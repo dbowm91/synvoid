@@ -1,3 +1,4 @@
+use crate::components::confirm_dialog::{ConfirmDialog, ConfirmType};
 use crate::services::ApiService;
 use crate::types::{MasterStatus, WorkerCountResponse, WorkerStatus};
 use yew::prelude::*;
@@ -10,6 +11,7 @@ pub fn Workers() -> Html {
     let error = use_state(|| None as Option<String>);
     let restarting = use_state(|| None as Option<String>);
     let scaling = use_state(|| false);
+    let pending_restart = use_state(|| None as Option<String>);
 
     {
         let workers = workers.clone();
@@ -28,7 +30,7 @@ pub fn Workers() -> Html {
 
                 match api.get_workers_status().await {
                     Ok(w) => workers.set(w),
-                    Err(e) => error.set(Some(e)),
+                    Err(e) => error.set(Some(e.to_string())),
                 }
 
                 match api.get_supervisor_status().await {
@@ -47,39 +49,55 @@ pub fn Workers() -> Html {
     }
 
     let on_restart = {
+        let pending_restart = pending_restart.clone();
+        Callback::from(move |worker_id: String| {
+            pending_restart.set(Some(worker_id));
+        })
+    };
+
+    let on_confirm_restart = {
         let workers = workers.clone();
         let restarting = restarting.clone();
         let error = error.clone();
+        let pending_restart = pending_restart.clone();
+        Callback::from(move |_| {
+            if let Some(worker_id) = (*pending_restart).clone() {
+                let workers = workers.clone();
+                let restarting = restarting.clone();
+                let error = error.clone();
+                let pending_restart = pending_restart.clone();
+                pending_restart.set(None);
+                restarting.set(Some(worker_id.clone()));
 
-        Callback::from(move |worker_id: String| {
-            let workers = workers.clone();
-            let restarting = restarting.clone();
-            let error = error.clone();
-            let worker_id_clone = worker_id.clone();
+                wasm_bindgen_futures::spawn_local(async move {
+                    let api = ApiService::new();
 
-            restarting.set(Some(worker_id_clone.clone()));
+                    match api.restart_worker(&worker_id).await {
+                        Ok(_resp) => {
+                            let workers = workers.clone();
+                            let restarting = restarting.clone();
 
-            wasm_bindgen_futures::spawn_local(async move {
-                let api = ApiService::new();
+                            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                            restarting.set(None);
 
-                match api.restart_worker(&worker_id_clone).await {
-                    Ok(_resp) => {
-                        let workers = workers.clone();
-                        let restarting = restarting.clone();
-
-                        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                        restarting.set(None);
-
-                        if let Ok(w) = api.get_workers_status().await {
-                            workers.set(w);
+                            if let Ok(w) = api.get_workers_status().await {
+                                workers.set(w);
+                            }
+                        }
+                        Err(e) => {
+                            error.set(Some(e.to_string()));
+                            restarting.set(None);
                         }
                     }
-                    Err(e) => {
-                        error.set(Some(e));
-                        restarting.set(None);
-                    }
-                }
-            });
+                });
+            }
+        })
+    };
+
+    let on_cancel_restart = {
+        let pending_restart = pending_restart.clone();
+        Callback::from(move |_| {
+            pending_restart.set(None);
         })
     };
 
@@ -113,7 +131,7 @@ pub fn Workers() -> Html {
                         }
                     }
                     Err(e) => {
-                        error.set(Some(e));
+                        error.set(Some(e.to_string()));
                     }
                 }
                 scaling.set(false);
@@ -151,7 +169,7 @@ pub fn Workers() -> Html {
                         }
                     }
                     Err(e) => {
-                        error.set(Some(e));
+                        error.set(Some(e.to_string()));
                     }
                 }
                 scaling.set(false);
@@ -185,6 +203,17 @@ pub fn Workers() -> Html {
 
     html! {
         <div class="space-y-6">
+            <ConfirmDialog
+                show={(*pending_restart).is_some()}
+                title={"Restart Worker".to_string()}
+                message={"Are you sure you want to restart this worker? Active requests may be interrupted.".to_string()}
+                confirm_label={"Restart".to_string()}
+                confirm_type={ConfirmType::Warning}
+                on_confirm={on_confirm_restart}
+                on_cancel={on_cancel_restart}
+                cancel_label={None}
+            />
+
             <div class="flex justify-between items-center">
                 <h1 class="text-2xl font-bold">{ "Workers & Supervisor" }</h1>
             </div>

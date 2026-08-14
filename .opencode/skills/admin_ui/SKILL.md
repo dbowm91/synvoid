@@ -113,7 +113,7 @@ Common patterns:
 - `post<T, B>(&self, path: &str, body: &B)` - POST with JSON body (session cookie + CSRF)
 - `put<T, B>(&self, path: &str, body: &B)` - PUT with JSON body (session cookie + CSRF)
 
-All methods return `Result<T, String>` with error messages.
+All methods return `Result<T, ApiError>` with structured error information. Pages convert errors to strings via `.to_string()` for state storage.
 
 ### `types/mod.rs` - Type Definitions
 
@@ -144,11 +144,15 @@ pub fn use_websocket_or_poll<T: DeserializeOwned + Clone + 'static>(
 **State machine**: `Connecting` → `Connected(T)` | `Polling` | `Disconnected` | `Error(String)`
 
 **Key behaviors**:
-- URL construction: Derives `ws://` or `wss://` from `window.location` automatically. Always use relative paths (never hardcoded `ws://localhost:...`).
+- URL construction: `derive_ws_url_from_href` derives `ws://` or `wss://` from `window.location` automatically. Always use relative paths (never hardcoded `ws://localhost:...`).
 - At most one polling interval per hook instance (deduplication flag prevents duplicate timers on `onerror`+`onclose` sequences).
 - Session expiry (`401`/`403`/`Session expired`) stops polling and transitions to `Disconnected`.
 - Cleanup closes the WebSocket and cancels any active polling interval.
 - The second return value `Callback<()>` triggers an immediate manual poll.
+
+**Data freshness**: Components should track `last_received_at` timestamp and display "Stale" when `now - last_received > 15s` (3x the 5s poll interval). See `realtime_header.rs` for the reference implementation.
+
+**Range controls**: `range_to_seconds(secs)` maps button values (60/300/900/3600) to API query parameters. Components fetch historical data from `/api/stats/history?seconds=<N>` when the selected range changes.
 
 **Do not**: pass bearer tokens to WebSocket hooks (auth uses HttpOnly session cookies).
 
@@ -157,11 +161,11 @@ pub fn use_websocket_or_poll<T: DeserializeOwned + Clone + 'static>(
 1. **Add method to `api.rs`**:
 
 ```rust
-pub async fn get_something(&self) -> Result<crate::types::SomethingResponse, String> {
+pub async fn get_something(&self) -> Result<crate::types::SomethingResponse, ApiError> {
     self.get("/something").await
 }
 
-pub async fn update_something(&self, data: &SomethingRequest) -> Result<serde_json::Value, String> {
+pub async fn update_something(&self, data: &SomethingRequest) -> Result<serde_json::Value, ApiError> {
     self.put("/something", data).await
 }
 ```
@@ -177,6 +181,26 @@ pub struct SomethingResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SomethingRequest {
     pub name: String,
+}
+```
+
+### `ApiError` - Structured Error Handling
+
+All API methods return `Result<T, ApiError>`. The `ApiError` type provides:
+
+```rust
+pub struct ApiError {
+    pub status: u16,      // HTTP status code (0 for network errors)
+    pub message: String,  // Bounded, sanitized server-provided error detail
+}
+```
+
+Pages display errors using `e.to_string()` which formats as `"HTTP {status}: {message}"`:
+
+```rust
+match api.get_something().await {
+    Ok(data) => my_state.set(Some(data)),
+    Err(e) => error.set(Some(e.to_string())),
 }
 ```
 
@@ -255,6 +279,34 @@ For async data fetching, use `use_effect_with`:
 ```
 
 ## Modal Dialogs
+
+### Confirmation Dialogs for Destructive Operations
+
+Use the `ConfirmDialog` component for operations whose accidental activation has material effect:
+
+```rust
+use crate::components::confirm_dialog::{ConfirmDialog, ConfirmType};
+
+let pending_delete = use_state(|| None as Option<String>);
+
+// In html:
+<ConfirmDialog
+    show={(*pending_delete).is_some()}
+    title={"Delete Site".to_string()}
+    message={"Are you sure? This action cannot be undone.".to_string()}
+    confirm_label={"Delete".to_string()}
+    confirm_type={ConfirmType::Danger}
+    on_confirm={on_confirm_delete}
+    on_cancel={on_cancel_delete}
+    cancel_label={None}
+/>
+```
+
+**ConfirmType variants**: `Danger` (red), `Warning` (yellow), `Primary` (blue).
+
+**Pattern**: Store the pending item ID in state, show dialog when set, clear on confirm/cancel.
+
+### General Modals
 
 Modals use a boolean state and conditional rendering:
 
@@ -337,12 +389,16 @@ match api.derive_signing_key(&genesis_key_input).await {
 match api.call_endpoint().await {
     Ok(data) => data,
     Err(e) => {
-        // Option 1: Set error state to display
-        error.set(Some(e));
+        // Option 1: Set error state to display (convert ApiError to String)
+        error.set(Some(e.to_string()));
         // Option 2: Silently ignore (for non-critical data)
     }
 }
 ```
+
+**Login form semantics**: Uses `<form onsubmit>` with `type="password"` input and `type="submit"` button. Keyboard Enter works. Submit is disabled during flight.
+
+**Logout**: Visible button in sidebar footer. Calls `DELETE /api/auth/session` and redirects to `/login`.
 
 ## Building
 

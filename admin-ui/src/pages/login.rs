@@ -27,7 +27,7 @@ pub fn Login() -> Html {
         let token_input = token_input.clone();
         let login_state = login_state.clone();
         let error_msg = error_msg.clone();
-        Callback::from(move |e: MouseEvent| {
+        Callback::from(move |e: SubmitEvent| {
             e.prevent_default();
             let token = (*token_input).clone();
             if token.is_empty() {
@@ -36,6 +36,7 @@ pub fn Login() -> Html {
             }
 
             login_state.set(LoginState::Loading);
+            error_msg.set(String::new());
 
             let login_state = login_state.clone();
             let error_msg = error_msg.clone();
@@ -72,30 +73,25 @@ pub fn Login() -> Html {
                     </div>
                 }
 
-                <form class="space-y-6">
+                <form onsubmit={on_submit} class="space-y-6">
                     <Input
                         label="Admin Token"
                         name="token"
+                        input_type="password"
                         value={(*token_input).clone()}
                         on_change={on_token_change}
                         placeholder="Enter your admin token"
+                        help="Configured in your server's admin.security.admin_token setting"
                     />
 
                     <button
-                        type="button"
-                        onclick={on_submit}
+                        type="submit"
                         disabled={is_loading}
                         class="w-full px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
                     >
                         { if is_loading { "Authenticating..." } else { "Login" } }
                     </button>
                 </form>
-
-                <div class="mt-6 text-center">
-                    <p class="text-xs text-secondary">
-                        { "Tokens are configured in your server's admin.security.admin_token setting" }
-                    </p>
-                </div>
             </div>
         </div>
     }

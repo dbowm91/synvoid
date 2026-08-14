@@ -28,11 +28,11 @@ pub fn SystemStatus() -> Html {
                 let api = ApiService::new();
                 match api.get_system_info().await {
                     Ok(info) => system_info.set(Some(info)),
-                    Err(e) => error.set(Some(e)),
+                    Err(e) => error.set(Some(e.to_string())),
                 }
                 match api.get_master_status().await {
                     Ok(status) => master_status.set(Some(status)),
-                    Err(e) => error.set(Some(e)),
+                    Err(e) => error.set(Some(e.to_string())),
                 }
                 if let Ok(status) = api.get_mesh_status().await {
                     mesh_status.set(Some(status));
@@ -74,7 +74,7 @@ pub fn SystemStatus() -> Html {
                         }
                     }
                     Err(e) => {
-                        derive_error.set(Some(e));
+                        derive_error.set(Some(e.to_string()));
                     }
                 }
                 deriving_key.set(false);

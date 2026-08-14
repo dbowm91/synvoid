@@ -1,3 +1,4 @@
+use crate::components::confirm_dialog::{ConfirmDialog, ConfirmType};
 use crate::services::api::ApiService;
 use crate::types::{
     BackupInfo, HistorySample, ThreatLevelBaseline, ThreatLevelHistory, ThreatLevelStatus,
@@ -87,7 +88,7 @@ fn ThreatStatusTab() -> Html {
                 let api = ApiService::new();
                 match api.get_threat_level_status().await {
                     Ok(s) => status.set(Some(s)),
-                    Err(e) => error.set(Some(e)),
+                    Err(e) => error.set(Some(e.to_string())),
                 }
                 loading.set(false);
             });
@@ -207,7 +208,7 @@ fn ThreatHistoryTab() -> Html {
                 let api = ApiService::new();
                 match api.get_threat_level_history().await {
                     Ok(h) => history.set(Some(h)),
-                    Err(e) => error.set(Some(e)),
+                    Err(e) => error.set(Some(e.to_string())),
                 }
                 loading.set(false);
             });
@@ -299,6 +300,7 @@ fn ThreatBackupsTab() -> Html {
     let backups = use_state(Vec::<BackupInfo>::new);
     let loading = use_state(|| true);
     let error = use_state(|| None as Option<String>);
+    let pending_delete = use_state(|| None as Option<String>);
 
     {
         let backups = backups.clone();
@@ -312,7 +314,7 @@ fn ThreatBackupsTab() -> Html {
                 let api = ApiService::new();
                 match api.list_threat_level_backups().await {
                     Ok(b) => backups.set(b.backups),
-                    Err(e) => error.set(Some(e)),
+                    Err(e) => error.set(Some(e.to_string())),
                 }
                 loading.set(false);
             });
@@ -335,28 +337,57 @@ fn ThreatBackupsTab() -> Html {
     };
 
     let on_delete = {
+        let pending_delete = pending_delete.clone();
+        Callback::from(move |id: String| {
+            pending_delete.set(Some(id));
+        })
+    };
+
+    let on_confirm_delete = {
         let backups = backups.clone();
         let error = error.clone();
-        Callback::from(move |id: String| {
-            let backups = backups.clone();
-            let error = error.clone();
-            let id_clone = id.clone();
-            wasm_bindgen_futures::spawn_local(async move {
-                let api = ApiService::new();
-                match api.delete_threat_level_backup(&id_clone).await {
-                    Ok(true) | Ok(false) => {
-                        let mut current = (*backups).clone();
-                        current.retain(|b| b.id != id_clone);
-                        backups.set(current);
+        let pending_delete = pending_delete.clone();
+        Callback::from(move |_| {
+            if let Some(id) = (*pending_delete).clone() {
+                let backups = backups.clone();
+                let error = error.clone();
+                let pending_delete = pending_delete.clone();
+                pending_delete.set(None);
+                wasm_bindgen_futures::spawn_local(async move {
+                    let api = ApiService::new();
+                    match api.delete_threat_level_backup(&id).await {
+                        Ok(true) | Ok(false) => {
+                            let mut current = (*backups).clone();
+                            current.retain(|b| b.id != id);
+                            backups.set(current);
+                        }
+                        Err(e) => error.set(Some(e.to_string())),
                     }
-                    Err(e) => error.set(Some(e)),
-                }
-            });
+                });
+            }
+        })
+    };
+
+    let on_cancel_delete = {
+        let pending_delete = pending_delete.clone();
+        Callback::from(move |_| {
+            pending_delete.set(None);
         })
     };
 
     html! {
         <div class="bg-secondary rounded-lg border border-default p-6">
+            <ConfirmDialog
+                show={(*pending_delete).is_some()}
+                title={"Delete Backup".to_string()}
+                message={"Are you sure you want to delete this backup? This action cannot be undone.".to_string()}
+                confirm_label={"Delete".to_string()}
+                confirm_type={ConfirmType::Danger}
+                on_confirm={on_confirm_delete}
+                on_cancel={on_cancel_delete}
+                cancel_label={None}
+            />
+
             <div class="flex justify-between items-center mb-4">
                 <h3 class="text-lg font-semibold">{ "Backups" }</h3>
                 <button
@@ -426,6 +457,7 @@ fn ThreatSettingsTab() -> Html {
     let current_status = use_state(|| None as Option<ThreatLevelStatus>);
     let loading = use_state(|| true);
     let error = use_state(|| None as Option<String>);
+    let pending_reset = use_state(|| false);
 
     {
         let baseline = baseline.clone();
@@ -441,11 +473,11 @@ fn ThreatSettingsTab() -> Html {
                 let api = ApiService::new();
                 match api.get_threat_level_baseline().await {
                     Ok(b) => baseline.set(Some(b)),
-                    Err(e) => error.set(Some(e)),
+                    Err(e) => error.set(Some(e.to_string())),
                 }
                 match api.get_threat_level_status().await {
                     Ok(s) => current_status.set(Some(s)),
-                    Err(e) => error.set(Some(e)),
+                    Err(e) => error.set(Some(e.to_string())),
                 }
                 loading.set(false);
             });
@@ -466,7 +498,7 @@ fn ThreatSettingsTab() -> Html {
                             current_status.set(Some(s));
                         }
                     }
-                    Err(e) => error.set(Some(e)),
+                    Err(e) => error.set(Some(e.to_string())),
                 }
             });
         })
@@ -486,15 +518,24 @@ fn ThreatSettingsTab() -> Html {
                             current_status.set(Some(s));
                         }
                     }
-                    Err(e) => error.set(Some(e)),
+                    Err(e) => error.set(Some(e.to_string())),
                 }
             });
         })
     };
 
     let on_reset_baseline = {
-        let baseline = baseline.clone();
+        let pending_reset = pending_reset.clone();
         Callback::from(move |_| {
+            pending_reset.set(true);
+        })
+    };
+
+    let on_confirm_reset = {
+        let baseline = baseline.clone();
+        let pending_reset = pending_reset.clone();
+        Callback::from(move |_| {
+            pending_reset.set(false);
             let baseline = baseline.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
@@ -507,8 +548,26 @@ fn ThreatSettingsTab() -> Html {
         })
     };
 
+    let on_cancel_reset = {
+        let pending_reset = pending_reset.clone();
+        Callback::from(move |_| {
+            pending_reset.set(false);
+        })
+    };
+
     html! {
         <div class="bg-secondary rounded-lg border border-default p-6">
+            <ConfirmDialog
+                show={*pending_reset}
+                title={"Reset Baseline".to_string()}
+                message={"Are you sure you want to reset the threat level baseline? Current threat level will reset and learning will restart.".to_string()}
+                confirm_label={"Reset".to_string()}
+                confirm_type={ConfirmType::Danger}
+                on_confirm={on_confirm_reset}
+                on_cancel={on_cancel_reset}
+                cancel_label={None}
+            />
+
             if *loading {
                 <div class="text-center py-8">{ "Loading..." }</div>
             } else if let Some(err) = &*error {

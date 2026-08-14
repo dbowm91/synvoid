@@ -2,6 +2,7 @@ use yew::prelude::*;
 use yew_router::prelude::*;
 
 use crate::app::Route;
+use crate::components::confirm_dialog::{ConfirmDialog, ConfirmType};
 use crate::components::skeleton::LoadingSpinner;
 use crate::services::ApiService;
 use crate::types::{SiteInfo, SiteStats};
@@ -13,6 +14,7 @@ pub fn Sites() -> Html {
     let loading = use_state(|| true);
     let error = use_state(|| None as Option<String>);
     let filter = use_state(String::new);
+    let pending_delete = use_state(|| None as Option<String>);
 
     {
         let sites = sites.clone();
@@ -29,7 +31,7 @@ pub fn Sites() -> Html {
 
                 match api.list_sites().await {
                     Ok(s) => sites.set(s),
-                    Err(e) => error.set(Some(e)),
+                    Err(e) => error.set(Some(e.to_string())),
                 }
 
                 match api.get_stats_sites().await {
@@ -44,22 +46,43 @@ pub fn Sites() -> Html {
     }
 
     let on_delete = {
-        let sites = sites.clone();
+        let pending_delete = pending_delete.clone();
         Callback::from(move |site_id: String| {
-            let sites = sites.clone();
-            wasm_bindgen_futures::spawn_local(async move {
-                let api = ApiService::new();
-                match api.delete_site(&site_id).await {
-                    Ok(_) => {
-                        let mut current = (*sites).clone();
-                        current.retain(|s| s.id != site_id);
-                        sites.set(current);
+            pending_delete.set(Some(site_id));
+        })
+    };
+
+    let on_confirm_delete = {
+        let sites = sites.clone();
+        let pending_delete = pending_delete.clone();
+        let error = error.clone();
+        Callback::from(move |_| {
+            if let Some(site_id) = (*pending_delete).clone() {
+                let sites = sites.clone();
+                let error = error.clone();
+                let pending_delete = pending_delete.clone();
+                pending_delete.set(None);
+                wasm_bindgen_futures::spawn_local(async move {
+                    let api = ApiService::new();
+                    match api.delete_site(&site_id).await {
+                        Ok(_) => {
+                            let mut current = (*sites).clone();
+                            current.retain(|s| s.id != site_id);
+                            sites.set(current);
+                        }
+                        Err(e) => {
+                            error.set(Some(e.to_string()));
+                        }
                     }
-                    Err(e) => {
-                        tracing::error!("Failed to delete site: {}", e);
-                    }
-                }
-            });
+                });
+            }
+        })
+    };
+
+    let on_cancel_delete = {
+        let pending_delete = pending_delete.clone();
+        Callback::from(move |_| {
+            pending_delete.set(None);
         })
     };
 
@@ -81,6 +104,17 @@ pub fn Sites() -> Html {
 
     html! {
         <div>
+            <ConfirmDialog
+                show={(*pending_delete).is_some()}
+                title={"Delete Site".to_string()}
+                message={"Are you sure you want to delete this site? This action cannot be undone.".to_string()}
+                confirm_label={"Delete".to_string()}
+                confirm_type={ConfirmType::Danger}
+                on_confirm={on_confirm_delete}
+                on_cancel={on_cancel_delete}
+                cancel_label={None}
+            />
+
             <div class="flex justify-between items-center mb-6">
                 <h1 class="text-2xl font-bold">{ "Sites" }</h1>
                 <Link<Route>

@@ -89,7 +89,7 @@ pub fn SiteDetail(props: &SiteDetailProps) -> Html {
                             site_stats.set(Some(site.clone()));
                         }
                     }
-                    Err(e) => error.set(Some(e)),
+                    Err(e) => error.set(Some(e.to_string())),
                 }
             });
 

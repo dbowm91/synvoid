@@ -26,7 +26,7 @@ pub fn Upstreams() -> Html {
                         error.set(None);
                     }
                     Err(e) => {
-                        error.set(Some(e));
+                        error.set(Some(e.to_string()));
                     }
                 }
                 loading.set(false);
@@ -52,7 +52,7 @@ pub fn Upstreams() -> Html {
                         error.set(None);
                     }
                     Err(e) => {
-                        error.set(Some(e));
+                        error.set(Some(e.to_string()));
                     }
                 }
                 loading.set(false);

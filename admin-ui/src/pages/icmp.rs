@@ -71,7 +71,7 @@ pub fn Icmp() -> Html {
                             last_ping,
                         }));
                     }
-                    Err(e) => error.set(Some(e)),
+                    Err(e) => error.set(Some(e.to_string())),
                 }
 
                 match api.get_icmp_backends().await {
@@ -109,7 +109,7 @@ pub fn Icmp() -> Html {
                             backends.set(backend_list);
                         }
                     }
-                    Err(e) => error.set(Some(e)),
+                    Err(e) => error.set(Some(e.to_string())),
                 }
             });
         });

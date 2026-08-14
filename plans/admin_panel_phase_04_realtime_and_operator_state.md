@@ -2,7 +2,7 @@
 
 ## Status
 
-**COMPLETE**
+**COMPLETE** (including gap closure)
 
 ## Objective
 

@@ -85,3 +85,28 @@ Webhook URLs are validated at configuration time via IP classification (`is_rest
 ### Webhook Delivery Result
 
 `send_webhook_internal()` returns `WebhookDeliveryResult` with `outcome` (`Success`/`PartialFailure`/`Failure`), counts, and per-destination details. The `/alerting/test-webhook` endpoint returns `TestWebhookResult`.
+
+## Phase 6 Corrections
+
+### Login Form Semantics
+
+The admin-ui login uses proper HTML form submission:
+- `<form onsubmit={on_submit}>` with `type="submit"` button
+- Token input uses `type="password"` (non-echoing)
+- Submit button disabled during flight to prevent double submission
+- Invalid credentials show bounded generic error without reflecting the token
+
+### Destructive Operation Confirmation
+
+All destructive operations require explicit confirmation via `ConfirmDialog`:
+- Site deletion
+- Worker restart
+- Tier key revoke/unbind
+- Threat level backup delete
+- Threat level baseline reset
+
+The `ConfirmDialog` component (`admin-ui/src/components/confirm_dialog.rs`) supports `Danger`/`Warning`/`Primary` confirmation types.
+
+### API Error Handling
+
+API methods return `Result<T, ApiError>` where `ApiError` contains `status: u16` and `message: String`. Error messages are bounded (512 bytes max) and sanitized. Known JSON error shapes (`error`, `message`, `detail` fields) are extracted; arbitrary text is truncated.

@@ -63,7 +63,7 @@ pub fn Alerts() -> Html {
 
                 match api.get::<AlertConfigResponse>("/alerts/config").await {
                     Ok(resp) => config.set(Some(resp.config)),
-                    Err(e) => error.set(Some(e)),
+                    Err(e) => error.set(Some(e.to_string())),
                 }
             });
 
@@ -104,7 +104,7 @@ pub fn Alerts() -> Html {
                             toast_success("Alert configuration saved");
                         }
                         Err(e) => {
-                            error.set(Some(e.clone()));
+                            error.set(Some(e.to_string()));
                             toast_error(&format!("Failed to save: {}", e));
                         }
                     }
@@ -169,7 +169,7 @@ pub fn Alerts() -> Html {
                         test_result.set(Some(result));
                     }
                     Err(e) => {
-                        error.set(Some(e.clone()));
+                        error.set(Some(e.to_string()));
                         toast_error(&format!("Webhook test error: {}", e));
                     }
                 }
@@ -322,7 +322,7 @@ pub fn Alerts() -> Html {
                                                         <span class={status_class}>{ status_icon }</span>
                                                         <span class="text-primary truncate">{ &d.url }</span>
                                                         if let Some(err) = &d.error {
-                                                            <span class="text-red-400 text-xs">({ err })</span>
+                                                            <span class="text-red-400 text-xs">{ format!("({})", err) }</span>
                                                         }
                                                     </div>
                                                 }

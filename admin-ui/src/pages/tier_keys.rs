@@ -1,4 +1,4 @@
-use crate::services::api::ApiService;
+use crate::services::api::{ApiError, ApiService};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen_futures::spawn_local;
 use yew::prelude::*;
@@ -31,6 +31,8 @@ pub struct TierKeys {
     issue_tier: u32,
     issuing: bool,
     issue_error: Option<String>,
+    pending_revoke: Option<(String, String)>,
+    pending_unbind: Option<(String, String)>,
 }
 
 pub enum Msg {
@@ -41,11 +43,15 @@ pub enum Msg {
     SetOrgId(String),
     SetTier(u32),
     IssueKey,
-    IssueKeyResult(Result<serde_json::Value, String>),
+    IssueKeyResult(Result<serde_json::Value, ApiError>),
+    ConfirmRevoke(String, String),
     RevokeKey(String, String),
-    RevokeKeyResult(String, Result<serde_json::Value, String>),
+    RevokeKeyResult(String, Result<serde_json::Value, ApiError>),
+    CancelRevoke,
+    ConfirmUnbind(String, String),
     UnbindKey(String, String),
-    UnbindKeyResult(String, Result<serde_json::Value, String>),
+    UnbindKeyResult(String, Result<serde_json::Value, ApiError>),
+    CancelUnbind,
 }
 
 #[derive(Properties, PartialEq)]
@@ -66,6 +72,8 @@ impl Component for TierKeys {
             issue_tier: 1,
             issuing: false,
             issue_error: None,
+            pending_revoke: None,
+            pending_unbind: None,
         }
     }
 
@@ -90,7 +98,7 @@ impl Component for TierKeys {
                             }
                         }
                         Err(e) => {
-                            link.send_message(Msg::LoadError(e));
+                            link.send_message(Msg::LoadError(e.to_string()));
                         }
                     }
                 });
@@ -164,6 +172,14 @@ impl Component for TierKeys {
                 });
                 true
             }
+            Msg::ConfirmRevoke(org_id, key_id) => {
+                self.pending_revoke = Some((org_id, key_id));
+                true
+            }
+            Msg::CancelRevoke => {
+                self.pending_revoke = None;
+                true
+            }
             Msg::RevokeKeyResult(key_id, result) => {
                 match result {
                     Ok(_) => {
@@ -185,6 +201,14 @@ impl Component for TierKeys {
                 });
                 true
             }
+            Msg::ConfirmUnbind(org_id, key_id) => {
+                self.pending_unbind = Some((org_id, key_id));
+                true
+            }
+            Msg::CancelUnbind => {
+                self.pending_unbind = None;
+                true
+            }
             Msg::UnbindKeyResult(key_id, result) => {
                 match result {
                     Ok(_) => {
@@ -202,8 +226,64 @@ impl Component for TierKeys {
     fn view(&self, ctx: &Context<Self>) -> Html {
         let on_issue = ctx.link().callback(|_| Msg::ToggleIssueModal);
 
+        let revoke_dialog = if let Some((org_id, key_id)) = &self.pending_revoke {
+            let org_id = org_id.clone();
+            let key_id = key_id.clone();
+            let link = ctx.link().clone();
+            let on_confirm = Callback::from(move |_| {
+                link.send_message(Msg::RevokeKey(org_id.clone(), key_id.clone()));
+            });
+            let link = ctx.link().clone();
+            let on_cancel = Callback::from(move |_| {
+                link.send_message(Msg::CancelRevoke);
+            });
+            html! {
+                <crate::components::confirm_dialog::ConfirmDialog
+                    show=true
+                    title={"Revoke Tier Key".to_string()}
+                    message={"Are you sure you want to revoke this tier key? The key will be permanently invalidated.".to_string()}
+                    confirm_label={"Revoke".to_string()}
+                    confirm_type={crate::components::confirm_dialog::ConfirmType::Danger}
+                    on_confirm={on_confirm}
+                    on_cancel={on_cancel}
+                cancel_label={None}
+                />
+            }
+        } else {
+            html! {}
+        };
+
+        let unbind_dialog = if let Some((org_id, key_id)) = &self.pending_unbind {
+            let org_id = org_id.clone();
+            let key_id = key_id.clone();
+            let link = ctx.link().clone();
+            let on_confirm = Callback::from(move |_| {
+                link.send_message(Msg::UnbindKey(org_id.clone(), key_id.clone()));
+            });
+            let link = ctx.link().clone();
+            let on_cancel = Callback::from(move |_| {
+                link.send_message(Msg::CancelUnbind);
+            });
+            html! {
+                <crate::components::confirm_dialog::ConfirmDialog
+                    show=true
+                    title={"Unbind Tier Key".to_string()}
+                    message={"Are you sure you want to unbind this tier key from its organization?".to_string()}
+                    confirm_label={"Unbind".to_string()}
+                    confirm_type={crate::components::confirm_dialog::ConfirmType::Warning}
+                    on_confirm={on_confirm}
+                    on_cancel={on_cancel}
+                cancel_label={None}
+                />
+            }
+        } else {
+            html! {}
+        };
+
         html! {
             <div class="space-y-6">
+                { revoke_dialog }
+                { unbind_dialog }
                 { if self.show_issue_modal {
                     let on_close = ctx.link().callback(|_| Msg::ToggleIssueModal);
                     html! {
@@ -324,13 +404,13 @@ impl Component for TierKeys {
                                     let on_revoke = {
                                         let link = ctx.link().clone();
                                         move |_| {
-                                            link.send_message(Msg::RevokeKey(bound_for_revoke.clone(), key_id_for_revoke.clone()));
+                                            link.send_message(Msg::ConfirmRevoke(bound_for_revoke.clone(), key_id_for_revoke.clone()));
                                         }
                                     };
                                     let on_unbind = {
                                         let link = ctx.link().clone();
                                         move |_| {
-                                            link.send_message(Msg::UnbindKey(bound_for_unbind.clone(), key_id_for_unbind.clone()));
+                                            link.send_message(Msg::ConfirmUnbind(bound_for_unbind.clone(), key_id_for_unbind.clone()));
                                         }
                                     };
 

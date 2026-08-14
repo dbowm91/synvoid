@@ -84,7 +84,7 @@ pub fn Logs() -> Html {
                         entries.set(resp.entries);
                         error.set(None);
                     }
-                    Err(e) => error.set(Some(e)),
+                    Err(e) => error.set(Some(e.to_string())),
                 }
                 loading.set(false);
             });

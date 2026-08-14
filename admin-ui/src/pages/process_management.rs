@@ -55,7 +55,7 @@ pub fn ProcessManagement() -> Html {
                             }
                         }
                     }
-                    Err(e) => error.set(Some(e)),
+                    Err(e) => error.set(Some(e.to_string())),
                 }
 
                 match api.get_supervisor_config().await {
@@ -68,7 +68,7 @@ pub fn ProcessManagement() -> Html {
                             }
                         }
                     }
-                    Err(e) => error.set(Some(e)),
+                    Err(e) => error.set(Some(e.to_string())),
                 }
             });
 

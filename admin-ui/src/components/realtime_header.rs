@@ -1,7 +1,11 @@
 use crate::components::charts::Sparkline;
-use crate::hooks::use_websocket::{use_websocket_or_poll, UseWebSocketState};
+use crate::hooks::use_websocket::{range_to_seconds, use_websocket_or_poll, UseWebSocketState};
 use crate::types::RealtimeMetrics;
+use gloo::timers::callback::Interval;
 use yew::prelude::*;
+
+const STALE_THRESHOLD_MS: u32 = 15_000;
+const STALE_CHECK_INTERVAL_MS: u32 = 3_000;
 
 fn get_threat_level_color_and_label(level: u8) -> (&'static str, &'static str) {
     match level {
@@ -29,7 +33,79 @@ pub fn RealtimeHeader() -> Html {
     let current_metrics = use_state(|| None::<RealtimeMetrics>);
     let last_updated = use_state(|| String::from("--:--:--"));
     let selected_range = use_state(|| 60u64);
+    let last_received_ms = use_state(|| 0u64);
+    let is_stale = use_state(|| false);
 
+    // Track data freshness: update timestamp on each Connected sample
+    {
+        let ws_state = ws_state.clone();
+        let set_last_received_ms = last_received_ms.clone();
+
+        use_effect_with(ws_state.clone(), move |state| {
+            if let UseWebSocketState::Connected(_) = (*state).clone() {
+                let now = js_sys::Date::now() as u64;
+                set_last_received_ms.set(now);
+            }
+        });
+    }
+
+    // Periodic staleness check: compare now against last_received_ms
+    {
+        let last_received_ms = last_received_ms.clone();
+        let set_is_stale = is_stale.clone();
+
+        use_effect_with((), move |_| {
+            let interval = Interval::new(STALE_CHECK_INTERVAL_MS, move || {
+                let now = js_sys::Date::now() as u64;
+                let last = *last_received_ms;
+                if last > 0 && now.saturating_sub(last) > STALE_THRESHOLD_MS as u64 {
+                    set_is_stale.set(true);
+                } else {
+                    set_is_stale.set(false);
+                }
+            });
+            move || drop(interval)
+        });
+    }
+
+    // Fetch historical data when range changes
+    {
+        let selected_range = selected_range.clone();
+        let set_req_history = req_history.clone();
+        let set_blocked_history = blocked_history.clone();
+        let set_current_metrics = current_metrics.clone();
+
+        use_effect_with(*selected_range, move |range| {
+            let secs = range_to_seconds(*range);
+            let set_req_history = set_req_history.clone();
+            let set_blocked_history = set_blocked_history.clone();
+            let set_current_metrics = set_current_metrics.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = crate::services::api::ApiService::new();
+                let url = format!("/api/stats/history?seconds={}", secs);
+                match api.get::<Vec<RealtimeMetrics>>(&url).await {
+                    Ok(data) => {
+                        if let Some(last) = data.last() {
+                            set_current_metrics.set(Some(last.clone()));
+                        }
+                        let reqs: Vec<f64> = data.iter().map(|m| m.requests_per_second).collect();
+                        let blocked: Vec<f64> = data.iter().map(|m| m.blocked_per_second).collect();
+                        // Take last 10 for sparkline
+                        let req_tail: Vec<f64> =
+                            reqs.iter().rev().take(10).rev().cloned().collect();
+                        let block_tail: Vec<f64> =
+                            blocked.iter().rev().take(10).rev().cloned().collect();
+                        set_req_history.set(req_tail);
+                        set_blocked_history.set(block_tail);
+                    }
+                    Err(_) => {}
+                }
+            });
+            || {}
+        });
+    }
+
+    // Update sparklines from real-time samples (appends to historical data)
     {
         let ws_state = ws_state.clone();
         let set_current_metrics = current_metrics.clone();
@@ -45,10 +121,15 @@ pub fn RealtimeHeader() -> Html {
 
                 let mut req_hist = (*req_history).clone();
                 let mut block_hist = (*blocked_history).clone();
-                req_hist.remove(0);
                 req_hist.push(metrics.requests_per_second);
-                block_hist.remove(0);
                 block_hist.push(metrics.blocked_per_second);
+                // Keep at most 10 sparkline points
+                if req_hist.len() > 10 {
+                    req_hist.remove(0);
+                }
+                if block_hist.len() > 10 {
+                    block_hist.remove(0);
+                }
                 req_history.set(req_hist);
                 blocked_history.set(block_hist);
             }
@@ -62,14 +143,12 @@ pub fn RealtimeHeader() -> Html {
             let total = m.total_requests;
             let blocked = m.blocked;
             let errors = m.errors;
-            let valid = total.saturating_add(errors).min(total);
             let success_numerator = total.saturating_sub(blocked).saturating_sub(errors);
             let success_pct = if total > 0 {
                 (success_numerator as f64 / total as f64 * 100.0).clamp(0.0, 100.0)
             } else {
                 100.0
             };
-            let _ = valid;
             (
                 format!("{:.1}", m.requests_per_second),
                 format!("{:.1}", m.blocked_per_second),
@@ -99,9 +178,14 @@ pub fn RealtimeHeader() -> Html {
         threat_label.to_string()
     };
 
+    // Determine connection status label with staleness awareness
     let connection_status = match &ws_state {
         UseWebSocketState::Connected(_) => {
-            ("w-2 h-2 rounded-full bg-green-500 animate-pulse", "Live")
+            if *is_stale {
+                ("w-2 h-2 rounded-full bg-yellow-500", "Stale")
+            } else {
+                ("w-2 h-2 rounded-full bg-green-500 animate-pulse", "Live")
+            }
         }
         UseWebSocketState::Connecting => (
             "w-2 h-2 rounded-full bg-yellow-500 animate-pulse",

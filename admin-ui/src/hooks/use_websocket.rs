@@ -25,18 +25,30 @@ impl<T: Clone> Clone for UseWebSocketState<T> {
     }
 }
 
+/// Derive a WebSocket URL from a page URL and an API path.
+///
+/// Given `page_url = "https://example.com:8443/admin"` and `path = "/api/ws/metrics"`,
+/// returns `"wss://example.com:8443/api/ws/metrics"`.
+///
+/// Falls back to `ws://` for non-HTTPS schemes. If derivation fails, returns the
+/// path unchanged.
+pub fn derive_ws_url_from_href(page_url: &str, path: &str) -> String {
+    if let Some(idx) = page_url.find("://") {
+        let scheme = &page_url[..idx];
+        let rest = &page_url[idx + 3..];
+        if let Some(path_start) = rest.find('/') {
+            let host = &rest[..path_start];
+            let ws_scheme = if scheme == "https" { "wss" } else { "ws" };
+            return format!("{}://{}{}", ws_scheme, host, path);
+        }
+    }
+    path.to_string()
+}
+
 pub fn build_ws_url(path: &str) -> String {
     if let Some(window) = web_sys::window() {
         if let Ok(location) = window.location().href() {
-            if let Some(idx) = location.find("://") {
-                let scheme = &location[..idx];
-                let rest = &location[idx + 3..];
-                if let Some(path_start) = rest.find('/') {
-                    let host = &rest[..path_start];
-                    let ws_scheme = if scheme == "https" { "wss" } else { "ws" };
-                    return format!("{}://{}{}", ws_scheme, host, path);
-                }
-            }
+            return derive_ws_url_from_href(&location, path);
         }
     }
     path.to_string()
@@ -149,11 +161,15 @@ pub fn use_websocket_or_poll<T: DeserializeOwned + Clone + 'static>(
                         state.set(UseWebSocketState::Connected(data));
                     }
                     Err(e) => {
-                        if e.contains("Session expired") || e.contains("401") || e.contains("403") {
+                        let msg = e.to_string();
+                        if msg.contains("Session expired")
+                            || msg.contains("401")
+                            || msg.contains("403")
+                        {
                             *interval_ref.borrow_mut() = None;
                             state.set(UseWebSocketState::Disconnected);
                         } else {
-                            state.set(UseWebSocketState::Error(e));
+                            state.set(UseWebSocketState::Error(msg));
                         }
                     }
                 }
@@ -283,4 +299,85 @@ pub fn use_websocket_or_poll<T: DeserializeOwned + Clone + 'static>(
     }
 
     ((*state).clone(), refresh)
+}
+
+pub fn range_to_seconds(secs: u64) -> u64 {
+    match secs {
+        60 => 60,
+        300 => 300,
+        900 => 900,
+        3600 => 3600,
+        _ => 60,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn derive_ws_url_http() {
+        assert_eq!(
+            derive_ws_url_from_href("http://localhost:8080/admin", "/api/ws/metrics"),
+            "ws://localhost:8080/api/ws/metrics"
+        );
+    }
+
+    #[test]
+    fn derive_ws_url_https() {
+        assert_eq!(
+            derive_ws_url_from_href("https://example.com/admin", "/api/ws/metrics"),
+            "wss://example.com/api/ws/metrics"
+        );
+    }
+
+    #[test]
+    fn derive_ws_url_https_custom_port() {
+        assert_eq!(
+            derive_ws_url_from_href(
+                "https://example.com:8443/admin/dashboard",
+                "/api/ws/metrics"
+            ),
+            "wss://example.com:8443/api/ws/metrics"
+        );
+    }
+
+    #[test]
+    fn derive_ws_url_http_custom_port() {
+        assert_eq!(
+            derive_ws_url_from_href("http://10.0.0.1:3000/", "/api/ws/metrics"),
+            "ws://10.0.0.1:3000/api/ws/metrics"
+        );
+    }
+
+    #[test]
+    fn derive_ws_url_no_path_slash() {
+        assert_eq!(
+            derive_ws_url_from_href("http://localhost:8080", "/api/ws/metrics"),
+            "/api/ws/metrics"
+        );
+    }
+
+    #[test]
+    fn derive_ws_url_invalid_url() {
+        assert_eq!(
+            derive_ws_url_from_href("not-a-url", "/api/ws/metrics"),
+            "/api/ws/metrics"
+        );
+    }
+
+    #[test]
+    fn range_to_seconds_maps_correctly() {
+        assert_eq!(range_to_seconds(60), 60);
+        assert_eq!(range_to_seconds(300), 300);
+        assert_eq!(range_to_seconds(900), 900);
+        assert_eq!(range_to_seconds(3600), 3600);
+    }
+
+    #[test]
+    fn range_to_seconds_default_fallback() {
+        assert_eq!(range_to_seconds(0), 60);
+        assert_eq!(range_to_seconds(999), 60);
+        assert_eq!(range_to_seconds(u64::MAX), 60);
+    }
 }

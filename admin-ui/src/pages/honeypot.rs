@@ -69,7 +69,7 @@ pub fn Honeypot() -> Html {
                             }));
                         }
                     }
-                    Err(e) => error.set(Some(e)),
+                    Err(e) => error.set(Some(e.to_string())),
                 }
             });
         });
