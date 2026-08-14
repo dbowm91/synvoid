@@ -369,7 +369,6 @@ The `.opencode/skills/` directory contains 27 specialized skill files. Load the 
 
 ## Known Issues
 
-- `src/admin/alerting/mod.rs:376` — Email alerting is a stub (logs, returns Ok).
 - `spin` idle instance eviction never cleans up old UUID entries (plan DOC-L7).
 - `wasmtime` 40.0.4 (via yara-x) has known CVEs but only used for YARA compilation, not wasm sandbox — mitigated by `[patch.crates-io]` for direct dep. 11 advisory ignores in `deny.toml` with re-audit dates 2026-10-01.
 - `synvoid-testkit` has zero consumers — documented boundary policy in `crates/synvoid-testkit/README.md`

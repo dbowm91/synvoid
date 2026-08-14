@@ -384,13 +384,22 @@ Separate rate limits for YARA operations:
 
 ### SSRF Protection
 
-Webhook URLs are validated:
-- Only http/https allowed
-- Blocked: localhost, 127.x.x.x, 10.x.x.x, 192.168.x.x, 172.x.x.x
+Webhook URLs are validated at two levels:
+- **Configuration time**: Uses IP classification (via `synvoid_core::net::is_restricted_ip()`) on literal IPs, blocks `localhost`
+- **Request time**: DNS resolution with IP validation on every resolved candidate before connection
 
-### Email Alerting (Stub)
+Blocked ranges: loopback, RFC1918 private, link-local, shared-address, benchmarking, multicast, unspecified, IPv6 unique-local, IPv6 link-local, IPv6 loopback, IPv4-mapped IPv6.
 
-`send_email_internal()` at `src/admin/alerting/mod.rs:349-373` is a **stub implementation** — it logs the email alert message then returns `Ok(())` without actually sending email. SMTP configuration is validated but no connection is made.
+### Webhook Delivery
+
+`send_webhook_internal()` returns a typed `WebhookDeliveryResult` with:
+- `outcome`: `Success` (all delivered), `PartialFailure` (mixed), `Failure` (none delivered)
+- `attempted`, `succeeded`, `failed` counts
+- Per-destination `DestinationResult` with success flag and error message
+
+Only 2xx HTTP responses count as success. Non-2xx, connection errors, TLS errors, timeouts, and private-IP-blocked destinations are counted as failures.
+
+The `/alerting/test-webhook` endpoint returns the full `WebhookDeliveryResult` as `TestWebhookResult`.
 
 ---
 

@@ -78,10 +78,10 @@ See `skills/admin_api.md` for Admin API patterns.
 
 ## Security Issues
 
-### SSRF Bypass via HTTPS (SEC-2 — RESOLVED)
+### SSRF Protection
 
-`src/admin/alerting/mod.rs:143-154` — SSRF check now validates both `http://` and `https://` URLs against private IPs. Both schemes are checked in the same condition block.
+Webhook URLs are validated at configuration time via IP classification (`is_restricted_ip()`), and at request time via DNS resolution with IP validation. All private/loopback/link-local/multicast IPv4 and IPv6 addresses are blocked. Redirects are not followed (hyper does not auto-follow). Only 2xx HTTP responses count as delivery success.
 
-### Email Alerting is a Stub
+### Webhook Delivery Result
 
-`send_email_internal()` at `src/admin/alerting/mod.rs:349-373` logs a message then returns `Ok(())` without actually sending any email. No SMTP or email transport is implemented.
+`send_webhook_internal()` returns `WebhookDeliveryResult` with `outcome` (`Success`/`PartialFailure`/`Failure`), counts, and per-destination details. The `/alerting/test-webhook` endpoint returns `TestWebhookResult`.

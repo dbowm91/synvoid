@@ -1,5 +1,4 @@
-#[allow(unused_imports)]
-use crate::admin::alerting::{AlertConfig, AlertConfigError, AlertEvent, AlertManager};
+use crate::admin::alerting::{AlertConfig, AlertEvent, DeliveryOutcome, WebhookDeliveryResult};
 use crate::admin::handlers::common::OptionalAuth;
 use crate::admin::state::AdminState;
 use axum::extract::{Extension, State};
@@ -8,8 +7,7 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use synvoid_core::admin_mutation::{
-    AdminActor, AdminAuditEvent, AdminMutationAuthority, AdminMutationResult, AdminMutationStatus,
-    PropagationStatus,
+    AdminActor, AdminAuditEvent, AdminMutationAuthority, AdminMutationStatus, PropagationStatus,
 };
 use utoipa::ToSchema;
 
@@ -98,11 +96,47 @@ pub async fn update_alert_config(
     Ok(Json(AlertConfigResponse { config: json }))
 }
 
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct TestWebhookResult {
+    pub outcome: DeliveryOutcome,
+    pub attempted: usize,
+    pub succeeded: usize,
+    pub failed: usize,
+    pub details: Vec<DestinationResultSummary>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct DestinationResultSummary {
+    pub url: String,
+    pub success: bool,
+    pub error: Option<String>,
+}
+
+impl From<WebhookDeliveryResult> for TestWebhookResult {
+    fn from(r: WebhookDeliveryResult) -> Self {
+        Self {
+            outcome: r.outcome,
+            attempted: r.attempted,
+            succeeded: r.succeeded,
+            failed: r.failed,
+            details: r
+                .details
+                .into_iter()
+                .map(|d| DestinationResultSummary {
+                    url: d.url,
+                    success: d.success,
+                    error: d.error,
+                })
+                .collect(),
+        }
+    }
+}
+
 #[utoipa::path(
     post,
     path = "/alerting/test-webhook",
     responses(
-        (status = 200, description = "Test webhook result", body = AdminMutationResult<String>),
+        (status = 200, description = "Test webhook result", body = TestWebhookResult),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Alert manager not found"),
         (status = 500, description = "Internal server error")
@@ -112,7 +146,7 @@ pub async fn update_alert_config(
 pub async fn test_webhook(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
-) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
+) -> Result<Json<TestWebhookResult>, StatusCode> {
     let alert_manager = state
         .process
         .alert_manager
@@ -121,14 +155,12 @@ pub async fn test_webhook(
     let config = alert_manager.get_config().await;
 
     if !config.webhook_enabled || config.webhook_urls.is_empty() {
-        return Ok(Json(AdminMutationResult {
-            status: AdminMutationStatus::NoOpAlreadyAbsent,
-            target: "webhook_test".to_string(),
-            local_store_mutated: false,
-            propagation: PropagationStatus::NotApplicable,
-            event_id: None,
-            audit_id: None,
-            message: "Webhook not configured".to_string(),
+        return Ok(Json(TestWebhookResult {
+            outcome: DeliveryOutcome::Success,
+            attempted: 0,
+            succeeded: 0,
+            failed: 0,
+            details: vec![],
         }));
     }
 
@@ -141,10 +173,9 @@ pub async fn test_webhook(
         message: "This is a test alert from SynVoid".to_string(),
     };
 
-    alert_manager
+    let delivery = alert_manager
         .send_webhook(&config.webhook_urls, &test_event)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .await;
 
     let audit_id = uuid::Uuid::new_v4().to_string();
     let audit_event = AdminAuditEvent {
@@ -157,19 +188,15 @@ pub async fn test_webhook(
         prior_state: None,
         requested_state: None,
         resulting_state: None,
-        mutation_status: AdminMutationStatus::Applied,
+        mutation_status: match delivery.outcome {
+            DeliveryOutcome::Success => AdminMutationStatus::Applied,
+            DeliveryOutcome::PartialFailure => AdminMutationStatus::Applied,
+            DeliveryOutcome::Failure => AdminMutationStatus::Failed,
+        },
         propagation_status: PropagationStatus::NotApplicable,
         event_id: None,
     };
     state.audit.log_audit_event(&audit_event);
 
-    Ok(Json(AdminMutationResult {
-        status: AdminMutationStatus::Applied,
-        target: "webhook_test".to_string(),
-        local_store_mutated: false,
-        propagation: PropagationStatus::NotApplicable,
-        event_id: None,
-        audit_id: Some(audit_id),
-        message: "Test webhook sent".to_string(),
-    }))
+    Ok(Json(delivery.into()))
 }

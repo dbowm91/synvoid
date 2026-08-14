@@ -181,7 +181,7 @@ All non-deferred mutating endpoints now return `AdminMutationResult` and emit `A
 
 | Endpoint | File | Authority | Response |
 |----------|------|-----------|----------|
-| POST `/alerting/test-webhook` | alerting.rs | AdminManual | AdminMutationResult<String> |
+| POST `/alerting/test-webhook` | alerting.rs | AdminManual | TestWebhookResult |
 
 ### Threat Level Endpoints — ALL CONVERTED
 

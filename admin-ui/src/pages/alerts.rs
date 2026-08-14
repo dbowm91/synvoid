@@ -6,14 +6,9 @@ use yew::prelude::*;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AlertConfig {
     pub enabled: bool,
-    pub email_enabled: bool,
-    pub email_recipients: Vec<String>,
-    pub email_smtp_host: Option<String>,
-    pub email_smtp_port: Option<u16>,
-    pub email_username: Option<String>,
-    pub email_password: Option<String>,
     pub webhook_enabled: bool,
     pub webhook_urls: Vec<String>,
+    pub cooldown_secs: u64,
     pub alerts: Vec<AlertRule>,
 }
 
@@ -31,11 +26,29 @@ struct AlertConfigResponse {
     config: AlertConfig,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct WebhookTestResult {
+    outcome: String,
+    attempted: usize,
+    succeeded: usize,
+    failed: usize,
+    details: Vec<WebhookTestDetail>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct WebhookTestDetail {
+    url: String,
+    success: bool,
+    error: Option<String>,
+}
+
 #[function_component]
 pub fn Alerts() -> Html {
     let config = use_state(|| None as Option<AlertConfig>);
     let error = use_state(|| None as Option<String>);
     let saving = use_state(|| false);
+    let testing = use_state(|| false);
+    let test_result = use_state(|| None as Option<WebhookTestResult>);
 
     {
         let config = config.clone();
@@ -103,25 +116,64 @@ pub fn Alerts() -> Html {
 
     let on_test_webhook = {
         let error = error.clone();
+        let testing = testing.clone();
+        let test_result = test_result.clone();
 
         Callback::from(move |_| {
             let error = error.clone();
+            let testing = testing.clone();
+            let test_result = test_result.clone();
+
+            testing.set(true);
+            test_result.set(None);
 
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
 
                 match api
-                    .post::<serde_json::Value, _>("/alerts/test-webhook", &())
+                    .post::<WebhookTestResult, _>("/alerts/test-webhook", &())
                     .await
                 {
-                    Ok(_) => {
-                        toast_success("Test webhook sent");
+                    Ok(result) => {
+                        match result.outcome.as_str() {
+                            "Success" => {
+                                toast_success(&format!(
+                                    "Webhook test passed: {}/{} delivered",
+                                    result.succeeded, result.attempted
+                                ));
+                            }
+                            "PartialFailure" => {
+                                toast_error(&format!(
+                                    "Partial failure: {}/{} succeeded, {} failed",
+                                    result.succeeded, result.attempted, result.failed
+                                ));
+                            }
+                            "Failure" => {
+                                let errors: Vec<String> = result
+                                    .details
+                                    .iter()
+                                    .filter(|d| !d.success)
+                                    .filter_map(|d| d.error.clone())
+                                    .collect();
+                                let msg = if errors.is_empty() {
+                                    "All destinations failed".to_string()
+                                } else {
+                                    errors.join("; ")
+                                };
+                                toast_error(&format!("Webhook test failed: {}", msg));
+                            }
+                            _ => {
+                                toast_error("Webhook test returned unknown result");
+                            }
+                        }
+                        test_result.set(Some(result));
                     }
                     Err(e) => {
                         error.set(Some(e.clone()));
-                        toast_error(&format!("Webhook test failed: {}", e));
+                        toast_error(&format!("Webhook test error: {}", e));
                     }
                 }
+                testing.set(false);
             });
         })
     };
@@ -138,18 +190,6 @@ pub fn Alerts() -> Html {
         })
     };
 
-    let toggle_email = {
-        let config = config.clone();
-        Callback::from(move |_| {
-            let config = config.clone();
-            if let Some(c) = (*config).clone() {
-                let mut new_config = c;
-                new_config.email_enabled = !new_config.email_enabled;
-                config.set(Some(new_config));
-            }
-        })
-    };
-
     let toggle_webhook = {
         let config = config.clone();
         Callback::from(move |_| {
@@ -157,70 +197,6 @@ pub fn Alerts() -> Html {
             if let Some(c) = (*config).clone() {
                 let mut new_config = c;
                 new_config.webhook_enabled = !new_config.webhook_enabled;
-                config.set(Some(new_config));
-            }
-        })
-    };
-
-    let on_smtp_host_change = {
-        let config = config.clone();
-        Callback::from(move |value: String| {
-            let config = config.clone();
-            if let Some(c) = (*config).clone() {
-                let mut new_config = c;
-                new_config.email_smtp_host = if value.is_empty() { None } else { Some(value) };
-                config.set(Some(new_config));
-            }
-        })
-    };
-
-    let on_smtp_port_change = {
-        let config = config.clone();
-        Callback::from(move |value: u16| {
-            let config = config.clone();
-            if let Some(c) = (*config).clone() {
-                let mut new_config = c;
-                new_config.email_smtp_port = Some(value);
-                config.set(Some(new_config));
-            }
-        })
-    };
-
-    let on_email_username_change = {
-        let config = config.clone();
-        Callback::from(move |value: String| {
-            let config = config.clone();
-            if let Some(c) = (*config).clone() {
-                let mut new_config = c;
-                new_config.email_username = if value.is_empty() { None } else { Some(value) };
-                config.set(Some(new_config));
-            }
-        })
-    };
-
-    let on_email_password_change = {
-        let config = config.clone();
-        Callback::from(move |value: String| {
-            let config = config.clone();
-            if let Some(c) = (*config).clone() {
-                let mut new_config = c;
-                new_config.email_password = if value.is_empty() { None } else { Some(value) };
-                config.set(Some(new_config));
-            }
-        })
-    };
-
-    let on_email_recipients_change = {
-        let config = config.clone();
-        Callback::from(move |value: String| {
-            let config = config.clone();
-            if let Some(c) = (*config).clone() {
-                let mut new_config = c;
-                new_config.email_recipients = value
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect();
                 config.set(Some(new_config));
             }
         })
@@ -273,128 +249,90 @@ pub fn Alerts() -> Html {
                         </button>
                     </div>
                     <p class="text-secondary text-sm">
-                        { "Configure email and webhook notifications for security alerts, system errors, and performance thresholds." }
+                        { "Configure webhook notifications for security alerts, system errors, and performance thresholds." }
                     </p>
                 </div>
 
-                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    <div class="bg-secondary rounded-lg border border-default p-6">
-                        <div class="flex items-center justify-between mb-4">
-                            <h2 class="text-lg font-semibold">{ "Email Notifications" }</h2>
-                            <button
-                                onclick={toggle_email}
-                                class={format!("px-3 py-1 rounded text-sm font-medium {}", if c.email_enabled { "bg-green-600 text-white" } else { "bg-tertiary text-secondary" })}
-                            >
-                                { if c.email_enabled { "Enabled" } else { "Disabled" } }
-                            </button>
-                        </div>
-
-                        if c.email_enabled {
-                            <div class="space-y-4">
-                                <div>
-                                    <label class="block text-sm text-secondary mb-1">{ "SMTP Host" }</label>
-                                    <input
-                                        type="text"
-                                        value={c.email_smtp_host.clone().unwrap_or_default()}
-                                        oninput={Callback::from(move |e: InputEvent| {
-                                            let value = e.target_unchecked_into::<web_sys::HtmlInputElement>().value();
-                                            on_smtp_host_change.emit(value);
-                                        })}
-                                        class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary"
-                                        placeholder="smtp.example.com"
-                                    />
-                                </div>
-                                <div>
-                                    <label class="block text-sm text-secondary mb-1">{ "SMTP Port" }</label>
-                                    <input
-                                        type="number"
-                                        value={c.email_smtp_port.unwrap_or(587).to_string()}
-                                        oninput={Callback::from(move |e: InputEvent| {
-                                            if let Ok(value) = e.target_unchecked_into::<web_sys::HtmlInputElement>().value().parse::<u16>() {
-                                                on_smtp_port_change.emit(value);
-                                            }
-                                        })}
-                                        class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary"
-                                        placeholder="587"
-                                    />
-                                </div>
-                                <div>
-                                    <label class="block text-sm text-secondary mb-1">{ "Username" }</label>
-                                    <input
-                                        type="text"
-                                        value={c.email_username.clone().unwrap_or_default()}
-                                        oninput={Callback::from(move |e: InputEvent| {
-                                            let value = e.target_unchecked_into::<web_sys::HtmlInputElement>().value();
-                                            on_email_username_change.emit(value);
-                                        })}
-                                        class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary"
-                                        placeholder="alerts@example.com"
-                                    />
-                                </div>
-                                <div>
-                                    <label class="block text-sm text-secondary mb-1">{ "Password" }</label>
-                                    <input
-                                        type="password"
-                                        value={c.email_password.clone().unwrap_or_default()}
-                                        oninput={Callback::from(move |e: InputEvent| {
-                                            let value = e.target_unchecked_into::<web_sys::HtmlInputElement>().value();
-                                            on_email_password_change.emit(value);
-                                        })}
-                                        class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary"
-                                        placeholder="••••••••"
-                                    />
-                                </div>
-                                <div>
-                                    <label class="block text-sm text-secondary mb-1">{ "Recipients (comma separated)" }</label>
-                                    <input
-                                        type="text"
-                                        value={c.email_recipients.join(", ")}
-                                        oninput={Callback::from(move |e: InputEvent| {
-                                            let value = e.target_unchecked_into::<web_sys::HtmlInputElement>().value();
-                                            on_email_recipients_change.emit(value);
-                                        })}
-                                        class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary"
-                                        placeholder="admin@example.com, security@example.com"
-                                    />
-                                </div>
-                            </div>
-                        }
+                <div class="bg-secondary rounded-lg border border-default p-6">
+                    <div class="flex items-center justify-between mb-4">
+                        <h2 class="text-lg font-semibold">{ "Webhook Notifications" }</h2>
+                        <button
+                            onclick={toggle_webhook}
+                            class={format!("px-3 py-1 rounded text-sm font-medium {}", if c.webhook_enabled { "bg-green-600 text-white" } else { "bg-tertiary text-secondary" })}
+                        >
+                            { if c.webhook_enabled { "Enabled" } else { "Disabled" } }
+                        </button>
                     </div>
 
-                    <div class="bg-secondary rounded-lg border border-default p-6">
-                        <div class="flex items-center justify-between mb-4">
-                            <h2 class="text-lg font-semibold">{ "Webhook Notifications" }</h2>
-                            <button
-                                onclick={toggle_webhook}
-                                class={format!("px-3 py-1 rounded text-sm font-medium {}", if c.webhook_enabled { "bg-green-600 text-white" } else { "bg-tertiary text-secondary" })}
-                            >
-                                { if c.webhook_enabled { "Enabled" } else { "Disabled" } }
-                            </button>
-                        </div>
-
-                        if c.webhook_enabled {
-                            <div class="space-y-4">
-                                <div>
-                                    <label class="block text-sm text-secondary mb-1">{ "Webhook URLs (one per line)" }</label>
-                                    <textarea
-                                        value={c.webhook_urls.join("\n")}
-                                        oninput={Callback::from(move |e: InputEvent| {
-                                            let value = e.target_unchecked_into::<web_sys::HtmlTextAreaElement>().value();
-                                            on_webhook_urls_change.emit(value);
-                                        })}
-                                        class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary h-24"
-                                        placeholder="https://hooks.slack.com/services/...\nhttps://your-server.com/webhook"
-                                    />
-                                </div>
+                    if c.webhook_enabled {
+                        <div class="space-y-4">
+                            <div>
+                                <label class="block text-sm text-secondary mb-1">{ "Webhook URLs (one per line)" }</label>
+                                <textarea
+                                    value={c.webhook_urls.join("\n")}
+                                    oninput={Callback::from(move |e: InputEvent| {
+                                        let value = e.target_unchecked_into::<web_sys::HtmlTextAreaElement>().value();
+                                        on_webhook_urls_change.emit(value);
+                                    })}
+                                    class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary h-24"
+                                    placeholder="https://hooks.slack.com/services/...\nhttps://your-server.com/webhook"
+                                />
+                            </div>
+                            <div class="flex items-center gap-3">
                                 <button
                                     onclick={on_test_webhook}
-                                    class="px-4 py-2 bg-tertiary text-secondary rounded-lg hover:text-primary"
+                                    disabled={*testing}
+                                    class="px-4 py-2 bg-tertiary text-secondary rounded-lg hover:text-primary disabled:opacity-50"
                                 >
-                                    { "Test Webhook" }
+                                    { if *testing { "Testing..." } else { "Test Webhook" } }
                                 </button>
                             </div>
-                        }
-                    </div>
+
+                            if let Some(result) = &*test_result {
+                                <div class={format!(
+                                    "p-4 rounded-lg border {}",
+                                    match result.outcome.as_str() {
+                                        "Success" => "bg-green-500/10 border-green-500",
+                                        "PartialFailure" => "bg-yellow-500/10 border-yellow-500",
+                                        _ => "bg-red-500/10 border-red-500",
+                                    }
+                                )}>
+                                    <div class="flex items-center gap-2 mb-2">
+                                        <span class={format!(
+                                            "px-2 py-0.5 rounded text-xs font-medium {}",
+                                            match result.outcome.as_str() {
+                                                "Success" => "bg-green-600 text-white",
+                                                "PartialFailure" => "bg-yellow-600 text-white",
+                                                _ => "bg-red-600 text-white",
+                                            }
+                                        )}>
+                                            { &result.outcome }
+                                        </span>
+                                        <span class="text-sm text-secondary">
+                                            { format!("{} attempted, {} succeeded, {} failed", result.attempted, result.succeeded, result.failed) }
+                                        </span>
+                                    </div>
+                                    if !result.details.is_empty() {
+                                        <div class="space-y-1 mt-2">
+                                            { for result.details.iter().map(|d| {
+                                                let status_class = if d.success { "text-green-500" } else { "text-red-500" };
+                                                let status_icon = if d.success { "\u{2713}" } else { "\u{2717}" };
+                                                html! {
+                                                    <div class="flex items-center gap-2 text-sm">
+                                                        <span class={status_class}>{ status_icon }</span>
+                                                        <span class="text-primary truncate">{ &d.url }</span>
+                                                        if let Some(err) = &d.error {
+                                                            <span class="text-red-400 text-xs">({ err })</span>
+                                                        }
+                                                    </div>
+                                                }
+                                            })}
+                                        </div>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    }
                 </div>
 
                 <div class="bg-secondary rounded-lg border border-default p-6 mt-6">

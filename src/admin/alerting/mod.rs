@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
+use std::net::{IpAddr, ToSocketAddrs};
 use std::sync::Arc;
+use std::time::Duration;
+use synvoid_core::net::is_restricted_ip;
 use tokio::sync::RwLock as TokioRwLock;
 
 pub const SUPPORTED_ALERT_METRICS: &[&str] = &[
@@ -13,15 +16,11 @@ pub const SUPPORTED_ALERT_METRICS: &[&str] = &[
     "audit_write_failures",
 ];
 
+const WEBHOOK_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AlertConfig {
     pub enabled: bool,
-    pub email_enabled: bool,
-    pub email_recipients: Vec<String>,
-    pub email_smtp_host: Option<String>,
-    pub email_smtp_port: Option<u16>,
-    pub email_username: Option<String>,
-    pub email_password: Option<String>,
     pub webhook_enabled: bool,
     pub webhook_urls: Vec<String>,
     pub cooldown_secs: u64,
@@ -32,12 +31,6 @@ impl Default for AlertConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            email_enabled: false,
-            email_recipients: Vec::new(),
-            email_smtp_host: None,
-            email_smtp_port: None,
-            email_username: None,
-            email_password: None,
             webhook_enabled: false,
             webhook_urls: Vec::new(),
             cooldown_secs: 300,
@@ -94,6 +87,29 @@ pub struct AlertEvent {
     pub message: String,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, utoipa::ToSchema)]
+pub enum DeliveryOutcome {
+    Success,
+    PartialFailure,
+    Failure,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebhookDeliveryResult {
+    pub outcome: DeliveryOutcome,
+    pub attempted: usize,
+    pub succeeded: usize,
+    pub failed: usize,
+    pub details: Vec<DestinationResult>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DestinationResult {
+    pub url: String,
+    pub success: bool,
+    pub error: Option<String>,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum AlertConfigError {
     #[error("Unknown metric: {metric}. Supported metrics: {metrics:?}")]
@@ -109,18 +125,10 @@ pub enum AlertConfigError {
         "Link-local/internal webhook URL blocked for SSRF: {url}. Add to allowlist if intentional"
     )]
     BlockedWebhookUrl { url: String },
-    #[error("Email enabled but SMTP host not configured")]
-    EmailMissingSmtpHost,
 }
 
 impl AlertConfig {
     pub fn validate(&self) -> Result<(), AlertConfigError> {
-        if self.email_enabled {
-            if self.email_smtp_host.is_none() {
-                return Err(AlertConfigError::EmailMissingSmtpHost);
-            }
-        }
-
         for rule in &self.alerts {
             if !SUPPORTED_ALERT_METRICS.contains(&rule.metric.as_str()) {
                 return Err(AlertConfigError::UnknownMetric {
@@ -136,29 +144,98 @@ impl AlertConfig {
         }
 
         for url in &self.webhook_urls {
-            let url_lower = url.to_lowercase();
-            if !url_lower.starts_with("http://") && !url_lower.starts_with("https://") {
-                return Err(AlertConfigError::InvalidWebhookScheme { url: url.clone() });
-            }
-            if url_lower.starts_with("http://") || url_lower.starts_with("https://") {
-                let host = url
-                    .strip_prefix("http://")
-                    .or_else(|| url.strip_prefix("https://"))
-                    .unwrap_or(url);
-                let host_part = host.split('/').next().unwrap_or(host);
-                if host_part == "localhost"
-                    || host_part.starts_with("127.")
-                    || host_part.starts_with("10.")
-                    || host_part.starts_with("192.168.")
-                    || host_part.starts_with("172.")
-                {
-                    return Err(AlertConfigError::BlockedWebhookUrl { url: url.clone() });
-                }
-            }
+            validate_webhook_url(url)?;
         }
 
         Ok(())
     }
+}
+
+/// Validate a single webhook URL at configuration time.
+///
+/// Uses IP classification (not string matching) to block private/link-local/loopback targets.
+/// DNS resolution is deferred to request time for the final check.
+pub fn validate_webhook_url(url: &str) -> Result<(), AlertConfigError> {
+    let parsed = url
+        .parse::<url::Url>()
+        .map_err(|_| AlertConfigError::InvalidWebhookScheme {
+            url: url.to_string(),
+        })?;
+
+    match parsed.scheme() {
+        "http" | "https" => {}
+        _ => {
+            return Err(AlertConfigError::InvalidWebhookScheme {
+                url: url.to_string(),
+            })
+        }
+    }
+
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| AlertConfigError::InvalidWebhookScheme {
+            url: url.to_string(),
+        })?;
+
+    let host_for_ip_check = host
+        .strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(host);
+
+    if let Ok(ip) = host_for_ip_check.parse::<IpAddr>() {
+        if is_restricted_ip(&ip) {
+            return Err(AlertConfigError::BlockedWebhookUrl {
+                url: url.to_string(),
+            });
+        }
+    }
+
+    if host == "localhost" {
+        return Err(AlertConfigError::BlockedWebhookUrl {
+            url: url.to_string(),
+        });
+    }
+
+    Ok(())
+}
+
+/// Resolve the hostname in a URL and verify that no resolved IP is restricted.
+///
+/// Returns `Ok(())` if all resolved IPs are public, or `Err(message)` if any
+/// candidate is restricted or resolution fails.
+async fn validate_destination_at_request_time(url: &url::Url) -> Result<(), String> {
+    let host = url
+        .host_str()
+        .ok_or_else(|| "URL has no host".to_string())?;
+
+    let default_port = match url.scheme() {
+        "https" => 443,
+        "http" => 80,
+        _ => return Err("unsupported scheme".to_string()),
+    };
+    let port = url.port().unwrap_or(default_port);
+
+    let socket_addr = format!("{}:{}", host, port);
+    let addrs: Vec<std::net::SocketAddr> = socket_addr
+        .to_socket_addrs()
+        .map_err(|e| format!("DNS resolution failed for {}: {}", host, e))?
+        .collect();
+
+    if addrs.is_empty() {
+        return Err(format!("DNS resolution returned no addresses for {}", host));
+    }
+
+    for addr in &addrs {
+        if is_restricted_ip(&addr.ip()) {
+            return Err(format!(
+                "destination {} resolves to restricted IP {}",
+                host,
+                addr.ip()
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 #[derive(Clone)]
@@ -289,24 +366,14 @@ impl AlertManager {
                     let webhook_urls = config.webhook_urls.clone();
                     let event_clone = event.clone();
                     tokio::spawn(async move {
-                        if let Err(e) = send_webhook_internal(&webhook_urls, &event_clone).await {
-                            tracing::warn!("Failed to send webhook: {}", e);
-                        }
-                    });
-                }
-
-                if config.email_enabled && !config.email_recipients.is_empty() {
-                    let email_config = (
-                        config.email_recipients.clone(),
-                        config.email_smtp_host.clone(),
-                        config.email_smtp_port,
-                        config.email_username.clone(),
-                        config.email_password.clone(),
-                    );
-                    let event_clone = event.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) = send_email_internal(email_config, &event_clone).await {
-                            tracing::warn!("Failed to send email: {}", e);
+                        let result = send_webhook_internal(&webhook_urls, &event_clone).await;
+                        match result.outcome {
+                            DeliveryOutcome::Success => {
+                                super::metrics_events::record_alert_delivery_success();
+                            }
+                            DeliveryOutcome::Failure | DeliveryOutcome::PartialFailure => {
+                                super::metrics_events::record_alert_delivery_failure();
+                            }
                         }
                     });
                 }
@@ -317,7 +384,7 @@ impl AlertManager {
     }
 }
 
-async fn send_webhook_internal(urls: &[String], event: &AlertEvent) -> Result<(), String> {
+async fn send_webhook_internal(urls: &[String], event: &AlertEvent) -> WebhookDeliveryResult {
     let client = crate::http_client::create_http_client();
 
     let payload = serde_json::json!({
@@ -329,55 +396,92 @@ async fn send_webhook_internal(urls: &[String], event: &AlertEvent) -> Result<()
         "message": event.message,
     });
 
-    let mut has_success = false;
+    let mut details = Vec::new();
+    let mut succeeded = 0usize;
+    let mut failed = 0usize;
+
     for url in urls {
-        match crate::http_client::post_json(&client, url, &payload).await {
-            Ok(_) => {
-                tracing::info!("Webhook sent successfully to {}", url);
-                has_success = true;
-            }
-            Err(e) => {
-                tracing::warn!("Failed to send webhook to {}: {}", url, e);
-            }
+        let result = deliver_webhook_single(&client, url, &payload).await;
+        match &result {
+            DestinationResult { success: true, .. } => succeeded += 1,
+            _ => failed += 1,
         }
+        details.push(result);
     }
-    if has_success {
-        super::metrics_events::record_alert_delivery_success();
-    } else if !urls.is_empty() {
-        super::metrics_events::record_alert_delivery_failure();
+
+    let outcome = if succeeded == urls.len() {
+        DeliveryOutcome::Success
+    } else if succeeded > 0 {
+        DeliveryOutcome::PartialFailure
+    } else {
+        DeliveryOutcome::Failure
+    };
+
+    WebhookDeliveryResult {
+        outcome,
+        attempted: urls.len(),
+        succeeded,
+        failed,
+        details,
     }
-    Ok(())
 }
 
-#[allow(clippy::type_complexity)]
-async fn send_email_internal(
-    config: (
-        Vec<String>,
-        Option<String>,
-        Option<u16>,
-        Option<String>,
-        Option<String>,
-    ),
-    event: &AlertEvent,
-) -> Result<(), String> {
-    let (recipients, smtp_host, smtp_port, username, password) = config;
+/// Deliver a single webhook POST request with request-time destination validation.
+///
+/// Validates the destination IP after DNS resolution. hyper does not follow
+/// redirects automatically, so redirect responses are treated as non-2xx failures.
+async fn deliver_webhook_single(
+    client: &crate::http_client::HttpClient,
+    url: &str,
+    payload: &serde_json::Value,
+) -> DestinationResult {
+    let parsed_url = match url.parse::<url::Url>() {
+        Ok(u) => u,
+        Err(_) => {
+            return DestinationResult {
+                url: url.to_string(),
+                success: false,
+                error: Some("invalid URL".to_string()),
+            };
+        }
+    };
 
-    let _smtp_host = smtp_host.ok_or("SMTP host not configured")?;
-    let _smtp_port = smtp_port.unwrap_or(587);
-    let _username = username.ok_or("SMTP username not configured")?;
-    let _password = password.ok_or("SMTP password not configured")?;
+    if let Err(e) = validate_destination_at_request_time(&parsed_url).await {
+        return DestinationResult {
+            url: url.to_string(),
+            success: false,
+            error: Some(e),
+        };
+    }
 
-    tracing::info!(
-        "Sending email alert to {} recipients about: {}",
-        recipients.len(),
-        event.rule_name
-    );
-
-    Ok(())
+    match crate::http_client::post_json_with_timeout(client, url, payload, WEBHOOK_REQUEST_TIMEOUT)
+        .await
+    {
+        Ok(resp) => {
+            if resp.status.is_success() {
+                DestinationResult {
+                    url: url.to_string(),
+                    success: true,
+                    error: None,
+                }
+            } else {
+                DestinationResult {
+                    url: url.to_string(),
+                    success: false,
+                    error: Some(format!("HTTP {}", resp.status.as_u16())),
+                }
+            }
+        }
+        Err(e) => DestinationResult {
+            url: url.to_string(),
+            success: false,
+            error: Some(e),
+        },
+    }
 }
 
 impl AlertManager {
-    pub async fn send_webhook(&self, urls: &[String], event: &AlertEvent) -> Result<(), String> {
+    pub async fn send_webhook(&self, urls: &[String], event: &AlertEvent) -> WebhookDeliveryResult {
         send_webhook_internal(urls, event).await
     }
 
@@ -411,24 +515,14 @@ impl AlertManager {
             let webhook_urls = config.webhook_urls.clone();
             let event_clone = event.clone();
             tokio::spawn(async move {
-                if let Err(e) = send_webhook_internal(&webhook_urls, &event_clone).await {
-                    tracing::warn!("Failed to send GeoIP stale webhook: {}", e);
-                }
-            });
-        }
-
-        if config.email_enabled && !config.email_recipients.is_empty() {
-            let email_config = (
-                config.email_recipients.clone(),
-                config.email_smtp_host.clone(),
-                config.email_smtp_port,
-                config.email_username.clone(),
-                config.email_password.clone(),
-            );
-            let event_clone = event.clone();
-            tokio::spawn(async move {
-                if let Err(e) = send_email_internal(email_config, &event_clone).await {
-                    tracing::warn!("Failed to send GeoIP stale email: {}", e);
+                let result = send_webhook_internal(&webhook_urls, &event_clone).await;
+                match result.outcome {
+                    DeliveryOutcome::Success => {
+                        super::metrics_events::record_alert_delivery_success();
+                    }
+                    DeliveryOutcome::Failure | DeliveryOutcome::PartialFailure => {
+                        super::metrics_events::record_alert_delivery_failure();
+                    }
                 }
             });
         }
@@ -457,5 +551,126 @@ impl synvoid_geoip::GeoIpNotificationHandler for AlertManager {
                 .send_geoip_stale_notification(&edition_id, days)
                 .await
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_webhook_url_allows_public_https() {
+        assert!(validate_webhook_url("https://example.com/hook").is_ok());
+        assert!(validate_webhook_url("http://example.com/webhook").is_ok());
+    }
+
+    #[test]
+    fn validate_webhook_url_rejects_non_http() {
+        assert!(validate_webhook_url("ftp://example.com/hook").is_err());
+        assert!(validate_webhook_url("javascript:alert(1)").is_err());
+    }
+
+    #[test]
+    fn validate_webhook_url_rejects_localhost() {
+        assert!(validate_webhook_url("http://localhost/hook").is_err());
+        assert!(validate_webhook_url("http://localhost:8080/hook").is_err());
+    }
+
+    #[test]
+    fn validate_webhook_url_rejects_loopback_ip() {
+        assert!(validate_webhook_url("http://127.0.0.1/hook").is_err());
+        assert!(validate_webhook_url("http://127.0.0.1:8080/hook").is_err());
+    }
+
+    #[test]
+    fn validate_webhook_url_rejects_private_ranges() {
+        assert!(validate_webhook_url("http://10.0.0.1/hook").is_err());
+        assert!(validate_webhook_url("http://172.16.0.1/hook").is_err());
+        assert!(validate_webhook_url("http://192.168.1.1/hook").is_err());
+    }
+
+    #[test]
+    fn validate_webhook_url_rejects_link_local() {
+        assert!(validate_webhook_url("http://169.254.1.1/hook").is_err());
+    }
+
+    #[test]
+    fn validate_webhook_url_rejects_ipv6_loopback() {
+        assert!(validate_webhook_url("http://[::1]/hook").is_err());
+    }
+
+    #[test]
+    fn validate_webhook_url_rejects_ipv6_private() {
+        assert!(validate_webhook_url("http://[fd00::1]/hook").is_err());
+        assert!(validate_webhook_url("http://[fe80::1]/hook").is_err());
+    }
+
+    #[test]
+    fn alert_config_validation_rejects_invalid_metrics() {
+        let config = AlertConfig {
+            alerts: vec![AlertRule {
+                name: "bad".to_string(),
+                metric: "nonexistent".to_string(),
+                threshold: 1.0,
+                condition: AlertCondition::GreaterThan,
+                enabled: true,
+            }],
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn alert_config_validation_rejects_negative_threshold() {
+        let config = AlertConfig {
+            alerts: vec![AlertRule {
+                name: "bad".to_string(),
+                metric: "error_rate_percent".to_string(),
+                threshold: -1.0,
+                condition: AlertCondition::GreaterThan,
+                enabled: true,
+            }],
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn alert_config_validation_rejects_private_webhook() {
+        let config = AlertConfig {
+            webhook_urls: vec!["http://10.0.0.1/hook".to_string()],
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn alert_config_validation_rejects_localhost_webhook() {
+        let config = AlertConfig {
+            webhook_urls: vec!["http://localhost/hook".to_string()],
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn alert_config_validation_allows_public_webhook() {
+        let config = AlertConfig {
+            webhook_urls: vec!["https://hooks.slack.com/services/T00/B00/xxx".to_string()],
+            ..Default::default()
+        };
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn delivery_outcome_no_urls_is_success() {
+        let result = WebhookDeliveryResult {
+            outcome: DeliveryOutcome::Success,
+            attempted: 0,
+            succeeded: 0,
+            failed: 0,
+            details: vec![],
+        };
+        assert_eq!(result.outcome, DeliveryOutcome::Success);
     }
 }

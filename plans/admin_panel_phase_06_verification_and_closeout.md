@@ -280,7 +280,6 @@ Before closeout, search production admin source for known stale patterns, includ
 - duplicate `/system/supervisor` GET declarations
 - duplicate `/mesh/attest-capability` POST declarations
 - request-rate-derived threat-level code
-- `send_email_internal` logging-only success stub
 - unsafe tier key prefix slicing
 
 Every hit must be classified as fixed canonical usage, test fixture, documentation example, or stale code requiring removal.

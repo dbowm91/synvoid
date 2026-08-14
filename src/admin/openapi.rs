@@ -990,6 +990,8 @@ mod core_openapi {
                 crate::admin::handlers::icmp::IcmpBackendsResponse,
                 crate::admin::handlers::alerting::AlertConfigResponse,
                 crate::admin::handlers::alerting::UpdateAlertConfigRequest,
+                crate::admin::handlers::alerting::TestWebhookResult,
+                crate::admin::handlers::alerting::DestinationResultSummary,
 
                 crate::admin::handlers::honeypot::HoneypotStatusResponse,
                 crate::admin::handlers::honeypot::HoneypotControlRequest,
@@ -1313,6 +1315,8 @@ mod mesh_openapi {
                 crate::admin::handlers::icmp::IcmpBackendsResponse,
                 crate::admin::handlers::alerting::AlertConfigResponse,
                 crate::admin::handlers::alerting::UpdateAlertConfigRequest,
+                crate::admin::handlers::alerting::TestWebhookResult,
+                crate::admin::handlers::alerting::DestinationResultSummary,
 
                 crate::admin::handlers::honeypot::HoneypotStatusResponse,
                 crate::admin::handlers::honeypot::HoneypotControlRequest,
