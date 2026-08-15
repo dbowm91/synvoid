@@ -12,12 +12,34 @@ The admin API runs on a separate port from the reverse proxy (default 8081) to a
 
 ## Authentication
 
-All API endpoints (except `/health`) require bearer token authentication:
+### Browser Clients (Session-Based)
+
+Browser clients use a two-step authentication flow:
 
 ```bash
-# Include token in Authorization header
+# Step 1: Exchange bearer token for session
+curl -X POST http://127.0.0.1:8081/api/auth/session \
+  -H "Authorization: Bearer your-admin-token"
+# Response: Set-Cookie: synvoid_session=<id>; HttpOnly; SameSite=Strict; Max-Age=3600
+# Response: X-CSRF-Token: <uuid>
+
+# Step 2: Use session cookie for subsequent requests
+curl http://127.0.0.1:8081/api/system/info \
+  -H "Cookie: synvoid_session=<id>"
+
+# Mutations require CSRF header
+curl -X POST http://127.0.0.1:8081/api/config/reload \
+  -H "Cookie: synvoid_session=<id>" \
+  -H "X-CSRF-Token: <csrf-token>"
+```
+
+### API Clients (Bearer Token)
+
+API clients use bearer token authentication. Bearer tokens bypass CSRF:
+
+```bash
 curl -H "Authorization: Bearer your-admin-token" \
-  http://127.0.0.1:8081/api/health
+  http://127.0.0.1:8081/api/system/info
 ```
 
 ### Generating Tokens
@@ -29,6 +51,27 @@ curl -H "Authorization: Bearer your-admin-token" \
 # Generate and save to config
 ./synvoid --generatenewtoken
 ```
+
+### Session Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/auth/session` | Create session (requires `Authorization: Bearer`) |
+| `DELETE` | `/api/auth/session` | Logout (invalidate session) |
+| `GET` | `/api/auth/csrf` | Get CSRF token for current session |
+
+### Error Responses
+
+Non-2xx responses return bounded error detail:
+
+```json
+{
+  "error": "Unauthorized",
+  "message": "Invalid or expired session"
+}
+```
+
+Error bodies are capped at 512 bytes. The frontend treats 401/403 as session expiry.
 
 ## Response Format
 

@@ -203,7 +203,7 @@ pub fn validate_webhook_url(url: &str) -> Result<(), AlertConfigError> {
 ///
 /// Returns `Ok(())` if all resolved IPs are public, or `Err(message)` if any
 /// candidate is restricted or resolution fails.
-async fn validate_destination_at_request_time(url: &url::Url) -> Result<(), String> {
+pub async fn validate_destination_at_request_time(url: &url::Url) -> Result<(), String> {
     let host = url
         .host_str()
         .ok_or_else(|| "URL has no host".to_string())?;

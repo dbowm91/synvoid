@@ -302,6 +302,7 @@ pub fn Workers() -> Html {
                                 <button
                                     onclick={on_scale_down}
                                     disabled={*scaling || worker_count.as_ref().map(|c| c.current <= c.min).unwrap_or(true)}
+                                    aria-label="Scale down workers"
                                     class="px-3 py-1 bg-tertiary rounded hover:bg-tertiary/80 disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -314,6 +315,7 @@ pub fn Workers() -> Html {
                                 <button
                                     onclick={on_scale_up}
                                     disabled={*scaling || worker_count.as_ref().map(|c| c.current >= c.max).unwrap_or(true)}
+                                    aria-label="Scale up workers"
                                     class="px-3 py-1 bg-tertiary rounded hover:bg-tertiary/80 disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

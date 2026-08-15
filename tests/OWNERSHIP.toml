@@ -34,6 +34,18 @@ owners = ["synvoid-admin", "admin-ui"]
 reason = "validates frontend/backend API contract alignment (route paths, HTTP methods)"
 
 [[test]]
+name = "admin_smoke_flow"
+class = "qualification"
+owners = ["synvoid-admin", "admin-ui"]
+reason = "integrated smoke flow covering Phase 6 acceptance criteria (15-step auth/session lifecycle)"
+
+[[test]]
+name = "admin_alerting_verification"
+class = "qualification"
+owners = ["synvoid-admin"]
+reason = "alerting system verification: SSRF protection, delivery outcomes, config validation"
+
+[[test]]
 name = "architecture_test"
 class = "static_policy"
 owners = []

@@ -46,7 +46,7 @@ SynVoid supports two client classes with distinct trust boundaries:
 - All Admin API endpoints (`/api/*`, `/config/*`, `/sites/*`, `/system/*`, etc.)
 - Bearer token authentication via `Authorization: Bearer <token>` (API clients)
 - Session cookie authentication for browser-based admin dashboard
-- WebSocket connections: session cookie, bearer token, or legacy WS cookie
+- WebSocket connections: session cookie or bearer token (legacy `synvoid_ws_token` cookie removed)
 
 ---
 

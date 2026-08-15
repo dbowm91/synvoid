@@ -1,3 +1,5 @@
+use gloo::timers::callback::Timeout;
+use web_sys::KeyboardEvent;
 use yew::prelude::*;
 
 #[derive(Properties, PartialEq)]
@@ -56,14 +58,49 @@ pub fn ConfirmDialog(props: &ConfirmDialogProps) -> Html {
         })
     };
 
+    // Escape key handler
+    let on_keydown = {
+        let on_cancel = props.on_cancel.clone();
+        Callback::from(move |e: KeyboardEvent| {
+            if e.key() == "Escape" {
+                on_cancel.emit(());
+            }
+        })
+    };
+
+    // Auto-focus the cancel button on mount
+    let cancel_node = use_node_ref();
+    {
+        let cancel_node = cancel_node.clone();
+        let show = props.show;
+        use_effect_with(show, move |show| {
+            if *show {
+                // Defer focus to next microtask so the DOM is rendered
+                let node = cancel_node.clone();
+                let _timeout = Timeout::new(0, move || {
+                    if let Some(el) = node.cast::<web_sys::HtmlElement>() {
+                        let _ = el.focus();
+                    }
+                });
+            }
+            || {}
+        });
+    }
+
     html! {
-        <div class="fixed inset-0 z-50 flex items-center justify-center">
+        <div
+            class="fixed inset-0 z-50 flex items-center justify-center"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="confirm-dialog-title"
+            onkeydown={on_keydown}
+        >
             <div
                 class="absolute inset-0 bg-black/60 backdrop-blur-sm"
                 onclick={on_cancel.clone()}
             />
             <div class="relative bg-secondary border border-default rounded-lg shadow-xl max-w-md w-full mx-4 p-6 animate-fade-in">
-                <h3 class="text-lg font-semibold text-primary mb-2">
+                <h3 id="confirm-dialog-title" class="text-lg font-semibold text-primary mb-2">
                     { &props.title }
                 </h3>
                 <p class="text-secondary mb-6">
@@ -71,6 +108,7 @@ pub fn ConfirmDialog(props: &ConfirmDialogProps) -> Html {
                 </p>
                 <div class="flex justify-end gap-3">
                     <button
+                        ref={cancel_node}
                         onclick={on_cancel}
                         class="px-4 py-2 bg-tertiary text-primary rounded-lg hover:opacity-80 transition"
                     >

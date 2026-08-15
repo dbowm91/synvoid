@@ -281,7 +281,29 @@ The admin UI uses WebSocket for real-time updates. The WebSocket URL is derived 
 
 ### Authentication
 
-All pages require authentication via admin token. The token is stored in browser session storage.
+Browser clients authenticate via a two-step flow:
+
+1. **Login**: `POST /api/auth/session` with `Authorization: Bearer <token>` header
+2. **Session**: Server sets `synvoid_session` HttpOnly cookie (SameSite=Strict, 1hr TTL) and returns `X-CSRF-Token` header
+
+The raw bearer token is **never** stored in browser storage. All subsequent requests use the session cookie. Mutations (POST/PUT/DELETE) require the `X-CSRF-Token` header when using session auth. Bearer token bypasses CSRF.
+
+### API Error Responses
+
+Non-2xx responses include bounded error detail:
+
+```json
+{
+  "error": "Unauthorized",
+  "message": "Invalid or expired session"
+}
+```
+
+Error bodies are capped at 512 bytes. Known JSON shapes (`error`, `message`, `detail`) are extracted automatically.
+
+### Session Expiry
+
+When a session expires (401/403 response), the frontend clears local state and redirects to login.
 
 ### HTTPS
 
@@ -297,6 +319,8 @@ enabled = true
 cert_path = "/etc/synvoid/certs/admin.crt"
 key_path = "/etc/synvoid/certs/admin.key"
 ```
+
+With TLS enabled, the session cookie includes `Secure` attribute.
 
 ## Customization
 

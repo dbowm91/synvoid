@@ -68,7 +68,7 @@ The Admin API middleware stack (in order, from outermost to innermost):
 
 **Public routes** (health, SPA fallback) do NOT have auth/CSRF middleware.
 
-**WebSocket routes**: Auth handled per-connection (bearer token, session cookie, or legacy WS cookie), not via blanket middleware.
+**WebSocket routes**: Auth handled per-connection (bearer token or session cookie), not via blanket middleware. Legacy `synvoid_ws_token` cookie removed.
 
 **Note**: CSRF exclusion list: `/health`, `/ws/*`, `/stats*`, `/config/schema`. All other mutating endpoints require CSRF for session-authenticated requests.
 

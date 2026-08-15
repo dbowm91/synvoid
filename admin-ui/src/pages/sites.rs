@@ -219,7 +219,9 @@ fn SiteCard(props: &SiteCardProps) -> Html {
         <div class="bg-secondary rounded-lg border border-default overflow-hidden">
             <div class="p-4 border-b border-default flex items-center justify-between">
                 <div class="flex items-center gap-3">
-                    <span class={format!("w-3 h-3 rounded-full {}", status_class)} />
+                    <span class={format!("w-3 h-3 rounded-full {}", status_class)}>
+                        <span class="sr-only">{ if props.healthy { "Healthy" } else { "Unhealthy" } }</span>
+                    </span>
                     <h3 class="text-lg font-semibold">{ &primary_domain }</h3>
                 </div>
                 <div class="flex gap-2">

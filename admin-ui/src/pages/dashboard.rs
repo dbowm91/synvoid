@@ -123,6 +123,7 @@ pub fn Dashboard() -> Html {
     let cache_stats = use_state(|| None::<crate::types::CacheStats>);
     let bandwidth = use_state(|| None::<crate::types::BandwidthPayload>);
     let blocking_history = use_state(Vec::<std::collections::HashMap<String, u64>>::new);
+    let error = use_state(|| None::<String>);
 
     let (ws_state, _) =
         use_websocket_or_poll::<RealtimeMetrics>("/api/ws/metrics", "/api/stats/summary", 5000);
@@ -173,28 +174,52 @@ pub fn Dashboard() -> Html {
         let sites = sites.clone();
         let cache_stats = cache_stats.clone();
         let bandwidth = bandwidth.clone();
+        let error = error.clone();
         use_effect_with((), move |_| {
             let stats = stats.clone();
             let sites = sites.clone();
             let cache_stats = cache_stats.clone();
             let bandwidth = bandwidth.clone();
+            let error = error.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
+                let mut last_err = None;
                 match api.get_stats_summary().await {
                     Ok(s) => stats.set(Some(s)),
-                    Err(e) => tracing::error!("Failed to fetch stats: {}", e),
+                    Err(e) => {
+                        tracing::error!("Failed to fetch stats: {}", e);
+                        last_err = Some(e.to_string());
+                    }
                 }
                 match api.get_stats_sites().await {
                     Ok(s) => sites.set(s),
-                    Err(e) => tracing::error!("Failed to fetch sites: {}", e),
+                    Err(e) => {
+                        tracing::error!("Failed to fetch sites: {}", e);
+                        if last_err.is_none() {
+                            last_err = Some(e.to_string());
+                        }
+                    }
                 }
                 match api.get_cache_stats().await {
                     Ok(c) => cache_stats.set(Some(c)),
-                    Err(e) => tracing::error!("Failed to fetch cache stats: {}", e),
+                    Err(e) => {
+                        tracing::error!("Failed to fetch cache stats: {}", e);
+                        if last_err.is_none() {
+                            last_err = Some(e.to_string());
+                        }
+                    }
                 }
                 match api.get_bandwidth().await {
                     Ok(b) => bandwidth.set(Some(b)),
-                    Err(e) => tracing::error!("Failed to fetch bandwidth: {}", e),
+                    Err(e) => {
+                        tracing::error!("Failed to fetch bandwidth: {}", e);
+                        if last_err.is_none() {
+                            last_err = Some(e.to_string());
+                        }
+                    }
+                }
+                if let Some(err) = last_err {
+                    error.set(Some(err));
                 }
             });
             Box::new(|| {})
@@ -395,6 +420,19 @@ pub fn Dashboard() -> Html {
     html! {
         <div>
             <h1 class="text-2xl font-bold mb-6">{ "Dashboard" }</h1>
+
+            {
+                if let Some(ref err) = *error {
+                    html! {
+                        <div class="mb-4 p-3 bg-red-900/30 border border-red-700 rounded-lg text-red-300 text-sm">
+                            { "Failed to load dashboard data: " }
+                            { err }
+                        </div>
+                    }
+                } else {
+                    html! {}
+                }
+            }
 
             <RealtimeHeader />
 
