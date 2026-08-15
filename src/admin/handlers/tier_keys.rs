@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use axum::{extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;

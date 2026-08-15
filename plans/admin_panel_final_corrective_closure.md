@@ -2,7 +2,7 @@
 
 ## Status
 
-**PLANNED**
+**COMPLETE** — final corrective pass implemented, verified, and committed.
 
 ## Baseline
 

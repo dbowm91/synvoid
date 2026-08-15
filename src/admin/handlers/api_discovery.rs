@@ -25,7 +25,7 @@ pub struct ApiEndpoint {
 }
 
 fn get_api_endpoints() -> Vec<ApiCategory> {
-    vec![
+    let categories = vec![
         ApiCategory {
             name: "stats".to_string(),
             endpoints: vec![
@@ -187,6 +187,12 @@ fn get_api_endpoints() -> Vec<ApiCategory> {
                     path: "/config/process-manager".to_string(),
                     method: "PUT".to_string(),
                 },
+            ],
+        },
+        #[cfg(feature = "mesh")]
+        ApiCategory {
+            name: "config_mesh".to_string(),
+            endpoints: vec![
                 ApiEndpoint {
                     path: "/config/mesh".to_string(),
                     method: "GET".to_string(),
@@ -197,6 +203,7 @@ fn get_api_endpoints() -> Vec<ApiCategory> {
                 },
             ],
         },
+        #[cfg(feature = "mesh")]
         ApiCategory {
             name: "mesh".to_string(),
             endpoints: vec![
@@ -258,6 +265,7 @@ fn get_api_endpoints() -> Vec<ApiCategory> {
                 },
             ],
         },
+        #[cfg(feature = "mesh")]
         ApiCategory {
             name: "tier_keys".to_string(),
             endpoints: vec![
@@ -394,6 +402,7 @@ fn get_api_endpoints() -> Vec<ApiCategory> {
                 },
             ],
         },
+        #[cfg(feature = "mesh")]
         ApiCategory {
             name: "yara".to_string(),
             endpoints: vec![
@@ -488,6 +497,7 @@ fn get_api_endpoints() -> Vec<ApiCategory> {
                 },
             ],
         },
+        #[cfg(feature = "icmp-filter")]
         ApiCategory {
             name: "icmp".to_string(),
             endpoints: vec![
@@ -517,6 +527,20 @@ fn get_api_endpoints() -> Vec<ApiCategory> {
                 },
             ],
         },
+        #[cfg(feature = "dns")]
+        ApiCategory {
+            name: "dns".to_string(),
+            endpoints: vec![
+                ApiEndpoint {
+                    path: "/config/dns".to_string(),
+                    method: "GET".to_string(),
+                },
+                ApiEndpoint {
+                    path: "/config/dns".to_string(),
+                    method: "PUT".to_string(),
+                },
+            ],
+        },
         ApiCategory {
             name: "logs".to_string(),
             endpoints: vec![
@@ -542,6 +566,7 @@ fn get_api_endpoints() -> Vec<ApiCategory> {
                 },
             ],
         },
+        #[cfg(feature = "mesh")]
         ApiCategory {
             name: "plugins".to_string(),
             endpoints: vec![
@@ -567,6 +592,7 @@ fn get_api_endpoints() -> Vec<ApiCategory> {
                 },
             ],
         },
+        #[cfg(feature = "mesh")]
         ApiCategory {
             name: "serverless".to_string(),
             endpoints: vec![
@@ -689,7 +715,8 @@ fn get_api_endpoints() -> Vec<ApiCategory> {
                 },
             ],
         },
-    ]
+    ];
+    categories
 }
 
 #[utoipa::path(

@@ -294,7 +294,7 @@ The admin server uses `ConnectInfo<SocketAddr>` for direct peer IP extraction. T
 
 ### WebSocket Authentication
 
-WebSocket endpoints (`/ws/metrics`, `/ws/logs`) authenticate via:
+WebSocket endpoints (`/api/ws/metrics`, `/api/ws/logs`) authenticate via:
 1. Bearer token in `Authorization` header (API clients)
 2. HttpOnly session cookie (browser clients)
 

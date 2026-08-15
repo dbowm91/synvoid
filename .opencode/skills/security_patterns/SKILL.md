@@ -1068,14 +1068,14 @@ WebSocket polling stops automatically on session expiry to prevent repeated fail
 
 **Location**: `src/admin/handlers/auth.rs`, `src/admin/mod.rs`
 
-**Pattern**: Cookie `Secure` flag based on actual deployment transport (`is_external_bind()`), not debug/release build:
+**Pattern**: Cookie `Secure` flag controlled by explicit `admin.secure_cookie` config. When `None` (default), inferred from bind address (`is_external_bind()`):
 ```rust
-fn is_external_bind(bind_address: &str) -> bool {
-    match bind_address.parse::<std::net::IpAddr>() {
-        Ok(ip) => !ip.is_loopback(),
-        Err(_) => bind_address != "127.0.0.1" && bind_address != "::1" && bind_address != "localhost"
-    }
-}
+// AdminConfig.secure_cookie: Option<bool>
+// - Some(true): Always set Secure
+// - Some(false): Never set Secure  
+// - None: Infer from bind address (non-loopback = Secure)
+let secure_cookie = config.admin.secure_cookie
+    .unwrap_or_else(|| is_external_bind(&admin_bind_address));
 ```
 
 Session cookie: `HttpOnly`, `SameSite=Strict`, `Path=/`, `Max-Age=3600`, `Secure` (when external).

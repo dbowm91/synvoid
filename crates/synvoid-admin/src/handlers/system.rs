@@ -120,7 +120,7 @@ pub async fn get_capabilities<S: AdminStateProvider>(
         mesh_admin: cfg!(feature = "mesh"),
         dns_admin: cfg!(feature = "dns"),
         icmp_admin: cfg!(feature = "icmp-filter"),
-        honeypot: cfg!(feature = "mesh"),
+        honeypot: true,
         process_manager: true,
         plugins: cfg!(feature = "mesh"),
         serverless: cfg!(feature = "mesh"),

@@ -268,8 +268,8 @@ Request
 
 | Endpoint | Purpose | Auth |
 |----------|---------|------|
-| `/ws/metrics` | Real-time metrics stream | Bearer or cookie token |
-| `/ws/logs` | Real-time log stream | Bearer or cookie token |
+| `/api/ws/metrics` | Real-time metrics stream | Bearer or session cookie |
+| `/api/ws/logs` | Real-time log stream | Bearer or session cookie |
 
 ---
 

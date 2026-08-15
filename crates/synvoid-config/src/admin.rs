@@ -52,6 +52,12 @@ pub struct AdminConfig {
     pub rate_limit: AdminRateLimitConfig,
     #[serde(default)]
     pub trusted_proxies: Vec<String>,
+    /// Explicitly control the `Secure` flag on the session cookie.
+    /// - `Some(true)`: Always set `Secure` (for TLS-terminating reverse proxy deployments).
+    /// - `Some(false)`: Never set `Secure` (for plain HTTP development).
+    /// - `None` (default): Infer from bind address (non-loopback = Secure).
+    #[serde(default)]
+    pub secure_cookie: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]

@@ -7,6 +7,19 @@ use crate::types::{MasterStatus, SystemInfo, WorkerStatus};
 
 const MAX_ERROR_BODY: usize = 512;
 
+/// Truncate a string to at most `max_bytes` bytes without splitting a UTF-8 code point.
+/// Returns the original string unchanged if it fits.
+fn truncate_utf8_safe(text: &str, max_bytes: usize) -> String {
+    if text.len() <= max_bytes {
+        return text.to_string();
+    }
+    let mut end = max_bytes;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}...", &text[..end])
+}
+
 #[derive(Debug, Clone)]
 pub struct ApiError {
     pub status: u16,
@@ -30,11 +43,7 @@ impl ApiError {
                 .to_string()
         } else {
             let trimmed = body.trim();
-            if trimmed.len() > MAX_ERROR_BODY {
-                format!("{}...", &trimmed[..MAX_ERROR_BODY])
-            } else {
-                trimmed.to_string()
-            }
+            truncate_utf8_safe(trimmed, MAX_ERROR_BODY)
         };
         Self { status, message }
     }
@@ -48,7 +57,6 @@ impl From<ApiError> for String {
 
 thread_local! {
     static CSRF_TOKEN: RefCell<Option<String>> = const { RefCell::new(None) };
-    static IS_AUTHENTICATED: RefCell<bool> = const { RefCell::new(false) };
 }
 
 pub fn set_csrf_token(token: Option<String>) {
@@ -59,17 +67,8 @@ pub fn get_csrf_token() -> Option<String> {
     CSRF_TOKEN.with(|cell| cell.borrow().clone())
 }
 
-pub fn set_authenticated(auth: bool) {
-    IS_AUTHENTICATED.with(|cell| *cell.borrow_mut() = auth);
-}
-
-pub fn is_authenticated() -> bool {
-    IS_AUTHENTICATED.with(|cell| *cell.borrow())
-}
-
 pub fn clear_auth_state() {
     set_csrf_token(None);
-    set_authenticated(false);
 }
 
 pub struct ApiService {
@@ -107,13 +106,7 @@ impl ApiService {
 
         if !request.ok() {
             let body = match request.text().await {
-                Ok(text) if !text.is_empty() => {
-                    if text.len() > MAX_ERROR_BODY {
-                        format!("{}...", &text[..MAX_ERROR_BODY])
-                    } else {
-                        text
-                    }
-                }
+                Ok(text) if !text.is_empty() => truncate_utf8_safe(&text, MAX_ERROR_BODY),
                 _ => String::new(),
             };
             let err = ApiError::from_response(request.status(), &body);
@@ -123,7 +116,6 @@ impl ApiService {
         let csrf_token = request.headers().get("X-CSRF-Token").unwrap_or_default();
 
         set_csrf_token(Some(csrf_token.clone()));
-        set_authenticated(true);
 
         Ok(csrf_token)
     }
@@ -159,7 +151,6 @@ impl ApiService {
         }
 
         set_csrf_token(Some(csrf_token.clone()));
-        set_authenticated(true);
 
         Ok(csrf_token)
     }
@@ -167,7 +158,14 @@ impl ApiService {
     /// Logout: invalidate the server session and clear client state.
     pub async fn logout() -> Result<(), String> {
         let url = "/api/auth/session";
-        let request = Request::delete(url)
+        let mut builder = Request::delete(url);
+
+        if let Some(csrf) = get_csrf_token() {
+            builder = builder.header("X-CSRF-Token", &csrf);
+        }
+
+        let request = builder
+            .credentials(web_sys::RequestCredentials::Include)
             .send()
             .await
             .map_err(|e| format!("Logout request failed: {}", e))?;
@@ -270,13 +268,7 @@ impl ApiService {
 
     async fn read_error_body(response: &Response) -> String {
         match response.text().await {
-            Ok(text) if !text.is_empty() => {
-                if text.len() > MAX_ERROR_BODY {
-                    format!("{}...", &text[..MAX_ERROR_BODY])
-                } else {
-                    text
-                }
-            }
+            Ok(text) if !text.is_empty() => truncate_utf8_safe(&text, MAX_ERROR_BODY),
             _ => String::new(),
         }
     }
@@ -1034,5 +1026,56 @@ impl ApiService {
             &serde_json::json!({ "org_id": org_id, "key_id": key_id }),
         )
         .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncate_utf8_short_ascii() {
+        assert_eq!(truncate_utf8_safe("hello", 10), "hello");
+    }
+
+    #[test]
+    fn truncate_utf8_exact_limit() {
+        assert_eq!(truncate_utf8_safe("12345", 5), "12345");
+    }
+
+    #[test]
+    fn truncate_utf8_long_ascii() {
+        assert_eq!(
+            truncate_utf8_safe("hello world this is long", 10),
+            "hello worl..."
+        );
+    }
+
+    #[test]
+    fn truncate_utf8_multibyte_within_limit() {
+        assert_eq!(truncate_utf8_safe("日本語テスト", 20), "日本語テスト");
+    }
+
+    #[test]
+    fn truncate_utf8_multibyte_crossing_boundary() {
+        let text = "abc日本語def";
+        // "abc" = 3 bytes, "日" = 3 bytes, "本" = 3 bytes, "語" = 3 bytes, "def" = 3 bytes
+        // Total = 18 bytes. Limit 7 means: "abc" (3) + "日" starts at 3, full "日" ends at 6, "本" starts at 6, would cross 7.
+        // So we back up to char boundary at 6: "abc日" (but "日" ends at 6, so "abc日" = 6 bytes)
+        let result = truncate_utf8_safe(text, 7);
+        assert_eq!(result, "abc日...");
+    }
+
+    #[test]
+    fn truncate_utf8_empty() {
+        assert_eq!(truncate_utf8_safe("", 10), "");
+    }
+
+    #[test]
+    fn truncate_utf8_multibyte_at_boundary() {
+        let text = "abc日本語";
+        // "abc" = 3, "日" = 3 (ends at 6), "本" = 3 (ends at 9)
+        let result = truncate_utf8_safe(text, 6);
+        assert_eq!(result, "abc日...");
     }
 }

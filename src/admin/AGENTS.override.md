@@ -36,7 +36,7 @@ Browser clients must use session-based authentication, not the raw bearer token:
 
 **Never**: Store bearer token in `localStorage`, `sessionStorage`, JS-readable cookies, or WebSocket URLs.
 
-**Cookie policy**: `Secure` flag is based on bind address (external = Secure, loopback = no Secure), not `debug_assertions`.
+**Cookie policy**: `Secure` flag is controlled by explicit `admin.secure_cookie` configuration. When not explicitly set, inferred from bind address (external = Secure, loopback = no Secure). Explicit configuration takes precedence.
 
 ### Constant-Time Comparison
 
@@ -68,9 +68,9 @@ The Admin API middleware stack (in order, from outermost to innermost):
 
 **Public routes** (health, SPA fallback) do NOT have auth/CSRF middleware.
 
-**WebSocket routes**: Auth handled per-connection (bearer token or session cookie), not via blanket middleware. Legacy `synvoid_ws_token` cookie removed.
+**WebSocket routes**: Canonical paths are `/api/ws/metrics` and `/api/ws/logs`. Auth handled per-connection (bearer token or session cookie), not via blanket middleware. Legacy `synvoid_ws_token` cookie removed.
 
-**Note**: CSRF exclusion list: `/health`, `/ws/*`, `/stats*`, `/config/schema`. All other mutating endpoints require CSRF for session-authenticated requests.
+**Note**: CSRF exclusion list: `/health`, `/api/ws/*`, `/stats*`, `/config/schema`. All other mutating endpoints require CSRF for session-authenticated requests.
 
 ## Skills Reference
 

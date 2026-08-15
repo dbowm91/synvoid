@@ -71,7 +71,7 @@ pub async fn auth_middleware_with_state(
 ) -> Response {
     let path = request.uri().path();
 
-    if path == "/health" || path.starts_with("/ws/") {
+    if path == "/health" || path.starts_with("/api/ws/") {
         return next.run(request).await;
     }
 
@@ -155,7 +155,7 @@ pub async fn csrf_middleware(
     let method = request.method();
 
     let requires_csrf = matches!(method.as_str(), "POST" | "PUT" | "PATCH" | "DELETE")
-        && !path.starts_with("/ws/")
+        && !path.starts_with("/api/ws/")
         && !path.starts_with("/stats")
         && !path.eq("/health")
         && !path.eq("/config/schema");

@@ -128,6 +128,12 @@ pub fn create_admin_router(
     let config_dir = config.blocking_read().config_dir.clone();
     let config_versions = ConfigVersionManager::new(config_dir);
     let admin_bind_address = config.blocking_read().main.admin.bind_address.clone();
+    let secure_cookie = config
+        .blocking_read()
+        .main
+        .admin
+        .secure_cookie
+        .unwrap_or_else(|| is_external_bind(&admin_bind_address));
 
     let state_builder = AdminState::new(config, token_hash)
         .with_config_versions(config_versions)
@@ -136,7 +142,7 @@ pub fn create_admin_router(
         .with_upstream_error_tracker(upstream_error_tracker)
         .with_threat_level_manager(threat_level_manager)
         .with_rule_feed_manager(rule_feed_manager)
-        .with_secure_cookie(is_external_bind(&admin_bind_address));
+        .with_secure_cookie(secure_cookie);
 
     #[cfg(feature = "mesh")]
     let state_builder = state_builder
@@ -735,7 +741,7 @@ fn build_router_from_state(
         .route("/auth/session", post(handlers::auth::create_session))
         .route("/auth/csrf", get(handlers::auth::get_csrf_token))
         .route("/auth/session", delete(handlers::auth::delete_session))
-        .route("/api", get(handlers::api_discovery::get_api_discovery));
+        .route("/", get(handlers::api_discovery::get_api_discovery));
 
     // ── Mesh-only routes ───────────────────────────────────────────────────
     #[cfg(feature = "mesh")]
@@ -897,19 +903,6 @@ fn build_router_from_state(
             "/spin/apps/{name}/instances",
             get(handlers::spin::get_spin_app_instances),
         )
-        .route(
-            "/honeypot/status",
-            get(handlers::honeypot::get_honeypot_status),
-        )
-        .route(
-            "/honeypot/control",
-            post(handlers::honeypot::control_honeypot),
-        )
-        .route(
-            "/honeypot/config",
-            get(handlers::honeypot::get_honeypot_port_config)
-                .put(handlers::honeypot::update_honeypot_port_config),
-        )
         .route("/tier-keys", get(handlers::tier_keys::list_tier_keys))
         .route(
             "/tier-keys/issue",
@@ -922,6 +915,22 @@ fn build_router_from_state(
         .route(
             "/tier-keys/unbind",
             post(handlers::tier_keys::unbind_tier_key),
+        );
+
+    // ── Honeypot admin routes (not mesh-gated; controller availability is runtime) ──
+    let api_routes = api_routes
+        .route(
+            "/honeypot/status",
+            get(handlers::honeypot::get_honeypot_status),
+        )
+        .route(
+            "/honeypot/control",
+            post(handlers::honeypot::control_honeypot),
+        )
+        .route(
+            "/honeypot/config",
+            get(handlers::honeypot::get_honeypot_port_config)
+                .put(handlers::honeypot::update_honeypot_port_config),
         );
 
     let rate_limit_layer =
@@ -962,10 +971,11 @@ fn build_router_from_state(
             middleware::csrf_middleware,
         ));
 
-    // ── WebSocket routes (auth handled per-connection, not blanket) ────────
+    // ── WebSocket routes (session-authenticated upgrade, no blanket middleware) ──
+    // Canonical paths: /api/ws/metrics and /api/ws/logs (matching frontend namespace)
     let ws_routes = Router::new()
-        .route("/ws/metrics", get(ws::ws_metrics_handler))
-        .route("/ws/logs", get(ws::ws_logs_handler));
+        .route("/api/ws/metrics", get(ws::ws_metrics_handler))
+        .route("/api/ws/logs", get(ws::ws_logs_handler));
 
     // ── Root health (public, no auth) ─────────────────────────────────────
     let health_route = Router::new().route("/health", get(health_check));
