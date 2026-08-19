@@ -23,52 +23,50 @@ impl DnsMessageCompressor {
     }
 
     pub fn compress_name(&mut self, name: &str, output: &mut Vec<u8>) -> usize {
-        let name_lower = name.to_lowercase().trim_end_matches('.').to_string();
+        let name = name.trim_end_matches('.');
 
-        if name_lower.is_empty() {
+        if name.is_empty() {
             output.push(0);
             self.current_offset += 1;
             return 1;
         }
 
-        if let Some(&offset) = self.labels.get(&name_lower) {
+        if let Some(&offset) = self.labels.get(&name.to_lowercase()) {
             output.push(0xC0 | (offset >> 8) as u8);
             output.push((offset & 0xFF) as u8);
             self.current_offset += 2;
             return 2;
         }
 
-        let parts: Vec<&str> = name_lower.split('.').collect();
+        let parts: Vec<&str> = name.split('.').collect();
+        let compression_start = (0..parts.len()).find(|&i| {
+            self.labels
+                .contains_key(&parts[i..].join(".").to_lowercase())
+        });
+        let literal_end = compression_start.unwrap_or(parts.len());
         let mut written = 0;
-        let mut used_compression = false;
 
-        for part in &parts {
-            if let Some(&offset) = self.labels.get(*part) {
-                output.push(0xC0 | (offset >> 8) as u8);
-                output.push((offset & 0xFF) as u8);
-                written += 2;
-                used_compression = true;
-                break;
-            }
-
+        for i in 0..literal_end {
+            let suffix = parts[i..].join(".").to_lowercase();
+            self.labels
+                .entry(suffix)
+                .or_insert(self.current_offset as u16);
+            let part = parts[i];
             output.push(part.len() as u8);
             output.extend_from_slice(part.as_bytes());
             written += 1 + part.len();
-
-            let remaining: String = if let Some(pos) = parts.iter().position(|&p| p == *part) {
-                parts[parts.len() - pos..].join(".")
-            } else {
-                continue;
-            };
-            if !remaining.is_empty() {
-                self.labels.insert(remaining, self.current_offset as u16);
-            }
-
             self.current_offset += 1 + part.len();
         }
 
-        if !used_compression {
+        if let Some(i) = compression_start {
+            let offset = self.labels[&parts[i..].join(".").to_lowercase()];
+            output.push(0xC0 | (offset >> 8) as u8);
+            output.push((offset & 0xFF) as u8);
+            self.current_offset += 2;
+            written += 2;
+        } else {
             output.push(0);
+            self.current_offset += 1;
             written += 1;
         }
 
@@ -76,38 +74,7 @@ impl DnsMessageCompressor {
     }
 
     pub fn build_compressed_name(&mut self, name: &str, output: &mut Vec<u8>) {
-        let name_lower = name.to_lowercase().trim_end_matches('.').to_string();
-
-        if name_lower.is_empty() {
-            output.push(0);
-            return;
-        }
-
-        if let Some(&offset) = self.labels.get(&name_lower) {
-            output.push(0xC0 | (offset >> 8) as u8);
-            output.push((offset & 0xFF) as u8);
-            return;
-        }
-
-        let parts: Vec<&str> = name_lower.split('.').collect();
-
-        for (i, _part) in parts.iter().enumerate() {
-            let suffix = parts[i..].join(".");
-            if let Some(&offset) = self.labels.get(&suffix) {
-                output.extend_from_slice(
-                    &name_lower.as_bytes()[..name_lower.len() - suffix.len() - 1],
-                );
-                output.push(0xC0 | (offset >> 8) as u8);
-                output.push((offset & 0xFF) as u8);
-                return;
-            }
-        }
-
-        for part in &parts {
-            output.push(part.len() as u8);
-            output.extend_from_slice(part.as_bytes());
-        }
-        output.push(0);
+        let _ = self.compress_name(name, output);
     }
 }
 
@@ -270,6 +237,33 @@ mod tests {
         compressor.compress_name("example.com", &mut output);
 
         assert_eq!(output, vec![0xC0, 0x0C]);
+    }
+
+    #[test]
+    fn test_compressor_preserves_case_and_writes_label_length() {
+        let mut compressor = DnsMessageCompressor::new();
+        compressor.add_label("example.com", 12);
+
+        let mut output = Vec::new();
+        compressor.compress_name("WWW.Example.COM", &mut output);
+
+        assert_eq!(output, vec![3, b'W', b'W', b'W', 0xC0, 0x0C]);
+    }
+
+    #[test]
+    fn test_compressor_registers_correct_multi_label_suffixes() {
+        let mut compressor = DnsMessageCompressor::new();
+        let mut first = Vec::new();
+        compressor.compress_name("a.example.com", &mut first);
+
+        let mut second = Vec::new();
+        compressor.compress_name("b.example.com", &mut second);
+
+        assert_eq!(
+            first,
+            vec![1, b'a', 7, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 3, b'c', b'o', b'm', 0]
+        );
+        assert_eq!(second, vec![1, b'b', 0xC0, 0x0E]);
     }
 
     #[test]

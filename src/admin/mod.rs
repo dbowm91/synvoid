@@ -127,13 +127,7 @@ pub fn create_admin_router(
 
     let config_dir = config.blocking_read().config_dir.clone();
     let config_versions = ConfigVersionManager::new(config_dir);
-    let admin_bind_address = config.blocking_read().main.admin.bind_address.clone();
-    let secure_cookie = config
-        .blocking_read()
-        .main
-        .admin
-        .secure_cookie
-        .unwrap_or_else(|| is_external_bind(&admin_bind_address));
+    let secure_cookie = config.blocking_read().main.admin.secure_cookie;
 
     let state_builder = AdminState::new(config, token_hash)
         .with_config_versions(config_versions)
@@ -996,18 +990,6 @@ fn build_router_from_state(
         .layer(yara_rate_limit_layer)
         .layer(rate_limit_layer)
         .with_state(state)
-}
-
-/// Returns true if the admin bind address is not a loopback address,
-/// indicating the server is likely behind a TLS-terminating reverse proxy.
-fn is_external_bind(bind_address: &str) -> bool {
-    match bind_address.parse::<std::net::IpAddr>() {
-        Ok(ip) => !ip.is_loopback(),
-        Err(_) => {
-            // Non-IP hostnames like "0.0.0.0" are not loopback
-            bind_address != "127.0.0.1" && bind_address != "::1" && bind_address != "localhost"
-        }
-    }
 }
 
 async fn health_check() -> (StatusCode, Json<serde_json::Value>) {

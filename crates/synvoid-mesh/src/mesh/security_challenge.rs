@@ -1,6 +1,6 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use digest::Digest;
 use hmac::{Hmac, Mac};
@@ -42,7 +42,7 @@ pub struct MeshSecurityChallengeManager {
     #[allow(dead_code)]
     config: Arc<MeshConfig>,
     active_challenges: Arc<RwLock<HashMap<String, MeshSecurityChallenge>>>,
-    challenge_history: Arc<RwLock<Vec<MeshSecurityChallenge>>>,
+    challenge_history: Arc<RwLock<VecDeque<MeshSecurityChallenge>>>,
     node_challenge_counts: Arc<RwLock<HashMap<String, usize>>>,
 }
 
@@ -51,7 +51,7 @@ impl MeshSecurityChallengeManager {
         Self {
             config,
             active_challenges: Arc::new(RwLock::new(HashMap::new())),
-            challenge_history: Arc::new(RwLock::new(Vec::new())),
+            challenge_history: Arc::new(RwLock::new(VecDeque::new())),
             node_challenge_counts: Arc::new(RwLock::new(HashMap::new())),
         }
     }
@@ -117,11 +117,11 @@ impl MeshSecurityChallengeManager {
 
             let mut history = self.challenge_history.write();
             if let Some(c) = challenges.get(challenge_id) {
-                history.push(c.clone());
+                history.push_back(c.clone());
             }
 
             if history.len() > CHALLENGE_CACHE_SIZE {
-                history.remove(0);
+                history.pop_front();
             }
 
             tracing::info!(
@@ -144,7 +144,12 @@ impl MeshSecurityChallengeManager {
         let now = Instant::now();
         let challenge_id = uuid::Uuid::new_v4().to_string();
 
-        let time_window = (now.elapsed().as_secs() / 30) % 100;
+        let time_window = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+            / 30
+            % 100;
         let challenge_data = format!("{}:{}:{}", target_node, time_window, challenge_id);
 
         let mut mac =
@@ -207,7 +212,7 @@ impl MeshSecurityChallengeManager {
 
         let mut history = self.challenge_history.write();
         if let Some(c) = challenges.get(challenge_id) {
-            history.push(c.clone());
+            history.push_back(c.clone());
         }
 
         tracing::info!(
@@ -271,7 +276,23 @@ impl MeshSecurityChallengeManager {
         let now = Instant::now();
 
         let mut challenges = self.active_challenges.write();
+        let expired_targets: Vec<String> = challenges
+            .values()
+            .filter(|c| now > c.expires_at)
+            .map(|c| c.target_node.clone())
+            .collect();
         challenges.retain(|_, c| now <= c.expires_at);
+        drop(challenges);
+
+        let mut counts = self.node_challenge_counts.write();
+        for target in expired_targets {
+            if let Some(count) = counts.get_mut(&target) {
+                *count = count.saturating_sub(1);
+                if *count == 0 {
+                    counts.remove(&target);
+                }
+            }
+        }
 
         let mut history = self.challenge_history.write();
         history.retain(|c| now.duration_since(c.created_at) < Duration::from_secs(3600));
@@ -293,7 +314,7 @@ pub struct MeshAttackDetector {
     config: Arc<MeshConfig>,
     suspicious_patterns: Arc<RwLock<Vec<SuspiciousPattern>>>,
     blocked_nodes: Arc<RwLock<std::collections::HashSet<String>>>,
-    attack_history: Arc<RwLock<Vec<AttackEvent>>>,
+    attack_history: Arc<RwLock<VecDeque<AttackEvent>>>,
     transport: Arc<RwLock<Option<Arc<crate::transport::MeshTransport>>>>,
 }
 
@@ -386,7 +407,7 @@ impl MeshAttackDetector {
             config,
             suspicious_patterns: Arc::new(RwLock::new(Vec::new())),
             blocked_nodes: Arc::new(RwLock::new(std::collections::HashSet::new())),
-            attack_history: Arc::new(RwLock::new(Vec::new())),
+            attack_history: Arc::new(RwLock::new(VecDeque::new())),
             transport: Arc::new(RwLock::new(None)),
         };
 
@@ -478,10 +499,10 @@ impl MeshAttackDetector {
 
     pub fn record_attack(&self, event: AttackEvent) {
         let mut history = self.attack_history.write();
-        history.push(event.clone());
+        history.push_back(event.clone());
 
         if history.len() > 10000 {
-            history.remove(0);
+            history.pop_front();
         }
 
         match event.severity {

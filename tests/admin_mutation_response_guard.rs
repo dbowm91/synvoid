@@ -79,8 +79,6 @@ const ALLOWLIST: &[&str] = &[
     "mesh_topology.rs",
     "behavioral_intel.rs",
     "threat_intel_policy.rs",
-    // Deferred: config endpoints use StatusResponse::success (local-only, no mesh propagation)
-    "config.rs",
 ];
 
 #[test]

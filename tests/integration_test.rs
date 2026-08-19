@@ -1879,7 +1879,7 @@ mod ipc_serialization_tests {
                 cors: AdminCorsConfig::default(),
                 rate_limit: AdminRateLimitConfig::default(),
                 trusted_proxies: vec![],
-                secure_cookie: None,
+                secure_cookie: false,
             };
             assert!(config.validate().is_ok());
         }
@@ -1896,7 +1896,7 @@ mod ipc_serialization_tests {
                 cors: AdminCorsConfig::default(),
                 rate_limit: AdminRateLimitConfig::default(),
                 trusted_proxies: vec![],
-                secure_cookie: None,
+                secure_cookie: false,
             };
             let err = config.validate().unwrap_err();
             assert_eq!(err.field, "admin.port");
@@ -1914,7 +1914,7 @@ mod ipc_serialization_tests {
                 cors: AdminCorsConfig::default(),
                 rate_limit: AdminRateLimitConfig::default(),
                 trusted_proxies: vec![],
-                secure_cookie: None,
+                secure_cookie: false,
             };
             let err = config.validate().unwrap_err();
             assert_eq!(err.field, "admin.bcrypt_cost");
@@ -1932,7 +1932,7 @@ mod ipc_serialization_tests {
                 cors: AdminCorsConfig::default(),
                 rate_limit: AdminRateLimitConfig::default(),
                 trusted_proxies: vec![],
-                secure_cookie: None,
+                secure_cookie: false,
             };
             let err = config.validate().unwrap_err();
             assert_eq!(err.field, "admin.bcrypt_cost");
@@ -1950,7 +1950,7 @@ mod ipc_serialization_tests {
                 cors: AdminCorsConfig::default(),
                 rate_limit: AdminRateLimitConfig::default(),
                 trusted_proxies: vec![],
-                secure_cookie: None,
+                secure_cookie: false,
             };
             let err = config.validate().unwrap_err();
             assert_eq!(err.field, "admin.token");
@@ -1973,7 +1973,7 @@ mod ipc_serialization_tests {
                 cors: AdminCorsConfig::default(),
                 rate_limit: AdminRateLimitConfig::default(),
                 trusted_proxies: vec![],
-                secure_cookie: None,
+                secure_cookie: false,
             };
             let err = config.validate().unwrap_err();
             assert!(err.message.contains("at least"));
@@ -1991,7 +1991,7 @@ mod ipc_serialization_tests {
                 cors: AdminCorsConfig::default(),
                 rate_limit: AdminRateLimitConfig::default(),
                 trusted_proxies: vec![],
-                secure_cookie: None,
+                secure_cookie: false,
             };
             let result = config.validate();
             assert!(result.is_err());

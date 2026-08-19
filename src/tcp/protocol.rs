@@ -939,22 +939,7 @@ mod tests {
 
     #[test]
     fn test_rtsp_detection() {
-        use crate::protocol::detect_common::extract_first_line;
         let detector = ProtocolDetector::new();
-
-        let data = b"OPTIONS rtsp://example.com RTSP/1.0\r\n";
-        let first_line = extract_first_line(data);
-        let upper_line = first_line.to_uppercase();
-        eprintln!("first_line: {:?}", first_line);
-        eprintln!("upper_line: {:?}", upper_line);
-        eprintln!(
-            "starts_with OPTIONS: {}",
-            first_line.starts_with("OPTIONS ")
-        );
-        eprintln!(
-            "upper_line.contains RTSP/: {}",
-            upper_line.contains("RTSP/")
-        );
 
         assert_eq!(
             detector.detect_from_bytes(b"OPTIONS rtsp://example.com RTSP/1.0\r\n"),

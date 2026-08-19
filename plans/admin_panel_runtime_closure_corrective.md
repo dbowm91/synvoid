@@ -103,16 +103,13 @@ At minimum, the guard still needs explicit coverage for the production HTTP/WebS
 
 This must remain a small, finite contract guard. Do not build a general Rust parser, OpenAPI code generator, or frontend code-generation system for this pass.
 
-### R6 — Secure-cookie policy is explicit only when configured; default still infers HTTPS from bind address
+### R6 — Secure-cookie policy is explicit and never inferred from bind address
 
-`AdminConfig.secure_cookie: Option<bool>` is a useful improvement, but `None` still falls back to `is_external_bind(&admin_bind_address)`.
+`AdminConfig.secure_cookie: bool` is the sole authority for the cookie transport policy; it is never inferred from `admin_bind_address`.
 
-That means the default still assumes:
-
-- non-loopback listener implies HTTPS/reverse proxy
-- loopback listener implies plaintext HTTP
-
-Neither assumption is transport truth. A remote plaintext listener can get an unusable Secure cookie, while a TLS proxy forwarding to loopback can get a non-Secure cookie unless explicitly configured.
+The deterministic default is `false`; HTTPS/reverse-proxy deployments must explicitly set
+`secure_cookie = true`. This keeps local HTTP usable while making the transport decision
+an explicit deployment setting.
 
 The prior acceptance criteria required the transport contract to be explicit rather than derived from bind address.
 
@@ -486,31 +483,17 @@ The objective is to guard historically unstable boundaries, not achieve theoreti
 
 # Workstream 6 — Make secure-cookie transport policy fully explicit
 
-## 6.1 Remove bind-address inference from the default runtime decision
+## 6.1 Use explicit configuration for the runtime decision
 
 Do not use `is_external_bind()` as the default authority for whether the browser-facing origin is HTTPS.
 
-Preferred minimal design:
+The implemented minimal design is:
 
 ```rust
 pub secure_cookie: bool
 ```
 
-with a clearly documented default chosen for the repository's supported deployment model, or an explicit small enum such as:
-
-```rust
-pub enum AdminTransportSecurity {
-    Http,
-    HttpsProxy,
-}
-```
-
-If preserving `Option<bool>` is important for configuration compatibility, then `None` must resolve to a documented deterministic policy that is not based on bind address.
-
-Examples:
-
-- `None => false` for backward-compatible local HTTP, while docs require `secure_cookie = true` for remote HTTPS
-- or configuration validation rejects remote/external admin use unless secure transport is explicitly declared
+It defaults to `false`; documentation requires `secure_cookie = true` for remote HTTPS.
 
 Choose the least disruptive option consistent with existing config compatibility.
 

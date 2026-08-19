@@ -87,7 +87,7 @@ impl ErrorPageManager {
 
         let resolved_dir = if error_page_mode == ErrorPageMode::Custom {
             custom_dir.clone().unwrap_or_else(|| {
-                log::warn!(
+                tracing::warn!(
                     "error_pages mode is 'custom' but custom_directory not specified, falling back to 'styled'"
                 );
                 format!("{}/styled", default_dir.trim_end_matches('/'))
@@ -108,7 +108,7 @@ impl ErrorPageManager {
 
         let custom_dir_str = custom_dir.as_deref().unwrap_or("none");
 
-        log::info!(
+        tracing::info!(
             "Error pages: mode={}, directory='{}', custom_directory={}, custom_pages={}",
             mode_name,
             resolved_dir,
@@ -123,12 +123,12 @@ impl ErrorPageManager {
         let default_pages = Self::load_directory(&resolved_dir);
 
         if default_pages.is_empty() {
-            log::warn!(
+            tracing::warn!(
                 "Error pages directory '{}' is empty or not found - using minimal fallback pages",
                 resolved_dir
             );
         } else {
-            log::trace!(
+            tracing::trace!(
                 "Loaded {} error pages from '{}'",
                 default_pages.len(),
                 resolved_dir

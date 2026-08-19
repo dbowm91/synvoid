@@ -2,6 +2,7 @@ use gloo::net::http::{Request, Response};
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json;
 use std::cell::RefCell;
+use yew::Callback;
 
 use crate::types::{MasterStatus, SystemInfo, WorkerStatus};
 
@@ -57,6 +58,19 @@ impl From<ApiError> for String {
 
 thread_local! {
     static CSRF_TOKEN: RefCell<Option<String>> = const { RefCell::new(None) };
+    static SESSION_EXPIRED_HANDLER: RefCell<Option<Callback<()>>> = const { RefCell::new(None) };
+}
+
+pub fn set_session_expired_handler(handler: Option<Callback<()>>) {
+    SESSION_EXPIRED_HANDLER.with(|cell| *cell.borrow_mut() = handler);
+}
+
+fn notify_session_expired() {
+    SESSION_EXPIRED_HANDLER.with(|cell| {
+        if let Some(handler) = cell.borrow().as_ref() {
+            handler.emit(());
+        }
+    });
 }
 
 pub fn set_csrf_token(token: Option<String>) {
@@ -86,10 +100,6 @@ impl ApiService {
         Self {
             base_url: "/api".to_string(),
         }
-    }
-
-    pub fn with_base_url(base_url: String) -> Self {
-        Self { base_url }
     }
 
     /// Bootstrap a browser session using the bearer token.
@@ -156,7 +166,7 @@ impl ApiService {
     }
 
     /// Logout: invalidate the server session and clear client state.
-    pub async fn logout() -> Result<(), String> {
+    pub async fn logout() -> Result<(), ApiError> {
         let url = "/api/auth/session";
         let mut builder = Request::delete(url);
 
@@ -168,14 +178,18 @@ impl ApiService {
             .credentials(web_sys::RequestCredentials::Include)
             .send()
             .await
-            .map_err(|e| format!("Logout request failed: {}", e))?;
+            .map_err(|e| ApiError {
+                status: 0,
+                message: format!("Logout request failed: {}", e),
+            })?;
 
         clear_auth_state();
 
         if request.ok() {
             Ok(())
         } else {
-            Err(format!("Logout failed (HTTP {})", request.status()))
+            let body = Self::read_error_body(&request).await;
+            Err(ApiError::from_response(request.status(), &body))
         }
     }
 
@@ -258,6 +272,7 @@ impl ApiService {
     fn handle_auth_error(status: u16) -> Result<(), ApiError> {
         if status == 401 || status == 403 {
             clear_auth_state();
+            notify_session_expired();
             return Err(ApiError {
                 status,
                 message: "Session expired".to_string(),
@@ -330,10 +345,6 @@ impl ApiService {
             None => "/stats/history".to_string(),
         };
         self.get(&path).await
-    }
-
-    pub async fn get_attack_stats(&self) -> Result<crate::types::AttackStats, ApiError> {
-        self.get("/stats/attacks").await
     }
 
     pub async fn get_cache_stats(&self) -> Result<crate::types::CacheStats, ApiError> {
@@ -589,13 +600,6 @@ impl ApiService {
         self.get(&format!("/sites/{}", site_id)).await
     }
 
-    pub async fn create_site(
-        &self,
-        request: &serde_json::Value,
-    ) -> Result<serde_json::Value, ApiError> {
-        self.post("/sites", request).await
-    }
-
     pub async fn update_site(
         &self,
         site_id: &str,
@@ -615,59 +619,12 @@ impl ApiService {
         }
     }
 
-    pub async fn list_upstreams(&self) -> Result<serde_json::Value, ApiError> {
-        self.get("/upstreams").await
-    }
-
-    pub async fn get_site_upstreams(&self, site_id: &str) -> Result<serde_json::Value, ApiError> {
-        self.get(&format!("/upstreams/{}", site_id)).await
-    }
-
     pub async fn trigger_health_check(&self, site_id: &str) -> Result<serde_json::Value, ApiError> {
         self.post(
             &format!("/upstreams/{}/check", site_id),
             &serde_json::json!({}),
         )
         .await
-    }
-
-    pub async fn get_logs(&self, limit: Option<u32>) -> Result<serde_json::Value, ApiError> {
-        let path = match limit {
-            Some(l) => format!("/logs?limit={}", l),
-            None => "/logs".to_string(),
-        };
-        self.get(&path).await
-    }
-
-    pub async fn get_config_main(&self) -> Result<serde_json::Value, ApiError> {
-        self.get("/config/main").await
-    }
-
-    pub async fn update_config_main(
-        &self,
-        config: &serde_json::Value,
-    ) -> Result<serde_json::Value, ApiError> {
-        self.put("/config/main", config).await
-    }
-
-    pub async fn reload_config(&self) -> Result<serde_json::Value, ApiError> {
-        self.post("/config/reload", &serde_json::json!({})).await
-    }
-
-    pub async fn get_alert_config(&self) -> Result<serde_json::Value, ApiError> {
-        self.get("/alerts/config").await
-    }
-
-    pub async fn update_alert_config(
-        &self,
-        config: &serde_json::Value,
-    ) -> Result<serde_json::Value, ApiError> {
-        self.put("/alerts/config", config).await
-    }
-
-    pub async fn test_alert_webhook(&self) -> Result<serde_json::Value, ApiError> {
-        self.post("/alerts/test-webhook", &serde_json::json!({}))
-            .await
     }
 
     pub async fn get_process_manager_config(&self) -> Result<serde_json::Value, ApiError> {
@@ -949,10 +906,6 @@ impl ApiService {
         self.get("/icmp/status").await
     }
 
-    pub async fn get_icmp_config(&self) -> Result<serde_json::Value, ApiError> {
-        self.get("/icmp/config").await
-    }
-
     pub async fn enable_icmp(&self) -> Result<serde_json::Value, ApiError> {
         self.post("/icmp/enable", &serde_json::json!({})).await
     }
@@ -965,19 +918,8 @@ impl ApiService {
         self.get("/icmp/backends").await
     }
 
-    pub async fn update_icmp_config(
-        &self,
-        config: &serde_json::Value,
-    ) -> Result<serde_json::Value, ApiError> {
-        self.put("/icmp/config", config).await
-    }
-
     pub async fn get_yara_status(&self) -> Result<serde_json::Value, ApiError> {
         self.get("/yara/status").await
-    }
-
-    pub async fn get_yara_submissions(&self) -> Result<serde_json::Value, ApiError> {
-        self.get("/yara/submissions").await
     }
 
     pub async fn get_serverless_health(&self) -> Result<serde_json::Value, ApiError> {

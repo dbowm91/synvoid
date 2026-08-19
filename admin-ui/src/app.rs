@@ -10,7 +10,7 @@ use crate::pages::{
     RequestLogs, Settings, SiteDetail, SiteEditor, Sites, SystemStatus, ThreatLevel, TierKeys,
     TrafficShaping, Upstreams, Workers,
 };
-use crate::services::api::ApiService;
+use crate::services::api::{set_session_expired_handler, ApiService};
 use crate::types::UpdateThemeRequest;
 
 #[derive(Clone, Routable, PartialEq)]
@@ -88,6 +88,17 @@ pub fn App() -> Html {
         });
     }
 
+    {
+        let auth_state = auth_state.clone();
+        use_effect_with((), move |_| {
+            let auth_state = auth_state.clone();
+            set_session_expired_handler(Some(Callback::from(move |_| {
+                auth_state.set(AuthState::Unauthenticated);
+            })));
+            || set_session_expired_handler(None)
+        });
+    }
+
     let current_theme = *theme;
 
     let toggle_theme = {
@@ -111,13 +122,27 @@ pub fn App() -> Html {
         Callback::from(move |_| {
             let auth_state = auth_state.clone();
             spawn_local(async move {
-                let _ = ApiService::logout().await;
-                auth_state.set(AuthState::Unauthenticated);
-                if let Some(window) = web_sys::window() {
-                    let _ = window.location().set_href("/login");
+                match ApiService::logout().await {
+                    Ok(())
+                    | Err(crate::services::api::ApiError {
+                        status: 401..=403, ..
+                    }) => {
+                        auth_state.set(AuthState::Unauthenticated);
+                        if let Some(window) = web_sys::window() {
+                            let _ = window.location().set_href("/login");
+                        }
+                    }
+                    Err(error) => {
+                        web_sys::console::error_1(&error.to_string().into());
+                    }
                 }
             });
         })
+    };
+
+    let on_authenticated = {
+        let auth_state = auth_state.clone();
+        Callback::from(move |_| auth_state.set(AuthState::Authenticated))
     };
 
     let theme_class = current_theme.class().to_string();
@@ -131,7 +156,10 @@ pub fn App() -> Html {
         AuthState::Unauthenticated => html! {
             <BrowserRouter>
                 <ToastContainer />
-                <Switch<Route> render={switch} />
+                <Switch<Route> render={Callback::from({
+                    let on_authenticated = on_authenticated.clone();
+                    move |route| switch_unauthenticated(route, on_authenticated.clone())
+                })} />
             </BrowserRouter>
         },
         AuthState::Authenticated => html! {
@@ -161,7 +189,7 @@ enum AuthState {
 
 fn switch(route: Route) -> Html {
     match route {
-        Route::Login => html! { <Login /> },
+        Route::Login => html! { <Dashboard /> },
         Route::Home | Route::Dashboard => html! { <Dashboard /> },
         Route::Logs => html! { <Logs /> },
         Route::RequestLogs => html! { <RequestLogs /> },
@@ -186,5 +214,33 @@ fn switch(route: Route) -> Html {
             <h1 class="text-4xl font-bold mb-4">{ "404" }</h1>
             <p class="text-secondary">{ "Page not found" }</p>
         </div> },
+    }
+}
+
+fn switch_unauthenticated(route: Route, on_authenticated: Callback<()>) -> Html {
+    match route {
+        Route::Login
+        | Route::Home
+        | Route::Dashboard
+        | Route::Logs
+        | Route::RequestLogs
+        | Route::Upstreams
+        | Route::Sites
+        | Route::SiteEditor { .. }
+        | Route::SiteDetail { .. }
+        | Route::Probes
+        | Route::Dns
+        | Route::Settings
+        | Route::Mesh
+        | Route::ProcessManagement
+        | Route::TierKeys
+        | Route::Workers
+        | Route::Alerts
+        | Route::SystemStatus
+        | Route::ThreatLevel
+        | Route::Honeypot
+        | Route::Icmp
+        | Route::TrafficShaping
+        | Route::NotFound => html! { <Login on_authenticated={on_authenticated} /> },
     }
 }

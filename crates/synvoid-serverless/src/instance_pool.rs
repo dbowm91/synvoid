@@ -509,7 +509,16 @@ impl InstancePool {
         };
 
         for id in instances_to_evict {
-            self.return_instance(&id);
+            let instance = {
+                let mut idle = self.idle_instances.write();
+                idle.iter()
+                    .position(|instance| instance.id == id)
+                    .map(|index| idle.remove(index))
+            };
+            if let Some(instance) = instance {
+                *instance.state.write() = InstanceState::Evicted;
+                self.evict_instance(instance);
+            }
         }
     }
 

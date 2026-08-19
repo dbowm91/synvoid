@@ -13,21 +13,6 @@ use std::time::Duration;
 
 use std::sync::LazyLock;
 
-/// Default embedded Ed25519 public key for rule feed signature verification.
-///
-/// Deployments MUST replace this placeholder with a real base64-encoded
-/// 32-byte Ed25519 public key matching the private key used to sign rule feeds.
-///
-/// To generate a key pair:
-///   ed25519-dalek: SigningKey::generate(&mut rand::rng())
-///
-/// Configure via `waf.rule_feed.public_key` in the TOML config, or set the
-/// SYNVOID_RULE_FEED_PUBLIC_KEY environment variable.
-///
-/// If this placeholder remains, a random key is generated at startup and all
-/// rule feed signature verifications will fail (rules will not be applied).
-const EMBEDDED_PUBLIC_KEY: &str = "DEFAULT_EMBEDDED_PUBLIC_KEY_PLACEHOLDER";
-
 const PLACEHOLDER_KEY: &str = "DEFAULT_EMBEDDED_PUBLIC_KEY_PLACEHOLDER";
 
 use dashmap::DashMap;
@@ -311,15 +296,17 @@ pub struct RuleFeedManager {
 
 impl RuleFeedManager {
     pub fn new(config: RuleFeedConfig) -> Result<Arc<Self>, String> {
-        let embedded_public_key = config
-            .public_key
-            .as_deref()
-            .filter(|k| !k.is_empty())
-            .map(Self::parse_embedded_key)
-            .transpose()?
-            .unwrap_or_else(|| {
-                Self::parse_embedded_key(EMBEDDED_PUBLIC_KEY).expect("Invalid embedded key")
-            });
+        let embedded_public_key = match config.public_key.as_deref().filter(|k| !k.is_empty()) {
+            Some(key) => Self::parse_embedded_key(key)?,
+            None => {
+                return Err(
+                    "RULE FEED SECURITY VIOLATION: No rule feed public key configured. Set \
+                     [waf.rule_feed.public_key] in the TOML config to a valid base64-encoded \
+                     32-byte Ed25519 verifying key."
+                        .to_string(),
+                );
+            }
+        };
 
         let manager = Arc::new(Self {
             config,

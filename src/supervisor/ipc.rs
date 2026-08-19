@@ -187,6 +187,7 @@ async fn handle_worker_connection_internal(
                 };
 
                 let is_worker_ready = matches!(message, Message::UnifiedServerWorkerReady { .. });
+                let mut unsupported_response = None;
 
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     match message {
@@ -312,8 +313,14 @@ async fn handle_worker_connection_internal(
                                 worker_id,
                                 request
                             );
-                            // TODO: Route to separate Mesh Control Plane process once implemented.
-                            // For now, it stays in the Supervisor process.
+                            unsupported_response = Some(Message::MeshControlResponse {
+                                worker_id,
+                                response: synvoid_ipc::ipc::MeshControlResponse::Error {
+                                    message:
+                                        "mesh control request is not supported by the supervisor"
+                                            .to_string(),
+                                },
+                            });
                         }
                         Message::MeshUpdateNotification {
                             worker_id,
@@ -324,7 +331,10 @@ async fn handle_worker_connection_internal(
                                 worker_id,
                                 notification
                             );
-                            // TODO: Route to separate Mesh Control Plane process once implemented.
+                            tracing::warn!(
+                                "Mesh update notification from worker {} is not routed by the supervisor",
+                                worker_id
+                            );
                         }
                         Message::PluginExecuteRequest(req) => {
                             tracing::debug!(
@@ -333,7 +343,17 @@ async fn handle_worker_connection_internal(
                                 req.plugin_name,
                                 req.function_name
                             );
-                            // TODO: Route to Plugin Isolation Runner
+                            unsupported_response = Some(Message::PluginExecuteResponse(
+                                synvoid_ipc::ipc::PluginExecuteResponse {
+                                    request_id: req.request_id,
+                                    status: 501,
+                                    headers: HashMap::new(),
+                                    body: Vec::new(),
+                                    error: Some(
+                                        "plugin isolation runner is not available".to_string(),
+                                    ),
+                                },
+                            ));
                         }
                         Message::PluginExecuteResponse(res) => {
                             tracing::debug!(
@@ -341,7 +361,10 @@ async fn handle_worker_connection_internal(
                                 res.request_id,
                                 res.status
                             );
-                            // TODO: Route back to requesting worker
+                            tracing::warn!(
+                                "Plugin execute response {} has no requesting worker route",
+                                res.request_id
+                            );
                         }
                         Message::ServerlessHandleRequest(req) => {
                             tracing::debug!(
@@ -349,7 +372,16 @@ async fn handle_worker_connection_internal(
                                 req.request_id,
                                 req.function_name
                             );
-                            // TODO: Route to Serverless Sandbox
+                            unsupported_response = Some(Message::ServerlessHandleResponse(
+                                synvoid_ipc::ipc::ServerlessHandleResponse {
+                                    request_id: req.request_id,
+                                    status: 501,
+                                    headers: HashMap::new(),
+                                    body: Vec::new(),
+                                    execution_time_ms: 0,
+                                    error: Some("serverless sandbox is not available".to_string()),
+                                },
+                            ));
                         }
                         Message::ServerlessHandleResponse(res) => {
                             tracing::debug!(
@@ -357,7 +389,10 @@ async fn handle_worker_connection_internal(
                                 res.request_id,
                                 res.status
                             );
-                            // TODO: Route back to requesting worker
+                            tracing::warn!(
+                                "Serverless response {} has no requesting worker route",
+                                res.request_id
+                            );
                         }
                         Message::UnifiedServerWorkerReady { id } => {
                             process_manager.handle_unified_server_worker_ready(id);
@@ -370,6 +405,11 @@ async fn handle_worker_connection_internal(
                 if let Some(response) = blocklist_response {
                     if ipc.send(&response).await.is_err() {
                         tracing::warn!("Failed to send blocklist response to worker");
+                    }
+                }
+                if let Some(response) = unsupported_response {
+                    if ipc.send(&response).await.is_err() {
+                        tracing::warn!("Failed to send unsupported IPC response to worker");
                     }
                 }
 

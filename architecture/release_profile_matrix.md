@@ -84,7 +84,7 @@ The `icmp-ebpf` feature is classified as **Beta** (not Supported):
 |------|--------|-----------|
 | `synvoid-icmp-filter` eBPF (`--all-features`) | **Beta** — compiles, runtime fallback | eBPF requires kernel BTF + root; nftables fallback always available |
 | `--all-features` full workspace check | **Fails** on `synvoid-icmp-filter` eBPF dep resolution | Not in default profile; individual crate checks pass |
-| wasmtime 40.0.4 (via yara-x) | **Tracked** — 11 advisory ignores in deny.toml | Used for YARA compilation only, not wasm sandbox. Re-audit: 2026-10-01 |
+| wasmtime 40.0.4 (via yara-x) | **Tracked** — 13 advisory ignores in deny.toml | Used for YARA compilation only, not wasm sandbox. Re-audit: 2026-10-01 |
 
 ## CI Enforcement
 

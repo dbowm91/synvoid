@@ -341,23 +341,29 @@ async fn smoke_09_csrf_protected_mutation() {
 #[tokio::test]
 async fn smoke_10_ws_endpoint_rejects_unauthenticated() {
     let router = build_router().await;
-    let resp = router
-        .oneshot(
-            Request::builder()
-                .uri("/ws/metrics")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    // WebSocket endpoint should reject unauthenticated requests (401 or upgrade rejection)
-    // The exact behavior depends on whether the WS handler checks auth
-    // At minimum it should not return 200 with full data
-    assert_ne!(
-        resp.status(),
-        StatusCode::OK,
-        "WebSocket must not serve data without auth"
-    );
+    for path in ["/api/ws/metrics", "/api/ws/logs"] {
+        let resp = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(path)
+                    .header("upgrade", "websocket")
+                    .header("connection", "Upgrade")
+                    .header("sec-websocket-version", "13")
+                    .header("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(
+            resp.status() == StatusCode::UNAUTHORIZED
+                || resp.status() == StatusCode::UPGRADE_REQUIRED,
+            "{} must reject unauthenticated upgrades, got {}",
+            path,
+            resp.status()
+        );
+    }
 }
 
 // ── Step 11: Threat level endpoint returns real data ─────────────────────────

@@ -36,7 +36,7 @@ Browser clients must use session-based authentication, not the raw bearer token:
 
 **Never**: Store bearer token in `localStorage`, `sessionStorage`, JS-readable cookies, or WebSocket URLs.
 
-**Cookie policy**: `Secure` flag is controlled by explicit `admin.secure_cookie` configuration. When not explicitly set, inferred from bind address (external = Secure, loopback = no Secure). Explicit configuration takes precedence.
+**Cookie policy**: `Secure` flag is controlled by explicit `admin.secure_cookie` configuration. It defaults to `false`; deployments using HTTPS must set it to `true`. The value is never inferred from the bind address.
 
 ### Constant-Time Comparison
 

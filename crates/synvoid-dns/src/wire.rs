@@ -72,6 +72,11 @@ pub fn parse_query_name(bytes: &[u8], mut pos: usize) -> Option<String> {
             continue;
         }
 
+        // RFC 1035 limits each uncompressed label to 63 octets.
+        if len > 63 {
+            return None;
+        }
+
         // Regular label - ensure we have enough bytes
         if pos + 1 + len > bytes.len() {
             return None;
@@ -101,6 +106,13 @@ pub fn parse_query_name(bytes: &[u8], mut pos: usize) -> Option<String> {
         pos += len;
     }
     let _ = pos;
+
+    // A DNS name is limited to 255 octets on the wire, including the
+    // terminating root label. The textual form therefore cannot exceed 253
+    // octets (the parser does not append a trailing dot).
+    if name.len() > 253 {
+        return None;
+    }
 
     Some(name)
 }
@@ -516,8 +528,16 @@ mod tests {
         name_bytes.push(0);
 
         let name = parse_query_name(&name_bytes, 0);
-        // This should still work since we don't enforce max length in parsing
-        assert!(name.is_some());
+        assert!(name.is_none());
+    }
+
+    #[test]
+    fn test_parse_query_name_invalid_label_too_long() {
+        let mut name_bytes = vec![64];
+        name_bytes.extend_from_slice(&[b'a'; 64]);
+        name_bytes.push(0);
+
+        assert!(parse_query_name(&name_bytes, 0).is_none());
     }
 
     #[test]

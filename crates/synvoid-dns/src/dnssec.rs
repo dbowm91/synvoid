@@ -300,11 +300,6 @@ mod tests {
     #[test]
     fn test_canonical_mx_record() {
         let result = canonical_rdata(15, "example.com", Some(10), None, None, 3600);
-        eprintln!(
-            "DEBUG: result len = {}, result = {:?}",
-            result.len(),
-            result
-        );
         // MX RDATA: 2 bytes priority + canonical name
         // canonical name "example.com" = [7, 'example', 3, 'com', 0] = 13 bytes
         // Total: 2 + 13 = 15 bytes

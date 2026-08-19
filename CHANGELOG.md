@@ -167,13 +167,13 @@ The 1.1.0 release adds a production-grade DNS authoritative server with DNSSEC s
 - Honeypot mesh propagation guardrails: minimum confidence, minimum event count, dedupe keys, TTL
 - Threat-intel enforcement paths use policy-strict lookups, never raw diagnostic lookups
 - Mesh-ID blocks restricted to admin/control-plane only (not WAF/request/proxy/HTTP-3 code)
-- cargo-deny passes; 12 advisory ignores documented with re-audit dates (2026-10-01)
+- cargo-deny passes; 13 advisory ignores documented with re-audit dates (2026-10-01)
 
 ### Known Limitations
 
 - `synvoid-icmp-filter` eBPF (`icmp-ebpf` feature): compiles cleanly, returns explicit error at runtime when eBPF unavailable, falls back to nftables. Not in default profile.
 - `--all-features` full workspace check fails on `synvoid-icmp-filter` eBPF dependency resolution. Individual crate checks pass.
-- wasmtime 40.0.4 (via yara-x) has known CVEs but is used only for YARA compilation, not the WASM sandbox. 11 advisory ignores in deny.toml with re-audit date 2026-10-01.
+- wasmtime 40.0.4 (via yara-x) has known CVEs but is used only for YARA compilation, not the WASM sandbox. 13 advisory ignores in deny.toml with re-audit date 2026-10-01.
 - Email alerting is a stub (`src/admin/alerting/mod.rs:349`).
 - `spin` idle instance eviction never cleans up old UUID entries.
 - DNS: DoQ is experimental. Persistent TCP pipelining, EDNS keepalive, NSEC3 closest-encloser proofs, external DNSSEC tooling, and bailiwick enforcement are deferred.
@@ -182,7 +182,7 @@ The 1.1.0 release adds a production-grade DNS authoritative server with DNSSEC s
 ### Validation Summary
 
 - **Test count**: 2,760+ tests across 43 workspace members (release mode)
-- **cargo-deny**: Passes (12 advisory ignores documented with re-audit dates 2026-10-01)
+- **cargo-deny**: Passes (13 advisory ignores documented with re-audit dates 2026-10-01)
 - **Ignored tests**: Zero `#[ignore]` annotations remain (34 dead stubs deleted, 2 deadlock tests rewritten)
 - **Compilation profiles**: 5 profiles verified (Default, Core, Mesh, DNS, Full mesh+DNS)
 - **CI jobs**: 25 jobs including build matrix (8 targets), clippy, fmt, tests, security audit, dependency audit, profile matrix, guard suite (33 guards), fuzz smoke (16 targets)

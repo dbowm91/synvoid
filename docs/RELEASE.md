@@ -255,7 +255,7 @@ The following items are known limitations or tracked exceptions that operators s
 |------|---------------|--------|-------|
 | `icmp-ebpf` eBPF ICMP filter | **Beta** | Feature-gated, not in default profile | Requires Linux with kernel BTF, CAP_NET_ADMIN or root, precompiled eBPF object. Falls back to nftables when unavailable |
 | `--all-features` workspace check | **Tracked exception** | Does not pass `cargo check --all-features` | `synvoid-icmp-filter` eBPF dependency resolution fails in `--all-features` mode. Individual crate checks pass. Not in default profile |
-| wasmtime 40.0.4 (via yara-x) | **Tracked** | 11 advisory ignores in `deny.toml` | Used for YARA compilation only, not WASM sandbox. Re-audit date: 2026-10-01 |
+| wasmtime 40.0.4 (via yara-x) | **Tracked** | 13 advisory ignores in `deny.toml` | Used for YARA compilation only, not WASM sandbox. Re-audit date: 2026-10-01 |
 | Email alerting (`src/admin/alerting/mod.rs:349`) | **Stub** | Logs and returns Ok, no actual sending | Not production-ready; implementation deferred |
 | `spin` idle instance eviction | **Known gap** | Old UUID entries are never cleaned up | Tracked as plan DOC-L7 |
 | Archive inspection | **Limitation** | ZIP-only, non-recursive | Does not inspect nested archives or non-ZIP formats |

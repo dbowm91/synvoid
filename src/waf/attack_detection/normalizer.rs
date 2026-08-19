@@ -18,6 +18,7 @@ bitflags! {
         const DOUBLE_ENCODING = 1 << 3;
         const INVALID_UTF8 = 1 << 4;
         const UNICODE_NORMALIZED = 1 << 5;
+        const OUTPUT_LIMIT = 1 << 6;
     }
 }
 
@@ -146,6 +147,7 @@ impl InputNormalizer {
 
         let mut total_passes = 0;
         let max_output = input.len().saturating_mul(MAX_OUTPUT_RATIO);
+        let mut output_limited = false;
 
         buffer.push_str(input);
 
@@ -164,6 +166,8 @@ impl InputNormalizer {
             total_passes += 1;
 
             if decoded_len > max_output {
+                *buffer = prev_content;
+                output_limited = true;
                 break;
             }
         }
@@ -179,6 +183,16 @@ impl InputNormalizer {
         chars.extend(buffer.chars());
         buffer.clear();
         self.apply_normalizations_with_chars(buffer, chars);
+
+        if buffer.len() > max_output {
+            buffer.clear();
+            buffer.push_str(input);
+            output_limited = true;
+        }
+
+        if output_limited {
+            NORMALIZATION_FLAGS.with(|f| f.borrow_mut().insert(NormalizationFlags::OUTPUT_LIMIT));
+        }
 
         let normalized = if buffer.as_str() == input {
             NormalizedData::Borrowed(input)
@@ -596,7 +610,8 @@ impl<'a> NormalizedData<'a> {
         match self {
             Self::Borrowed(s) => s,
             Self::Owned(ref s) => s.as_str(),
-            Self::Pooled(ref p) => unsafe { std::str::from_utf8_unchecked(p.as_slice()) },
+            Self::Pooled(ref p) => std::str::from_utf8(p.as_slice())
+                .expect("normalized pooled buffer must contain valid UTF-8"),
         }
     }
 }
@@ -668,10 +683,7 @@ impl<'a> NormalizedInputs<'a> {
                 .collect(),
             body: self.body, // body is already static
             body_raw: self.body_raw,
-            body_bytes: self.body_bytes.map(|b| {
-                let owned: &'static [u8] = Vec::leak(b.to_vec());
-                owned
-            }),
+            body_bytes: self.body_bytes.map(|b| Cow::Owned(b.into_owned())),
         }
     }
 
@@ -719,7 +731,7 @@ pub struct NormalizedInputs<'a> {
     pub headers_raw: Vec<(Arc<str>, Cow<'a, str>)>,
     pub body: Option<NormalizedInput<'static>>,
     pub body_raw: Option<Cow<'static, str>>,
-    pub body_bytes: Option<&'a [u8]>,
+    pub body_bytes: Option<Cow<'a, [u8]>>,
 }
 
 impl<'a> NormalizedInputs<'a> {
@@ -775,7 +787,7 @@ impl<'a> NormalizedInputs<'a> {
             headers_raw: raw_headers,
             body: body_norm,
             body_raw,
-            body_bytes: body,
+            body_bytes: body.map(Cow::Borrowed),
         }
     }
 }
@@ -904,7 +916,8 @@ mod tests {
             }
             NormalizedData::Owned(s) => assert_eq!(s, "<script>"),
             NormalizedData::Pooled(p) => assert_eq!(
-                unsafe { std::str::from_utf8_unchecked(p.as_slice()) },
+                std::str::from_utf8(p.as_slice())
+                    .expect("normalized pooled buffer must contain valid UTF-8"),
                 "<script>"
             ),
         }

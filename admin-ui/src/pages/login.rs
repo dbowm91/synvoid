@@ -10,11 +10,17 @@ enum LoginState {
     Error(String),
 }
 
+#[derive(Properties, PartialEq)]
+pub struct LoginProps {
+    pub on_authenticated: Callback<()>,
+}
+
 #[function_component]
-pub fn Login() -> Html {
+pub fn Login(props: &LoginProps) -> Html {
     let token_input = use_state(String::new);
     let login_state = use_state(|| LoginState::Idle);
     let error_msg = use_state(String::new);
+    let on_authenticated = props.on_authenticated.clone();
 
     let on_token_change = {
         let token_input = token_input.clone();
@@ -40,13 +46,12 @@ pub fn Login() -> Html {
 
             let login_state = login_state.clone();
             let error_msg = error_msg.clone();
+            let on_authenticated = on_authenticated.clone();
 
             spawn_local(async move {
                 match ApiService::login(&token).await {
                     Ok(_csrf_token) => {
-                        if let Some(window) = web_sys::window() {
-                            let _ = window.location().set_href("/");
-                        }
+                        on_authenticated.emit(());
                     }
                     Err(msg) => {
                         login_state.set(LoginState::Error(msg.clone()));

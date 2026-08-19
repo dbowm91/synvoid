@@ -129,7 +129,28 @@ pub struct RecursiveDnsServer {
     client_semaphores: Arc<Mutex<HashMap<IpAddr, Arc<Semaphore>>>>,
 }
 
+const MAX_CLIENT_SEMAPHORES: usize = 10_000;
+
 impl RecursiveDnsServer {
+    fn client_semaphore(&self, client_ip: IpAddr, max_per_client: usize) -> Option<Arc<Semaphore>> {
+        let mut map = self.client_semaphores.lock().unwrap();
+        if let Some(semaphore) = map.get(&client_ip) {
+            return Some(semaphore.clone());
+        }
+
+        if map.len() >= MAX_CLIENT_SEMAPHORES {
+            let idle_ip = map
+                .iter()
+                .find(|(_, semaphore)| semaphore.available_permits() == max_per_client)
+                .map(|(ip, _)| *ip)?;
+            map.remove(&idle_ip);
+        }
+
+        let semaphore = Arc::new(Semaphore::new(max_per_client));
+        map.insert(client_ip, semaphore.clone());
+        Some(semaphore)
+    }
+
     pub async fn new(
         config: RecursiveDnsConfig,
         rate_limiter: Option<Arc<DnsRateLimiter>>,
@@ -286,10 +307,9 @@ impl RecursiveDnsServer {
 
         tokio::spawn(async move {
             let mut buf = vec![0u8; 4096];
-            let mut running = server.running.read().await;
 
             loop {
-                if !*running {
+                if !*server.running.read().await {
                     break;
                 }
 
@@ -313,8 +333,6 @@ impl RecursiveDnsServer {
                     }
                     _ = tokio::time::sleep(Duration::from_millis(100)) => {}
                 }
-
-                running = server.running.read().await;
             }
 
             info!("Recursive DNS server stopped");
@@ -380,11 +398,9 @@ impl RecursiveDnsServer {
 
         let max_per_client = self.config.max_per_client_queries;
         let client_sem = if max_per_client > 0 {
-            let mut map = self.client_semaphores.lock().unwrap();
             Some(
-                map.entry(client_addr.ip())
-                    .or_insert_with(|| Arc::new(Semaphore::new(max_per_client as usize)))
-                    .clone(),
+                self.client_semaphore(client_addr.ip(), max_per_client as usize)
+                    .ok_or(RecursiveDnsError::RateLimited)?,
             )
         } else {
             None
@@ -548,12 +564,9 @@ impl RecursiveDnsServer {
 
         let max_per_client = self.config.max_per_client_queries;
         if max_per_client > 0 {
-            let sem = {
-                let mut map = self.client_semaphores.lock().unwrap();
-                map.entry(client_addr.ip())
-                    .or_insert_with(|| Arc::new(Semaphore::new(max_per_client as usize)))
-                    .clone()
-            };
+            let sem = self
+                .client_semaphore(client_addr.ip(), max_per_client as usize)
+                .ok_or(RecursiveDnsError::RateLimited)?;
             let _client_permit = tokio::time::timeout(Duration::from_secs(1), sem.acquire())
                 .await
                 .map_err(|_| RecursiveDnsError::RateLimited)?

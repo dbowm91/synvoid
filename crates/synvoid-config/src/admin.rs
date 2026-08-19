@@ -53,11 +53,12 @@ pub struct AdminConfig {
     #[serde(default)]
     pub trusted_proxies: Vec<String>,
     /// Explicitly control the `Secure` flag on the session cookie.
-    /// - `Some(true)`: Always set `Secure` (for TLS-terminating reverse proxy deployments).
-    /// - `Some(false)`: Never set `Secure` (for plain HTTP development).
-    /// - `None` (default): Infer from bind address (non-loopback = Secure).
+    /// - `true`: Always set `Secure` (for TLS-terminating reverse proxy deployments).
+    /// - `false`: Never set `Secure` (for plain HTTP development).
+    ///
+    /// The default is `false`; HTTPS/reverse-proxy deployments must opt in.
     #[serde(default)]
-    pub secure_cookie: Option<bool>,
+    pub secure_cookie: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]

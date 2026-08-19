@@ -86,9 +86,11 @@ impl DnsCookieServer {
         expected_server.ct_eq(server_cookie).into()
     }
 
-    pub fn create_response_cookie(&self, client_ip: IpAddr) -> Vec<u8> {
-        let client_cookie = super::crypto_rng::random_bytes(COOKIE_SIZE)
-            .expect("Crypto RNG failure - system integrity compromised");
+    pub fn create_response_cookie(
+        &self,
+        client_ip: IpAddr,
+    ) -> Result<Vec<u8>, super::crypto_rng::CryptoRngError> {
+        let client_cookie = super::crypto_rng::random_bytes(COOKIE_SIZE)?;
         let server_cookie = self.generate_server_cookie(client_ip, &client_cookie);
 
         let mut cookies = self.inner.cookies.write();
@@ -103,7 +105,7 @@ impl DnsCookieServer {
 
         let mut response = client_cookie;
         response.extend_from_slice(&server_cookie);
-        response
+        Ok(response)
     }
 
     pub fn should_require_cookie(&self, client_ip: IpAddr) -> bool {

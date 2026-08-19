@@ -388,6 +388,9 @@ impl HttpsServer {
 
                             if http_config.strict_protocol_validation {
                                 let raw_fd = stream.as_raw_fd();
+                                // SAFETY: `raw_fd` belongs to `stream`; this temporary wrapper is
+                                // used only for a non-consuming peek and is forgotten before the
+                                // original stream is dropped, so ownership stays with `stream`.
                                 let socket = unsafe { std::net::TcpStream::from_raw_fd(raw_fd) };
                                 socket.set_nonblocking(false).ok();
                                 let mut peek_buf = [0u8; 16];

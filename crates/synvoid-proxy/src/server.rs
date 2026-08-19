@@ -516,23 +516,13 @@ impl<W: WafProcessor> ProxyServer<W> {
                 counter!("synvoid.requests.upstream_error").increment(1);
                 tracing::error!("Upstream error: {}", e);
                 histogram!("synvoid.request.duration").record(start.elapsed());
-                Ok(Response::builder()
-                    .status(502)
-                    .body(
-                        Full::new(Bytes::from_static(b"Bad Gateway"))
-                            .map_err(std::io::Error::other)
-                            .boxed(),
-                    )
-                    .unwrap_or_else(|_| {
-                        Response::builder()
-                            .status(502)
-                            .body(
-                                Full::new(Bytes::from_static(b"Bad Gateway"))
-                                    .map_err(std::io::Error::other)
-                                    .boxed(),
-                            )
-                            .unwrap_or_else(|_| unreachable!())
-                    }))
+                let mut response = Response::new(
+                    Full::new(Bytes::from_static(b"Bad Gateway"))
+                        .map_err(std::io::Error::other)
+                        .boxed(),
+                );
+                *response.status_mut() = http::StatusCode::BAD_GATEWAY;
+                Ok(response)
             }
         }
     }

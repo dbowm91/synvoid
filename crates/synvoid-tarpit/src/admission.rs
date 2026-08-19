@@ -9,12 +9,25 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 /// Permits are released automatically on drop.
 pub struct AdmissionGuard {
     _global: OwnedSemaphorePermit,
-    _ip: OwnedSemaphorePermit,
+    _ip: Option<OwnedSemaphorePermit>,
+    ip_map: Arc<Mutex<HashMap<IpAddr, Arc<Semaphore>>>>,
+    ip: IpAddr,
+    ip_sema: Arc<Semaphore>,
+    max_per_ip: usize,
     active_count: Arc<AtomicUsize>,
 }
 
 impl Drop for AdmissionGuard {
     fn drop(&mut self) {
+        self._ip.take();
+        let mut map = self.ip_map.lock();
+        if map
+            .get(&self.ip)
+            .is_some_and(|sema| Arc::ptr_eq(sema, &self.ip_sema))
+            && self.ip_sema.available_permits() == self.max_per_ip
+        {
+            map.remove(&self.ip);
+        }
         self.active_count.fetch_sub(1, Ordering::Relaxed);
     }
 }
@@ -63,7 +76,11 @@ impl TarpitAdmission {
 
         Some(AdmissionGuard {
             _global: global_permit,
-            _ip: ip_permit,
+            _ip: Some(ip_permit),
+            ip_map: Arc::clone(&self.ip_map),
+            ip,
+            ip_sema,
+            max_per_ip: self.max_per_ip,
             active_count: Arc::clone(&self.active_count),
         })
     }

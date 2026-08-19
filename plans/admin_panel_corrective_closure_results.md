@@ -38,9 +38,9 @@ Final corrective pass addressed remaining integration gaps:
    - Added unit tests for ASCII, multibyte, boundary, and empty cases
 
 7. **Explicit secure-cookie configuration** (`crates/synvoid-config/src/admin.rs`, `src/admin/mod.rs`):
-   - Added `AdminConfig.secure_cookie: Option<bool>` field
-   - `Some(true)` forces Secure cookie, `Some(false)` disables, `None` falls back to bind-address heuristic
-   - Updated `create_admin_router` to use explicit config when available
+   - Added `AdminConfig.secure_cookie: bool` field, defaulting to `false`
+   - HTTPS or reverse-proxy deployments must explicitly set `secure_cookie = true`
+   - Updated `create_admin_router` to use the explicit transport policy without bind-address inference
 
 8. **Route contract test updates** (`tests/admin_route_contract.rs`):
    - All existing tests continue to pass (8 tests)
@@ -79,9 +79,9 @@ cd admin-ui && cargo check  # PASS
 | `src/admin/handlers/api_discovery.rs` | Discovery at /api, feature-gated categories |
 | `src/admin/handlers/tier_keys.rs` | Added #![allow(dead_code)] for pre-existing clippy issue |
 | `src/admin/AGENTS.override.md` | Updated WS paths, CSRF exclusions, secure cookie docs |
-| `crates/synvoid-config/src/admin.rs` | Added secure_cookie: Option<bool> field |
-| `crates/synvoid-config/src/main_config.rs` | Added secure_cookie: None to default config |
+| `crates/synvoid-config/src/admin.rs` | Added secure_cookie: bool field |
+| `crates/synvoid-config/src/main_config.rs` | Added secure_cookie: false to default config |
 | `crates/synvoid-admin/src/handlers/system.rs` | Honeypot capability decoupled from mesh feature |
-| `tests/integration_test.rs` | Added secure_cookie: None to AdminConfig literals |
+| `tests/integration_test.rs` | Added secure_cookie: false to AdminConfig literals |
 | `plans/admin_panel_final_corrective_closure.md` | Status → COMPLETE |
 | `plans/admin_panel_corrective_roadmap.md` | Status → COMPLETE |

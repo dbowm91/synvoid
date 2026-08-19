@@ -5,7 +5,6 @@
 
 #[allow(unused_imports)]
 use std::sync::Arc;
-use tokio::runtime::Runtime;
 
 use crate::platform::sandbox::{ProcessSandbox, SandboxLevel, SandboxPaths};
 
@@ -23,12 +22,10 @@ pub fn run_wasm_jail_mode() {
         std::process::exit(1);
     }
 
-    let rt = Runtime::new().expect("Failed to build Tokio runtime for WASM jail");
-    rt.block_on(async {
-        // TODO: Implement IPC listener for WASM execution requests
-        tracing::info!("WASM jail is now active and sandboxed.");
-        let _ = tokio::signal::ctrl_c().await;
-    });
+    tracing::error!(
+        "WASM jail IPC is not implemented; refusing to run a sandbox with no request listener"
+    );
+    std::process::exit(1);
 }
 
 pub fn run_yara_jail_mode() {
@@ -45,10 +42,8 @@ pub fn run_yara_jail_mode() {
         std::process::exit(1);
     }
 
-    let rt = Runtime::new().expect("Failed to build Tokio runtime for YARA jail");
-    rt.block_on(async {
-        // TODO: Implement IPC listener for YARA scan requests
-        tracing::info!("YARA jail is now active and sandboxed.");
-        let _ = tokio::signal::ctrl_c().await;
-    });
+    tracing::error!(
+        "YARA jail IPC is not implemented; refusing to run a sandbox with no request listener"
+    );
+    std::process::exit(1);
 }

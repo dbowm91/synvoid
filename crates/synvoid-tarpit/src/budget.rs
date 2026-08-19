@@ -44,7 +44,7 @@ impl SessionBudget {
 
         *self.last_activity.lock() = Instant::now();
 
-        if chunks >= self.config.max_chunks {
+        if chunks > self.config.max_chunks {
             return false;
         }
         if bytes >= self.config.max_bytes {
@@ -120,7 +120,8 @@ mod tests {
     fn reject_after_max_chunks() {
         let budget = SessionBudget::new(test_budget(2, 1024, 600));
         assert!(budget.record_chunk(10)); // chunks=1, < 2
-        assert!(!budget.record_chunk(10)); // chunks=2, >= 2
+        assert!(budget.record_chunk(10)); // chunks=2, equal to the limit
+        assert!(!budget.record_chunk(10)); // chunks=3, exceeds the limit
     }
 
     #[test]

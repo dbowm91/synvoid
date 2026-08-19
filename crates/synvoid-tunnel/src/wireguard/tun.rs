@@ -170,6 +170,8 @@ mod platform {
             let fd = self.fd;
             let name = self.name.clone();
 
+            // SAFETY: We've extracted the fields we need; prevent Drop from closing fd
+            // since ownership is transferred to AsyncTunDevice.
             std::mem::forget(self);
 
             Ok(AsyncTunDevice { fd, name })

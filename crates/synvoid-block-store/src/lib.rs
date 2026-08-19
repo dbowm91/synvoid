@@ -20,7 +20,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use synvoid_config::DenyListLimitsConfig;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 pub use synvoid_core::block_store::{
     BlockProvenance, BlockProvenanceKind, BlockRecord, BlockTargetKind, BlocklistEvent,
@@ -527,7 +527,7 @@ pub struct BlockStore {
     capacity_lock: Mutex<()>,
     mesh_capacity_lock: Mutex<()>,
     persist_tx: Option<mpsc::Sender<PersistRequest>>,
-    shutdown_tx: Option<mpsc::Sender<()>>,
+    shutdown_tx: Option<mpsc::Sender<oneshot::Sender<()>>>,
     mitigation_provider: arc_swap::ArcSwapOption<SizedMitigationProvider>,
     seen_events: RwLock<SeenEventCache>,
     target_state: RwLock<TargetStateCache>,
@@ -836,8 +836,10 @@ impl BlockStore {
         {
             let (tx, mut rx): (mpsc::Sender<PersistRequest>, mpsc::Receiver<PersistRequest>) =
                 mpsc::channel(100);
-            let (shutdown_tx, mut shutdown_rx): (mpsc::Sender<()>, mpsc::Receiver<()>) =
-                mpsc::channel(1);
+            let (shutdown_tx, mut shutdown_rx): (
+                mpsc::Sender<oneshot::Sender<()>>,
+                mpsc::Receiver<oneshot::Sender<()>>,
+            ) = mpsc::channel(1);
             let path = persist_path.clone().unwrap();
             let mesh_path = mesh_persist_path.clone();
             let max_entries_clone = max_entries;
@@ -861,7 +863,13 @@ impl BlockStore {
                         Some(req) = rx.recv() => {
                             pending = Some(req);
                         }
-                        _ = shutdown_rx.recv() => {
+                        Some(done_tx) = shutdown_rx.recv() => {
+                            // Requests can be queued ahead of the shutdown signal. Drain
+                            // them so the final snapshot is always the newest state rather
+                            // than a stale pre-unblock snapshot.
+                            while let Ok(req) = rx.try_recv() {
+                                pending = Some(req);
+                            }
                             if let Some(req) = pending.take() {
                                 Self::persist_to_disk(&path, req.entries, max_entries_clone).await;
                                 if let Some(ref mp) = mesh_path {
@@ -869,6 +877,7 @@ impl BlockStore {
                                 }
                             }
                             tracing::info!("Block store persistence task shutting down");
+                            let _ = done_tx.send(());
                             break;
                         }
                     }
@@ -968,7 +977,10 @@ impl BlockStore {
         }
 
         if let Some(tx) = &self.shutdown_tx {
-            let _ = tx.send(()).await;
+            let (done_tx, done_rx) = oneshot::channel();
+            if tx.send(done_tx).await.is_ok() {
+                let _ = done_rx.await;
+            }
         }
     }
 
@@ -1252,12 +1264,15 @@ impl BlockStore {
         }
 
         if let Some((key, idx)) = min_key.zip(min_shard_idx) {
-            self.shards[idx].write().remove(&key);
-            let _ = self
-                .total_entries
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1));
-            tracing::debug!("Evicted LRU block entry: {}", key);
-            true
+            if self.shards[idx].write().remove(&key).is_some() {
+                let _ =
+                    self.total_entries
+                        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1));
+                tracing::debug!("Evicted LRU block entry: {}", key);
+                true
+            } else {
+                false
+            }
         } else {
             false
         }
@@ -1281,12 +1296,17 @@ impl BlockStore {
         }
 
         if let Some((key, idx)) = min_key.zip(min_shard_idx) {
-            self.mesh_shards[idx].write().remove(&key);
-            let _ =
-                self.total_mesh_entries
-                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1));
-            tracing::debug!("Evicted LRU mesh block entry: {}", key);
-            true
+            if self.mesh_shards[idx].write().remove(&key).is_some() {
+                let _ = self.total_mesh_entries.fetch_update(
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                    |v| v.checked_sub(1),
+                );
+                tracing::debug!("Evicted LRU mesh block entry: {}", key);
+                true
+            } else {
+                false
+            }
         } else {
             false
         }

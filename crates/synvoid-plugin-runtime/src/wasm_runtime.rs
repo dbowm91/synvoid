@@ -5423,11 +5423,6 @@ entry = "plugin.wasm"
                 .unwrap();
             let env = Arc::new(std::collections::HashMap::new());
             let _ = runtime.filter_request(req, env);
-            eprintln!(
-                "After invocation {}: failure_count={}",
-                i + 1,
-                runtime.guard.failure_count()
-            );
         }
 
         // After 6 invocations (threshold is 5), plugin MUST be disabled
@@ -5474,11 +5469,6 @@ entry = "plugin.wasm"
                 .unwrap();
             let env = Arc::new(std::collections::HashMap::new());
             let _ = runtime.filter_request(req, env);
-            eprintln!(
-                "Fuel test after {}: failure_count={}",
-                i + 1,
-                runtime.guard.failure_count()
-            );
         }
 
         // After 10 invocations (threshold is 5), plugin MUST be disabled

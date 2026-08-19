@@ -43,6 +43,10 @@ impl ReplayCache {
     }
 
     fn insert(&mut self, mac_hash: Vec<u8>) {
+        if self.last_cleanup.elapsed().as_secs() >= TSIG_REPLAY_CACHE_TTL_SECS {
+            self.cleanup_expired();
+        }
+
         if self.entries.len() >= MAX_REPLAY_CACHE_SIZE {
             self.evict_oldest();
         }
@@ -52,10 +56,6 @@ impl ReplayCache {
                 timestamp: Instant::now(),
             },
         );
-
-        if self.last_cleanup.elapsed().as_secs() >= TSIG_REPLAY_CACHE_TTL_SECS {
-            self.cleanup_expired();
-        }
     }
 
     fn evict_oldest(&mut self) {
@@ -167,12 +167,6 @@ impl TsigVerifier {
         }
 
         let mac_hash = ReplayCache::compute_mac_hash(original_mac);
-        {
-            let cache = self.replay_cache.read();
-            if cache.is_replay(&mac_hash) {
-                return Err(TsigError::ReplayAttack);
-            }
-        }
 
         let keys = self.keys.read();
         let key = keys
@@ -240,10 +234,11 @@ impl TsigVerifier {
             return Err(TsigError::MacVerificationFailed);
         }
 
-        {
-            let mut cache = self.replay_cache.write();
-            cache.insert(mac_hash);
+        let mut cache = self.replay_cache.write();
+        if cache.is_replay(&mac_hash) {
+            return Err(TsigError::ReplayAttack);
         }
+        cache.insert(mac_hash);
 
         Ok(())
     }

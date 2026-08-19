@@ -235,7 +235,7 @@ impl MainConfig {
                 cors: AdminCorsConfig::default(),
                 rate_limit: AdminRateLimitConfig::default(),
                 trusted_proxies: Vec::new(),
-                secure_cookie: None,
+                secure_cookie: false,
             },
             logging: LoggingConfig::default(),
             metrics: MetricsConfig {

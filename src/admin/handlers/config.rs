@@ -7,9 +7,14 @@ use schemars::schema_for;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Instant;
+use synvoid_core::admin_mutation::AdminMutationResult;
 use utoipa::ToSchema;
 
 use super::common::{OptionalAuth, StatusResponse};
+
+fn config_mutation(message: impl Into<String>) -> AdminMutationResult<String> {
+    AdminMutationResult::applied("config".to_string(), message)
+}
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct MainConfigResponse {
@@ -60,7 +65,7 @@ pub struct UpdateMainConfigRequest {
     path = "/config/main",
     request_body = UpdateMainConfigRequest,
     responses(
-        (status = 200, description = "Configuration updated", body = StatusResponse),
+        (status = 200, description = "Configuration updated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -71,7 +76,7 @@ pub async fn update_main_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdateMainConfigRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     // Save snapshot before making changes
     save_config_snapshot(&state, Some("Before update_main_config".to_string())).await?;
 
@@ -130,7 +135,7 @@ pub async fn update_main_config(
         true,
     ));
 
-    Ok(Json(StatusResponse::success(
+    Ok(Json(config_mutation(
         "Configuration updated and reloaded to workers.",
     )))
 }
@@ -156,7 +161,7 @@ pub async fn get_config_schema(_auth: OptionalAuth) -> Result<Json<serde_json::V
     post,
     path = "/config/reload",
     responses(
-        (status = 200, description = "Configuration reloaded", body = StatusResponse),
+        (status = 200, description = "Configuration reloaded", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 500, description = "Internal server error")
     ),
@@ -165,7 +170,7 @@ pub async fn get_config_schema(_auth: OptionalAuth) -> Result<Json<serde_json::V
 pub async fn reload_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     #[cfg(feature = "mesh")]
     {
         let mesh_enabled = {
@@ -179,7 +184,7 @@ pub async fn reload_config(
         };
 
         if mesh_enabled {
-            return Ok(Json(StatusResponse::restart_required(
+            return Ok(Json(config_mutation(
                 "Config hot-reload is not supported when mesh feature is enabled. Mesh, \
                 YARA rules, threat intel, and honeypot changes require full worker restart. \
                 Please restart the worker to apply mesh-related configuration changes.",
@@ -191,9 +196,7 @@ pub async fn reload_config(
     {
         let _ = &state;
         #[allow(unreachable_code)]
-        return Ok(Json(StatusResponse::success(
-            "Configuration reloaded successfully",
-        )));
+        return Ok(Json(config_mutation("Configuration reloaded successfully")));
     }
 
     #[cfg(feature = "mesh")]
@@ -267,11 +270,7 @@ pub async fn reload_config(
             )
         };
 
-        if failed == 0 {
-            Ok(Json(StatusResponse::hot_reload_applied(message)))
-        } else {
-            Ok(Json(StatusResponse::partial_reload(message)))
-        }
+        Ok(Json(config_mutation(message)))
     }
 }
 
@@ -285,7 +284,7 @@ pub struct SetLogLevelRequest {
     path = "/config/log-level",
     request_body = SetLogLevelRequest,
     responses(
-        (status = 200, description = "Log level set", body = StatusResponse),
+        (status = 200, description = "Log level set", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid log level"),
         (status = 500, description = "Internal server error")
@@ -296,12 +295,9 @@ pub async fn set_log_level(
     State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<SetLogLevelRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     match log_controller::set_log_level(&req.level) {
-        Ok(level) => Ok(Json(StatusResponse {
-            status: "success".to_string(),
-            message: format!("Log level set to {}", level),
-        })),
+        Ok(level) => Ok(Json(config_mutation(format!("Log level set to {}", level)))),
         Err(e) => {
             tracing::warn!("Invalid log level request: {}", e);
             Err(StatusCode::BAD_REQUEST)
@@ -434,7 +430,7 @@ fn validate_config_paths(content: &str) -> Result<(), String> {
     path = "/config/import",
     request_body = ImportConfigRequest,
     responses(
-        (status = 200, description = "Configuration imported", body = StatusResponse),
+        (status = 200, description = "Configuration imported", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -445,7 +441,7 @@ pub async fn import_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<ImportConfigRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     save_config_snapshot(&state, Some("Before import_config".to_string())).await?;
 
     validate_config_paths(&req.config).map_err(|e| {
@@ -494,7 +490,7 @@ pub async fn import_config(
         pm.broadcast_config_reload(config_dir).await;
     }
 
-    Ok(Json(StatusResponse::success(
+    Ok(Json(config_mutation(
         "Configuration imported and reloaded.",
     )))
 }
@@ -605,7 +601,7 @@ pub async fn get_process_manager_config(
     path = "/config/process-manager",
     request_body = UpdateProcessManagerConfigRequest,
     responses(
-        (status = 200, description = "Process manager config updated", body = StatusResponse),
+        (status = 200, description = "Process manager config updated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -616,7 +612,7 @@ pub async fn update_process_manager_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdateProcessManagerConfigRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     save_config_snapshot(
         &state,
         Some("Before update_process_manager_config".to_string()),
@@ -663,11 +659,11 @@ pub async fn update_process_manager_config(
         })?;
 
     if needs_restart {
-        Ok(Json(StatusResponse::success(
+        Ok(Json(config_mutation(
             "Process manager config updated. Restart required for changes to take effect.",
         )))
     } else {
-        Ok(Json(StatusResponse::success(
+        Ok(Json(config_mutation(
             "Process manager config updated and applied dynamically.",
         )))
     }
@@ -708,7 +704,7 @@ pub async fn get_supervisor_config(
     path = "/config/supervisor",
     request_body = UpdateSupervisorConfigRequest,
     responses(
-        (status = 200, description = "Supervisor config updated", body = StatusResponse),
+        (status = 200, description = "Supervisor config updated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -719,7 +715,7 @@ pub async fn update_supervisor_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdateSupervisorConfigRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     save_config_snapshot(&state, Some("Before update_supervisor_config".to_string())).await?;
 
     let _guard = state.metrics.config_write_lock.write().await;
@@ -785,7 +781,7 @@ pub async fn update_supervisor_config(
 
     tracing::info!("Supervisor config updated - reload signal sent to workers");
 
-    Ok(Json(StatusResponse::success(
+    Ok(Json(config_mutation(
         "Supervisor config updated and reload signal sent to workers.",
     )))
 }
@@ -827,7 +823,7 @@ pub async fn get_tls_config(
     path = "/config/tls",
     request_body = UpdateTlsConfigRequest,
     responses(
-        (status = 200, description = "TLS config updated", body = StatusResponse),
+        (status = 200, description = "TLS config updated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -838,14 +834,14 @@ pub async fn update_tls_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdateTlsConfigRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let _guard = state.metrics.config_write_lock.write().await;
     {
         let mut config = state.process.config.write().await;
         config.main.tls = req.config;
     }
     persist_with_snapshot(&state, "TLS config updated").await?;
-    Ok(Json(StatusResponse::success("TLS config updated.")))
+    Ok(Json(config_mutation("TLS config updated.")))
 }
 
 // --- HTTP config ---
@@ -885,7 +881,7 @@ pub async fn get_http_config(
     path = "/config/http",
     request_body = UpdateHttpConfigRequest,
     responses(
-        (status = 200, description = "HTTP config updated", body = StatusResponse),
+        (status = 200, description = "HTTP config updated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -896,14 +892,14 @@ pub async fn update_http_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdateHttpConfigRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let _guard = state.metrics.config_write_lock.write().await;
     {
         let mut config = state.process.config.write().await;
         config.main.http = req.config;
     }
     persist_with_snapshot(&state, "TLS config updated").await?;
-    Ok(Json(StatusResponse::success("HTTP config updated.")))
+    Ok(Json(config_mutation("HTTP config updated.")))
 }
 
 // --- ACME config ---
@@ -943,7 +939,7 @@ pub async fn get_acme_config(
     path = "/config/acme",
     request_body = UpdateAcmeConfigRequest,
     responses(
-        (status = 200, description = "ACME config updated", body = StatusResponse),
+        (status = 200, description = "ACME config updated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -954,14 +950,14 @@ pub async fn update_acme_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdateAcmeConfigRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let _guard = state.metrics.config_write_lock.write().await;
     {
         let mut config = state.process.config.write().await;
         config.main.tls.acme = req.config;
     }
     persist_with_snapshot(&state, "TLS config updated").await?;
-    Ok(Json(StatusResponse::success("ACME config updated.")))
+    Ok(Json(config_mutation("ACME config updated.")))
 }
 
 // --- HTTP/3 config ---
@@ -1001,7 +997,7 @@ pub async fn get_http3_config(
     path = "/config/http3",
     request_body = UpdateHttp3ConfigRequest,
     responses(
-        (status = 200, description = "HTTP/3 config updated", body = StatusResponse),
+        (status = 200, description = "HTTP/3 config updated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -1012,14 +1008,14 @@ pub async fn update_http3_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdateHttp3ConfigRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let _guard = state.metrics.config_write_lock.write().await;
     {
         let mut config = state.process.config.write().await;
         config.main.http3 = req.config;
     }
     persist_with_snapshot(&state, "TLS config updated").await?;
-    Ok(Json(StatusResponse::success("HTTP/3 config updated.")))
+    Ok(Json(config_mutation("HTTP/3 config updated.")))
 }
 
 // --- Security config ---
@@ -1059,7 +1055,7 @@ pub async fn get_security_config(
     path = "/config/security",
     request_body = UpdateSecurityConfigRequest,
     responses(
-        (status = 200, description = "Security config updated", body = StatusResponse),
+        (status = 200, description = "Security config updated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -1070,14 +1066,14 @@ pub async fn update_security_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdateSecurityConfigRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let _guard = state.metrics.config_write_lock.write().await;
     {
         let mut config = state.process.config.write().await;
         config.main.security = req.config;
     }
     persist_with_snapshot(&state, "TLS config updated").await?;
-    Ok(Json(StatusResponse::success("Security config updated.")))
+    Ok(Json(config_mutation("Security config updated.")))
 }
 
 // --- Static config ---
@@ -1117,7 +1113,7 @@ pub async fn get_static_config(
     path = "/config/static",
     request_body = UpdateStaticConfigRequest,
     responses(
-        (status = 200, description = "Static config updated", body = StatusResponse),
+        (status = 200, description = "Static config updated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -1128,14 +1124,14 @@ pub async fn update_static_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdateStaticConfigRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let _guard = state.metrics.config_write_lock.write().await;
     {
         let mut config = state.process.config.write().await;
         config.main.static_config = Some(req.config);
     }
     persist_with_snapshot(&state, "Static config updated").await?;
-    Ok(Json(StatusResponse::success("Static config updated.")))
+    Ok(Json(config_mutation("Static config updated.")))
 }
 
 // --- Tunnel config ---
@@ -1178,7 +1174,7 @@ pub async fn get_tunnel_config(
     path = "/config/tunnel",
     request_body = UpdateTunnelConfigRequest,
     responses(
-        (status = 200, description = "Tunnel config updated", body = StatusResponse),
+        (status = 200, description = "Tunnel config updated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -1189,7 +1185,7 @@ pub async fn update_tunnel_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdateTunnelConfigRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let tunnel_config: crate::config::tunnel::TunnelConfig = serde_json::from_value(req.config)
         .map_err(|e| {
             tracing::error!("Failed to parse tunnel config: {}", e);
@@ -1201,7 +1197,7 @@ pub async fn update_tunnel_config(
         config.main.tunnel = tunnel_config;
     }
     persist_with_snapshot(&state, "TLS config updated").await?;
-    Ok(Json(StatusResponse::success("Tunnel config updated.")))
+    Ok(Json(config_mutation("Tunnel config updated.")))
 }
 
 // --- Plugins config ---
@@ -1241,7 +1237,7 @@ pub async fn get_plugins_config(
     path = "/config/plugins",
     request_body = UpdatePluginsConfigRequest,
     responses(
-        (status = 200, description = "Plugins config updated", body = StatusResponse),
+        (status = 200, description = "Plugins config updated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -1252,14 +1248,14 @@ pub async fn update_plugins_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdatePluginsConfigRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let _guard = state.metrics.config_write_lock.write().await;
     {
         let mut config = state.process.config.write().await;
         config.main.plugins = req.config;
     }
     persist_with_snapshot(&state, "TLS config updated").await?;
-    Ok(Json(StatusResponse::success("Plugins config updated.")))
+    Ok(Json(config_mutation("Plugins config updated.")))
 }
 
 // --- Logging config ---
@@ -1299,7 +1295,7 @@ pub async fn get_logging_config(
     path = "/config/logging",
     request_body = UpdateLoggingConfigRequest,
     responses(
-        (status = 200, description = "Logging config updated", body = StatusResponse),
+        (status = 200, description = "Logging config updated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -1310,14 +1306,14 @@ pub async fn update_logging_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdateLoggingConfigRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let _guard = state.metrics.config_write_lock.write().await;
     {
         let mut config = state.process.config.write().await;
         config.main.logging = req.config;
     }
     persist_with_snapshot(&state, "TLS config updated").await?;
-    Ok(Json(StatusResponse::success("Logging config updated.")))
+    Ok(Json(config_mutation("Logging config updated.")))
 }
 
 // --- Metrics config ---
@@ -1357,7 +1353,7 @@ pub async fn get_metrics_config(
     path = "/config/metrics",
     request_body = UpdateMetricsConfigRequest,
     responses(
-        (status = 200, description = "Metrics config updated", body = StatusResponse),
+        (status = 200, description = "Metrics config updated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -1368,14 +1364,14 @@ pub async fn update_metrics_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdateMetricsConfigRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let _guard = state.metrics.config_write_lock.write().await;
     {
         let mut config = state.process.config.write().await;
         config.main.metrics = req.config;
     }
     persist_with_snapshot(&state, "Metrics config updated").await?;
-    Ok(Json(StatusResponse::success("Metrics config updated.")))
+    Ok(Json(config_mutation("Metrics config updated.")))
 }
 
 // --- Tokio config ---
@@ -1415,7 +1411,7 @@ pub async fn get_tokio_config(
     path = "/config/tokio",
     request_body = UpdateTokioConfigRequest,
     responses(
-        (status = 200, description = "Tokio config updated", body = StatusResponse),
+        (status = 200, description = "Tokio config updated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -1426,14 +1422,14 @@ pub async fn update_tokio_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdateTokioConfigRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let _guard = state.metrics.config_write_lock.write().await;
     {
         let mut config = state.process.config.write().await;
         config.main.tokio = req.config;
     }
     persist_with_snapshot(&state, "Tokio config updated").await?;
-    Ok(Json(StatusResponse::success("Tokio config updated.")))
+    Ok(Json(config_mutation("Tokio config updated.")))
 }
 
 // --- Traffic shaping config ---
@@ -1473,7 +1469,7 @@ pub async fn get_traffic_shaping_config(
     path = "/config/traffic-shaping",
     request_body = UpdateTrafficShapingConfigRequest,
     responses(
-        (status = 200, description = "Traffic shaping config updated", body = StatusResponse),
+        (status = 200, description = "Traffic shaping config updated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -1484,16 +1480,14 @@ pub async fn update_traffic_shaping_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdateTrafficShapingConfigRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let _guard = state.metrics.config_write_lock.write().await;
     {
         let mut config = state.process.config.write().await;
         config.main.traffic_shaping = req.config;
     }
     persist_with_snapshot(&state, "TLS config updated").await?;
-    Ok(Json(StatusResponse::success(
-        "Traffic shaping config updated.",
-    )))
+    Ok(Json(config_mutation("Traffic shaping config updated.")))
 }
 
 // --- Threat level config ---
@@ -1533,7 +1527,7 @@ pub async fn get_threat_level_config(
     path = "/config/threat-level",
     request_body = UpdateThreatLevelConfigRequest,
     responses(
-        (status = 200, description = "Threat level config updated", body = StatusResponse),
+        (status = 200, description = "Threat level config updated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -1544,16 +1538,14 @@ pub async fn update_threat_level_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdateThreatLevelConfigRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let _guard = state.metrics.config_write_lock.write().await;
     {
         let mut config = state.process.config.write().await;
         config.main.threat_level = req.config;
     }
     persist_with_snapshot(&state, "TLS config updated").await?;
-    Ok(Json(StatusResponse::success(
-        "Threat level config updated.",
-    )))
+    Ok(Json(config_mutation("Threat level config updated.")))
 }
 
 // --- IP feeds config ---
@@ -1593,7 +1585,7 @@ pub async fn get_ip_feeds_config(
     path = "/config/ip-feeds",
     request_body = UpdateIpFeedsConfigRequest,
     responses(
-        (status = 200, description = "IP feeds config updated", body = StatusResponse),
+        (status = 200, description = "IP feeds config updated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -1604,14 +1596,14 @@ pub async fn update_ip_feeds_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdateIpFeedsConfigRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let _guard = state.metrics.config_write_lock.write().await;
     {
         let mut config = state.process.config.write().await;
         config.main.ip_feeds = req.config;
     }
     persist_with_snapshot(&state, "TLS config updated").await?;
-    Ok(Json(StatusResponse::success("IP feeds config updated.")))
+    Ok(Json(config_mutation("IP feeds config updated.")))
 }
 
 // --- DNS config (feature-gated) ---
@@ -1658,7 +1650,7 @@ pub async fn get_dns_config(
     path = "/config/dns",
     request_body = UpdateDnsConfigRequest,
     responses(
-        (status = 200, description = "DNS config updated", body = StatusResponse),
+        (status = 200, description = "DNS config updated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -1669,7 +1661,7 @@ pub async fn update_dns_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdateDnsConfigRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let dns_config: crate::config::dns::DnsConfig =
         serde_json::from_value(req.config).map_err(|e| {
             tracing::error!("Failed to parse DNS config: {}", e);
@@ -1681,7 +1673,7 @@ pub async fn update_dns_config(
         config.main.dns = dns_config;
     }
     persist_with_snapshot(&state, "TLS config updated").await?;
-    Ok(Json(StatusResponse::success("DNS config updated.")))
+    Ok(Json(config_mutation("DNS config updated.")))
 }
 
 // --- Rate limits config ---
@@ -1730,7 +1722,7 @@ pub async fn get_rate_limits_config(
     path = "/config/rate-limits",
     request_body = UpdateRateLimitsConfigRequest,
     responses(
-        (status = 200, description = "Rate limits config updated", body = StatusResponse),
+        (status = 200, description = "Rate limits config updated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -1741,7 +1733,7 @@ pub async fn update_rate_limits_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdateRateLimitsConfigRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let _guard = state.metrics.config_write_lock.write().await;
 
     {
@@ -1761,7 +1753,7 @@ pub async fn update_rate_limits_config(
     }
 
     persist_with_snapshot(&state, "TLS config updated").await?;
-    Ok(Json(StatusResponse::success("Rate limits config updated.")))
+    Ok(Json(config_mutation("Rate limits config updated.")))
 }
 
 // --- Bot detection config ---
@@ -1801,7 +1793,7 @@ pub async fn get_bot_detection_config(
     path = "/config/bot-detection",
     request_body = UpdateBotDetectionConfigRequest,
     responses(
-        (status = 200, description = "Bot detection config updated", body = StatusResponse),
+        (status = 200, description = "Bot detection config updated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -1812,7 +1804,7 @@ pub async fn update_bot_detection_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdateBotDetectionConfigRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let _guard = state.metrics.config_write_lock.write().await;
 
     {
@@ -1821,9 +1813,7 @@ pub async fn update_bot_detection_config(
     }
 
     persist_with_snapshot(&state, "TLS config updated").await?;
-    Ok(Json(StatusResponse::success(
-        "Bot detection config updated.",
-    )))
+    Ok(Json(config_mutation("Bot detection config updated.")))
 }
 
 // --- Mesh config ---
@@ -1859,7 +1849,7 @@ pub async fn update_mesh_config(
     _: State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(_req): Json<UpdateMeshConfigRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     Err(StatusCode::NOT_FOUND)
 }
 
@@ -1875,7 +1865,7 @@ pub async fn update_mesh_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdateMeshConfigRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let _guard = state.metrics.config_write_lock.write().await;
 
     let mesh_config: crate::config::mesh::MeshConfig =
@@ -1887,7 +1877,7 @@ pub async fn update_mesh_config(
     }
 
     persist_with_snapshot(&state, "TLS config updated").await?;
-    Ok(Json(StatusResponse::success("Mesh config updated.")))
+    Ok(Json(config_mutation("Mesh config updated.")))
 }
 
 #[cfg(not(feature = "mesh"))]
@@ -1896,7 +1886,7 @@ pub async fn _update_mesh_config_stub(
     _: State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(_req): Json<UpdateMeshConfigRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     Err(StatusCode::NOT_FOUND)
 }
 
@@ -1937,7 +1927,7 @@ pub async fn get_mime_types_config(
     path = "/config/mime-types",
     request_body = UpdateMimeTypesConfigRequest,
     responses(
-        (status = 200, description = "MIME types config updated", body = StatusResponse),
+        (status = 200, description = "MIME types config updated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -1948,14 +1938,14 @@ pub async fn update_mime_types_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdateMimeTypesConfigRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let _guard = state.metrics.config_write_lock.write().await;
     {
         let mut config = state.process.config.write().await;
         config.main.mimes = req.config;
     }
     persist_with_snapshot(&state, "TLS config updated").await?;
-    Ok(Json(StatusResponse::success("MIME types config updated.")))
+    Ok(Json(config_mutation("MIME types config updated.")))
 }
 
 // --- TCP/UDP Defaults config ---
@@ -1998,7 +1988,7 @@ pub async fn get_tcp_udp_defaults_config(
     path = "/config/tcp-udp-defaults",
     request_body = UpdateTcpUdpDefaultsConfigRequest,
     responses(
-        (status = 200, description = "TCP/UDP defaults config updated", body = StatusResponse),
+        (status = 200, description = "TCP/UDP defaults config updated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -2009,7 +1999,7 @@ pub async fn update_tcp_udp_defaults_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdateTcpUdpDefaultsConfigRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let _guard = state.metrics.config_write_lock.write().await;
     {
         let mut config = state.process.config.write().await;
@@ -2021,9 +2011,7 @@ pub async fn update_tcp_udp_defaults_config(
         }
     }
     persist_with_snapshot(&state, "TLS config updated").await?;
-    Ok(Json(StatusResponse::success(
-        "TCP/UDP defaults config updated.",
-    )))
+    Ok(Json(config_mutation("TCP/UDP defaults config updated.")))
 }
 
 // --- Fallback config ---
@@ -2063,7 +2051,7 @@ pub async fn get_fallback_config(
     path = "/config/fallback",
     request_body = UpdateFallbackConfigRequest,
     responses(
-        (status = 200, description = "Fallback config updated", body = StatusResponse),
+        (status = 200, description = "Fallback config updated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -2074,14 +2062,14 @@ pub async fn update_fallback_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdateFallbackConfigRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let _guard = state.metrics.config_write_lock.write().await;
     {
         let mut config = state.process.config.write().await;
         config.main.fallback = req.config;
     }
     persist_with_snapshot(&state, "TLS config updated").await?;
-    Ok(Json(StatusResponse::success("Fallback config updated.")))
+    Ok(Json(config_mutation("Fallback config updated.")))
 }
 
 // --- Upgrade config ---
@@ -2121,7 +2109,7 @@ pub async fn get_upgrade_config(
     path = "/config/upgrade",
     request_body = UpdateUpgradeConfigRequest,
     responses(
-        (status = 200, description = "Upgrade config updated", body = StatusResponse),
+        (status = 200, description = "Upgrade config updated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -2132,14 +2120,14 @@ pub async fn update_upgrade_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdateUpgradeConfigRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let _guard = state.metrics.config_write_lock.write().await;
     {
         let mut config = state.process.config.write().await;
         config.main.upgrade = req.config;
     }
     persist_with_snapshot(&state, "TLS config updated").await?;
-    Ok(Json(StatusResponse::success("Upgrade config updated.")))
+    Ok(Json(config_mutation("Upgrade config updated.")))
 }
 
 // --- Rule Feed config ---
@@ -2207,7 +2195,7 @@ pub async fn get_rule_feed_config(
     path = "/config/rule-feed",
     request_body = UpdateRuleFeedConfigRequest,
     responses(
-        (status = 200, description = "Rule feed config updated", body = StatusResponse),
+        (status = 200, description = "Rule feed config updated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -2218,14 +2206,14 @@ pub async fn update_rule_feed_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdateRuleFeedConfigRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let _guard = state.metrics.config_write_lock.write().await;
     {
         let mut config = state.process.config.write().await;
         config.main.rule_feed = req.config;
     }
     persist_with_snapshot(&state, "TLS config updated").await?;
-    Ok(Json(StatusResponse::success("Rule feed config updated.")))
+    Ok(Json(config_mutation("Rule feed config updated.")))
 }
 
 // --- YARA Feed config ---
@@ -2291,7 +2279,7 @@ pub async fn get_yara_feed_config(
     path = "/config/yara-feed",
     request_body = UpdateYaraFeedConfigRequest,
     responses(
-        (status = 200, description = "YARA feed config updated", body = StatusResponse),
+        (status = 200, description = "YARA feed config updated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -2302,14 +2290,14 @@ pub async fn update_yara_feed_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdateYaraFeedConfigRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let _guard = state.metrics.config_write_lock.write().await;
     {
         let mut config = state.process.config.write().await;
         config.main.yara_feed = req.config;
     }
     persist_with_snapshot(&state, "TLS config updated").await?;
-    Ok(Json(StatusResponse::success("YARA feed config updated.")))
+    Ok(Json(config_mutation("YARA feed config updated.")))
 }
 
 // --- Validate config ---
@@ -2395,7 +2383,7 @@ pub async fn get_config_bundle(
     path = "/config/bundle",
     request_body = UpdateConfigBundleRequest,
     responses(
-        (status = 200, description = "Configuration bundle updated", body = StatusResponse),
+        (status = 200, description = "Configuration bundle updated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -2406,7 +2394,7 @@ pub async fn update_config_bundle(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdateConfigBundleRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     save_config_snapshot(&state, Some("Before update_config_bundle".to_string())).await?;
 
     let main_config: crate::config::main::MainConfig = serde_json::from_value(req.config.clone())
@@ -2464,7 +2452,7 @@ pub async fn update_config_bundle(
         true,
     ));
 
-    Ok(Json(StatusResponse::success(
+    Ok(Json(config_mutation(
         "Configuration bundle updated and reloaded to workers.",
     )))
 }
@@ -2600,7 +2588,7 @@ pub struct RollbackRequest {
     post,
     path = "/config/rollback/{id}",
     responses(
-        (status = 200, description = "Config rolled back", body = StatusResponse),
+        (status = 200, description = "Config rolled back", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Version not found"),
         (status = 500, description = "Internal server error")
@@ -2612,7 +2600,7 @@ pub async fn rollback_config(
     _auth: OptionalAuth,
     axum::extract::Path(id): axum::extract::Path<String>,
     Json(_req): Json<RollbackRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     // Save current config as a version before rolling back
     let current_content = {
         let config = state.process.config.read().await;
@@ -2664,7 +2652,7 @@ pub async fn rollback_config(
         true,
     ));
 
-    Ok(Json(StatusResponse::success(format!(
+    Ok(Json(config_mutation(format!(
         "Configuration rolled back to version {}.",
         id
     ))))
@@ -2801,7 +2789,7 @@ pub async fn get_honeypot_defaults(
     path = "/config/defaults/honeypot",
     request_body = UpdateHoneypotDefaultsRequest,
     responses(
-        (status = 200, description = "Honeypot defaults config updated", body = StatusResponse),
+        (status = 200, description = "Honeypot defaults config updated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -2812,14 +2800,14 @@ pub async fn update_honeypot_defaults(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdateHoneypotDefaultsRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let _guard = state.metrics.config_write_lock.write().await;
     {
         let mut config = state.process.config.write().await;
         config.main.defaults.honeypot = req.config;
     }
     persist_with_snapshot(&state, "Honeypot defaults updated").await?;
-    Ok(Json(StatusResponse::success("Honeypot defaults updated.")))
+    Ok(Json(config_mutation("Honeypot defaults updated.")))
 }
 
 // --- Honeypot Probe config ---
@@ -2859,7 +2847,7 @@ pub async fn get_honeypot_probing_defaults(
     path = "/config/defaults/honeypot-probe",
     request_body = UpdateHoneypotProbingDefaultsRequest,
     responses(
-        (status = 200, description = "Honeypot probing defaults config updated", body = StatusResponse),
+        (status = 200, description = "Honeypot probing defaults config updated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -2870,16 +2858,14 @@ pub async fn update_honeypot_probing_defaults(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdateHoneypotProbingDefaultsRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let _guard = state.metrics.config_write_lock.write().await;
     {
         let mut config = state.process.config.write().await;
         config.main.defaults.honeypot_probe = req.config;
     }
     persist_with_snapshot(&state, "Honeypot probe defaults updated").await?;
-    Ok(Json(StatusResponse::success(
-        "Honeypot probing defaults updated.",
-    )))
+    Ok(Json(config_mutation("Honeypot probing defaults updated.")))
 }
 
 // --- Blocked defaults config ---
@@ -2919,7 +2905,7 @@ pub async fn get_blocked_defaults(
     path = "/config/defaults/blocked",
     request_body = UpdateBlockedDefaultsRequest,
     responses(
-        (status = 200, description = "Blocked defaults config updated", body = StatusResponse),
+        (status = 200, description = "Blocked defaults config updated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -2930,14 +2916,14 @@ pub async fn update_blocked_defaults(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdateBlockedDefaultsRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let _guard = state.metrics.config_write_lock.write().await;
     {
         let mut config = state.process.config.write().await;
         config.main.defaults.blocked = req.config;
     }
     persist_with_snapshot(&state, "Blocked defaults updated").await?;
-    Ok(Json(StatusResponse::success("Blocked defaults updated.")))
+    Ok(Json(config_mutation("Blocked defaults updated.")))
 }
 
 // --- Suspicious words config ---
@@ -2977,7 +2963,7 @@ pub async fn get_suspicious_words_defaults(
     path = "/config/defaults/suspicious-words",
     request_body = UpdateSuspiciousWordsConfigRequest,
     responses(
-        (status = 200, description = "Suspicious words config updated", body = StatusResponse),
+        (status = 200, description = "Suspicious words config updated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -2988,16 +2974,14 @@ pub async fn update_suspicious_words_defaults(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdateSuspiciousWordsConfigRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let _guard = state.metrics.config_write_lock.write().await;
     {
         let mut config = state.process.config.write().await;
         config.main.defaults.suspicious_words = req.config;
     }
     persist_with_snapshot(&state, "Suspicious words defaults updated").await?;
-    Ok(Json(StatusResponse::success(
-        "Suspicious words defaults updated.",
-    )))
+    Ok(Json(config_mutation("Suspicious words defaults updated.")))
 }
 
 // --- Upstream errors config ---
@@ -3037,7 +3021,7 @@ pub async fn get_upstream_errors_defaults(
     path = "/config/defaults/upstream-errors",
     request_body = UpdateUpstreamErrorsConfigRequest,
     responses(
-        (status = 200, description = "Upstream errors config updated", body = StatusResponse),
+        (status = 200, description = "Upstream errors config updated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -3048,16 +3032,14 @@ pub async fn update_upstream_errors_defaults(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdateUpstreamErrorsConfigRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let _guard = state.metrics.config_write_lock.write().await;
     {
         let mut config = state.process.config.write().await;
         config.main.defaults.upstream_errors = req.config;
     }
     persist_with_snapshot(&state, "Upstream errors defaults updated").await?;
-    Ok(Json(StatusResponse::success(
-        "Upstream errors defaults updated.",
-    )))
+    Ok(Json(config_mutation("Upstream errors defaults updated.")))
 }
 
 // --- Error pages config ---
@@ -3097,7 +3079,7 @@ pub async fn get_error_pages_defaults(
     path = "/config/defaults/error-pages",
     request_body = UpdateErrorPagesDefaultsRequest,
     responses(
-        (status = 200, description = "Error pages defaults config updated", body = StatusResponse),
+        (status = 200, description = "Error pages defaults config updated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -3108,16 +3090,14 @@ pub async fn update_error_pages_defaults(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdateErrorPagesDefaultsRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let _guard = state.metrics.config_write_lock.write().await;
     {
         let mut config = state.process.config.write().await;
         config.main.defaults.error_pages = req.config;
     }
     persist_with_snapshot(&state, "Error pages defaults updated").await?;
-    Ok(Json(StatusResponse::success(
-        "Error pages defaults updated.",
-    )))
+    Ok(Json(config_mutation("Error pages defaults updated.")))
 }
 
 // --- CSS challenge config ---
@@ -3157,7 +3137,7 @@ pub async fn get_css_challenge_defaults(
     path = "/config/defaults/css-challenge",
     request_body = UpdateCssChallengeDefaultsRequest,
     responses(
-        (status = 200, description = "CSS challenge defaults config updated", body = StatusResponse),
+        (status = 200, description = "CSS challenge defaults config updated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -3168,16 +3148,14 @@ pub async fn update_css_challenge_defaults(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdateCssChallengeDefaultsRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let _guard = state.metrics.config_write_lock.write().await;
     {
         let mut config = state.process.config.write().await;
         config.main.defaults.css_challenge = req.config;
     }
     persist_with_snapshot(&state, "CSS challenge defaults updated").await?;
-    Ok(Json(StatusResponse::success(
-        "CSS challenge defaults updated.",
-    )))
+    Ok(Json(config_mutation("CSS challenge defaults updated.")))
 }
 
 // --- POW challenge config ---
@@ -3217,7 +3195,7 @@ pub async fn get_pow_challenge_defaults(
     path = "/config/defaults/pow-challenge",
     request_body = UpdatePowChallengeDefaultsRequest,
     responses(
-        (status = 200, description = "POW challenge defaults config updated", body = StatusResponse),
+        (status = 200, description = "POW challenge defaults config updated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -3228,16 +3206,14 @@ pub async fn update_pow_challenge_defaults(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdatePowChallengeDefaultsRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let _guard = state.metrics.config_write_lock.write().await;
     {
         let mut config = state.process.config.write().await;
         config.main.defaults.pow_challenge = req.config;
     }
     persist_with_snapshot(&state, "POW challenge defaults updated").await?;
-    Ok(Json(StatusResponse::success(
-        "POW challenge defaults updated.",
-    )))
+    Ok(Json(config_mutation("POW challenge defaults updated.")))
 }
 
 // --- Challenge priority config ---
@@ -3277,7 +3253,7 @@ pub async fn get_challenge_defaults(
     path = "/config/defaults/challenge",
     request_body = UpdateChallengeDefaultsRequest,
     responses(
-        (status = 200, description = "Challenge defaults config updated", body = StatusResponse),
+        (status = 200, description = "Challenge defaults config updated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -3288,14 +3264,14 @@ pub async fn update_challenge_defaults(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdateChallengeDefaultsRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let _guard = state.metrics.config_write_lock.write().await;
     {
         let mut config = state.process.config.write().await;
         config.main.defaults.challenge = req.config;
     }
     persist_with_snapshot(&state, "Challenge defaults updated").await?;
-    Ok(Json(StatusResponse::success("Challenge defaults updated.")))
+    Ok(Json(config_mutation("Challenge defaults updated.")))
 }
 
 // --- Auth defaults config ---
@@ -3335,7 +3311,7 @@ pub async fn get_auth_defaults(
     path = "/config/defaults/auth",
     request_body = UpdateAuthDefaultsRequest,
     responses(
-        (status = 200, description = "Auth defaults config updated", body = StatusResponse),
+        (status = 200, description = "Auth defaults config updated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -3346,14 +3322,14 @@ pub async fn update_auth_defaults(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdateAuthDefaultsRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let _guard = state.metrics.config_write_lock.write().await;
     {
         let mut config = state.process.config.write().await;
         config.main.defaults.auth = req.config;
     }
     persist_with_snapshot(&state, "Auth defaults updated").await?;
-    Ok(Json(StatusResponse::success("Auth defaults updated.")))
+    Ok(Json(config_mutation("Auth defaults updated.")))
 }
 
 // --- Worker pool defaults config ---
@@ -3393,7 +3369,7 @@ pub async fn get_worker_pool_defaults(
     path = "/config/defaults/worker-pool",
     request_body = UpdateWorkerPoolDefaultsRequest,
     responses(
-        (status = 200, description = "Worker pool defaults config updated", body = StatusResponse),
+        (status = 200, description = "Worker pool defaults config updated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -3404,16 +3380,14 @@ pub async fn update_worker_pool_defaults(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdateWorkerPoolDefaultsRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let _guard = state.metrics.config_write_lock.write().await;
     {
         let mut config = state.process.config.write().await;
         config.main.defaults.worker_pool = req.config;
     }
     persist_with_snapshot(&state, "Worker pool defaults updated").await?;
-    Ok(Json(StatusResponse::success(
-        "Worker pool defaults updated.",
-    )))
+    Ok(Json(config_mutation("Worker pool defaults updated.")))
 }
 
 // --- Persistence config ---
@@ -3453,7 +3427,7 @@ pub async fn get_persistence_defaults(
     path = "/config/defaults/persistence",
     request_body = UpdatePersistenceConfigRequest,
     responses(
-        (status = 200, description = "Persistence config updated", body = StatusResponse),
+        (status = 200, description = "Persistence config updated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -3464,16 +3438,14 @@ pub async fn update_persistence_defaults(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdatePersistenceConfigRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let _guard = state.metrics.config_write_lock.write().await;
     {
         let mut config = state.process.config.write().await;
         config.main.defaults.persistence = req.config;
     }
     persist_with_snapshot(&state, "Persistence defaults updated").await?;
-    Ok(Json(StatusResponse::success(
-        "Persistence defaults updated.",
-    )))
+    Ok(Json(config_mutation("Persistence defaults updated.")))
 }
 
 // --- Tarpit defaults config ---
@@ -3513,7 +3485,7 @@ pub async fn get_tarpit_defaults(
     path = "/config/defaults/tarpit",
     request_body = UpdateTarpitDefaultsRequest,
     responses(
-        (status = 200, description = "Tarpit defaults config updated", body = StatusResponse),
+        (status = 200, description = "Tarpit defaults config updated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -3524,14 +3496,14 @@ pub async fn update_tarpit_defaults(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdateTarpitDefaultsRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let _guard = state.metrics.config_write_lock.write().await;
     {
         let mut config = state.process.config.write().await;
         config.main.defaults.tarpit = req.config;
     }
     persist_with_snapshot(&state, "Tarpit defaults updated").await?;
-    Ok(Json(StatusResponse::success("Tarpit defaults updated.")))
+    Ok(Json(config_mutation("Tarpit defaults updated.")))
 }
 
 // --- Upload defaults config ---
@@ -3571,7 +3543,7 @@ pub async fn get_upload_defaults(
     path = "/config/defaults/upload",
     request_body = UpdateUploadDefaultsRequest,
     responses(
-        (status = 200, description = "Upload defaults config updated", body = StatusResponse),
+        (status = 200, description = "Upload defaults config updated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -3582,14 +3554,14 @@ pub async fn update_upload_defaults(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdateUploadDefaultsRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let _guard = state.metrics.config_write_lock.write().await;
     {
         let mut config = state.process.config.write().await;
         config.main.defaults.upload = req.config;
     }
     persist_with_snapshot(&state, "Upload defaults updated").await?;
-    Ok(Json(StatusResponse::success("Upload defaults updated.")))
+    Ok(Json(config_mutation("Upload defaults updated.")))
 }
 
 // --- Traffic shaping defaults config ---
@@ -3629,7 +3601,7 @@ pub async fn get_traffic_shaping_sub_defaults(
     path = "/config/defaults/traffic-shaping",
     request_body = UpdateTrafficShapingDefaultsRequest,
     responses(
-        (status = 200, description = "Traffic shaping defaults config updated", body = StatusResponse),
+        (status = 200, description = "Traffic shaping defaults config updated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -3640,16 +3612,14 @@ pub async fn update_traffic_shaping_sub_defaults(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdateTrafficShapingDefaultsRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let _guard = state.metrics.config_write_lock.write().await;
     {
         let mut config = state.process.config.write().await;
         config.main.defaults.traffic_shaping = req.config;
     }
     persist_with_snapshot(&state, "Traffic shaping defaults updated").await?;
-    Ok(Json(StatusResponse::success(
-        "Traffic shaping defaults updated.",
-    )))
+    Ok(Json(config_mutation("Traffic shaping defaults updated.")))
 }
 
 // --- ASN scraping defaults config ---
@@ -3689,7 +3659,7 @@ pub async fn get_asn_scraping_defaults(
     path = "/config/defaults/asn-scraping",
     request_body = UpdateAsnScrapingConfigRequest,
     responses(
-        (status = 200, description = "ASN scraping defaults config updated", body = StatusResponse),
+        (status = 200, description = "ASN scraping defaults config updated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -3700,14 +3670,12 @@ pub async fn update_asn_scraping_defaults(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdateAsnScrapingConfigRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let _guard = state.metrics.config_write_lock.write().await;
     {
         let mut config = state.process.config.write().await;
         config.main.defaults.asn_scraping = req.config;
     }
     persist_with_snapshot(&state, "ASN scraping defaults updated").await?;
-    Ok(Json(StatusResponse::success(
-        "ASN scraping defaults updated.",
-    )))
+    Ok(Json(config_mutation("ASN scraping defaults updated.")))
 }

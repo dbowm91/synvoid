@@ -922,9 +922,18 @@ impl ZoneTransfer {
                     }
                 }
                 RecordType::TXT => {
-                    let txt_len = record.value.len() as u8;
-                    response.push(txt_len);
-                    response.extend_from_slice(record.value.as_bytes());
+                    let txt = record.value.as_bytes();
+                    let mut rdata = Vec::with_capacity(txt.len() + txt.len().div_ceil(255));
+                    if txt.is_empty() {
+                        rdata.push(0);
+                    } else {
+                        for chunk in txt.chunks(255) {
+                            rdata.push(chunk.len() as u8);
+                            rdata.extend_from_slice(chunk);
+                        }
+                    }
+                    response.extend_from_slice(&(rdata.len() as u16).to_be_bytes());
+                    response.extend_from_slice(&rdata);
                 }
                 RecordType::MX => {
                     let priority = record.priority.unwrap_or(10);

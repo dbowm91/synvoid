@@ -702,7 +702,7 @@ impl AttackDetector {
             }
         }
 
-        if let Some(body_bytes) = inputs.body_bytes {
+        if let Some(body_bytes) = inputs.body_bytes.as_deref() {
             if let Some(result) = detector.detect_raw(body_bytes, InputLocation::PostBody) {
                 return Some(result);
             }
@@ -763,7 +763,7 @@ impl AttackDetector {
             }
         }
 
-        if let Some(body_bytes) = inputs.body_bytes {
+        if let Some(body_bytes) = inputs.body_bytes.as_deref() {
             if let Some(result) = detector.detect_raw(body_bytes, InputLocation::PostBody) {
                 return Some(result);
             }
@@ -1362,7 +1362,9 @@ impl AttackDetector {
         &self,
         inputs: &NormalizedInputs,
     ) -> Option<AttackDetectionResult> {
-        let risky_flags = NormalizationFlags::NULL_BYTE | NormalizationFlags::ZERO_WIDTH;
+        let risky_flags = NormalizationFlags::NULL_BYTE
+            | NormalizationFlags::ZERO_WIDTH
+            | NormalizationFlags::OUTPUT_LIMIT;
 
         // Check path
         if let (Some(norm), Some(raw)) = (&inputs.path, &inputs.path_raw) {

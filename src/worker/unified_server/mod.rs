@@ -333,6 +333,11 @@ async fn register_mesh_generation_support(
     // Spawn DNS verification loops.
     for (dns_registry, is_global) in support.dns_verification_registries {
         let role = if is_global { "global" } else { "edge" };
+        let task_name = if is_global {
+            "dns_verification_global"
+        } else {
+            "dns_verification_edge"
+        };
         if let Some(loop_fut) = dns_registry.build_verification_loop(None) {
             let mut gen_cancel = cancel_rx.clone();
             let mut worker_shutdown = worker_shutdown_rx.clone();
@@ -344,10 +349,7 @@ async fn register_mesh_generation_support(
                     _ = loop_fut => {}
                 }
             };
-            let id = registry.spawn_background(
-                Box::leak(format!("dns_verification_{}", role).into_boxed_str()),
-                wrapped,
-            );
+            let id = registry.spawn_background(task_name, wrapped);
             task_ids.push(TaskId(id as u64));
             tracing::info!("DNS verification loop registered ({})", role);
         }
