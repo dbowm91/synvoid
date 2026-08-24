@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use axum::http::StatusCode;
 use axum_extra::{
     headers::{authorization::Bearer, Authorization},

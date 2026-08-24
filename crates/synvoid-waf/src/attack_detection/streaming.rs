@@ -394,6 +394,19 @@ impl AttackDetectionResult {
     }
 }
 
+impl synvoid_core::streaming_waf::StreamingWafScanner for StreamingWafCore {
+    fn scan_chunk(&mut self, chunk: &[u8]) -> synvoid_core::streaming_waf::StreamingWafDecision {
+        match StreamingWafCore::scan_chunk(self, chunk) {
+            StreamingWafDecision::Continue => {
+                synvoid_core::streaming_waf::StreamingWafDecision::Continue
+            }
+            StreamingWafDecision::Block(status, reason) => {
+                synvoid_core::streaming_waf::StreamingWafDecision::Block(status, reason)
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

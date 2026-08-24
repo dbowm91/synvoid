@@ -186,7 +186,9 @@ pub async fn execute_worker_shutdown(
     // Step 2: Stop accepting new connections.
     let tx_guard = state.stop_accepting_tx.lock().await;
     if let Some(tx) = tx_guard.as_ref() {
-        let _ = tx.send(());
+        if tx.send(()).is_err() {
+            tracing::debug!("Stop-accepting receiver was already dropped");
+        }
     }
     drop(tx_guard);
     state.stopped_accepting.start_drain();

@@ -25,6 +25,11 @@ use crate::stubs::metrics;
 use crate::stubs::waf_stub::threat_intel::feed_client::{ThreatFeedIndicator, ThreatFeedPayload};
 
 const DEFAULT_SYNC_INTERVAL_SECS: u64 = 300;
+const HOT_THREAT_BLOOM_SEED: [u8; 32] = [0x53; 32];
+
+fn new_hot_threat_bloom() -> bloomfilter::Bloom<IpAddr> {
+    bloomfilter::Bloom::new_for_fp_rate_with_seed(100_000, 0.01, &HOT_THREAT_BLOOM_SEED)
+}
 
 fn make_indicator_key(ip: &str, threat_type: ThreatType) -> String {
     format!("threat_indicator:{}:{:?}", ip, threat_type)
@@ -445,7 +450,7 @@ impl ThreatIntelligenceManager {
                 .max_capacity(1000)
                 .time_to_idle(Duration::from_secs(3600))
                 .build(),
-            hot_threats: RwLock::new(bloomfilter::Bloom::new_for_fp_rate(100_000, 0.01)),
+            hot_threats: RwLock::new(new_hot_threat_bloom()),
             policy_context: RwLock::new(None),
         };
 
@@ -474,6 +479,13 @@ impl ThreatIntelligenceManager {
 
         let mut indicators = self.indicators.write();
         *indicators = store.indicators;
+        let mut hot_threats = self.hot_threats.write();
+        for entry in indicators.values() {
+            if let Ok(ip) = entry.indicator.indicator_value.parse::<IpAddr>() {
+                hot_threats.set(&ip);
+            }
+        }
+        drop(hot_threats);
         drop(indicators);
         *self.local_version.write() = local_version;
 
@@ -550,13 +562,10 @@ impl ThreatIntelligenceManager {
     }
 
     pub fn broadcast_hot_threats(&self) {
-        let bloom = self.hot_threats.read();
+        let (bloom_filter, hashes) = self.hot_threat_gossip_parts();
         let msg = MeshMessage::HotThreatGossip {
-            // Using a more realistic approach for the 'bloomfilter' crate:
-            // Since 'Bloom' might not implement Serialize, we'd normally need to
-            // extract the bitmap. For now, we'll use a placeholder to fix the build.
-            bloom_filter: Vec::new(),
-            hashes: 0,
+            bloom_filter,
+            hashes,
             timestamp: synvoid_utils::safe_unix_timestamp(),
             immediate_indicator: None,
         };
@@ -568,16 +577,31 @@ impl ThreatIntelligenceManager {
     }
     pub fn handle_hot_threat_gossip(
         &self,
-        _bloom_filter: Vec<u8>,
+        bloom_filter: Vec<u8>,
         hashes: u32,
         timestamp: u64,
         immediate_indicator: Option<ThreatIndicator>,
     ) {
         // Only accept relatively recent gossips
         let now = synvoid_utils::safe_unix_timestamp();
-        if timestamp < now - 300 {
+        if timestamp < now.saturating_sub(300) {
             return;
         }
+
+        let remote_bloom = if bloom_filter.is_empty()
+            || hashes == 0
+            || hashes > 64
+            || bloom_filter.len() > 1024 * 1024
+        {
+            None
+        } else {
+            Some(bloomfilter::Bloom::from_existing(
+                &bloom_filter,
+                (bloom_filter.len() as u64).saturating_mul(8),
+                hashes,
+                new_hot_threat_bloom().sip_keys(),
+            ))
+        };
 
         if let Some(indicator) = immediate_indicator {
             // Immediately process high-priority threat indicator from gossip
@@ -597,8 +621,38 @@ impl ThreatIntelligenceManager {
             );
         }
 
-        // TODO: Full Bloom filter reconciliation for non-immediate threats
+        if let Some(remote_bloom) = remote_bloom {
+            let missing = self
+                .indicators
+                .read()
+                .values()
+                .filter_map(|entry| {
+                    entry
+                        .indicator
+                        .indicator_value
+                        .parse::<IpAddr>()
+                        .ok()
+                        .filter(|ip| !remote_bloom.check(ip))
+                        .map(|_| entry.indicator.clone())
+                })
+                .take(self.config.max_indicators_per_message)
+                .collect::<Vec<_>>();
+            for indicator in missing {
+                self.queue_for_push(indicator);
+            }
+        }
         tracing::debug!("Received hot threat gossip with {} hashes", hashes);
+    }
+
+    fn record_hot_threat(&self, indicator: &ThreatIndicator) {
+        if let Ok(ip) = indicator.indicator_value.parse::<IpAddr>() {
+            self.hot_threats.write().set(&ip);
+        }
+    }
+
+    fn hot_threat_gossip_parts(&self) -> (Vec<u8>, u32) {
+        let bloom = self.hot_threats.read();
+        (bloom.bitmap(), bloom.number_of_hash_functions())
     }
 
     pub fn get_reputation_manager(&self) -> Arc<ReputationManager> {
@@ -682,6 +736,7 @@ impl ThreatIntelligenceManager {
                 },
             );
         }
+        self.record_hot_threat(&indicator);
 
         *self.local_version.write() += 1;
         self.persist_if_needed();
@@ -693,9 +748,10 @@ impl ThreatIntelligenceManager {
                 self.queue_for_push(indicator.clone());
 
                 // Immediate Gossip for high-priority threats
+                let (bloom_filter, hashes) = self.hot_threat_gossip_parts();
                 let gossip_msg = MeshMessage::HotThreatGossip {
-                    bloom_filter: Vec::new(),
-                    hashes: 0,
+                    bloom_filter,
+                    hashes,
                     timestamp: now,
                     immediate_indicator: Some(indicator),
                 };
@@ -787,6 +843,7 @@ impl ThreatIntelligenceManager {
                 },
             );
         }
+        self.record_hot_threat(&indicator);
 
         *self.local_version.write() += 1;
         self.persist_if_needed();
@@ -870,6 +927,7 @@ impl ThreatIntelligenceManager {
                 },
             );
         }
+        self.record_hot_threat(&indicator);
 
         *self.local_version.write() += 1;
         self.persist_if_needed();
@@ -945,6 +1003,7 @@ impl ThreatIntelligenceManager {
                 },
             );
         }
+        self.record_hot_threat(&indicator);
 
         *self.local_version.write() += 1;
         self.persist_if_needed();
@@ -1012,6 +1071,7 @@ impl ThreatIntelligenceManager {
                 },
             );
         }
+        self.record_hot_threat(&indicator);
 
         *self.local_version.write() += 1;
         self.persist_if_needed();
@@ -1509,6 +1569,8 @@ impl ThreatIntelligenceManager {
                 tracing::warn!("Received threat with unspecified type from {}", from_node);
             }
         }
+
+        self.record_hot_threat(&indicator);
 
         {
             let mut indicators = self.indicators.write();
@@ -2979,6 +3041,12 @@ impl ThreatIntelligenceManager {
     }
 
     fn clone_internal(&self) -> Self {
+        let mut hot_threats = new_hot_threat_bloom();
+        for entry in self.indicators.read().values() {
+            if let Ok(ip) = entry.indicator.indicator_value.parse::<IpAddr>() {
+                hot_threats.set(&ip);
+            }
+        }
         Self {
             config: self.config.clone(),
             block_store: self.block_store.clone(),
@@ -2995,7 +3063,7 @@ impl ThreatIntelligenceManager {
             global_node_ips: RwLock::new(self.global_node_ips.read().clone()),
             persistence_path: self.persistence_path.clone(),
             seen_announces: self.seen_announces.clone(),
-            hot_threats: RwLock::new(bloomfilter::Bloom::new_for_fp_rate(100_000, 0.01)),
+            hot_threats: RwLock::new(hot_threats),
             policy_context: RwLock::new(self.policy_context.read().clone()),
         }
     }

@@ -220,6 +220,31 @@ impl RaftInstance {
         }
     }
 
+    pub fn get_log_entries_paged(
+        &self,
+        start: u64,
+        limit: u64,
+    ) -> Vec<crate::raft::RaftCommitNotification> {
+        self.registry
+            .log_storage()
+            .get_log_entries_paged(start, limit)
+            .into_iter()
+            .filter_map(|(commit_index, _term, payload)| {
+                let command = postcard::from_bytes::<RaftCommand>(&payload).ok()?;
+                let (namespace, key_id) = match command {
+                    RaftCommand::Set { namespace, key, .. }
+                    | RaftCommand::Delete { namespace, key, .. } => (namespace, key),
+                };
+                Some(crate::raft::RaftCommitNotification::new(
+                    self.node_id.to_string(),
+                    commit_index,
+                    namespace,
+                    key_id,
+                ))
+            })
+            .collect()
+    }
+
     pub async fn get_leader_id(&self) -> Option<u64> {
         self.raft.current_leader().await
     }

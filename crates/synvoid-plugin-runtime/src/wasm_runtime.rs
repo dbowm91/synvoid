@@ -2117,6 +2117,10 @@ fn checked_guest_range(
     Ok(start..end)
 }
 
+fn checked_guest_memory_offset(offset: usize) -> bool {
+    offset <= isize::MAX as usize
+}
+
 #[derive(Debug, Clone, Copy)]
 struct GuestAllocation {
     ptr: i32,
@@ -2564,6 +2568,14 @@ impl WasmRuntime {
                                 return ABI_ERR_INVALID_POINTER;
                             }
                         };
+                    if !checked_guest_memory_offset(out_range.start) {
+                        crate::wasm_metrics::record_host_call_failure(
+                            "",
+                            "get_env",
+                            "InvalidPointer",
+                        );
+                        return ABI_ERR_INVALID_POINTER;
+                    }
 
                     unsafe {
                         let mem_ptr = mem.data_ptr(&caller);
@@ -2788,6 +2800,14 @@ impl WasmRuntime {
                                         return ABI_ERR_INVALID_POINTER;
                                     }
                                 };
+                                if !checked_guest_memory_offset(out_range.start) {
+                                    crate::wasm_metrics::record_host_call_failure(
+                                        "",
+                                        "mesh_query_dht",
+                                        "InvalidPointer",
+                                    );
+                                    return ABI_ERR_INVALID_POINTER;
+                                }
                                 unsafe {
                                     let mem_ptr = mem.data_ptr(&caller);
                                     std::slice::from_raw_parts_mut(

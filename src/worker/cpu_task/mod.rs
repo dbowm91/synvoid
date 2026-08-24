@@ -22,7 +22,7 @@ use crate::worker::response_builder;
 use crate::{DrainFlag, RunningFlag};
 use synvoid_config::ConfigManager;
 use synvoid_ipc::ipc_signed::IpcSigner;
-use synvoid_ipc::{CpuTaskPayload, Message};
+use synvoid_ipc::{CpuTaskErrorCode, CpuTaskPayload, Message};
 use synvoid_static_files::minifier;
 
 use self::connection::handle_minify_client_connection;
@@ -119,6 +119,7 @@ pub async fn run_cpu_worker(
     response_builder::init_minifier_caches(&state, &main_config);
 
     let socket_path = args.cpu_worker_socket.clone();
+    let runtime_handle = tokio::runtime::Handle::current();
     if socket_path.exists() {
         let _ = std::fs::remove_file(&socket_path);
     }
@@ -143,6 +144,7 @@ pub async fn run_cpu_worker(
         };
 
         let socket_state = state.clone();
+        let runtime_handle = runtime_handle.clone();
         let active_connections = Arc::new(AtomicU32::new(0));
         const MAX_STATIC_CONNECTIONS: u32 = 100;
 
@@ -165,7 +167,7 @@ pub async fn run_cpu_worker(
                     let ipc = crate::process::IpcStream::new(stream);
                     let state = socket_state.clone();
                     let counter = active_connections.clone();
-                    tokio::spawn(async move {
+                    runtime_handle.spawn(async move {
                         tokio::task::spawn_blocking(move || {
                             handle_minify_client_connection(ipc, state);
                         })
@@ -188,6 +190,7 @@ pub async fn run_cpu_worker(
     {
         let listener = crate::process::ipc::WindowsIpcListener::new("synvoid-static-worker");
         let socket_state = state.clone();
+        let runtime_handle = runtime_handle.clone();
         let active_connections = Arc::new(AtomicU32::new(0));
         const MAX_STATIC_CONNECTIONS: u32 = 100;
 
@@ -210,7 +213,7 @@ pub async fn run_cpu_worker(
                     let ipc = crate::process::IpcStream::new(stream);
                     let state = socket_state.clone();
                     let counter = active_connections.clone();
-                    tokio::spawn(async move {
+                    runtime_handle.spawn(async move {
                         tokio::task::spawn_blocking(move || {
                             handle_minify_client_connection(ipc, state);
                         })
@@ -357,17 +360,22 @@ pub async fn run_cpu_worker(
                                     max_dimension,
                                     jpeg_quality,
                                 } => {
-                                    let poisoned = image_rights::mark_image_rights_sync(
-                                        &ipc_state,
-                                        &site_id,
-                                        body,
-                                        last_modified,
-                                        level,
-                                        intensity,
-                                        seed,
-                                        max_dimension,
-                                        jpeg_quality,
-                                    );
+                                    let image_state = ipc_state.clone();
+                                    let poisoned = tokio::task::spawn_blocking(move || {
+                                        image_rights::mark_image_rights_sync(
+                                            &image_state,
+                                            &site_id,
+                                            body,
+                                            last_modified,
+                                            level,
+                                            intensity,
+                                            seed,
+                                            max_dimension,
+                                            jpeg_quality,
+                                        )
+                                    })
+                                    .await
+                                    .unwrap_or_default();
                                     if let Err(e) = ipc
                                         .send(&Message::PoisonImageResponse {
                                             request_id,
@@ -396,17 +404,28 @@ pub async fn run_cpu_worker(
                             }
                         }
 
-                        let response = process_cpu_task_request_sync(
-                            &ipc_state,
+                        let task_state = ipc_state.clone();
+                        let response = tokio::task::spawn_blocking(move || {
+                            process_cpu_task_request_sync(
+                                &task_state,
+                                request_id,
+                                task_kind,
+                                policy,
+                                deadline_unix_ms,
+                                payload_size_limit,
+                                output_size_limit,
+                                file_payload_path,
+                                payload,
+                            )
+                        })
+                        .await
+                        .unwrap_or_else(|error| Message::CpuTaskError {
                             request_id,
                             task_kind,
-                            policy,
-                            deadline_unix_ms,
-                            payload_size_limit,
-                            output_size_limit,
-                            file_payload_path,
-                            payload,
-                        );
+                            code: CpuTaskErrorCode::InternalError,
+                            message: format!("CPU task worker failed: {}", error),
+                            retryable: true,
+                        });
                         let response = Message::adapt_cpu_task_response_compat(
                             response,
                             request_id,
@@ -447,7 +466,12 @@ pub async fn run_cpu_worker(
                 break;
             }
 
-            response_builder::process_compression_queue(&queue_state);
+            let compression_state = queue_state.clone();
+            tokio::task::spawn_blocking(move || {
+                response_builder::process_compression_queue(&compression_state);
+            })
+            .await
+            .ok();
         }
     });
 
@@ -486,27 +510,32 @@ pub async fn run_cpu_worker(
                 crate::worker::common::collect_current_process_usage();
             next_heartbeat_at += watch_interval;
 
-            if let Ok(config) = watch_state.config_manager.read() {
-                for (site_id, site) in config.sites.iter() {
-                    let static_config = &site.r#static;
-                    if !static_config.enabled.unwrap_or(false) {
-                        continue;
-                    }
+            let file_watch_state = watch_state.clone();
+            tokio::task::spawn_blocking(move || {
+                if let Ok(config) = file_watch_state.config_manager.read() {
+                    for (site_id, site) in config.sites.iter() {
+                        let static_config = &site.r#static;
+                        if !static_config.enabled.unwrap_or(false) {
+                            continue;
+                        }
 
-                    if static_config.enable_file_watching.unwrap_or(true) {
-                        for location in &static_config.locations {
-                            let root = PathBuf::from(location.root.as_str());
-                            if root.exists() {
-                                response_builder::check_and_invalidate_cache(
-                                    &watch_state,
-                                    site_id,
-                                    &root,
-                                );
+                        if static_config.enable_file_watching.unwrap_or(true) {
+                            for location in &static_config.locations {
+                                let root = PathBuf::from(location.root.as_str());
+                                if root.exists() {
+                                    response_builder::check_and_invalidate_cache(
+                                        &file_watch_state,
+                                        site_id,
+                                        &root,
+                                    );
+                                }
                             }
                         }
                     }
                 }
-            }
+            })
+            .await
+            .ok();
 
             let (cache_hits, cache_misses) = watch_state.get_cache_stats();
 

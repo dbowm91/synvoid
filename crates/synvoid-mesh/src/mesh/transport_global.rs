@@ -1,5 +1,4 @@
-#![allow(dead_code)]
-// SAFETY_REASON: Reserved for future global node protocol handling
+// Global-node transport handlers are wired by the mesh dispatcher as they are enabled.
 
 use crate::transport::{MembershipChangeAction, MeshTransport};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -40,7 +39,15 @@ impl MeshTransport {
         }
 
         // If the gap is too large, suggest a snapshot
-        if last_sync_index > current_index + 5000 {
+        let next_index = last_sync_index.saturating_add(1);
+        let gap = current_index.saturating_sub(last_sync_index);
+        let snapshot_required = gap > 5000
+            || raft
+                .registry
+                .log_storage()
+                .get_first_id()
+                .is_some_and(|first_index| next_index < first_index);
+        if snapshot_required {
             let response = MeshMessage::ReplicaSyncResponse {
                 request_id: ArcStr::from(request_id.to_string()),
                 current_index,
@@ -51,13 +58,12 @@ impl MeshTransport {
             return;
         }
 
-        // TODO: Implement log entry fetching from RaftInstance
-        // For now, return what we have (even if empty) to let the peer know current index
+        let entries = raft.get_log_entries_paged(next_index, gap.min(5000));
         let response = MeshMessage::ReplicaSyncResponse {
             request_id: ArcStr::from(request_id.to_string()),
             current_index,
             snapshot_required: false,
-            entries: Vec::new(),
+            entries,
         };
         let _ = self.send_datagram_to_peer(peer_id, &response).await;
     }
@@ -243,6 +249,7 @@ impl MeshTransport {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn announce_global_node(&self) {
         tracing::warn!("Global nodes cannot self-announce - must be added via genesis key");
     }
@@ -266,6 +273,7 @@ impl MeshTransport {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn consume_global_node_heartbeat(
         &self,
         from_node_id: &str,
@@ -299,6 +307,7 @@ impl MeshTransport {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn add_global_node(&self, target_node_id: &str, target_public_key: &str) {
         if !self.config.role.is_global() {
             tracing::warn!("Only global nodes can add new global nodes");
@@ -363,6 +372,7 @@ impl MeshTransport {
         tracing::info!("Added global node {} via genesis key", target_node_id);
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn remove_global_node(&self, target_node_id: &str) {
         if !self.config.role.is_global() {
             tracing::warn!("Only global nodes can remove global nodes");
@@ -433,6 +443,7 @@ impl MeshTransport {
         tracing::info!("Removed global node {} via genesis key", target_node_id);
     }
 
+    #[allow(dead_code)]
     pub(crate) fn create_global_node_invitation(
         &self,
         target_mesh_id: &str,
@@ -466,6 +477,7 @@ impl MeshTransport {
         Some(invitation)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn validate_global_node_invitation(
         &self,
         invitation: &str,
@@ -515,6 +527,7 @@ impl MeshTransport {
         Some((mesh_id, timestamp, expires_at))
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn accept_global_node_invitation(
         &self,
         invitation: &str,
@@ -540,6 +553,7 @@ impl MeshTransport {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn handle_key_forward(
         &self,
         from_peer: &str,
@@ -582,6 +596,7 @@ impl MeshTransport {
         .await;
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn handle_key_forward_as_origin(
         &self,
         from_peer: &str,
@@ -965,6 +980,7 @@ impl MeshTransport {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn revoke_global_node(&self, target_node_id: &str, reason: &str) {
         if !self.config.role.is_global() {
             tracing::warn!("Only global nodes can revoke other global nodes");
@@ -1119,6 +1135,7 @@ impl MeshTransport {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn initiate_genesis_key_rotation(
         &self,
         new_key_base64: &str,

@@ -75,7 +75,9 @@ pub async fn begin_coordinated_shutdown(
     }
 
     if let Some(ack) = lifecycle_ack {
-        let _ = ack.send(());
+        if ack.send(()).is_err() {
+            tracing::debug!("Lifecycle acknowledgement receiver was dropped");
+        }
     }
 }
 
@@ -760,7 +762,9 @@ pub fn spawn_ipc_loop(
 
                     let tx_guard = state.stop_accepting_tx.lock().await;
                     if let Some(tx) = tx_guard.as_ref() {
-                        let _ = tx.send(());
+                        if tx.send(()).is_err() {
+                            tracing::debug!("Stop-accepting receiver was already dropped");
+                        }
                     }
                     state.stopped_accepting.start_drain();
 

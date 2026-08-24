@@ -123,8 +123,11 @@ impl RaftAwareClient {
     }
 
     async fn reconcile_with_leader(&self) -> Result<(), RaftAwareClientError> {
-        let manager_guard = self.edge_replica_manager.read().await;
-        let Some(ref manager) = *manager_guard else {
+        let manager = {
+            let manager_guard = self.edge_replica_manager.read().await;
+            manager_guard.as_ref().cloned()
+        };
+        let Some(manager) = manager else {
             return Ok(());
         };
 
@@ -148,6 +151,7 @@ impl RaftAwareClient {
             Ok(MeshMessage::ReplicaSyncResponse {
                 current_index,
                 snapshot_required,
+                entries,
                 ..
             }) => {
                 if snapshot_required {
@@ -158,13 +162,52 @@ impl RaftAwareClient {
                     );
                     // In a future wave, trigger full snapshot transfer
                 } else if current_index > last_sync_index {
+                    let synced_index =
+                        entries
+                            .last()
+                            .map(|entry| entry.commit_index)
+                            .ok_or_else(|| {
+                                RaftAwareClientError::InvalidResponse(
+                                    "Replica sync response omitted log entries".to_string(),
+                                )
+                            })?;
                     tracing::info!(
                         "Raft reconciliation: catching up from {} to {}",
                         last_sync_index,
-                        current_index
+                        synced_index
                     );
-                    // For now, update local index to indicate we are converged at this point
-                    manager.set_last_sync_index(current_index).ok();
+
+                    for entry in &entries {
+                        let namespace = entry.namespace.clone();
+                        match self
+                            .query_leader_for_record(namespace.clone(), &entry.key_id)
+                            .await?
+                        {
+                            Some(value) => manager
+                                .update_from_notification(&namespace, &entry.key_id, &value)
+                                .map_err(|e| {
+                                    RaftAwareClientError::InvalidResponse(format!(
+                                        "Failed to update replica record: {}",
+                                        e
+                                    ))
+                                })?,
+                            None => manager
+                                .delete_from_notification(&namespace, &entry.key_id)
+                                .map_err(|e| {
+                                    RaftAwareClientError::InvalidResponse(format!(
+                                        "Failed to delete replica record: {}",
+                                        e
+                                    ))
+                                })?,
+                        }
+                    }
+
+                    manager.set_last_sync_index(synced_index).map_err(|e| {
+                        RaftAwareClientError::InvalidResponse(format!(
+                            "Failed to update replica sync index: {}",
+                            e
+                        ))
+                    })?;
                 }
             }
             _ => {

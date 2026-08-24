@@ -824,8 +824,7 @@ mod yara_broadcast_tests {
     #[test]
     fn yara_metrics_constants_exist() {
         // Verify metric names are documented/used in the source
-        let content =
-            std::fs::read_to_string("src/worker/unified_server/mod.rs").unwrap_or_default();
+        let content = include_str!("mod.rs");
         assert!(content.contains("yara_mesh_broadcast_submitted_total"));
         assert!(content.contains("yara_mesh_broadcast_completed_total"));
         assert!(content.contains("yara_mesh_broadcast_failed_total"));
@@ -836,8 +835,7 @@ mod yara_broadcast_tests {
     #[test]
     fn yara_broadcast_sink_trait_exists() {
         // Phase 15: YaraBroadcastSink trait enables testability
-        let content =
-            std::fs::read_to_string("src/worker/unified_server/mod.rs").unwrap_or_default();
+        let content = include_str!("mod.rs");
         assert!(content.contains("trait YaraBroadcastSink"));
         assert!(content.contains("async fn broadcast(&self, msg:"));
     }

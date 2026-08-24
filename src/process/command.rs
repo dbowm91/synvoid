@@ -334,7 +334,8 @@ impl CommandClient {
 
                     Ok(SupervisorStatus {
                         supervisor_pid: inner.pid,
-                        started_at: 0,
+                        started_at: crate::utils::safe_unix_timestamp()
+                            .saturating_sub(inner.uptime_secs),
                         uptime_secs: inner.uptime_secs,
                         version: inner.version,
                         workers,

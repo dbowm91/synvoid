@@ -2,7 +2,9 @@ use crate::bandwidth::BandwidthTracker;
 use crate::payloads::{
     HealthStatus, ServerlessMetrics, SiteMetricsPayload, TimingStatsPayload, WorkerMetricsPayload,
 };
-use crate::{get_static_cache_hits, get_static_cache_misses, LATENCY_SAMPLE_SIZE};
+use crate::{
+    get_all_serverless_metrics, get_static_cache_hits, get_static_cache_misses, LATENCY_SAMPLE_SIZE,
+};
 use parking_lot::Mutex;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -655,7 +657,7 @@ impl WorkerMetrics {
             static_cache_hits: get_static_cache_hits(),
             static_cache_misses: get_static_cache_misses(),
             bandwidth: self.bandwidth.to_payload(),
-            serverless_metrics: Vec::new(), // TODO
+            serverless_metrics: get_all_serverless_metrics(),
             health_score: 1.0,
             last_request_at: None,
             active_connections: self.active_connections.load(Ordering::Relaxed),

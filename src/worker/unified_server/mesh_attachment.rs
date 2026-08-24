@@ -249,7 +249,9 @@ fn spawn_optional_support_registration(
         } else {
             Ok(None)
         };
-        let _ = helper_tx.send(result);
+        if helper_tx.send(result).is_err() {
+            tracing::debug!("Mesh support registration receiver was dropped");
+        }
     });
     helper_rx
 }
@@ -284,21 +286,33 @@ fn spawn_optional_mesh_startup(
                         None
                     }
                 };
-                let _ = startup_complete_tx.send(Ok(bundle));
-                let _ = event_tx
+                if startup_complete_tx.send(Ok(bundle)).is_err() {
+                    tracing::debug!("Mesh startup completion receiver was dropped");
+                }
+                if event_tx
                     .send(crate::worker::mesh_supervision::MeshSupervisionEvent::Started)
-                    .await;
+                    .await
+                    .is_err()
+                {
+                    tracing::debug!("Mesh supervision receiver was dropped");
+                }
             }
             Err(e) => {
                 tracing::error!("Mesh startup failed: {}", e);
-                let _ = startup_complete_tx.send(Err(e.to_string()));
-                let _ = event_tx
+                if startup_complete_tx.send(Err(e.to_string())).is_err() {
+                    tracing::debug!("Mesh startup completion receiver was dropped");
+                }
+                if event_tx
                     .send(
                         crate::worker::mesh_supervision::MeshSupervisionEvent::StartupFailed(
                             e.to_string(),
                         ),
                     )
-                    .await;
+                    .await
+                    .is_err()
+                {
+                    tracing::debug!("Mesh supervision receiver was dropped");
+                }
             }
         }
     });

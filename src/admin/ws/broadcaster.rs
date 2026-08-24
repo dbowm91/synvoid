@@ -31,20 +31,35 @@ impl Broadcaster {
     }
 
     pub fn new_client(&self) -> Option<(String, broadcast::Receiver<String>)> {
-        if self.client_count.load(Ordering::Relaxed) >= self.max_clients {
-            return None;
+        let mut count = self.client_count.load(Ordering::Acquire);
+        loop {
+            if count >= self.max_clients {
+                return None;
+            }
+
+            match self.client_count.compare_exchange_weak(
+                count,
+                count + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => break,
+                Err(updated) => count = updated,
+            }
         }
 
         let client_id = Uuid::new_v4().to_string();
         let rx = self.sender.subscribe();
 
-        self.client_count.fetch_add(1, Ordering::Relaxed);
-
         Some((client_id, rx))
     }
 
     pub fn remove_client(&self, _client_id: &str) {
-        self.client_count.fetch_sub(1, Ordering::Relaxed);
+        let _ = self
+            .client_count
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                count.checked_sub(1)
+            });
     }
 
     pub fn get_sender(&self) -> broadcast::Sender<String> {
@@ -99,6 +114,27 @@ mod tests {
         let result = broadcaster.new_client();
         assert!(result.is_none());
         assert_eq!(broadcaster.client_count(), 2);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_clients_never_exceed_limit() {
+        let broadcaster = std::sync::Arc::new(Broadcaster::new(8));
+        let mut tasks = Vec::new();
+
+        for _ in 0..64 {
+            let broadcaster = broadcaster.clone();
+            tasks.push(tokio::spawn(async move { broadcaster.new_client() }));
+        }
+
+        let mut receivers = Vec::new();
+        for task in tasks {
+            if let Some((_id, receiver)) = task.await.expect("client task should finish") {
+                receivers.push(receiver);
+            }
+        }
+
+        assert_eq!(receivers.len(), 8);
+        assert_eq!(broadcaster.client_count(), 8);
     }
 
     #[test]

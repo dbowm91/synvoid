@@ -54,7 +54,7 @@ impl TokenBucket {
         }
     }
 
-    pub fn consume(&self, bytes: u64) -> Duration {
+    pub async fn consume(&self, bytes: u64) -> Duration {
         loop {
             self.refill();
 
@@ -72,7 +72,7 @@ impl TokenBucket {
                 let deficit = bytes - current;
                 let refill_rate = self.refill_rate.load(Ordering::Acquire);
                 let wait_ms = (deficit * 1000) / refill_rate.max(1);
-                std::thread::sleep(Duration::from_millis(wait_ms.min(1000)));
+                tokio::time::sleep(Duration::from_millis(wait_ms.min(1000))).await;
             }
         }
     }
@@ -139,5 +139,15 @@ mod tests {
 
         let available = bucket.available_tokens();
         assert!(available >= 50);
+    }
+
+    #[tokio::test]
+    async fn consume_does_not_block_the_executor() {
+        let bucket = TokenBucket::new(1, 1_000, 1);
+        assert!(bucket.try_consume(1));
+
+        tokio::time::timeout(Duration::from_millis(100), bucket.consume(1))
+            .await
+            .expect("token consumption should yield while waiting");
     }
 }

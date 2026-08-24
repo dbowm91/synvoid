@@ -14,8 +14,12 @@ const AUTH_WINDOW_DURATION: Duration = Duration::from_secs(60);
 const BCRYPT_COST: u32 = 12;
 
 pub struct AuthRateLimiter {
-    #[allow(clippy::type_complexity)]
-    attempts: Arc<RwLock<HashMap<String, (Vec<Instant>, bool)>>>,
+    attempts: Arc<RwLock<HashMap<String, AuthAttemptState>>>,
+}
+
+struct AuthAttemptState {
+    times: Vec<Instant>,
+    locked_at: Option<Instant>,
 }
 
 pub fn hash_admin_token_with_cost(token: &str, cost: u32) -> Result<String, String> {
@@ -43,7 +47,8 @@ impl AuthRateLimiter {
         if attempts
             .get(identifier)
             .map(|e| {
-                e.0.iter()
+                e.times
+                    .iter()
                     .filter(|t| t.elapsed() < AUTH_WINDOW_DURATION)
                     .count()
             })
@@ -54,27 +59,27 @@ impl AuthRateLimiter {
         }
         let entry = attempts
             .entry(identifier.to_string())
-            .or_insert((Vec::new(), false));
-        entry.0.push(Instant::now());
+            .or_insert_with(|| AuthAttemptState {
+                times: Vec::new(),
+                locked_at: None,
+            });
+        entry.times.push(Instant::now());
 
         let recent: Vec<_> = entry
-            .0
+            .times
             .iter()
             .filter(|t| t.elapsed() < AUTH_WINDOW_DURATION)
             .cloned()
             .collect();
-        entry.0 = recent;
+        entry.times = recent;
 
-        if entry.0.len() >= MAX_AUTH_ATTEMPTS {
-            entry.1 = true;
+        if entry.times.len() >= MAX_AUTH_ATTEMPTS && entry.locked_at.is_none() {
+            entry.locked_at = Some(Instant::now());
             let attempts = Arc::clone(&self.attempts);
             let id = identifier.to_string();
             tokio::spawn(async move {
                 tokio::time::sleep(AUTH_LOCKOUT_DURATION).await;
                 let mut attempts = attempts.write();
-                if let Some((_, locked)) = attempts.get_mut(&id) {
-                    *locked = false;
-                }
                 attempts.remove(&id);
             });
         }
@@ -87,26 +92,21 @@ impl AuthRateLimiter {
 
     pub fn is_locked(&self, identifier: &str) -> bool {
         let attempts = self.attempts.read();
-        if let Some((_, locked)) = attempts.get(identifier) {
-            if *locked {
-                return true;
-            }
-        }
-        false
+        attempts
+            .get(identifier)
+            .and_then(|state| state.locked_at)
+            .is_some()
     }
 
     pub fn retry_after(&self, identifier: &str) -> Option<Duration> {
         let attempts = self.attempts.read();
-        if let Some((times, locked)) = attempts.get(identifier) {
-            if *locked {
-                if let Some(oldest) = times.iter().max() {
-                    let elapsed = oldest.elapsed();
-                    if elapsed >= AUTH_LOCKOUT_DURATION {
-                        return Some(Duration::ZERO);
-                    }
-                    return Some(AUTH_LOCKOUT_DURATION.saturating_sub(elapsed));
+        if let Some(state) = attempts.get(identifier) {
+            if let Some(locked_at) = state.locked_at {
+                let elapsed = locked_at.elapsed();
+                if elapsed >= AUTH_LOCKOUT_DURATION {
+                    return Some(Duration::ZERO);
                 }
-                return Some(AUTH_LOCKOUT_DURATION);
+                return Some(AUTH_LOCKOUT_DURATION.saturating_sub(elapsed));
             }
         }
         None
@@ -115,20 +115,22 @@ impl AuthRateLimiter {
     pub fn cleanup_expired(&self) {
         let mut attempts = self.attempts.write();
         let now = Instant::now();
-        attempts.retain(|_, (times, locked)| {
-            if *locked {
+        attempts.retain(|_, state| {
+            if state.locked_at.is_some() {
                 return true;
             }
-            times.retain(|t| now.duration_since(*t) < AUTH_WINDOW_DURATION);
-            !times.is_empty()
+            state
+                .times
+                .retain(|t| now.duration_since(*t) < AUTH_WINDOW_DURATION);
+            !state.times.is_empty()
         });
     }
 
     fn cleanup_if_needed(&self, identifier: &str) {
         let mut attempts = self.attempts.write();
-        if let Some((times, _)) = attempts.get_mut(identifier) {
-            times.retain(|t| t.elapsed() < AUTH_WINDOW_DURATION);
-            if times.is_empty() {
+        if let Some(state) = attempts.get_mut(identifier) {
+            state.times.retain(|t| t.elapsed() < AUTH_WINDOW_DURATION);
+            if state.times.is_empty() && state.locked_at.is_none() {
                 attempts.remove(identifier);
             }
         }
@@ -202,8 +204,7 @@ mod tests {
         let attempts = limiter.attempts.read();
         let entry = attempts.get(identifier);
         assert!(entry.is_some());
-        let (times, _) = entry.unwrap();
-        assert!(times.len() <= MAX_AUTH_ATTEMPTS);
+        assert!(entry.unwrap().times.len() <= MAX_AUTH_ATTEMPTS);
     }
 
     #[test]
@@ -286,6 +287,29 @@ mod tests {
         let identifier = "192.168.1.106";
 
         assert!(limiter.retry_after(identifier).is_none());
+    }
+
+    #[test]
+    fn test_auth_rate_limiter_retry_after_uses_lock_time() {
+        let limiter = AuthRateLimiter::new();
+        let identifier = "192.168.1.108";
+        let locked_at = Instant::now() - Duration::from_secs(10);
+
+        limiter.attempts.write().insert(
+            identifier.to_string(),
+            AuthAttemptState {
+                times: vec![Instant::now()],
+                locked_at: Some(locked_at),
+            },
+        );
+
+        let retry = limiter.retry_after(identifier).expect("locked identifier");
+        let lower = AUTH_LOCKOUT_DURATION.saturating_sub(Duration::from_secs(11));
+        let upper = AUTH_LOCKOUT_DURATION.saturating_sub(Duration::from_secs(9));
+        assert!(
+            retry >= lower && retry <= upper,
+            "retry-after should be anchored to lock time: {retry:?}"
+        );
     }
 
     #[test]
