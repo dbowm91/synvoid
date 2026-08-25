@@ -12,6 +12,7 @@ pub mod mesh_stubs {
     use axum::extract::{Query, State};
     use axum::Json;
     use std::sync::Arc;
+    use synvoid_core::admin_mutation::{AdminMutationResult, BlockMutationTarget};
     use utoipa::ToSchema;
 
     #[derive(ToSchema)]
@@ -137,7 +138,7 @@ pub mod mesh_stubs {
         post,
         path = "/mesh/ban/ip",
         responses(
-            (status = 200, description = "Ban IP", body = StatusResponse),
+            (status = 200, description = "Ban IP"),
             (status = 401, description = "Unauthorized"),
             (status = 500, description = "Internal server error")
         ),
@@ -146,15 +147,22 @@ pub mod mesh_stubs {
     pub async fn ban_ip(
         State(_state): State<Arc<AdminState>>,
         _auth: OptionalAuth,
-    ) -> Result<Json<StatusResponse>, axum::http::StatusCode> {
-        Ok(Json(StatusResponse::success("IP banned (mesh disabled)")))
+    ) -> Result<Json<AdminMutationResult<BlockMutationTarget>>, axum::http::StatusCode> {
+        Ok(Json(AdminMutationResult::failed(
+            BlockMutationTarget {
+                kind: "ip".to_string(),
+                value: String::new(),
+                site_scope: None,
+            },
+            "IP ban unavailable (mesh disabled)",
+        )))
     }
 
     #[utoipa::path(
         post,
         path = "/mesh/ban/mesh-id",
         responses(
-            (status = 200, description = "Ban mesh ID", body = StatusResponse),
+            (status = 200, description = "Ban mesh ID"),
             (status = 401, description = "Unauthorized"),
             (status = 500, description = "Internal server error")
         ),
@@ -163,9 +171,14 @@ pub mod mesh_stubs {
     pub async fn ban_mesh_id(
         State(_state): State<Arc<AdminState>>,
         _auth: OptionalAuth,
-    ) -> Result<Json<StatusResponse>, axum::http::StatusCode> {
-        Ok(Json(StatusResponse::success(
-            "Mesh ID banned (mesh disabled)",
+    ) -> Result<Json<AdminMutationResult<BlockMutationTarget>>, axum::http::StatusCode> {
+        Ok(Json(AdminMutationResult::failed(
+            BlockMutationTarget {
+                kind: "mesh_id".to_string(),
+                value: String::new(),
+                site_scope: None,
+            },
+            "Mesh ID ban unavailable (mesh disabled)",
         )))
     }
 
@@ -173,7 +186,7 @@ pub mod mesh_stubs {
         delete,
         path = "/mesh/ban",
         responses(
-            (status = 200, description = "Unban", body = StatusResponse),
+            (status = 200, description = "Unban"),
             (status = 401, description = "Unauthorized"),
             (status = 500, description = "Internal server error")
         ),
@@ -182,8 +195,15 @@ pub mod mesh_stubs {
     pub async fn unban(
         State(_state): State<Arc<AdminState>>,
         _auth: OptionalAuth,
-    ) -> Result<Json<StatusResponse>, axum::http::StatusCode> {
-        Ok(Json(StatusResponse::success("Unbanned (mesh disabled)")))
+    ) -> Result<Json<AdminMutationResult<BlockMutationTarget>>, axum::http::StatusCode> {
+        Ok(Json(AdminMutationResult::failed(
+            BlockMutationTarget {
+                kind: "ip".to_string(),
+                value: String::new(),
+                site_scope: None,
+            },
+            "Unban unavailable (mesh disabled)",
+        )))
     }
 
     #[utoipa::path(

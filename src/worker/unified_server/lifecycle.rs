@@ -216,23 +216,33 @@ pub fn spawn_heartbeat_task(
             };
 
             let mut ipc = state.ipc.lock().await;
-            let _ = ipc
+            if let Err(e) = ipc
                 .send(&Message::UnifiedServerWorkerHeartbeat {
                     id: worker_id,
                     timestamp,
                     metrics: payload,
                 })
-                .await;
+                .await
+            {
+                tracing::warn!("Failed to send heartbeat to supervisor: {}", e);
+            }
 
             for (site_id, healthy) in app_health {
-                let _ = ipc
+                if let Err(e) = ipc
                     .send(&Message::AppServerHealth {
                         id: worker_id,
-                        site_id,
+                        site_id: site_id.clone(),
                         healthy,
                         timestamp,
                     })
-                    .await;
+                    .await
+                {
+                    tracing::warn!(
+                        "Failed to send app server health for {} to supervisor: {}",
+                        site_id,
+                        e
+                    );
+                }
             }
         }
     })
@@ -422,13 +432,18 @@ pub fn spawn_ipc_loop(
                                 block.provenance_source.as_deref(),
                             );
                             if let Ok(ip) = block.ip.parse() {
-                                let _ = block_store.block_ip_with_provenance(
+                                if !block_store.block_ip_with_provenance(
                                     ip,
                                     &block.reason,
                                     block.ban_expire_seconds,
                                     &block.site_scope,
                                     provenance,
-                                );
+                                ) {
+                                    tracing::warn!(
+                                        "Failed to apply supervisor-synced IP block for {}",
+                                        block.ip
+                                    );
+                                }
                             }
                         }
                         for block in mesh_blocks {
@@ -436,13 +451,18 @@ pub fn spawn_ipc_loop(
                                 block.provenance_kind.as_deref(),
                                 block.provenance_source.as_deref(),
                             );
-                            let _ = block_store.block_mesh_id_with_provenance(
+                            if !block_store.block_mesh_id_with_provenance(
                                 &block.mesh_id,
                                 &block.reason,
                                 block.ban_expire_seconds,
                                 &block.site_scope,
                                 provenance,
-                            );
+                            ) {
+                                tracing::warn!(
+                                    "Failed to apply supervisor-synced mesh block for {}",
+                                    block.mesh_id
+                                );
+                            }
                         }
                     }
                 }
@@ -896,13 +916,18 @@ pub async fn request_initial_blocklist(
                         block.provenance_source.as_deref(),
                     );
                     if let Ok(ip) = block.ip.parse() {
-                        let _ = block_store.block_ip_with_provenance(
+                        if !block_store.block_ip_with_provenance(
                             ip,
                             &block.reason,
                             block.ban_expire_seconds,
                             &block.site_scope,
                             provenance,
-                        );
+                        ) {
+                            tracing::warn!(
+                                "Failed to apply startup-synced IP block for {}",
+                                block.ip
+                            );
+                        }
                     }
                 }
                 for block in mesh_blocks {
@@ -910,13 +935,18 @@ pub async fn request_initial_blocklist(
                         block.provenance_kind.as_deref(),
                         block.provenance_source.as_deref(),
                     );
-                    let _ = block_store.block_mesh_id_with_provenance(
+                    if !block_store.block_mesh_id_with_provenance(
                         &block.mesh_id,
                         &block.reason,
                         block.ban_expire_seconds,
                         &block.site_scope,
                         provenance,
-                    );
+                    ) {
+                        tracing::warn!(
+                            "Failed to apply startup-synced mesh block for {}",
+                            block.mesh_id
+                        );
+                    }
                 }
                 break;
             }

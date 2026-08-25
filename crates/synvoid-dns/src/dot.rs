@@ -133,6 +133,19 @@ impl DotServer {
 
             match response {
                 Some(resp) => {
+                    if resp.len() > u16::MAX as usize {
+                        counter!("synvoid.dot.query.errors").increment(1);
+                        tracing::warn!(
+                            remote_addr = %client_addr,
+                            size = resp.len(),
+                            "DoT response exceeds 65535 bytes; refusing to send truncated frame"
+                        );
+                        let empty_response: Vec<u8> = vec![0; 2];
+                        if let Err(e) = tls_stream.write_all(&empty_response).await {
+                            break Err(format!("Failed to send empty response: {}", e));
+                        }
+                        continue;
+                    }
                     let response_len = resp.len() as u16;
                     if let Err(e) = tls_stream.write_all(&response_len.to_be_bytes()).await {
                         break Err(format!("Failed to send response length: {}", e));

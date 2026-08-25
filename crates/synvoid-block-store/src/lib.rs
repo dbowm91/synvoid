@@ -957,7 +957,13 @@ impl BlockStore {
                 records,
             };
             if let Ok(json) = serde_json::to_string_pretty(&snapshot) {
-                let _ = tokio::fs::write(cur_path, &json).await;
+                if let Err(e) = tokio::fs::write(cur_path, &json).await {
+                    tracing::error!(
+                        path = %cur_path.display(),
+                        error = %e,
+                        "Failed to persist peer cursors during shutdown; replay gaps/duplicates possible after restart"
+                    );
+                }
                 Self::set_secure_permissions(cur_path).await;
             }
 
@@ -971,7 +977,13 @@ impl BlockStore {
                 .join("blocklist_local_sequence.json");
             let data = serde_json::json!({ "next_sequence": seq });
             if let Ok(json) = serde_json::to_string_pretty(&data) {
-                let _ = tokio::fs::write(&seq_path, &json).await;
+                if let Err(e) = tokio::fs::write(&seq_path, &json).await {
+                    tracing::error!(
+                        path = %seq_path.display(),
+                        error = %e,
+                        "Failed to persist local sequence during shutdown"
+                    );
+                }
                 Self::set_secure_permissions(&seq_path).await;
             }
         }

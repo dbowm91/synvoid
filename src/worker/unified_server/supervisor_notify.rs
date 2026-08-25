@@ -15,117 +15,138 @@ pub async fn notify_supervisor_of_shutdown(
 ) {
     match cause {
         WorkerShutdownCause::SupervisorShutdown => {
-            let mut ipc_guard = ipc.lock().await;
-            let _ = ipc_guard
-                .send(
-                    &crate::process::Message::UnifiedServerWorkerShutdownComplete { id: worker_id },
-                )
-                .await;
+            send_to_supervisor(
+                ipc,
+                crate::process::Message::UnifiedServerWorkerShutdownComplete { id: worker_id },
+                "shutdown complete",
+            )
+            .await;
         }
         WorkerShutdownCause::WorkerResize { worker_threads } => {
-            let mut ipc_guard = ipc.lock().await;
-            let _ = ipc_guard
-                .send(&crate::process::Message::UnifiedServerWorkerResizeAck {
+            send_to_supervisor(
+                ipc,
+                crate::process::Message::UnifiedServerWorkerResizeAck {
                     id: worker_id,
                     worker_threads: *worker_threads as u32,
-                })
-                .await;
+                },
+                "resize ack",
+            )
+            .await;
         }
         WorkerShutdownCause::CriticalTaskExit(exit) => {
-            let mut ipc_guard = ipc.lock().await;
-            let _ = ipc_guard
-                .send(&crate::process::Message::WorkerError {
-                    id: worker_id,
-                    error: format!("Critical task '{}' exited: {}", exit.name, exit.reason),
-                    severity: crate::process::ErrorSeverity::Critical,
-                    error_code: crate::process::ErrorCode::WorkerPanic,
-                })
-                .await;
+            send_worker_error(
+                ipc,
+                worker_id,
+                format!("Critical task '{}' exited: {}", exit.name, exit.reason),
+                crate::process::ErrorCode::WorkerPanic,
+            )
+            .await;
         }
         WorkerShutdownCause::ServerExitedUnexpectedly(ref exit) => {
-            let mut ipc_guard = ipc.lock().await;
-            let _ = ipc_guard
-                .send(&crate::process::Message::WorkerError {
-                    id: worker_id,
-                    error: format!(
-                        "Server task '{}' exited unexpectedly: {}",
-                        exit.name, exit.reason
-                    ),
-                    severity: crate::process::ErrorSeverity::Critical,
-                    error_code: crate::process::ErrorCode::Unknown,
-                })
-                .await;
+            send_worker_error(
+                ipc,
+                worker_id,
+                format!(
+                    "Server task '{}' exited unexpectedly: {}",
+                    exit.name, exit.reason
+                ),
+                crate::process::ErrorCode::Unknown,
+            )
+            .await;
         }
         WorkerShutdownCause::RegistryExitChannelClosed => {
-            let mut ipc_guard = ipc.lock().await;
-            let _ = ipc_guard
-                .send(&crate::process::Message::WorkerError {
-                    id: worker_id,
-                    error: "Registry exit channel closed — lifecycle infrastructure failure"
-                        .to_string(),
-                    severity: crate::process::ErrorSeverity::Critical,
-                    error_code: crate::process::ErrorCode::Unknown,
-                })
-                .await;
+            send_worker_error(
+                ipc,
+                worker_id,
+                "Registry exit channel closed — lifecycle infrastructure failure".to_string(),
+                crate::process::ErrorCode::Unknown,
+            )
+            .await;
         }
         #[cfg(feature = "mesh")]
         WorkerShutdownCause::MeshStartupFailed(ref reason) => {
-            let mut ipc_guard = ipc.lock().await;
-            let _ = ipc_guard
-                .send(&crate::process::Message::WorkerError {
-                    id: worker_id,
-                    error: format!("Mesh startup failed: {}", reason),
-                    severity: crate::process::ErrorSeverity::Critical,
-                    error_code: crate::process::ErrorCode::Unknown,
-                })
-                .await;
+            send_worker_error(
+                ipc,
+                worker_id,
+                format!("Mesh startup failed: {}", reason),
+                crate::process::ErrorCode::Unknown,
+            )
+            .await;
         }
         #[cfg(feature = "mesh")]
         WorkerShutdownCause::MeshShutdownIncomplete(ref reason) => {
-            let mut ipc_guard = ipc.lock().await;
-            let _ = ipc_guard
-                .send(&crate::process::Message::WorkerError {
-                    id: worker_id,
-                    error: format!("Mesh shutdown incomplete: {}", reason),
-                    severity: crate::process::ErrorSeverity::Critical,
-                    error_code: crate::process::ErrorCode::Unknown,
-                })
-                .await;
+            send_worker_error(
+                ipc,
+                worker_id,
+                format!("Mesh shutdown incomplete: {}", reason),
+                crate::process::ErrorCode::Unknown,
+            )
+            .await;
         }
         #[cfg(feature = "mesh")]
         WorkerShutdownCause::MeshServiceExit(ref exit) => {
-            let mut ipc_guard = ipc.lock().await;
-            let _ = ipc_guard
-                .send(&crate::process::Message::WorkerError {
-                    id: worker_id,
-                    error: format!("Mesh service '{}' exited: {}", exit.name, exit.reason),
-                    severity: crate::process::ErrorSeverity::Critical,
-                    error_code: crate::process::ErrorCode::Unknown,
-                })
-                .await;
+            send_worker_error(
+                ipc,
+                worker_id,
+                format!("Mesh service '{}' exited: {}", exit.name, exit.reason),
+                crate::process::ErrorCode::Unknown,
+            )
+            .await;
         }
         #[cfg(feature = "mesh")]
         WorkerShutdownCause::MeshRestartExhausted {
             attempts,
             ref last_error,
         } => {
-            let mut ipc_guard = ipc.lock().await;
-            let _ = ipc_guard
-                .send(&crate::process::Message::WorkerError {
-                    id: worker_id,
-                    error: format!(
-                        "Mesh restart exhausted after {} attempts: {}",
-                        attempts, last_error
-                    ),
-                    severity: crate::process::ErrorSeverity::Critical,
-                    error_code: crate::process::ErrorCode::Unknown,
-                })
-                .await;
+            send_worker_error(
+                ipc,
+                worker_id,
+                format!(
+                    "Mesh restart exhausted after {} attempts: {}",
+                    attempts, last_error
+                ),
+                crate::process::ErrorCode::Unknown,
+            )
+            .await;
         }
         // SupervisorDisconnected, ExternalStop, RunningFlagCleared, ServerStoppedForShutdown
         // -> no supervisor notification needed.
         _ => {}
     }
+}
+
+async fn send_to_supervisor(
+    ipc: &tokio::sync::Mutex<synvoid_ipc::AsyncIpcStream>,
+    msg: crate::process::Message,
+    context: &str,
+) {
+    let mut ipc_guard = ipc.lock().await;
+    if let Err(e) = ipc_guard.send(&msg).await {
+        tracing::warn!(
+            context = context,
+            error = %e,
+            "Failed to send supervisor notification; supervisor may misinterpret shutdown outcome"
+        );
+    }
+}
+
+async fn send_worker_error(
+    ipc: &tokio::sync::Mutex<synvoid_ipc::AsyncIpcStream>,
+    worker_id: WorkerId,
+    error: String,
+    error_code: crate::process::ErrorCode,
+) {
+    send_to_supervisor(
+        ipc,
+        crate::process::Message::WorkerError {
+            id: worker_id,
+            error,
+            severity: crate::process::ErrorSeverity::Critical,
+            error_code,
+        },
+        "worker error report",
+    )
+    .await;
 }
 
 /// Derive the process exit code from the authoritative shutdown cause.

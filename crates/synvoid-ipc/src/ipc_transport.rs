@@ -90,6 +90,7 @@ pub struct IpcStream {
     read_buffer: Vec<u8>,
     signer: Option<Arc<IpcSigner>>,
     _enforce_signing: bool,
+    negotiated_signed: bool,
 }
 
 pub struct IpcListener {
@@ -239,6 +240,7 @@ impl IpcStream {
             read_buffer: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
             signer: None,
             _enforce_signing: false,
+            negotiated_signed: false,
         }
     }
 
@@ -249,6 +251,7 @@ impl IpcStream {
             read_buffer: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
             signer: Some(signer),
             _enforce_signing: true,
+            negotiated_signed: true,
         }
     }
 
@@ -264,6 +267,7 @@ impl IpcStream {
         Self {
             inner: Box::new(stream),
             read_buffer: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
+            negotiated_signed: enforce_signing && signer.is_some(),
             signer,
             _enforce_signing: enforce_signing,
         }
@@ -276,6 +280,7 @@ impl IpcStream {
             read_buffer: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
             signer: None,
             _enforce_signing: false,
+            negotiated_signed: false,
         }
     }
 
@@ -286,6 +291,7 @@ impl IpcStream {
             read_buffer: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
             signer: Some(signer),
             _enforce_signing: true,
+            negotiated_signed: true,
         }
     }
 
@@ -301,6 +307,7 @@ impl IpcStream {
         Self {
             inner: Box::new(pipe),
             read_buffer: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
+            negotiated_signed: enforce_signing && signer.is_some(),
             signer,
             _enforce_signing: enforce_signing,
         }
@@ -338,6 +345,7 @@ impl IpcStream {
                         read_buffer: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
                         signer: None,
                         _enforce_signing: false,
+                        negotiated_signed: false,
                     });
                 }
                 Err(e) if e.kind() == io::ErrorKind::NotFound && attempts < max_attempts => {
@@ -369,6 +377,7 @@ impl IpcStream {
                         read_buffer: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
                         signer: Some(signer),
                         _enforce_signing: true,
+                        negotiated_signed: true,
                     });
                 }
                 Err(e) if e.kind() == io::ErrorKind::NotFound && attempts < max_attempts => {
@@ -381,7 +390,7 @@ impl IpcStream {
     }
 
     pub async fn send<T: Serialize>(&mut self, msg: &T) -> io::Result<()> {
-        if self._enforce_signing {
+        if self._enforce_signing || (self.negotiated_signed && self.signer.is_some()) {
             if let Some(ref signer) = self.signer {
                 use super::ipc_signed::SignedIpcMessage;
                 let data = SignedIpcMessage::serialize_signed(msg, signer)?;
@@ -402,7 +411,7 @@ impl IpcStream {
     }
 
     pub async fn recv<T: DeserializeOwned>(&mut self) -> io::Result<Option<T>> {
-        if self._enforce_signing {
+        if self._enforce_signing || (self.negotiated_signed && self.signer.is_some()) {
             if let Some(ref signer) = self.signer {
                 use super::ipc_signed::SignedIpcMessage;
 
@@ -443,6 +452,51 @@ impl IpcStream {
                     "IPC signing enforced but no signer configured",
                 ))
             }
+        } else if let Some(signer) = self.signer.clone() {
+            // Negotiation mode: a signer is attached but the peer has not yet
+            // demonstrated signed framing (e.g. a listener serving both
+            // provisioned workers and unsigned CLI clients). Read one frame
+            // and prefer the signed envelope; fall back to plain framing so
+            // legacy peers keep working. Once a validly signed envelope
+            // arrives, both directions switch to signed mode permanently.
+            use super::ipc_signed::SignedIpcMessage;
+
+            let mut len_buf = [0u8; 4];
+            match self.inner.read_exact(&mut len_buf).await {
+                Ok(_) => {}
+                Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
+                Err(e) => return Err(e),
+            }
+
+            let len = u32::from_be_bytes(len_buf) as usize;
+            if len > super::ipc_framing::MAX_MESSAGE_SIZE {
+                super::ipc_signed::increment_oversized_rejected();
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "message too large",
+                ));
+            }
+
+            let mut data = vec![0u8; len];
+            self.inner
+                .read_exact(&mut data)
+                .await
+                .map_err(io::Error::other)?;
+
+            let mut framed = Vec::with_capacity(4 + data.len());
+            framed.extend_from_slice(&len_buf);
+            framed.extend_from_slice(&data);
+
+            match SignedIpcMessage::deserialize_signed::<T>(&framed, &signer) {
+                Ok(msg) => {
+                    self.negotiated_signed = true;
+                    Ok(Some(msg))
+                }
+                Err(signed_err) => match synvoid_utils::serialization::deserialize(&data) {
+                    Ok(msg) => Ok(Some(msg)),
+                    Err(_) => Err(signed_err),
+                },
+            }
         } else {
             super::ipc_framing::read_message(&mut self.inner, &mut self.read_buffer).await
         }
@@ -473,7 +527,19 @@ impl IpcStream {
             read_buffer: self.read_buffer,
             signer: Some(signer),
             _enforce_signing: true,
+            negotiated_signed: true,
         }
+    }
+
+    /// Attaches a signer without forcing signed-only framing.
+    ///
+    /// The first received frame selects the mode: a validly signed envelope
+    /// switches both directions to signed framing; unsigned peers keep using
+    /// plain framing. Intended for listeners whose peer population mixes
+    /// provisioned (signing) workers with ad-hoc clients.
+    pub fn with_signer_negotiated(mut self, signer: Arc<IpcSigner>) -> Self {
+        self.signer = Some(signer);
+        self
     }
 
     pub fn is_signed(&self) -> bool {
@@ -570,4 +636,74 @@ pub async fn connect_to_commands_async() -> io::Result<IpcStream> {
 
 pub async fn connect_to_commands_signed(signer: Arc<IpcSigner>) -> io::Result<IpcStream> {
     IpcEndpoint::commands().connect_with_signer(signer).await
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use crate::ipc_signed::generate_session_key;
+
+    async fn test_endpoint_listener(label: &str) -> (IpcEndpoint, IpcListener) {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let endpoint = IpcEndpoint::new(&format!("{}-{}-{}", label, std::process::id(), nanos));
+        let listener = endpoint.bind().await.unwrap();
+        (endpoint, listener)
+    }
+
+    #[tokio::test]
+    async fn test_negotiated_stream_accepts_unsigned_peer() {
+        let (endpoint, listener) = test_endpoint_listener("negotiated-unsigned").await;
+        let signer = Arc::new(IpcSigner::new(&generate_session_key()));
+
+        let server = tokio::spawn(async move {
+            let mut stream = listener
+                .accept()
+                .await
+                .unwrap()
+                .with_signer_negotiated(signer);
+            let first: Option<String> = stream.recv().await.unwrap();
+            assert_eq!(first, Some("hello".to_string()));
+            stream.send(&"welcome".to_string()).await.unwrap();
+            let eof: Option<String> = stream.recv().await.unwrap();
+            assert!(eof.is_none());
+        });
+
+        let mut client = endpoint.connect().await.unwrap();
+        client.send(&"hello".to_string()).await.unwrap();
+        let reply: Option<String> = client.recv().await.unwrap();
+        assert_eq!(reply, Some("welcome".to_string()));
+        drop(client);
+
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_negotiated_stream_flips_to_signed_for_provisioned_worker() {
+        let (endpoint, listener) = test_endpoint_listener("negotiated-signed").await;
+        let signer = Arc::new(IpcSigner::new(&generate_session_key()));
+
+        let server_signer = signer.clone();
+        let server = tokio::spawn(async move {
+            let mut stream = listener
+                .accept()
+                .await
+                .unwrap()
+                .with_signer_negotiated(server_signer);
+            let first: Option<String> = stream.recv().await.unwrap();
+            assert_eq!(first, Some("signed-hello".to_string()));
+            stream.send(&"signed-welcome".to_string()).await.unwrap();
+        });
+
+        let mut client = endpoint.connect_with_signer(signer).await.unwrap();
+        client.send(&"signed-hello".to_string()).await.unwrap();
+
+        // The enforce-side decode proves the negotiated peer replied signed.
+        let reply: Option<String> = client.recv_with_timeout(5000).await.unwrap();
+        assert_eq!(reply, Some("signed-welcome".to_string()));
+
+        server.await.unwrap();
+    }
 }

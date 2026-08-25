@@ -697,11 +697,12 @@ impl MeshTransport {
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
-                let ttl = rec.get("ttl").and_then(|t| t.as_u64()).unwrap_or(3600) as u32;
+                let ttl = u32::try_from(rec.get("ttl").and_then(|t| t.as_u64()).unwrap_or(3600))
+                    .unwrap_or(u32::MAX);
                 let priority = rec
                     .get("priority")
                     .and_then(|p| p.as_u64())
-                    .map(|p| p as u32);
+                    .map(|p| u32::try_from(p).unwrap_or(u32::MAX));
 
                 let record_type = match record_type_str.to_uppercase().as_str() {
                     "A" => RecordType::A,

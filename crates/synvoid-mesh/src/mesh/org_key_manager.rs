@@ -681,7 +681,7 @@ impl OrgKeyManager {
 
             if let Some(org_key) = org_key_opt {
                 let now = synvoid_utils::safe_unix_timestamp();
-                if now - org_key.created_at > 86400 * 25 {
+                if now.saturating_sub(org_key.created_at) > 86400 * 25 {
                     tracing::info!(
                         "Organization key for {} is nearing expiration, requesting new signatures",
                         org_id

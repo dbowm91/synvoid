@@ -39,7 +39,10 @@ pub fn truncate_prompt(prompt: &str, max_bytes: usize) -> String {
         return prompt.to_string();
     }
     // Keep the tail of the prompt (most recent payload data is most relevant)
-    let start = prompt.len().saturating_sub(max_bytes);
+    let mut start = prompt.len().saturating_sub(max_bytes);
+    while start > 0 && !prompt.is_char_boundary(start) {
+        start -= 1;
+    }
     format!("[truncated]{}", &prompt[start..])
 }
 
@@ -234,6 +237,14 @@ mod tests {
         let result = truncate_prompt(&prompt, 4096);
         assert!(result.starts_with("[truncated]"));
         assert!(result.len() <= 4096 + "[truncated]".len());
+    }
+
+    #[test]
+    fn test_truncate_prompt_multibyte_no_panic() {
+        let prompt = "🎉".repeat(2000);
+        let result = truncate_prompt(&prompt, 4096);
+        assert!(result.starts_with("[truncated]"));
+        assert!(result.is_char_boundary("[truncated]".len()));
     }
 
     #[test]

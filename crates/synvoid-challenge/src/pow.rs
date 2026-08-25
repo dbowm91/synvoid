@@ -15,7 +15,7 @@ pub fn has_leading_zeros(hash: &[u8], zeros: usize) -> bool {
 
     let mut result: u8 = 1;
 
-    for hash_byte in &hash[..zeros_u8] {
+    for hash_byte in hash.iter().take(zeros_u8.min(hash.len())) {
         result &= (*hash_byte == 0) as u8;
     }
 
@@ -82,6 +82,19 @@ mod tests {
         let hash = hex::decode("0001ff").unwrap();
         assert!(has_leading_zeros_ct(&hash, 15).unwrap_u8() == 1);
         assert!(has_leading_zeros_ct(&hash, 16).unwrap_u8() == 0);
+    }
+
+    #[test]
+    fn test_leading_zeros_short_hash() {
+        let zero_hash = [0u8, 0u8];
+        assert!(has_leading_zeros(&zero_hash, 16));
+        assert!(has_leading_zeros(&zero_hash, 24));
+        assert!(has_leading_zeros_ct(&zero_hash, 24).unwrap_u8() == 1);
+
+        let mixed_hash = [0x40u8, 0x00u8];
+        assert!(has_leading_zeros(&mixed_hash, 1));
+        assert!(!has_leading_zeros(&mixed_hash, 2));
+        assert!(!has_leading_zeros(&mixed_hash, 24));
     }
 
     #[test]

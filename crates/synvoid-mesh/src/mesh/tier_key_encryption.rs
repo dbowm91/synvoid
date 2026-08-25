@@ -488,57 +488,64 @@ pub fn deserialize_encrypted_tier_key(
 ) -> Result<EncryptedTierKeyData, TierKeyEncryptionError> {
     let mut offset = 4; // Skip total length prefix
 
-    if data.len() < offset + 4 {
+    let read_u32 = |offset: usize| -> Result<u32, TierKeyEncryptionError> {
+        if data.len() < offset + 4 {
+            return Err(TierKeyEncryptionError::Decryption(
+                "Data too short".to_string(),
+            ));
+        }
+        Ok(u32::from_be_bytes([
+            data[offset],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
+        ]))
+    };
+
+    let org_id_len = read_u32(offset)? as usize;
+    offset += 4;
+
+    if data.len() < offset + org_id_len {
         return Err(TierKeyEncryptionError::Decryption(
-            "Data too short".to_string(),
+            "Data too short for org id".to_string(),
         ));
     }
-
-    let org_id_len = u32::from_be_bytes([
-        data[offset],
-        data[offset + 1],
-        data[offset + 2],
-        data[offset + 3],
-    ]) as usize;
-    offset += 4;
     let org_id = String::from_utf8_lossy(&data[offset..offset + org_id_len]).to_string();
     offset += org_id_len;
 
-    let tier = u32::from_be_bytes([
-        data[offset],
-        data[offset + 1],
-        data[offset + 2],
-        data[offset + 3],
-    ]);
+    let tier = read_u32(offset)?;
     offset += 4;
 
-    let key_id_len = u32::from_be_bytes([
-        data[offset],
-        data[offset + 1],
-        data[offset + 2],
-        data[offset + 3],
-    ]) as usize;
+    let key_id_len = read_u32(offset)? as usize;
     offset += 4;
+
+    if data.len() < offset + key_id_len {
+        return Err(TierKeyEncryptionError::Decryption(
+            "Data too short for key id".to_string(),
+        ));
+    }
     let key_id = String::from_utf8_lossy(&data[offset..offset + key_id_len]).to_string();
     offset += key_id_len;
 
-    let nonce_len = u32::from_be_bytes([
-        data[offset],
-        data[offset + 1],
-        data[offset + 2],
-        data[offset + 3],
-    ]) as usize;
+    let nonce_len = read_u32(offset)? as usize;
     offset += 4;
+
+    if data.len() < offset + nonce_len {
+        return Err(TierKeyEncryptionError::Decryption(
+            "Data too short for nonce".to_string(),
+        ));
+    }
     let nonce = data[offset..offset + nonce_len].to_vec();
     offset += nonce_len;
 
-    let encrypted_key_len = u32::from_be_bytes([
-        data[offset],
-        data[offset + 1],
-        data[offset + 2],
-        data[offset + 3],
-    ]) as usize;
+    let encrypted_key_len = read_u32(offset)? as usize;
     offset += 4;
+
+    if data.len() < offset + encrypted_key_len {
+        return Err(TierKeyEncryptionError::Decryption(
+            "Data too short for encrypted key".to_string(),
+        ));
+    }
     let encrypted_key = data[offset..offset + encrypted_key_len].to_vec();
 
     Ok(EncryptedTierKeyData {
@@ -726,6 +733,38 @@ mod tests {
 
         let decrypted = encrypter.decrypt_tier_key_data(&deserialized).unwrap();
         assert_eq!(decrypted, tier_key.to_vec());
+    }
+
+    #[test]
+    fn test_deserialize_truncated_inputs_rejected_not_panic() {
+        let encrypter = make_encrypter();
+        let encrypted = encrypter
+            .encrypt_tier_key_data("org-1", 1, "key-1", b"test_key")
+            .unwrap();
+        let serialized = serialize_encrypted_tier_key(&encrypted);
+
+        for cut in 0..serialized.len() {
+            let result = deserialize_encrypted_tier_key(&serialized[..cut]);
+            assert!(
+                result.is_err(),
+                "truncated input of {} bytes must be rejected",
+                cut
+            );
+        }
+    }
+
+    #[test]
+    fn test_deserialize_hostile_length_prefix_rejected_not_panic() {
+        let mut hostile = vec![0u8; 4];
+        hostile.extend_from_slice(&[0xFFu8; 4]);
+        hostile.extend_from_slice(b"org");
+        assert!(deserialize_encrypted_tier_key(&hostile).is_err());
+
+        let mut hostile2 = vec![0u8; 4];
+        hostile2.extend_from_slice(&3u32.to_be_bytes());
+        hostile2.extend_from_slice(b"org");
+        hostile2.extend_from_slice(&1u32.to_be_bytes());
+        assert!(deserialize_encrypted_tier_key(&hostile2).is_err());
     }
 
     #[test]

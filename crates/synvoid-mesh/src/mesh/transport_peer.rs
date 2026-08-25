@@ -4482,6 +4482,7 @@ impl MeshTransport {
                     {
                         tracing::warn!("Failed to apply peer session rotation: {}", e);
                     } else {
+                        let rotated_session_id = session_id.clone();
                         let ack = MeshMessage::SessionRotateAck {
                             session_id,
                             peer_id: self.config.node_id().into(),
@@ -4493,8 +4494,18 @@ impl MeshTransport {
                             .encode()
                             .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
                         let len = (encoded.len() as u32).to_be_bytes();
-                        let _ = send_stream.write_all(&len).await;
-                        let _ = send_stream.write_all(&encoded).await;
+                        send_stream.write_all(&len).await.map_err(|e| {
+                            MeshTransportError::SendFailed(format!(
+                                "failed to send SessionRotateAck length: {:?}",
+                                e
+                            ))
+                        })?;
+                        send_stream.write_all(&encoded).await.map_err(|e| {
+                            MeshTransportError::SendFailed(format!(
+                                "failed to send SessionRotateAck for session {}: {:?}",
+                                rotated_session_id, e
+                            ))
+                        })?;
                     }
                 }
             }

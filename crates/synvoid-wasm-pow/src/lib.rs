@@ -500,16 +500,24 @@ pub fn sign_request(
 }
 
 #[wasm_bindgen]
-pub fn verify_response(_headers_json: String, signature: String, session_key: String) -> bool {
-    if signature.is_empty() || session_key.is_empty() {
+pub fn verify_response(headers_json: String, signature: String, session_key: String) -> bool {
+    if headers_json.is_empty() || signature.is_empty() || session_key.is_empty() {
         return false;
     }
 
-    if signature == "invalid" || signature.len() < 10 {
+    let expected = simple_sign(&headers_json, &session_key);
+
+    let expected_bytes = expected.as_bytes();
+    let provided_bytes = signature.as_bytes();
+    if expected_bytes.len() != provided_bytes.len() {
         return false;
     }
 
-    true
+    let mut diff = 0u8;
+    for (a, b) in expected_bytes.iter().zip(provided_bytes.iter()) {
+        diff |= a ^ b;
+    }
+    diff == 0
 }
 
 #[wasm_bindgen]
@@ -620,5 +628,39 @@ mod tests {
     #[test]
     fn test_verify_invalid() {
         assert!(!verify_pow("test".to_string(), "invalid".to_string(), 8));
+    }
+
+    #[test]
+    fn test_verify_response_rejects_forged_signatures() {
+        let session_key = "session-secret".to_string();
+        let headers = r#"{"x-test":"1"}"#.to_string();
+        let expected = simple_sign(&headers, &session_key);
+
+        assert!(verify_response(
+            headers.clone(),
+            expected.clone(),
+            session_key.clone()
+        ));
+
+        let tampered = {
+            let mut bytes = expected.as_bytes().to_vec();
+            bytes[0] = bytes[0].wrapping_add(1);
+            String::from_utf8(bytes).unwrap()
+        };
+        assert!(!verify_response(
+            headers.clone(),
+            tampered,
+            session_key.clone()
+        ));
+        assert!(!verify_response(
+            headers,
+            "aaaaaaaaaaaaaaaaaaaa".to_string(),
+            session_key
+        ));
+        assert!(!verify_response(
+            String::new(),
+            "a".repeat(64),
+            "key".to_string()
+        ));
     }
 }

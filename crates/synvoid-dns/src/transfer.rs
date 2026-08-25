@@ -11,6 +11,14 @@ use crate::cache::InvalidationReason;
 pub const AXFR_QUERY_TYPE: u16 = 252;
 pub const IXFR_QUERY_TYPE: u16 = 251;
 
+/// RFC 1982 serial arithmetic: returns true when `a` is strictly newer than
+/// `b`, accounting for u32 wraparound. Differences >= 2^31 are ambiguous and
+/// treated as "not newer".
+fn serial_is_newer(a: u32, b: u32) -> bool {
+    let delta = a.wrapping_sub(b);
+    delta != 0 && delta < 0x8000_0000
+}
+
 pub struct ZoneTransfer {
     zones: Arc<ShardedZoneStore>,
     allowed_transfers: Vec<String>,
@@ -525,7 +533,7 @@ impl ZoneTransfer {
 
         let responses = if client_serial == current_serial {
             vec![self.build_ixfr_current_response(qname, &zone, message_id)?]
-        } else if client_serial == 0 || client_serial > current_serial {
+        } else if client_serial == 0 || serial_is_newer(client_serial, current_serial) {
             if self.ixfr_fallback_to_axfr {
                 self.build_ixfr_full_response_messages(qname, &zone, message_id)?
             } else {
@@ -1189,5 +1197,17 @@ mod tests {
         let zones = Arc::new(ShardedZoneStore::new());
         let transfer = ZoneTransfer::new(zones, vec![], None);
         assert!(transfer.cache.is_none());
+    }
+
+    #[test]
+    fn test_serial_is_newer_rfc1982() {
+        assert!(serial_is_newer(2, 1));
+        assert!(!serial_is_newer(1, 2));
+        assert!(!serial_is_newer(5, 5));
+
+        assert!(serial_is_newer(1, u32::MAX));
+        assert!(serial_is_newer(0x0000_0010, 0xFFFFFFF0));
+        assert!(serial_is_newer(u32::MAX, u32::MAX - 1));
+        assert!(!serial_is_newer(u32::MAX - 1, u32::MAX));
     }
 }

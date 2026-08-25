@@ -88,8 +88,22 @@ impl GlobalNodeRevocationList {
             saved_at: synvoid_utils::current_timestamp(),
         };
 
-        if let Ok(bytes) = synvoid_utils::serialization::serialize(&persisted) {
-            let _ = std::fs::write(path, bytes);
+        match synvoid_utils::serialization::serialize(&persisted) {
+            Ok(bytes) => {
+                if let Err(e) = std::fs::write(path, bytes) {
+                    tracing::error!(
+                        path = %path.display(),
+                        error = %e,
+                        "Failed to persist revocation list; revoked nodes may be un-revoked after restart"
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::error!(
+                    error = ?e,
+                    "Failed to serialize revocation list for persistence"
+                );
+            }
         }
     }
 

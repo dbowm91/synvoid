@@ -196,6 +196,10 @@ impl DnsMessageDecompressor {
 
                 let offset = (len & 0x3F) << 8 | data[pos + 1] as usize;
 
+                if offset >= pos {
+                    return Err("Compression pointer must point backwards".to_string());
+                }
+
                 pos = offset;
                 jumps += 1;
                 continue;

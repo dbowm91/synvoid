@@ -164,31 +164,31 @@ impl PortHoneypotListener {
                                 }
                             };
 
-                            // Check per-IP connection limit
-                            {
-                                let counts = self.ip_connection_counts.read();
-                                if let Some(&count) = counts.get(&ip_key) {
-                                    if count >= self.config.max_connections_per_ip {
-                                        metrics::counter!("honeypot_connections_rejected_per_ip_limit").increment(1);
-                                        tracing::debug!(
-                                            remote_ip = %remote_addr.ip(),
-                                            current_count = count,
-                                            max = self.config.max_connections_per_ip,
-                                            "Honeypot connection rejected: per-IP limit reached"
-                                        );
-                                        drop(global_permit);
-                                        drop(stream);
-                                        continue;
-                                    }
-                                }
-                            }
-
-                            // Increment per-IP count and create RAII guard
-                            {
+                            // Check per-IP connection limit and increment atomically
+                            // under a single write lock to prevent TOCTOU bypass.
+                            let admitted = {
                                 let mut counts = self.ip_connection_counts.write();
                                 let count = counts.entry(ip_key.clone()).or_insert(0);
-                                *count += 1;
+                                if *count >= self.config.max_connections_per_ip {
+                                    false
+                                } else {
+                                    *count += 1;
+                                    true
+                                }
+                            };
+
+                            if !admitted {
+                                metrics::counter!("honeypot_connections_rejected_per_ip_limit").increment(1);
+                                tracing::debug!(
+                                    remote_ip = %remote_addr.ip(),
+                                    max = self.config.max_connections_per_ip,
+                                    "Honeypot connection rejected: per-IP limit reached"
+                                );
+                                drop(global_permit);
+                                drop(stream);
+                                continue;
                             }
+
                             let ip_guard = IpConnGuard::new(
                                 Arc::clone(&self.ip_connection_counts),
                                 ip_key,

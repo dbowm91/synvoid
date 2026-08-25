@@ -307,6 +307,12 @@ impl DoqServer {
     }
 
     async fn write_response(send: &mut quinn::SendStream, response: &[u8]) -> Result<(), String> {
+        if response.len() > u16::MAX as usize {
+            return Err(format!(
+                "Response too large for DoQ framing: {} bytes (max 65535)",
+                response.len()
+            ));
+        }
         let length = (response.len() as u16).to_be_bytes();
         send.write_all(&length)
             .await

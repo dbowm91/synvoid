@@ -136,12 +136,10 @@ impl HealthChecker {
         for (backend, is_healthy) in results {
             if is_healthy {
                 if !backend.is_healthy.is_running() {
-                    backend
-                        .consecutive_successes
-                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     let successes = backend
                         .consecutive_successes
-                        .load(std::sync::atomic::Ordering::Relaxed);
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                        + 1;
 
                     if successes >= config.recovery_threshold {
                         backend.is_healthy.set(true);
@@ -153,12 +151,10 @@ impl HealthChecker {
                     }
                 }
             } else {
-                backend
-                    .consecutive_failures
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 let failures = backend
                     .consecutive_failures
-                    .load(std::sync::atomic::Ordering::Relaxed);
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                    + 1;
 
                 if failures >= config.failure_threshold && backend.is_healthy.is_running() {
                     backend.is_healthy.set(false);

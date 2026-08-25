@@ -191,8 +191,8 @@ impl VerificationTaskManager {
         let current_penalty = if let Some(record) = existing_penalty {
             if let Ok(penalty) = serde_json::from_slice::<OriginPenalty>(&record.value) {
                 let now = safe_unix_timestamp();
-                let recovery_intervals =
-                    (now - penalty.last_updated) / self.config.penalty_recovery_interval_secs;
+                let recovery_intervals = now.saturating_sub(penalty.last_updated)
+                    / self.config.penalty_recovery_interval_secs;
 
                 // Exponential backoff: penalty halves every interval
                 let mut new_score = penalty.penalty_score as f32;

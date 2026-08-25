@@ -112,13 +112,10 @@ impl PowManager {
         self.active_challenges
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-        let mut challenge_data = Vec::new();
-        challenge_data.extend_from_slice(&self.secret_key);
-        challenge_data.extend_from_slice(&now.to_le_bytes());
-
-        let hash = Sha256::digest(&challenge_data);
-        // Include difficulty in the payload to ensure verification uses the same difficulty
-        let payload = format!("{}:{}:{}", now, hex::encode(hash), difficulty);
+        let commitment = Self::commitment_hash(&self.secret_key, now, difficulty);
+        // Include difficulty in the payload so verification reconstructs the
+        // exact work requirement issued for this challenge.
+        let payload = format!("{}:{}:{}", now, hex::encode(commitment), difficulty);
         let challenge = BASE64.encode(payload.as_bytes());
 
         PowChallenge {
@@ -128,10 +125,24 @@ impl PowManager {
         }
     }
 
+    fn commitment_hash(secret_key: &[u8; 32], timestamp: u64, difficulty: u8) -> [u8; 32] {
+        let mut challenge_data = Vec::with_capacity(37);
+        challenge_data.extend_from_slice(secret_key);
+        challenge_data.extend_from_slice(&timestamp.to_le_bytes());
+        challenge_data.push(difficulty);
+        Sha256::digest(&challenge_data).into()
+    }
+
     pub fn verify_solution(&self, challenge: &str, client_nonce: &str) -> bool {
-        // Decrement active challenges counter on verification attempt (best effort)
-        self.active_challenges
-            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        use subtle::ConstantTimeEq;
+
+        // Best-effort decrement; never wraps below zero when verification
+        // attempts outnumber generated challenges.
+        let _ = self.active_challenges.fetch_update(
+            std::sync::atomic::Ordering::Relaxed,
+            std::sync::atomic::Ordering::Relaxed,
+            |count| count.checked_sub(1),
+        );
 
         let now = current_timestamp();
 
@@ -146,7 +157,7 @@ impl PowManager {
         };
 
         let parts: Vec<&str> = payload.split(':').collect();
-        if parts.len() < 2 {
+        if parts.len() < 3 {
             return false;
         }
 
@@ -154,6 +165,24 @@ impl PowManager {
             Ok(t) => t,
             Err(_) => return false,
         };
+
+        let claimed_difficulty: u8 = match parts[2].parse() {
+            Ok(d) => d,
+            Err(_) => return false,
+        };
+
+        let commitment = match hex::decode(parts[1]) {
+            Ok(c) if c.len() == 32 => c,
+            _ => return false,
+        };
+
+        // Re-derive the commitment from the server-side secret. The difficulty
+        // is authenticated as part of the commitment, so clients cannot
+        // downgrade it to an easier value.
+        let expected = Self::commitment_hash(&self.secret_key, timestamp, claimed_difficulty);
+        if expected.ct_eq(commitment.as_slice()).unwrap_u8() != 1 {
+            return false;
+        }
 
         let age = now.saturating_sub(timestamp);
         if age > self.timeout_secs {
@@ -164,17 +193,10 @@ impl PowManager {
             return false;
         }
 
-        // Difficulty might be stored in the payload (for adaptive support)
-        let difficulty = if parts.len() >= 3 {
-            parts[2].parse().unwrap_or(self.difficulty)
-        } else {
-            self.difficulty
-        };
-
         let input = format!("{}{}", challenge, client_nonce);
         let hash = Sha256::digest(input.as_bytes());
 
-        has_leading_zeros_ct(&hash, difficulty as usize).into()
+        has_leading_zeros_ct(&hash, claimed_difficulty as usize).into()
     }
 
     pub fn generate_challenge_page(&self, honeypot_html: &str) -> String {
@@ -444,5 +466,56 @@ mod tests {
         let hash = hex::decode("0001ff").unwrap();
         assert!(has_leading_zeros_ct(&hash, 15).unwrap_u8() == 1);
         assert!(has_leading_zeros_ct(&hash, 16).unwrap_u8() == 0);
+    }
+
+    #[test]
+    fn test_difficulty_downgrade_rejected() {
+        let manager = PowManager::new(16, 300, 60, "test_cookie".to_string());
+        let challenge = manager.generate_challenge();
+
+        let decoded = BASE64.decode(challenge.challenge.as_bytes()).unwrap();
+        let payload = String::from_utf8(decoded).unwrap();
+        let mut parts: Vec<String> = payload.split(':').map(|s| s.to_string()).collect();
+        parts[2] = "1".to_string();
+        let forged_payload = parts.join(":");
+        let forged_challenge = BASE64.encode(forged_payload.as_bytes());
+
+        let trivial_solution = solve_pow_sync(&forged_challenge, 1);
+        assert!(trivial_solution.is_some());
+
+        assert!(!manager.verify_solution(&forged_challenge, &trivial_solution.unwrap()));
+    }
+
+    #[test]
+    fn test_forged_commitment_rejected() {
+        let manager = PowManager::new(4, 300, 60, "test_cookie".to_string());
+        let challenge = manager.generate_challenge();
+
+        let decoded = BASE64.decode(challenge.challenge.as_bytes()).unwrap();
+        let payload = String::from_utf8(decoded).unwrap();
+        let parts: Vec<&str> = payload.split(':').collect();
+        let timestamp: u64 = parts[0].parse().unwrap();
+
+        let mut fake_key = [0u8; 32];
+        rand::fill(&mut fake_key);
+        let forged_hash = PowManager::commitment_hash(&fake_key, timestamp, 4);
+        let forged_payload = format!("{}:{}:{}", timestamp, hex::encode(forged_hash), 4);
+        let forged_challenge = BASE64.encode(forged_payload.as_bytes());
+
+        assert!(!manager.verify_solution(&forged_challenge, "0"));
+    }
+
+    #[test]
+    fn test_verify_never_panics_or_wraps_counter() {
+        let manager = PowManager::new(4, 300, 60, "test_cookie".to_string());
+        for _ in 0..10 {
+            assert!(!manager.verify_solution("bogus", "0"));
+        }
+        assert_eq!(
+            manager
+                .active_challenges
+                .load(std::sync::atomic::Ordering::Relaxed),
+            0
+        );
     }
 }

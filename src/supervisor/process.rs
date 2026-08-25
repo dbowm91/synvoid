@@ -409,6 +409,15 @@ async fn run_supervisor_ipc_accept_loop(
     loop {
         match listener.accept().await {
             Ok(ipc) => {
+                // Attach the session signer so workers that connect signed
+                // interop correctly; unsigned clients still negotiate plain
+                // framing. See IpcStream::with_signer_negotiated.
+                let ipc = match pm.get_ipc_session_key() {
+                    Some(key) => ipc.with_signer_negotiated(Arc::new(
+                        crate::process::ipc_signed::IpcSigner::new(&key),
+                    )),
+                    None => ipc,
+                };
                 let pm_clone = pm.clone();
                 let state_clone = state.clone();
                 // reason: Per-connection IPC handler — short-lived, not a background task

@@ -420,6 +420,11 @@ impl DnsQueryValidator {
                 return Err(resp);
             }
 
+            if pos + 1 + len > query.len() {
+                let resp = super::wire::build_error_response(query, super::wire::RCODE_REFUSED);
+                return Err(resp);
+            }
+
             labels_count += 1;
             name_length += 1 + len;
 
