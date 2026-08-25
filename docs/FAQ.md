@@ -182,6 +182,6 @@ See [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) for more issues.
 
 ## Getting Help
 
-- GitHub Issues: https://github.com/synvoid/synvoid/issues
+- GitHub Issues: https://github.com/dbowm91/synvoid/issues
 - Documentation: Check the docs/ folder
 - Configuration Examples: See examples/ directory

@@ -107,7 +107,7 @@ The difference is architectural: HTTP/1 bodies flow through hyper's backpressure
 
 Request dispatch consumes `RequestServices` or narrower handles, never `UnifiedServerWorkerState`.
 
-This is enforced by `tests/data_plane_composition_boundary_guard.rs`. The guard classifies each file by role (`CompositionRoot`, `RequestPath`, `SharedTypes`, `Unclassified`) and scans for forbidden tokens:
+This is enforced by `tests/boundary_composition_guard.rs`. The guard classifies each file by role (`CompositionRoot`, `RequestPath`, `SharedTypes`, `Unclassified`) and scans for forbidden tokens:
 
 - `CONSTRUCTION_TOKENS` — constructors of concrete infrastructure types
 - `TYPE_IMPORT_TOKENS` — direct imports of `UnifiedServerWorkerState`, `MeshTransport`, `BlockStore`, etc.
@@ -117,20 +117,21 @@ Request-path files (`src/waf/`, `src/proxy/`, `crates/synvoid-http/`, `crates/sy
 
 ## Guard Tests
 
+The former per-boundary guard files (`data_plane_composition_boundary_guard`,
+`http_request_pipeline_boundary_guard`, `http3_waf_boundary`,
+`request_path_capability_boundary`, `manifest_authority_load_path`) were
+consolidated into a single compilation unit, `tests/boundary_composition_guard.rs`.
+
 | Test | What It Enforces |
 |------|------------------|
-| `tests/data_plane_composition_boundary_guard.rs` | Request-path modules don't import concrete infrastructure types; files classified by role, exceptions audited |
+| `tests/boundary_composition_guard.rs` | Composition-boundary role classification; HTTP request dispatch doesn't import worker lifecycle; doc vocabulary checks (`Http3DispatchDeps`, `Http3RequestMetadata`); HTTP/3 WAF leak prevention; manifest authority load paths; exceptions audited |
 | `tests/mesh_id_boundary_guard.rs` | Mesh-ID enforcement never called from WAF/request/proxy/HTTP/3 code |
-| `tests/threat_intel_boundary_guard.rs` | Enforcement consumers use strict lookup wrappers, not raw lookups |
-| `tests/http3_waf_boundary_guard.rs` | HTTP/3 WAF code doesn't leak concrete types into the request path |
-| `tests/http_request_pipeline_boundary_guard.rs` | HTTP request dispatch doesn't import worker lifecycle; architecture doc documents `Http3DispatchDeps` and `Http3RequestMetadata`; no stale "no deps struct" wording; dispatch signature uses context structs |
+| `tests/security_guard.rs` | Threat-intel raw lookups separated from enforcement (consolidates the former `threat_intel_boundary_guard`) |
 
 Run all boundary guards:
 
 ```bash
-cargo test --test data_plane_composition_boundary_guard
+cargo test --test boundary_composition_guard
 cargo test --test mesh_id_boundary_guard
-cargo test --test threat_intel_boundary_guard
-cargo test --test http3_waf_boundary_guard
-cargo test --test http_request_pipeline_boundary_guard
+cargo test --test security_guard
 ```

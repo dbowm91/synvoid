@@ -427,6 +427,6 @@ Per `AGENTS.md` — Pure Rust crypto, battle-tested, no C bindings. Provides TLS
 | `crates/synvoid-http-client/src/response.rs` | HttpResponse + from_hyper conversion |
 | `crates/synvoid-http-client/src/erased_pool.rs` | Type-erased connection pool for streaming |
 | `crates/synvoid-http3/src/server.rs` | HTTP/3 server that uses `HttpClient` for upstream |
-| `src/proxy/mod.rs` | Uses `http_client` for proxying |
+| `crates/synvoid-proxy/src/` | Uses `http_client` for proxying (`src/proxy/` is a compat shim) |
 | `src/tunnel/quic/*.rs` | QUIC tunnel infrastructure |
 | `crates/synvoid-config/src/site/proxy.rs` + `security.rs` | Site proxy/security config for upstream_tls_from_site_config (no dedicated site/tls.rs) |

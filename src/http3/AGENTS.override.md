@@ -50,9 +50,10 @@ The HTTP/3 crate must NOT import:
 
 ### Boundary Guard Test
 
-`tests/http3_waf_boundary_guard.rs` scans `crates/synvoid-http3/` for forbidden concrete imports. Run with:
+`tests/boundary_composition_guard.rs` scans `crates/synvoid-http3/` for forbidden concrete imports. Run with:
 ```bash
-cargo test --test http3_waf_boundary_guard
+cargo test --test boundary_composition_guard
+# (consolidates the former http3_waf_boundary_guard)
 ```
 
 ### WAF Decision Mapping (HTTP/3 vs HTTP/1/2)

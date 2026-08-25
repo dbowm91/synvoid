@@ -130,26 +130,23 @@ impl BehavioralIntelLookup for BehavioralIntelLookupAdapter {
 
 ## Threat-Intel Diagnostic/Enforcement Separation
 
-Raw lookups (`lookup_local_indicator`, `lookup_local_indicator_by_ip`, `lookup_threat_indicator_in_dht`) are diagnostic-only. Enforcement consumers must use `lookup_*_policy_strict` wrappers. This separation is enforced by `tests/threat_intel_boundary_guard.rs`.
+Raw lookups (`lookup_local_indicator`, `lookup_local_indicator_by_ip`, `lookup_threat_indicator_in_dht`) are diagnostic-only. Enforcement consumers must use `lookup_*_policy_strict` wrappers. This separation is enforced by `tests/security_guard.rs`.
 
 ## Guard Tests
 
+The former per-boundary guard files were consolidated into
+`tests/boundary_composition_guard.rs` and `tests/security_guard.rs`.
+
 | Test | What It Enforces |
 |------|------------------|
-| `tests/request_path_capability_boundary_guard.rs` | Request-path modules don't import forbidden concrete types |
-| `tests/data_plane_composition_boundary_guard.rs` | Composition boundary role-based classification |
-| `tests/http_request_pipeline_boundary_guard.rs` | HTTP dispatch doesn't import worker lifecycle |
-| `tests/http3_waf_boundary_guard.rs` | HTTP/3 WAF doesn't leak concrete types |
-| `tests/threat_intel_boundary_guard.rs` | Raw lookups separated from enforcement |
+| `tests/boundary_composition_guard.rs` | Composition boundary role-based classification; request-path modules don't import forbidden concrete types; HTTP dispatch doesn't import worker lifecycle; HTTP/3 WAF doesn't leak concrete types |
+| `tests/security_guard.rs` | Raw lookups separated from enforcement |
 | `tests/mesh_id_boundary_guard.rs` | Mesh-ID blocks not in request path |
 
 ## Verification
 
 ```bash
-cargo test --test request_path_capability_boundary_guard
-cargo test --test data_plane_composition_boundary_guard
-cargo test --test http_request_pipeline_boundary_guard
-cargo test --test http3_waf_boundary_guard
-cargo test --test threat_intel_boundary_guard
+cargo test --test boundary_composition_guard
+cargo test --test security_guard
 cargo test --test mesh_id_boundary_guard
 ```

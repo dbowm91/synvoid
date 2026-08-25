@@ -53,6 +53,8 @@ pub struct TlsContext {
 | `src/server/request_handler.rs` | Unified handler traits and utilities |
 | `src/server/mod.rs` | UnifiedServer orchestration |
 
+Note: `src/server/` is split into focused modules — `startup_plan.rs`, `resources.rs`, `runtime_handles.rs`, `plugin_runtime.rs`, `waf_handler.rs` — with `mod.rs` re-exporting. See `architecture/worker_data_plane_composition_root.md`.
+
 ## Architecture Diagram
 
 ```

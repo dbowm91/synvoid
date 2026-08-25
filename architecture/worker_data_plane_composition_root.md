@@ -2,7 +2,10 @@
 
 **Established**: Iteration 58
 **Updated**: Iteration 98
-**Guardrail**: `tests/data_plane_composition_boundary_guard.rs`
+**Guardrail**: `tests/boundary_composition_guard.rs` (consolidates the former
+`data_plane_composition_boundary_guard`, `request_path_capability_boundary_guard`,
+`http_request_pipeline_boundary_guard`, `http3_waf_boundary`, and
+`manifest_authority_load_path` guards)
 
 ## Invariant
 
@@ -128,7 +131,7 @@ These methods are retained only for trait compatibility (`EarlyWafHooks`, `Chall
 
 ## Guardrail (Iteration 60)
 
-`tests/data_plane_composition_boundary_guard.rs` enforces the composition boundary with role-based file classification and three token groups:
+`tests/boundary_composition_guard.rs` enforces the composition boundary with role-based file classification and three token groups:
 
 - **`BoundaryRole` enum**: Classifies files as `CompositionRoot`, `RequestPath`, `ControlPlane`, `Admin`, `SharedTypes`, `TestOnly`, or `Unclassified`. Each file under `src/worker/unified_server/` is classified individually. Unknown files under mixed-role directories fail closed as `Unclassified`.
 - **`boundary_scan_roots()`**: Mixed-role scan roots that include `src/worker/unified_server/` alongside pure request-path directories. Every `.rs` file in these roots is traversed and classified.
@@ -261,7 +264,7 @@ HTTP/1 has equivalent stage mapping via `RequestFrontdoorContext`, `PreparedRequ
 
 Request dispatch consumes `RequestServices` or narrower handles. Neither protocol imports
 `UnifiedServerWorkerState` or worker lifecycle modules. Guard tests in
-`tests/http_request_pipeline_boundary_guard.rs` enforce this.
+`tests/boundary_composition_guard.rs` (pipeline-boundary assertions) enforce this.
 
 ### Body/Streaming Semantics
 

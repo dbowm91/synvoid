@@ -1,6 +1,6 @@
 [Unit]
 Description=MaluWAF - Multi-Process Web Application Firewall
-Documentation=https://github.com/synvoid/synvoid
+Documentation=https://github.com/dbowm91/synvoid
 After=network-online.target
 Wants=network-online.target
 

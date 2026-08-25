@@ -151,12 +151,12 @@ spec:
         command: ["synvoid", "--foreground"]
         livenessProbe:
           exec:
-            command: ["synvoid", "status"]
+            command: ["synvoid", "--status"]
           initialDelaySeconds: 10
           periodSeconds: 30
         readinessProbe:
           exec:
-            command: ["synvoid", "status"]
+            command: ["synvoid", "--status"]
           initialDelaySeconds: 5
           periodSeconds: 10
 ```
@@ -237,7 +237,7 @@ The supervisor maintains a state machine to coordinate worker rotations and upgr
 
 ```bash
 # Check status via gRPC
-synvoid status
+synvoid --status
 ```
 
 ### HTTP Health Endpoint

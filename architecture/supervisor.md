@@ -131,15 +131,20 @@ service ControlPlane {
 | `BlockIp` | Manually block an IP address with reason and duration |
 | `UnblockIp` | Remove a manual IP block |
 
-### 2.5 `supervisor/commands.rs` - CLI Command Handlers
+### 2.5 `supervisor/commands.rs` - IPC Command Handlers
 
-Handles CLI commands received via IPC socket.
+Handles supervisor commands received from workers via IPC.
 
-**Supported Commands:**
-- `MasterCommand::Status` - Returns comprehensive status
-- `MasterCommand::Stop { graceful }` - Initiates shutdown
-- `MasterCommand::ReloadConfig` - Hot reload configuration
-- `MasterCommand::HealthCheck` - Liveness check
+**Supported Commands** (`SupervisorCommand`, defined in `crates/synvoid-ipc/src/ipc.rs`):
+- `SupervisorCommand::Status` - Returns comprehensive status
+- `SupervisorCommand::Stop { graceful }` - Initiates shutdown
+- `SupervisorCommand::ReloadConfig` - Hot reload configuration
+- `SupervisorCommand::HealthCheck` - Liveness check
+
+Related: `src/supervisor/cli_commands.rs` implements the operator-facing CLI command
+handlers (`--status`, `--stop`, `--rehash`, threat-feed export) that reach the
+supervisor through the gRPC control plane (`crates/synvoid-cli/src/lib.rs` defines
+the flags; there are no positional subcommands).
 
 ### 2.6 `supervisor/mesh.rs` - Mesh Agent Mode
 
@@ -155,6 +160,12 @@ Standalone mesh agent for distributed mesh operations (feature-gated).
 - `#[cfg(not(feature = "mesh"))]`: Stub that exits with error message
 
 ## (Table of Contents placeholder - content continues below)
+
+### 2.6b `src/supervisor/ipc.rs` - Worker IPC Server
+
+Largest supervisor module: accepts worker IPC connections, routes signed messages,
+and tracks worker registration/heartbeat state. See `architecture/ipc_process.md`
+for the protocol details.
 
 ### 2.7 `src/supervisor/drain_manager.rs` - Drain Management
 

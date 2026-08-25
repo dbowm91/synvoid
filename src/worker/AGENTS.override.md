@@ -427,7 +427,7 @@ The supervision loop returns `SupervisionOutcome` (Lifecycle | DirectCause) inst
 
 **Mesh attachment boundary**: `mesh_attachment.rs` owns startup attachment only and must not import `RequestServices` or `DataPlaneServices`.
 
-**Boundary guards**: Three new assertions in `tests/data_plane_composition_boundary_guard.rs`:
+**Boundary guards**: Three new assertions in `tests/boundary_composition_guard.rs`:
 - `request_services_must_not_import_worker_lifecycle_modules`
 - `startup_plan_delegates_data_plane_cross_wiring`
 - `mesh_attachment_does_not_own_request_services`
@@ -449,7 +449,7 @@ HTTP/1 pipeline stages are already well-decomposed in `crates/synvoid-http/src/`
 
 ### Boundary Invariant
 
-Request dispatch consumes `RequestServices` or narrower handles. Neither protocol imports `UnifiedServerWorkerState` or worker lifecycle modules. Guard tests in `tests/http_request_pipeline_boundary_guard.rs` enforce this with 6 assertions:
+Request dispatch consumes `RequestServices` or narrower handles. Neither protocol imports `UnifiedServerWorkerState` or worker lifecycle modules. Guard tests in `tests/boundary_composition_guard.rs` (pipeline assertions) enforce this with 6 assertions:
 - `http3_dispatch_must_not_import_worker_lifecycle_modules`
 - `http1_request_flow_must_not_import_worker_lifecycle_modules`
 - `http3_dispatch_uses_context_structs`

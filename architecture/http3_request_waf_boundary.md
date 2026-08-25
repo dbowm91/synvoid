@@ -224,9 +224,9 @@ waf.check_request_full_owned(
 
 ## 7. Mechanical Guardrails
 
-A source-scan guard test exists at `tests/http3_waf_boundary_guard.rs` that scans `crates/synvoid-http3/` for forbidden concrete imports. See that file for details.
+A source-scan guard test exists at `tests/boundary_composition_guard.rs` that scans `crates/synvoid-http3/` for forbidden concrete imports. See that file for details.
 
-The existing `tests/threat_intel_boundary_guard.rs` also covers `crates/synvoid-http3/` in its denylist directories.
+The existing `tests/security_guard.rs` also covers `crates/synvoid-http3/` in its denylist directories.
 
 ---
 
@@ -249,8 +249,8 @@ The existing `tests/threat_intel_boundary_guard.rs` also covers `crates/synvoid-
 ## 9. Verification
 
 ```bash
-cargo test --test http3_waf_boundary_guard
-cargo test --test threat_intel_boundary_guard
+cargo test --test boundary_composition_guard
+cargo test --test security_guard
 cargo test -p synvoid-http3
 cargo test -p synvoid-waf
 cargo test -p synvoid-http

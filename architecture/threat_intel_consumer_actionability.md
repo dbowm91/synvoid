@@ -91,7 +91,7 @@ These consumers use raw lookup APIs for compatibility, diagnostics, or bookkeepi
 | 25 | `threat_intel.rs:lookup_local_indicator_by_ip` | IP | raw (convenience wrapper) | NO | NO | raw-read |
 | 26 | `feed_client.rs:announce_indicator` — dedup check | Multi-type | raw (`lookup_local_indicator` for dedup) | NO | NO | feed-ingest |
 
-**Invariant**: Raw lookup APIs are compatibility/debug APIs. They must not be consumed by enforcement paths. The `threat_intel_boundary_guard.rs` test enforces this boundary mechanically.
+**Invariant**: Raw lookup APIs are compatibility/debug APIs. They must not be consumed by enforcement paths. The `tests/security_guard.rs` test (consolidating the former threat_intel_boundary_guard) enforces this boundary mechanically.
 
 ### F. Policy-Composed Read Consumers (staged)
 
@@ -156,7 +156,7 @@ These are pure helper functions that perform classification or composition witho
 
 4. **Worker IPC applies Supervisor events as control-plane authority.** Workers trust the Supervisor-broadcast blocklist events and preserve original provenance via `ipc_data_to_provenance()`.
 
-5. **Raw lookup APIs are compatibility/diagnostic only.** `lookup_local_indicator`, `lookup_local_indicator_by_ip`, and `lookup_threat_indicator_in_dht` must not be consumed by enforcement paths. The `threat_intel_boundary_guard.rs` test enforces this boundary mechanically. Within `threat_intel.rs`, raw lookups are permitted only in explicit non-enforcement function bodies via function-level allowlisting (`threat_intel_consumer_actionability_guard.rs`). `handle_incoming_threat` and `_after_policy_permit` helpers are denylisted from raw lookups.
+5. **Raw lookup APIs are compatibility/diagnostic only.** `lookup_local_indicator`, `lookup_local_indicator_by_ip`, and `lookup_threat_indicator_in_dht` must not be consumed by enforcement paths. The `tests/security_guard.rs` test (consolidating the former threat_intel_boundary_guard) enforces this boundary mechanically. Within `threat_intel.rs`, raw lookups are permitted only in explicit non-enforcement function bodies via function-level allowlisting (now in `tests/security_guard.rs`). `handle_incoming_threat` and `_after_policy_permit` helpers are denylisted from raw lookups.
 
 6. **Shadow-only paths never mutate enforcement state.** `evaluate_indicator_policy_shadow` is metrics/logs only. Admin diagnostics can expose shadow disagreement but cannot convert it into action without a policy gate.
 
@@ -184,7 +184,7 @@ These are pure helper functions that perform classification or composition witho
 - `architecture/threat_intel_request_waf_audit.md` — Request/WAF boundary audit
 - `architecture/mesh_trust_domains.md` — Trust domain classification and invariants
 - `docs/THREAT_INTEL.md` — User-facing threat-intel documentation
-- `tests/threat_intel_boundary_guard.rs` — Raw lookup boundary guardrail test
-- `tests/threat_intel_consumer_actionability_guard.rs` — Consumer actionability guardrail test
+- `tests/security_guard.rs` — Raw lookup boundary guardrail test
+- `tests/security_guard.rs` — Consumer actionability guardrail test
 - `tests/mesh_id_boundary_guard.rs` — Mesh-ID request-path boundary guardrail
 - `tests/manual_enforcement_provenance_guard.rs` — Provenance guardrail test

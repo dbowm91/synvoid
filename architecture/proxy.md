@@ -2,7 +2,12 @@
 
 ## 1. Purpose and Responsibility
 
-The Proxy module (`src/proxy/`) is SynVoid's reverse proxy subsystem that handles proxied HTTP/HTTPS requests end-to-end:
+> **Location note (2026-06 crate split)**: the proxy implementation lives in
+> `crates/synvoid-proxy/src/` (with caching in `crates/synvoid-proxy-cache/`). The
+> `src/proxy/*.rs` root paths are thin re-export shims kept for backward compatibility —
+> do not add implementation code there.
+
+The proxy subsystem is SynVoid's reverse proxy that handles proxied HTTP/HTTPS requests end-to-end:
 
 | Responsibility | Description |
 |----------------|-------------|
@@ -17,14 +22,14 @@ The Proxy module (`src/proxy/`) is SynVoid's reverse proxy subsystem that handle
 
 | Module | File | Responsibility |
 |--------|------|----------------|
-| `dispatch` | `dispatch.rs` | Upstream dispatch with load balancing |
-| `executor` | `executor.rs` | Upstream request building and response handling |
-| `cache` | `cache.rs` | Proxy cache implementation |
-| `headers` | `headers.rs` | Header filtering, XFF validation |
-| `retry` | `retry.rs` | Retry logic with backoff calculation |
-| `client_registry` | `client_registry.rs` | HTTP client registration |
-| `governor` | `governor.rs` | Rate limiting for upstream requests |
-| `streaming` | `streaming.rs` | TeeBody for caching streamed responses |
+| `dispatch` | `crates/synvoid-proxy/src/dispatch.rs` | Upstream dispatch with load balancing |
+| `executor` | `crates/synvoid-proxy/src/executor.rs` | Upstream request building and response handling |
+| `cache` | `crates/synvoid-proxy/src/cache.rs` | Proxy cache implementation |
+| `headers` | `crates/synvoid-proxy/src/headers.rs` | Header filtering, XFF validation |
+| `retry` | `crates/synvoid-proxy/src/retry.rs` | Retry logic with backoff calculation |
+| `client_registry` | `crates/synvoid-proxy/src/client_registry.rs` | HTTP client registration |
+| `governor` | `crates/synvoid-proxy/src/governor.rs` | Rate limiting for upstream requests |
+| `streaming` | `crates/synvoid-proxy/src/streaming.rs` | TeeBody for caching streamed responses |
 
 ## 3. Major Data Structures
 
@@ -54,7 +59,7 @@ pub struct ProxyServer {
 }
 ```
 
-### BackendType (from `src/router.rs:66-78`)
+### BackendType (from `crates/synvoid-proxy/src/router.rs:66-78`)
 ```rust
 pub enum BackendType {
     Upstream,       // Standard reverse proxy to HTTP/HTTPS upstream
@@ -289,7 +294,7 @@ constructor parameters, not named constants.
 
 ### SharedConnectionTable Layout (DOC-H19)
 
-The mmap-based `SharedConnectionTable` in `src/upstream/shared_state.rs` uses this layout:
+The mmap-based `SharedConnectionTable` in `crates/synvoid-upstream/src/shared_state.rs` uses this layout:
 
 ```
 [0..8]:                              max_workers (u64)

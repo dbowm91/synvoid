@@ -2,7 +2,13 @@
 
 **Status**: Under Review
 **Last Updated**: 2026-04-27
-**Review Source**: `src/mesh/proxy.rs`, `src/http/server.rs`, `src/mesh/transports/manager.rs`
+**Review Source**: `crates/synvoid-mesh/src/mesh/proxy.rs` (was `src/mesh/proxy.rs`), `crates/synvoid-http/src/server.rs` (was `src/http/server.rs`), `crates/synvoid-mesh/src/mesh/transports/manager.rs`
+
+> **Path note (2026-06 crate split)**: line references below predate the workspace
+> crate split. `src/mesh/*` → `crates/synvoid-mesh/src/mesh/*`,
+> `src/http/server.rs` → `crates/synvoid-http/src/server.rs`,
+> `src/config/site/misc.rs` → `crates/synvoid-config/src/site/misc.rs`.
+> Re-locate symbols by name when acting on these findings.
 
 ---
 

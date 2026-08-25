@@ -261,12 +261,12 @@ Multiple Supervisor nodes participating in a Raft consensus cluster.
 # Start SynVoid (Supervisor + Workers)
 ./synvoid
 
-# Reload configuration via gRPC
-./synvoid reload
-
-# Connect to WAF mesh
-./synvoid --mesh --seeds global-node:5001
+# Reload configuration via gRPC (propagates to workers)
+./synvoid --rehash
 ```
+
+Mesh participation (peers, seeds, trust) is configured in `main.toml` under the mesh
+section, not via CLI flags. See `docs/WAF_MESH.md` and `architecture/mesh.md`.
 
 ## Next Steps
 

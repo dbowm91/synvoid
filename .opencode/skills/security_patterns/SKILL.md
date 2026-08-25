@@ -772,7 +772,7 @@ fn attest_capability(node_id: &str, capability: &str) {
 
 ### SSRF Allowlist Bypass Prevention (S2.6)
 
-**Location**: `src/waf/attack_detection/ssrf.rs:267-294`
+**Location**: `crates/synvoid-waf/src/attack_detection/ssrf.rs:267-294`
 
 **Pattern**: Word boundary checks instead of substring matching:
 ```rust
@@ -796,7 +796,7 @@ fn has_word_boundary(input: &str, substring: &str) -> bool {
 
 ### Open Redirect Bypass Prevention (S2.7)
 
-**Location**: `src/waf/attack_detection/open_redirect.rs:114-133`
+**Location**: `crates/synvoid-waf/src/attack_detection/open_redirect.rs:114-133`
 
 **Pattern**: Newline and homograph attack checks:
 ```rust
@@ -818,7 +818,7 @@ if let Some(scheme_end) = input_lower.find(':') {
 
 ### Transfer-Encoding Parsing (S2.8)
 
-**Location**: `src/waf/attack_detection/request_smuggling.rs:12-40`
+**Location**: `crates/synvoid-waf/src/attack_detection/request_smuggling.rs:12-40`
 
 **Pattern**: Proper comma-separated TE header parsing:
 ```rust
@@ -836,7 +836,7 @@ fn te_contains_chunked(te_str: &str) -> bool {
 
 ### JWT Algorithm Validation (S2.9)
 
-**Location**: `src/waf/attack_detection/jwt.rs:125-186`
+**Location**: `crates/synvoid-waf/src/attack_detection/jwt.rs:125-186`
 
 **Pattern**: Proper JSON parsing with algorithm whitelist:
 ```rust
@@ -1405,7 +1405,7 @@ validate_peer_role(
 
 ### SSRF Subdomain Spoofing Detection
 
-**Location**: `src/waf/attack_detection/ssrf.rs:267-294`
+**Location**: `crates/synvoid-waf/src/attack_detection/ssrf.rs:267-294`
 
 **Issue**: Only checked exact `.localhost` and `.local` - bypassable via subdomain.
 
@@ -1682,7 +1682,7 @@ use subtle::ConstantTimeEq;
 
 ### Body Inspection UTF-8 Hardening
 
-**Location**: `src/waf/attack_detection/sqli.rs`, `xss.rs`, `normalizer.rs`
+**Location**: `crates/synvoid-waf/src/attack_detection/{sqli.rs,xss.rs,normalizer.rs}`
 
 **Issue**: `unwrap_or("")` on invalid UTF-8 body input allowed payloads to evade inspection.
 

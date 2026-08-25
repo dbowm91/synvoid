@@ -59,7 +59,7 @@ Testing quirks:
 - **Entry point**: `src/main.rs` → delegates to `src/commands/{plan,execute,runtime_launch}.rs`
 - **Supervisor**: `src/supervisor/` — lifecycle, IPC, control-plane
 - **Data plane**: `src/worker/unified_server/` — HTTP + WAF + proxy in ONE Tokio event loop; CPU offload in `src/worker/cpu_task/`
-- **Process model**: Supervisor (1) → UnifiedServerWorker (1) + CpuWorker (1). Workers are NOT process-per-tenant. The `--worker` flag spawns a legacy `BaseWorkerProcess` unused for HTTP.
+- **Process model**: Supervisor (1) → UnifiedServerWorker (1) + CpuWorker (1). Workers are NOT process-per-tenant. Note: the legacy `--worker` flag (`src/process/worker.rs` `BaseWorkerProcess`) has NO dispatch branch in `src/commands/plan.rs` and falls through to the default `RuntimeCommand::Supervisor`; HTTP serving uses `--unified-server-worker` / `--cpu-worker`.
 - **Mesh**: `crates/synvoid-mesh/src/mesh/` — DHT, transport, Raft, peer auth
 - Many legacy root paths re-export crate contents for compat (e.g., `src/dns/mod.rs` re-exports `synvoid_dns::*`).
 
@@ -101,6 +101,8 @@ Root-module ownership policy lives in `architecture/root_module_ledger.md` — p
 | `src/wasm_pow/` | `crates/synvoid-wasm-pow/` |
 | `src/server/mod.rs` (monolithic) | `src/server/` (split: `startup_plan.rs`, `resources.rs`, `runtime_handles.rs`, `plugin_runtime.rs`) |
 | `src/dns/*.rs` (legacy copies) | `crates/synvoid-dns/src/` (canonical) |
+| `src/waf/attack_detection/*.rs` (impl) | `crates/synvoid-waf/src/attack_detection/` (root path is a re-export shim) |
+| `src/proxy/*.rs`, `src/http3/*.rs` (impl) | `crates/synvoid-proxy/src/`, `crates/synvoid-http3/src/` (root paths are re-export shims) |
 
 ## Security Invariants (violations break guard tests)
 
@@ -136,9 +138,31 @@ Root-module ownership policy lives in `architecture/root_module_ledger.md` — p
 ## Repo-Specific Pointers
 
 - **Module overrides**: each subsystem dir has an `AGENTS.override.md` with extra rules — read before working there: `src/{waf,http,http3,http_client,proxy,config,admin,auth,platform,plugin,worker,tunnel,app_server,theme,static_files,serverless}/AGENTS.override.md` and `crates/synvoid-{dns,honeypot,tarpit}/AGENTS.override.md`.
-- **Skills**: `.opencode/skills/<name>/SKILL.md` — 32 per-subsystem guides (names match subsystems, e.g. `dns_dnssec`, `serverless_wasm`, `ipc_hardening`, `raft_consensus`, `org_key_trust_chain`). Load before working in an unfamiliar subsystem.
+- **Skills**: `.opencode/skills/<name>/SKILL.md` — 35 per-subsystem guides (e.g. `dns_dnssec`, `serverless_wasm`, `ipc_hardening`, `raft_consensus`, `org_key_trust_chain`, `proxy_upstream`, `supervisor`, `worker_data_plane`). Load before working in an unfamiliar subsystem; keep path references canonical when editing them.
 - **Config paths**: `--config-path` takes the DIRECTORY containing `main.toml` + `sites/`, not the TOML file. Caveat: `--configtest` ignores `--config-path` and validates `./config/` relative to CWD.
-- **Key docs**: `architecture/overview.md` (bird's eye), `architecture/http_request_pipeline.md`, `architecture/mesh_trust_domains.md`, `architecture/block_store.md`, `architecture/plugin_runtime_sandbox.md`, `architecture/root_module_ledger.md`, `architecture/worker_data_plane_composition_root.md`, `docs/RELEASE.md` + `docs/releasing.md`. `architecture/` (119 docs) and `plans/` are development artifacts; user/operator docs live in `docs/`.
+- **Key docs**: start at `architecture/overview.md` (verified module index), then use the Architecture Index below. User/operator docs live in `docs/`; `architecture/` (128 docs) and `plans/` are development artifacts.
+
+## Architecture Index
+
+Primary doc per subsystem (deep dives live beside each as `<topic>_deep_dive.md`; `_archived/` is historical):
+
+| Subsystem | Primary doc(s) |
+|-----------|----------------|
+| Overview & module ownership | `overview.md`, `root_module_ledger.md`, `request_path_capability_boundary.md` |
+| Request pipeline (HTTP/1 + HTTP/3) | `http_request_pipeline.md`, `http_server.md`, `http_shared.md`, `http3_request_waf_boundary.md` |
+| Worker data plane | `worker_data_plane_composition_root.md`, `worker_task_lifecycle.md`, `unified_server_startup.md` |
+| Supervisor & process model | `supervisor.md`, `supervisor_lifecycle.md`, `process_lifecycle.md`, `cli_supervisor_command_dispatch.md` |
+| WAF | `waf.md`, `streaming.md`, `challenge.md` |
+| Proxy, upstream, cache, tunnels | `proxy.md`, `upstream.md`, `proxy_cache.md`, `tunnel_deep_dive.md` |
+| Mesh, DHT, Raft, trust | `mesh.md`, `mesh_transport_lifecycle.md`, `mesh_trust_domains.md`, `block_store.md` |
+| Threat-intel enforcement | `threat_intel_consumer_actionability.md`, `manual_enforcement_ownership.md`, `admin_control_plane_authority.md` |
+| DNS (`dns` feature) | `dns.md`, `dns_config_runtime_matrix.md`, `dns_zone_lifecycle.md`, `dns_operations_diagnostics.md` |
+| Plugins, WASM, serverless | `plugin_runtime_sandbox.md`, `plugin_wasm.md`, `serverless.md`, `unsafe_native_extensions.md` |
+| Admin UI/API & auth | `admin_deep_dive.md`, `auth.md`, `admin_ui.md` |
+| Config system | `config.md`, `core_types.md` |
+| TLS, PQC, integrity | `tls.md`, `pqc.md`, `integrity.md` |
+| Platform & sandboxing | `platform.md`, `layer_3_5_deep_dive.md`, `icmp_filter.md` |
+| CI, fuzzing, releases | `ci_fuzz_failure_injection.md`, `developer_tooling.md`, `release_profile_matrix.md`, `semver_stability_policy.md` |
 
 ## Known Issues
 

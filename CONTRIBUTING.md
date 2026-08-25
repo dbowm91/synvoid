@@ -16,22 +16,26 @@ We welcome contributions from the community! Whether you're reporting bugs, sugg
 - Rust (stable) - latest stable version recommended
 - Cargo - Rust package manager
 - Git - version control system
+- `protobuf-compiler` (protoc) - required for the default `mesh` feature's protobuf codegen
 
 ### Building the Project
 
 ```bash
 # Clone the repository
-git clone https://github.com/synvoid/synvoid.git
+git clone https://github.com/dbowm91/synvoid.git
 cd synvoid
 
 # Build in release mode
 cargo build --release
 
-# Run tests
-cargo test
+# Run the canonical CI verification gate (fmt, clippy, guards, security tests)
+cargo xtask verify
+
+# Run the full local test suite (requires cargo-nextest; pinned version — see docs/testing/nextest-policy.md)
+cargo xtask verify-full
 
 # Run with default configuration
-./target/release/synvoid
+./target/release/synvoid --foreground
 ```
 
 ### Code Style

@@ -39,6 +39,7 @@ Welcome to the SynVoid documentation. This index provides quick access to all do
 | [RATE_LIMITING.md](RATE_LIMITING.md) | Request rate limiting |
 | [REQUEST_SANITIZATION.md](REQUEST_SANITIZATION.md) | Request sanitization and header handling |
 | [STATIC_FILES.md](STATIC_FILES.md) | Static file serving and optimization |
+| [TARPIT.md](TARPIT.md) | Anti-scraping tarpit behavior |
 
 ## Upstream Management
 
@@ -53,18 +54,35 @@ SynVoid includes additional features for specific use cases:
 | [HTTP3.md](HTTP3.md) | HTTP/3 (QUIC) support for lower latency |
 | [TUNNELS.md](TUNNELS.md) | QUIC tunnels and site-to-site connectivity |
 | [WAF_MESH.md](WAF_MESH.md) | Peer-to-peer mesh networking for DDoS mitigation |
+| [THREAT_INTEL.md](THREAT_INTEL.md) | Threat intelligence feeds and mesh sharing |
+| [SIGNED_RULE_FEED.md](SIGNED_RULE_FEED.md) | Cryptographically signed WAF rule distribution |
 | [UPLOADS.md](UPLOADS.md) | File upload validation and malware scanning |
 | [FASTCGI.md](FASTCGI.md) | FastCGI proxy support for PHP, Python, etc. |
 | [PLUGINS.md](PLUGINS.md) | WASM plugin system for custom extensions |
+| [PLUGIN_CONFIG_REFERENCE.md](PLUGIN_CONFIG_REFERENCE.md) | Plugin configuration reference |
+| [PLUGIN_OPERATOR_RUNBOOK.md](PLUGIN_OPERATOR_RUNBOOK.md) | Plugin operational runbook |
+| [SERVERLESS.md](SERVERLESS.md) | Serverless WASM function execution |
+| [WASM-ABI.md](WASM-ABI.md) | Plugin WASM ABI specification |
+| [SANDBOXING.md](SANDBOXING.md) | OS-level process sandboxing |
 | [THREAT_LEVEL.md](THREAT_LEVEL.md) | Adaptive threat detection with auto-escalation |
 | [TRAFFIC_SHAPING.md](TRAFFIC_SHAPING.md) | Bandwidth limiting and rate shaping |
 | [PROXY_CACHE.md](PROXY_CACHE.md) | Response caching for performance |
 | [ADMIN_UI.md](ADMIN_UI.md) | Web-based admin interface |
 
+## DNS
+
+- [RFC5011_TRUST_ANCHOR.md](RFC5011_TRUST_ANCHOR.md) - DNSSEC trust anchor automation
+- [dns-dnssec-architecture.md](dns-dnssec-architecture.md) - DNSSEC validation architecture
+- [dns-mesh-integration.md](dns-mesh-integration.md) - DNS subsystem mesh integration
+- [global-node-ca.md](global-node-ca.md) - Global node certificate authority
+
 ## Operations
 
 - [DEPLOYMENT.md](DEPLOYMENT.md) - Production deployment guide
 - [UPGRADE.md](UPGRADE.md) - Upgrade guide and breaking changes
+- [RELEASE.md](RELEASE.md) - Release lifecycle and versioning policy
+- [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) - Pre-release verification checklist
+- [releasing.md](releasing.md) - Manual crate publication mechanics
 - [PERFORMANCE.md](PERFORMANCE.md) - Performance tuning and latency optimization
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - Common issues and solutions
 - [FAQ.md](FAQ.md) - Frequently asked questions
@@ -74,7 +92,7 @@ SynVoid includes additional features for specific use cases:
 
 ## Additional Resources
 
-- [GitHub Repository](https://github.com/synvoid/synvoid)
+- [GitHub Repository](https://github.com/dbowm91/synvoid)
 - [Example Configurations](../config/)
 - [Example Sites](../config/sites/)
 - [CONTRIBUTING.md](../CONTRIBUTING.md) - Contribution guidelines

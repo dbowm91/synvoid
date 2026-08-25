@@ -16,8 +16,9 @@ Use this skill when:
 - Extending `AttackDetector` with streaming methods
 
 ## Key Files
-- `src/waf/attack_detection/streaming.rs` - `StreamingWafCore` implementation
-- `src/waf/attack_detection/mod.rs` - Added `check_body_only_via_normalized()` method
+- `crates/synvoid-waf/src/attack_detection/streaming.rs` - `StreamingWafCore` implementation
+- `crates/synvoid-waf/src/attack_detection/mod.rs` - Added `check_body_only_via_normalized()` method
+  (`src/waf/attack_detection/mod.rs` is only a compat re-export shim)
 - `crates/synvoid-http3/src/server.rs` - HTTP/3 body handling (lines 264-281)
 
 ## Implementation Pattern
@@ -109,7 +110,7 @@ if state.pending_chunks.len() >= self.max_buffered_chunks {
 ```
 
 ### 6. Export Pattern
-In `src/waf/attack_detection/mod.rs`:
+In `crates/synvoid-waf/src/attack_detection/mod.rs`:
 ```rust
 pub use streaming::{StreamingWafCore, StreamingWafDecision};
 ```

@@ -36,7 +36,7 @@ SynVoid is an all-in-one web application firewall and reverse proxy that provide
 
 ```bash
 # Clone the repository
-git clone https://github.com/synvoid/synvoid.git
+git clone https://github.com/dbowm91/synvoid.git
 cd synvoid
 
 # Build

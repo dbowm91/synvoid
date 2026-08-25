@@ -237,7 +237,7 @@ Raw threat-intel lookup APIs are diagnostic-only. They must never be used to emi
 | `lookup_threat_indicator_in_dht()` | Diagnostic | No |
 | `lookup_*_policy_strict()` | Enforcement | Yes |
 
-Request-path enforcement metrics must identify the local enforcement source (`LocalDetector`, `AdminManual`, etc.), not the remote DHT lookup source. This separation is enforced by `tests/threat_intel_boundary_guard.rs`.
+Request-path enforcement metrics must identify the local enforcement source (`LocalDetector`, `AdminManual`, etc.), not the remote DHT lookup source. This separation is enforced by `tests/security_guard.rs`.
 
 ---
 

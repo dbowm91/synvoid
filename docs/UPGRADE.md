@@ -99,34 +99,8 @@ enable_js_challenge = false  # Disable JavaScript challenges
 
 ## Upgrading in Production
 
-### Zero-Downtime Upgrade
-
-SynVoid supports zero-downtime upgrades using the upgrade system:
-
-```bash
-# Stage the new binary
-./synvoid upgrade stage /path/to/new/synvoid
-
-# Apply when ready
-./synvoid upgrade apply
-
-# Or use Admin API
-curl -X POST -H "Authorization: Bearer <token>" \
-  -d '{"binary_path": "/path/to/new/synvoid"}' \
-  http://localhost:8081/api/upgrade
-```
-
-### Rollback
-
-If the upgrade causes issues:
-
-```bash
-./synvoid upgrade rollback
-```
-
-### Manual Upgrade
-
-For manual upgrades without the built-in system:
+SynVoid does not currently provide a built-in staged-upgrade command. Upgrades are
+performed manually:
 
 1. Stop the current instance
 2. Replace the binary
@@ -134,15 +108,20 @@ For manual upgrades without the built-in system:
 4. Monitor logs for errors
 
 ```bash
+# Validate configuration first (note: validates ./config/ relative to CWD)
+./synvoid --configtest
+
 # Stop gracefully
 ./synvoid --stop
 
 # Replace binary
 cp /path/to/new/synvoid /usr/local/bin/synvoid
 
-# Start
-./synvoid --config /etc/synvoid/main.toml
+# Start (--config-path takes the DIRECTORY containing main.toml and sites/)
+./synvoid --foreground --config-path /etc/synvoid/
 ```
+
+Rollback is the same procedure in reverse: stop, restore the previous binary, start.
 
 ## Configuration Version Compatibility
 
@@ -156,4 +135,4 @@ If you encounter issues during upgrade:
 
 1. Check logs: `RUST_LOG=debug ./synvoid`
 2. Verify configuration: `./synvoid --configtest`
-3. Report issues at: https://github.com/synvoid/synvoid/issues
+3. Report issues at: https://github.com/dbowm91/synvoid/issues
