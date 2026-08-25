@@ -37,9 +37,8 @@ The `synvoid-vpn-client` crate provides VPN client connectivity for SynVoid, sup
 ## Key Integration Points
 
 - **Tunnel**: `synvoid-tunnel` provides the underlying QUIC and WireGuard transports
-- **Config**: VPN configuration via `VpnConfig` in `synvoid-config`
+- **Config**: VPN configuration via `VpnClientConfig` in `synvoid-vpn-client`
 - **Platform**: Platform detection for transport selection via `synvoid-platform`
-- **Metrics**: Connection stats reported via `synvoid-metrics`
 
 ## Deep Dive Topics
 

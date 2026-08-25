@@ -82,7 +82,7 @@ MeshProxy is the critical routing component that coordinates mesh traffic betwee
 
 - **Peer Authentication:** Mesh TLS supports `strict`, `tofu`, and `permissive` modes. Strict mode requires CA-backed validation, TOFU can pin first-seen fingerprints, and permissive mode accepts peers without CA validation. Transport also enforces node-ID binding for DHT sync and anti-entropy traffic.
 - **Audit Logs:** The mesh includes a distributed auditing system (`crates/synvoid-mesh/src/mesh/audit.rs`) to track network events and detect malicious or misconfigured peers.
-- **Access Control:** Fine-grained policies control which nodes can proxy which services (see [`CapabilityAccessVerifier`](crates/synvoid-mesh/src/mesh/dht/capability_access.rs:7) in `crates/synvoid-mesh/src/mesh/dht/capability_access.rs`).
+- **Access Control:** Fine-grained policies control which nodes can proxy which services (see [`CapabilityAccessVerifier`](crates/synvoid-mesh/src/mesh/dht/capability_access.rs:8) in `crates/synvoid-mesh/src/mesh/dht/capability_access.rs`).
 
 ### Current DHT Verification Split
 

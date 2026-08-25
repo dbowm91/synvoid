@@ -22,11 +22,16 @@ pub struct PluginCapabilities {
     pub response_mutate: bool,      // Modify response
     pub metrics: bool,              // Emit metrics
     pub persistence: bool,          // Key-value storage
-    pub filesystem_read: bool,      // Read files
-    pub filesystem_write: bool,     // Write files
-    pub network: bool,              // HTTP requests
+    pub filesystem_read: Vec<String>,  // Read file paths (allowlist)
+    pub filesystem_write: Vec<String>, // Write file paths (allowlist)
+    pub network: Vec<String>,       // HTTP request hosts (allowlist)
     pub mesh: bool,                 // DHT queries
     pub admin_events: bool,         // Admin notifications
+    pub mesh_policy: PluginMeshPolicy,
+    pub filesystem_policy: PluginFilesystemPolicy,
+    pub network_policy: PluginNetworkPolicy,
+    pub persistence_policy: PluginPersistencePolicy,
+    pub metrics_policy: PluginMetricsPolicy,
 }
 ```
 

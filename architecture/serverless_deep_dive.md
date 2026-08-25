@@ -20,18 +20,19 @@ ServerlessManager
 
 ```rust
 pub struct ServerlessManager {
-    functions: DashMap<String, ServerlessFunction>,
-    route_table: RwLock<Vec<(Regex, String)>>,  // (pattern, function_name)
-    instance_pools: DashMap<String, Arc<InstancePool>>,
-    compilation_manager: AsyncCompilationManager,
+    functions: RwLock<HashMap<String, ServerlessFunction>>,
+    pools: RwLock<HashMap<String, Arc<InstancePool>>>,
+    config: RwLock<Option<ServerlessConfig>>,
+    runtime: Arc<WasmPluginManager>,
+    routes: RwLock<Vec<ServerlessRoute>>,
+    event_subscriptions: RwLock<HashMap<String, Vec<String>>>,
+    compilation_manager: Arc<AsyncCompilationManager>,
 }
 
 pub struct ServerlessFunction {
-    name: String,
-    wasm_path: PathBuf,
-    route_pattern: Option<Regex>,
-    config: FunctionConfig,
-    state: FunctionState,  // Compiling, Ready, Failed
+    pub definition: FunctionDefinition,
+    pub runtime: Option<Arc<WasmRuntime>>,
+    pub compilation_handle: Option<Arc<AsyncCompilationHandle>>,
 }
 ```
 
@@ -39,15 +40,20 @@ pub struct ServerlessFunction {
 
 ```rust
 pub struct InstancePool {
-    min_instances: usize,
-    max_instances: usize,
-    idle_eviction: Duration,
-    instances: Mutex<Vec<PooledInstance>>,
-    active_count: AtomicUsize,
-    auto_scaler: AutoScaler,
+    config: InstancePoolConfig,
+    function_definition: FunctionDefinition,
+    runtime: Arc<WasmRuntime>,
+    instances: RwLock<Vec<Arc<ServerlessInstance>>>,
+    active_instances: RwLock<HashMap<String, Arc<ServerlessInstance>>>,
+    idle_instances: RwLock<Vec<Arc<ServerlessInstance>>>,
+    last_scale_up: RwLock<Instant>,
+    last_scale_down: RwLock<Instant>,
+    shutdown_tx: tokio::sync::watch::Sender<()>,
+    mode: RwLock<InstancePoolMode>,
+    last_mode_used: RwLock<InstancePoolMode>,
 }
 
-pub enum PoolMode {
+pub enum InstancePoolMode {
     Pool,       // Reuse instances (default)
     Direct,     // New instance per request
     Hybrid,     // Pool for hot, direct for cold
@@ -56,13 +62,19 @@ pub enum PoolMode {
 
 ### Auto-Scaling
 
+Scaling is built into `InstancePool` via `InstancePoolConfig`:
+
 ```rust
-pub struct AutoScaler {
-    tick_interval: Duration,  // 10s
-    scale_up_threshold: f64,  // 80% utilization
-    scale_down_threshold: f64, // 20% utilization
-    scale_up_step: usize,
-    scale_down_step: usize,
+pub struct InstancePoolConfig {
+    pub min_instances: usize,           // default: 1
+    pub max_instances: usize,           // default: 10
+    pub idle_timeout_seconds: u64,      // default: 300
+    pub scale_up_threshold: f64,        // default: 0.7
+    pub scale_down_threshold: f64,      // default: 0.3
+    pub scale_up_cooldown_seconds: u64, // default: 30
+    pub scale_down_cooldown_seconds: u64, // default: 60
+    pub pre_warm_instances: usize,      // default: 2
+    pub max_scale_up_per_tick: usize,   // default: 5
 }
 ```
 
@@ -133,9 +145,10 @@ pub async fn invoke_with_cpu_offload(
 
 ```rust
 pub enum CompilationState {
-    Compiling,  // WASM compilation in progress
-    Ready,      // Ready to execute
-    Failed(String),  // Compilation failed
+    Pending,                        // Awaiting compilation
+    Compiling { started_at: Instant }, // WASM compilation in progress
+    Ready,                          // Ready to execute
+    Failed { error: String },       // Compilation failed
 }
 
 pub struct AsyncCompilationManager {
@@ -149,7 +162,10 @@ pub struct AsyncCompilationManager {
 | Type | Location | Purpose |
 |------|----------|---------|
 | `ServerlessManager` | `crates/synvoid-serverless/src/manager.rs` | Central orchestrator |
-| `InstancePool` | `crates/synvoid-serverless/src/pool.rs` | Per-function pool |
-| `ServerlessFunction` | `crates/synvoid-serverless/src/function.rs` | Function metadata |
-| `AsyncCompilationManager` | `crates/synvoid-serverless/src/compilation.rs` | Compilation tracking |
-| `AutoScaler` | `crates/synvoid-serverless/src/autoscaler.rs` | Dynamic scaling |
+| `InstancePool` | `crates/synvoid-serverless/src/instance_pool.rs` | Per-function pool |
+| `ServerlessFunction` | `crates/synvoid-serverless/src/manager.rs` | Function metadata |
+| `AsyncCompilationManager` | `crates/synvoid-serverless/src/async_compilation.rs` | Compilation tracking |
+| `ServerlessRoute` | `crates/synvoid-serverless/src/routing.rs` | Route-based invocation |
+| `ServerlessRegistry` | `crates/synvoid-serverless/src/registry.rs` | Global registry |
+| `ServerlessScheduler` | `crates/synvoid-serverless/src/scheduler.rs` | Scheduling |
+| `CallerContext` | `crates/synvoid-serverless/src/manager.rs` | Mesh caller metadata |

@@ -8,9 +8,17 @@ SynVoid's HTTP/3 server implements QUIC-based HTTP/3 using `quinn` + `h3` crates
 
 ```rust
 pub struct Http3Server {
-    endpoint: quinn::Endpoint,
-    h3_config: h3::server::Config,
-    waf_backend: Arc<dyn Http3WafBackend>,
+    addr: SocketAddr,
+    config: Http3Config,
+    router: Arc<Router>,
+    waf: Arc<dyn Http3WafBackend>,
+    flood_protector: Option<Arc<FloodProtector>>,
+    client: HttpClient,
+    upstream_client_registry: Arc<UpstreamClientRegistry>,
+    metrics: Option<Arc<WorkerMetrics>>,
+    shutdown_rx: broadcast::Receiver<()>,
+    trusted_proxies: Vec<String>,
+    main_config: Arc<MainConfig>,
 }
 ```
 
@@ -57,9 +65,9 @@ Response via QUIC stream
 | Type | Location | Purpose |
 |------|----------|---------|
 | `Http3Server` | `crates/synvoid-http3/src/server.rs` | Main server |
-| `Http3WafBackend` | `crates/synvoid-http3/src/server.rs` | WAF trait boundary |
-| `Http3RequestStream` | `crates/synvoid-http3/src/body.rs` | QUIC stream abstraction |
-| `Http3RequestResolver` | `crates/synvoid-http3/src/flow.rs` | Request resolution trait |
+| `Http3WafBackend` | `crates/synvoid-http3/src/lib.rs` | WAF trait boundary |
+| `Http3RequestStream` | `crates/synvoid-http/src/http3_body.rs` | QUIC stream abstraction (trait) |
+| `Http3RequestResolver` | `crates/synvoid-http/src/http3_request_flow.rs` | Request resolution trait |
 
 ## Integration Points
 

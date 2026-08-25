@@ -2,11 +2,11 @@
 
 ## Overview
 
-This document covers the reverse proxy module (`src/proxy/`), backend management (`src/upstream/`), and HTTP client (`src/http_client/`).
+This document covers the reverse proxy module (`crates/synvoid-proxy/src/`), backend management (`crates/synvoid-upstream/src/`), and HTTP client (`crates/synvoid-http-client/src/`).
 
 ---
 
-## 1. Proxy Module (`src/proxy/`)
+## 1. Proxy Module (`crates/synvoid-proxy/src/`)
 
 ### Purpose
 
@@ -16,8 +16,8 @@ End-to-end handling of proxied HTTP/HTTPS requests including upstream selection,
 
 | File | Responsibility |
 |------|----------------|
-| `mod.rs` | Main `ProxyServer` struct, request handling entry point, WAF integration, cache routing |
-| `dispatch.rs` | Low-level request dispatch to upstream with `DispatchParams` |
+| `server.rs` | Main `ProxyServer` struct, request handling entry point, WAF integration, cache routing |
+| `dispatch.rs` | Low-level `dispatch_to_upstream` with `DispatchParams` |
 | `executor.rs` | Request execution with caching (`ProxyExecutor`), upstream target preparation |
 | `retry.rs` | Retry logic, backoff calculation, idempotent method detection |
 | `cache.rs` | Cache response building, header filtering, max-age parsing |
@@ -41,19 +41,20 @@ End-to-end handling of proxied HTTP/HTTPS requests including upstream selection,
 
 ### Main Structs
 
-**`ProxyServer`** (mod.rs:73-94)
+**`ProxyServer`** (server.rs:67-96)
 - Central orchestrator for proxy operations
-- Holds `HttpClient`, `ErasedHttpClient`, upstream pool, cache, WAF reference
+- Generic over `WafProcessor` trait; holds HTTP clients, upstream pool, cache, WAF reference
 - Key methods:
   - `handle_request()` - Main entry point with WAF checking
   - `handle_request_with_cache()` - Cache-aware request handling with PURGE support
   - `forward_with_pool()` - Retry loop with backend selection
 
-**`DispatchParams`** (dispatch.rs:12-22)
+**`DispatchParams`** (dispatch.rs:14-26)
 - Bundles all parameters needed for upstream dispatch
-- Contains client, method, upstream_url, body, headers, timeout, forwarded protocol
+- Contains client, erased_client, method, upstream_url, body, headers, timeout, forwarded_protocol, proxy_config, client_ip, is_http2
+- `dispatch_to_upstream()` builds forward headers via `build_forward_headers()` then calls `send_request_erased_streaming()`
 
-**`ProxyExecutor`** (executor.rs:96-103)
+**`ProxyExecutor`** (executor.rs:101-110)
 - Caching-aware request executor
 - `execute_with_cache()` - Cache lookup + forward with revalidation
 
@@ -62,7 +63,7 @@ End-to-end handling of proxied HTTP/HTTPS requests including upstream selection,
 - Integrates with `GlobalCacheGovernor` for memory management
 - On stream completion, inserts into cache if buffer complete
 
-**`GlobalCacheGovernor`** (governor.rs:8-54)
+**`GlobalCacheGovernor`** (governor.rs:9-55)
 - Global memory limiter for cache buffering operations
 - Uses atomic compare-exchange for reservation tracking
 - Default 512MB limit, configurable
@@ -97,7 +98,7 @@ handle_request()
 
 ---
 
-## 2. Upstream Module (`src/upstream/`)
+## 2. Upstream Module (`crates/synvoid-upstream/src/`)
 
 ### Purpose
 
@@ -107,7 +108,7 @@ Backend address management, load balancing algorithms, health checking, and dist
 
 | File | Responsibility |
 |------|----------------|
-| `mod.rs` | Module exports, re-exports types |
+| `lib.rs` | Module exports, re-exports types |
 | `pool.rs` | `UpstreamPool`, `Backend`, load balancing algorithms |
 | `address.rs` | `UpstreamAddress`, `SocketErrorTracker`, `QuicTunnelStream` |
 | `health.rs` | `HealthChecker`, `HealthCheckConfig` |
@@ -115,17 +116,17 @@ Backend address management, load balancing algorithms, health checking, and dist
 
 ### Main Structs
 
-**`Backend`** (pool.rs:140-154)
+**`Backend`** (pool.rs:154-167)
 - Individual upstream server representation
 - Fields: url, weight, max_connections, current_connections, is_healthy, consecutive_failures/successes, protocol, is_backup, cpu/memory_percent, latency_ewma
 - Key methods:
   - `is_available()` - Healthy + under connection limit
   - `connection_scope()` - RAII guard that increments/decrements connections
   - `record_latency()` - EWMA latency tracking (90% weight to previous value for slow-moving EWMA: `(old_ewma * 9 + latency_ms) / 10`)
-  - `record_success()` / `record_failure()` - Circuit breaker with 3-failure threshold
+  - `record_success()` / `record_failure()` - Circuit breaker: 3 consecutive failures → unhealthy; 3 consecutive successes → healthy (resets the opposite counter)
   - `composite_load()` - (conn_load * 0.4) + (cpu_load * 0.6)
 
-**`UpstreamPool`** (pool.rs:375-380)
+**`UpstreamPool`** (pool.rs:376-382)
 - Manages collection of backends with load balancing
 - Key methods:
   - `select_backend()` - Primary selection
@@ -134,17 +135,17 @@ Backend address management, load balancing algorithms, health checking, and dist
   - `mark_healthy()` / `mark_unhealthy()` - State management
   - `get_metrics()` - Aggregate upstream metrics
 
-**`LoadBalanceAlgorithm`** (pool.rs:47-56)
+**`LoadBalanceAlgorithm`** (pool.rs:49-57)
 - Enum: RoundRobin (default), Random, LeastConnections, PeakEwma, WeightedRoundRobin, IpHash
 - PeakEwma uses cost = (connections + 1) * (latency + 1)
 
-**`HealthChecker`** (health.rs:10-15)
+**`HealthChecker`** (health.rs:11-16)
 - Background health check runner
 - Registers pools, runs periodic checks via `tokio::time::interval`
 - Supports HEAD, GET, and TCP health check methods
 - Configurable failure_threshold (3) and recovery_threshold (2)
 
-**`SharedConnectionTable`** (shared_state.rs:20-25)
+**`SharedConnectionTable`** (shared_state.rs:21-25)
 - mmap-based shared memory for cross-worker load balancing
 - Layout: [max_workers:u64][max_backends:u64][heartbeats:AtomicU64][connections:AtomicUsize]
 - `record_heartbeat()` - Worker liveness signaling
@@ -158,7 +159,7 @@ Backend address management, load balancing algorithms, health checking, and dist
 
 ---
 
-## 3. HTTP Client Module (`src/http_client/`)
+## 3. HTTP Client Module (`crates/synvoid-http-client/src/`)
 
 ### Purpose
 
@@ -213,12 +214,12 @@ The erased pool is used for true streaming at 1M RPS scale to avoid per-request 
 
 ### Key Structs
 
-**`StreamingWafBody<B>`** (mod.rs:133-223)
+**`StreamingWafBody<B, S>`** (streaming_waf_body.rs:9-15)
 - Body wrapper that performs WAF scanning on chunks during streaming
-- Fields: inner (B), streaming_waf, client_ip, blocked, error_sent
+- Fields: inner (B), streaming_waf (Option<S>), client_ip, blocked, error_sent
 - `poll_frame()` - Inspects each chunk via `sw.scan_chunk()` and blocks if WAFDecision::Block
 
-**`ErasedHttpClient`** (erased_pool.rs:415-456)
+**`ErasedHttpClient`** (erased_pool.rs:354-356)
 - HTTP client using erased connection pool
 - `send_request()` - Checkout → send → checkin pattern
 
@@ -236,14 +237,14 @@ The erased pool is used for true streaming at 1M RPS scale to avoid per-request 
 
 ### Type Erasure for Performance
 - `ErasedBody` / `ErasedHttpClient` avoid per-request boxing at 1M RPS
-- `PoolKey` uses `(authority, is_http2)` tuple for connection multiplexing (Hash derive at `erased_pool.rs:112`)
+- `PoolKey` uses `(authority, is_http2)` tuple for connection multiplexing
 
 ### Distributed Load Balancing
 - `SharedConnectionTable` via mmap for cross-worker connection counting
 - Worker heartbeat mechanism (10s timeout) for liveness
 
 ### Stale-While-Revalidate
-- Background revalidation with **semaphore-based limiting** (`revalidation_semaphore` at `proxy_cache/store.rs:156`)
+- Background revalidation with **semaphore-based limiting** (`revalidation_semaphore`)
 - Default 100 concurrent revalidations (configurable via `max_concurrent_revalidations` in `ProxyCacheSettings`)
 - Circuit breaker after `revalidation_failure_threshold` failures (default 10), with cooldown period
 - Returns stale content immediately, updates in background
@@ -281,8 +282,8 @@ The erased pool is used for true streaming at 1M RPS scale to avoid per-request 
 // due to hyper-util API limitations.
 
 // Decision: UpstreamClientRegistry is integrated but not used in ProxyServer::send_single_request.
-// The registry exists at src/proxy/client_registry.rs and is instantiated in http/server.rs,
-// http3/server.rs, and tls/server.rs for streaming client management. The ProxyServer flow
+// The registry exists at crates/synvoid-proxy/src/client_registry.rs and is instantiated in
+// http/server.rs, http3/server.rs, and tls/server.rs for streaming client management. The ProxyServer flow
 // uses ErasedHttpClient directly via send_request_erased_streaming. The registry remains
 // available for future typed client management but is not currently required.
 

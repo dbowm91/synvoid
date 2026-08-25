@@ -19,58 +19,39 @@ SynVoid has two layers of hybrid signature support:
 | Type | Location | Purpose |
 |------|----------|---------|
 | **`HybridSigner`** trait | `crates/synvoid-mesh/src/mesh/hybrid_signature.rs:190` | Generic trait for any hybrid signer implementing `sign_hybrid()` / `verify_hybrid()` |
-| **`HybridSignature`** struct | `crates/synvoid-mesh/src/mesh/hybrid_signature.rs:36-58` | Generic signature containing `ed25519_signature` (64 bytes), `ml_dsa_signature` (2420 bytes), and public keys |
+| **`HybridSignature`** struct | `crates/synvoid-mesh/src/mesh/hybrid_signature.rs:17-22` | Generic signature containing `ed25519_signature` (Vec<u8>), `ml_dsa_signature` (Vec<u8>), `ed25519_public_key` (String), and `ml_dsa_public_key` (Option<String>) |
 | **`MeshHybridSigner`** | `crates/synvoid-mesh/src/mesh/ml_dsa.rs:122` | Concrete mesh-specific signer that uses Ed25519 + ML-DSA-44 for DHT/mesh messages |
 
 The generic `HybridSigner` trait provides a consistent interface; `MeshHybridSigner` is the concrete implementation for mesh control plane messages. The `HybridSignature` struct stores the raw signature bytes for serialization.
 
 ### Hybrid Signature Verification (BUG-L1)
 
-The `verify_hybrid()` function at `crates/synvoid-mesh/src/mesh/ml_dsa.rs:189-219` implements fail-safe hybrid signature verification:
+The `verify_hybrid()` function at `crates/synvoid-mesh/src/mesh/ml_dsa.rs:186-216` implements fail-safe hybrid signature verification:
 
 1. **Ed25519 First:** Always verifies the classical Ed25519 signature first
 2. **ML-DSA Optional:** If `signature.has_ml_dsa()` is true, verifies the ML-DSA signature
 3. **Fail-Safe Behavior:** If ML-DSA data is absent (`has_ml_dsa()` returns false), the function returns `true` (treating as valid)
 
-This fail-safe approach ensures that if the PQC algorithm is broken or unavailable, the system can still operate on classical Ed25519 signatures alone. See `verify_hybrid()` at `crates/synvoid-mesh/src/mesh/ml_dsa.rs:206-218`.
+This fail-safe approach ensures that if the PQC algorithm is broken or unavailable, the system can still operate on classical Ed25519 signatures alone. See `verify_hybrid()` at `crates/synvoid-mesh/src/mesh/ml_dsa.rs:186-216`.
 
 ### Post-Quantum TLS Provider Installation (L35-4)
 
-When the `post-quantum` feature is enabled (`Cargo.toml:30`), the `rustls-post-quantum` crate provides ML-KEM-768 hybrid key exchange for TLS 1.3 connections:
+When the `post-quantum` feature is enabled (`Cargo.toml:33`), the `rustls` crate with `prefer-post-quantum` feature provides hybrid key exchange for TLS 1.3 connections:
 
 ```toml
-post-quantum = ["dep:rustls-post-quantum"]  # Cargo.toml:30
-rustls-post-quantum = { version = "0.2", optional = true }  # Cargo.toml:156
+post-quantum = ["synvoid-http-client/post-quantum"]  # Cargo.toml:33
+rustls = { version = "0.23", features = ["prefer-post-quantum", "aws-lc-rs"] }  # Cargo.toml:165
 ```
 
-This installs `rustls_post_quantum::provider()` which provides X25519MLKEM768 hybrid key exchange for all TLS 1.3 connections, securing Layer 3 (TLS & Proxy) traffic against quantum attacks.
-
-```rust
-// crates/synvoid-mesh/src/mesh/cert.rs:87-139 — verify_post_quantum_tls()
-#[cfg(feature = "post-quantum")]
-{
-    use rustls_post_quantum::provider;
-    if let Err(e) = provider().install_default() {
-        tracing::warn!("Failed to install post-quantum TLS provider: {:?}. Using default.", e);
-    } else {
-        tracing::info!("Post-quantum TLS (X25519MLKEM768) enabled");
-        // Verify PQ is actually available by checking supported key exchange groups
-        use rustls::crypto::CryptoProvider;
-        let provider = CryptoProvider::get_default();
-        // ... logs group count and sample groups
-    }
-}
-```
-
-This installs `rustls_post_quantum::provider()` which provides X25519MLKEM768 hybrid key exchange for all TLS 1.3 connections, securing Layer 3 (TLS & Proxy) traffic against quantum attacks.
+This enables X25519MLKEM768 hybrid key exchange for all TLS 1.3 connections, securing Layer 3 (TLS & Proxy) traffic against quantum attacks.
 
 ### Async Hybrid Verification
 
-The `verify_hybrid_async()` function (`crates/synvoid-mesh/src/mesh/protocol.rs:197-232`) uses `CryptoVerificationPool` for parallel ML-DSA signature verification.
+The `verify_hybrid_async()` function (`crates/synvoid-mesh/src/mesh/protocol.rs:196-232`) uses `CryptoVerificationPool` for parallel ML-DSA signature verification.
 
 ### ML-KEM Proof-of-Possession (BUG-L3)
 
-The ML-KEM key exchange includes proof-of-possession verification at `crates/synvoid-mesh/src/mesh/ml_kem_key_exchange.rs:204-264`. The `confirm_key` method:
+The ML-KEM key exchange includes proof-of-possession verification at `crates/synvoid-mesh/src/mesh/ml_kem_key_exchange.rs:204-279`. The `confirm_key` method:
 
 1. **Verifies Client Public Key:** Confirms the client public key matches the stored session public key
 2. **Decapsulation Test:** Calls `MlKem768::decapsulate()` with the client's key to confirm the client can actually use the shared secret
@@ -119,7 +100,7 @@ The trust model follows a robust, SPIFFE-like hierarchical chain:
 ## 5. Origin Node Protections & Isolation
 
 **Can origin nodes join freely but not become edge nodes?**
-Yes. The `validate_peer_role` function (at `crates/synvoid-mesh/src/mesh/peer_auth.rs:372`) strictly enforces role boundaries. An Origin node cannot simply announce itself to the DHT as an Edge node. To claim the `EDGE` role, it must provide a `MemberCertificate` explicitly signed by an `OrgPublicKey` that has been authorized by the Global quorum. Edge nodes can also validate via a value-bound `SignedRaftAttestation` (v2 protocol, `protocol_version=2`) — when a Raft attestation is provided, it is used exclusively with no fallback to other validation paths. Origin nodes can join the mesh to *receive* traffic and threat updates, but they are algorithmically prohibited from routing traffic or acting as authoritative DHT storage nodes.
+Yes. The `validate_peer_role` function (at `crates/synvoid-mesh/src/mesh/peer_auth.rs:390`) strictly enforces role boundaries. An Origin node cannot simply announce itself to the DHT as an Edge node. To claim the `EDGE` role, it must provide a `MemberCertificate` explicitly signed by an `OrgPublicKey` that has been authorized by the Global quorum. Edge nodes can also validate via a value-bound `SignedRaftAttestation` (v2 protocol, `protocol_version=2`) — when a Raft attestation is provided, it is used exclusively with no fallback to other validation paths. Origin nodes can join the mesh to *receive* traffic and threat updates, but they are algorithmically prohibited from routing traffic or acting as authoritative DHT storage nodes.
 
 **Can malicious origin nodes attack the system? What protections exist?**
 SynVoid anticipates malicious origins and protects against them:
@@ -133,7 +114,7 @@ Beyond HTTP/HTTPS proxying, SynVoid supports a **Half-TCP** mode for non-HTTP pr
 
 ### Tunnel Backend
 
-The `TunnelBackend` (defined in `src/tunnel/router.rs:200`) provides half-TCP proxy functionality with two routing modes:
+The `TunnelBackend` (defined in `crates/synvoid-tunnel/src/router.rs:199`) provides half-TCP proxy functionality with two routing modes:
 
 ```rust
 pub enum TunnelBackend {
@@ -142,7 +123,7 @@ pub enum TunnelBackend {
 }
 ```
 
-**Routing Logic** (`src/tunnel/router.rs:150-170`):
+**Routing Logic** (`crates/synvoid-tunnel/src/router.rs:149-195`):
 - `resolve_tunnel_backend()` first attempts QUIC client resolution
 - Falls back to session mappings lookup
 - Both result in `TunnelBackend::Direct` variant with resolved host/port
@@ -205,14 +186,14 @@ The mesh Global tier uses Raft consensus (`crates/synvoid-mesh/src/mesh/raft/`) 
 
 See [Raft Consensus Skill](../.opencode/skills/raft_consensus/SKILL.md) for detailed Raft implementation status.
 
-### rustls-post-quantum Dependency (L35-10)
+### Post-Quantum TLS Configuration (L35-10)
 
-Post-quantum TLS support depends on `rustls-post-quantum` crate:
+Post-quantum TLS support is provided by `rustls` with the `prefer-post-quantum` feature:
 
 ```toml
 # Cargo.toml
-post-quantum = ["dep:rustls-post-quantum"]  # Feature flag
-rustls-post-quantum = { version = "0.2", optional = true }  # Line 156
+post-quantum = ["synvoid-http-client/post-quantum"]  # Feature flag
+rustls = { version = "0.23", features = ["prefer-post-quantum", "aws-lc-rs"] }
 ```
 
 When enabled, this provides X25519MLKEM768 hybrid key exchange for all TLS 1.3 connections.

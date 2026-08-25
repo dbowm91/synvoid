@@ -16,16 +16,17 @@ Cross-platform abstractions providing OS-level functionality for Unix and Window
 
 | File | Responsibility |
 |------|----------------|
-| `mod.rs` | Platform enum detection, capability queries, exports |
+| `mod.rs` | Compatibility facade re-exporting from `synvoid-platform` crate; root-owned platform-specific code |
 | `ipc.rs` | Traits for IPC transport abstraction (`IpcTransport`, `IpcListener`, `IpcStream`) |
 | `sandbox.rs` | Multi-backend sandboxing (Landlock, Capsicum, Pledge, Seatbelt, Job Objects) |
 | `socket.rs` | Socket creation, FD passing, owned socket wrappers |
 | `process.rs` | Process control traits, signal handling |
 | `unix.rs` | Unix-specific implementations (UnixDomain sockets, signals, daemonization) |
 | `windows_impl.rs` | Windows-specific IPC via named pipes |
-| `fs.rs` | Filesystem operations with sandbox integration (path resolution, traversal prevention) |
 | `service/` | Windows service integration (service control manager, installation, running as service) |
 | `windows/` | Windows-specific implementations (firewall, interface resolver, Wintun VPN) |
+
+> **Note:** The `Platform` enum and capability queries (`supports_*`) are defined in `crates/synvoid-platform/src/lib.rs` (the dedicated `synvoid-platform` crate). `src/platform/mod.rs` is a compatibility facade that re-exports them alongside root-owned composition code.
 
 ### Platform Abstraction Pattern
 
@@ -40,7 +41,11 @@ platform().supports_socket_fd_passing()  // Unix only
 platform().supports_signals()            // Unix only
 platform().supports_sandbox()            // Linux/FreeBSD/OpenBSD only
 platform().supports_reuse_port()         // Linux/Macos/FreeBSD
-platform().supports_seatbelt()           // macOS only (sandboxing)
+platform().supports_ebpf()               // Linux only
+platform().supports_nftables()           // Linux only
+platform().supports_pf()                 // macOS/FreeBSD/OpenBSD/NetBSD
+platform().supports_tun()                // Most platforms
+platform().supports_wireguard_kernel()   // Linux only
 ```
 
 ### Key Traits
@@ -63,10 +68,10 @@ platform().supports_seatbelt()           // macOS only (sandboxing)
 | Linux (5.13+) | **Landlock** | Read/write path allowlists, filesystem restrictions |
 | FreeBSD | **Capsicum** | FD rights limiting, process limits |
 | OpenBSD | **Pledge + Unveil** | Promise-based syscall filtering, path permissions |
-| macOS | **Seatbelt** | Sandboxed profile compilation (query via `platform().supports_seatbelt()`) |
+| macOS | **Seatbelt** | Sandboxed profile compilation (not yet fully implemented) |
 | Windows | **Job Objects + DACL** | Process memory limits, file security descriptors; DEP (Data Execution Prevention) and ASLR (Address Space Layout Randomization) mitigation policies |
 
-**Note:** `supports_seatbelt()` is available for symmetry with other platform queries, but Seatbelt sandboxing is not yet fully implemented (macOS sandboxing requires additional code).
+**Note:** Seatbelt sandboxing is not yet fully implemented on macOS — the `Platform` enum does not expose a `supports_seatbelt()` query. Other platforms use Landlock (Linux), Capsicum (FreeBSD), or Pledge+Unveil (OpenBSD).
 
 ---
 

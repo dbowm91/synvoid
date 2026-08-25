@@ -8,20 +8,20 @@ SynVoid's networking layer is built for extreme performance and flexibility, sup
 SynVoid uses **Hyper** as its foundational HTTP library.
 - **HTTP/1.1:** Robust implementation with connection pooling and keep-alive support.
 - **HTTP/2:** Infrastructure exists (see `ErasedHttpClient::send_request(..., is_http2)`) but HTTP/2 pooled connections are not fully available in current implementation. **Milestone:** HTTP/2 upstream connection pooling is a planned enhancement. The `Http2PooledConnection` stub exists but is not wired for production use. This is a known limitation (HTTP2-POOL deferred item).
-- **Protocol Detection:** At TLS handshake, protocol negotiation occurs via ALPN (`tls/server.rs:410-411`). The server extracts the ALPN protocol and determines if the connection should use HTTP/2 (`h2`) or HTTP/1.1. This detection happens during the TLS handshake callback before request processing begins.
+- **Protocol Detection:** At TLS handshake, protocol negotiation occurs via ALPN (`src/tls/server.rs:420-421`). The server extracts the ALPN protocol and determines if the connection should use HTTP/2 (`h2`) or HTTP/1.1. This detection happens during the TLS handshake callback before request processing begins.
 
 ### 2. HTTP/3 (QUIC)
 SynVoid features native HTTP/3 support via the **Quinn** library.
 - **Connection Migration:** QUIC's use of connection IDs allows clients (like mobile devices) to switch networks without dropping connections. When a client changes network interfaces (e.g., Wi-Fi to cellular), the connection persists using the same connection ID, enabling seamless migration.
 - **0-RTT:** Enables clients to send data in the first packet of a handshake, significantly reducing time-to-first-byte. **Security Tradeoff:** 0-RTT data is susceptible to replay attacks (RFC 9000). By default, 0-RTT is **disabled** (`tls.quic_enable_0rtt = false`). When enabled, only idempotent requests should be sent early. Configuration: `tls.quic_enable_0rtt` (default: false).
 - **Independence:** QUIC streams are independent, meaning packet loss on one stream doesn't stall others (eliminating Head-of-Line blocking).
-- **QUIC Tunnel Datagrams:** Maximum datagram payload size is **1200 bytes** (per `src/tunnel/quic/messages.rs:4` `MAX_DATAGRAM_PAYLOAD`).
+- **QUIC Tunnel Datagrams:** Maximum datagram payload size is **1200 bytes** (per `crates/synvoid-tunnel/src/quic/messages.rs:4` `MAX_DATAGRAM_PAYLOAD`).
 
 ### 3. TCP & UDP Listeners
 Beyond HTTP, SynVoid can act as a generic proxy for any TCP or UDP service.
-- **TCP Listener:** Uses `src/listener/mod.rs` with `ListenerInstance` for connection management; actual TCP listener implementation in `src/tcp/listener.rs`.
+- **TCP Listener:** Uses `src/tcp/listener.rs` for connection management with `TcpSocketOptions` for socket configuration (reuse_port, send/recv buffer sizes, keepalive, nodelay).
 - **UDP Handling:** Built-in protections against amplification attacks.
-- **Listener Configuration:** `src/listener/common.rs` defines `ListenerConfigBase`, `ListenerInstance`, `ConnectionContext` for connection handling. The `SocketOptionsBase` struct provides reusable socket options (reuse_port, send_buffer_size, recv_buffer_size).
+- **Listener Configuration:** `crates/synvoid-http/src/listener/common.rs` defines `ConnectionContext` for connection handling. TCP socket options are configured via `TcpSocketOptions` in `src/tcp/listener.rs`.
 
 ---
 
@@ -39,13 +39,13 @@ SynVoid supports **DNS-01** challenges for ACME certificate issuance, enabling c
 1. ACME server delivers a `dns-01` challenge with a key authorization
 2. SynVoid computes `SHA-256(key_authorization)` and base64url-encodes it
 3. The challenge value is stored in `AcmeDnsChallenge` (`crates/synvoid-tls/src/acme_dns.rs`)
-4. DNS server serves the value via `_acme-challenge.<domain>` TXT records (`crates/synvoid-dns/src/server/query.rs:698-721`)
+4. DNS server serves the value via `_acme-challenge.<domain>` TXT records (`crates/synvoid-dns/src/server/query.rs:920`)
 5. ACME server validates by querying the TXT record
 6. On success, the challenge is cleaned up automatically
 
 **Implementation Details:**
 - `AcmeDnsChallenge` (`crates/synvoid-tls/src/acme_dns.rs`) manages pending challenges using a thread-safe `DashMap`
-- DNS integration via `build_acme_txt_response()` in `crates/synvoid-dns/src/server/response.rs:782`
+- DNS integration via `build_acme_txt_response()` in `crates/synvoid-dns/src/server/response.rs:446`
 - Feature-gated: requires `dns` feature flag
 - TXT records are only served for exact `_acme-challenge.<domain>` queries (type 16)
 

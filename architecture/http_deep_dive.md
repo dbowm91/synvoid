@@ -7,10 +7,9 @@ SynVoid's HTTP server crate (`synvoid-http`) implements the 7-stage request pipe
 ### Stage 1: Metadata Normalization (`request_frontdoor.rs`)
 
 ```rust
-pub fn prepare_request_frontdoor(
-    req: Request<Incoming>,
-    conn: ConnectionContext,
-) -> FrontdoorRequest {
+pub async fn prepare_request_frontdoor<D: HttpDrainControl>(
+    ctx: RequestFrontdoorContext<D>,
+) -> Result<RequestFrontdoorOutcome, hyper::Error> {
     // 1. Sanitize client IP via trusted proxy resolution
     // 2. Extract path, method, host, user-agent
     // 3. Dispatch internal endpoints (/__internal__/health, ready, drain)
@@ -21,11 +20,17 @@ pub fn prepare_request_frontdoor(
 ### Stage 2: Route Resolution (`request_preparation.rs`)
 
 ```rust
-pub async fn prepare_request_preflight(
-    frontdoor: FrontdoorRequest,
-    router: &Router,
-    waf: &WafCore,
-) -> Result<RequestPreflight> {
+pub async fn prepare_request_preflight<W, LogFn, DropFn>(
+    req: hyper::Request<hyper::body::Incoming>,
+    client_ip: IpAddr,
+    local_addr: Option<SocketAddr>,
+    router: Arc<Router>,
+    waf: Arc<W>,
+    alt_svc: Option<String>,
+    main_config: Arc<MainConfig>,
+    on_log: LogFn,
+    on_drop: DropFn,
+) -> Result<RequestPreflightOutcome, hyper::Error> {
     // 1. Validate WebSocket upgrade
     // 2. Extract metadata
     // 3. Early WAF decision (trust cookie bypass)
@@ -37,10 +42,13 @@ pub async fn prepare_request_preflight(
 ### Stage 3: Body Policy (`body_policy.rs`)
 
 ```rust
-pub async fn collect_and_scan_request_body(
-    body: Incoming,
-    waf: &RequestBodyWaf,
-) -> Result<PreparedRequest> {
+pub async fn collect_and_scan_request_body<W>(
+    body: hyper::body::Incoming,
+    waf: &W,
+    client_ip: IpAddr,
+    content_length: Option<usize>,
+    max_streaming_body_size: usize,
+) -> Result<(Bytes, u64), BodyPolicyError> {
     // For bodies > 256KB: streaming chunk WAF scanning
     // For bodies > 1MB: chunked post-collection scanning (64KB steps)
     // Constants: MAX_WAF_BODY_SIZE = 1MB, CHUNK_WAF_SCAN_SIZE = 64KB
@@ -50,10 +58,21 @@ pub async fn collect_and_scan_request_body(
 ### Stage 4: WAF Evaluation (`waf_decision.rs`)
 
 ```rust
-pub async fn resolve_full_request_waf_decision(
-    prepared: PreparedRequest,
-    waf: &WafCore,
-) -> WafDecision {
+pub async fn resolve_full_request_waf_decision<...>(
+    decision: WafDecision,
+    client_ip: IpAddr,
+    http_config: HttpConfig,
+    alt_svc: Option<String>,
+    main_config: Arc<MainConfig>,
+    on_drop: DropFn,
+    on_log: LogFn,
+    on_blocked: BlockedFn,
+    on_blocked_egress: BlockedEgressFn,
+    on_challenged: ChallengedFn,
+    elapsed_ms: ElapsedFn,
+    render_block_body: BlockRenderFn,
+    generate_tarpit_html: TarpitRenderFn,
+) -> FullWafDecisionOutcome {
     // 1. Full request WAF check (headers, method, path, query, body, JA4)
     // 2. Map WafDecision variants:
     //    - Drop → 404
@@ -71,21 +90,20 @@ Handles health/ready/drain endpoints and mesh special paths.
 
 ### Stage 6: Backend Dispatch (`backend_dispatch.rs`)
 
-12 backend types tried in order:
+WebSocket upgrade is checked first (a separate path in `websocket_upgrade_dispatch.rs`, not a `BackendType` variant). Then the 11 `BackendType` variants are tried in order:
 
-1. WebSocket upgrade
-2. Axum dynamic
-3. Static files
-4. AppServer (mesh)
-5. Serverless (mesh)
-6. Spin
-7. FastCGI/PHP
-8. CGI
-9. AppServer (general)
-10. Mesh backend (mesh)
-11. WASM filter
-12. Upload validation
-13. Upstream proxy (fallback)
+1. Axum dynamic
+2. Static files
+3. AppServer (mesh-gated, `is_appserver` check)
+4. Serverless (mesh-gated)
+5. Spin
+6. FastCGI/PHP
+7. CGI
+8. AppServer (general)
+9. Mesh backend (mesh-gated)
+10. WASM filter
+11. Upload validation
+12. Upstream proxy (fallback via `upstream_proxy_dispatch.rs`)
 
 ### Stage 7: Accounting (`http_request_postlude.rs`)
 
@@ -110,17 +128,19 @@ pub async fn handle_http_request_postlude(
 ## WebSocket Support
 
 ```rust
-// Detection
-pub fn is_websocket_upgrade(headers: &HeaderMap) -> bool {
-    headers.get("upgrade") == Some("websocket")
-        && headers.get("connection").map(|v| v.to_str().unwrap().contains("upgrade")) == Some(true)
+// Detection (crates/synvoid-http/src/headers.rs)
+pub fn is_websocket_upgrade(headers: &http::HeaderMap) -> bool {
+    // Case-insensitive check for upgrade=websocket + connection contains "upgrade"
 }
 
-// Bidirectional proxy
-async fn handle_websocket_tunnel(
-    client: WebSocket,
-    upstream: WebSocket,
-    waf: &WafCore,
+// Bidirectional proxy (crates/synvoid-http/src/websocket_dispatch.rs)
+pub async fn handle_websocket_tunnel(
+    upgraded: hyper::upgrade::OnUpgrade,
+    target: RouteTarget,
+    path: String,
+    waf: Arc<dyn WafCoreBackend>,
+    client_ip: IpAddr,
+    ws_config: SiteWebSocketConfig,
 ) {
     // WAF on every message in both directions
     // Supports Block, LogOnly, Allow actions
@@ -132,17 +152,17 @@ async fn handle_websocket_tunnel(
 ```rust
 pub fn apply_compression(
     body: Bytes,
-    accept_encoding: &str,
-    config: &CompressionSettings,
-) -> Bytes {
+    accept_encoding: Option<&str>,
+    settings: &CompressionSettings,
+) -> (Bytes, Option<String>) {
     // Prefer Brotli, fallback to Gzip
     // Configurable levels via CompressionSettings
 }
 
 pub fn apply_minification(
     body: Bytes,
-    content_type: &str,
-    minifier: &MinifierGenerator,
+    content_type: Option<&str>,
+    settings: &MinificationSettings,
 ) -> Bytes {
     // HTML, CSS, JS minification
 }
@@ -152,10 +172,10 @@ pub fn apply_minification(
 
 | Type | Location | Purpose |
 |------|----------|---------|
-| `HttpRuntimeContext` | `src/http/runtime.rs` | Bundled runtime deps |
-| `FrontdoorRequest` | `src/http/request_frontdoor.rs` | Normalized request |
-| `RequestPreflight` | `src/http/request_preparation.rs` | Route-resolved request |
-| `PreparedRequest` | `src/http/request_preparation.rs` | Body-collected request |
-| `BackendDispatchContext` | `src/http/backend_dispatch.rs` | Dispatch context |
-| `EarlyHttpRequest` | `src/http/early_parse.rs` | Zero-copy early parse |
+| `HttpRuntimeContext` | `crates/synvoid-http/src/runtime.rs` | Bundled runtime deps |
+| `FrontdoorRequest` | `crates/synvoid-http/src/request_frontdoor.rs` | Normalized request |
+| `RequestPreflight` | `crates/synvoid-http/src/request_preparation.rs` | Route-resolved request |
+| `PreparedRequest` | `crates/synvoid-http/src/request_preparation.rs` | Body-collected request |
+| `BackendDispatchContext` | `crates/synvoid-http/src/backend_dispatch.rs` | Dispatch context |
+| `EarlyHttpRequest` | `crates/synvoid-http/src/early_parse.rs` | Zero-copy early parse |
 | `WafStreamedBody` | `crates/synvoid-http/src/shared_handler.rs` | Streaming WAF body wrapper |

@@ -30,22 +30,27 @@ Workers handle the data plane — HTTP request processing, WAF evaluation, proxy
 
 ```rust
 pub struct UnifiedServerWorkerState {
-    pub worker_id: u32,
+    pub worker_id: WorkerId,
+    pub metrics: Arc<WorkerMetrics>,
     pub start_time: Instant,
-    pub ipc: Arc<IpcStream>,
-    pub running: Arc<RunningFlag>,
-    pub master_dead: Arc<AtomicBool>,
-    pub draining: Arc<AtomicBool>,
-    pub stopped_accepting: Arc<AtomicBool>,
-    pub drain_state: Arc<WorkerDrainState>,
+    pub ipc: Arc<TokioMutex<AsyncIpcStream>>,
+    pub running: RunningFlag,
+    pub master_dead: RunningFlag,
     pub app_servers: Arc<RwLock<HashMap<String, Arc<GranianSupervisor>>>>,
+    pub draining: DrainFlag,
+    pub drain_id: Arc<AtomicU64>,
+    pub stopped_accepting: DrainFlag,
+    pub drain_state: Arc<WorkerDrainState>,
+    pub stop_accepting_tx: Arc<TokioMutex<Option<broadcast::Sender<()>>>>,
     pub unified_server: Arc<UnifiedServer>,
-    pub task_registry: Arc<Mutex<WorkerTaskRegistry>>,
+    pub task_handles: Arc<TokioMutex<Vec<JoinHandle<()>>>>,
+    pub request_services: Arc<RequestServices>,
     pub data_plane: Arc<DataPlaneServices>,
     // Mesh fields (feature-gated)
     pub canonical_snapshot: Arc<RwLock<Option<CanonicalTrustSnapshot>>>,
     pub mesh_status: Arc<RwLock<WorkerMeshStatus>>,
-    pub mesh_policy: Arc<MeshSupervisionPolicy>,
+    pub mesh_policy: Option<MeshSupervisionPolicy>,
+    pub task_registry: Arc<tokio::sync::Mutex<WorkerTaskRegistry>>,
 }
 ```
 
@@ -54,20 +59,22 @@ pub struct UnifiedServerWorkerState {
 ```rust
 pub struct DataPlaneServices {
     pub request_services: Arc<RequestServices>,
-    pub serverless_manager: Option<Arc<ServerlessManager>>,
+    pub serverless_manager: Arc<ServerlessManager>,
     pub port_honeypot_runner: Option<Arc<PortHoneypotRunner>>,
+    // Mesh fields (feature-gated)
+    pub mesh_transport_manager: Option<Arc<MeshTransportManager>>,
+    pub threat_intel: Option<Arc<ThreatIntelligenceManager>>,
+    pub threat_intel_policy: Option<ThreatIntelPolicyContext>,
+    pub record_store: Option<Arc<RecordStoreManager>>,
 }
 
 pub struct RequestServices {
-    pub waf_core: Arc<WafCore>,
-    pub router: Arc<Router>,
-    pub block_store: Arc<BlockStore>,
-    pub metrics: Arc<SiteMetrics>,
-    pub drain_state: Arc<WorkerDrainState>,
-    pub challenge_manager: Arc<PowManager>,
-    pub tarpit_service: Arc<TarpitService>,
-    pub upload_validator: Arc<UploadValidator>,
-    pub config: Arc<MainConfig>,
+    pub threat_intel: Option<Arc<dyn ThreatIntelLookup>>,
+    pub behavioral_intel: Option<Arc<dyn BehavioralIntelLookup>>,
+    pub upload_validator: Option<Arc<UploadValidator>>,
+    pub yara_rules: Option<Arc<YaraRulesManager>>,
+    pub plugin_manager: Option<Arc<GlobalPluginManager>>,
+    pub serverless_registry: Option<Arc<ServerlessRegistry>>,
 }
 ```
 
@@ -79,10 +86,15 @@ Separate process for CPU-intensive tasks, communicating via Unix domain socket.
 
 ```rust
 pub struct CpuWorkerState {
-    pub minifier_caches: HashMap<String, MinifierCache>,
-    pub compression_queue: Vec<CompressionTask>,
-    pub cpu_task_limiter: CpuTaskLimiter,
-    pub yara_scanner: Option<YaraScanner>,
+    pub worker_id: usize,
+    pub running: RunningFlag,
+    pub stop_background_tasks: DrainFlag,
+    pub ipc: Arc<TokioMutex<AsyncIpcStream>>,
+    pub config_manager: Arc<RwLock<ConfigManager>>,
+    pub minifier_caches: Arc<RwLock<HashMap<String, Arc<MinifierCache>>>>,
+    pub compression_queue: Arc<RwLock<Vec<CompressionTask>>>,
+    pub cpu_task_limiter: Arc<CpuTaskLimiter>,
+    pub yara_scanner: Option<Arc<YaraScanner>>,
 }
 ```
 
@@ -101,12 +113,17 @@ pub struct CpuWorkerState {
 
 ```rust
 pub struct CpuTaskLimiter {
-    max_active_global: usize,      // 128
-    max_queue_global: usize,       // 1024
-    max_active_per_site: usize,    // 32
-    max_queue_per_site: usize,     // 256
-    max_payload_bytes: usize,      // 64MB
-    max_output_bytes: usize,       // 64MB
+    pub limits: CpuTaskLimits,
+    pub state: Mutex<CpuTaskBackpressureState>,
+}
+
+pub struct CpuTaskLimits {
+    pub max_active_global: usize,      // 128
+    pub max_queue_global: usize,       // 1024
+    pub max_active_per_site: usize,    // 32
+    pub max_queue_per_site: usize,     // 256
+    pub max_payload_bytes: usize,      // 64MB
+    pub max_output_bytes: usize,       // 64MB
 }
 ```
 
@@ -206,3 +223,4 @@ pub enum TaskExitReason {
 | `CpuTaskLimiter` | `src/worker/cpu_task/state.rs` | Backpressure system |
 | `WorkerTaskRegistry` | `src/worker/task_registry.rs` | Task lifecycle management |
 | `WorkerDrainState` | `src/worker/drain_state.rs` | Per-worker drain tracking |
+| `RequestServices` | `src/worker/context.rs` | Request-path service handles |

@@ -45,23 +45,27 @@ DJB2 hash provides good distribution across shards, minimizing lock contention.
 
 ```rust
 pub struct BlockEntry {
-    pub ip: IpAddr,
+    pub ip: String,
     pub reason: String,
-    pub banned_at: u64,           // Unix timestamp
-    pub expires_at: Option<u64>,  // Optional TTL
+    pub blocked_at: u64,           // Unix timestamp
+    pub ban_expire_seconds: u64,   // 0 = permanent
     pub site_scope: String,       // Site-specific or "global"
-    pub access_count: AtomicU64,  // LRU eviction metric
-    pub provenance: BlockProvenanceKind,
+    pub access_count: u64,        // LRU eviction metric
+    pub last_access: u64,         // Last access timestamp
+    pub provenance: BlockProvenance, // Contains kind: BlockProvenanceKind + optional source
 }
 
 pub enum BlockProvenanceKind {
-    LegacyUnknown,              // Backward compat
+    LegacyUnknown,              // Backward compat/tests/mocks only
+    LocalWaf,                   // WAF attack detection
+    LocalHoneypot,              // Honeypot detection
+    LocalAsnTracker,            // ASN-based blocking
+    MeshThreatIntelPolicyGated, // Mesh threat intelligence
+    SupervisorSync,             // Supervisor sync
     AdminManual,                // Admin API
     SupervisorManual,           // Supervisor gRPC
-    MeshPeer,                   // Mesh propagation
-    ThreatIntel,                // Threat intelligence
-    Honeypot,                   // Honeypot detection
-    WafDetection,               // WAF attack detection
+    ProxyHealthProbe,           // Proxy health probe
+    Test,                       // Test only
 }
 ```
 
@@ -82,15 +86,13 @@ impl BlockStore {
         let shard = self.ip_shards[shard_key(site_scope, &ip.to_string())];
         let mut guard = shard.write();
         
-        let entry = BlockEntry {
+        let entry = BlockEntry::new_with_provenance(
             ip,
-            reason: reason.to_string(),
-            banned_at: current_timestamp(),
-            expires_at: ttl.map(|d| current_timestamp() + d.as_secs()),
-            site_scope: site_scope.to_string(),
-            access_count: AtomicU64::new(0),
-            provenance,
-        };
+            reason.to_string(),
+            ttl.map(|d| d.as_secs()).unwrap_or(0),
+            site_scope.to_string(),
+            BlockProvenance { kind: provenance, source: None },
+        );
         
         guard.insert(key, entry);
         
@@ -113,7 +115,7 @@ impl BlockStore {
 fn evict_lru(&self, shard: &mut AHashMap<String, BlockEntry>) {
     // Sort by access_count (ascending)
     let mut entries: Vec<_> = shard.iter().collect();
-    entries.sort_by_key(|(_, e)| e.access_count.load(Ordering::Relaxed));
+    entries.sort_by_key(|(_, e)| e.access_count);
     
     // Remove bottom 10%
     let evict_count = entries.len() / 10;
@@ -135,7 +137,7 @@ async fn persistence_loop(rx: mpsc::Receiver<PersistCommand>) {
                 
                 // 2. Write to temp file
                 let tmp_path = format!("{}.tmp", self.config.path);
-                let data = postcard::to_allocvec(&snapshot)?;
+                let data = serde_json::to_string_pretty(&snapshot)?;
                 std::fs::write(&tmp_path, &data)?;
                 
                 // 3. Atomic rename
@@ -157,17 +159,19 @@ pub struct BlocklistEventLog {
 }
 
 pub struct BlocklistEvent {
-    pub sequence: u64,
+    pub operation: BlocklistOperation,     // Block, Unblock
+    pub target_kind: BlockTargetKind,     // Ip, MeshId
+    pub identifier: String,               // IP address or mesh_id
+    pub site_scope: String,
+    pub reason: Option<String>,
+    pub provenance: BlockProvenance,
     pub timestamp: u64,
-    pub event_type: BlocklistEventType,
     pub source_node: Option<String>,
-}
-
-pub enum BlocklistEventType {
-    Block { ip, reason, site_scope },
-    Unblock { ip, site_scope },
-    MeshBlock { mesh_id, reason, site_scope },
-    MeshUnblock { mesh_id, site_scope },
+    pub event_id: Option<String>,
+    pub ttl_secs: Option<u64>,
+    pub version: Option<u64>,
+    pub source_sequence: Option<u64>,
+    pub logical_time: Option<u64>,
 }
 ```
 
@@ -176,23 +180,27 @@ pub enum BlocklistEventType {
 ### Event Deduplication
 
 ```rust
-pub struct SeenEventCache {
-    seen: HashSet<Uuid>,
-    max_size: usize,  // 10K
+struct SeenEventCache {
+    set: HashSet<String>,
+    order: VecDeque<String>,
 }
 
 impl SeenEventCache {
-    pub fn is_seen(&mut self, event_id: &Uuid) -> bool {
-        if self.seen.contains(event_id) {
-            return true;
+    fn contains(&self, event_id: &str) -> bool {
+        self.set.contains(event_id)
+    }
+
+    fn insert(&mut self, event_id: String) {
+        if self.set.contains(&event_id) {
+            return;
         }
-        self.seen.insert(*event_id);
-        if self.seen.len() > self.max_size {
-            // Evict oldest 10%
-            let drain_count = self.max_size / 10;
-            self.seen.drain(..drain_count);
+        self.set.insert(event_id.clone());
+        self.order.push_back(event_id);
+        while self.order.len() > SEEN_EVENTS_MAX {
+            if let Some(oldest) = self.order.pop_front() {
+                self.set.remove(&oldest);
+            }
         }
-        false
     }
 }
 ```
@@ -268,7 +276,7 @@ mesh.broadcast_blocklist_event(BlocklistEvent::Block {
 | `BlockStore` | `crates/synvoid-block-store/src/lib.rs` | Main block store |
 | `BlockEntry` | `crates/synvoid-block-store/src/lib.rs` | IP block entry |
 | `MeshBlockEntry` | `crates/synvoid-block-store/src/lib.rs` | Mesh-ID block entry |
-| `BlocklistEventLog` | `crates/synvoid-block-store/src/event_log.rs` | Bounded event log |
-| `SeenEventCache` | `crates/synvoid-block-store/src/event_dedup.rs` | Event deduplication |
-| `TargetStateCache` | `crates/synvoid-block-store/src/target_state.rs` | Per-target state tracking |
-| `BlockProvenanceKind` | `crates/synvoid-block-store/src/lib.rs` | Block source attribution |
+| `BlocklistEventLog` | `crates/synvoid-block-store/src/lib.rs` | Bounded event log |
+| `SeenEventCache` | `crates/synvoid-block-store/src/lib.rs` | Event deduplication |
+| `TargetStateCache` | `crates/synvoid-block-store/src/lib.rs` | Per-target state tracking |
+| `BlockProvenanceKind` | `crates/synvoid-core/src/block_store.rs` | Block source attribution |

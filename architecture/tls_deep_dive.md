@@ -19,8 +19,9 @@ TLS
 ```rust
 pub struct CertResolver {
     certs: Arc<RwLock<HashMap<String, Arc<CertifiedKey>>>>,
-    wildcard_certs: Arc<RwLock<HashMap<String, Arc<CertifiedKey>>>>,
-    watcher: Option<notify::RecommendedWatcher>,
+    default_cert: Arc<RwLock<Option<Arc<CertifiedKey>>>>,
+    config: InternalTlsConfig,
+    reload_tx: broadcast::Sender<()>,
 }
 
 impl ResolvesServerCert for CertResolver {
@@ -36,9 +37,14 @@ impl ResolvesServerCert for CertResolver {
 
 ```rust
 pub struct AcmeManager {
-    account: AcmeAccount,
-    config: AcmeConfig,
-    cert_store: Arc<CertStore>,
+    config: InternalAcmeConfig,
+    cert_resolver: Arc<CertResolver>,
+    account: parking_lot::RwLock<Option<Account>>,
+    credentials_path: PathBuf,
+    http_challenges: Arc<DashMap<String, String>>,
+    dns_challenges: Option<Arc<AcmeDnsChallenge>>,  // behind "dns" feature
+    managed_certs: parking_lot::RwLock<HashMap<String, ManagedCert>>,
+    renew_callback: parking_lot::RwLock<Option<Box<dyn Fn(Vec<String>) + Send + Sync>>>,
 }
 
 impl AcmeManager {
@@ -59,19 +65,25 @@ impl AcmeManager {
 ### JA4 Fingerprinting
 
 ```rust
-pub fn compute_ja4(client_hello: &ClientHello) -> String {
-    // JA4 format: t{TLS_version}{SNI}{Cipher_count}{Extension_count}_{Hash}
-    // Example: t13d1516h2_8daaf6152771
+pub fn compute_ja4(data: &[u8]) -> Option<String> {
+    // JA4 format: {tls_version}{sni_flag}{cipher_count}_{first_alpn}_{cipher_hash}_{ext_hash}
+    // Example: 13d0000h2_8daaf6152771
     
-    let mut ja4 = String::new();
-    ja4.push_str(&format!("t{}", tls_version));
-    ja4.push_str(if sni { "d" } else { "i" });
-    ja4.push_str(&format!("{:02x}", cipher_suites.len()));
-    ja4.push_str(&format!("{:02x}", extensions.len()));
-    ja4.push('_');
-    ja4.push_str(&hash_hex(&hash_input));
+    let info = parse_client_hello_info(data).ok()??;
     
-    ja4
+    let tls_version = match info.tls_version {
+        0x0304 => "13",
+        0x0303 => "12",
+        0x0302 => "11",
+        0x0301 => "10",
+        _ => return None,
+    };
+    
+    let sni_flag = if info.has_sni { "d" } else { "i" };
+    let cipher_count = info.cipher_suites.len().min(99);
+    // ... hash computation ...
+    
+    Some(format!("{}{:02x}{}_...", tls_version, cipher_count, sni_flag))
 }
 ```
 
@@ -79,43 +91,36 @@ pub fn compute_ja4(client_hello: &ClientHello) -> String {
 
 ```rust
 pub fn watch_for_cert_changes(
-    cert_path: &Path,
-    key_path: &Path,
     resolver: Arc<CertResolver>,
-) -> Result<()> {
-    let mut watcher = notify::RecommendedWatcher::new(
-        move |event| {
-            if event.kind == EventKind::Modify(_) || event.kind == EventKind::Create(_) {
-                // Reload certificate
-                if let Ok(cert) = load_certificate(cert_path, key_path) {
-                    resolver.insert_cert(cert);
-                }
-            }
-        },
-        notify::Config::default(),
-    )?;
-    
-    watcher.watch(cert_path, RecursiveMode::NonRecursive)?;
-    Ok(())
+    watch_dir: PathBuf,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut watcher = notify::recommended_watcher(move |res| {
+            if res.is_ok() { let _ = tx.blocking_send(()); }
+        })?;
+        
+        watcher.watch(watch_dir.as_path(), notify::RecursiveMode::Recursive)?;
+        
+        loop {
+            // Wait for filesystem events, debounce, then call resolver.load_certificates()
+        }
+    })
 }
 ```
 
 ### Key Strength Validation
 
 ```rust
-pub fn validate_key_strength(key: &PrivateKey) -> Result<()> {
-    match key.algorithm() {
-        Algorithm::Rsa => {
-            let size = key.key_size();
-            if size < 2048 {
-                return Err(Error::WeakKey(format!("RSA {} bits < 2048", size)));
-            }
+fn validate_key_strength(&self, key: &PrivateKeyDer<'_>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    match key {
+        PrivateKeyDer::Pkcs1(pkcs1) => {
+            // Estimate RSA key size from DER length; reject < 2048 bits
         }
-        Algorithm::Ecdsa => {
-            // ECDSA keys are generally safe
+        PrivateKeyDer::Sec1(_sec1) => {
+            // EC keys are inherently strong (>= 160 bits)
         }
-        Algorithm::Ed25519 => {
-            // Ed25519 keys are always safe
+        PrivateKeyDer::Pkcs8(pkcs8) => {
+            // Try to parse as RSA; reject < 2048 bits
         }
     }
     Ok(())
@@ -135,6 +140,5 @@ pub fn validate_key_strength(key: &PrivateKey) -> Result<()> {
 |------|----------|---------|
 | `CertResolver` | `crates/synvoid-tls/src/cert_resolver.rs` | SNI-based certificate resolution |
 | `AcmeManager` | `crates/synvoid-tls/src/acme.rs` | ACME protocol lifecycle |
-| `AcmeDnsManager` | `crates/synvoid-tls/src/acme_dns.rs` | DNS-01 challenge handling |
-| `ClientHelloInfo` | `crates/synvoid-tls/src/sni_peek.rs` | SNI extraction + JA4 |
-| `CertStore` | `crates/synvoid-tls/src/cert_store.rs` | Certificate storage |
+| `AcmeDnsChallenge` | `crates/synvoid-tls/src/acme_dns.rs` | DNS-01 challenge handling |
+| `SniPeekResult` / `ClientHelloInfo` | `crates/synvoid-tls/src/sni_peek.rs` | SNI extraction + JA4 fingerprinting |

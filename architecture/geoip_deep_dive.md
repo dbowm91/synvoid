@@ -19,19 +19,17 @@ GeoIpLookup
 
 ```rust
 pub struct GeoIpLookup {
-    country_reader: Option<Reader<Vec<u8>>>,
-    asn_reader: Option<Reader<Vec<u8>>>,
-    city_reader: Option<Reader<Vec<u8>>>,
+    pub reader: Option<Reader<Vec<u8>>>,
 }
 
 impl GeoIpLookup {
-    pub fn lookup_country(&self, ip: IpAddr) -> Option<CountryInfo>;
-    pub fn lookup_country_info(&self, ip: IpAddr) -> Option<GeoLocationInfo>;
+    pub fn lookup_country(&self, ip: IpAddr) -> Option<String>;
+    pub fn lookup_country_info(&self, ip: IpAddr) -> Option<CountryInfo>;
     pub fn lookup_subdivision(&self, ip: IpAddr) -> Option<String>;
     pub fn lookup_city(&self, ip: IpAddr) -> Option<String>;
-    pub fn lookup_asn(&self, ip: IpAddr) -> Option<AsnInfo>;
+    pub fn lookup_asn(&self, ip: IpAddr) -> Option<(u32, String)>;
     pub fn lookup_location(&self, ip: IpAddr) -> Option<(f64, f64)>;
-    pub fn lookup_location_info(&self, ip: IpAddr) -> Option<GeoIpResult>;
+    pub fn lookup_location_info(&self, ip: IpAddr) -> Option<GeoLocationInfo>;
 }
 ```
 
@@ -39,19 +37,12 @@ impl GeoIpLookup {
 
 ```rust
 pub struct GeoIpUpdater {
-    config: UpdateConfig,
-    notification_handlers: Vec<Box<dyn GeoIpNotificationHandler>>,
-}
-
-pub struct UpdateConfig {
-    sources: Vec<DownloadSource>,
-    check_interval: Duration,
-    auto_apply: bool,
+    // Handles auto-download of MaxMind databases
 }
 
 pub enum DownloadSource {
-    MaxMind { license_key: String },
-    Custom { url: String },
+    MaxMind { account_id: String, license_key: String },
+    PresignedUrl(String),
 }
 ```
 
@@ -70,5 +61,4 @@ pub enum DownloadSource {
 | `GeoIpManager` | `crates/synvoid-geoip/src/manager.rs` | Database lifecycle |
 | `GeoIpUpdater` | `crates/synvoid-geoip/src/updater.rs` | Auto-download |
 | `CountryInfo` | `crates/synvoid-geoip/src/types.rs` | Country lookup result |
-| `AsnInfo` | `crates/synvoid-geoip/src/types.rs` | ASN lookup result |
-| `GeoIpResult` | `crates/synvoid-geoip/src/types.rs` | Combined result |
+| `GeoLocationInfo` | `crates/synvoid-geoip/src/lookup.rs` | Combined geo result |

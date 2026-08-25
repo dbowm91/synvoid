@@ -17,13 +17,13 @@ SynVoid's upstream crate manages backend server pools with health checking, load
 
 ```rust
 impl UpstreamPool {
-    pub fn select_backend(&self) -> Option<Arc<Backend>> {
+    pub fn select_backend(&self) -> Option<Backend> {
         // 1. Filter primary backends by is_available()
         // 2. Apply algorithm
         // 3. If no primaries → fallback to backup backends
     }
     
-    pub fn select_next_backend(&self, current: &Backend) -> Option<Arc<Backend>> {
+    pub fn select_next_backend(&self, current: &Backend) -> Option<Backend> {
         // Failover excluding current backend
     }
 }
@@ -69,11 +69,15 @@ impl Backend {
 ### EWMA Latency
 
 ```rust
-pub fn record_latency(&self, latency: Duration) {
-    let old = self.latency_ewma.load(Ordering::Relaxed);
-    let new = latency.as_millis() as f64;
-    let ewma = (old * 9.0 + new) / 10.0;
-    self.latency_ewma.store(ewma as u64, Ordering::Relaxed);
+pub fn record_latency(&self, duration: Duration) {
+    let latency_ms = duration.as_millis() as usize;
+    let old_ewma = self.latency_ewma.load(Ordering::Relaxed);
+    let new_ewma = if old_ewma == 0 {
+        latency_ms
+    } else {
+        (old_ewma * 9 + latency_ms) / 10
+    };
+    self.latency_ewma.store(new_ewma, Ordering::Relaxed);
 }
 ```
 
@@ -83,20 +87,20 @@ pub fn record_latency(&self, latency: Duration) {
 pub enum ConnectionCounter {
     Local(Arc<AtomicUsize>),  // Single-process
     Shared {                   // Multi-worker
-        table: Arc<SharedConnectionTable>,
+        table: SharedConnectionTable,
         backend_index: usize,
-        worker_id: u32,
+        worker_id: usize,
     },
 }
 
 // RAII guard
-pub struct ConnectionGuard {
-    counter: Arc<AtomicUsize>,
+pub struct ConnectionGuard<'a> {
+    backend: &'a Backend,
 }
 
-impl Drop for ConnectionGuard {
+impl<'a> Drop for ConnectionGuard<'a> {
     fn drop(&mut self) {
-        self.counter.fetch_sub(1, Ordering::Relaxed);
+        self.backend.decrement_connections();
     }
 }
 ```
@@ -104,12 +108,12 @@ impl Drop for ConnectionGuard {
 ## Global Pool Registry
 
 ```rust
-static GLOBAL_POOL_REGISTRY: Lazy<DashMap<String, Arc<UpstreamPool>>> = Lazy::new(DashMap::new);
+static GLOBAL_POOL_REGISTRY: LazyLock<DashMap<String, Arc<UpstreamPool>>> = LazyLock::new(DashMap::new);
 
-pub fn get_or_create_global_pool(name: &str) -> Arc<UpstreamPool> {
+pub fn get_or_create_global_pool(backend_url: &str, algorithm: LoadBalanceAlgorithm) -> Arc<UpstreamPool> {
     GLOBAL_POOL_REGISTRY
-        .entry(name.to_string())
-        .or_insert_with(|| UpstreamPool::new(name))
+        .entry(backend_url.to_string())
+        .or_insert_with(|| UpstreamPool::new(vec![backend_url.to_string()], algorithm))
         .clone()
 }
 ```
@@ -122,5 +126,5 @@ pub fn get_or_create_global_pool(name: &str) -> Arc<UpstreamPool> {
 | `Backend` | `crates/synvoid-upstream/src/pool.rs` | Individual backend |
 | `ConnectionGuard` | `crates/synvoid-upstream/src/pool.rs` | RAII connection guard |
 | `HealthChecker` | `crates/synvoid-upstream/src/health.rs` | Periodic health checks |
-| `SharedConnectionTable` | `crates/synvoid-upstream/src/shared.rs` | Cross-worker connection sharing |
+| `SharedConnectionTable` | `crates/synvoid-upstream/src/shared_state.rs` | Cross-worker connection sharing |
 | `UpstreamAddress` | `crates/synvoid-upstream/src/address.rs` | Backend address |

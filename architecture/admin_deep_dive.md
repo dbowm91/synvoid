@@ -40,13 +40,14 @@ SynVoid supports two client classes with distinct trust boundaries:
 2. **Browser clients** (admin SPA): Present the bearer token only to `POST /api/auth/session`, receive an HttpOnly bounded session cookie, and subsequently authenticate through that session. State-changing browser requests carry a CSRF token tied to the session. The browser must **never** retain the raw bearer token in JavaScript-readable storage after session creation.
 
 **Key Files:**
-- `src/admin/auth.rs:16-26` - `hash_admin_token()` and `verify_admin_token()`
+- `src/admin/auth.rs` - re-exports `hash_admin_token()` and `verify_admin_token()` from `synvoid-admin`
+- `crates/synvoid-admin/src/auth.rs` - bcrypt token hashing and verification
 
 **When Admin Auth is Used:**
 - All Admin API endpoints (`/api/*`, `/config/*`, `/sites/*`, `/system/*`, etc.)
 - Bearer token authentication via `Authorization: Bearer <token>` (API clients)
 - Session cookie authentication for browser-based admin dashboard
-- WebSocket connections: session cookie or bearer token (legacy `synvoid_ws_token` cookie removed)
+- WebSocket connections: session cookie only (legacy `synvoid_ws_token` cookie removed)
 
 ---
 
@@ -70,10 +71,10 @@ SynVoid supports two client classes with distinct trust boundaries:
 - Constant-time CSRF comparison via `subtle::ConstantTimeEq`
 
 **Key Files:**
-- `src/auth/mod.rs:91-103` - `AuthManager` struct
-- `src/auth/mod.rs:294-333` - `create_user()` registration
-- `src/auth/mod.rs:393-533` - `verify_login()` authentication
-- `src/auth/mod.rs:561-629` - `validate_session()` session management
+- `src/auth/mod.rs` - `AuthManager` struct
+- `src/auth/mod.rs` - `create_user()` registration
+- `src/auth/mod.rs` - `verify_login()` authentication
+- `src/auth/mod.rs` - `validate_session()` session management
 
 **User Auth Flow:**
 1. User registration via `POST /api/auth/register` (if enabled) or Admin API
@@ -92,7 +93,7 @@ SynVoid supports two client classes with distinct trust boundaries:
 - Token verified via `verify_admin_token()` using bcrypt verify
 
 **Key Files:**
-- `src/admin/auth.rs:20-26` - `hash_admin_token()` and `verify_admin_token()`
+- `src/admin/auth.rs` - re-exports `hash_admin_token()` and `verify_admin_token()` from `synvoid-admin`
 
 ### Session Management (with Timing Normalization)
 
@@ -109,19 +110,19 @@ freshly-created sessions remain usable.
 
 **Timing Normalization (ADMIN-5):**
 To prevent session enumeration attacks, admin auth includes timing normalization:
-- `verify_dummy_admin_token()` at `src/admin/handlers/auth.rs:14-22` performs a dummy bcrypt verify
+- `verify_dummy_admin_token()` at `src/admin/handlers/auth.rs` performs a dummy bcrypt verify
 - Ensures minimum 200ms response time even on invalid tokens
 - Applied before both `UNAUTHORIZED` returns in `create_session()`
 
 **Key Files:**
-- `src/admin/state.rs:796-828` - `create_session()` and session data storage
-- `src/admin/state.rs:830-845` - `validate_session()` with sliding window expiration
-- `src/admin/handlers/auth.rs:14-22` - `verify_dummy_admin_token()` timing normalization
-- `src/admin/handlers/auth.rs:24-65` - Session creation endpoint
+- `src/admin/state.rs` - `create_session()` and session data storage
+- `src/admin/state.rs` - `validate_session()` with sliding window expiration
+- `src/admin/handlers/auth.rs` - `verify_dummy_admin_token()` timing normalization
+- `src/admin/handlers/auth.rs` - Session creation endpoint
 
 ### Brute-Force Protection
 
-**Global Auth Rate Limiter** (`src/admin/auth.rs`):
+**Global Auth Rate Limiter** (`crates/synvoid-admin/src/auth.rs`, re-exported via `src/admin/auth.rs`):
 - **MAX_AUTH_ATTEMPTS**: 5 failures per IP
 - **AUTH_LOCKOUT_DURATION**: 300 seconds (5 minutes)
 - **AUTH_WINDOW_DURATION**: 60 seconds (sliding window)
@@ -145,9 +146,9 @@ To prevent session enumeration attacks, admin auth includes timing normalization
 4. Check token not expired
 
 **Key Files:**
-- `src/admin/state.rs:728-749` - `validate_csrf()`
-- `src/admin/state.rs:751-779` - `generate_csrf_token()`
-- `src/admin/middleware.rs:185-266` - `csrf_middleware()`
+- `src/admin/state.rs` - `validate_csrf()`
+- `src/admin/state.rs` - `generate_csrf_token()`
+- `src/admin/middleware.rs` - `csrf_middleware()`
 
 ### CSRF Middleware Logic
 
@@ -172,7 +173,7 @@ Request
   └── Client IP Extraction (trusted proxy support) — innermost
 ```
 
-**CORS Support:** CORS is implemented via `create_cors_layer()` at `src/admin/mod.rs:50-97` and applied at line 806 inside `build_router_from_state()` (defined at line 173). However, nested `/api` routes (lines 179-189) do **not** have CORS applied. Since the Admin API uses bearer/session tokens rather than browser-based cross-origin requests, this gap may be intentional but should be documented. See BUG-CORS-1.
+**CORS Support:** CORS is implemented via `create_cors_layer()` at `src/admin/mod.rs` and applied inside `build_router_from_state()`. However, nested `/api` routes do **not** have CORS applied. Since the Admin API uses bearer/session tokens rather than browser-based cross-origin requests, this gap may be intentional but should be documented. See BUG-CORS-1.
 
 **Key File:** `src/admin/middleware.rs`
 
@@ -195,9 +196,9 @@ Request
 
 ## Admin API Structure
 
-### API Organization (28 handlers: 24 always + 4 mesh-gated)
+### API Organization (28 handlers: 22 always + 6 mesh-gated)
 
-**Location:** `src/admin/handlers/` (28 handlers, 4 mesh-gated)
+**Location:** `src/admin/handlers/` (24 local modules) + 4 re-exported from `synvoid-admin`
 
 | Handler | Purpose | Feature Gate |
 |---------|---------|--------------|
@@ -209,25 +210,28 @@ Request
 | `config` | All configuration endpoints (40+ sub-endpoints) | - |
 | `honeypot` | Honeypot port management | - |
 | `icmp` | ICMP filtering | - |
-| `logs` | Log retrieval, error pages, audit logs | - |
+| `logs` | Log retrieval, error pages, audit logs | - (re-exported) |
 | `mesh_admin` | Mesh node/org/ban management | mesh |
 | `mesh_topology` | Mesh topology graphs | mesh |
+| `observability` | Plugin diagnostics, system observability | - |
 | `php` | PHP-FPM pool management | - |
 | `plugins` | WASM plugin management | - |
-| `probes` | Probe tracking, suspicious words, upstream errors | - |
+| `probes` | Probe tracking, suspicious words, upstream errors | - (re-exported) |
 | `rule_feed` | WAF rule feed management | - |
 | `serverless` | Serverless function stats | - |
 | `sites` | Site configuration CRUD | - |
 | `spin` | Spin framework app management | - |
-| `stats` | Metrics, bandwidth, request logs | - |
-| `system` | Worker management, system info | - |
+| `stats` | Metrics, bandwidth, request logs | - (re-exported) |
+| `system` | Worker management, system info | - (re-exported) |
 | `tcp_udp` | TCP/UDP listener management | - |
 | `theme` | Admin UI theming | - |
+| `threat_intel_policy` | Threat intel policy enforcement | mesh |
 | `threat_level` | Threat level control and history | - |
+| `tier_keys` | Organization tier key management | mesh |
 | `upstreams` | Upstream backend management | - |
 | `yara_rules` | YARA rules submissions | mesh |
 
-**Note:** 4 handlers are mesh-gated (`behavioral_intel`, `mesh_admin`, `mesh_topology`, `yara_rules`) = 28 total, 24 always available.
+**Note:** 6 handlers are mesh-gated (`behavioral_intel`, `mesh_admin`, `mesh_topology`, `threat_intel_policy`, `tier_keys`, `yara_rules`) = 28 total, 22 always available.
 
 ### Key REST Endpoint Groups
 
@@ -268,8 +272,8 @@ Request
 
 | Endpoint | Purpose | Auth |
 |----------|---------|------|
-| `/api/ws/metrics` | Real-time metrics stream | Bearer or session cookie |
-| `/api/ws/logs` | Real-time log stream | Bearer or session cookie |
+| `/api/ws/metrics` | Real-time metrics stream | Session cookie |
+| `/api/ws/logs` | Real-time log stream | Session cookie |
 
 ---
 
@@ -277,7 +281,7 @@ Request
 
 ### AdminState
 
-**Location:** `src/admin/state.rs:257-267` (AdminState struct definition)
+**Location:** `src/admin/state.rs` (AdminState struct definition)
 
 ```rust
 pub struct AdminState {
@@ -290,6 +294,7 @@ pub struct AdminState {
     pub plugins: PluginsState,           // Plugin reload logs
     pub audit: AuditState,               // Audit logging
     pub config_versions: ConfigVersionManager,
+    pub secure_cookie: bool,             // Secure flag for session cookies
 }
 ```
 
@@ -311,7 +316,7 @@ pub struct SecurityState {
 
 ### Admin Rate Limiter
 
-**Location:** `src/admin/rate_limit.rs`
+**Location:** `src/admin/rate_limit.rs` (AdminRateLimiter in `src/admin/state.rs`)
 
 - **Per-IP tracking** with minute and second windows
 - **Configurable limits** (requests_per_minute, requests_per_second)
@@ -320,7 +325,7 @@ pub struct SecurityState {
 
 ### YARA-Specific Rate Limiter
 
-**Location:** `src/admin/state.rs:86-143`
+**Location:** `src/admin/state.rs` (YaraRateLimiter)
 
 Separate rate limits for YARA operations:
 - `submit` - 10/minute default
@@ -423,7 +428,7 @@ The `/alerting/test-webhook` endpoint returns the full `WebhookDeliveryResult` a
 - Rollback support
 - File-based storage with 0o600 permissions
 
-**Note:** `log()` at `audit.rs:131-139` re-applies `0o600` permissions on every write. This is redundant since permissions are already set in `with_audit_dir()` at line 76, but provides defense-in-depth against permission drift.
+**Note:** `log()` re-applies `0o600` permissions on every write. This is redundant since permissions are already set in `with_audit_dir()`, but provides defense-in-depth against permission drift.
 
 ---
 

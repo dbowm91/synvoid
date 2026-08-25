@@ -33,28 +33,33 @@ Client                        Edge Node                     Origin
 
 ```rust
 pub struct HttpMessageSigner {
-    ed25519_key: Ed25519Signer,
-    ml_dsa_key: Option<MlDsaSigner>,  // Post-quantum (feature-gated)
+    session_key: Arc<RwLock<Option<SessionKey>>>,
+    ed25519_signing_key: Option<Ed25519SigningKey>,
+    ed25519_verifying_key: Option<Ed25519VerifyingKey>,
+    mldsa_signing_key: Option<MldsaSigningKey>,
+    mldsa_verifying_key: Option<MldsaVerifyingKey>,
 }
 
 // Signature format: [type_byte][ed25519_sig(64)][ml_dsa_sig(2420)]
+// type_byte: 0x00 = Ed25519 only, 0x01 = hybrid Ed25519+ML-DSA
 ```
 
 ### Verification
 
 ```rust
 pub struct HttpMessageVerifier {
-    ed25519_verifier: Ed25519Verifier,
-    ml_dsa_verifier: Option<MlDsaVerifier>,
+    session_keys: Arc<RwLock<HashMap<String, SessionKey>>>,
+    client_ed25519_verifying_keys: Arc<RwLock<HashMap<String, Ed25519VerifyingKey>>>,
+    client_mldsa_verifying_keys: Arc<RwLock<HashMap<String, MldsaVerifyingKey>>>,
 }
 
 impl HttpMessageVerifier {
-    pub fn verify(&self, message: &[u8], signature: &[u8]) -> bool {
-        // Returns true if EITHER Ed25519 OR ML-DSA is valid
-        // (backward compatibility during migration)
-        self.verify_ed25519(message, signature) 
-            || self.verify_ml_dsa(message, signature)
-    }
+    pub fn verify_request(&self, method, path, query, headers, body, integrity_header, signature)
+        -> Result<bool, String> { ... }
+    pub fn verify_response(&self, status, headers, body, integrity_header, signature)
+        -> Result<bool, String> { ... }
+    // Returns true if EITHER Ed25519 OR ML-DSA signature is valid
+    // (backward compatibility during migration)
 }
 ```
 
@@ -71,15 +76,20 @@ Feature-gated `origin_key_exchange` module:
 
 ```rust
 pub struct AttestationRegistry {
-    trusted_keys: DashMap<String, Ed25519PublicKey>,
+    attestations: Arc<RwLock<HashMap<String, OriginAttestation>>>,
+    trusted_keys: Arc<RwLock<HashMap<String, String>>>,
+    max_attestations: usize,
 }
 
 pub struct OriginAttestation {
-    pub origin_node_id: String,
-    pub attestation_key: Ed25519PublicKey,
-    pub signed_by: Ed25519PublicKey,  // Global node
-    pub expires_at: u64,
-    pub signature: [u8; 64],
+    pub mesh_id: String,
+    pub node_id: String,
+    pub ed25519_public_key: String,
+    pub x25519_public_key: Option<String>,
+    pub signed_at: i64,
+    pub expires_at: i64,
+    pub signature: String,
+    pub attested_by: String,
 }
 ```
 
@@ -87,8 +97,9 @@ pub struct OriginAttestation {
 
 ```rust
 pub enum IntegrityMode {
-    AuditOnly,    // Log failures, allow traffic
-    Enforced,     // Reject invalid signatures
+    Disabled,   // No integrity checking (default)
+    Audit,      // Log failures, allow traffic
+    Enforced,   // Reject invalid signatures
 }
 ```
 
@@ -104,9 +115,9 @@ pub enum IntegrityMode {
 
 | Type | Location | Purpose |
 |------|----------|---------|
-| `SessionKeyManager` | `crates/synvoid-integrity/src/session.rs` | Session lifecycle |
+| `SessionKeyManager` | `crates/synvoid-integrity/src/protocol.rs` | Session lifecycle |
 | `HttpMessageSigner` | `crates/synvoid-integrity/src/signing.rs` | Message signing |
-| `HttpMessageVerifier` | `crates/synvoid-integrity/src/verification.rs` | Message verification |
-| `IntegrityVerifier` | `crates/synvoid-integrity/src/lib.rs` | High-level verification |
-| `OriginKeyExchangeManager` | `crates/synvoid-integrity/src/origin_key_exchange.rs` | Origin-signed flow |
+| `HttpMessageVerifier` | `crates/synvoid-integrity/src/signing.rs` | Message verification |
+| `IntegrityVerifier` | `crates/synvoid-integrity/src/verification.rs` | High-level verification |
+| `OriginKeyExchangeManager` | `crates/synvoid-integrity/src/protocol.rs` | Origin-signed flow (feature-gated) |
 | `AttestationRegistry` | `crates/synvoid-integrity/src/attestation.rs` | Origin attestation |

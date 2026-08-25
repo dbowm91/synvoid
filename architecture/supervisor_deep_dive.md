@@ -8,12 +8,14 @@ The Supervisor is the single control-plane process that orchestrates all worker 
 
 ```rust
 pub struct SupervisorProcess {
+    state: SupervisorState,
     process_manager: Arc<ProcessManager>,
     drain_manager: Arc<DrainManager>,
     drain_protocol: Arc<DrainProtocol>,
+    event_rx: mpsc::Receiver<ProcessEvent>,
+    running: RunningFlag,
+    ipc_listener: Option<IpcListener>,
     supervisor_tasks: SupervisorTaskRegistry,
-    ipc_listener: IpcListener,
-    state: Arc<SupervisorState>,
 }
 ```
 
@@ -68,17 +70,15 @@ Supervisor
 
 ```rust
 pub struct ProcessManager {
-    workers: HashMap<WorkerId, WorkerInfo>,
-    cpu_workers: HashMap<WorkerId, CpuWorkerInfo>,
-    next_worker_id: AtomicU32,
-}
-
-struct WorkerInfo {
-    pid: Pid,
-    socket_path: String,
-    state: WorkerState,  // Starting, Ready, Draining, Stopped, Failed
-    start_time: Instant,
-    last_heartbeat: Option<Instant>,
+    config: ProcessManagerConfig,
+    workers: Arc<PLRwLock<HashMap<usize, WorkerProcess>>>,
+    cpu_worker: Arc<PLRwLock<Option<CpuWorkerProcess>>>,
+    unified_server_workers: Arc<PLRwLock<HashMap<usize, UnifiedServerWorkerProcess>>>,
+    next_worker_id: Arc<PLRwLock<usize>>,
+    running: Arc<AtomicBool>,
+    shutdown_tx: broadcast::Sender<()>,
+    event_tx: mpsc::Sender<ProcessEvent>,
+    // ... metrics, rate limiter, signer, blocklist event log
 }
 ```
 
@@ -140,12 +140,17 @@ async fn handle_drain_request(&self, timeout_secs: u64, drain_id: Uuid) {
 
 ```rust
 pub struct WorkerDrainState {
-    active_connections: AtomicUsize,
-    idle_connections: AtomicUsize,
-    active_fds: DashMap<RawFd, FdInfo>,
-    typed_requests: TypedRequestTracker,  // Short/Long/Streaming
-    stopped_accepting: AtomicBool,
-    drain_id: Mutex<Option<Uuid>>,
+    draining: DrainFlag,
+    drain_id: Arc<AtomicU64>,
+    active_connections: Arc<AtomicU64>,
+    idle_connections: Arc<AtomicU64>,
+    connections_drained: Arc<AtomicU64>,
+    drain_start: Arc<Mutex<Option<Instant>>>,
+    stopped_accepting: DrainFlag,
+    short_requests: Arc<AtomicU64>,
+    long_requests: Arc<AtomicU64>,
+    streaming_requests: Arc<AtomicU64>,
+    active_fds: Arc<DashMap<u64, (RawFd, RequestType, String)>>,
 }
 ```
 
@@ -222,7 +227,8 @@ impl ControlPlane for ControlPlaneService {
 |------|----------|---------|
 | `SupervisorProcess` | `src/supervisor/process.rs` | Main supervisor struct |
 | `SupervisorState` | `src/supervisor/state.rs` | Shared state (config, block store, mesh) |
-| `ProcessManager` | `src/supervisor/process.rs` | Worker process management |
+| `SupervisorStateTrackers` | `src/supervisor/state.rs` | Tracker bundles for state initialization |
+| `ProcessManager` | `synvoid-ipc/src/manager.rs` | Worker process management |
 | `DrainManager` | `src/supervisor/drain_manager.rs` | Per-worker drain state |
 | `DrainProtocol` | `src/supervisor/drain_manager.rs` | IPC drain handshake |
 | `SupervisorTaskRegistry` | `src/supervisor/task_registry.rs` | Long-lived task management |

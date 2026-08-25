@@ -20,9 +20,8 @@ Order-2 Markov chain trained on technology/web corpora:
 
 ```rust
 pub struct MarkovChain {
+    model: HashMap<String, Vec<String>>,
     order: usize,  // 2 (bigram)
-    transitions: HashMap<Vec<char>, HashMap<char, usize>>,
-    corpus: Vec<String>,
 }
 ```
 
@@ -34,12 +33,14 @@ Semaphore-based concurrency limiting:
 
 ```rust
 pub struct TarpitAdmission {
-    global_semaphore: Arc<Semaphore>,   // Default 256
-    per_ip: DashMap<IpAddr, Arc<Semaphore>>,  // Default 4 per IP
+    global: Arc<Semaphore>,   // Default 256
+    ip_map: Arc<Mutex<HashMap<IpAddr, Arc<Semaphore>>>>,  // Default 4 per IP
+    max_per_ip: usize,
+    active_count: Arc<AtomicUsize>,
 }
 
 // RAII guard automatically releases on drop
-let _guard = admission.try_acquire(ip)?;
+let _guard = admission.try_admit(ip)?;
 ```
 
 ### Session Budget
@@ -48,11 +49,11 @@ Per-session resource tracking:
 
 ```rust
 pub struct SessionBudget {
-    chunks_sent: AtomicU64,   // Default max: 500
-    bytes_sent: AtomicU64,    // Default max: 50MB
-    start_time: Instant,
-    last_chunk: Instant,      // Idle timeout: 30s
-    max_duration: Duration,   // Default: 600s
+    config: BudgetConfig,
+    start: Instant,
+    last_activity: Mutex<Instant>,
+    chunks_sent: AtomicU64,
+    bytes_sent: AtomicU64,
 }
 ```
 
@@ -61,24 +62,12 @@ pub struct SessionBudget {
 ```rust
 pub fn generate_infinite_streaming_response(
     chain: &MarkovChain,
-    config: &TarpitConfig,
-) -> impl Stream<Item = Result<Bytes>> {
-    async_stream::stream! {
-        loop {
-            // Generate HTML page with links
-            let html = chain.generate_html_page(config);
-            
-            // Apply fingerprint resistance
-            let html = apply_delays(html, config.chunk_delay);
-            
-            yield Ok(Bytes::from(html));
-            
-            // Budget check
-            if budget.exceeded() {
-                break;
-            }
-        }
-    }
+    max_depth: u32,
+    links_per_page: u32,
+) -> String {
+    // Generates a single HTML page with Markov-generated content,
+    // navigation links, content paragraphs, and footer links.
+    // Called per-chunk inside the streaming handler loop.
 }
 ```
 
@@ -94,24 +83,22 @@ To avoid tarpit detection:
 ## Redirect Safety
 
 ```rust
-pub fn sanitize_redirect_target(target: &str) -> Result<String> {
+pub fn sanitize_redirect_target(
+    target: &str,
+    allowed_hosts: &[String],
+) -> Result<String, RedirectRejection> {
     // 1. Reject CRLF injection
     if target.contains('\r') || target.contains('\n') {
-        return Err(Error::CrlfInjection);
+        return Err(RedirectRejection::CrlfInjection);
     }
     
     // 2. Reject control characters
-    if target.chars().any(|c| c.is_control()) {
-        return Err(Error::ControlCharacter);
+    if target.chars().any(|c| (c as u32) < 32 || c as u32 == 127) {
+        return Err(RedirectRejection::ControlCharacter);
     }
     
-    // 3. Reject open redirect
-    if target.starts_with("//") || target.starts_with("http://") || target.starts_with("https://") {
-        return Err(Error::OpenRedirect);
-    }
-    
-    // 4. Validate against host allowlist
-    Ok(target.to_string())
+    // 3. Absolute URLs: check host against allowed_hosts
+    // 4. Relative paths: must start with / and not //
 }
 ```
 
@@ -133,8 +120,8 @@ Triggered by scraper pattern detection in the WAF request path:
 
 | Type | Location | Purpose |
 |------|----------|---------|
-| `MarkovChain` | `crates/synvoid-tarpit/src/markov.rs` | Text generation engine |
+| `MarkovChain` | `crates/synvoid-tarpit/src/generator.rs` | Text generation engine |
 | `TarpitAdmission` | `crates/synvoid-tarpit/src/admission.rs` | Concurrency control |
 | `SessionBudget` | `crates/synvoid-tarpit/src/budget.rs` | Per-session resource tracking |
 | `TarpitConfig` | `crates/synvoid-tarpit/src/config.rs` | Configuration |
-| `TarpitService` | `crates/synvoid-tarpit/src/service.rs` | Service entry point |
+| `TarpitHandler` | `src/tarpit/handler.rs` | Root-owned service entry point |

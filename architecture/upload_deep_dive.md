@@ -18,18 +18,18 @@ Upload
 
 ```rust
 pub struct YaraScanner {
-    rules: Arc<CompiledRules>,
-    config: YaraScanConfig,
+    // Compiles and scans with YARA rules
+    // Supports bundled, directory, inline, mesh-distributed, and compiled bundle sources
 }
 
-pub enum ScanMode {
+pub enum YaraLargeFileScanMode {
     Full,           // Scan entire file
     HeaderOnly,     // First N bytes
-    Windowed { offset, size },  // Specific region
+    Windowed,       // Sliding window scan
 }
 ```
 
-- Bundled and custom rule sources
+- Bundled and custom rule sources (`YaraRuleSourceType`: Bundled, Directory, Inline, Mesh, CompiledBundle)
 - Configurable timeout per scan
 - Max concurrent scans with queue limits
 - Hot-reload when YARA rule version changes (mesh distribution)
@@ -40,14 +40,13 @@ ZIP archive analysis:
 
 ```rust
 pub struct ArchiveInspectionConfig {
-    max_entries: usize,
-    max_entry_size: u64,
-    max_total_size: u64,
-    check_nested: bool,         // Recursion currently disabled
-    reject_path_traversal: bool,
-    reject_absolute_paths: bool,
-    reject_unc_paths: bool,
-    reject_symlinks: bool,
+    pub enabled: bool,
+    pub max_depth: u32,                    // Default: 3
+    pub max_entries: u32,
+    pub max_total_uncompressed_bytes: u64,  // Default: 100MB
+    pub max_entry_uncompressed_bytes: u64,
+    pub max_compression_ratio: f64,
+    pub max_nested_archives: u32,
 }
 ```
 
@@ -57,11 +56,16 @@ UUID-based temp directories with platform-level sandboxing:
 
 ```rust
 pub struct Sandbox {
-    temp_dir: PathBuf,
-    sandbox: ProcessSandbox,  // From synvoid-platform
+    pub config: SandboxConfig,
 }
 
-// Platform backends:
+pub struct SandboxConfig {
+    pub sandbox_dir: PathBuf,
+    pub quarantine_dir: PathBuf,
+    pub sandbox_level: SandboxLevel,
+}
+
+// Platform backends (via synvoid-platform):
 // - macOS: Seatbelt
 // - Linux: Landlock
 // - FreeBSD: Capsicum
@@ -74,18 +78,20 @@ Malicious files quarantined with metadata:
 
 ```rust
 pub struct QuarantineEntry {
-    pub filename: String,
-    pub mime_type: String,
-    pub yara_matches: Vec<YaraMatch>,
-    pub quarantined_at: u64,
-    pub original_path: String,
+    pub id: Uuid,
+    pub original_filename: Option<String>,
+    pub detected_mime: Option<String>,
+    pub file_path: PathBuf,
+    pub metadata_path: PathBuf,
+    pub yara_matches: Vec<String>,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
 }
 ```
 
 ## Failure Policies
 
 ```rust
-pub enum FailurePolicy {
+pub enum UploadScanFailurePolicy {
     FailClosed,           // Reject on scan error
     FailOpen,             // Allow on scan error
     QuarantineOnError,    // Quarantine on error
@@ -105,7 +111,7 @@ pub enum FailurePolicy {
 | Type | Location | Purpose |
 |------|----------|---------|
 | `UploadValidator` | `crates/synvoid-upload/src/lib.rs` | Main entry point |
-| `ValidationResult` | `crates/synvoid-upload/src/result.rs` | Rich result with scan status |
-| `YaraScanner` | `crates/synvoid-upload/src/yara.rs` | YARA compilation and scanning |
+| `ValidationResult` | `crates/synvoid-upload/src/lib.rs` | Rich result with scan status |
+| `YaraScanner` | `crates/synvoid-upload/src/yara_scanner.rs` | YARA compilation and scanning |
 | `Sandbox` | `crates/synvoid-upload/src/sandbox.rs` | File isolation |
 | `ArchiveInspectionConfig` | `crates/synvoid-upload/src/archive.rs` | Archive inspection parameters |

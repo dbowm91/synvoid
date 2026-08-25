@@ -10,32 +10,25 @@ SHA-256 based proof-of-work with configurable difficulty.
 
 ```rust
 pub struct PowChallenge {
-    pub timestamp: u64,
-    pub difficulty: u32,      // 1-32 bits
-    pub hash: [u8; 32],       // SHA-256 of solution
-}
-
-pub struct PowSolution {
-    pub nonce: u64,
-    pub hash: [u8; 32],
+    pub challenge: String,     // Challenge string for hashing
+    pub difficulty: u8,        // 1-32 bits
+    pub expires_at: u64,       // Expiration timestamp
 }
 ```
 
 **Verification**:
 ```rust
-fn verify_pow(challenge: &PowChallenge, solution: &PowSolution) -> bool {
-    // 1. Check timestamp freshness (±5 minutes)
-    // 2. Compute SHA-256(challenge.timestamp + solution.nonce)
-    // 3. Verify hash matches challenge.hash
-    // 4. Verify leading zeros >= difficulty
-    has_leading_zeros_ct(&solution.hash, challenge.difficulty)
+fn verify_pow_solution(challenge: &str, nonce: &str, difficulty: u8) -> bool {
+    let input = format!("{}{}", challenge, nonce);
+    let hash = Sha256::digest(input.as_bytes());
+    has_leading_zeros(&hash, difficulty as usize)
 }
 ```
 
 **Adaptive Difficulty**:
-- Base difficulty: 6 bits (configurable)
+- Base difficulty: configurable (default varies)
 - Scales logarithmically above 100 concurrent challenges
-- Maximum: 32 bits
+- Maximum: configurable, default 16 (clamped to 32)
 - Minimum: 1 bit
 
 ### CSS Challenges
@@ -43,7 +36,7 @@ fn verify_pow(challenge: &PowChallenge, solution: &PowSolution) -> bool {
 Browser verification via CSS aspect-ratio media queries.
 
 ```rust
-pub struct CssChallenge {
+pub struct CssChallengeData {
     pub valid_ratios: Vec<AspectRatio>,     // Real ratios browsers match
     pub invalid_ratios: Vec<AspectRatio>,   // Impossible ratios
     pub trap_paths: Vec<String>,            // Honeypot trap URLs
@@ -123,14 +116,7 @@ Request ──► WAF Decision: Challenge
 
 ## Trust Cookie
 
-```rust
-pub struct TrustToken {
-    pub ip: IpAddr,
-    pub expires_at: u64,
-    pub challenge_type: ChallengeType,
-    pub signature: [u8; 64],  // Ed25519
-}
-```
+The trust cookie (`sv_trust`) carries a signed token after successful challenge verification:
 
 - **Cookie name**: `sv_trust`
 - **Flags**: `Secure; SameSite=Strict; HttpOnly`
@@ -141,16 +127,18 @@ pub struct TrustToken {
 
 ```rust
 impl PowManager {
-    fn calculate_difficulty(&self) -> u32 {
+    fn get_computed_difficulty(&self) -> u32 {
+        if !self.adaptive_difficulty {
+            return self.difficulty;
+        }
+
         let active = self.active_challenges.load(Ordering::Relaxed);
-        let base = self.config.base_difficulty;
-        
         if active < 100 {
-            base
+            self.difficulty
         } else {
-            // Logarithmic scaling
-            let scale = (active as f64 / 100.0).log2() as u32;
-            (base + scale).min(self.config.max_difficulty)
+            // Logarithmic scaling: increase difficulty based on active challenges
+            let extra_bits = (active as f32 / 100.0).log2() as u8;
+            (self.difficulty + extra_bits).min(self.max_difficulty)
         }
     }
 }
@@ -170,9 +158,8 @@ For distributed verification across mesh nodes:
 
 | Type | Location | Purpose |
 |------|----------|---------|
-| `PowManager` | `crates/synvoid-challenge/src/pow.rs` | PoW challenge generation/verification |
+| `PowManager` | `crates/synvoid-challenge/src/manager_pow.rs` | PoW challenge generation/verification |
 | `CssManager` | `crates/synvoid-challenge/src/css.rs` | CSS challenge generation |
 | `HoneypotTracker` | `crates/synvoid-challenge/src/honeypot.rs` | Trap path generation |
-| `ChallengeType` | `crates/synvoid-challenge/src/lib.rs` | PoW, CSS, MeshPow variants |
-| `ChallengePriority` | `crates/synvoid-challenge/src/lib.rs` | Challenge ordering |
-| `TrustToken` | `crates/synvoid-challenge/src/trust.rs` | Verification cookie payload |
+| `ChallengeType` | `crates/synvoid-challenge/src/types.rs` | PoW, CSS, MeshPow variants |
+| `ChallengePriority` | `crates/synvoid-challenge/src/types.rs` | Challenge ordering |

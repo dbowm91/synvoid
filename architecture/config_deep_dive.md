@@ -18,7 +18,7 @@ The configuration library provides strongly-typed, feature-gated configuration s
 [features]
 dns = []
 icmp-filter = []
-mesh = ["dep:ed25519-dalek", "dep:utoipa"]
+mesh = ["dep:ed25519-dalek"]
 rkyv = []
 ```
 

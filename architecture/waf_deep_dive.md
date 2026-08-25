@@ -8,7 +8,7 @@ The WAF pipeline operates in several distinct phases, from the connection level 
 
 ### 1. Connection Layer (Flood Protection)
 
-The `FloodProtector` (`src/waf/flood/mod.rs:225-367`) provides comprehensive flood protection with multiple backends:
+The `FloodProtector` (`crates/synvoid-waf/src/flood/mod.rs:127`) provides comprehensive flood protection with multiple backends:
 
 #### SYN Flood Protection
 - **Half-open connection tracking:** Tracks incomplete TCP connections via `SynFloodProtector`
@@ -36,7 +36,7 @@ The `ConnectionLimiter` (`src/waf/traffic_shaper/limiter.rs`) enforces connectio
 **Queue Timeout Metrics:** When a connection times out in the queue (waits longer than `connection_queue_timeout_ms`), the metric `synvoid.waf.queue_timeout_total` is incremented. This helps identify when the queue is too small or timeout is too short for the traffic pattern.
 
 #### TokenBucket Rate Limiting
-The `TokenBucket` (`src/waf/traffic_shaper/bucket.rs`) provides precise rate-based limiting:
+The `TokenBucket` (`crates/synvoid-waf/src/traffic_shaper/bucket.rs`) provides precise rate-based limiting:
 - **Capacity-based refilling:** Tokens refill at configurable rate (bytes/sec)
 - **GlobalTrafficShaper:** Enforces ingress/egress bandwidth limits with burst allowance
 - **SiteTrafficShaper:** Per-site bandwidth limits that can override global settings
@@ -59,14 +59,14 @@ The `AttackDetector` is responsible for deep packet inspection. It normalizes in
 - **Cross-Site Scripting (XSS):** Identifies malicious scripts in paths, queries, headers, and bodies.
 - **Path Traversal:** Blocks attempts to access files outside the intended directory.
 - **SSRF & RFI:** Prevents Server-Side Request Forgery and Remote File Inclusion by validating URLs.
-- **Pattern Detection:** Uses Aho-Corasick multi-pattern matching via `PatternDetector` trait (`src/waf/attack_detection/detector_common.rs:293`) for efficient bulk pattern matching. Implementations include `SstiDetector`, `LdapInjectionDetector`, `XPathInjectionDetector`, `OpenRedirectDetector`, `XxeDetector`, `CmdInjectionDetector`, `PathTraversalDetector`, `RfiDetector`, `SsrfDetector`, and `BasePatternDetector`.
+- **Pattern Detection:** Uses Aho-Corasick multi-pattern matching via `PatternDetector` trait (`crates/synvoid-waf/src/attack_detection/detector_common.rs:195`) for efficient bulk pattern matching. `BasePatternDetector` provides the default implementation; individual detectors (e.g. `SqliDetector`, `XssDetector`, `SstiDetector`, `LdapInjectionDetector`, `XPathInjectionDetector`, `OpenRedirectDetector`, `XxeDetector`, `CmdInjectionDetector`, `PathTraversalDetector`, `RfiDetector`, `SsrfDetector`) wrap it. `LibInjectionDetector` is a separate module re-exported from `crates/synvoid-waf/src/attack_detection/libinjection.rs`.
 
 ### 4. Bot Detection Layer
 
 Bot detection uses multiple techniques to distinguish real browsers from automated tools:
 
 #### CSS Challenge (Honeypot)
-The `CssManager` (`src/challenge/css.rs`) generates CSS-based challenges:
+The `CssManager` (`crates/synvoid-challenge/src/css.rs`) generates CSS-based challenges:
 - **Valid CSS rules:** Use `@media (min-aspect-ratio: X/Y) and (max-aspect-ratio: X/Y)` with realistic aspect ratio ranges. Real browsers will match at least one rule and request the associated asset.
 - **Invalid CSS rules:** Use impossible aspect ratios (negative or zero denominators). Only bots that don't parse CSS correctly will request these assets.
 - **Flow:** Challenge page → Browser matches valid rule → Requests `/rnd-<name>.png` → Session verified → Cookie set
@@ -82,7 +82,7 @@ The `CssManager` (`src/challenge/css.rs`) generates CSS-based challenges:
 ```
 
 **Honeypot HTML Attributes:**
-The `HoneypotTracker` (`src/challenge/honeypot.rs`) generates trap URLs with these HTML attributes:
+The `HoneypotTracker` (`crates/synvoid-challenge/src/honeypot.rs`) generates trap URLs with these HTML attributes:
 - `display: none` - Hidden from normal view
 - `visibility: hidden` - Not rendered
 - `opacity: 0` - Fully transparent
@@ -93,14 +93,14 @@ The `HoneypotTracker` (`src/challenge/honeypot.rs`) generates trap URLs with the
 These attributes make links invisible to humans but still crawlable by bots that parse HTML without rendering.
 
 #### HTTP Honeypot Traps
-The `HoneypotTracker` (`src/challenge/honeypot.rs`) generates trap URLs:
+The `HoneypotTracker` (`crates/synvoid-challenge/src/honeypot.rs`) generates trap URLs:
 - **Trap paths:** Random URLs under `/_waf_hp_<random>` that are hidden from real users
 - **Hidden links:** HTML links with `display:none;visibility:hidden;opacity:0;position:absolute;left:-9999px;width:0;height:0` — invisible to humans but crawlable by bots
 - **Per-IP tracking:** Each IP gets unique trap paths that expire after TTL
 - **Hit detection:** Bots visiting trap URLs are immediately flagged
 
 #### JS Challenge (WASM-based Proof of Work)
-Browser verification via WASM-compiled JavaScript (`src/challenge/pow.rs`). Client must execute JavaScript to solve a SHA-256 proof-of-work puzzle, proving browser identity.
+Browser verification via WASM-compiled JavaScript (`crates/synvoid-challenge/src/pow.rs`). Client must execute JavaScript to solve a SHA-256 proof-of-work puzzle, proving browser identity.
 
 #### Proof of Work (PoW)
 Computational puzzle requiring client to solve a computational challenge (`crates/synvoid-wasm-pow/`), effective against high-volume automated tools.
@@ -110,7 +110,7 @@ Computational puzzle requiring client to solve a computational challenge (`crate
 
 ### 5. Streaming WAF (Chunked Processing)
 
-The `StreamingWafCore` (`src/waf/attack_detection/streaming.rs`) provides true streaming attack detection for large or chunked request bodies, enabling O(1) memory usage regardless of body size.
+The `StreamingWafCore` (`crates/synvoid-waf/src/attack_detection/streaming.rs`) provides true streaming attack detection for large or chunked request bodies, enabling O(1) memory usage regardless of body size.
 
 **Chunked Processing:**
 - Processes data in configurable chunks (default 4096 bytes)
@@ -197,7 +197,7 @@ The WAF pipeline executes asynchronously at `src/waf/mod.rs:442-517` to maximize
 
 ### eBPF Integration (Linux Only)
 
-eBPF-based flood protection is available via the `flood-ebpf` feature on Linux only (`src/waf/flood/mod.rs:5-6`).
+eBPF-based flood protection is available via the `flood-ebpf` feature on Linux only (`src/waf/flood/mod.rs:3-4`).
 
 **Availability:**
 - Conditionally compiled with `#[cfg(all(target_os = "linux", feature = "flood-ebpf"))]`
@@ -212,5 +212,5 @@ eBPF-based flood protection is available via the `flood-ebpf` feature on Linux o
 ### Additional Performance Features
 
 - **Regex & libinjection:** High-performance pattern matching engines for rule evaluation
-- **Streaming WAF:** True streaming attack detection via `StreamingWafCore` for chunked processing and multipart parsing (`src/waf/attack_detection/streaming.rs`)
+- **Streaming WAF:** True streaming attack detection via `StreamingWafCore` for chunked processing and multipart parsing (`crates/synvoid-waf/src/attack_detection/streaming.rs`)
 - **Distributed Intelligence:** In a Mesh deployment, WAF nodes share blocked IP addresses and threat signatures in real-time, providing collective defense.

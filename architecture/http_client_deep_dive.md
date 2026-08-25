@@ -7,33 +7,38 @@ SynVoid's HTTP client crate provides TLS-configurable HTTP/1.1 and HTTP/2 client
 ### Core Types
 
 ```rust
-pub type HttpClient = hyper::Client<HttpsConnector<HttpConnector>, Full<Bytes>>;
-pub type StreamingHttpClient = hyper::Client<HttpsConnector<HttpConnector>, Body>;
+pub type HttpClient = Client<HttpsConnector<HttpConnector>, Full<Bytes>>;
+pub type StreamingHttpClient = Client<HttpsConnector<HttpConnector>, BoxErasedBody>;
+#[cfg(unix)]
+pub type UnixHttpClient = Client<hyperlocal::UnixConnector, Full<Bytes>>;
 
-// Type-erased pool for dynamic dispatch
-pub trait ErasedConnectionPool: Send + Sync {
-    fn get(&self, key: &str) -> Option<PooledClient>;
-    fn insert(&self, key: &str, client: PooledClient);
+// Type-erased body for dynamic dispatch
+pub trait ErasedBody: Send + Sync + 'static {
+    fn poll_frame(&mut self, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, std::io::Error>>>;
+    fn size_hint(&self) -> SizeHint;
 }
-
-pub trait ErasedHttpClient: Send + Sync {
-    async fn send(&self, req: Request<Body>) -> Result<Response<Body>>;
-}
+pub type BoxErasedBody = Box<dyn ErasedBody>;
 ```
 
 ### Connection Pooling
 
-```rust
-pub struct ConnectionPool {
-    clients: moka::sync::Cache<String, PooledClient>,
-    default_ttl: Duration,  // 100s idle, 300s active
-}
+Per-site clients are cached in static moka caches keyed by `UpstreamClientKey` (TLS config + pool params):
 
-pub struct PooledClient {
-    client: HttpClient,
-    tls_config: Option<UpstreamTlsConfig>,
-    created_at: Instant,
-    last_used: Instant,
+```rust
+const MAX_UPSTREAM_CLIENT_CACHE_SIZE: u64 = 100;
+const UPSTREAM_CLIENT_CACHE_TTL_SECS: u64 = 300;
+
+static UPSTREAM_CLIENT_CACHE: LazyLock<Cache<UpstreamClientKey, HttpClient>> = ...;
+static UPSTREAM_STREAMING_CLIENT_CACHE: LazyLock<Cache<UpstreamClientKey, StreamingHttpClient>> = ...;
+```
+
+The erased pool (`ErasedConnectionPool`) manages HTTP/1.1 connections with configurable max idle per host and connect timeout:
+
+```rust
+pub struct ErasedConnectionPool {
+    inner: Arc<Mutex<HashMap<PoolKey, VecDeque<Http1PooledConnection>>>>,
+    max_idle_per_host: usize,
+    connect_timeout: Duration,
 }
 ```
 
@@ -41,28 +46,37 @@ pub struct PooledClient {
 
 ```rust
 pub struct UpstreamTlsConfig {
-    pub ca_cert: Option<Vec<u8>>,     // Custom CA certificate
-    pub skip_verify: bool,            // Skip server verification
-    pub allow_plaintext: bool,        // Allow HTTP (not just HTTPS)
-    pub client_cert: Option<(Vec<u8>, Vec<u8>)>,  // mTLS
+    pub verify: bool,                    // Verify server certificate
+    pub ca_cert_path: Option<String>,    // Custom CA certificate path
+    pub server_name: Option<String>,     // Override server name
+    pub skip_verify: bool,               // Skip hostname verification
+    pub skip_verify_reason: Option<String>, // Audit reason for skip
+    pub allow_plaintext: bool,           // Allow HTTP (not just HTTPS)
 }
 ```
 
 ### Streaming Body
 
 ```rust
-pub struct StreamingWafBody {
-    inner: Body,
-    waf_scanner: Arc<dyn StreamingWafScanner>,
-    max_size: usize,
+pub struct StreamingWafBody<B, S> {
+    inner: B,
+    streaming_waf: Option<S>,
+    client_ip: IpAddr,
+    blocked: bool,
+    error_sent: bool,
 }
 
-impl Stream for StreamingWafBody {
-    type Item = Result<Bytes>;
+impl<B, S> hyper::body::Body for StreamingWafBody<B, S>
+where
+    B: http_body::Body<Data = Bytes> + Unpin,
+    S: StreamingWafScanner + Send + Sync + Unpin + 'static,
+{
+    type Data = Bytes;
+    type Error = std::io::Error;
     
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        // Scan each chunk via WAF
-        // Enforce max size
+    fn poll_next(...) -> Poll<Option<Result<Frame<Bytes>, std::io::Error>>> {
+        // Scan each chunk via streaming WAF
+        // Block on StreamingWafDecision::Block
     }
 }
 ```
@@ -80,7 +94,9 @@ impl Stream for StreamingWafBody {
 |------|----------|---------|
 | `HttpClient` | `crates/synvoid-http-client/src/client.rs` | Standard HTTP client |
 | `StreamingHttpClient` | `crates/synvoid-http-client/src/client.rs` | Streaming HTTP client |
-| `ConnectionPool` | `crates/synvoid-http-client/src/pool.rs` | Client pooling |
+| `UnixHttpClient` | `crates/synvoid-http-client/src/client.rs` | Unix socket HTTP client |
 | `UpstreamTlsConfig` | `crates/synvoid-http-client/src/tls.rs` | Per-upstream TLS |
-| `StreamingWafBody` | `crates/synvoid-http-client/src/streaming.rs` | WAF-scanning body |
-| `ErasedConnectionPool` | `crates/synvoid-http-client/src/erased_pool.rs` | Type-erased pool |
+| `StreamingWafBody` | `crates/synvoid-http-client/src/streaming_waf_body.rs` | WAF-scanning body |
+| `ErasedConnectionPool` | `crates/synvoid-http-client/src/erased_pool.rs` | Type-erased HTTP/1.1 pool |
+| `ErasedHttpClient` | `crates/synvoid-http-client/src/erased_pool.rs` | Type-erased HTTP client |
+| `ErasedBody` / `BoxErasedBody` | `crates/synvoid-http-client/src/erased_pool.rs` | Type-erased body trait/alias |

@@ -65,6 +65,7 @@ The `synvoid-tunnel` crate provides VPN tunnel infrastructure for SynVoid, suppo
 ## Feature Gates
 
 - `wireguard` — Enables WireGuard tunnel support (requires `defguard_boringtun`)
+- `tun-rs` — Enables TUN interface backend via `tun-rs` crate
 - Default: QUIC-only tunnel support
 
 ## Key Integration Points

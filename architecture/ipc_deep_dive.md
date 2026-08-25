@@ -7,13 +7,13 @@ SynVoid's inter-process communication layer handles all Supervisor ↔ Worker an
 ### Transport Layer (`synvoid-ipc`)
 
 - **Unix domain sockets** with `SCM_RIGHTS` for FD passing
-- **Ed25519 signed messages** for authentication and integrity
+- **HMAC-SHA3-256 signed messages** for authentication and integrity (constant-time verification)
 - **Message framing**: Length-prefixed Postcard-encoded messages
 - **Non-blocking I/O** with `tokio::net::UnixStream`
 
 ### Message Protocol
 
-All IPC messages use the `Message` enum (60+ variants) serialized with Postcard:
+All IPC messages use the `Message` enum (~118 variants) serialized with Postcard:
 
 ```rust
 enum Message {
@@ -50,34 +50,33 @@ enum Message {
 
 ### Message Signing
 
-Every IPC message is signed with Ed25519:
-- **Session key**: Generated per-worker at startup, exchanged during handshake
-- **Signature**: `[u8; 64]` appended to serialized message
-- **Verification**: Supervisor validates worker signatures; workers validate supervisor signatures
-- **Replay protection**: Monotonic sequence numbers per session
+Every IPC message is signed with HMAC-SHA3-256:
+- **Session key**: 32-byte random key exchanged via `SYNVOID_IPC_KEY_FILE` env var or file-based key exchange at startup
+- **Signature**: `[u8; 32]` (HMAC) + 8-byte timestamp + 16-byte nonce appended to serialized message
+- **Verification**: Supervisor validates worker signatures; workers validate supervisor signatures, using constant-time comparison (`ct_eq`)
+- **Replay protection**: Nonce cache with 60-second timestamp window (`ipc_signed.rs`)
 
 ### File Descriptor Passing
 
-Used for zero-copy socket handoff between processes:
+Used for zero-copy socket handoff between processes (on Unix via SCM_RIGHTS):
 
 ```rust
-// Supervisor → Worker: socket handoff
-SocketHandoff {
-    listener_fd: RawFd,  // Passed via SCM_RIGHTS
-    port: u16,
-    socket_type: SocketType,  // Tcp, TcpReusePort
+// Supervisor → Worker: socket handoff request
+SocketHandoffRequest {
+    socket_path: String,  // Path to the listening socket
 }
 
-// Worker → Supervisor: socket release
-SocketRelease {
-    listener_fd: RawFd,
-    port: u16,
+// Worker → Supervisor: handoff ready
+SocketHandoffReady {
+    ports: Vec<u16>,
+}
+
+// Worker → Supervisor: handoff complete
+SocketHandoffComplete {
+    success: bool,
+    fd_count: usize,
 }
 ```
-
-- Up to 254 FDs per message
-- FDs are duplicated (not transferred) — sender retains original
-- Receiver gets a new file descriptor pointing to the same kernel object
 
 ### Connection Lifecycle
 
@@ -118,17 +117,17 @@ Close Socket
 
 | Type | Location | Purpose |
 |------|----------|---------|
-| `Message` | `synvoid-ipc/src/message.rs` | 60+ variant IPC message enum |
-| `IpcSession` | `synvoid-ipc/src/session.rs` | Session state with signing keys |
-| `IpcListener` | `synvoid-ipc/src/listener.rs` | Unix socket listener |
-| `IpcStream` | `synvoid-ipc/src/stream.rs` | Unix socket stream |
-| `SignedMessage` | `synvoid-ipc/src/signing.rs` | Message + Ed25519 signature |
+| `Message` | `synvoid-ipc/src/ipc.rs` | ~118 variant IPC message enum |
+| `IpcSigner` | `synvoid-ipc/src/ipc_signed.rs` | HMAC-SHA3-256 signing/verification |
+| `IpcListener` | `synvoid-ipc/src/ipc_transport.rs` | Unix socket listener |
+| `IpcStream` | `synvoid-ipc/src/ipc_transport.rs` | Unix socket stream |
+| `SignedWriter` | `synvoid-ipc/src/ipc_signed.rs` | Signed write adapter |
 
 ## Security Considerations
 
 - **Path permissions**: IPC socket created with `0o600` (owner-only access)
 - **Session isolation**: Each worker gets a unique session key
-- **Message authentication**: All messages are Ed25519-signed
-- **Sequence numbers**: Prevent replay attacks
+- **Message authentication**: All messages are HMAC-SHA3-256 signed with constant-time verification
+- **Replay protection**: Nonce cache with timestamp window prevents replay attacks
 - **FD validation**: Received FDs are validated before use
 - **Socket cleanup**: Stale sockets are detected and cleaned up on startup

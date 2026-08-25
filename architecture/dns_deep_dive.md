@@ -32,7 +32,7 @@ The DNS module is gated by the `dns` feature in `Cargo.toml`.
 | `dnssec_validation.rs` | Signature verification, chain of trust, DS record handling |
 | `dnssec_key_mgmt.rs` | DNSSEC key lifecycle management |
 | `tsig.rs` | TSIG authentication for dynamic updates and zone transfers |
-| `recursive.rs` | Recursive DNS resolver using `hickory_resolver::TokioResolver` |
+| `resolver.rs` | Recursive DNS resolver using `hickory_resolver::TokioResolver` |
 | `recursive_cache.rs` | Cache for recursive resolver responses |
 | `trust_anchor.rs` | RFC 5011 trust anchor management |
 | `hsm.rs` | HSM-based key storage and signing |
@@ -109,7 +109,7 @@ Production-safe transport handling with fail-fast startup, enforced limits, and 
 **IXFR** (RFC 1995) - Incremental zone transfer
 **TSIG** (RFC 2845) - Transaction signature authentication for zone transfers
 
-**AXFR Record Type Coverage:** The AXFR implementation at `crates/synvoid-dns/src/transfer.rs:829-1029` handles the following record types: A, AAAA, CNAME, NS, SOA, TXT, MX, SRV, PTR, DNSKEY, RRSIG, NSEC, NSEC3, DS, CAA. The following record types are **not handled** (fall through with `_ => continue` at line 1029):
+**AXFR Record Type Coverage:** The AXFR implementation at `crates/synvoid-dns/src/transfer.rs` handles the following record types in `build_axfr_record()`: A, AAAA, CNAME, NS, SOA, TXT, MX, SRV, PTR, DNSKEY, RRSIG, NSEC, NSEC3, DS, CAA. The following record types are **not handled** (fall through with `_ => continue`):
 - **NAPTR** (35) - Naming Authority Pointer
 - **CERT** (37) - Certificate record
 - **SMMEA** (48) - Simple Mail Messaging Exchange Authority
