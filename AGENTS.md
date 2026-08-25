@@ -1,195 +1,71 @@
 # AGENTS.md
 
-SynVoid is a high-performance WAF & reverse proxy in Rust with a mesh networking layer, multi-process architecture (Supervisor + UnifiedServerWorker + CPU offload), and 46 workspace members (36 dedicated `synvoid-*` crates plus root, pqc, admin-ui, examples, fuzz, xtask, and repo-guards).
+SynVoid is a high-performance WAF & reverse proxy in Rust with a mesh networking layer and multi-process architecture (Supervisor + UnifiedServerWorker data plane + CPU offload). 45-member Cargo workspace: root app, 37 `synvoid-*` crates under `crates/`, plus `pqc`, `admin-ui` (Yew/WASM via Trunk), `examples/*`, `fuzz`, `tools/{xtask,synvoid-repo-guards}`. Linux is the primary deployment target.
 
-## Quick Commands
-
-```bash
-# Build (default features: mesh, dns, erased_pool, swagger-ui)
-cargo build --release
-
-# Format + lint (CI order: fmt → clippy)
-cargo fmt --all -- --check
-cargo clippy --profile ci --all-targets -- -D warnings
-
-# Quick compile check
-cargo check --no-default-features --profile ci
-
-# Run a single test by name
-cargo test --lib <test_name>
-cargo test --test <integration_test_name>
-
-# Full test suite (CI uses --profile ci --no-fail-fast)
-cargo test --profile ci --no-fail-fast
-
-# Full test suite with nextest (preferred for CI — better concurrency and diagnostics)
-cargo nextest run --workspace --cargo-profile ci --profile ci --exclude synvoid-fuzz
-cargo test --workspace --doc --profile ci  # doctests (nextest doesn't run these)
-
-# Repository guard tests (lightweight crate, no root dependency)
-cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci
-
-# Full test suite (release mode — only for release qualification)
-cargo test --release --no-fail-fast
-
-# Release verification (per-crate qualification + package inspection, no publish; fails on dirty tree)
-cargo xtask verify-release
-cargo xtask verify-release --allow-dirty  # override dirty-tree check for local experimentation
-
-# Security regression tests (must run single-threaded; uses env var serialization guard)
-cargo test --test security_regression --profile ci -- --test-threads=1
-
-# Root test ownership guard (enforces OWNERSHIP.toml manifest)
-cargo test --test root_test_ownership_guard
-
-# Mesh/DNS features required for many tests
-cargo test --test mesh_task_ownership_guard --features mesh,dns
-cargo test --test worker_supervision_control_flow --features mesh,dns
-cargo test --test composition_root_behavioral --features mesh,dns
-
-# DNS full suite (all unit + integration tests)
-cargo test -p synvoid-dns --profile ci
-
-# DNS interop & conformance
-cargo test -p synvoid-dns --test dns_interop_authoritative
-cargo test -p synvoid-dns --test dns_interop_truncation
-cargo test -p synvoid-dns --test dns_interop_dnssec
-cargo test -p synvoid-dns --test dns_interop_transfers
-cargo test -p synvoid-dns --test dns_interop_update_notify
-cargo test -p synvoid-dns --test dns_interop_encrypted
-cargo test -p synvoid-dns --test dns_interop_recursive
-./scripts/dns/conformance.sh
-
-# DNS benchmarks
-cargo bench -p synvoid-dns
-
-# Plugin runtime tests
-cargo test -p synvoid-plugin-runtime
-
-# Honeypot tests
-cargo test -p synvoid-honeypot --all-targets
-
-# Tarpit tests
-cargo test -p synvoid-tarpit --all-targets
-```
-
-## CI Testing Infrastructure
-
-**Authority**: `docs/testing/verification-contract.md` — frozen routine, full, and release verification contracts.
-
-The single routine workflow (`ci.yml`) runs `cargo xtask verify`. Publication is manual through `cargo publish` only — see `docs/releasing.md`.
-
-**CI profile** (routine tests): `cargo test --profile ci`
-**Release profile** (production artifacts): `cargo test --release`
-
-Key docs:
-- `docs/testing/verification-contract.md` — **Authoritative** verification specification
-- `docs/releasing.md` — Manual publication procedure and publication order
-
-## Test Orchestration (xtask)
+## Build & Setup
 
 ```bash
-cargo xtask verify             # Canonical routine verification contract (what CI runs)
-cargo xtask verify-full        # Full local verification (broader than routine, no duplicate tests)
-cargo xtask verify-release     # Release verification (per-crate qualification; --allow-dirty to override)
-cargo xtask test package synvoid-dns  # Test a specific package
-cargo xtask test guards        # All architectural guard tests
-
-# Stress/endurance (not in verify-full; run directly)
-cargo test -p synvoid-dns --test dns_stress --profile ci
-cargo test -p synvoid-dns --test dns_interop_authoritative --profile ci
-cargo test --test worker_supervision_control_flow --profile ci -- --test-threads=1
-cargo test --test fault_injection_test --profile ci
-
-# Options:
-#   --dry-run    Print commands without executing
-#   --json       Machine-readable JSON output
-#   --verbose    Detailed output
+cargo build --release   # default features: socket-handoff, mesh, dns, erased_pool, swagger-ui
 ```
 
-## Feature Profiles
+- **protoc is required**: the default `mesh` feature triggers protobuf codegen in `build.rs` (`tonic-prost-build`). Install `protobuf-compiler` (CI does) or builds fail confusingly.
+- All feature profiles must compile: `cargo check --no-default-features [--features mesh | dns | mesh,dns]`.
 
-Default features: `socket-handoff`, `mesh`, `dns`, `erased_pool`, `swagger-ui`. Always verify all profiles compile:
+## Verification
+
+**Authority**: `docs/testing/verification-contract.md` (frozen contract). The single CI workflow (`.github/workflows/ci.yml`) runs exactly:
 
 ```bash
-cargo check --no-default-features          # Core
-cargo check --no-default-features --features mesh
-cargo check --no-default-features --features dns
-cargo check --no-default-features --features mesh,dns  # Full
+cargo xtask verify   # fmt → clippy --profile ci --all-targets -D warnings → core compile check → repo-guards → security regression → root guard suite → core admin tests → failure injection
 ```
 
-## Guardrail Tests
-
-These enforce architectural invariants. Run them after touching relevant areas:
+xtask subcommands (options: `--dry-run`, `--json`, `--verbose`, `--allow-dirty`):
 
 ```bash
-# Consolidated root guard tests (single nextest invocation, ci profile)
-cargo nextest run --cargo-profile ci --profile ci \
-  --test boundary_composition_guard --test lifecycle_task_guard \
-  --test plugin_guard --test cli_admin_guard --test security_guard \
-  --test root_facade_boundary_guard --test mesh_id_boundary_guard \
-  --test admin_mutation_response_guard --test admin_mutation_blocklist \
-  --test abi_memory_boundary_guard --test root_test_ownership_guard \
-  --test worker_mesh_supervision_boundary_guard --test mesh_task_ownership_guard \
-  --features mesh
-
-# Static guards (lightweight, no root dependency)
-cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci
-
-# synvoid-core admin/mesh edge cases
-cargo nextest run -p synvoid-core --cargo-profile ci --profile ci \
-  --test admin_auth_boundary --test mesh_admin_edge_cases
-
-# Failure injection (separate: distinct composition domain)
-cargo test --test failure_injection --profile ci
-
-# Admin route contract (validates frontend/backend API alignment)
-cargo test --test admin_route_contract --profile ci
-
-# Domain-specific guard tests (not in routine CI)
-cargo test -p synvoid-plugin-runtime --test plugin_failure_does_not_poison_manager
-cargo test -p synvoid-plugin-runtime --test manifest_authority_wiring
-cargo test -p synvoid-tarpit --all-targets
-cargo test -p synvoid-repo-guards -- ci_policy
+cargo xtask verify-full            # broader local: feature-profile compiles + one full workspace nextest run + doctests
+cargo xtask verify-release         # release qualification + package inspection; NEVER publishes; fails on dirty tree
+cargo xtask test package <name>    # e.g. cargo xtask test package synvoid-dns
+cargo xtask test guards            # all architectural guard tests
 ```
 
-## Critical Security Rules
+Focused runs:
 
-- **Constant-time comparison**: Always use `subtle::ConstantTimeEq` for secrets, keys, MACs, auth tokens.
-- **File permissions**: Set `0o600` on private key files.
-- **Exception**: Simple `!=` is correct in `security_challenge.rs:196` — the expected solution is public, not a secret.
-- **Plugin lifecycle**: Use `PluginRuntimeOwner` to own plugin hot-reload watchers. Never use `std::mem::forget`.
-- **Signed byte loading**: File-based plugin loading reads WASM bytes once and instantiates from those verified bytes (TOCTOU closure). `PreparedPluginLoad.wasm_bytes` owns the verified bytes.
-- **Strict SignedSandboxed**: Empty `binary_sha256` or `manifest_sha256` fields are rejected for `SignedSandboxed` in production.
-- **Plugin ABI memory boundary**: `write_to_guest_memory` requires `guest_alloc`/`guest_free`. Fixed-offset 1024 fallback is removed. All guest pointer/length operations use `checked_guest_range`.
-- **Plugin ABI frame serialization**: Use `abi_frame::serialize_headers_canonical` and `abi_frame::build_request_frame` — never ad-hoc header encoding. `SerializationFailureClass` classifies rejections for bounded metrics.
-- **Unsafe native extensions**: Disabled by default. Production loading requires explicit risk acknowledgement, path allowlist, and optional SHA-256 hash verification. The `Library` handle is retained via `Arc` for the lifetime of any plugin-derived values. Native extensions are NOT sandboxed and have full process authority.
-- **Plugin lifecycle**: Reload is prepare-then-commit with generation-aware atomic swaps. Failed reloads must never replace a working plugin. Hot reload waits for stable files and debounces watcher events. Lifecycle states and transitions are explicit and auditable.
-- **Overlong UTF-8 handling**: The WAF normalizer decodes overlong UTF-8 percent-encoded sequences (e.g., `%C0%BE` → `>`) to their intended ASCII equivalents before pattern matching. This prevents attackers from bypassing XSS/SQLi detection via overlong encodings. The `OVERLONG` flag is set on `NormalizationFlags` when overlong sequences are detected. `strict_normalization` mode rejects requests containing overlong sequences. Tests: `test_overlong_*` in `normalizer.rs`, `test_waf_corpus_xss_invalid_utf8` in `waf_corpus_test.rs`.
+```bash
+cargo test --lib <name>                          # unit test
+cargo test --test <integration_name>             # root integration test
+cargo nextest run --workspace --cargo-profile ci --profile ci --exclude synvoid-fuzz   # full suite
+cargo test --workspace --doc --profile ci        # doctests (nextest doesn't run these)
+cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci               # static repo guards
+./scripts/verify_architecture.sh                 # local-only profile checks + guard suite
+```
 
-## Admin Control-Plane Authority
+Testing quirks:
 
-- **Typed mutation results**: Mutating admin endpoints must return `AdminMutationResult` (from `synvoid_core::admin_mutation`), not generic `{"success": true}` JSON.
-- **Authority classification**: Every mutation must be attributed to an `AdminMutationAuthority` variant. Compatibility paths must use `CompatibilityLegacy`, not silently default to admin authority.
-- **Audit events**: Block/unblock operations emit `AdminAuditEvent` via `state.audit.log_audit_event()`.
-- **Propagation semantics**: Mesh propagation is best-effort (`QueuedBestEffort`). Never promise delivery to all peers.
-- **No raw session tokens**: `AdminActor.session_id_hash` must be hashed; never store raw tokens in audit logs.
-- **Browser session security**: Browser clients use HttpOnly session cookie + CSRF token. Bearer token only for session exchange. No JavaScript-readable token storage. WebSocket auth via session cookie only (`synvoid_ws_token` removed).
-- **Security headers**: Admin responses include `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, CSP with `frame-ancestors 'none'`, `Referrer-Policy: strict-origin-when-cross-origin`.
-- **Session expiry handling**: Frontend treats 401 and 403 as session expiry. WebSocket polling stops on auth failure.
-- **Architecture doc**: `architecture/admin_control_plane_authority.md`
+- Use `--profile ci` for routine testing (matches CI); `--release` only for release qualification.
+- nextest is pinned (0.9.140) — see `docs/testing/nextest-policy.md`.
+- `security_regression` must run single-threaded: `cargo test --test security_regression --profile ci -- --test-threads=1`.
+- Some guard suites need features: `--test mesh_task_ownership_guard --features mesh,dns` (same for `worker_supervision_control_flow`, `composition_root_behavioral`).
+- Stress/endurance suites are NOT in verify-full: `dns_stress`, `worker_supervision_control_flow -- --test-threads=1`, `fault_injection_test`.
+- Fuzz smoke tests need nightly + cargo-fuzz: `cargo +nightly fuzz run <target> -- -runs=1000` (17 targets in `fuzz/fuzz_targets/`). See `architecture/ci_fuzz_failure_injection.md`.
+- Publication is manual via `cargo publish` only — see `docs/releasing.md`.
 
-## Threat-Intel Enforcement Rules
+## Test Placement Rules
 
-1. **Never enforce from raw lookups** — `lookup_local_indicator()`, `lookup_local_indicator_by_ip()`, `lookup_threat_indicator_in_dht()` are diagnostic-only. Enforcement paths must use `lookup_*_policy_strict`.
-2. **WAF reads BlockStore, not ThreatIntelligenceManager** — mesh enforcement populates BlockStore; WAF reads it.
-3. **New block-store writes need meaningful provenance** — Use `block_ip_with_provenance` with `BlockProvenanceKind`. `LegacyUnknown` is only for backward compat, tests, and mocks.
-4. **Mesh-ID blocks are admin/control-plane only** — `RequestContext` and `WafContext` lack mesh identity; `is_mesh_id_blocked()` must never appear in WAF/request/proxy/HTTP/3 code.
-5. **New threat-intel consumers** must use `ThreatIntelConsumerKind::Enforcement` + `ThreatIntelConsumerAction::PermitAction` before mutating state.
+- Every root `tests/*.rs` file MUST have an entry in `tests/OWNERSHIP.toml` or `root_test_ownership_guard` fails; `class = "domain"` entries are rejected — single-crate tests belong in the owning crate's `tests/`. Classification guide: `docs/testing/root-test-ownership.md`.
+- Suites outside routine CI (run when touching those areas): DNS full/interop (`cargo test -p synvoid-dns --profile ci`, conformance via `./scripts/dns/conformance.sh`), plugin runtime (`plugin_failure_does_not_poison_manager`, `manifest_authority_wiring`), honeypot/tarpit (`--all-targets`), `admin_route_contract` (frontend/backend API alignment).
 
-## Composition Boundary
+## Architecture Facts
 
-Request-path modules must consume **narrow traits**, not concrete infrastructure:
+- **Entry point**: `src/main.rs` → delegates to `src/commands/{plan,execute,runtime_launch}.rs`
+- **Supervisor**: `src/supervisor/` — lifecycle, IPC, control-plane
+- **Data plane**: `src/worker/unified_server/` — HTTP + WAF + proxy in ONE Tokio event loop; CPU offload in `src/worker/cpu_task/`
+- **Process model**: Supervisor (1) → UnifiedServerWorker (1) + CpuWorker (1). Workers are NOT process-per-tenant. The `--worker` flag spawns a legacy `BaseWorkerProcess` unused for HTTP.
+- **Mesh**: `crates/synvoid-mesh/src/mesh/` — DHT, transport, Raft, peer auth
+- Many legacy root paths re-export crate contents for compat (e.g., `src/dns/mod.rs` re-exports `synvoid_dns::*`).
+
+### Composition Boundary (guard-enforced)
+
+Request-path code consumes **narrow traits**, never concrete infrastructure:
 
 | Layer | May Own/Import |
 |-------|---------------|
@@ -197,21 +73,11 @@ Request-path modules must consume **narrow traits**, not concrete infrastructure
 | Request path (`src/waf/`, `src/proxy/`, `src/http/`, `crates/synvoid-waf/`, `crates/synvoid-proxy/`) | Narrow traits (`BlockListStore`, `WafProcessor`), config snapshots, request context |
 | Control-plane (`crates/synvoid-mesh/`, `crates/synvoid-block-store/`) | Full infrastructure internals |
 
-**How to add a new capability safely:**
-1. Define a narrow trait in `crates/synvoid-waf/src/traits.rs` or `crates/synvoid-core/`
-2. Implement it on a concrete type in a composition root
-3. Pass `Arc<dyn YourTrait>` to request-path modules
-4. Never pass concrete types directly to request-path code
+To add a capability: define a narrow trait in `crates/synvoid-waf/src/traits.rs` or `crates/synvoid-core/`, implement on concrete type in a composition root, pass `Arc<dyn Trait>` to request-path modules.
 
-## Serialization & Crypto Standards
+Root-module ownership policy lives in `architecture/root_module_ledger.md` — prefer dedicated `synvoid-*` crates unless the ledger says `keep_app_root`.
 
-- **Postcard over JSON** for distributed state (DHT, Mesh, Persistence).
-- **Typed structs** with `Archive`/`RkyvSerialize`/`RkyvDeserialize` — never `serde_json::Value`.
-- **Unix timestamps (u64)** — use `crate::mesh::safe_unix_timestamp()` or `crate::utils::current_timestamp()`. Use `.saturating_sub()` for durations.
-- **Base64**: Always `URL_SAFE_NO_PAD` for mesh/DHT data.
-- **Pure Rust deps preferred** over C bindings where possible (confirmed: `libinjectionrs`, `bcrypt`).
-
-## Known File Path Corrections
+## Stale Path Map (use the Correct path)
 
 | Wrong | Correct |
 |-------|---------|
@@ -226,149 +92,56 @@ Request-path modules must consume **narrow traits**, not concrete infrastructure
 | `src/worker/unified_server.rs` | `src/worker/unified_server/` (split 2026-06) |
 | `src/app_server/granian.rs` | `crates/synvoid-app-server/src/granian.rs` |
 | `src/main.rs` (command dispatch) | `src/commands/plan.rs` + `execute.rs` + `runtime_launch.rs` |
-| `src/tls/acme.rs` | `crates/synvoid-tls/src/acme.rs` |
-| `src/tls/acme_dns.rs` | `crates/synvoid-tls/src/acme_dns.rs` |
+| `src/tls/acme.rs`, `src/tls/acme_dns.rs` | `crates/synvoid-tls/src/acme*.rs` |
 | `src/plugin/wasm_runtime.rs` | `crates/synvoid-plugin-runtime/src/wasm_runtime.rs` |
-| `serialize_headers` (inline in wasm_runtime.rs) | `crates/synvoid-plugin-runtime/src/abi_frame.rs` (canonical) |
+| `serialize_headers` (inline) | `crates/synvoid-plugin-runtime/src/abi_frame.rs` (canonical) |
 | `src/plugin/instance_pool.rs` | `crates/synvoid-plugin-runtime/src/instance_pool.rs` |
 | `src/config/admin.rs` | `crates/synvoid-config/src/admin.rs` |
 | `src/admin/authority.rs` | `crates/synvoid-core/src/admin_mutation.rs` |
 | `src/wasm_pow/` | `crates/synvoid-wasm-pow/` |
 | `src/server/mod.rs` (monolithic) | `src/server/` (split: `startup_plan.rs`, `resources.rs`, `runtime_handles.rs`, `plugin_runtime.rs`) |
-| `src/dns/*.rs` (legacy copies) | `crates/synvoid-dns/src/` (canonical). `src/dns/mod.rs` re-exports `synvoid_dns::*`. |
+| `src/dns/*.rs` (legacy copies) | `crates/synvoid-dns/src/` (canonical) |
 
-## Module Overrides
+## Security Invariants (violations break guard tests)
 
-Each subsystem has specialized `AGENTS.override.md` files. Load the relevant one when working in that area:
+- **Constant-time comparison**: use `subtle::ConstantTimeEq` for secrets, keys, MACs, auth tokens (PoW solution verification included). Private key files get mode `0o600`.
+- **Overlong UTF-8**: WAF normalizer decodes overlong percent-encoded sequences (`%C0%BE` → `>`); sets `OVERLONG` flag on `NormalizationFlags`; `strict_normalization` rejects them. Tests: `test_overlong_*`, `test_waf_corpus_xss_invalid_utf8`.
+- **Plugin lifecycle**: own hot-reload watchers with `PluginRuntimeOwner`; never `std::mem::forget`. Reload is prepare-then-commit with generation-aware atomic swaps — a failed reload must never replace a working plugin. File-based loading reads WASM bytes once (TOCTOU closure via `PreparedPluginLoad.wasm_bytes`).
+- **SignedSandboxed plugins**: empty `binary_sha256`/`manifest_sha256` rejected in production.
+- **Plugin ABI memory boundary**: guest pointer ops require `guest_alloc`/`guest_free` and `checked_guest_range` (no fixed-offset fallback). Frame serialization only via `abi_frame::serialize_headers_canonical` / `build_request_frame`.
+- **Native extensions**: disabled by default; production load requires explicit risk acknowledgement + path allowlist. They are NOT sandboxed; retain the `Library` handle via `Arc` for the lifetime of derived values.
 
-| Module | Path |
-|--------|------|
-| DNS/DNSSEC | `crates/synvoid-dns/AGENTS.override.md` |
-| WAF | `src/waf/AGENTS.override.md` |
-| HTTP Server | `src/http/AGENTS.override.md` |
-| HTTP Client | `src/http_client/AGENTS.override.md` |
-| HTTP/3 | `src/http3/AGENTS.override.md` |
-| Plugin/WASM | `src/plugin/AGENTS.override.md` |
-| Proxy | `src/proxy/AGENTS.override.md` |
-| Config | `src/config/AGENTS.override.md` |
-| Admin | `src/admin/AGENTS.override.md` |
-| Auth | `src/auth/AGENTS.override.md` |
-| Platform | `src/platform/AGENTS.override.md` |
-| Worker | `src/worker/AGENTS.override.md` |
-| Tunnel | `src/tunnel/AGENTS.override.md` |
-| App Server | `src/app_server/AGENTS.override.md` |
-| Theme | `src/theme/AGENTS.override.md` |
-| Static Files | `src/static_files/AGENTS.override.md` |
-| Serverless | `src/serverless/AGENTS.override.md` |
-| Honeypot | `crates/synvoid-honeypot/AGENTS.override.md` |
-| Tarpit | `crates/synvoid-tarpit/AGENTS.override.md` |
+### Admin Control-Plane Authority
 
-## CI, Fuzzing & Failure Injection
+- Mutating endpoints return typed `AdminMutationResult` (`synvoid_core::admin_mutation`), attributed to an `AdminMutationAuthority` variant (compat paths use `CompatibilityLegacy`) — never generic `{"success": true}`.
+- Block/unblock emits `AdminAuditEvent` via `state.audit.log_audit_event()`. Never store raw session tokens in audit logs (`AdminActor.session_id_hash` is hashed).
+- Browser clients: HttpOnly session cookie + CSRF token; bearer token only for session exchange; WebSocket auth via session cookie only. Frontend treats 401/403 as session expiry.
+- Admin responses carry `nosniff`, `X-Frame-Options: DENY`, CSP `frame-ancestors 'none'`, strict referrer policy.
+- Mesh propagation is best-effort (`QueuedBestEffort`) — never promise delivery to all peers. Details: `architecture/admin_control_plane_authority.md`.
 
-```bash
-# Local verification script (profile checks + guard suite)
-./scripts/verify_architecture.sh
+### Threat-Intel Enforcement
 
-# Docs path reference guard (catches stale markdown links) — now in guard crate
-cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci
+1. Raw lookups (`lookup_local_indicator*`, `lookup_threat_indicator_in_dht`) are diagnostic-only; enforcement uses `lookup_*_policy_strict`.
+2. WAF reads BlockStore, not `ThreatIntelligenceManager` — mesh enforcement populates BlockStore.
+3. New block-store writes use `block_ip_with_provenance` with `BlockProvenanceKind` (`LegacyUnknown` only for compat/tests/mocks).
+4. Mesh-ID blocks are admin/control-plane only — `is_mesh_id_blocked()` must never appear in WAF/request/proxy/HTTP/3 code.
+5. New consumers need `ThreatIntelConsumerKind::Enforcement` + `ThreatIntelConsumerAction::PermitAction` before mutating state.
 
-# Failure-injection tests
-cargo test --test failure_injection --profile ci
+## Serialization & Crypto Standards
 
-# Fuzz smoke tests (requires nightly toolchain + cargo-fuzz)
-cargo +nightly fuzz run admin_mutation_result_decode -- -runs=1000
-cargo +nightly fuzz run blocklist_event_decode -- -runs=1000
-cargo +nightly fuzz run blocklist_snapshot_decode -- -runs=1000
-cargo +nightly fuzz run dns_message_decode -- -runs=1000
-cargo +nightly fuzz run fuzz_attack_detection -- -runs=1000
-cargo +nightly fuzz run fuzz_early_parse -- -runs=1000
-cargo +nightly fuzz run fuzz_ipc -- -runs=1000
-cargo +nightly fuzz run fuzz_protocol_proto_decode -- -runs=1000
-cargo +nightly fuzz run fuzz_raft_commit_notification -- -runs=1000
-cargo +nightly fuzz run fuzz_raft_response -- -runs=1000
-cargo +nightly fuzz run fuzz_serialization -- -runs=1000
-cargo +nightly fuzz run fuzz_serialization_new -- -runs=1000
-cargo +nightly fuzz run http_header_normalization -- -runs=1000
-cargo +nightly fuzz run http_path_normalization -- -runs=1000
-cargo +nightly fuzz run mesh_protocol_compressed_decode -- -runs=1000
-cargo +nightly fuzz run parsed_query_parse -- -runs=1000
-cargo +nightly fuzz run plugin_manifest -- -runs=1000
-```
+- Postcard (not JSON) for distributed state; typed rkyv structs (`Archive`/`RkyvSerialize`/`RkyvDeserialize`), never `serde_json::Value`.
+- Unix timestamps are u64 — use `synvoid_utils::{safe_unix_timestamp, current_timestamp}` (`crates/synvoid-utils/src/ip_utils.rs`) or `synvoid_core::time::{current_timestamp_secs, current_timestamp_millis}`; `.saturating_sub()` for durations.
+- Base64: always `URL_SAFE_NO_PAD` for mesh/DHT data. Prefer pure-Rust deps over C bindings.
 
-See `architecture/ci_fuzz_failure_injection.md` for the full profile matrix and fuzz target inventory.
+## Repo-Specific Pointers
 
-## Architecture Quick Reference
-
-The `architecture/` directory (119 active docs) and `.opencode/skills/` directory contain detailed subsystem docs. Key entrypoints:
-
-- **Entry point**: `src/main.rs` → delegates to `src/commands/` (plan/execute/runtime_launch)
-- **Supervisor**: `src/supervisor/` — lifecycle, IPC, control-plane
-- **Worker**: `src/worker/unified_server/` — data plane (HTTP + WAF + proxy in one Tokio event loop)
-- **Mesh**: `crates/synvoid-mesh/src/mesh/` — DHT, transport, Raft, peer auth
-- **WAF**: `crates/synvoid-waf/` — rule engine, attack detection
-- **Proxy**: `crates/synvoid-proxy/` — routing, cache keys
-- **Tarpit**: `crates/synvoid-tarpit/` — anti-scraping tarpit, escaping, admission, budgets
-
-**Process model**: Supervisor (1) → UnifiedServerWorker (1, single Tokio event loop) + CpuWorker (1, bounded transforms). Workers are NOT process-per-tenant. `--worker` flag spawns a legacy `BaseWorkerProcess` unused for HTTP.
-
-**Root crate ownership**: tracked in `architecture/root_module_ledger.md`. Prefer dedicated `synvoid-*` crates over root `synvoid::` paths unless the ledger says `keep_app_root`.
-
-### Skills Index
-
-The `.opencode/skills/` directory contains 27 specialized skill files. Load the relevant skill when working in that subsystem:
-
-| Skill | Subsystem | Key Coverage |
-|-------|-----------|-------------|
-| `admin_api` | Admin REST API | Mutation results, auth, audit, handler patterns |
-| `admin_ui` | Yew WASM frontend | Pages, components, API service, state management |
-| `behavioral_intel` | Mesh intelligence | Behavioral fingerprints, LSH matching, privacy design |
-| `buffer_pool` | Buffer allocation | Sharded mutex pool, ABA safety, tiered arenas |
-| `crypto_dependencies` | Crypto supply chain | Dependency inventory, CVE tracking, feature flags |
-| `dht_persistence` | DHT storage | Disk-backed storage, L1/L2 cache, Merkle trees, quorum |
-| `dns_dnssec` | DNS/DNSSEC | Dual-mode resolver, trust anchors, encrypted transports |
-| `ebpf_blocking` | Kernel-level blocking | XDP SYN dropping, block store integration |
-| `filter` | Protocol filtering | Allow/deny lists, strict mode, per-port matching |
-| `h3_proxy` | HTTP/3 QUIC | QUIC proxy, streaming, WAF integration |
-| `honeypot` | Deception layer | AI responders, protocol detection, port rotation, threat intel |
-| `httpserver` | HTTP server | Dual-mode, JA4, WebSocket, connection meta trait |
-| `hybrid_post_quantum` | Post-quantum crypto | Ed25519+ML-DSA-44, async verification, key sizes |
-| `implementation_patterns` | Cross-cutting | Semaphore, debounce, atomic writes, worktree workflows |
-| `ipc_hardening` | IPC security | HMAC-SHA3-256 signing, replay protection, key loading |
-| `org_key_trust chain` | Mesh trust | Genesis key, org keys, member certificates |
-| `raft_consensus` | Raft control plane | State machine, snapshots, linearizable reads, attestation |
-| `rule_feed_persistence` | WAF rules | Signed rule feed, hot-reload, cross-worker sync |
-| `sandboxing` | OS sandboxing | Landlock, Capsicum, Pledge, Job Objects, Seatbelt |
-| `security_patterns` | Security fixes | CSRF, XSS, SSRF, timing attacks, nonce poisoning |
-| `serverless_wasm` | Serverless WASM | Instance pooling, ABI frame serialization, plugin sandbox |
-| `static_files` | Static serving | Directory listing, per-location themes, minification |
-| `streaming_waf` | Streaming WAF | Trailing window, fail-closed, type-erased body |
-| `supply_chain_hashes` | Supply chain | pip --require-hashes, Granian verification |
-| `synvoid_mesh` | Mesh networking | DHT, transport, Raft, peer auth, HTTP framing |
-| `tarpit` | Anti-scraping | Markov chains, admission control, session budgets |
-| `threat_feed_production` | Threat intel | Signed feeds, key hierarchy, production workflow |
-| `topology_visualizer` | Mesh visualization | Topology API, D3.js graph data, route registration |
-| `upstream` | Backend pool | Connection pooling, load balancing, health checking |
-| `waf_bot_detection` | Bot detection | UA analysis, JA3/JA4, configurable policies |
-| `windows_service` | Windows platform | Service management, WFP, firewall rules |
-
-### Key Architecture Documents
-
-| Document | Description |
-|----------|-------------|
-| `architecture/overview.md` | Bird's eye view, process model, feature gates, module index |
-| `architecture/plugin_runtime_sandbox.md` | Plugin trust tiers, manifest schema, default-deny capabilities, signing policy |
-| `architecture/root_module_ledger.md` | Root module ownership (keep_app_root / split_required / legacy) |
-| `architecture/worker_data_plane_composition_root.md` | Composition boundary rules for request-path vs root |
-| `architecture/http_request_pipeline.md` | 7-stage HTTP pipeline shared by HTTP/1 and HTTP/3 |
-| `architecture/mesh_trust_domains.md` | 7 trust domains, CanonicalTrustReader, trust invariants |
-| `architecture/block_store.md` | BlockStore architecture, persistence, snapshot export, peer cursors |
-| `architecture/dns_config_runtime_matrix.md` | DNS config field inventory with runtime status, defaults, and wiring |
-| `architecture/release_profile_matrix.md` | Compilation profiles, feature gate classifications, platform coverage |
-| `docs/RELEASE.md` | Release lifecycle, versioning policy, build profiles, hotfix, deprecation |
-| `docs/releasing.md` | Manual publication procedure and publication order |
+- **Module overrides**: each subsystem dir has an `AGENTS.override.md` with extra rules — read before working there: `src/{waf,http,http3,http_client,proxy,config,admin,auth,platform,plugin,worker,tunnel,app_server,theme,static_files,serverless}/AGENTS.override.md` and `crates/synvoid-{dns,honeypot,tarpit}/AGENTS.override.md`.
+- **Skills**: `.opencode/skills/<name>/SKILL.md` — 32 per-subsystem guides (names match subsystems, e.g. `dns_dnssec`, `serverless_wasm`, `ipc_hardening`, `raft_consensus`, `org_key_trust_chain`). Load before working in an unfamiliar subsystem.
+- **Config paths**: `--config-path` takes the DIRECTORY containing `main.toml` + `sites/`, not the TOML file. Caveat: `--configtest` ignores `--config-path` and validates `./config/` relative to CWD.
+- **Key docs**: `architecture/overview.md` (bird's eye), `architecture/http_request_pipeline.md`, `architecture/mesh_trust_domains.md`, `architecture/block_store.md`, `architecture/plugin_runtime_sandbox.md`, `architecture/root_module_ledger.md`, `architecture/worker_data_plane_composition_root.md`, `docs/RELEASE.md` + `docs/releasing.md`. `architecture/` (119 docs) and `plans/` are development artifacts; user/operator docs live in `docs/`.
 
 ## Known Issues
 
-- `spin` idle instance eviction never cleans up old UUID entries (plan DOC-L7).
-- `wasmtime` 40.0.4 (via yara-x) has known CVEs but only used for YARA compilation, not wasm sandbox — mitigated by `[patch.crates-io]` for direct dep. 13 advisory ignores in `deny.toml` with re-audit dates 2026-10-01.
-- `synvoid-testkit` has zero consumers — documented boundary policy in `crates/synvoid-testkit/README.md`
+- `wasmtime` 40.0.4 arrives transitively via yara-x (YARA rule compilation only, not the wasm sandbox); direct wasmtime is patched to 42.0.2 via `[patch.crates-io]`. 13 advisory ignores in `deny.toml`, re-audit date 2026-10-01.
+- `spin` idle instance eviction never cleans up old UUID entries.
+- `synvoid-testkit` currently has zero consumers — boundary policy documented in its README.
