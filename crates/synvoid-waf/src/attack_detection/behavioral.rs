@@ -140,7 +140,7 @@ impl BehavioralEngine {
             suspicious_header_count,
             url_entropy,
             body_to_header_ratio,
-            body_len: body_len as u32,
+            body_len: body_len as u64,
         }
     }
 }
@@ -152,7 +152,7 @@ pub struct StandaloneRequestFeatures {
     pub suspicious_header_count: u8,
     pub url_entropy: f32,
     pub body_to_header_ratio: f32,
-    pub body_len: u32,
+    pub body_len: u64,
 }
 
 pub fn calculate_string_entropy(s: &str) -> f32 {

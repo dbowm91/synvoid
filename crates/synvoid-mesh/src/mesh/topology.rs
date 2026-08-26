@@ -913,10 +913,12 @@ impl MeshTopology {
                                             .and_then(|v| v.as_str().map(|s| s.to_string()))
                                         {
                                             use base64::{
-                                                engine::general_purpose::STANDARD, Engine,
+                                                engine::general_purpose::URL_SAFE_NO_PAD, Engine,
                                             };
                                             let sig_bytes = verified.global_node_signature.clone();
-                                            if let Ok(pubkey_bytes) = STANDARD.decode(pubkey_str) {
+                                            if let Ok(pubkey_bytes) =
+                                                URL_SAFE_NO_PAD.decode(pubkey_str)
+                                            {
                                                 if pubkey_bytes.len() == 32 && sig_bytes.len() == 64
                                                 {
                                                     let mut pk_array = [0u8; 32];
@@ -1014,9 +1016,12 @@ impl MeshTopology {
                                         .get("public_key")
                                         .and_then(|v| v.as_str().map(|s| s.to_string()))
                                     {
-                                        use base64::{engine::general_purpose::STANDARD, Engine};
+                                        use base64::{
+                                            engine::general_purpose::URL_SAFE_NO_PAD, Engine,
+                                        };
                                         let sig_bytes = verified.global_node_signature.clone();
-                                        if let Ok(pubkey_bytes) = STANDARD.decode(pubkey_str) {
+                                        if let Ok(pubkey_bytes) = URL_SAFE_NO_PAD.decode(pubkey_str)
+                                        {
                                             if pubkey_bytes.len() == 32 && sig_bytes.len() == 64 {
                                                 let mut pk_array = [0u8; 32];
                                                 pk_array.copy_from_slice(&pubkey_bytes);

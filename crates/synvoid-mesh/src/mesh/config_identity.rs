@@ -302,6 +302,8 @@ impl NodeIdentityConfig {
                 {
                     std::fs::write(path, key)
                         .map_err(|e| format!("Failed to write signing key: {}", e))?;
+                    synvoid_platform::fs::set_file_permissions(std::path::Path::new(path), false)
+                        .map_err(|e| format!("Failed to secure signing key: {}", e))?;
                 }
             }
         }

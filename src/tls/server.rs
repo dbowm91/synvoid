@@ -979,7 +979,7 @@ impl HttpsServer {
                             .and_then(|v| v.parse::<u64>().ok())
                             .unwrap_or(0);
                         if let Some(max_size) = upstream_target.max_response_size {
-                            if body_len > 0 && body_len as usize > max_size {
+                            if body_len > 0 && body_len > max_size as u64 {
                                 return Ok(Self::build_response(
                                     502,
                                     "Bad Gateway".to_string(),
@@ -1001,14 +1001,9 @@ impl HttpsServer {
                             main_config.security.global_security_headers,
                         );
                         return Ok(builder
-                            .body(
-                                upstream_body
-                                    .map_err(|e| {
-                                        tracing::warn!("Upstream body stream error: {}", e);
-                                        unreachable!()
-                                    })
-                                    .boxed(),
-                            )
+                            .body(crate::http::response_helpers::swallow_incoming_body_errors(
+                                upstream_body,
+                            ))
                             .unwrap_or_else(|_| {
                                 Self::build_response(
                                     500,
@@ -1832,15 +1827,9 @@ impl HttpsServer {
                                     }
 
                                     return Ok(builder
-                                        .body(
-                                            body.map_err(|e| {
-                                                tracing::warn!("Proxy body error: {}", e);
-                                                // Infallible means we don't expect errors here,
-                                                // but hyper will handle the underlying IO error
-                                                unreachable!()
-                                            })
-                                            .boxed(),
-                                        )
+                                        .body(crate::http::response_helpers::swallow_body_errors(
+                                            body,
+                                        ))
                                         .unwrap_or_else(|_| {
                                             Self::build_response(
                                                 500,
@@ -1932,7 +1921,7 @@ impl HttpsServer {
                             .unwrap_or(0);
 
                         if let Some(max_size) = upstream_target.max_response_size {
-                            if body_len > 0 && body_len as usize > max_size {
+                            if body_len > 0 && body_len > max_size as u64 {
                                 return Ok(Self::build_response(
                                     502,
                                     "Bad Gateway".to_string(),
@@ -1990,14 +1979,9 @@ impl HttpsServer {
                         }
 
                         Ok(builder
-                            .body(
-                                upstream_body
-                                    .map_err(|e| {
-                                        tracing::warn!("Upstream body stream error: {}", e);
-                                        unreachable!()
-                                    })
-                                    .boxed(),
-                            )
+                            .body(crate::http::response_helpers::swallow_incoming_body_errors(
+                                upstream_body,
+                            ))
                             .unwrap_or_else(|_| {
                                 Self::build_response(
                                     500,

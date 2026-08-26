@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 
+use super::bucket::K_SIZE;
 use super::contact::PeerContact;
 use super::node_id::NodeId;
 use metrics::counter;
@@ -16,6 +17,15 @@ pub struct LookupQuery {
 }
 
 impl LookupQuery {
+    fn sort_and_truncate(target: &NodeId, peers: &mut Vec<PeerContact>) {
+        peers.sort_by(|a, b| {
+            let dist_a = target.xor_distance(&a.node_id);
+            let dist_b = target.xor_distance(&b.node_id);
+            dist_a.cmp(&dist_b)
+        });
+        peers.truncate(K_SIZE);
+    }
+
     pub fn new(target: NodeId) -> Self {
         Self {
             target,
@@ -41,11 +51,8 @@ impl LookupQuery {
             }
         }
 
-        self.closest.sort_by(|a, b| {
-            let dist_a = self.target.xor_distance(&a.node_id);
-            let dist_b = self.target.xor_distance(&b.node_id);
-            dist_a.cmp(&dist_b)
-        });
+        Self::sort_and_truncate(&self.target, &mut self.closest);
+        Self::sort_and_truncate(&self.target, &mut self.pending);
     }
 
     pub fn next_peers_to_query(&self) -> Vec<&PeerContact> {
@@ -89,6 +96,7 @@ impl LookupQuery {
                 self.pending.push(peer);
             }
         }
+        Self::sort_and_truncate(&self.target, &mut self.pending);
     }
 
     pub fn process_response(&mut self, peer: &PeerContact, new_peers: Vec<PeerContact>) {
@@ -108,11 +116,8 @@ impl LookupQuery {
         }
 
         if added {
-            self.closest.sort_by(|a, b| {
-                let dist_a = self.target.xor_distance(&a.node_id);
-                let dist_b = self.target.xor_distance(&b.node_id);
-                dist_a.cmp(&dist_b)
-            });
+            Self::sort_and_truncate(&self.target, &mut self.closest);
+            Self::sort_and_truncate(&self.target, &mut self.pending);
         }
     }
 
@@ -159,11 +164,13 @@ impl LookupQuery {
     }
 
     pub fn reset_pending(&mut self) {
+        self.pending.clear();
         for peer in &self.closest {
             if !self.contacted.contains(&peer.node_id) {
                 self.pending.push(peer.clone());
             }
         }
+        Self::sort_and_truncate(&self.target, &mut self.pending);
     }
 }
 
@@ -268,6 +275,20 @@ mod tests {
 
         assert_eq!(query.closest.len(), 3);
         assert!(!query.next_peers_to_query().is_empty());
+    }
+
+    #[test]
+    fn lookup_candidates_are_bounded_to_k() {
+        let target = NodeId::from_node_id_string("target");
+        let mut query = LookupQuery::new(target);
+        let peers = (0..(K_SIZE + 5))
+            .map(|index| make_contact(&format!("peer-{index}")))
+            .collect();
+
+        query.init(peers);
+
+        assert_eq!(query.closest.len(), K_SIZE);
+        assert!(query.pending_count() <= K_SIZE);
     }
 
     #[test]

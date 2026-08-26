@@ -306,7 +306,7 @@ pub struct DnsCache {
 
 struct InnerDnsCache {
     cache: Cache<CacheKey, CachedResponse>,
-    qname_index: RwLock<HashMap<String, HashSet<CacheKey>>>,
+    qname_index: Arc<RwLock<HashMap<String, HashSet<CacheKey>>>>,
     max_ttl: Duration,
     min_ttl: Duration,
     max_entry_size: usize,
@@ -325,20 +325,41 @@ struct InnerDnsCache {
     dns_metrics: Option<Arc<DnsMetrics>>,
 }
 
+type QnameIndex = Arc<RwLock<HashMap<String, HashSet<CacheKey>>>>;
+type CacheStorage = (Cache<CacheKey, CachedResponse>, QnameIndex);
+
 impl DnsCache {
-    pub fn new(capacity: usize, max_ttl_secs: u64, min_ttl_secs: u64) -> Self {
+    fn build_cache(capacity: usize, max_ttl_secs: u64) -> CacheStorage {
+        let qname_index = Arc::new(RwLock::new(HashMap::<String, HashSet<CacheKey>>::new()));
+        let listener_index = Arc::clone(&qname_index);
         let cache = Cache::builder()
             .max_capacity(capacity as u64)
             .time_to_live(Duration::from_secs(max_ttl_secs))
             .weigher(|_key: &CacheKey, value: &CachedResponse| {
                 u32::try_from(value.data.len()).unwrap_or(u32::MAX)
             })
+            .eviction_listener(move |key, _value, cause| {
+                if cause.was_evicted() {
+                    let mut index = listener_index.write();
+                    if let Some(keys) = index.get_mut(&key.qname) {
+                        keys.remove(key.as_ref());
+                        if keys.is_empty() {
+                            index.remove(&key.qname);
+                        }
+                    }
+                }
+            })
             .build();
+        (cache, qname_index)
+    }
+
+    pub fn new(capacity: usize, max_ttl_secs: u64, min_ttl_secs: u64) -> Self {
+        let (cache, qname_index) = Self::build_cache(capacity, max_ttl_secs);
 
         Self {
             inner: Arc::new(InnerDnsCache {
                 cache,
-                qname_index: RwLock::new(HashMap::new()),
+                qname_index,
                 max_ttl: Duration::from_secs(max_ttl_secs),
                 min_ttl: Duration::from_secs(min_ttl_secs),
                 max_entry_size: 65535,
@@ -366,18 +387,12 @@ impl DnsCache {
         enable_source_validation: bool,
         enable_fingerprinting: bool,
     ) -> Self {
-        let cache = Cache::builder()
-            .max_capacity(capacity as u64)
-            .time_to_live(Duration::from_secs(max_ttl_secs))
-            .weigher(|_key: &CacheKey, value: &CachedResponse| {
-                u32::try_from(value.data.len()).unwrap_or(u32::MAX)
-            })
-            .build();
+        let (cache, qname_index) = Self::build_cache(capacity, max_ttl_secs);
 
         Self {
             inner: Arc::new(InnerDnsCache {
                 cache,
-                qname_index: RwLock::new(HashMap::new()),
+                qname_index,
                 max_ttl: Duration::from_secs(max_ttl_secs),
                 min_ttl: Duration::from_secs(min_ttl_secs),
                 max_entry_size,
@@ -405,18 +420,12 @@ impl DnsCache {
         serve_stale_max_stale_secs: u64,
         serve_stale_max_stale_count: u64,
     ) -> Self {
-        let cache = Cache::builder()
-            .max_capacity(capacity as u64)
-            .time_to_live(Duration::from_secs(max_ttl_secs))
-            .weigher(|_key: &CacheKey, value: &CachedResponse| {
-                u32::try_from(value.data.len()).unwrap_or(u32::MAX)
-            })
-            .build();
+        let (cache, qname_index) = Self::build_cache(capacity, max_ttl_secs);
 
         Self {
             inner: Arc::new(InnerDnsCache {
                 cache,
-                qname_index: RwLock::new(HashMap::new()),
+                qname_index,
                 max_ttl: Duration::from_secs(max_ttl_secs),
                 min_ttl: Duration::from_secs(min_ttl_secs),
                 max_entry_size: 65535,
@@ -1152,12 +1161,14 @@ pub(crate) fn detect_dnssec_signed(data: &[u8]) -> bool {
 
     let mut offset = 12;
     for _ in 0..qdcount {
-        if let Some(pos) = data[offset..].iter().position(|&b| b == 0) {
-            offset += pos + 5;
-            if offset > data.len() {
-                return false;
-            }
-        } else {
+        let Some(name_end) = skip_name(data, offset) else {
+            return false;
+        };
+        let Some(question_end) = name_end.checked_add(4) else {
+            return false;
+        };
+        offset = question_end;
+        if offset > data.len() {
             return false;
         }
     }
@@ -1804,6 +1815,18 @@ mod dnssec_detection_tests {
             0x00, 0x00, 0x00, 0x22,
         ];
         assert!(!detect_dnssec_signed(&data));
+    }
+
+    #[test]
+    fn test_detect_dnssec_signed_with_compressed_question_name() {
+        let data = vec![
+            0x00, 0x00, 0x81, 0x80, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
+            // The pointer is the complete compressed QNAME.
+            0xC0, 0x0C, 0x00, 0x01, 0x00, 0x01,
+            // RRSIG answer with an empty placeholder RDATA.
+            0x00, 0x00, 0x2E, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
+        assert!(detect_dnssec_signed(&data));
     }
 
     #[test]

@@ -469,8 +469,12 @@ impl DnsSecKeyManager {
                 .map_err(|e| format!("Failed to write private key: {}", e))?;
         }
         #[cfg(not(unix))]
-        std::fs::write(&priv_file, &private_key)
-            .map_err(|e| format!("Failed to write private key: {}", e))?;
+        {
+            std::fs::write(&priv_file, &private_key)
+                .map_err(|e| format!("Failed to write private key: {}", e))?;
+            synvoid_platform::fs::set_file_permissions(&priv_file, false)
+                .map_err(|e| format!("Failed to secure private key: {}", e))?;
+        }
 
         let zone_key = ZoneSigningKey {
             key_id: key_id.to_string(),

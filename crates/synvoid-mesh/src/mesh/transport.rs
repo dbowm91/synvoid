@@ -1655,7 +1655,8 @@ impl MeshTransport {
                 .org_key_manager
                 .set_raft_client(raft_client.clone());
 
-            raft_client.start_reconciliation_loop();
+            raft_client
+                .start_reconciliation_loop(transport_arc.session_reaper_shutdown.subscribe());
         }
 
         let wasm_dist_manager = Arc::new(crate::wasm_dist::WasmDistManager::new());
@@ -4910,7 +4911,7 @@ impl MeshTransport {
                 if let Some(ref pk) = peer_public_key {
                     use base64::Engine;
                     if let Ok(pk_bytes) =
-                        base64::engine::general_purpose::STANDARD.decode(pk.as_str())
+                        base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(pk.as_str())
                     {
                         let expected_node_id =
                             crate::dht::routing::node_id::NodeId::from_public_key(&pk_bytes);

@@ -2930,10 +2930,12 @@ impl MeshTransport {
                                 global_node_signature: signature.clone(),
                                 origin_signature: origin_signature.clone(),
                                 origin_pubkey: {
-                                    use base64::{engine::general_purpose::STANDARD, Engine};
+                                    use base64::{
+                                        engine::general_purpose::URL_SAFE_NO_PAD, Engine,
+                                    };
                                     hex::decode(&origin_pk_str)
                                         .ok()
-                                        .map(|bytes| STANDARD.encode(&bytes))
+                                        .map(|bytes| URL_SAFE_NO_PAD.encode(&bytes))
                                 },
                                 registered_at: synvoid_utils::safe_unix_timestamp(),
                                 expires_at: synvoid_utils::safe_unix_timestamp() + 300,
@@ -3451,38 +3453,40 @@ impl MeshTransport {
             timestamp
         );
 
-        let verified =
-            match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, public_key) {
-                Ok(pubkey_bytes) => {
-                    let result = synvoid_integrity::signing::verify_ed25519_raw(
-                        &pubkey_bytes,
-                        &sign_data,
-                        signature,
+        let verified = match base64::Engine::decode(
+            &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+            public_key,
+        ) {
+            Ok(pubkey_bytes) => {
+                let result = synvoid_integrity::signing::verify_ed25519_raw(
+                    &pubkey_bytes,
+                    &sign_data,
+                    signature,
+                );
+                if result {
+                    tracing::info!(
+                        "Site config sync signature verified for site {} from {}",
+                        site_id,
+                        source_node_id
                     );
-                    if result {
-                        tracing::info!(
-                            "Site config sync signature verified for site {} from {}",
-                            site_id,
-                            source_node_id
-                        );
-                    } else {
-                        tracing::warn!(
-                            "Site config sync signature verification FAILED for site {} from {}",
-                            site_id,
-                            source_node_id
-                        );
-                    }
-                    result
-                }
-                Err(e) => {
+                } else {
                     tracing::warn!(
-                        "Failed to decode public key for site config sync from {}: {}",
-                        source_node_id,
-                        e
+                        "Site config sync signature verification FAILED for site {} from {}",
+                        site_id,
+                        source_node_id
                     );
-                    false
                 }
-            };
+                result
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to decode public key for site config sync from {}: {}",
+                    source_node_id,
+                    e
+                );
+                false
+            }
+        };
 
         if !verified {
             tracing::warn!(

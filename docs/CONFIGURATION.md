@@ -329,11 +329,11 @@ tls_passthrough_enforce_waf = true
 
 | Setting | Description |
 |---------|-------------|
-| `tls_passthrough` | Forward encrypted traffic directly to origin (bypasses WAF L7 inspection) |
-| `tls_passthrough_enforce_waf` | Apply WAF attack detection rules to passthrough traffic |
+| `tls_passthrough` | Forward encrypted traffic directly to origin |
+| `tls_passthrough_enforce_waf` | Apply WAF attack detection rules to passthrough traffic (default unless explicitly false) |
 | `tls_passthrough_warn_only` | Log WAF violations but don't block (for monitoring) |
 
-**Warning:** When `tls_passthrough = true` without `tls_passthrough_enforce_waf`, L7 attacks (SQLi, XSS, etc.) in encrypted traffic will not be detected. Only layer 3/4 protections (IP rate limiting, connection limits) apply.
+**Warning:** Set `tls_passthrough_enforce_waf = false` only when deliberately accepting the loss of L7 inspection. Only layer 3/4 protections (IP rate limiting, connection limits) apply to that bypass.
 
 ### Strict TLS Passthrough Policy
 
@@ -347,13 +347,13 @@ strict_tls_passthrough_policy = false  # Default: false (warn-only)
 | Value | Behavior |
 |-------|----------|
 | `false` (default) | Logs warnings and emits metrics for unprotected passthrough sites, but does not fail startup. Safe for existing deployments. |
-| `true` | Returns an error and **fails worker validation** when any site has TLS passthrough enabled without WAF enforcement (`tls_passthrough_enforce_waf = true`) **and** without meaningful rate limiting. |
+| `true` | Returns an error and **fails worker validation** when any site explicitly disables WAF enforcement (`tls_passthrough_enforce_waf = false`) **and** lacks meaningful rate limiting. |
 
 **What counts as "meaningful rate limiting":** A site passes the rate-limit check if any of the following are configured: `ratelimit.mode`, IP-level limits (`ip.per_second`, `ip.per_minute`, etc.), global limits (`global.per_second`, `global.max_connections`), or endpoint-level limits.
 
 **Allowed configurations under strict mode:**
 
-- Passthrough with `tls_passthrough_enforce_waf = true` — WAF inspects L7 traffic despite passthrough.
+- Passthrough with the default or `tls_passthrough_enforce_waf = true` — WAF inspects L7 traffic despite passthrough.
 - Passthrough bypass with configured rate limiting — L7 inspection is bypassed, but the site is still protected by layer 3/4 rate limiting. A warning is still logged that L7 WAF inspection is bypassed.
 
 **Site-level remediation (option A — enable WAF enforcement):**
@@ -969,7 +969,7 @@ per_minute = 100
 
 | Mistake | Problem | Solution |
 |---------|---------|----------|
-| TLS Passthrough bypassing WAF | When `tls_passthrough = true`, all L7 WAF inspection (SQLi, XSS, etc.) is bypassed | Use `tls_passthrough_enforce_waf = true` to still apply WAF rules |
+| TLS Passthrough bypassing WAF | When `tls_passthrough = true`, all L7 WAF inspection (SQLi, XSS, etc.) is bypassed unless enforcement is enabled | Keep `tls_passthrough_enforce_waf` unset or set it to `true`; set it to `false` only when bypass is intentional |
 | Port conflicts | Default ports 8080, 8081, 9090 may be in use | Check ports are available before starting SynVoid |
 | Trusted proxies misconfiguration | X-Forwarded-For header not working | Ensure client IP is in `trusted_proxies` list |
 | Weak admin token | Using default or short tokens exposes admin API | Use a strong, random token in production |

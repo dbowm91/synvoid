@@ -106,7 +106,10 @@ impl RaftAwareClient {
         *self.raft_instance.write().await = Some(instance);
     }
 
-    pub fn start_reconciliation_loop(self: Arc<Self>) {
+    pub fn start_reconciliation_loop(
+        self: Arc<Self>,
+        mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
+    ) {
         if self.config.role.is_global() {
             return;
         }
@@ -114,9 +117,17 @@ impl RaftAwareClient {
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(60));
             loop {
-                interval.tick().await;
-                if let Err(e) = self.reconcile_with_leader().await {
-                    tracing::debug!("Raft reconciliation skipped or failed: {:?}", e);
+                tokio::select! {
+                    _ = interval.tick() => {
+                        if let Err(e) = self.reconcile_with_leader().await {
+                            tracing::debug!("Raft reconciliation skipped or failed: {:?}", e);
+                        }
+                    }
+                    changed = shutdown_rx.changed() => {
+                        if changed.is_err() || *shutdown_rx.borrow() {
+                            break;
+                        }
+                    }
                 }
             }
         });

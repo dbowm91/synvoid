@@ -22,6 +22,7 @@ synvoid-config = { path = "../synvoid-config", features = ["mesh"] , version = "
 synvoid-utils = { path = "../synvoid-utils" , version = "0.1" }
 synvoid-integrity = { path = "../synvoid-integrity" , version = "0.1" }
 synvoid-geoip = { path = "../synvoid-geoip" , version = "0.1" }
+synvoid-platform = { path = "../synvoid-platform" , version = "0.1" }
 synvoid-tls = { path = "../synvoid-tls" , version = "0.1" }
 synvoid-tunnel = { path = "../synvoid-tunnel" , version = "0.1" }
 synvoid-proxy = { path = "../synvoid-proxy" , version = "0.1" }

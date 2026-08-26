@@ -4,7 +4,6 @@ use std::sync::Arc;
 use bytes::Bytes;
 use http::Response;
 use http_body_util::combinators::BoxBody;
-use http_body_util::BodyExt;
 
 use synvoid_config::MainConfig;
 use synvoid_http_client::{
@@ -107,7 +106,7 @@ pub async fn handle_streaming_waf_upstream_pass(
                 );
 
                 if let Some(max_size) = upstream_target.max_response_size {
-                    if body_len > 0 && body_len as usize > max_size {
+                    if body_len > 0 && body_len > max_size as u64 {
                         return Ok(build_response_with_alt_svc(
                             502,
                             "Bad Gateway".to_string(),
@@ -119,14 +118,9 @@ pub async fn handle_streaming_waf_upstream_pass(
                 }
 
                 builder
-                    .body(
-                        upstream_body
-                            .map_err(|e| {
-                                tracing::warn!("Upstream body stream error: {}", e);
-                                unreachable!()
-                            })
-                            .boxed(),
-                    )
+                    .body(crate::response_helpers::swallow_incoming_body_errors(
+                        upstream_body,
+                    ))
                     .unwrap_or_else(|_| {
                         build_response_with_alt_svc(
                             500,

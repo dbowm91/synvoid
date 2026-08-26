@@ -2309,7 +2309,7 @@ impl YaraRulesManager {
                     {
                         if let Some(ref signer) = self.signer {
                             let sign_content = format!("{}:{}", version, rules);
-                            let pk_bytes = base64::engine::general_purpose::STANDARD
+                            let pk_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
                                 .decode(signer_public_key.as_deref().unwrap_or(""))
                                 .unwrap_or_default();
                             if !signer.verify(sign_content.as_bytes(), signature, &pk_bytes) {

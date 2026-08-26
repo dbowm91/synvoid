@@ -86,7 +86,7 @@ pub async fn handle_streaming_upstream_response(
             if should_zero_copy {
                 if body_len > 0
                     && max_response_size
-                        .map(|max_size| body_len as usize > max_size)
+                        .map(|max_size| body_len > max_size as u64)
                         .unwrap_or(false)
                 {
                     return Ok(build_response_with_alt_svc(
@@ -99,14 +99,9 @@ pub async fn handle_streaming_upstream_response(
                 }
 
                 return Ok(builder
-                    .body(
-                        upstream_body
-                            .map_err(|e| {
-                                tracing::warn!("Upstream body stream error: {}", e);
-                                unreachable!()
-                            })
-                            .boxed(),
-                    )
+                    .body(crate::response_helpers::swallow_incoming_body_errors(
+                        upstream_body,
+                    ))
                     .unwrap_or_else(|_| {
                         build_response_with_alt_svc(
                             500,

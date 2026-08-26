@@ -157,18 +157,23 @@ impl NodeId {
 
     pub fn generate_random_in_bucket(bucket_index: usize, local: &NodeId) -> NodeId {
         let prefix_len = 255usize.saturating_sub(bucket_index);
-        let mut id = local.0;
-
-        if prefix_len < 256 {
-            let divergence_bit = 255usize - prefix_len;
-            let byte_idx = divergence_bit / 8;
-            let bit_idx = 7 - (divergence_bit % 8);
-            id[byte_idx] ^= 1 << bit_idx;
-        }
-
         use rand::RngCore;
         let mut rng = rand::rng();
+        let mut id = [0u8; 32];
         rng.fill_bytes(&mut id);
+
+        let divergence_bit = 255usize - prefix_len;
+        for bit in 0..divergence_bit {
+            let byte_idx = bit / 8;
+            let bit_idx = 7 - (bit % 8);
+            let mask = 1 << bit_idx;
+            id[byte_idx] = (id[byte_idx] & !mask) | (local.0[byte_idx] & mask);
+        }
+
+        let byte_idx = divergence_bit / 8;
+        let bit_idx = 7 - (divergence_bit % 8);
+        let mask = 1 << bit_idx;
+        id[byte_idx] = (id[byte_idx] & !mask) | ((!local.0[byte_idx]) & mask);
 
         NodeId(id)
     }
@@ -301,5 +306,22 @@ mod tests {
     fn test_node_id_from_hex_invalid() {
         assert!(NodeId::from_hex("invalid").is_none());
         assert!(NodeId::from_hex("010203").is_none());
+    }
+
+    #[test]
+    fn generated_id_stays_in_requested_bucket() {
+        let local = NodeId([0xAA; NODE_ID_LEN]);
+        for bucket_index in [0, 1, 7, 8, 127, 255] {
+            let generated = NodeId::generate_random_in_bucket(bucket_index, &local);
+            let divergence_bit = bucket_index;
+            for bit in 0..divergence_bit {
+                let byte_idx = bit / 8;
+                let mask = 1 << (7 - bit % 8);
+                assert_eq!(generated.0[byte_idx] & mask, local.0[byte_idx] & mask);
+            }
+            let byte_idx = divergence_bit / 8;
+            let mask = 1 << (7 - divergence_bit % 8);
+            assert_ne!(generated.0[byte_idx] & mask, local.0[byte_idx] & mask);
+        }
     }
 }

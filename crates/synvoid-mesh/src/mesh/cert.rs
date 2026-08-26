@@ -562,7 +562,7 @@ impl MeshCertManager {
 
     pub fn add_seed_public_key(&self, node_id: &str, public_key: Option<String>) {
         if let Some(key) = public_key {
-            if let Ok(key_bytes) = base64::engine::general_purpose::STANDARD.decode(&key) {
+            if let Ok(key_bytes) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(&key) {
                 let mut keys = self.global_node_public_keys.write();
                 keys.insert(node_id.to_string(), key_bytes);
                 tracing::debug!("Added seed public key for {}", node_id);
@@ -1222,8 +1222,12 @@ fn generate_mesh_cert(
             .map_err(|e| MeshCertError::IoError(key_path.display().to_string(), e))?;
     }
     #[cfg(not(unix))]
-    std::fs::write(&key_path, certified_key.key_pair.serialize_pem())
-        .map_err(|e| MeshCertError::IoError(key_path.display().to_string(), e))?;
+    {
+        std::fs::write(&key_path, certified_key.key_pair.serialize_pem())
+            .map_err(|e| MeshCertError::IoError(key_path.display().to_string(), e))?;
+        synvoid_platform::fs::set_file_permissions(&key_path, false)
+            .map_err(|e| MeshCertError::IoError(key_path.display().to_string(), e))?;
+    }
 
     tracing::info!(
         "Generated {} certificate for {} in {:?}",

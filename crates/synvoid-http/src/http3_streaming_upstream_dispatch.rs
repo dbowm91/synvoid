@@ -229,7 +229,7 @@ where
                 .unwrap_or(0);
 
             if max_response_size
-                .map(|max| body_len > 0 && body_len as usize > max)
+                .map(|max| body_len > 0 && body_len > max as u64)
                 .unwrap_or(false)
             {
                 let response = build_plain_error_response(StatusCode::BAD_GATEWAY, "text/plain");

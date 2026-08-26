@@ -726,6 +726,10 @@ impl StaticFileHandler {
     }
 
     fn parse_range(header: &str, file_size: u64) -> Option<(u64, u64)> {
+        if file_size == 0 {
+            return None;
+        }
+
         let prefix = "bytes=";
         if !header.starts_with(prefix) {
             return None;
@@ -740,12 +744,16 @@ impl StaticFileHandler {
             if parts[1].is_empty() {
                 return None;
             }
-            file_size.saturating_sub(parts[1].parse().ok()?) - 1
+            let suffix_len: u64 = parts[1].parse().ok()?;
+            if suffix_len == 0 {
+                return None;
+            }
+            file_size.saturating_sub(suffix_len).saturating_sub(1)
         } else {
             parts[0].parse().ok()?
         };
         let end = if parts[1].is_empty() {
-            file_size - 1
+            file_size.saturating_sub(1)
         } else {
             parts[1].parse().ok()?
         };
@@ -912,6 +920,18 @@ impl StaticFileHandler {
                     .unwrap()
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::StaticFileHandler;
+
+    #[test]
+    fn empty_files_do_not_panic_when_parsing_ranges() {
+        assert_eq!(StaticFileHandler::parse_range("bytes=-0", 0), None);
+        assert_eq!(StaticFileHandler::parse_range("bytes=0-", 0), None);
+        assert_eq!(StaticFileHandler::parse_range("bytes=-0", 10), None);
     }
 }
 

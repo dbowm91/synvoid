@@ -2692,7 +2692,7 @@ impl BlockStore {
             // Check expiry.
             if record.ban_expire_seconds > 0 {
                 let now = synvoid_utils::safe_unix_timestamp();
-                if now > record.blocked_at + record.ban_expire_seconds {
+                if now > record.blocked_at.saturating_add(record.ban_expire_seconds) {
                     result.expired_records_ignored += 1;
                     continue;
                 }
@@ -2755,7 +2755,7 @@ impl BlockStore {
             // Check expiry.
             if record.ban_expire_seconds > 0 {
                 let now = synvoid_utils::safe_unix_timestamp();
-                if now > record.blocked_at + record.ban_expire_seconds {
+                if now > record.blocked_at.saturating_add(record.ban_expire_seconds) {
                     result.expired_records_ignored += 1;
                     continue;
                 }

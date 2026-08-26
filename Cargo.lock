@@ -8255,6 +8255,7 @@ dependencies = [
  "synvoid-core",
  "synvoid-geoip",
  "synvoid-mesh",
+ "synvoid-platform",
  "synvoid-tls",
  "synvoid-utils",
  "tempfile",
@@ -8555,6 +8556,7 @@ dependencies = [
  "synvoid-core",
  "synvoid-geoip",
  "synvoid-integrity",
+ "synvoid-platform",
  "synvoid-proxy",
  "synvoid-proxy-cache",
  "synvoid-serverless",
@@ -8610,6 +8612,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

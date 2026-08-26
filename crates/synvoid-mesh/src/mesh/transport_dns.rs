@@ -441,7 +441,7 @@ impl MeshTransport {
                 match encoder.finish() {
                     Ok(compressed) => {
                         let encoded = base64::Engine::encode(
-                            &base64::engine::general_purpose::STANDARD,
+                            &base64::engine::general_purpose::URL_SAFE_NO_PAD,
                             &compressed,
                         );
                         tracing::debug!(
@@ -516,7 +516,10 @@ impl MeshTransport {
             zone_origin, serial, complete, previous_serial, compressed);
 
         let final_json = if compressed {
-            match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, records_json) {
+            match base64::Engine::decode(
+                &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+                records_json,
+            ) {
                 Ok(compressed_data) => {
                     use std::io::Read;
                     let mut decoder = ReadZlibDecoder::new(compressed_data.as_slice());
@@ -549,9 +552,10 @@ impl MeshTransport {
         let verified = if !origin_signature.is_empty() && origin_pubkey.is_some() {
             let sign_data = format!("{}|{}|{}", zone_origin, final_json, serial);
             if let Some(pubkey_str) = origin_pubkey {
-                if let Ok(pubkey_bytes) =
-                    base64::Engine::decode(&base64::engine::general_purpose::STANDARD, pubkey_str)
-                {
+                if let Ok(pubkey_bytes) = base64::Engine::decode(
+                    &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+                    pubkey_str,
+                ) {
                     synvoid_integrity::signing::verify_ed25519_raw(
                         &pubkey_bytes,
                         &sign_data,

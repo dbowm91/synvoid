@@ -76,7 +76,7 @@ pub fn site_has_rate_limit(site: &SiteConfig) -> bool {
 /// # Classification rules
 ///
 /// - `passthrough_sites`: all sites with `tls_passthrough == Some(true)`
-/// - `passthrough_with_waf`: subset that also have `tls_passthrough_enforce_waf == Some(true)`
+/// - `passthrough_with_waf`: passthrough sites unless `tls_passthrough_enforce_waf == Some(false)`
 /// - `bypass_sites`: passthrough sites **without** WAF enforcement (subset of `passthrough_sites` \ `passthrough_with_waf`)
 /// - `bypass_sites_without_rate_limit`: bypass sites where `site_has_rate_limit()` returns `false`
 pub fn classify_passthrough_sites(
@@ -92,7 +92,7 @@ pub fn classify_passthrough_sites(
         .iter()
         .filter(|(_, site)| {
             site.proxy.tls_passthrough == Some(true)
-                && site.proxy.tls_passthrough_enforce_waf == Some(true)
+                && site.proxy.tls_passthrough_enforce_waf != Some(false)
         })
         .map(|(id, _)| id.clone())
         .collect();
@@ -183,7 +183,7 @@ pub async fn validate_tls_passthrough_waf_policy(
 
     if !evaluation.classification.bypass_sites.is_empty() {
         tracing::error!(
-            "TLS passthrough is enabled for sites: {:?}. WAF inspection is BYPASSED for these sites - L7 attacks will not be blocked. Set tls_passthrough_enforce_waf = true to enable WAF inspection for passthrough traffic.",
+            "TLS passthrough is enabled for sites: {:?} with WAF inspection explicitly disabled - L7 attacks will not be blocked. Remove tls_passthrough_enforce_waf or set it to true to enable WAF inspection for passthrough traffic.",
             evaluation.classification.bypass_sites
         );
         crate::metrics::record_tls_passthrough_waf_bypassed();
@@ -390,6 +390,14 @@ mod tests {
         assert_eq!(result.passthrough_with_waf, vec!["site-a"]);
         assert!(result.bypass_sites.is_empty());
         assert!(result.bypass_sites_without_rate_limit.is_empty());
+    }
+
+    #[test]
+    fn passthrough_enforces_waf_by_default() {
+        let sites = site_map(vec![("site-default", make_site(Some(true), None))]);
+        let result = classify_passthrough_sites(&sites);
+        assert_eq!(result.passthrough_with_waf, vec!["site-default"]);
+        assert!(result.bypass_sites.is_empty());
     }
 
     #[test]

@@ -649,7 +649,7 @@ impl UdpRateLimiter {
             Some(entry) => {
                 let window_start = entry.window_start.load(Ordering::Relaxed);
 
-                if now - window_start >= window_secs {
+                if now < window_start || now.saturating_sub(window_start) >= window_secs {
                     entry.window_start.store(now, Ordering::Relaxed);
                     entry.count.store(1, Ordering::Relaxed);
                     return true;
@@ -680,7 +680,7 @@ impl UdpRateLimiter {
             let before = shard.len() as u64;
             shard.retain(|_, entry| {
                 let window_start = entry.window_start.load(Ordering::Relaxed);
-                now - window_start < max_age_secs
+                now >= window_start && now.saturating_sub(window_start) < max_age_secs
             });
             total_removed += before - shard.len() as u64;
         }

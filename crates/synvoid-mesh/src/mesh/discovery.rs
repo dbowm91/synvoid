@@ -515,7 +515,7 @@ impl MeshDiscovery {
 
                 if let Some(ref pk) = public_key {
                     use base64::Engine;
-                    if let Ok(pk_bytes) = base64::engine::general_purpose::STANDARD.decode(pk.as_str()) {
+                    if let Ok(pk_bytes) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(pk.as_str()) {
                         let expected_node_id = crate::dht::routing::node_id::NodeId::from_public_key(&pk_bytes);
                         let claimed_node_id = crate::dht::routing::node_id::NodeId::from_node_id_string(node_id.as_str());
                         if expected_node_id != claimed_node_id {

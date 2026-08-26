@@ -11,9 +11,6 @@ impl MeshTransport {
         if let Some(expected_key) = keys.get(node_id) {
             return bool::from(expected_key.as_slice().ct_eq(token.as_bytes()));
         }
-        if keys.is_empty() {
-            return true;
-        }
         false
     }
 

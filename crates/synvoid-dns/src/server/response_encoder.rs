@@ -148,6 +148,9 @@ pub(super) fn encode_rr(
             }
             let mut encoded = Vec::new();
             for part in &parts {
+                if part.len() > 63 {
+                    return Err("DNS label exceeds the 63-byte limit".to_string());
+                }
                 encoded.push(part.len() as u8);
                 encoded.extend_from_slice(part.as_bytes());
             }
@@ -573,6 +576,12 @@ mod tests {
         assert!(rdlength > 0, "CNAME RDLENGTH must be > 0");
         let rdata = &encoded.bytes[rdata_start..rdata_start + rdlength];
         assert_eq!(rdata.last(), Some(&0u8), "CNAME must end with root label");
+    }
+
+    #[test]
+    fn test_encode_rr_rejects_oversized_cname_label() {
+        let record = make_record("alias.example.com", RecordType::CNAME, &"a".repeat(64), 600);
+        assert!(encode_rr(&record, None).is_err());
     }
 
     #[test]

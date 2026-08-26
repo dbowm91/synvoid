@@ -659,14 +659,25 @@ impl OrgKeyManager {
         Ok(())
     }
 
-    pub fn start_background_tasks(self: &Arc<Self>) {
+    pub fn start_background_tasks(
+        self: &Arc<Self>,
+        mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
+    ) {
         let mgr = self.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600)); // Every hour
             loop {
-                interval.tick().await;
-                let _ = mgr.sync_from_dht().await;
-                mgr.perform_renewal_checks().await;
+                tokio::select! {
+                    _ = interval.tick() => {
+                        let _ = mgr.sync_from_dht().await;
+                        mgr.perform_renewal_checks().await;
+                    }
+                    changed = shutdown_rx.changed() => {
+                        if changed.is_err() || *shutdown_rx.borrow() {
+                            break;
+                        }
+                    }
+                }
             }
         });
     }

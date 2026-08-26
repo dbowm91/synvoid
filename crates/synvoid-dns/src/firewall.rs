@@ -249,7 +249,7 @@ impl DnsFirewall {
 
     fn cleanup_expired_rules(&mut self) {
         let now = current_timestamp_secs();
-        if now - self.last_cleanup < 60 {
+        if now.saturating_sub(self.last_cleanup) < 60 {
             return;
         }
 

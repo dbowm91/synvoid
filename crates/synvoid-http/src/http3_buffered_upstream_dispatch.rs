@@ -103,7 +103,7 @@ where
 
             let size_exceeded = upstream_target
                 .max_response_size
-                .map(|max| body_len > 0 && body_len as usize > max)
+                .map(|max| body_len > 0 && body_len > max as u64)
                 .unwrap_or(false);
 
             if size_exceeded {

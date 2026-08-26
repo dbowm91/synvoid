@@ -253,6 +253,9 @@ pub fn set_file_permissions(path: &Path, read_only: bool) -> io::Result<()> {
         let mut perms = std::fs::metadata(path)?.permissions();
         perms.set_readonly(read_only);
         std::fs::set_permissions(path, perms)?;
+        if !read_only {
+            windows_security::set_file_user_only(path)?;
+        }
     }
 
     #[cfg(not(any(unix, windows)))]
@@ -261,6 +264,118 @@ pub fn set_file_permissions(path: &Path, read_only: bool) -> io::Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(windows)]
+mod windows_security {
+    use std::io;
+    use std::os::windows::ffi::OsStrExt;
+
+    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError};
+    use windows_sys::Win32::Security::Authorization::{SetNamedSecurityInfoW, SE_FILE_OBJECT};
+    use windows_sys::Win32::Security::{
+        AddAccessAllowedAce, GetLengthSid, GetTokenInformation, InitializeAcl, TokenUser, ACL,
+        ACL_REVISION, DACL_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION, TOKEN_QUERY,
+        TOKEN_USER,
+    };
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    const FILE_ALL_ACCESS: u32 = 0x1_0000 | 0x1FF;
+
+    pub fn set_file_user_only(path: &std::path::Path) -> io::Result<()> {
+        let mut token = std::ptr::null_mut();
+        unsafe {
+            if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
+                return Err(io::Error::last_os_error());
+            }
+        }
+
+        let result = (|| {
+            let mut token_size = 0;
+            unsafe {
+                GetTokenInformation(token, TokenUser, std::ptr::null_mut(), 0, &mut token_size);
+            }
+            if token_size == 0 {
+                return Err(io::Error::from_raw_os_error(unsafe {
+                    GetLastError() as i32
+                }));
+            }
+
+            let mut token_storage = vec![0u64; (token_size as usize).div_ceil(8)];
+            unsafe {
+                if GetTokenInformation(
+                    token,
+                    TokenUser,
+                    token_storage.as_mut_ptr().cast(),
+                    token_size,
+                    &mut token_size,
+                ) == 0
+                {
+                    return Err(io::Error::last_os_error());
+                }
+            }
+
+            let token_user = unsafe { &*token_storage.as_ptr().cast::<TOKEN_USER>() };
+            if token_user.User.Sid.is_null() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "missing user SID",
+                ));
+            }
+            let sid_len = unsafe { GetLengthSid(token_user.User.Sid) } as usize;
+            let mut sid = vec![0u8; sid_len];
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    token_user.User.Sid.cast::<u8>(),
+                    sid.as_mut_ptr(),
+                    sid_len,
+                );
+            }
+
+            let acl_size = std::mem::size_of::<ACL>()
+                + std::mem::size_of::<windows_sys::Win32::Security::ACCESS_ALLOWED_ACE>()
+                - std::mem::size_of::<u32>()
+                + sid_len;
+            let mut acl_storage = vec![0u32; acl_size.div_ceil(4)];
+            let acl = acl_storage.as_mut_ptr().cast::<ACL>();
+            unsafe {
+                if InitializeAcl(acl, acl_size as u32, ACL_REVISION) == 0
+                    || AddAccessAllowedAce(
+                        acl,
+                        ACL_REVISION,
+                        FILE_ALL_ACCESS,
+                        sid.as_mut_ptr().cast(),
+                    ) == 0
+                {
+                    return Err(io::Error::last_os_error());
+                }
+            }
+
+            let path_wide: Vec<u16> = path
+                .as_os_str()
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect();
+            let result = unsafe {
+                SetNamedSecurityInfoW(
+                    path_wide.as_ptr(),
+                    SE_FILE_OBJECT,
+                    DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    acl.cast(),
+                    std::ptr::null(),
+                )
+            };
+            if result != 0 {
+                return Err(io::Error::from_raw_os_error(result as i32));
+            }
+            Ok(())
+        })();
+
+        unsafe { CloseHandle(token) };
+        result
+    }
 }
 
 pub fn set_dir_permissions(path: &Path, private: bool) -> io::Result<()> {

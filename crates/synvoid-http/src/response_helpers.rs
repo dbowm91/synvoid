@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use futures::StreamExt;
 use http::Response;
 use http_body_util::combinators::BoxBody;
 use http_body_util::BodyExt;
@@ -12,6 +13,30 @@ use crate::headers::{
 };
 
 pub type BoxBodyResponse = Response<BoxBody<Bytes, Infallible>>;
+
+/// Convert a body to an infallible body without panicking when the upstream
+/// connection fails after the response has started.
+pub fn swallow_body_errors<B>(body: B) -> BoxBody<Bytes, Infallible>
+where
+    B: http_body::Body<Data = Bytes> + Send + Sync + Unpin + 'static,
+    B::Error: std::fmt::Debug + Send + Sync + 'static,
+{
+    let stream = futures::stream::unfold(body.into_data_stream(), |mut body| async move {
+        match body.next().await {
+            Some(Ok(bytes)) => Some((Ok(http_body::Frame::data(bytes)), body)),
+            Some(Err(error)) => {
+                tracing::warn!("Upstream body stream error: {:?}", error);
+                None
+            }
+            None => None,
+        }
+    });
+    http_body_util::BodyExt::boxed(http_body_util::StreamBody::new(stream))
+}
+
+pub fn swallow_incoming_body_errors(body: hyper::body::Incoming) -> BoxBody<Bytes, Infallible> {
+    swallow_body_errors(body)
+}
 
 pub fn apply_security_headers(
     builder: http::response::Builder,

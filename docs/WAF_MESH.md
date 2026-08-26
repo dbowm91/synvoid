@@ -298,7 +298,7 @@ enable_post_quantum = true
 
 ### TLS Passthrough and WAF Enforcement
 
-By default, enabling `tls_passthrough = true` on a site bypasses all L7 WAF inspection (SQLi, XSS, RCE, etc.) since the WAF cannot decrypt the traffic. This is a security trade-off: encrypted traffic is forwarded directly to the origin without inspection.
+By default, enabling `tls_passthrough = true` keeps L7 WAF inspection enabled. Set `tls_passthrough_enforce_waf = false` only for an intentional bypass; encrypted traffic is then forwarded directly to the origin without inspection.
 
 To force WAF L7 inspection even with TLS passthrough enabled, use `tls_passthrough_enforce_waf`:
 
@@ -314,7 +314,7 @@ tls_passthrough_enforce_waf = true
 
 When enabled, the WAF will still apply layer 7 attack detection rules to passthrough traffic. Note that this requires additional configuration to terminate TLS at the WAF for inspection, then re-encrypt to the origin.
 
-**Warning**: TLS passthrough without `tls_passthrough_enforce_waf` means attacks embedded in encrypted traffic will not be detected by the WAF. Only layer 3/4 protections (IP rate limiting, connection limits) apply.
+**Warning**: TLS passthrough with `tls_passthrough_enforce_waf = false` means attacks embedded in encrypted traffic will not be detected by the WAF. Only layer 3/4 protections (IP rate limiting, connection limits) apply.
 
 To enforce that all TLS passthrough sites have either WAF enforcement or rate limiting configured, enable the strict policy:
 
@@ -323,7 +323,7 @@ To enforce that all TLS passthrough sites have either WAF enforcement or rate li
 strict_tls_passthrough_policy = true  # Default: false
 ```
 
-When enabled, `validate_tls_passthrough_waf_policy()` returns an error for any TLS passthrough site that lacks both `tls_passthrough_enforce_waf` and rate limit configuration, preventing silently unprotected sites in production.
+When enabled, `validate_tls_passthrough_waf_policy()` returns an error for any TLS passthrough site that explicitly disables WAF enforcement and lacks rate limit configuration, preventing silently unprotected sites in production.
 
 ### Authentication
 

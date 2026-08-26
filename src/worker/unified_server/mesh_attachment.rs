@@ -16,7 +16,9 @@ use super::startup_plan::{MeshStartupState, WorkerReadinessPlan};
 #[cfg(feature = "mesh")]
 use super::state::UnifiedServerWorkerState;
 #[cfg(feature = "mesh")]
-use super::{MeshGenerationSupport, SupportStopContext};
+use super::MeshGenerationSupport;
+#[cfg(all(feature = "mesh", feature = "dns"))]
+use super::SupportStopContext;
 #[cfg(feature = "mesh")]
 use synvoid_config::ConfigManager;
 
@@ -322,7 +324,7 @@ fn spawn_optional_mesh_startup(
 
 #[cfg(feature = "mesh")]
 async fn await_optional_mesh_startup(
-    state: &UnifiedServerWorkerState,
+    _state: &UnifiedServerWorkerState,
     mesh_status: &Arc<tokio::sync::RwLock<crate::worker::mesh_supervision::WorkerMeshStatus>>,
     mut optional_startup_rx: tokio::sync::oneshot::Receiver<
         Result<Option<MeshGenerationSupport>, String>,
@@ -352,7 +354,7 @@ async fn await_optional_mesh_startup(
                                     "Optional mesh startup completed but degradation pending — stopping support bundle"
                                 );
                                 let stop_report = super::stop_mesh_generation_support(
-                                    &state.task_registry,
+                                    &_state.task_registry,
                                     support,
                                     std::time::Duration::from_secs(5),
                                     SupportStopContext::OptionalMeshDegraded,

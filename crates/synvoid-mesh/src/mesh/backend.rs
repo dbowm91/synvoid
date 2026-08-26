@@ -496,7 +496,7 @@ pub async fn initialize_mesh_transports(
 
     quic_transport_inner
         .org_key_manager
-        .start_background_tasks();
+        .start_background_tasks(quic_transport_inner.session_reaper_shutdown.subscribe());
 
     transport_manager.set_quic_transport(quic_transport);
 

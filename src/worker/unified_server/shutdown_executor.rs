@@ -164,8 +164,12 @@ pub async fn execute_worker_shutdown(
         graceful,
         drain_timeout,
         #[cfg(feature = "mesh")]
-        mut active_mesh_support,
+        active_mesh_support,
     } = ctx;
+    #[cfg(all(feature = "mesh", feature = "dns"))]
+    let mut active_mesh_support = active_mesh_support;
+    #[cfg(all(feature = "mesh", not(feature = "dns")))]
+    let _ = active_mesh_support;
     #[cfg(feature = "mesh")]
     let mut shutdown_cause = shutdown_cause;
 
@@ -307,10 +311,6 @@ pub async fn execute_worker_shutdown(
             );
         }
     }
-    // Suppress unused variable when mesh is enabled but dns is not compiled in.
-    #[cfg(all(feature = "mesh", not(feature = "dns")))]
-    let _ = active_mesh_support;
-
     // Step 5: Clear running flag.
     state.running.stop();
 

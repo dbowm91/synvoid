@@ -32,7 +32,10 @@ impl AuthChallenge {
     }
 
     pub fn as_base64(&self) -> String {
-        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, self.challenge)
+        base64::Engine::encode(
+            &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+            self.challenge,
+        )
     }
 }
 

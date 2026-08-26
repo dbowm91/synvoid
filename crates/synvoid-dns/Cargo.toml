@@ -17,6 +17,7 @@ synvoid-config = { path = "../synvoid-config", features = ["dns"] , version = "0
 synvoid-tls = { path = "../synvoid-tls", features = ["dns"] , version = "0.1" }
 synvoid-utils = { path = "../synvoid-utils" , version = "0.1" }
 synvoid-geoip = { path = "../synvoid-geoip" , version = "0.1" }
+synvoid-platform = { path = "../synvoid-platform" , version = "0.1" }
 hickory-proto = { version = "0.26", features = ["dnssec-ring"] }
 hickory-resolver = { version = "0.26", features = ["system-config", "recursor", "dnssec-ring"] }
 tokio = { version = "1", features = ["rt", "net", "time", "sync", "macros", "io-util", "fs"] }

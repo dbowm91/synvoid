@@ -753,7 +753,8 @@ pub fn validate_edge_node_with_attestation(
 
     let mut key_verified = false;
     for global_pubkey in authorized_global_pubkeys {
-        if let Ok(pk_bytes) = base64::engine::general_purpose::STANDARD.decode(global_pubkey) {
+        if let Ok(pk_bytes) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(global_pubkey)
+        {
             if bool::from(
                 pk_bytes
                     .as_slice()
@@ -988,8 +989,12 @@ fn validate_global_node(
         ));
     }
 
-    let pk_base64 = URL_SAFE_NO_PAD.encode(&pk_bytes);
-    if !authorized_global_pubkeys.iter().any(|k| k == &pk_base64) {
+    if !authorized_global_pubkeys.iter().any(|key| {
+        URL_SAFE_NO_PAD
+            .decode(key)
+            .map(|authorized| bool::from(authorized.as_slice().ct_eq(pk_bytes.as_slice())))
+            .unwrap_or(false)
+    }) {
         return Err(format!(
             "Global node {} public key not in authorized list",
             peer_node_id

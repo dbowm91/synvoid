@@ -120,23 +120,15 @@ pub async fn maybe_handle_mesh_backend(
                         main_config.security.global_security_headers,
                     );
 
-                    Ok(builder
-                        .body(
-                            body.map_err(|e| {
-                                tracing::warn!("Mesh proxy body error: {}", e);
-                                unreachable!()
-                            })
-                            .boxed(),
+                    Ok(builder.body(body.boxed()).unwrap_or_else(|_| {
+                        crate::response_builder::build_response_with_alt_svc(
+                            500,
+                            crate::reason_phrase(500).to_string(),
+                            "text/plain",
+                            alt_svc,
+                            main_config,
                         )
-                        .unwrap_or_else(|_| {
-                            crate::response_builder::build_response_with_alt_svc(
-                                500,
-                                crate::reason_phrase(500).to_string(),
-                                "text/plain",
-                                alt_svc,
-                                main_config,
-                            )
-                        }))
+                    }))
                 }
                 Err(e) => {
                     on_upstream_failure();
