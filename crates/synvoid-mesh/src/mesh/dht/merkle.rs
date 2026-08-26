@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use subtle::ConstantTimeEq;
 
 const MERKLE_TREE_DEGREE: usize = 2;
 
@@ -82,7 +83,7 @@ impl MerkleProof {
         let mut found_leaf = false;
         for node in &self.proof_nodes {
             if node.key.as_deref() == Some(record_key) {
-                if node.hash != leaf_hash {
+                if !bool::from(node.hash.as_slice().ct_eq(leaf_hash.as_slice())) {
                     return false;
                 }
                 found_leaf = true;
@@ -110,7 +111,7 @@ impl MerkleProof {
             current_hash = h.finalize().to_vec();
         }
 
-        current_hash == self.root_hash
+        bool::from(current_hash.as_slice().ct_eq(self.root_hash.as_slice()))
     }
 }
 

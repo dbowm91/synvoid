@@ -184,7 +184,7 @@ impl GeoIpManager {
                                     .duration_since(std::time::UNIX_EPOCH)
                                     .unwrap_or_default()
                                     .as_secs();
-                                (now - last) / (24 * 60 * 60)
+                                now.saturating_sub(last) / (24 * 60 * 60)
                             } else {
                                 u64::MAX
                             }
@@ -283,7 +283,7 @@ impl GeoIpManager {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs();
-            return (now - last) > threshold;
+            return now.saturating_sub(last) > threshold;
         }
         true
     }
@@ -294,7 +294,7 @@ impl GeoIpManager {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs();
-            (now - last) / (24 * 60 * 60)
+            now.saturating_sub(last) / (24 * 60 * 60)
         })
     }
 }

@@ -1421,8 +1421,11 @@ pub fn run_guards(dry_run: bool, json_output: bool, verbose: bool) -> Result<(),
 mod tests {
     use super::*;
 
+    type MockCrateDeps<'a> = Vec<(&'a str, &'a str, &'a str)>;
+    type MockCrate<'a> = (&'a str, &'a str, MockCrateDeps<'a>);
+
     // Helper to create a mock metadata JSON value for a crate with given deps
-    fn mock_metadata(crates: &[(&str, &str, Vec<(&str, &str, &str)>)]) -> serde_json::Value {
+    fn mock_metadata(crates: &[MockCrate<'_>]) -> serde_json::Value {
         // crates: Vec of (name, version, deps)
         // deps: Vec of (dep_name, dep_kind, dep_path_or_empty)
         let packages: Vec<serde_json::Value> = crates
@@ -1658,7 +1661,7 @@ mod tests {
                 },
             ),
         ];
-        let publishable = vec![
+        let publishable = [
             ("crate_a".to_string(), PathBuf::from("/a")),
             ("crate_b".to_string(), PathBuf::from("/b")),
             ("crate_c".to_string(), PathBuf::from("/c")),

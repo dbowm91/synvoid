@@ -457,15 +457,20 @@ impl DnsSecKeyManager {
             .map_err(|e| format!("Failed to write public key: {}", e))?;
 
         let priv_file = key_dir.join(format!("{}.priv", key_name));
-        std::fs::write(&priv_file, &private_key)
-            .map_err(|e| format!("Failed to write private key: {}", e))?;
-
         #[cfg(unix)]
         {
+            use std::io::Write;
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&priv_file, std::fs::Permissions::from_mode(0o600))
+            let mut file = std::fs::File::create(&priv_file)
+                .map_err(|e| format!("Failed to write private key: {}", e))?;
+            file.set_permissions(std::fs::Permissions::from_mode(0o600))
                 .map_err(|e| format!("Failed to set private key permissions: {}", e))?;
+            file.write_all(&private_key)
+                .map_err(|e| format!("Failed to write private key: {}", e))?;
         }
+        #[cfg(not(unix))]
+        std::fs::write(&priv_file, &private_key)
+            .map_err(|e| format!("Failed to write private key: {}", e))?;
 
         let zone_key = ZoneSigningKey {
             key_id: key_id.to_string(),
@@ -625,10 +630,10 @@ impl DnsSecKeyManager {
         let now = synvoid_core::time::current_timestamp_secs();
 
         if let Some(ksk) = &self.key_signing_key {
-            let age = now - ksk.created_at;
+            let age = now.saturating_sub(ksk.created_at);
             let age_days = age / 86400;
             let rollover_threshold = (config.ksk_rollover_days as u64 * 86400)
-                - (config.grace_period_days as u64 * 86400);
+                .saturating_sub(config.grace_period_days as u64 * 86400);
 
             if age_days >= (config.ksk_rollover_days as u64).saturating_sub(7) {
                 tracing::warn!(
@@ -645,10 +650,10 @@ impl DnsSecKeyManager {
         }
 
         if let Some(zsk) = &self.zone_signing_key {
-            let age = now - zsk.created_at;
+            let age = now.saturating_sub(zsk.created_at);
             let age_days = age / 86400;
             let rollover_threshold = (config.zsk_rollover_days as u64 * 86400)
-                - (config.grace_period_days as u64 * 86400);
+                .saturating_sub(config.grace_period_days as u64 * 86400);
 
             if age_days >= (config.zsk_rollover_days as u64).saturating_sub(7) {
                 tracing::warn!(
@@ -751,7 +756,7 @@ impl DnsSecKeyManager {
 
         // Clone key data to avoid borrow checker issues
         let ksk_needs_rotation = self.key_signing_key.as_ref().map(|ksk| {
-            let age_days = (now - ksk.created_at) / 86400;
+            let age_days = now.saturating_sub(ksk.created_at) / 86400;
             let rollover_threshold = config.ksk_rollover_days - config.grace_period_days;
             (age_days >= rollover_threshold as u64, age_days)
         });
@@ -779,7 +784,7 @@ impl DnsSecKeyManager {
 
         // Clone key data to avoid borrow checker issues
         let zsk_needs_rotation = self.zone_signing_key.as_ref().map(|zsk| {
-            let age_days = (now - zsk.created_at) / 86400;
+            let age_days = now.saturating_sub(zsk.created_at) / 86400;
             let rollover_threshold = config.zsk_rollover_days - config.grace_period_days;
             (age_days >= rollover_threshold as u64, age_days)
         });
@@ -821,7 +826,7 @@ impl DnsSecKeyManager {
             key_tag: k.key_tag,
             created_at: k.created_at,
             expires_at: k.expires_at,
-            age_days: (now - k.created_at) / 86400,
+            age_days: now.saturating_sub(k.created_at) / 86400,
             days_until_expiry: if k.expires_at > now {
                 Some((k.expires_at - now) / 86400)
             } else {
@@ -835,7 +840,7 @@ impl DnsSecKeyManager {
             key_tag: k.key_tag,
             created_at: k.created_at,
             expires_at: k.expires_at,
-            age_days: (now - k.created_at) / 86400,
+            age_days: now.saturating_sub(k.created_at) / 86400,
             days_until_expiry: if k.expires_at > now {
                 Some((k.expires_at - now) / 86400)
             } else {

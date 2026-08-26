@@ -371,7 +371,7 @@ impl GeoIpUpdater {
         let duration = modified
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|e| GeoIpUpdaterError::IoError(e.to_string()))?;
-        Ok(Some(duration.as_secs() as i64))
+        Ok(Some(duration.as_secs().min(i64::MAX as u64) as i64))
     }
 
     pub async fn update(&self) -> Result<Vec<String>, GeoIpUpdaterError> {
@@ -467,7 +467,8 @@ impl GeoIpUpdater {
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
-                    .as_secs() as i64,
+                    .as_secs()
+                    .min(i64::MAX as u64) as i64,
             );
         }
 

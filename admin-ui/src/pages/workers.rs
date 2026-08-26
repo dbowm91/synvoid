@@ -244,7 +244,7 @@ pub fn Workers() -> Html {
                             <div class="flex justify-between">
                                 <span class="text-secondary">{ "Uptime" }</span>
                                 <span class="text-primary font-medium">
-                                    { status.uptime_secs.map(|u| format_uptime(u)).unwrap_or_else(|| "N/A".to_string()) }
+                                    { status.uptime_secs.map(format_uptime).unwrap_or_else(|| "N/A".to_string()) }
                                 </span>
                             </div>
                             <div class="flex justify-between">

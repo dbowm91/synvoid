@@ -424,6 +424,19 @@ pub fn solve_pow_sync(challenge: &str, difficulty: u8) -> Option<String> {
 mod tests {
     use super::*;
 
+    /// Finds a nonce whose hash is *provably* below the difficulty (fewer than
+    /// the required leading zero bits), so rejection assertions are deterministic.
+    fn find_invalid_nonce(challenge: &str, difficulty: u8) -> String {
+        for nonce in 0..MAX_NONCE {
+            let input = format!("{}{}", challenge, nonce);
+            let hash = Sha256::digest(input.as_bytes());
+            if !has_leading_zeros(&hash, difficulty as usize) {
+                return nonce.to_string();
+            }
+        }
+        panic!("no invalid nonce found for challenge");
+    }
+
     #[test]
     fn test_pow_generation() {
         let manager = PowManager::new(4, 300, 60, "test_cookie".to_string());
@@ -443,7 +456,9 @@ mod tests {
 
         let nonce = solution.unwrap();
         assert!(manager.verify_solution(&challenge.challenge, &nonce));
-        assert!(!manager.verify_solution(&challenge.challenge, "invalid_nonce"));
+
+        let invalid_nonce = find_invalid_nonce(&challenge.challenge, challenge.difficulty);
+        assert!(!manager.verify_solution(&challenge.challenge, &invalid_nonce));
     }
 
     #[test]
@@ -451,7 +466,8 @@ mod tests {
         let manager = PowManager::new(8, 300, 60, "test_cookie".to_string());
         let challenge = manager.generate_challenge();
 
-        assert!(!manager.verify_solution(&challenge.challenge, "invalid_nonce"));
+        let invalid_nonce = find_invalid_nonce(&challenge.challenge, challenge.difficulty);
+        assert!(!manager.verify_solution(&challenge.challenge, &invalid_nonce));
     }
 
     #[test]

@@ -35,6 +35,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use lru_time_cache::LruCache;
+use subtle::ConstantTimeEq;
 
 use bytes::Bytes;
 use dashmap::DashMap;
@@ -4176,7 +4177,7 @@ impl MeshTransport {
                         .auth_keys
                         .read()
                         .values()
-                        .any(|k| k.as_slice() == expected_token.as_bytes())
+                        .any(|k| bool::from(k.as_slice().ct_eq(expected_token.as_bytes())))
                     {
                         tracing::warn!(
                             "Authentication failed for node {}: invalid auth token",
@@ -4987,7 +4988,8 @@ impl MeshTransport {
 
                 if let Some(ref expected_token) = auth_token {
                     match &resp_token {
-                        Some(resp_t) if resp_t.as_str() == expected_token.as_str() => {}
+                        Some(resp_t)
+                            if bool::from(resp_t.as_bytes().ct_eq(expected_token.as_bytes())) => {}
                         _ => {
                             tracing::warn!("Authentication failed for node {}", node_id);
                             return Err(MeshTransportError::AuthFailed(

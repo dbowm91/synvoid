@@ -717,12 +717,15 @@ impl<'a> Default for NormalizedData<'a> {
 }
 
 impl<'a> NormalizedData<'a> {
+    /// Every construction path feeds this type from validated `String`/lossy
+    /// sources, so pooled bytes are UTF-8 by invariant. If a future regression
+    /// ever breaks that invariant, degrade to a scan miss instead of panicking
+    /// on the WAF hot path.
     pub fn as_str(&self) -> &str {
         match self {
             Self::Borrowed(s) => s,
             Self::Owned(ref s) => s.as_str(),
-            Self::Pooled(ref p) => std::str::from_utf8(p.as_slice())
-                .expect("normalized pooled buffer must contain valid UTF-8"),
+            Self::Pooled(ref p) => std::str::from_utf8(p.as_slice()).unwrap_or(""),
         }
     }
 }

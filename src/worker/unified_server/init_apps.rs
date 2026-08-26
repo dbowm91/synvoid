@@ -68,7 +68,19 @@ pub fn spawn_granian_supervisors(
             }
 
             let app_config_internal: crate::app_server::AppServerConfig =
-                serde_json::from_str(&serde_json::to_string(&app_config).unwrap()).unwrap();
+                match serde_json::to_string(&app_config)
+                    .ok()
+                    .and_then(|json| serde_json::from_str(&json).ok())
+                {
+                    Some(cfg) => cfg,
+                    None => {
+                        tracing::error!(
+                            "Invalid app-server config for site {} — skipping granian init",
+                            site_id
+                        );
+                        continue;
+                    }
+                };
             let mut granian_config = GranianConfig::from(&app_config_internal);
             granian_config = granian_config.with_site_info(site_id, worker_id.as_usize());
 

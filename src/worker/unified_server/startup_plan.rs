@@ -123,7 +123,9 @@ pub async fn build_worker_startup(
         bandwidth_retention_days,
         bandwidth_mesh_excluded,
         bandwidth_reset_config,
-    ) = state::extract_bandwidth_config(&shared_config).await;
+    ) = state::extract_bandwidth_config(&shared_config)
+        .await
+        .map_err(|e| -> BoxError { e.into() })?;
     crate::metrics::bandwidth::init_global_bandwidth_tracker(
         bandwidth_retention_days,
         bandwidth_mesh_excluded,

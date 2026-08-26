@@ -83,7 +83,16 @@ impl IpFeedManager {
 
         tokio::spawn(async move {
             loop {
-                self_clone.fetch_and_update().await;
+                // Isolate each iteration so a panic is logged instead of
+                // silently killing the feed refresh loop.
+                let worker = Arc::clone(&self_clone);
+                if let Err(e) = tokio::spawn(async move {
+                    worker.fetch_and_update().await;
+                })
+                .await
+                {
+                    tracing::error!("IP feed refresh task panicked: {}", e);
+                }
 
                 let interval =
                     Duration::from_secs(self_clone.config.update_interval_hours as u64 * 3600);

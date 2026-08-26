@@ -180,7 +180,6 @@ pub fn use_websocket_or_poll<T: DeserializeOwned + Clone + 'static>(
     {
         let state = state.clone();
         let ws_path = ws_path.to_string();
-        let poll_interval_ms = poll_interval_ms;
         let refresh = refresh.clone();
         let interval_ref = interval_ref.clone();
         let polling_active = polling_active.clone();

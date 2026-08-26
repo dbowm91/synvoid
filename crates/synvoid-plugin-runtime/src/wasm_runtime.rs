@@ -5435,7 +5435,7 @@ entry = "plugin.wasm"
         assert_eq!(runtime.guard.failure_count(), 0);
 
         // Invoke repeatedly — each should trap and record a failure
-        for i in 0..6 {
+        for _ in 0..6 {
             let req = Request::builder()
                 .method("GET")
                 .uri("http://example.com/")
@@ -5481,7 +5481,7 @@ entry = "plugin.wasm"
         assert!(runtime.guard.is_invocable());
 
         // Each invocation should exhaust fuel and record a failure
-        for i in 0..10 {
+        for _ in 0..10 {
             let req = Request::builder()
                 .method("GET")
                 .uri("http://example.com/")

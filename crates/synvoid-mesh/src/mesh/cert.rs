@@ -542,7 +542,7 @@ impl MeshCertManager {
     pub fn is_global_node_authorized(&self, signer_public_key: &str) -> bool {
         let keys = self.global_node_public_keys.read();
         keys.values()
-            .any(|pk| pk.as_slice() == signer_public_key.as_bytes())
+            .any(|pk| bool::from(pk.as_slice().ct_eq(signer_public_key.as_bytes())))
     }
 
     pub fn verify_global_node_proof(
@@ -880,7 +880,8 @@ impl MeshCertManager {
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .map_err(|e| MeshCertError::ConfigError(format!("System time error: {}", e)))?
-            .as_secs() as i64;
+            .as_secs()
+            .min(i64::MAX as u64) as i64;
 
         let server_name = rustls_pki_types::ServerName::try_from(peer_node_id.to_string())
             .map_err(|e| MeshCertError::ConfigError(format!("Invalid server name: {}", e)))?;
@@ -1207,6 +1208,20 @@ fn generate_mesh_cert(
 
     std::fs::write(&cert_path, certified_key.cert.pem())
         .map_err(|e| MeshCertError::IoError(cert_path.display().to_string(), e))?;
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+        let mut key_file = std::fs::File::create(&key_path)
+            .map_err(|e| MeshCertError::IoError(key_path.display().to_string(), e))?;
+        key_file
+            .set_permissions(std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| MeshCertError::IoError(key_path.display().to_string(), e))?;
+        key_file
+            .write_all(certified_key.key_pair.serialize_pem().as_bytes())
+            .map_err(|e| MeshCertError::IoError(key_path.display().to_string(), e))?;
+    }
+    #[cfg(not(unix))]
     std::fs::write(&key_path, certified_key.key_pair.serialize_pem())
         .map_err(|e| MeshCertError::IoError(key_path.display().to_string(), e))?;
 
@@ -1349,7 +1364,9 @@ pub fn verify_certificate_chain(
     let ca_pubkey_bytes = ca_cert.public_key().subject_public_key.as_ref().to_vec();
 
     // Verify CA public key is in trusted set
-    let ca_trusted = trusted_global_keys.values().any(|k| *k == ca_pubkey_bytes);
+    let ca_trusted = trusted_global_keys
+        .values()
+        .any(|k| bool::from(k.as_slice().ct_eq(ca_pubkey_bytes.as_slice())));
     if !ca_trusted {
         return Err(MeshCertError::UntrustedCa);
     }

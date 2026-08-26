@@ -10,7 +10,7 @@ pub struct AtomicBucketWindow {
     bucket_duration_ms: u64,
     #[allow(dead_code)]
     current_bucket: AtomicU64,
-    start_ms: u64,
+    start: Instant,
 }
 
 impl AtomicBucketWindow {
@@ -24,20 +24,20 @@ impl AtomicBucketWindow {
             bucket_count,
             bucket_duration_ms,
             current_bucket: AtomicU64::new(0),
-            start_ms: Instant::now().elapsed().as_millis() as u64,
+            start: Instant::now(),
         }
     }
 
     #[inline]
     pub fn increment(&self) -> u32 {
-        let now_ms = Instant::now().elapsed().as_millis() as u64 - self.start_ms;
+        let now_ms = self.start.elapsed().as_millis() as u64;
         let bucket_idx = ((now_ms / self.bucket_duration_ms) % self.bucket_count as u64) as usize;
         self.buckets[bucket_idx].fetch_add(1, Ordering::Relaxed) + 1
     }
 
     #[inline]
     pub fn get_count(&self) -> u32 {
-        let now_ms = Instant::now().elapsed().as_millis() as u64 - self.start_ms;
+        let now_ms = self.start.elapsed().as_millis() as u64;
         let bucket_idx = ((now_ms / self.bucket_duration_ms) % self.bucket_count as u64) as usize;
         self.buckets[bucket_idx].load(Ordering::Relaxed)
     }

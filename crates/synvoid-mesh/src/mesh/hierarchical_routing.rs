@@ -125,6 +125,14 @@ pub struct RegionalHubInfo {
     pub last_sync: u64,
 }
 
+/// # Lock ordering
+///
+/// Code that acquires more than one of these locks must follow the global
+/// order below; violating it deadlocks:
+///
+/// `route_advertisements` → `local_upstreams` → `upstream_bloom_filters`
+///
+/// (`regional_hubs` is never held together with another lock.)
 pub struct HierarchicalRoutingManager {
     local_upstreams: RwLock<HashMap<String, Instant>>,
     upstream_bloom_filters: RwLock<HashMap<String, MeshBloomFilter>>,

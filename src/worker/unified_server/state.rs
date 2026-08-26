@@ -128,23 +128,28 @@ pub async fn setup_config(config_path: &std::path::Path) -> Arc<RwLock<ConfigMan
 
 pub async fn extract_bandwidth_config(
     config: &Arc<RwLock<ConfigManager>>,
-) -> (
-    Option<String>,
-    u32,
-    bool,
-    crate::metrics::bandwidth::MonthlyResetConfig,
-) {
+) -> Result<
+    (
+        Option<String>,
+        u32,
+        bool,
+        crate::metrics::bandwidth::MonthlyResetConfig,
+    ),
+    String,
+> {
     let config_guard = config.read().await;
     let bandwidth = &config_guard.main.traffic_shaping.bandwidth;
     let reset_cfg_external = bandwidth.monthly_reset.clone();
-    let reset_cfg_internal: crate::metrics::bandwidth::MonthlyResetConfig =
-        serde_json::from_str(&serde_json::to_string(&reset_cfg_external).unwrap()).unwrap();
-    (
+    let reset_cfg_internal: crate::metrics::bandwidth::MonthlyResetConfig = serde_json::from_str(
+        &serde_json::to_string(&reset_cfg_external).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| format!("Invalid bandwidth monthly_reset config: {}", e))?;
+    Ok((
         bandwidth.data_dir.clone(),
         bandwidth.retention_days,
         bandwidth.mesh_excluded_from_total,
         reset_cfg_internal,
-    )
+    ))
 }
 
 pub fn apply_cpu_affinity(cpu_affinity: Option<usize>, worker_id: WorkerId) {

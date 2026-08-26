@@ -773,7 +773,10 @@ impl RecordStoreManager {
 
         let my_root_hash = self.get_merkle_root_hash();
 
-        if my_root_hash.as_deref() == Some(local_root_hash) {
+        if my_root_hash.as_deref().is_some_and(|h| {
+            use subtle::ConstantTimeEq;
+            bool::from(h.ct_eq(local_root_hash))
+        }) {
             tracing::debug!(
                 "DHT anti-entropy: {} has same root hash as {}",
                 from_node,

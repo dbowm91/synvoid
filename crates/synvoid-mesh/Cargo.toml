@@ -12,7 +12,7 @@ path = "src/lib.rs"
 [features]
 default = []
 dns = []
-mesh = ["dep:openraft", "synvoid-serverless/mesh"]
+mesh = ["synvoid-serverless/mesh"]
 audit = []
 verify-pq = []
 
@@ -26,7 +26,7 @@ synvoid-tls = { path = "../synvoid-tls" , version = "0.1" }
 synvoid-tunnel = { path = "../synvoid-tunnel" , version = "0.1" }
 synvoid-proxy = { path = "../synvoid-proxy" , version = "0.1" }
 synvoid-proxy-cache = { path = "../synvoid-proxy-cache" , version = "0.1" }
-synvoid-serverless = { path = "../synvoid-serverless", optional = true , version = "0.1" }
+synvoid-serverless = { path = "../synvoid-serverless", version = "0.1" }
 pqc = { path = "../../pqc", features = ["async"] , version = "0.1" }
 
 # Async runtime
@@ -131,8 +131,8 @@ url = "2"
 # YARA rules
 yara-x = { version = "1.15", default-features = false, features = ["default-modules", "linkme"] }
 
-# Raft consensus (optional, behind mesh feature)
-openraft = { version = "0.10.0-alpha.18", features = ["serde"], optional = true }
+# Raft consensus (always available so the crate compiles under every feature profile)
+openraft = { version = "0.10.0-alpha.18", features = ["serde"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net", "sync"] }

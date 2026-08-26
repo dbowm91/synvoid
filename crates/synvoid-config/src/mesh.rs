@@ -125,7 +125,10 @@ pub struct GlobalNodeConfig {
 
 impl GlobalNodeConfig {
     pub fn is_invite_token_valid(&self, token: &str) -> bool {
-        self.invite_tokens.iter().any(|t| t == token)
+        use subtle::ConstantTimeEq;
+        self.invite_tokens
+            .iter()
+            .any(|t| bool::from(t.as_bytes().ct_eq(token.as_bytes())))
     }
 
     pub fn load_keys(&mut self) -> Result<(), String> {

@@ -196,8 +196,19 @@ pub async fn init_mesh_and_threat_intel(
             config.main.tunnel.mesh.clone()
         };
 
-        let mesh_config: Option<crate::mesh::config::MeshConfig> = mesh_config_external
-            .map(|c| serde_json::from_str(&serde_json::to_string(&c).unwrap()).unwrap());
+        let mesh_config: Option<crate::mesh::config::MeshConfig> = match mesh_config_external {
+            Some(c) => match serde_json::to_string(&c)
+                .ok()
+                .and_then(|json| serde_json::from_str(&json).ok())
+            {
+                Some(cfg) => Some(cfg),
+                None => {
+                    tracing::error!("Invalid mesh config — refusing to start mesh subsystem");
+                    return MeshInit::disabled();
+                }
+            },
+            None => None,
+        };
 
         let Some(ref mesh_config) = mesh_config else {
             tracing::info!("Mesh config absent — returning MeshInit::disabled()");

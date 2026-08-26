@@ -176,7 +176,7 @@ impl BaselineLearner {
 
         let now = crate::utils::safe_unix_timestamp() as i64;
 
-        let elapsed = now - start;
+        let elapsed = now.saturating_sub(start);
         let duration = self.learning_duration_secs as i64;
 
         if duration <= 0 {

@@ -211,52 +211,63 @@ impl RateLimiterManager {
                 let mut cleanup_timer = interval(Duration::from_secs(cleanup_interval_secs));
                 loop {
                     cleanup_timer.tick().await;
-                    let now = Instant::now();
-                    let mut total = 0usize;
-
-                    for mut site_entry in cleanup_state.site_shards.iter_mut() {
-                        let site_id = site_entry.key().clone();
-                        let shards = site_entry.value_mut();
-                        for shard in shards {
-                            let mut requests = shard.ip_requests.write();
-                            let lru_order = &cleanup_state.lru_order;
-                            let cutoff_max = Duration::from_secs(86400);
-                            requests.retain(|ip, state| {
-                                if let Some(last_access) = state.last_access {
-                                    if now.duration_since(last_access) > cutoff_max {
-                                        return false;
-                                    }
-                                }
-                                state.remove_expired_windows(now);
-                                if state.is_empty() {
-                                    false
-                                } else {
-                                    state.touch();
-                                    if let Some(lru) =
-                                        lru_order.write().get_mut(&(site_id.clone(), *ip))
-                                    {
-                                        *lru = now;
-                                    }
-                                    true
-                                }
-                            });
-                            total += requests.len();
-                            *shard.last_cleanup.write() = now;
-                        }
+                    // Isolate each sweep so a panic is logged instead of
+                    // silently killing the cleanup loop.
+                    let worker = Arc::clone(&cleanup_state);
+                    if let Err(e) = tokio::spawn(async move {
+                        Self::run_cleanup_sweep(&worker);
+                    })
+                    .await
+                    {
+                        tracing::error!("Rate-limit cleanup task panicked: {}", e);
                     }
-
-                    cleanup_state.slotted_ip_limiter.decay_all(2);
-                    let max_entries = cleanup_state.memory_config.max_ip_entries;
-                    if total > max_entries {
-                        let to_evict = total - max_entries + (max_entries / 10);
-                        Self::evict_lru_entries(&cleanup_state, to_evict);
-                    }
-                    *cleanup_state.total_entries.write() = total;
                 }
             });
         }
 
         RateLimiterManager { state }
+    }
+
+    fn run_cleanup_sweep(state: &Arc<RateLimiterState>) {
+        let now = Instant::now();
+        let mut total = 0usize;
+
+        for mut site_entry in state.site_shards.iter_mut() {
+            let site_id = site_entry.key().clone();
+            let shards = site_entry.value_mut();
+            for shard in shards {
+                let mut requests = shard.ip_requests.write();
+                let lru_order = &state.lru_order;
+                let cutoff_max = Duration::from_secs(86400);
+                requests.retain(|ip, state| {
+                    if let Some(last_access) = state.last_access {
+                        if now.duration_since(last_access) > cutoff_max {
+                            return false;
+                        }
+                    }
+                    state.remove_expired_windows(now);
+                    if state.is_empty() {
+                        false
+                    } else {
+                        state.touch();
+                        if let Some(lru) = lru_order.write().get_mut(&(site_id.clone(), *ip)) {
+                            *lru = now;
+                        }
+                        true
+                    }
+                });
+                total += requests.len();
+                *shard.last_cleanup.write() = now;
+            }
+        }
+
+        state.slotted_ip_limiter.decay_all(2);
+        let max_entries = state.memory_config.max_ip_entries;
+        if total > max_entries {
+            let to_evict = total - max_entries + (max_entries / 10);
+            Self::evict_lru_entries(state, to_evict);
+        }
+        *state.total_entries.write() = total;
     }
 
     fn evict_lru_entries(state: &Arc<RateLimiterState>, count: usize) {

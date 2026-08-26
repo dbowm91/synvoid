@@ -4808,87 +4808,99 @@ impl MeshTransport {
         &self,
         req: &crate::protocol::ServerlessInvokeRequest,
     ) -> Result<(), MeshTransportError> {
-        use std::time::Instant;
-        use synvoid_serverless::manager::CallerContext;
-
-        let start = Instant::now();
-
-        let sm = {
-            let guard = self.serverless_manager.read();
-            guard.clone()
-        };
-
-        let Some(serverless_manager) = sm else {
+        #[cfg(not(feature = "mesh"))]
+        {
+            let _ = req;
             tracing::warn!(
-                "ServerlessInvokeRequest for '{}' but serverless manager not available",
+                "ServerlessInvokeRequest for '{}' but mesh serverless support is not enabled",
                 req.function_name
             );
             return Ok(());
-        };
-
-        let caller = CallerContext {
-            node_id: req.caller_node_id.clone(),
-            role: crate::config::MeshNodeRole::EDGE,
-            org_id: None,
-            tier: None,
-            is_local: false,
-        };
-
-        let function_name = req.function_name.clone();
-        let result = serverless_manager
-            .invoke_for_mesh(
-                &function_name,
-                "POST",
-                "/",
-                &http::HeaderMap::new(),
-                None,
-                caller,
-            )
-            .await;
-
-        let execution_time_ms = start.elapsed().as_millis() as u64;
-
-        let (success, response_data, error_message) = match result {
-            Ok(response) => {
-                tracing::debug!(
-                    "Serverless invoke '{}' completed: status={}, {}ms",
-                    function_name,
-                    response.status_code,
-                    execution_time_ms
-                );
-                let body_vec = response.body.to_vec();
-                (true, body_vec, String::new())
-            }
-            Err(e) => {
-                tracing::warn!("Serverless invoke '{}' failed: {}", function_name, e);
-                (false, Vec::new(), e.to_string())
-            }
-        };
-
-        let response_msg =
-            MeshMessage::ServerlessInvokeResponse(crate::protocol::ServerlessInvokeResponse {
-                function_name,
-                caller_node_id: req.caller_node_id.clone(),
-                timestamp: synvoid_utils::safe_unix_timestamp(),
-                response_data,
-                success,
-                error_message,
-                execution_time_ms,
-                response_signature: Vec::new(),
-            });
-
-        if let Err(e) = self
-            .send_message_to_peer(&req.caller_node_id, &response_msg)
-            .await
-        {
-            tracing::warn!(
-                "Failed to send ServerlessInvokeResponse to {}: {}",
-                req.caller_node_id,
-                e
-            );
         }
+        #[cfg(feature = "mesh")]
+        {
+            use std::time::Instant;
+            use synvoid_serverless::manager::CallerContext;
 
-        Ok(())
+            let start = Instant::now();
+
+            let sm = {
+                let guard = self.serverless_manager.read();
+                guard.clone()
+            };
+
+            let Some(serverless_manager) = sm else {
+                tracing::warn!(
+                    "ServerlessInvokeRequest for '{}' but serverless manager not available",
+                    req.function_name
+                );
+                return Ok(());
+            };
+
+            let caller = CallerContext {
+                node_id: req.caller_node_id.clone(),
+                role: crate::config::MeshNodeRole::EDGE,
+                org_id: None,
+                tier: None,
+                is_local: false,
+            };
+
+            let function_name = req.function_name.clone();
+            let result = serverless_manager
+                .invoke_for_mesh(
+                    &function_name,
+                    "POST",
+                    "/",
+                    &http::HeaderMap::new(),
+                    None,
+                    caller,
+                )
+                .await;
+
+            let execution_time_ms = start.elapsed().as_millis() as u64;
+
+            let (success, response_data, error_message) = match result {
+                Ok(response) => {
+                    tracing::debug!(
+                        "Serverless invoke '{}' completed: status={}, {}ms",
+                        function_name,
+                        response.status_code,
+                        execution_time_ms
+                    );
+                    let body_vec = response.body.to_vec();
+                    (true, body_vec, String::new())
+                }
+                Err(e) => {
+                    tracing::warn!("Serverless invoke '{}' failed: {}", function_name, e);
+                    (false, Vec::new(), e.to_string())
+                }
+            };
+
+            let response_msg =
+                MeshMessage::ServerlessInvokeResponse(crate::protocol::ServerlessInvokeResponse {
+                    function_name,
+                    caller_node_id: req.caller_node_id.clone(),
+                    timestamp: synvoid_utils::safe_unix_timestamp(),
+                    response_data,
+                    success,
+                    error_message,
+                    execution_time_ms,
+                    response_signature: Vec::new(),
+                });
+
+            if let Err(e) = self
+                .send_message_to_peer(&req.caller_node_id, &response_msg)
+                .await
+            {
+                tracing::warn!(
+                    "Failed to send ServerlessInvokeResponse to {}: {}",
+                    req.caller_node_id,
+                    e
+                );
+            }
+
+            Ok(())
+        }
     }
 
     pub(crate) async fn handle_serverless_invoke_response(
@@ -5963,6 +5975,41 @@ impl MeshTransport {
     }
 
     async fn handle_serverless_proxy_stream(
+        &self,
+        upstream_id: &str,
+        parsed_meta: &ParsedHttpRequestMeta,
+        http_data: &[u8],
+        send_stream: &mut SendStream,
+        peer_node_id: String,
+    ) -> Result<(), MeshTransportError> {
+        #[cfg(not(feature = "mesh"))]
+        {
+            let _ = (upstream_id, parsed_meta, http_data, &peer_node_id);
+            tracing::warn!("Serverless proxy request but mesh serverless support is not enabled");
+            let unavailable = b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n";
+            send_stream
+                .write_all(unavailable)
+                .await
+                .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
+            let _ = send_stream.finish();
+            return Ok(());
+        }
+        #[cfg(feature = "mesh")]
+        {
+            return self
+                .handle_serverless_proxy_stream_enabled(
+                    upstream_id,
+                    parsed_meta,
+                    http_data,
+                    send_stream,
+                    peer_node_id,
+                )
+                .await;
+        }
+    }
+
+    #[cfg(feature = "mesh")]
+    async fn handle_serverless_proxy_stream_enabled(
         &self,
         upstream_id: &str,
         parsed_meta: &ParsedHttpRequestMeta,

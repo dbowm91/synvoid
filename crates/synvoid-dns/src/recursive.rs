@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use hickory_proto::op::Message;
@@ -126,14 +126,14 @@ pub struct RecursiveDnsServer {
     query_semaphore: Arc<Semaphore>,
     running: Arc<tokio::sync::RwLock<bool>>,
     circuit_breaker: Arc<CircuitBreaker>,
-    client_semaphores: Arc<Mutex<HashMap<IpAddr, Arc<Semaphore>>>>,
+    client_semaphores: Arc<parking_lot::Mutex<HashMap<IpAddr, Arc<Semaphore>>>>,
 }
 
 const MAX_CLIENT_SEMAPHORES: usize = 10_000;
 
 impl RecursiveDnsServer {
     fn client_semaphore(&self, client_ip: IpAddr, max_per_client: usize) -> Option<Arc<Semaphore>> {
-        let mut map = self.client_semaphores.lock().unwrap();
+        let mut map = self.client_semaphores.lock();
         if let Some(semaphore) = map.get(&client_ip) {
             return Some(semaphore.clone());
         }
@@ -182,7 +182,7 @@ impl RecursiveDnsServer {
             query_semaphore,
             running: Arc::new(tokio::sync::RwLock::new(false)),
             circuit_breaker,
-            client_semaphores: Arc::new(Mutex::new(HashMap::new())),
+            client_semaphores: Arc::new(parking_lot::Mutex::new(HashMap::new())),
         })
     }
 
@@ -1688,7 +1688,7 @@ mod tests {
             circuit_breaker: Arc::new(CircuitBreaker::new(
                 &synvoid_config::dns::CircuitBreakerConfig::default(),
             )),
-            client_semaphores: Arc::new(Mutex::new(HashMap::new())),
+            client_semaphores: Arc::new(parking_lot::Mutex::new(HashMap::new())),
         }
     }
 }

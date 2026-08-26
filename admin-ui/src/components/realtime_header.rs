@@ -83,22 +83,18 @@ pub fn RealtimeHeader() -> Html {
             wasm_bindgen_futures::spawn_local(async move {
                 let api = crate::services::api::ApiService::new();
                 let url = format!("/api/stats/history?seconds={}", secs);
-                match api.get::<Vec<RealtimeMetrics>>(&url).await {
-                    Ok(data) => {
-                        if let Some(last) = data.last() {
-                            set_current_metrics.set(Some(last.clone()));
-                        }
-                        let reqs: Vec<f64> = data.iter().map(|m| m.requests_per_second).collect();
-                        let blocked: Vec<f64> = data.iter().map(|m| m.blocked_per_second).collect();
-                        // Take last 10 for sparkline
-                        let req_tail: Vec<f64> =
-                            reqs.iter().rev().take(10).rev().cloned().collect();
-                        let block_tail: Vec<f64> =
-                            blocked.iter().rev().take(10).rev().cloned().collect();
-                        set_req_history.set(req_tail);
-                        set_blocked_history.set(block_tail);
+                if let Ok(data) = api.get::<Vec<RealtimeMetrics>>(&url).await {
+                    if let Some(last) = data.last() {
+                        set_current_metrics.set(Some(last.clone()));
                     }
-                    Err(_) => {}
+                    let reqs: Vec<f64> = data.iter().map(|m| m.requests_per_second).collect();
+                    let blocked: Vec<f64> = data.iter().map(|m| m.blocked_per_second).collect();
+                    // Take last 10 for sparkline
+                    let req_tail: Vec<f64> = reqs.iter().rev().take(10).rev().cloned().collect();
+                    let block_tail: Vec<f64> =
+                        blocked.iter().rev().take(10).rev().cloned().collect();
+                    set_req_history.set(req_tail);
+                    set_blocked_history.set(block_tail);
                 }
             });
             || {}

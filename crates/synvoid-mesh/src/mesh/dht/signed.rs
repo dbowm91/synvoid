@@ -1589,7 +1589,9 @@ pub fn verify_quorum_proof_minimum_threshold(
 pub fn validate_message_freshness(timestamp: u64) -> bool {
     let now = synvoid_utils::safe_unix_timestamp() as i64;
     let msg_time = timestamp as i64;
-    let diff = (now - msg_time).abs();
+    // Remote input can exceed i64 range; saturating math avoids overflow panics
+    // (debug builds) and the i64::MIN abs() wrap.
+    let diff = now.saturating_sub(msg_time).abs();
     diff <= DHT_MESSAGE_TIMESTAMP_WINDOW_SECS
 }
 

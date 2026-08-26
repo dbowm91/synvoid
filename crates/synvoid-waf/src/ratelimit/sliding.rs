@@ -41,36 +41,39 @@ pub struct AtomicBucketWindow {
     bucket_count: u32,
     bucket_duration_ms: u64,
     current_bucket: AtomicU64,
-    start_ms: u64,
+    start: Instant,
 }
 
 impl AtomicBucketWindow {
     pub fn new(window_secs: u32, bucket_count: u32) -> Self {
         let bucket_count = bucket_count.max(1);
         let buckets: Vec<AtomicU32> = (0..bucket_count).map(|_| AtomicU32::new(0)).collect();
-        let bucket_duration_ms = (window_secs as u64 * 1000) / bucket_count as u64;
+        let bucket_duration_ms = ((window_secs as u64 * 1000) / bucket_count as u64).max(1);
 
         Self {
             buckets: buckets.into_boxed_slice(),
             bucket_count,
             bucket_duration_ms,
             current_bucket: AtomicU64::new(0),
-            start_ms: Instant::now().elapsed().as_millis() as u64,
+            start: Instant::now(),
         }
     }
 
     #[inline]
+    fn now_ms(&self) -> u64 {
+        self.start.elapsed().as_millis() as u64
+    }
+
+    #[inline]
     pub fn increment(&self) -> u32 {
-        let now_ms = Instant::now().elapsed().as_millis() as u64 - self.start_ms;
-        let bucket_idx = self.rotate_and_get_bucket(now_ms);
+        let bucket_idx = self.rotate_and_get_bucket(self.now_ms());
 
         self.buckets[bucket_idx].fetch_add(1, Ordering::Relaxed) + 1
     }
 
     #[inline]
     pub fn get_count(&self) -> u32 {
-        let now_ms = Instant::now().elapsed().as_millis() as u64 - self.start_ms;
-        self.rotate_and_get_bucket(now_ms);
+        self.rotate_and_get_bucket(self.now_ms());
 
         self.sum_buckets()
     }
@@ -187,23 +190,18 @@ impl<K: Hash + Eq + Clone> SlidingWindowLimiter<K> {
     }
 
     pub fn check_and_increment(&self, key: &K) -> SlidingDecision {
-        let is_limited = {
+        {
             let mut entries = self.entries.write();
             let entry = entries
                 .entry(key.clone())
                 .or_insert_with(|| SlidingWindowEntry::new(&self.configs));
 
-            if let Some((limit_type, limit)) = entry.check_and_increment(&self.configs) {
+            if let Some((limit_type, current)) = entry.check_and_increment(&self.configs) {
                 return SlidingDecision::Limited {
                     limit_type,
-                    current: limit,
+                    current,
                 };
             }
-            false
-        };
-
-        if is_limited {
-            return SlidingDecision::Allowed;
         }
 
         if self.entries.read().len() > self.max_entries {
@@ -361,6 +359,39 @@ mod tests {
         }
 
         assert_eq!(window.get_count(), 5);
+    }
+
+    #[test]
+    fn test_atomic_bucket_window_counts_decay_after_bucket_rotation() {
+        let window = AtomicBucketWindow::new(1, 10);
+
+        for _ in 0..5 {
+            window.increment();
+        }
+        assert_eq!(window.get_count(), 5);
+
+        // 1s window / 10 buckets = 100ms per bucket; sleep past two buckets.
+        thread::sleep(std::time::Duration::from_millis(250));
+
+        assert_eq!(window.get_count(), 0);
+    }
+
+    #[test]
+    fn test_sliding_window_limiter_unblocks_after_window() {
+        let configs = vec![SlidingWindowConfig::with_buckets(1, 10, 3)];
+        let limiter: SlidingWindowLimiter<IpAddr> = SlidingWindowLimiter::new(configs, 1000);
+
+        let ip: IpAddr = "192.168.1.7".parse().unwrap();
+
+        for _ in 0..3 {
+            assert_eq!(limiter.check_and_increment(&ip), SlidingDecision::Allowed);
+        }
+        assert!(limiter.check_and_increment(&ip).is_limited());
+
+        // Counts must decay once the window rotates; the client must not stay
+        // rate-limited forever.
+        thread::sleep(std::time::Duration::from_millis(250));
+        assert_eq!(limiter.check_and_increment(&ip), SlidingDecision::Allowed);
     }
 
     #[test]

@@ -8,6 +8,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
+use subtle::ConstantTimeEq;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RevocationInfo {
@@ -338,7 +339,7 @@ pub fn validate_member_certificate_with_raft_attestation(
             // Verify signer is an authorized Global Node
             let signer_authorized = authorized_global_pubkeys
                 .iter()
-                .any(|k| k == &att.signer_public_key);
+                .any(|k| bool::from(k.as_bytes().ct_eq(att.signer_public_key.as_bytes())));
             if !signer_authorized {
                 return false;
             }
@@ -753,7 +754,11 @@ pub fn validate_edge_node_with_attestation(
     let mut key_verified = false;
     for global_pubkey in authorized_global_pubkeys {
         if let Ok(pk_bytes) = base64::engine::general_purpose::STANDARD.decode(global_pubkey) {
-            if pk_bytes == attestation_pubkey_bytes {
+            if bool::from(
+                pk_bytes
+                    .as_slice()
+                    .ct_eq(attestation_pubkey_bytes.as_slice()),
+            ) {
                 key_verified = true;
                 break;
             }
@@ -909,7 +914,7 @@ fn validate_origin_node(
 
     if !authorized_global_pubkeys
         .iter()
-        .any(|k| k == attestation_key)
+        .any(|k| bool::from(k.as_bytes().ct_eq(attestation_key.as_bytes())))
     {
         return Err(format!(
             "Origin node {} global node attestation key not in authorized list",

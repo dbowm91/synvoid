@@ -8,6 +8,7 @@
 use bcrypt::{hash, verify, DEFAULT_COST};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use sha2::Digest;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -653,8 +654,12 @@ impl AuthManager {
 
         if let Some(data) = session_data {
             if data.ip_address.as_deref() != Some(client_ip) {
-                tracing::warn!("Session {} used from IP {} but was created from IP {:?} - possible session hijacking", 
-                    session_id, client_ip, data.ip_address);
+                let session_id_hash = format!(
+                    "sha256:{}",
+                    &hex::encode(sha2::Sha256::digest(session_id.as_bytes()))[..16]
+                );
+                tracing::warn!("Session {} used from IP {} but was created from IP {:?} - possible session hijacking",
+                    session_id_hash, client_ip, data.ip_address);
                 store.sessions.remove(session_id);
                 self.save_store(&store).await;
                 return None;

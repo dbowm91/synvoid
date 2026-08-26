@@ -333,7 +333,7 @@ impl AlertManager {
                 let rule_key = format!("{}:{}", rule.name, rule.metric);
                 let mut last = self.last_fired.write().await;
                 if let Some(last_time) = last.get(&rule_key) {
-                    if now - last_time < cooldown as i64 {
+                    if now.saturating_sub(*last_time) < cooldown as i64 {
                         continue;
                     }
                 }

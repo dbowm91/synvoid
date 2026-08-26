@@ -43,24 +43,16 @@ pub mod threat_intel_policy;
 pub mod tier_key_encryption;
 pub mod topology;
 pub mod transport;
-#[cfg(feature = "mesh")]
 pub mod transport_connection;
 pub mod transport_core;
-#[cfg(feature = "mesh")]
 pub mod transport_dht;
 #[cfg(all(feature = "mesh", feature = "dns"))]
 pub mod transport_dns;
-#[cfg(feature = "mesh")]
 pub mod transport_global;
-#[cfg(feature = "mesh")]
 pub mod transport_org;
-#[cfg(feature = "mesh")]
 pub mod transport_peer;
-#[cfg(feature = "mesh")]
 pub mod transport_rate_limit;
-#[cfg(feature = "mesh")]
 pub mod transport_routing;
-#[cfg(feature = "mesh")]
 pub mod transport_serverless;
 pub mod transport_types;
 pub mod transports;

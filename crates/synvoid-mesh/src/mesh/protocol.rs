@@ -1726,7 +1726,12 @@ impl DhtRecord {
         if self.content_hash.is_empty() {
             return true;
         }
-        self.compute_content_hash() == self.content_hash
+        use subtle::ConstantTimeEq;
+        bool::from(
+            self.compute_content_hash()
+                .as_slice()
+                .ct_eq(self.content_hash.as_slice()),
+        )
     }
 
     pub fn is_expired(&self, now: u64) -> bool {
