@@ -57,6 +57,13 @@ impl SharedConnectionTable {
 
         let mmap = unsafe { MmapOptions::new().map_mut(&file)? };
 
+        assert!(
+            mmap.len() >= total_size,
+            "mmap too short for shared connection table: {} < {}",
+            mmap.len(),
+            total_size
+        );
+
         // Initialize header
         unsafe {
             let ptr = mmap.as_ptr() as *mut u64;
@@ -183,6 +190,13 @@ impl SharedRateLimitTable {
         file.set_len(total_size as u64)?;
 
         let mmap = unsafe { MmapOptions::new().map_mut(&file)? };
+
+        assert!(
+            mmap.len() >= total_size,
+            "mmap too short for shared rate limit table: {} < {}",
+            mmap.len(),
+            total_size
+        );
 
         Ok(Self {
             mmap: Arc::new(mmap),

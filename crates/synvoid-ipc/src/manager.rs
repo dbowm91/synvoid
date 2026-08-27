@@ -11,6 +11,12 @@ use tokio::sync::{broadcast, mpsc, Mutex as TokioMutex};
 use tokio::task::JoinHandle;
 use tokio::time::interval;
 
+#[cfg(unix)]
+#[inline]
+fn checked_pid(pid: u32) -> Option<nix::unistd::Pid> {
+    i32::try_from(pid).ok().map(nix::unistd::Pid::from_raw)
+}
+
 pub use super::worker::{
     BaseWorkerProcess, CpuWorkerProcess, UnifiedServerWorkerProcess, WorkerProcess,
     WorkerProcessBase,
@@ -614,7 +620,10 @@ impl ProcessManager {
     #[cfg(unix)]
     fn is_pid_alive(pid: u32) -> bool {
         // Send signal 0 to check if process exists (doesn't actually send signal)
-        nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), None).is_ok()
+        match checked_pid(pid) {
+            Some(p) => nix::sys::signal::kill(p, None).is_ok(),
+            None => false,
+        }
     }
 
     #[cfg(not(unix))]
@@ -1830,16 +1839,18 @@ impl ProcessManager {
         for (pid, is_graceful) in pids {
             #[cfg(unix)]
             {
-                if is_graceful {
-                    let _ = nix::sys::signal::kill(
-                        nix::unistd::Pid::from_raw(pid as i32),
-                        nix::sys::signal::Signal::SIGTERM,
-                    );
-                } else {
-                    let _ = nix::sys::signal::kill(
-                        nix::unistd::Pid::from_raw(pid as i32),
-                        nix::sys::signal::Signal::SIGKILL,
-                    );
+                match checked_pid(pid) {
+                    Some(p) => {
+                        let signal = if is_graceful {
+                            nix::sys::signal::Signal::SIGTERM
+                        } else {
+                            nix::sys::signal::Signal::SIGKILL
+                        };
+                        let _ = nix::sys::signal::kill(p, signal);
+                    }
+                    None => {
+                        tracing::warn!("PID {} exceeds i32::MAX; skipping signal send", pid);
+                    }
                 }
             }
             #[cfg(not(unix))]
@@ -2019,10 +2030,14 @@ impl ProcessManager {
 
         #[cfg(unix)]
         {
-            let _ = nix::sys::signal::kill(
-                nix::unistd::Pid::from_raw(pid as i32),
-                nix::sys::signal::Signal::SIGTERM,
-            );
+            match checked_pid(pid) {
+                Some(p) => {
+                    let _ = nix::sys::signal::kill(p, nix::sys::signal::Signal::SIGTERM);
+                }
+                None => {
+                    tracing::warn!("PID {} exceeds i32::MAX; skipping SIGTERM", pid);
+                }
+            }
         }
 
         #[cfg(not(unix))]
@@ -2073,13 +2088,18 @@ impl ProcessManager {
         #[cfg(unix)]
         {
             use nix::sys::signal::SIGUSR1;
-            use nix::unistd::Pid;
 
             let workers = self.workers.read();
             for worker in workers.values() {
-                if let Some(pid) = worker.pid() {
-                    let pid = Pid::from_raw(pid as i32);
-                    let _ = nix::sys::signal::kill(pid, SIGUSR1);
+                if let Some(raw_pid) = worker.pid() {
+                    match checked_pid(raw_pid) {
+                        Some(p) => {
+                            let _ = nix::sys::signal::kill(p, SIGUSR1);
+                        }
+                        None => {
+                            tracing::warn!("PID {} exceeds i32::MAX; skipping signal send", raw_pid)
+                        }
+                    }
                 }
             }
             tracing::info!("Config reload signal sent to all workers");
@@ -2108,13 +2128,18 @@ impl ProcessManager {
         #[cfg(unix)]
         {
             use nix::sys::signal::SIGUSR2;
-            use nix::unistd::Pid;
 
             let workers = self.workers.read();
             for worker in workers.values() {
-                if let Some(pid) = worker.pid() {
-                    let pid = Pid::from_raw(pid as i32);
-                    let _ = nix::sys::signal::kill(pid, SIGUSR2);
+                if let Some(raw_pid) = worker.pid() {
+                    match checked_pid(raw_pid) {
+                        Some(p) => {
+                            let _ = nix::sys::signal::kill(p, SIGUSR2);
+                        }
+                        None => {
+                            tracing::warn!("PID {} exceeds i32::MAX; skipping signal send", raw_pid)
+                        }
+                    }
                 }
             }
             tracing::info!(

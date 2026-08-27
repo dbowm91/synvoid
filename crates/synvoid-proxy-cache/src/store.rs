@@ -329,7 +329,9 @@ impl ProxyCache {
     }
 
     pub fn shutdown(&self) {
-        let _ = self.cleanup_shutdown_tx.send(());
+        if self.cleanup_shutdown_tx.send(()).is_err() {
+            tracing::warn!("proxy cache cleanup shutdown signal sent with no active receivers");
+        }
     }
 
     #[inline]

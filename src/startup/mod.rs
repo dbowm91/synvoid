@@ -94,6 +94,8 @@ impl MasterState {
     }
 
     pub async fn shutdown(&self) {
-        let _ = self.shutdown_tx.send(());
+        if self.shutdown_tx.send(()).is_err() {
+            tracing::warn!("startup shutdown signal sent with no active receivers");
+        }
     }
 }

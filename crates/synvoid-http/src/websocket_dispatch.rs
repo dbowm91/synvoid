@@ -166,7 +166,9 @@ pub async fn handle_websocket_tunnel(
                     ("BINARY-RESPONSE", b.to_vec())
                 }
                 tokio_tungstenite::tungstenite::Message::Close(_) => {
-                    let _ = client_tx.send(msg).await;
+                    if let Err(e) = client_tx.send(msg).await {
+                        tracing::debug!("websocket close frame delivery failed: {}", e);
+                    }
                     break;
                 }
                 tokio_tungstenite::tungstenite::Message::Ping(data) => {
@@ -386,7 +388,9 @@ pub async fn handle_websocket_to_appserver(
                     ("BINARY-RESPONSE", b.to_vec())
                 }
                 tokio_tungstenite::tungstenite::Message::Close(_) => {
-                    let _ = client_tx.send(msg).await;
+                    if let Err(e) = client_tx.send(msg).await {
+                        tracing::debug!("websocket close frame delivery failed: {}", e);
+                    }
                     break;
                 }
                 tokio_tungstenite::tungstenite::Message::Ping(data) => {

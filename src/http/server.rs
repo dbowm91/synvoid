@@ -231,7 +231,7 @@ impl HttpServer {
         accept_loop::run_accept_loop(self.addr, self.shutdown_rx, self.runtime).await
     }
 
-    #[allow(unused_assignments, unused_variables)]
+    #[allow(unused_assignments, unused_variables, dead_code)]
     async fn handle_request(
         req: hyper::Request<hyper::body::Incoming>,
         client_addr: SocketAddr,

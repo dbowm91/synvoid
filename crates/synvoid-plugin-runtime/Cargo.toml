@@ -29,7 +29,7 @@ serde_json = "1"
 sha2 = "0.10"
 synvoid-utils = { path = "../synvoid-utils", features = ["buffer"] , version = "0.1" }
 thiserror = "2"
-tokio = { version = "1", features = ["sync", "rt"] }
+tokio = { version = "1", features = ["sync", "rt", "rt-multi-thread"] }
 toml = "0.8"
 tracing = "0.1"
 uuid = { version = "1", features = ["v4", "serde"] }

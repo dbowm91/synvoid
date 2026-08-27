@@ -1880,16 +1880,6 @@ pub async fn update_mesh_config(
     Ok(Json(config_mutation("Mesh config updated.")))
 }
 
-#[cfg(not(feature = "mesh"))]
-#[allow(dead_code)]
-pub async fn _update_mesh_config_stub(
-    _: State<Arc<AdminState>>,
-    _auth: OptionalAuth,
-    Json(_req): Json<UpdateMeshConfigRequest>,
-) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
-    Err(StatusCode::NOT_FOUND)
-}
-
 // --- Mime types config ---
 
 #[derive(Debug, Serialize, ToSchema)]

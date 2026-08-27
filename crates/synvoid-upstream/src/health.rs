@@ -236,7 +236,9 @@ impl HealthChecker {
     }
 
     pub fn shutdown(&self) {
-        let _ = self.shutdown_tx.send(());
+        if self.shutdown_tx.send(()).is_err() {
+            tracing::warn!("Health checker shutdown signal sent with no active receivers");
+        }
         tracing::info!("Health checker shutdown signal sent");
     }
 }

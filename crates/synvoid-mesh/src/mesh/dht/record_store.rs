@@ -499,9 +499,10 @@ impl RecordStoreManager {
         let routing = self.routing_state.read();
 
         let total_global_nodes = if let Some(ref topology) = routing.topology {
-            tokio::runtime::Handle::current()
-                .block_on(topology.get_global_nodes())
-                .len()
+            tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(topology.get_global_nodes())
+            })
+            .len()
         } else {
             0
         };

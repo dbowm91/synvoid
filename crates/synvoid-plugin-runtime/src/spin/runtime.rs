@@ -297,6 +297,10 @@ impl SpinRuntime {
             let mut instances_guard = self.instances.write();
             instances_guard.retain(|_, inst| !inst.is_idle(idle_timeout));
         }
+        {
+            let mut cached_guard = self.cached_instances.write();
+            cached_guard.retain(|_, inst| !inst.is_idle(idle_timeout));
+        }
 
         let mut guard = self.cached_instances.write();
         if let Some(instance) = guard.get(component_id).cloned() {

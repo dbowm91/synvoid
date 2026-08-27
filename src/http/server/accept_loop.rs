@@ -1,5 +1,6 @@
 use super::*;
 
+#[allow(dead_code)]
 struct HttpConnectionService {
     client_addr: SocketAddr,
     local_addr: Option<SocketAddr>,
@@ -118,6 +119,7 @@ impl hyper::service::Service<hyper::Request<hyper::body::Incoming>> for HttpConn
     }
 }
 
+#[allow(dead_code)]
 pub(super) async fn run_accept_loop(
     addr: SocketAddr,
     mut shutdown_rx: broadcast::Receiver<()>,

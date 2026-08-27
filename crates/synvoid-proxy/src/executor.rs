@@ -88,14 +88,13 @@ pub fn build_upstream_request(
     method: &Method,
     target: &PreparedUpstreamTarget,
     headers: HeaderMap,
-) -> Request<Bytes> {
+) -> Result<Request<Bytes>, http::Error> {
     let mut req = Request::builder()
         .method(method.clone())
         .uri(&target.url)
-        .body(Bytes::new())
-        .unwrap_or_else(|e| panic!("failed to build upstream request: {}", e));
+        .body(Bytes::new())?;
     *req.headers_mut() = headers;
-    req
+    Ok(req)
 }
 
 pub struct ProxyExecutor {

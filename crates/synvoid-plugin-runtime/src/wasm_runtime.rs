@@ -2614,8 +2614,10 @@ impl WasmRuntime {
                     };
 
                     // Enforce per-call timeout budget by wrapping blocking_recv
-                    let result = tokio::runtime::Handle::current()
-                        .block_on(tokio::time::timeout(budget_timeout, rx.recv()));
+                    let result = tokio::task::block_in_place(|| {
+                        tokio::runtime::Handle::current()
+                            .block_on(tokio::time::timeout(budget_timeout, rx.recv()))
+                    });
 
                     match result {
                         Err(_elapsed) => {
@@ -2777,10 +2779,12 @@ impl WasmRuntime {
                         let provider = provider.clone();
                         let key_clone = key.clone();
                         let get_result =
-                            tokio::runtime::Handle::current()
-                                .block_on(tokio::time::timeout(budget_timeout, async move {
-                                    provider.get_record(&key_clone)
-                                }));
+                            tokio::task::block_in_place(|| {
+                                tokio::runtime::Handle::current()
+                                    .block_on(tokio::time::timeout(budget_timeout, async move {
+                                        provider.get_record(&key_clone)
+                                    }))
+                            });
                         match get_result {
                             Ok(Some(value)) => {
                                 let max_bytes = caller.data().host_call_budget.max_mesh_value_bytes;
@@ -2889,10 +2893,12 @@ impl WasmRuntime {
                     {
                         let provider = provider.clone();
                         let ip_clone = ip_str.clone();
-                        match tokio::runtime::Handle::current().block_on(tokio::time::timeout(
-                            budget_timeout,
-                            async move { provider.check_threat(&ip_clone) },
-                        )) {
+                        match tokio::task::block_in_place(|| {
+                            tokio::runtime::Handle::current().block_on(tokio::time::timeout(
+                                budget_timeout,
+                                async move { provider.check_threat(&ip_clone) },
+                            ))
+                        }) {
                             Ok(threatened) => {
                                 if threatened {
                                     tracing::debug!(
@@ -3030,11 +3036,13 @@ impl WasmRuntime {
                         let provider = provider.clone();
                         let topic_clone = topic.clone();
                         let data_clone = data.clone();
-                        let emit_result = tokio::runtime::Handle::current().block_on(
-                            tokio::time::timeout(budget_timeout, async move {
-                                provider.store_event(&topic_clone, &data_clone);
-                            }),
-                        );
+                        let emit_result = tokio::task::block_in_place(|| {
+                            tokio::runtime::Handle::current().block_on(
+                                tokio::time::timeout(budget_timeout, async move {
+                                    provider.store_event(&topic_clone, &data_clone);
+                                }),
+                            )
+                        });
                         if emit_result.is_err() {
                             crate::wasm_metrics::record_host_call_failure(
                                 "",

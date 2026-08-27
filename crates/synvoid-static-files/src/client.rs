@@ -890,10 +890,12 @@ fn send_cpu_task_cancel_sync(
     request_id: u64,
     task_kind: synvoid_ipc::CpuTaskKind,
 ) {
-    let _ = ipc.send(&Message::CpuTaskCancel {
+    if let Err(e) = ipc.send(&Message::CpuTaskCancel {
         request_id,
         task_kind,
-    });
+    }) {
+        tracing::warn!("CPU task cancel IPC send failed: {}", e);
+    }
 }
 
 impl AsyncCpuTaskConnectionPool {

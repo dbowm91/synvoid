@@ -278,7 +278,14 @@ impl<W: Write> Write for SignedWriter<W> {
         let ts_bytes = timestamp.to_be_bytes();
         let hmac = self.signer.sign_parts(&[&ts_bytes, &nonce, &self.buffer]);
 
-        let total_len = (TIMESTAMP_SIZE + NONCE_SIZE + HMAC_SIZE + self.buffer.len()) as u32;
+        let total_len: u32 = (TIMESTAMP_SIZE + NONCE_SIZE + HMAC_SIZE + self.buffer.len())
+            .try_into()
+            .map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "IPC signed frame too large for u32 length field",
+                )
+            })?;
         self.inner.write_all(&total_len.to_be_bytes())?;
         self.inner.write_all(&ts_bytes)?;
         self.inner.write_all(&nonce)?;

@@ -233,8 +233,8 @@ pub async fn start_grpc_server(
                 .ok_or("TLS enabled but no cert_path")?;
             let key_path = tls.key_path.as_ref().ok_or("TLS enabled but no key_path")?;
 
-            let cert_pem = std::fs::read(cert_path)?;
-            let key_pem = std::fs::read(key_path)?;
+            let cert_pem = tokio::fs::read(cert_path).await?;
+            let key_pem = tokio::fs::read(key_path).await?;
 
             let identity = Identity::from_pem(&cert_pem, &key_pem);
             let tls_config = ServerTlsConfig::new().identity(identity);
