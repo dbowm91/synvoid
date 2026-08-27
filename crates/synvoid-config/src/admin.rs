@@ -32,7 +32,7 @@ pub struct AdminCorsConfig {
     pub allow_headers: Option<Vec<String>>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
 pub struct AdminConfig {
     #[serde(default = "default_admin_enabled")]
     pub enabled: bool,
@@ -53,11 +53,9 @@ pub struct AdminConfig {
     #[serde(default)]
     pub trusted_proxies: Vec<String>,
     /// Explicitly control the `Secure` flag on the session cookie.
-    /// - `true`: Always set `Secure` (for TLS-terminating reverse proxy deployments).
-    /// - `false`: Never set `Secure` (for plain HTTP development).
-    ///
-    /// The default is `false`; HTTPS/reverse-proxy deployments must opt in.
-    #[serde(default)]
+    /// - `true` (default): Always set `Secure` (safe for TLS and reverse-proxy deployments).
+    /// - `false`: Never set `Secure` (for plain HTTP development only).
+    #[serde(default = "default_secure_cookie")]
     pub secure_cookie: bool,
 }
 
@@ -81,6 +79,23 @@ fn default_admin_rate_limit_burst() -> u32 {
     10
 }
 
+impl Default for AdminConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_admin_enabled(),
+            port: default_admin_port(),
+            bind_address: default_admin_bind(),
+            token: default_admin_token(),
+            token_env_var: None,
+            bcrypt_cost: default_bcrypt_cost(),
+            cors: AdminCorsConfig::default(),
+            rate_limit: AdminRateLimitConfig::default(),
+            trusted_proxies: Vec::new(),
+            secure_cookie: default_secure_cookie(),
+        }
+    }
+}
+
 impl AdminConfig {
     pub fn resolve_token(&self) -> String {
         if let Some(ref env_var) = self.token_env_var {
@@ -101,13 +116,13 @@ impl AdminConfig {
         let mut rng = rand::rng();
         let token: String = (0..48)
             .map(|_| {
-                let idx = rng.random_range(0..64);
+                let idx = rng.random_range(0..62);
                 if idx < 10 {
                     (b'0' + idx) as char
                 } else if idx < 36 {
-                    (b'a' + idx - 10) as char
+                    (b'A' + idx - 10) as char
                 } else {
-                    (b'A' + idx - 36) as char
+                    (b'a' + idx - 36) as char
                 }
             })
             .collect();
@@ -178,6 +193,14 @@ impl AdminConfig {
 
         if let Some(ref origin) = self.cors.allow_origin {
             if origin == "*" {
+                if cfg!(not(debug_assertions)) {
+                    return Err(ConfigValidationError {
+                        field: "admin.cors.allow_origin".to_string(),
+                        message: "CORS allow_origin '*' is not allowed in release builds. \
+                                  Specify exact origins."
+                            .to_string(),
+                    });
+                }
                 tracing::warn!("CORS allow_origin is set to '*' - this is insecure for production. Specify exact origins.");
             }
         }
@@ -216,6 +239,10 @@ fn default_bcrypt_cost() -> u32 {
     12
 }
 
+fn default_secure_cookie() -> bool {
+    true
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct MetricsConfig {
     #[serde(default = "default_metrics_enabled")]
@@ -230,4 +257,102 @@ fn default_metrics_enabled() -> bool {
 
 fn default_metrics_port() -> u16 {
     9090
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generate_token_only_alphanumeric() {
+        let token = AdminConfig::generate_token();
+        assert_eq!(token.len(), 48);
+        assert!(token.chars().all(|c| c.is_ascii_alphanumeric()));
+        assert!(token
+            .chars()
+            .all(|c| c.is_ascii_digit() || c.is_ascii_lowercase() || c.is_ascii_uppercase()));
+    }
+
+    #[test]
+    fn default_admin_token_only_alphanumeric() {
+        let token = default_admin_token();
+        assert_eq!(token.len(), 32);
+        assert!(token.chars().all(|c| c.is_ascii_alphanumeric()));
+    }
+
+    #[test]
+    fn generate_and_default_token_use_same_charset() {
+        let gen = generate_token_chars();
+        let def = default_token_chars();
+        assert_eq!(
+            gen, def,
+            "generate_token and default_admin_token must use the same charset"
+        );
+    }
+
+    fn generate_token_chars() -> Vec<char> {
+        (0..62u8)
+            .map(|idx| {
+                if idx < 10 {
+                    (b'0' + idx) as char
+                } else if idx < 36 {
+                    (b'A' + idx - 10) as char
+                } else {
+                    (b'a' + idx - 36) as char
+                }
+            })
+            .collect()
+    }
+
+    fn default_token_chars() -> Vec<char> {
+        (0..62u8)
+            .map(|idx| {
+                if idx < 10 {
+                    (b'0' + idx) as char
+                } else if idx < 36 {
+                    (b'A' + idx - 10) as char
+                } else {
+                    (b'a' + idx - 36) as char
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn cors_wildcard_rejects_in_release() {
+        let config = AdminConfig {
+            port: 8081,
+            token: "a".repeat(48),
+            bcrypt_cost: 12,
+            cors: AdminCorsConfig {
+                allow_origin: Some("*".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        // In release builds this must error; in debug it only warns.
+        if cfg!(not(debug_assertions)) {
+            assert!(
+                config.validate().is_err(),
+                "CORS wildcard must be rejected in release builds"
+            );
+        } else {
+            assert!(config.validate().is_ok());
+        }
+    }
+
+    #[test]
+    fn cors_specific_origin_passes_validation() {
+        let config = AdminConfig {
+            port: 8081,
+            token: "a".repeat(48),
+            bcrypt_cost: 12,
+            cors: AdminCorsConfig {
+                allow_origin: Some("https://example.com".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(config.validate().is_ok());
+    }
 }

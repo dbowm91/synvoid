@@ -26,5 +26,44 @@ pub fn parse_size_string(s: &str) -> Result<usize, String> {
         (1, s.as_str())
     };
     let num: usize = num_str.trim().parse().map_err(|_| "Invalid number")?;
-    Ok(num * multiplier)
+    num.checked_mul(multiplier)
+        .ok_or_else(|| format!("size overflow: {}", s))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_size_overflow_gb() {
+        let max = format!("{}GB", usize::MAX / (1024 * 1024 * 1024) + 1);
+        assert!(parse_size_string(&max).is_err());
+    }
+
+    #[test]
+    fn test_parse_size_overflow_mb() {
+        let max = format!("{}MB", usize::MAX / (1024 * 1024) + 1);
+        assert!(parse_size_string(&max).is_err());
+    }
+
+    #[test]
+    fn test_parse_size_overflow_kb() {
+        let max = format!("{}KB", usize::MAX / 1024 + 1);
+        assert!(parse_size_string(&max).is_err());
+    }
+
+    #[test]
+    fn test_parse_size_valid() {
+        assert_eq!(parse_size_string("10GB").unwrap(), 10 * 1024 * 1024 * 1024);
+        assert_eq!(parse_size_string("500MB").unwrap(), 500 * 1024 * 1024);
+        assert_eq!(parse_size_string("1024KB").unwrap(), 1024 * 1024);
+        assert_eq!(parse_size_string("100B").unwrap(), 100);
+        assert_eq!(parse_size_string("100").unwrap(), 100);
+    }
+
+    #[test]
+    fn test_parse_size_invalid() {
+        assert!(parse_size_string("abc").is_err());
+        assert!(parse_size_string("").is_err());
+    }
 }

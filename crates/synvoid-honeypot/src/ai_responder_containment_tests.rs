@@ -344,6 +344,21 @@ fn test_ai_responder_sync_returns_fallback() {
     assert!(!response.close_connection);
 }
 
+#[tokio::test]
+async fn test_ai_responder_sync_from_async_context_does_not_panic() {
+    // BUG-006: respond() must not call Handle::current().block_on() because
+    // that panics when called from within a Tokio runtime. Calling it from
+    // an async context via spawn_blocking verifies no runtime re-entry.
+    let budget_config = AiBudgetConfig::default();
+    let responder = AiHoneypotResponder::ssh(Box::new(DummyAiResponder), budget_config);
+    let context = make_context("ssh");
+    let response = tokio::task::spawn_blocking(move || responder.respond(b"test", &context))
+        .await
+        .unwrap();
+    assert_eq!(response.response_type, ResponseType::Static);
+    assert!(response.data.starts_with(b"SSH-2.0"));
+}
+
 #[test]
 fn test_ai_responder_name_and_service() {
     let budget_config = AiBudgetConfig::default();

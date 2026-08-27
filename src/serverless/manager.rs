@@ -392,6 +392,9 @@ impl ServerlessManager {
             let func_name = func_def.name.clone();
             let runtime = self.runtime.clone();
             let (tx, _rx) = tokio::sync::oneshot::channel();
+            // DETACHED: short-lived compile task. Sends result via oneshot;
+            // terminates when compile_blocking completes. Lifecycle managed
+            // by AsyncCompilationManager, not WorkerTaskRegistry.
             tokio::spawn(async move {
                 let compile_result = tokio::task::spawn_blocking({
                     let func_def = func_def_clone.clone();
@@ -466,6 +469,7 @@ impl ServerlessManager {
             let pool_clone_for_init = pool.clone();
             let pool_clone_for_autoscaler = pool.clone();
             let func_name_for_init = func_name.clone();
+            // DETACHED: short-lived init task. Terminates when pre-warm completes.
             tokio::spawn(async move {
                 if let Err(e) = pool_clone_for_init.initialize().await {
                     tracing::error!(
@@ -475,6 +479,9 @@ impl ServerlessManager {
                     );
                 }
             });
+            // DETACHED: autoscaler runs for the lifetime of the pool. Terminates
+            // when pool is dropped (function unload). Not in WorkerTaskRegistry
+            // because lifecycle is tied to InstancePool, not worker shutdown.
             tokio::spawn(async move {
                 pool_clone_for_autoscaler.run_autoscaler().await;
             });
@@ -514,6 +521,8 @@ impl ServerlessManager {
                     let upstream_id = format!("serverless_function:{}", func_def.name);
                     let routing_clone = routing.clone();
                     let func_name = func_def.name.clone();
+                    // DETACHED: short-lived registration task. Terminates when
+                    // register_local_upstream completes.
                     tokio::spawn(async move {
                         routing_clone.register_local_upstream(&upstream_id).await;
                         tracing::debug!(

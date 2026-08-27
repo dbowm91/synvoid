@@ -151,10 +151,10 @@ impl ZoneTrie {
         // Navigate to the node
         let mut current = &mut self.root;
         for label in labels.iter().rev() {
-            if !current.children.contains_key(label) {
+            let Some(child) = current.children.get_mut(label) else {
                 return false;
-            }
-            current = current.children.get_mut(label).unwrap();
+            };
+            current = child;
         }
 
         if current.is_zone {
@@ -313,5 +313,28 @@ mod tests {
         assert!(trie.is_empty());
         assert_eq!(trie.len(), 0);
         assert_eq!(trie.find_zone("example.com"), None);
+    }
+
+    #[test]
+    fn test_remove_nonexistent_returns_false() {
+        let mut trie = ZoneTrie::new();
+        trie.insert("example.com");
+
+        assert!(!trie.remove("nonexistent.com"));
+        assert!(!trie.remove("other.example.com"));
+        assert_eq!(trie.len(), 1);
+        assert!(trie.contains("example.com"));
+    }
+
+    #[test]
+    fn test_remove_intermediate_label() {
+        let mut trie = ZoneTrie::new();
+        trie.insert("example.com");
+        trie.insert("sub.example.com");
+
+        assert!(!trie.remove("example"));
+        assert_eq!(trie.len(), 2);
+        assert!(trie.contains("example.com"));
+        assert!(trie.contains("sub.example.com"));
     }
 }

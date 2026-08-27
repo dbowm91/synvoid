@@ -40,6 +40,10 @@ pub fn extract_client_ip(request: &Request, trusted_proxies: &[String]) -> Strin
         None => return "unknown".to_string(),
     };
 
+    if trusted_proxies.is_empty() {
+        return direct_ip_str;
+    }
+
     let is_trusted = trusted_proxies.iter().any(|p| {
         if let (Ok(proxy), Ok(direct)) = (p.parse::<IpAddr>(), direct_ip_str.parse::<IpAddr>()) {
             proxy == direct
@@ -51,10 +55,23 @@ pub fn extract_client_ip(request: &Request, trusted_proxies: &[String]) -> Strin
     if is_trusted {
         if let Some(header) = request.headers().get("x-forwarded-for") {
             if let Ok(s) = header.to_str() {
-                if let Some(client_ip) = s.split(',').next() {
-                    let ip = client_ip.trim();
-                    if !ip.is_empty() && ip.parse::<IpAddr>().is_ok() {
-                        return ip.to_string();
+                let ips: Vec<&str> = s.split(',').collect();
+                for ip_str in ips.iter().rev() {
+                    let ip = ip_str.trim();
+                    if ip.is_empty() {
+                        continue;
+                    }
+                    if let Ok(parsed) = ip.parse::<IpAddr>() {
+                        let is_proxy = trusted_proxies.iter().any(|p| {
+                            if let Ok(tp) = p.parse::<IpAddr>() {
+                                tp == parsed
+                            } else {
+                                false
+                            }
+                        });
+                        if !is_proxy {
+                            return ip.to_string();
+                        }
                     }
                 }
             }
@@ -264,7 +281,7 @@ pub async fn security_headers_middleware(request: Request, next: Next) -> Respon
 
     headers.entry("content-security-policy").or_insert_with(|| {
         HeaderValue::from_static(
-            "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws: wss:; frame-ancestors 'none'"
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws: wss:; frame-ancestors 'none'"
         )
     });
 
@@ -350,7 +367,7 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_client_ip_multiple_xff_uses_first() {
+    fn test_extract_client_ip_multiple_xff_uses_last_non_trusted() {
         let mut request = Request::builder().body(axum::body::Body::empty()).unwrap();
 
         let addr: std::net::SocketAddr = "10.0.0.1:8080".parse().unwrap();
@@ -364,7 +381,43 @@ mod tests {
         );
 
         let ip = extract_client_ip(&request, &["10.0.0.1".to_string()]);
-        assert_eq!(ip, "203.0.113.50");
+        assert_eq!(ip, "70.41.3.18");
+    }
+
+    #[test]
+    fn test_extract_client_ip_multi_hop_right_to_left() {
+        let mut request = Request::builder().body(axum::body::Body::empty()).unwrap();
+
+        let addr: std::net::SocketAddr = "10.0.0.1:8080".parse().unwrap();
+        request
+            .extensions_mut()
+            .insert(axum::extract::ConnectInfo(addr));
+
+        request.headers_mut().insert(
+            "x-forwarded-for",
+            HeaderValue::from_static("1.2.3.4, 10.0.0.2, 10.0.0.1"),
+        );
+
+        let ip = extract_client_ip(&request, &["10.0.0.1".to_string(), "10.0.0.2".to_string()]);
+        assert_eq!(ip, "1.2.3.4");
+    }
+
+    #[test]
+    fn test_extract_client_ip_all_trusted_falls_back_to_direct() {
+        let mut request = Request::builder().body(axum::body::Body::empty()).unwrap();
+
+        let addr: std::net::SocketAddr = "10.0.0.1:8080".parse().unwrap();
+        request
+            .extensions_mut()
+            .insert(axum::extract::ConnectInfo(addr));
+
+        request.headers_mut().insert(
+            "x-forwarded-for",
+            HeaderValue::from_static("10.0.0.2, 10.0.0.1"),
+        );
+
+        let ip = extract_client_ip(&request, &["10.0.0.1".to_string(), "10.0.0.2".to_string()]);
+        assert_eq!(ip, "10.0.0.1");
     }
 
     #[tokio::test]

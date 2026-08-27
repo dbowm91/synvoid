@@ -88,7 +88,8 @@ impl<C: RaftTypeConfig> MeshRaftNetwork<C> {
             MAX_RETRIES + 1,
             self.target
         );
-        let err = last_error.unwrap();
+        let err = last_error
+            .expect("for attempt in 0..=MAX_RETRIES, the first iteration always sets last_error");
         Err(RPCError::Unreachable(Unreachable::new(
             &std::io::Error::new(std::io::ErrorKind::ConnectionRefused, err.to_string()),
         )))
@@ -312,5 +313,54 @@ impl openraft::network::RaftNetworkFactory<crate::raft::state_machine::GlobalReg
             target.to_string(),
             Some(self.observer_tags.clone()),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mesh::raft::consensus::{ConsensusTransport, ConsensusTransportError};
+    use crate::protocol::MeshMessage;
+    use async_trait::async_trait;
+
+    struct AlwaysFailTransport;
+
+    #[async_trait]
+    impl ConsensusTransport for AlwaysFailTransport {
+        async fn send_rpc(
+            &self,
+            _peer_id: &str,
+            _message: &MeshMessage,
+        ) -> Result<Vec<u8>, ConsensusTransportError> {
+            Err(ConsensusTransportError::SendFailed(
+                "simulated failure".into(),
+            ))
+        }
+
+        async fn send_fire_and_forget(
+            &self,
+            _peer_id: &str,
+            _message: &MeshMessage,
+        ) -> Result<(), ConsensusTransportError> {
+            Err(ConsensusTransportError::SendFailed(
+                "simulated failure".into(),
+            ))
+        }
+    }
+
+    #[tokio::test]
+    async fn test_send_raw_all_failures_returns_error() {
+        let transport = Arc::new(AlwaysFailTransport);
+        let network: MeshRaftNetwork<crate::raft::state_machine::GlobalRegistryConfig> =
+            MeshRaftNetwork::new(transport, "test-target".into(), None);
+
+        let result = network
+            .send_raw(RaftMsgType::AppendEntries, vec![1, 2, 3])
+            .await;
+
+        assert!(
+            result.is_err(),
+            "send_raw should return an error when all retries fail"
+        );
     }
 }

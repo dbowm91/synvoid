@@ -341,7 +341,9 @@ pub async fn export_config(
     _auth: OptionalAuth,
 ) -> Result<String, StatusCode> {
     let config = state.process.config.read().await;
-    let toml_content = toml::to_string_pretty(&config.main).map_err(|e| {
+    let mut main = config.main.clone();
+    main.admin.token.clear();
+    let toml_content = toml::to_string_pretty(&main).map_err(|e| {
         tracing::error!("Failed to serialize config: {}", e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
@@ -352,6 +354,35 @@ pub async fn export_config(
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct ImportConfigRequest {
     pub config: String,
+}
+
+fn percent_decode(s: &str) -> String {
+    let mut result = Vec::with_capacity(s.len());
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hi = hex_digit(bytes[i + 1]);
+            let lo = hex_digit(bytes[i + 2]);
+            if let (Some(h), Some(l)) = (hi, lo) {
+                result.push(h * 16 + l);
+                i += 3;
+                continue;
+            }
+        }
+        result.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8(result).unwrap_or_default()
+}
+
+fn hex_digit(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
 }
 
 fn validate_config_paths(content: &str) -> Result<(), String> {
@@ -384,12 +415,31 @@ fn validate_config_paths(content: &str) -> Result<(), String> {
                     || s.contains('\\');
 
                 if is_path_key {
-                    if s.contains("..") {
+                    let decoded = percent_decode(s);
+
+                    if decoded.contains('\0') {
+                        violations.push(format!("Null byte detected in '{}': '{}'", key, s));
+                    }
+
+                    let check_str = decoded.to_lowercase();
+                    let raw_lower = s.to_lowercase();
+
+                    if check_str.contains("..") || raw_lower.contains("..") {
                         violations.push(format!("Path traversal detected in '{}': '{}'", key, s));
                     }
-                    let lower = s.to_lowercase();
+                    if check_str.contains("\\..\\")
+                        || check_str.contains("/../")
+                        || check_str.contains("..\\")
+                    {
+                        if !check_str.contains("..") {
+                            violations
+                                .push(format!("Path traversal detected in '{}': '{}'", key, s));
+                        }
+                    }
+
                     for sensitive_path in sensitive {
-                        if lower.starts_with(&sensitive_path.to_lowercase()) {
+                        let sp = sensitive_path.to_lowercase();
+                        if check_str.starts_with(&sp) || raw_lower.starts_with(&sp) {
                             violations
                                 .push(format!("Sensitive path reference in '{}': '{}'", key, s));
                             break;
@@ -839,6 +889,10 @@ pub async fn update_tls_config(
     {
         let mut config = state.process.config.write().await;
         config.main.tls = req.config;
+        config.main.tls.validate().map_err(|e| {
+            tracing::error!("TLS config validation failed: {}", e);
+            StatusCode::BAD_REQUEST
+        })?;
     }
     persist_with_snapshot(&state, "TLS config updated").await?;
     Ok(Json(config_mutation("TLS config updated.")))
@@ -1013,8 +1067,12 @@ pub async fn update_http3_config(
     {
         let mut config = state.process.config.write().await;
         config.main.http3 = req.config;
+        config.main.validate().map_err(|e| {
+            tracing::error!("HTTP/3 config validation failed: {}", e);
+            StatusCode::BAD_REQUEST
+        })?;
     }
-    persist_with_snapshot(&state, "TLS config updated").await?;
+    persist_with_snapshot(&state, "HTTP/3 config updated").await?;
     Ok(Json(config_mutation("HTTP/3 config updated.")))
 }
 
@@ -3668,4 +3726,72 @@ pub async fn update_asn_scraping_defaults(
     }
     persist_with_snapshot(&state, "ASN scraping defaults updated").await?;
     Ok(Json(config_mutation("ASN scraping defaults updated.")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_percent_decode_basic() {
+        assert_eq!(percent_decode("hello"), "hello");
+        assert_eq!(percent_decode("hello%20world"), "hello world");
+        assert_eq!(percent_decode("%2Fetc%2Fpasswd"), "/etc/passwd");
+        assert_eq!(percent_decode("no%2e%2e%2f"), "no../");
+    }
+
+    #[test]
+    fn test_validate_config_rejects_url_encoded_traversal() {
+        let config = r#"
+[server]
+log_file = "/var/log/%2e%2e/etc/passwd"
+"#;
+        assert!(validate_config_paths(config).is_err());
+    }
+
+    #[test]
+    fn test_validate_config_rejects_null_bytes() {
+        let config = r#"
+[server]
+log_file = "/var/log/test\x00/etc/passwd"
+"#;
+        let result = validate_config_paths(config);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_config_rejects_literal_dotdot() {
+        let config = r#"
+[server]
+log_file = "/var/log/../etc/passwd"
+"#;
+        assert!(validate_config_paths(config).is_err());
+    }
+
+    #[test]
+    fn test_validate_config_rejects_sensitive_proc() {
+        let config = r#"
+[server]
+log_file = "/proc/self/environ"
+"#;
+        assert!(validate_config_paths(config).is_err());
+    }
+
+    #[test]
+    fn test_validate_config_allows_safe_paths() {
+        let config = r#"
+[server]
+log_file = "/var/log/synvoid/access.log"
+"#;
+        assert!(validate_config_paths(config).is_ok());
+    }
+
+    #[test]
+    fn test_validate_config_rejects_raw_dotdot_in_non_path() {
+        let config = r#"
+[server]
+description = "test..path"
+"#;
+        assert!(validate_config_paths(config).is_ok());
+    }
 }

@@ -385,7 +385,7 @@ impl AdminState {
             },
             audit: AuditState::new(),
             config_versions: ConfigVersionManager::new(std::path::PathBuf::new()),
-            secure_cookie: false,
+            secure_cookie: true,
         }
     }
 
@@ -1419,6 +1419,21 @@ mod tests {
         );
 
         assert_ne!(entry1.id, entry2.id);
+    }
+
+    #[test]
+    fn test_admin_state_secure_cookie_defaults_to_true() {
+        let state = create_test_state();
+        assert!(state.secure_cookie, "secure_cookie should default to true");
+    }
+
+    #[test]
+    fn test_admin_config_secure_cookie_default_is_true() {
+        let config = crate::config::admin::AdminConfig::default();
+        assert!(
+            config.secure_cookie,
+            "AdminConfig.secure_cookie should default to true"
+        );
     }
 
     #[test]

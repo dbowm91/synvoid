@@ -832,22 +832,7 @@ impl MeshProxy {
         &self,
         providers: Vec<crate::protocol::ProviderInfo>,
     ) -> Vec<crate::protocol::ProviderInfo> {
-        if providers.len() <= 1 {
-            return providers;
-        }
-
-        let scores: Vec<f64> = providers.iter().map(|p| p.score.max(0.01)).collect();
-
-        let weighted_index = WeightedIndex::new(&scores).unwrap();
-        let mut indices: Vec<usize> = (0..providers.len()).collect();
-        let mut rng = rand::rng();
-
-        let mut result = Vec::with_capacity(providers.len());
-        for _ in 0..providers.len() {
-            let idx = indices.remove(weighted_index.sample(&mut rng));
-            result.push(providers[idx].clone());
-        }
-        result
+        weighted_shuffle(providers)
     }
 
     // Response transform holds a cache lock across an await; low contention expected.
@@ -1337,6 +1322,9 @@ impl MeshProxy {
             self.policy_cache.insert(upstream_id.clone(), refreshed);
             let upstream = upstream_id;
             let cache = self.policy_cache.clone();
+            // DETACHED: short-lived (1s sleep + map remove). Task terminates
+            // independently; cache outlives the spawn. No lifecycle management
+            // needed — consistent with moka::sync::Cache cleanup semantics.
             tokio::spawn(async move {
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 cache.remove(&upstream);
@@ -1970,6 +1958,28 @@ impl MeshProxy {
     }
 }
 
+fn weighted_shuffle(
+    providers: Vec<crate::protocol::ProviderInfo>,
+) -> Vec<crate::protocol::ProviderInfo> {
+    if providers.len() <= 1 {
+        return providers;
+    }
+
+    let mut scores: Vec<f64> = providers.iter().map(|p| p.score.max(0.01)).collect();
+    let mut indices: Vec<usize> = (0..providers.len()).collect();
+    let mut rng = rand::rng();
+
+    let mut result = Vec::with_capacity(providers.len());
+    for _ in 0..providers.len() {
+        let weighted_index = WeightedIndex::new(&scores).unwrap();
+        let pick = weighted_index.sample(&mut rng);
+        let idx = indices.remove(pick);
+        scores.remove(pick);
+        result.push(providers[idx].clone());
+    }
+    result
+}
+
 #[derive(Debug, Clone)]
 pub struct MeshProxyStats {
     pub active_connections: usize,
@@ -2009,4 +2019,83 @@ pub enum MeshProxyError {
         upstream_id: String,
         alternatives: Vec<crate::protocol::AlternativeProvider>,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::{ProviderInfo, WafPolicy};
+    use std::time::Duration;
+
+    fn make_provider(node_id: &str, score: f64) -> ProviderInfo {
+        ProviderInfo {
+            node_id: node_id.to_string(),
+            upstream_url: format!("http://{node_id}:8080"),
+            waf_policy: Some(WafPolicy::default()),
+            hops: 1,
+            ttl: Duration::from_secs(60),
+            score,
+            priority_tier: 1,
+            tier_claim: None,
+            org_id: None,
+            mesh_name: None,
+        }
+    }
+
+    #[test]
+    fn weighted_shuffle_no_panic_no_duplicates() {
+        let providers: Vec<ProviderInfo> = (0..10)
+            .map(|i| make_provider(&format!("node-{i}"), (i + 1) as f64))
+            .collect();
+
+        for _ in 0..50 {
+            let result = weighted_shuffle(providers.clone());
+            assert_eq!(result.len(), providers.len());
+            let ids: Vec<&str> = result.iter().map(|p| p.node_id.as_str()).collect();
+            let mut sorted = ids.clone();
+            sorted.sort();
+            sorted.dedup();
+            assert_eq!(
+                sorted.len(),
+                ids.len(),
+                "duplicate providers in shuffle output"
+            );
+        }
+    }
+
+    #[test]
+    fn weighted_shuffle_single_or_empty() {
+        let empty: Vec<ProviderInfo> = vec![];
+        assert!(weighted_shuffle(empty).is_empty());
+
+        let single = vec![make_provider("only", 1.0)];
+        let result = weighted_shuffle(single.clone());
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].node_id, "only");
+    }
+
+    #[test]
+    fn weighted_shuffle_respects_distributions() {
+        let mut first_place_counts = [0u64; 5];
+        let providers: Vec<ProviderInfo> = (0..5)
+            .map(|i| make_provider(&format!("node-{i}"), (i + 1) as f64))
+            .collect();
+
+        let runs = 10_000;
+        for _ in 0..runs {
+            let result = weighted_shuffle(providers.clone());
+            if let Some(first) = result.first() {
+                if let Some(idx) = first.node_id.strip_prefix("node-") {
+                    if let Ok(idx) = idx.parse::<usize>() {
+                        first_place_counts[idx] += 1;
+                    }
+                }
+            }
+        }
+        // node-4 (score 5.0) should appear first more often than node-0 (score 1.0)
+        assert!(
+            first_place_counts[4] > first_place_counts[0],
+            "expected node-4 to appear first more often, got counts={first_place_counts:?}"
+        );
+    }
 }

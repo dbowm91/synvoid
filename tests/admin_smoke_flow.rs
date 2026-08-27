@@ -715,3 +715,103 @@ async fn smoke_openapi_spec_available() {
         "OpenAPI spec should be publicly available"
     );
 }
+
+// ── TLS config validation (BUG-009) ──────────────────────────────────────────
+
+#[tokio::test]
+async fn tls_config_validation_rejects_enabled_without_cert() {
+    let router = build_router().await;
+    let body = serde_json::json!({
+        "config": {
+            "enabled": true,
+            "cert_path": null,
+            "key_path": null,
+            "port": 443,
+            "prefer_post_quantum": true,
+            "client_auth": { "enabled": false },
+            "acme": { "enabled": false }
+        }
+    });
+    let resp = router
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/config/tls")
+                .header("authorization", format!("Bearer {}", TEST_TOKEN))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::BAD_REQUEST,
+        "TLS enabled without cert_path or ACME should return 400"
+    );
+}
+
+#[tokio::test]
+async fn tls_config_validation_accepts_disabled() {
+    let router = build_router().await;
+    let body = serde_json::json!({
+        "config": {
+            "enabled": false,
+            "cert_path": null,
+            "key_path": null,
+            "port": 443,
+            "prefer_post_quantum": true,
+            "client_auth": { "enabled": false },
+            "acme": { "enabled": false }
+        }
+    });
+    let resp = router
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/config/tls")
+                .header("authorization", format!("Bearer {}", TEST_TOKEN))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        resp.status().is_success(),
+        "TLS disabled should succeed, got {}",
+        resp.status()
+    );
+}
+
+// ── HTTP/3 config validation (BUG-009) ───────────────────────────────────────
+
+#[tokio::test]
+async fn http3_config_validation_accepts_default() {
+    let router = build_router().await;
+    let body = serde_json::json!({
+        "config": {
+            "enabled": false,
+            "port": 443,
+            "alt_svc_max_age": 86400,
+            "max_request_size": 10485760
+        }
+    });
+    let resp = router
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/config/http3")
+                .header("authorization", format!("Bearer {}", TEST_TOKEN))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        resp.status().is_success(),
+        "HTTP/3 config with valid defaults should succeed, got {}",
+        resp.status()
+    );
+}

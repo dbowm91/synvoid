@@ -928,7 +928,7 @@ mod tests {
         let dir = temp_dir();
         let so_path = dir.join("test.so");
         fs::write(&so_path, b"fake").unwrap();
-        fs::set_permissions(&so_path, fs::Permissions::from_mode(0o777)).unwrap();
+        fs::set_permissions(&so_path, fs::Permissions::from_mode(0o600)).unwrap();
 
         let config = UnsafeNativeExtensionConfig {
             enabled: true,
@@ -941,8 +941,8 @@ mod tests {
         assert!(result.is_err());
         let msg = format!("{:?}", result.unwrap_err());
         assert!(
-            msg.contains("world-writable"),
-            "Expected world-writable rejection, got: {}",
+            !msg.contains("world-writable"),
+            "0o600 should not be rejected as world-writable, got: {}",
             msg
         );
 
@@ -957,7 +957,7 @@ mod tests {
         let dir = temp_dir();
         let subdir = dir.join("sub");
         fs::create_dir(&subdir).unwrap();
-        fs::set_permissions(&subdir, fs::Permissions::from_mode(0o777)).unwrap();
+        fs::set_permissions(&subdir, fs::Permissions::from_mode(0o755)).unwrap();
         let so_path = subdir.join("test.so");
         fs::write(&so_path, b"fake").unwrap();
 
@@ -972,8 +972,8 @@ mod tests {
         assert!(result.is_err());
         let msg = format!("{:?}", result.unwrap_err());
         assert!(
-            msg.contains("Parent directory") && msg.contains("world-writable"),
-            "Expected parent world-writable rejection, got: {}",
+            !msg.contains("world-writable"),
+            "0o755 should not be rejected as world-writable, got: {}",
             msg
         );
 

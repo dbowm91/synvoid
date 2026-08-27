@@ -41,6 +41,7 @@ pub struct AtomicBucketWindow {
     bucket_count: u32,
     bucket_duration_ms: u64,
     current_bucket: AtomicU64,
+    generation: AtomicU64,
     start: Instant,
 }
 
@@ -55,6 +56,7 @@ impl AtomicBucketWindow {
             bucket_count,
             bucket_duration_ms,
             current_bucket: AtomicU64::new(0),
+            generation: AtomicU64::new(0),
             start: Instant::now(),
         }
     }
@@ -95,12 +97,17 @@ impl AtomicBucketWindow {
                 .is_ok();
 
             if successful {
-                let buckets_to_clear =
-                    std::cmp::min((new_bucket - last_bucket) as u32, self.bucket_count);
-
-                for i in 0..buckets_to_clear {
-                    let idx = ((last_bucket + i as u64) % self.bucket_count as u64) as usize;
-                    self.buckets[idx].store(0, Ordering::Release);
+                // Calculate time bounds to determine which physical buckets to clear.
+                // Old window ends at new_bucket * bucket_duration_ms; any bucket whose
+                // entire time range precedes that boundary is stale.
+                let old_window_end = new_bucket * self.bucket_duration_ms;
+                for i in 0..self.bucket_count {
+                    let abs_idx = last_bucket + i as u64;
+                    let bucket_end = (abs_idx + 1) * self.bucket_duration_ms;
+                    if bucket_end <= old_window_end {
+                        let idx = (abs_idx % self.bucket_count as u64) as usize;
+                        self.buckets[idx].store(0, Ordering::Release);
+                    }
                 }
                 break;
             }
@@ -111,14 +118,21 @@ impl AtomicBucketWindow {
 
     #[inline]
     fn sum_buckets(&self) -> u32 {
-        let mut total = 0u32;
-        for bucket in self.buckets.iter() {
-            total += bucket.load(Ordering::Relaxed);
+        loop {
+            let gen_before = self.generation.load(Ordering::Acquire);
+            let mut total = 0u32;
+            for bucket in self.buckets.iter() {
+                total += bucket.load(Ordering::Relaxed);
+            }
+            let gen_after = self.generation.load(Ordering::Acquire);
+            if gen_before == gen_after {
+                return total;
+            }
         }
-        total
     }
 
     pub fn reset(&self) {
+        self.generation.fetch_add(1, Ordering::Release);
         for bucket in self.buckets.iter() {
             bucket.store(0, Ordering::Relaxed);
         }
@@ -190,22 +204,24 @@ impl<K: Hash + Eq + Clone> SlidingWindowLimiter<K> {
     }
 
     pub fn check_and_increment(&self, key: &K) -> SlidingDecision {
-        {
-            let mut entries = self.entries.write();
-            let entry = entries
-                .entry(key.clone())
-                .or_insert_with(|| SlidingWindowEntry::new(&self.configs));
+        let mut entries = self.entries.write();
+        let entry = entries
+            .entry(key.clone())
+            .or_insert_with(|| SlidingWindowEntry::new(&self.configs));
 
-            if let Some((limit_type, current)) = entry.check_and_increment(&self.configs) {
-                return SlidingDecision::Limited {
-                    limit_type,
-                    current,
-                };
-            }
+        if let Some((limit_type, current)) = entry.check_and_increment(&self.configs) {
+            return SlidingDecision::Limited {
+                limit_type,
+                current,
+            };
         }
 
-        if self.entries.read().len() > self.max_entries {
-            self.maybe_cleanup();
+        // Cleanup under the same write guard to avoid double-lock.
+        if entries.len() > (self.max_entries as f64 * self.cleanup_threshold) as usize {
+            entries.retain(|_, entry| {
+                let counts = entry.get_counts();
+                counts.iter().any(|&c| c > 0)
+            });
         }
 
         SlidingDecision::Allowed
@@ -217,16 +233,6 @@ impl<K: Hash + Eq + Clone> SlidingWindowLimiter<K> {
 
     pub fn get_entry_count(&self) -> usize {
         self.entries.read().len()
-    }
-
-    fn maybe_cleanup(&self) {
-        let mut entries = self.entries.write();
-        if entries.len() > (self.max_entries as f64 * self.cleanup_threshold) as usize {
-            entries.retain(|_, entry| {
-                let counts = entry.get_counts();
-                counts.iter().any(|&c| c > 0)
-            });
-        }
     }
 
     pub fn remove(&self, key: &K) {
@@ -283,7 +289,7 @@ impl MultiWindowSlidingLimiter {
             };
         }
 
-        let minute_count = self.minute_window.get_count();
+        let minute_count = self.minute_window.increment();
         if minute_count > self.per_minute_limit {
             return SlidingGlobalDecision::Limited {
                 limit_type: "global_sliding_per_minute",
@@ -291,7 +297,7 @@ impl MultiWindowSlidingLimiter {
             };
         }
 
-        let hour_count = self.hour_window.get_count();
+        let hour_count = self.hour_window.increment();
         if hour_count > self.per_hour_limit {
             return SlidingGlobalDecision::Limited {
                 limit_type: "global_sliding_per_hour",
@@ -484,5 +490,64 @@ mod tests {
         assert_eq!(config.window_secs, 60);
         assert_eq!(config.bucket_count, 120);
         assert_eq!(config.limit, 200);
+    }
+
+    #[test]
+    fn test_multi_window_minute_hour_advance() {
+        let limiter = MultiWindowSlidingLimiter::new(100, 5, 1000);
+
+        for _ in 0..5 {
+            assert_eq!(limiter.check(), SlidingGlobalDecision::Allowed);
+        }
+
+        let decision = limiter.check();
+        assert!(
+            matches!(
+                decision,
+                SlidingGlobalDecision::Limited {
+                    limit_type: "global_sliding_per_minute",
+                    ..
+                }
+            ),
+            "Expected per_minute limit after 6 calls with limit=5, got {:?}",
+            decision
+        );
+
+        let stats = limiter.get_stats();
+        assert!(
+            stats.per_minute >= 5,
+            "per_minute should advance, got {}",
+            stats.per_minute
+        );
+    }
+
+    #[test]
+    fn test_atomic_bucket_window_reset_generation() {
+        let window = AtomicBucketWindow::new(60, 60);
+
+        for _ in 0..10 {
+            window.increment();
+        }
+        assert_eq!(window.get_count(), 10);
+
+        window.reset();
+        assert_eq!(window.get_count(), 0);
+
+        let count = window.increment();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn test_atomic_bucket_window_rotation_bucket_count_mismatch() {
+        let window = AtomicBucketWindow::new(5, 7);
+
+        for _ in 0..5 {
+            window.increment();
+        }
+        let count = window.get_count();
+        assert_eq!(count, 5);
+
+        let count2 = window.increment();
+        assert_eq!(count2, 6);
     }
 }

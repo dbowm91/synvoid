@@ -420,17 +420,22 @@ impl NodeIdentityConfig {
                     aead::{Aead, KeyInit},
                     Aes256Gcm, Nonce,
                 };
-                use rand::RngCore;
+                use rand::TryRngCore;
 
                 let mut salt = [0u8; 16];
-                rand::rng().fill_bytes(&mut salt);
+                let mut os_rng = rand::rngs::OsRng;
+                os_rng
+                    .try_fill_bytes(&mut salt)
+                    .map_err(|e| format!("RNG failure: {}", e))?;
 
                 let key = Self::derive_encryption_key(pass, &salt);
                 let cipher = Aes256Gcm::new_from_slice(&key)
                     .map_err(|e| format!("Cipher init failed: {}", e))?;
 
                 let mut nonce_bytes = [0u8; 12];
-                rand::rng().fill_bytes(&mut nonce_bytes);
+                os_rng
+                    .try_fill_bytes(&mut nonce_bytes)
+                    .map_err(|e| format!("RNG failure: {}", e))?;
                 let nonce = Nonce::clone_from_slice(&nonce_bytes);
 
                 let ciphertext = cipher

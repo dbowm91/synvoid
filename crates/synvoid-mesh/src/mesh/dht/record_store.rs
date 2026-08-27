@@ -498,7 +498,13 @@ impl RecordStoreManager {
     ) -> (bool, usize) {
         let routing = self.routing_state.read();
 
-        let total_global_nodes = if let Some(ref topology) = routing.topology {
+        let topology = routing.topology.clone();
+
+        let cert_manager = routing.transport.as_ref().map(|t| t.cert_manager.clone());
+
+        drop(routing);
+
+        let total_global_nodes = if let Some(topology) = topology {
             tokio::task::block_in_place(|| {
                 tokio::runtime::Handle::current().block_on(topology.get_global_nodes())
             })
@@ -513,10 +519,6 @@ impl RecordStoreManager {
             );
             return (false, 0);
         }
-
-        let cert_manager = routing.transport.as_ref().map(|t| t.cert_manager.clone());
-
-        drop(routing);
 
         let get_authorized_key = move |node_id: &str| -> Option<String> {
             let cm = cert_manager.as_ref()?;

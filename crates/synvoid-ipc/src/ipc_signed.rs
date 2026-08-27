@@ -50,6 +50,8 @@ pub const SIGNED_MESSAGE_OVERHEAD: usize = 4 + TIMESTAMP_SIZE + NONCE_SIZE + HMA
 pub const MAX_IPC_MESSAGE_SIZE: usize = 1024 * 1024;
 
 static OVERSIZED_REJECTED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static NONCE_CACHE_MSG_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+const RETAIN_INTERVAL: u64 = 64;
 
 pub fn oversized_rejected_count() -> u64 {
     OVERSIZED_REJECTED.load(std::sync::atomic::Ordering::Relaxed)
@@ -69,21 +71,33 @@ const REPLAY_WINDOW_SECS: u64 = 60;
 fn check_and_insert_nonce(signer_id: u64, nonce: &[u8; 16], timestamp: u64) -> bool {
     let key = (signer_id, *nonce);
 
-    // Remove only entries that are outside the replay window. Evicting a live
-    // entry when the cache is full would let a valid frame be replayed after an
-    // attacker filled the cache with other authenticated frames.
-    let cutoff = timestamp.saturating_sub(REPLAY_WINDOW_SECS);
-    NONCE_CACHE.retain(|_, cached_timestamp| *cached_timestamp > cutoff);
+    let msg_count = NONCE_CACHE_MSG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if msg_count.is_multiple_of(RETAIN_INTERVAL) {
+        let now = synvoid_utils::current_timestamp();
+        let cutoff = now.saturating_sub(REPLAY_WINDOW_SECS);
+        NONCE_CACHE.retain(|_, cached_timestamp| *cached_timestamp > cutoff);
+    }
+
+    // If the cache is at capacity, evict expired entries BEFORE acquiring
+    // the entry ref. Holding an entry ref across `retain` would deadlock
+    // because both take shard-level locks.
+    if NONCE_CACHE.len() >= MAX_NONCE_CACHE_SIZE {
+        let now = synvoid_utils::current_timestamp();
+        let expire_cutoff = now.saturating_sub(REPLAY_WINDOW_SECS);
+        NONCE_CACHE.retain(|_, ts| *ts > expire_cutoff);
+    }
 
     // DashMap's entry API makes the duplicate check and insertion atomic. A
     // get-then-insert sequence can accept the same nonce twice when two IPC
     // frames are verified concurrently.
     use dashmap::mapref::entry::Entry;
-    let cache_full = NONCE_CACHE.len() >= MAX_NONCE_CACHE_SIZE;
     match NONCE_CACHE.entry(key) {
         Entry::Occupied(_) => false,
-        Entry::Vacant(_entry) if cache_full => false,
         Entry::Vacant(entry) => {
+            // Cache may transiently exceed MAX_NONCE_CACHE_SIZE under an
+            // active replay-window attack; the periodic retain above keeps
+            // it bounded in the steady state and evicts attack entries once
+            // they age out.
             entry.insert(timestamp);
             true
         }
@@ -813,6 +827,31 @@ mod tests {
             "Unsigned payload must be rejected by signed deserializer, but got: {:?}",
             result
         );
+    }
+
+    #[test]
+    fn test_nonce_cache_accepts_new_when_full() {
+        let signer_id = 999u64;
+        let now = synvoid_utils::current_timestamp();
+
+        let start_len = NONCE_CACHE.len();
+        let mut accepted = 0usize;
+        for i in 0..(MAX_NONCE_CACHE_SIZE.saturating_sub(start_len) + 16) {
+            let nonce = (i as u64).wrapping_add(0xDEAD_BEEF).to_le_bytes();
+            let mut full_nonce = [0u8; 16];
+            full_nonce[..8].copy_from_slice(&nonce);
+            if check_and_insert_nonce(signer_id, &full_nonce, now) {
+                accepted += 1;
+            }
+        }
+
+        assert_eq!(
+            accepted,
+            MAX_NONCE_CACHE_SIZE.saturating_sub(start_len) + 16,
+            "BUG-005 regression — entries must be accepted even when the global cache is at capacity"
+        );
+
+        assert!(NONCE_CACHE.len() > MAX_NONCE_CACHE_SIZE);
     }
 
     #[test]

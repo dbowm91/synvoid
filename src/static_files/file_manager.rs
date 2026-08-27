@@ -982,7 +982,7 @@ impl FileManager {
         let max_size = self.config.archive_max_size;
         let max_compression_ratio = 10;
 
-        let dest_canonical = dest.canonicalize().unwrap_or_else(|_| PathBuf::from(dest));
+        let dest_canonical = dest.canonicalize()?;
 
         for i in 0..archive.len() {
             let mut file = archive
@@ -1087,7 +1087,7 @@ impl FileManager {
         let mut total_extracted_size: u64 = 0;
         let max_size = self.config.archive_max_size;
 
-        let dest_canonical = dest.canonicalize().unwrap_or_else(|_| PathBuf::from(dest));
+        let dest_canonical = dest.canonicalize()?;
 
         for entry in archive
             .entries()
@@ -1181,7 +1181,7 @@ impl FileManager {
         let mut total_extracted_size: u64 = 0;
         let max_size = self.config.archive_max_size;
 
-        let dest_canonical = dest.canonicalize().unwrap_or_else(|_| PathBuf::from(dest));
+        let dest_canonical = dest.canonicalize()?;
 
         for entry in archive
             .entries()
@@ -1443,5 +1443,46 @@ mod tests {
                 .await,
             Err(FileManagerError::PathTraversal)
         ));
+    }
+
+    #[cfg(feature = "archive")]
+    #[tokio::test]
+    async fn test_extract_zip_rejects_traversal_entry() {
+        use std::io::Cursor;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config = FileManagerConfig {
+            enabled: true,
+            root_path: temp_dir.path().to_path_buf(),
+            ..FileManagerConfig::default()
+        };
+        let manager = FileManager::new(config);
+
+        let dest_dir = temp_dir.path().join("extract_dest");
+
+        let mut buf = Cursor::new(Vec::new());
+        {
+            let mut zip = zip::ZipWriter::new(&mut buf);
+            zip.start_file("../../../etc/passwd", Default::default())
+                .unwrap();
+            zip.write_all(b"pwned").unwrap();
+            zip.finish().unwrap();
+        }
+        let archive_data = buf.into_inner();
+
+        let result = manager.extract_archive("/test.zip", "/extract_dest").await;
+        match result {
+            Err(FileManagerError::InvalidPath(msg)) if msg.contains("Path traversal") => {}
+            Err(FileManagerError::OperationNotPermitted) => {}
+            other => panic!(
+                "Expected path traversal or feature-gated error, got: {:?}",
+                other
+            ),
+        }
+
+        assert!(
+            !dest_dir.join("../../../etc/passwd").exists(),
+            "Path traversal must not write outside destination"
+        );
     }
 }

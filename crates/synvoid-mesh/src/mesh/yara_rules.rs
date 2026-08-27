@@ -1267,9 +1267,11 @@ impl YaraRulesManager {
         }
 
         if self.config.trusted_signers.is_empty() {
-            let transport = self.transport.read();
-            if let Some(ref t) = *transport {
-                let topology = t.get_topology();
+            let topology = {
+                let transport = self.transport.read();
+                transport.as_ref().map(|t| t.get_topology())
+            };
+            if let Some(topology) = topology {
                 return tokio::task::block_in_place(|| {
                     tokio::runtime::Handle::current().block_on(topology.get_global_nodes())
                 })
