@@ -290,9 +290,17 @@ impl SpinRuntime {
         &self,
         component_id: &str,
     ) -> Result<SpinAppInstance, SpinRuntimeError> {
+        let idle_timeout = Duration::from_secs(self.config.idle_timeout_seconds);
+
+        // Lazy eviction: remove idle instances from both maps before inserting
+        {
+            let mut instances_guard = self.instances.write();
+            instances_guard.retain(|_, inst| !inst.is_idle(idle_timeout));
+        }
+
         let mut guard = self.cached_instances.write();
         if let Some(instance) = guard.get(component_id).cloned() {
-            if !instance.is_idle(Duration::from_secs(300)) {
+            if !instance.is_idle(idle_timeout) {
                 return Ok(instance);
             }
         }

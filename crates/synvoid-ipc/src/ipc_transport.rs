@@ -27,26 +27,25 @@ pub trait AsyncIpcTransport: AsyncRead + AsyncWrite + Unpin + Send + Sync + std:
 #[cfg(unix)]
 impl AsyncIpcTransport for UnixStream {
     fn peer_pid(&self) -> Option<u32> {
-        // ... (existing logic)
-        use socket2::SockRef;
-        use std::mem::size_of;
-        use std::os::unix::io::AsRawFd;
-
-        let sock_ref = SockRef::from(self);
-        let raw_fd = sock_ref.as_raw_fd();
-
-        #[repr(C)]
-        struct UCred {
-            pid: libc::pid_t,
-            uid: libc::uid_t,
-            gid: libc::gid_t,
-        }
-
-        let mut cred: UCred = unsafe { std::mem::zeroed() };
-        let mut cred_len = size_of::<UCred>() as libc::socklen_t;
-
         #[cfg(target_os = "linux")]
         {
+            use socket2::SockRef;
+            use std::mem::size_of;
+            use std::os::unix::io::AsRawFd;
+
+            let sock_ref = SockRef::from(self);
+            let raw_fd = sock_ref.as_raw_fd();
+
+            #[repr(C)]
+            struct UCred {
+                pid: libc::pid_t,
+                uid: libc::uid_t,
+                gid: libc::gid_t,
+            }
+
+            let mut cred: UCred = unsafe { std::mem::zeroed() };
+            let mut cred_len = size_of::<UCred>() as libc::socklen_t;
+
             let result = unsafe {
                 libc::getsockopt(
                     raw_fd,

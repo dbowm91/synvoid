@@ -591,4 +591,42 @@ Phase 3 follow-up (evidence reconciliation):
 54. Failure ledger reconciled to final authoritative state
 55. Verification contract reconciled to match `verify.rs` exactly
 
+## 14. Known macOS Issues
+
+### BUG-002: `rkyv_derive` 0.7 linker segfault on Apple clang 21
+
+**Symptom**: Running `cargo check --no-default-features --profile ci` (or any command that triggers compilation of `rkyv_derive 0.7.46`) on macOS with Apple clang 21.0.0 fails with:
+
+```
+error: linking with `cc` failed: exit status: 1
+clang: error: unable to execute command: Segmentation fault: 11
+error: could not compile `rkyv_derive` (lib) due to 1 previous error
+```
+
+**Root cause**: `rkyv_derive 0.7.46` (a proc-macro crate) triggers a linker segfault when compiled with Apple clang 21. This is an Apple toolchain regression — the same code compiles successfully on Linux.
+
+**Dependency chain**: The problematic `rkyv 0.7.46` / `rkyv_derive 0.7.46` pair is a transitive dependency only — it is NOT used by SynVoid's own code:
+
+```
+synvoid-static-files → lightningcss 1.0.0-alpha.71 → parcel_sourcemap 2.1.1 → rkyv 0.7.46 → rkyv_derive 0.7.46
+minify-html 0.18.1 → lightningcss 1.0.0-alpha.71 → parcel_sourcemap 2.1.1 → rkyv 0.7.46 → rkyv_derive 0.7.46
+```
+
+SynVoid's own crates use `rkyv 0.8.16` only. The `rkyv 0.7.46` is pulled in exclusively through `parcel_sourcemap`, which is a hard dependency of `lightningcss`'s default `sourcemap` feature.
+
+**Why unification is not feasible**:
+- `parcel_sourcemap 2.1.1` (latest, last updated Sep 2022) requires `rkyv ^0.7.38` — no newer version exists
+- `lightningcss`'s `sourcemap` feature (on by default) pulls in `parcel_sourcemap`
+- Both `minify-html` and `synvoid-static-files` depend on `lightningcss` with default features
+- `rkyv 0.7` and `0.8` have incompatible APIs — cannot patch one to the other
+
+**Workarounds** (pick one):
+1. **Retry the build** — the linker segfault is non-deterministic; retrying often succeeds
+2. **Use a different Apple clang version** — Xcode 15.x or 16.x toolchains do not exhibit this bug
+3. **Use `cargo test` paths instead of `cargo check`** — test compilation uses different link modes that may avoid the segfault
+4. **Run verification on Linux** — CI runs on Ubuntu; this issue does not affect the CI pipeline
+5. **Wait for upstream** — `parcel_sourcemap` or `lightningcss` may drop the `rkyv 0.7` dependency in a future release
+
+**Impact**: macOS-only. Linux CI is unaffected. No SynVoid code change can resolve this without breaking the dependency chain.
+
 If implementation reveals an invalid command, correct this document in the same commit with an explicit rationale. Do not improvise a broader suite or restore selector behavior.

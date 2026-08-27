@@ -319,6 +319,11 @@ pub mod mesh_stubs {
         }))
     }
 
+    /// OpenAPI documentation stub — no real mutation performed.
+    /// This handler exists solely to document the API surface for the
+    /// non-mesh (core) profile. It returns a static success response
+    /// without writing to any store or emitting audit events.
+    #[allow(clippy::unused_async)]
     #[utoipa::path(
         post,
         path = "/mesh/organizations",
@@ -674,6 +679,11 @@ pub mod dns_stubs {
         }))
     }
 
+    /// OpenAPI documentation stub — no real mutation performed.
+    /// This handler exists solely to document the API surface for the
+    /// non-mesh (core) profile. It returns a static success response
+    /// without writing to any store or emitting audit events.
+    #[allow(clippy::unused_async)]
     #[utoipa::path(
         put,
         path = "/config/dns",

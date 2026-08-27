@@ -4,7 +4,6 @@
 //! under high concurrent loads.
 
 use std::collections::HashMap;
-use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -12,7 +11,7 @@ use ahash::AHasher;
 use parking_lot::RwLock;
 use std::hash::{Hash, Hasher};
 
-use super::cache::{CacheKey, CachePoisoningError, CachedResponse};
+use super::cache::{CacheKey, CachedResponse};
 
 /// Number of shards in the cache (must be a power of 2 for efficient modulo)
 const DEFAULT_SHARDS: usize = 16;
@@ -41,17 +40,24 @@ impl Shard {
         }
     }
 
-    /// Evict entries to make room for new ones
+    /// Evict entries to make room for new ones.
+    ///
+    /// Uses `cached_at` timestamps for true LRU eviction — the oldest
+    /// entries (smallest `Instant`, i.e. least-recently used) are removed first.
     fn evict(&mut self, needed: usize) {
         if self.entries.len() + needed <= self.capacity {
             return;
         }
 
-        // Simple LRU eviction: remove oldest entries
-        // For better performance, consider using a proper LRU structure
         let to_remove = self.entries.len() + needed - self.capacity;
-        let keys_to_remove: Vec<CacheKey> = self.entries.keys().take(to_remove).cloned().collect();
-        for key in keys_to_remove {
+        let mut candidates: Vec<(CacheKey, Instant)> = self
+            .entries
+            .iter()
+            .map(|(k, v)| (k.clone(), v.cached_at))
+            .collect();
+        // Sort ascending by cached_at so oldest (LRU) entries come first.
+        candidates.sort_unstable_by_key(|&(_, ts)| ts);
+        for (key, _) in candidates.into_iter().take(to_remove) {
             self.entries.remove(&key);
         }
     }
@@ -95,8 +101,8 @@ impl ShardedDnsCache {
             // Check if entry is still valid
             let elapsed = entry.cached_at.elapsed();
             if elapsed <= entry.ttl {
-                // Return a clone wrapped in Arc for efficiency
-                return Some(Arc::new(entry.data.clone()));
+                // Arc::clone bumps the refcount — no data copy
+                return Some(Arc::clone(&entry.data));
             }
         }
         None
@@ -119,13 +125,16 @@ impl ShardedDnsCache {
         // Evict if needed
         shard.evict(1);
 
+        let fingerprint = super::cache::DnsCache::compute_fingerprint(&data);
+        let is_dnssec_signed = super::cache::detect_dnssec_signed(&data);
+
         let entry = CachedResponse {
-            data,
+            data: Arc::new(data),
             ttl: ttl_duration,
             cached_at: Instant::now(),
-            fingerprint: super::cache::DnsCache::compute_fingerprint(&data),
+            fingerprint,
             source_ip: key.client_subnet,
-            is_dnssec_signed: super::cache::detect_dnssec_signed(&data),
+            is_dnssec_signed,
         };
 
         shard.entries.insert(key, entry);

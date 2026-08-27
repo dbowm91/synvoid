@@ -25,9 +25,8 @@ use synvoid_dns::recursive::CircuitBreaker;
 static COUNTER_STORE: parking_lot::Mutex<Vec<(String, Arc<AtomicU64>)>> =
     parking_lot::Mutex::new(Vec::new());
 
-fn install_recorder() {
+fn reset_counters() {
     COUNTER_STORE.lock().clear();
-    let _ = metrics::set_global_recorder(TestRecorder);
 }
 
 #[derive(Default, Clone, Copy)]
@@ -81,47 +80,55 @@ fn minimal_config() -> DnsConfig {
 }
 
 #[test]
-fn circuit_breaker_emits_opens_metric() {
-    install_recorder();
-    let cb = CircuitBreaker::new(&CircuitBreakerConfig {
-        failure_threshold: 3,
-        success_threshold: 1,
-        recovery_timeout_secs: 60,
-    });
+fn circuit_breaker_opens_metric_threshold_behavior() {
+    let recorder = TestRecorder;
+    let _guard = metrics::set_default_local_recorder(&recorder);
 
-    for _ in 0..3 {
-        cb.record_failure();
+    // Phase 1: threshold breached → metric emitted
+    {
+        reset_counters();
+        let cb = CircuitBreaker::new(&CircuitBreakerConfig {
+            failure_threshold: 3,
+            success_threshold: 1,
+            recovery_timeout_secs: 60,
+        });
+
+        for _ in 0..3 {
+            cb.record_failure();
+        }
+
+        assert!(
+            read_counter("dns_recursive_circuit_breaker_opens_total") >= 1,
+            "expected dns_recursive_circuit_breaker_opens_total >= 1"
+        );
     }
 
-    assert!(
-        read_counter("dns_recursive_circuit_breaker_opens_total") >= 1,
-        "expected dns_recursive_circuit_breaker_opens_total >= 1"
-    );
-}
+    // Phase 2: below threshold → metric NOT emitted
+    {
+        reset_counters();
+        let cb = CircuitBreaker::new(&CircuitBreakerConfig {
+            failure_threshold: 10,
+            success_threshold: 1,
+            recovery_timeout_secs: 60,
+        });
 
-#[test]
-fn circuit_breaker_no_emit_below_threshold() {
-    install_recorder();
-    let cb = CircuitBreaker::new(&CircuitBreakerConfig {
-        failure_threshold: 10,
-        success_threshold: 1,
-        recovery_timeout_secs: 60,
-    });
+        for _ in 0..3 {
+            cb.record_failure();
+        }
 
-    for _ in 0..3 {
-        cb.record_failure();
+        assert_eq!(
+            read_counter("dns_recursive_circuit_breaker_opens_total"),
+            0,
+            "metric must not emit below the configured threshold"
+        );
     }
-
-    assert_eq!(
-        read_counter("dns_recursive_circuit_breaker_opens_total"),
-        0,
-        "metric must not emit below the configured threshold"
-    );
 }
 
 #[test]
 fn zone_reload_failure_emits_metric() {
-    install_recorder();
+    let recorder = TestRecorder;
+    let _guard = metrics::set_default_local_recorder(&recorder);
+    reset_counters();
     let server = synvoid_dns::server::DnsServer::new(minimal_config(), None);
     // Origin containing a control character triggers `IllegalOriginCharacters`.
     let result = server.load_zones(vec![default_zone_config("\x07bad.example.com")]);
@@ -134,7 +141,9 @@ fn zone_reload_failure_emits_metric() {
 
 #[test]
 fn zone_reload_success_emits_success_metric() {
-    install_recorder();
+    let recorder = TestRecorder;
+    let _guard = metrics::set_default_local_recorder(&recorder);
+    reset_counters();
     let server = synvoid_dns::server::DnsServer::new(minimal_config(), None);
     // Empty zone list succeeds without inserting any zones; the outer
     // `load_zones` wrapper still records the operation count (0).
@@ -150,6 +159,9 @@ fn zone_reload_success_emits_success_metric() {
 // emitted counter, this test will fail at compile time.
 #[test]
 fn metric_names_resolve() {
+    let recorder = TestRecorder;
+    let _guard = metrics::set_default_local_recorder(&recorder);
+    reset_counters();
     metrics::counter!("dns_active_tcp_connections").increment(0);
     metrics::counter!("dns_recursive_circuit_breaker_opens_total").increment(0);
     metrics::counter!("dns_encode_failures_total").increment(0);
