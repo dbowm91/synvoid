@@ -590,7 +590,6 @@ mod tests {
     fn test_database_edition_build_url_presigned() {
         let source = DownloadSource::PresignedUrl("https://example.com/geoip".to_string());
         let url = DatabaseEdition::build_url("GeoLite2-City", &source).unwrap();
-        eprintln!("Generated URL: {}", url);
         assert!(url.contains("GeoLite2-City"));
     }
 

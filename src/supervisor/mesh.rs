@@ -98,8 +98,21 @@ pub async fn init_mesh_control_plane(
     block_store: Arc<BlockStore>,
 ) -> Option<MeshControlPlane> {
     let mesh_config_external = main_config.tunnel.mesh.as_ref()?;
+    let mesh_config_value = match serde_json::to_value(mesh_config_external) {
+        Ok(value) => value,
+        Err(error) => {
+            tracing::error!(%error, "Failed to serialize mesh configuration");
+            return None;
+        }
+    };
     let mesh_config: crate::mesh::config::MeshConfig =
-        serde_json::from_str(&serde_json::to_string(mesh_config_external).unwrap()).unwrap();
+        match serde_json::from_value(mesh_config_value) {
+            Ok(config) => config,
+            Err(error) => {
+                tracing::error!(%error, "Failed to convert mesh configuration");
+                return None;
+            }
+        };
 
     if !mesh_config.enabled {
         tracing::info!("Mesh is disabled in configuration.");

@@ -6244,9 +6244,6 @@ mod tests {
             store.shutdown().await;
         }
 
-        // Allow any in-flight async persist tasks to complete.
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-
         // Phase 2: Restart. Replay the older block event.
         let store2 = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), config);
         let stale_block = BlocklistEvent::block_ip(

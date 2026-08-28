@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use parking_lot::{Mutex as ParkingMutex, RwLock as ParkingRwLock};
 use tokio::sync::{oneshot, RwLock};
 
 use synvoid_plugin_runtime::WasmPluginError;
@@ -33,9 +34,8 @@ impl CompilationState {
 #[allow(clippy::type_complexity)]
 pub struct AsyncCompilationHandle {
     state: Arc<RwLock<CompilationState>>,
-    completion_sender: Arc<std::sync::Mutex<Option<oneshot::Sender<Result<(), WasmPluginError>>>>>,
-    completion_receiver:
-        Arc<std::sync::Mutex<Option<oneshot::Receiver<Result<(), WasmPluginError>>>>>,
+    completion_sender: Arc<ParkingMutex<Option<oneshot::Sender<Result<(), WasmPluginError>>>>>,
+    completion_receiver: Arc<ParkingMutex<Option<oneshot::Receiver<Result<(), WasmPluginError>>>>>,
 }
 
 impl AsyncCompilationHandle {
@@ -43,8 +43,8 @@ impl AsyncCompilationHandle {
         let (tx, rx) = oneshot::channel();
         Self {
             state: Arc::new(RwLock::const_new(CompilationState::Pending)),
-            completion_sender: Arc::new(std::sync::Mutex::new(Some(tx))),
-            completion_receiver: Arc::new(std::sync::Mutex::new(Some(rx))),
+            completion_sender: Arc::new(ParkingMutex::new(Some(tx))),
+            completion_receiver: Arc::new(ParkingMutex::new(Some(rx))),
         }
     }
 
@@ -62,7 +62,7 @@ impl AsyncCompilationHandle {
         let sender = self.completion_sender.clone();
         tokio::spawn(async move {
             *state.write().await = CompilationState::Ready;
-            if let Some(tx) = sender.lock().unwrap().take() {
+            if let Some(tx) = sender.lock().take() {
                 let _ = tx.send(Ok(()));
             }
         });
@@ -73,7 +73,7 @@ impl AsyncCompilationHandle {
         let sender = self.completion_sender.clone();
         tokio::spawn(async move {
             *state.write().await = CompilationState::Failed { error };
-            if let Some(tx) = sender.lock().unwrap().take() {
+            if let Some(tx) = sender.lock().take() {
                 let _ = tx.send(Ok(()));
             }
         });
@@ -87,7 +87,7 @@ impl AsyncCompilationHandle {
     }
 
     pub async fn wait_for_completion(&self) -> Result<(), WasmPluginError> {
-        let receiver = self.completion_receiver.lock().unwrap().take();
+        let receiver = self.completion_receiver.lock().take();
         if let Some(rx) = receiver {
             match rx.await {
                 Ok(result) => result,
@@ -115,21 +115,18 @@ impl Default for AsyncCompilationHandle {
 }
 
 pub struct AsyncCompilationManager {
-    handles: std::sync::RwLock<std::collections::HashMap<String, Arc<AsyncCompilationHandle>>>,
+    handles: ParkingRwLock<std::collections::HashMap<String, Arc<AsyncCompilationHandle>>>,
 }
-
-unsafe impl Send for AsyncCompilationManager {}
-unsafe impl Sync for AsyncCompilationManager {}
 
 impl AsyncCompilationManager {
     pub fn new() -> Self {
         Self {
-            handles: std::sync::RwLock::new(std::collections::HashMap::new()),
+            handles: ParkingRwLock::new(std::collections::HashMap::new()),
         }
     }
 
     pub fn get_or_create(&self, function_name: &str) -> Arc<AsyncCompilationHandle> {
-        let mut handles = self.handles.write().unwrap();
+        let mut handles = self.handles.write();
         if let Some(handle) = handles.get(function_name) {
             return handle.clone();
         }
@@ -139,11 +136,11 @@ impl AsyncCompilationManager {
     }
 
     pub fn get(&self, function_name: &str) -> Option<Arc<AsyncCompilationHandle>> {
-        self.handles.read().unwrap().get(function_name).cloned()
+        self.handles.read().get(function_name).cloned()
     }
 
     pub fn remove(&self, function_name: &str) {
-        self.handles.write().unwrap().remove(function_name);
+        self.handles.write().remove(function_name);
     }
 
     pub fn mark_compiling(&self, function_name: &str) {

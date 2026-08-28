@@ -1,5 +1,4 @@
 use http::Method;
-use std::path::Path;
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]
@@ -19,13 +18,17 @@ impl RouteMatch {
         match self {
             RouteMatch::Exact(pattern) => path == *pattern,
             RouteMatch::Prefix(prefix) => {
-                path == *prefix || path.starts_with(&format!("{}/", prefix))
+                path == *prefix
+                    || path
+                        .strip_prefix(prefix)
+                        .is_some_and(|rest| rest.starts_with('/'))
             }
             RouteMatch::Suffix(suffix) => path.ends_with(suffix),
-            RouteMatch::Regex { pattern, compiled } => {
+            RouteMatch::Regex {
+                compiled,
+                pattern: _,
+            } => {
                 if let Some(ref re) = compiled {
-                    re.is_match(path)
-                } else if let Ok(re) = regex::Regex::new(pattern) {
                     re.is_match(path)
                 } else {
                     false
@@ -37,58 +40,55 @@ impl RouteMatch {
 }
 
 fn glob_match(pattern: &str, path: &str) -> bool {
-    let pattern = Path::new(pattern);
-    let path = Path::new(path);
-    let pattern_str = pattern.to_str().unwrap_or("");
-    let path_str = path.to_str().unwrap_or("");
+    let pattern_chars: Vec<char> = pattern.chars().collect();
+    let path_chars: Vec<char> = path.chars().collect();
+    let mut pattern_index = 0;
+    let mut path_index = 0;
+    let mut star: Option<(usize, bool)> = None;
+    let mut star_path_index = 0;
 
-    let mut pattern_chars = pattern_str.chars().peekable();
-    let mut path_chars = path_str.chars().peekable();
-
-    while pattern_chars.peek().is_some() || path_chars.peek().is_some() {
-        match pattern_chars.peek() {
-            Some('*') => {
-                pattern_chars.next();
-                match pattern_chars.peek() {
-                    Some('*') => {
-                        pattern_chars.next();
-                        if pattern_chars.peek().is_none() {
-                            return true;
-                        }
-                        while path_chars.peek().is_some() {
-                            if glob_match(
-                                &pattern_chars.clone().collect::<String>(),
-                                &path_chars.clone().collect::<String>(),
-                            ) {
-                                return true;
-                            }
-                            path_chars.next();
-                        }
-                        return false;
-                    }
-                    Some(c) => {
-                        while path_chars.peek().is_some() && path_chars.peek() != Some(c) {
-                            path_chars.next();
-                        }
-                    }
-                    None => {
-                        return path_chars.peek().is_none() || path_chars.all(|c| c != '/');
-                    }
-                }
-            }
-            Some(c) => {
-                if path_chars.peek() != Some(c) {
+    while path_index < path_chars.len() {
+        if pattern_index < pattern_chars.len()
+            && pattern_chars[pattern_index] != '*'
+            && pattern_chars[pattern_index] == path_chars[path_index]
+        {
+            pattern_index += 1;
+            path_index += 1;
+        } else if pattern_index < pattern_chars.len() && pattern_chars[pattern_index] == '*' {
+            let crosses_segments =
+                pattern_index + 1 < pattern_chars.len() && pattern_chars[pattern_index + 1] == '*';
+            pattern_index += if crosses_segments { 2 } else { 1 };
+            star = Some((pattern_index, crosses_segments));
+            star_path_index = path_index;
+        } else if let Some((after_star, crosses_segments)) = star {
+            if crosses_segments && pattern_chars.get(after_star) == Some(&'/') {
+                // A globstar followed by a separator may match zero path segments.
+                pattern_index = after_star + 1;
+                star = Some((pattern_index, true));
+            } else {
+                if star_path_index >= path_chars.len()
+                    || (!crosses_segments && path_chars[star_path_index] == '/')
+                {
                     return false;
                 }
-                pattern_chars.next();
-                path_chars.next();
+                star_path_index += 1;
+                path_index = star_path_index;
+                pattern_index = after_star;
             }
-            None => {
-                return path_chars.peek().is_none();
-            }
+        } else {
+            return false;
         }
     }
-    true
+
+    while pattern_index < pattern_chars.len() && pattern_chars[pattern_index] == '*' {
+        pattern_index +=
+            if pattern_index + 1 < pattern_chars.len() && pattern_chars[pattern_index + 1] == '*' {
+                2
+            } else {
+                1
+            };
+    }
+    pattern_index == pattern_chars.len()
 }
 
 #[derive(Debug, Clone)]
@@ -334,5 +334,43 @@ mod tests {
         assert!(route.matches("/api/v123/items", &Method::POST));
         assert!(!route.matches("/api/users", &Method::GET));
         assert!(!route.matches("/api/v/users", &Method::GET));
+    }
+
+    #[test]
+    fn test_invalid_regex_without_compiled_pattern_does_not_match() {
+        let route = ServerlessRoute {
+            matcher: RouteMatch::Regex {
+                pattern: "[invalid".to_string(),
+                compiled: None,
+            },
+            method: MethodMatch::Any,
+            priority: 0,
+            function_name: "test".to_string(),
+        };
+        assert!(!route.matches("/api/users", &Method::GET));
+    }
+
+    #[test]
+    fn test_glob_route_match_does_not_cross_segments_for_single_star() {
+        let route = ServerlessRoute {
+            matcher: RouteMatch::Glob("/api/*/users".to_string()),
+            method: MethodMatch::Any,
+            priority: 0,
+            function_name: "test".to_string(),
+        };
+        assert!(route.matches("/api/v1/users", &Method::GET));
+        assert!(!route.matches("/api/v1/admin/users", &Method::GET));
+    }
+
+    #[test]
+    fn test_glob_route_match_double_star_crosses_segments() {
+        let route = ServerlessRoute {
+            matcher: RouteMatch::Glob("/api/**/users".to_string()),
+            method: MethodMatch::Any,
+            priority: 0,
+            function_name: "test".to_string(),
+        };
+        assert!(route.matches("/api/v1/admin/users", &Method::GET));
+        assert!(route.matches("/api/users", &Method::GET));
     }
 }

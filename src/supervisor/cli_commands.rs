@@ -246,13 +246,17 @@ pub fn handle_configtest(config_path: &Option<PathBuf>) -> Result<(), Box<dyn st
                             Ok(_) => {
                                 println!(
                                     "✓ {} is valid",
-                                    path.file_name().unwrap().to_string_lossy()
+                                    path.file_name()
+                                        .map(|name| name.to_string_lossy().into_owned())
+                                        .unwrap_or_else(|| path.display().to_string())
                                 );
                             }
                             Err(e) => {
                                 eprintln!(
                                     "✗ {}: {}",
-                                    path.file_name().unwrap().to_string_lossy(),
+                                    path.file_name()
+                                        .map(|name| name.to_string_lossy().into_owned())
+                                        .unwrap_or_else(|| path.display().to_string()),
                                     e
                                 );
                                 std::process::exit(1);
@@ -499,10 +503,10 @@ pub fn handle_export_threat_feed_data(
         Default::default(),
     ));
     let internal_config: crate::mesh::threat_intel::ThreatIntelligenceConfigInternal =
-        serde_json::from_str(&serde_json::to_string(&threat_intel_config).unwrap()).unwrap();
+        serde_json::from_value(serde_json::to_value(&threat_intel_config)?)?;
 
     let node_role_internal: crate::mesh::config::MeshNodeRole =
-        serde_json::from_str(&serde_json::to_string(&node_role).unwrap()).unwrap();
+        serde_json::from_value(serde_json::to_value(node_role)?)?;
 
     let threat_manager = ThreatIntelligenceManager::new(
         internal_config,
@@ -589,10 +593,10 @@ pub fn handle_export_threat_feed(
         Default::default(),
     ));
     let internal_config: crate::mesh::threat_intel::ThreatIntelligenceConfigInternal =
-        serde_json::from_str(&serde_json::to_string(&threat_intel_config).unwrap()).unwrap();
+        serde_json::from_value(serde_json::to_value(&threat_intel_config)?)?;
 
     let node_role_internal: crate::mesh::config::MeshNodeRole =
-        serde_json::from_str(&serde_json::to_string(&node_role).unwrap()).unwrap();
+        serde_json::from_value(serde_json::to_value(node_role)?)?;
 
     let threat_manager = ThreatIntelligenceManager::new(
         internal_config,

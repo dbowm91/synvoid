@@ -37,17 +37,25 @@ struct AsyncCpuPoolLimits {
 
 impl AsyncCpuPoolLimits {
     fn from_env_or_default() -> Self {
-        let max_connections = std::env::var(ASYNC_CPU_POOL_MAX_CONNECTIONS_ENV)
-            .ok()
+        Self::from_values(
+            std::env::var(ASYNC_CPU_POOL_MAX_CONNECTIONS_ENV)
+                .ok()
+                .as_deref(),
+            std::env::var(ASYNC_CPU_MAX_IN_FLIGHT_PER_CONNECTION_ENV)
+                .ok()
+                .as_deref(),
+        )
+    }
+
+    fn from_values(max_connections: Option<&str>, max_in_flight: Option<&str>) -> Self {
+        let max_connections = max_connections
             .and_then(|v| v.parse::<usize>().ok())
             .unwrap_or(DEFAULT_ASYNC_CPU_POOL_MAX_CONNECTIONS)
             .max(1);
-        let max_in_flight_per_connection =
-            std::env::var(ASYNC_CPU_MAX_IN_FLIGHT_PER_CONNECTION_ENV)
-                .ok()
-                .and_then(|v| v.parse::<usize>().ok())
-                .unwrap_or(DEFAULT_ASYNC_CPU_MAX_IN_FLIGHT_PER_CONNECTION)
-                .max(1);
+        let max_in_flight_per_connection = max_in_flight
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(DEFAULT_ASYNC_CPU_MAX_IN_FLIGHT_PER_CONNECTION)
+            .max(1);
 
         Self {
             max_connections,
@@ -1062,7 +1070,10 @@ impl AsyncCpuTaskConnectionPool {
 
 impl AsyncMinifierClient {
     pub fn new(socket_path: PathBuf) -> Self {
-        let limits = AsyncCpuPoolLimits::from_env_or_default();
+        Self::new_with_limits(socket_path, AsyncCpuPoolLimits::from_env_or_default())
+    }
+
+    fn new_with_limits(socket_path: PathBuf, limits: AsyncCpuPoolLimits) -> Self {
         Self {
             pool: AsyncCpuTaskConnectionPool::new(
                 socket_path.clone(),
@@ -1924,105 +1935,39 @@ pub type PoisonImageClientError = ImageRightsClientError;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, OnceLock};
-
-    fn env_test_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
-
-    fn with_pool_env<F>(max_connections: Option<&str>, max_in_flight: Option<&str>, f: F)
-    where
-        F: FnOnce(),
-    {
-        let _guard = env_test_lock().lock().expect("env lock poisoned");
-        let prev_max_connections = std::env::var(ASYNC_CPU_POOL_MAX_CONNECTIONS_ENV).ok();
-        let prev_max_in_flight = std::env::var(ASYNC_CPU_MAX_IN_FLIGHT_PER_CONNECTION_ENV).ok();
-
-        match max_connections {
-            Some(v) => {
-                // SAFETY: Serialized by process-wide test lock above.
-                unsafe { std::env::set_var(ASYNC_CPU_POOL_MAX_CONNECTIONS_ENV, v) }
-            }
-            None => {
-                // SAFETY: Serialized by process-wide test lock above.
-                unsafe { std::env::remove_var(ASYNC_CPU_POOL_MAX_CONNECTIONS_ENV) }
-            }
-        }
-        match max_in_flight {
-            Some(v) => {
-                // SAFETY: Serialized by process-wide test lock above.
-                unsafe { std::env::set_var(ASYNC_CPU_MAX_IN_FLIGHT_PER_CONNECTION_ENV, v) }
-            }
-            None => {
-                // SAFETY: Serialized by process-wide test lock above.
-                unsafe { std::env::remove_var(ASYNC_CPU_MAX_IN_FLIGHT_PER_CONNECTION_ENV) }
-            }
-        }
-
-        f();
-
-        match prev_max_connections {
-            Some(v) => {
-                // SAFETY: Serialized by process-wide test lock above.
-                unsafe { std::env::set_var(ASYNC_CPU_POOL_MAX_CONNECTIONS_ENV, v) }
-            }
-            None => {
-                // SAFETY: Serialized by process-wide test lock above.
-                unsafe { std::env::remove_var(ASYNC_CPU_POOL_MAX_CONNECTIONS_ENV) }
-            }
-        }
-        match prev_max_in_flight {
-            Some(v) => {
-                // SAFETY: Serialized by process-wide test lock above.
-                unsafe { std::env::set_var(ASYNC_CPU_MAX_IN_FLIGHT_PER_CONNECTION_ENV, v) }
-            }
-            None => {
-                // SAFETY: Serialized by process-wide test lock above.
-                unsafe { std::env::remove_var(ASYNC_CPU_MAX_IN_FLIGHT_PER_CONNECTION_ENV) }
-            }
-        }
-    }
 
     #[test]
     fn async_cpu_pool_limits_use_defaults_when_env_missing() {
-        with_pool_env(None, None, || {
-            let limits = AsyncCpuPoolLimits::from_env_or_default();
-            assert_eq!(
-                limits.max_connections,
-                DEFAULT_ASYNC_CPU_POOL_MAX_CONNECTIONS
-            );
-            assert_eq!(
-                limits.max_in_flight_per_connection,
-                DEFAULT_ASYNC_CPU_MAX_IN_FLIGHT_PER_CONNECTION
-            );
-        });
+        let limits = AsyncCpuPoolLimits::from_values(None, None);
+        assert_eq!(
+            limits.max_connections,
+            DEFAULT_ASYNC_CPU_POOL_MAX_CONNECTIONS
+        );
+        assert_eq!(
+            limits.max_in_flight_per_connection,
+            DEFAULT_ASYNC_CPU_MAX_IN_FLIGHT_PER_CONNECTION
+        );
     }
 
     #[test]
     fn async_cpu_pool_limits_allow_multiple_in_flight_requests() {
-        with_pool_env(Some("7"), Some("3"), || {
-            let limits = AsyncCpuPoolLimits::from_env_or_default();
-            assert_eq!(limits.max_connections, 7);
-            assert_eq!(limits.max_in_flight_per_connection, 3);
-        });
+        let limits = AsyncCpuPoolLimits::from_values(Some("7"), Some("3"));
+        assert_eq!(limits.max_connections, 7);
+        assert_eq!(limits.max_in_flight_per_connection, 3);
     }
 
     #[test]
     fn async_cpu_pool_limits_clamp_invalid_or_zero_values() {
-        with_pool_env(Some("0"), Some("not-a-number"), || {
-            let limits = AsyncCpuPoolLimits::from_env_or_default();
-            assert_eq!(limits.max_connections, 1);
-            assert_eq!(
-                limits.max_in_flight_per_connection,
-                DEFAULT_ASYNC_CPU_MAX_IN_FLIGHT_PER_CONNECTION
-            );
-        });
+        let limits = AsyncCpuPoolLimits::from_values(Some("0"), Some("not-a-number"));
+        assert_eq!(limits.max_connections, 1);
+        assert_eq!(
+            limits.max_in_flight_per_connection,
+            DEFAULT_ASYNC_CPU_MAX_IN_FLIGHT_PER_CONNECTION
+        );
     }
 
     #[tokio::test]
     async fn async_cpu_pool_stats_are_zero_for_fresh_clients() {
-        with_pool_env(None, None, || {});
         let socket_path = PathBuf::from("/tmp/nonexistent-static-worker.sock");
         let minifier = AsyncMinifierClient::new(socket_path.clone());
         let image_rights = ImageRightsClient::new(socket_path.clone());
@@ -2066,29 +2011,14 @@ mod tests {
             .expect("failed to bind mock CPU task socket");
         let (first_request_seen_tx, first_request_seen_rx) = tokio::sync::oneshot::channel();
 
-        let client = {
-            let _guard = env_test_lock().lock().expect("env lock poisoned");
-            let prev_max_connections = std::env::var(ASYNC_CPU_POOL_MAX_CONNECTIONS_ENV).ok();
-            let prev_max_in_flight = std::env::var(ASYNC_CPU_MAX_IN_FLIGHT_PER_CONNECTION_ENV).ok();
-
-            unsafe { std::env::set_var(ASYNC_CPU_POOL_MAX_CONNECTIONS_ENV, "1") };
-            unsafe { std::env::set_var(ASYNC_CPU_MAX_IN_FLIGHT_PER_CONNECTION_ENV, "2") };
-
-            let client = AsyncMinifierClient::new(client_socket_path.clone()).with_timeout(2000);
-
-            match prev_max_connections {
-                Some(v) => unsafe { std::env::set_var(ASYNC_CPU_POOL_MAX_CONNECTIONS_ENV, v) },
-                None => unsafe { std::env::remove_var(ASYNC_CPU_POOL_MAX_CONNECTIONS_ENV) },
-            }
-            match prev_max_in_flight {
-                Some(v) => unsafe {
-                    std::env::set_var(ASYNC_CPU_MAX_IN_FLIGHT_PER_CONNECTION_ENV, v)
-                },
-                None => unsafe { std::env::remove_var(ASYNC_CPU_MAX_IN_FLIGHT_PER_CONNECTION_ENV) },
-            }
-
-            client
-        };
+        let client = AsyncMinifierClient::new_with_limits(
+            client_socket_path.clone(),
+            AsyncCpuPoolLimits {
+                max_connections: 1,
+                max_in_flight_per_connection: 2,
+            },
+        )
+        .with_timeout(2000);
 
         let server = tokio::spawn(async move {
             let (stream, _) = listener

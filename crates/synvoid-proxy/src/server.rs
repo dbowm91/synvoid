@@ -1001,7 +1001,7 @@ impl<W: WafProcessor> ProxyServer<W> {
                 }
                 Err(e) => {
                     let error_str = e.to_string();
-                    last_error = Some(error_str.clone());
+                    last_error = Some(error_str);
 
                     if retry_enabled && should_retry_method {
                         let should_retry = (retry_config.unwrap().retry_on_error
