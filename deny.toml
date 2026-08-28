@@ -51,6 +51,18 @@ ignore = [
     "RUSTSEC-2026-0095",
     "RUSTSEC-2026-0096",
     "RUSTSEC-2026-0114",
+
+    # RUSTSEC-2026-0222: wasmtime 40.0.4 remains transitive through yara-x
+    # 1.15, whose dependency constraint cannot use SynVoid's patched 42.0.2.
+    # Exposure: YARA compilation only; SynVoid's runtime sandbox uses the
+    # patched 42.0.2 dependency. Review: 2026-08-28. Re-audit: 2026-10-01.
+    "RUSTSEC-2026-0222",
+
+    # RUSTSEC-2026-0235: rkyv 0.7.46 is transitive through
+    # minify-html -> lightningcss -> parcel_sourcemap. SynVoid does not use
+    # this archive format in the static-file path, and all direct rkyv users
+    # are on 0.8.18. Review: 2026-08-28. Re-audit: 2026-10-01.
+    "RUSTSEC-2026-0235",
 ]
 
 # Deny yanked crates (prevents accidental use of withdrawn versions)
@@ -72,4 +84,5 @@ version = "=42.0.2"
 
 [sources]
 unknown-registry = "warn"
-unknown-git = "warn"
+unknown-git = "deny"
+allow-git = ["https://github.com/bytecodealliance/wasmtime"]

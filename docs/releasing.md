@@ -69,9 +69,8 @@ Crates must be published in this exact order. Each crate's path dependencies mus
 | 34 | `synvoid-icmp-filter` | *(none)* |
 | 35 | `synvoid-tarpit` | *(none)* |
 | 36 | `synvoid-vpn-client` | synvoid-config, synvoid-tunnel, synvoid-platform, synvoid-utils |
-| 37 | `synvoid-testkit` | synvoid-core, synvoid-config |
-| 38 | `synvoid` | *(root — all workspace crates)* |
-| 39 | `synvoid-wasm-pow` | *(none)* |
+| 37 | `synvoid` | *(root — all workspace crates)* |
+| 38 | `synvoid-wasm-pow` | *(none)* |
 
 ## 2. Package Metadata Requirements
 

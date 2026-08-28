@@ -174,8 +174,8 @@ reason = "validates cross-crate security regression"
 [[test]]
 name = "traffic_regression_test"
 class = "composition"
-owners = ["synvoid-testkit"]
-reason = "validates echo server test utility (test_utils::echo) used by proxy and integration tests"
+owners = ["synvoid-proxy"]
+reason = "validates the root echo server fixture used by proxy integration tests"
 
 [[test]]
 name = "worker_mesh_supervision_boundary_guard"

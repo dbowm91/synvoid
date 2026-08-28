@@ -26,7 +26,6 @@ bytes = "1"
 parking_lot = "0.12"
 serde = { version = "1", features = ["derive"] }
 postcard = { version = "1", features = ["alloc", "use-std"] }
-bincode = "1"
 subtle = "2"
 rand = "0.9"
 base64 = "0.22"

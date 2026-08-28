@@ -746,20 +746,22 @@ impl AdminState {
         use std::time::Duration;
 
         let now = Instant::now();
-        let csrf_tokens = self.security.csrf_tokens.read();
+        let mut csrf_tokens = self.security.csrf_tokens.write();
         let session_hash = hex::encode(sha2::Sha256::digest(session_id));
 
-        if let Some(valid_token) = csrf_tokens.get(token) {
-            if now.duration_since(valid_token.created) < Duration::from_secs(3600)
+        let valid = csrf_tokens.get(token).is_some_and(|valid_token| {
+            now.duration_since(valid_token.created) < Duration::from_secs(3600)
                 && bool::from(
                     valid_token
                         .session_id_hash
                         .as_bytes()
                         .ct_eq(session_hash.as_bytes()),
                 )
-            {
-                return true;
-            }
+        });
+
+        if valid {
+            csrf_tokens.remove(token);
+            return true;
         }
 
         false
@@ -1245,6 +1247,17 @@ mod tests {
 
         let token = state.generate_csrf_token(session_id.to_string());
         assert!(state.validate_csrf(&token, session_id));
+        assert!(!state.validate_csrf(&token, session_id));
+    }
+
+    #[test]
+    fn test_csrf_token_is_single_use() {
+        let state = create_test_state();
+        let session_id = "single-use-session";
+        let token = state.generate_csrf_token(session_id.to_string());
+
+        assert!(state.validate_csrf(&token, session_id));
+        assert!(!state.validate_csrf(&token, session_id));
     }
 
     #[test]

@@ -167,5 +167,3 @@ Primary doc per subsystem (deep dives live beside each as `<topic>_deep_dive.md`
 ## Known Issues
 
 - `wasmtime` 40.0.4 arrives transitively via yara-x (YARA rule compilation only, not the wasm sandbox); direct wasmtime is patched to 42.0.2 via `[patch.crates-io]`. 13 advisory ignores in `deny.toml`, re-audit date 2026-10-01.
-- `spin` idle instance eviction never cleans up old UUID entries.
-- `synvoid-testkit` currently has zero consumers — boundary policy documented in its README.

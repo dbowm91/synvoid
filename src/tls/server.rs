@@ -14,10 +14,11 @@ use hyper::server::conn::http2 as http2_server;
 use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::TokioIo;
 use metrics::counter;
+use nix::sys::socket::{recv, MsgFlags};
 use parking_lot::Mutex;
 use std::convert::Infallible;
 use std::net::SocketAddr;
-use std::os::fd::{AsRawFd, FromRawFd};
+use std::os::fd::AsRawFd;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
@@ -388,13 +389,12 @@ impl HttpsServer {
 
                             if http_config.strict_protocol_validation {
                                 let raw_fd = stream.as_raw_fd();
-                                // SAFETY: `raw_fd` belongs to `stream`; this temporary wrapper is
-                                // used only for a non-consuming peek and is forgotten before the
-                                // original stream is dropped, so ownership stays with `stream`.
-                                let socket = unsafe { std::net::TcpStream::from_raw_fd(raw_fd) };
-                                socket.set_nonblocking(false).ok();
                                 let mut peek_buf = [0u8; 16];
-                                if let Ok(1..) = socket.peek(&mut peek_buf) {
+                                if let Ok(1..) = recv(
+                                    raw_fd,
+                                    &mut peek_buf,
+                                    MsgFlags::MSG_PEEK | MsgFlags::MSG_DONTWAIT,
+                                ) {
                                     if is_valid_http_request_start(&peek_buf) {
                                         counter!("synvoid.tls.http_on_tls_port").increment(1);
                                         tracing::debug!(
@@ -403,8 +403,6 @@ impl HttpsServer {
                                         );
                                     }
                                 }
-                                socket.set_nonblocking(true).ok();
-                                std::mem::forget(socket);
                             }
 
                             tokio::spawn(async move {

@@ -225,7 +225,18 @@ impl SpinRuntime {
             SpinAppInstance::new(manifest, wasm_runtime, component_id.to_string(), kv_store);
 
         let instance_id = uuid::Uuid::new_v4().to_string();
-        self.instances.write().insert(instance_id, instance.clone());
+        let mut instances = self.instances.write();
+        let max_instances = self.config.max_instances.max(1);
+        if instances.len() >= max_instances {
+            if let Some(oldest_id) = instances
+                .iter()
+                .min_by_key(|(_, instance)| *instance.last_request.read())
+                .map(|(id, _)| id.clone())
+            {
+                instances.remove(&oldest_id);
+            }
+        }
+        instances.insert(instance_id, instance.clone());
 
         tracing::info!(
             "Instantiated Spin app '{}' component '{}'",
@@ -346,6 +357,7 @@ impl SpinRuntime {
 
     pub fn shutdown(&self) {
         self.instances.write().clear();
+        self.cached_instances.write().clear();
         self.compiled_runtimes.write().clear();
     }
 }

@@ -153,7 +153,6 @@ Classification values:
 | tonic-prost | admin | composition_runtime | default | gRPC prost integration | keep |
 | openraft | mesh | composition_runtime | mesh | Raft consensus for mesh control plane | keep |
 | async-stream | http_client, mesh | composition_runtime | default | Async stream macro | keep |
-| bincode | mesh, utils | composition_runtime | default | Binary serialization for mesh state | keep |
 
 ## Build Dependencies
 

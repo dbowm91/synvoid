@@ -497,11 +497,17 @@ pub fn run_supervisor_mode(
 
     let shared_config = Arc::new(RwLock::new(config_manager));
 
-    let rt = tokio::runtime::Builder::new_multi_thread()
+    let rt = match tokio::runtime::Builder::new_multi_thread()
         .worker_threads(4)
         .enable_all()
         .build()
-        .expect("Failed to build Tokio runtime");
+    {
+        Ok(rt) => rt,
+        Err(e) => {
+            tracing::error!("Failed to build Tokio runtime: {}", e);
+            return;
+        }
+    };
 
     let trackers = SupervisorStateTrackers {
         rule_feed_manager,
@@ -546,10 +552,10 @@ pub fn run_supervisor_mode(
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         rt.block_on(async {
-            let mut supervisor = SupervisorProcess::new(state, pm_config)
-                .await
-                .expect("Failed to initialize SupervisorProcess");
-            supervisor.run().await
+            match SupervisorProcess::new(state, pm_config).await {
+                Ok(mut supervisor) => supervisor.run().await,
+                Err(e) => Err(e),
+            }
         })
     }));
 

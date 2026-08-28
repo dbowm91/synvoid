@@ -192,6 +192,29 @@ pub async fn csrf_middleware(
         return next.run(request).await;
     }
 
+    let client_ip = request
+        .extensions()
+        .get::<ClientIp>()
+        .map(|ip| ip.0.as_str())
+        .unwrap_or("unknown");
+
+    if super::auth::AUTH_RATE_LIMITER.is_locked(client_ip) {
+        let retry_after = super::auth::AUTH_RATE_LIMITER
+            .retry_after(client_ip)
+            .unwrap_or(super::auth::AUTH_LOCKOUT_DURATION);
+        tracing::warn!(
+            "CSRF middleware: client {} is locked out, retry after {:?}",
+            client_ip,
+            retry_after
+        );
+        let mut response = StatusCode::TOO_MANY_REQUESTS.into_response();
+        response.headers_mut().insert(
+            axum::http::header::RETRY_AFTER,
+            HeaderValue::from(retry_after.as_secs()),
+        );
+        return response;
+    }
+
     let session_id = get_session_cookie(&request);
 
     let session_id = match session_id {
@@ -202,6 +225,7 @@ pub async fn csrf_middleware(
                 method,
                 path
             );
+            super::auth::AUTH_RATE_LIMITER.record_failure(client_ip);
             super::metrics_events::record_csrf_failure();
             return StatusCode::FORBIDDEN.into_response();
         }
@@ -213,6 +237,7 @@ pub async fn csrf_middleware(
             method,
             path
         );
+        super::auth::AUTH_RATE_LIMITER.record_failure(client_ip);
         super::metrics_events::record_csrf_failure();
         return StatusCode::FORBIDDEN.into_response();
     }
@@ -231,16 +256,19 @@ pub async fn csrf_middleware(
                 method,
                 path
             );
+            super::auth::AUTH_RATE_LIMITER.record_failure(client_ip);
             super::metrics_events::record_csrf_failure();
             return StatusCode::FORBIDDEN.into_response();
         }
     };
 
     if state.validate_csrf(&csrf_token, &session_id) {
+        super::auth::AUTH_RATE_LIMITER.record_success(client_ip);
         return next.run(request).await;
     }
 
     tracing::warn!("CSRF validation failed for {} {}", method, path);
+    super::auth::AUTH_RATE_LIMITER.record_failure(client_ip);
     super::metrics_events::record_csrf_failure();
     StatusCode::FORBIDDEN.into_response()
 }

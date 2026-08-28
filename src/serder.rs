@@ -4,7 +4,7 @@
 //!
 //! ## Current State
 //!
-//! - **serde** (bincode): Current serialization format for IPC and QUIC messages
+//! - **serde** (postcard): Current serialization format for IPC and QUIC messages
 //! - **rkyv**: Zero-copy deserialization - planned migration
 //!
 //! ## Migration to rkyv
@@ -67,7 +67,7 @@
 //!
 //! ### Step 4: Update serialization.rs
 //!
-//! Replace bincode calls with rkyv API:
+//! Replace postcard calls with rkyv API where zero-copy access is required:
 //!
 //! ```text
 //! // Use rkyv::to_bytes for serialization

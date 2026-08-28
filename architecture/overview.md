@@ -35,7 +35,7 @@ synvoid/
 └── scripts/                # CI/build scripts
 ```
 
-**Workspace**: 45 members — root app, 37 `synvoid-*` crates, `pqc`, `admin-ui`, 2 examples, `fuzz`, `tools/{xtask,synvoid-repo-guards}`.
+**Workspace**: 44 members — root app, 36 `synvoid-*` crates, `pqc`, `admin-ui`, 2 examples, `fuzz`, `tools/{xtask,synvoid-repo-guards}`.
 
 Binaries: `synvoid` (`src/main.rs`, the supervisor/worker entry), plus standalone `synvoid-vpn` and a reserved VPN-dashboard `server` binary under `src/bin/`.
 
@@ -265,7 +265,6 @@ Root-owned orchestration code (see [`root_module_ledger.md`](./root_module_ledge
 | **xtask** | `tools/xtask` | `cargo xtask verify[-full|-release]`, focused test lanes | [`developer_tooling.md`](./developer_tooling.md) |
 | **Repo guards** | `tools/synvoid-repo-guards` + root `tests/` | ~12 static guard suites enforcing boundaries/invariants | [`developer_tooling.md`](./developer_tooling.md) · [`root_module_ledger.md`](./root_module_ledger.md) |
 | **Fuzzing** | `fuzz/` | 17 targets; smoke runs need nightly | [`ci_fuzz_failure_injection.md`](./ci_fuzz_failure_injection.md) |
-| **Testkit** | `crates/synvoid-testkit` | Shared fixtures (currently zero consumers — dormant) | [`developer_tooling.md`](./developer_tooling.md) |
 
 ---
 

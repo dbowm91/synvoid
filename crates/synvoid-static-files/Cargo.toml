@@ -28,7 +28,7 @@ walkdir = "2"
 flate2 = "1"
 brotli = "6"
 tempfile = "3"
-lightningcss = "1.0.0-alpha.71"
+lightningcss = { version = "1.0.0-alpha.72", default-features = false }
 minify-html = "0.18"
 minify-js = "0.6"
 anyhow = "1"

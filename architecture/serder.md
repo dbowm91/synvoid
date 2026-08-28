@@ -2,7 +2,7 @@
 
 ## 1. Purpose and Responsibility
 
-The Serialization module (`src/serder.rs`) provides **serialization strategy documentation and migration guidance** for transitioning from serde/bincode to rkyv zero-copy deserialization, with feature-gated re-exports.
+The Serialization module (`src/serder.rs`) provides **serialization strategy documentation and migration guidance** from serde-based postcard encoding to rkyv zero-copy deserialization, with feature-gated re-exports.
 
 **Core Responsibilities:**
 - Document serialization strategy across codebases

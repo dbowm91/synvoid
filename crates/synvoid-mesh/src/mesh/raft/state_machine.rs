@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Debug, Display};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
@@ -18,6 +18,7 @@ use openraft::vote::RaftLeaderId;
 use openraft::EntryPayload;
 use openraft::OptionalSend;
 use openraft::RaftTypeConfig;
+use parking_lot::Mutex;
 use rusqlite::{params, Connection};
 use tokio::io::{AsyncRead, AsyncSeek, AsyncWrite};
 
@@ -431,7 +432,6 @@ impl GlobalRegistryStateMachine {
     pub fn get(&self, namespace: &Namespace, key: &str) -> Option<Vec<u8>> {
         self.db
             .lock()
-            .unwrap()
             .query_row(
                 "SELECT value FROM state_machine WHERE namespace = ?1 AND key = ?2",
                 params![namespace.as_str(), key],
@@ -446,7 +446,7 @@ impl GlobalRegistryStateMachine {
         key: &str,
         value: Vec<u8>,
     ) -> Result<(), rusqlite::Error> {
-        self.db.lock().unwrap().execute(
+        self.db.lock().execute(
             "INSERT OR REPLACE INTO state_machine (namespace, key, value) VALUES (?1, ?2, ?3)",
             params![namespace.as_str(), key, value],
         )?;
@@ -454,7 +454,7 @@ impl GlobalRegistryStateMachine {
     }
 
     pub fn delete(&self, namespace: &Namespace, key: &str) -> Result<bool, rusqlite::Error> {
-        let rows = self.db.lock().unwrap().execute(
+        let rows = self.db.lock().execute(
             "DELETE FROM state_machine WHERE namespace = ?1 AND key = ?2",
             params![namespace.as_str(), key],
         )?;
@@ -464,7 +464,6 @@ impl GlobalRegistryStateMachine {
     pub fn get_last_applied_log_id(&self) -> Option<u64> {
         self.db
             .lock()
-            .unwrap()
             .query_row(
                 "SELECT value FROM snapshot_metadata WHERE key = 'last_applied_log_id'",
                 [],
@@ -477,7 +476,6 @@ impl GlobalRegistryStateMachine {
     pub fn get_first_log_term(&self) -> Option<u64> {
         self.db
             .lock()
-            .unwrap()
             .query_row("SELECT MIN(term) FROM log_entries", [], |row| {
                 row.get::<_, Option<i64>>(0)
             })
@@ -489,7 +487,6 @@ impl GlobalRegistryStateMachine {
     pub fn get_last_log_term(&self) -> Option<u64> {
         self.db
             .lock()
-            .unwrap()
             .query_row("SELECT MAX(term) FROM log_entries", [], |row| {
                 row.get::<_, Option<i64>>(0)
             })
@@ -499,7 +496,7 @@ impl GlobalRegistryStateMachine {
     }
 
     pub fn set_last_applied_log_id(&self, index: u64) -> Result<(), rusqlite::Error> {
-        self.db.lock().unwrap().execute(
+        self.db.lock().execute(
             "INSERT OR REPLACE INTO snapshot_metadata (key, value) VALUES ('last_applied_log_id', ?1)",
             params![index.to_string()],
         )?;
@@ -509,7 +506,6 @@ impl GlobalRegistryStateMachine {
     pub fn get_membership_raw(&self) -> Option<String> {
         self.db
             .lock()
-            .unwrap()
             .query_row(
                 "SELECT value FROM snapshot_metadata WHERE key = 'last_membership'",
                 [],
@@ -519,7 +515,7 @@ impl GlobalRegistryStateMachine {
     }
 
     pub fn set_membership_raw(&self, membership_json: &str) -> Result<(), rusqlite::Error> {
-        self.db.lock().unwrap().execute(
+        self.db.lock().execute(
             "INSERT OR REPLACE INTO snapshot_metadata (key, value) VALUES ('last_membership', ?1)",
             params![membership_json],
         )?;
@@ -527,7 +523,7 @@ impl GlobalRegistryStateMachine {
     }
 
     pub fn get_all_entries(&self) -> Vec<(Namespace, String, Vec<u8>)> {
-        let db_guard = self.db.lock().unwrap();
+        let db_guard = self.db.lock();
         let mut stmt = match db_guard.prepare("SELECT namespace, key, value FROM state_machine") {
             Ok(s) => s,
             Err(_) => return Vec::new(),
@@ -559,7 +555,7 @@ impl GlobalRegistryStateMachine {
         tokio::task::spawn_blocking(move || {
             let mut file = tempfile::tempfile()?;
 
-            let db_guard = db.lock().unwrap();
+            let db_guard = db.lock();
             let mut stmt = db_guard
                 .prepare("SELECT namespace, key, value FROM state_machine")
                 .map_err(std::io::Error::other)?;
@@ -622,7 +618,7 @@ impl GlobalRegistryStateMachine {
             data.read_exact(&mut count_buf)?;
             let entry_count = u64::from_le_bytes(count_buf);
 
-            let db_guard = db.lock().unwrap();
+            let db_guard = db.lock();
             db_guard
                 .execute("DELETE FROM state_machine", [])
                 .map_err(std::io::Error::other)?;
@@ -668,7 +664,7 @@ impl GlobalRegistryStateMachine {
         let entries: Vec<(Namespace, String, Vec<u8>)> = serde_json::from_slice(data)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
 
-        let db_guard = db.lock().unwrap();
+        let db_guard = db.lock();
         db_guard
             .execute("DELETE FROM state_machine", [])
             .map_err(std::io::Error::other)?;
@@ -754,7 +750,7 @@ impl GlobalRegistryLogStorage {
         payload: &[u8],
         membership: Option<&str>,
     ) -> Result<(), rusqlite::Error> {
-        self.db.lock().unwrap().execute(
+        self.db.lock().execute(
             "INSERT INTO log_entries (id, term, payload, membership) VALUES (?1, ?2, ?3, ?4)",
             params![index as i64, term as i64, payload, membership],
         )?;
@@ -764,7 +760,6 @@ impl GlobalRegistryLogStorage {
     pub fn get_log_entry(&self, index: u64) -> Option<(u64, Vec<u8>)> {
         self.db
             .lock()
-            .unwrap()
             .query_row(
                 "SELECT term, payload FROM log_entries WHERE id = ?1",
                 params![index as i64],
@@ -778,7 +773,7 @@ impl GlobalRegistryLogStorage {
     }
 
     pub fn save_vote_to_storage(&self, vote: &[u8]) -> Result<(), rusqlite::Error> {
-        self.db.lock().unwrap().execute(
+        self.db.lock().execute(
             "INSERT OR REPLACE INTO vote_store (id, vote) VALUES (1, ?1)",
             params![vote],
         )?;
@@ -788,7 +783,6 @@ impl GlobalRegistryLogStorage {
     pub fn get_vote(&self) -> Option<Vec<u8>> {
         self.db
             .lock()
-            .unwrap()
             .query_row("SELECT vote FROM vote_store WHERE id = 1", [], |row| {
                 row.get::<_, Vec<u8>>(0)
             })
@@ -798,7 +792,6 @@ impl GlobalRegistryLogStorage {
     pub fn get_first_id(&self) -> Option<u64> {
         self.db
             .lock()
-            .unwrap()
             .query_row("SELECT MIN(id) FROM log_entries", [], |row| {
                 row.get::<_, Option<i64>>(0)
             })
@@ -810,7 +803,6 @@ impl GlobalRegistryLogStorage {
     pub fn get_last_id(&self) -> Option<u64> {
         self.db
             .lock()
-            .unwrap()
             .query_row("SELECT MAX(id) FROM log_entries", [], |row| {
                 row.get::<_, Option<i64>>(0)
             })
@@ -822,7 +814,6 @@ impl GlobalRegistryLogStorage {
     pub fn get_first_log_term(&self) -> Option<u64> {
         self.db
             .lock()
-            .unwrap()
             .query_row("SELECT MIN(term) FROM log_entries", [], |row| {
                 row.get::<_, Option<i64>>(0)
             })
@@ -834,7 +825,6 @@ impl GlobalRegistryLogStorage {
     pub fn get_last_log_term(&self) -> Option<u64> {
         self.db
             .lock()
-            .unwrap()
             .query_row("SELECT MAX(term) FROM log_entries", [], |row| {
                 row.get::<_, Option<i64>>(0)
             })
@@ -844,7 +834,7 @@ impl GlobalRegistryLogStorage {
     }
 
     pub fn delete_range(&self, start: u64, end: u64) -> Result<(), rusqlite::Error> {
-        self.db.lock().unwrap().execute(
+        self.db.lock().execute(
             "DELETE FROM log_entries WHERE id >= ?1 AND id < ?2",
             params![start as i64, end as i64],
         )?;
@@ -852,7 +842,7 @@ impl GlobalRegistryLogStorage {
     }
 
     pub fn get_all_entries(&self) -> Vec<(u64, u64, Vec<u8>)> {
-        let db_guard = self.db.lock().unwrap();
+        let db_guard = self.db.lock();
         let mut stmt =
             match db_guard.prepare("SELECT id, term, payload FROM log_entries ORDER BY id") {
                 Ok(s) => s,
@@ -873,7 +863,7 @@ impl GlobalRegistryLogStorage {
     }
 
     pub fn get_log_entries_paged(&self, start: u64, limit: u64) -> Vec<(u64, u64, Vec<u8>)> {
-        let db_guard = self.db.lock().unwrap();
+        let db_guard = self.db.lock();
         let mut stmt = match db_guard.prepare(
             "SELECT id, term, payload FROM log_entries WHERE id >= ?1 ORDER BY id LIMIT ?2",
         ) {
@@ -1227,7 +1217,7 @@ impl RaftStateMachine<GlobalRegistryConfig> for GlobalRegistryStateMachine {
     ) -> std::io::Result<()> {
         self.streaming_deserialize_and_apply(snapshot).await?;
 
-        let db = self.db.lock().unwrap();
+        let db = self.db.lock();
 
         if let Some(log_id) = meta.last_log_id {
             db.execute(
@@ -1251,7 +1241,7 @@ impl RaftStateMachine<GlobalRegistryConfig> for GlobalRegistryStateMachine {
         &mut self,
     ) -> std::io::Result<Option<SnapshotOf<GlobalRegistryConfig>>> {
         let count: u64 = {
-            let db_guard = self.db.lock().unwrap();
+            let db_guard = self.db.lock();
             db_guard
                 .query_row("SELECT COUNT(*) FROM state_machine", [], |row| row.get(0))
                 .map_err(std::io::Error::other)?

@@ -234,10 +234,9 @@ impl ProxyExecutor {
                     builder = builder.header(k, v);
                 }
                 Ok(builder.body(hyper_resp.body).unwrap_or_else(|_| {
-                    http::Response::builder()
-                        .status(500)
-                        .body(Bytes::from("Internal Server Error"))
-                        .unwrap()
+                    let mut response = Response::new(Bytes::from("Internal Server Error"));
+                    *response.status_mut() = http::StatusCode::INTERNAL_SERVER_ERROR;
+                    response
                 }))
             }
             Err(e) => Err(e.to_string()),

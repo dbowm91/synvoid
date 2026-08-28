@@ -2,7 +2,7 @@
 
 ## 1. Scope
 
-This document indexes the non-runtime tooling: `tools/xtask`, `tools/synvoid-repo-guards`, `fuzz/`, `crates/synvoid-testkit`, and `examples/`. The authoritative verification contract is `docs/testing/verification-contract.md` (frozen).
+This document indexes the non-runtime tooling: `tools/xtask`, `tools/synvoid-repo-guards`, `fuzz/`, and `examples/`. The authoritative verification contract is `docs/testing/verification-contract.md` (frozen).
 
 ## 2. xtask (`tools/xtask`)
 
@@ -31,11 +31,7 @@ The actual guard suites live in root `tests/` (~12 files, 100+ tests), covering:
 
 Smoke policy and failure-injection seams: [`ci_fuzz_failure_injection.md`](./ci_fuzz_failure_injection.md).
 
-## 5. Testkit (`crates/synvoid-testkit`)
-
-Shared test fixtures (temp config dirs, minimal config TOML, request builders, assertion macros). Deliberately limited to `synvoid-core` + `synvoid-config` deps. **Currently has zero consumers** — boundary policy documented in its README; retained pending removal decision.
-
-## 6. Examples (`examples/`)
+## 5. Examples (`examples/`)
 
 - `dynamic-plugin-example/` — loading a dynamic WASM plugin.
 - `embedded-app-example/` — embedding SynVoid as a library.

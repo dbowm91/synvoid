@@ -137,7 +137,7 @@ impl CacheEntryInner {
 
 pub struct ProxyCache {
     entries: Cache<CacheKey, CacheEntryInner>,
-    settings: RwLock<ProxyCacheSettings>,
+    settings: RwLock<Arc<ProxyCacheSettings>>,
     disk_path: PathBuf,
     cache_hits: AtomicU64,
     cache_misses: AtomicU64,
@@ -204,7 +204,7 @@ impl ProxyCache {
         let (shutdown_tx, _) = tokio::sync::watch::channel(());
         Self {
             entries: cache,
-            settings: RwLock::new(settings.clone()),
+            settings: RwLock::new(Arc::new(settings.clone())),
             disk_path,
             cache_hits: AtomicU64::new(0),
             cache_misses: AtomicU64::new(0),
@@ -229,7 +229,7 @@ impl ProxyCache {
     }
 
     pub fn settings(&self) -> Arc<ProxyCacheSettings> {
-        Arc::new(self.settings.read().clone())
+        self.settings.read().clone()
     }
 
     pub fn revalidation_semaphore(&self) -> Arc<tokio::sync::Semaphore> {
@@ -300,9 +300,9 @@ impl ProxyCache {
     /// Update cache settings via a closure. The closure receives a mutable reference
     /// to the current settings; changes are applied atomically under the write lock.
     pub fn update_settings(&self, f: impl FnOnce(&mut ProxyCacheSettings)) {
-        let mut settings = self.settings.read().clone();
+        let mut settings = (**self.settings.read()).clone();
         f(&mut settings);
-        *self.settings.write() = settings;
+        *self.settings.write() = Arc::new(settings);
     }
 
     pub fn start_background_cleanup(&self, interval_secs: u64) -> tokio::task::JoinHandle<()> {
