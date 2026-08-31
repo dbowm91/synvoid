@@ -1050,6 +1050,7 @@ message DhtSnapshotRequest {
     uint64 from_version = 3;
     bytes signature = 4;
     optional string signer_public_key = 5;
+    uint64 timestamp = 6;
 }
 
 message DhtSnapshotResponse {

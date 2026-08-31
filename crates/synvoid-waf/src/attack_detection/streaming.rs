@@ -122,29 +122,31 @@ impl StreamingWafCore {
             );
         }
 
-        let previous_len = self.state.trailing_window.len().min(TRAILING_WINDOW_SIZE);
-        let current_remaining = TRAILING_WINDOW_SIZE.saturating_sub(previous_len);
-        let window_start = chunk.len().saturating_sub(current_remaining);
-
-        let previous_content: Vec<u8> = if previous_len > 0 {
-            self.state.trailing_window[..previous_len].to_vec()
-        } else {
-            vec![]
-        };
+        let max_old = TRAILING_WINDOW_SIZE.saturating_sub(chunk.len());
+        let take = self.state.trailing_window.len().min(max_old);
+        let old_start = self.state.trailing_window.len() - take;
+        let previous_content = self.state.trailing_window[old_start..].to_vec();
 
         self.state.trailing_window.clear();
         self.state
             .trailing_window
             .extend_from_slice(&previous_content);
-        self.state
-            .trailing_window
-            .extend_from_slice(&chunk[window_start..]);
+        self.state.trailing_window.extend_from_slice(
+            &chunk[chunk
+                .len()
+                .saturating_sub(TRAILING_WINDOW_SIZE.saturating_sub(previous_content.len()))..],
+        );
 
         StreamingWafDecision::Continue
     }
 
     fn process_multipart_chunk(&mut self, chunk: &[u8]) -> StreamingWafDecision {
-        let boundary_str = self.state.boundary.as_ref().unwrap().clone();
+        let boundary_str = self
+            .state
+            .boundary
+            .as_ref()
+            .expect("boundary set when entering multipart processing")
+            .clone();
         let boundary = boundary_str.as_bytes();
         let trailing_slice = self.state.trailing_window.as_slice();
         let combined_view = [trailing_slice, chunk];

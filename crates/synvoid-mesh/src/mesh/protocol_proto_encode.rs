@@ -1406,6 +1406,7 @@ impl From<&MeshMessage> for proto::MeshMessage {
                 request_id,
                 node_id,
                 from_version,
+                timestamp,
                 signature,
                 signer_public_key,
             } => proto::MeshMessage {
@@ -1417,6 +1418,7 @@ impl From<&MeshMessage> for proto::MeshMessage {
                         from_version: *from_version,
                         signature: signature.clone(),
                         signer_public_key: signer_public_key.clone(),
+                        timestamp: *timestamp,
                     },
                 )),
             },

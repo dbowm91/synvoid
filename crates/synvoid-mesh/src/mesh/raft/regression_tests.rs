@@ -1081,33 +1081,28 @@ mod streaming_snapshot_tests {
 #[allow(clippy::module_inception)] // reason: test module matches file name, standard Rust test pattern
 mod regression_tests {
     #[test]
-    fn test_regression_raft_snapshot_framing_by_length_heuristic_is_wrong() {
-        let header_payload = [0u8; 50];
-        let chunk_payload = [0u8; 100];
+    fn test_regression_raft_snapshot_legacy_frames_decode_by_shape() {
+        let header = crate::protocol::SnapshotHeader {
+            request_id: "snap-header".to_string(),
+            vote: vec![1, 2, 3],
+            meta: vec![0u8; 128],
+            total_size: 1024,
+        };
+        let header_bytes = postcard::to_stdvec(&header).unwrap();
+        let decoded_header: crate::protocol::SnapshotHeader =
+            postcard::from_bytes(&header_bytes).unwrap();
+        assert_eq!(decoded_header.request_id, "snap-header");
 
-        let is_header_50 = header_payload.len() < 100;
-        let is_header_100 = chunk_payload.len() < 100;
-
-        assert!(
-            is_header_50,
-            "BUG: A 50-byte snapshot header would be incorrectly identified as a chunk because payload.data.len() < 100 heuristic treats it as header-only if >= 100 bytes"
-        );
-        assert!(
-            !is_header_100,
-            "A 100-byte chunk would be incorrectly identified as a header because >= 100 is treated as chunk boundary"
-        );
-
-        let small_header = [0u8; 99];
-        let small_chunk = [0u8; 100];
-
-        assert!(
-            small_header.len() < 100,
-            "BUG: 99-byte valid header misidentified as chunk"
-        );
-        assert!(
-            small_chunk.len() >= 100,
-            "BUG: 100-byte chunk misidentified as header"
-        );
+        let chunk = crate::protocol::SnapshotChunk {
+            request_id: "snap-chunk".to_string(),
+            offset: 0,
+            is_last: true,
+            data: vec![7, 8, 9],
+        };
+        let chunk_bytes = postcard::to_stdvec(&chunk).unwrap();
+        let decoded_chunk: crate::protocol::SnapshotChunk =
+            postcard::from_bytes(&chunk_bytes).unwrap();
+        assert_eq!(decoded_chunk.request_id, "snap-chunk");
     }
 
     #[test]

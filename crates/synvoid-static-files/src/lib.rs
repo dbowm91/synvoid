@@ -843,7 +843,7 @@ impl StaticFileHandler {
             let body = if let Some(template_path) = effective_template_path.as_deref() {
                 if format == "html" {
                     let template = directory::load_directory_template(template_path)?;
-                    let entries = directory::collect_directory_entries(dir_path)?;
+                    let entries = directory::collect_directory_entries(dir_path, url_path)?;
                     directory::render_custom_template(&template, url_path, &entries)?
                 } else {
                     directory::render_directory_listing(
@@ -924,6 +924,7 @@ impl StaticFileHandler {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::StaticFileHandler;
 

@@ -104,6 +104,7 @@ impl RecordStoreManager {
             request_id: request_id.into(),
             node_id: self.node_id.clone().into(),
             from_version,
+            timestamp,
             signature,
             signer_public_key,
         })

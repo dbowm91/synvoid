@@ -925,6 +925,7 @@ pub enum MeshMessage {
         request_id: ArcStr,
         node_id: ArcStr,
         from_version: u64,
+        timestamp: u64,
         signature: Vec<u8>,
         signer_public_key: Option<String>,
     },

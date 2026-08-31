@@ -180,17 +180,12 @@ impl QueryCoalescer {
             }
         }
 
-        // Check if we need to evict, then insert
-        {
-            let in_flight = self.in_flight.read();
-            if in_flight.len() >= self.max_entries {
-                drop(in_flight);
-                let mut in_flight = self.in_flight.write();
-                self.evict_oldest(&mut in_flight);
-            }
-        }
-
+        // Keep the capacity check, eviction, and insertion under one write lock
+        // so concurrent misses cannot grow the map past max_entries.
         let mut in_flight = self.in_flight.write();
+        if in_flight.len() >= self.max_entries {
+            self.evict_oldest(&mut in_flight);
+        }
         let (tx, _) = broadcast::channel(1);
         let entry = CoalescerEntry {
             sender: tx.clone(),

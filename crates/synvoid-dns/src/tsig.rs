@@ -5,7 +5,6 @@ use std::time::Instant;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use hmac::{Hmac, Mac};
 use parking_lot::RwLock;
-use sha1::Sha1;
 use sha2::{Digest, Sha256, Sha384, Sha512};
 use subtle::ConstantTimeEq;
 
@@ -13,7 +12,6 @@ use thiserror::Error;
 
 use synvoid_config::dns::{TsigAlgorithm, TsigKeyConfig};
 
-type HmacSha1 = Hmac<Sha1>;
 type HmacSha256 = Hmac<Sha256>;
 type HmacSha384 = Hmac<Sha384>;
 type HmacSha512 = Hmac<Sha512>;
@@ -95,7 +93,7 @@ impl TsigKey {
             .decode(&config.secret_base64)
             .map_err(|e| format!("Invalid TSIG secret base64: {}", e))?;
 
-        if secret.len() < config.algorithm.key_size() / 2 {
+        if secret.len() < config.algorithm.key_size() {
             return Err(format!(
                 "TSIG secret too short for {}",
                 config.algorithm.dns_algorithm_name()
@@ -203,12 +201,6 @@ impl TsigVerifier {
                 mac.update(&data_to_sign);
                 mac.finalize().into_bytes().to_vec()
             }
-            TsigAlgorithm::HmacSha1 => {
-                let mut mac =
-                    HmacSha1::new_from_slice(&key.secret).map_err(|_| TsigError::InvalidKey)?;
-                mac.update(&data_to_sign);
-                mac.finalize().into_bytes().to_vec()
-            }
             TsigAlgorithm::HmacSha384 => {
                 let mut mac =
                     HmacSha384::new_from_slice(&key.secret).map_err(|_| TsigError::InvalidKey)?;
@@ -278,12 +270,6 @@ impl TsigVerifier {
             TsigAlgorithm::HmacSha256 => {
                 let mut mac =
                     HmacSha256::new_from_slice(&key.secret).map_err(|_| TsigError::InvalidKey)?;
-                mac.update(&data_to_sign);
-                mac.finalize().into_bytes().to_vec()
-            }
-            TsigAlgorithm::HmacSha1 => {
-                let mut mac =
-                    HmacSha1::new_from_slice(&key.secret).map_err(|_| TsigError::InvalidKey)?;
                 mac.update(&data_to_sign);
                 mac.finalize().into_bytes().to_vec()
             }
@@ -461,7 +447,6 @@ mod tests {
     #[test]
     fn test_tsig_algorithm_u16() {
         assert_eq!(TsigAlgorithm::HmacSha256.to_u16(), 161);
-        assert_eq!(TsigAlgorithm::HmacSha1.to_u16(), 249);
         assert_eq!(TsigAlgorithm::HmacSha384.to_u16(), 170);
         assert_eq!(TsigAlgorithm::HmacSha512.to_u16(), 172);
     }
@@ -472,7 +457,6 @@ mod tests {
             TsigAlgorithm::from_u16(161),
             Some(TsigAlgorithm::HmacSha256)
         );
-        assert_eq!(TsigAlgorithm::from_u16(249), Some(TsigAlgorithm::HmacSha1));
         assert_eq!(
             TsigAlgorithm::from_u16(170),
             Some(TsigAlgorithm::HmacSha384)
@@ -490,7 +474,6 @@ mod tests {
             TsigAlgorithm::HmacSha256.dns_algorithm_name(),
             "hmac-sha256"
         );
-        assert_eq!(TsigAlgorithm::HmacSha1.dns_algorithm_name(), "hmac-sha1");
         assert_eq!(
             TsigAlgorithm::HmacSha384.dns_algorithm_name(),
             "hmac-sha384"
@@ -504,7 +487,6 @@ mod tests {
     #[test]
     fn test_tsig_algorithm_key_size() {
         assert_eq!(TsigAlgorithm::HmacSha256.key_size(), 32);
-        assert_eq!(TsigAlgorithm::HmacSha1.key_size(), 20);
         assert_eq!(TsigAlgorithm::HmacSha384.key_size(), 48);
         assert_eq!(TsigAlgorithm::HmacSha512.key_size(), 64);
     }
@@ -523,19 +505,33 @@ mod tests {
     }
 
     #[test]
+    fn test_tsig_key_rejects_short_secret() {
+        let config = TsigKeyConfig {
+            name: "short-key".to_string(),
+            secret_base64: base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                b"sixteen-byte-key",
+            ),
+            algorithm: TsigAlgorithm::HmacSha256,
+        };
+
+        assert!(TsigKey::from_config(&config).is_err());
+    }
+
+    #[test]
     fn test_tsig_key_from_config_all_algorithms() {
         let algorithms = [
             TsigAlgorithm::HmacSha256,
-            TsigAlgorithm::HmacSha1,
             TsigAlgorithm::HmacSha384,
             TsigAlgorithm::HmacSha512,
         ];
 
         for algorithm in algorithms {
+            use base64::Engine;
             let config = TsigKeyConfig {
                 name: format!("test-key-{:?}", algorithm),
-                secret_base64: "dGVzdC1zZWNyZXQtMTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2"
-                    .to_string(),
+                secret_base64: base64::engine::general_purpose::STANDARD
+                    .encode(b"test-secret-key-material-that-is-long-enough-for-all-tsig-algorithms-0123456789"),
                 algorithm,
             };
 

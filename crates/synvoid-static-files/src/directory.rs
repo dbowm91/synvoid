@@ -129,8 +129,9 @@ pub fn render_custom_template(
     entries: &[DirectoryEntry],
 ) -> Result<String, super::StaticError> {
     let mut html = template.to_string();
+    let escaped_url_path = escape_html(url_path);
 
-    html = html.replace("{{url_path}}", url_path);
+    html = html.replace("{{url_path}}", &escaped_url_path);
 
     let parent_link = if url_path != "/" {
         let parent = std::path::Path::new(url_path)
@@ -144,7 +145,7 @@ pub fn render_custom_template(
         };
         format!(
             r#"<tr><td colspan="3"><a href="{}">..</a></td></tr>"#,
-            parent_href
+            escape_html(&parent_href)
         )
     } else {
         String::new()
@@ -160,26 +161,28 @@ pub fn render_custom_template(
                 get_file_type_icon(&entry.name)
             };
             let escaped_name = escape_html(&entry.name);
+            let escaped_href = escape_html(&entry.href);
             format!(
                 r#"<tr>
                     <td><a href="{}">{} {}</a></td>
                     <td>{}</td>
                     <td class="size">{}</td>
                 </tr>"#,
-                entry.href, icon, escaped_name, entry.modified, entry.size
+                escaped_href, icon, escaped_name, entry.modified, entry.size
             )
         })
         .collect();
     html = html.replace("{{rows}}", &rows);
 
     html = html.replace("{{site_name}}", "SynVoid");
-    html = html.replace("{{title}}", &format!("Index of {}", url_path));
+    html = html.replace("{{title}}", &format!("Index of {}", escaped_url_path));
 
     Ok(html)
 }
 
 pub fn collect_directory_entries(
     dir_path: &Path,
+    url_path: &str,
 ) -> Result<Vec<DirectoryEntry>, super::StaticError> {
     let entries =
         fs::read_dir(dir_path).map_err(|e| super::StaticError::Internal(e.to_string()))?;
@@ -218,17 +221,15 @@ pub fn collect_directory_entries(
         _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
     });
 
-    let binding = dir_path.to_string_lossy();
-    let base_path = binding.trim_end_matches('/');
-    let url_path = format!("/{}", base_path);
+    let base_path = url_path.trim_end_matches('/');
 
     let mut result: Vec<DirectoryEntry> = Vec::new();
 
     for entry in items {
         let href = if entry.is_dir {
-            format!("{}/{}/", url_path, entry.name)
+            format!("{}/{}/", base_path, entry.name)
         } else {
-            format!("{}/{}", url_path, entry.name)
+            format!("{}/{}", base_path, entry.name)
         };
 
         result.push(DirectoryEntry {

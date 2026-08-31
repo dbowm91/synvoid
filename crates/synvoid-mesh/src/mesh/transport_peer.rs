@@ -2313,6 +2313,7 @@ impl MeshTransport {
                 request_id,
                 node_id,
                 from_version,
+                timestamp,
                 signature,
                 signer_public_key,
             } => {
@@ -2321,6 +2322,7 @@ impl MeshTransport {
                     &request_id,
                     &node_id,
                     from_version,
+                    timestamp,
                     &signature,
                     signer_public_key.as_deref().unwrap_or(""),
                 )
@@ -5294,21 +5296,12 @@ impl MeshTransport {
                     },
                     Err(e) => {
                         tracing::warn!(
-                            "Failed to decode RaftSnapshotFrame, using legacy length heuristic: {}",
+                            "Failed to decode RaftSnapshotFrame, attempting legacy frame formats: {}",
                             e
                         );
-                        if payload.data.len() < 100 {
-                            let header: crate::protocol::SnapshotHeader =
-                                match postcard::from_bytes(&payload.data) {
-                                    Ok(h) => h,
-                                    Err(e) => {
-                                        tracing::warn!(
-                                            "Failed to deserialize SnapshotHeader: {}",
-                                            e
-                                        );
-                                        return Ok(None);
-                                    }
-                                };
+                        if let Ok(header) =
+                            postcard::from_bytes::<crate::protocol::SnapshotHeader>(&payload.data)
+                        {
                             tracing::info!(
                                 "Received snapshot header: request_id={}, total_size={}",
                                 header.request_id,
@@ -5326,18 +5319,9 @@ impl MeshTransport {
                                 ),
                             );
                             None
-                        } else {
-                            let chunk: crate::protocol::SnapshotChunk =
-                                match postcard::from_bytes(&payload.data) {
-                                    Ok(c) => c,
-                                    Err(e) => {
-                                        tracing::warn!(
-                                            "Failed to deserialize SnapshotChunk: {}",
-                                            e
-                                        );
-                                        return Ok(None);
-                                    }
-                                };
+                        } else if let Ok(chunk) =
+                            postcard::from_bytes::<crate::protocol::SnapshotChunk>(&payload.data)
+                        {
                             let mut pending = self.pending_snapshot_transfers.lock().await;
                             let request_id = chunk.request_id.clone();
                             let is_complete = if let Some(snapshot) = pending.get_mut(&request_id) {
@@ -5417,6 +5401,9 @@ impl MeshTransport {
                                 );
                                 None
                             }
+                        } else {
+                            tracing::warn!("Failed to deserialize legacy snapshot frame");
+                            None
                         }
                     }
                 }

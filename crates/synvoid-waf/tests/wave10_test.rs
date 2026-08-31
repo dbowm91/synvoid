@@ -1558,18 +1558,12 @@ mod wasm_pool_contention_tests {
                 thread::spawn(move || {
                     let mut local_acquired = 0;
                     let mut local_released = 0;
-                    let mut instances: Vec<WasmInstance> = Vec::new();
-
                     for _ in 0..50 {
                         if let Some(instance) = pool.acquire() {
                             local_acquired += 1;
-                            instances.push(instance);
+                            pool.release(instance);
+                            local_released += 1;
                         }
-                    }
-
-                    for instance in instances.drain(..) {
-                        pool.release(instance);
-                        local_released += 1;
                     }
 
                     acquired_count.fetch_add(local_acquired, Ordering::Relaxed);

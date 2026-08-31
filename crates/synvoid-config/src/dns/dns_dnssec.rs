@@ -179,7 +179,6 @@ pub enum HsmProvider {
 pub enum TsigAlgorithm {
     #[default]
     HmacSha256,
-    HmacSha1,
     HmacSha384,
     HmacSha512,
 }
@@ -188,7 +187,6 @@ impl TsigAlgorithm {
     pub fn to_u16(&self) -> u16 {
         match self {
             TsigAlgorithm::HmacSha256 => 161,
-            TsigAlgorithm::HmacSha1 => 249,
             TsigAlgorithm::HmacSha384 => 170,
             TsigAlgorithm::HmacSha512 => 172,
         }
@@ -197,7 +195,6 @@ impl TsigAlgorithm {
     pub fn from_u16(value: u16) -> Option<Self> {
         match value {
             161 => Some(TsigAlgorithm::HmacSha256),
-            249 => Some(TsigAlgorithm::HmacSha1),
             170 => Some(TsigAlgorithm::HmacSha384),
             172 => Some(TsigAlgorithm::HmacSha512),
             _ => None,
@@ -207,7 +204,6 @@ impl TsigAlgorithm {
     pub fn key_size(&self) -> usize {
         match self {
             TsigAlgorithm::HmacSha256 => 32,
-            TsigAlgorithm::HmacSha1 => 20,
             TsigAlgorithm::HmacSha384 => 48,
             TsigAlgorithm::HmacSha512 => 64,
         }
@@ -216,7 +212,6 @@ impl TsigAlgorithm {
     pub fn dns_algorithm_name(&self) -> &'static str {
         match self {
             TsigAlgorithm::HmacSha256 => "hmac-sha256",
-            TsigAlgorithm::HmacSha1 => "hmac-sha1",
             TsigAlgorithm::HmacSha384 => "hmac-sha384",
             TsigAlgorithm::HmacSha512 => "hmac-sha512",
         }

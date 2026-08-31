@@ -100,10 +100,10 @@ impl ViolationTracker {
                 match serde_json::from_str::<Vec<ViolationEntry>>(&content) {
                     Ok(entries) => {
                         for entry in entries.into_iter().filter(|e| !e.is_expired()) {
-                            let ip: IpAddr = entry
-                                .ip
-                                .parse()
-                                .unwrap_or_else(|_| "0.0.0.0".parse().unwrap());
+                            let Ok(ip) = entry.ip.parse::<IpAddr>() else {
+                                tracing::warn!(ip = %entry.ip, "Skipping violation entry with invalid IP");
+                                continue;
+                            };
                             let key = ViolationEntry::key(&ip);
                             let shard_idx = djb2_hash(&key);
                             shards[shard_idx].write().insert(key, entry);

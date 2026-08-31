@@ -429,7 +429,7 @@ mod tests {
 
         #[test]
         fn test_default_fallback_platform() {
-            let platform = super::fallback::FallbackAnycastSocket::default();
+            let platform = super::fallback::FallbackAnycastSocket;
             assert_eq!(platform.platform_name(), "fallback");
             assert!(!platform.supports_pktinfo());
         }

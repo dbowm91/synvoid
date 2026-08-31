@@ -24,7 +24,7 @@ pub struct TlsConfig {
     pub tls_1_3_only: bool,
     #[serde(default)]
     pub enable_tls_12_fallback: bool,
-    #[serde(default)]
+    #[serde(default = "default_ocsp_stapling_enabled")]
     pub ocsp_stapling_enabled: bool,
     #[serde(default)]
     pub ocsp_response_path: Option<String>,
@@ -48,7 +48,7 @@ impl Default for TlsConfig {
             prefer_post_quantum: true,
             tls_1_3_only: true,
             enable_tls_12_fallback: false,
-            ocsp_stapling_enabled: false,
+            ocsp_stapling_enabled: default_ocsp_stapling_enabled(),
             ocsp_response_path: None,
             port: default_tls_port(),
             acme: AcmeConfig::default(),
@@ -60,6 +60,10 @@ impl Default for TlsConfig {
 
 fn default_tls_port() -> u16 {
     443
+}
+
+fn default_ocsp_stapling_enabled() -> bool {
+    true
 }
 
 fn default_prefer_post_quantum() -> bool {

@@ -27,13 +27,23 @@ impl AsyncTokenBucket {
     pub fn try_consume(&self, bytes: u64) -> bool {
         self.refill();
 
-        let current = self.available.load(Ordering::Acquire);
-        if current >= bytes {
-            let new = current - bytes;
-            self.available.store(new, Ordering::Release);
-            true
-        } else {
-            false
+        loop {
+            let current = self.available.load(Ordering::Acquire);
+            if current < bytes {
+                return false;
+            }
+            if self
+                .available
+                .compare_exchange(
+                    current,
+                    current - bytes,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
+                .is_ok()
+            {
+                return true;
+            }
         }
     }
 

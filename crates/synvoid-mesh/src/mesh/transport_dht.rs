@@ -117,28 +117,37 @@ impl MeshTransport {
             return true;
         }
         let Ok(pk_bytes) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(pk_str) else {
-            return true;
+            tracing::warn!("{} rejected: malformed signer_public_key", context);
+            return false;
         };
         let cert_mgr = self.cert_manager.read();
-        if let Some(expected_key) = cert_mgr.get_global_node_key(claimed_node_id) {
-            if pk_bytes != expected_key {
-                tracing::warn!(
-                    "{} rejected: signer_public_key does not match authorized key for node {}",
-                    context,
-                    claimed_node_id
-                );
-                return false;
-            }
+        let Some(expected_key) = cert_mgr.get_global_node_key(claimed_node_id) else {
+            tracing::warn!(
+                "{} rejected: no authorized key registered for node {}",
+                context,
+                claimed_node_id
+            );
+            return false;
+        };
+        if pk_bytes != expected_key {
+            tracing::warn!(
+                "{} rejected: signer_public_key does not match authorized key for node {}",
+                context,
+                claimed_node_id
+            );
+            return false;
         }
         true
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn handle_dht_snapshot_request(
         &self,
         from_peer: &str,
         request_id: &str,
         _node_id: &str,
         from_version: u64,
+        timestamp: u64,
         signature: &[u8],
         signer_public_key: &str,
     ) {
@@ -185,7 +194,6 @@ impl MeshTransport {
         }
 
         let signature_valid = {
-            let timestamp = crate::protocol::MeshMessage::generate_timestamp();
             let content = crate::dht::signed::get_snapshot_request_signable_content(
                 request_id,
                 _node_id,

@@ -23,18 +23,8 @@ fn sha512_key_config(name: &str) -> TsigKeyConfig {
     TsigKeyConfig {
         name: name.to_string(),
         secret_base64: base64::engine::general_purpose::STANDARD
-            .encode(b"another-secret-key-for-sha512-testing-purposes"),
+            .encode(b"another-secret-key-for-sha512-testing-purposes-0123456789abcdef-extra"),
         algorithm: TsigAlgorithm::HmacSha512,
-    }
-}
-
-fn sha1_key_config(name: &str) -> TsigKeyConfig {
-    use base64::Engine;
-    TsigKeyConfig {
-        name: name.to_string(),
-        secret_base64: base64::engine::general_purpose::STANDARD
-            .encode(b"sha1-secret-key-for-hmac-testing-purposes"),
-        algorithm: TsigAlgorithm::HmacSha1,
     }
 }
 
@@ -43,7 +33,7 @@ fn sha384_key_config(name: &str) -> TsigKeyConfig {
     TsigKeyConfig {
         name: name.to_string(),
         secret_base64: base64::engine::general_purpose::STANDARD
-            .encode(b"sha384-key-for-hmac-testing-purposes-abcdef"),
+            .encode(b"sha384-key-for-hmac-testing-purposes-abcdef-0123456789"),
         algorithm: TsigAlgorithm::HmacSha384,
     }
 }
@@ -76,15 +66,6 @@ fn tsig_sha512_sign_produces_output() {
         "SHA-512 TSIG RDATA must have meaningful length, got {}",
         rdata.len()
     );
-}
-
-/// SHA-1: sign produces non-empty output.
-#[test]
-fn tsig_sha1_sign_produces_output() {
-    let verifier = TsigVerifier::new(vec![sha1_key_config("sha1key")]).unwrap();
-    let message = b"DNS query sha1 test";
-    let rdata = verifier.sign("sha1key", message, 0).unwrap();
-    assert!(!rdata.is_empty());
 }
 
 /// SHA-384: sign produces non-empty output.

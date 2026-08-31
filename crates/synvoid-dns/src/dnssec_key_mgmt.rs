@@ -533,6 +533,18 @@ impl DnsSecKeyManager {
     }
 
     pub fn start_key_rollover(&mut self, key_type: KeyType) -> Result<(), String> {
+        let validity_days = match key_type {
+            KeyType::KSK => 365,
+            KeyType::ZSK => 90,
+        };
+        self.start_key_rollover_with_validity(key_type, validity_days)
+    }
+
+    fn start_key_rollover_with_validity(
+        &mut self,
+        key_type: KeyType,
+        validity_days: u32,
+    ) -> Result<(), String> {
         let now = synvoid_core::time::current_timestamp_secs();
 
         match key_type {
@@ -551,7 +563,7 @@ impl DnsSecKeyManager {
                     .and_then(|k| k.key_size)
                     .unwrap_or(2048);
 
-                self.generate_standby_key(algorithm, KeyType::KSK, key_size, 365)?;
+                self.generate_standby_key(algorithm, KeyType::KSK, key_size, validity_days)?;
                 self.rollover_state.ksk_in_rollover = true;
                 self.rollover_state.ksk_rollover_started = Some(now);
                 self.rollover_state.publish_dnssec = true;
@@ -573,7 +585,7 @@ impl DnsSecKeyManager {
                     .and_then(|k| k.key_size)
                     .unwrap_or(2048);
 
-                self.generate_standby_key(algorithm, KeyType::ZSK, key_size, 90)?;
+                self.generate_standby_key(algorithm, KeyType::ZSK, key_size, validity_days)?;
                 self.rollover_state.zsk_in_rollover = true;
                 self.rollover_state.zsk_rollover_started = Some(now);
                 self.rollover_state.publish_dnssec = true;
@@ -632,6 +644,7 @@ impl DnsSecKeyManager {
 
     pub fn check_key_rotation(&mut self, config: KeyRotationConfig) -> Result<(), String> {
         let now = synvoid_core::time::current_timestamp_secs();
+        self.complete_ready_rollovers(config.grace_period_days, now)?;
 
         if let Some(ksk) = &self.key_signing_key {
             let age = now.saturating_sub(ksk.created_at);
@@ -647,7 +660,7 @@ impl DnsSecKeyManager {
                 );
             }
 
-            if age > rollover_threshold {
+            if age > rollover_threshold && !self.rollover_state.ksk_in_rollover {
                 tracing::info!("KSK key rotation needed (age: {} days)", age_days);
                 self.rotate_ksk(config)?;
             }
@@ -667,7 +680,7 @@ impl DnsSecKeyManager {
                 );
             }
 
-            if age > rollover_threshold {
+            if age > rollover_threshold && !self.rollover_state.zsk_in_rollover {
                 tracing::info!("ZSK key rotation needed (age: {} days)", age_days);
                 self.rotate_zsk(config)?;
             }
@@ -676,48 +689,20 @@ impl DnsSecKeyManager {
         Ok(())
     }
 
-    pub fn rotate_ksk(&mut self, config: KeyRotationConfig) -> Result<(), String> {
+    pub fn rotate_ksk(&mut self, _config: KeyRotationConfig) -> Result<(), String> {
         if self.key_signing_key.is_none() {
             return Err("No KSK key to rotate".to_string());
         }
 
-        let ksk = self
-            .key_signing_key
-            .as_ref()
-            .expect("checked is_some above");
-        let algorithm = ksk.algorithm;
-        let key_size = ksk.key_size.unwrap_or(2048);
-
-        self.generate_key(
-            algorithm,
-            KeyType::KSK,
-            key_size,
-            config.key_expiration_days,
-        )?;
-
-        Ok(())
+        self.start_key_rollover_with_validity(KeyType::KSK, _config.key_expiration_days)
     }
 
-    pub fn rotate_zsk(&mut self, config: KeyRotationConfig) -> Result<(), String> {
+    pub fn rotate_zsk(&mut self, _config: KeyRotationConfig) -> Result<(), String> {
         if self.zone_signing_key.is_none() {
             return Err("No ZSK key to rotate".to_string());
         }
 
-        let zsk = self
-            .zone_signing_key
-            .as_ref()
-            .expect("checked is_some above");
-        let algorithm = zsk.algorithm;
-        let key_size = zsk.key_size.unwrap_or(2048);
-
-        self.generate_key(
-            algorithm,
-            KeyType::ZSK,
-            key_size,
-            config.key_expiration_days,
-        )?;
-
-        Ok(())
+        self.start_key_rollover_with_validity(KeyType::ZSK, _config.key_expiration_days)
     }
 
     pub fn get_active_keys(&self) -> Result<Vec<ZoneSigningKey>, String> {
@@ -757,6 +742,7 @@ impl DnsSecKeyManager {
         let mut result = KeyRotationResult::default();
 
         let now = synvoid_core::time::current_timestamp_secs();
+        self.complete_ready_rollovers(config.grace_period_days, now)?;
 
         // Clone key data to avoid borrow checker issues
         let ksk_needs_rotation = self.key_signing_key.as_ref().map(|ksk| {
@@ -777,7 +763,8 @@ impl DnsSecKeyManager {
                 match self.rotate_ksk(config) {
                     Ok(_) => {
                         result.ksk_rotated = true;
-                        result.ksk_new_key_id = Some(format!("ksk-{}", now));
+                        result.ksk_new_key_id =
+                            self.standby_ksk.as_ref().map(|key| key.key_id.clone());
                     }
                     Err(e) => {
                         result.ksk_error = Some(e);
@@ -805,7 +792,8 @@ impl DnsSecKeyManager {
                 match self.rotate_zsk(config) {
                     Ok(_) => {
                         result.zsk_rotated = true;
-                        result.zsk_new_key_id = Some(format!("zsk-{}", now));
+                        result.zsk_new_key_id =
+                            self.standby_zsk.as_ref().map(|key| key.key_id.clone());
                     }
                     Err(e) => {
                         result.zsk_error = Some(e);
@@ -819,6 +807,30 @@ impl DnsSecKeyManager {
         }
 
         Ok(result)
+    }
+
+    fn complete_ready_rollovers(&mut self, grace_period_days: u32, now: u64) -> Result<(), String> {
+        let propagation_delay = u64::from(grace_period_days).saturating_mul(86_400);
+
+        if self.rollover_state.ksk_in_rollover
+            && self
+                .rollover_state
+                .ksk_rollover_started
+                .is_some_and(|started| now.saturating_sub(started) >= propagation_delay)
+        {
+            self.complete_key_rollover(KeyType::KSK)?;
+        }
+
+        if self.rollover_state.zsk_in_rollover
+            && self
+                .rollover_state
+                .zsk_rollover_started
+                .is_some_and(|started| now.saturating_sub(started) >= propagation_delay)
+        {
+            self.complete_key_rollover(KeyType::ZSK)?;
+        }
+
+        Ok(())
     }
 
     pub fn get_key_status(&self) -> Result<DnsSecKeyStatus, String> {
@@ -881,6 +893,17 @@ impl DnsSecKeyManager {
                                     std::fs::remove_file(&path).map_err(|e| {
                                         format!("Failed to remove expired key: {}", e)
                                     })?;
+                                    for extension in ["pub", "priv"] {
+                                        let sidecar = path.with_extension(extension);
+                                        if sidecar.exists() {
+                                            std::fs::remove_file(&sidecar).map_err(|e| {
+                                                format!(
+                                                    "Failed to remove expired key material: {}",
+                                                    e
+                                                )
+                                            })?;
+                                        }
+                                    }
                                     tracing::info!("Removed expired key: {:?}", path);
                                 }
                             }
@@ -959,14 +982,11 @@ mod tests {
     use super::*;
 
     fn temp_key_dir() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "dnssec_key_test_{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        dir
+        tempfile::Builder::new()
+            .prefix("dnssec_key_test_")
+            .tempdir()
+            .unwrap()
+            .keep()
     }
 
     #[test]
@@ -1332,7 +1352,11 @@ mod tests {
             })
             .unwrap();
         let key_path = key_file_entry.path();
-        let _stem = key_path.file_stem().unwrap().to_str().unwrap();
+        let stem = key_path.file_stem().unwrap().to_str().unwrap();
+        let pub_path = ksk_dir.join(format!("{}.pub", stem));
+        let priv_path = ksk_dir.join(format!("{}.priv", stem));
+        assert!(pub_path.exists());
+        assert!(priv_path.exists());
 
         let meta = serde_json::json!({
             "key_id": "ksk",
@@ -1360,6 +1384,14 @@ mod tests {
             .collect();
 
         assert!(key_files.is_empty(), "Expired key files should be removed");
+        assert!(
+            !pub_path.exists(),
+            "Expired public key material should be removed"
+        );
+        assert!(
+            !priv_path.exists(),
+            "Expired private key material should be removed"
+        );
 
         std::fs::remove_dir_all(&dir).ok();
     }

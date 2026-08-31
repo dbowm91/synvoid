@@ -147,11 +147,12 @@ impl ProbeTracker {
                                 .into_iter()
                                 .filter(|e| !e.is_expired(now, retention_secs))
                                 .take(max_records)
-                                .map(|e| {
-                                    let ip: IpAddr = e.ip.parse().unwrap_or_else(|_| {
-                                        "0.0.0.0".parse().expect("valid IPv4 literal")
-                                    });
-                                    (ProbeRecord::key(&ip), e)
+                                .filter_map(|e| {
+                                    let Ok(ip) = e.ip.parse::<IpAddr>() else {
+                                        tracing::warn!(ip = %e.ip, "Skipping probe record with invalid IP");
+                                        return None;
+                                    };
+                                    Some((ProbeRecord::key(&ip), e))
                                 })
                                 .collect();
                             tracing::info!(

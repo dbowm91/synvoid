@@ -40,7 +40,9 @@ use crate::retry::{
 };
 use synvoid_core::ids::{RequestId, SiteId};
 use synvoid_core::request::RequestContext;
-use synvoid_metrics::{record_proxy_cache_hit, record_proxy_cache_miss};
+use synvoid_metrics::{
+    record_proxy_cache_hit, record_proxy_cache_miss, record_stall_timeout, StallPermit,
+};
 use synvoid_proxy_cache::{CacheHit, CacheKey, CacheKeyBuilder, ProxyCache, ProxyCacheEntry};
 use synvoid_upstream::{Backend, UpstreamPool};
 use synvoid_waf::traits::{BlockListStore, TarpitService, ThreatLevelProvider, WafProcessor};
@@ -49,6 +51,8 @@ use synvoid_waf::UpstreamErrorTracker;
 pub use synvoid_waf::WafDecision;
 
 pub type ProxyResponse = Response<BoxBody<Bytes, std::io::Error>>;
+
+const MAX_STALLED_REQUESTS: u32 = 100;
 
 /// Trait for handling QUIC tunnel requests. Root crate provides the implementation
 /// since it depends on tunnel-specific types not available in the proxy crate.
@@ -96,6 +100,16 @@ pub struct ProxyServer<W: WafProcessor> {
 }
 
 impl<W: WafProcessor> ProxyServer<W> {
+    fn fallback_error_response() -> ProxyResponse {
+        let mut response = Response::new(
+            Full::new(Bytes::from_static(b"Internal Server Error"))
+                .map_err(std::io::Error::other)
+                .boxed(),
+        );
+        *response.status_mut() = http::StatusCode::INTERNAL_SERVER_ERROR;
+        response
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         upstream_url: String,
@@ -299,7 +313,7 @@ impl<W: WafProcessor> ProxyServer<W> {
                                 .map_err(std::io::Error::other)
                                 .boxed(),
                         )
-                        .unwrap());
+                        .unwrap_or_else(|_| Self::fallback_error_response()));
                 }
             }
         }
@@ -363,10 +377,27 @@ impl<W: WafProcessor> ProxyServer<W> {
                 }
                 WafDecision::Stall => {
                     counter!("synvoid.requests.stalled").increment(1);
+                    let Some(_permit) = StallPermit::try_new(MAX_STALLED_REQUESTS) else {
+                        return Ok(Response::builder()
+                            .status(429)
+                            .body(
+                                Full::new(Bytes::from_static(b"Too many stalled requests\n"))
+                                    .map_err(std::io::Error::other)
+                                    .boxed(),
+                            )
+                            .unwrap_or_else(|_| Self::fallback_error_response()));
+                    };
+                    tokio::time::sleep(Duration::from_secs(30)).await;
+                    record_stall_timeout();
                     histogram!("synvoid.request.duration").record(start.elapsed());
-                    tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-                    std::future::pending::<()>().await;
-                    return Err("stalled".to_string());
+                    return Ok(Response::builder()
+                        .status(408)
+                        .body(
+                            Full::new(Bytes::from_static(b"Request timeout\n"))
+                                .map_err(std::io::Error::other)
+                                .boxed(),
+                        )
+                        .unwrap_or_else(|_| Self::fallback_error_response()));
                 }
                 WafDecision::Block(status_code, message) => {
                     counter!("synvoid.requests.blocked").increment(1);
@@ -381,7 +412,7 @@ impl<W: WafProcessor> ProxyServer<W> {
                                 .map_err(std::io::Error::other)
                                 .boxed(),
                         )
-                        .unwrap());
+                        .unwrap_or_else(|_| Self::fallback_error_response()));
                 }
                 WafDecision::Challenge(_type, html) => {
                     counter!("synvoid.requests.challenged").increment(1);
@@ -395,7 +426,7 @@ impl<W: WafProcessor> ProxyServer<W> {
                                 .map_err(std::io::Error::other)
                                 .boxed(),
                         )
-                        .unwrap());
+                        .unwrap_or_else(|_| Self::fallback_error_response()));
                 }
                 WafDecision::ChallengeWithCookie {
                     challenge_type: _,
@@ -420,7 +451,7 @@ impl<W: WafProcessor> ProxyServer<W> {
                                 .map_err(std::io::Error::other)
                                 .boxed(),
                         )
-                        .unwrap());
+                        .unwrap_or_else(|_| Self::fallback_error_response()));
                 }
                 WafDecision::Tarpit(tar_path) => {
                     counter!("synvoid.requests.tarpitted").increment(1);
@@ -436,7 +467,7 @@ impl<W: WafProcessor> ProxyServer<W> {
                                     res.map(http_body::Frame::data)
                                 }),
                             )))
-                            .unwrap());
+                            .unwrap_or_else(|_| Self::fallback_error_response()));
                     }
                     return Ok(Response::builder()
                         .status(200)
@@ -445,13 +476,13 @@ impl<W: WafProcessor> ProxyServer<W> {
                                 .map_err(std::io::Error::other)
                                 .boxed(),
                         )
-                        .unwrap());
+                        .unwrap_or_else(|_| Self::fallback_error_response()));
                 }
                 WafDecision::Pass => {}
             }
         }
 
-        let forward_result = self.forward_request(method, &path, body).await;
+        let forward_result = self.forward_request(client_ip, method, &path, body).await;
 
         match forward_result {
             Ok(response) => {
@@ -529,6 +560,7 @@ impl<W: WafProcessor> ProxyServer<W> {
 
     async fn forward_request(
         &self,
+        client_ip: std::net::IpAddr,
         method: http::Method,
         path: &str,
         body: Option<BoxErasedBody>,
@@ -542,11 +574,14 @@ impl<W: WafProcessor> ProxyServer<W> {
             );
         }
         if let Some(ref pool) = self.upstream_pool {
-            return self.forward_with_pool(method, path, pool, body).await;
+            return self
+                .forward_with_pool(client_ip, method, path, pool, body)
+                .await;
         }
 
         let url = join_upstream_url(&self.upstream_url, path);
-        self.send_single_request(method, &url, None, body).await
+        self.send_single_request(method, &url, None, body, Some(client_ip))
+            .await
     }
 
     pub async fn forward_request_via_tunnel(
@@ -558,7 +593,7 @@ impl<W: WafProcessor> ProxyServer<W> {
         body: Option<BoxErasedBody>,
     ) -> Result<ProxyResponse, Box<dyn std::error::Error + Send + Sync>> {
         let full_url = join_upstream_url(tunnel_url, path);
-        self.send_single_request(method, &full_url, headers, body)
+        self.send_single_request(method, &full_url, headers, body, None)
             .await
     }
 
@@ -585,7 +620,7 @@ impl<W: WafProcessor> ProxyServer<W> {
 
         if !self.is_cacheable_method(&method) {
             return self
-                .forward_request(method, path, body)
+                .forward_request(client_ip, method, path, body)
                 .await
                 .map_err(|e| e.to_string());
         }
@@ -674,7 +709,9 @@ impl<W: WafProcessor> ProxyServer<W> {
                         cache.record_cache_miss();
                         record_proxy_cache_miss();
 
-                        let result = self.forward_request(method.clone(), path, body).await;
+                        let result = self
+                            .forward_request(client_ip, method.clone(), path, body)
+                            .await;
 
                         match result {
                             Ok(response) => {
@@ -713,7 +750,7 @@ impl<W: WafProcessor> ProxyServer<W> {
             }
         }
 
-        self.forward_request(method, path, body)
+        self.forward_request(client_ip, method, path, body)
             .await
             .map_err(|e| e.to_string())
     }
@@ -910,6 +947,7 @@ impl<W: WafProcessor> ProxyServer<W> {
 
     async fn forward_with_pool(
         &self,
+        client_ip: std::net::IpAddr,
         method: http::Method,
         path: &str,
         pool: &UpstreamPool,
@@ -968,7 +1006,7 @@ impl<W: WafProcessor> ProxyServer<W> {
 
             let start_time = std::time::Instant::now();
             let result = self
-                .send_single_request(method.clone(), &url, None, body.take())
+                .send_single_request(method.clone(), &url, None, body.take(), Some(client_ip))
                 .await;
 
             backend.record_latency(start_time.elapsed());
@@ -1067,6 +1105,7 @@ impl<W: WafProcessor> ProxyServer<W> {
         url: &str,
         headers: Option<&http::HeaderMap>,
         body: Option<BoxErasedBody>,
+        client_ip: Option<std::net::IpAddr>,
     ) -> Result<ProxyResponse, Box<dyn std::error::Error + Send + Sync>> {
         use crate::headers::HOP_BY_HOP_HEADERS;
 
@@ -1122,7 +1161,7 @@ impl<W: WafProcessor> ProxyServer<W> {
 
         let forward_headers = if let Some(ref config) = self.proxy_headers_config {
             crate::headers::build_forward_headers(
-                std::net::IpAddr::from([127, 0, 0, 1]),
+                client_ip.unwrap_or(std::net::IpAddr::from([127, 0, 0, 1])),
                 headers.unwrap_or(&http::HeaderMap::new()),
                 config,
                 crate::headers::ForwardedProtocol::Https,
