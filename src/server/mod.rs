@@ -287,7 +287,10 @@ impl UnifiedServer {
         // not here. This method only creates the manager and wires the callback.
 
         tracing::info!("ACME manager created");
-        *self.acme_manager.lock().unwrap() = Some(acme_manager.clone());
+        *self
+            .acme_manager
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(acme_manager.clone());
         Some(acme_manager)
     }
 
@@ -706,7 +709,11 @@ impl UnifiedServer {
         // ── ACME init/renewal (registered) ──────────────────────────
         #[cfg(feature = "dns")]
         {
-            if let Some(ref acme_mgr) = *self.acme_manager.lock().unwrap() {
+            if let Some(ref acme_mgr) = *self
+                .acme_manager
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+            {
                 let acme_clone = acme_mgr.clone();
                 let mut shutdown_rx = self.shutdown_tx.subscribe();
                 spawn_registered(
@@ -838,8 +845,9 @@ impl UnifiedServer {
 
         #[cfg(feature = "mesh")]
         if let Some(mesh_cfg_external) = mesh_config {
+            let mesh_cfg_json = serde_json::to_string(&mesh_cfg_external)?;
             let mesh_cfg_internal: crate::mesh::config::MeshConfig =
-                serde_json::from_str(&serde_json::to_string(&mesh_cfg_external).unwrap()).unwrap();
+                serde_json::from_str(&mesh_cfg_json)?;
             server = server.with_mesh_config(Some(Arc::new(mesh_cfg_internal)));
         }
 
@@ -913,9 +921,9 @@ impl UnifiedServer {
         if let Some(mt) = state.mesh_transport.clone() {
             let config_guard = state.config.read().await;
             if let Some(mesh_cfg_external) = config_guard.main.mesh.clone() {
+                let mesh_cfg_json = serde_json::to_string(&mesh_cfg_external)?;
                 let mesh_cfg_internal: crate::mesh::config::MeshConfig =
-                    serde_json::from_str(&serde_json::to_string(&mesh_cfg_external).unwrap())
-                        .unwrap();
+                    serde_json::from_str(&mesh_cfg_json)?;
                 server = server.with_mesh_config(Arc::new(mesh_cfg_internal));
             }
             drop(config_guard);

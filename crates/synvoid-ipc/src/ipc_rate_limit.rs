@@ -505,7 +505,7 @@ mod tests {
         }
 
         for handle in handles {
-            handle.join().unwrap();
+            handle.join().expect("rate limiter thread panicked");
         }
     }
 
@@ -528,7 +528,7 @@ mod tests {
         }
 
         for handle in handles {
-            handle.join().unwrap();
+            handle.join().expect("rate limiter thread panicked");
         }
     }
 

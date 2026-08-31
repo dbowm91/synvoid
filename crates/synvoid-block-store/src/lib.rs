@@ -831,9 +831,7 @@ impl BlockStore {
             }
         }
 
-        let (persist_tx, shutdown_tx) = if config.persist_interval_secs > 0
-            && persist_path.is_some()
-        {
+        let (persist_tx, shutdown_tx) = if persist_path.is_some() {
             let (tx, mut rx): (mpsc::Sender<PersistRequest>, mpsc::Receiver<PersistRequest>) =
                 mpsc::channel(100);
             let (shutdown_tx, mut shutdown_rx): (
@@ -843,11 +841,12 @@ impl BlockStore {
             let path = persist_path.clone().unwrap();
             let mesh_path = mesh_persist_path.clone();
             let max_entries_clone = max_entries;
+            let persist_immediately = config.persist_interval_secs == 0;
+            let persist_interval_secs = config.persist_interval_secs.max(1);
 
             tokio::spawn(async move {
-                let mut interval = tokio::time::interval(std::time::Duration::from_secs(
-                    config.persist_interval_secs,
-                ));
+                let mut interval =
+                    tokio::time::interval(std::time::Duration::from_secs(persist_interval_secs));
                 let mut pending: Option<PersistRequest> = None;
 
                 loop {
@@ -861,7 +860,14 @@ impl BlockStore {
                             }
                         }
                         Some(req) = rx.recv() => {
-                            pending = Some(req);
+                            if persist_immediately {
+                                Self::persist_to_disk(&path, req.entries, max_entries_clone).await;
+                                if let Some(ref mp) = mesh_path {
+                                    Self::persist_mesh_to_disk(mp, req.mesh_entries, max_entries_clone).await;
+                                }
+                            } else {
+                                pending = Some(req);
+                            }
                         }
                         Some(done_tx) = shutdown_rx.recv() => {
                             // Requests can be queued ahead of the shutdown signal. Drain

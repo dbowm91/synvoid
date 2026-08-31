@@ -43,9 +43,7 @@ swagger-ui = ["dep:utoipa-swagger-ui"]
 fastcgi_streaming = []  # Enable streaming FastCGI response handling
 
 [patch.crates-io]
-# Patch wasmtime from yara-x transitive dependency (RUSTSEC-2026-0096, RUSTSEC-2026-0086, etc.)
-# yara-x 1.14.0 depends on wasmtime 40.0.4 which has multiple vulnerabilities
-# Force all wasmtime dependencies to use 42.0.2
+# Patch the application runtime's Wasmtime dependency to the audited version.
 wasmtime = { git = "https://github.com/bytecodealliance/wasmtime", tag = "v42.0.2" }
 
 [workspace]

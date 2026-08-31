@@ -58,6 +58,14 @@ ignore = [
     # patched 42.0.2 dependency. Review: 2026-08-28. Re-audit: 2026-10-01.
     "RUSTSEC-2026-0222",
 
+    # RUSTSEC-2026-0269: Wasmtime 40.0.4 filesystem sandbox escape. The
+    # vulnerable version remains transitive through yara-x 1.15 and is used
+    # only for YARA rule compilation; SynVoid's WASM runtime uses the patched
+    # direct Wasmtime 42.0.2 dependency. Upgrade yara-x when it supports a
+    # patched Wasmtime release without the current workspace dependency
+    # conflict. Review: 2026-08-31. Re-audit: 2026-10-01.
+    "RUSTSEC-2026-0269",
+
     # RUSTSEC-2026-0235: rkyv 0.7.46 is transitive through
     # minify-html -> lightningcss -> parcel_sourcemap. SynVoid does not use
     # this archive format in the static-file path, and all direct rkyv users

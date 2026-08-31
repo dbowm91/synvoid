@@ -626,7 +626,10 @@ impl WorkerTaskRegistry {
         match tokio::time::timeout_at(deadline, &mut handle).await {
             Ok(join_result) => match join_result {
                 Ok(()) => {
-                    let already_reported = reported_exits.lock().unwrap().remove(&task.id);
+                    let already_reported = reported_exits
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .remove(&task.id);
                     if let Some(reason) = already_reported {
                         return NamedTaskExit {
                             id: task.id,
@@ -646,7 +649,10 @@ impl WorkerTaskRegistry {
                     }
                 }
                 Err(e) => {
-                    let already_reported = reported_exits.lock().unwrap().remove(&task.id);
+                    let already_reported = reported_exits
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .remove(&task.id);
                     let reason = classify_join_error(e);
                     if already_reported.is_none() {
                         match &reason {
@@ -830,13 +836,19 @@ impl WorkerTaskRegistry {
                     let join_result = task.handle.await;
                     let reason = match join_result {
                         Ok(()) => {
-                            let already_reported =
-                                self.reported_exits.lock().unwrap().remove(&task.id);
+                            let already_reported = self
+                                .reported_exits
+                                .lock()
+                                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                                .remove(&task.id);
                             already_reported.unwrap_or(TaskExitReason::CleanCompletion)
                         }
                         Err(e) => {
-                            let already_reported =
-                                self.reported_exits.lock().unwrap().remove(&task.id);
+                            let already_reported = self
+                                .reported_exits
+                                .lock()
+                                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                                .remove(&task.id);
                             already_reported.unwrap_or(classify_join_error(e))
                         }
                     };
@@ -853,8 +865,11 @@ impl WorkerTaskRegistry {
                         tokio::time::timeout_at(cooperative_deadline, &mut task.handle).await;
                     match join_result {
                         Ok(Ok(())) => {
-                            let already_reported =
-                                self.reported_exits.lock().unwrap().remove(&task.id);
+                            let already_reported = self
+                                .reported_exits
+                                .lock()
+                                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                                .remove(&task.id);
                             let reason =
                                 already_reported.unwrap_or(TaskExitReason::CleanCompletion);
                             exits.push(NamedTaskExit {
@@ -866,8 +881,11 @@ impl WorkerTaskRegistry {
                             });
                         }
                         Ok(Err(e)) => {
-                            let already_reported =
-                                self.reported_exits.lock().unwrap().remove(&task.id);
+                            let already_reported = self
+                                .reported_exits
+                                .lock()
+                                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                                .remove(&task.id);
                             let reason = already_reported.unwrap_or(classify_join_error(e));
                             exits.push(NamedTaskExit {
                                 id: task.id,
@@ -899,7 +917,11 @@ impl WorkerTaskRegistry {
                     Err(error) => classify_join_error(error),
                 };
 
-                let already_reported = self.reported_exits.lock().unwrap().remove(&task.id);
+                let already_reported = self
+                    .reported_exits
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .remove(&task.id);
                 let final_reason = already_reported.unwrap_or(reason);
 
                 exits.push(NamedTaskExit {
@@ -970,7 +992,7 @@ fn record_exit_metrics(
     }
     reported_exits
         .lock()
-        .unwrap()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
         .insert(exit.id, exit.reason.clone());
 }
 

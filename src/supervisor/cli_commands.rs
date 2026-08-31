@@ -516,7 +516,9 @@ pub fn handle_export_threat_feed_data(
         signer.as_ref().map(|s| Arc::new(s.clone())),
     );
 
-    let signer = signer.as_ref().expect("Signer was validated above");
+    let Some(signer) = signer.as_ref() else {
+        return Err("No signing key available after validation".into());
+    };
     let signer_pk_bytes: [u8; 32] = signer
         .get_public_key_bytes()
         .as_slice()
@@ -606,7 +608,9 @@ pub fn handle_export_threat_feed(
         signer.as_ref().map(|s| Arc::new(s.clone())),
     );
 
-    let signer = signer.as_ref().expect("Signer was validated above");
+    let Some(signer) = signer.as_ref() else {
+        return Err("No signing key available after validation".into());
+    };
     let signer_pk_bytes: [u8; 32] = signer
         .get_public_key_bytes()
         .as_slice()

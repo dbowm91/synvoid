@@ -28,6 +28,14 @@ fn escape_html(s: &str) -> String {
         .replace('\'', "&#x27;")
 }
 
+fn capitalize_first(s: &str) -> String {
+    let Some(first) = s.chars().next() else {
+        return String::new();
+    };
+
+    first.to_uppercase().to_string() + &s[first.len_utf8()..]
+}
+
 #[derive(Debug, Clone)]
 pub struct DirectoryEntry {
     pub name: String,
@@ -198,7 +206,7 @@ impl DirectoryListingTemplate {
                 if is_active { "active" } else { "" },
                 sort_opt,
                 if is_active { "true" } else { "false" },
-                sort_opt.chars().next().unwrap().to_uppercase().to_string() + &sort_opt[1..]
+                capitalize_first(sort_opt)
             ));
         }
 
@@ -576,5 +584,28 @@ impl DirectoryListingTemplate {
             pagination = pagination,
             theme_script = theme_toggle_script,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{capitalize_first, DirectoryListingTemplate};
+    use synvoid_config::theme::ThemeConfig;
+
+    #[test]
+    fn capitalize_first_handles_empty_and_whitespace_values() {
+        assert_eq!(capitalize_first(""), "");
+        assert_eq!(capitalize_first(" "), " ");
+        assert_eq!(capitalize_first("name"), "Name");
+    }
+
+    #[test]
+    fn render_accepts_empty_sort_values() {
+        for sort in ["", " "] {
+            let html = DirectoryListingTemplate::new(ThemeConfig::default())
+                .sort_by(sort)
+                .render();
+            assert!(html.contains("Sort by:"));
+        }
     }
 }
