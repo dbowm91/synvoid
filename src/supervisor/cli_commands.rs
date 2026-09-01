@@ -418,22 +418,40 @@ auto_scale = true
         content + &admin_section
     };
 
-    if let Err(e) = std::fs::write(&main_config_path, &updated_content) {
-        eprintln!("Error: Failed to write config file: {}", e);
-        return;
-    }
-
-    // Restrict permissions on config file since it contains the admin token
-    // Note: Token is written before permissions are set, but window is minimal
-    // and only affects world-readable during the atomic write operation.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if let Err(e) =
-            std::fs::set_permissions(&main_config_path, std::fs::Permissions::from_mode(0o600))
+    // Atomic write: create temp file with 0600 then rename
+    let tmp_path = main_config_path.with_extension(format!("tmp.{}", std::process::id()));
+    let write_result: std::io::Result<()> = (|| {
+        use std::io::Write;
+        #[cfg(unix)]
         {
-            eprintln!("Warning: Failed to set config file permissions: {}", e);
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&tmp_path)?;
+            file.write_all(updated_content.as_bytes())?;
+            file.sync_all()?;
         }
+        #[cfg(not(unix))]
+        {
+            std::fs::write(&tmp_path, &updated_content)?;
+        }
+        std::fs::rename(&tmp_path, &main_config_path)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ =
+                std::fs::set_permissions(&main_config_path, std::fs::Permissions::from_mode(0o600));
+        }
+        Ok(())
+    })();
+    if let Err(e) = write_result {
+        let _ = std::fs::remove_file(&tmp_path);
+        eprintln!("Error: Failed to write config file: {}", e);
+        eprintln!("Warning: printed token may not have been persisted");
+        return;
     }
 
     tracing::warn!(
@@ -446,10 +464,10 @@ auto_scale = true
 }
 
 #[cfg(feature = "mesh")]
-pub fn handle_export_threat_feed_data(
+fn load_threat_feed_payload(
     sign_with: &Option<PathBuf>,
     site_id: Option<&str>,
-) -> Result<ThreatFeedExportSummary, Box<dyn std::error::Error>> {
+) -> Result<(serde_json::Value, usize), Box<dyn std::error::Error>> {
     let config_dir = PathBuf::from("config");
     let main_config_path = config_dir.join("main.toml");
 
@@ -527,10 +545,17 @@ pub fn handle_export_threat_feed_data(
     let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(&signer_pk_bytes)
         .map_err(|_| "Invalid Ed25519 public key")?;
     let payload = threat_manager.create_signed_feed(site_id, &verifying_key);
+    let json = serde_json::to_value(&payload)?;
+    let bytes = serde_json::to_string_pretty(&payload)?.len();
+    Ok((json, bytes))
+}
 
-    let json = serde_json::to_string_pretty(&payload)?;
-    let bytes = json.len();
-
+#[cfg(feature = "mesh")]
+pub fn handle_export_threat_feed_data(
+    sign_with: &Option<PathBuf>,
+    site_id: Option<&str>,
+) -> Result<ThreatFeedExportSummary, Box<dyn std::error::Error>> {
+    let (_json, bytes) = load_threat_feed_payload(sign_with, site_id)?;
     Ok(ThreatFeedExportSummary::Written {
         bytes,
         records: None,
@@ -542,86 +567,7 @@ pub fn handle_export_threat_feed(
     sign_with: &Option<PathBuf>,
     site_id: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let config_dir = PathBuf::from("config");
-    let main_config_path = config_dir.join("main.toml");
-
-    if !main_config_path.exists() {
-        return Err(format!("Config not found at {:?}", main_config_path).into());
-    }
-
-    let main_config = match MainConfig::from_file(&main_config_path) {
-        Ok(c) => c,
-        Err(e) => return Err(format!("Failed to load config: {}", e).into()),
-    };
-
-    let mesh_config = match main_config.tunnel.mesh {
-        Some(m) => m,
-        None => return Err("Mesh is not enabled - cannot export threat feed".into()),
-    };
-
-    let node_id = mesh_config.node_id();
-    let node_role = mesh_config.role;
-
-    let (_signing_key, signer) = if let Some(ref key_path) = sign_with {
-        let key_data = std::fs::read(key_path)?;
-        if key_data.len() != 32 {
-            return Err("Signing key must be 32 bytes (Ed25519)".into());
-        }
-        let mut key_array = [0u8; 32];
-        key_array.copy_from_slice(&key_data);
-        let signer = MeshMessageSigner::new(key_array);
-        (Some(key_array), Some(signer))
-    } else if let Some(ref genesis) = mesh_config.genesis_key {
-        if let Some(private_key) = &genesis.private_key {
-            let signer = MeshMessageSigner::new(*private_key);
-            (Some(*private_key), Some(signer))
-        } else {
-            return Err("No signing key available. Use --sign-with to provide a key file.".into());
-        }
-    } else if let Some(signing_key_bytes) = mesh_config.signing_key() {
-        let mut key_array = [0u8; 32];
-        key_array.copy_from_slice(signing_key_bytes);
-        let signer = MeshMessageSigner::new(key_array);
-        (Some(key_array), Some(signer))
-    } else {
-        return Err("No signing key available. Use --sign-with to provide a key file.".into());
-    };
-
-    let threat_intel_config = mesh_config.threat_intel.clone();
-
-    let block_store = Arc::new(crate::block_store::BlockStore::new(
-        false,
-        None,
-        Default::default(),
-    ));
-    let internal_config: crate::mesh::threat_intel::ThreatIntelligenceConfigInternal =
-        serde_json::from_value(serde_json::to_value(&threat_intel_config)?)?;
-
-    let node_role_internal: crate::mesh::config::MeshNodeRole =
-        serde_json::from_value(serde_json::to_value(node_role)?)?;
-
-    let threat_manager = ThreatIntelligenceManager::new(
-        internal_config,
-        block_store,
-        node_id.clone(),
-        node_role_internal,
-        signer.as_ref().map(|s| Arc::new(s.clone())),
-    );
-
-    let Some(signer) = signer.as_ref() else {
-        return Err("No signing key available after validation".into());
-    };
-    let signer_pk_bytes: [u8; 32] = signer
-        .get_public_key_bytes()
-        .as_slice()
-        .try_into()
-        .map_err(|_| "Invalid public key length")?;
-    let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(&signer_pk_bytes)
-        .map_err(|_| "Invalid Ed25519 public key")?;
-    let payload = threat_manager.create_signed_feed(site_id, &verifying_key);
-
-    let json = serde_json::to_string_pretty(&payload)?;
-    println!("{}", json);
-
+    let (json, _bytes) = load_threat_feed_payload(sign_with, site_id)?;
+    println!("{}", serde_json::to_string_pretty(&json)?);
     Ok(())
 }

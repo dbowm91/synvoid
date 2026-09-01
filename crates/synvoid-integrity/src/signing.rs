@@ -60,9 +60,10 @@ pub fn verify_ed25519_raw(public_key_bytes: &[u8], message: &str, signature: &[u
     }
 }
 
-pub fn sign_ml_dsa(signing_key: &MldsaSigningKey, message: &str) -> Vec<u8> {
-    let sig = MlDsa44::sign(signing_key, message.as_bytes()).expect("ML-DSA signing failed");
-    sig.as_bytes().to_vec()
+pub fn sign_ml_dsa(signing_key: &MldsaSigningKey, message: &str) -> Option<Vec<u8>> {
+    MlDsa44::sign(signing_key, message.as_bytes())
+        .ok()
+        .map(|sig| sig.as_bytes().to_vec())
 }
 
 pub fn verify_ml_dsa(verifying_key: &MldsaVerifyingKey, message: &str, signature: &[u8]) -> bool {
@@ -185,7 +186,7 @@ impl HttpMessageSigner {
         let ed25519_sig = sign_ed25519(ed25519_key, &message);
 
         let combined_sig = if let Some(mldsa_key) = mldsa_key {
-            let mldsa_sig = sign_ml_dsa(mldsa_key, &message);
+            let mldsa_sig = sign_ml_dsa(mldsa_key, &message)?;
             let mut combined = vec![0u8; 1];
             combined.push(0x01);
             combined.extend_from_slice(&ed25519_sig);
@@ -241,7 +242,7 @@ impl HttpMessageSigner {
         let ed25519_sig = sign_ed25519(ed25519_key, &message);
 
         let combined_sig = if let Some(mldsa_key) = mldsa_key {
-            let mldsa_sig = sign_ml_dsa(mldsa_key, &message);
+            let mldsa_sig = sign_ml_dsa(mldsa_key, &message)?;
             let mut combined = vec![0u8; 1];
             combined.push(0x01);
             combined.extend_from_slice(&ed25519_sig);

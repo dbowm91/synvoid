@@ -93,8 +93,11 @@ impl HybridSignature {
         if bytes.len() < offset + 4 {
             return Err(HybridSignatureError::InvalidFormat);
         }
-        let ed25519_len =
-            u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
+        let ed25519_len = u32::from_le_bytes(
+            bytes[offset..offset + 4]
+                .try_into()
+                .map_err(|_| HybridSignatureError::InvalidFormat)?,
+        ) as usize;
         offset += 4;
 
         if bytes.len() < offset + ed25519_len {
@@ -106,7 +109,11 @@ impl HybridSignature {
         if bytes.len() < offset + 4 {
             return Err(HybridSignatureError::InvalidFormat);
         }
-        let ml_dsa_len = u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
+        let ml_dsa_len = u32::from_le_bytes(
+            bytes[offset..offset + 4]
+                .try_into()
+                .map_err(|_| HybridSignatureError::InvalidFormat)?,
+        ) as usize;
         offset += 4;
 
         if bytes.len() < offset + ml_dsa_len {
@@ -118,7 +125,11 @@ impl HybridSignature {
         if bytes.len() < offset + 4 {
             return Err(HybridSignatureError::InvalidFormat);
         }
-        let ed_pk_len = u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
+        let ed_pk_len = u32::from_le_bytes(
+            bytes[offset..offset + 4]
+                .try_into()
+                .map_err(|_| HybridSignatureError::InvalidFormat)?,
+        ) as usize;
         offset += 4;
 
         if bytes.len() < offset + ed_pk_len {
@@ -129,8 +140,11 @@ impl HybridSignature {
         offset += ed_pk_len;
 
         let ml_dsa_public_key = if bytes.len() >= offset + 4 {
-            let ml_pk_len =
-                u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
+            let ml_pk_len = u32::from_le_bytes(
+                bytes[offset..offset + 4]
+                    .try_into()
+                    .map_err(|_| HybridSignatureError::InvalidFormat)?,
+            ) as usize;
             offset += 4;
             if ml_pk_len > 0 && bytes.len() >= offset + ml_pk_len {
                 let s = String::from_utf8(bytes[offset..offset + ml_pk_len].to_vec())

@@ -1,4 +1,4 @@
-#![allow(unused_variables, dead_code)]
+#![allow(unused_variables)]
 
 use super::trait_def::{ProtocolError, ProtocolHandler, WafAction, WafCoreBackend};
 use super::types::{ProtocolMetrics, ProtocolRequest, ProtocolResponse, ProtocolType};
@@ -9,6 +9,7 @@ use std::sync::Arc;
 use synvoid_upstream::{Backend, UpstreamPool};
 
 const WS_FRAME_HEADER_MIN: usize = 2;
+#[allow(dead_code)]
 const WS_FRAME_HEADER_MAX: usize = 14;
 
 const WS_OPCODE_MASK: u8 = 0x0f;
@@ -28,6 +29,7 @@ pub struct WebSocketHandler {
     upstream_pool: Option<Arc<UpstreamPool>>,
     metrics: Arc<WsMetrics>,
     max_message_size: usize,
+    #[allow(dead_code)]
     enable_frame_validation: bool,
     enable_message_validation: bool,
     mask_required: bool,
@@ -36,11 +38,13 @@ pub struct WebSocketHandler {
 #[derive(Default)]
 struct WsMetrics {
     connections_opened: AtomicU64,
+    #[allow(dead_code)]
     connections_closed: AtomicU64,
     messages_sent: AtomicU64,
     messages_received: AtomicU64,
     bytes_sent: AtomicU64,
     bytes_received: AtomicU64,
+    #[allow(dead_code)]
     invalid_frames: AtomicU64,
     blocked_messages: AtomicU64,
 }
@@ -126,7 +130,12 @@ impl WebSocketHandler {
         };
         let actual_payload_len = match payload_len {
             126 => u16::from_be_bytes([data[2], data[3]]) as u64,
-            127 => u64::from_be_bytes(data[2..10].try_into().unwrap()),
+            127 => {
+                let Ok(bytes) = data[2..10].try_into() else {
+                    return false;
+                };
+                u64::from_be_bytes(bytes)
+            }
             value => value as u64,
         };
         let Ok(actual_payload_len) = usize::try_from(actual_payload_len) else {
@@ -312,6 +321,7 @@ mod tests {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct WebSocketFrame {
     fin: bool,
     opcode: u8,

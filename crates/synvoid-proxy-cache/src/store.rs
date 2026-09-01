@@ -570,13 +570,23 @@ impl ProxyCache {
         };
 
         // Update memory size tracking atomically
-        if let Some(old) = self.entries.get(&key) {
+        let old_for_site = self.entries.get(&key).and_then(|old| {
             if !old.on_disk {
-                self.current_memory_size
-                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
-                        v.checked_sub(old.size as u64)
-                    })
-                    .ok();
+                Some(old.size as u64)
+            } else {
+                None
+            }
+        });
+        if let Some(old_size) = old_for_site {
+            self.current_memory_size
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                    v.checked_sub(old_size)
+                })
+                .ok();
+            if let Some(counter) = self.site_memory_usage.get(&key.host) {
+                let _ = counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                    v.checked_sub(old_size)
+                });
             }
         }
 
@@ -587,7 +597,7 @@ impl ProxyCache {
 
         self.entries.insert(key.clone(), entry_inner);
 
-        // Update global memory size and per-site tracking
+        // Update per-site tracking
         if !should_store_disk {
             self.site_memory_usage
                 .entry(key.host.clone())
@@ -595,10 +605,12 @@ impl ProxyCache {
                 .fetch_add(size as u64, Ordering::Relaxed);
         }
 
-        self.host_index
-            .entry(key.host.clone())
-            .or_default()
-            .push(key);
+        {
+            let mut host_keys = self.host_index.entry(key.host.clone()).or_default();
+            if !host_keys.contains(&key) {
+                host_keys.push(key);
+            }
+        }
 
         Ok(())
     }
@@ -617,11 +629,7 @@ impl ProxyCache {
                         v.checked_sub(entry.size as u64)
                     })
                     .ok();
-                self.site_memory_usage.get(&host).map(|counter| {
-                    counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
-                        v.checked_sub(entry.size as u64)
-                    })
-                });
+                self.adjust_site_memory_on_remove(&host, entry.size as u64);
             }
             self.entries.invalidate(key);
         }
@@ -654,8 +662,12 @@ impl ProxyCache {
                             v.checked_sub(entry.size as u64)
                         })
                         .ok();
+                    self.adjust_site_memory_on_remove(&key.host, entry.size as u64);
                 }
                 self.entries.invalidate(key);
+                if let Some(mut keys) = self.host_index.get_mut(&key.host) {
+                    keys.retain(|k| k != key);
+                }
             }
         }
 
@@ -684,14 +696,35 @@ impl ProxyCache {
                             v.checked_sub(entry.size as u64)
                         })
                         .ok();
+                    self.adjust_site_memory_on_remove(host, entry.size as u64);
                 }
                 self.entries.invalidate(key);
             }
         }
 
         self.host_index.remove(host);
+        // site_memory_usage entry for this host is already decremented per-entry;
+        // ensure it is removed if it reached zero
+        if let Some(counter) = self.site_memory_usage.get(host) {
+            if counter.load(Ordering::Relaxed) == 0 {
+                drop(counter);
+                self.site_memory_usage.remove(host);
+            }
+        }
 
         count
+    }
+
+    fn adjust_site_memory_on_remove(&self, host: &str, size: u64) {
+        if let Some(counter) = self.site_memory_usage.get(host) {
+            let _ = counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                v.checked_sub(size)
+            });
+            if counter.load(Ordering::Relaxed) == 0 {
+                drop(counter);
+                self.site_memory_usage.remove(host);
+            }
+        }
     }
 
     pub fn clear(&self) {
@@ -774,15 +807,23 @@ impl ProxyCache {
             return 0;
         }
 
-        std::fs::read_dir(&self.disk_path)
-            .map(|dir| {
-                dir.filter_map(|e| e.ok())
-                    .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
-                    .filter_map(|e| e.metadata().ok())
-                    .map(|m| m.len() as usize)
-                    .sum()
-            })
-            .unwrap_or(0)
+        let path = self.disk_path.clone();
+        let compute = || {
+            std::fs::read_dir(&path)
+                .map(|dir| {
+                    dir.filter_map(|e| e.ok())
+                        .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+                        .filter_map(|e| e.metadata().ok())
+                        .map(|m| m.len() as usize)
+                        .sum()
+                })
+                .unwrap_or(0)
+        };
+        if tokio::runtime::Handle::try_current().is_ok() {
+            tokio::task::block_in_place(compute)
+        } else {
+            compute()
+        }
     }
 
     pub fn cleanup_expired(&self) -> usize {
@@ -814,8 +855,12 @@ impl ProxyCache {
                             v.checked_sub(entry.size as u64)
                         })
                         .ok();
+                    self.adjust_site_memory_on_remove(&key.host, entry.size as u64);
                 }
                 self.entries.invalidate(key);
+                if let Some(mut keys) = self.host_index.get_mut(&key.host) {
+                    keys.retain(|k| k != key);
+                }
             }
         }
 

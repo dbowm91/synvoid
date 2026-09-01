@@ -842,7 +842,9 @@ impl ProcessManager {
             *worker.status_mut() = WorkerStatus::Stopped;
             worker.ipc = None;
             if let Some(mut child) = worker.child_mut().take() {
-                let _ = child.kill();
+                if let Err(e) = child.kill() {
+                    tracing::warn!("kill unified worker {} failed: {}", worker_id, e);
+                }
             }
         }
         let _ = self
@@ -1216,7 +1218,9 @@ impl ProcessManager {
         if let Some(worker) = workers.get_mut(&worker_id.as_usize()) {
             *worker.status_mut() = WorkerStatus::Stopped;
             if let Some(mut child) = worker.child_mut().take() {
-                let _ = child.kill();
+                if let Err(e) = child.kill() {
+                    tracing::warn!("kill worker {} failed: {}", worker_id, e);
+                }
             }
         }
         let _ = self
@@ -1794,7 +1798,9 @@ impl ProcessManager {
                     } else {
                         nix::sys::signal::Signal::SIGKILL
                     };
-                    let _ = nix::sys::signal::kill(p, signal);
+                    if let Err(e) = nix::sys::signal::kill(p, signal) {
+                        tracing::warn!("kill({}) {} failed: {}", pid, signal, e);
+                    }
                 }
                 None => {
                     tracing::warn!("PID {} exceeds i32::MAX; skipping signal send", pid);
@@ -1877,7 +1883,9 @@ impl ProcessManager {
             let mut workers = self.workers.write();
             for worker in workers.values_mut() {
                 if let Some(child) = worker.child_mut() {
-                    let _ = child.kill();
+                    if let Err(e) = child.kill() {
+                        tracing::warn!("kill_remaining worker {:?} failed: {}", worker.id, e);
+                    }
                 }
             }
         }
@@ -1886,7 +1894,13 @@ impl ProcessManager {
             let mut unified_server_workers = self.unified_server_workers.write();
             for worker in unified_server_workers.values_mut() {
                 if let Some(child) = worker.child_mut() {
-                    let _ = child.kill();
+                    if let Err(e) = child.kill() {
+                        tracing::warn!(
+                            "kill_remaining unified worker {:?} failed: {}",
+                            worker.id,
+                            e
+                        );
+                    }
                 }
             }
         }
@@ -1975,10 +1989,12 @@ impl ProcessManager {
         {
             match checked_pid(pid) {
                 Some(p) => {
-                    let _ = nix::sys::signal::kill(
+                    if let Err(e) = nix::sys::signal::kill(
                         p,
                         nix::sys::signal::Signal::SIGTERM,
-                    );
+                    ) {
+                        tracing::warn!("kill({}) SIGTERM failed: {}", pid, e);
+                    }
                 }
                 None => {
                     tracing::warn!("PID {} exceeds i32::MAX; skipping SIGTERM", pid);
@@ -1991,7 +2007,9 @@ impl ProcessManager {
             let mut workers = self.workers.write();
             if let Some(worker) = workers.get_mut(&id) {
                 if let Some(mut child) = worker.child_mut().take() {
-                    let _ = child.kill();
+                    if let Err(e) = child.kill() {
+                        tracing::warn!("kill worker {} failed: {}", id, e);
+                    }
                 }
                 *worker.status_mut() = WorkerStatus::Stopped;
             }
@@ -2039,7 +2057,11 @@ impl ProcessManager {
             for worker in workers.values() {
                 if let Some(raw_pid) = worker.pid() {
                     match checked_pid(raw_pid) {
-                        Some(p) => { let _ = nix::sys::signal::kill(p, SIGUSR1); }
+                        Some(p) => {
+                            if let Err(e) = nix::sys::signal::kill(p, SIGUSR1) {
+                                tracing::warn!("kill({}) SIGUSR1 failed: {}", raw_pid, e);
+                            }
+                        }
                         None => tracing::warn!("PID {} exceeds i32::MAX; skipping signal send", raw_pid),
                     }
                 }
@@ -2075,7 +2097,11 @@ impl ProcessManager {
             for worker in workers.values() {
                 if let Some(raw_pid) = worker.pid() {
                     match checked_pid(raw_pid) {
-                        Some(p) => { let _ = nix::sys::signal::kill(p, SIGUSR2); }
+                        Some(p) => {
+                            if let Err(e) = nix::sys::signal::kill(p, SIGUSR2) {
+                                tracing::warn!("kill({}) SIGUSR2 failed: {}", raw_pid, e);
+                            }
+                        }
                         None => tracing::warn!("PID {} exceeds i32::MAX; skipping signal send", raw_pid),
                     }
                 }

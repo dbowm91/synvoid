@@ -251,17 +251,17 @@ impl ThreatLevelManager {
     }
 
     pub fn get_level(&self) -> ThreatLevel {
-        if self.is_manual.load(Ordering::Relaxed) == 1 {
-            return ThreatLevel(self.manual_override.load(Ordering::Relaxed));
+        if self.is_manual.load(Ordering::Acquire) == 1 {
+            return ThreatLevel(self.manual_override.load(Ordering::Acquire));
         }
-        ThreatLevel(self.current_level.load(Ordering::Relaxed))
+        ThreatLevel(self.current_level.load(Ordering::Acquire))
     }
 
     pub fn set_level(&self, level: u8) {
         let new_level = ThreatLevel::new(level);
-        self.manual_override.store(new_level.0, Ordering::Relaxed);
-        self.is_manual.store(1, Ordering::Relaxed);
-        self.current_level.store(new_level.0, Ordering::Relaxed);
+        self.manual_override.store(new_level.0, Ordering::Release);
+        self.is_manual.store(1, Ordering::Release);
+        self.current_level.store(new_level.0, Ordering::Release);
         if self.scale_tx.send(new_level).is_err() {
             crate::metrics::record_dropped_threat_level_event();
             tracing::warn!("Failed to send manual threat level change - scaler dropped");
@@ -270,9 +270,9 @@ impl ThreatLevelManager {
     }
 
     pub fn reset_to_auto(&self) {
-        self.is_manual.store(0, Ordering::Relaxed);
+        self.current_level.store(1u8, Ordering::Release);
+        self.is_manual.store(0, Ordering::Release);
         let auto_level = 1u8;
-        self.current_level.store(auto_level, Ordering::Relaxed);
         if self.scale_tx.send(ThreatLevel(auto_level)).is_err() {
             crate::metrics::record_dropped_threat_level_event();
             tracing::warn!("Failed to send threat level reset - scaler dropped");
@@ -281,11 +281,11 @@ impl ThreatLevelManager {
     }
 
     pub fn is_manual(&self) -> bool {
-        self.is_manual.load(Ordering::Relaxed) == 1
+        self.is_manual.load(Ordering::Acquire) == 1
     }
 
     pub fn check_and_scale(&self) -> Option<ThreatLevel> {
-        if self.is_manual.load(Ordering::Relaxed) == 1 {
+        if self.is_manual.load(Ordering::Acquire) == 1 {
             return None;
         }
 
@@ -331,10 +331,10 @@ impl ThreatLevelManager {
         let score = self.scorer.calculate_score(&metrics, &baselines);
         let new_level = self.scorer.determine_level(&score);
 
-        let current = self.current_level.load(Ordering::Relaxed);
+        let current = self.current_level.load(Ordering::Acquire);
         if new_level.as_u8() != current {
             self.current_level
-                .store(new_level.as_u8(), Ordering::Relaxed);
+                .store(new_level.as_u8(), Ordering::Release);
             *self.cooldown_until.write() = now + self.cooldown_duration;
             if self.scale_tx.send(new_level).is_err() {
                 crate::metrics::record_dropped_threat_level_event();

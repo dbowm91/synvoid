@@ -42,10 +42,10 @@ pub(in crate::worker) fn process_minify_request(
 
     let source_path = source_root.join(path.trim_start_matches('/'));
 
-    let original_content =
-        std::fs::read(&source_path).map_err(|e| format!("Failed to read file: {}", e))?;
+    let original_content = task::block_in_place(|| std::fs::read(&source_path))
+        .map_err(|e| format!("Failed to read file: {}", e))?;
 
-    let mtime = std::fs::metadata(&source_path)
+    let mtime = task::block_in_place(|| std::fs::metadata(&source_path))
         .and_then(|m| m.modified())
         .unwrap_or(SystemTime::UNIX_EPOCH);
 

@@ -19,15 +19,17 @@ pub fn create_record_store(
     routing_manager: Option<Arc<crate::dht::routing::DhtRoutingManager>>,
     verification_pool: Option<Arc<crate::crypto_verification::CryptoVerificationPool>>,
 ) -> Option<Arc<RecordStoreManager>> {
-    if !config.dht.as_ref().map(|d| d.enabled).unwrap_or(false) {
+    let Some(dht_config) = config.dht.as_ref() else {
+        tracing::info!("DHT RecordStore disabled");
+        return None;
+    };
+    if !dht_config.enabled {
         tracing::info!("DHT RecordStore disabled");
         return None;
     }
 
     let node_id = config.node_id().to_string();
     let role = config.role;
-
-    let dht_config = config.dht.as_ref().unwrap();
 
     let store_config = RecordStoreConfig {
         enabled: dht_config.enabled,
