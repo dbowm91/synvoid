@@ -566,7 +566,32 @@ pub fn is_available() -> bool {
 }
 
 pub fn available_backends() -> Vec<FilterBackend> {
+    #[cfg(any(
+        target_os = "linux",
+        all(target_os = "macos", feature = "icmp-pf"),
+        all(
+            any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"),
+            feature = "icmp-pf"
+        ),
+        all(
+            target_os = "windows",
+            any(feature = "icmp-winfw", feature = "icmp-wfp")
+        )
+    ))]
     let mut backends = Vec::new();
+    #[cfg(not(any(
+        target_os = "linux",
+        all(target_os = "macos", feature = "icmp-pf"),
+        all(
+            any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"),
+            feature = "icmp-pf"
+        ),
+        all(
+            target_os = "windows",
+            any(feature = "icmp-winfw", feature = "icmp-wfp")
+        )
+    )))]
+    let backends = Vec::new();
 
     #[cfg(target_os = "linux")]
     {

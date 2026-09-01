@@ -352,29 +352,26 @@ impl StaticFileHandler {
             return Err(StaticError::NotFound("empty path".to_string()));
         }
 
-        let mut full_path = location.fs_root.join(relative_path);
+        let full_path = location.fs_root.join(relative_path);
 
-        let canonical = match tokio::fs::canonicalize(&full_path).await {
-            Ok(c) => c,
-            Err(_) => {
-                if self.allow_symlinks {
-                    let fp = full_path.clone();
-                    match tokio::task::spawn_blocking(move || std::fs::metadata(&fp)).await {
-                        Ok(Ok(m)) if m.is_symlink() => {
-                            let fp = full_path.clone();
-                            std::fs::read_link(&fp).unwrap_or_else(|_| fp.clone())
-                        }
-                        _ => full_path.clone(),
-                    }
-                } else {
-                    full_path.clone()
-                }
-            }
-        };
+        let canonical = tokio::fs::canonicalize(&full_path).await.map_err(|e| {
+            tracing::debug!(
+                path = %full_path.display(),
+                allow_symlinks = self.allow_symlinks,
+                error = %e,
+                "Static file path could not be canonicalized"
+            );
+            StaticError::NotFound(relative_path.to_string())
+        })?;
 
         let canonical_root = tokio::fs::canonicalize(&location.fs_root)
             .await
-            .unwrap_or_else(|_| location.fs_root.clone());
+            .map_err(|e| {
+                StaticError::Internal(format!(
+                    "static file root could not be canonicalized: {}",
+                    e
+                ))
+            })?;
 
         if !canonical.starts_with(&canonical_root) {
             tracing::warn!(
@@ -387,7 +384,7 @@ impl StaticFileHandler {
                 "path traversal not allowed".to_string(),
             ));
         }
-        full_path = canonical;
+        let full_path = canonical;
 
         if self.block_hidden_files {
             for component in full_path.components() {

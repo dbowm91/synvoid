@@ -23,6 +23,18 @@ pub struct MeshControlPlane {
     pub transport_manager: Arc<MeshTransportManager>,
     pub threat_intel: Arc<ThreatIntelligenceManager>,
     pub yara_rules: Option<Arc<YaraRulesManager>>,
+    shutdown_tx: tokio::sync::watch::Sender<bool>,
+    task_handles: Vec<tokio::task::JoinHandle<()>>,
+}
+
+#[cfg(feature = "mesh")]
+impl Drop for MeshControlPlane {
+    fn drop(&mut self) {
+        let _ = self.shutdown_tx.send(true);
+        for handle in &self.task_handles {
+            handle.abort();
+        }
+    }
 }
 
 #[cfg(feature = "mesh")]
@@ -43,11 +55,17 @@ pub fn run_mesh_agent_mode(config_path: Option<PathBuf>, _foreground: bool) {
     }
 
     let main_config = config_manager.main.clone();
-    let rt = tokio::runtime::Builder::new_multi_thread()
+    let rt = match tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
         .build()
-        .expect("Failed to build Tokio runtime for mesh agent");
+    {
+        Ok(rt) => rt,
+        Err(error) => {
+            eprintln!("Failed to build Tokio runtime for mesh agent: {}", error);
+            return;
+        }
+    };
 
     rt.block_on(async {
         tracing::info!("Starting standalone Mesh Agent (Control Plane)");
@@ -127,11 +145,16 @@ pub async fn init_mesh_control_plane(
 
     // Standalone path: build topology background tasks and spawn directly
     // (no MeshTaskGroup available outside the mesh lifecycle).
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let mut task_handles = Vec::new();
     {
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
         let specs = topology.build_background_tasks(shutdown_rx);
         for spec in specs {
-            tokio::spawn(spec.future);
+            task_handles.push(tokio::spawn(async move {
+                if let Err(error) = spec.future.await {
+                    tracing::warn!(%error, "Mesh topology background task exited with an error");
+                }
+            }));
         }
     }
 
@@ -146,16 +169,20 @@ pub async fn init_mesh_control_plane(
 
         // Standalone path: build DHT routing background tasks and spawn directly
         {
-            let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+            let shutdown_rx = shutdown_tx.subscribe();
             let specs = manager.build_background_tasks(shutdown_rx);
             for spec in specs {
-                tokio::spawn(spec.future);
+                task_handles.push(tokio::spawn(async move {
+                    if let Err(error) = spec.future.await {
+                        tracing::warn!(%error, "DHT routing background task exited with an error");
+                    }
+                }));
             }
         }
 
-        tokio::spawn(async move {
+        task_handles.push(tokio::spawn(async move {
             manager_clone.init().await;
-        });
+        }));
         Some(manager)
     } else {
         None
@@ -234,11 +261,13 @@ pub async fn init_mesh_control_plane(
         Some(Arc::new(signer_for_threat)),
     ));
 
-    let transport = transport_manager
-        .clone()
+    let Some(transport) = transport_manager
         .get_quic_transport()
-        .expect("Failed to get transport")
-        .get_inner();
+        .map(|transport| transport.get_inner())
+    else {
+        tracing::error!("Failed to get QUIC transport for mesh agent");
+        return None;
+    };
     let _raft_client = Arc::new(crate::mesh::raft::client::RaftAwareClient::new(
         transport,
         mesh_config_arc.clone(),
@@ -299,5 +328,7 @@ pub async fn init_mesh_control_plane(
         transport_manager,
         threat_intel,
         yara_rules: yara_rules_out,
+        shutdown_tx,
+        task_handles,
     })
 }

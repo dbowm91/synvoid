@@ -319,8 +319,6 @@ impl SsrfDetector {
             "iocalhost",
             "1ocalhost",
             "oocalhost",
-            "locaihost",
-            "iocalhost",
         ];
 
         for pattern in &lookalike_patterns {
@@ -361,7 +359,14 @@ impl SsrfDetector {
     }
 
     fn has_local_domain_suffix(input: &str) -> bool {
-        input.contains(".local")
+        input.match_indices(".local").any(|(pos, _)| {
+            let after_pos = pos + ".local".len();
+            after_pos >= input.len()
+                || matches!(
+                    input.as_bytes()[after_pos],
+                    b'.' | b':' | b'/' | b'?' | b'#'
+                )
+        })
     }
 
     fn normalize_ip_for_parse(s: &str) -> String {
@@ -526,6 +531,20 @@ mod tests {
         let detector = SsrfDetector::new(2, &[], true, vec![], false);
         assert!(detector
             .detect("https://api.example.com/data", InputLocation::QueryString)
+            .is_none());
+    }
+
+    #[test]
+    fn test_ssrf_local_suffix_requires_label_boundary() {
+        let detector = SsrfDetector::new(2, &[], true, vec![], false);
+        assert!(detector
+            .detect("https://service.local/admin", InputLocation::QueryString)
+            .is_some());
+        assert!(detector
+            .detect(
+                "https://service.localtest.example.com/",
+                InputLocation::QueryString
+            )
             .is_none());
     }
 }

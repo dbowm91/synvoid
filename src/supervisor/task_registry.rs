@@ -112,7 +112,9 @@ impl SupervisorTaskRegistry {
     /// Poll all tasks with a 10ms timeout, returning completed/failed/cancelled ones.
     ///
     /// Finished tasks are removed from the registry.
-    pub async fn join_finished(&mut self) -> Vec<(SupervisorTaskId, SupervisorTaskOutcome)> {
+    pub async fn join_finished(
+        &mut self,
+    ) -> Vec<(SupervisorTaskId, &'static str, SupervisorTaskOutcome)> {
         let mut results = Vec::new();
         let deadline = tokio::time::Instant::now() + Duration::from_millis(10);
 
@@ -120,6 +122,7 @@ impl SupervisorTaskRegistry {
 
         for id in ids {
             if let Some(task) = self.tasks.get_mut(&id) {
+                let task_name = task.name;
                 let outcome = tokio::select! {
                     biased;
                     result = &mut task.handle => {
@@ -148,7 +151,7 @@ impl SupervisorTaskRegistry {
                         synvoid_metrics::collection::record_supervisor_task_aborted();
                     }
                 }
-                results.push((id, outcome));
+                results.push((id, task_name, outcome));
             }
         }
 
@@ -298,7 +301,7 @@ mod tests {
 
         let results = registry.join_finished().await;
         assert_eq!(results.len(), 1);
-        assert!(matches!(&results[0].1, SupervisorTaskOutcome::Completed));
+        assert!(matches!(&results[0].2, SupervisorTaskOutcome::Completed));
         assert_eq!(registry.active_count(), 0);
     }
 

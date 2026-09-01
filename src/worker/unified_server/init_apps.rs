@@ -55,7 +55,7 @@ pub fn spawn_granian_supervisors(
     worker_id: WorkerId,
     config: Arc<RwLock<ConfigManager>>,
     app_servers: Arc<RwLock<HashMap<String, Arc<GranianSupervisor>>>>,
-) {
+) -> tokio::task::JoinHandle<()> {
     let app_servers_for_init = app_servers.clone();
     let config_for_app = config.clone();
     tokio::spawn(async move {
@@ -103,7 +103,7 @@ pub fn spawn_granian_supervisors(
                 .insert(site_id.clone(), supervisor.clone());
             crate::app_server::register_granian_supervisor(site_id, supervisor);
         }
-    });
+    })
 }
 
 /// Wait for the Granian supervisor spawn delay. Original code uses

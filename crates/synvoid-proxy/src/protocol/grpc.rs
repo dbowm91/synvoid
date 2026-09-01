@@ -108,8 +108,8 @@ impl GrpcHandler {
                 break;
             }
 
-            let key_data =
-                &headers[GRPC_FRAME_HEADER_SIZE..GRPC_FRAME_HEADER_SIZE + length.min(256)];
+            let key_start = pos + GRPC_FRAME_HEADER_SIZE;
+            let key_data = &headers[key_start..key_start + length.min(256)];
             if let Ok(key) = std::str::from_utf8(key_data) {
                 if let Some((k, v)) = key.split_once(": ") {
                     metadata.insert(k.to_string(), v.to_string());

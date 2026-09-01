@@ -194,11 +194,14 @@ pub fn apply_cpu_affinity(cpu_affinity: Option<usize>, worker_id: WorkerId) {
     }
 }
 
-pub fn start_shared_connection_heartbeat(worker_id_raw: usize) {
+pub fn start_shared_connection_heartbeat(
+    worker_id_raw: usize,
+    running: RunningFlag,
+) -> Option<JoinHandle<()>> {
     // Start background heartbeat task for shared connection table
-    if let Some(table) = crate::upstream::shared_state::SharedConnectionTable::get_global() {
+    crate::upstream::shared_state::SharedConnectionTable::get_global().map(|table| {
         tokio::spawn(async move {
-            loop {
+            while running.is_running() {
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
@@ -206,8 +209,8 @@ pub fn start_shared_connection_heartbeat(worker_id_raw: usize) {
                 table.record_heartbeat(worker_id_raw, now);
                 tokio::time::sleep(Duration::from_secs(2)).await;
             }
-        });
-    }
+        })
+    })
 }
 
 pub async fn validate_ports_or_skip_for_shared_port(

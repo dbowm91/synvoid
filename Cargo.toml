@@ -187,9 +187,6 @@ zip = "2"
 # Dynamic plugin loading
 libloading = "0.8"
 
-# eBPF support (Linux-only - aya uses netlink APIs not available on other platforms)
-aya = { version = "0.13", optional = true }
-
 synvoid-utils = { path = "crates/synvoid-utils", features = ["buffer"] , version = "0.1" }
 synvoid-core = { path = "crates/synvoid-core", features = ["utoipa"] , version = "0.1" }
 synvoid-tarpit = { path = "crates/synvoid-tarpit" , version = "0.1" }

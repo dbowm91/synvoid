@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::mpsc;
+use tokio::sync::Mutex as TokioMutex;
 use tokio::sync::RwLock;
 use tokio::time::timeout;
 
@@ -19,6 +20,7 @@ pub struct MeshDiscovery {
     cert_manager: Arc<RwLock<MeshCertManager>>,
     running: Arc<RwLock<bool>>,
     shutdown_tx: Arc<RwLock<Option<mpsc::Sender<()>>>>,
+    task_handle: Arc<TokioMutex<Option<tokio::task::JoinHandle<()>>>>,
     record_store: Option<Arc<crate::dht::RecordStoreManager>>,
     revocation_list: Option<Arc<GlobalNodeRevocationList>>,
 }
@@ -37,6 +39,7 @@ impl MeshDiscovery {
             cert_manager,
             running: Arc::new(RwLock::new(false)),
             shutdown_tx: Arc::new(RwLock::new(None)),
+            task_handle: Arc::new(TokioMutex::new(None)),
             record_store,
             revocation_list,
         }
@@ -60,8 +63,9 @@ impl MeshDiscovery {
         let config = self.config.clone();
         let topology = self.topology.clone();
         let cert_manager = self.cert_manager.clone();
+        let running = self.running.clone();
 
-        tokio::spawn(async move {
+        let task_handle = tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(30));
 
             loop {
@@ -78,9 +82,10 @@ impl MeshDiscovery {
                 }
             }
 
-            let mut is_running = self.running.write();
+            let mut is_running = running.write();
             *is_running = false;
         });
+        *self.task_handle.lock().await = Some(task_handle);
 
         if !self.config.seeds.is_empty() {
             self.bootstrap_from_seeds().await?;
@@ -92,6 +97,9 @@ impl MeshDiscovery {
     pub async fn stop(&self) {
         if let Some(tx) = self.shutdown_tx.write().take() {
             let _ = tx.send(()).await;
+        }
+        if let Some(handle) = self.task_handle.lock().await.take() {
+            let _ = handle.await;
         }
     }
 

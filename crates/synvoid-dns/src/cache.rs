@@ -116,6 +116,25 @@ pub enum CacheNamespace {
     Recursive,
 }
 
+impl CacheNamespace {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Authoritative => "authoritative",
+            Self::Recursive => "recursive",
+        }
+    }
+}
+
+fn format_transport_class(transport: TransportClass) -> String {
+    match transport {
+        TransportClass::Udp512 => "udp512".to_string(),
+        TransportClass::UdpEdns(size) => format!("udp-edns-{}", size),
+        TransportClass::Tcp => "tcp".to_string(),
+        TransportClass::Http => "http".to_string(),
+        TransportClass::Quic => "quic".to_string(),
+    }
+}
+
 /// DNS cache key covering all output-affecting dimensions.
 ///
 /// Two queries that could produce different wire-format responses MUST have
@@ -329,6 +348,24 @@ type QnameIndex = Arc<RwLock<HashMap<String, HashSet<CacheKey>>>>;
 type CacheStorage = (Cache<CacheKey, CachedResponse>, QnameIndex);
 
 impl DnsCache {
+    fn try_acquire_stale_slot(inner: &InnerDnsCache) -> bool {
+        let mut count = inner.stale_served_count.load(Ordering::Relaxed);
+        loop {
+            if count >= inner.max_stale_count {
+                return false;
+            }
+            match inner.stale_served_count.compare_exchange_weak(
+                count,
+                count + 1,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return true,
+                Err(actual) => count = actual,
+            }
+        }
+    }
+
     fn build_cache(capacity: usize, max_ttl_secs: u64) -> CacheStorage {
         let qname_index = Arc::new(RwLock::new(HashMap::<String, HashSet<CacheKey>>::new()));
         let listener_index = Arc::clone(&qname_index);
@@ -497,7 +534,12 @@ impl DnsCache {
 
             if let Some(existing) = fingerprints.get(&fp_key) {
                 let has_fingerprint = existing.iter().any(|(fp, _)| *fp == fingerprint);
-                if existing.len() >= inner.max_fingerprints_per_name {
+                let distinct_fingerprints = existing
+                    .iter()
+                    .map(|(fp, _)| *fp)
+                    .collect::<HashSet<_>>()
+                    .len();
+                if distinct_fingerprints >= inner.max_fingerprints_per_name {
                     if !has_fingerprint {
                         let fps: Vec<u64> = existing.iter().map(|(fp, _)| *fp).collect();
                         inner
@@ -514,7 +556,16 @@ impl DnsCache {
                         });
                     }
                 } else if !existing.is_empty() && !has_fingerprint {
-                    let first_fingerprint = existing[0].0;
+                    let first_fingerprint = existing
+                        .iter()
+                        .fold(HashMap::<u64, usize>::new(), |mut counts, (fp, _)| {
+                            *counts.entry(*fp).or_default() += 1;
+                            counts
+                        })
+                        .into_iter()
+                        .max_by_key(|(_, count)| *count)
+                        .map(|(fp, _)| fp)
+                        .unwrap_or(fingerprint);
                     let confirmations = existing
                         .iter()
                         .filter(|(fp, _)| *fp == first_fingerprint)
@@ -547,11 +598,19 @@ impl DnsCache {
     }
 
     /// Build a fingerprint key from full cache key dimensions.
-    /// Format: "qname|qtype|qclass|dnssec|namespace"
+    /// Format: "qname|qtype|qclass|dnssec|client_subnet|transport|namespace"
     fn fingerprint_key(key: &CacheKey) -> String {
         format!(
-            "{}|{}|{}|{}|{:?}",
-            key.qname, key.qtype, key.qclass, key.dnssec_ok, key.namespace
+            "{}|{}|{}|{}|{}|{}|{}",
+            key.qname,
+            key.qtype,
+            key.qclass,
+            key.dnssec_ok,
+            key.client_subnet
+                .map(|ip| ip.to_string())
+                .unwrap_or_default(),
+            format_transport_class(key.transport_class),
+            key.namespace.as_str()
         )
     }
 
@@ -573,11 +632,20 @@ impl DnsCache {
         let max_age = Duration::from_secs(3600);
         entry.retain(|(_, ts)| now.duration_since(*ts) < max_age);
 
-        if !entry.iter().any(|(fp, _)| *fp == fingerprint) {
+        let distinct_fingerprints = entry
+            .iter()
+            .map(|(fp, _)| *fp)
+            .collect::<HashSet<_>>()
+            .len();
+        if !entry.iter().any(|(fp, _)| *fp == fingerprint)
+            && distinct_fingerprints >= inner.max_fingerprints_per_name
+        {
+            return;
+        }
+
+        let observations = entry.iter().filter(|(fp, _)| *fp == fingerprint).count();
+        if observations < inner.confirmation_threshold.max(1) {
             entry.push((fingerprint, now));
-            if entry.len() > inner.max_fingerprints_per_name {
-                entry.remove(0);
-            }
         }
     }
 
@@ -595,14 +663,12 @@ impl DnsCache {
                 }
                 return Some(cached.data.clone());
             } else if inner.serve_stale_enabled && age < cached.ttl + inner.serve_stale_max_stale {
-                let stale_count = inner.stale_served_count.load(Ordering::Relaxed);
-                if stale_count >= inner.max_stale_count {
+                if !Self::try_acquire_stale_slot(inner) {
                     tracing::debug!(
-                        "Cache stale hit for {} rejected: stale_served_count {} >= max_stale_count {}",
-                        key.qname, stale_count, inner.max_stale_count
+                        "Cache stale hit for {} rejected: stale budget exhausted",
+                        key.qname
                     );
                 } else {
-                    inner.stale_served_count.fetch_add(1, Ordering::Relaxed);
                     tracing::debug!("Cache stale hit for {} (age: {:?})", key.qname, age);
                     inner.metrics.stale_hits.fetch_add(1, Ordering::Relaxed);
                     if let Some(ref dm) = inner.dns_metrics {
@@ -640,14 +706,12 @@ impl DnsCache {
                 }
                 return Some((cached.data.clone(), false));
             } else if inner.serve_stale_enabled && age < cached.ttl + inner.serve_stale_max_stale {
-                let stale_count = inner.stale_served_count.load(Ordering::Relaxed);
-                if stale_count >= inner.max_stale_count {
+                if !Self::try_acquire_stale_slot(inner) {
                     tracing::debug!(
-                        "Cache stale hit for {} rejected: stale_served_count {} >= max_stale_count {}",
-                        key.qname, stale_count, inner.max_stale_count
+                        "Cache stale hit for {} rejected: stale budget exhausted",
+                        key.qname
                     );
                 } else {
-                    inner.stale_served_count.fetch_add(1, Ordering::Relaxed);
                     tracing::debug!("Cache stale hit for {} (age: {:?})", key.qname, age);
                     inner.metrics.stale_hits.fetch_add(1, Ordering::Relaxed);
                     if let Some(ref dm) = inner.dns_metrics {
@@ -908,7 +972,8 @@ impl DnsCache {
     }
 
     pub fn len(&self) -> usize {
-        self.inner.cache.iter().count()
+        self.inner.cache.run_pending_tasks();
+        self.inner.cache.entry_count() as usize
     }
 
     pub fn is_empty(&self) -> bool {
@@ -921,10 +986,11 @@ impl DnsCache {
 
     pub fn stats(&self) -> CacheStats {
         let inner = &self.inner;
+        inner.cache.run_pending_tasks();
         let fingerprints = inner.cache_fingerprints.read();
 
         CacheStats {
-            entries: inner.cache.iter().count(),
+            entries: inner.cache.entry_count() as usize,
             fingerprints_tracked: fingerprints.len(),
             max_entries: inner.max_capacity,
             enable_source_validation: inner.enable_source_validation,
@@ -1293,7 +1359,7 @@ mod phase7_cache_tests {
             namespace: CacheNamespace::Authoritative,
         };
         let fp_key = DnsCache::fingerprint_key(&key);
-        assert_eq!(fp_key, "example.com|1|1|true|Authoritative");
+        assert_eq!(fp_key, "example.com|1|1|true||udp512|authoritative");
     }
 
     #[test]

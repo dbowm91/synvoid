@@ -88,6 +88,7 @@ pub async fn build_worker_startup(
     let worker_id_raw = args.worker_id;
     crate::process::set_current_worker_id(worker_id_raw);
     let worker_id = WorkerId(worker_id_raw);
+    let mut legacy_handles = Vec::new();
 
     // ---- Phase 1: runtime ----
     state::apply_cpu_affinity(args.cpu_affinity, worker_id);
@@ -96,7 +97,6 @@ pub async fn build_worker_startup(
         crate::log_controller::init_logging_with_dynamic_level(level);
     }
 
-    state::start_shared_connection_heartbeat(worker_id_raw);
     crate::metrics::health::SystemHealthMonitor::start();
 
     tracing::info!(
@@ -162,18 +162,20 @@ pub async fn build_worker_startup(
 
     // ---- Phase 6: ACME + Granian ----
     super::init_apps::setup_acme(&unified_server, worker_id);
-    super::init_apps::spawn_granian_supervisors(
+    legacy_handles.push(super::init_apps::spawn_granian_supervisors(
         worker_id,
         shared_config.clone(),
         app_servers.clone(),
-    );
+    ));
     super::init_apps::wait_after_granian_spawn().await;
 
     // ---- Phase 7: WAF ----
     super::init_waf::start_waf_background_tasks(&unified_server);
     super::init_waf::init_upload_validator(&shared_config).await;
     let port_honeypot_runner = super::init_waf::build_port_honeypot(&shared_config).await;
-    super::init_waf::spawn_port_honeypot(port_honeypot_runner.clone());
+    if let Some(handle) = super::init_waf::spawn_port_honeypot(port_honeypot_runner.clone()) {
+        legacy_handles.push(handle);
+    }
 
     // ---- Phase 8: mesh + threat intel ----
     let mesh_init = super::init_mesh::init_mesh_and_threat_intel(
@@ -247,6 +249,10 @@ pub async fn build_worker_startup(
     // ---- Phase 11: build DataPlaneServices + Ready ----
     let metrics = WorkerMetrics::shared();
     let _running = RunningFlag::new();
+    if let Some(handle) = state::start_shared_connection_heartbeat(worker_id_raw, _running.clone())
+    {
+        legacy_handles.push(handle);
+    }
     let draining = DrainFlag::new();
     let drain_id = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let stopped_accepting = DrainFlag::new();
@@ -433,6 +439,6 @@ pub async fn build_worker_startup(
         exit_rx,
         #[cfg(feature = "mesh")]
         mesh_startup,
-        legacy_handles: Vec::new(),
+        legacy_handles,
     })
 }

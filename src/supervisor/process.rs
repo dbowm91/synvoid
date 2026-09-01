@@ -190,7 +190,7 @@ impl SupervisorProcess {
 
                     // Check for finished supervisor tasks
                     let finished = self.supervisor_tasks.join_finished().await;
-                    for (_task_id, outcome) in finished {
+                    for (_task_id, task_name, outcome) in finished {
                         match outcome {
                             SupervisorTaskOutcome::Failed(reason) => {
                                 tracing::error!(
@@ -198,7 +198,7 @@ impl SupervisorProcess {
                                     reason
                                 );
                                 shutdown_cause = SupervisorShutdownCause::TaskFailed {
-                                    task: "supervisor_task",
+                                    task: task_name,
                                     reason,
                                 };
                                 break;
@@ -393,7 +393,15 @@ impl SupervisorProcess {
     }
 
     async fn handle_process_event(&mut self, event: ProcessEvent) {
+        let requires_immediate_reaction = matches!(
+            &event,
+            ProcessEvent::WorkerFailed(_, _) | ProcessEvent::UnifiedServerWorkerFailed(_, _)
+        );
         tracing::debug!("Supervisor received event: {:?}", event);
+        if requires_immediate_reaction {
+            self.process_manager.reap_zombies().await;
+            self.process_manager.check_workers_health().await;
+        }
     }
 }
 

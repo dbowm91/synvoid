@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 use std::cell::RefCell;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use synvoid_utils::buffer::pool::{BufferPool, PooledBuf};
 use unicode_normalization::UnicodeNormalization;
 
@@ -121,9 +121,11 @@ impl InputNormalizer {
                             NormalizedData::Borrowed(s) => {
                                 let mut pooled = BufferPool::acquire(s.len());
                                 pooled.extend_from_slice(s.as_bytes());
-                                NormalizedData::Pooled(pooled)
+                                NormalizedData::pooled(pooled)
                             }
-                            NormalizedData::Pooled(p) => NormalizedData::Pooled(p),
+                            NormalizedData::Pooled { buf, lossy } => {
+                                NormalizedData::Pooled { buf, lossy }
+                            }
                             NormalizedData::Owned(o) => NormalizedData::Owned(o),
                         };
                         NormalizedInput {
@@ -214,7 +216,7 @@ impl InputNormalizer {
         } else {
             let mut pooled = BufferPool::acquire(buffer.len());
             pooled.as_mut_slice().copy_from_slice(buffer.as_bytes());
-            NormalizedData::Pooled(pooled)
+            NormalizedData::pooled(pooled)
         };
 
         NormalizedInput {
@@ -693,7 +695,10 @@ impl InputNormalizer {
 pub enum NormalizedData<'a> {
     Borrowed(&'a str),
     Owned(String),
-    Pooled(PooledBuf),
+    Pooled {
+        buf: PooledBuf,
+        lossy: OnceLock<String>,
+    },
 }
 
 impl<'a> Clone for NormalizedData<'a> {
@@ -701,10 +706,17 @@ impl<'a> Clone for NormalizedData<'a> {
         match self {
             Self::Borrowed(s) => Self::Borrowed(s),
             Self::Owned(s) => Self::Owned(s.clone()),
-            Self::Pooled(p) => {
-                let mut new_buf = BufferPool::acquire(p.len());
-                new_buf.extend_from_slice(p.as_slice());
-                Self::Pooled(new_buf)
+            Self::Pooled { buf, lossy } => {
+                let mut new_buf = BufferPool::acquire(buf.len());
+                new_buf.extend_from_slice(buf.as_slice());
+                let new_lossy = OnceLock::new();
+                if let Some(value) = lossy.get() {
+                    let _ = new_lossy.set(value.clone());
+                }
+                Self::Pooled {
+                    buf: new_buf,
+                    lossy: new_lossy,
+                }
             }
         }
     }
@@ -717,15 +729,24 @@ impl<'a> Default for NormalizedData<'a> {
 }
 
 impl<'a> NormalizedData<'a> {
-    /// Every construction path feeds this type from validated `String`/lossy
-    /// sources, so pooled bytes are UTF-8 by invariant. If a future regression
-    /// ever breaks that invariant, degrade to a scan miss instead of panicking
-    /// on the WAF hot path.
+    fn pooled(buf: PooledBuf) -> Self {
+        Self::Pooled {
+            buf,
+            lossy: OnceLock::new(),
+        }
+    }
+
     pub fn as_str(&self) -> &str {
         match self {
             Self::Borrowed(s) => s,
             Self::Owned(ref s) => s.as_str(),
-            Self::Pooled(ref p) => std::str::from_utf8(p.as_slice()).unwrap_or(""),
+            Self::Pooled { buf, lossy } => {
+                std::str::from_utf8(buf.as_slice()).unwrap_or_else(|_| {
+                    lossy
+                        .get_or_init(|| String::from_utf8_lossy(buf.as_slice()).into_owned())
+                        .as_str()
+                })
+            }
         }
     }
 }
@@ -768,7 +789,7 @@ impl<'a> NormalizedInput<'a> {
         let normalized = match self.normalized {
             NormalizedData::Borrowed(s) => NormalizedData::Owned(s.to_string()),
             NormalizedData::Owned(s) => NormalizedData::Owned(s),
-            NormalizedData::Pooled(p) => NormalizedData::Pooled(p),
+            NormalizedData::Pooled { buf, lossy } => NormalizedData::Pooled { buf, lossy },
         };
         NormalizedInput {
             normalized,
@@ -880,9 +901,9 @@ impl<'a> NormalizedInputs<'a> {
                     let mut pooled = BufferPool::acquire(s.len());
                     pooled.clear();
                     pooled.extend_from_slice(s.as_bytes());
-                    NormalizedData::Pooled(pooled)
+                    NormalizedData::pooled(pooled)
                 }
-                NormalizedData::Pooled(p) => NormalizedData::Pooled(p),
+                NormalizedData::Pooled { buf, lossy } => NormalizedData::Pooled { buf, lossy },
                 NormalizedData::Owned(o) => NormalizedData::Owned(o),
             };
             NormalizedInput {

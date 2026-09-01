@@ -500,8 +500,13 @@ pub async fn run_unified_server_worker(
     ) = (None, None, None);
 
     let worker_id = startup.worker_id;
+    let state = startup.state;
+    {
+        let mut handles = state.task_handles.lock().await;
+        handles.extend(startup.legacy_handles);
+    }
     let supervision_result = supervision_loop::run_worker_supervision(
-        &startup.state,
+        &state,
         startup.lifecycle_rx,
         startup.exit_rx,
         mesh_decision_rx_opt,
@@ -513,7 +518,7 @@ pub async fn run_unified_server_worker(
     // ---- Phase 16: map supervision outcome + execute ordered shutdown ----
     let shutdown_ctx = shutdown_executor::WorkerShutdownContext::from_supervision_result(
         worker_id,
-        startup.state,
+        state,
         supervision_result,
     );
     let _report = shutdown_executor::execute_worker_shutdown(shutdown_ctx).await?;

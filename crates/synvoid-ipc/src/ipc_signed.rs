@@ -1,4 +1,5 @@
 use std::io::{self, Read, Write};
+use std::sync::Mutex;
 use std::sync::{Arc, LazyLock};
 
 use dashmap::DashMap;
@@ -65,10 +66,14 @@ type CacheKey = (u64, [u8; 16]);
 type ShardedNonceCache = DashMap<CacheKey, u64>;
 
 static NONCE_CACHE: LazyLock<ShardedNonceCache> = LazyLock::new(ShardedNonceCache::new);
+static NONCE_CACHE_CAPACITY_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 const MAX_NONCE_CACHE_SIZE: usize = 10000;
 const REPLAY_WINDOW_SECS: u64 = 60;
 
 fn check_and_insert_nonce(signer_id: u64, nonce: &[u8; 16], timestamp: u64) -> bool {
+    let _capacity_guard = NONCE_CACHE_CAPACITY_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let key = (signer_id, *nonce);
 
     let msg_count = NONCE_CACHE_MSG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -85,6 +90,9 @@ fn check_and_insert_nonce(signer_id: u64, nonce: &[u8; 16], timestamp: u64) -> b
         let now = synvoid_utils::current_timestamp();
         let expire_cutoff = now.saturating_sub(REPLAY_WINDOW_SECS);
         NONCE_CACHE.retain(|_, ts| *ts > expire_cutoff);
+        if NONCE_CACHE.len() >= MAX_NONCE_CACHE_SIZE {
+            return false;
+        }
     }
 
     // DashMap's entry API makes the duplicate check and insertion atomic. A
@@ -94,10 +102,6 @@ fn check_and_insert_nonce(signer_id: u64, nonce: &[u8; 16], timestamp: u64) -> b
     match NONCE_CACHE.entry(key) {
         Entry::Occupied(_) => false,
         Entry::Vacant(entry) => {
-            // Cache may transiently exceed MAX_NONCE_CACHE_SIZE under an
-            // active replay-window attack; the periodic retain above keeps
-            // it bounded in the steady state and evicts attack entries once
-            // they age out.
             entry.insert(timestamp);
             true
         }
@@ -830,7 +834,7 @@ mod tests {
     }
 
     #[test]
-    fn test_nonce_cache_accepts_new_when_full() {
+    fn test_nonce_cache_stays_bounded_when_full() {
         let signer_id = 999u64;
         let now = synvoid_utils::current_timestamp();
 
@@ -845,13 +849,11 @@ mod tests {
             }
         }
 
-        assert_eq!(
-            accepted,
-            MAX_NONCE_CACHE_SIZE.saturating_sub(start_len) + 16,
-            "regression: entries must be accepted even when the global cache is at capacity"
+        assert!(
+            accepted <= MAX_NONCE_CACHE_SIZE.saturating_sub(start_len),
+            "nonce cache must reject fresh entries once its hard capacity is reached"
         );
-
-        assert!(NONCE_CACHE.len() > MAX_NONCE_CACHE_SIZE);
+        assert!(NONCE_CACHE.len() <= MAX_NONCE_CACHE_SIZE);
     }
 
     #[test]

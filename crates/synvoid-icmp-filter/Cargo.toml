@@ -19,6 +19,8 @@ thiserror = "2"
 metrics = "0.22"
 tracing = "0.1"
 libc = "0.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
 aya = { version = "0.13", optional = true }
 
 [dev-dependencies]

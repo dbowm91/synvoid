@@ -82,17 +82,11 @@ impl WebSocketHandler {
 
         let first_line = Self::extract_first_line(data);
 
-        if first_line.to_uppercase().contains("UPGRADE: WEBSOCKET")
-            || first_line.to_uppercase().contains("SEC-WEBSOCKET-KEY")
-            || first_line.starts_with("GET")
-                && data
-                    .windows(10)
-                    .any(|w| w[0].eq_ignore_ascii_case(&b'U') && &w[1..9] == b"PGRADE".as_slice())
+        let request = String::from_utf8_lossy(data).to_ascii_lowercase();
+        if first_line.to_ascii_uppercase().starts_with("GET ")
+            && request.contains("\nupgrade: websocket")
+            && request.contains("\nsec-websocket-key:")
         {
-            return true;
-        }
-
-        if Self::is_websocket_frame(data) {
             return true;
         }
 
@@ -113,12 +107,39 @@ impl WebSocketHandler {
     }
 
     fn is_websocket_frame(data: &[u8]) -> bool {
-        if data.is_empty() {
+        if data.len() < WS_FRAME_HEADER_MIN {
             return false;
         }
 
         let first_byte = data[0];
         let opcode = first_byte & WS_OPCODE_MASK;
+        if first_byte & 0x70 != 0 {
+            return false;
+        }
+
+        let payload_len = data[1] & WS_PAYLOAD_LEN_MASK;
+        let header_size: usize = match payload_len {
+            126 if data.len() >= 4 => 4,
+            127 if data.len() >= 10 => 10,
+            126 | 127 => return false,
+            _ => 2,
+        };
+        let actual_payload_len = match payload_len {
+            126 => u16::from_be_bytes([data[2], data[3]]) as u64,
+            127 => u64::from_be_bytes(data[2..10].try_into().unwrap()),
+            value => value as u64,
+        };
+        let Ok(actual_payload_len) = usize::try_from(actual_payload_len) else {
+            return false;
+        };
+        let mask_size = if data[1] & WS_MASK_MASK != 0 { 4 } else { 0 };
+        let payload_end = match (header_size + mask_size).checked_add(actual_payload_len) {
+            Some(end) => end,
+            None => return false,
+        };
+        if payload_end > data.len() {
+            return false;
+        }
 
         matches!(
             opcode,
@@ -139,6 +160,10 @@ impl WebSocketHandler {
         let first_byte = data[0];
         let second_byte = data[1];
 
+        if first_byte & 0x70 != 0 {
+            return None;
+        }
+
         let fin = (first_byte & WS_FIN_MASK) != 0;
         let opcode = first_byte & WS_OPCODE_MASK;
         let masked = (second_byte & WS_MASK_MASK) != 0;
@@ -157,9 +182,10 @@ impl WebSocketHandler {
                 return None;
             }
             header_size = 10;
-            usize::from_be_bytes([
+            let declared_len = u64::from_be_bytes([
                 data[2], data[3], data[4], data[5], data[6], data[7], data[8], data[9],
-            ])
+            ]);
+            usize::try_from(declared_len).ok()?
         } else {
             payload_len
         };
@@ -180,11 +206,12 @@ impl WebSocketHandler {
 
         let payload_start = header_size + if masked { 4 } else { 0 };
 
-        if data.len() < payload_start + actual_payload_len {
+        let payload_end = payload_start.checked_add(actual_payload_len)?;
+        if data.len() < payload_end {
             return None;
         }
 
-        let mut payload = data[payload_start..payload_start + actual_payload_len].to_vec();
+        let mut payload = data[payload_start..payload_end].to_vec();
 
         if let Some(key) = mask_key {
             for (i, byte) in payload.iter_mut().enumerate() {
@@ -221,7 +248,7 @@ impl WebSocketHandler {
             frame.extend_from_slice(&(payload_len as u16).to_be_bytes());
         } else {
             frame.push(127);
-            frame.extend_from_slice(&payload_len.to_be_bytes());
+            frame.extend_from_slice(&(payload_len as u64).to_be_bytes());
         }
 
         frame.extend_from_slice(payload);
@@ -261,6 +288,29 @@ impl WebSocketHandler {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detect_requires_websocket_handshake() {
+        assert!(!WebSocketHandler::detect(&[0x81, 0x00, 0x16]));
+        assert!(WebSocketHandler::detect(
+            b"GET /chat HTTP/1.1\r\nUpgrade: websocket\r\nSec-WebSocket-Key: key\r\n\r\n"
+        ));
+    }
+
+    #[test]
+    fn parse_extended_length_is_platform_independent() {
+        let mut frame = vec![0x81, 127];
+        frame.extend_from_slice(&(3u64).to_be_bytes());
+        frame.extend_from_slice(b"hey");
+
+        let parsed = WebSocketHandler::parse_frame(&frame).expect("valid extended frame");
+        assert_eq!(parsed.payload, b"hey");
+    }
+}
+
 #[derive(Debug, Clone)]
 struct WebSocketFrame {
     fin: bool,
@@ -286,6 +336,11 @@ impl ProtocolHandler for WebSocketHandler {
         if Self::is_websocket_frame(data) {
             let frame = Self::parse_frame(data)
                 .ok_or_else(|| ProtocolError::Framing("Invalid WebSocket frame".to_string()))?;
+            if frame.payload.len() > self.max_message_size {
+                return Err(ProtocolError::Framing(
+                    "WebSocket message exceeds maximum size".to_string(),
+                ));
+            }
 
             self.metrics
                 .messages_received

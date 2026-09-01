@@ -119,7 +119,8 @@ fn root_manifest_dependencies(manifest: &str) -> BTreeSet<String> {
     for line in manifest.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with('[') {
-            in_root_deps = trimmed == "[dependencies]";
+            in_root_deps = trimmed == "[dependencies]"
+                || (trimmed.starts_with("[target.") && trimmed.ends_with(".dependencies]"));
             continue;
         }
         if !in_root_deps || trimmed.is_empty() || trimmed.starts_with('#') {

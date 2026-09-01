@@ -101,13 +101,16 @@ impl ExtensionRegistry {
             health: runtime.health_check(),
             runtime,
         };
-        self.extensions.write().unwrap().push(info);
+        self.extensions
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(info);
     }
 
     pub fn get_health_statuses(&self) -> Vec<(&'static str, ExtensionFailurePolicy, HealthStatus)> {
         self.extensions
             .read()
-            .unwrap()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .iter()
             .map(|e| (e.name, e.failure_policy, e.runtime.health_check()))
             .collect()
@@ -117,7 +120,7 @@ impl ExtensionRegistry {
         let runtimes: Vec<_> = self
             .extensions
             .read()
-            .unwrap()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .iter()
             .map(|e| (e.name, e.runtime.clone()))
             .collect();
@@ -134,7 +137,7 @@ impl ExtensionRegistry {
         let runtimes: Vec<_> = self
             .extensions
             .read()
-            .unwrap()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .iter()
             .map(|e| (e.name, e.runtime.clone()))
             .collect();
@@ -147,7 +150,10 @@ impl ExtensionRegistry {
     }
 
     pub fn refresh_health(&self) {
-        let mut extensions = self.extensions.write().unwrap();
+        let mut extensions = self
+            .extensions
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         for ext in extensions.iter_mut() {
             ext.health = ext.runtime.health_check();
         }

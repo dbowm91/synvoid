@@ -22,13 +22,16 @@ impl GlobalCacheGovernor {
         let mut current = CURRENT_BUFFERED_BYTES.load(Ordering::Relaxed);
 
         loop {
-            if current + bytes > max {
+            let Some(next) = current.checked_add(bytes) else {
+                return false;
+            };
+            if next > max {
                 return false;
             }
 
             match CURRENT_BUFFERED_BYTES.compare_exchange_weak(
                 current,
-                current + bytes,
+                next,
                 Ordering::SeqCst,
                 Ordering::Relaxed,
             ) {
@@ -40,7 +43,19 @@ impl GlobalCacheGovernor {
 
     /// Release previously reserved space.
     pub fn release(bytes: usize) {
-        CURRENT_BUFFERED_BYTES.fetch_sub(bytes, Ordering::SeqCst);
+        let mut current = CURRENT_BUFFERED_BYTES.load(Ordering::Relaxed);
+        loop {
+            let next = current.saturating_sub(bytes);
+            match CURRENT_BUFFERED_BYTES.compare_exchange_weak(
+                current,
+                next,
+                Ordering::SeqCst,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return,
+                Err(actual) => current = actual,
+            }
+        }
     }
 
     /// Update the maximum allowed buffered bytes.

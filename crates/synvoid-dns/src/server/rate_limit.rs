@@ -40,13 +40,16 @@ impl TokenBucket {
     }
 
     fn refill(&mut self) {
+        if self.refill_rate == 0.0 {
+            return;
+        }
         let now = Instant::now();
         let elapsed = now.duration_since(self.last_refill).as_secs_f64();
 
         let tokens_to_add = (elapsed * self.refill_rate) as u64;
         if tokens_to_add > 0 {
             self.tokens = (self.tokens + tokens_to_add).min(self.max_tokens);
-            self.last_refill = now;
+            self.last_refill += Duration::from_secs_f64(tokens_to_add as f64 / self.refill_rate);
         }
     }
 }

@@ -1026,7 +1026,7 @@ pub mod darwin {
             {
                 use libc::dlsym;
 
-                let sym = unsafe { dlsym(libc::RTLD_DEFAULT, b"sandbox_init\0".as_ptr().cast()) };
+                let sym = unsafe { dlsym(libc::RTLD_DEFAULT, c"sandbox_init".as_ptr().cast()) };
                 !sym.is_null()
             }
             #[cfg(not(all(target_os = "macos", feature = "macos-sandbox")))]
@@ -1095,9 +1095,9 @@ pub mod darwin {
                     return Err(SandboxError::NotSupported("Seatbelt not available".into()));
                 }
 
-                let profile_cstr =
-                    CStr::from_bytes_with_nul(format!("{}\0", profile).as_bytes())
-                        .map_err(|_| SandboxError::Syscall("Invalid sandbox profile".into()))?;
+                let profile_with_nul = format!("{}\0", profile);
+                let profile_cstr = CStr::from_bytes_with_nul(profile_with_nul.as_bytes())
+                    .map_err(|_| SandboxError::Syscall("Invalid sandbox profile".into()))?;
 
                 #[link(name = "sandbox")]
                 extern "C" {

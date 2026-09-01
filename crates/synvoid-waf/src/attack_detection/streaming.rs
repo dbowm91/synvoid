@@ -254,12 +254,21 @@ impl StreamingWafCore {
                             );
                         }
 
-                        self.state.field_trailing_window.clear();
-                        let window_start =
-                            field_fragment.len().saturating_sub(TRAILING_WINDOW_SIZE);
-                        self.state
-                            .field_trailing_window
-                            .extend_from_slice(&field_fragment[window_start..]);
+                        let previous_window = self.state.field_trailing_window.as_slice();
+                        let keep_from_previous =
+                            TRAILING_WINDOW_SIZE.saturating_sub(field_fragment.len());
+                        let previous_start =
+                            previous_window.len().saturating_sub(keep_from_previous);
+                        let mut trailing_window = BufferPool::acquire(TRAILING_WINDOW_SIZE);
+                        trailing_window.extend_from_slice(&previous_window[previous_start..]);
+                        trailing_window.extend_from_slice(field_fragment.as_slice());
+                        if trailing_window.len() > TRAILING_WINDOW_SIZE {
+                            let overflow = trailing_window.len() - TRAILING_WINDOW_SIZE;
+                            let tail = trailing_window.as_slice()[overflow..].to_vec();
+                            trailing_window.clear();
+                            trailing_window.extend_from_slice(&tail);
+                        }
+                        self.state.field_trailing_window = trailing_window;
 
                         current_pos = total_len;
                     }

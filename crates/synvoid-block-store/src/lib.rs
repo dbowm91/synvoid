@@ -20,7 +20,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use synvoid_config::DenyListLimitsConfig;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, Mutex as TokioMutex};
 
 pub use synvoid_core::block_store::{
     BlockProvenance, BlockProvenanceKind, BlockRecord, BlockTargetKind, BlocklistEvent,
@@ -528,6 +528,7 @@ pub struct BlockStore {
     mesh_capacity_lock: Mutex<()>,
     persist_tx: Option<mpsc::Sender<PersistRequest>>,
     shutdown_tx: Option<mpsc::Sender<oneshot::Sender<()>>>,
+    persist_handle: TokioMutex<Option<tokio::task::JoinHandle<()>>>,
     mitigation_provider: arc_swap::ArcSwapOption<SizedMitigationProvider>,
     seen_events: RwLock<SeenEventCache>,
     target_state: RwLock<TargetStateCache>,
@@ -540,6 +541,28 @@ pub struct BlockStore {
 }
 
 impl BlockStore {
+    async fn persist_request(
+        path: &PathBuf,
+        mesh_path: Option<&PathBuf>,
+        request: &PersistRequest,
+        max_entries: usize,
+    ) -> bool {
+        let mut succeeded = true;
+        if let Err(error) = Self::persist_to_disk(path, &request.entries, max_entries).await {
+            tracing::warn!(%error, "Failed to persist block store snapshot");
+            succeeded = false;
+        }
+        if let Some(mesh_path) = mesh_path {
+            if let Err(error) =
+                Self::persist_mesh_to_disk(mesh_path, &request.mesh_entries, max_entries).await
+            {
+                tracing::warn!(%error, "Failed to persist mesh block store snapshot");
+                succeeded = false;
+            }
+        }
+        succeeded
+    }
+
     #[inline]
     pub(crate) fn shard_index(key: &str) -> usize {
         let mut hash: u64 = 5381;
@@ -831,7 +854,7 @@ impl BlockStore {
             }
         }
 
-        let (persist_tx, shutdown_tx) = if persist_path.is_some() {
+        let (persist_tx, shutdown_tx, persist_handle) = if persist_path.is_some() {
             let (tx, mut rx): (mpsc::Sender<PersistRequest>, mpsc::Receiver<PersistRequest>) =
                 mpsc::channel(100);
             let (shutdown_tx, mut shutdown_rx): (
@@ -844,7 +867,7 @@ impl BlockStore {
             let persist_immediately = config.persist_interval_secs == 0;
             let persist_interval_secs = config.persist_interval_secs.max(1);
 
-            tokio::spawn(async move {
+            let persist_handle = tokio::spawn(async move {
                 let mut interval =
                     tokio::time::interval(std::time::Duration::from_secs(persist_interval_secs));
                 let mut pending: Option<PersistRequest> = None;
@@ -853,17 +876,25 @@ impl BlockStore {
                     tokio::select! {
                         _ = interval.tick() => {
                             if let Some(req) = pending.take() {
-                                Self::persist_to_disk(&path, req.entries, max_entries_clone).await;
-                                if let Some(ref mp) = mesh_path {
-                                    Self::persist_mesh_to_disk(mp, req.mesh_entries, max_entries_clone).await;
+                                if !Self::persist_request(
+                                    &path,
+                                    mesh_path.as_ref(),
+                                    &req,
+                                    max_entries_clone,
+                                ).await {
+                                    pending = Some(req);
                                 }
                             }
                         }
                         Some(req) = rx.recv() => {
                             if persist_immediately {
-                                Self::persist_to_disk(&path, req.entries, max_entries_clone).await;
-                                if let Some(ref mp) = mesh_path {
-                                    Self::persist_mesh_to_disk(mp, req.mesh_entries, max_entries_clone).await;
+                                if !Self::persist_request(
+                                    &path,
+                                    mesh_path.as_ref(),
+                                    &req,
+                                    max_entries_clone,
+                                ).await {
+                                    pending = Some(req);
                                 }
                             } else {
                                 pending = Some(req);
@@ -877,10 +908,12 @@ impl BlockStore {
                                 pending = Some(req);
                             }
                             if let Some(req) = pending.take() {
-                                Self::persist_to_disk(&path, req.entries, max_entries_clone).await;
-                                if let Some(ref mp) = mesh_path {
-                                    Self::persist_mesh_to_disk(mp, req.mesh_entries, max_entries_clone).await;
-                                }
+                                let _ = Self::persist_request(
+                                    &path,
+                                    mesh_path.as_ref(),
+                                    &req,
+                                    max_entries_clone,
+                                ).await;
                             }
                             tracing::info!("Block store persistence task shutting down");
                             let _ = done_tx.send(());
@@ -890,9 +923,9 @@ impl BlockStore {
                 }
             });
 
-            (Some(tx), Some(shutdown_tx))
+            (Some(tx), Some(shutdown_tx), Some(persist_handle))
         } else {
-            (None, None)
+            (None, None, None)
         };
 
         let store = Self {
@@ -908,6 +941,7 @@ impl BlockStore {
             mesh_capacity_lock: Mutex::new(()),
             persist_tx,
             shutdown_tx,
+            persist_handle: TokioMutex::new(persist_handle),
             mitigation_provider: arc_swap::ArcSwapOption::const_empty(),
             seen_events: RwLock::new(SeenEventCache::new()),
             target_state: RwLock::new(target_state_cache),
@@ -1000,40 +1034,37 @@ impl BlockStore {
                 let _ = done_rx.await;
             }
         }
+
+        if let Some(handle) = self.persist_handle.lock().await.take() {
+            if let Err(error) = handle.await {
+                tracing::warn!(%error, "Block store persistence task failed during shutdown");
+            }
+        }
     }
 
     pub(crate) async fn persist_to_disk(
         path: &PathBuf,
-        entries: Vec<(String, BlockEntry)>,
+        entries: &[(String, BlockEntry)],
         max_entries: usize,
-    ) {
+    ) -> Result<(), String> {
         let entries_to_save: Vec<BlockEntry> = entries
-            .into_iter()
+            .iter()
             .filter(|(_, e)| !e.is_expired())
             .take(max_entries)
-            .map(|(_, e)| e)
+            .map(|(_, e)| e.clone())
             .collect();
 
-        match serde_json::to_string_pretty(&entries_to_save) {
-            Ok(json) => {
-                let temp_path = path.with_extension("tmp");
-                match tokio::fs::write(&temp_path, json).await {
-                    Ok(_) => {
-                        if let Err(e) = tokio::fs::rename(&temp_path, path).await {
-                            tracing::warn!("Failed to rename temp block file: {}", e);
-                        } else {
-                            Self::set_secure_permissions(path).await;
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to write blocks to disk: {}", e);
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::warn!("Failed to serialize block entries: {}", e);
-            }
-        }
+        let json = serde_json::to_string_pretty(&entries_to_save)
+            .map_err(|e| format!("failed to serialize block entries: {}", e))?;
+        let temp_path = path.with_extension("tmp");
+        tokio::fs::write(&temp_path, json)
+            .await
+            .map_err(|e| format!("failed to write blocks to disk: {}", e))?;
+        tokio::fs::rename(&temp_path, path)
+            .await
+            .map_err(|e| format!("failed to rename temp block file: {}", e))?;
+        Self::set_secure_permissions(path).await;
+        Ok(())
     }
 
     #[cfg(unix)]
@@ -1053,36 +1084,27 @@ impl BlockStore {
 
     pub(crate) async fn persist_mesh_to_disk(
         path: &PathBuf,
-        entries: Vec<(String, MeshBlockEntry)>,
+        entries: &[(String, MeshBlockEntry)],
         max_entries: usize,
-    ) {
+    ) -> Result<(), String> {
         let entries_to_save: Vec<MeshBlockEntry> = entries
-            .into_iter()
+            .iter()
             .filter(|(_, e)| !e.is_expired())
             .take(max_entries)
-            .map(|(_, e)| e)
+            .map(|(_, e)| e.clone())
             .collect();
 
-        match serde_json::to_string_pretty(&entries_to_save) {
-            Ok(json) => {
-                let temp_path = path.with_extension("tmp");
-                match tokio::fs::write(&temp_path, json).await {
-                    Ok(_) => {
-                        if let Err(e) = tokio::fs::rename(&temp_path, path).await {
-                            tracing::warn!("Failed to rename temp mesh block file: {}", e);
-                        } else {
-                            Self::set_secure_permissions(path).await;
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to write mesh blocks to disk: {}", e);
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::warn!("Failed to serialize mesh block entries: {}", e);
-            }
-        }
+        let json = serde_json::to_string_pretty(&entries_to_save)
+            .map_err(|e| format!("failed to serialize mesh block entries: {}", e))?;
+        let temp_path = path.with_extension("tmp");
+        tokio::fs::write(&temp_path, json)
+            .await
+            .map_err(|e| format!("failed to write mesh blocks to disk: {}", e))?;
+        tokio::fs::rename(&temp_path, path)
+            .await
+            .map_err(|e| format!("failed to rename temp mesh block file: {}", e))?;
+        Self::set_secure_permissions(path).await;
+        Ok(())
     }
 
     /// Persist the current target state cache to disk as `blocklist_target_state.json`.
@@ -1243,10 +1265,12 @@ impl BlockStore {
             });
             let max_entries = self.config.max_entries;
             tokio::spawn(async move {
-                Self::persist_to_disk(&path, entries, max_entries).await;
-                if let Some(mp) = mesh_path {
-                    Self::persist_mesh_to_disk(&mp, mesh_entries, max_entries).await;
-                }
+                let request = PersistRequest {
+                    entries,
+                    mesh_entries,
+                };
+                let _ =
+                    Self::persist_request(&path, mesh_path.as_ref(), &request, max_entries).await;
             });
         }
     }

@@ -58,6 +58,17 @@ pub const BLOCK_BROADCAST_FAILURE_THRESHOLD: u32 = 5;
 /// we block locally and inform global peers. The actual ratelimit block duration
 /// from the origin WAF is preserved when we receive blocks from other nodes.
 const BLOCK_DURATION_SECS: u64 = 300;
+const MAX_PROVIDER_FANOUT: usize = 16;
+
+struct ProviderTaskGuard(Vec<tokio::task::JoinHandle<()>>);
+
+impl Drop for ProviderTaskGuard {
+    fn drop(&mut self) {
+        for task in &self.0 {
+            task.abort();
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct MeshProxy {
@@ -1072,8 +1083,14 @@ impl MeshProxy {
             String,
             Result<Response<BoxBody<Bytes, Infallible>>, MeshProxyError>,
         )>(providers.len());
+        let provider_limit = Arc::new(tokio::sync::Semaphore::new(MAX_PROVIDER_FANOUT));
+        let mut provider_tasks = ProviderTaskGuard(Vec::with_capacity(providers.len()));
 
         for provider in &providers {
+            let permit =
+                provider_limit.clone().acquire_owned().await.map_err(|_| {
+                    MeshProxyError::SendFailed("provider fanout closed".to_string())
+                })?;
             let result_tx = result_tx.clone();
             let upstream_id = upstream_id.to_string();
             let node_id = provider.node_id.clone();
@@ -1084,7 +1101,8 @@ impl MeshProxy {
             let headers_clone = headers.clone();
             let proxy = self.clone();
 
-            tokio::spawn(async move {
+            provider_tasks.0.push(tokio::spawn(async move {
+                let _permit = permit;
                 tracing::debug!("Trying provider {} for {}", node_id, upstream_id);
 
                 // Build request with original method/URI/headers, preserving client's path
@@ -1107,7 +1125,7 @@ impl MeshProxy {
                     .proxy_to_peer(&node_id, &upstream_id, upstream_url, retry_req)
                     .await;
                 let _ = result_tx.send((node_id, result)).await;
-            });
+            }));
         }
 
         drop(result_tx);

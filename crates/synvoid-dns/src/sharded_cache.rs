@@ -66,7 +66,7 @@ impl Shard {
 impl ShardedDnsCache {
     /// Create a new sharded cache
     pub fn new(capacity: usize, max_ttl_secs: u64, min_ttl_secs: u64) -> Self {
-        let shard_capacity = capacity / DEFAULT_SHARDS;
+        let shard_capacity = capacity.div_ceil(DEFAULT_SHARDS);
         let shards = (0..DEFAULT_SHARDS)
             .map(|_| RwLock::new(Shard::new(shard_capacity)))
             .collect();
@@ -174,11 +174,11 @@ mod tests {
     fn test_sharded_cache_basic() {
         let cache = ShardedDnsCache::new(1000, 3600, 60);
 
-        let key = CacheKey {
-            qname: "example.com".to_string(),
-            qtype: 1, // A record
-            client_subnet: None,
-        };
+        let key = CacheKey::new(
+            "example.com".to_string(),
+            super::server::RecordType::A,
+            None,
+        );
 
         let data = vec![1, 2, 3, 4];
         cache.insert(key.clone(), data.clone(), 300);
@@ -194,11 +194,11 @@ mod tests {
 
         // Insert more entries than capacity
         for i in 0..20 {
-            let key = CacheKey {
-                qname: format!("example{}.com", i),
-                qtype: 1,
-                client_subnet: None,
-            };
+            let key = CacheKey::new(
+                format!("example{}.com", i),
+                super::server::RecordType::A,
+                None,
+            );
             cache.insert(key, vec![1, 2, 3], 300);
         }
 
@@ -210,11 +210,11 @@ mod tests {
     fn test_sharded_cache_ttl() {
         let cache = ShardedDnsCache::new(1000, 3600, 1);
 
-        let key = CacheKey {
-            qname: "example.com".to_string(),
-            qtype: 1,
-            client_subnet: None,
-        };
+        let key = CacheKey::new(
+            "example.com".to_string(),
+            super::server::RecordType::A,
+            None,
+        );
 
         // Insert with 1 second TTL
         cache.insert(key.clone(), vec![1, 2, 3], 1);

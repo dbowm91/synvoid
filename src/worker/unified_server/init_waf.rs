@@ -131,11 +131,13 @@ pub async fn build_port_honeypot(
 }
 
 /// Spawn the port-honeypot background task.
-pub fn spawn_port_honeypot(port_honeypot_runner: Option<Arc<PortHoneypotRunner>>) {
-    if let Some(runner) = port_honeypot_runner {
+pub fn spawn_port_honeypot(
+    port_honeypot_runner: Option<Arc<PortHoneypotRunner>>,
+) -> Option<tokio::task::JoinHandle<()>> {
+    port_honeypot_runner.map(|runner| {
         let runner_clone = runner.clone();
         tokio::spawn(async move {
             runner_clone.run().await;
-        });
-    }
+        })
+    })
 }
