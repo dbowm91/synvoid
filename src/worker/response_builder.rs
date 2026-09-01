@@ -2,8 +2,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Instant, SystemTime};
 
-use tokio::task;
-
 use super::cpu_task::state::{CompressionTask, CpuWorkerState};
 use synvoid_ipc::CpuTaskResult;
 use synvoid_static_files::minifier;
@@ -42,10 +40,10 @@ pub(in crate::worker) fn process_minify_request(
 
     let source_path = source_root.join(path.trim_start_matches('/'));
 
-    let original_content = task::block_in_place(|| std::fs::read(&source_path))
-        .map_err(|e| format!("Failed to read file: {}", e))?;
+    let original_content =
+        std::fs::read(&source_path).map_err(|e| format!("Failed to read file: {}", e))?;
 
-    let mtime = task::block_in_place(|| std::fs::metadata(&source_path))
+    let mtime = std::fs::metadata(&source_path)
         .and_then(|m| m.modified())
         .unwrap_or(SystemTime::UNIX_EPOCH);
 
@@ -318,14 +316,20 @@ pub(in crate::worker) async fn handle_minify_request(
     let source_path = source_root.join(path.trim_start_matches('/'));
 
     // Use spawn_blocking to run blocking file I/O in the blocking thread pool
-    // This prevents blocking the async runtime
-    let file_result = task::block_in_place(|| {
-        let read_result = std::fs::read(&source_path);
-        let mtime = std::fs::metadata(&source_path)
+    // (M-02) — avoids stalling the Tokio worker.
+    let source_path_clone = source_path.clone();
+    let file_result = tokio::task::spawn_blocking(move || {
+        let read_result = std::fs::read(&source_path_clone);
+        let mtime = std::fs::metadata(&source_path_clone)
             .and_then(|m| m.modified())
             .unwrap_or(SystemTime::UNIX_EPOCH);
         (read_result, mtime)
-    });
+    })
+    .await
+    .unwrap_or((
+        Err(std::io::Error::other("spawn_blocking failed")),
+        SystemTime::UNIX_EPOCH,
+    ));
 
     let (original_content, mtime) = match file_result {
         (Ok(content), mtime) => (content, mtime),
@@ -343,28 +347,31 @@ pub(in crate::worker) async fn handle_minify_request(
 
     let minified_content = match cache.get(&key) {
         Some(entry) if entry.mtime >= mtime => entry.content.to_vec(),
-        _ => {
-            match cache.minify_and_cache(&site_id, &path, &original_content, mtime) {
-                Ok(entry) => {
-                    let site_id_clone = site_id.clone();
-                    let path_clone = path.clone();
-                    let content = entry.content.clone();
-                    let mtime_clone = mtime;
-                    // Run disk write in blocking thread to avoid blocking async runtime
-                    let write_result = task::block_in_place(|| {
-                        cache.write_to_disk(&site_id_clone, &path_clone, &content, mtime_clone)
-                    });
-                    if let Err(e) = write_result {
-                        tracing::warn!("Failed to write minified file: {}", e);
-                    }
-                    entry.content.to_vec()
+        _ => match cache.minify_and_cache(&site_id, &path, &original_content, mtime) {
+            Ok(entry) => {
+                let cache_clone = cache.clone();
+                let site_id_clone = site_id.clone();
+                let path_clone = path.clone();
+                let content = entry.content.clone();
+                let write_result = tokio::task::spawn_blocking(move || {
+                    cache_clone.write_to_disk(&site_id_clone, &path_clone, &content, mtime)
+                })
+                .await
+                .unwrap_or_else(|e| {
+                    Err(synvoid_static_files::minifier::MinifierError::Io(
+                        std::io::Error::other(e.to_string()),
+                    ))
+                });
+                if let Err(e) = write_result {
+                    tracing::warn!("Failed to write minified file: {}", e);
                 }
-                Err(e) => {
-                    send_error(state, request_id, format!("Minification failed: {}", e)).await;
-                    return;
-                }
+                entry.content.to_vec()
             }
-        }
+            Err(e) => {
+                send_error(state, request_id, format!("Minification failed: {}", e)).await;
+                return;
+            }
+        },
     };
 
     let content_type = path
@@ -394,16 +401,23 @@ pub(in crate::worker) async fn handle_minify_request(
                             &minifier::Encoding::Gzip,
                         ) {
                             Ok(content) => {
+                                let cache_clone = cache.clone();
                                 let site_id_clone = site_id.clone();
                                 let path_clone = path.clone();
                                 let content_clone = content.clone();
-                                let write_result = task::block_in_place(|| {
-                                    cache.write_compressed_to_disk(
+                                let write_result = tokio::task::spawn_blocking(move || {
+                                    cache_clone.write_compressed_to_disk(
                                         &site_id_clone,
                                         &path_clone,
                                         &content_clone,
                                         &minifier::Encoding::Gzip,
                                     )
+                                })
+                                .await
+                                .unwrap_or_else(|e| {
+                                    Err(synvoid_static_files::minifier::MinifierError::Io(
+                                        std::io::Error::other(e.to_string()),
+                                    ))
                                 });
                                 if let Err(e) = write_result {
                                     tracing::warn!("Failed to write gzip file: {}", e);
@@ -440,16 +454,23 @@ pub(in crate::worker) async fn handle_minify_request(
                             &minifier::Encoding::Br,
                         ) {
                             Ok(content) => {
+                                let cache_clone = cache.clone();
                                 let site_id_clone = site_id.clone();
                                 let path_clone = path.clone();
                                 let content_clone = content.clone();
-                                let write_result = task::block_in_place(|| {
-                                    cache.write_compressed_to_disk(
+                                let write_result = tokio::task::spawn_blocking(move || {
+                                    cache_clone.write_compressed_to_disk(
                                         &site_id_clone,
                                         &path_clone,
                                         &content_clone,
                                         &minifier::Encoding::Br,
                                     )
+                                })
+                                .await
+                                .unwrap_or_else(|e| {
+                                    Err(synvoid_static_files::minifier::MinifierError::Io(
+                                        std::io::Error::other(e.to_string()),
+                                    ))
                                 });
                                 if let Err(e) = write_result {
                                     tracing::warn!("Failed to write brotli file: {}", e);
@@ -613,23 +634,44 @@ pub(in crate::worker) fn process_compression_queue(state: &CpuWorkerState) {
 
             match cache.generate_compressed(&task.site_id, &task.path, &minified_content, &enc) {
                 Ok(content) => {
-                    let site_id_clone = task.site_id.clone();
-                    let path_clone = task.path.clone();
-                    let content_clone = content.clone();
-                    let enc_clone = enc.clone();
-                    let write_result = task::block_in_place(|| {
-                        cache.write_compressed_to_disk(
-                            &site_id_clone,
-                            &path_clone,
-                            &content_clone,
-                            &enc_clone,
+                    // Background compression queue runs off the hot request path;
+                    // direct write is okay, but prefer blocking-pool when inside a
+                    // runtime to keep the fix consistent with M-02. For the sync
+                    // CPU-worker thread we can call directly; if we are inside a
+                    // Tokio runtime we fire-and-forget via spawn_blocking.
+                    let write_result = if tokio::runtime::Handle::try_current().is_ok() {
+                        let cache_clone = Arc::clone(cache);
+                        let site_id_clone = task.site_id.clone();
+                        let path_clone = task.path.clone();
+                        let content_clone = content.clone();
+                        let enc_clone = enc.clone();
+                        // Fire-and-forget on the blocking pool (M-02 optimization note)
+                        tokio::task::spawn_blocking(move || {
+                            let _ = cache_clone.write_compressed_to_disk(
+                                &site_id_clone,
+                                &path_clone,
+                                &content_clone,
+                                &enc_clone,
+                            );
+                        });
+                        Ok::<_, synvoid_static_files::minifier::MinifierError>(
+                            std::path::PathBuf::new(),
                         )
-                    });
+                    } else {
+                        cache.write_compressed_to_disk(&task.site_id, &task.path, &content, &enc)
+                    };
                     if let Err(e) = write_result {
                         tracing::warn!("Failed to write {} file: {}", task.encoding, e);
-                    } else {
+                    } else if tokio::runtime::Handle::try_current().is_err() {
                         tracing::debug!(
                             "Generated {} for {}/{}",
+                            task.encoding,
+                            task.site_id,
+                            task.path
+                        );
+                    } else {
+                        tracing::debug!(
+                            "Queued {} generation for {}/{} on blocking pool",
                             task.encoding,
                             task.site_id,
                             task.path

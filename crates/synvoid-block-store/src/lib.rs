@@ -550,6 +550,7 @@ impl BlockStore {
         let mut succeeded = true;
         if let Err(error) = Self::persist_to_disk(path, &request.entries, max_entries).await {
             tracing::warn!(%error, "Failed to persist block store snapshot");
+            counter!("synvoid.blockstore.persist_failures_total").increment(1);
             succeeded = false;
         }
         if let Some(mesh_path) = mesh_path {
@@ -557,6 +558,7 @@ impl BlockStore {
                 Self::persist_mesh_to_disk(mesh_path, &request.mesh_entries, max_entries).await
             {
                 tracing::warn!(%error, "Failed to persist mesh block store snapshot");
+                counter!("synvoid.blockstore.persist_failures_total").increment(1);
                 succeeded = false;
             }
         }

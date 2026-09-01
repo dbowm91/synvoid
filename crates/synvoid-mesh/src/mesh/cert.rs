@@ -540,9 +540,13 @@ impl MeshCertManager {
     }
 
     pub fn is_global_node_authorized(&self, signer_public_key: &str) -> bool {
+        use subtle::{Choice, ConstantTimeEq};
         let keys = self.global_node_public_keys.read();
-        keys.values()
-            .any(|pk| bool::from(pk.as_slice().ct_eq(signer_public_key.as_bytes())))
+        let mut m = Choice::from(0u8);
+        for pk in keys.values() {
+            m |= pk.as_slice().ct_eq(signer_public_key.as_bytes());
+        }
+        bool::from(m)
     }
 
     pub fn verify_global_node_proof(
@@ -1368,10 +1372,15 @@ pub fn verify_certificate_chain(
     // Extract CA public key (Ed25519)
     let ca_pubkey_bytes = ca_cert.public_key().subject_public_key.as_ref().to_vec();
 
-    // Verify CA public key is in trusted set
-    let ca_trusted = trusted_global_keys
-        .values()
-        .any(|k| bool::from(k.as_slice().ct_eq(ca_pubkey_bytes.as_slice())));
+    // Verify CA public key is in trusted set (M-05: fold without short-circuit)
+    let ca_trusted = {
+        use subtle::{Choice, ConstantTimeEq};
+        let mut m = Choice::from(0u8);
+        for k in trusted_global_keys.values() {
+            m |= k.as_slice().ct_eq(ca_pubkey_bytes.as_slice());
+        }
+        bool::from(m)
+    };
     if !ca_trusted {
         return Err(MeshCertError::UntrustedCa);
     }

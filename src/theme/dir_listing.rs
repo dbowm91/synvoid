@@ -192,13 +192,22 @@ impl DirectoryListingTemplate {
                     .collect();
                 format!("?{}", pairs.join("&"))
             };
+            // L-01: avoid panic on empty or multi-byte `sort` query param
+            let display = {
+                let mut chars = sort_opt.chars();
+                let first = chars
+                    .next()
+                    .map(|c| c.to_uppercase().to_string())
+                    .unwrap_or_default();
+                format!("{}{}", first, chars.as_str())
+            };
             html.push_str(&format!(
                 r#"<a href="{}" class="{}" aria-label="Sort by {}" aria-current="{}">{}</a>"#,
                 query,
                 if is_active { "active" } else { "" },
                 sort_opt,
                 if is_active { "true" } else { "false" },
-                sort_opt.chars().next().unwrap().to_uppercase().to_string() + &sort_opt[1..]
+                display
             ));
         }
 

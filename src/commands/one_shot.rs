@@ -246,7 +246,9 @@ fn execute_config_test() -> Result<OneShotOutcome, OneShotError> {
             crate::config::site::SiteConfig::from_file(&path).map_err(|e| {
                 OneShotError::ConfigInvalid(format!(
                     "{}: {}",
-                    path.file_name().unwrap().to_string_lossy(),
+                    path.file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| path.display().to_string()),
                     e
                 ))
             })?;

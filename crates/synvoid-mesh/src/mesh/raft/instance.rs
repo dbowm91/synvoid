@@ -336,6 +336,16 @@ impl Clone for RaftInstance {
     }
 }
 
+// SAFETY: `RaftInstance` contains `openraft::Raft<GlobalRegistryConfig, _>` and
+// `GlobalRegistry`. At the pinned `openraft = "0.10.0-alpha.18"` with
+// `AsyncRuntime = TokioRuntime`, `Raft<C>` is `Send + Sync` when `C`'s
+// associated types (`RaftStateMachine`, `RaftLogStorage`, etc.) are `Send + Sync`.
+// `GlobalRegistryStateMachine`/`GlobalRegistryLogStorage` are `Send + Sync` via
+// the SAFETY comments above (mutex-serialized `rusqlite::Connection`). All
+// other fields (`Arc<_>`, `u64`, `Vec<String>`, `MeshRaftNetworkFactory` which
+// is `Send + Sync`) are `Send + Sync`. The `unsafe impl` therefore upholds
+// `Send`/`Sync` as long as the `openraft` version and its trait bounds remain
+// as pinned. If `openraft` adds a `!Send` field, this impl must be revisited.
 unsafe impl Send for RaftInstance {}
 unsafe impl Sync for RaftInstance {}
 

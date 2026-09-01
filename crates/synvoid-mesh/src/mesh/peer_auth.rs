@@ -336,10 +336,16 @@ pub fn validate_member_certificate_with_raft_attestation(
                 return false;
             }
 
-            // Verify signer is an authorized Global Node
-            let signer_authorized = authorized_global_pubkeys
-                .iter()
-                .any(|k| bool::from(k.as_bytes().ct_eq(att.signer_public_key.as_bytes())));
+            // Verify signer is an authorized Global Node (M-05: fold without
+            // short-circuit to avoid leaking signer count / match position).
+            let signer_authorized = {
+                use subtle::{Choice, ConstantTimeEq};
+                let mut m = Choice::from(0u8);
+                for k in authorized_global_pubkeys.iter() {
+                    m |= k.as_bytes().ct_eq(att.signer_public_key.as_bytes());
+                }
+                bool::from(m)
+            };
             if !signer_authorized {
                 return false;
             }
@@ -751,20 +757,16 @@ pub fn validate_edge_node_with_attestation(
         }
     }
 
-    let mut key_verified = false;
+    let mut key_verified_choice = subtle::Choice::from(0u8);
     for global_pubkey in authorized_global_pubkeys {
         if let Ok(pk_bytes) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(global_pubkey)
         {
-            if bool::from(
-                pk_bytes
-                    .as_slice()
-                    .ct_eq(attestation_pubkey_bytes.as_slice()),
-            ) {
-                key_verified = true;
-                break;
-            }
+            key_verified_choice |= pk_bytes
+                .as_slice()
+                .ct_eq(attestation_pubkey_bytes.as_slice());
         }
     }
+    let key_verified = bool::from(key_verified_choice);
 
     if !key_verified {
         return Err(format!(
@@ -913,14 +915,18 @@ fn validate_origin_node(
         return Err("No authorized global node keys configured for origin attestation".to_string());
     }
 
-    if !authorized_global_pubkeys
-        .iter()
-        .any(|k| bool::from(k.as_bytes().ct_eq(attestation_key.as_bytes())))
     {
-        return Err(format!(
-            "Origin node {} global node attestation key not in authorized list",
-            peer_node_id
-        ));
+        use subtle::{Choice, ConstantTimeEq};
+        let mut m = Choice::from(0u8);
+        for k in authorized_global_pubkeys.iter() {
+            m |= k.as_bytes().ct_eq(attestation_key.as_bytes());
+        }
+        if !bool::from(m) {
+            return Err(format!(
+                "Origin node {} global node attestation key not in authorized list",
+                peer_node_id
+            ));
+        }
     }
 
     verify_signature(
@@ -989,16 +995,20 @@ fn validate_global_node(
         ));
     }
 
-    if !authorized_global_pubkeys.iter().any(|key| {
-        URL_SAFE_NO_PAD
-            .decode(key)
-            .map(|authorized| bool::from(authorized.as_slice().ct_eq(pk_bytes.as_slice())))
-            .unwrap_or(false)
-    }) {
-        return Err(format!(
-            "Global node {} public key not in authorized list",
-            peer_node_id
-        ));
+    {
+        use subtle::{Choice, ConstantTimeEq};
+        let mut m = Choice::from(0u8);
+        for key in authorized_global_pubkeys.iter() {
+            if let Ok(authorized) = URL_SAFE_NO_PAD.decode(key) {
+                m |= authorized.as_slice().ct_eq(pk_bytes.as_slice());
+            }
+        }
+        if !bool::from(m) {
+            return Err(format!(
+                "Global node {} public key not in authorized list",
+                peer_node_id
+            ));
+        }
     }
 
     let challenge = format!("{}:{}", peer_node_id, timestamp);

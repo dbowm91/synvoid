@@ -56,9 +56,6 @@ struct WebDavState {
     webdav_config: WebDavConfig,
 }
 
-unsafe impl Send for WebDavState {}
-unsafe impl Sync for WebDavState {}
-
 /// Verify authentication from request headers
 fn require_auth(state: &WebDavState, headers: &HeaderMap) -> Result<(), StatusCode> {
     if !state.webdav_config.require_auth {

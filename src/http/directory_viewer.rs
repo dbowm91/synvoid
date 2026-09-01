@@ -48,9 +48,6 @@ struct DirectoryViewerState {
     admin_token_hash: String,
 }
 
-unsafe impl Send for DirectoryViewerState {}
-unsafe impl Sync for DirectoryViewerState {}
-
 fn require_auth(state: &DirectoryViewerState, headers: &HeaderMap) -> Result<(), StatusCode> {
     if !state.viewer_config.require_auth {
         return Ok(());

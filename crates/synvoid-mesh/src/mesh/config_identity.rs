@@ -2,10 +2,13 @@ use super::*;
 
 impl GlobalNodeConfig {
     pub fn is_invite_token_valid(&self, token: &str) -> bool {
-        use subtle::ConstantTimeEq;
-        self.invite_tokens
-            .iter()
-            .any(|t| bool::from(t.as_bytes().ct_eq(token.as_bytes())))
+        use subtle::{Choice, ConstantTimeEq};
+        // M-05: fold without short-circuit to avoid leaking token set size / match position.
+        let mut m = Choice::from(0u8);
+        for t in &self.invite_tokens {
+            m |= t.as_bytes().ct_eq(token.as_bytes());
+        }
+        bool::from(m)
     }
 
     pub fn load_keys(&mut self) -> Result<(), String> {
@@ -234,9 +237,14 @@ impl GenesisKeyConfig {
             );
             return false;
         }
-        self.authorized_genesis_keys
-            .iter()
-            .any(|k| k == genesis_public_key)
+        // M-05: use constant-time fold even though keys are public; avoids
+        // leaking authorized set size / match position via short-circuit.
+        use subtle::{Choice, ConstantTimeEq};
+        let mut m = Choice::from(0u8);
+        for k in &self.authorized_genesis_keys {
+            m |= k.as_bytes().ct_eq(genesis_public_key.as_bytes());
+        }
+        bool::from(m)
     }
 
     pub fn authorize_genesis_key(&mut self, public_key: String) {

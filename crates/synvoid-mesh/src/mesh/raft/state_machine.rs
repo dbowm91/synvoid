@@ -387,6 +387,15 @@ impl Clone for GlobalRegistryStateMachine {
     }
 }
 
+// SAFETY: `rusqlite::Connection` is `!Send` because `sqlite3*` handles are not
+// thread-safe for unsynchronized concurrent use. All access to `db` is
+// serialized behind `parking_lot::Mutex<Connection>` and no guard is held
+// across an `.await` point except inside `tokio::task::spawn_blocking` (see
+// `streaming_serialize`, `streaming_deserialize_and_apply`). The connection is
+// therefore never accessed concurrently from two threads. This synchronized
+// use is sound when SQLite is compiled with `SQLITE_THREADSAFE=1` (default
+// for `rusqlite`/`libsqlite3-sys`). The `unsafe impl` upholds the invariant
+// that every DB access holds the mutex.
 unsafe impl Send for GlobalRegistryStateMachine {}
 unsafe impl Sync for GlobalRegistryStateMachine {}
 
@@ -698,6 +707,10 @@ impl Clone for GlobalRegistryLogStorage {
     }
 }
 
+// SAFETY: Same as `GlobalRegistryStateMachine` — `rusqlite::Connection` is
+// `!Send` to prevent unsynchronized cross-thread use, but all access is
+// serialized behind `parking_lot::Mutex` and no guard is held across await
+// outside `spawn_blocking`. See SAFETY comment on `GlobalRegistryStateMachine`.
 unsafe impl Send for GlobalRegistryLogStorage {}
 unsafe impl Sync for GlobalRegistryLogStorage {}
 

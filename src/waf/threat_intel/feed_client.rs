@@ -5,7 +5,6 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
-use subtle::ConstantTimeEq;
 use tokio::time;
 
 use crate::mesh::protocol::{MeshMessageSigner, ThreatIndicator, ThreatSeverity, ThreatType};
@@ -307,13 +306,19 @@ impl ThreatFeedClient {
     }
 
     fn is_trusted_signer(&self, signer_public_key: Option<&str>) -> bool {
+        use subtle::{Choice, ConstantTimeEq};
         let Some(signer_pk) = signer_public_key else {
             return false;
         };
-        self.config.trusted_signers.iter().any(|pk| {
-            let result = pk.as_bytes().ct_eq(signer_pk.as_bytes());
-            bool::from(result)
-        })
+        // M-05: Fold without short-circuit to avoid leaking signer count / match position
+        // via timing. `ct_eq` on slices of different length returns 0 quickly, but
+        // trusted signer keys are fixed-length base64 (43 chars for 32 bytes), so length
+        // is constant and the fold provides constant-time selection over the set.
+        let mut matched = Choice::from(0u8);
+        for pk in &self.config.trusted_signers {
+            matched |= pk.as_bytes().ct_eq(signer_pk.as_bytes());
+        }
+        bool::from(matched)
     }
 
     async fn fetch_feed(&self) -> Result<ThreatFeedPayload, String> {

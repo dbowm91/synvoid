@@ -178,13 +178,11 @@ impl WafCore {
 
     pub fn verify_trust_token(&self, client_ip: IpAddr, token: &str) -> bool {
         let expected = self.generate_trust_token(client_ip);
-        if expected.len() != token.len() {
-            // Avoid timing oracle on length: run a dummy constant-time compare
-            // of equal length before returning false.
-            let dummy = vec![0u8; token.len()];
-            let _ = subtle::ConstantTimeEq::ct_eq(dummy.as_slice(), token.as_bytes());
-            return false;
-        }
+        // M-06: Trust tokens are always 64 hex chars (32-byte HMAC hex). The
+        // previous dummy-allocation path added a distinct timing branch for
+        // length mismatches. `ct_eq` on slices of different length returns 0
+        // without an allocation; the length (64) is public and fixed, so a
+        // single constant-time compare is sufficient.
         subtle::ConstantTimeEq::ct_eq(expected.as_bytes(), token.as_bytes()).unwrap_u8() == 1
     }
 
@@ -366,7 +364,16 @@ impl WafCore {
         });
 
         let mut trust_token_key = [0u8; 32];
-        rand::fill(&mut trust_token_key);
+        // M-04: Use OsRng (getrandom) for bearer-secret seeding. `rand::fill`
+        // uses the thread-local ChaCha12 RNG (seeded via getrandom) — practically
+        // OK, but security audit expects an explicit OsRng contract for 32-byte
+        // bearer secrets.
+        {
+            use rand::TryRngCore;
+            rand::rngs::OsRng
+                .try_fill_bytes(&mut trust_token_key)
+                .expect("OsRng failure");
+        }
 
         Self {
             rate_limiter,

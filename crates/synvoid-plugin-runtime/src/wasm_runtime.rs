@@ -796,15 +796,33 @@ impl WasmPluginManager {
                     }
                 }
 
-                let bytes = std::fs::read(&canonical).map_err(|e| {
-                    WasmPluginError::LoadFailed(format!(
-                        "Plugin '{}' (tier: {}): failed to read {}: {}",
-                        m.name,
-                        m.trust_tier,
-                        canonical.display(),
-                        e
-                    ))
-                })?;
+                let bytes = {
+                    // M-03: Avoid blocking a Tokio worker when this is called
+                    // from an async composition root that holds locks (e.g.
+                    // config reload). If we are inside a runtime, run the
+                    // blocking read on the blocking pool via block_in_place;
+                    // otherwise use a direct read (startup / tests).
+                    let do_read = || std::fs::read(&canonical);
+                    let res = if tokio::runtime::Handle::try_current().is_ok() {
+                        // block_in_place is only valid on multi_thread runtime;
+                        // fall back to direct read if it panics (current_thread).
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            tokio::task::block_in_place(do_read)
+                        }))
+                        .unwrap_or_else(|_| do_read())
+                    } else {
+                        do_read()
+                    };
+                    res.map_err(|e| {
+                        WasmPluginError::LoadFailed(format!(
+                            "Plugin '{}' (tier: {}): failed to read {}: {}",
+                            m.name,
+                            m.trust_tier,
+                            canonical.display(),
+                            e
+                        ))
+                    })?
+                };
                 Bytes::from(bytes)
             }
             (None, None) => {
@@ -2008,13 +2026,24 @@ pub fn wait_for_stable_file(
     let mut stable_count = 0usize;
 
     loop {
-        let metadata = std::fs::metadata(path).map_err(|e| {
-            WasmPluginError::LoadFailed(format!(
-                "failed to read metadata for stability check {}: {}",
-                path.display(),
-                e
-            ))
-        })?;
+        let metadata = {
+            let do_meta = || std::fs::metadata(path);
+            let res = if tokio::runtime::Handle::try_current().is_ok() {
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    tokio::task::block_in_place(do_meta)
+                }))
+                .unwrap_or_else(|_| do_meta())
+            } else {
+                do_meta()
+            };
+            res.map_err(|e| {
+                WasmPluginError::LoadFailed(format!(
+                    "failed to read metadata for stability check {}: {}",
+                    path.display(),
+                    e
+                ))
+            })?
+        };
 
         let current_len = metadata.len();
         let current_mtime = metadata.modified().ok();

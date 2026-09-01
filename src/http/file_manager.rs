@@ -79,9 +79,6 @@ struct FileManagerState {
     admin_token_hash: String,
 }
 
-unsafe impl Send for FileManagerState {}
-unsafe impl Sync for FileManagerState {}
-
 fn require_auth(state: &FileManagerState, headers: &HeaderMap) -> Result<(), StatusCode> {
     let token = headers
         .get("Authorization")

@@ -136,32 +136,15 @@ impl HoneypotResponder for AiHoneypotResponder {
         &self.service_type
     }
 
-    fn respond(&self, payload: &[u8], context: &HoneypotContext) -> HoneypotResponse {
-        let payload_str = if let Ok(s) = std::str::from_utf8(payload) {
-            s.trim().to_string()
-        } else {
-            format!("[binary data: {} bytes]", payload.len())
-        };
-
-        let prompt = format!(
-            "Context: {} connecting from {} to port {} ({} service)\n\
-            Previous data: {}\n\
-            The attacker sent: {}\n\
-            Provide an appropriate response as the simulated service would.",
-            context.remote_ip,
-            context.remote_port,
-            context.local_port,
-            context.service,
-            context.payload_hex.chars().take(100).collect::<String>(),
-            payload_str
-        );
-
-        let response_text = tokio::runtime::Handle::current()
-            .block_on(self.ai_responder.generate_response(&prompt, context))
-            .unwrap_or_else(|e| format!("Error generating response: {}", e));
-
+    fn respond(&self, payload: &[u8], _context: &HoneypotContext) -> HoneypotResponse {
+        // AiHoneypotResponder cannot safely block on an async AI call from a sync
+        // context when running inside a Tokio runtime (Handle::current().block_on
+        // panics with "cannot execute blocking call inside runtime"). The sync
+        // `respond` trait method exists for backward compatibility with
+        // non-AI responders. AI responders must be called via `respond_async`.
+        let _ = payload;
         HoneypotResponse::with_options(
-            response_text.into_bytes(),
+            b"AI responder requires async context: use respond_async".to_vec(),
             ResponseType::AiGenerated,
             false,
             true,

@@ -405,7 +405,7 @@ impl ProcessManager {
         worker_id
     }
 
-    fn build_worker_command(&self, binary_path: &Path) -> Command {
+    fn build_worker_command(&self, binary_path: &Path) -> std::io::Result<Command> {
         let mut cmd = Command::new(binary_path);
 
         if let Some(ref level) = self.config.log_level {
@@ -429,12 +429,12 @@ impl ProcessManager {
                         );
                         cmd.env("SYNVOID_IPC_KEY", key_hex);
                     } else {
-                        panic!(
+                        return Err(std::io::Error::other(format!(
                             "Failed to write IPC key to temp file: {}. \
                              Refusing to fall back to env var (key visible in /proc). \
                              Set security.allow_insecure_ipc_key=true to allow this fallback.",
                             e
-                        );
+                        )));
                     }
                 }
             }
@@ -452,7 +452,7 @@ impl ProcessManager {
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit());
 
-        cmd
+        Ok(cmd)
     }
 
     fn write_ipc_key_to_tempfile(&self, key_hex: &str) -> std::io::Result<String> {
@@ -464,12 +464,21 @@ impl ProcessManager {
         let file_path = temp_dir.join(format!("synvoid_ipc_key_{}", pid));
 
         {
-            // Try to create the file with create_new to prevent symlink attacks
-            match OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&file_path)
-            {
+            // Try to create the file with create_new + O_NOFOLLOW to prevent
+            // symlink attacks (L-03). TOCTOU between check and write is mitigated
+            // by O_EXCL|O_NOFOLLOW and verifying the file is not a symlink via
+            // fstat after open (implicit via O_NOFOLLOW).
+            let res = {
+                let mut opts = OpenOptions::new();
+                opts.write(true).create_new(true);
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::OpenOptionsExt;
+                    opts.custom_flags(libc::O_NOFOLLOW);
+                }
+                opts.open(&file_path)
+            };
+            match res {
                 Ok(mut file) => {
                     #[cfg(unix)]
                     {
@@ -489,10 +498,16 @@ impl ProcessManager {
                                 stale_pid
                             );
                             std::fs::remove_file(&file_path)?;
-                            let mut file = OpenOptions::new()
-                                .write(true)
-                                .create_new(true)
-                                .open(&file_path)?;
+                            let mut file = {
+                                let mut opts = OpenOptions::new();
+                                opts.write(true).create_new(true);
+                                #[cfg(unix)]
+                                {
+                                    use std::os::unix::fs::OpenOptionsExt;
+                                    opts.custom_flags(libc::O_NOFOLLOW);
+                                }
+                                opts.open(&file_path)?
+                            };
                             #[cfg(unix)]
                             {
                                 use std::os::unix::fs::PermissionsExt;
@@ -581,7 +596,7 @@ impl ProcessManager {
     ) -> std::io::Result<WorkerId> {
         let worker_binary = self.find_worker_binary()?;
 
-        let mut cmd = self.build_worker_command(&worker_binary);
+        let mut cmd = self.build_worker_command(&worker_binary)?;
         cmd.arg("--worker")
             .arg("--worker-id")
             .arg(id.as_usize().to_string())
@@ -637,7 +652,7 @@ impl ProcessManager {
             None => self.find_worker_binary()?,
         };
 
-        let mut cmd = self.build_worker_command(&worker_binary);
+        let mut cmd = self.build_worker_command(&worker_binary)?;
         cmd.arg("--worker")
             .arg("--worker-id")
             .arg(id.as_usize().to_string())
@@ -682,7 +697,7 @@ impl ProcessManager {
     pub fn spawn_cpu_worker(&self) -> std::io::Result<usize> {
         let worker_binary = self.find_worker_binary()?;
 
-        let mut cmd = self.build_worker_command(&worker_binary);
+        let mut cmd = self.build_worker_command(&worker_binary)?;
         cmd.arg("--cpu-worker").arg("--cpu-worker-id").arg("0");
 
         let child = cmd.spawn()?;
@@ -722,7 +737,7 @@ impl ProcessManager {
         let pending_threads = *self.pending_thread_count.read();
         let worker_threads = pending_threads.unwrap_or(2) as usize;
 
-        let mut cmd = self.build_worker_command(&worker_binary);
+        let mut cmd = self.build_worker_command(&worker_binary)?;
         cmd.arg("--unified-server-worker")
             .arg("--worker-id")
             .arg(id.as_usize().to_string())

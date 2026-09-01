@@ -155,7 +155,10 @@ pub struct IpcSigner {
 
 impl IpcSigner {
     pub fn new(key: &[u8; 32]) -> Self {
-        let signer_id = u64::from_le_bytes(key[..8].try_into().expect("key has at least 8 bytes"));
+        // M-10: key is [u8;32], so 0..8 is always valid — avoid expect panic string.
+        let signer_id = u64::from_le_bytes([
+            key[0], key[1], key[2], key[3], key[4], key[5], key[6], key[7],
+        ]);
         Self {
             signer_id,
             key: *key,
@@ -235,8 +238,9 @@ impl IpcSigner {
     }
 
     pub fn sign(&self, data: &[u8]) -> [u8; HMAC_SIZE] {
+        // HMAC accepts any key size per RFC2104 — infallible
         let mut mac =
-            HmacSha3_256::new_from_slice(&self.key).expect("HMAC can take key of any size");
+            HmacSha3_256::new_from_slice(&self.key).expect("HMAC accepts any key size per RFC2104");
         mac.update(data);
         let result = mac.finalize();
         let mut hmac_bytes = [0u8; HMAC_SIZE];
@@ -251,8 +255,9 @@ impl IpcSigner {
     }
 
     pub fn sign_parts(&self, parts: &[&[u8]]) -> [u8; HMAC_SIZE] {
+        // HMAC accepts any key size per RFC2104 — infallible
         let mut mac =
-            HmacSha3_256::new_from_slice(&self.key).expect("HMAC can take key of any size");
+            HmacSha3_256::new_from_slice(&self.key).expect("HMAC accepts any key size per RFC2104");
         for part in parts {
             mac.update(part);
         }

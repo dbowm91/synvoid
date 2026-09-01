@@ -142,6 +142,7 @@ pub struct ProxyCache {
     cache_hits: AtomicU64,
     cache_misses: AtomicU64,
     current_memory_size: AtomicU64,
+    current_disk_size: AtomicU64,
     cleanup_shutdown_tx: Arc<tokio::sync::watch::Sender<()>>,
     host_index: DashMap<String, Vec<CacheKey>>,
     inflight_requests: InflightRequestsMap,
@@ -163,6 +164,7 @@ impl Clone for ProxyCache {
             cache_hits: AtomicU64::new(self.cache_hits.load(Ordering::Relaxed)),
             cache_misses: AtomicU64::new(self.cache_misses.load(Ordering::Relaxed)),
             current_memory_size: AtomicU64::new(self.current_memory_size.load(Ordering::Relaxed)),
+            current_disk_size: AtomicU64::new(self.current_disk_size.load(Ordering::Relaxed)),
             cleanup_shutdown_tx: self.cleanup_shutdown_tx.clone(),
             host_index: DashMap::new(),
             inflight_requests: self.inflight_requests.clone(),
@@ -201,6 +203,22 @@ impl ProxyCache {
             }
         }
 
+        // Initialize disk size from existing files (startup scan, not hot path)
+        let initial_disk_size = if settings.enabled && settings.use_temp_file && disk_path.exists()
+        {
+            std::fs::read_dir(&disk_path)
+                .map(|dir| {
+                    dir.filter_map(|e| e.ok())
+                        .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+                        .filter_map(|e| e.metadata().ok())
+                        .map(|m| m.len())
+                        .sum()
+                })
+                .unwrap_or(0)
+        } else {
+            0
+        };
+
         let (shutdown_tx, _) = tokio::sync::watch::channel(());
         Self {
             entries: cache,
@@ -209,6 +227,7 @@ impl ProxyCache {
             cache_hits: AtomicU64::new(0),
             cache_misses: AtomicU64::new(0),
             current_memory_size: AtomicU64::new(0),
+            current_disk_size: AtomicU64::new(initial_disk_size),
             cleanup_shutdown_tx: Arc::new(shutdown_tx),
             host_index: DashMap::new(),
             inflight_requests: Arc::new(DashMap::new()),
@@ -546,16 +565,47 @@ impl ProxyCache {
         if should_store_disk {
             let filename = ProxyCache::key_to_filename(&key);
             let path = self.disk_path.join(&filename);
-            if let Some(parent) = path.parent() {
-                if let Err(e) = std::fs::create_dir_all(parent) {
-                    tracing::warn!(error = %e, "failed to create disk cache dir");
-                }
-            }
-            if let Err(e) = std::fs::write(&path, &content) {
-                tracing::warn!(error = %e, "failed to write disk cache file");
-                should_store_disk = false;
-            } else {
+            // Offload blocking disk I/O to the blocking pool when inside a Tokio
+            // runtime to avoid stalling the worker (M-01). Fire-and-forget.
+            if tokio::runtime::Handle::try_current().is_ok() {
+                let parent = path.parent().map(|p| p.to_path_buf());
+                let content_for_disk = content.clone();
+                let path_clone = path.clone();
+                tokio::task::spawn_blocking(move || {
+                    if let Some(parent) = parent {
+                        if let Err(e) = std::fs::create_dir_all(&parent) {
+                            tracing::warn!(error = %e, "failed to create disk cache dir");
+                            return;
+                        }
+                    }
+                    if let Err(e) = std::fs::write(&path_clone, &content_for_disk) {
+                        tracing::warn!(error = %e, "failed to write disk cache file");
+                    }
+                });
                 disk_path = Some(path);
+                self.current_disk_size
+                    .fetch_add(size as u64, Ordering::Relaxed);
+            } else {
+                // Synchronous fallback for tests / non-runtime contexts
+                if let Some(parent) = path.parent() {
+                    if let Err(e) = std::fs::create_dir_all(parent) {
+                        tracing::warn!(error = %e, "failed to create disk cache dir");
+                        should_store_disk = false;
+                    }
+                }
+                if should_store_disk {
+                    if let Err(e) = std::fs::write(&path, &content) {
+                        tracing::warn!(error = %e, "failed to write disk cache file");
+                        should_store_disk = false;
+                    } else {
+                        disk_path = Some(path);
+                        self.current_disk_size
+                            .fetch_add(size as u64, Ordering::Relaxed);
+                    }
+                }
+                if !should_store_disk {
+                    disk_path = None;
+                }
             }
         }
 
@@ -568,6 +618,19 @@ impl ProxyCache {
             disk_path,
             checksum,
         };
+
+        // Update disk size tracking for replaced on-disk entries (M-07).
+        // For disk->disk replacement the net is new - old; for disk->memory we
+        // remove the old disk accounting, for memory->disk we added new above.
+        if let Some(old) = self.entries.get(&key) {
+            if old.on_disk {
+                self.current_disk_size
+                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                        v.checked_sub(old.size as u64)
+                    })
+                    .ok();
+            }
+        }
 
         // Update memory size tracking atomically
         let old_for_site = self.entries.get(&key).and_then(|old| {
@@ -619,9 +682,20 @@ impl ProxyCache {
         let host = key.host.clone();
         if let Some(entry) = self.entries.get(key) {
             if entry.on_disk {
-                if let Some(path) = &entry.disk_path {
-                    let _ = std::fs::remove_file(path);
+                if let Some(path) = entry.disk_path.clone() {
+                    if tokio::runtime::Handle::try_current().is_ok() {
+                        tokio::task::spawn_blocking(move || {
+                            let _ = std::fs::remove_file(&path);
+                        });
+                    } else {
+                        let _ = std::fs::remove_file(&path);
+                    }
                 }
+                self.current_disk_size
+                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                        v.checked_sub(entry.size as u64)
+                    })
+                    .ok();
             }
             if !entry.on_disk {
                 self.current_memory_size
@@ -652,9 +726,20 @@ impl ProxyCache {
         for key in &to_remove {
             if let Some(entry) = self.entries.get(key) {
                 if entry.on_disk {
-                    if let Some(path) = &entry.disk_path {
-                        let _ = std::fs::remove_file(path);
+                    if let Some(path) = entry.disk_path.clone() {
+                        if tokio::runtime::Handle::try_current().is_ok() {
+                            tokio::task::spawn_blocking(move || {
+                                let _ = std::fs::remove_file(&path);
+                            });
+                        } else {
+                            let _ = std::fs::remove_file(&path);
+                        }
                     }
+                    self.current_disk_size
+                        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                            v.checked_sub(entry.size as u64)
+                        })
+                        .ok();
                 }
                 if !entry.on_disk {
                     self.current_memory_size
@@ -686,9 +771,20 @@ impl ProxyCache {
         for key in &to_remove {
             if let Some(entry) = self.entries.get(key) {
                 if entry.on_disk {
-                    if let Some(path) = &entry.disk_path {
-                        let _ = std::fs::remove_file(path);
+                    if let Some(path) = entry.disk_path.clone() {
+                        if tokio::runtime::Handle::try_current().is_ok() {
+                            tokio::task::spawn_blocking(move || {
+                                let _ = std::fs::remove_file(&path);
+                            });
+                        } else {
+                            let _ = std::fs::remove_file(&path);
+                        }
                     }
+                    self.current_disk_size
+                        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                            v.checked_sub(entry.size as u64)
+                        })
+                        .ok();
                 }
                 if !entry.on_disk {
                     self.current_memory_size
@@ -730,13 +826,20 @@ impl ProxyCache {
     pub fn clear(&self) {
         for (_, entry) in self.entries.iter() {
             if entry.on_disk {
-                if let Some(path) = &entry.disk_path {
-                    let _ = std::fs::remove_file(path);
+                if let Some(path) = entry.disk_path.clone() {
+                    if tokio::runtime::Handle::try_current().is_ok() {
+                        tokio::task::spawn_blocking(move || {
+                            let _ = std::fs::remove_file(&path);
+                        });
+                    } else {
+                        let _ = std::fs::remove_file(&path);
+                    }
                 }
             }
         }
         self.entries.invalidate_all();
         self.current_memory_size.store(0, Ordering::Relaxed);
+        self.current_disk_size.store(0, Ordering::Relaxed);
         self.host_index.clear();
         self.site_memory_usage.clear();
     }
@@ -803,27 +906,9 @@ impl ProxyCache {
     }
 
     fn calculate_disk_size(&self) -> usize {
-        if !self.disk_path.exists() {
-            return 0;
-        }
-
-        let path = self.disk_path.clone();
-        let compute = || {
-            std::fs::read_dir(&path)
-                .map(|dir| {
-                    dir.filter_map(|e| e.ok())
-                        .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
-                        .filter_map(|e| e.metadata().ok())
-                        .map(|m| m.len() as usize)
-                        .sum()
-                })
-                .unwrap_or(0)
-        };
-        if tokio::runtime::Handle::try_current().is_ok() {
-            tokio::task::block_in_place(compute)
-        } else {
-            compute()
-        }
+        // M-07: Return incremental atomic counter instead of O(n) directory scan
+        // on the request path. The counter is maintained on insert/invalidate.
+        self.current_disk_size.load(Ordering::Relaxed) as usize
     }
 
     pub fn cleanup_expired(&self) -> usize {
@@ -845,9 +930,20 @@ impl ProxyCache {
         for key in &to_remove {
             if let Some(entry) = self.entries.get(key) {
                 if entry.on_disk {
-                    if let Some(path) = &entry.disk_path {
-                        let _ = std::fs::remove_file(path);
+                    if let Some(path) = entry.disk_path.clone() {
+                        if tokio::runtime::Handle::try_current().is_ok() {
+                            tokio::task::spawn_blocking(move || {
+                                let _ = std::fs::remove_file(&path);
+                            });
+                        } else {
+                            let _ = std::fs::remove_file(&path);
+                        }
                     }
+                    self.current_disk_size
+                        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                            v.checked_sub(entry.size as u64)
+                        })
+                        .ok();
                 }
                 if !entry.on_disk {
                     self.current_memory_size

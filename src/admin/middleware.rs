@@ -309,7 +309,9 @@ pub async fn security_headers_middleware(request: Request, next: Next) -> Respon
 
     headers.entry("content-security-policy").or_insert_with(|| {
         HeaderValue::from_static(
-            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws: wss:; frame-ancestors 'none'"
+            // L-02: Removed 'unsafe-inline' for styles; admin UI now serves styles
+            // via external sheets. If inline styles are required, use a nonce.
+            "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' ws: wss:; frame-ancestors 'none'"
         )
     });
 

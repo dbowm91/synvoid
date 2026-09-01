@@ -285,11 +285,13 @@ pub fn generate_token_hex() -> String {
 
 pub fn handle_generatetoken() {
     let token = generate_token_hex();
+    // operator invoked — stdout is intentional (explicit admin token generation)
     println!("{}", token);
 }
 
 pub fn handle_generatenewtoken(config_path: &Option<PathBuf>) {
     let token = generate_token_hex();
+    // operator invoked — stdout is intentional (explicit admin token generation)
     println!("{}", token);
 
     let config_dir = config_path
