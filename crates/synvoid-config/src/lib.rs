@@ -156,6 +156,11 @@ impl ConfigManager {
         if !self.sites_dir.exists() {
             if let Err(e) = std::fs::create_dir_all(&self.sites_dir) {
                 tracing::warn!("Could not create sites directory: {}", e);
+            } else {
+                tracing::warn!(
+                    "Sites directory {} did not exist and was created; 0 sites loaded — check config_path for typos",
+                    self.sites_dir.display()
+                );
             }
             return results;
         }
@@ -199,9 +204,12 @@ impl ConfigManager {
     }
 
     pub fn get_site(&self, domain: &str) -> Option<&SiteConfig> {
-        self.sites
-            .values()
-            .find(|site| site.site.domains.iter().any(|d| d == domain))
+        self.sites.values().find(|site| {
+            site.site
+                .domains
+                .iter()
+                .any(|d| d.eq_ignore_ascii_case(domain))
+        })
     }
 
     pub fn reload_site(&mut self, domain: &str) -> Result<(), String> {

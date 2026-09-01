@@ -80,6 +80,14 @@ impl InputNormalizer {
         Self::default()
     }
 
+    /// Normalize `input` via thread-local `RefCell` buffers.
+    ///
+    /// # Safety / Invariant
+    /// The returned `NormalizedInput` borrows from thread-local `RefCell` storage.
+    /// Do **not** hold the result across an `.await` — that would keep the
+    /// `RefCell` borrow alive across a yield point and panic at runtime when
+    /// another task tries to borrow the same thread-local. Clone or
+    /// `into_owned()` the result before any `.await`.
     pub fn normalize<'a>(&self, input: &'a str) -> NormalizedInput<'a> {
         NORMALIZE_BUFFER.with(|buf_cell| {
             NORMALIZE_CHARS.with(|chars_cell| {

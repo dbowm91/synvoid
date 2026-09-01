@@ -79,7 +79,13 @@ pub async fn update_alert_config(
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    alert_manager.update_config(config.clone()).await;
+    alert_manager
+        .update_config(config.clone())
+        .await
+        .map_err(|e| {
+            tracing::warn!("Alert config validation failed in update_config: {}", e);
+            StatusCode::BAD_REQUEST
+        })?;
 
     state.audit.log(super::super::audit::AuditLog::new(
         None,

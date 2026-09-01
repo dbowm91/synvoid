@@ -56,6 +56,7 @@ impl ForwardedProtocol {
     }
 }
 
+#[allow(dead_code)]
 static HOP_BY_HOP_HEADERS_SET: LazyLock<AHashSet<&'static str>> =
     LazyLock::new(|| HOP_BY_HOP_HEADERS.iter().copied().collect());
 
@@ -167,6 +168,89 @@ pub fn sanitize_request_path(path: &str) -> std::borrow::Cow<'_, str> {
                     ) {
                         let decoded = (h << 4) | l;
                         if decoded != 0 {
+                            // Handle overlong UTF-8 sequences consistently with
+                            // the WAF normalizer (e.g. %C0%AF → '/'). This
+                            // prevents proxy/WAF disagreement on the effective
+                            // path that could be abused for WAF bypass.
+                            if (0xC0..=0xFD).contains(&decoded) {
+                                let expected_len = if decoded & 0xE0 == 0xC0 {
+                                    2
+                                } else if decoded & 0xF0 == 0xE0 {
+                                    3
+                                } else if decoded & 0xF8 == 0xF0 {
+                                    4
+                                } else {
+                                    0
+                                };
+                                if expected_len > 1 {
+                                    let mut clone = bytes.clone();
+                                    let mut seq = vec![decoded];
+                                    let mut ok = true;
+                                    for _ in 1..expected_len {
+                                        if clone.next() != Some(b'%') {
+                                            ok = false;
+                                            break;
+                                        }
+                                        let Some(ch) = clone.next() else {
+                                            ok = false;
+                                            break;
+                                        };
+                                        let Some(cl) = clone.next() else {
+                                            ok = false;
+                                            break;
+                                        };
+                                        let (Ok(hi), Ok(lo)) = (
+                                            u8::from_str_radix(
+                                                std::str::from_utf8(&[ch]).unwrap_or(""),
+                                                16,
+                                            ),
+                                            u8::from_str_radix(
+                                                std::str::from_utf8(&[cl]).unwrap_or(""),
+                                                16,
+                                            ),
+                                        ) else {
+                                            ok = false;
+                                            break;
+                                        };
+                                        let b = (hi << 4) | lo;
+                                        if b & 0xC0 != 0x80 {
+                                            ok = false;
+                                            break;
+                                        }
+                                        seq.push(b);
+                                    }
+                                    if ok {
+                                        let codepoint = match seq.len() {
+                                            2 => {
+                                                ((seq[0] & 0x1F) as u32) << 6
+                                                    | (seq[1] & 0x3F) as u32
+                                            }
+                                            3 => {
+                                                ((seq[0] & 0x0F) as u32) << 12
+                                                    | ((seq[1] & 0x3F) as u32) << 6
+                                                    | (seq[2] & 0x3F) as u32
+                                            }
+                                            4 => {
+                                                ((seq[0] & 0x07) as u32) << 18
+                                                    | ((seq[1] & 0x3F) as u32) << 12
+                                                    | ((seq[2] & 0x3F) as u32) << 6
+                                                    | (seq[3] & 0x3F) as u32
+                                            }
+                                            _ => 0xFFFD,
+                                        };
+                                        if let Some(ch) = char::from_u32(codepoint) {
+                                            // Only treat as overlong-decoded if the codepoint
+                                            // is ASCII that affects path normalization; for
+                                            // consistency we decode any ASCII overlong.
+                                            if ch.is_ascii() {
+                                                bytes = clone;
+                                                current_segment.push(ch as u8);
+                                                continue;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                             current_segment.push(decoded);
                         }
                     } else {
@@ -241,12 +325,14 @@ pub fn filter_response_headers(
     headers: &http::HeaderMap,
     headers_to_filter: &AHashSet<String>,
 ) -> Vec<(String, String)> {
-    headers
+    // Delegate to the `HeaderMap`-preserving variant to avoid duplicate
+    // filtering logic and double allocation of header strings.
+    let name_set: AHashSet<http::header::HeaderName> = headers_to_filter
         .iter()
-        .filter(|(k, _)| {
-            let name_str = k.as_str();
-            !HOP_BY_HOP_HEADERS_SET.contains(name_str) && !headers_to_filter.contains(name_str)
-        })
+        .filter_map(|s| s.parse().ok())
+        .collect();
+    filter_response_headers_buf(headers, &name_set)
+        .iter()
         .filter_map(|(k, v)| v.to_str().ok().map(|vv| (k.to_string(), vv.to_string())))
         .collect()
 }
@@ -289,34 +375,52 @@ pub fn apply_response_header_transforms(
         return;
     }
 
-    let clear_patterns: Vec<String> = config.clear.to_vec();
-    let hide_patterns: Vec<String> = config.hide.to_vec();
+    // Pre-normalize patterns: lowercase once, split wildcard vs exact.
+    // This turns the per-header O(patterns) scan into O(1) exact lookup
+    // plus a short prefix scan, and avoids allocating `to_lowercase()` on
+    // every header.
+    let (clear_exact, clear_prefixes): (AHashSet<String>, Vec<String>) = {
+        let mut exact = AHashSet::new();
+        let mut prefixes = Vec::new();
+        for p in &config.clear {
+            let lower = p.to_ascii_lowercase();
+            if lower.contains('*') {
+                prefixes.push(lower.trim_end_matches('*').to_string());
+            } else {
+                exact.insert(lower);
+            }
+        }
+        (exact, prefixes)
+    };
+    let (hide_exact, hide_prefixes): (AHashSet<String>, Vec<String>) = {
+        let mut exact = AHashSet::new();
+        let mut prefixes = Vec::new();
+        for p in &config.hide {
+            let lower = p.to_ascii_lowercase();
+            if lower.contains('*') {
+                prefixes.push(lower.trim_end_matches('*').to_string());
+            } else {
+                exact.insert(lower);
+            }
+        }
+        (exact, prefixes)
+    };
 
     let should_remove = |name: &http::header::HeaderName| -> bool {
         let name_str = name.as_str();
-
-        for pattern in &clear_patterns {
-            if pattern.contains('*') {
-                let prefix = pattern.trim_end_matches('*');
-                if name_str.starts_with(prefix) {
-                    return true;
-                }
-            } else if name_str == pattern.to_lowercase() {
+        if clear_exact.contains(name_str) || hide_exact.contains(name_str) {
+            return true;
+        }
+        for prefix in &clear_prefixes {
+            if name_str.starts_with(prefix) {
                 return true;
             }
         }
-
-        for pattern in &hide_patterns {
-            if pattern.contains('*') {
-                let prefix = pattern.trim_end_matches('*');
-                if name_str.starts_with(prefix) {
-                    return true;
-                }
-            } else if name_str == pattern.to_lowercase() {
+        for prefix in &hide_prefixes {
+            if name_str.starts_with(prefix) {
                 return true;
             }
         }
-
         false
     };
 
@@ -381,13 +485,25 @@ pub fn build_forward_headers(
     let capacity = original_headers.len().clamp(8, 32);
     let mut forward_headers = http::HeaderMap::with_capacity(capacity);
 
-    let headers_to_forward: Vec<&str> = if config.forward.is_empty() {
-        vec!["*"]
+    // Normalize `forward` list once: lowercase + deduped, matching the
+    // deduplication in `build_headers_to_filter`. This avoids duplicate
+    // forwarding when config lists the same header with different cases
+    // (e.g. ["X-Request-Id", "x-request-id"]).
+    let forward_set: Option<AHashSet<String>> = if config.forward.is_empty() {
+        None
     } else {
-        config.forward.iter().map(|s| s.as_str()).collect()
+        let set: AHashSet<String> = config
+            .forward
+            .iter()
+            .map(|s| s.to_ascii_lowercase())
+            .collect();
+        if set.contains("*") {
+            None
+        } else {
+            Some(set)
+        }
     };
-
-    let forward_all = headers_to_forward.contains(&"*");
+    let forward_all = forward_set.is_none();
 
     for (name, value) in original_headers.iter() {
         let name_str = name.as_str();
@@ -416,10 +532,13 @@ pub fn build_forward_headers(
             continue;
         }
 
-        let should_forward = forward_all
-            || headers_to_forward
-                .iter()
-                .any(|h| h.eq_ignore_ascii_case(name_str));
+        let should_forward = if forward_all {
+            true
+        } else {
+            forward_set
+                .as_ref()
+                .is_some_and(|set| set.contains(&name_str.to_ascii_lowercase()))
+        };
         if should_forward {
             forward_headers.insert(name, value.clone());
         }

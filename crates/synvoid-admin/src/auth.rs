@@ -42,8 +42,14 @@ impl AuthRateLimiter {
     }
 
     pub fn record_failure(&self, identifier: &str) {
-        self.cleanup_if_needed(identifier);
         let mut attempts = self.attempts.write();
+        // Inline cleanup that previously required a separate write lock (TOCTOU).
+        if let Some(state) = attempts.get_mut(identifier) {
+            state.times.retain(|t| t.elapsed() < AUTH_WINDOW_DURATION);
+            if state.times.is_empty() && state.locked_at.is_none() {
+                attempts.remove(identifier);
+            }
+        }
         if attempts
             .get(identifier)
             .map(|e| {
@@ -126,6 +132,7 @@ impl AuthRateLimiter {
         });
     }
 
+    #[allow(dead_code)]
     fn cleanup_if_needed(&self, identifier: &str) {
         let mut attempts = self.attempts.write();
         if let Some(state) = attempts.get_mut(identifier) {

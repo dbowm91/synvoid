@@ -100,3 +100,12 @@ Cargo.lock.new
 *.zip
 *.tar.gz
 *.tar
+
+# Secrets / private keys — never commit (see tools/xtask/src/verify.rs PROHIBITED_EXTENSIONS)
+*.key
+*.pem
+*.p12
+*.pfx
+*.keystore
+# Public DNSSEC trust anchor is intentionally tracked (RFC 5011 root KSK)
+!trusted-key.key

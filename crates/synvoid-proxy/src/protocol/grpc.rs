@@ -121,6 +121,36 @@ impl GrpcHandler {
 
         metadata
     }
+
+    fn percent_decode(input: &str) -> String {
+        let mut out = Vec::with_capacity(input.len());
+        let mut bytes = input.bytes();
+        while let Some(b) = bytes.next() {
+            if b == b'%' {
+                let h = bytes.next();
+                let l = bytes.next();
+                if let (Some(h), Some(l)) = (h, l) {
+                    let hi = (h as char).to_digit(16);
+                    let lo = (l as char).to_digit(16);
+                    if let (Some(hi), Some(lo)) = (hi, lo) {
+                        out.push((hi << 4 | lo) as u8);
+                        continue;
+                    }
+                    out.push(b'%');
+                    out.push(h);
+                    out.push(l);
+                } else {
+                    out.push(b'%');
+                    if let Some(h) = h {
+                        out.push(h);
+                    }
+                }
+            } else {
+                out.push(b);
+            }
+        }
+        String::from_utf8_lossy(&out).into_owned()
+    }
 }
 
 impl ProtocolHandler for GrpcHandler {
@@ -207,7 +237,14 @@ impl ProtocolHandler for GrpcHandler {
         tracing::debug!(protocol = "grpc", path = %request.path, "Applying WAF rules");
 
         if self.enable_request_validation {
-            if request.path.contains("..") || request.path.contains("//") {
+            // Decode percent-encoded variants before traversal check so
+            // %2e%2e / %2F etc are not missed. Check both raw and decoded.
+            let decoded = Self::percent_decode(&request.path);
+            if request.path.contains("..")
+                || request.path.contains("//")
+                || decoded.contains("..")
+                || decoded.contains("//")
+            {
                 tracing::warn!(protocol = "grpc", path = %request.path, "Path traversal attempt detected");
                 self.metrics
                     .requests_blocked

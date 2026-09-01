@@ -256,9 +256,10 @@ impl AlertManager {
         self.config.read().await.clone()
     }
 
-    pub async fn update_config(&self, config: AlertConfig) {
-        config.validate().expect("validated config should be valid");
+    pub async fn update_config(&self, config: AlertConfig) -> Result<(), String> {
+        config.validate().map_err(|e| e.to_string())?;
         *self.config.write().await = config;
+        Ok(())
     }
 
     fn extract_metric_value(

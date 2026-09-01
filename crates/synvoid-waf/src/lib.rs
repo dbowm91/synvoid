@@ -3,6 +3,9 @@
 //! This crate provides the core WAF attack detection logic independent of
 //! HTTP server, supervisor, worker, mesh, DNS, and admin subsystems.
 
+#![deny(clippy::await_holding_refcell_ref)]
+#![deny(clippy::await_holding_lock)]
+
 pub mod access;
 pub mod attack_detection;
 pub mod bot;

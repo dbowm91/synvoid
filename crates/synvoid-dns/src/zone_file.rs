@@ -272,7 +272,7 @@ impl ZoneFileParser {
             None
         };
 
-        let value = if record_type == RecordType::TXT {
+        let value = if matches!(record_type, RecordType::TXT | RecordType::CAA) {
             parts[pos..].join(" ")
         } else {
             parts[pos].to_string()

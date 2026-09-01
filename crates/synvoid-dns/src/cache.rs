@@ -125,13 +125,13 @@ impl CacheNamespace {
     }
 }
 
-fn format_transport_class(transport: TransportClass) -> String {
+fn format_transport_class(transport: TransportClass) -> std::borrow::Cow<'static, str> {
     match transport {
-        TransportClass::Udp512 => "udp512".to_string(),
-        TransportClass::UdpEdns(size) => format!("udp-edns-{}", size),
-        TransportClass::Tcp => "tcp".to_string(),
-        TransportClass::Http => "http".to_string(),
-        TransportClass::Quic => "quic".to_string(),
+        TransportClass::Udp512 => std::borrow::Cow::Borrowed("udp512"),
+        TransportClass::UdpEdns(size) => std::borrow::Cow::Owned(format!("udp-edns-{}", size)),
+        TransportClass::Tcp => std::borrow::Cow::Borrowed("tcp"),
+        TransportClass::Http => std::borrow::Cow::Borrowed("http"),
+        TransportClass::Quic => std::borrow::Cow::Borrowed("quic"),
     }
 }
 
@@ -482,6 +482,18 @@ impl DnsCache {
         }
     }
 
+    /// Override the fingerprint confirmation threshold for testing.
+    ///
+    /// Trade-off: a lower threshold reduces false positives on legitimate
+    /// zone updates (fewer transient failures) but weakens poisoning
+    /// resistance. The default `3` is the recommended production value;
+    /// see `architecture/dns.md` for discussion.
+    pub fn set_confirmation_threshold(&mut self, threshold: usize) {
+        if let Some(inner) = Arc::get_mut(&mut self.inner) {
+            inner.confirmation_threshold = threshold;
+        }
+    }
+
     pub fn compute_fingerprint(data: &[u8]) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut hasher = AHasher::default();
@@ -781,19 +793,33 @@ impl DnsCache {
         // WS5: Reset stale served count on fresh insertion — fresh data means stale budget resets.
         inner.stale_served_count.store(0, Ordering::Relaxed);
 
-        let mut index = inner.qname_index.write();
-        index.entry(key.qname.clone()).or_default().insert(key);
+        {
+            let mut index = inner.qname_index.write();
+            index.entry(key.qname.clone()).or_default().insert(key);
+        }
 
         // Opportunistic cleanup: if index has significantly more entries than cache,
-        // clean up stale entries caused by eviction
-        if index.len() > inner.max_capacity * 2 {
-            let stale_qnames: Vec<String> = index
-                .iter()
-                .filter(|(_, keys)| keys.is_empty())
-                .map(|(qname, _)| qname.clone())
-                .collect();
-            for qname in stale_qnames {
-                index.remove(&qname);
+        // clean up stale entries caused by eviction. Do collection under a
+        // read lock, then remove under a write lock, to avoid holding the
+        // write lock during iteration and stalling concurrent readers.
+        if inner.qname_index.read().len() > inner.max_capacity * 2 {
+            let stale_qnames: Vec<String> = {
+                let index = inner.qname_index.read();
+                index
+                    .iter()
+                    .filter(|(_, keys)| keys.is_empty())
+                    .map(|(qname, _)| qname.clone())
+                    .collect()
+            };
+            if !stale_qnames.is_empty() {
+                let mut index = inner.qname_index.write();
+                for qname in stale_qnames {
+                    // Re-check that it is still empty before removing, to avoid
+                    // races where a concurrent insert populated it.
+                    if index.get(&qname).is_some_and(|k| k.is_empty()) {
+                        index.remove(&qname);
+                    }
+                }
             }
         }
     }

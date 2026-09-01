@@ -1290,68 +1290,95 @@ impl BlockStore {
     /// # Returns
     /// `true` if an entry was evicted, `false` if the store is empty
     fn evict_lru(&self) -> bool {
-        let mut min_key: Option<String> = None;
-        let mut min_shard_idx: Option<usize> = None;
-        let mut min_last_access: u64 = u64::MAX;
+        // Find global minimum last_access under read locks, then re-check
+        // under the write lock to handle races where the entry was updated
+        // or removed between the scan and the eviction.
+        for _ in 0..2 {
+            let mut min_key: Option<String> = None;
+            let mut min_shard_idx: Option<usize> = None;
+            let mut min_last_access: u64 = u64::MAX;
 
-        for (idx, shard) in self.shards.iter().enumerate() {
-            let store = shard.read();
-            if let Some((key, entry)) = store.iter().min_by_key(|(_, entry)| entry.last_access) {
-                if entry.last_access < min_last_access {
-                    min_last_access = entry.last_access;
-                    min_key = Some(key.clone());
-                    min_shard_idx = Some(idx);
+            for (idx, shard) in self.shards.iter().enumerate() {
+                let store = shard.read();
+                if let Some((key, entry)) = store.iter().min_by_key(|(_, entry)| entry.last_access)
+                {
+                    if entry.last_access < min_last_access {
+                        min_last_access = entry.last_access;
+                        min_key = Some(key.clone());
+                        min_shard_idx = Some(idx);
+                    }
                 }
             }
-        }
 
-        if let Some((key, idx)) = min_key.zip(min_shard_idx) {
-            if self.shards[idx].write().remove(&key).is_some() {
-                let _ =
-                    self.total_entries
-                        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1));
-                tracing::debug!("Evicted LRU block entry: {}", key);
-                true
+            if let Some((key, idx)) = min_key.zip(min_shard_idx) {
+                let mut shard = self.shards[idx].write();
+                match shard.get(&key) {
+                    Some(entry) if entry.last_access != min_last_access => {
+                        // Entry was updated between scan and write lock — retry once
+                        // to find the true LRU rather than evicting a recently-touched entry.
+                        continue;
+                    }
+                    Some(_) => {
+                        shard.remove(&key);
+                        drop(shard);
+                        let _ = self.total_entries.fetch_update(
+                            Ordering::Relaxed,
+                            Ordering::Relaxed,
+                            |v| v.checked_sub(1),
+                        );
+                        tracing::debug!("Evicted LRU block entry: {}", key);
+                        return true;
+                    }
+                    None => return false,
+                }
             } else {
-                false
+                return false;
             }
-        } else {
-            false
         }
+        false
     }
 
     /// Evict the least recently accessed mesh-ID entry.
     fn evict_lru_mesh(&self) -> bool {
-        let mut min_key: Option<String> = None;
-        let mut min_shard_idx: Option<usize> = None;
-        let mut min_last_access = u64::MAX;
+        for _ in 0..2 {
+            let mut min_key: Option<String> = None;
+            let mut min_shard_idx: Option<usize> = None;
+            let mut min_last_access: u64 = u64::MAX;
 
-        for (idx, shard) in self.mesh_shards.iter().enumerate() {
-            let store = shard.read();
-            if let Some((key, entry)) = store.iter().min_by_key(|(_, entry)| entry.last_access) {
-                if entry.last_access < min_last_access {
-                    min_last_access = entry.last_access;
-                    min_key = Some(key.clone());
-                    min_shard_idx = Some(idx);
+            for (idx, shard) in self.mesh_shards.iter().enumerate() {
+                let store = shard.read();
+                if let Some((key, entry)) = store.iter().min_by_key(|(_, entry)| entry.last_access)
+                {
+                    if entry.last_access < min_last_access {
+                        min_last_access = entry.last_access;
+                        min_key = Some(key.clone());
+                        min_shard_idx = Some(idx);
+                    }
                 }
             }
-        }
 
-        if let Some((key, idx)) = min_key.zip(min_shard_idx) {
-            if self.mesh_shards[idx].write().remove(&key).is_some() {
-                let _ = self.total_mesh_entries.fetch_update(
-                    Ordering::Relaxed,
-                    Ordering::Relaxed,
-                    |v| v.checked_sub(1),
-                );
-                tracing::debug!("Evicted LRU mesh block entry: {}", key);
-                true
+            if let Some((key, idx)) = min_key.zip(min_shard_idx) {
+                let mut shard = self.mesh_shards[idx].write();
+                match shard.get(&key) {
+                    Some(entry) if entry.last_access != min_last_access => continue,
+                    Some(_) => {
+                        shard.remove(&key);
+                        drop(shard);
+                        let _ = self.total_mesh_entries.fetch_update(
+                            Ordering::Relaxed,
+                            Ordering::Relaxed,
+                            |v| v.checked_sub(1),
+                        );
+                        tracing::debug!("Evicted LRU mesh block entry: {}", key);
+                        return true;
+                    }
+                    None => return false,
+                }
             } else {
-                false
+                return false;
             }
-        } else {
-            false
         }
+        false
     }
 
     /// Block an IP address.

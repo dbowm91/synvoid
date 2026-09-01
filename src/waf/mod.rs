@@ -179,6 +179,10 @@ impl WafCore {
     pub fn verify_trust_token(&self, client_ip: IpAddr, token: &str) -> bool {
         let expected = self.generate_trust_token(client_ip);
         if expected.len() != token.len() {
+            // Avoid timing oracle on length: run a dummy constant-time compare
+            // of equal length before returning false.
+            let dummy = vec![0u8; token.len()];
+            let _ = subtle::ConstantTimeEq::ct_eq(dummy.as_slice(), token.as_bytes());
             return false;
         }
         subtle::ConstantTimeEq::ct_eq(expected.as_bytes(), token.as_bytes()).unwrap_u8() == 1
@@ -538,6 +542,10 @@ impl WafCore {
         }
     }
 
+    /// Block-store is checked in the worker composition root, not here.
+    /// See `architecture/worker_data_plane_composition_root.md`.
+    /// This stub always returns `None` and exists only to preserve the
+    /// historical call site in `check_request_full`.
     fn check_block_store(&self, _ip: IpAddr, _site_id: Option<&str>) -> Option<WafDecision> {
         None
     }

@@ -118,20 +118,23 @@ impl RaftInstance {
         Ok(())
     }
 
+    #[deprecated(note = "use change_membership via external coordination")]
     pub async fn add_node(
         &self,
         _node_id: u64,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        tracing::info!("Node added to cluster (cluster management via external coordination)");
-        Ok(())
+        Err("add_node is not implemented: use change_membership via external coordination".into())
     }
 
+    #[deprecated(note = "use change_membership via external coordination")]
     pub async fn remove_node(
         &self,
         _node_id: u64,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        tracing::info!("Node removed from cluster (cluster management via external coordination)");
-        Ok(())
+        Err(
+            "remove_node is not implemented: use change_membership via external coordination"
+                .into(),
+        )
     }
 
     pub async fn client_write(
