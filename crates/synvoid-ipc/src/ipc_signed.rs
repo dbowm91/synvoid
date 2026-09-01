@@ -848,7 +848,7 @@ mod tests {
         assert_eq!(
             accepted,
             MAX_NONCE_CACHE_SIZE.saturating_sub(start_len) + 16,
-            "BUG-005 regression — entries must be accepted even when the global cache is at capacity"
+            "regression: entries must be accepted even when the global cache is at capacity"
         );
 
         assert!(NONCE_CACHE.len() > MAX_NONCE_CACHE_SIZE);

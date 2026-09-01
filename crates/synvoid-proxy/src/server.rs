@@ -1012,20 +1012,35 @@ impl<W: WafProcessor> ProxyServer<W> {
             backend.record_latency(start_time.elapsed());
             backend.decrement_connections();
 
+            let cfg = match retry_config {
+                Some(cfg) => cfg,
+                None => {
+                    return match result {
+                        Ok(response) => Ok(response),
+                        Err(e) => {
+                            if let Some(ref be) = current_backend {
+                                pool.mark_failed(&be.url);
+                            }
+                            Err(e)
+                        }
+                    };
+                }
+            };
+
             match result {
                 Ok(response) => {
                     let status = response.status().as_u16();
 
                     if retry_enabled
                         && should_retry_method
-                        && is_retryable_status_impl(status, retry_config.unwrap())
+                        && is_retryable_status_impl(status, cfg)
                         && attempt <= max_retries
                     {
                         if let Some(ref be) = current_backend {
                             pool.mark_failed(&be.url);
                         }
 
-                        if let Some(timeout) = retry_config.unwrap().timeout_ms {
+                        if let Some(timeout) = cfg.timeout_ms {
                             tokio::time::sleep(std::time::Duration::from_millis(
                                 calculate_backoff_impl(attempt, timeout),
                             ))
@@ -1042,17 +1057,15 @@ impl<W: WafProcessor> ProxyServer<W> {
                     last_error = Some(error_str);
 
                     if retry_enabled && should_retry_method {
-                        let should_retry = (retry_config.unwrap().retry_on_error
-                            && is_connection_error_impl(&*e))
-                            || (retry_config.unwrap().retry_on_timeout
-                                && is_timeout_error_impl(&*e));
+                        let should_retry = (cfg.retry_on_error && is_connection_error_impl(&*e))
+                            || (cfg.retry_on_timeout && is_timeout_error_impl(&*e));
 
                         if should_retry && attempt <= max_retries {
                             if let Some(ref be) = current_backend {
                                 pool.mark_failed(&be.url);
                             }
 
-                            if let Some(timeout) = retry_config.unwrap().timeout_ms {
+                            if let Some(timeout) = cfg.timeout_ms {
                                 tokio::time::sleep(std::time::Duration::from_millis(
                                     calculate_backoff_impl(attempt, timeout),
                                 ))

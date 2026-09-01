@@ -65,7 +65,7 @@ impl ShardedRateLimiter {
     }
 
     pub fn check(&self, client_ip: IpAddr) -> RateLimitDecision {
-        let shard_idx = ip_to_slot(client_ip, self.shards.len()).unwrap();
+        let shard_idx = ip_to_slot(client_ip, self.shards.len()).unwrap_or(0);
         let shard = &self.shards[shard_idx];
 
         let now_ms = get_monotonic_time_ms();
@@ -405,20 +405,24 @@ impl CounterArray {
         match self {
             CounterArray::Local(b) => b,
             CounterArray::Shared { mmap, offset, len } => {
-                let byte_end = offset
-                    .checked_add(
-                        len.checked_mul(std::mem::size_of::<AtomicU32>())
-                            .expect("CounterArray::Shared len overflow"),
-                    )
-                    .expect("CounterArray::Shared offset+len overflow");
-                assert!(
-                    byte_end <= mmap.len(),
-                    "CounterArray::Shared out of bounds: offset={}, len={}, byte_end={}, mmap.len={}",
-                    offset,
-                    len,
-                    byte_end,
-                    mmap.len()
-                );
+                let byte_len = match len.checked_mul(std::mem::size_of::<AtomicU32>()) {
+                    Some(v) => v,
+                    None => return &[],
+                };
+                let byte_end = match offset.checked_add(byte_len) {
+                    Some(v) => v,
+                    None => return &[],
+                };
+                if byte_end > mmap.len() {
+                    tracing::error!(
+                        "CounterArray::Shared out of bounds: offset={}, len={}, byte_end={}, mmap.len={}",
+                        offset,
+                        len,
+                        byte_end,
+                        mmap.len()
+                    );
+                    return &[];
+                }
                 let ptr = unsafe { mmap.as_ptr().add(*offset) } as *const AtomicU32;
                 unsafe { std::slice::from_raw_parts(ptr, *len) }
             }
@@ -552,7 +556,7 @@ impl SlottedIpRateLimiter {
     }
 
     fn ip_to_slot(&self, ip: IpAddr) -> usize {
-        ip_to_slot(ip, IP_RATE_LIMIT_SLOTS).unwrap()
+        ip_to_slot(ip, IP_RATE_LIMIT_SLOTS).unwrap_or(0)
     }
 
     fn rotate_windows(&self, now_secs: u64) {

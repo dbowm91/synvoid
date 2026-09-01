@@ -83,13 +83,13 @@ impl Http3Server {
 
         let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
 
-        let transport_config =
-            Arc::get_mut(&mut server_config.transport).expect("Failed to get transport config");
+        let transport_config = Arc::get_mut(&mut server_config.transport)
+            .ok_or_else(|| "Failed to get transport config".to_string())?;
         transport_config.max_concurrent_uni_streams(0_u8.into());
         transport_config.max_concurrent_bidi_streams(100_u32.into());
 
         let idle_timeout = quinn::IdleTimeout::try_from(std::time::Duration::from_secs(60))
-            .expect("Failed to create idle timeout");
+            .map_err(|e| format!("Failed to create idle timeout: {}", e))?;
         transport_config.max_idle_timeout(Some(idle_timeout));
 
         let std_socket = bind_udp_reuse(self.addr)?;

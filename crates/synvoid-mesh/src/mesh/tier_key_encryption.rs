@@ -461,7 +461,9 @@ pub fn derive_transmission_key(session_key: &[u8]) -> [u8; 32] {
     let hk = Hkdf::<Sha256>::new(None, session_key);
     let mut okm = [0u8; DERIVED_KEY_SIZE];
     let info = TierKeyEncryption::build_transmission_hkdf_info();
-    let _ = hk.expand(&info, &mut okm);
+    if hk.expand(&info, &mut okm).is_err() {
+        tracing::error!("HKDF expand failed for transmission key derivation; returning zeroed key");
+    }
     okm
 }
 

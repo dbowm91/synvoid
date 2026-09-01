@@ -1040,7 +1040,7 @@ mod tests {
         assert_eq!(
             record_type,
             crate::dht::signed::SignedRecordType::NodeInfo,
-            "BUG: The record type for node_info:my-node should be NodeInfo"
+            "regression: The record type for node_info:my-node should be NodeInfo"
         );
 
         let signed_record = crate::dht::signed::SignedDhtRecord {

@@ -1153,7 +1153,7 @@ mod regression_tests {
         assert_ne!(
             signable_content,
             verify_format.as_bytes(),
-            "BUG: Snapshot request is signed using get_anti_entropy_request_signable_content() which uses postcard serialization, but verified using format! with request_id, node_id, from_version which is a different format. These are incompatible!"
+            "regression: Snapshot request is signed using get_anti_entropy_request_signable_content() which uses postcard serialization, but verified using format! with request_id, node_id, from_version which is a different format. These are incompatible!"
         );
     }
 

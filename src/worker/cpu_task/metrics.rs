@@ -243,7 +243,7 @@ pub fn record_cpu_task_duration(task_kind: CpuTaskKind, duration_ms: u64) {
     let task_kind_label = cpu_task_kind_label(task_kind);
     let mut samples = CPU_TASK_DURATION_SAMPLES
         .lock()
-        .expect("cpu task duration samples lock");
+        .unwrap_or_else(|e| e.into_inner());
     let phase_samples = samples
         .entry(task_kind_label)
         .or_insert_with(|| VecDeque::with_capacity(CPU_TASK_DURATION_SAMPLE_SIZE));
@@ -277,7 +277,7 @@ pub fn summarize_timing_samples(samples: &[u64]) -> TimingStatsPayload {
 pub fn summarize_cpu_task_durations() -> HashMap<String, TimingStatsPayload> {
     let samples = CPU_TASK_DURATION_SAMPLES
         .lock()
-        .expect("cpu task duration samples lock");
+        .unwrap_or_else(|e| e.into_inner());
     let mut summary = HashMap::new();
 
     for (task_kind, durations) in samples.iter() {

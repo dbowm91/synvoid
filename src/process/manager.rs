@@ -33,6 +33,10 @@ use synvoid_block_store::{BlockProvenance, BlockProvenanceKind};
 
 pub type SharedIpc = Arc<tokio::sync::Mutex<IpcStream>>;
 
+fn compute_worker_port(port_base: u16, id: usize) -> Option<u16> {
+    u16::try_from(u32::from(port_base) + u32::try_from(id).ok()?).ok()
+}
+
 #[derive(Debug, Clone)]
 pub struct WorkerConfig {
     pub id: WorkerId,
@@ -550,7 +554,17 @@ impl ProcessManager {
 
     pub fn spawn_worker(&self) -> std::io::Result<WorkerId> {
         let id = self.allocate_worker_id();
-        let port = self.config.worker_port_base + id.as_usize() as u16;
+        let port = compute_worker_port(self.config.worker_port_base, id.as_usize())
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!(
+                        "worker_port_base {} + id {} overflows u16",
+                        self.config.worker_port_base,
+                        id.as_usize()
+                    ),
+                )
+            })?;
 
         self.spawn_worker_with_id(id, port)
     }
@@ -1536,9 +1550,16 @@ impl ProcessManager {
 
             let workers = self.workers.read();
             let worker = workers.get(&id);
-            let port = worker
-                .map(|w| w.port)
-                .unwrap_or_else(|| self.config.worker_port_base + id as u16);
+            let port = worker.map(|w| w.port).unwrap_or_else(|| {
+                compute_worker_port(self.config.worker_port_base, id).unwrap_or_else(|| {
+                    tracing::error!(
+                        "worker_port_base {} + id {} overflows u16 during resize restart",
+                        self.config.worker_port_base,
+                        id
+                    );
+                    self.config.worker_port_base
+                })
+            });
             drop(workers);
 
             tracing::info!(
@@ -1558,9 +1579,16 @@ impl ProcessManager {
         for (id, restart_count) in failure_restarts {
             let workers = self.workers.read();
             let worker = workers.get(&id);
-            let port = worker
-                .map(|w| w.port)
-                .unwrap_or_else(|| self.config.worker_port_base + id as u16);
+            let port = worker.map(|w| w.port).unwrap_or_else(|| {
+                compute_worker_port(self.config.worker_port_base, id).unwrap_or_else(|| {
+                    tracing::error!(
+                        "worker_port_base {} + id {} overflows u16 during failure restart",
+                        self.config.worker_port_base,
+                        id
+                    );
+                    self.config.worker_port_base
+                })
+            });
             let last_restart_at = worker.and_then(|w| w.last_restart_at);
             drop(workers);
 

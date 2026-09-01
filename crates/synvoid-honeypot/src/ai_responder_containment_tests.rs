@@ -346,7 +346,7 @@ fn test_ai_responder_sync_returns_fallback() {
 
 #[tokio::test]
 async fn test_ai_responder_sync_from_async_context_does_not_panic() {
-    // BUG-006: respond() must not call Handle::current().block_on() because
+    // regression: respond() must not call Handle::current().block_on() because
     // that panics when called from within a Tokio runtime. Calling it from
     // an async context via spawn_blocking verifies no runtime re-entry.
     let budget_config = AiBudgetConfig::default();

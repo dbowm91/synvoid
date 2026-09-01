@@ -290,8 +290,11 @@ pub async fn init_mesh_and_threat_intel(
             let ikm = node_id.as_bytes();
             let hk = Hkdf::<Sha256>::new(None, ikm);
             let mut okm = [0u8; 32];
-            hk.expand(b"synvoid-mesh-signer", &mut okm)
-                .expect("HKDF expand failed");
+            if let Err(e) = hk.expand(b"synvoid-mesh-signer", &mut okm) {
+                tracing::error!(
+                    "HKDF expand failed for mesh signer key derivation: {e:?}; signer will be disabled"
+                );
+            }
             okm
         };
 

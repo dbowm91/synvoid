@@ -175,10 +175,7 @@ impl AuthManager {
         // mutation represented by older snapshots. Merging older maps back
         // into it can resurrect deleted users/sessions or overwrite a newer
         // password/site update with stale data.
-        stores
-            .last()
-            .cloned()
-            .expect("non-empty store snapshot list")
+        stores.last().cloned().unwrap_or_default()
     }
 
     fn load_store(data_dir: &std::path::Path) -> AuthStore {

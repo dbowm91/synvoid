@@ -194,8 +194,12 @@ pub async fn init_mesh_control_plane(
         let ikm = node_id.as_bytes();
         let hk = Hkdf::<Sha256>::new(None, ikm);
         let mut okm = [0u8; 32];
-        hk.expand(b"synvoid-mesh-signer", &mut okm)
-            .expect("HKDF expand failed");
+        if hk.expand(b"synvoid-mesh-signer", &mut okm).is_err() {
+            tracing::error!(
+                "HKDF expand failed for mesh signer key derivation; aborting mesh startup"
+            );
+            return None;
+        }
         okm
     };
 

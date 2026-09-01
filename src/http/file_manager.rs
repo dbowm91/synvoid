@@ -158,7 +158,8 @@ async fn write_handler(
         .write_file(&path, body.to_vec())
         .await
         .map_err(|e| {
-            http::StatusCode::from_u16(e.status_code()).expect("valid HTTP status code")
+            http::StatusCode::from_u16(e.status_code())
+                .unwrap_or(http::StatusCode::INTERNAL_SERVER_ERROR)
         })?;
 
     Ok(Json(ApiResponse::success(
@@ -176,7 +177,8 @@ async fn delete_handler(
     let path = format!("/{}", path);
 
     state.file_manager.delete(&path).await.map_err(|e| {
-        http::StatusCode::from_u16(e.status_code()).expect("valid HTTP status code")
+        http::StatusCode::from_u16(e.status_code())
+            .unwrap_or(http::StatusCode::INTERNAL_SERVER_ERROR)
     })?;
 
     Ok(Json(ApiResponse::success(
@@ -197,7 +199,8 @@ async fn mkdir_handler(
         .create_directory(&payload.path)
         .await
         .map_err(|e| {
-            http::StatusCode::from_u16(e.status_code()).expect("valid HTTP status code")
+            http::StatusCode::from_u16(e.status_code())
+                .unwrap_or(http::StatusCode::INTERNAL_SERVER_ERROR)
         })?;
 
     Ok(Json(ApiResponse::success(
@@ -218,7 +221,8 @@ async fn rename_handler(
         .rename(&payload.old_path, &payload.new_path)
         .await
         .map_err(|e| {
-            http::StatusCode::from_u16(e.status_code()).expect("valid HTTP status code")
+            http::StatusCode::from_u16(e.status_code())
+                .unwrap_or(http::StatusCode::INTERNAL_SERVER_ERROR)
         })?;
 
     Ok(Json(ApiResponse::success(serde_json::json!({
@@ -242,7 +246,8 @@ async fn get_permissions_handler(
         .get_permissions(&path)
         .await
         .map_err(|e| {
-            http::StatusCode::from_u16(e.status_code()).expect("valid HTTP status code")
+            http::StatusCode::from_u16(e.status_code())
+                .unwrap_or(http::StatusCode::INTERNAL_SERVER_ERROR)
         })?;
 
     Ok(Json(ApiResponse::success(permissions)))
@@ -261,7 +266,8 @@ async fn set_permissions_handler(
         .set_permissions(&payload.path, payload.mode)
         .await
         .map_err(|e| {
-            http::StatusCode::from_u16(e.status_code()).expect("valid HTTP status code")
+            http::StatusCode::from_u16(e.status_code())
+                .unwrap_or(http::StatusCode::INTERNAL_SERVER_ERROR)
         })?;
 
     Ok(Json(ApiResponse::success(
@@ -284,7 +290,8 @@ async fn search_handler(
         .search(&query, &path)
         .await
         .map_err(|e| {
-            http::StatusCode::from_u16(e.status_code()).expect("valid HTTP status code")
+            http::StatusCode::from_u16(e.status_code())
+                .unwrap_or(http::StatusCode::INTERNAL_SERVER_ERROR)
         })?;
 
     Ok(Json(ApiResponse::success(result)))
@@ -310,7 +317,8 @@ async fn upload_handler(
         .upload_file(&dest_path, filename, body.to_vec())
         .await
         .map_err(|e| {
-            http::StatusCode::from_u16(e.status_code()).expect("valid HTTP status code")
+            http::StatusCode::from_u16(e.status_code())
+                .unwrap_or(http::StatusCode::INTERNAL_SERVER_ERROR)
         })?;
 
     Ok(Json(ApiResponse::success(entry)))
@@ -329,7 +337,8 @@ async fn extract_handler(
         .extract_archive(&payload.archive_path, &payload.dest_path)
         .await
         .map_err(|e| {
-            http::StatusCode::from_u16(e.status_code()).expect("valid HTTP status code")
+            http::StatusCode::from_u16(e.status_code())
+                .unwrap_or(http::StatusCode::INTERNAL_SERVER_ERROR)
         })?;
 
     Ok(Json(ApiResponse::success(serde_json::json!({

@@ -716,7 +716,7 @@ async fn smoke_openapi_spec_available() {
     );
 }
 
-// ── TLS config validation (BUG-009) ──────────────────────────────────────────
+// ── TLS config validation (regression) ───────────────────────────────────────
 
 #[tokio::test]
 async fn tls_config_validation_rejects_enabled_without_cert() {
@@ -784,7 +784,7 @@ async fn tls_config_validation_accepts_disabled() {
     );
 }
 
-// ── HTTP/3 config validation (BUG-009) ───────────────────────────────────────
+// ── HTTP/3 config validation (regression) ────────────────────────────────────
 
 #[tokio::test]
 async fn http3_config_validation_accepts_default() {

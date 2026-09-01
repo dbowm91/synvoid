@@ -151,12 +151,12 @@ async fn propfind_handler(
     // Generate WebDAV XML response
     let xml = generate_propfind_response(&path, &listing);
 
-    Ok(Response::builder()
+    Response::builder()
         .status(StatusCode::MULTI_STATUS)
         .header("Content-Type", "application/xml; charset=utf-8")
         .header("DAV", "1, 2")
         .body(axum::body::Body::from(xml))
-        .unwrap())
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 /// Generate PROPFIND XML response
@@ -283,11 +283,11 @@ async fn mkcol_handler(
             status
         })?;
 
-    Ok(Response::builder()
+    Response::builder()
         .status(StatusCode::CREATED)
         .header("Location", path.as_str())
         .body(axum::body::Body::empty())
-        .unwrap())
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 // ============================================================================
@@ -356,16 +356,16 @@ async fn move_handler(
         })?;
 
     if dest_exists && overwrite {
-        Ok(Response::builder()
+        Response::builder()
             .status(StatusCode::NO_CONTENT)
             .body(axum::body::Body::empty())
-            .unwrap())
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
     } else {
-        Ok(Response::builder()
+        Response::builder()
             .status(StatusCode::CREATED)
             .header("Location", dest_path.as_str())
             .body(axum::body::Body::empty())
-            .unwrap())
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
     }
 }
 
@@ -454,16 +454,16 @@ async fn copy_handler(
     }
 
     if dest_exists && overwrite {
-        Ok(Response::builder()
+        Response::builder()
             .status(StatusCode::NO_CONTENT)
             .body(axum::body::Body::empty())
-            .unwrap())
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
     } else {
-        Ok(Response::builder()
+        Response::builder()
             .status(StatusCode::CREATED)
             .header("Location", dest_path.as_str())
             .body(axum::body::Body::empty())
-            .unwrap())
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
     }
 }
 
@@ -574,11 +574,11 @@ async fn get_handler(
             })?;
 
         let xml = generate_propfind_response(&path, &listing);
-        return Ok(Response::builder()
+        return Response::builder()
             .status(StatusCode::OK)
             .header("Content-Type", "application/xml; charset=utf-8")
             .body(axum::body::Body::from(xml))
-            .unwrap());
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     // It's a file
@@ -599,11 +599,11 @@ async fn get_handler(
         .get_mime_for_extension(ext)
         .unwrap_or_else(|| "application/octet-stream".to_string());
 
-    Ok(Response::builder()
+    Response::builder()
         .status(StatusCode::OK)
         .header("Content-Type", mime.as_str())
         .body(axum::body::Body::from(data))
-        .unwrap())
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 /// Handle PUT requests - create or update a file
@@ -635,10 +635,10 @@ async fn put_handler(
             status
         })?;
 
-    Ok(Response::builder()
+    Response::builder()
         .status(StatusCode::CREATED)
         .body(axum::body::Body::empty())
-        .unwrap())
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 /// Handle DELETE requests - delete a file or directory
@@ -660,10 +660,10 @@ async fn delete_handler(
         status
     })?;
 
-    Ok(Response::builder()
+    Response::builder()
         .status(StatusCode::NO_CONTENT)
         .body(axum::body::Body::empty())
-        .unwrap())
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 /// Handle OPTIONS requests - return WebDAV support information
@@ -677,7 +677,12 @@ async fn options_handler(_state: &WebDavState) -> Response {
         )
         .header("MS-Author-Via", "DAV")
         .body(axum::body::Body::empty())
-        .unwrap()
+        .unwrap_or_else(|_| {
+            Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(axum::body::Body::empty())
+                .expect("static response builder cannot fail")
+        })
 }
 
 // ============================================================================

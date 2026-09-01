@@ -2371,7 +2371,7 @@ mod tests {
         let verified = verify_dht_record_signature(&record2);
         assert!(
             !verified,
-            "BUG: Quorum proof signatures must be bound to specific record content. A proof created for record1 should NOT verify for record2."
+            "regression: quorum proof signatures must be bound to specific record content. A proof created for record1 should NOT verify for record2."
         );
     }
 
@@ -2394,7 +2394,7 @@ mod tests {
 
         assert!(
             timestamp_valid,
-            "BUG: validate_record_timestamp() rejects records with timestamp diff > 300 seconds, even though this record is still LIVE (expires in {} seconds). The validation should check if the record is EXPIRED, not just OLD.",
+            "regression: validate_record_timestamp() rejects records with timestamp diff > 300 seconds, even though this record is still LIVE (expires in {} seconds). The validation should check if the record is EXPIRED, not just OLD.",
             expires_at as i64 - now
         );
     }
