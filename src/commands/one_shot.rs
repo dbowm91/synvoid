@@ -518,21 +518,26 @@ auto_scale = true
         {
             Ok(mut f) => {
                 if let Err(e) = f.write_all(updated_content.as_bytes()) {
-                    return Err(OneShotError::Io(format!("Failed to write config file: {}", e)));
+                    return Err(OneShotError::Io(format!(
+                        "Failed to write config file: {}",
+                        e
+                    )));
                 }
                 let _ = f.sync_all();
             }
-            Err(e) => return Err(OneShotError::Io(format!("Failed to create config file: {}", e))),
+            Err(e) => {
+                return Err(OneShotError::Io(format!(
+                    "Failed to create config file: {}",
+                    e
+                )))
+            }
         }
     }
     #[cfg(not(unix))]
     {
         std::fs::write(&main_config_path, &updated_content)
             .map_err(|e| OneShotError::Io(format!("Failed to write config file: {}", e)))?;
-        let _ = std::fs::set_permissions(
-            &main_config_path,
-            std::fs::Permissions::from_mode(0o600),
-        );
+        let _ = std::fs::set_permissions(&main_config_path, std::fs::Permissions::from_mode(0o600));
     }
 
     tracing::warn!(

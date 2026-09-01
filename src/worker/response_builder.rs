@@ -61,7 +61,9 @@ pub(in crate::worker) fn process_minify_request(
             let entry = cache
                 .minify_and_cache(&site_id, &path, &original_content, mtime)
                 .map_err(|e| format!("Minification failed: {}", e))?;
-            let _ = cache.write_to_disk(&site_id, &path, &entry.content, mtime);
+            if let Err(e) = cache.write_to_disk(&site_id, &path, &entry.content, mtime) {
+                tracing::warn!("Failed to write minified cache to disk: {}", e);
+            }
             entry.content.to_vec()
         }
     };
@@ -94,12 +96,14 @@ pub(in crate::worker) fn process_minify_request(
                                 &minifier::Encoding::Gzip,
                             )
                             .map_err(|e| format!("Gzip compression failed: {}", e))?;
-                        let _ = cache.write_compressed_to_disk(
+                        if let Err(e) = cache.write_compressed_to_disk(
                             &site_id,
                             &path,
                             &content,
                             &minifier::Encoding::Gzip,
-                        );
+                        ) {
+                            tracing::warn!("Failed to write gzip cache to disk: {}", e);
+                        }
                         content.to_vec()
                     }
                 }
@@ -122,12 +126,14 @@ pub(in crate::worker) fn process_minify_request(
                                 &minifier::Encoding::Br,
                             )
                             .map_err(|e| format!("Brotli compression failed: {}", e))?;
-                        let _ = cache.write_compressed_to_disk(
+                        if let Err(e) = cache.write_compressed_to_disk(
                             &site_id,
                             &path,
                             &content,
                             &minifier::Encoding::Br,
-                        );
+                        ) {
+                            tracing::warn!("Failed to write brotli cache to disk: {}", e);
+                        }
                         content.to_vec()
                     }
                 }

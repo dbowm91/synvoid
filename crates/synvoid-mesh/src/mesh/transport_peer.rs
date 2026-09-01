@@ -4543,8 +4543,12 @@ impl MeshTransport {
                     .encode()
                     .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
                 let len = (encoded.len() as u32).to_be_bytes();
-                let _ = send_stream.write_all(&len).await;
-                let _ = send_stream.write_all(&encoded).await;
+                send_stream.write_all(&len).await.map_err(|e| {
+                    MeshTransportError::SendFailed(format!("pong write failed: {}", e))
+                })?;
+                send_stream.write_all(&encoded).await.map_err(|e| {
+                    MeshTransportError::SendFailed(format!("pong write failed: {}", e))
+                })?;
             }
             MeshMessage::Pong {
                 request_id: _,
@@ -4599,8 +4603,12 @@ impl MeshTransport {
                     .encode()
                     .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
                 let len = (encoded.len() as u32).to_be_bytes();
-                let _ = send_stream.write_all(&len).await;
-                let _ = send_stream.write_all(&encoded).await;
+                send_stream.write_all(&len).await.map_err(|e| {
+                    MeshTransportError::SendFailed(format!("health response write failed: {}", e))
+                })?;
+                send_stream.write_all(&encoded).await.map_err(|e| {
+                    MeshTransportError::SendFailed(format!("health response write failed: {}", e))
+                })?;
             }
             MeshMessage::ServerlessFunctionAnnounce(announce) => {
                 tracing::debug!(

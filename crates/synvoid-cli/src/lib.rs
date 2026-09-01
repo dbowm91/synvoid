@@ -22,7 +22,10 @@ pub struct Args {
     #[arg(long, help = "Run as YARA rule evaluation jail")]
     pub yara_jail: bool,
 
-    #[arg(long, help = "Run as worker process")]
+    #[arg(
+        long,
+        help = "[deprecated] Run as worker process (alias for supervisor; compat only)"
+    )]
     pub worker: bool,
 
     #[arg(long, value_name = "ID", help = "Worker ID (worker mode only)")]

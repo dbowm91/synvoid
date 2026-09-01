@@ -7,6 +7,7 @@ use std::sync::Arc;
 const SMALL_BUF_SIZE: usize = 4 * 1024;
 const MEDIUM_BUF_SIZE: usize = 64 * 1024;
 const LARGE_BUF_SIZE: usize = 256 * 1024;
+const JUMBO_BUF_SIZE: usize = 512 * 1024;
 
 const SMALL_POOL_CAP: usize = 512;
 const MEDIUM_POOL_CAP: usize = 256;
@@ -203,7 +204,7 @@ impl Shard {
             small: TierArena::new(SMALL_BUF_SIZE, SMALL_POOL_CAP / NUM_SHARDS),
             medium: TierArena::new(MEDIUM_BUF_SIZE, MEDIUM_POOL_CAP / NUM_SHARDS),
             large: TierArena::new(LARGE_BUF_SIZE, LARGE_POOL_CAP / NUM_SHARDS),
-            jumbo: TierArena::new(256 * 1024, JUMBO_POOL_CAP / NUM_SHARDS),
+            jumbo: TierArena::new(JUMBO_BUF_SIZE, JUMBO_POOL_CAP / NUM_SHARDS),
         }
     }
 }
@@ -309,6 +310,10 @@ impl BufferPool {
     }
 
     pub fn try_acquire(size: usize) -> Option<PooledBuf> {
+        // Best-effort memory limit using Relaxed ordering: fetch_add/sub in
+        // acquire_inner/drop is also Relaxed, so concurrent try_acquire calls
+        // may race and slightly exceed the limit. This is acceptable for a
+        // soft backpressure bound; the limit is not a hard safety invariant.
         let limit = GLOBAL_MEMORY_LIMIT.load(std::sync::atomic::Ordering::Relaxed);
         if limit > 0 {
             let current = GLOBAL_ALLOCATED_BYTES.load(std::sync::atomic::Ordering::Relaxed);
@@ -596,12 +601,14 @@ impl PooledBuf {
         self.buf.take().unwrap_or_default()
     }
 
-    pub fn as_bytes_mut(&mut self) -> &mut BytesMut {
-        if let Some(ref mut b) = self.buf {
-            b
-        } else {
-            panic!("PooledBuf already consumed")
-        }
+    pub fn as_bytes_mut(&mut self) -> Option<&mut BytesMut> {
+        self.buf.as_mut()
+    }
+
+    /// Panicking variant of `as_bytes_mut` for call sites that require a `&mut BytesMut`.
+    /// Prefer `as_bytes_mut` (Option) for new code; this will panic if the buffer was consumed.
+    pub fn as_bytes_mut_expect(&mut self) -> &mut BytesMut {
+        self.buf.as_mut().expect("PooledBuf already consumed")
     }
 
     pub fn clear(&mut self) {

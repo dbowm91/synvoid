@@ -213,7 +213,9 @@ impl CommandClient {
                 SupervisorCommand::Status => Signal::SIGUSR2,
             };
 
-            let pid = Pid::from_raw(pid as i32);
+            let raw = i32::try_from(pid)
+                .map_err(|_| CommandError::SignalFailed(format!("PID {} exceeds i32::MAX", pid)))?;
+            let pid = Pid::from_raw(raw);
             kill(pid, sig).map_err(|e| CommandError::SignalFailed(e.to_string()))?;
 
             Ok(format!("Signal {:?} sent to PID {}", sig, pid))

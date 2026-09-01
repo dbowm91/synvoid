@@ -43,7 +43,7 @@ impl MeshTaskGroup {
     /// Creates a new task group with a fresh shutdown channel.
     pub fn new() -> Self {
         let (shutdown_tx, _) = watch::channel(false);
-        let (exit_tx, _) = broadcast::channel(64);
+        let (exit_tx, _) = broadcast::channel(256);
         Self {
             shutdown_tx,
             critical: Vec::new(),
@@ -63,7 +63,7 @@ impl MeshTaskGroup {
     /// broadcast channel that survives task group replacements during restart.
     pub fn new_with_forward(forward_tx: broadcast::Sender<MeshTaskExit>) -> Self {
         let (shutdown_tx, _) = watch::channel(false);
-        let (exit_tx, _) = broadcast::channel(64);
+        let (exit_tx, _) = broadcast::channel(256);
         Self {
             shutdown_tx,
             critical: Vec::new(),
@@ -86,7 +86,7 @@ impl MeshTaskGroup {
         id_generator: Arc<MeshTaskIdGenerator>,
     ) -> Self {
         let (shutdown_tx, _) = watch::channel(false);
-        let (exit_tx, _) = broadcast::channel(64);
+        let (exit_tx, _) = broadcast::channel(256);
         Self {
             shutdown_tx,
             critical: Vec::new(),
@@ -408,9 +408,13 @@ impl MeshTaskGroup {
                 class,
                 reason,
             };
-            let _ = exit_tx.send(exit.clone());
+            if let Err(e) = exit_tx.send(exit.clone()) {
+                tracing::warn!("mesh task exit broadcast send failed: {}", e);
+            }
             if let Some(fwd) = forward_tx {
-                let _ = fwd.send(exit.clone());
+                if let Err(e) = fwd.send(exit.clone()) {
+                    tracing::warn!("mesh task forward send failed: {}", e);
+                }
             }
             exit
         })
@@ -477,9 +481,13 @@ impl MeshTaskGroup {
                 class,
                 reason,
             };
-            let _ = exit_tx.send(exit.clone());
+            if let Err(e) = exit_tx.send(exit.clone()) {
+                tracing::warn!("mesh task exit broadcast send failed: {}", e);
+            }
             if let Some(fwd) = forward_tx {
-                let _ = fwd.send(exit.clone());
+                if let Err(e) = fwd.send(exit.clone()) {
+                    tracing::warn!("mesh task forward send failed: {}", e);
+                }
             }
             exit
         })

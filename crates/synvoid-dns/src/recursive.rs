@@ -438,7 +438,9 @@ impl RecursiveDnsServer {
                     let len = response.len() as u16;
                     let mut len_bytes = len.to_be_bytes().to_vec();
                     len_bytes.extend_from_slice(&response);
-                    let _ = stream.write_all(&len_bytes).await;
+                    if let Err(e) = stream.write_all(&len_bytes).await {
+                        tracing::warn!("Failed to send REFUSED response: {}", e);
+                    }
                 }
                 return Err(RecursiveDnsError::FirewallBlocked);
             }
@@ -501,7 +503,9 @@ impl RecursiveDnsServer {
                     let len = servfail.len() as u16;
                     let mut len_bytes = len.to_be_bytes().to_vec();
                     len_bytes.extend_from_slice(&servfail);
-                    let _ = stream.write_all(&len_bytes).await;
+                    if let Err(write_err) = stream.write_all(&len_bytes).await {
+                        tracing::warn!("Failed to send SERVFAIL response: {}", write_err);
+                    }
                 }
                 return Err(e);
             }

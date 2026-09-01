@@ -256,8 +256,12 @@ impl UdpListenerPool {
 
             sock.set_nonblocking(true).ok();
 
-            let _ = sock.set_recv_buffer_size(socket_options.recv_buffer_size);
-            let _ = sock.set_send_buffer_size(socket_options.send_buffer_size);
+            if let Err(e) = sock.set_recv_buffer_size(socket_options.recv_buffer_size) {
+                tracing::warn!("Failed to set UDP recv buffer size: {}", e);
+            }
+            if let Err(e) = sock.set_send_buffer_size(socket_options.send_buffer_size) {
+                tracing::warn!("Failed to set UDP send buffer size: {}", e);
+            }
 
             if let Err(e) = sock.bind(&addr.into()) {
                 tracing::error!("Failed to bind UDP socket to {}: {}", bind_addr, e);
@@ -611,7 +615,9 @@ impl RateEntry {
     fn new() -> Self {
         Self {
             count: AtomicU32::new(1),
-            window_start: AtomicI64::new(crate::utils::safe_unix_timestamp() as i64),
+            window_start: AtomicI64::new(
+                i64::try_from(crate::utils::safe_unix_timestamp()).unwrap_or(i64::MAX),
+            ),
         }
     }
 }
@@ -639,7 +645,7 @@ impl UdpRateLimiter {
     }
 
     fn check_with_limit(&self, ip: std::net::IpAddr, limit: u32) -> bool {
-        let now = crate::utils::safe_unix_timestamp() as i64;
+        let now = i64::try_from(crate::utils::safe_unix_timestamp()).unwrap_or(i64::MAX);
 
         let window_secs: i64 = 1;
         let shard_idx = hash_ip(&ip);
@@ -673,7 +679,7 @@ impl UdpRateLimiter {
     }
 
     fn cleanup_stale(&self, max_age_secs: i64) {
-        let now = crate::utils::safe_unix_timestamp() as i64;
+        let now = i64::try_from(crate::utils::safe_unix_timestamp()).unwrap_or(i64::MAX);
 
         let mut total_removed = 0u64;
         for shard in &self.shards {

@@ -40,7 +40,7 @@ rkyv = []
 macos-sandbox = []  # Enable macOS sandbox enforcement
 test-utils = []
 swagger-ui = ["dep:utoipa-swagger-ui"]
-fastcgi_streaming = []  # Enable streaming FastCGI response handling
+fastcgi_streaming = []  # Additive, opt-in: streaming FastCGI response handling (no default impact)
 
 [patch.crates-io]
 # Patch the application runtime's Wasmtime dependency to the audited version.
@@ -248,7 +248,7 @@ daemonize2 = "0.6"
 digest = "0.10"
 ed25519-dalek = { version = "2" }
 rsa = "0.9"
-rand_core_06 = { package = "rand_core", version = "0.6" }
+rand_core_06 = { package = "rand_core", version = "0.6" } # shim for pqc rand 0.8 compat vs root rand 0.9; keep in sync with pqc/Cargo.toml:18
 hkdf = "0.12"
 hmac = "0.12"
 socket2 = "0.6"

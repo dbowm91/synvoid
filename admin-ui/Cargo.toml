@@ -3,6 +3,9 @@ name = "admin-ui"
 version = "0.1.0"
 edition = "2021"
 license.workspace = true
+description = "SynVoid admin UI (Yew/WASM frontend)"
+repository.workspace = true
+publish = false
 
 [lib]
 crate-type = ["cdylib", "rlib"]

@@ -573,7 +573,7 @@ async fn close_and_drain_async_cpu_task_connection(
 ) {
     closed.store(true, Ordering::Release);
     let drained = {
-        let mut guard = pending.lock().expect("cpu task pending lock poisoned");
+        let mut guard = pending.lock().unwrap_or_else(|e| e.into_inner());
         guard.drain().collect::<Vec<_>>()
     };
 
@@ -606,14 +606,14 @@ where
             };
 
             {
-                let mut guard = pending.lock().expect("cpu task pending lock poisoned");
+                let mut guard = pending.lock().unwrap_or_else(|e| e.into_inner());
                 guard.insert(request_id, response_tx);
             }
 
             if let Err(e) = send_framed_async_cpu_task_message(writer, signer, &request).await {
                 if let Some(sender) = pending
                     .lock()
-                    .expect("cpu task pending lock poisoned")
+                    .unwrap_or_else(|e| e.into_inner())
                     .remove(&request_id)
                 {
                     let _ = sender.send(Err(AsyncCpuTaskDispatchError::SendFailed(e.to_string())));
@@ -628,7 +628,7 @@ where
         } => {
             let _ = pending
                 .lock()
-                .expect("cpu task pending lock poisoned")
+                .unwrap_or_else(|e| e.into_inner())
                 .remove(&request_id);
 
             let cancel = Message::CpuTaskCancel {
@@ -661,10 +661,7 @@ async fn run_async_cpu_task_connection_driver<R, W>(
             break;
         }
 
-        let pending_empty = pending
-            .lock()
-            .expect("cpu task pending lock poisoned")
-            .is_empty();
+        let pending_empty = pending.lock().unwrap_or_else(|e| e.into_inner()).is_empty();
 
         if pending_empty {
             if commands_closed {
@@ -709,7 +706,7 @@ async fn run_async_cpu_task_connection_driver<R, W>(
                     if let Some(request_id) = async_cpu_task_message_request_id(&message) {
                         if let Some(sender) = pending
                             .lock()
-                            .expect("cpu task pending lock poisoned")
+                            .unwrap_or_else(|e| e.into_inner())
                             .remove(&request_id)
                         {
                             let _ = sender.send(Ok(message));
@@ -773,7 +770,7 @@ async fn run_async_cpu_task_connection_driver<R, W>(
                         if let Some(request_id) = async_cpu_task_message_request_id(&message) {
                             if let Some(sender) = pending
                                 .lock()
-                                .expect("cpu task pending lock poisoned")
+                                .unwrap_or_else(|e| e.into_inner())
                                 .remove(&request_id)
                             {
                                 let _ = sender.send(Ok(message));
@@ -805,7 +802,7 @@ async fn run_async_cpu_task_connection_driver<R, W>(
 
     closed.store(true, Ordering::Release);
     let drained = {
-        let mut guard = pending.lock().expect("cpu task pending lock poisoned");
+        let mut guard = pending.lock().unwrap_or_else(|e| e.into_inner());
         guard.drain().collect::<Vec<_>>()
     };
     for (_, sender) in drained {

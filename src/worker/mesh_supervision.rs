@@ -621,7 +621,9 @@ pub async fn run_mesh_exit_observer(
                 match result {
                     Ok(exit) => {
                         MESH_SUPERVISION_METRICS.exit_events_total.fetch_add(1, Ordering::Relaxed);
-                        let _ = control_tx.send(MeshSupervisionEvent::TaskExit(exit)).await;
+                        if let Err(e) = control_tx.send(MeshSupervisionEvent::TaskExit(exit)).await {
+                            tracing::warn!("mesh supervision control send failed (TaskExit): {}", e);
+                        }
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         // Events were lost — mark degraded and request reconciliation
@@ -630,11 +632,15 @@ pub async fn run_mesh_exit_observer(
                             let mut s = status.write().await;
                             s.transition_degraded(format!("exit stream lagged by {} events", n));
                         }
-                        let _ = control_tx.send(MeshSupervisionEvent::ExitStreamLagged(n)).await;
+                        if let Err(e) = control_tx.send(MeshSupervisionEvent::ExitStreamLagged(n)).await {
+                            tracing::warn!("mesh supervision control send failed (Lagged {}): {}", n, e);
+                        }
                     }
                     Err(broadcast::error::RecvError::Closed) => {
                         // Channel closed — if worker is still running, this is a failure
-                        let _ = control_tx.send(MeshSupervisionEvent::ExitStreamClosed).await;
+                        if let Err(e) = control_tx.send(MeshSupervisionEvent::ExitStreamClosed).await {
+                            tracing::warn!("mesh supervision control send failed (Closed): {}", e);
+                        }
                         break;
                     }
                 }

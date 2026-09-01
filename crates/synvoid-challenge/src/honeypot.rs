@@ -150,15 +150,16 @@ impl HoneypotTracker {
             for trap in &entry.traps {
                 let hits = trap.get_hits();
                 let app_path = trap.app_path.clone();
-                stats_map
-                    .entry(app_path.clone())
+                let key = app_path.clone();
+                let stats = stats_map
+                    .entry(key.clone())
                     .or_insert_with(|| PathHitStats {
-                        app_path,
+                        app_path: key.clone(),
                         total_traps: 0,
                         total_hits: 0,
-                    })
-                    .total_hits += hits;
-                stats_map.get_mut(&trap.app_path).unwrap().total_traps += 1;
+                    });
+                stats.total_hits += hits;
+                stats.total_traps += 1;
             }
         }
 

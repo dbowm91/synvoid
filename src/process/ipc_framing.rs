@@ -20,7 +20,12 @@ where
         ));
     }
 
-    let len = data.len() as u32;
+    let len = u32::try_from(data.len()).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "message too large for u32",
+        )
+    })?;
     writer.write_all(&len.to_be_bytes())?;
     writer.write_all(&data)?;
     writer.flush()?;
@@ -135,7 +140,12 @@ where
         ));
     }
 
-    let len = data.len() as u32;
+    let len = u32::try_from(data.len()).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "message too large for u32",
+        )
+    })?;
     writer.write_all(&len.to_be_bytes()).await?;
     writer.write_all(&data).await?;
     writer.flush().await?;

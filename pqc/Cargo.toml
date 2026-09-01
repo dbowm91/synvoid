@@ -14,8 +14,8 @@ serde_json = "1"
 thiserror = "2"
 zeroize = { version = "1", features = ["derive"] }
 subtle = "2"
-libcrux-ml-dsa = "0.0"
-rand = "0.8"
+libcrux-ml-dsa = "0.0" # pre-release 0.0 intentionally pinned; any update may break—review changelog before bump
+rand = "0.8" # kept at 0.8 for pqc; root uses rand 0.9 with rand_core_06 shim (see Cargo.toml:251)
 
 [dependencies.tokio]
 version = "1"

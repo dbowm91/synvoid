@@ -1116,7 +1116,7 @@ impl ThreatIntelligenceManager {
         if self.config.hub_only_mode && !self.node_role.is_global() {
             static WARNED_ONCE: std::sync::LazyLock<std::sync::Mutex<bool>> =
                 std::sync::LazyLock::new(|| std::sync::Mutex::new(false));
-            let mut warned = WARNED_ONCE.lock().unwrap();
+            let mut warned = WARNED_ONCE.lock().unwrap_or_else(|e| e.into_inner());
             if !*warned {
                 tracing::warn!(
                     "DHT publish skipped for non-global node in hub_only_mode (standalone). \

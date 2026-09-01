@@ -342,7 +342,7 @@ impl AlertManager {
         }
 
         let mut events = Vec::new();
-        let now = crate::utils::safe_unix_timestamp() as i64;
+        let now = i64::try_from(crate::utils::safe_unix_timestamp()).unwrap_or(i64::MAX);
         let cooldown = config.cooldown_secs;
 
         for rule in &config.alerts {
@@ -529,7 +529,7 @@ impl AlertManager {
             return Ok(());
         }
 
-        let now = crate::utils::safe_unix_timestamp() as i64;
+        let now = i64::try_from(crate::utils::safe_unix_timestamp()).unwrap_or(i64::MAX);
 
         let event = AlertEvent {
             timestamp: now,

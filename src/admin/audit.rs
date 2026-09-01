@@ -180,8 +180,11 @@ impl AuditState {
     pub fn log_audit_event(&self, event: &synvoid_core::admin_mutation::AdminAuditEvent) {
         let log = AuditLog {
             id: event.audit_id.clone(),
-            timestamp: chrono::DateTime::from_timestamp(event.timestamp as i64, 0)
-                .unwrap_or_default(),
+            timestamp: chrono::DateTime::from_timestamp(
+                i64::try_from(event.timestamp).unwrap_or(i64::MAX),
+                0,
+            )
+            .unwrap_or_default(),
             user_id: event.actor.actor_id.clone(),
             username: event.actor.actor_id.clone(),
             action: event.action.clone(),

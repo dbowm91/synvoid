@@ -351,7 +351,17 @@ impl CgiHandler {
         if !body.is_empty() {
             if let Some(mut stdin) = child.stdin.take() {
                 use tokio::io::AsyncWriteExt;
-                let _ = stdin.write_all(&body).await;
+                if let Err(e) = stdin.write_all(&body).await {
+                    tracing::warn!(
+                        "Failed to write CGI stdin (body {} bytes): {}",
+                        body.len(),
+                        e
+                    );
+                    return Err(CgiError::ExecutionFailed(format!(
+                        "failed to write CGI stdin: {}",
+                        e
+                    )));
+                }
             }
         }
 

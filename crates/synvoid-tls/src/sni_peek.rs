@@ -573,9 +573,15 @@ mod tests {
 
         // ServerName entry: type = host_name (0), name
         ext.push(0x00); // type
-        let name_len: u16 = hostname.len().try_into().expect("hostname too long for SNI (max 65535)");
+        let name_bytes = hostname.as_bytes();
+        let name_len: u16 = name_bytes.len().try_into().unwrap_or(65535);
+        let name_bytes = if name_bytes.len() > 65535 {
+            &name_bytes[..65535]
+        } else {
+            name_bytes
+        };
         ext.extend_from_slice(&name_len.to_be_bytes());
-        ext.extend_from_slice(hostname.as_bytes());
+        ext.extend_from_slice(name_bytes);
 
         // Fill in ServerNameList length
         let list_len = ext.len() - list_pos - 2;

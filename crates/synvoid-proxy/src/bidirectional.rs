@@ -135,7 +135,10 @@ where
                             .write_all(&write_buf.as_slice()[..write_pending])
                             .await
                             .map_err(|e| ProxyError::WriteError(e.to_string()))?;
-                        let _ = upstream_write.flush().await;
+                        upstream_write
+                            .flush()
+                            .await
+                            .map_err(|e| ProxyError::WriteError(e.to_string()))?;
                     }
                     break Ok(total);
                 }
@@ -165,7 +168,10 @@ where
                                 .write_all(&write_buf.as_slice()[..write_pending])
                                 .await
                                 .map_err(|e| ProxyError::WriteError(e.to_string()))?;
-                            let _ = upstream_write.flush().await;
+                            upstream_write
+                                .flush()
+                                .await
+                                .map_err(|e| ProxyError::WriteError(e.to_string()))?;
                             write_pending = 0;
                             last_flush_at = total;
                         }
@@ -184,7 +190,10 @@ where
                             .map_err(|e| ProxyError::WriteError(e.to_string()))?;
 
                         if total - last_flush_at >= flush_interval as u64 {
-                            let _ = upstream_write.flush().await;
+                            upstream_write
+                                .flush()
+                                .await
+                                .map_err(|e| ProxyError::WriteError(e.to_string()))?;
                             last_flush_at = total;
                         }
                     }
@@ -213,7 +222,10 @@ where
                             .write_all(&write_buf.as_slice()[..write_pending])
                             .await
                             .map_err(|e| ProxyError::WriteError(e.to_string()))?;
-                        let _ = client_write.flush().await;
+                        client_write
+                            .flush()
+                            .await
+                            .map_err(|e| ProxyError::WriteError(e.to_string()))?;
                     }
                     break Ok(total);
                 }
@@ -243,7 +255,10 @@ where
                                 .write_all(&write_buf.as_slice()[..write_pending])
                                 .await
                                 .map_err(|e| ProxyError::WriteError(e.to_string()))?;
-                            let _ = client_write.flush().await;
+                            client_write
+                                .flush()
+                                .await
+                                .map_err(|e| ProxyError::WriteError(e.to_string()))?;
                             write_pending = 0;
                             last_flush_at = total;
                         }
@@ -262,7 +277,10 @@ where
                             .map_err(|e| ProxyError::WriteError(e.to_string()))?;
 
                         if total - last_flush_at >= flush_interval as u64 {
-                            let _ = client_write.flush().await;
+                            client_write
+                                .flush()
+                                .await
+                                .map_err(|e| ProxyError::WriteError(e.to_string()))?;
                             last_flush_at = total;
                         }
                     }
@@ -277,8 +295,12 @@ where
 
     let result = tokio::try_join!(client_to_upstream, upstream_to_client);
 
-    let _ = client_write.flush().await;
-    let _ = upstream_write.flush().await;
+    if let Err(e) = client_write.flush().await {
+        tracing::warn!("final client flush failed: {}", e);
+    }
+    if let Err(e) = upstream_write.flush().await {
+        tracing::warn!("final upstream flush failed: {}", e);
+    }
 
     match result {
         Ok((_, _)) => Ok(()),

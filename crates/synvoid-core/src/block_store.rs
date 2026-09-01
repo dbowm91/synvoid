@@ -94,7 +94,11 @@ impl MeshBlockEntry {
     }
 
     pub fn is_expired(&self) -> bool {
-        Self::is_expired_at(self.blocked_at, self.ban_expire_seconds, crate::time::current_timestamp_secs())
+        Self::is_expired_at(
+            self.blocked_at,
+            self.ban_expire_seconds,
+            crate::time::current_timestamp_secs(),
+        )
     }
 
     pub(crate) fn is_expired_at(blocked_at: u64, ttl: u64, now: u64) -> bool {

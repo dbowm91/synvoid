@@ -281,7 +281,14 @@ impl PidFileManager {
             {
                 use nix::unistd::Pid;
                 // Check if process exists by sending signal 0
-                let pid = Pid::from_raw(content.pid as i32);
+                let raw = match i32::try_from(content.pid) {
+                    Ok(v) => v,
+                    Err(_) => {
+                        tracing::warn!("PID {} exceeds i32::MAX, cannot check", content.pid);
+                        return false;
+                    }
+                };
+                let pid = Pid::from_raw(raw);
                 return nix::sys::signal::kill(pid, None).is_ok();
             }
             #[cfg(windows)]

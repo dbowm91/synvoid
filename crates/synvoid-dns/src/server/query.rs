@@ -476,7 +476,9 @@ impl DnsServer {
                     let len = servfail.len() as u16;
                     let mut response_buf = len.to_be_bytes().to_vec();
                     response_buf.extend_from_slice(&servfail);
-                    let _ = stream.write_all(&response_buf).await;
+                    if let Err(e) = stream.write_all(&response_buf).await {
+                        tracing::warn!("Failed to send SERVFAIL response: {}", e);
+                    }
                     return Ok(());
                 }
             }

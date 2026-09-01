@@ -48,10 +48,16 @@ impl GeoIpManager {
                 Ok(l) => l,
                 Err(e) => {
                     tracing::warn!("Failed to load GeoIP database: {}", e);
-                    GeoIpLookup::new("").unwrap_or_else(|_| GeoIpLookup::new("").unwrap())
+                    GeoIpLookup::new("").unwrap_or_else(|inner| {
+                        tracing::warn!("GeoIP empty fallback failed: {}", inner);
+                        GeoIpLookup { reader: None }
+                    })
                 }
             },
-            None => GeoIpLookup::new("").unwrap_or_else(|_| GeoIpLookup::new("").unwrap()),
+            None => GeoIpLookup::new("").unwrap_or_else(|e| {
+                tracing::warn!("GeoIP empty fallback failed: {}", e);
+                GeoIpLookup { reader: None }
+            }),
         };
 
         let mut blocked: HashSet<String> = config

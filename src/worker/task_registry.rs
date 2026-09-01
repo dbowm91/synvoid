@@ -416,7 +416,7 @@ pub struct WorkerTaskRegistry {
 impl WorkerTaskRegistry {
     pub fn new() -> Self {
         let (shutdown_tx, _) = watch::channel(false);
-        let (exit_tx, _) = tokio::sync::broadcast::channel(64);
+        let (exit_tx, _) = tokio::sync::broadcast::channel(256);
         let shutdown_started_arc = Arc::new(AtomicBool::new(false));
         Self {
             shutdown_tx,
@@ -464,7 +464,9 @@ impl WorkerTaskRegistry {
             let shutdown = shutdown_started.load(Ordering::Acquire);
             let exit = classify_unit_result(id, name, TaskClass::CriticalService, result, shutdown);
             record_exit_metrics(&exit, &metrics, &reported_exits);
-            let _ = exit_tx.send(exit);
+            if let Err(e) = exit_tx.send(exit) {
+                tracing::warn!("task exit broadcast send failed (no receivers): {}", e);
+            }
         });
 
         self.metrics.record_started();
@@ -494,7 +496,9 @@ impl WorkerTaskRegistry {
             let shutdown = shutdown_started.load(Ordering::Acquire);
             let exit = classify_result_task(id, name, TaskClass::CriticalService, result, shutdown);
             record_exit_metrics(&exit, &metrics, &reported_exits);
-            let _ = exit_tx.send(exit);
+            if let Err(e) = exit_tx.send(exit) {
+                tracing::warn!("task exit broadcast send failed (no receivers): {}", e);
+            }
         });
 
         self.metrics.record_started();
@@ -524,7 +528,9 @@ impl WorkerTaskRegistry {
             let exit =
                 classify_unit_result(id, name, TaskClass::RestartableBackground, result, shutdown);
             record_exit_metrics(&exit, &metrics, &reported_exits);
-            let _ = exit_tx.send(exit);
+            if let Err(e) = exit_tx.send(exit) {
+                tracing::warn!("task exit broadcast send failed (no receivers): {}", e);
+            }
         });
 
         self.metrics.record_started();
@@ -554,7 +560,9 @@ impl WorkerTaskRegistry {
             let exit =
                 classify_unit_result(id, name, TaskClass::RestartableBackground, result, shutdown);
             record_exit_metrics(&exit, &metrics, &reported_exits);
-            let _ = exit_tx.send(exit);
+            if let Err(e) = exit_tx.send(exit) {
+                tracing::warn!("task exit broadcast send failed (no receivers): {}", e);
+            }
         });
 
         self.metrics.record_started();
@@ -588,7 +596,9 @@ impl WorkerTaskRegistry {
             let shutdown = shutdown_started.load(Ordering::Acquire);
             let exit = classify_unit_result_one_shot(id, name, result, shutdown);
             record_exit_metrics(&exit, &metrics, &reported_exits);
-            let _ = exit_tx.send(exit);
+            if let Err(e) = exit_tx.send(exit) {
+                tracing::warn!("task exit broadcast send failed (no receivers): {}", e);
+            }
         });
 
         self.metrics.record_started();

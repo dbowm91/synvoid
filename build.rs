@@ -4,7 +4,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-changed=.git/refs/heads/");
     println!("cargo:rustc-env=BUILD_TIMESTAMP={}", build_timestamp());
 
-    // Only compile protobuf when mesh feature is enabled (requires protoc)
+    // Only compile protobuf when mesh feature is enabled (requires protoc).
+    // Generates mesh.proto into the root crate's OUT_DIR. The synvoid-mesh
+    // crate generates the same proto into its own OUT_DIR unconditionally
+    // (see crates/synvoid-mesh/build.rs); duplication across OUT_DIRs is
+    // intentional and not a build waste — a shared -sys crate would be needed
+    // to deduplicate.
     if std::env::var("CARGO_FEATURE_MESH").is_ok() {
         let proto_files = &["src/mesh/proto/mesh.proto", "proto/control.proto"];
         let out_dir = std::env::var("OUT_DIR")?;

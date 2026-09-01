@@ -429,7 +429,9 @@ impl AuthManager {
                     let reason = if lock_user {
                         user.locked_until = Some(
                             Utc::now()
-                                + chrono::Duration::seconds(self.lockout_duration_secs as i64),
+                                + chrono::Duration::seconds(
+                                    i64::try_from(self.lockout_duration_secs).unwrap_or(i64::MAX),
+                                ),
                         );
                         Some("Too many failed attempts".to_string())
                     } else {
