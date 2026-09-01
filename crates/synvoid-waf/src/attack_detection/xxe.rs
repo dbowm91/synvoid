@@ -61,6 +61,10 @@ impl PatternDetector for XxeDetector {
         self.inner.patterns()
     }
 
+    fn attack_type(&self) -> AttackType {
+        AttackType::Xxe
+    }
+
     fn detect(&self, input: &str, location: InputLocation) -> Option<AttackDetectionResult> {
         self.detect_with_xml_normalization(input, location)
     }

@@ -28,7 +28,8 @@ impl RequestSmugglingDetector {
         }
         let lower_values: Vec<String> = values.iter().map(|v| v.trim().to_lowercase()).collect();
         let has_chunked = lower_values.iter().any(|v| v == "chunked");
-        has_chunked
+        let has_other = lower_values.iter().any(|v| v != "chunked");
+        has_chunked && has_other
     }
 
     fn te_contains_identity_and_chunked(te_str: &str) -> bool {
@@ -82,23 +83,30 @@ impl RequestSmugglingDetector {
         if has_cl && has_te {
             if let Some(te_value) = headers.get("transfer-encoding") {
                 if let Ok(te_str) = te_value.to_str() {
-                    if Self::te_contains_chunked(te_str) {
-                        tracing::warn!(
-                            attack_type = "request_smuggling",
-                            "HTTP Request Smuggling: Both Content-Length and Transfer-Encoding: chunked present"
-                        );
-
-                        return Some(AttackDetectionResult {
-                            attack_type: AttackType::RequestSmuggling,
-                            fingerprint: Some("cl_te_conflict".to_string()),
-                            matched_pattern: Some(
-                                "Content-Length + Transfer-Encoding: chunked".to_string(),
-                            ),
-                            input_location: InputLocation::Header("transfer-encoding".into()),
-                        });
-                    }
+                    tracing::warn!(
+                        attack_type = "request_smuggling",
+                        "HTTP Request Smuggling: Both Content-Length and Transfer-Encoding present"
+                    );
+                    let pattern = if Self::te_contains_chunked(te_str) {
+                        "Content-Length + Transfer-Encoding: chunked".to_string()
+                    } else {
+                        format!("Content-Length + Transfer-Encoding: {}", te_str)
+                    };
+                    return Some(AttackDetectionResult {
+                        attack_type: AttackType::RequestSmuggling,
+                        fingerprint: Some("cl_te_conflict".to_string()),
+                        matched_pattern: Some(pattern),
+                        input_location: InputLocation::Header("transfer-encoding".into()),
+                    });
                 }
             }
+            // Fallback if TE value not parseable
+            return Some(AttackDetectionResult {
+                attack_type: AttackType::RequestSmuggling,
+                fingerprint: Some("cl_te_conflict".to_string()),
+                matched_pattern: Some("Content-Length + Transfer-Encoding".to_string()),
+                input_location: InputLocation::Header("transfer-encoding".into()),
+            });
         }
 
         if let Some(te_value) = headers.get("transfer-encoding") {

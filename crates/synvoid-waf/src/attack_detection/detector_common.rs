@@ -42,6 +42,10 @@ macro_rules! pattern_detector {
                 self.inner.patterns()
             }
 
+            fn attack_type(&self) -> $crate::attack_detection::config::AttackType {
+                $attack_type
+            }
+
             fn detect(&self, input: &str, location: InputLocation) -> Option<AttackDetectionResult> {
                 self.inner.detect_internal(input, location)
             }
@@ -134,6 +138,10 @@ macro_rules! url_decode_detector {
                 self.inner.patterns()
             }
 
+            fn attack_type(&self) -> $crate::attack_detection::config::AttackType {
+                $attack_type
+            }
+
             fn detect(&self, input: &str, location: InputLocation) -> Option<AttackDetectionResult> {
                 self.detect_with_url_decode(input, location)
             }
@@ -195,6 +203,10 @@ where
 
 pub trait PatternDetector: Send + Sync {
     fn patterns(&self) -> &Arc<AhoCorasick>;
+
+    fn attack_type(&self) -> AttackType {
+        AttackType::Other
+    }
 
     fn detect(&self, input: &str, location: InputLocation) -> Option<AttackDetectionResult>;
 
@@ -409,6 +421,10 @@ impl PatternDetector for BasePatternDetector {
         &self.patterns
     }
 
+    fn attack_type(&self) -> AttackType {
+        self.attack_type
+    }
+
     fn detect(&self, input: &str, location: InputLocation) -> Option<AttackDetectionResult> {
         self.detect_internal(input, location)
     }
@@ -500,7 +516,7 @@ where
     if let Some(mat) = detector.patterns().find(normalized) {
         let matched = normalized[mat.start()..mat.end()].to_string();
         return Some(AttackDetectionResult {
-            attack_type: AttackType::Other,
+            attack_type: detector.attack_type(),
             fingerprint: None,
             matched_pattern: Some(matched),
             input_location: location,

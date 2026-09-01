@@ -205,6 +205,18 @@ impl AdminConfig {
             }
         }
 
+        if !self.secure_cookie
+            && self.enabled
+            && self.bind_address != "127.0.0.1"
+            && self.bind_address != "::1"
+            && self.bind_address != "localhost"
+        {
+            tracing::warn!(
+                "admin.secure_cookie is false with public bind_address '{}' - session cookies will lack Secure flag; set secure_cookie = true for production",
+                self.bind_address
+            );
+        }
+
         Ok(())
     }
 }

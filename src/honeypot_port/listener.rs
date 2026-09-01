@@ -249,9 +249,9 @@ async fn handle_connection(
         payload: payload.clone(),
         payload_hex: hex::encode(&payload),
         detected_pattern: detection.as_ref().and_then(|d| d.matched_pattern.clone()),
-        bytes_received: bytes_read as u32,
-        bytes_sent: banner_len as u32,
-        duration_ms: duration.as_millis() as u32,
+        bytes_received: u32::try_from(bytes_read).unwrap_or(u32::MAX),
+        bytes_sent: u32::try_from(banner_len).unwrap_or(u32::MAX),
+        duration_ms: u32::try_from(duration.as_millis()).unwrap_or(u32::MAX),
         connection_info: format!("{}:{}", remote_addr.ip(), remote_addr.port()),
     };
 

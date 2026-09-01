@@ -151,7 +151,7 @@ pub async fn list_probes<S: AdminStateProvider>(
             ProbeResponse {
                 ip: record.ip.clone(),
                 event_count: record.event_count,
-                unique_endpoints: record.unique_endpoints.clone(),
+                unique_endpoints: record.unique_endpoints.iter().cloned().collect(),
                 first_seen: record.first_seen,
                 last_seen: record.last_seen,
                 user_agent: record.user_agent.clone(),
@@ -207,7 +207,7 @@ pub async fn get_probe<S: AdminStateProvider>(
     Ok(Json(ProbeResponse {
         ip: record.ip,
         event_count: record.event_count,
-        unique_endpoints: record.unique_endpoints,
+        unique_endpoints: record.unique_endpoints.into_iter().collect(),
         first_seen: record.first_seen,
         last_seen: record.last_seen,
         user_agent: record.user_agent,

@@ -106,6 +106,7 @@ pub struct ProxyExecutor {
     pub erased_client: ErasedHttpClient,
     pub revalidation_client: HttpClient,
     pub is_http2: bool,
+    pub proxy_headers_config: Option<Arc<synvoid_config::site::ProxyHeadersConfig>>,
 }
 
 impl ProxyExecutor {
@@ -206,12 +207,13 @@ impl ProxyExecutor {
         client_ip: std::net::IpAddr,
     ) -> Result<Response<Bytes>, String> {
         let url = join_upstream_url(&self.upstream_url, path);
-        let forward_headers = build_forward_headers(
-            client_ip,
-            headers,
-            &synvoid_config::site::ProxyHeadersConfig::default(),
-            ForwardedProtocol::Https,
-        );
+        let default_headers = synvoid_config::site::ProxyHeadersConfig::default();
+        let headers_config = self
+            .proxy_headers_config
+            .as_deref()
+            .unwrap_or(&default_headers);
+        let forward_headers =
+            build_forward_headers(client_ip, headers, headers_config, ForwardedProtocol::Https);
 
         let body = body.unwrap_or_default();
         let erased_body = ErasedBodyImpl::from_full(http_body_util::Full::new(body));
@@ -291,10 +293,16 @@ impl ProxyExecutor {
         let erased_client = self.erased_client.clone();
         let upstream_url = self.upstream_url.clone();
         let is_http2 = self.is_http2;
+        let default_headers = synvoid_config::site::ProxyHeadersConfig::default();
+        let headers_config = self
+            .proxy_headers_config
+            .as_deref()
+            .unwrap_or(&default_headers)
+            .clone();
         let reval_headers = build_forward_headers(
             client_ip,
             original_headers,
-            &synvoid_config::site::ProxyHeadersConfig::default(),
+            &headers_config,
             ForwardedProtocol::Https,
         );
 

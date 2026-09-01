@@ -193,9 +193,13 @@ impl DohServer {
         let query_start = std::time::Instant::now();
         let response = {
             let dns_server_guard = dns_server.read();
-            let server = dns_server_guard
-                .as_ref()
-                .expect("DNS server not configured");
+            let Some(server) = dns_server_guard.as_ref() else {
+                tracing::warn!("DoH request received but DNS server not configured");
+                return Ok(hyper::Response::builder()
+                    .status(StatusCode::SERVICE_UNAVAILABLE)
+                    .body(Full::new(Bytes::new()))
+                    .expect("response builder should not fail"));
+            };
 
             let ctx = server.query_context();
             if let Some(c) = &ctx.cache {

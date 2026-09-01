@@ -103,6 +103,10 @@ impl PatternDetector for SqliDetector {
         self.inner.patterns()
     }
 
+    fn attack_type(&self) -> AttackType {
+        AttackType::Sqli
+    }
+
     fn detect(&self, input: &str, location: InputLocation) -> Option<AttackDetectionResult> {
         self.detect(input.as_bytes(), location)
     }

@@ -67,7 +67,7 @@ sha2 = "0.10"
 synvoid-filter = { path = "crates/synvoid-filter" , version = "0.1" }
 
 [dependencies]
-tokio = { version = "1", features = ["full"] }
+tokio = { workspace = true }
 hyper = { version = "1", features = ["http1", "http2", "server", "client"] }
 hyper-util = { version = "0.1", features = ["tokio", "server-auto", "server-graceful", "http1", "http2", "client", "client-legacy"] }
 hyper-rustls = { version = "0.27", features = ["http2"] }

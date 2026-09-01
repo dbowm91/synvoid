@@ -282,11 +282,12 @@ mod persistence {
                 timestamp: last_sample.timestamp,
                 level: max_level,
                 score: max_score,
-                requests_per_second: (avg_requests / 60.0) as u32,
-                requests_per_minute: avg_requests as u32,
-                attacks_per_minute: avg_attacks as u32,
-                rate_limit_hits: avg_rl_hits as u32,
-                blocked: avg_blocked as u32,
+                requests_per_second: u32::try_from((avg_requests / 60.0) as u64)
+                    .unwrap_or(u32::MAX),
+                requests_per_minute: u32::try_from(avg_requests as u64).unwrap_or(u32::MAX),
+                attacks_per_minute: u32::try_from(avg_attacks as u64).unwrap_or(u32::MAX),
+                rate_limit_hits: u32::try_from(avg_rl_hits as u64).unwrap_or(u32::MAX),
+                blocked: u32::try_from(avg_blocked as u64).unwrap_or(u32::MAX),
             };
 
             drop(from_queue);

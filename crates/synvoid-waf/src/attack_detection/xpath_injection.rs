@@ -75,6 +75,10 @@ impl PatternDetector for XPathInjectionDetector {
         self.inner.patterns()
     }
 
+    fn attack_type(&self) -> AttackType {
+        AttackType::XPathInjection
+    }
+
     fn detect(
         &self,
         input: &str,

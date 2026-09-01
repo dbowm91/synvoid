@@ -5,6 +5,7 @@ use crate::payloads::{
 use crate::{
     get_all_serverless_metrics, get_static_cache_hits, get_static_cache_misses, LATENCY_SAMPLE_SIZE,
 };
+use dashmap::DashMap;
 use parking_lot::Mutex;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -46,17 +47,18 @@ pub struct SiteMetrics {
     pub upstream_successes: AtomicU64,
     pub upstream_failures: AtomicU64,
     pub latency_samples: Mutex<Vec<u64>>,
-    pub blocked_by_type: Mutex<HashMap<AttackType, AtomicU64>>,
+    pub blocked_by_type: DashMap<AttackType, AtomicU64>,
 }
 
 impl Clone for SiteMetrics {
     fn clone(&self) -> Self {
-        let blocked_types = self.blocked_by_type.lock();
-        let mut blocked_by_type = HashMap::new();
-        for (k, v) in blocked_types.iter() {
-            blocked_by_type.insert(*k, AtomicU64::new(v.load(Ordering::Relaxed)));
+        let blocked_by_type = DashMap::new();
+        for entry in self.blocked_by_type.iter() {
+            blocked_by_type.insert(
+                *entry.key(),
+                AtomicU64::new(entry.value().load(Ordering::Relaxed)),
+            );
         }
-        drop(blocked_types);
 
         Self {
             total_requests: AtomicU64::new(self.total_requests.load(Ordering::Relaxed)),
@@ -71,7 +73,7 @@ impl Clone for SiteMetrics {
             upstream_successes: AtomicU64::new(self.upstream_successes.load(Ordering::Relaxed)),
             upstream_failures: AtomicU64::new(self.upstream_failures.load(Ordering::Relaxed)),
             latency_samples: Mutex::new(Vec::new()),
-            blocked_by_type: Mutex::new(blocked_by_type),
+            blocked_by_type,
         }
     }
 }
@@ -91,7 +93,7 @@ impl Default for SiteMetrics {
             upstream_successes: AtomicU64::new(0),
             upstream_failures: AtomicU64::new(0),
             latency_samples: Mutex::new(Vec::with_capacity(LATENCY_SAMPLE_SIZE)),
-            blocked_by_type: Mutex::new(HashMap::new()),
+            blocked_by_type: DashMap::new(),
         }
     }
 }
@@ -156,9 +158,11 @@ impl SiteMetrics {
 
     pub fn to_payload(&self, _site_id: &str) -> SiteMetricsPayload {
         let mut blocked_types = HashMap::new();
-        let types = self.blocked_by_type.lock();
-        for (k, v) in types.iter() {
-            blocked_types.insert(format!("{:?}", k), v.load(Ordering::Relaxed));
+        for entry in self.blocked_by_type.iter() {
+            blocked_types.insert(
+                format!("{:?}", entry.key()),
+                entry.value().load(Ordering::Relaxed),
+            );
         }
 
         let latency_samples = self.latency_samples.lock();
@@ -248,7 +252,7 @@ pub struct WorkerMetrics {
     pub latency_samples: Mutex<Vec<u64>>,
     pub request_queue_samples: Mutex<VecDeque<u64>>,
     pub inline_cpu_phase_samples: Mutex<HashMap<WorkerInlineCpuPhase, VecDeque<u64>>>,
-    pub blocked_by_type: Mutex<HashMap<AttackType, AtomicU64>>,
+    pub blocked_by_type: DashMap<AttackType, AtomicU64>,
     pub per_site: Mutex<HashMap<String, SiteMetrics>>,
     pub bandwidth: Arc<BandwidthTracker>,
     pub per_serverless: Mutex<HashMap<String, ServerlessMetrics>>,
@@ -265,12 +269,13 @@ pub struct WorkerMetrics {
 
 impl Clone for WorkerMetrics {
     fn clone(&self) -> Self {
-        let blocked_types = self.blocked_by_type.lock();
-        let mut blocked_by_type = HashMap::new();
-        for (k, v) in blocked_types.iter() {
-            blocked_by_type.insert(*k, AtomicU64::new(v.load(Ordering::Relaxed)));
+        let blocked_by_type = DashMap::new();
+        for entry in self.blocked_by_type.iter() {
+            blocked_by_type.insert(
+                *entry.key(),
+                AtomicU64::new(entry.value().load(Ordering::Relaxed)),
+            );
         }
-        drop(blocked_types);
 
         Self {
             total_requests: AtomicU64::new(self.total_requests.load(Ordering::Relaxed)),
@@ -285,7 +290,7 @@ impl Clone for WorkerMetrics {
             latency_samples: Mutex::new(Vec::new()),
             request_queue_samples: Mutex::new(VecDeque::new()),
             inline_cpu_phase_samples: Mutex::new(HashMap::new()),
-            blocked_by_type: Mutex::new(blocked_by_type),
+            blocked_by_type,
             per_site: Mutex::new(HashMap::new()),
             bandwidth: self.bandwidth.clone(),
             per_serverless: Mutex::new(HashMap::new()),
@@ -327,7 +332,7 @@ impl Default for WorkerMetrics {
             latency_samples: Mutex::new(Vec::with_capacity(LATENCY_SAMPLE_SIZE)),
             request_queue_samples: Mutex::new(VecDeque::with_capacity(LATENCY_SAMPLE_SIZE)),
             inline_cpu_phase_samples: Mutex::new(HashMap::new()),
-            blocked_by_type: Mutex::new(HashMap::new()),
+            blocked_by_type: DashMap::new(),
             per_site: Mutex::new(HashMap::new()),
             bandwidth: Arc::new(BandwidthTracker::default()),
             per_serverless: Mutex::new(HashMap::new()),
@@ -448,11 +453,11 @@ impl WorkerMetrics {
 
     pub fn record_blocked(&self, attack_type: AttackType) {
         self.blocked.fetch_add(1, Ordering::Relaxed);
-        let mut blocked_types = self.blocked_by_type.lock();
-        let counter = blocked_types
+        let counter = self
+            .blocked_by_type
             .entry(attack_type)
             .or_insert_with(|| AtomicU64::new(0));
-        counter.fetch_add(1, Ordering::Relaxed);
+        counter.value().fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn record_challenged(&self) {
@@ -518,10 +523,9 @@ impl WorkerMetrics {
     }
 
     pub fn blocked_by_type(&self) -> HashMap<AttackType, u64> {
-        let blocked = self.blocked_by_type.lock();
         let mut result = HashMap::new();
-        for (k, v) in blocked.iter() {
-            result.insert(*k, v.load(Ordering::Relaxed));
+        for entry in self.blocked_by_type.iter() {
+            result.insert(*entry.key(), entry.value().load(Ordering::Relaxed));
         }
         result
     }

@@ -83,6 +83,10 @@ impl PatternDetector for LdapInjectionDetector {
         self.inner.patterns()
     }
 
+    fn attack_type(&self) -> AttackType {
+        AttackType::LdapInjection
+    }
+
     fn detect(
         &self,
         input: &str,

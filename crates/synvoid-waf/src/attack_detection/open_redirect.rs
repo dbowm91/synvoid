@@ -8,6 +8,7 @@ use crate::attack_detection::config::{AttackDetectionResult, AttackType, InputLo
 use crate::attack_detection::detector_common::{BasePatternDetector, PatternDetector};
 use crate::attack_detection::patterns::DefaultPatterns;
 
+#[allow(dead_code)]
 static REDIRECT_PARAM_AC: LazyLock<AhoCorasick> = LazyLock::new(|| {
     let patterns = vec![
         "redirect",
@@ -87,6 +88,87 @@ static REDIRECT_PARAM_AC: LazyLock<AhoCorasick> = LazyLock::new(|| {
     AhoCorasick::new(&patterns).unwrap()
 });
 
+static REDIRECT_PARAMS_SET: LazyLock<std::collections::HashSet<String>> = LazyLock::new(|| {
+    [
+        "redirect",
+        "url",
+        "link",
+        "goto",
+        "next",
+        "dest",
+        "destination",
+        "callback",
+        "return",
+        "page",
+        "ref",
+        "reference",
+        "site",
+        "html",
+        "val",
+        "validate",
+        "domain",
+        "continue",
+        "c",
+        "path",
+        "dir",
+        "show",
+        "view",
+        "doc",
+        "img_url",
+        "source",
+        "src",
+        "target",
+        "to",
+        "out",
+        "viewpage",
+        "open",
+        "file",
+        "document",
+        "folder",
+        "pg",
+        "style",
+        "return_path",
+        "success_url",
+        "error_url",
+        "return_to",
+        "return_url",
+        "from_url",
+        "redir_url",
+        "redirect_uri",
+        "redirect_url",
+        "oauth_callback",
+        "callback_url",
+        "serve",
+        "proxy",
+        "bigimg",
+        "url_link",
+        "linkurl",
+        "origin",
+        "originurl",
+        "sourceurl",
+        "contenturl",
+        "shareurl",
+        "qpa",
+        "query",
+        "token",
+        "email",
+        "subject",
+        "template",
+        "func",
+        "call",
+        "mode",
+        "name",
+        "rest_url",
+        "continue_url",
+        "u",
+        "urlfrom",
+        "urlsrc",
+    ]
+    .into_iter()
+    .map(|s| s.to_string())
+    .collect()
+});
+
 pub struct OpenRedirectDetector {
     inner: BasePatternDetector,
 }
@@ -106,7 +188,33 @@ impl OpenRedirectDetector {
     }
 
     fn is_redirect_param(&self, input_lower: &str) -> bool {
-        REDIRECT_PARAM_AC.is_match(input_lower)
+        // Require param-name boundary: key must appear as `key=` delimited by ? & ; # or start-of-string.
+        // Split input into potential key=value segments.
+        for segment in input_lower.split(|c| ['&', '?', ';', '#'].contains(&c)) {
+            let seg = segment.trim();
+            if seg.is_empty() {
+                continue;
+            }
+            let key = if let Some(eq) = seg.find('=') {
+                seg[..eq].trim()
+            } else {
+                seg
+            };
+            // Also handle path-style "/key/value" split via '/' not needed; we focus on query keys.
+            // Extract last key segment after '/' if present (e.g., "/path/to/page?url=")
+            let key = if let Some(slash) = key.rfind('/') {
+                &key[slash + 1..]
+            } else {
+                key
+            };
+            if REDIRECT_PARAMS_SET.contains(key) {
+                return true;
+            }
+            // Also handle encoded param names already decoded; fallback substring check for
+            // patterns that are substrings of composite keys like "redirect_url" -> key "redirect_url"
+            // already exact-matched. Single-letter keys like "c" need exact match, not substring.
+        }
+        false
     }
 
     fn is_external_redirect(&self, input_lower: &str) -> bool {
@@ -252,6 +360,10 @@ impl OpenRedirectDetector {
 impl PatternDetector for OpenRedirectDetector {
     fn patterns(&self) -> &Arc<AhoCorasick> {
         self.inner.patterns()
+    }
+
+    fn attack_type(&self) -> AttackType {
+        AttackType::OpenRedirect
     }
 
     fn detect(&self, input: &str, location: InputLocation) -> Option<AttackDetectionResult> {

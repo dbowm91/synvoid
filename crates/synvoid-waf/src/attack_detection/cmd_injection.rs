@@ -55,6 +55,10 @@ impl PatternDetector for CmdInjectionDetector {
         self.inner.patterns()
     }
 
+    fn attack_type(&self) -> AttackType {
+        AttackType::CmdInjection
+    }
+
     fn detect(&self, input: &str, location: InputLocation) -> Option<AttackDetectionResult> {
         self.detect_with_normalization(input, location)
     }

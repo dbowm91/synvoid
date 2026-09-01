@@ -772,6 +772,6 @@ impl RaftAwareClient {
 
 impl Default for RaftAwareClient {
     fn default() -> Self {
-        panic!("RaftAwareClient::default should not be used directly")
+        unreachable!("RaftAwareClient::default should not be used directly; construct via new()")
     }
 }

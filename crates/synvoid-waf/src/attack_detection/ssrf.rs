@@ -490,6 +490,10 @@ impl PatternDetector for SsrfDetector {
         self.inner.patterns()
     }
 
+    fn attack_type(&self) -> AttackType {
+        AttackType::Ssrf
+    }
+
     fn detect(&self, input: &str, location: InputLocation) -> Option<AttackDetectionResult> {
         self.detect_with_url_decode(input, location)
     }

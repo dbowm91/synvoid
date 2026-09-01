@@ -136,8 +136,10 @@ impl ViolationTracker {
 
                             let mut all_entries: HashMap<String, ViolationEntry> = HashMap::new();
                             for shard in shards_for_persist.iter() {
-                                let mut guard = shard.write();
-                                all_entries.extend(std::mem::take(&mut *guard));
+                                let guard = shard.read();
+                                all_entries.extend(
+                                    guard.iter().map(|(k, v)| (k.clone(), v.clone())),
+                                );
                             }
                             if !all_entries.is_empty() {
                                 Self::persist_to_disk(&path, all_entries).await;
@@ -242,7 +244,8 @@ impl ViolationTracker {
         if let Some(ref tx) = self.persist_tx {
             let mut entries = HashMap::new();
             for shard in self.shards.iter() {
-                entries.extend(shard.write().drain());
+                let guard = shard.read();
+                entries.extend(guard.iter().map(|(k, v)| (k.clone(), v.clone())));
             }
             if let Err(e) = tx.try_send(PersistRequest { entries }) {
                 if matches!(e, tokio::sync::mpsc::error::TrySendError::Closed(_)) {

@@ -77,6 +77,10 @@ impl PatternDetector for PathTraversalDetector {
         self.inner.patterns()
     }
 
+    fn attack_type(&self) -> AttackType {
+        AttackType::PathTraversal
+    }
+
     fn detect(
         &self,
         input: &str,

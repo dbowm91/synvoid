@@ -420,8 +420,10 @@ impl WindowsProcessControl {
         let ctrl_result = self.send_ctrl_c_to_process(pid);
 
         if ctrl_result.is_ok() {
-            // Wait for graceful shutdown with timeout
-            let timeout_ms = (self.graceful_shutdown_timeout_secs * 1000) as u32;
+            // Wait for graceful shutdown with timeout (clamp to u32::MAX)
+            let timeout_ms =
+                u32::try_from(self.graceful_shutdown_timeout_secs.saturating_mul(1000))
+                    .unwrap_or(u32::MAX);
             let wait_result = unsafe { WaitForSingleObject(handle, timeout_ms) };
 
             if wait_result == WAIT_TIMEOUT {

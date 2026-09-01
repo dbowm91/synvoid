@@ -159,10 +159,58 @@ impl StreamingWafCore {
                     if let Some(pos) =
                         Self::find_in_fragments(&combined_view, current_pos, boundary)
                     {
+                        // Scan preamble bytes before first boundary (H06)
+                        let preamble_len = pos.saturating_sub(current_pos);
+                        if preamble_len > 0 {
+                            let mut preamble = BufferPool::acquire(preamble_len);
+                            Self::copy_from_fragments(
+                                &mut preamble,
+                                &combined_view,
+                                current_pos,
+                                preamble_len,
+                            );
+                            if let Some(result) = self.inner.check_body_fragments(&[
+                                self.state.trailing_window.as_slice(),
+                                preamble.as_slice(),
+                            ]) {
+                                self.state.last_result = Some(result.clone());
+                                return StreamingWafDecision::Block(
+                                    result.get_block_status().unwrap_or(403),
+                                    format!(
+                                        "Attack detected in multipart preamble: {:?}",
+                                        result.attack_type
+                                    ),
+                                );
+                            }
+                        }
                         self.state.multipart_state = MultipartState::ReadingHeaders;
                         self.state.multipart_header_buffer.clear();
                         current_pos = pos + boundary.len();
                     } else {
+                        // No boundary found — scan preamble as regular content (H06)
+                        let preamble_len = total_len - current_pos;
+                        if preamble_len > 0 {
+                            let mut preamble = BufferPool::acquire(preamble_len);
+                            Self::copy_from_fragments(
+                                &mut preamble,
+                                &combined_view,
+                                current_pos,
+                                preamble_len,
+                            );
+                            if let Some(result) = self.inner.check_body_fragments(&[
+                                self.state.trailing_window.as_slice(),
+                                preamble.as_slice(),
+                            ]) {
+                                self.state.last_result = Some(result.clone());
+                                return StreamingWafDecision::Block(
+                                    result.get_block_status().unwrap_or(403),
+                                    format!(
+                                        "Attack detected in multipart preamble: {:?}",
+                                        result.attack_type
+                                    ),
+                                );
+                            }
+                        }
                         current_pos = total_len;
                     }
                 }
@@ -277,10 +325,58 @@ impl StreamingWafCore {
                     if let Some(pos) =
                         Self::find_in_fragments(&combined_view, current_pos, boundary)
                     {
+                        // Scan file content before next boundary (H01)
+                        let file_len = pos.saturating_sub(current_pos);
+                        if file_len > 0 {
+                            let mut file_fragment = BufferPool::acquire(file_len);
+                            Self::copy_from_fragments(
+                                &mut file_fragment,
+                                &combined_view,
+                                current_pos,
+                                file_len,
+                            );
+                            if let Some(result) = self.inner.check_body_fragments(&[
+                                self.state.trailing_window.as_slice(),
+                                file_fragment.as_slice(),
+                            ]) {
+                                self.state.last_result = Some(result.clone());
+                                return StreamingWafDecision::Block(
+                                    result.get_block_status().unwrap_or(403),
+                                    format!(
+                                        "Attack detected in multipart file: {:?}",
+                                        result.attack_type
+                                    ),
+                                );
+                            }
+                        }
                         self.state.multipart_state = MultipartState::ReadingHeaders;
                         self.state.multipart_header_buffer.clear();
                         current_pos = pos + boundary.len();
                     } else {
+                        // No boundary — scan file chunk incrementally (H01)
+                        let file_len = total_len - current_pos;
+                        if file_len > 0 {
+                            let mut file_fragment = BufferPool::acquire(file_len);
+                            Self::copy_from_fragments(
+                                &mut file_fragment,
+                                &combined_view,
+                                current_pos,
+                                file_len,
+                            );
+                            if let Some(result) = self.inner.check_body_fragments(&[
+                                self.state.trailing_window.as_slice(),
+                                file_fragment.as_slice(),
+                            ]) {
+                                self.state.last_result = Some(result.clone());
+                                return StreamingWafDecision::Block(
+                                    result.get_block_status().unwrap_or(403),
+                                    format!(
+                                        "Attack detected in multipart file: {:?}",
+                                        result.attack_type
+                                    ),
+                                );
+                            }
+                        }
                         current_pos = total_len;
                     }
                 }

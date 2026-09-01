@@ -68,7 +68,13 @@ impl AuditState {
     pub fn with_audit_dir(mut self, audit_dir: PathBuf) -> Self {
         let audit_file = audit_dir.join(AUDIT_LOG_FILENAME);
         if let Some(parent) = audit_file.parent() {
-            let _ = std::fs::create_dir_all(parent);
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                tracing::warn!(
+                    "Failed to create audit directory {}: {}",
+                    parent.display(),
+                    e
+                );
+            }
         }
         #[cfg(unix)]
         {
@@ -77,7 +83,9 @@ impl AuditState {
                 if let Ok(metadata) = std::fs::metadata(&audit_file) {
                     let mut perms = metadata.permissions();
                     perms.set_mode(0o600);
-                    let _ = std::fs::set_permissions(&audit_file, perms);
+                    if let Err(e) = std::fs::set_permissions(&audit_file, perms) {
+                        tracing::warn!("Failed to set audit file permissions: {}", e);
+                    }
                 }
             } else if let Err(e) = std::fs::OpenOptions::new()
                 .create(true)

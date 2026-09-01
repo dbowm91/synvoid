@@ -1,8 +1,6 @@
-#![allow(unused_mut)]
-
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::IpAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -29,9 +27,9 @@ pub struct ProbeEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProbeRecord {
     pub ip: String,
-    pub events: Vec<ProbeEvent>,
+    pub events: VecDeque<ProbeEvent>,
     pub event_count: u32,
-    pub unique_endpoints: Vec<String>,
+    pub unique_endpoints: HashSet<String>,
     pub first_seen: u64,
     pub last_seen: u64,
     pub user_agent: Option<String>,
@@ -40,10 +38,13 @@ pub struct ProbeRecord {
 impl ProbeRecord {
     pub fn new(ip: IpAddr, event: ProbeEvent) -> Self {
         let ip_str = ip.to_string();
-        let unique = vec![event.endpoint.clone()];
+        let mut unique = HashSet::new();
+        unique.insert(event.endpoint.clone());
+        let mut events = VecDeque::new();
+        events.push_back(event.clone());
         Self {
             ip: ip_str,
-            events: vec![event.clone()],
+            events,
             event_count: 1,
             unique_endpoints: unique,
             first_seen: event.timestamp,
@@ -57,15 +58,13 @@ impl ProbeRecord {
         let user_agent = event.user_agent.clone();
         let endpoint = event.endpoint.clone();
 
-        if !self.unique_endpoints.contains(&endpoint) {
-            self.unique_endpoints.push(endpoint);
-        }
+        self.unique_endpoints.insert(endpoint);
 
         if self.events.len() >= MAX_EVENTS_PER_IP {
-            self.events.remove(0);
+            self.events.pop_front();
         }
 
-        self.events.push(event);
+        self.events.push_back(event);
         self.event_count += 1;
         self.last_seen = timestamp;
         if self.user_agent.is_none() {
@@ -312,7 +311,7 @@ impl ProbeTracker {
         self.store
             .read()
             .get(&ProbeRecord::key(&ip))
-            .map(|r| r.unique_endpoints.clone())
+            .map(|r| r.unique_endpoints.iter().cloned().collect())
             .unwrap_or_default()
     }
 
@@ -396,8 +395,8 @@ impl ProbeTracker {
     fn trigger_persist(&self) {
         if let Some(ref tx) = self.persist_tx {
             let entries = {
-                let mut store = self.store.write();
-                std::mem::take(&mut *store)
+                let store = self.store.read();
+                store.clone()
             };
             if let Err(e) = tx.try_send(PersistRequest { entries }) {
                 if matches!(e, tokio::sync::mpsc::error::TrySendError::Closed(_)) {
@@ -406,8 +405,8 @@ impl ProbeTracker {
             }
         } else if let Some(ref path) = self.persist_path {
             let entries = {
-                let mut store = self.store.write();
-                std::mem::take(&mut *store)
+                let store = self.store.read();
+                store.clone()
             };
             let path = path.clone();
             let max_records = self.config.max_records;
@@ -424,7 +423,7 @@ impl ProbeTracker {
         max_records: usize,
         retention_secs: u64,
     ) {
-        let mut entries_to_save: Vec<ProbeRecord> = entries
+        let entries_to_save: Vec<ProbeRecord> = entries
             .into_values()
             .take(max_records)
             .map(|mut e| {
@@ -492,7 +491,7 @@ pub struct SuspiciousWordRecord {
 }
 
 pub struct SuspiciousWordTracker {
-    store: Arc<RwLock<HashMap<IpAddr, Vec<SuspiciousWordRecord>>>>,
+    store: Arc<RwLock<HashMap<IpAddr, VecDeque<SuspiciousWordRecord>>>>,
     config: synvoid_config::SuspiciousWordsConfig,
     words_lower: Vec<String>,
     total_matches: std::sync::atomic::AtomicU64,
@@ -548,14 +547,12 @@ impl SuspiciousWordTracker {
                     let entry = store.entry(ip).or_default();
 
                     if entry.len() >= 10 {
-                        entry.remove(0);
+                        entry.pop_front();
                     }
-                    entry.push(record.clone());
+                    entry.push_back(record.clone());
 
                     if store.len() >= MAX_WORD_TRACKER_IPS {
-                        let mut keys_to_remove: Vec<IpAddr> =
-                            store.keys().cloned().take(1).collect();
-                        for key in keys_to_remove {
+                        if let Some(key) = store.keys().next().cloned() {
                             store.remove(&key);
                         }
                     }
@@ -572,7 +569,10 @@ impl SuspiciousWordTracker {
     }
 
     pub fn get_record(&self, ip: &IpAddr) -> Option<Vec<SuspiciousWordRecord>> {
-        self.store.read().get(ip).cloned()
+        self.store
+            .read()
+            .get(ip)
+            .map(|v| v.iter().cloned().collect())
     }
 
     pub fn list_records(&self, limit: usize) -> Vec<(IpAddr, Vec<SuspiciousWordRecord>)> {
@@ -580,7 +580,7 @@ impl SuspiciousWordTracker {
         store
             .iter()
             .take(limit)
-            .map(|(ip, records)| (*ip, records.clone()))
+            .map(|(ip, records)| (*ip, records.iter().cloned().collect()))
             .collect()
     }
 
@@ -640,7 +640,7 @@ pub struct UpstreamErrorRecord {
 }
 
 pub struct UpstreamErrorTracker {
-    store: Arc<RwLock<HashMap<IpAddr, Vec<UpstreamErrorRecord>>>>,
+    store: Arc<RwLock<HashMap<IpAddr, VecDeque<UpstreamErrorRecord>>>>,
     config: synvoid_config::UpstreamErrorsConfig,
     total_errors: std::sync::atomic::AtomicU64,
 }
@@ -694,10 +694,10 @@ impl UpstreamErrorTracker {
             entry.retain(|r| r.timestamp >= window_start);
 
             if entry.len() >= 20 {
-                entry.remove(0);
+                entry.pop_front();
             }
 
-            entry.push(record.clone());
+            entry.push_back(record.clone());
             error_count = entry.len();
 
             let unique_endpoints: std::collections::HashSet<_> =
@@ -706,8 +706,7 @@ impl UpstreamErrorTracker {
             probing_detected = unique_endpoints.len() >= self.config.min_error_endpoints;
 
             if store.len() >= MAX_WORD_TRACKER_IPS {
-                let mut keys_to_remove: Vec<IpAddr> = store.keys().cloned().take(1).collect();
-                for key in keys_to_remove {
+                if let Some(key) = store.keys().next().cloned() {
                     store.remove(&key);
                 }
             }
@@ -743,7 +742,10 @@ impl UpstreamErrorTracker {
     }
 
     pub fn get_record(&self, ip: &IpAddr) -> Option<Vec<UpstreamErrorRecord>> {
-        self.store.read().get(ip).cloned()
+        self.store
+            .read()
+            .get(ip)
+            .map(|v| v.iter().cloned().collect())
     }
 
     pub fn list_records(&self, limit: usize) -> Vec<(IpAddr, Vec<UpstreamErrorRecord>)> {
@@ -751,7 +753,7 @@ impl UpstreamErrorTracker {
         store
             .iter()
             .take(limit)
-            .map(|(ip, records)| (*ip, records.clone()))
+            .map(|(ip, records)| (*ip, records.iter().cloned().collect()))
             .collect()
     }
 

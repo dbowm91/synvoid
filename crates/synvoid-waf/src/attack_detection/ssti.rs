@@ -59,6 +59,10 @@ impl PatternDetector for SstiDetector {
         self.inner.patterns()
     }
 
+    fn attack_type(&self) -> AttackType {
+        AttackType::Ssti
+    }
+
     fn detect(
         &self,
         input: &str,

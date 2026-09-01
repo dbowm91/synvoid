@@ -186,7 +186,11 @@ impl AuthManager {
         {
             use std::os::unix::fs::PermissionsExt;
             if auth_dir.exists() {
-                let _ = std::fs::set_permissions(&auth_dir, std::fs::Permissions::from_mode(0o700));
+                if let Err(e) =
+                    std::fs::set_permissions(&auth_dir, std::fs::Permissions::from_mode(0o700))
+                {
+                    tracing::warn!("Failed to set auth dir permissions: {}", e);
+                }
             }
         }
 
@@ -194,8 +198,11 @@ impl AuthManager {
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                let _ =
-                    std::fs::set_permissions(&store_path, std::fs::Permissions::from_mode(0o600));
+                if let Err(e) =
+                    std::fs::set_permissions(&store_path, std::fs::Permissions::from_mode(0o600))
+                {
+                    tracing::warn!("Failed to set auth store permissions: {}", e);
+                }
             }
 
             match fs::read_to_string(&store_path) {
@@ -486,7 +493,9 @@ impl AuthManager {
                 username: username.to_string(),
                 created_at: Utc::now(),
                 expires_at: Utc::now()
-                    + chrono::Duration::seconds(self.session_duration_secs as i64),
+                    + chrono::Duration::seconds(
+                        i64::try_from(self.session_duration_secs).unwrap_or(i64::MAX),
+                    ),
                 ip_address: ip_str.clone(),
                 user_agent: ua_str.clone(),
                 csrf_token: Some(Uuid::new_v4().to_string()),
@@ -586,8 +595,10 @@ impl AuthManager {
 
             if elapsed_ratio > self.session_refresh_threshold {
                 let new_session_id = Uuid::new_v4().to_string();
-                let expires_at =
-                    Utc::now() + chrono::Duration::seconds(self.session_duration_secs as i64);
+                let expires_at = Utc::now()
+                    + chrono::Duration::seconds(
+                        i64::try_from(self.session_duration_secs).unwrap_or(i64::MAX),
+                    );
                 let new_csrf_token = Uuid::new_v4().to_string();
 
                 store.sessions.remove(session_id);
@@ -672,8 +683,10 @@ impl AuthManager {
 
             if elapsed_ratio > self.session_refresh_threshold {
                 let new_session_id = Uuid::new_v4().to_string();
-                let expires_at =
-                    Utc::now() + chrono::Duration::seconds(self.session_duration_secs as i64);
+                let expires_at = Utc::now()
+                    + chrono::Duration::seconds(
+                        i64::try_from(self.session_duration_secs).unwrap_or(i64::MAX),
+                    );
                 let new_csrf_token = Uuid::new_v4().to_string();
 
                 store.sessions.remove(session_id);

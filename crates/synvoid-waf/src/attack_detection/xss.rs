@@ -98,6 +98,10 @@ impl PatternDetector for XssDetector {
         self.inner.patterns()
     }
 
+    fn attack_type(&self) -> AttackType {
+        AttackType::Xss
+    }
+
     fn detect(&self, input: &str, location: InputLocation) -> Option<AttackDetectionResult> {
         self.detect(input.as_bytes(), location)
     }

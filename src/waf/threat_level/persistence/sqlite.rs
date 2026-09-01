@@ -420,11 +420,13 @@ impl SqliteHistory {
                 timestamp: row.get(0)?,
                 level: row.get(1)?,
                 score: row.get(2)?,
-                requests_per_second: row.get::<_, f64>(3)? as u32,
-                requests_per_minute: row.get::<_, f64>(4)? as u32,
-                attacks_per_minute: row.get::<_, f64>(5)? as u32,
-                rate_limit_hits: row.get::<_, f64>(6)? as u32,
-                blocked: row.get::<_, f64>(7)? as u32,
+                requests_per_second: u32::try_from(row.get::<_, f64>(3)? as u64)
+                    .unwrap_or(u32::MAX),
+                requests_per_minute: u32::try_from(row.get::<_, f64>(4)? as u64)
+                    .unwrap_or(u32::MAX),
+                attacks_per_minute: u32::try_from(row.get::<_, f64>(5)? as u64).unwrap_or(u32::MAX),
+                rate_limit_hits: u32::try_from(row.get::<_, f64>(6)? as u64).unwrap_or(u32::MAX),
+                blocked: u32::try_from(row.get::<_, f64>(7)? as u64).unwrap_or(u32::MAX),
             })
         });
 
@@ -473,11 +475,13 @@ impl SqliteHistory {
                 timestamp: row.get(0)?,
                 level: row.get(1)?,
                 score: row.get(2)?,
-                requests_per_second: row.get::<_, f64>(3)? as u32,
-                requests_per_minute: row.get::<_, f64>(4)? as u32,
-                attacks_per_minute: row.get::<_, f64>(5)? as u32,
-                rate_limit_hits: row.get::<_, f64>(6)? as u32,
-                blocked: row.get::<_, f64>(7)? as u32,
+                requests_per_second: u32::try_from(row.get::<_, f64>(3)? as u64)
+                    .unwrap_or(u32::MAX),
+                requests_per_minute: u32::try_from(row.get::<_, f64>(4)? as u64)
+                    .unwrap_or(u32::MAX),
+                attacks_per_minute: u32::try_from(row.get::<_, f64>(5)? as u64).unwrap_or(u32::MAX),
+                rate_limit_hits: u32::try_from(row.get::<_, f64>(6)? as u64).unwrap_or(u32::MAX),
+                blocked: u32::try_from(row.get::<_, f64>(7)? as u64).unwrap_or(u32::MAX),
             })
         });
 
@@ -537,11 +541,13 @@ impl SqliteHistory {
                 timestamp: row.get(0)?,
                 level: row.get(1)?,
                 score: row.get(2)?,
-                requests_per_second: row.get::<_, f64>(3)? as u32,
-                requests_per_minute: row.get::<_, f64>(4)? as u32,
-                attacks_per_minute: row.get::<_, f64>(5)? as u32,
-                rate_limit_hits: row.get::<_, f64>(6)? as u32,
-                blocked: row.get::<_, f64>(7)? as u32,
+                requests_per_second: u32::try_from(row.get::<_, f64>(3)? as u64)
+                    .unwrap_or(u32::MAX),
+                requests_per_minute: u32::try_from(row.get::<_, f64>(4)? as u64)
+                    .unwrap_or(u32::MAX),
+                attacks_per_minute: u32::try_from(row.get::<_, f64>(5)? as u64).unwrap_or(u32::MAX),
+                rate_limit_hits: u32::try_from(row.get::<_, f64>(6)? as u64).unwrap_or(u32::MAX),
+                blocked: u32::try_from(row.get::<_, f64>(7)? as u64).unwrap_or(u32::MAX),
             })
         });
 

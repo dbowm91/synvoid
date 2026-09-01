@@ -36,7 +36,6 @@ pub const HEADERS_TO_STRIP: &[&str] = &[
     "x-cache-hits",
     "x-backend",
     "x-server",
-    "location",
 ];
 
 pub const MAX_XFF_CHAIN_LENGTH: usize = 10;
