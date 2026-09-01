@@ -1705,27 +1705,34 @@ pub fn parse_content_disposition_filename(header_value: &str) -> Option<String> 
 }
 
 fn percent_decode(s: &str) -> String {
-    let mut bytes = Vec::with_capacity(s.len());
-    let mut chars = s.bytes();
-    while let Some(b) = chars.next() {
+    // shared logic with synvoid-proxy::grpc — see synvoid-core::url::percent_decode
+    let mut out = Vec::with_capacity(s.len());
+    let mut bytes = s.bytes();
+    while let Some(b) = bytes.next() {
         if b == b'%' {
-            let hex: String = chars.by_ref().take(2).map(|b| b as char).collect();
-            if hex.len() == 2 {
-                if let Ok(val) = u8::from_str_radix(&hex, 16) {
-                    bytes.push(val);
+            let h = bytes.next();
+            let l = bytes.next();
+            if let (Some(h), Some(l)) = (h, l) {
+                let hi = (h as char).to_digit(16);
+                let lo = (l as char).to_digit(16);
+                if let (Some(hi), Some(lo)) = (hi, lo) {
+                    out.push((hi << 4 | lo) as u8);
                     continue;
                 }
-            }
-            bytes.push(b'%');
-            for c in hex.bytes() {
-                bytes.push(c);
+                out.push(b'%');
+                out.push(h);
+                out.push(l);
+            } else {
+                out.push(b'%');
+                if let Some(h) = h {
+                    out.push(h);
+                }
             }
         } else {
-            bytes.push(b);
+            out.push(b);
         }
     }
-    String::from_utf8(bytes.clone())
-        .unwrap_or_else(|_| String::from_utf8_lossy(&bytes).into_owned())
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 pub struct MultipartPart {

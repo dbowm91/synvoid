@@ -84,6 +84,7 @@ impl SecureConfigManager {
             .map_err(|e| SecureConfigError::EncryptionError(e.to_string()))?;
 
         Ok(SecureConfigValue {
+            // local at-rest encryption, not wire/DHT — STANDARD base64 intentionally
             encrypted: true,
             value: base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &ciphertext),
             nonce: Some(base64::Engine::encode(

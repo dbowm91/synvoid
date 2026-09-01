@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use axum::{extract::State, Json};
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _}; // local POW/audit HTTP, not DHT mesh wire
 use parking_lot::RwLock;
 use rand::Rng;
 use serde::{Deserialize, Serialize};

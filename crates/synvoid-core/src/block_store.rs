@@ -94,14 +94,14 @@ impl MeshBlockEntry {
     }
 
     pub fn is_expired(&self) -> bool {
-        if self.is_permanent() {
+        Self::is_expired_at(self.blocked_at, self.ban_expire_seconds, crate::time::current_timestamp_secs())
+    }
+
+    pub(crate) fn is_expired_at(blocked_at: u64, ttl: u64, now: u64) -> bool {
+        if ttl == 0 {
             return false;
         }
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        now > self.blocked_at + self.ban_expire_seconds
+        now > blocked_at + ttl
     }
 
     pub fn key(site_scope: &str, mesh_id: &str) -> String {
@@ -163,11 +163,7 @@ impl BlocklistTargetStateRecord {
     /// Returns `true` if this record has passed its retention TTL.
     pub fn is_expired(&self) -> bool {
         if let Some(expires_at) = self.expires_at {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            now > expires_at
+            crate::time::current_timestamp_secs() > expires_at
         } else {
             false
         }
@@ -417,11 +413,7 @@ impl BlocklistPeerCursorRecord {
     /// Returns `true` if this cursor has passed its retention TTL.
     pub fn is_expired(&self) -> bool {
         if let Some(expires_at) = self.expires_at {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            now > expires_at
+            crate::time::current_timestamp_secs() > expires_at
         } else {
             false
         }

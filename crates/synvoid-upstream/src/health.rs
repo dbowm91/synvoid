@@ -107,7 +107,9 @@ impl HealthChecker {
 
             for pool in pools_guard.iter() {
                 let pool_backends = pool.get_backends();
-                backends.extend(pool_backends.iter().map(|b| Arc::new(b.clone())));
+                for b in pool_backends.iter() {
+                    backends.push(Arc::new(b.clone()));
+                }
             }
 
             backends

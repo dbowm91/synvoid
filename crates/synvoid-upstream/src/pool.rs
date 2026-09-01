@@ -288,6 +288,7 @@ impl Backend {
     /// Atomically reserve a connection slot. Returns true if slot was acquired.
     /// This avoids the TOCTOU race between `is_available()` and `increment_connections()`.
     #[inline]
+    #[must_use]
     pub fn try_increment_connections(&self) -> bool {
         self.current_connections
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
@@ -303,6 +304,7 @@ impl Backend {
     /// Atomically reserve a connection and return a guard that decrements on drop.
     /// Returns None if at capacity.
     #[inline]
+    #[must_use]
     pub fn try_connection_scope(&self) -> Option<ConnectionGuard<'_>> {
         if self.try_increment_connections() {
             Some(ConnectionGuard { backend: self })
@@ -398,7 +400,8 @@ impl Backend {
         let conn_load =
             self.current_connections.load(Ordering::Relaxed) as f64 / self.max_connections as f64;
         let cpu_load = self.get_cpu_percent() as f64;
-        let _mem_load = self.get_memory_percent() as f64;
+        // mem_load intentionally excluded: memory pressure correlates with cpu/latency;
+        // double-counting over-penalizes backends under GC pauses.
         (conn_load * 0.4) + (cpu_load * 0.6)
     }
 }
@@ -417,6 +420,13 @@ impl Clone for UpstreamPool {
     /// `start_health_check()` on a cloned pool after the original has started
     /// its health check loop, or two concurrent loops will race on `mark_healthy`.
     fn clone(&self) -> Self {
+        #[cfg(debug_assertions)]
+        if self.health_check_task.read().is_some() {
+            debug_assert!(
+                false,
+                "cloning UpstreamPool while health check is running — creates detached health state"
+            );
+        }
         Self {
             backends: self.backends.clone(),
             algorithm: self.algorithm.clone(),

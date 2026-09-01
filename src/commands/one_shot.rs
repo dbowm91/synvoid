@@ -505,18 +505,34 @@ auto_scale = true
         content + &admin_section
     };
 
-    std::fs::write(&main_config_path, &updated_content)
-        .map_err(|e| OneShotError::Io(format!("Failed to write config file: {}", e)))?;
-
-    // Restrict permissions on config file since it contains the admin token.
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        if let Err(e) =
-            std::fs::set_permissions(&main_config_path, std::fs::Permissions::from_mode(0o600))
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        match std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&main_config_path)
         {
-            eprintln!("Warning: Failed to set config file permissions: {}", e);
+            Ok(mut f) => {
+                if let Err(e) = f.write_all(updated_content.as_bytes()) {
+                    return Err(OneShotError::Io(format!("Failed to write config file: {}", e)));
+                }
+                let _ = f.sync_all();
+            }
+            Err(e) => return Err(OneShotError::Io(format!("Failed to create config file: {}", e))),
         }
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(&main_config_path, &updated_content)
+            .map_err(|e| OneShotError::Io(format!("Failed to write config file: {}", e)))?;
+        let _ = std::fs::set_permissions(
+            &main_config_path,
+            std::fs::Permissions::from_mode(0o600),
+        );
     }
 
     tracing::warn!(

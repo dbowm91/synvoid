@@ -531,21 +531,27 @@ mod retry_behavior_tests {
     #[test]
     fn test_backoff_exponential() {
         let base = 100;
-        assert_eq!(calculate_backoff(0, base), 100);
-        assert_eq!(calculate_backoff(1, base), 200);
-        assert_eq!(calculate_backoff(2, base), 400);
-        assert_eq!(calculate_backoff(3, base), 800);
+        // With jitter, backoff is in [capped/2, capped]
+        let v0 = calculate_backoff(0, base);
+        assert!(v0 >= 50 && v0 <= 100, "v0={}", v0);
+        let v1 = calculate_backoff(1, base);
+        assert!(v1 >= 100 && v1 <= 200, "v1={}", v1);
+        let v2 = calculate_backoff(2, base);
+        assert!(v2 >= 200 && v2 <= 400, "v2={}", v2);
+        let v3 = calculate_backoff(3, base);
+        assert!(v3 >= 400 && v3 <= 800, "v3={}", v3);
     }
 
     #[test]
     fn test_backoff_capped_at_30s() {
         let result = calculate_backoff(10, 60000);
-        assert_eq!(result, 30000);
+        assert!(result >= 15000 && result <= 30000, "result={}", result);
     }
 
     #[test]
     fn test_backoff_saturates_before_cap() {
-        assert_eq!(calculate_backoff(5, u64::MAX), 30000);
+        let result = calculate_backoff(5, u64::MAX);
+        assert!(result >= 15000 && result <= 30000, "result={}", result);
     }
 
     #[test]

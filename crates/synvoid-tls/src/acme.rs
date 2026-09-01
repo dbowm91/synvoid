@@ -353,8 +353,30 @@ impl AcmeManager {
             .map_err(|e| AcmeError::Io(format!("Failed to create cache dir: {}", e)))?;
         std::fs::write(&cert_path, &cert_pem)
             .map_err(|e| AcmeError::Io(format!("Failed to write cert: {}", e)))?;
-        std::fs::write(&key_path, &private_key_pem)
-            .map_err(|e| AcmeError::Io(format!("Failed to write key: {}", e)))?;
+        #[cfg(unix)]
+        {
+            use std::io::Write;
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut key_file = std::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&key_path)
+                .map_err(|e| AcmeError::Io(format!("Failed to create key file: {}", e)))?;
+            key_file
+                .write_all(private_key_pem.as_bytes())
+                .map_err(|e| AcmeError::Io(format!("Failed to write key: {}", e)))?;
+            key_file
+                .sync_all()
+                .map_err(|e| AcmeError::Io(format!("Failed to fsync key: {}", e)))?;
+        }
+        #[cfg(not(unix))]
+        {
+            std::fs::write(&key_path, &private_key_pem)
+                .map_err(|e| AcmeError::Io(format!("Failed to write key: {}", e)))?;
+            let _ = synvoid_platform::fs::set_file_permissions(&key_path, false);
+        }
 
         // Parse expiry from cert
         let expires_at = parse_cert_expiry(&cert_pem).unwrap_or_else(|_| {
@@ -544,7 +566,7 @@ impl AcmeClient {
         for (domain, cert) in certs.iter() {
             let expires_at = chrono::DateTime::<chrono::Utc>::from(cert.expires_at);
             if expires_at > now {
-                if last_order.is_none() || expires_at > last_order.unwrap() {
+                if last_order.is_none_or(|lo| expires_at > lo) {
                     last_order = Some(expires_at);
                 }
             } else {

@@ -534,9 +534,10 @@ mod tests {
         hello.extend_from_slice(&sni_data);
 
         // Fill in extensions length
-        let ext_len = hello.len() - ext_start - 2;
-        hello[ext_start] = (ext_len >> 8) as u8;
-        hello[ext_start + 1] = (ext_len & 0xFF) as u8;
+        let ext_len: u16 = (hello.len() - ext_start - 2)
+            .try_into()
+            .expect("ClientHello extensions too large");
+        hello[ext_start..ext_start + 2].copy_from_slice(&ext_len.to_be_bytes());
 
         // Fill in handshake message length
         let msg_len = hello.len() - 4;
@@ -548,8 +549,11 @@ mod tests {
         let mut record = Vec::new();
         record.push(0x16); // Handshake
         record.extend_from_slice(&[0x03, 0x01]); // TLS 1.0 record version
-        let record_len = hello.len();
-        record.extend_from_slice(&((record_len as u16).to_be_bytes()));
+        let record_len: u16 = hello
+            .len()
+            .try_into()
+            .expect("ClientHello record too large");
+        record.extend_from_slice(&record_len.to_be_bytes());
         record.extend_from_slice(&hello);
 
         record
@@ -569,7 +573,7 @@ mod tests {
 
         // ServerName entry: type = host_name (0), name
         ext.push(0x00); // type
-        let name_len = hostname.len() as u16;
+        let name_len: u16 = hostname.len().try_into().expect("hostname too long for SNI (max 65535)");
         ext.extend_from_slice(&name_len.to_be_bytes());
         ext.extend_from_slice(hostname.as_bytes());
 

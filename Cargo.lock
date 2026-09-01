@@ -8630,6 +8630,7 @@ dependencies = [
  "hyper",
  "matchit 0.7.3",
  "metrics 0.22.4",
+ "rand 0.9.4",
  "regex",
  "schemars 0.8.22",
  "serde",

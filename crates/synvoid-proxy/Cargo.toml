@@ -36,6 +36,7 @@ unicode-normalization = "0.1"
 regex = "1"
 serde = { version = "1", features = ["derive"] }
 schemars = "0.8"
+rand = "0.9"
 dashmap = "7.0.0-rc2"
 thiserror = "2"
 matchit = "0.7"

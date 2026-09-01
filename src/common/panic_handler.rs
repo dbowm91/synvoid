@@ -23,12 +23,33 @@ pub fn setup_panic_handler(process_name: &str, log_file: Option<&str>) {
         );
 
         let panic_content = format!("{}: {}", location, message);
+        let write_secure = |path: &str| {
+            #[cfg(unix)]
+            {
+                use std::io::Write;
+                use std::os::unix::fs::OpenOptionsExt;
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .write(true)
+                    .truncate(true)
+                    .mode(0o600)
+                    .open(path)
+                {
+                    let _ = f.write_all(panic_content.as_bytes());
+                    let _ = f.sync_all();
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = std::fs::write(path, &panic_content);
+                let _ = std::fs::set_permissions(
+                    path,
+                    std::os::unix::fs::PermissionsExt::from_mode(0o600),
+                );
+            }
+        };
         if let Some(ref log_path) = log {
-            let _ = std::fs::write(log_path, &panic_content);
-            let _ = std::fs::set_permissions(
-                log_path,
-                std::os::unix::fs::PermissionsExt::from_mode(0o600),
-            );
+            write_secure(log_path);
         }
         if let Some(temp_dir) = std::env::temp_dir().to_str() {
             let default_panic_path = format!(
@@ -36,11 +57,7 @@ pub fn setup_panic_handler(process_name: &str, log_file: Option<&str>) {
                 temp_dir,
                 name.to_lowercase().replace(' ', "-")
             );
-            let _ = std::fs::write(&default_panic_path, &panic_content);
-            let _ = std::fs::set_permissions(
-                &default_panic_path,
-                std::os::unix::fs::PermissionsExt::from_mode(0o600),
-            );
+            write_secure(&default_panic_path);
         }
     }));
 }

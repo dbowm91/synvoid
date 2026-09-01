@@ -123,33 +123,7 @@ impl GrpcHandler {
     }
 
     fn percent_decode(input: &str) -> String {
-        let mut out = Vec::with_capacity(input.len());
-        let mut bytes = input.bytes();
-        while let Some(b) = bytes.next() {
-            if b == b'%' {
-                let h = bytes.next();
-                let l = bytes.next();
-                if let (Some(h), Some(l)) = (h, l) {
-                    let hi = (h as char).to_digit(16);
-                    let lo = (l as char).to_digit(16);
-                    if let (Some(hi), Some(lo)) = (hi, lo) {
-                        out.push((hi << 4 | lo) as u8);
-                        continue;
-                    }
-                    out.push(b'%');
-                    out.push(h);
-                    out.push(l);
-                } else {
-                    out.push(b'%');
-                    if let Some(h) = h {
-                        out.push(h);
-                    }
-                }
-            } else {
-                out.push(b);
-            }
-        }
-        String::from_utf8_lossy(&out).into_owned()
+        synvoid_core::url::percent_decode(input)
     }
 }
 

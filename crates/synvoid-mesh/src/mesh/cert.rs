@@ -590,6 +590,7 @@ impl MeshCertManager {
         let mut hasher = Sha256::new();
         hasher.update(cert_der);
         let hash = hasher.finalize();
+        // local-only fingerprint, not DHT wire — STANDARD intentionally
         base64::engine::general_purpose::STANDARD.encode(hash)
     }
 

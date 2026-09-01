@@ -202,10 +202,7 @@ pub fn start_shared_connection_heartbeat(
     crate::upstream::shared_state::SharedConnectionTable::get_global().map(|table| {
         tokio::spawn(async move {
             while running.is_running() {
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs();
+                let now = crate::utils::current_timestamp();
                 table.record_heartbeat(worker_id_raw, now);
                 tokio::time::sleep(Duration::from_secs(2)).await;
             }

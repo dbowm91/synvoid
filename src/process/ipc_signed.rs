@@ -539,6 +539,8 @@ impl SignedIpcMessage {
         crate::serialization::deserialize(&envelope.data)
     }
 
+    /// Requires a blocking `Read`. For non-blocking transports use the
+    /// buffer-based `deserialize_signed` path.
     pub fn deserialize_signed_from_stream<R: Read>(
         stream: &mut R,
         signer: &IpcSigner,

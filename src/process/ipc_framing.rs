@@ -27,6 +27,8 @@ where
     Ok(())
 }
 
+/// Blocking read — requires a blocking `Read`. For non-blocking fds use
+/// `try_read_message_sync`.
 pub fn read_message_sync<R, T>(reader: &mut R, buffer: &mut Vec<u8>) -> io::Result<Option<T>>
 where
     R: Read,
@@ -43,9 +45,6 @@ where
             }
             Ok(n) => {
                 buffer.extend_from_slice(&temp_buf[..n]);
-            }
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                return Ok(None);
             }
             Err(e) => return Err(e),
         }
@@ -80,9 +79,6 @@ where
                     if buffer.len() >= total_needed {
                         break;
                     }
-                }
-                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                    return Ok(None);
                 }
                 Err(e) => return Err(e),
             }
@@ -220,6 +216,73 @@ where
     Ok(Some(msg))
 }
 
+/// Non-blocking variant — returns `Ok(None)` on `WouldBlock` without consuming partial frames.
+pub fn try_read_message_sync<R, T>(reader: &mut R, buffer: &mut Vec<u8>) -> io::Result<Option<T>>
+where
+    R: Read,
+    T: DeserializeOwned,
+{
+    if buffer.len() < 4 {
+        let mut temp_buf = [0u8; 4096];
+        match reader.read(&mut temp_buf) {
+            Ok(0) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "connection closed",
+                ))
+            }
+            Ok(n) => {
+                buffer.extend_from_slice(&temp_buf[..n]);
+            }
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                return Ok(None);
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    if buffer.len() < 4 {
+        return Ok(None);
+    }
+    let len = u32::from_be_bytes([buffer[0], buffer[1], buffer[2], buffer[3]]) as usize;
+    if len > MAX_MESSAGE_SIZE {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "message too large",
+        ));
+    }
+    let total_needed = 4 + len;
+    if buffer.len() < total_needed {
+        let mut temp_buf = [0u8; 4096];
+        loop {
+            match reader.read(&mut temp_buf) {
+                Ok(0) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "connection closed",
+                    ))
+                }
+                Ok(n) => {
+                    buffer.extend_from_slice(&temp_buf[..n]);
+                    if buffer.len() >= total_needed {
+                        break;
+                    }
+                }
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    return Ok(None);
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
+    if buffer.len() < total_needed {
+        return Ok(None);
+    }
+    let data = buffer[4..total_needed].to_vec();
+    buffer.drain(..total_needed);
+    let msg: T = crate::serialization::deserialize(&data)?;
+    Ok(Some(msg))
+}
+
 pub async fn read_message_with_timeout<R, T>(
     reader: &mut R,
     buffer: &mut Vec<u8>,
@@ -248,6 +311,8 @@ where
         }
     })
     .await;
+    // Note: sleep_duration resets per call; successful read returns immediately so no
+    // mid-call reset needed. Bursty callers get fresh backoff on next invocation.
 
     match result {
         Ok(r) => r,

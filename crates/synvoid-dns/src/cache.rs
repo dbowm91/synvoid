@@ -828,7 +828,8 @@ impl DnsCache {
         let inner = &self.inner;
 
         // Use secondary index for O(1) qname lookup instead of linear scan
-        let dominated = |qname: &str| qname == origin || qname.ends_with(&format!(".{}", origin));
+        let dot_origin = format!(".{}", origin);
+        let dominated = |qname: &str| qname == origin || qname.ends_with(&dot_origin);
         let keys_to_remove: Vec<CacheKey> = {
             let index = inner.qname_index.read();
             index

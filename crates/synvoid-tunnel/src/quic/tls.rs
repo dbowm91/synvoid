@@ -258,8 +258,30 @@ pub fn generate_self_signed_cert(
 
     std::fs::write(&cert_path, certified_key.cert.pem())
         .map_err(|e| QuicTlsError::IoError(cert_path.display().to_string(), e))?;
-    std::fs::write(&key_path, certified_key.key_pair.serialize_pem())
-        .map_err(|e| QuicTlsError::IoError(key_path.display().to_string(), e))?;
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut key_file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&key_path)
+            .map_err(|e| QuicTlsError::IoError(key_path.display().to_string(), e))?;
+        key_file
+            .write_all(certified_key.key_pair.serialize_pem().as_bytes())
+            .map_err(|e| QuicTlsError::IoError(key_path.display().to_string(), e))?;
+        key_file
+            .sync_all()
+            .map_err(|e| QuicTlsError::IoError(key_path.display().to_string(), e))?;
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(&key_path, certified_key.key_pair.serialize_pem())
+            .map_err(|e| QuicTlsError::IoError(key_path.display().to_string(), e))?;
+        let _ = synvoid_platform::fs::set_file_permissions(&key_path, false);
+    }
 
     tracing::info!(
         "Generated self-signed certificate for {} in {:?}",

@@ -460,13 +460,18 @@ impl DnsSecKeyManager {
         #[cfg(unix)]
         {
             use std::io::Write;
-            use std::os::unix::fs::PermissionsExt;
-            let mut file = std::fs::File::create(&priv_file)
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut file = std::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&priv_file)
                 .map_err(|e| format!("Failed to write private key: {}", e))?;
-            file.set_permissions(std::fs::Permissions::from_mode(0o600))
-                .map_err(|e| format!("Failed to set private key permissions: {}", e))?;
             file.write_all(&private_key)
                 .map_err(|e| format!("Failed to write private key: {}", e))?;
+            file.sync_all()
+                .map_err(|e| format!("Failed to fsync private key: {}", e))?;
         }
         #[cfg(not(unix))]
         {

@@ -64,6 +64,14 @@ impl SharedConnectionTable {
             total_size
         );
 
+        // Alignment checks — AtomicU64/AtomicUsize require proper alignment
+        debug_assert_eq!(16 % std::mem::align_of::<AtomicU64>(), 0);
+        debug_assert_eq!(
+            (header_size + heartbeats_size) % std::mem::align_of::<AtomicUsize>(),
+            0,
+            "connection array misaligned: header+heartbeats not multiple of AtomicUsize alignment"
+        );
+
         // Initialize header
         unsafe {
             let ptr = mmap.as_ptr() as *mut u64;
@@ -89,7 +97,9 @@ impl SharedConnectionTable {
             return None;
         }
         let offset = 16 + worker_id * 8;
+        debug_assert_eq!(offset % std::mem::align_of::<AtomicU64>(), 0);
         let ptr = unsafe { self.mmap.as_ptr().add(offset) } as *const AtomicU64;
+        debug_assert!((ptr as usize).is_multiple_of(std::mem::align_of::<AtomicU64>()));
         Some(unsafe { &*ptr })
     }
 
@@ -104,7 +114,9 @@ impl SharedConnectionTable {
         let offset = 16
             + self.max_workers * 8
             + (worker_id * self.max_backends + backend_index) * std::mem::size_of::<AtomicUsize>();
+        debug_assert_eq!(offset % std::mem::align_of::<AtomicUsize>(), 0);
         let ptr = unsafe { self.mmap.as_ptr().add(offset) } as *const AtomicUsize;
+        debug_assert!((ptr as usize).is_multiple_of(std::mem::align_of::<AtomicUsize>()));
         Some(unsafe { &*ptr })
     }
 
@@ -113,10 +125,7 @@ impl SharedConnectionTable {
             return 0;
         }
 
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = synvoid_utils::current_timestamp();
 
         let mut total = 0;
         for w in 0..self.max_workers {
@@ -184,7 +193,7 @@ impl SharedRateLimitTable {
             .open(&path)?;
 
         let counter_size = num_slots * std::mem::size_of::<AtomicU32>();
-        let dirty_bits_size = (num_slots / 32) * std::mem::size_of::<AtomicU32>();
+        let dirty_bits_size = num_slots.div_ceil(32) * std::mem::size_of::<AtomicU32>();
         let total_size = (counter_size * 3) + dirty_bits_size;
 
         file.set_len(total_size as u64)?;
