@@ -177,11 +177,17 @@ impl IpcSigner {
         {
             if let Ok(key_file) = std::env::var("SYNVOID_IPC_KEY_FILE") {
                 let path = std::path::Path::new(&key_file);
-                let meta = match path.metadata() {
+                let meta = match std::fs::symlink_metadata(path) {
                     Ok(m) => m,
                     Err(_) => return None,
                 };
-                if meta.permissions().readonly() {
+                if meta.file_type().is_symlink() {
+                    return None;
+                }
+                if !meta.is_file() {
+                    return None;
+                }
+                if !meta.permissions().readonly() {
                     return None;
                 }
                 if meta.len() < 64 || meta.len() > 128 {
@@ -593,6 +599,9 @@ fn read_ipc_key_file_impl(path: &std::path::Path) -> Option<Arc<IpcSigner>> {
         return None;
     }
     if !meta.is_file() {
+        return None;
+    }
+    if !meta.permissions().readonly() {
         return None;
     }
     if meta.len() < 64 || meta.len() > 128 {

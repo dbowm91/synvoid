@@ -78,15 +78,16 @@ macro_rules! url_decode_detector {
             }
 
             fn detect_with_url_decode(&self, input: &str, location: InputLocation) -> Option<AttackDetectionResult> {
+                use std::borrow::Cow;
                 use synvoid_core::url::url_decode_all;
 
-                let decoded = if input.contains('%') || input.contains('+') {
-                    url_decode_all(input)
+                let decoded: Cow<str> = if input.contains('%') || input.contains('+') {
+                    Cow::Owned(url_decode_all(input))
                 } else {
-                    input.to_string()
+                    Cow::Borrowed(input)
                 };
 
-                if let Some(mat) = self.inner.patterns_ref().find(&decoded) {
+                if let Some(mat) = self.inner.patterns_ref().find(decoded.as_ref()) {
                     let matched = decoded[mat.start()..mat.end()].to_string();
                     tracing::warn!(
                         attack_type = $attack_name,

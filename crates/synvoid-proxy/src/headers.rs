@@ -138,14 +138,16 @@ pub fn sanitize_request_path(path: &str) -> std::borrow::Cow<'_, str> {
         return std::borrow::Cow::Owned(String::new());
     }
 
-    let path = path.nfkc().collect::<String>();
-
     let fast_path = {
         let bytes = path.as_bytes();
         !bytes.iter().any(|&b| b == b'%' || b == b'.' || b < 0x20) && !path.contains("//")
     };
     if fast_path {
-        return std::borrow::Cow::Owned(path);
+        let normalized: String = path.nfkc().collect();
+        if normalized == path {
+            return std::borrow::Cow::Borrowed(path);
+        }
+        return std::borrow::Cow::Owned(normalized);
     }
 
     let mut result = Vec::<u8>::with_capacity(path.len());

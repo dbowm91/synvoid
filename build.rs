@@ -1,5 +1,7 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-env-changed=SOURCE_DATE_EPOCH");
+    println!("cargo:rerun-if-changed=.git/HEAD");
+    println!("cargo:rerun-if-changed=.git/refs/heads/");
     println!("cargo:rustc-env=BUILD_TIMESTAMP={}", build_timestamp());
 
     // Only compile protobuf when mesh feature is enabled (requires protoc)

@@ -423,12 +423,15 @@ impl InputNormalizer {
     ///
     /// Overlong encodings use extra bytes to represent codepoints that should fit
     /// in fewer bytes. For example, `>` (U+003E) can be overlong-encoded as `%C0%BE`
-    /// instead of the canonical `%3E`.
+    /// instead of the canonical `%3E`. The function also detects non-ASCII overlongs
+    /// (e.g. a 3-byte encoding of `é` which canonically fits in 2 bytes) and flags
+    /// `NormalizationFlags::OVERLONG` only when the decoded codepoint is below the
+    /// minimal value for the byte length.
     ///
     /// Returns `(decoded_char, total_chars_consumed)` where `total_chars_consumed`
-    /// includes the initial `%XX` at `start`. If the sequence is not a valid overlong
-    /// encoding or the decoded codepoint is not in the ASCII range (0x00-0x7F),
-    /// returns `(None, 3)` (consumes only the initial percent-encoded byte).
+    /// includes the initial `%XX` at `start`. If the sequence is not a valid
+    /// multi-byte UTF-8 encoding, returns `(None, 3)` (consumes only the initial
+    /// percent-encoded byte).
     fn decode_overlong_sequence(
         chars: &[char],
         start: usize,
@@ -486,19 +489,21 @@ impl InputNormalizer {
             _ => return (None, 3),
         };
 
-        // Only map to ASCII if the codepoint is in the ASCII range.
-        // Overlong encodings of non-ASCII codepoints are unusual in attack
-        // payloads but we handle them conservatively.
-        if codepoint <= 0x7F {
+        // Flag overlong only when the codepoint could have been encoded with
+        // fewer bytes than were used. Minimal byte lengths per RFC 3629:
+        //  2 bytes => U+0080 minimum, 3 bytes => U+0800, 4 bytes => U+10000.
+        let is_overlong = match bytes.len() {
+            2 => codepoint < 0x80,
+            3 => codepoint < 0x800,
+            4 => codepoint < 0x10000,
+            _ => false,
+        };
+        if is_overlong {
             NORMALIZATION_FLAGS.with(|f| {
                 f.borrow_mut().insert(NormalizationFlags::OVERLONG);
             });
-            (char::from_u32(codepoint), pos - start)
-        } else {
-            // Non-ASCII codepoint from overlong: push the Unicode character
-            // as-is. This preserves the character for downstream processing.
-            (char::from_u32(codepoint), pos - start)
         }
+        (char::from_u32(codepoint), pos - start)
     }
 
     fn decode_html_entity_simple(&self, entity: &str) -> Option<char> {

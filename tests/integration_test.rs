@@ -2570,12 +2570,11 @@ mod proxy_pipeline_tests {
 
     #[test]
     fn test_sanitize_request_path_returns_cow() {
-        use std::borrow::Cow;
         let result = sanitize_request_path("/api/users");
-        assert!(matches!(result, Cow::Owned(_)));
+        assert_eq!(result.as_ref(), "/api/users");
 
         let simple = sanitize_request_path("/simple");
-        assert!(matches!(simple, Cow::Owned(_)));
+        assert_eq!(simple.as_ref(), "/simple");
     }
 
     #[test]

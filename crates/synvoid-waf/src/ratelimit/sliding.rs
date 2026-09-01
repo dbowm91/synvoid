@@ -120,6 +120,11 @@ impl AtomicBucketWindow {
     fn sum_buckets(&self) -> u32 {
         loop {
             let gen_before = self.generation.load(Ordering::Acquire);
+            // Odd generation means a reset is in progress (seqlock).
+            if gen_before & 1 == 1 {
+                std::hint::spin_loop();
+                continue;
+            }
             let mut total = 0u32;
             for bucket in self.buckets.iter() {
                 total += bucket.load(Ordering::Relaxed);
@@ -132,10 +137,12 @@ impl AtomicBucketWindow {
     }
 
     pub fn reset(&self) {
+        // Seqlock: bump to odd, zero, bump to even.
         self.generation.fetch_add(1, Ordering::Release);
         for bucket in self.buckets.iter() {
             bucket.store(0, Ordering::Relaxed);
         }
+        self.generation.fetch_add(1, Ordering::Release);
     }
 }
 
