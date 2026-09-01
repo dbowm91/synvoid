@@ -828,11 +828,12 @@ impl DnsCache {
         let inner = &self.inner;
 
         // Use secondary index for O(1) qname lookup instead of linear scan
+        let dominated = |qname: &str| qname == origin || qname.ends_with(&format!(".{}", origin));
         let keys_to_remove: Vec<CacheKey> = {
             let index = inner.qname_index.read();
             index
                 .iter()
-                .filter(|(qname, _)| qname.ends_with(origin) || **qname == origin)
+                .filter(|(qname, _)| dominated(qname))
                 .flat_map(|(_, keys)| keys.iter().cloned())
                 .collect()
         };
@@ -845,7 +846,7 @@ impl DnsCache {
         // (keys that were evicted but we never cleaned up)
         {
             let mut index = inner.qname_index.write();
-            index.retain(|qname, _| !qname.ends_with(origin) && *qname != origin);
+            index.retain(|qname, _| !dominated(qname));
             // Remove keys that no longer exist in cache
             let stale_qnames: Vec<String> = index
                 .iter_mut()
@@ -865,9 +866,12 @@ impl DnsCache {
         }
 
         // WS6: Clean up fingerprints keyed by the new composite format
-        let origin_with_suffix = format!("{}|", origin);
+        // Fingerprint keys are "qname|qtype|qclass|..." — extract qname prefix before '|'.
         let mut fingerprints = inner.cache_fingerprints.write();
-        fingerprints.retain(|name, _| !name.starts_with(&origin_with_suffix) && *name != origin);
+        fingerprints.retain(|name, _| {
+            let qname = name.split('|').next().unwrap_or(name);
+            !(qname == origin || qname.ends_with(&format!(".{}", origin)))
+        });
 
         if !keys_to_remove.is_empty() {
             inner.metrics.invalidations.fetch_add(1, Ordering::Relaxed);
@@ -987,7 +991,9 @@ impl DnsCache {
         }
 
         let to_remove = fingerprints.len() - max_entries;
-        let keys: Vec<String> = fingerprints.keys().take(to_remove).cloned().collect();
+        let mut keys: Vec<String> = fingerprints.keys().cloned().collect();
+        keys.sort();
+        keys.truncate(to_remove);
 
         for key in keys {
             fingerprints.remove(&key);

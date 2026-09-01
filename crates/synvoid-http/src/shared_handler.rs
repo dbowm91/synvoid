@@ -33,10 +33,7 @@ impl SharedRequestHandler {
         alt_svc: &Option<String>,
         main_config: &MainConfig,
     ) -> Response<BoxBody<Bytes, Infallible>> {
-        let body = serde_json::json!({
-            "status": "healthy",
-        })
-        .to_string();
+        let body = r#"{"status":"healthy"}"#.to_string();
 
         self.build_response_with_alt_svc(200, body, "application/json", alt_svc, main_config)
     }
@@ -48,18 +45,9 @@ impl SharedRequestHandler {
         main_config: &MainConfig,
     ) -> Response<BoxBody<Bytes, Infallible>> {
         let (status_code, body) = if is_ready {
-            let body = serde_json::json!({
-                "ready": true,
-            })
-            .to_string();
-            (200, body)
+            (200, r#"{"ready":true}"#.to_string())
         } else {
-            let body = serde_json::json!({
-                "ready": false,
-                "reason": "not_ready",
-            })
-            .to_string();
-            (503, body)
+            (503, r#"{"ready":false,"reason":"not_ready"}"#.to_string())
         };
 
         self.build_response_with_alt_svc(

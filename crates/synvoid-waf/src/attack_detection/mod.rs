@@ -318,10 +318,24 @@ impl AttackDetector {
 
         let mut join_set = tokio::task::JoinSet::new();
 
+        // Share header/body clones between detectors via Arc to avoid 2× allocations.
+        let shared_headers: Option<Arc<http::HeaderMap>> =
+            if self.config.request_smuggling.enabled || self.config.jwt.enabled {
+                Some(Arc::new(headers.clone()))
+            } else {
+                None
+            };
+        let shared_body: Option<Arc<[u8]>> =
+            if self.config.request_smuggling.enabled || self.config.jwt.enabled {
+                body.map(|b| Arc::from(b.to_vec().into_boxed_slice()))
+            } else {
+                None
+            };
+
         if self.config.request_smuggling.enabled {
             let detector = self.request_smuggling_detector.clone();
-            let headers = headers.clone();
-            let body = body.map(|b| b.to_vec());
+            let headers = shared_headers.clone().unwrap();
+            let body = shared_body.clone();
             join_set.spawn(async move {
                 detector
                     .check_headers(&headers)
@@ -334,9 +348,9 @@ impl AttackDetector {
         if self.config.jwt.enabled {
             let detector = self.jwt_detector.clone();
             let normalizer = self.normalizer.clone();
-            let headers = headers.clone();
+            let headers = shared_headers.clone().unwrap();
             let query_string = query_string.map(|s| s.to_string());
-            let body = body.map(|b| b.to_vec());
+            let body = shared_body.clone();
             join_set.spawn(async move {
                 if let Some(result) = detector.detect_in_headers(&headers) {
                     return Some((result, 40));

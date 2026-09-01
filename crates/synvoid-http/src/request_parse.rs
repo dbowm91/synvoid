@@ -83,8 +83,10 @@ pub fn classify_internal_endpoint(
         if path == INTERNAL_READY_PATH {
             return InternalEndpointAction::Ready;
         }
-    } else if path == INTERNAL_HEALTH_PATH || path == INTERNAL_READY_PATH {
+    } else if path == INTERNAL_HEALTH_PATH {
         return InternalEndpointAction::Health;
+    } else if path == INTERNAL_READY_PATH {
+        return InternalEndpointAction::Ready;
     }
 
     InternalEndpointAction::None
@@ -140,7 +142,7 @@ pub fn sanitize_and_resolve_client_ip(
     trusted_proxies: &[String],
     client_ip: IpAddr,
 ) -> IpAddr {
-    let sanitizer = RequestSanitizer::new(trusted_proxies.to_vec(), true);
+    let sanitizer = RequestSanitizer::new_from_slice(trusted_proxies, true);
     sanitizer.sanitize_request_headers(headers, client_ip);
     sanitizer
         .get_real_ip(headers, client_ip)
@@ -152,7 +154,33 @@ pub fn resolve_client_ip(
     trusted_proxies: &[String],
     client_ip: IpAddr,
 ) -> IpAddr {
-    let sanitizer = RequestSanitizer::new(trusted_proxies.to_vec(), true);
+    let sanitizer = RequestSanitizer::new_from_slice(trusted_proxies, true);
+    sanitizer
+        .get_real_ip(headers, client_ip)
+        .unwrap_or(client_ip)
+}
+
+/// Zero-copy variant that accepts pre-parsed `TrustedProxy` slices.
+/// Composition roots should call `RequestSanitizer::parse_trusted_proxies` once
+/// at startup and pass the resulting slice here to avoid per-request CIDR parsing.
+pub fn sanitize_and_resolve_client_ip_with_parsed(
+    headers: &mut HeaderMap,
+    trusted_proxies: &[synvoid_waf::request_sanitization::TrustedProxy],
+    client_ip: IpAddr,
+) -> IpAddr {
+    let sanitizer = RequestSanitizer::new_from_parsed(trusted_proxies.to_vec(), true);
+    sanitizer.sanitize_request_headers(headers, client_ip);
+    sanitizer
+        .get_real_ip(headers, client_ip)
+        .unwrap_or(client_ip)
+}
+
+pub fn resolve_client_ip_with_parsed(
+    headers: &HeaderMap,
+    trusted_proxies: &[synvoid_waf::request_sanitization::TrustedProxy],
+    client_ip: IpAddr,
+) -> IpAddr {
+    let sanitizer = RequestSanitizer::new_from_parsed(trusted_proxies.to_vec(), true);
     sanitizer
         .get_real_ip(headers, client_ip)
         .unwrap_or(client_ip)
@@ -208,7 +236,7 @@ mod tests {
             IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
             false,
         );
-        assert_eq!(ready_without_drain, InternalEndpointAction::Health);
+        assert_eq!(ready_without_drain, InternalEndpointAction::Ready);
     }
 
     #[test]

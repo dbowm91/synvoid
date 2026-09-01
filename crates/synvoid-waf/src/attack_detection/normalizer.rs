@@ -47,7 +47,7 @@ fn hex_chars_to_u32(chars: &[char]) -> Option<u32> {
     }
     let mut result = 0u32;
     for &c in chars {
-        result = result << 4 | hex_char_to_nibble(c)? as u32;
+        result = result.checked_shl(4)? | hex_char_to_nibble(c)? as u32;
     }
     Some(result)
 }

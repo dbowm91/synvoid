@@ -2294,20 +2294,21 @@ mod xff_validation_tests {
 
     #[test]
     fn test_validate_and_truncate_xff_private_ip_rejected() {
+        // Private IPs are now preserved (H-01 fix) — proxy no longer strips them.
         let result = validate_and_truncate_xff("10.0.0.1", "8.8.8.8");
-        assert_eq!(result, "8.8.8.8");
+        assert_eq!(result, "10.0.0.1, 8.8.8.8");
     }
 
     #[test]
     fn test_validate_and_truncate_xff_private_ip_middle_rejected() {
         let result = validate_and_truncate_xff("8.8.8.8, 192.168.1.1, 1.1.1.1", "9.9.9.9");
-        assert_eq!(result, "8.8.8.8, 1.1.1.1, 9.9.9.9");
+        assert_eq!(result, "8.8.8.8, 192.168.1.1, 1.1.1.1, 9.9.9.9");
     }
 
     #[test]
     fn test_validate_and_truncate_xff_loopback_rejected() {
         let result = validate_and_truncate_xff("::1", "8.8.8.8");
-        assert_eq!(result, "8.8.8.8");
+        assert_eq!(result, "::1, 8.8.8.8");
     }
 }
 

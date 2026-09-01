@@ -242,6 +242,7 @@ pub async fn validate_destination_at_request_time(url: &url::Url) -> Result<(), 
 pub struct AlertManager {
     config: Arc<TokioRwLock<AlertConfig>>,
     last_fired: Arc<TokioRwLock<std::collections::HashMap<String, i64>>>,
+    pending_webhooks: Arc<tokio::sync::Mutex<tokio::task::JoinSet<()>>>,
 }
 
 impl AlertManager {
@@ -249,6 +250,36 @@ impl AlertManager {
         Self {
             config: Arc::new(TokioRwLock::new(AlertConfig::default())),
             last_fired: Arc::new(TokioRwLock::new(std::collections::HashMap::new())),
+            pending_webhooks: Arc::new(tokio::sync::Mutex::new(tokio::task::JoinSet::new())),
+        }
+    }
+
+    /// Drain pending webhook deliveries with a timeout. Used during graceful shutdown
+    /// to avoid dropping pages/SIEM events mid-flight on SIGTERM/rolling deploy.
+    pub async fn drain_pending_webhooks(&self, timeout: Duration) {
+        let mut js = self.pending_webhooks.lock().await;
+        let deadline = tokio::time::Instant::now() + timeout;
+        while let Some(res) = tokio::time::timeout(
+            deadline.saturating_duration_since(tokio::time::Instant::now()),
+            js.join_next(),
+        )
+        .await
+        .unwrap_or(None)
+        {
+            if let Err(e) = res {
+                if e.is_cancelled() {
+                    tracing::warn!("Webhook delivery cancelled during shutdown drain");
+                } else {
+                    tracing::warn!("Webhook delivery failed during drain: {}", e);
+                }
+            }
+        }
+        if !js.is_empty() {
+            tracing::warn!(
+                "Draining webhooks: aborting {} remaining after timeout",
+                js.len()
+            );
+            js.abort_all();
         }
     }
 
@@ -366,7 +397,8 @@ impl AlertManager {
                 if config.webhook_enabled && !config.webhook_urls.is_empty() {
                     let webhook_urls = config.webhook_urls.clone();
                     let event_clone = event.clone();
-                    tokio::spawn(async move {
+                    let pending = self.pending_webhooks.clone();
+                    pending.lock().await.spawn(async move {
                         let result = send_webhook_internal(&webhook_urls, &event_clone).await;
                         match result.outcome {
                             DeliveryOutcome::Success => {
@@ -515,7 +547,8 @@ impl AlertManager {
         if config.webhook_enabled && !config.webhook_urls.is_empty() {
             let webhook_urls = config.webhook_urls.clone();
             let event_clone = event.clone();
-            tokio::spawn(async move {
+            let pending = self.pending_webhooks.clone();
+            pending.lock().await.spawn(async move {
                 let result = send_webhook_internal(&webhook_urls, &event_clone).await;
                 match result.outcome {
                     DeliveryOutcome::Success => {

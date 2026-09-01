@@ -164,6 +164,7 @@ pub struct Backend {
     pub cpu_percent: Arc<AtomicU32>,
     pub memory_percent: Arc<AtomicU32>,
     pub latency_ewma: Arc<AtomicUsize>, // For Phase 4
+    counter_lock: Arc<parking_lot::Mutex<()>>,
 }
 
 pub struct ConnectionGuard<'a> {
@@ -211,6 +212,7 @@ impl Backend {
             cpu_percent: Arc::new(AtomicU32::new(0)),
             memory_percent: Arc::new(AtomicU32::new(0)),
             latency_ewma: Arc::new(AtomicUsize::new(0)),
+            counter_lock: Arc::new(parking_lot::Mutex::new(())),
         }
     }
 
@@ -283,6 +285,32 @@ impl Backend {
             && self.current_connections.load(Ordering::Relaxed) < self.max_connections
     }
 
+    /// Atomically reserve a connection slot. Returns true if slot was acquired.
+    /// This avoids the TOCTOU race between `is_available()` and `increment_connections()`.
+    #[inline]
+    pub fn try_increment_connections(&self) -> bool {
+        self.current_connections
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                if v < self.max_connections {
+                    Some(v + 1)
+                } else {
+                    None
+                }
+            })
+            .is_ok()
+    }
+
+    /// Atomically reserve a connection and return a guard that decrements on drop.
+    /// Returns None if at capacity.
+    #[inline]
+    pub fn try_connection_scope(&self) -> Option<ConnectionGuard<'_>> {
+        if self.try_increment_connections() {
+            Some(ConnectionGuard { backend: self })
+        } else {
+            None
+        }
+    }
+
     #[inline]
     pub fn increment_connections(&self) {
         self.current_connections.fetch_add(1, Ordering::Relaxed);
@@ -322,6 +350,7 @@ impl Backend {
     }
 
     pub fn record_success(&self) {
+        let _lock = self.counter_lock.lock();
         self.consecutive_failures.store(0, Ordering::Relaxed);
         let successes = self.consecutive_successes.fetch_add(1, Ordering::Relaxed) + 1;
         if successes >= 3 && !self.is_healthy.is_running() {
@@ -330,6 +359,7 @@ impl Backend {
     }
 
     pub fn record_failure(&self) {
+        let _lock = self.counter_lock.lock();
         self.consecutive_successes.store(0, Ordering::Relaxed);
         let failures = self.consecutive_failures.fetch_add(1, Ordering::Relaxed) + 1;
         if failures >= 3 && self.is_healthy.is_running() {
@@ -382,6 +412,10 @@ pub struct UpstreamPool {
 }
 
 impl Clone for UpstreamPool {
+    /// Clone creates a new pool handle sharing backends and round-robin index.
+    /// The `health_check_task` is intentionally not cloned — do not call
+    /// `start_health_check()` on a cloned pool after the original has started
+    /// its health check loop, or two concurrent loops will race on `mark_healthy`.
     fn clone(&self) -> Self {
         Self {
             backends: self.backends.clone(),
@@ -587,8 +621,8 @@ impl UpstreamPool {
             return available.first().cloned();
         }
 
-        let idx = self.round_robin_index.fetch_add(1, Ordering::Relaxed) as u32;
-        let mut remainder = idx % total_weight;
+        let idx = self.round_robin_index.fetch_add(1, Ordering::Relaxed);
+        let mut remainder = (idx % total_weight as usize) as u32;
 
         for backend in available {
             if remainder < backend.weight {

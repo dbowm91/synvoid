@@ -8,7 +8,7 @@ pub struct RequestSanitizer {
 }
 
 #[derive(Debug, Clone)]
-enum TrustedProxy {
+pub enum TrustedProxy {
     IPv4(Ipv4Addr, u8),
     IPv6(Ipv6Addr, u8),
 }
@@ -47,15 +47,33 @@ impl TrustedProxy {
 
 impl RequestSanitizer {
     pub fn new(trusted_proxies: Vec<String>, sanitize_forwarded: bool) -> Self {
+        Self::new_from_slice(&trusted_proxies, sanitize_forwarded)
+    }
+
+    pub fn new_from_slice(trusted_proxies: &[String], sanitize_forwarded: bool) -> Self {
         let proxies = trusted_proxies
-            .into_iter()
-            .filter_map(|p| Self::parse_proxy(&p))
+            .iter()
+            .filter_map(|p| Self::parse_proxy(p))
             .collect();
 
         Self {
             trusted_proxies: proxies,
             sanitize_forwarded,
         }
+    }
+
+    pub fn new_from_parsed(trusted_proxies: Vec<TrustedProxy>, sanitize_forwarded: bool) -> Self {
+        Self {
+            trusted_proxies,
+            sanitize_forwarded,
+        }
+    }
+
+    pub fn parse_trusted_proxies(proxies: &[String]) -> Vec<TrustedProxy> {
+        proxies
+            .iter()
+            .filter_map(|p| Self::parse_proxy(p))
+            .collect()
     }
 
     fn parse_proxy(proxy: &str) -> Option<TrustedProxy> {

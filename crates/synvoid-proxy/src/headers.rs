@@ -56,10 +56,6 @@ impl ForwardedProtocol {
     }
 }
 
-#[allow(dead_code)]
-static HOP_BY_HOP_HEADERS_SET: LazyLock<AHashSet<&'static str>> =
-    LazyLock::new(|| HOP_BY_HOP_HEADERS.iter().copied().collect());
-
 static STATIC_HEADERS_TO_FILTER: LazyLock<AHashSet<&'static str>> = LazyLock::new(|| {
     HOP_BY_HOP_HEADERS
         .iter()
@@ -78,9 +74,13 @@ static HOP_BY_HOP_HEADER_NAMES: LazyLock<AHashSet<http::header::HeaderName>> =
 
 #[inline]
 pub fn is_hop_by_hop_header(name: &str) -> bool {
-    HOP_BY_HOP_HEADERS
-        .iter()
-        .any(|h| h.eq_ignore_ascii_case(name))
+    if let Ok(parsed) = name.parse::<HeaderName>() {
+        is_hop_by_hop_header_name(&parsed)
+    } else {
+        HOP_BY_HOP_HEADERS
+            .iter()
+            .any(|h| h.eq_ignore_ascii_case(name))
+    }
 }
 
 #[inline]
@@ -92,6 +92,7 @@ pub fn is_private_ip(ip: &IpAddr) -> bool {
     synvoid_core::net::is_restricted_ip(ip)
 }
 
+#[allow(dead_code)]
 fn is_public_ip(s: &str) -> Option<bool> {
     s.parse::<IpAddr>().ok().map(|ip| !is_private_ip(&ip))
 }
@@ -238,6 +239,11 @@ pub fn sanitize_request_path(path: &str) -> std::borrow::Cow<'_, str> {
                                             }
                                             _ => 0xFFFD,
                                         };
+                                        if codepoint == 0 {
+                                            // Overlong null (%C0%80) — drop consistently with %00
+                                            bytes = clone;
+                                            continue;
+                                        }
                                         if let Some(ch) = char::from_u32(codepoint) {
                                             // Only treat as overlong-decoded if the codepoint
                                             // is ASCII that affects path normalization; for
@@ -456,7 +462,7 @@ thread_local! {
 
 pub fn validate_and_truncate_xff(existing: &str, client_ip: &str) -> String {
     let mut entries: Vec<&str> = existing.split(',').map(|s| s.trim()).collect();
-    entries.retain(|e| !e.is_empty() && is_public_ip(e) == Some(true));
+    entries.retain(|e| !e.is_empty() && e.parse::<IpAddr>().is_ok());
     if entries.len() >= MAX_XFF_CHAIN_LENGTH {
         entries = entries.split_off(entries.len() - MAX_XFF_CHAIN_LENGTH + 1);
     }
@@ -505,6 +511,14 @@ pub fn build_forward_headers(
     };
     let forward_all = forward_set.is_none();
 
+    // Pre-normalize hide/clear once (same pattern as apply_response_header_transforms).
+    let hide_set: AHashSet<String> = config.hide.iter().map(|s| s.to_ascii_lowercase()).collect();
+    let clear_set: AHashSet<String> = config
+        .clear
+        .iter()
+        .map(|s| s.to_ascii_lowercase())
+        .collect();
+
     for (name, value) in original_headers.iter() {
         let name_str = name.as_str();
 
@@ -520,24 +534,16 @@ pub fn build_forward_headers(
             continue;
         }
 
-        if config.hide.iter().any(|h| h.eq_ignore_ascii_case(name_str)) {
-            continue;
-        }
-
-        if config
-            .clear
-            .iter()
-            .any(|h| h.eq_ignore_ascii_case(name_str))
-        {
+        // Hot path: single hash lookup instead of O(hide+clear) linear scan.
+        let lower = name_str.to_ascii_lowercase();
+        if hide_set.contains(&lower) || clear_set.contains(&lower) {
             continue;
         }
 
         let should_forward = if forward_all {
             true
         } else {
-            forward_set
-                .as_ref()
-                .is_some_and(|set| set.contains(&name_str.to_ascii_lowercase()))
+            forward_set.as_ref().is_some_and(|set| set.contains(&lower))
         };
         if should_forward {
             forward_headers.insert(name, value.clone());
