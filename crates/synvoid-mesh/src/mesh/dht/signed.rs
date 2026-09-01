@@ -1146,11 +1146,17 @@ impl SignedDhtRecord {
     }
 
     pub fn serialize_value<T: Serialize>(value: &T) -> Vec<u8> {
-        synvoid_utils::serialization::serialize(value).unwrap_or_default()
+        synvoid_utils::serialization::serialize(value).unwrap_or_else(|e| {
+            tracing::error!("SignedDhtRecord::serialize_value failed: {}", e);
+            Vec::new()
+        })
     }
 
     pub fn serialize_postcard(&self) -> Vec<u8> {
-        synvoid_utils::serialization::serialize(self).unwrap_or_default()
+        synvoid_utils::serialization::serialize(self).unwrap_or_else(|e| {
+            tracing::error!("SignedDhtRecord::serialize_postcard failed: {}", e);
+            Vec::new()
+        })
     }
 
     pub fn deserialize_postcard(data: &[u8]) -> Option<Self> {
@@ -1205,7 +1211,10 @@ impl SignedDhtRecord {
             record_type: record_type_str,
         };
 
-        synvoid_utils::serialization::serialize(&content).unwrap_or_default()
+        synvoid_utils::serialization::serialize(&content).unwrap_or_else(|e| {
+            tracing::error!("SignedDhtRecord::get_signable_content failed: {}", e);
+            Vec::new()
+        })
     }
 }
 
