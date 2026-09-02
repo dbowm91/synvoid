@@ -41,17 +41,17 @@ impl ViolationEntry {
             violations_count: 1,
             first_violation_at: now,
             last_violation_at: now,
-            expires_at: now + window_secs,
+            expires_at: now.saturating_add(window_secs),
         }
     }
 
     pub fn increment(&mut self, threat_level: u8, window_secs: u64) {
         let now = synvoid_utils::safe_unix_timestamp();
 
-        self.violations_count += 1;
+        self.violations_count = self.violations_count.saturating_add(1);
         self.last_violation_at = now;
         self.threat_level_at_violation = threat_level;
-        self.expires_at = now + window_secs;
+        self.expires_at = now.saturating_add(window_secs);
     }
 
     pub fn is_expired(&self) -> bool {

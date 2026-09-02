@@ -101,6 +101,9 @@ pub struct AuthManager {
     session_refresh_threshold: f64,
     write_tx: mpsc::Sender<(AuthStore, Option<mpsc::Sender<()>>)>,
     flush_requested: DrainFlag,
+    // Keep flush task handle alive so panics are not silently dropped and
+    // so flush() can detect a dead writer.
+    _flush_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl AuthManager {
@@ -119,7 +122,7 @@ impl AuthManager {
         let flush_flag = DrainFlag::new();
         let flush_flag_clone = flush_flag.clone();
 
-        let _handle = tokio::spawn(async move {
+        let flush_handle = tokio::spawn(async move {
             let mut interval = tokio::time::interval(TokioDuration::from_secs(5));
             let mut pending_stores: Vec<AuthStore> = Vec::new();
             let mut flush_completion_tx: Option<mpsc::Sender<()>> = None;
@@ -162,6 +165,7 @@ impl AuthManager {
             session_refresh_threshold: 0.5,
             write_tx,
             flush_requested: flush_flag,
+            _flush_handle: Some(flush_handle),
         }
     }
 
@@ -283,7 +287,8 @@ impl AuthManager {
         self.flush_requested.start_drain();
         let _ = self.write_tx.send((store_clone, Some(tx))).await;
 
-        let _ = rx.recv().await;
+        // Avoid hanging forever if the writer task panicked; bound wait.
+        let _ = tokio::time::timeout(TokioDuration::from_secs(5), rx.recv()).await;
     }
 
     pub async fn create_user(

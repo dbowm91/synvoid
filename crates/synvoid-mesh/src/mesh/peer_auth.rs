@@ -365,8 +365,17 @@ pub fn validate_member_certificate_with_raft_attestation(
                     let actual_value_hash = RaftAttestation::compute_value_hash(
                         org_pub_key.get_signable_data().as_bytes(),
                     );
-                    if attested_value_hash != &actual_value_hash {
-                        return false;
+                    {
+                        use subtle::ConstantTimeEq;
+                        let equal = attested_value_hash
+                            .as_slice()
+                            .ct_eq(actual_value_hash.as_slice())
+                            .unwrap_u8()
+                            == 1
+                            && attested_value_hash.len() == actual_value_hash.len();
+                        if !equal {
+                            return false;
+                        }
                     }
                 }
                 // If protocol_version >= 2 but no value_hash, reject (must bind to value)

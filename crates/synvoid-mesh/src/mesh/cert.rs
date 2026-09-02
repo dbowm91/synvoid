@@ -541,10 +541,18 @@ impl MeshCertManager {
 
     pub fn is_global_node_authorized(&self, signer_public_key: &str) -> bool {
         use subtle::{Choice, ConstantTimeEq};
+        let decoded =
+            match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(signer_public_key) {
+                Ok(d) => d,
+                Err(_) => return false,
+            };
         let keys = self.global_node_public_keys.read();
         let mut m = Choice::from(0u8);
         for pk in keys.values() {
-            m |= pk.as_slice().ct_eq(signer_public_key.as_bytes());
+            // Both sides are now raw 32-byte keys; ct_eq requires equal length.
+            if pk.len() == decoded.len() {
+                m |= pk.as_slice().ct_eq(decoded.as_slice());
+            }
         }
         bool::from(m)
     }

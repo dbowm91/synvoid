@@ -59,9 +59,12 @@ pub fn spawn_granian_supervisors(
     let app_servers_for_init = app_servers.clone();
     let config_for_app = config.clone();
     tokio::spawn(async move {
-        let config = config_for_app.read().await;
+        let sites_snapshot = {
+            let config = config_for_app.read().await;
+            config.sites.clone()
+        };
 
-        for (site_id, site_config) in config.sites.iter() {
+        for (site_id, site_config) in sites_snapshot.iter() {
             let app_config = site_config.app_server_config();
             if !app_config.is_valid() {
                 continue;

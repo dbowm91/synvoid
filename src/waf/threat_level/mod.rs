@@ -448,7 +448,7 @@ impl ThreatLevelManager {
     pub fn get_base_ban_duration(&self, violations_count: u32) -> u64 {
         let level = self.get_level().as_u8();
 
-        let base_seconds = match level {
+        let base_seconds: u64 = match level {
             1 => 3600,
             2 => 14400,
             3 => 86400,
@@ -462,7 +462,8 @@ impl ThreatLevelManager {
         }
 
         let multiplier = 2u64.saturating_pow(violations_count.saturating_sub(1));
-        base_seconds * multiplier
+        const MAX_BAN_SECS: u64 = 30 * 86400;
+        base_seconds.saturating_mul(multiplier).min(MAX_BAN_SECS)
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<ThreatLevel> {

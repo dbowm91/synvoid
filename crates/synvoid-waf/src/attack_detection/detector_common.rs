@@ -443,19 +443,35 @@ pub fn build_pattern_automaton(
     }
 
     let mut seen: std::collections::HashSet<String> = patterns.iter().cloned().collect();
-    for pattern in custom_patterns {
+    for pattern in custom_patterns.iter().cloned() {
         if seen.insert(pattern.clone()) {
-            patterns.push(pattern.clone());
+            patterns.push(pattern);
         }
     }
 
     let patterns_str: Vec<&str> = patterns.iter().map(|s| s.as_str()).collect();
-    Arc::new(
-        AhoCorasick::builder()
-            .ascii_case_insensitive(true)
-            .build(&patterns_str)
-            .unwrap(),
-    )
+    match AhoCorasick::builder()
+        .ascii_case_insensitive(true)
+        .build(&patterns_str)
+    {
+        Ok(ac) => Arc::new(ac),
+        Err(e) => {
+            tracing::error!("AhoCorasick build failed for custom patterns: {}", e);
+            // Fallback to base patterns only to keep data plane alive; static patterns are trusted.
+            let base_str: Vec<&str> = base_patterns.iter().copied().collect();
+            Arc::new(
+                AhoCorasick::builder()
+                    .ascii_case_insensitive(true)
+                    .build(&base_str)
+                    .unwrap_or_else(|_| {
+                        AhoCorasick::builder()
+                            .ascii_case_insensitive(true)
+                            .build(Vec::<&str>::new())
+                            .expect("empty pattern set always builds")
+                    }),
+            )
+        }
+    }
 }
 
 pub fn check_inputs<D>(

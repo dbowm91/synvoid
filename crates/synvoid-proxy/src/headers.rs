@@ -330,14 +330,13 @@ pub fn filter_response_headers(
     headers: &http::HeaderMap,
     headers_to_filter: &AHashSet<String>,
 ) -> Vec<(String, String)> {
-    // Delegate to the `HeaderMap`-preserving variant to avoid duplicate
-    // filtering logic and double allocation of header strings.
     let name_set: AHashSet<http::header::HeaderName> = headers_to_filter
         .iter()
         .filter_map(|s| s.parse().ok())
         .collect();
-    filter_response_headers_buf(headers, &name_set)
+    headers
         .iter()
+        .filter(|(k, _)| !name_set.contains(*k) && !HOP_BY_HOP_HEADER_NAMES.contains(*k))
         .filter_map(|(k, v)| v.to_str().ok().map(|vv| (k.to_string(), vv.to_string())))
         .collect()
 }

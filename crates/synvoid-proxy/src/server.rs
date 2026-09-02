@@ -367,7 +367,8 @@ impl<W: WafProcessor> ProxyServer<W> {
                 .await
                 .unwrap_or_else(|e| {
                     tracing::error!("WAF check failed: {}", e);
-                    WafDecision::Pass
+                    counter!("synvoid.waf.error").increment(1);
+                    WafDecision::Block(500, "Internal Server Error".to_string())
                 });
 
             match waf_decision {
@@ -937,7 +938,8 @@ impl<W: WafProcessor> ProxyServer<W> {
                 }
             }
             Err(e) => {
-                tracing::debug!("Background revalidation failed for {}: {}", path, e);
+                tracing::warn!("Background revalidation failed for {}: {}", path, e);
+                counter!("synvoid.proxy.revalidation_failed").increment(1);
                 cache.record_revalidation_failure();
             }
         }

@@ -187,7 +187,9 @@ impl AsnTracker {
         if violation_count <= 1 {
             base
         } else {
-            base * 2u64.saturating_pow(violation_count.saturating_sub(1))
+            const MAX_BAN_SECS: u64 = 30 * 86400;
+            let multiplier = 2u64.saturating_pow(violation_count.saturating_sub(1));
+            base.saturating_mul(multiplier).min(MAX_BAN_SECS)
         }
     }
 

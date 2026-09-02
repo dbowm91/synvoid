@@ -44,15 +44,39 @@ pub struct MeshSecurityChallengeManager {
     active_challenges: Arc<RwLock<HashMap<String, MeshSecurityChallenge>>>,
     challenge_history: Arc<RwLock<VecDeque<MeshSecurityChallenge>>>,
     node_challenge_counts: Arc<RwLock<HashMap<String, usize>>>,
+    challenge_hmac_key: [u8; 32],
 }
 
 impl MeshSecurityChallengeManager {
     pub fn new(config: Arc<MeshConfig>) -> Self {
+        // Derive per-node HMAC key: prefer node identity private key if available,
+        // otherwise generate a random per-instance secret. Using target_node name
+        // directly (prior) is low-entropy and attacker-known.
+        let challenge_hmac_key = if let Some(ref pk) = config.node_identity.private_key {
+            let mut key = [0u8; 32];
+            // Hash private key material to uniformly distribute key bytes
+            use sha2::{Digest, Sha256};
+            let hash = Sha256::digest(pk);
+            key.copy_from_slice(&hash);
+            key
+        } else if let Some(ref pk) = config.global_node.ed25519_private_key {
+            let mut key = [0u8; 32];
+            use sha2::{Digest, Sha256};
+            let hash = Sha256::digest(pk);
+            key.copy_from_slice(&hash);
+            key
+        } else {
+            let mut key = [0u8; 32];
+            use rand::RngCore;
+            rand::rng().fill_bytes(&mut key);
+            key
+        };
         Self {
             config,
             active_challenges: Arc::new(RwLock::new(HashMap::new())),
             challenge_history: Arc::new(RwLock::new(VecDeque::new())),
             node_challenge_counts: Arc::new(RwLock::new(HashMap::new())),
+            challenge_hmac_key,
         }
     }
 
@@ -148,12 +172,11 @@ impl MeshSecurityChallengeManager {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs()
-            / 30
-            % 100;
+            / 30;
         let challenge_data = format!("{}:{}:{}", target_node, time_window, challenge_id);
 
-        let mut mac =
-            HmacSha256::new_from_slice(target_node.as_bytes()).expect("HMAC accepts any key size");
+        let mut mac = HmacSha256::new_from_slice(&self.challenge_hmac_key)
+            .expect("HMAC accepts any key size");
         mac.update(challenge_data.as_bytes());
         let expected_solution = hex::encode(mac.finalize().into_bytes());
 
@@ -198,12 +221,21 @@ impl MeshSecurityChallengeManager {
             }
         };
 
-        if solution != expected_solution {
-            tracing::warn!(
-                "Time-based challenge {} verification failed: invalid solution",
-                challenge_id
-            );
-            return false;
+        {
+            use subtle::ConstantTimeEq;
+            let equal = expected_solution
+                .as_bytes()
+                .ct_eq(solution.as_bytes())
+                .unwrap_u8()
+                == 1
+                && expected_solution.len() == solution.len();
+            if !equal {
+                tracing::warn!(
+                    "Time-based challenge {} verification failed: invalid solution",
+                    challenge_id
+                );
+                return false;
+            }
         }
 
         if let Some(c) = challenges.get_mut(challenge_id) {
@@ -359,7 +391,11 @@ impl SuspiciousPattern {
         description: String,
     ) -> Self {
         let compiled_regex = if pattern_type == PatternType::Regex {
-            regex::Regex::new(&format!("(?{{max=10000}}){}", pattern))
+            regex::RegexBuilder::new(&pattern)
+                .size_limit(10 * (1 << 20))
+                .dfa_size_limit(10 * (1 << 20))
+                .nest_limit(50)
+                .build()
                 .ok()
                 .map(Arc::new)
         } else {

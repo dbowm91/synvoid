@@ -155,7 +155,9 @@ pub async fn run_cpu_worker(
 
             match listener.accept() {
                 Ok((stream, _)) => {
-                    if active_connections.load(Ordering::Relaxed) >= MAX_STATIC_CONNECTIONS {
+                    let prev = active_connections.fetch_add(1, Ordering::Relaxed);
+                    if prev >= MAX_STATIC_CONNECTIONS {
+                        active_connections.fetch_sub(1, Ordering::Relaxed);
                         tracing::debug!(
                             "CPU worker at max connections ({}), dropping",
                             MAX_STATIC_CONNECTIONS
@@ -163,7 +165,6 @@ pub async fn run_cpu_worker(
                         drop(stream);
                         continue;
                     }
-                    active_connections.fetch_add(1, Ordering::Relaxed);
                     let ipc = crate::process::IpcStream::new(stream);
                     let state = socket_state.clone();
                     let counter = active_connections.clone();
@@ -201,7 +202,9 @@ pub async fn run_cpu_worker(
 
             match listener.accept() {
                 Ok(stream) => {
-                    if active_connections.load(Ordering::Relaxed) >= MAX_STATIC_CONNECTIONS {
+                    let prev = active_connections.fetch_add(1, Ordering::Relaxed);
+                    if prev >= MAX_STATIC_CONNECTIONS {
+                        active_connections.fetch_sub(1, Ordering::Relaxed);
                         tracing::debug!(
                             "CPU worker at max connections ({}), dropping",
                             MAX_STATIC_CONNECTIONS
@@ -209,7 +212,6 @@ pub async fn run_cpu_worker(
                         drop(stream);
                         continue;
                     }
-                    active_connections.fetch_add(1, Ordering::Relaxed);
                     let ipc = crate::process::IpcStream::new(stream);
                     let state = socket_state.clone();
                     let counter = active_connections.clone();

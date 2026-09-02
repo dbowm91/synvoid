@@ -1861,17 +1861,20 @@ impl ProcessManager {
                     tracing::debug!("Shutdown signal received during graceful shutdown");
                 }
                 _ = tokio::time::sleep(check_interval) => {
-                    let all_stopped = {
+                    // Avoid holding both RwLocks simultaneously to prevent deadlock
+                    // if another path acquires them in opposite order. Snapshot each
+                    // independently and combine.
+                    let workers_stopped = {
                         let workers = self.workers.read();
-                        let workers_stopped = workers.values().all(|w| *w.status() == WorkerStatus::Stopped);
-
-                        let unified_server_workers = self.unified_server_workers.read();
-                        let unified_stopped = unified_server_workers
-                            .values()
-                            .all(|w| *w.status() == WorkerStatus::Stopped);
-
-                        workers_stopped && unified_stopped
+                        workers.values().all(|w| *w.status() == WorkerStatus::Stopped)
                     };
+                    let unified_stopped = {
+                        let unified_server_workers = self.unified_server_workers.read();
+                        unified_server_workers
+                            .values()
+                            .all(|w| *w.status() == WorkerStatus::Stopped)
+                    };
+                    let all_stopped = workers_stopped && unified_stopped;
 
                     if all_stopped {
                         tracing::info!("All workers stopped gracefully");

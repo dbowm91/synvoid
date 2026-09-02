@@ -162,22 +162,27 @@ impl InputNormalizer {
 
         buffer.push_str(input);
 
+        // Reuse allocation for prev_content to avoid alloc churn per pass (M-04).
+        let mut prev_content = String::with_capacity(buffer.len());
         for _ in 0..self.max_decode_passes {
             let prev_len = buffer.len();
-            let prev_content = buffer.clone();
+            prev_content.clear();
+            prev_content.push_str(buffer);
             chars.clear();
             chars.extend(buffer.chars());
             buffer.clear();
             let decoded_len = self.decode_single_pass_with_chars(buffer, chars);
 
-            if decoded_len == prev_len && buffer.as_str() == prev_content {
+            // Fast path: length mismatch implies content differs without cloning compare.
+            if decoded_len == prev_len && buffer.as_bytes() == prev_content.as_bytes() {
                 break;
             }
 
             total_passes += 1;
 
             if decoded_len > max_output {
-                *buffer = prev_content;
+                // Swap back without extra clone.
+                std::mem::swap(buffer, &mut prev_content);
                 output_limited = true;
                 break;
             }
@@ -203,7 +208,9 @@ impl InputNormalizer {
             // NFKC normalization can create new percent-encoding sequences
             // (e.g., %b2 → ² → NFKC → 2, forming %02 with preceding literal).
             // Run one additional decode pass to handle them.
-            let post_norm = buffer.clone();
+            let post_norm_len = buffer.len();
+            let mut post_norm = String::with_capacity(post_norm_len);
+            post_norm.push_str(buffer);
             chars.clear();
             chars.extend(post_norm.chars());
             buffer.clear();
