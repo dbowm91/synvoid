@@ -23,8 +23,12 @@ pub trait BlockListStore: Send + Sync + 'static {
 
     /// Block an IP address with provenance metadata.
     ///
-    /// Default implementation delegates to [`block_ip`](Self::block_ip) with
-    /// [`BlockProvenanceKind::LegacyUnknown`] provenance.
+    /// Default implementation delegates to [`block_ip`](Self::block_ip).
+    /// The concrete store cannot record [`BlockProvenance`], so the
+    /// provenance is degraded to [`BlockProvenanceKind::LegacyUnknown`]
+    /// semantics. Implementors with provenance-aware stores must override
+    /// this method; the fallback emits a warning so provenance loss is
+    /// visible in logs (see M-01).
     fn block_ip_with_provenance(
         &self,
         ip: IpAddr,
@@ -33,7 +37,12 @@ pub trait BlockListStore: Send + Sync + 'static {
         scope: &str,
         provenance: BlockProvenance,
     ) {
-        let _ = provenance;
+        tracing::warn!(
+            %ip,
+            scope,
+            ?provenance,
+            "BlockListStore::block_ip_with_provenance fallback: provenance-aware store not implemented, degrading to LegacyUnknown"
+        );
         self.block_ip(ip, reason, duration_secs, scope);
     }
 }

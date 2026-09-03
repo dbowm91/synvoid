@@ -424,13 +424,16 @@ impl QuicRuntime {
         Err(last_error.unwrap_or_else(|| "Connection failed after retries".into()))
     }
 
-    pub fn bind_address(&self) -> SocketAddr {
+    /// Parse the configured bind address, failing fast on invalid config
+    /// instead of silently falling back to a default interface/port (see H-02).
+    pub fn bind_address(&self) -> Result<SocketAddr, String> {
         format!("{}:{}", self.config.bind_address, self.config.port)
             .parse()
-            .unwrap_or_else(|_| {
-                "0.0.0.0:51821"
-                    .parse()
-                    .expect("valid socket address literal")
+            .map_err(|e| {
+                format!(
+                    "Invalid QUIC bind address '{}:{}': {}",
+                    self.config.bind_address, self.config.port, e
+                )
             })
     }
 

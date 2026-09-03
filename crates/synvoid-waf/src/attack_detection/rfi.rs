@@ -1,5 +1,6 @@
 use aho_corasick::AhoCorasick;
 use regex::Regex;
+use std::borrow::Cow;
 use std::sync::Arc;
 use std::sync::LazyLock;
 
@@ -44,14 +45,20 @@ impl RfiDetector {
         input: &str,
         location: InputLocation,
     ) -> Option<AttackDetectionResult> {
-        let input_lower = input.to_lowercase();
-        let decoded = if input_lower.contains('%') || input_lower.contains('+') {
-            url_decode_all(&input_lower)
+        // Avoid allocation when already lowercase (see M-07). ASCII check
+        // suffices: attack patterns are ASCII.
+        let input_lower: Cow<str> = if input.bytes().any(|b| b.is_ascii_uppercase()) {
+            Cow::Owned(input.to_ascii_lowercase())
+        } else {
+            Cow::Borrowed(input)
+        };
+        let decoded: Cow<str> = if input_lower.contains('%') || input_lower.contains('+') {
+            Cow::Owned(url_decode_all(&input_lower))
         } else {
             input_lower.clone()
         };
 
-        if let Some(mat) = self.inner.patterns_ref().find(&decoded) {
+        if let Some(mat) = self.inner.patterns_ref().find(decoded.as_ref()) {
             let matched = decoded[mat.start()..mat.end()].to_string();
             tracing::warn!(
                 attack_type = "rfi",

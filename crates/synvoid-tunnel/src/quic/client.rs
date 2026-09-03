@@ -412,11 +412,22 @@ impl QuicTunnelClient {
 
     pub fn get_connection_for_peer(&self, peer_id: &str) -> Option<QuicConnection> {
         self.sessions.get(peer_id).and_then(|session| {
+            let remote_addr: std::net::SocketAddr = match session.remote_addr.parse() {
+                Ok(addr) => addr,
+                // Drop corrupt sessions instead of misrouting via a bogus
+                // 0.0.0.0:0 peer address (see H-03).
+                Err(e) => {
+                    tracing::warn!(
+                        peer_id = %peer_id,
+                        remote_addr = %session.remote_addr,
+                        error = %e,
+                        "Dropping QUIC session with unparseable remote_addr"
+                    );
+                    return None;
+                }
+            };
             session.connection.as_ref().map(|conn| QuicConnection {
-                remote_addr: session
-                    .remote_addr
-                    .parse()
-                    .unwrap_or_else(|_| "0.0.0.0:0".parse().expect("valid socket address literal")),
+                remote_addr,
                 peer_id: Some(peer_id.to_string()),
                 session_id: session.id.clone(),
                 client_id: peer_id.to_string(),

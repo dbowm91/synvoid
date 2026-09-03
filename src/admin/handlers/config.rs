@@ -1,4 +1,4 @@
-use super::super::audit::{AuditLog, ConfigVersion};
+use super::super::audit::ConfigVersion;
 use super::super::state::AdminState;
 use crate::log_controller;
 use axum::{extract::State, http::StatusCode, Json};
@@ -7,7 +7,10 @@ use schemars::schema_for;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Instant;
-use synvoid_core::admin_mutation::AdminMutationResult;
+use synvoid_core::admin_mutation::{
+    AdminActor, AdminAuditEvent, AdminMutationAuthority, AdminMutationResult, AdminMutationStatus,
+    PropagationStatus,
+};
 use utoipa::ToSchema;
 
 use super::common::{OptionalAuth, StatusResponse};
@@ -75,6 +78,9 @@ pub struct UpdateMainConfigRequest {
 pub async fn update_main_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
+    axum::extract::Extension(client_ip): axum::extract::Extension<
+        super::super::middleware::ClientIp,
+    >,
     Json(req): Json<UpdateMainConfigRequest>,
 ) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     // Save snapshot before making changes
@@ -105,7 +111,7 @@ pub async fn update_main_config(
 
     {
         let _guard = state.metrics.config_write_lock.write().await;
-        tokio::fs::write(&main_config_path, toml_content)
+        super::common::write_config_file_secure(&main_config_path, toml_content)
             .await
             .map_err(|e| {
                 tracing::error!("Failed to write main config: {}", e);
@@ -124,20 +130,33 @@ pub async fn update_main_config(
         pm.broadcast_config_reload(config_dir).await;
     }
 
-    state.audit.log(AuditLog::new(
-        None,
-        Some("admin".to_string()),
-        "update_main_config".to_string(),
-        "config/main".to_string(),
-        "unknown".to_string(),
-        None,
-        Some("Main configuration updated".to_string()),
-        true,
-    ));
+    let audit_id = uuid::Uuid::new_v4().to_string();
+    let audit_event = AdminAuditEvent {
+        audit_id: audit_id.clone(),
+        timestamp: synvoid_utils::safe_unix_timestamp(),
+        actor: AdminActor::new(AdminMutationAuthority::AdminManual)
+            .with_source_ip(client_ip.0.clone()),
+        action: "update_main_config".to_string(),
+        target_kind: "config".to_string(),
+        target_id: "config/main".to_string(),
+        prior_state: None,
+        requested_state: Some(req.config.clone()),
+        resulting_state: None,
+        mutation_status: AdminMutationStatus::Applied,
+        propagation_status: PropagationStatus::NotApplicable,
+        event_id: None,
+    };
+    state.audit.log_audit_event(&audit_event);
 
-    Ok(Json(config_mutation(
-        "Configuration updated and reloaded to workers.",
-    )))
+    Ok(Json(AdminMutationResult {
+        status: AdminMutationStatus::Applied,
+        target: "config".to_string(),
+        local_store_mutated: true,
+        propagation: PropagationStatus::NotApplicable,
+        event_id: None,
+        audit_id: Some(audit_id),
+        message: "Configuration updated and reloaded to workers.".to_string(),
+    }))
 }
 
 #[utoipa::path(
@@ -521,7 +540,7 @@ pub async fn import_config(
 
     {
         let _guard = state.metrics.config_write_lock.write().await;
-        tokio::fs::write(&main_config_path, toml_content)
+        super::common::write_config_file_secure(&main_config_path, toml_content)
             .await
             .map_err(|e| {
                 tracing::error!("Failed to write main config: {}", e);
@@ -701,7 +720,7 @@ pub async fn update_process_manager_config(
         (path, content)
     };
 
-    tokio::fs::write(&main_config_path, toml_content)
+    super::common::write_config_file_secure(&main_config_path, toml_content)
         .await
         .map_err(|e| {
             tracing::error!("Failed to write main config: {}", e);
@@ -805,7 +824,7 @@ pub async fn update_supervisor_config(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    tokio::fs::write(&main_config_path, toml_content)
+    super::common::write_config_file_secure(&main_config_path, toml_content)
         .await
         .map_err(|e| {
             tracing::error!("Failed to write main config: {}", e);
@@ -2441,6 +2460,9 @@ pub async fn get_config_bundle(
 pub async fn update_config_bundle(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
+    axum::extract::Extension(client_ip): axum::extract::Extension<
+        super::super::middleware::ClientIp,
+    >,
     Json(req): Json<UpdateConfigBundleRequest>,
 ) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     save_config_snapshot(&state, Some("Before update_config_bundle".to_string())).await?;
@@ -2470,7 +2492,7 @@ pub async fn update_config_bundle(
 
     {
         let _guard = state.metrics.config_write_lock.write().await;
-        tokio::fs::write(&main_config_path, toml_content)
+        super::common::write_config_file_secure(&main_config_path, toml_content)
             .await
             .map_err(|e| {
                 tracing::error!("Failed to write main config: {}", e);
@@ -2489,20 +2511,33 @@ pub async fn update_config_bundle(
         pm.broadcast_config_reload(config_dir).await;
     }
 
-    state.audit.log(AuditLog::new(
-        None,
-        Some("admin".to_string()),
-        "update_config_bundle".to_string(),
-        "config/bundle".to_string(),
-        "unknown".to_string(),
-        None,
-        Some("Full configuration bundle updated".to_string()),
-        true,
-    ));
+    let audit_id = uuid::Uuid::new_v4().to_string();
+    let audit_event = AdminAuditEvent {
+        audit_id: audit_id.clone(),
+        timestamp: synvoid_utils::safe_unix_timestamp(),
+        actor: AdminActor::new(AdminMutationAuthority::AdminManual)
+            .with_source_ip(client_ip.0.clone()),
+        action: "update_config_bundle".to_string(),
+        target_kind: "config".to_string(),
+        target_id: "config/bundle".to_string(),
+        prior_state: None,
+        requested_state: Some(req.config.clone()),
+        resulting_state: None,
+        mutation_status: AdminMutationStatus::Applied,
+        propagation_status: PropagationStatus::NotApplicable,
+        event_id: None,
+    };
+    state.audit.log_audit_event(&audit_event);
 
-    Ok(Json(config_mutation(
-        "Configuration bundle updated and reloaded to workers.",
-    )))
+    Ok(Json(AdminMutationResult {
+        status: AdminMutationStatus::Applied,
+        target: "config".to_string(),
+        local_store_mutated: true,
+        propagation: PropagationStatus::NotApplicable,
+        event_id: None,
+        audit_id: Some(audit_id),
+        message: "Configuration bundle updated and reloaded to workers.".to_string(),
+    }))
 }
 
 // --- Helper: persist MainConfig to TOML file ---
@@ -2522,7 +2557,7 @@ async fn persist_main_config_and_notify(state: &Arc<AdminState>) -> Result<(), S
         (path, content, config.config_dir.clone())
     };
 
-    tokio::fs::write(&main_config_path, toml_content)
+    super::common::write_config_file_secure(&main_config_path, toml_content)
         .await
         .map_err(|e| {
             tracing::error!("Failed to write main config: {}", e);
@@ -2646,6 +2681,9 @@ pub struct RollbackRequest {
 pub async fn rollback_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
+    axum::extract::Extension(client_ip): axum::extract::Extension<
+        super::super::middleware::ClientIp,
+    >,
     axum::extract::Path(id): axum::extract::Path<String>,
     Json(_req): Json<RollbackRequest>,
 ) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
@@ -2689,21 +2727,33 @@ pub async fn rollback_config(
         pm.broadcast_config_reload(config_dir).await;
     }
 
-    state.audit.log(AuditLog::new(
-        None,
-        Some("admin".to_string()),
-        "rollback_config".to_string(),
-        "config".to_string(),
-        "unknown".to_string(),
-        None,
-        Some(format!("Rolled back to version {}", id)),
-        true,
-    ));
+    let audit_id = uuid::Uuid::new_v4().to_string();
+    let audit_event = AdminAuditEvent {
+        audit_id: audit_id.clone(),
+        timestamp: synvoid_utils::safe_unix_timestamp(),
+        actor: AdminActor::new(AdminMutationAuthority::AdminManual)
+            .with_source_ip(client_ip.0.clone()),
+        action: "rollback_config".to_string(),
+        target_kind: "config".to_string(),
+        target_id: id.clone(),
+        prior_state: None,
+        requested_state: Some(serde_json::Value::String(id.clone())),
+        resulting_state: None,
+        mutation_status: AdminMutationStatus::Applied,
+        propagation_status: PropagationStatus::NotApplicable,
+        event_id: None,
+    };
+    state.audit.log_audit_event(&audit_event);
 
-    Ok(Json(config_mutation(format!(
-        "Configuration rolled back to version {}.",
-        id
-    ))))
+    Ok(Json(AdminMutationResult {
+        status: AdminMutationStatus::Applied,
+        target: "config".to_string(),
+        local_store_mutated: true,
+        propagation: PropagationStatus::NotApplicable,
+        event_id: None,
+        audit_id: Some(audit_id),
+        message: format!("Configuration rolled back to version {}.", id),
+    }))
 }
 
 #[derive(Debug, Serialize, ToSchema)]

@@ -602,8 +602,31 @@ impl MeshCertManager {
         let mut hasher = Sha256::new();
         hasher.update(cert_der);
         let hash = hasher.finalize();
-        // local-only fingerprint, not DHT wire — STANDARD intentionally
+        // Local-only fingerprint, not DHT wire — STANDARD retained for
+        // backward compat with existing pinned values. Verification accepts
+        // both STANDARD and URL_SAFE_NO_PAD via `fingerprints_equal` (L-03).
         base64::engine::general_purpose::STANDARD.encode(hash)
+    }
+
+    /// Compare fingerprints accepting both STANDARD (legacy local) and
+    /// URL_SAFE_NO_PAD encodings. Falls back to string equality for
+    /// non-base64 values.
+    fn fingerprints_equal(a: &str, b: &str) -> bool {
+        use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
+        use base64::Engine;
+        if a == b {
+            return true;
+        }
+        let decode = |s: &str| {
+            URL_SAFE_NO_PAD
+                .decode(s)
+                .or_else(|_| STANDARD.decode(s))
+                .ok()
+        };
+        match (decode(a), decode(b)) {
+            (Some(ab), Some(bb)) => ab == bb,
+            _ => false,
+        }
     }
 
     pub fn pin_seed_fingerprint(&self, seed_address: &str, fingerprint: &str) {
@@ -632,7 +655,7 @@ impl MeshCertManager {
         match fingerprints.entry(seed_address.to_string()) {
             std::collections::hash_map::Entry::Occupied(entry) => {
                 let pinned = entry.get();
-                if pinned.fingerprint == fingerprint {
+                if Self::fingerprints_equal(&pinned.fingerprint, fingerprint) {
                     if pinned.pinned_at.elapsed().as_secs() > MAX_TOOF_FINGERPRINT_AGE_SECS {
                         entry.remove();
                         return Err(format!(

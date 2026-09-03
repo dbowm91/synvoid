@@ -157,7 +157,9 @@ fn parse_method(method_part: &str) -> MethodMatch {
         .collect();
 
     if methods.len() == 1 {
-        MethodMatch::Specific(methods.into_iter().next().unwrap())
+        // `len() == 1` guarantees `next()` is `Some`; `expect` documents the
+        // invariant instead of a bare `unwrap` (see M-04).
+        MethodMatch::Specific(methods.into_iter().next().expect("len checked to be 1"))
     } else if methods.len() > 1 {
         MethodMatch::Multiple(methods)
     } else {
@@ -171,7 +173,16 @@ fn parse_path_match(path: &str) -> RouteMatch {
     }
 
     if let Some(pattern) = path.strip_prefix("regex:") {
-        let compiled = regex::Regex::new(pattern).ok().map(Arc::new);
+        // Fail closed on invalid regex (never matches) but surface the error
+        // at config load so operators get feedback via `--configtest`/logs
+        // instead of a silently dead route (see M-05).
+        let compiled = match regex::Regex::new(pattern) {
+            Ok(re) => Some(Arc::new(re)),
+            Err(e) => {
+                tracing::error!(pattern = %pattern, error = %e, "Invalid serverless regex route; route will never match");
+                None
+            }
+        };
         return RouteMatch::Regex {
             pattern: pattern.to_string(),
             compiled,

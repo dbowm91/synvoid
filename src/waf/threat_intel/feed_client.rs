@@ -432,6 +432,10 @@ impl ThreatFeedClient {
                 indicator.indicator_value, indicator.threat_type
             );
 
+            // Diagnostic-only use of the raw lookup API for timestamp dedup
+            // (see L-01): this does NOT authorize the block decision below.
+            // Enforcement is via `announce_local_block`, which routes through
+            // the strict policy path. Do not treat this lookup as enforcement.
             if let Some(existing) = threat_manager
                 .lookup_local_indicator(&indicator.indicator_value, indicator.threat_type)
             {

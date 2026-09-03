@@ -93,14 +93,16 @@ pub fn Alerts() -> Html {
                     }
 
                     match api
-                        .put::<AlertConfigResponse, _>(
+                        .put::<serde_json::Value, _>(
                             "/alerts/config",
-                            &UpdateRequest { config: c },
+                            &UpdateRequest { config: c.clone() },
                         )
                         .await
                     {
-                        Ok(resp) => {
-                            config.set(Some(resp.config));
+                        Ok(_) => {
+                            // PUT now returns AdminMutationResult (no config echo);
+                            // retain the just-saved local config.
+                            config.set(Some(c));
                             toast_success("Alert configuration saved");
                         }
                         Err(e) => {

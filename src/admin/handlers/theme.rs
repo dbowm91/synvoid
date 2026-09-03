@@ -188,7 +188,7 @@ pub async fn update_theme(
 
     {
         let _guard = state.metrics.config_write_lock.write().await;
-        tokio::fs::write(&main_config_path, toml_content)
+        super::common::write_config_file_secure(&main_config_path, toml_content)
             .await
             .map_err(|e| {
                 tracing::error!("Failed to write main config: {}", e);

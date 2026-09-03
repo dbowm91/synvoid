@@ -32,7 +32,16 @@ impl EndpointBlockerManager {
         block_response_code: u16,
         block_page_html: Option<String>,
     ) -> Self {
-        let validation = Self::validate_patterns(&paths, use_regex);
+        // Compile each pattern once (see M-06): previously `validate_patterns`
+        // compiled every regex and `new` recompiled the valid ones.
+        let mut blocked_patterns = Vec::new();
+        let mut invalid_patterns = Vec::new();
+        for p in &paths {
+            match Self::compile_pattern(p, use_regex) {
+                Ok(re) => blocked_patterns.push(re),
+                Err(_) => invalid_patterns.push(p.clone()),
+            }
+        }
 
         let block_methods: HashSet<String> = block_methods
             .into_iter()
@@ -41,16 +50,30 @@ impl EndpointBlockerManager {
 
         EndpointBlockerManager {
             inner: Arc::new(RwLock::new(EndpointBlocker {
-                blocked_patterns: validation
-                    .valid
-                    .iter()
-                    .filter_map(|p| Regex::new(p).ok())
-                    .collect(),
-                invalid_patterns: validation.invalid.iter().map(|(p, _)| p.clone()).collect(),
+                blocked_patterns,
+                invalid_patterns,
                 block_methods,
                 block_response_code,
                 block_page_html,
             })),
+        }
+    }
+
+    /// Compile a single pattern, returning the compiled regex or a reason.
+    /// Shared by `new` and `validate_patterns` so each pattern is compiled
+    /// exactly once per call site.
+    fn compile_pattern(pattern: &str, use_regex: bool) -> Result<Regex, String> {
+        if use_regex {
+            let complexity = check_regex_complexity(pattern);
+            if !complexity.safe {
+                return Err(complexity
+                    .reason
+                    .unwrap_or_else(|| "Unknown risk".to_string()));
+            }
+            Regex::new(pattern).map_err(|e| e.to_string())
+        } else {
+            let escaped = regex::escape(pattern);
+            Regex::new(&format!("^{}$", escaped)).map_err(|e| e.to_string())
         }
     }
 
@@ -59,27 +82,9 @@ impl EndpointBlockerManager {
         let mut invalid = Vec::new();
 
         for p in paths {
-            if use_regex {
-                let complexity = check_regex_complexity(p);
-                if !complexity.safe {
-                    invalid.push((
-                        p.clone(),
-                        complexity
-                            .reason
-                            .unwrap_or_else(|| "Unknown risk".to_string()),
-                    ));
-                    continue;
-                }
-                match Regex::new(p) {
-                    Ok(_) => valid.push(p.clone()),
-                    Err(e) => invalid.push((p.clone(), e.to_string())),
-                }
-            } else {
-                let escaped = regex::escape(p);
-                match Regex::new(&format!("^{}$", escaped)) {
-                    Ok(_) => valid.push(p.clone()),
-                    Err(e) => invalid.push((p.clone(), e.to_string())),
-                }
+            match Self::compile_pattern(p, use_regex) {
+                Ok(_) => valid.push(p.clone()),
+                Err(reason) => invalid.push((p.clone(), reason)),
             }
         }
 

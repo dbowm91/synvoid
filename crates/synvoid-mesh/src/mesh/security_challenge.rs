@@ -1,6 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use digest::Digest;
 use hmac::{Hmac, Mac};
@@ -168,11 +168,8 @@ impl MeshSecurityChallengeManager {
         let now = Instant::now();
         let challenge_id = uuid::Uuid::new_v4().to_string();
 
-        let time_window = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
-            / 30;
+        // Use canonical u64 timestamp helper (see L-04).
+        let time_window = synvoid_utils::safe_unix_timestamp() / 30;
         let challenge_data = format!("{}:{}:{}", target_node, time_window, challenge_id);
 
         let mut mac = HmacSha256::new_from_slice(&self.challenge_hmac_key)

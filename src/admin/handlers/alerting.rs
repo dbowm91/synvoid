@@ -7,7 +7,8 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use synvoid_core::admin_mutation::{
-    AdminActor, AdminAuditEvent, AdminMutationAuthority, AdminMutationStatus, PropagationStatus,
+    AdminActor, AdminAuditEvent, AdminMutationAuthority, AdminMutationResult, AdminMutationStatus,
+    PropagationStatus,
 };
 use utoipa::ToSchema;
 
@@ -37,7 +38,7 @@ pub async fn get_alert_config(
         .as_ref()
         .ok_or(StatusCode::NOT_FOUND)?;
     let config = alert_manager.get_config().await;
-    let json = serde_json::to_value(&config).unwrap_or(serde_json::Value::Null);
+    let json = serde_json::to_value(&config).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(Json(AlertConfigResponse { config: json }))
 }
@@ -52,7 +53,7 @@ pub struct UpdateAlertConfigRequest {
     path = "/alerting/config",
     request_body = UpdateAlertConfigRequest,
     responses(
-        (status = 200, description = "Alert configuration updated", body = AlertConfigResponse),
+        (status = 200, description = "Alert configuration updated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Alert manager not found"),
         (status = 400, description = "Invalid configuration"),
@@ -64,7 +65,7 @@ pub async fn update_alert_config(
     State(state): State<Arc<AdminState>>,
     Extension(client_ip): Extension<super::super::middleware::ClientIp>,
     Json(req): Json<UpdateAlertConfigRequest>,
-) -> Result<Json<AlertConfigResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let alert_manager = state
         .process
         .alert_manager
@@ -87,19 +88,38 @@ pub async fn update_alert_config(
             StatusCode::BAD_REQUEST
         })?;
 
-    state.audit.log(super::super::audit::AuditLog::new(
-        None,
-        None,
-        "alert.config.update".to_string(),
-        "alerting/config".to_string(),
-        client_ip.0.clone(),
-        None,
-        None,
-        true,
-    ));
+    // Serialize first so a serialization failure surfaces as 500 instead of
+    // silently returning a null config (see H-05).
+    let resulting_state =
+        serde_json::to_value(&config).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let json = serde_json::to_value(&config).unwrap_or(serde_json::Value::Null);
-    Ok(Json(AlertConfigResponse { config: json }))
+    let audit_id = uuid::Uuid::new_v4().to_string();
+    let audit_event = AdminAuditEvent {
+        audit_id: audit_id.clone(),
+        timestamp: synvoid_utils::safe_unix_timestamp(),
+        actor: AdminActor::new(AdminMutationAuthority::AdminManual)
+            .with_source_ip(client_ip.0.clone()),
+        action: "alert.config.update".to_string(),
+        target_kind: "alerting".to_string(),
+        target_id: "alerting/config".to_string(),
+        prior_state: None,
+        requested_state: Some(req.config.clone()),
+        resulting_state: Some(resulting_state),
+        mutation_status: AdminMutationStatus::Applied,
+        propagation_status: PropagationStatus::NotApplicable,
+        event_id: None,
+    };
+    state.audit.log_audit_event(&audit_event);
+
+    Ok(Json(AdminMutationResult {
+        status: AdminMutationStatus::Applied,
+        target: "alerting/config".to_string(),
+        local_store_mutated: true,
+        propagation: PropagationStatus::NotApplicable,
+        event_id: None,
+        audit_id: Some(audit_id),
+        message: "Alert configuration updated".to_string(),
+    }))
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]

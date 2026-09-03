@@ -438,10 +438,12 @@ impl SsrfDetector {
         input: &str,
         location: InputLocation,
     ) -> Option<AttackDetectionResult> {
+        // Cow avoids allocation when already lowercase (see M-07); ASCII
+        // lowering suffices since SSRF patterns are ASCII.
         let decoded_lower: Cow<str> = if input.contains('%') || input.contains('+') {
-            Cow::Owned(url_decode_all(input))
+            Cow::Owned(url_decode_all(input).to_ascii_lowercase())
         } else if input.bytes().any(|b| b.is_ascii_uppercase()) {
-            Cow::Owned(input.to_lowercase())
+            Cow::Owned(input.to_ascii_lowercase())
         } else {
             Cow::Borrowed(input)
         };

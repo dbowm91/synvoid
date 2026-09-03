@@ -38,7 +38,7 @@ async fn persist_main_config_and_notify(state: &Arc<AdminState>) -> Result<(), S
 
     {
         let _guard = state.metrics.config_write_lock.write().await;
-        tokio::fs::write(&main_config_path, toml_content)
+        super::common::write_config_file_secure(&main_config_path, toml_content)
             .await
             .map_err(|e| {
                 tracing::error!("Failed to write main config: {}", e);

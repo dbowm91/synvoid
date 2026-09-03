@@ -109,6 +109,24 @@ pub fn config_path(config_dir: &std::path::Path, site_id: &str) -> std::path::Pa
     config_dir.join(format!("{}.toml", site_id.replace('.', "_")))
 }
 
+/// Write a config file with restrictive `0o600` permissions (see L-02).
+///
+/// Config files can carry secrets (tokens, private keys, webhook URLs), so
+/// default-umask writes are insufficient even when parent-dir perms are
+/// restrictive. Matches private-key handling in `quic/tls.rs`.
+pub async fn write_config_file_secure(
+    path: &std::path::Path,
+    contents: impl AsRef<[u8]>,
+) -> std::io::Result<()> {
+    tokio::fs::write(path, contents).await?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).await?;
+    }
+    Ok(())
+}
+
 #[derive(Debug, Deserialize)]
 pub struct PaginationQuery {
     pub limit: Option<usize>,

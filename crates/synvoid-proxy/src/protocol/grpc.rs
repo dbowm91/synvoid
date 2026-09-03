@@ -185,14 +185,17 @@ impl ProtocolHandler for GrpcHandler {
             return Err(ProtocolError::Framing("Invalid gRPC response".to_string()));
         }
 
+        // Non-numeric status payloads must not be masked as 0 (OK), which
+        // would hide upstream failures from retry/WAF logic (see H-04).
         let status = if data.len() > GRPC_FRAME_HEADER_SIZE {
             let payload = &data[GRPC_FRAME_HEADER_SIZE..];
             if payload.starts_with(&[0x00]) {
-                if let Ok(text) = std::str::from_utf8(&payload[1..]) {
-                    text.parse::<u16>().unwrap_or_default()
-                } else {
-                    0
-                }
+                let text = std::str::from_utf8(&payload[1..]).map_err(|e| {
+                    ProtocolError::Framing(format!("Invalid gRPC status encoding: {e}"))
+                })?;
+                text.parse::<u16>().map_err(|e| {
+                    ProtocolError::Framing(format!("Invalid gRPC status value: {e}"))
+                })?
             } else {
                 0
             }
@@ -267,5 +270,36 @@ impl ProtocolHandler for GrpcHandler {
 
     fn set_upstream_pool(&mut self, pool: Arc<UpstreamPool>) {
         self.upstream_pool = Some(pool);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn framed_status(payload: &[u8]) -> Vec<u8> {
+        let mut data = vec![0u8; GRPC_FRAME_HEADER_SIZE];
+        data.extend_from_slice(payload);
+        data
+    }
+
+    #[test]
+    fn garbage_status_payload_is_not_ok() {
+        let handler = GrpcHandler::new();
+        // Non-numeric payload where a status code is expected must not
+        // decode as 0 (OK); it must surface as a framing error (see H-04).
+        let data = framed_status(b"\x00not-a-status");
+        let err = handler
+            .parse_response(&data)
+            .expect_err("garbage status must fail");
+        assert!(matches!(err, ProtocolError::Framing(_)));
+    }
+
+    #[test]
+    fn numeric_status_payload_parses() {
+        let handler = GrpcHandler::new();
+        let data = framed_status(b"\x000");
+        let resp = handler.parse_response(&data).expect("valid status");
+        assert_eq!(resp.status_code, 0);
     }
 }

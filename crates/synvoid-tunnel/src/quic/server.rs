@@ -166,10 +166,11 @@ impl QuicTunnelServer {
             return Ok(());
         }
 
-        tracing::info!(
-            "Starting QUIC tunnel server on {}",
-            self.runtime.bind_address()
-        );
+        let bind_addr = self.runtime.bind_address().map_err(|e| {
+            tracing::error!("{e}");
+            e
+        })?;
+        tracing::info!("Starting QUIC tunnel server on {}", bind_addr);
 
         let connection_rx = self.runtime.start_server().await?;
         self.connection_rx = Some(connection_rx);

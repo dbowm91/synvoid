@@ -15,6 +15,15 @@ use parking_lot::RwLock;
 const CONFIG_ENCRYPTION_KEY_SIZE: usize = 32;
 const NONCE_SIZE: usize = 12;
 
+/// Decode base64 accepting mesh-standard `URL_SAFE_NO_PAD` first, then legacy
+/// `STANDARD` (see L-03). Local at-rest values historically used STANDARD;
+/// wire/DHT data uses URL_SAFE_NO_PAD.
+fn decode_b64_compat(s: &str) -> Result<Vec<u8>, base64::DecodeError> {
+    use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
+    use base64::Engine;
+    URL_SAFE_NO_PAD.decode(s).or_else(|_| STANDARD.decode(s))
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecureConfigValue {
     pub encrypted: bool,
@@ -117,15 +126,16 @@ impl SecureConfigManager {
                     "Missing nonce".to_string(),
                 ))?;
 
-        let nonce_decoded =
-            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, nonce_bytes)
-                .map_err(|e| SecureConfigError::DecryptionError(e.to_string()))?;
+        // Compat decode for L-03: accept URL_SAFE_NO_PAD (mesh standard)
+        // first, then legacy STANDARD (local at-rest history). Encode remains
+        // STANDARD for these local-only values (not DHT wire).
+        let nonce_decoded = decode_b64_compat(nonce_bytes)
+            .map_err(|e| SecureConfigError::DecryptionError(e.to_string()))?;
 
         let nonce = Nonce::from_slice(&nonce_decoded);
 
-        let ciphertext =
-            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &encrypted.value)
-                .map_err(|e| SecureConfigError::DecryptionError(e.to_string()))?;
+        let ciphertext = decode_b64_compat(&encrypted.value)
+            .map_err(|e| SecureConfigError::DecryptionError(e.to_string()))?;
 
         let plaintext = cipher
             .decrypt(nonce, ciphertext.as_ref())

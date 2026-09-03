@@ -320,7 +320,19 @@ pub async fn init_key_exchange(mesh_id: String, global_node_url: String) -> Stri
     let _ = JsFuture::from(confirm_promise).await;
 
     let x25519_secret =
-        derive_session_key(&client_key_pair.secret_key, &key_resp.server_x25519_pubkey);
+        match derive_session_key(&client_key_pair.secret_key, &key_resp.server_x25519_pubkey) {
+            Some(s) => s,
+            None => {
+                return serde_json::to_string(&KeyExchangeResult {
+                    completed: false,
+                    session_id: Some(key_resp.session_id),
+                    session_key: None,
+                    server_ed25519_pubkey: key_resp.origin_ed25519_pubkey,
+                    error: Some("Invalid X25519 key material".to_string()),
+                })
+                .unwrap_or_default();
+            }
+        };
 
     let session_key = if let (Some(ct_b64), Some(ref sk)) =
         (&key_resp.server_ml_kem_ciphertext, &client_ml_kem_secert)
@@ -552,7 +564,9 @@ pub async fn report_signature_failure(global_node_url: String, _details_json: St
 
 fn generate_x25519_key_pair() -> X25519KeyPair {
     let mut seed = [0u8; 32];
-    getrandom::getrandom(&mut seed).unwrap_or_default();
+    // Fail loudly on RNG failure: continuing with [0u8; 32] would generate a
+    // deterministic all-zero secret shared by every client (see C-01).
+    getrandom::getrandom(&mut seed).expect("getrandom failed: entropy source unavailable");
 
     let secret = StaticSecret::from(seed);
     let public = PublicKey::from(&secret);
@@ -563,23 +577,28 @@ fn generate_x25519_key_pair() -> X25519KeyPair {
     }
 }
 
-fn derive_session_key(secret_key: &str, peer_public_key: &str) -> String {
+fn derive_session_key(secret_key: &str, peer_public_key: &str) -> Option<String> {
+    // Fail closed on malformed input: never echo secret material into a
+    // low-entropy fallback string (see H-01).
     let secret_bytes = match hex::decode(secret_key) {
         Ok(bytes) if bytes.len() == 32 => bytes,
-        _ => return format!("{}:{}", secret_key, peer_public_key),
+        _ => return None,
     };
 
     let peer_bytes = match hex::decode(peer_public_key) {
         Ok(bytes) if bytes.len() == 32 => bytes,
-        _ => return format!("{}:{}", secret_key, peer_public_key),
+        _ => return None,
     };
 
-    let secret = StaticSecret::from(<[u8; 32]>::try_from(secret_bytes).unwrap());
-    let peer_public = PublicKey::from(<[u8; 32]>::try_from(peer_bytes).unwrap());
+    // Length guard above guarantees 32-byte conversion succeeds.
+    let secret =
+        StaticSecret::from(<[u8; 32]>::try_from(secret_bytes).expect("len checked to be 32"));
+    let peer_public =
+        PublicKey::from(<[u8; 32]>::try_from(peer_bytes).expect("len checked to be 32"));
 
     let shared_secret = secret.diffie_hellman(&peer_public);
     let hash = Sha256::digest(shared_secret.as_bytes());
-    hex::encode(hash)
+    Some(hex::encode(hash))
 }
 
 fn combine_wasm_secrets(classical: &[u8], pq: &[u8]) -> String {
@@ -595,7 +614,9 @@ fn combine_wasm_secrets(classical: &[u8], pq: &[u8]) -> String {
 
 fn generate_nonce() -> String {
     let mut bytes = [0u8; 16];
-    getrandom::getrandom(&mut bytes).unwrap_or_default();
+    // Fail loudly on RNG failure: a predictable all-zero nonce enables
+    // challenge replay (see C-02).
+    getrandom::getrandom(&mut bytes).expect("getrandom failed: entropy source unavailable");
     hex::encode(bytes)
 }
 
@@ -662,5 +683,14 @@ mod tests {
             "a".repeat(64),
             "key".to_string()
         ));
+    }
+
+    #[test]
+    fn test_derive_session_key_rejects_invalid_input() {
+        // Malformed keys must fail closed (None), never echo secrets into a
+        // low-entropy `secret:peer` fallback string (see H-01).
+        assert!(derive_session_key("not-hex", "also-not-hex").is_none());
+        assert!(derive_session_key("abcd", &"00".repeat(32)).is_none());
+        assert!(derive_session_key(&"00".repeat(32), "short").is_none());
     }
 }

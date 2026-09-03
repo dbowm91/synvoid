@@ -144,7 +144,7 @@ pub async fn create_site(
 
     // Hold write lock across both file write and in-memory update to prevent TOCTOU
     let _guard = state.metrics.config_write_lock.write().await;
-    tokio::fs::write(&config_path, toml_content)
+    super::common::write_config_file_secure(&config_path, toml_content)
         .await
         .map_err(|e| {
             tracing::error!("Failed to write site config: {}", e);
@@ -304,7 +304,7 @@ pub async fn update_site(
 
     // Hold write lock across both file write and in-memory update to prevent TOCTOU
     let _guard = state.metrics.config_write_lock.write().await;
-    tokio::fs::write(&config_path, toml_content)
+    super::common::write_config_file_secure(&config_path, toml_content)
         .await
         .map_err(|e| {
             tracing::error!("Failed to write site config: {}", e);
@@ -486,7 +486,7 @@ pub async fn update_site_theme(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    tokio::fs::write(&config_path, toml_content)
+    super::common::write_config_file_secure(&config_path, toml_content)
         .await
         .map_err(|e| {
             tracing::error!("Failed to write site config: {}", e);
@@ -629,7 +629,7 @@ pub async fn update_site_bot_detection(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    tokio::fs::write(&config_path, toml_content)
+    super::common::write_config_file_secure(&config_path, toml_content)
         .await
         .map_err(|e| {
             tracing::error!("Failed to write site config: {}", e);
@@ -738,7 +738,7 @@ pub async fn update_site_error_pages(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    tokio::fs::write(&config_path, toml_content)
+    super::common::write_config_file_secure(&config_path, toml_content)
         .await
         .map_err(|e| {
             tracing::error!("Failed to write site config: {}", e);

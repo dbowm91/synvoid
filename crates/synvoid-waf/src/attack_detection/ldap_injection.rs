@@ -1,6 +1,7 @@
 use crate::attack_detection::config::{AttackType, InputLocation};
 use crate::attack_detection::detector_common::{BasePatternDetector, PatternDetector};
 use crate::attack_detection::patterns::DefaultPatterns;
+use std::borrow::Cow;
 use synvoid_core::url::url_decode_all;
 
 pub struct LdapInjectionDetector {
@@ -25,14 +26,20 @@ impl LdapInjectionDetector {
         input: &str,
         location: InputLocation,
     ) -> Option<crate::attack_detection::config::AttackDetectionResult> {
-        let input_lower = input.to_lowercase();
-        let decoded = if input_lower.contains('%') || input_lower.contains('+') {
-            url_decode_all(&input_lower)
+        // Avoid allocation when already lowercase (see M-07). ASCII check
+        // suffices: attack patterns are ASCII.
+        let input_lower: Cow<str> = if input.bytes().any(|b| b.is_ascii_uppercase()) {
+            Cow::Owned(input.to_ascii_lowercase())
+        } else {
+            Cow::Borrowed(input)
+        };
+        let decoded: Cow<str> = if input_lower.contains('%') || input_lower.contains('+') {
+            Cow::Owned(url_decode_all(&input_lower))
         } else {
             input_lower.clone()
         };
 
-        if let Some(mat) = self.inner.patterns_ref().find(&decoded) {
+        if let Some(mat) = self.inner.patterns_ref().find(decoded.as_ref()) {
             let matched = decoded[mat.start()..mat.end()].to_string();
             tracing::warn!(
                 attack_type = "ldap_injection",
@@ -49,7 +56,7 @@ impl LdapInjectionDetector {
         }
 
         if decoded != input_lower {
-            if let Some(mat) = self.inner.patterns_ref().find(&input_lower) {
+            if let Some(mat) = self.inner.patterns_ref().find(input_lower.as_ref()) {
                 let matched = input_lower[mat.start()..mat.end()].to_string();
                 tracing::warn!(
                     attack_type = "ldap_injection",
