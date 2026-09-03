@@ -856,14 +856,13 @@ impl BlockStore {
             }
         }
 
-        let (persist_tx, shutdown_tx, persist_handle) = if persist_path.is_some() {
+        let (persist_tx, shutdown_tx, persist_handle) = if let Some(path) = persist_path.clone() {
             let (tx, mut rx): (mpsc::Sender<PersistRequest>, mpsc::Receiver<PersistRequest>) =
                 mpsc::channel(100);
             let (shutdown_tx, mut shutdown_rx): (
                 mpsc::Sender<oneshot::Sender<()>>,
                 mpsc::Receiver<oneshot::Sender<()>>,
             ) = mpsc::channel(1);
-            let path = persist_path.clone().unwrap();
             let mesh_path = mesh_persist_path.clone();
             let max_entries_clone = max_entries;
             let persist_immediately = config.persist_interval_secs == 0;
@@ -2086,7 +2085,9 @@ impl BlockStore {
         // Step 4: Mutate BlockStore.
         let result = match (&event.operation, &event.target_kind) {
             (BlocklistOperation::Block, BlockTargetKind::Ip) => {
-                let ip = event.identifier.parse::<IpAddr>().unwrap();
+                let Ok(ip) = event.identifier.parse::<IpAddr>() else {
+                    return BlocklistApplyResult::InvalidTarget;
+                };
                 let ban_secs = event.ttl_secs.unwrap_or(3600);
                 let applied = self.block_ip_with_provenance(
                     ip,
@@ -2102,7 +2103,9 @@ impl BlockStore {
                 }
             }
             (BlocklistOperation::Unblock, BlockTargetKind::Ip) => {
-                let ip = event.identifier.parse::<IpAddr>().unwrap();
+                let Ok(ip) = event.identifier.parse::<IpAddr>() else {
+                    return BlocklistApplyResult::InvalidTarget;
+                };
                 let removed = self.unblock_ip(&ip, &event.site_scope);
                 if removed {
                     BlocklistApplyResult::Applied

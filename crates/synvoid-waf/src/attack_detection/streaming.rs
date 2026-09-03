@@ -493,8 +493,9 @@ impl StreamingWafCore {
 }
 
 impl AttackDetectionResult {
+    /// Block status for an already-detected attack. Currently always 403;
+    /// kept as `Option` for call-site compat (`unwrap_or(403)`).
     pub fn get_block_status(&self) -> Option<u16> {
-        let _ = self;
         Some(403)
     }
 }

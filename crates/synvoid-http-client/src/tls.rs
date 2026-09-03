@@ -121,9 +121,18 @@ pub(crate) fn build_tls_config(
         );
     });
 
-    let builder = rustls::ClientConfig::builder_with_provider(provider)
+    let builder = match rustls::ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
-        .expect("failed to set TLS protocol versions");
+    {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::error!(
+                error = %e,
+                "failed to set TLS protocol versions, falling back to default builder"
+            );
+            rustls::ClientConfig::builder()
+        }
+    };
 
     if skip_verify {
         let reason = skip_verify_reason.unwrap_or("not specified");
@@ -167,9 +176,20 @@ pub(crate) fn build_tls_config(
             }
         }
 
-        let inner = WebPkiServerVerifier::builder(Arc::new(root_store))
-            .build()
-            .expect("failed to build WebPkiServerVerifier");
+        let inner = match WebPkiServerVerifier::builder(Arc::new(root_store)).build() {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::error!(
+                    error = %e,
+                    "failed to build WebPkiServerVerifier (empty root store?), failing closed"
+                );
+                let mut fallback = builder
+                    .with_root_certificates(rustls::RootCertStore::empty())
+                    .with_no_client_auth();
+                fallback.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+                return fallback;
+            }
+        };
         let verifier_reason = skip_verify_reason.unwrap_or("not specified");
         let verifier = HostnameSkippingVerifier::new(inner, verifier_reason.to_string());
 

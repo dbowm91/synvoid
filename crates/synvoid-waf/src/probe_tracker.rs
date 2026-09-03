@@ -171,10 +171,9 @@ impl ProbeTracker {
         };
 
         let initial_count = store.len();
-        let persist_tx = if persist_path.is_some() {
+        let persist_tx = if let Some(path) = persist_path.clone() {
             let (tx, mut rx): (mpsc::Sender<PersistRequest>, mpsc::Receiver<PersistRequest>) =
                 mpsc::channel(100);
-            let path = persist_path.clone().expect("checked is_some above");
             let config_clone = config.clone();
 
             tokio::spawn(async move {

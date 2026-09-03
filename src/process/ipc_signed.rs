@@ -65,12 +65,29 @@ type ShardedNonceCache = DashMap<CacheKey, u64>;
 static NONCE_CACHE: LazyLock<ShardedNonceCache> = LazyLock::new(|| ShardedNonceCache::new());
 const MAX_NONCE_CACHE_SIZE: usize = 10000;
 const REPLAY_WINDOW_SECS: u64 = 60;
+static LAST_NONCE_SWEEP_SECS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+const NONCE_SWEEP_INTERVAL_SECS: u64 = 1;
 
 fn check_and_insert_nonce(signer_id: u64, nonce: &[u8; 16], timestamp: u64) -> bool {
     let key = (signer_id, *nonce);
 
-    let cutoff = timestamp.saturating_sub(REPLAY_WINDOW_SECS);
-    NONCE_CACHE.retain(|_, cached_timestamp| *cached_timestamp > cutoff);
+    // Amortize the O(n) retain: sweep at most once per second.
+    let now_secs = crate::utils::current_timestamp();
+    let last = LAST_NONCE_SWEEP_SECS.load(std::sync::atomic::Ordering::Relaxed);
+    if now_secs.wrapping_sub(last) >= NONCE_SWEEP_INTERVAL_SECS
+        && LAST_NONCE_SWEEP_SECS
+            .compare_exchange(
+                last,
+                now_secs,
+                std::sync::atomic::Ordering::Relaxed,
+                std::sync::atomic::Ordering::Relaxed,
+            )
+            .is_ok()
+    {
+        let cutoff = now_secs.saturating_sub(REPLAY_WINDOW_SECS);
+        NONCE_CACHE.retain(|_, cached_timestamp| *cached_timestamp > cutoff);
+    }
 
     use dashmap::mapref::entry::Entry;
     let cache_full = NONCE_CACHE.len() >= MAX_NONCE_CACHE_SIZE;

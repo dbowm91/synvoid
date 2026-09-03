@@ -57,33 +57,47 @@ impl ConnectionLimiter {
     ) -> Result<ConnectionToken, ConnectionLimitError> {
         let config = &self.config;
 
-        let total = self.total_connections.load(Ordering::Acquire);
-        if total >= config.max_connections {
+        // Increment-then-validate: bounds overshoot instead of allowing
+        // N concurrent check-then-act passers to all exceed the limit.
+        let total_prev = self.total_connections.fetch_add(1, Ordering::AcqRel);
+        if total_prev >= config.max_connections {
+            self.total_connections.fetch_sub(1, Ordering::Release);
             return Err(ConnectionLimitError::GlobalLimitExceeded);
         }
 
         let effective_max_per_site = max_per_site.unwrap_or(10000);
-        let site_count = if max_per_site.is_some() {
-            self.site_total_connections
-                .get(site_id)
-                .map(|c| c.load(Ordering::Acquire))
-                .unwrap_or(0)
-        } else {
-            0
-        };
-
-        if site_count >= effective_max_per_site {
-            return Err(ConnectionLimitError::SiteLimitExceeded);
+        let site_tracked = max_per_site.is_some();
+        if site_tracked {
+            let site_prev = self
+                .site_total_connections
+                .entry(site_id.to_string())
+                .or_insert_with(|| AtomicU32::new(0))
+                .fetch_add(1, Ordering::AcqRel);
+            if site_prev >= effective_max_per_site {
+                if let Some(c) = self.site_total_connections.get(site_id) {
+                    c.fetch_sub(1, Ordering::Release);
+                }
+                self.total_connections.fetch_sub(1, Ordering::Release);
+                return Err(ConnectionLimitError::SiteLimitExceeded);
+            }
         }
 
         let effective_max_per_ip = max_per_ip.unwrap_or(config.max_connections_per_ip);
-        let ip_count = self
+        let ip_prev = self
             .ip_connections
-            .get(&client_ip)
-            .map(|c| c.load(Ordering::Acquire))
-            .unwrap_or(0);
-
-        if ip_count >= effective_max_per_ip {
+            .entry(client_ip)
+            .or_insert_with(|| AtomicU32::new(0))
+            .fetch_add(1, Ordering::AcqRel);
+        if ip_prev >= effective_max_per_ip {
+            if let Some(c) = self.ip_connections.get(&client_ip) {
+                c.fetch_sub(1, Ordering::Release);
+            }
+            if site_tracked {
+                if let Some(c) = self.site_total_connections.get(site_id) {
+                    c.fetch_sub(1, Ordering::Release);
+                }
+            }
+            self.total_connections.fetch_sub(1, Ordering::Release);
             return Err(ConnectionLimitError::PerIpLimitExceeded);
         }
 
@@ -93,29 +107,20 @@ impl ConnectionLimiter {
             .map(|t| t.load(Ordering::Acquire))
             .unwrap_or(0);
 
-        if ip_count > config.connection_burst && can_burst == 0 {
+        if ip_prev > config.connection_burst && can_burst == 0 {
+            if let Some(c) = self.ip_connections.get(&client_ip) {
+                c.fetch_sub(1, Ordering::Release);
+            }
+            if site_tracked {
+                if let Some(c) = self.site_total_connections.get(site_id) {
+                    c.fetch_sub(1, Ordering::Release);
+                }
+            }
+            self.total_connections.fetch_sub(1, Ordering::Release);
             return Err(ConnectionLimitError::BurstExceeded);
         }
 
-        self.total_connections.fetch_add(1, Ordering::Release);
-
-        if max_per_site.is_some() {
-            let counter = self
-                .site_total_connections
-                .entry(site_id.to_string())
-                .or_insert_with(|| AtomicU32::new(0));
-            counter.fetch_add(1, Ordering::Release);
-        }
-
-        {
-            let counter = self
-                .ip_connections
-                .entry(client_ip)
-                .or_insert_with(|| AtomicU32::new(0));
-            counter.fetch_add(1, Ordering::Release);
-        }
-
-        if max_per_site.is_some() {
+        if site_tracked {
             let site_ips = self
                 .site_connections
                 .entry(site_id.to_string())
@@ -208,7 +213,11 @@ impl ConnectionLimiter {
                     .fetch_update(Ordering::Release, Ordering::Relaxed, |v| v.checked_sub(1));
                 if prev == Ok(1) {
                     drop(counter);
-                    self.site_total_connections.remove(&token.site_id);
+                    // Remove only if still zero — a concurrent acquire may have
+                    // incremented after our decrement.
+                    self.site_total_connections.remove_if(&token.site_id, |_, v| {
+                        v.load(Ordering::Acquire) == 0
+                    });
                 }
             }
         }
@@ -219,11 +228,15 @@ impl ConnectionLimiter {
                     .fetch_update(Ordering::Release, Ordering::Relaxed, |v| v.checked_sub(1));
                 if prev == Ok(1) {
                     drop(counter);
-                    self.ip_connections.remove(&token.client_ip);
-                    self.ip_burst_tokens.insert(
-                        token.client_ip,
-                        AtomicU32::new(self.config.connection_burst),
-                    );
+                    let removed = self.ip_connections.remove_if(&token.client_ip, |_, v| {
+                        v.load(Ordering::Acquire) == 0
+                    });
+                    if removed.is_some() {
+                        self.ip_burst_tokens.insert(
+                            token.client_ip,
+                            AtomicU32::new(self.config.connection_burst),
+                        );
+                    }
                 }
             }
         }
@@ -235,12 +248,15 @@ impl ConnectionLimiter {
                         .fetch_update(Ordering::Release, Ordering::Relaxed, |v| v.checked_sub(1));
                     if prev == Ok(1) {
                         drop(counter);
-                        site_ips.remove(&token.client_ip);
+                        site_ips.remove_if(&token.client_ip, |_, v| {
+                            v.load(Ordering::Acquire) == 0
+                        });
                     }
                 }
                 if site_ips.is_empty() {
                     drop(site_ips);
-                    self.site_connections.remove(&token.site_id);
+                    self.site_connections
+                        .remove_if(&token.site_id, |_, inner| inner.is_empty());
                 }
             }
         }

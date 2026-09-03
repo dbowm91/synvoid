@@ -1728,8 +1728,10 @@ pub async fn get_org_public_key(
         .as_ref()
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
 
-    // Attempt sync first
-    let _ = mgr.sync_from_dht().await;
+    // Attempt sync first; on failure serve cached key but log staleness.
+    if let Err(e) = mgr.sync_from_dht().await {
+        tracing::warn!(org_id = %org_id, error = %e, "org-key DHT sync failed; serving cached key");
+    }
 
     let pub_key = mgr
         .get_org_public_key(&org_id)

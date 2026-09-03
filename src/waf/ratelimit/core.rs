@@ -132,8 +132,10 @@ pub struct AtomicSlidingWindow {
 
 impl AtomicSlidingWindow {
     pub fn new(window_duration_secs: u64, bucket_count: u64) -> Self {
+        // Clamp degenerate inputs instead of panicking on the request path.
+        let bucket_count = bucket_count.max(1);
         let buckets: Vec<AtomicU64> = (0..bucket_count).map(|_| AtomicU64::new(0)).collect();
-        let bucket_duration_ms = (window_duration_secs * 1000) / bucket_count;
+        let bucket_duration_ms = (window_duration_secs.saturating_mul(1000) / bucket_count).max(1);
 
         Self {
             buckets: buckets.into_boxed_slice(),

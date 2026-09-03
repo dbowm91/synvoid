@@ -81,7 +81,7 @@ impl SpinResponse {
         Response::builder()
             .status(self.status)
             .body(self.body)
-            .unwrap_or_else(|_| Response::builder().status(500).body(Bytes::new()).unwrap())
+            .unwrap_or_else(|_| Response::new(Bytes::new()))
     }
 }
 

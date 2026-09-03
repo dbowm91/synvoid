@@ -1214,7 +1214,9 @@ impl YaraRulesManager {
             *current = Some(version.clone());
         }
 
-        let _ = self.save_rules_to_disk();
+        if let Err(e) = self.save_rules_to_disk() {
+            tracing::warn!(error = %e, version = %version, "failed to persist YARA rules to disk; in-memory rules applied");
+        }
 
         self.rule_change_tracker.write().record_change(&version);
 
@@ -1293,10 +1295,14 @@ impl YaraRulesManager {
                 *self.current_version.write() = Some(version.clone());
                 tracing::info!("Applied YARA rules from feed, version: {}", version);
 
-                let _ = self.save_rules_to_disk();
+                if let Err(e) = self.save_rules_to_disk() {
+                    tracing::warn!(error = %e, version = %version, "failed to persist YARA feed rules to disk; in-memory rules applied");
+                }
 
                 if self.node_role.is_global() {
-                    let _ = self.broadcast_approved_rules(&version);
+                    if let Err(e) = self.broadcast_approved_rules(&version) {
+                        tracing::warn!(error = %e, version = %version, "failed to broadcast approved YARA rules; peers may desync");
+                    }
                 }
 
                 return Ok(version);
@@ -1327,7 +1333,9 @@ impl YaraRulesManager {
         *self.local_rules.write() = Some(rules.clone());
         *self.current_version.write() = Some(version.clone());
 
-        let _ = self.save_rules_to_disk();
+        if let Err(e) = self.save_rules_to_disk() {
+            tracing::warn!(error = %e, version = %version, "failed to persist YARA rules to disk; in-memory rules applied");
+        }
 
         if let Some(ref fm) = self.feed_manager {
             let source_str = match source {
@@ -1336,7 +1344,10 @@ impl YaraRulesManager {
                 YaraRuleSource::MeshGlobal => "Mesh",
                 YaraRuleSource::MeshEdgeApproved => "MeshApproved",
             };
-            let _ = fm.add_to_history_inline(version.clone(), rules, source_str.to_string());
+            if let Err(e) = fm.add_to_history_inline(version.clone(), rules, source_str.to_string())
+            {
+                tracing::warn!(error = %e, version = %version, "failed to record YARA rule history");
+            }
         }
 
         self.rule_change_tracker.write().record_change(&version);

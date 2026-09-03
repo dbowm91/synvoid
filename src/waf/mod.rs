@@ -1055,7 +1055,9 @@ pub fn get_upload_validator() -> Option<Arc<synvoid_upload::UploadValidator>> {
 }
 
 pub fn set_upload_validator(validator: Arc<synvoid_upload::UploadValidator>) {
-    let _ = UPLOAD_VALIDATOR.set(validator);
+    if UPLOAD_VALIDATOR.set(validator).is_err() {
+        tracing::warn!("set_upload_validator ignored: validator already initialized");
+    }
 }
 
 #[cfg(feature = "mesh")]

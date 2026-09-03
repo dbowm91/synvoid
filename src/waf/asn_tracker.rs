@@ -89,7 +89,7 @@ impl AsnTracker {
             return None;
         }
 
-        let now_ms = crate::utils::current_timestamp() * 1000;
+        let now_ms = crate::utils::current_timestamp().saturating_mul(1000);
         let truncated_ip = Self::truncate_ip(client_ip);
 
         let mut entry = self.asn_windows.entry(asn).or_insert_with(|| {
@@ -213,13 +213,28 @@ impl AsnTracker {
         drop(last);
 
         let window_secs = self.config.unique_ips_window_secs;
-        let now_ms = crate::utils::current_timestamp() * 1000;
-        let cutoff = now_ms.saturating_sub(window_secs * 1000);
+        let now_ms = crate::utils::current_timestamp().saturating_mul(1000);
+        let cutoff = now_ms.saturating_sub(window_secs.saturating_mul(1000));
 
         for entry in self.asn_windows.iter_mut() {
             entry
                 .unique_ips
                 .retain(|_, &mut first_seen| first_seen > cutoff);
+        }
+        // Drop outer states whose inner maps are now empty to bound growth.
+        let empty: Vec<u32> = self
+            .asn_windows
+            .iter()
+            .filter_map(|e| {
+                if e.unique_ips.is_empty() {
+                    Some(*e.key())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        for asn in empty {
+            self.asn_windows.remove(&asn);
         }
     }
 

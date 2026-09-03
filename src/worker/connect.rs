@@ -7,6 +7,9 @@ use synvoid_ipc::ipc_transport::IpcEndpoint;
 use synvoid_ipc::ipc_transport::IpcStream as AsyncIpcStream;
 use synvoid_ipc::{connect_to_supervisor, IpcStream};
 
+/// Blocking connect-with-retry for startup on a dedicated (non-async) thread.
+/// Must NOT be called on a Tokio worker thread (it sleeps the calling thread);
+/// use `connect_to_supervisor_async` from async contexts.
 pub fn connect_to_supervisor_with_retry(
     socket_path: &Path,
     max_retries: u32,

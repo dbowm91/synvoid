@@ -269,8 +269,10 @@ pub struct ResponseTransformResult {
 static WHITELIST_REGEX_CACHE: LazyLock<DashMap<String, Option<regex::Regex>>> =
     LazyLock::new(DashMap::new);
 
-static IMAGE_PROTECTION_REGEX: LazyLock<regex::Regex> =
-    LazyLock::new(|| regex::Regex::new(r"\.(?:jpe?g|png|gif|webp|bmp|svg|ico)(?:\?|$)").unwrap());
+static IMAGE_PROTECTION_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"\.(?:jpe?g|png|gif|webp|bmp|svg|ico)(?:\?|$)")
+        .expect("static IMAGE_PROTECTION_REGEX must compile")
+});
 
 pub fn path_looks_like_image(path: &str) -> bool {
     IMAGE_PROTECTION_REGEX.is_match(path)

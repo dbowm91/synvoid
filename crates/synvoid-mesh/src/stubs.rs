@@ -87,7 +87,17 @@ pub mod http {
         let body = http_body_util::Full::new(bytes::Bytes::new())
             .map_err(|never| match never {})
             .boxed();
-        http::Response::builder().status(502).body(body).unwrap()
+        http::Response::builder()
+            .status(502)
+            .body(body)
+            .unwrap_or_else(|_| {
+                use http_body_util::BodyExt;
+                http::Response::new(
+                    http_body_util::Full::new(bytes::Bytes::new())
+                        .map_err(|never| match never {})
+                        .boxed(),
+                )
+            })
     }
 
     pub mod response_transform {

@@ -43,7 +43,9 @@ impl HoneypotStorage {
         let db_path = Path::new(&config.database_path);
 
         if let Some(parent) = db_path.parent() {
-            std::fs::create_dir_all(parent).ok();
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                tracing::warn!(path=?parent, error=%e, "honeypot parent dir create failed");
+            }
         }
 
         let conn = Connection::open(db_path)?;

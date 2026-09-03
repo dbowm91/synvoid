@@ -31,7 +31,14 @@ impl JwtDetector {
         }
 
         let patterns_str: Vec<&str> = base_patterns.iter().map(|s| s.as_str()).collect();
-        let patterns = Arc::new(AhoCorasick::new(&patterns_str).unwrap());
+        let patterns = match AhoCorasick::new(&patterns_str) {
+            Ok(ac) => Arc::new(ac),
+            Err(e) => {
+                tracing::error!(error = %e, "invalid custom JWT patterns; falling back to base patterns");
+                let base_str = DefaultPatterns::jwt();
+                Arc::new(AhoCorasick::new(&base_str).expect("base JWT patterns must compile"))
+            }
+        };
 
         Self { patterns }
     }
