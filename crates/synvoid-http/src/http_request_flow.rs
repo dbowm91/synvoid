@@ -88,7 +88,6 @@ where
     let frontdoor = match prepare_request_frontdoor(RequestFrontdoorContext {
         req,
         client_ip,
-        local_addr,
         drain_state,
         alt_svc: alt_svc_for_frontdoor,
         main_config: main_config_for_frontdoor,

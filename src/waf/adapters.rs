@@ -30,7 +30,9 @@ impl BlockListStore for BlockStoreAdapter {
     }
 
     fn block_ip(&self, ip: IpAddr, reason: &str, duration_secs: u64, scope: &str) {
-        let _ = self.inner.block_ip(ip, reason, duration_secs, scope);
+        if !self.inner.block_ip(ip, reason, duration_secs, scope) {
+            tracing::warn!(%ip, scope, "BlockStoreAdapter::block_ip failed (store disabled or at capacity)");
+        }
     }
 
     fn block_ip_with_provenance(
@@ -41,9 +43,12 @@ impl BlockListStore for BlockStoreAdapter {
         scope: &str,
         provenance: BlockProvenance,
     ) {
-        let _ = self
+        if !self
             .inner
-            .block_ip_with_provenance(ip, reason, duration_secs, scope, provenance);
+            .block_ip_with_provenance(ip, reason, duration_secs, scope, provenance)
+        {
+            tracing::warn!(%ip, scope, "BlockStoreAdapter::block_ip_with_provenance failed (store disabled or at capacity)");
+        }
     }
 }
 

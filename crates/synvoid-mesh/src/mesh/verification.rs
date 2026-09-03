@@ -386,11 +386,13 @@ impl VerificationTaskManager {
         }
 
         if let Ok(value) = serde_json::to_vec(&task) {
-            let _ = record_store.store_and_announce(
+            if !record_store.store_and_announce(
                 key_str.to_string(),
                 value,
                 self.config.penalty_ttl_secs,
-            );
+            ) {
+                tracing::warn!("Failed to store_and_announce verification task {}", key_str);
+            }
         }
     }
 
@@ -514,11 +516,16 @@ impl VerificationTaskManager {
                 task.verification_node_ids = verification_node_ids;
 
                 if let Ok(value) = serde_json::to_vec(&task) {
-                    let _ = record_store.store_and_announce(
+                    if !record_store.store_and_announce(
                         key_str.to_string(),
                         value,
                         self.config.penalty_ttl_secs,
-                    );
+                    ) {
+                        tracing::warn!(
+                            "Failed to store_and_announce verification task {}",
+                            key_str
+                        );
+                    }
                 }
             }
         }

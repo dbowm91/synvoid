@@ -346,7 +346,7 @@ pub fn filter_response_headers_buf(
     headers: &http::HeaderMap,
     headers_to_filter: &AHashSet<http::header::HeaderName>,
 ) -> http::HeaderMap {
-    let mut result = http::HeaderMap::new();
+    let mut result = http::HeaderMap::with_capacity(headers.len());
     for (k, v) in headers.iter() {
         if HOP_BY_HOP_HEADER_NAMES.contains(k) || headers_to_filter.contains(k) {
             continue;
@@ -361,7 +361,7 @@ pub fn filter_response_headers_buf_with_str_set(
     headers: &http::HeaderMap,
     headers_to_filter: &std::collections::HashSet<&str>,
 ) -> http::HeaderMap {
-    let mut result = http::HeaderMap::new();
+    let mut result = http::HeaderMap::with_capacity(headers.len());
     for (k, v) in headers.iter() {
         if HOP_BY_HOP_HEADER_NAMES.contains(k) || headers_to_filter.contains(k.as_str()) {
             continue;

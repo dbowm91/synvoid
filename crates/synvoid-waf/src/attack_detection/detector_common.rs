@@ -458,7 +458,7 @@ pub fn build_pattern_automaton(
         Err(e) => {
             tracing::error!("AhoCorasick build failed for custom patterns: {}", e);
             // Fallback to base patterns only to keep data plane alive; static patterns are trusted.
-            let base_str: Vec<&str> = base_patterns.iter().copied().collect();
+            let base_str: Vec<&str> = base_patterns.to_vec();
             Arc::new(
                 AhoCorasick::builder()
                     .ascii_case_insensitive(true)

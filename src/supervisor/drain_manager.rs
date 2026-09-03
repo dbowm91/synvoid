@@ -5,8 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use parking_lot::RwLock;
-use tokio::sync::Mutex;
+use parking_lot::{Mutex, RwLock};
 
 use crate::drain::{DrainStatus, WorkerDrainState};
 use synvoid_ipc::{IpcStream, Message, WorkerId};
@@ -44,8 +43,7 @@ impl DrainManager {
         let drain_id = next_drain_id();
         self.current_drain_id.store(drain_id, Ordering::SeqCst);
 
-        let mut start_time = self.drain_start_time.blocking_lock();
-        *start_time = Some(Instant::now());
+        *self.drain_start_time.lock() = Some(Instant::now());
 
         tracing::info!("Starting drain {} with timeout {}s", drain_id, timeout_secs);
 
@@ -125,8 +123,7 @@ impl DrainManager {
         let _total_drained: u64 = workers.values().map(|w| w.connections_drained).sum();
         let all_complete = !workers.is_empty() && workers.values().all(|w| w.drain_complete);
 
-        let start_time = self.drain_start_time.blocking_lock();
-        let drain_start = *start_time;
+        let drain_start = *self.drain_start_time.lock();
 
         DrainStatus::default()
             .with_drain_id(drain_id)
@@ -159,8 +156,7 @@ impl DrainManager {
     pub fn clear(&self) {
         self.workers.write().clear();
         self.current_drain_id.store(0, Ordering::SeqCst);
-        let mut start_time = self.drain_start_time.blocking_lock();
-        *start_time = None;
+        *self.drain_start_time.lock() = None;
     }
 
     pub async fn wait_for_drain(&self, timeout_secs: u64) -> bool {

@@ -150,6 +150,9 @@ impl ErrorPageManager {
         }
     }
 
+    /// NOTE (M-08): blocking `read_to_string` is intentional here. This runs once
+    /// at startup (`with_theme_and_mode` is sync, called during config load) and
+    /// results are cached in `Arc<HashMap>`; it is never called on the request hot path.
     fn load_directory(dir: &str) -> HashMap<u16, String> {
         let mut pages = HashMap::new();
 

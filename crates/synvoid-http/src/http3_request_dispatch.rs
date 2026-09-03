@@ -286,7 +286,21 @@ where
         )
         .await?;
     } else {
-        unreachable!("terminal HTTP/3 route results should already be handled");
+        tracing::error!(
+            host = %host,
+            path = %path,
+            "unhandled HTTP/3 route result after terminal handling; returning 500"
+        );
+        counter!("synvoid.http3.request.unhandled_route_result").increment(1);
+        let response =
+            crate::http3_body::build_json_error_response(http::StatusCode::INTERNAL_SERVER_ERROR);
+        crate::http3_body::send_response_with_body(
+            request_stream,
+            response,
+            bytes::Bytes::from_static(b"{\"error\":\"Internal server error\"}"),
+        )
+        .await?;
+        crate::http3_terminal::finalize_http3_request(request_stream, start).await?;
     }
 
     Ok(())

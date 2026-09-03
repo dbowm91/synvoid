@@ -143,10 +143,9 @@ pub fn build_cached_response(entry: &ProxyCacheEntry) -> http::Response<bytes::B
     }
 
     builder.body(entry.content.clone()).unwrap_or_else(|_| {
-        http::Response::builder()
-            .status(500)
-            .body(fallback_error_bytes())
-            .unwrap()
+        let mut resp = http::Response::new(fallback_error_bytes());
+        *resp.status_mut() = http::StatusCode::INTERNAL_SERVER_ERROR;
+        resp
     })
 }
 

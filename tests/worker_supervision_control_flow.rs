@@ -5,6 +5,9 @@
 //!
 //! Tests the supervision loop behavior: non-fatal exits don't stop the worker,
 //! critical exits do, receiver lag is handled, etc.
+//!
+//! NOTE: run single-threaded (`-- --test-threads=1`) per verification-contract
+//! §10; shared-state tests are nondeterministic under parallel execution.
 #![allow(
     unused_mut,
     unused_variables,

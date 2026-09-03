@@ -187,7 +187,16 @@ where
                 .status(StatusCode::BAD_GATEWAY)
                 .header(header::CONTENT_TYPE, "text/plain")
                 .body(body)
-                .unwrap();
+                .unwrap_or_else(|e| {
+                    tracing::error!("Failed to build HTTP/3 502 response: {}", e);
+                    let mut resp = Response::new(Bytes::from("Bad Gateway"));
+                    *resp.status_mut() = StatusCode::BAD_GATEWAY;
+                    resp.headers_mut().insert(
+                        header::CONTENT_TYPE,
+                        http::HeaderValue::from_static("text/plain"),
+                    );
+                    resp
+                });
 
             let (parts, body) = response.into_parts();
             request_stream

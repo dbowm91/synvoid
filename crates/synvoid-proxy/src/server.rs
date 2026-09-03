@@ -681,16 +681,23 @@ impl<W: WafProcessor> ProxyServer<W> {
                                             "Triggering background revalidation for {}",
                                             path_owned
                                         );
-                                        let _ = Self::revalidate_cache_entry(
+                                        if let Err(e) = Self::revalidate_cache_entry(
                                             &reval_client,
                                             cache_clone.clone(),
                                             key_clone.clone(),
                                             method_clone,
-                                            path_owned,
+                                            path_owned.clone(),
                                             upstream_url_clone,
                                             reval_headers,
                                         )
-                                        .await;
+                                        .await
+                                        {
+                                            tracing::warn!(
+                                                "Background revalidation task failed for {}: {}",
+                                                path_owned,
+                                                e
+                                            );
+                                        }
                                         drop(permit);
                                         cache_clone.record_revalidation_end();
                                         cache_clone.release_revalidation(&key_clone);

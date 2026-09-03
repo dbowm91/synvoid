@@ -510,13 +510,13 @@ where
     let check_user_agent = user_agent.clone();
     let check_waf = Arc::clone(&waf);
     let check_request_full = move || {
-        let site_id = check_site_id.clone();
-        let method = check_method.clone();
-        let path = check_path.clone();
-        let parts = check_parts.clone();
-        let target = check_target.clone();
-        let user_agent = check_user_agent.clone();
-        let waf = Arc::clone(&check_waf);
+        let site_id = check_site_id;
+        let method = check_method;
+        let path = check_path;
+        let parts = check_parts;
+        let target = check_target;
+        let user_agent = check_user_agent;
+        let waf = check_waf;
         async move {
             waf.check_request_full_owned(
                 Some(site_id),

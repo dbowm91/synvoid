@@ -85,7 +85,13 @@ static REDIRECT_PARAM_AC: LazyLock<AhoCorasick> = LazyLock::new(|| {
         "urlfrom",
         "urlsrc",
     ];
-    AhoCorasick::new(&patterns).unwrap()
+    AhoCorasick::new(&patterns).unwrap_or_else(|e| {
+        tracing::error!(
+            "Static redirect-param patterns invalid, using empty automaton: {}",
+            e
+        );
+        AhoCorasick::new(&[] as &[&str]).expect("empty automaton is always valid")
+    })
 });
 
 static REDIRECT_PARAMS_SET: LazyLock<std::collections::HashSet<String>> = LazyLock::new(|| {

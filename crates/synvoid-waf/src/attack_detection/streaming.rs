@@ -141,12 +141,10 @@ impl StreamingWafCore {
     }
 
     fn process_multipart_chunk(&mut self, chunk: &[u8]) -> StreamingWafDecision {
-        let boundary_str = self
-            .state
-            .boundary
-            .as_ref()
-            .expect("boundary set when entering multipart processing")
-            .clone();
+        let Some(boundary_str) = self.state.boundary.as_ref().cloned() else {
+            tracing::error!("Multipart processing without boundary; continuing without block");
+            return StreamingWafDecision::Continue;
+        };
         let boundary = boundary_str.as_bytes();
         let trailing_slice = self.state.trailing_window.as_slice();
         let combined_view = [trailing_slice, chunk];

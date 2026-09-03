@@ -19,6 +19,10 @@ pub struct PersistedBaseline {
     pub statistics: Vec<BaselineStats>,
 }
 
+/// NOTE (M-06): constructors below use blocking `std::fs` + sync `rusqlite`.
+/// This is intentional: they run once at startup (`ThreatLevelManager::new` is
+/// sync) or inside `spawn_blocking` (`SqliteBackup::create_backup` admin path).
+/// Do not call them from the async request hot path.
 pub struct SqlitePersistence {
     conn: Arc<Mutex<Connection>>,
 }

@@ -230,7 +230,6 @@ where
     }
 
     let buffered_waf_started_at = Instant::now();
-    let _body_slice_for_closure = body_slice.as_ref().map(|arc| arc.as_ref().clone());
     let site_id_for_closure = site_id.clone();
     let method_str_for_closure = method_str.clone();
     let path_for_closure = path.clone();

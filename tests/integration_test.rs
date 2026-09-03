@@ -888,10 +888,6 @@ mod worker_crash_recovery_tests {
 
     #[test]
     fn test_socket_handoff_error_types() {
-        // TODO: feature removed — SocketHandoffError variants Timeout, InvalidState, Cancelled
-        // no longer exist. The current enum has: CreateFailed, BindFailed, ListenFailed,
-        // SetOptFailed, SendFailed, RecvFailed, NoSocketsReceived, TooManySockets,
-        // NotConnected, NotSupported, IpcError.
         let not_supported = SocketHandoffError::NotSupported("test".to_string());
         assert!(not_supported.to_string().contains("not supported"));
     }

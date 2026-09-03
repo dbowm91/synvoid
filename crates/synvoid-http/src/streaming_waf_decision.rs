@@ -125,7 +125,10 @@ where
                     .body(BodyExt::boxed(StreamBody::new(stream.map(|res| {
                         Ok::<_, Infallible>(Frame::data(res.unwrap_or_default()))
                     }))))
-                    .unwrap(),
+                    .unwrap_or_else(|e| {
+                        tracing::error!("Failed to build tarpit streaming response: {}", e);
+                        crate::fallback_error_boxed()
+                    }),
             )
         }
     }

@@ -98,7 +98,7 @@ fn check_and_insert_nonce(signer_id: u64, nonce: &[u8; 16], timestamp: u64) -> b
                 "nonce cache full ({}), evicting oldest entry",
                 MAX_NONCE_CACHE_SIZE
             );
-            if let Some(k) = NONCE_CACHE.iter().next().map(|r| r.key().clone()) {
+            if let Some(k) = NONCE_CACHE.iter().next().map(|r| *r.key()) {
                 NONCE_CACHE.remove(&k);
             } else {
                 return false;

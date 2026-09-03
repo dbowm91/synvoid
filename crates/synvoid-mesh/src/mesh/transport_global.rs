@@ -242,9 +242,16 @@ impl MeshTransport {
                     key_exchange_endpoint: key_exchange_endpoint.map(|s| s.into()),
                     cert_chain: None,
                 };
-                let _ = self
+                let (sent, failed) = self
                     .broadcast_to_random_peers(msg, 0.5, Some(crate::config::MeshNodeRole::GLOBAL))
                     .await;
+                if failed > 0 {
+                    tracing::warn!(
+                        "Global broadcast failed for {} peers ({} sent)",
+                        failed,
+                        sent
+                    );
+                }
             }
         }
     }
@@ -366,9 +373,16 @@ impl MeshTransport {
             cert_chain: None,
         };
 
-        let _ = self
+        let (sent, failed) = self
             .broadcast_to_random_peers(msg, 0.5, Some(crate::config::MeshNodeRole::GLOBAL))
             .await;
+        if failed > 0 {
+            tracing::warn!(
+                "Global broadcast failed for {} peers ({} sent)",
+                failed,
+                sent
+            );
+        }
         tracing::info!("Added global node {} via genesis key", target_node_id);
     }
 
@@ -437,9 +451,16 @@ impl MeshTransport {
             cert_chain: None,
         };
 
-        let _ = self
+        let (sent, failed) = self
             .broadcast_to_random_peers(msg, 0.5, Some(crate::config::MeshNodeRole::GLOBAL))
             .await;
+        if failed > 0 {
+            tracing::warn!(
+                "Global broadcast failed for {} peers ({} sent)",
+                failed,
+                sent
+            );
+        }
         tracing::info!("Removed global node {} via genesis key", target_node_id);
     }
 
@@ -974,9 +995,16 @@ impl MeshTransport {
                 timestamp,
                 genesis_signature: genesis_signature.to_vec(),
             };
-            let _ = self
+            let (sent, failed) = self
                 .broadcast_to_random_peers(msg, 0.5, Some(crate::config::MeshNodeRole::GLOBAL))
                 .await;
+            if failed > 0 {
+                tracing::warn!(
+                    "Global broadcast failed for {} peers ({} sent)",
+                    failed,
+                    sent
+                );
+            }
         }
     }
 
@@ -1052,9 +1080,16 @@ impl MeshTransport {
                 timestamp,
                 genesis_signature: signature,
             };
-            let _ = self
+            let (sent, failed) = self
                 .broadcast_to_random_peers(msg, 0.5, Some(crate::config::MeshNodeRole::GLOBAL))
                 .await;
+            if failed > 0 {
+                tracing::warn!(
+                    "Global broadcast failed for {} peers ({} sent)",
+                    failed,
+                    sent
+                );
+            }
         }
 
         tracing::info!("Revoked global node {}: {}", target_node_id, reason);
@@ -1129,9 +1164,16 @@ impl MeshTransport {
                 timestamp,
                 genesis_signature: genesis_signature.to_vec(),
             };
-            let _ = self
+            let (sent, failed) = self
                 .broadcast_to_random_peers(msg, 0.5, Some(crate::config::MeshNodeRole::GLOBAL))
                 .await;
+            if failed > 0 {
+                tracing::warn!(
+                    "Global broadcast failed for {} peers ({} sent)",
+                    failed,
+                    sent
+                );
+            }
         }
     }
 
@@ -1206,9 +1248,16 @@ impl MeshTransport {
                 timestamp,
                 genesis_signature: signature,
             };
-            let _ = self
+            let (sent, failed) = self
                 .broadcast_to_random_peers(msg, 0.5, Some(crate::config::MeshNodeRole::GLOBAL))
                 .await;
+            if failed > 0 {
+                tracing::warn!(
+                    "Global broadcast failed for {} peers ({} sent)",
+                    failed,
+                    sent
+                );
+            }
         }
 
         tracing::info!(

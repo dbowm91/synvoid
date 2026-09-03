@@ -271,9 +271,15 @@ impl Router {
                 }
 
                 let reversed = Self::reverse_domain_for_router(&pattern);
-                let _ = wildcard_domain_router.insert(reversed.clone(), config_arc.clone());
-                let _ = wildcard_domain_router
-                    .insert(format!("{}/{}", reversed, "*sub"), config_arc.clone());
+                if let Err(e) = wildcard_domain_router.insert(reversed.clone(), config_arc.clone())
+                {
+                    tracing::error!("Failed to insert wildcard route for {}: {}", pattern, e);
+                }
+                if let Err(e) = wildcard_domain_router
+                    .insert(format!("{}/{}", reversed, "*sub"), config_arc.clone())
+                {
+                    tracing::error!("Failed to insert wildcard sub route for {}: {}", pattern, e);
+                }
 
                 suffixes.push(clean_domain.clone());
             } else {
@@ -375,9 +381,24 @@ impl Router {
 
                         let reversed = Self::reverse_domain_for_router(&pattern);
                         let router = ip_wildcard_routers.entry(bind_addr).or_default();
-                        let _ = router.insert(reversed.clone(), config_arc.clone());
-                        let _ =
-                            router.insert(format!("{}/{}", reversed, "*sub"), config_arc.clone());
+                        if let Err(e) = router.insert(reversed.clone(), config_arc.clone()) {
+                            tracing::error!(
+                                "Failed to insert IP wildcard route for {} on {}: {}",
+                                pattern,
+                                bind_addr,
+                                e
+                            );
+                        }
+                        if let Err(e) =
+                            router.insert(format!("{}/{}", reversed, "*sub"), config_arc.clone())
+                        {
+                            tracing::error!(
+                                "Failed to insert IP wildcard sub route for {} on {}: {}",
+                                pattern,
+                                bind_addr,
+                                e
+                            );
+                        }
                     } else {
                         ip_domain_map.insert((bind_addr, clean_domain.clone()), config_arc.clone());
                     }
@@ -1248,9 +1269,20 @@ impl Router {
                     }
 
                     let reversed = Self::reverse_domain_for_router(&pattern);
-                    let _ = wildcard_domain_router.insert(reversed.clone(), config_arc.clone());
-                    let _ = wildcard_domain_router
-                        .insert(format!("{}/{}", reversed, "*sub"), config_arc.clone());
+                    if let Err(e) =
+                        wildcard_domain_router.insert(reversed.clone(), config_arc.clone())
+                    {
+                        tracing::error!("Failed to insert wildcard route for {}: {}", pattern, e);
+                    }
+                    if let Err(e) = wildcard_domain_router
+                        .insert(format!("{}/{}", reversed, "*sub"), config_arc.clone())
+                    {
+                        tracing::error!(
+                            "Failed to insert wildcard sub route for {}: {}",
+                            pattern,
+                            e
+                        );
+                    }
 
                     suffixes.push(clean_domain.clone());
                 } else {

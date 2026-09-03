@@ -1,4 +1,4 @@
-use std::net::{IpAddr, SocketAddr};
+use std::net::IpAddr;
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -33,7 +33,6 @@ pub enum RequestFrontdoorOutcome {
 pub struct RequestFrontdoorContext<D> {
     pub req: hyper::Request<hyper::body::Incoming>,
     pub client_ip: IpAddr,
-    pub local_addr: Option<SocketAddr>,
     pub drain_state: Option<Arc<D>>,
     pub alt_svc: Option<String>,
     pub main_config: Arc<MainConfig>,
@@ -49,7 +48,6 @@ pub async fn prepare_request_frontdoor<D: HttpDrainControl>(
     let RequestFrontdoorContext {
         mut req,
         client_ip,
-        local_addr,
         drain_state,
         alt_svc,
         main_config,
@@ -111,8 +109,6 @@ pub async fn prepare_request_frontdoor<D: HttpDrainControl>(
 
     #[cfg(not(feature = "mesh"))]
     let req = req;
-
-    let _ = local_addr;
 
     Ok(RequestFrontdoorOutcome::Continue(FrontdoorRequest {
         req,

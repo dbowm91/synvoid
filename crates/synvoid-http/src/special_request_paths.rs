@@ -155,7 +155,10 @@ pub async fn maybe_handle_special_request_paths(
                         .header(http::header::CONTENT_TYPE, "text/plain")
                         .header(http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
                         .body(Full::new(Bytes::from(key_authorization)).boxed())
-                        .unwrap(),
+                        .unwrap_or_else(|e| {
+                            tracing::error!("Failed to build ACME challenge response: {}", e);
+                            crate::response_builder::fallback_error_boxed()
+                        }),
                 ));
             }
             tracing::debug!(
