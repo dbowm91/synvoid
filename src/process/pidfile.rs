@@ -265,8 +265,20 @@ impl PidFileManager {
             return None;
         }
 
-        let content = fs::read_to_string(path).ok()?;
-        serde_json::from_str(&content).ok()
+        let content = match fs::read_to_string(path) {
+            Ok(content) => content,
+            Err(e) => {
+                tracing::warn!(path = %path.display(), error = %e, "Failed to read pidfile");
+                return None;
+            }
+        };
+        match serde_json::from_str(&content) {
+            Ok(parsed) => Some(parsed),
+            Err(e) => {
+                tracing::warn!(path = %path.display(), error = %e, "Pidfile exists but is corrupt; treating as missing");
+                None
+            }
+        }
     }
 
     /// Check if the process is running.
@@ -466,10 +478,20 @@ impl SupervisorLockFile {
         if lock_path.exists() {
             if let Ok(metadata) = fs::metadata(&lock_path) {
                 if let Ok(modified) = metadata.modified() {
-                    let age = std::time::SystemTime::now()
-                        .duration_since(modified)
-                        .unwrap_or_default()
-                        .as_secs();
+                    let age = match std::time::SystemTime::now().duration_since(modified) {
+                        Ok(elapsed) => elapsed.as_secs(),
+                        Err(e) => {
+                            // File mtime is in the future (clock skew/NTP step).
+                            // Fail closed: keep the lock and log, instead of
+                            // silently treating it as brand-new.
+                            tracing::warn!(
+                                path = %lock_path.display(),
+                                error = %e,
+                                "Supervisor lock mtime is in the future; keeping lock"
+                            );
+                            0
+                        }
+                    };
 
                     if age > max_age_secs {
                         tracing::info!("Cleaning up stale supervisor lock (age: {}s)", age);

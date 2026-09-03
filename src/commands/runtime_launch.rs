@@ -202,11 +202,20 @@ pub fn execute_runtime_launch(plan: RuntimeLaunchPlan) -> RuntimeLaunchOutcome {
             let cpu_worker_args =
                 build_cpu_worker_args(cpu_worker_id, config_path, None, None, None);
 
-            let rt = tokio::runtime::Builder::new_multi_thread()
+            let rt = match tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(2)
                 .enable_all()
                 .build()
-                .expect("Failed to build Tokio runtime");
+            {
+                Ok(rt) => rt,
+                Err(e) => {
+                    tracing::error!("Failed to build Tokio runtime for CPU worker: {}", e);
+                    return RuntimeLaunchOutcome::Failed(format!(
+                        "Failed to build Tokio runtime for CPU worker: {}",
+                        e
+                    ));
+                }
+            };
 
             if let Err(e) = rt.block_on(run_cpu_worker(cpu_worker_args)) {
                 tracing::error!("CPU worker error: {}", e);
@@ -236,11 +245,23 @@ pub fn execute_runtime_launch(plan: RuntimeLaunchPlan) -> RuntimeLaunchOutcome {
                 reuse_port,
             );
 
-            let rt = tokio::runtime::Builder::new_multi_thread()
+            let rt = match tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(worker_threads)
                 .enable_all()
                 .build()
-                .expect("Failed to build Tokio runtime");
+            {
+                Ok(rt) => rt,
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to build Tokio runtime for unified server worker: {}",
+                        e
+                    );
+                    return RuntimeLaunchOutcome::Failed(format!(
+                        "Failed to build Tokio runtime for unified server worker: {}",
+                        e
+                    ));
+                }
+            };
 
             if let Err(e) = rt.block_on(run_unified_server_worker(unified_worker_args)) {
                 tracing::error!("Unified server worker error: {}", e);

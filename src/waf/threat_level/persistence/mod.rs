@@ -274,12 +274,13 @@ mod persistence {
                 .map(|s| s.score)
                 .fold(0.0_f64, |a, b| a.max(b));
 
-            let last_sample = from_queue
-                .back()
-                .expect("from_queue is non-empty due to preceding is_empty check");
+            let last_timestamp = match from_queue.back() {
+                Some(sample) => sample.timestamp,
+                None => return,
+            };
 
             let aggregated = ThreatHistorySample {
-                timestamp: last_sample.timestamp,
+                timestamp: last_timestamp,
                 level: max_level,
                 score: max_score,
                 requests_per_second: u32::try_from((avg_requests / 60.0) as u64)

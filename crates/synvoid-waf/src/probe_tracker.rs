@@ -80,10 +80,6 @@ impl ProbeRecord {
         let cutoff = current_timestamp().saturating_sub(retention_secs);
         self.events.retain(|e| e.timestamp >= cutoff);
     }
-
-    pub fn key(ip: &IpAddr) -> String {
-        format!("probe:{}", ip)
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -114,7 +110,7 @@ impl Default for ProbeConfig {
 }
 
 pub struct ProbeTracker {
-    store: Arc<RwLock<HashMap<String, ProbeRecord>>>,
+    store: Arc<RwLock<HashMap<IpAddr, ProbeRecord>>>,
     config: ProbeConfig,
     persist_path: Option<PathBuf>,
     persist_tx: Option<mpsc::Sender<PersistRequest>>,
@@ -123,7 +119,7 @@ pub struct ProbeTracker {
 
 #[derive(Debug, Clone)]
 struct PersistRequest {
-    entries: HashMap<String, ProbeRecord>,
+    entries: HashMap<IpAddr, ProbeRecord>,
 }
 
 impl ProbeTracker {
@@ -135,14 +131,14 @@ impl ProbeTracker {
             DEFAULT_MAX_RECORDS
         };
 
-        let store: HashMap<String, ProbeRecord> = if let Some(ref path) = persist_path {
+        let store: HashMap<IpAddr, ProbeRecord> = if let Some(ref path) = persist_path {
             if path.exists() {
                 match std::fs::read_to_string(path) {
                     Ok(content) => match serde_json::from_str::<Vec<ProbeRecord>>(&content) {
                         Ok(entries) => {
                             let now = current_timestamp();
                             let retention_secs = config.retention_days * 86400;
-                            let validated: HashMap<String, ProbeRecord> = entries
+                            let validated: HashMap<IpAddr, ProbeRecord> = entries
                                 .into_iter()
                                 .filter(|e| !e.is_expired(now, retention_secs))
                                 .take(max_records)
@@ -151,7 +147,7 @@ impl ProbeTracker {
                                         tracing::warn!(ip = %e.ip, "Skipping probe record with invalid IP");
                                         return None;
                                     };
-                                    Some((ProbeRecord::key(&ip), e))
+                                    Some((ip, e))
                                 })
                                 .collect();
                             tracing::info!(
@@ -245,8 +241,7 @@ impl ProbeTracker {
         {
             let mut store = self.store.write();
 
-            let key = ProbeRecord::key(&ip);
-            if let Some(record) = store.get_mut(&key) {
+            if let Some(record) = store.get_mut(&ip) {
                 record.add_event(event);
 
                 let recent_events: Vec<_> = record
@@ -271,7 +266,7 @@ impl ProbeTracker {
 
                 let record = ProbeRecord::new(ip, event);
                 probing_detected = false;
-                store.insert(key, record);
+                store.insert(ip, record);
                 *self.total_records.write() = store.len();
             }
         }
@@ -293,7 +288,7 @@ impl ProbeTracker {
         let window_start = now.saturating_sub(self.config.window_secs);
 
         let store = self.store.read();
-        if let Some(record) = store.get(&ProbeRecord::key(&ip)) {
+        if let Some(record) = store.get(&ip) {
             let unique_recent: std::collections::HashSet<_> = record
                 .events
                 .iter()
@@ -310,7 +305,7 @@ impl ProbeTracker {
     fn get_unique_endpoints(&self, ip: IpAddr) -> Vec<String> {
         self.store
             .read()
-            .get(&ProbeRecord::key(&ip))
+            .get(&ip)
             .map(|r| r.unique_endpoints.iter().cloned().collect())
             .unwrap_or_default()
     }
@@ -318,13 +313,13 @@ impl ProbeTracker {
     fn get_event_count(&self, ip: IpAddr) -> u32 {
         self.store
             .read()
-            .get(&ProbeRecord::key(&ip))
+            .get(&ip)
             .map(|r| r.event_count)
             .unwrap_or(0)
     }
 
     pub fn get_record(&self, ip: &IpAddr) -> Option<ProbeRecord> {
-        self.store.read().get(&ProbeRecord::key(ip)).cloned()
+        self.store.read().get(ip).cloned()
     }
 
     pub fn list_records(&self, limit: usize, offset: usize) -> Vec<ProbeRecord> {
@@ -372,7 +367,7 @@ impl ProbeTracker {
     }
 
     pub fn clear_record(&self, ip: &IpAddr) -> bool {
-        let removed = self.store.write().remove(&ProbeRecord::key(ip)).is_some();
+        let removed = self.store.write().remove(ip).is_some();
         if removed {
             *self.total_records.write() = self.store.read().len();
             self.trigger_persist();
@@ -419,7 +414,7 @@ impl ProbeTracker {
 
     async fn persist_to_disk(
         path: &PathBuf,
-        entries: HashMap<String, ProbeRecord>,
+        entries: HashMap<IpAddr, ProbeRecord>,
         max_records: usize,
         retention_secs: u64,
     ) {

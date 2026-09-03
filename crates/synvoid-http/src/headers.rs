@@ -112,20 +112,19 @@ pub fn inject_cors_headers(
 }
 
 pub fn is_websocket_upgrade(headers: &http::HeaderMap) -> bool {
-    let upgrade = headers
+    let has_upgrade = headers
         .get("upgrade")
         .and_then(|v| v.to_str().ok())
-        .map(|v| v.to_lowercase());
+        .map(|v| v.eq_ignore_ascii_case("websocket"))
+        .unwrap_or(false);
 
-    let connection = headers
+    let has_connection_upgrade = headers
         .get("connection")
         .and_then(|v| v.to_str().ok())
-        .map(|v| v.to_lowercase());
-
-    let has_upgrade = upgrade.as_ref().map(|u| u == "websocket").unwrap_or(false);
-    let has_connection_upgrade = connection
-        .as_ref()
-        .map(|c| c.contains("upgrade"))
+        .map(|v| {
+            v.split(',')
+                .any(|directive| directive.trim().eq_ignore_ascii_case("upgrade"))
+        })
         .unwrap_or(false);
 
     has_upgrade && has_connection_upgrade

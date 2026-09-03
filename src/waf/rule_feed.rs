@@ -15,6 +15,25 @@ use std::sync::LazyLock;
 
 const PLACEHOLDER_KEY: &str = "DEFAULT_EMBEDDED_PUBLIC_KEY_PLACEHOLDER";
 
+/// Decode Ed25519 key/signature material. Canonical encoding is
+/// `URL_SAFE_NO_PAD` per repo standard (mesh/DHT data); `STANDARD` is
+/// accepted as a fallback with a warning for interop with older producers.
+fn decode_b64_compat(input: &str) -> Result<Vec<u8>, base64::DecodeError> {
+    use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
+    match URL_SAFE_NO_PAD.decode(input) {
+        Ok(bytes) => Ok(bytes),
+        Err(first_err) => match STANDARD.decode(input) {
+            Ok(bytes) => {
+                tracing::warn!(
+                    "Rule-feed base64 input used STANDARD variant instead of canonical URL_SAFE_NO_PAD; accepting for interop"
+                );
+                Ok(bytes)
+            }
+            Err(_) => Err(first_err),
+        },
+    }
+}
+
 use dashmap::DashMap;
 
 static RULE_PATTERN_STORE: LazyLock<DashMap<String, GlobalRulePatterns>> =
@@ -395,11 +414,17 @@ impl RuleFeedManager {
         }
 
         // If a real base64-encoded 32-byte Ed25519 public key is provided, use it
-        if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(key_str) {
+        if let Ok(bytes) = decode_b64_compat(key_str) {
             if bytes.len() == 32 {
-                if let Ok(key) =
-                    VerifyingKey::from_bytes(bytes[..32].try_into().expect("Invalid key length"))
-                {
+                let Ok(arr) = <[u8; 32]>::try_from(&bytes[..]) else {
+                    return Err(
+                        "RULE FEED SECURITY VIOLATION: Invalid embedded Ed25519 public key length. \
+                         Set [waf.rule_feed.public_key] in the TOML config to a base64-encoded \
+                         32-byte Ed25519 verifying key. Refusing to start."
+                            .to_string(),
+                    );
+                };
+                if let Ok(key) = VerifyingKey::from_bytes(&arr) {
                     return Ok(key);
                 }
             }
@@ -528,8 +553,7 @@ impl RuleFeedManager {
     }
 
     fn verify_signature(&self, payload: &str, signature_b64: &str) -> Result<(), String> {
-        let signature_bytes = base64::engine::general_purpose::STANDARD
-            .decode(signature_b64)
+        let signature_bytes = decode_b64_compat(signature_b64)
             .map_err(|e| format!("Invalid signature encoding: {}", e))?;
 
         if signature_bytes.len() != 64 {

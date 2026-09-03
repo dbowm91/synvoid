@@ -6,6 +6,7 @@ mod tests {
     use crate::storage::*;
     use crate::storage_writer::HoneypotWriter;
     use std::collections::HashMap;
+    use std::net::IpAddr;
     use std::sync::Arc;
     use std::time::Duration;
     use tokio::io::AsyncWriteExt;
@@ -34,18 +35,22 @@ mod tests {
         (writer, Arc::new(storage))
     }
 
+    fn ip(s: &str) -> IpAddr {
+        s.parse().unwrap()
+    }
+
     #[tokio::test]
     async fn ip_conn_guard_removes_entry_at_zero() {
         let counts = Arc::new(parking_lot::RwLock::new(HashMap::new()));
         {
             let mut c = counts.write();
-            c.insert("1.2.3.4".to_string(), 1);
+            c.insert(ip("1.2.3.4"), 1);
         }
         {
-            let _guard = IpConnGuard::new(counts.clone(), "1.2.3.4".to_string());
+            let _guard = IpConnGuard::new(counts.clone(), ip("1.2.3.4"));
         }
         let c = counts.read();
-        assert_eq!(c.get("1.2.3.4"), None);
+        assert_eq!(c.get(&ip("1.2.3.4")), None);
     }
 
     #[tokio::test]
@@ -53,13 +58,13 @@ mod tests {
         let counts = Arc::new(parking_lot::RwLock::new(HashMap::new()));
         {
             let mut c = counts.write();
-            c.insert("1.2.3.4".to_string(), 3);
+            c.insert(ip("1.2.3.4"), 3);
         }
         {
-            let _guard = IpConnGuard::new(counts.clone(), "1.2.3.4".to_string());
+            let _guard = IpConnGuard::new(counts.clone(), ip("1.2.3.4"));
         }
         let c = counts.read();
-        assert_eq!(c.get("1.2.3.4"), Some(&2));
+        assert_eq!(c.get(&ip("1.2.3.4")), Some(&2));
     }
 
     #[tokio::test]
@@ -94,12 +99,12 @@ mod tests {
 
         for _ in 0..max_per_ip {
             let mut c = counts.write();
-            let count = c.entry("1.2.3.4".to_string()).or_insert(0);
+            let count = c.entry(ip("1.2.3.4")).or_insert(0);
             *count += 1;
         }
 
         let c = counts.read();
-        assert!(c.get("1.2.3.4").copied().unwrap_or(0) >= max_per_ip);
+        assert!(c.get(&ip("1.2.3.4")).copied().unwrap_or(0) >= max_per_ip);
     }
 
     #[tokio::test]
@@ -107,14 +112,14 @@ mod tests {
         let counts = Arc::new(parking_lot::RwLock::new(HashMap::new()));
         {
             let mut c = counts.write();
-            c.insert("10.0.0.1".to_string(), 2);
+            c.insert(ip("10.0.0.1"), 2);
         }
-        let g1 = IpConnGuard::new(counts.clone(), "10.0.0.1".to_string());
-        let g2 = IpConnGuard::new(counts.clone(), "10.0.0.1".to_string());
+        let g1 = IpConnGuard::new(counts.clone(), ip("10.0.0.1"));
+        let g2 = IpConnGuard::new(counts.clone(), ip("10.0.0.1"));
         drop(g1);
-        assert_eq!(*counts.read().get("10.0.0.1").unwrap(), 1);
+        assert_eq!(*counts.read().get(&ip("10.0.0.1")).unwrap(), 1);
         drop(g2);
-        assert!(counts.read().get("10.0.0.1").is_none());
+        assert!(counts.read().get(&ip("10.0.0.1")).is_none());
     }
 
     #[tokio::test]
@@ -143,7 +148,7 @@ mod tests {
         let sem = Arc::new(Semaphore::new(1));
         let permit = Arc::clone(&sem).acquire_owned().await.unwrap();
         let counts = Arc::new(parking_lot::RwLock::new(HashMap::new()));
-        let guard = IpConnGuard::new(counts, "127.0.0.1".to_string());
+        let guard = IpConnGuard::new(counts, ip("127.0.0.1"));
 
         handle_connection(
             server_stream,
@@ -197,7 +202,7 @@ mod tests {
         let sem = Arc::new(Semaphore::new(1));
         let permit = Arc::clone(&sem).acquire_owned().await.unwrap();
         let counts = Arc::new(parking_lot::RwLock::new(HashMap::new()));
-        let guard = IpConnGuard::new(counts, "127.0.0.1".to_string());
+        let guard = IpConnGuard::new(counts, ip("127.0.0.1"));
 
         handle_connection(
             server_stream,
@@ -249,7 +254,7 @@ mod tests {
         let sem = Arc::new(Semaphore::new(1));
         let permit = Arc::clone(&sem).acquire_owned().await.unwrap();
         let counts = Arc::new(parking_lot::RwLock::new(HashMap::new()));
-        let guard = IpConnGuard::new(counts, "127.0.0.1".to_string());
+        let guard = IpConnGuard::new(counts, ip("127.0.0.1"));
 
         handle_connection(
             server_stream,
@@ -302,7 +307,7 @@ mod tests {
         let sem = Arc::new(Semaphore::new(1));
         let permit = Arc::clone(&sem).acquire_owned().await.unwrap();
         let counts = Arc::new(parking_lot::RwLock::new(HashMap::new()));
-        let guard = IpConnGuard::new(counts, "127.0.0.1".to_string());
+        let guard = IpConnGuard::new(counts, ip("127.0.0.1"));
 
         handle_connection(
             server_stream,
@@ -346,7 +351,7 @@ mod tests {
         let sem = Arc::new(Semaphore::new(1));
         let permit = Arc::clone(&sem).acquire_owned().await.unwrap();
         let counts = Arc::new(parking_lot::RwLock::new(HashMap::new()));
-        let guard = IpConnGuard::new(counts, "127.0.0.1".to_string());
+        let guard = IpConnGuard::new(counts, ip("127.0.0.1"));
 
         handle_connection(
             server_stream,

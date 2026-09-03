@@ -357,8 +357,8 @@ impl<W: WafProcessor> ProxyServer<W> {
             ctx.site_id = Some(SiteId::new(self.site_id.clone()));
             ctx.client_ip = Some(client_ip.to_string());
             ctx.method = Some(method.to_string());
-            ctx.path = Some(path_for_waf.clone());
-            ctx.query = query_string.clone();
+            ctx.path = Some(path_for_waf);
+            ctx.query = query_string;
             ctx.user_agent = user_agent.clone();
 
             let waf_decision = self

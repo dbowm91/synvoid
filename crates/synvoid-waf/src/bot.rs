@@ -152,8 +152,12 @@ impl BotDetector {
     }
 
     pub fn check_ja3(&self, ja3_hash: &str) -> Option<BotDetectionResult> {
-        let hash_lower = ja3_hash.to_lowercase();
-        if self.known_bot_ja3_hashes.contains(&hash_lower) {
+        // Known hashes are stored lowercase; skip the allocation when the
+        // input is already lowercase (the common case for hex digests).
+        if self.known_bot_ja3_hashes.contains(ja3_hash)
+            || (ja3_hash.bytes().any(|b| b.is_ascii_uppercase())
+                && self.known_bot_ja3_hashes.contains(&ja3_hash.to_lowercase()))
+        {
             Some(BotDetectionResult::Blocked {
                 reason: "ja3_bot_fingerprint_matched".to_string(),
                 bot_type: "ja3".to_string(),
@@ -164,8 +168,12 @@ impl BotDetector {
     }
 
     pub fn check_ja4(&self, ja4_hash: &str) -> Option<BotDetectionResult> {
-        let hash_lower = ja4_hash.to_lowercase();
-        if self.known_bot_ja4_hashes.contains(&hash_lower) {
+        // Known hashes are stored lowercase; skip the allocation when the
+        // input is already lowercase (the common case for hex digests).
+        if self.known_bot_ja4_hashes.contains(ja4_hash)
+            || (ja4_hash.bytes().any(|b| b.is_ascii_uppercase())
+                && self.known_bot_ja4_hashes.contains(&ja4_hash.to_lowercase()))
+        {
             Some(BotDetectionResult::Blocked {
                 reason: "ja4_bot_fingerprint_matched".to_string(),
                 bot_type: "ja4".to_string(),
@@ -196,15 +204,23 @@ impl BotDetector {
             };
         }
 
-        let ua_lower = ua.to_lowercase();
+        // Only allocate a lowered copy when the UA actually contains
+        // uppercase bytes; known patterns are stored lowercase.
+        let ua_lower;
+        let ua_cmp: &str = if ua.bytes().any(|b| b.is_ascii_uppercase()) {
+            ua_lower = ua.to_lowercase();
+            &ua_lower
+        } else {
+            ua
+        };
 
-        if self.is_allowed_bot(&ua_lower) {
+        if self.is_allowed_bot(ua_cmp) {
             return BotDetectionResult::Allowed {
                 reason: "known_search_bot".to_string(),
             };
         }
 
-        if self.block_scrapers && self.is_scraper(&ua_lower) {
+        if self.block_scrapers && self.is_scraper(ua_cmp) {
             return BotDetectionResult::Tarpit {
                 reason: "scraper_detected".to_string(),
                 bot_type: "scraper".to_string(),
@@ -219,7 +235,7 @@ impl BotDetector {
         }
 
         let effective_block_ai = site_block_ai_crawlers.unwrap_or(self.block_ai_crawlers);
-        if effective_block_ai && self.is_ai_crawler(&ua_lower) {
+        if effective_block_ai && self.is_ai_crawler(ua_cmp) {
             return BotDetectionResult::Blocked {
                 reason: "ai_crawler_detected".to_string(),
                 bot_type: "ai".to_string(),
@@ -227,7 +243,7 @@ impl BotDetector {
         }
 
         if effective_block_ai {
-            self.warn_unknown_ai_pattern(ua, &ua_lower);
+            self.warn_unknown_ai_pattern(ua, ua_cmp);
         }
 
         BotDetectionResult::Allowed {

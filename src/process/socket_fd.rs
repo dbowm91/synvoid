@@ -277,8 +277,12 @@ pub fn create_listening_socket(port: u16, reuse_port: bool) -> Result<RawFd, Soc
         .map_err(nix_to_io_error)
         .map_err(SocketFDError::BindFailed)?;
 
-    let backlog = Backlog::new(1024)
-        .unwrap_or_else(|_| Backlog::new(128).expect("Backlog 128 should always be valid"));
+    let backlog = Backlog::new(1024).or_else(|_| Backlog::new(128)).map_err(|e| {
+        SocketFDError::ListenFailed(std::io::Error::other(format!(
+            "Invalid listen backlog: {}",
+            e
+        )))
+    })?;
     socket::listen(&fd, backlog)
         .map_err(nix_to_io_error)
         .map_err(SocketFDError::ListenFailed)?;
@@ -335,8 +339,12 @@ pub fn create_listening_socket_v6(port: u16, reuse_port: bool) -> Result<RawFd, 
         .map_err(nix_to_io_error)
         .map_err(SocketFDError::BindFailed)?;
 
-    let backlog = Backlog::new(1024)
-        .unwrap_or_else(|_| Backlog::new(128).expect("Backlog 128 should always be valid"));
+    let backlog = Backlog::new(1024).or_else(|_| Backlog::new(128)).map_err(|e| {
+        SocketFDError::ListenFailed(std::io::Error::other(format!(
+            "Invalid listen backlog: {}",
+            e
+        )))
+    })?;
     socket::listen(&fd, backlog)
         .map_err(nix_to_io_error)
         .map_err(SocketFDError::ListenFailed)?;

@@ -127,11 +127,12 @@ pub struct OrgKey {
 
 impl OrgKey {
     pub fn generate(issued_by: Option<String>) -> Self {
-        use rand::TryRngCore;
+        use rand::{RngCore, TryRngCore};
         let mut private_key = vec![0u8; 32];
-        rand::rngs::OsRng
-            .try_fill_bytes(&mut private_key)
-            .expect("RNG failure");
+        if let Err(e) = rand::rngs::OsRng.try_fill_bytes(&mut private_key) {
+            tracing::error!(error = %e, "OsRng failed generating org key; falling back to thread RNG");
+            rand::rng().fill_bytes(&mut private_key);
+        }
         let public_key = crate::cert::get_ed25519_public_key(&private_key)
             .expect("failed to derive Ed25519 public key");
 
@@ -688,11 +689,12 @@ pub fn is_mesh_name_allowed(name: &str) -> bool {
 }
 
 pub fn generate_invitation_token() -> String {
-    use rand::TryRngCore;
+    use rand::{RngCore, TryRngCore};
     let mut bytes = [0u8; 32];
-    rand::rngs::OsRng
-        .try_fill_bytes(&mut bytes)
-        .expect("RNG failure");
+    if let Err(e) = rand::rngs::OsRng.try_fill_bytes(&mut bytes) {
+        tracing::error!(error = %e, "OsRng failed generating invitation token; falling back to thread RNG");
+        rand::rng().fill_bytes(&mut bytes);
+    }
     hex::encode(bytes)
 }
 

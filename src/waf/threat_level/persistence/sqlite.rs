@@ -758,7 +758,6 @@ impl SqliteBackup {
 mod tests {
     use super::*;
     use std::env;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn test_sqlite_history_basic() {
@@ -768,10 +767,7 @@ mod tests {
         let history =
             SqliteHistory::new(Some(temp_dir.clone()), "test_site".to_string(), 60).unwrap();
 
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
+        let now = synvoid_utils::safe_unix_timestamp() as i64;
 
         for i in 0..5 {
             let sample = ThreatHistorySample {

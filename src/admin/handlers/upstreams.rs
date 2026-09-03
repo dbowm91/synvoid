@@ -165,8 +165,14 @@ async fn check_upstream_tcp(url: &str) -> bool {
         .unwrap_or(url);
 
     let (host, port) = if let Some((h, p)) = host_port.rsplit_once(':') {
-        let p = p.trim_end_matches('/').parse::<u16>().unwrap_or(80);
-        (h.trim_end_matches('/'), p)
+        let p = p.trim_end_matches('/');
+        match p.parse::<u16>() {
+            Ok(port) => (h.trim_end_matches('/'), port),
+            Err(_) => {
+                tracing::warn!(url = %url, port = %p, "Rejecting upstream health check: invalid port");
+                return false;
+            }
+        }
     } else {
         (host_port.trim_end_matches('/'), 80)
     };

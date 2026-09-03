@@ -87,25 +87,25 @@ struct OptionalMeshStartOutput {
 async fn create_mesh_pipeline(
     input: &WorkerMeshAttachmentInput<'_>,
 ) -> Result<MeshPipelineRuntime, BoxError> {
-    let mesh_transport = input
-        .mesh_transport
-        .clone()
-        .expect("mesh transport verified above");
+    let mesh_transport = input.mesh_transport.clone().ok_or_else(|| {
+        std::io::Error::other("mesh transport missing despite mesh feature being enabled")
+    })?;
 
     let mesh_status = input.state.mesh_status.clone();
 
+    let mesh_policy = input.state.mesh_policy.clone().ok_or_else(|| {
+        std::io::Error::other("mesh policy missing despite mesh transport being present")
+    })?;
     let (event_tx, coordinator, decision_rx) =
         crate::worker::mesh_supervision::create_supervision_pipeline(
             mesh_status.clone(),
-            input
-                .state
-                .mesh_policy
-                .clone()
-                .expect("mesh policy present when transport exists"),
+            mesh_policy,
         );
 
     {
-        let shutdown_rx = input.state.task_registry.lock().await.child_token();
+        // Scope the lock so the guard is dropped before spawning (never hold
+        // the registry lock across task spawn).
+        let shutdown_rx = { input.state.task_registry.lock().await.child_token() };
         let mut registry = input.state.task_registry.lock().await;
         let mut coord = coordinator;
         registry.spawn_critical("mesh_supervision_coordinator", async move {
@@ -116,7 +116,7 @@ async fn create_mesh_pipeline(
 
     {
         let exits = mesh_transport.subscribe_exits();
-        let shutdown_rx = input.state.task_registry.lock().await.child_token();
+        let shutdown_rx = { input.state.task_registry.lock().await.child_token() };
         let status = mesh_status.clone();
         let mut registry = input.state.task_registry.lock().await;
         registry.spawn_critical(
@@ -514,7 +514,7 @@ pub async fn attach_mesh(
             .state
             .mesh_policy
             .clone()
-            .expect("mesh policy present"),
+            .ok_or_else(|| std::io::Error::other("mesh policy missing at mesh startup"))?,
         decision_rx,
         startup_failure,
         active_mesh_support,

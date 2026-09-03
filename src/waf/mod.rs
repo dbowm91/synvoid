@@ -369,10 +369,11 @@ impl WafCore {
         // OK, but security audit expects an explicit OsRng contract for 32-byte
         // bearer secrets.
         {
-            use rand::TryRngCore;
-            rand::rngs::OsRng
-                .try_fill_bytes(&mut trust_token_key)
-                .expect("OsRng failure");
+            use rand::{RngCore, TryRngCore};
+            if let Err(e) = rand::rngs::OsRng.try_fill_bytes(&mut trust_token_key) {
+                tracing::error!(error = %e, "OsRng failed seeding trust-token key; falling back to thread RNG");
+                rand::rng().fill_bytes(&mut trust_token_key);
+            }
         }
 
         Self {

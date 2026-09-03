@@ -280,13 +280,22 @@ pub fn is_whitelisted_path(whitelist_patterns: Option<&Vec<String>>, path: &str)
     whitelist_patterns
         .map(|patterns| {
             patterns.iter().any(|pattern| {
-                WHITELIST_REGEX_CACHE
-                    .entry(pattern.clone())
-                    .or_insert_with(|| regex::Regex::new(pattern).ok())
-                    .value()
+                // Fast path: cache hit without holding a shard write lock.
+                if let Some(cached) = WHITELIST_REGEX_CACHE.get(pattern) {
+                    return cached
+                        .value()
+                        .as_ref()
+                        .map(|regex| regex.is_match(path))
+                        .unwrap_or(false);
+                }
+                // Compile outside the map lock, then insert.
+                let compiled = regex::Regex::new(pattern).ok();
+                let matched = compiled
                     .as_ref()
                     .map(|regex| regex.is_match(path))
-                    .unwrap_or(false)
+                    .unwrap_or(false);
+                WHITELIST_REGEX_CACHE.insert(pattern.clone(), compiled);
+                matched
             })
         })
         .unwrap_or(false)

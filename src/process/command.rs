@@ -90,7 +90,8 @@ impl CommandClient {
                         .get_status(StatusRequest {})
                         .await
                         .map_err(|e| CommandError::ServerError(e.to_string()))?;
-                    Ok(serde_json::to_string_pretty(&response.into_inner()).unwrap_or_default())
+                    Ok(serde_json::to_string_pretty(&response.into_inner())
+                        .map_err(|e| CommandError::ServerError(e.to_string()))?)
                 }
                 SupervisorCommand::ReloadConfig => {
                     let response = client
@@ -148,7 +149,8 @@ impl CommandClient {
             CommandResponse::Ok(msg) => Ok(msg),
             CommandResponse::Error(msg) => Err(CommandError::ServerError(msg)),
             CommandResponse::Status(status) => {
-                Ok(serde_json::to_string_pretty(&status).unwrap_or_default())
+                Ok(serde_json::to_string_pretty(&status)
+                    .map_err(|e| CommandError::ServerError(e.to_string()))?)
             }
         }
     }
@@ -184,7 +186,8 @@ impl CommandClient {
             CommandResponse::Ok(msg) => Ok(msg),
             CommandResponse::Error(msg) => Err(CommandError::ServerError(msg)),
             CommandResponse::Status(status) => {
-                Ok(serde_json::to_string_pretty(&status).unwrap_or_default())
+                Ok(serde_json::to_string_pretty(&status)
+                    .map_err(|e| CommandError::ServerError(e.to_string()))?)
             }
         }
     }

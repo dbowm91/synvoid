@@ -1,6 +1,6 @@
 use parking_lot::RwLock;
 use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -19,12 +19,12 @@ use synvoid_utils::current_timestamp;
 /// RAII guard that decrements per-IP connection count on drop.
 /// When the count reaches zero, the entry is removed from the map.
 pub(crate) struct IpConnGuard {
-    ip_counts: Arc<RwLock<HashMap<String, usize>>>,
-    ip_key: String,
+    ip_counts: Arc<RwLock<HashMap<IpAddr, usize>>>,
+    ip_key: IpAddr,
 }
 
 impl IpConnGuard {
-    pub(crate) fn new(ip_counts: Arc<RwLock<HashMap<String, usize>>>, ip_key: String) -> Self {
+    pub(crate) fn new(ip_counts: Arc<RwLock<HashMap<IpAddr, usize>>>, ip_key: IpAddr) -> Self {
         Self { ip_counts, ip_key }
     }
 }
@@ -48,7 +48,7 @@ pub struct PortHoneypotListener {
     current_port: Arc<RwLock<u16>>,
     active_connections: Arc<AtomicUsize>,
     shutdown_tx: broadcast::Sender<()>,
-    ip_connection_counts: Arc<RwLock<HashMap<String, usize>>>,
+    ip_connection_counts: Arc<RwLock<HashMap<IpAddr, usize>>>,
     global_semaphore: Arc<Semaphore>,
     ai_budget: Option<Arc<AiResponderBudget>>,
 }
@@ -148,7 +148,7 @@ impl PortHoneypotListener {
                 result = listener.accept() => {
                     match result {
                         Ok((stream, remote_addr)) => {
-                            let ip_key = remote_addr.ip().to_string();
+                            let ip_key = remote_addr.ip();
 
                             // Try to acquire a global semaphore permit
                             let global_permit = match Arc::clone(&self.global_semaphore).try_acquire_owned() {
@@ -168,7 +168,7 @@ impl PortHoneypotListener {
                             // under a single write lock to prevent TOCTOU bypass.
                             let admitted = {
                                 let mut counts = self.ip_connection_counts.write();
-                                let count = counts.entry(ip_key.clone()).or_insert(0);
+                                let count = counts.entry(ip_key).or_insert(0);
                                 if *count >= self.config.max_connections_per_ip {
                                     false
                                 } else {

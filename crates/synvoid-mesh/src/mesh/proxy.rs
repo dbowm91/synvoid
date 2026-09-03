@@ -25,12 +25,14 @@ static WHITELIST_REGEX_CACHE: LazyLock<DashMap<String, Option<regex::Regex>>> =
     LazyLock::new(DashMap::new);
 
 pub fn get_cached_regex(pattern: &str) -> Option<regex::Regex> {
-    WHITELIST_REGEX_CACHE
-        .entry(pattern.to_string())
-        .or_insert_with(|| regex::Regex::new(pattern).ok())
-        .value()
-        .as_ref()
-        .cloned()
+    // Fast path: cache hit without holding a shard write lock.
+    if let Some(cached) = WHITELIST_REGEX_CACHE.get(pattern) {
+        return cached.value().as_ref().cloned();
+    }
+    // Compile outside the map lock, then insert.
+    let compiled = regex::Regex::new(pattern).ok();
+    WHITELIST_REGEX_CACHE.insert(pattern.to_string(), compiled.clone());
+    compiled
 }
 
 use crate::config::MeshConfig;
