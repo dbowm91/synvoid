@@ -86,9 +86,20 @@ state.trailing_window = BufferPool::acquire(0);
 pub enum StreamingWafDecision {
     Continue,           // Normal operation, continue
     Block(u16, String), // Attack detected, block with status code and reason
-    NeedMore,           // Need more data (rarely used)
 }
 ```
+(Canonical — there is no `NeedMore` variant. The crate-internal
+`synvoid_waf` decision is adapted to the shared
+`synvoid_core::streaming_waf::StreamingWafDecision` at the
+`StreamingWafCore::scan_chunk` boundary so `synvoid-http-client` can depend
+on it without a cycle.)
+
+Enforcement mapping: chunk outcomes project onto the canonical contract via
+`synvoid_waf::enforcement::streaming_candidate`
+(`Continue`→no claim, `Block`→`Block/StreamingBodyScan/body_blocked`), and
+buffered body-policy failures via `BodyPolicyError::candidate()` in
+`crates/synvoid-http/src/body_policy.rs` (both variants terminal,
+fail-closed). See `architecture/enforcement_decision_contract.md`.
 
 ### 4. AttackDetector Integration
 Add `check_body_only_via_normalized()` to `AttackDetector`:

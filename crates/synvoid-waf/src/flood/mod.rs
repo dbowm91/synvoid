@@ -229,7 +229,10 @@ impl FloodProtector {
     }
 
     pub fn is_in_blackhole(&self) -> bool {
-        if !self.global_blackhole.is_running() {
+        // `global_blackhole` follows the workspace convention (see
+        // `src/waf/ratelimit/core.rs`): `stop()` engages blackhole mode, so a
+        // *stopped* flag means blackhole is active.
+        if self.global_blackhole.is_running() {
             return false;
         }
 
@@ -249,7 +252,7 @@ impl FloodProtector {
             syn_stats: self.syn_protector.get_stats(),
             connection_stats: self.connection_limiter.get_stats(),
             udp_stats: self.udp_protector.get_stats(),
-            in_blackhole: self.global_blackhole.is_running(),
+            in_blackhole: !self.global_blackhole.is_running(),
             backend: self.syn_protector.backend_type(),
         }
     }
@@ -266,4 +269,44 @@ pub struct FloodStats {
     pub udp_stats: UdpFloodStats,
     pub in_blackhole: bool,
     pub backend: FloodBackend,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::{IpAddr, Ipv4Addr};
+
+    const TEST_IP: IpAddr = IpAddr::V4(Ipv4Addr::new(192, 0, 2, 7));
+
+    #[test]
+    fn blackhole_engages_and_releases() {
+        // Regression test: `enter_blackhole` must make TCP/UDP checks deny
+        // until `exit_blackhole`. (Previously the flag polarity was
+        // inverted and blackhole mode could never engage — fail-open.)
+        let protector = FloodProtector::new(FloodConfig::default());
+        assert!(!protector.is_in_blackhole());
+        assert_eq!(
+            protector.check_tcp_connection(TEST_IP),
+            FloodDecision::Allowed
+        );
+        assert_eq!(protector.check_udp(TEST_IP), FloodDecision::Allowed);
+
+        protector.enter_blackhole();
+        assert!(protector.is_in_blackhole());
+        assert!(protector.get_stats().in_blackhole);
+        assert_eq!(
+            protector.check_tcp_connection(TEST_IP),
+            FloodDecision::Blackholed
+        );
+        assert_eq!(protector.check_udp(TEST_IP), FloodDecision::Blackholed);
+
+        protector.exit_blackhole();
+        assert!(!protector.is_in_blackhole());
+        assert!(!protector.get_stats().in_blackhole);
+        assert_eq!(
+            protector.check_tcp_connection(TEST_IP),
+            FloodDecision::Allowed
+        );
+        assert_eq!(protector.check_udp(TEST_IP), FloodDecision::Allowed);
+    }
 }

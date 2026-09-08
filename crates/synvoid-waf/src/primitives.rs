@@ -17,6 +17,33 @@ pub enum WafDecision {
     },
 }
 
+impl WafDecision {
+    /// Lossless transport-neutral classification of this directive.
+    ///
+    /// The rich payload (status code, message, HTML, cookies) stays on the
+    /// directive for response rendering; this mapping exposes only the
+    /// enforcement class so detectors and adapters compose through the
+    /// canonical contract (`synvoid_core::enforcement`).
+    pub const fn class(&self) -> synvoid_core::enforcement::EnforcementClass {
+        use synvoid_core::enforcement::EnforcementClass;
+        match self {
+            Self::Pass => EnforcementClass::Allow,
+            Self::Block(..) => EnforcementClass::Block,
+            Self::Drop => EnforcementClass::Drop,
+            Self::Tarpit(..) => EnforcementClass::Tarpit,
+            Self::Stall => EnforcementClass::Stall,
+            Self::Challenge(..) | Self::ChallengeWithCookie { .. } => EnforcementClass::Challenge,
+        }
+    }
+}
+
+/// Re-export the canonical contract for request-path consumers that only
+/// depend on `synvoid-waf`.
+pub use synvoid_core::enforcement::{
+    reduce, reduce_all, EnforcementCandidate, EnforcementClass, EnforcementReason,
+    EnforcementSource,
+};
+
 #[derive(Clone, Debug, Default)]
 pub struct TestModeConfig {
     pub enabled: bool,

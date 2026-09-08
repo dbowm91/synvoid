@@ -47,6 +47,7 @@ impl HoneypotWriter {
         &self.config
     }
 
+    #[allow(clippy::result_large_err)]
     pub async fn write_record(
         &self,
         mut record: HoneypotRecord,

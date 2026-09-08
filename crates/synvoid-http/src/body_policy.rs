@@ -11,6 +11,31 @@ pub enum BodyPolicyError {
     BodyTooLarge,
 }
 
+impl BodyPolicyError {
+    /// Project a body-policy failure onto the canonical enforcement contract.
+    ///
+    /// Both variants deny the request (fail closed): `BlockedByWaf` renders
+    /// 403, `BodyTooLarge` renders 413. The mapping is exhaustive so a new
+    /// variant cannot silently become an allow.
+    pub const fn candidate(&self) -> synvoid_core::enforcement::EnforcementCandidate {
+        use synvoid_core::enforcement::{
+            EnforcementCandidate, EnforcementClass, EnforcementReason, EnforcementSource,
+        };
+        match self {
+            Self::BlockedByWaf => EnforcementCandidate::new(
+                EnforcementClass::Block,
+                EnforcementSource::StreamingBodyScan,
+                EnforcementReason::BodyBlocked,
+            ),
+            Self::BodyTooLarge => EnforcementCandidate::new(
+                EnforcementClass::Block,
+                EnforcementSource::StreamingBodyScan,
+                EnforcementReason::BodyTooLarge,
+            ),
+        }
+    }
+}
+
 pub trait RequestBodyWaf {
     fn streaming(&self) -> Option<Box<dyn crate::shared_handler::StreamingWafScanner>>;
     fn check_request_body(&self, chunk: &[u8]) -> (bool, Option<synvoid_waf::WafDecision>);
@@ -99,4 +124,30 @@ where
     }
 
     Ok((full_body, request_body_size))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use synvoid_core::enforcement::{EnforcementClass, EnforcementSource};
+
+    #[test]
+    fn body_policy_errors_are_terminal_and_fail_closed() {
+        // Both variants must deny: a new BodyPolicyError variant that maps
+        // to Allow would be a fail-open regression.
+        for error in [BodyPolicyError::BlockedByWaf, BodyPolicyError::BodyTooLarge] {
+            let candidate = error.candidate();
+            assert_eq!(candidate.class, EnforcementClass::Block);
+            assert!(candidate.class.is_terminal());
+            assert_eq!(candidate.source, EnforcementSource::StreamingBodyScan);
+        }
+        assert_eq!(
+            BodyPolicyError::BlockedByWaf.candidate().reason.as_str(),
+            "body_blocked"
+        );
+        assert_eq!(
+            BodyPolicyError::BodyTooLarge.candidate().reason.as_str(),
+            "body_too_large"
+        );
+    }
 }

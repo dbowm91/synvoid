@@ -26,7 +26,7 @@ The `Http3Server` manages the QUIC endpoint and H3 connection lifecycle.
 1. **QUIC Accept**: New connections are accepted and passed to `handle_quic_connection`.
 2. **Flood Protection**: Early IP-based filtering via `FloodProtector`.
 3. **H3 Handshake**: Establishing the H3 connection over QUIC.
-4. **WAF Scanning**: full request body collection (up to `max_request_size`) and scanning via `WafCore::check_request_full`.
+4. **WAF Scanning**: full request body collection (up to `max_request_size`) and scanning via `WafCore::check_request_full`. Dispatch of the resulting `WafDecision` is exhaustive per the enforcement decision contract (`architecture/enforcement_decision_contract.md`); HTTP/3 renders via `maybe_handle_http3_waf_decision` in `crates/synvoid-http/src/http3_waf_dispatch.rs`.
 5. **Routing**: Host and path-based routing via `Router`.
 6. **Connection Limiting**: Per-site and per-IP connection limits enforced.
 7. **Proxying**: Actual forwarding using `crate::http_client::send_request_streaming`.

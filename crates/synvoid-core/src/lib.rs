@@ -7,6 +7,7 @@
 pub mod admin_mutation;
 pub mod block_store;
 pub mod drain;
+pub mod enforcement;
 pub mod error;
 pub mod ids;
 pub mod metrics;

@@ -7,6 +7,12 @@ use arc_swap::ArcSwapOption;
 use async_trait::async_trait;
 use http::HeaderMap;
 pub use synvoid_block_store::{BlockProvenance, BlockProvenanceKind};
+use synvoid_core::enforcement::{
+    EnforcementCandidate, EnforcementClass, EnforcementReason, EnforcementSource,
+};
+use synvoid_waf::enforcement::{
+    attack_candidate, bot_candidate, endpoint_candidate, flood_candidate,
+};
 
 pub mod adapters;
 pub mod asn_tracker;
@@ -63,6 +69,66 @@ pub use ratelimit::{RateLimitResult, RateLimiterManager};
 pub use crate::mesh::yara_rules::YaraRulesManager;
 
 pub use synvoid_waf::primitives::{TestModeConfig, WafConfig, WafDecision};
+
+/// One staged policy outcome: the rendered directive plus its canonical
+/// candidate for deterministic reduction.
+///
+/// The directive carries the response payload (status, HTML, cookies); the
+/// candidate carries only the transport-neutral class, source, and bounded
+/// reason. Reduction selects the winner; dispatch renders the winner's
+/// directive.
+struct StagedOutcome {
+    decision: WafDecision,
+    candidate: synvoid_core::enforcement::EnforcementCandidate,
+}
+
+impl StagedOutcome {
+    fn new(
+        decision: WafDecision,
+        candidate: synvoid_core::enforcement::EnforcementCandidate,
+    ) -> Self {
+        Self {
+            decision,
+            candidate,
+        }
+    }
+}
+
+/// Fold a staged outcome into the running winner with the canonical reducer.
+///
+/// Allocation-free: the winner is always one of the inputs, so the common
+/// allow path (all `None`) never touches the heap.
+fn fold_outcome(best: Option<StagedOutcome>, next: Option<StagedOutcome>) -> Option<StagedOutcome> {
+    match (best, next) {
+        (None, next) => next,
+        (best, None) => best,
+        (Some(current), Some(candidate)) => {
+            let winner = synvoid_core::enforcement::reduce(current.candidate, candidate.candidate);
+            if winner == current.candidate {
+                Some(current)
+            } else {
+                Some(candidate)
+            }
+        }
+    }
+}
+
+/// Emit the terminal-outcome observability for the reduced winner.
+///
+/// Source/class/reason labels are frozen bounded codes from the canonical
+/// contract — never IPs, URLs, user agents, or rule text. The allow path
+/// emits nothing.
+fn record_enforcement_outcome(candidate: &synvoid_core::enforcement::EnforcementCandidate) {
+    metrics::counter!("synvoid_request_enforcement_source_total", "source" => candidate.source.as_str())
+        .increment(1);
+    metrics::counter!(
+        "synvoid_request_enforcement_reason_total",
+        "source" => candidate.source.as_str(),
+        "class" => candidate.class.as_str(),
+        "reason" => candidate.reason.as_str()
+    )
+    .increment(1);
+}
 
 pub struct RateLimitConfigStore {
     pub ip: crate::config::defaults::IpRateLimitConfig,
@@ -407,6 +473,28 @@ impl WafCore {
         }
     }
 
+    /// Full request enforcement pipeline.
+    ///
+    /// Policy is produced in explicit stages and composed with the canonical
+    /// reducer (`synvoid_core::enforcement`), so precedence is data + tests
+    /// rather than incidental call order. See
+    /// `architecture/enforcement_decision_contract.md`.
+    ///
+    /// Stages:
+    ///
+    /// 1. admission state that may safely short-circuit (pre-existing
+    ///    block/blackhole). The block store itself is checked at the worker
+    ///    composition root, not here; `check_block_store` is a stub that
+    ///    yields no claim.
+    /// 2. cheap local policy checks (rate limit, endpoint policy).
+    /// 3. challenge/bot/rate/flood candidates (honeypot, bot, flood).
+    /// 4. expensive attack/body inspection — skipped when stages 1–3 already
+    ///    selected `Drop` or `Block`, which attack inspection (Block-class
+    ///    only) cannot outrank. Documented resource-protection short-circuit:
+    ///    the interim winner's provenance is retained.
+    /// 5. deterministic reduction of all claimed candidates.
+    /// 6. response rendering/dispatch from the winner's directive at the HTTP
+    ///    dispatch layer.
     pub async fn check_request_full(
         &self,
         site_id: Option<&str>,
@@ -421,47 +509,171 @@ impl WafCore {
         site_bot_config: Option<&crate::config::site::SiteBotConfig>,
         _ctx: Option<&RequestServices>,
     ) -> WafDecision {
-        if let Some(decision) = self.check_block_store(ip, site_id) {
-            metrics::counter!("synvoid_request_enforcement_source_total", "source" => "block_store").increment(1);
-            return decision;
+        // Stage 1: admission state (stub — composition root owns block store).
+        let _admission: Option<WafDecision> = self.check_block_store(ip, site_id);
+        let mut best: Option<StagedOutcome> = None;
+
+        // Stage 2: cheap local policy checks.
+        best = fold_outcome(best, self.check_rate_limits(ip, site_id).await);
+        best = fold_outcome(best, self.check_endpoint_block(path, method));
+
+        // Stage 3: challenge/bot/rate/flood candidates.
+        best = fold_outcome(best, self.check_honeypot(ip, path, method, ua));
+        best = fold_outcome(
+            best,
+            self.check_bot_protection(ip, path, ua, ja4_hash, site_bot_config),
+        );
+        best = fold_outcome(best, self.check_flood(ip));
+
+        // Stage 4: expensive attack inspection (skipped on interim Drop/Block).
+        let interim_is_denied = matches!(
+            best,
+            Some(ref outcome)
+                if matches!(
+                    outcome.candidate.class,
+                    synvoid_core::enforcement::EnforcementClass::Drop
+                        | synvoid_core::enforcement::EnforcementClass::Block
+                )
+        );
+        if !interim_is_denied {
+            best = fold_outcome(
+                best,
+                self.check_attack(ip, method, path, query, headers, body)
+                    .await,
+            );
         }
 
-        if let Some(decision) = self.check_rate_limits(ip, site_id).await {
-            metrics::counter!("synvoid_request_enforcement_source_total", "source" => "rate_limit")
-                .increment(1);
-            return decision;
-        }
-
-        if let Some(decision) = self.check_endpoint_block(path, method) {
-            metrics::counter!("synvoid_request_enforcement_source_total", "source" => "endpoint_block").increment(1);
-            return decision;
-        }
-
-        if let Some(decision) = self.check_honeypot(ip, path, method, ua) {
-            metrics::counter!("synvoid_request_enforcement_source_total", "source" => "honeypot_hit").increment(1);
-            return decision;
-        }
-
-        if let Some(decision) = self.check_bot_protection(ip, path, ua, ja4_hash, site_bot_config) {
-            metrics::counter!("synvoid_request_enforcement_source_total", "source" => "bot_protection").increment(1);
-            return decision;
-        }
-
-        if let Some(ref protector) = self.flood_protector {
-            match protector.check_tcp_connection(ip) {
-                FloodDecision::RateLimited => {
-                    metrics::counter!("synvoid_request_enforcement_source_total", "source" => "flood_protection").increment(1);
-                    return WafDecision::Block(429, "Rate Limited".to_string());
-                }
-                FloodDecision::Blackholed => {
-                    metrics::counter!("synvoid_request_enforcement_source_total", "source" => "flood_protection").increment(1);
-                    return WafDecision::Drop;
-                }
-                FloodDecision::Allowed => {}
+        // Stage 5: deterministic reduction already folded above; observe.
+        // Stage 6 (rendering) happens at the dispatch layer.
+        match best {
+            None => WafDecision::Pass,
+            Some(outcome) => {
+                record_enforcement_outcome(&outcome.candidate);
+                outcome.decision
             }
         }
+    }
 
-        // Parallel Attack Detection
+    pub async fn check_request(
+        &self,
+        site_id: Option<&str>,
+        ip: IpAddr,
+        method: &str,
+        path: &str,
+        ua: Option<&str>,
+    ) -> WafDecision {
+        let headers = http::HeaderMap::new();
+        self.check_request_full(
+            site_id, ip, method, path, None, &headers, None, ua, None, None, None,
+        )
+        .await
+    }
+
+    async fn check_rate_limits(&self, ip: IpAddr, site_id: Option<&str>) -> Option<StagedOutcome> {
+        let result = self.rate_limiter.check_rate_limit(site_id, ip).await;
+        match result {
+            RateLimitResult::Allowed => None,
+            RateLimitResult::Limited {
+                limit_type,
+                retry_after_millis,
+            } => {
+                tracing::info!(
+                    "Rate limiting IP {}: {} (site: {:?}, retry after: {}ms)",
+                    ip,
+                    limit_type,
+                    site_id.unwrap_or("global"),
+                    retry_after_millis
+                );
+
+                let threat_level = self
+                    .threat_level
+                    .as_ref()
+                    .map(|tl| tl.get_level().as_u8())
+                    .unwrap_or(1);
+
+                let candidate = EnforcementCandidate::new(
+                    EnforcementClass::Block,
+                    EnforcementSource::RateLimit,
+                    EnforcementReason::RateLimited,
+                );
+
+                if threat_level >= 2 {
+                    if let Some(decision) = self.maybe_escalate_and_block(
+                        ip,
+                        "rate_limit",
+                        threat_level,
+                        429,
+                        "Too Many Requests",
+                    ) {
+                        return Some(StagedOutcome::new(decision, candidate));
+                    }
+                }
+
+                Some(StagedOutcome::new(
+                    WafDecision::Block(429, "Too Many Requests".to_string()),
+                    candidate,
+                ))
+            }
+            RateLimitResult::Blackholed => Some(StagedOutcome::new(
+                WafDecision::Drop,
+                EnforcementCandidate::new(
+                    EnforcementClass::Drop,
+                    EnforcementSource::RateLimit,
+                    EnforcementReason::RateLimited,
+                ),
+            )),
+        }
+    }
+
+    /// Block-store is checked in the worker composition root, not here.
+    /// See `architecture/worker_data_plane_composition_root.md`.
+    /// This stub always returns `None` and exists only to preserve the
+    /// historical call site in `check_request_full`.
+    fn check_block_store(&self, _ip: IpAddr, _site_id: Option<&str>) -> Option<WafDecision> {
+        None
+    }
+
+    fn check_endpoint_block(&self, path: &str, method: &str) -> Option<StagedOutcome> {
+        let result = self.endpoint_blocker.check(path, method);
+        let candidate = endpoint_candidate(&result)?;
+        match result {
+            EndpointCheckResult::Allowed => None,
+            EndpointCheckResult::Blocked {
+                response_code,
+                html,
+                ..
+            } => Some(StagedOutcome::new(
+                WafDecision::Block(response_code, html.unwrap_or_default()),
+                candidate,
+            )),
+        }
+    }
+
+    /// Stage 3 flood candidate. The candidate mapping is single-sourced from
+    /// `synvoid_waf::enforcement::flood_candidate`; rendering preserves the
+    /// historical 429/`Drop` outcomes.
+    fn check_flood(&self, ip: IpAddr) -> Option<StagedOutcome> {
+        let protector = self.flood_protector.as_ref()?;
+        let flood = protector.check_tcp_connection(ip);
+        let candidate = flood_candidate(flood)?;
+        let decision = match flood {
+            FloodDecision::Allowed => return None,
+            FloodDecision::RateLimited => WafDecision::Block(429, "Rate Limited".to_string()),
+            FloodDecision::Blackholed => WafDecision::Drop,
+        };
+        Some(StagedOutcome::new(decision, candidate))
+    }
+
+    /// Stage 4 expensive attack inspection. Produces Block-class claims only.
+    async fn check_attack(
+        &self,
+        ip: IpAddr,
+        method: &str,
+        path: &str,
+        query: Option<&str>,
+        headers: &http::HeaderMap,
+        body: Option<&[u8]>,
+    ) -> Option<StagedOutcome> {
         if let Some(ad) = self.attack_detector.load().as_ref() {
             let http_method =
                 http::Method::from_bytes(method.as_bytes()).unwrap_or(http::Method::GET);
@@ -487,87 +699,13 @@ impl WafCore {
                     violation_tracker.record_violation(ip, "attack_detected", 3);
                 }
 
-                metrics::counter!("synvoid_request_enforcement_source_total", "source" => "attack_detection").increment(1);
-                return WafDecision::Block(403, "Attack Detected".to_string());
+                return Some(StagedOutcome::new(
+                    WafDecision::Block(403, "Attack Detected".to_string()),
+                    attack_candidate(&res),
+                ));
             }
         }
-
-        WafDecision::Pass
-    }
-
-    pub async fn check_request(
-        &self,
-        site_id: Option<&str>,
-        ip: IpAddr,
-        method: &str,
-        path: &str,
-        ua: Option<&str>,
-    ) -> WafDecision {
-        let headers = http::HeaderMap::new();
-        self.check_request_full(
-            site_id, ip, method, path, None, &headers, None, ua, None, None, None,
-        )
-        .await
-    }
-
-    async fn check_rate_limits(&self, ip: IpAddr, site_id: Option<&str>) -> Option<WafDecision> {
-        let result = self.rate_limiter.check_rate_limit(site_id, ip).await;
-        match result {
-            RateLimitResult::Allowed => None,
-            RateLimitResult::Limited {
-                limit_type,
-                retry_after_millis,
-            } => {
-                tracing::info!(
-                    "Rate limiting IP {}: {} (site: {:?}, retry after: {}ms)",
-                    ip,
-                    limit_type,
-                    site_id.unwrap_or("global"),
-                    retry_after_millis
-                );
-
-                let threat_level = self
-                    .threat_level
-                    .as_ref()
-                    .map(|tl| tl.get_level().as_u8())
-                    .unwrap_or(1);
-
-                if threat_level >= 2 {
-                    if let Some(decision) = self.maybe_escalate_and_block(
-                        ip,
-                        "rate_limit",
-                        threat_level,
-                        429,
-                        "Too Many Requests",
-                    ) {
-                        return Some(decision);
-                    }
-                }
-
-                Some(WafDecision::Block(429, "Too Many Requests".to_string()))
-            }
-            RateLimitResult::Blackholed => Some(WafDecision::Drop),
-        }
-    }
-
-    /// Block-store is checked in the worker composition root, not here.
-    /// See `architecture/worker_data_plane_composition_root.md`.
-    /// This stub always returns `None` and exists only to preserve the
-    /// historical call site in `check_request_full`.
-    fn check_block_store(&self, _ip: IpAddr, _site_id: Option<&str>) -> Option<WafDecision> {
         None
-    }
-
-    fn check_endpoint_block(&self, path: &str, method: &str) -> Option<WafDecision> {
-        let result = self.endpoint_blocker.check(path, method);
-        match result {
-            EndpointCheckResult::Allowed => None,
-            EndpointCheckResult::Blocked {
-                response_code,
-                html,
-                ..
-            } => Some(WafDecision::Block(response_code, html.unwrap_or_default())),
-        }
     }
 
     fn check_honeypot(
@@ -576,7 +714,7 @@ impl WafCore {
         path: &str,
         _method: &str,
         user_agent: Option<&str>,
-    ) -> Option<WafDecision> {
+    ) -> Option<StagedOutcome> {
         if let Some(matched) = self.sensitive_endpoint_manager.check(path) {
             tracing::info!(
                 "Honeypot hit: IP {} accessed sensitive endpoint {} (matched: {}) (UA: {:?})",
@@ -597,10 +735,24 @@ impl WafCore {
                 403,
                 "Access Denied",
             ) {
-                return Some(decision);
+                return Some(StagedOutcome::new(
+                    decision,
+                    EnforcementCandidate::new(
+                        EnforcementClass::Block,
+                        EnforcementSource::Honeypot,
+                        EnforcementReason::HoneypotHit,
+                    ),
+                ));
             }
 
-            return Some(WafDecision::Stall);
+            return Some(StagedOutcome::new(
+                WafDecision::Stall,
+                EnforcementCandidate::new(
+                    EnforcementClass::Stall,
+                    EnforcementSource::Honeypot,
+                    EnforcementReason::HoneypotHit,
+                ),
+            ));
         }
         None
     }
@@ -612,13 +764,16 @@ impl WafCore {
         user_agent: Option<&str>,
         ja4_hash: Option<&str>,
         site_bot_config: Option<&crate::config::site::SiteBotConfig>,
-    ) -> Option<WafDecision> {
+    ) -> Option<StagedOutcome> {
         let block_ai = site_bot_config.and_then(|c| c.block_ai_crawlers);
 
         // Use full fingerprinting check (JA3 is None here, JA4 is passed)
         let bot_result = self
             .bot_detector
             .check_with_fingerprints(user_agent, block_ai, None, ja4_hash);
+
+        // Canonical candidate is single-sourced from the detector mapping.
+        let candidate = bot_candidate(&bot_result);
 
         match bot_result {
             BotDetectionResult::Blocked { reason, .. } => {
@@ -630,7 +785,10 @@ impl WafCore {
                     ja4_hash
                 );
                 crate::metrics::record_attack_type("Bots");
-                Some(WafDecision::Block(403, "Forbidden".to_string()))
+                Some(StagedOutcome::new(
+                    WafDecision::Block(403, "Forbidden".to_string()),
+                    candidate.expect("blocked bot must yield a candidate"),
+                ))
             }
             BotDetectionResult::Tarpit { reason, .. } => {
                 tracing::info!(
@@ -640,7 +798,10 @@ impl WafCore {
                     user_agent,
                     ja4_hash
                 );
-                Some(WafDecision::Tarpit(path.to_string()))
+                Some(StagedOutcome::new(
+                    WafDecision::Tarpit(path.to_string()),
+                    candidate.expect("tarpitted scraper must yield a candidate"),
+                ))
             }
             BotDetectionResult::Allowed { .. } => {
                 // Suspicious if it's a known automated tool but not explicitly blocked
@@ -656,18 +817,31 @@ impl WafCore {
                     let (html, session_id) = self
                         .challenge_manager
                         .generate_challenge_page(&client_ip, Some(path));
+                    let candidate = EnforcementCandidate::new(
+                        EnforcementClass::Challenge,
+                        EnforcementSource::BotPolicy,
+                        EnforcementReason::ChallengeRequired,
+                    );
                     if let Some(sid) = session_id {
-                        return Some(WafDecision::ChallengeWithCookie {
-                            challenge_type: self.challenge_manager.get_challenge_type(),
-                            html,
-                            session_cookie_name: self.challenge_manager.css_session_cookie_name(),
-                            session_cookie_value: sid,
-                            session_cookie_max_age: self.challenge_manager.css_window_secs(),
-                        });
+                        return Some(StagedOutcome::new(
+                            WafDecision::ChallengeWithCookie {
+                                challenge_type: self.challenge_manager.get_challenge_type(),
+                                html,
+                                session_cookie_name: self
+                                    .challenge_manager
+                                    .css_session_cookie_name(),
+                                session_cookie_value: sid,
+                                session_cookie_max_age: self.challenge_manager.css_window_secs(),
+                            },
+                            candidate,
+                        ));
                     } else {
-                        return Some(WafDecision::Challenge(
-                            self.challenge_manager.get_challenge_type(),
-                            html,
+                        return Some(StagedOutcome::new(
+                            WafDecision::Challenge(
+                                self.challenge_manager.get_challenge_type(),
+                                html,
+                            ),
+                            candidate,
                         ));
                     }
                 }
@@ -701,6 +875,7 @@ impl WafCore {
         user_agent: Option<&str>,
     ) -> Option<WafDecision> {
         self.check_honeypot(ip, path, method, user_agent)
+            .map(|outcome| outcome.decision)
     }
 
     /// Compatibility shim — always returns `WafDecision::Pass`.
@@ -1088,4 +1263,252 @@ pub fn get_yara_rules() -> Option<Arc<crate::mesh::YaraRulesManager>> {
 #[cfg(not(feature = "mesh"))]
 pub fn get_yara_rules() -> Option<Arc<()>> {
     None
+}
+
+#[cfg(test)]
+mod enforcement_pipeline_tests {
+    use super::*;
+    use std::net::{IpAddr, Ipv4Addr};
+
+    use crate::config::defaults::{GlobalRateLimitConfig, IpRateLimitConfig};
+    use crate::config::limits::RateLimitMemoryConfig;
+    use crate::config::traffic::BandwidthConfig;
+
+    const NORMAL_UA: &str =
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+    const TEST_IP: IpAddr = IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1));
+
+    fn test_waf_core(ip_rate: IpRateLimitConfig) -> WafCore {
+        WafCore::new(WafCoreConfig {
+            rate_config: RateLimitConfigStore {
+                ip: ip_rate,
+                global: GlobalRateLimitConfig {
+                    per_second: 10_000,
+                    per_minute: 100_000,
+                    per_5min: 500_000,
+                    max_connections: 10_000,
+                },
+                cleanup_interval_secs: 0,
+            },
+            memory_config: RateLimitMemoryConfig::default(),
+            bot_config: BotDefaults::default(),
+            endpoint_config: BlockedDefaults::default(),
+            waf_config: WafConfig::new(
+                false,
+                false,
+                false,
+                "/login".to_string(),
+                false,
+                false,
+                TestModeConfig::default(),
+                3600,
+            ),
+            whitelist: Vec::new(),
+            attack_detection_config: Some(AttackDetectionConfig::default()),
+            auth_manager: None,
+            threat_level_config: None,
+            ip_feed_config: None,
+            probe_config: None,
+            suspicious_words_config: None,
+            upstream_errors_config: None,
+            traffic_shaping_config: None,
+            bandwidth_config: BandwidthConfig::default(),
+            asn_scraping_config: None,
+            geoip: None,
+            data_dir: Some(std::env::temp_dir().join("synvoid-enforcement-pipeline-test")),
+            test_mode: TestModeConfig::default(),
+            tarpit_defaults: None,
+        })
+    }
+
+    fn permissive_ip_rate() -> IpRateLimitConfig {
+        IpRateLimitConfig {
+            per_second: 10_000,
+            per_minute: 100_000,
+            per_5min: 500_000,
+            per_10min: 1_000_000,
+            per_hour: 5_000_000,
+            per_day: 10_000_000,
+            burst: 1_000,
+        }
+    }
+
+    fn headers() -> http::HeaderMap {
+        http::HeaderMap::new()
+    }
+
+    #[test]
+    fn fold_outcome_allow_never_erases_terminal() {
+        use synvoid_core::enforcement as e;
+        let terminal = StagedOutcome::new(
+            WafDecision::Block(429, "limited".to_string()),
+            e::EnforcementCandidate::new(
+                e::EnforcementClass::Block,
+                e::EnforcementSource::RateLimit,
+                e::EnforcementReason::RateLimited,
+            ),
+        );
+        // StagedOutcome is not Clone; rebuild the allow-side as None (no
+        // claim), which is how the pipeline represents allow.
+        let won = fold_outcome(Some(terminal), None).expect("terminal must survive");
+        assert!(matches!(won.decision, WafDecision::Block(429, _)));
+        assert_eq!(won.candidate.class, e::EnforcementClass::Block);
+    }
+
+    #[test]
+    fn fold_outcome_higher_precedence_wins_in_either_order() {
+        use synvoid_core::enforcement as e;
+        let mk = |class| {
+            StagedOutcome::new(
+                WafDecision::Stall,
+                e::EnforcementCandidate::new(
+                    class,
+                    e::EnforcementSource::Honeypot,
+                    e::EnforcementReason::HoneypotHit,
+                ),
+            )
+        };
+        // Stall vs Block: Block must win regardless of fold order. Rebuild
+        // (StagedOutcome is not Clone) for the reversed fold.
+        let fwd = fold_outcome(
+            Some(mk(e::EnforcementClass::Stall)),
+            Some(mk(e::EnforcementClass::Block)),
+        );
+        assert_eq!(
+            fwd.expect("claim").candidate.class,
+            e::EnforcementClass::Block
+        );
+        let rev = fold_outcome(
+            Some(mk(e::EnforcementClass::Block)),
+            Some(mk(e::EnforcementClass::Stall)),
+        );
+        assert_eq!(
+            rev.expect("claim").candidate.class,
+            e::EnforcementClass::Block
+        );
+    }
+
+    #[tokio::test]
+    async fn flood_drop_outranks_rate_limit_block() {
+        // B1: rate-limit Block (429) and flood-blackhole Drop claimed
+        // together must reduce to Drop. Legacy call order returned the rate
+        // block because it ran first.
+        let core = test_waf_core(IpRateLimitConfig {
+            per_second: 1,
+            per_minute: 10,
+            per_5min: 50,
+            per_10min: 100,
+            per_hour: 500,
+            per_day: 1000,
+            burst: 0,
+        });
+        let mut core = core;
+        let protector = Arc::new(FloodProtector::new(
+            crate::waf::flood::FloodConfig::default(),
+        ));
+        core.set_flood_protector(protector.clone());
+
+        // First request: rate limiter allows (primes the per-second window).
+        let first = core
+            .check_request_full(
+                None,
+                TEST_IP,
+                "GET",
+                "/",
+                None,
+                &headers(),
+                None,
+                Some(NORMAL_UA),
+                None,
+                None,
+                None,
+            )
+            .await;
+        assert!(matches!(first, WafDecision::Pass));
+
+        // Enter flood blackhole: the next request is both rate-limited and
+        // flood-blackholed.
+        protector.enter_blackhole();
+        let second = core
+            .check_request_full(
+                None,
+                TEST_IP,
+                "GET",
+                "/",
+                None,
+                &headers(),
+                None,
+                Some(NORMAL_UA),
+                None,
+                None,
+                None,
+            )
+            .await;
+        assert!(
+            matches!(second, WafDecision::Drop),
+            "flood Drop must outrank rate-limit Block, got {second:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn attack_block_outranks_honeypot_stall() {
+        // B2: a honeypot hit (Stall) carrying an attack payload (Block) must
+        // reduce to Block. Legacy call order returned Stall because the
+        // honeypot check ran before attack detection.
+        let mut core = test_waf_core(permissive_ip_rate());
+        core.sensitive_endpoint_manager =
+            SensitiveEndpointManager::new(vec!["/secret-honeypot".to_string()]);
+
+        let decision = core
+            .check_request_full(
+                None,
+                TEST_IP,
+                "GET",
+                "/secret-honeypot",
+                Some("id=1' OR '1'='1"),
+                &headers(),
+                None,
+                Some(NORMAL_UA),
+                None,
+                None,
+                None,
+            )
+            .await;
+        assert!(
+            matches!(decision, WafDecision::Block(403, _)),
+            "attack Block must outrank honeypot Stall, got {decision:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn blocked_endpoint_with_attack_payload_keeps_endpoint_block() {
+        // Preserved behavior + documented stage-4 skip: an endpoint Block
+        // decided in stages 1–3 is final; expensive attack inspection is
+        // skipped and the endpoint directive (not "Attack Detected") renders.
+        let core = test_waf_core(permissive_ip_rate());
+        let decision = core
+            .check_request_full(
+                None,
+                TEST_IP,
+                "GET",
+                "/.env",
+                Some("id=1' OR '1'='1"),
+                &headers(),
+                None,
+                Some(NORMAL_UA),
+                None,
+                None,
+                None,
+            )
+            .await;
+        match decision {
+            WafDecision::Block(403, ref msg) => {
+                assert_ne!(
+                    msg, "Attack Detected",
+                    "endpoint directive must render, attack stage skipped"
+                );
+            }
+            other => panic!("expected endpoint 403 block, got {other:?}"),
+        }
+    }
 }

@@ -293,6 +293,20 @@ pub enum WafDecision {
 }
 ```
 
+`WafDecision` is the rich response directive: it carries rendered payloads
+(status, HTML, cookies) for the dispatch layer. Policy composition across
+detectors goes through the canonical enforcement decision contract
+(`enforcement_decision_contract.md`): `WafDecision::class()` projects each
+directive onto `synvoid_core::enforcement::EnforcementClass`, and
+`WafCore::check_request_full` (`src/waf/mod.rs`) produces staged
+`StagedOutcome` candidates that fold through the deterministic reducer
+(`Drop > Block > Tarpit > Stall > Challenge > Observe > Allow`) instead of
+relying on early-return call order. Detector result types (`FloodDecision`,
+`BotDetectionResult`, `EndpointCheckResult`, `RateLimitResult`, …) are
+evidence carriers and map to candidates at the composition boundary; see the
+contract's inventory table before adding a new disposition enum (the
+`enforcement_decision_contract_guard` test enforces registration).
+
 ### AttackDetectionResult
 
 ```rust

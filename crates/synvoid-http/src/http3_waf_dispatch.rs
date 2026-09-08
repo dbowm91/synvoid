@@ -58,6 +58,14 @@ where
     W: Http3RequestStream,
     TarpitFn: FnOnce(&str) -> String,
 {
+    // Unified disposition counter on the canonical class vocabulary,
+    // mirroring the HTTP/1 dispatch. Non-allow only; bounded labels.
+    // Note: HTTP/3 Stall-then-timeout ultimately continues, but the Stall
+    // enforcement itself is still observed here.
+    let class = decision.class();
+    if class.is_terminal() {
+        counter!("synvoid.http3.enforcement_class_total", "class" => class.as_str()).increment(1);
+    }
     match decision {
         WafDecision::Pass => Ok(Http3WafDecisionOutcome::Continue),
         WafDecision::Stall => {

@@ -22,7 +22,13 @@ The SynVoid bot detection system identifies and blocks automated clients (bots, 
 
 ### Entry Point
 
-Bot detection is called from `check_bot_protection()` in `waf/mod.rs`:
+Bot detection runs as stage 3 of the `WafCore::check_request_full()` staged
+pipeline in `src/waf/mod.rs` (see
+`architecture/enforcement_decision_contract.md` for the stage policy and
+precedence). `check_bot_protection()` returns `Option<StagedOutcome>` (a
+`WafDecision` directive plus its canonical `EnforcementCandidate`), not a
+bare decision — outcomes fold through the deterministic reducer instead of
+early-returning:
 
 ```rust
 // src/waf/mod.rs:check_bot_protection()
@@ -32,8 +38,15 @@ fn check_bot_protection(
     path: &str,
     user_agent: Option<&str>,
     ja4_hash: Option<&str>,  // W3.1: Now passed through
-) -> Option<WafDecision>
+    site_bot_config: Option<&SiteBotConfig>,
+) -> Option<StagedOutcome>
 ```
+
+`BotDetectionResult` maps to the canonical contract via
+`synvoid_waf::enforcement::bot_candidate` (`Blocked`→`Block`,
+`Tarpit`→`Tarpit`, `Allowed`→no claim); the automated-tool challenge path
+maps to `Challenge/BotPolicy/challenge_required`. Keep the mapping
+single-sourced there — do not duplicate class/source/reason literals.
 
 ### Call Chain
 

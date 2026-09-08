@@ -82,6 +82,12 @@ owners = ["synvoid-ipc"]
 reason = "validates IPC drain end-to-end"
 
 [[test]]
+name = "enforcement_decision_contract_guard"
+class = "static_policy"
+owners = ["synvoid-core", "synvoid-waf", "synvoid-proxy", "synvoid-http"]
+reason = "validates canonical enforcement decision contract across request-path crates"
+
+[[test]]
 name = "e2e_process_test"
 class = "composition"
 owners = ["synvoid-ipc"]

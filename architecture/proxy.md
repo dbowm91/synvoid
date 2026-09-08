@@ -261,6 +261,15 @@ if !skip_waf_check {
 }
 ```
 
+Protocol handlers (`crates/synvoid-proxy/src/protocol/`) do not return
+`WafDecision` directly: `ProtocolHandler::apply_waf` returns the coarse,
+transport-local `WafAction`, which is an explicitly registered adapter over
+the canonical enforcement classification
+(`enforcement_decision_contract.md`). `WafAction::class()` /
+`WafAction::from_class()` are exhaustive and tested; canonical `Drop`
+degrades to `Block` at this layer (fail-closed — the framed-protocol layer
+cannot silently drop), so the two enums cannot evolve independently.
+
 ## 9. Feature Gates
 
 The Proxy module has no feature gates - it is always compiled. However, it integrates with:

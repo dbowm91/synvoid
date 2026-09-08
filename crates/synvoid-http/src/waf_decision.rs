@@ -89,6 +89,13 @@ where
     BlockRenderFn: FnMut(u16, &str) -> String,
     TarpitRenderFn: FnMut(&str) -> String,
 {
+    // Unified disposition counter on the canonical class vocabulary. Emitted
+    // only for non-allow outcomes so the common allow path keeps its existing
+    // overhead. Labels are frozen bounded codes (never IPs/URLs/UAs).
+    let class = decision.class();
+    if class.is_terminal() {
+        counter!("synvoid.http.enforcement_class_total", "class" => class.as_str()).increment(1);
+    }
     match decision {
         WafDecision::Drop => {
             counter!("synvoid.http.blackhole_drop").increment(1);

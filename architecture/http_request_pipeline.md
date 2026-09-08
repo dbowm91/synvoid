@@ -127,6 +127,7 @@ consolidated into a single compilation unit, `tests/boundary_composition_guard.r
 | `tests/boundary_composition_guard.rs` | Composition-boundary role classification; HTTP request dispatch doesn't import worker lifecycle; doc vocabulary checks (`Http3DispatchDeps`, `Http3RequestMetadata`); HTTP/3 WAF leak prevention; manifest authority load paths; exceptions audited |
 | `tests/mesh_id_boundary_guard.rs` | Mesh-ID enforcement never called from WAF/request/proxy/HTTP/3 code |
 | `tests/security_guard.rs` | Threat-intel raw lookups separated from enforcement (consolidates the former `threat_intel_boundary_guard`) |
+| `tests/enforcement_decision_contract_guard.rs` | No unregistered request-disposition enums in request-path crates; adapter registry matches `enforcement_decision_contract.md` |
 
 Run all boundary guards:
 

@@ -10,6 +10,7 @@ pub mod access;
 pub mod attack_detection;
 pub mod bot;
 pub mod endpoints;
+pub mod enforcement;
 pub mod flood;
 pub mod mitigation;
 pub mod primitives;

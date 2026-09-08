@@ -303,6 +303,7 @@ where
     WafStreamedBody::new(body, streaming_waf, client_ip, protocol, max_body_size)
 }
 
+#[allow(clippy::result_unit_err)] // reason: unit error preserved for API stability; callers distinguish BlockedByWaf vs BodyTooLarge by collection context in body_policy.rs
 pub async fn collect_body_with_chunk_waf<B, S>(
     body: B,
     streaming_waf: Option<S>,

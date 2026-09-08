@@ -386,6 +386,7 @@ impl RateLimiterManager {
         RateLimitResult::Allowed
     }
 
+    #[allow(clippy::result_unit_err)] // reason: semaphore-closed signal only; callers treat any error as unavailable
     pub async fn acquire_global_connection(&self) -> Result<GlobalConnectionPermit, ()> {
         match self.state.semaphore.clone().acquire_owned().await {
             Ok(permit) => Ok(GlobalConnectionPermit { _permit: permit }),

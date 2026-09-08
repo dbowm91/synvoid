@@ -389,7 +389,7 @@ impl SignalHandler for UnixSignalHandler {
         self.running.set(true);
 
         let handlers: Vec<(Signal, Arc<dyn Fn() + Send + Sync>)> =
-            self.handlers.drain(..).collect();
+            std::mem::take(&mut self.handlers);
 
         for (signal, handler) in handlers {
             let sig = match signal {
