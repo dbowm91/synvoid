@@ -1,25 +1,16 @@
 # SynVoid Architecture Hardening Roadmap
 
-Status: extended roadmap. Track 1 is complete. Track 2 is active.
+Status: extended roadmap. Tracks 1 and 2 are complete. Track 3 is planned and ready for implementation.
 
-Scope: this roadmap covers architecture hardening, trust-boundary closure, verification, release readiness, and the next post-hardening cleanup track for SynVoid.
+Scope: this roadmap covers architecture hardening, trust-boundary closure, verification, release readiness, post-hardening cleanup, and the architecture-convergence work required before another broad feature-expansion pass.
 
 Primary principle: request path remains local, narrow, and capability-driven; control plane remains explicit, audited, and provenance-carrying; distributed mesh data remains policy-gated before it mutates enforcement state; runtime tasks remain owned and drainable; the root crate remains composition, not domain logic; public stability claims remain conservative until verified by tests and release policy.
 
 ## Current Architectural Position
 
-SynVoid has completed the initial 10-phase architecture-hardening track. The repo now has typed startup/resource/runtime ownership for `UnifiedServer`, supervisor task ownership, request-path capability boundaries, blocklist convergence hardening, admin mutation authority types, plugin sandbox capability types, CI/fuzz/failure-injection scaffolding, security observability artifacts, and final surface/release-hardening reports.
+SynVoid has completed the initial 10-phase architecture-hardening track and the six-phase post-hardening closure track. The repo now has typed startup/resource/runtime ownership for `UnifiedServer`, supervisor task ownership, request-path capability boundaries, blocklist convergence hardening, admin mutation authority types, plugin sandbox capability types, CI/fuzz/failure-injection scaffolding, security observability artifacts, final surface/release-hardening reports, a first root-module burn-down pass, and an operator deployment drill.
 
-The repo is now substantially better guarded than when the roadmap started. The remaining risk is no longer broad architectural ambiguity. The remaining risk is post-hardening closure: making the newly introduced security models fully operational, observable in CI, conservative in stability guarantees, and less dependent on transitional root modules.
-
-Known residuals from the final verification cleanup report:
-
-- GitHub Actions runs/statuses were not observed; local verification is the current source of truth.
-- Some admin legacy endpoints still use ad-hoc response types without audit events.
-- Full cryptographic plugin signature verification is deferred.
-- `DevelopmentHotReload` gating is enforced at loader boundaries and needs a focused loader audit.
-- Fuzz targets exist but were not smoke-tested because `cargo-fuzz` was unavailable in the verification environment.
-- Large root modules remain `split_required` / transitional.
+The remaining risk is concentrated rather than broad: enforcement semantics still overlap across adjacent detector/transport result types; the highest-coupling root modules remain mixed; process-jail modes are fail-closed stubs rather than operational isolation; distributed-state consistency guarantees are documented in several places rather than one binding namespace contract; and the final convergence work needs adversarial/performance evidence before compatibility surfaces can be retired confidently.
 
 ## Track 1: Architecture Hardening Baseline — Complete
 
@@ -57,29 +48,23 @@ Detailed plan: `plans/phase_05_blocklist_convergence_hardening.md`.
 
 Result: peer cursors, source-scoped ordering metadata, stale replay prevention, snapshot fallback, and convergence docs/tests are in place.
 
-### Phase 6: Admin and Control-Plane Authority Hardening — Complete with Legacy Follow-Up
+### Phase 6: Admin and Control-Plane Authority Hardening — Complete
 
 Detailed plan: `plans/phase_06_admin_control_plane_authority_hardening.md`.
 
-Result: typed mutation authority, mutation outcomes, propagation status, audit event types, and blocklist/admin mutation tests are in place.
+Result: typed mutation authority, mutation outcomes, propagation status, audit event types, and blocklist/admin mutation tests are in place. Track 2 closed the remaining legacy endpoint residuals.
 
-Residual: some legacy admin endpoints still use ad-hoc response types without audit events. This becomes Track 2 Phase 12.
-
-### Phase 7: Plugin Runtime, Sandbox, and Capability Manifest Hardening — Complete with Signing Follow-Up
+### Phase 7: Plugin Runtime, Sandbox, and Capability Manifest Hardening — Complete
 
 Detailed plan: `plans/phase_07_plugin_runtime_sandbox_hardening.md`.
 
-Result: plugin trust tiers, manifest schema, default-deny capabilities, filesystem/network validation, invocation limits, failure isolation, and call-site capability gating are present.
+Result: plugin trust tiers, manifest schema, default-deny capabilities, filesystem/network validation, invocation limits, failure isolation, and call-site capability gating are present. Track 2 completed signing/loader follow-up.
 
-Residual: full cryptographic signature verification and loader-level hot-reload audit remain. This becomes Track 2 Phase 13.
-
-### Phase 8: Feature Profile CI, Fuzzing, and Failure Injection — Complete with CI/Fuzz Follow-Up
+### Phase 8: Feature Profile CI, Fuzzing, and Failure Injection — Complete
 
 Detailed plan: `plans/phase_08_ci_fuzz_failure_injection_hardening.md`.
 
-Result: CI workflow, verification script, docs path guard, fuzz target inventory, fuzz targets, and failure-injection tests exist.
-
-Residual: GitHub Actions status was not observed, and `cargo-fuzz` smoke tests were not run. This becomes Track 2 Phase 11 and Phase 14.
+Result: CI workflow, verification script, docs path guard, fuzz target inventory, fuzz targets, and failure-injection tests exist. Track 2 added bounded fuzz/CI closure.
 
 ### Phase 9: Observability as a Security Boundary — Complete
 
@@ -87,235 +72,170 @@ Detailed plan: `plans/phase_09_observability_security_boundary.md`.
 
 Result: security observability docs, metrics, admin observability handler, runtime/admin/blocklist/plugin/threat-policy signals, and observability guard are in place.
 
-### Phase 10: Final Public Surface Audit and Release Hardening — Complete with Stability Follow-Up
+### Phase 10: Final Public Surface Audit and Release Hardening — Complete
 
 Detailed plan: `plans/phase_10_final_surface_audit_release_hardening.md`.
 
 Result: public surface audit, release-hardening report, semver/stability policy, and final verification cleanup report exist.
 
-Residual: stability classifications should remain conservative until real release/versioning workflows exist. Future root extraction will require stability report updates.
+## Track 2: Post-Hardening Closure — Complete
 
-## Track 2: Post-Hardening Closure Roadmap — Active
-
-Track 2 should be executed before major feature expansion. Its purpose is not to add new product features, but to convert the hardened architecture into an operationally verified and maintainable baseline.
+Track 2 converted the hardened architecture into a more operationally verified and maintainable baseline.
 
 ### Phase 11: CI Execution and Release Verification Closure — Complete
 
-Goal: make verification externally observable, not only locally reported.
+Result: CI triggers/summary behavior and architecture verification were reconciled; release artifacts no longer overstate unobserved CI evidence.
 
-Core work:
+### Phase 12: Admin Legacy Endpoint Mutation/Audit Closure — Complete
 
-- Confirm `.github/workflows/ci.yml` triggers on `push` and `pull_request` for `main` or the active development branch. **Done**: triggers on main/master/develop pushes and PRs.
-- Trigger a real CI run and capture the result in `architecture/final_verification_cleanup_report.md`. **Done**: CI summary job parse error fixed; local verification recorded.
-- Ensure `scripts/verify_architecture.sh` is executable and exactly matches release-required guard/profile expectations. **Done**: script aligned with 27 guard tests (added `docs_path_reference_guard`).
-- Add CI jobs for profile checks, guard suite, docs path guard, failure-injection tests, and fuzz smoke where feasible. **Done**: 16 jobs in CI workflow.
-- Add badges or a short README status line only after real workflow runs are observed. **Deferred**: badge pending visible passing run.
-- If GitHub Actions is intentionally unavailable, document that in release artifacts and avoid "CI green" wording. **Done**: summary job was broken, now fixed.
+Result: remaining admin mutation paths were reconciled with typed mutation/audit semantics or explicitly classified as read-only diagnostics.
 
-Defense-in-depth value:
+### Phase 13: Plugin Signature Verification and Loader Trust Audit — Complete
 
-- Prevents local-only verification from being mistaken for CI-backed release confidence.
-- Catches profile/guard regressions before handoff.
-- Makes roadmap completion auditable by external tooling.
+Result: signed plugin trust and loader development-mode boundaries were hardened and tested according to the Track 2 plan.
 
-Deliverables:
+### Phase 14: Fuzz Smoke Execution and Parser Boundary Expansion — Complete
 
-- Updated `architecture/final_verification_cleanup_report.md` with CI status. **Done**
-- Updated `architecture/release_hardening_report.md` if status language changes. **Done**
-- Optional CI artifacts or badges only if runs are visible. **Deferred**
+Result: fuzzing moved from inventory-only scaffolding toward bounded execution/coverage, with remaining parser-specific work delegated to later focused phases where necessary.
 
-Acceptance criteria:
+### Phase 15: Transitional Root Module Burn-Down Track — Complete for Initial Pass
 
-- A workflow run is visible and passing for the release-required jobs, or docs explicitly state that CI is not available and local verification is the source of truth. **Done**: CI fixed; local verification authoritative.
-- Release artifacts no longer contain ambiguous CI claims. **Done**
+Detailed plan: `plans/phase_15_transitional_root_module_burndown.md`.
 
-### Phase 12: Admin Legacy Endpoint Mutation/Audit Closure
+Result: `platform`, `utils`, and `tarpit` were reduced/reclassified, duplicate/dead root code was removed, and the remaining high-risk mixed modules were deliberately deferred rather than extracted unsafely.
 
-Goal: finish the Phase 6 residual by converting remaining mutating admin endpoints to typed mutation outcomes and audit events.
+### Phase 16: Runtime Operations Readiness and Deployment Drill — Complete
 
-Core work:
+Detailed plan: `plans/phase_16_runtime_operations_deployment_drill.md`.
 
-- Inventory the documented legacy admin endpoints still using ad-hoc response types.
-- Classify each endpoint as read-only diagnostic, local mutation, control-plane mutation, mesh propagation mutation, plugin/runtime mutation, or dangerous operation.
-- Convert mutating endpoints to `AdminMutationResult` or a narrow typed equivalent.
-- Add `AdminAuditEvent` emission for every mutation.
-- Ensure propagation status distinguishes local mutation from queued best-effort mesh propagation.
-- Tighten `admin_mutation_response_guard` so newly added mutating endpoints cannot return generic success JSON.
-- Add tests for each converted endpoint category.
+Result: operator start/stop/reload/status, enforcement, plugin-failure, mesh, and degraded-feature workflows have an explicit drill/verification contract.
 
-Defense-in-depth value:
+## Track 3: Architecture Convergence and Underdeveloped Boundary Closure — Planned
 
-- Eliminates ambiguous admin success semantics.
-- Makes operator actions auditable.
-- Reduces privilege ambiguity through compatibility/admin paths.
+Track 3 is the current handoff line. It should be completed before broad feature expansion. The objective is not to add another set of subsystems; it is to make the existing subsystem set compose through fewer canonical contracts and to close the largest remaining implementation-vs-architecture gaps.
 
-Deliverables:
+### Phase 17: Canonical Request Enforcement Decision Contract
 
-- Updated `architecture/admin_control_plane_authority.md` endpoint inventory.
-- Updated `architecture/final_verification_cleanup_report.md` residual-risk section.
-- New or expanded tests for converted endpoints.
+Detailed plan: `plans/phase_17_enforcement_decision_contract.md`.
 
-Acceptance criteria:
+Goal: define one canonical enforcement classification, source/provenance vocabulary, reason coding, and deterministic precedence contract across WAF, rate limiting, bots, flood protection, block state, challenges, HTTP, streaming, and protocol adapters.
 
-- No mutating admin endpoint returns untyped `success: true` without a typed mutation/audit model.
-- Legacy endpoint residual count is zero or every remaining endpoint is documented as read-only diagnostic.
+Key result required: detector-specific evidence can remain domain-specific, but terminal action semantics cannot evolve independently in multiple enums or through undocumented early-return order.
 
-### Phase 13: Plugin Signature Verification and Loader Trust Audit
+### Phase 18: Authentication and Challenge Boundary Extraction
 
-Goal: complete the highest-value deferred plugin sandbox items: real signature verification and loader-level trust-tier enforcement.
+Detailed plan: `plans/phase_18_auth_challenge_boundary_extraction.md`.
 
-Core work:
+Goal: move authentication/session/CSRF/lockout behavior to a canonical domain owner and finish challenge-manager ownership so WAF/admin no longer depend on root implementations merely because those types were never extracted.
 
-- Implement or wire cryptographic signature verification for `SignedSandboxed` plugins.
-- Ensure signatures cover the plugin binary hash and manifest fields that affect trust/capabilities.
-- Verify trusted public keys are configured explicitly and loaded safely.
-- Audit plugin loader paths for `DevelopmentHotReload` gating.
-- Ensure production mode rejects development hot reload unless explicitly overridden.
-- Add tests for unsigned production plugin rejection, invalid signature rejection, valid signed plugin acceptance, binary tamper rejection, and development hot-reload gating.
-- Update `architecture/plugin_runtime_sandbox.md` and `architecture/semver_stability_policy.md` if signature or ABI behavior changes.
+Key result required: root `auth` and `challenge` become thin facades or precisely justified composition adapters with no duplicated domain implementation.
 
-Defense-in-depth value:
+### Phase 19: WAF Ownership Convergence and Root Composition Reduction
 
-- Makes `SignedSandboxed` a real trust tier rather than a policy placeholder.
-- Prevents dev hot-reload from becoming accidental production behavior.
-- Reduces plugin supply-chain risk.
+Detailed plan: `plans/phase_19_waf_ownership_convergence.md`.
 
-Deliverables:
+Goal: make `synvoid-waf` the canonical owner of reusable WAF policy/detection logic, remove root/crate duplicates and dead hot-path compatibility checks, and reduce root `WafCore` to clearly defined composition if it cannot move cleanly.
 
-- Signature verification implementation or explicit fail-closed policy if verification remains unavailable.
-- Loader audit report section in `architecture/plugin_runtime_sandbox.md` or a new `architecture/plugin_loader_trust_audit.md`.
-- Expanded plugin capability/signing tests.
+Key result required: `waf` is no longer `split_required` because of ambiguous ownership.
 
-Acceptance criteria:
+### Phase 20: HTTP Normalization, Dispatch, and Ownership Convergence
 
-- `SignedSandboxed` does not load without verified signature.
-- `DevelopmentHotReload` is impossible without explicit development-mode config.
-- Signature and loader behavior are covered by tests and guards.
+Detailed plan: `plans/phase_20_http_normalization_ownership_convergence.md`.
 
-### Phase 14: Fuzz Smoke Execution and Parser Boundary Expansion
+Goal: establish one canonical HTTP parsing/normalization/framing/body-policy path, remove root/crate duplication, and close adjacent `tls`/`http_client` mixed ownership after HTTP boundaries settle.
 
-Goal: turn existing fuzz targets from inventory artifacts into executed robustness checks.
+Key result required: routing and WAF evaluate the same security-relevant normalized request representation, with ambiguity failing closed.
 
-Core work:
+### Phase 21: Admin and Plugin Root-Boundary Closure
 
-- Install or document `cargo-fuzz` in the developer/CI environment.
-- Run bounded smoke tests for existing fuzz targets.
-- Add missing fuzz targets for mesh protocol decode, blocklist snapshot/cursor decode, config parse/validation, and any externally fed plugin manifest decode path not already covered.
-- Ensure fuzz targets have deterministic bounds and no external network/filesystem dependencies beyond test fixtures.
-- Add CI smoke job if runtime is acceptable; otherwise add nightly/manual job documentation.
-- Capture crashes/regressions as normal tests where possible.
+Detailed plan: `plans/phase_21_admin_plugin_root_boundary_closure.md`.
 
-Defense-in-depth value:
+Goal: leave admin as deliberate transport/control-plane composition over typed domain operations and plugin as application lifecycle composition over `synvoid-plugin-runtime`, then reconcile all remaining root-module classifications.
 
-- Exercises hostile input surfaces rather than just compiling fuzz targets.
-- Reduces panic/parse edge cases in network/control-plane parsers.
-- Converts fuzzing from “exists” to “used.”
+Key result required: module size alone is not treated as debt; only genuine mixed ownership remains `split_required`, and all architecture ledgers agree.
 
-Deliverables:
+### Phase 22: Sandbox Jail IPC and Runtime Closure
 
-- Updated `architecture/ci_fuzz_failure_injection.md` with executed targets and results.
-- Updated `architecture/phase_8_verification_report.md` or new fuzz execution report.
-- CI/manual smoke commands.
+Detailed plan: `plans/phase_22_sandbox_jail_ipc_runtime_closure.md`.
 
-Acceptance criteria:
+Goal: replace the current WASM/YARA jail fail-closed stubs with versioned, bounded, supervised out-of-process execution using a minimal local IPC protocol and explicit required-isolation failure semantics.
 
-- Existing fuzz targets run at least bounded smoke cycles locally or in CI.
-- Missing high-priority parser targets are either added or documented with blockers.
+Key result required: real workload round trips execute inside the jail, while launch/protocol/runtime failure cannot silently fall back to unisolated execution when isolation is required.
 
-### Phase 15: Transitional Root Module Burn-Down Track
+### Phase 23: Distributed State Consistency and Partition-Semantics Contract
 
-Goal: reduce the remaining `split_required` root modules without destabilizing the hardened runtime boundaries.
+Detailed plan: `plans/phase_23_distributed_state_consistency_contract.md`.
 
-Core work:
+Goal: define authority, consistency, versioning, TTL, conflict, partition-read/write, and enforcement semantics for every security-relevant replicated namespace, and reconcile current Raft behavior with stale/remaining MESH-15 documentation.
 
-- Prioritize root modules by risk and extraction feasibility: `auth`, `platform`, `utils`, `tarpit`, `tls`, `plugin`, `http_client`, `challenge`, `admin`, `waf`, `http`.
-- For each module, decide: extract to dedicated crate, reclassify as root-owned composition, or document blocker.
-- Start with low-risk modules that have few root dependencies and strong tests.
-- Preserve compatibility facades while moving new code to dedicated crates.
-- Update `architecture/root_module_ledger.md`, `architecture/final_surface_audit.md`, and root dependency ledger after every extraction.
-- Add guardrails preventing extracted crates from importing root `synvoid::*`.
+Key result required: canonical and advisory state cannot be confused during partition or rejoin, and operator mutation results describe local/best-effort/canonical completion truthfully.
 
-Defense-in-depth value:
+### Phase 24: Adversarial Verification, Performance Baselines, and Surface Closure
 
-- Reduces root privilege concentration.
-- Makes public surface easier to stabilize.
-- Prevents transitional modules from becoming permanent architecture debt.
+Detailed plan: `plans/phase_24_adversarial_performance_surface_closure.md`.
 
-Deliverables:
+Goal: add only the focused hostile-input, concurrency, state-machine, and performance evidence needed for the Track 3 refactors, remove stale benchmark/compatibility artifacts, audit crate granularity, and reconcile final root/public surface documentation.
 
-- New detailed extraction plan files per module cluster.
-- Updated root module ledger and dependency ownership docs.
-- Tests proving compatibility facades remain intact.
+Key result required: Track 3 closes with measurable regression protection without re-expanding CI complexity.
 
-Acceptance criteria:
+## Track 3 Dependency Order
 
-- At least two remaining `split_required` modules are extracted or reclassified with precise rationale per pass.
-- No domain crate imports root compatibility paths.
-- Root dependency ledger shrinks or becomes more precisely entitled.
+Default execution order:
 
-### Phase 16: Runtime Operations Readiness and Deployment Drill
-
-Goal: validate the hardened architecture under realistic operator workflows: start, stop, reload, block/unblock, plugin load failure, mesh reconnect, and degraded profile behavior.
-
-Core work:
-
-- Create an operator drill checklist under `architecture/runtime_operations_drill.md`.
-- Exercise default start/stop/reload flows locally or in integration tests.
-- Verify supervisor status, admin diagnostics, runtime task state, blocklist convergence state, and plugin runtime state are visible.
-- Test local block/unblock and mesh propagation status reporting.
-- Test plugin load failure and quarantine/disable behavior.
-- Test ACME/plugin/DNS disabled-feature behavior where feasible.
-- Document expected logs/metrics for each drill.
-
-Defense-in-depth value:
-
-- Validates that hardening work is operationally usable.
-- Catches “guarded but unusable” states.
-- Gives future agents a repeatable manual smoke test for release readiness.
-
-Deliverables:
-
-- `architecture/runtime_operations_drill.md`.
-- Optional integration tests or scripts for operator smoke paths.
-- Updated release hardening report with drill results.
-
-Acceptance criteria:
-
-- Operator drill can be followed by another agent without architectural context.
-- Each drill step has expected success/failure output.
-- Any unavailable drill path is documented with a blocker.
-
-## Suggested Track 2 Execution Order
-
-1. Phase 11: CI Execution and Release Verification Closure.
-2. Phase 12: Admin Legacy Endpoint Mutation/Audit Closure.
-3. Phase 13: Plugin Signature Verification and Loader Trust Audit.
-4. Phase 14: Fuzz Smoke Execution and Parser Boundary Expansion.
-5. Phase 15: Transitional Root Module Burn-Down Track.
-6. Phase 16: Runtime Operations Readiness and Deployment Drill.
+1. Phase 17 — enforcement semantics first; later request-path moves depend on this contract.
+2. Phase 18 — remove auth/challenge root ownership blockers.
+3. Phase 19 — converge WAF ownership on the settled contracts.
+4. Phase 20 — converge HTTP/TLS/client ownership after WAF semantics are stable.
+5. Phase 21 — close admin/plugin root boundaries against the canonical domain APIs.
+6. Phase 22 — operationalize process isolation once plugin/runtime ownership is clear.
+7. Phase 23 — consolidate distributed-state semantics and partition evidence.
+8. Phase 24 — final adversarial/performance/surface closure.
 
 Safe parallelism:
 
-- Phase 11 and Phase 14 can run together if CI ownership is clear.
-- Phase 12 and Phase 13 can run in parallel because admin authority and plugin signing are mostly separate.
-- Phase 15 should wait until Phase 11 is stable so extraction regressions are caught quickly.
-- Phase 16 should be last because it validates the operational result of prior phases.
+- Phase 23 can begin its namespace/document inventory while Phases 18–21 are underway, but code changes to enforcement/control-plane result types should wait for Phase 17.
+- Phase 22 protocol design can begin before Phase 21 completes, but plugin call-site migration should use the final plugin ownership boundary.
+- Phase 24 inventory/baseline capture can begin early; final regression conclusions and surface cleanup must wait until Phases 17–23 land.
 
-## Track 2 Global Acceptance Criteria
+Do not run Phases 19 and 20 as one giant mechanical file move. Each phase should leave tests and architecture ledgers coherent.
 
-Track 2 is complete when:
+## Track 3 Global Acceptance Criteria
 
-- CI status is observed or honestly documented as unavailable.
-- Admin mutation/audit residuals are closed or restricted to read-only diagnostics.
-- Signed plugin trust tier is backed by real verification or fail-closed behavior.
-- Development hot reload is loader-gated and tested.
-- Fuzz targets are executed in bounded smoke mode or scheduled/manual with documented results.
-- Remaining `split_required` root modules have an active burn-down plan and measurable reductions.
-- Runtime operations drill exists and validates the hardened architecture under realistic workflows.
-- Release artifacts distinguish verified guarantees from deferred work.
+Track 3 is complete only when:
+
+- one canonical enforcement classification/source/reason/precedence contract governs terminal request outcomes;
+- duplicate terminal-action vocabularies are removed or reduced to exhaustive adapters;
+- authentication and challenge domain behavior have canonical owners outside ambiguous root implementations;
+- WAF reusable policy/detection logic has one canonical owner and active request paths contain no known no-op placeholder checks;
+- HTTP security normalization/framing/body policy has one canonical implementation shared consistently by routing/WAF paths;
+- root `http`, `waf`, `auth`, `challenge`, `tls`, `http_client`, `admin`, and `plugin` are no longer ambiguously mixed, or any residual has a precise blocker and named follow-up;
+- WASM/YARA jail modes execute real bounded workloads through supervised IPC and fail closed when required isolation is unavailable;
+- every security-relevant replicated namespace has explicit authority, consistency, ordering, expiry, conflict, and partition behavior;
+- canonical distributed trust never falls back silently to advisory/DHT authority during partition;
+- targeted adversarial/concurrency tests cover the new canonical boundaries;
+- hot-path benchmarks show no material unexplained regression from convergence work;
+- crate-granularity audit distinguishes useful isolation boundaries from thin organizational crates without forcing a merge sweep;
+- root-module ledger, burn-down report, dependency ownership, final surface audit, and release-hardening docs agree;
+- routine CI remains proportionate to the project rather than growing into a new broad verification matrix.
+
+## Track 3 Rejection Criteria
+
+Reject a Track 3 closeout that:
+
+- treats file movement as ownership closure while duplicate logic remains live;
+- weakens request-path capability or canonical mesh trust boundaries;
+- changes enforcement precedence accidentally through refactoring;
+- creates new crates solely to reduce root LOC;
+- makes HTTP routing and WAF normalize security-relevant input differently without explicit tests;
+- marks jail mode operational without real WASM/YARA round trips and failure-isolation tests;
+- reports distributed best-effort propagation as canonical commit success;
+- merges crates solely to lower crate count;
+- declares completion while architecture ledgers disagree or `split_required` entries have no precise blocker.
 
 ## Roadmap Status
 
 Track 1: Complete.
 
 Track 2: Complete through Phase 16.
+
+Track 3: Planned through Phase 24; implementation handoff ready.
