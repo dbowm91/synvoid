@@ -1,18 +1,16 @@
 use std::net::IpAddr;
 
 use http::HeaderMap;
-use synvoid_waf::{request_sanitization::RequestSanitizer, WafDecision};
+use synvoid_waf::request_sanitization::RequestSanitizer;
 
+/// Early request hooks owned by the WAF composition root.
+///
+/// Post-Phase 19 this trait carries only the trust-token check. The former
+/// always-`Pass` `check_early` stage was removed: block-store admission lives
+/// in the worker composition root and every request proceeds directly to full
+/// preparation. See `architecture/waf_ownership_convergence.md`.
 pub trait EarlyWafHooks {
     fn verify_trust_token(&self, client_ip: IpAddr, token: &str) -> bool;
-
-    fn check_early(
-        &self,
-        client_ip: IpAddr,
-        path: &str,
-        cookies: Option<&str>,
-        user_agent: Option<&str>,
-    ) -> WafDecision;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -123,18 +121,18 @@ pub fn should_skip_waf_from_trust_cookie<W: EarlyWafHooks>(
     false
 }
 
+/// Post-Phase 19 the always-`Pass` early stage is gone: every request proceeds
+/// directly to full preparation. This helper is retained only so existing
+/// import paths keep compiling; it always reports `Pass` and must not gain
+/// new callers.
 pub fn early_waf_decision<W: EarlyWafHooks>(
-    waf: &W,
-    client_ip: IpAddr,
-    path: &str,
-    cookies: Option<&str>,
-    skip_waf: bool,
-) -> WafDecision {
-    if skip_waf {
-        WafDecision::Pass
-    } else {
-        waf.check_early(client_ip, path, cookies, None)
-    }
+    _waf: &W,
+    _client_ip: IpAddr,
+    _path: &str,
+    _cookies: Option<&str>,
+    _skip_waf: bool,
+) -> synvoid_waf::WafDecision {
+    synvoid_waf::WafDecision::Pass
 }
 
 pub fn sanitize_and_resolve_client_ip(

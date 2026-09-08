@@ -6,7 +6,7 @@
 
 | Entity | Key Shape | Consumers | Mutation API | Response DTO | Persistence | Proposed Change |
 |--------|-----------|-----------|-------------|-------------|-------------|-----------------|
-| IP Block | `block:{site_scope}:{ip}` | WAF check_block_store, WAF check_early, Admin list_bans, Mesh stubs | `block_ip()`, `block_ip_with_provenance()`, `unblock_ip()`, `is_blocked()` | `BanRecord` with `ban_type="ip"` | `blocks.json` (JSON) | No change |
+| IP Block | `block:{site_scope}:{ip}` | Worker admission check, Admin list_bans, Mesh stubs | `block_ip()`, `block_ip_with_provenance()`, `unblock_ip()`, `is_blocked()` | `BanRecord` with `ban_type="ip"` | `blocks.json` (JSON) | No change |
 | Mesh-ID Block (first-class) | `mesh_block:{site_scope}:{mesh_id}` | Admin list_bans, Supervisor sync | `block_mesh_id_with_provenance()`, `unblock_mesh_id()`, `is_mesh_id_blocked()` | `BanRecord` with `ban_type="mesh_id"` | `mesh_blocks.json` (JSON) | New first-class entity |
 | Legacy Sentinel Mesh-ID | `block:{site_scope}:0.0.0.0` | Admin list_bans (compat), migration | Legacy `block_ip_with_provenance()` | Parsed as `ban_type="mesh_id"` | `blocks.json` | Auto-migrated to first-class `MeshBlockEntry` during `BlockStore::new` |
 | Supervisor Sync (IP) | Same as IP Block | Worker BlockStore | `block_ip_with_provenance()` with `SupervisorSync` | Via `BlockEntryData` IPC | Worker local | Extended with mesh blocks |

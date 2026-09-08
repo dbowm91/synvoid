@@ -318,9 +318,9 @@ pub async fn build_worker_startup(
 
     let data_plane = builder.build_and_cross_wire(&unified_server);
 
-    unified_server
-        .get_waf()
-        .set_request_services(data_plane.request_services.clone());
+    // Phase 19: `WafCore::set_request_services` is a deprecated no-op.
+    // Request services are threaded through dispatch call sites instead of
+    // being installed on the WAF handle, so there is nothing to install here.
 
     let data_plane = std::sync::Arc::new(data_plane);
 

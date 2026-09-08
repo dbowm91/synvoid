@@ -14,9 +14,14 @@ use synvoid_config::MainConfig;
 use crate::response_builder::{build_response_with_alt_svc, fallback_error_boxed};
 use crate::response_helpers::format_secure_http_only_cookie;
 
+/// Narrow capability consumed by challenge-path dispatch.
+///
+/// Post-Phase 19 this trait carries only challenge rendering/verification.
+/// Timed IP blocks are worker admission / control-plane authority
+/// (`block_ip_with_provenance`); honeypot/CSS-trap hits deny the immediate
+/// request here without pretending to write block history. See
+/// `architecture/waf_ownership_convergence.md`.
 pub trait ChallengePathWaf {
-    fn block_ip_for_honeypot(&self, ip: IpAddr, reason: &str, duration_secs: u64, scope: &str);
-
     fn generate_challenge_page(
         &self,
         ip: &IpAddr,
@@ -43,7 +48,7 @@ pub fn maybe_handle_challenge_paths<W>(
     path: &str,
     client_ip: IpAddr,
     waf: &W,
-    honeypot_ban_duration_secs: u64,
+    _honeypot_ban_duration_secs: u64,
     parts: &http::request::Parts,
     main_config: &MainConfig,
     alt_svc: &Option<String>,
@@ -55,7 +60,8 @@ where
     if path.starts_with(HONEYPOT_PREFIX) {
         counter!("synvoid.honeypot.hit").increment(1);
         tracing::info!("HTTP honeypot accessed: {} by {}", path, client_ip);
-        waf.block_ip_for_honeypot(client_ip, "honeypot", honeypot_ban_duration_secs, "global");
+        // Phase 19: timed blocks are worker admission / control-plane authority,
+        // not WAF convenience writes. Deny the immediate request here.
         on_log(408, true);
         return Some(build_response_with_alt_svc(
             408,
@@ -138,12 +144,9 @@ where
 
         if res == AssetRequestResult::InvalidAsset {
             tracing::warn!("Bot detected via CSS aspect-ratio trap: IP {}", client_ip);
-            waf.block_ip_for_honeypot(
-                client_ip,
-                "css_trap_hit",
-                honeypot_ban_duration_secs,
-                "global",
-            );
+            // Phase 19: no WAF block-store write here; the trap denies via the
+            // redirect/drop action below while timed blocks stay with worker
+            // admission / control-plane authority.
         }
 
         match action {

@@ -56,10 +56,32 @@ Phase 18 extracted both high-value root dependencies ahead of the WAF ownership 
 | `http_client` | 219 | Small; QUIC tunnel dispatch depends on root tunnel infra |
 | `plugin` | 608 | Composition root stays root; runtime in synvoid-plugin-runtime |
 | `tls` | — | Local `HttpsServer` depends on root HTTP infra; core TLS in dedicated crate |
-| `waf` | 1,056+ | `WafCore` and root adapters root-owned; core traits/primitives in synvoid-waf |
+
+## Phase 19 Closure (WAF ownership convergence)
+
+Phase 19 made `synvoid-waf` the canonical owner of reusable WAF
+policy/detection logic and reduced `src/waf/` to root application composition:
+
+- Deleted never-compiled duplicate orphans (`flood/connection_limiter.rs`,
+  `flood/syn_flood.rs`, `flood/udp_flood.rs`, `traffic_shaper/limiter.rs`);
+  ported the orphan limiter's increment-then-validate fix and `remove_if`
+  release hardening into the canonical crate limiter first.
+- Removed the stale crate `ip_feed.rs` copy (never declared in
+  `synvoid-waf/src/lib.rs`; feed fetching needs the HTTP-client stack) and
+  kept the root feed integration as canonical with a documented blocker.
+- Removed hot-path placeholders (`check_block_store`, `check_early`,
+  `block_ip_for_honeypot`, `block_ip_with_threat_intel`) with their trait
+  methods and production call sites; documented remaining non-hot-path
+  placeholders as deprecated no-ops.
+- Split `WafCore` into documented composition (`AppWaf`/`AppWafConfig`
+  aliases; field classification in `architecture/waf_ownership_convergence.md`).
+- Added `tests/waf_ownership_guard.rs` (5 tests) covering crate purity,
+  facade thinness, deleted duplicates, removed placeholders, and shim callers.
+- Reclassified `waf` from `split_required` to `keep_app_root` (composition
+  over `synvoid-waf`); ledgers, burn-down, surface audit, and `waf.md`
+  reconciled. Full matrix: `architecture/waf_ownership_convergence.md`.
 
 ## Next Recommended Cluster
 
 1. `http_client` — 219 LOC, smallest remaining, could be reclassified as facade
-2. `waf` — Phase 19 ownership convergence (now unblocked: `WafCore` no longer pins root auth/challenge impls)
-3. `tls` — server integration still root-owned; core TLS already extracted
+2. `tls` — server integration still root-owned; core TLS already extracted

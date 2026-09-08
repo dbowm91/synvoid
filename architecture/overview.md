@@ -119,7 +119,7 @@ Client ──► TLS Termination ──► HTTP Server ──► WAF Pipeline �
 Every request flows through `synvoid-http`'s staged pipeline ([`http_request_pipeline.md`](./http_request_pipeline.md)):
 
 1. **Metadata Normalization** (`request_frontdoor.rs`) — client IP sanitization, internal endpoint dispatch, mesh special paths
-2. **Route Resolution** (`request_preparation.rs`) — domain/path matching, connection limits, early WAF decision, WebSocket upgrade validation
+2. **Route Resolution** (`request_preparation.rs`) — domain/path matching, connection limits, trust-token bypass, WebSocket upgrade validation
 3. **Body Policy** (`body_policy.rs`) — body collection; chunked WAF scanning for large bodies (64KB chunks, 256KB threshold, 1MB cap)
 4. **WAF Evaluation** (`waf_decision.rs`) — full attack detection, anomaly scoring, bot detection, challenge/tarpit/stall decisions
 5. **Terminal Response** (`internal_endpoint_dispatch.rs`) — health/ready/drain endpoints, mesh key exchange

@@ -2,8 +2,6 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use http::Response;
 use http_body_util::combinators::BoxBody;
-use http_body_util::BodyExt;
-use http_body_util::Full;
 use metrics::counter;
 use std::convert::Infallible;
 use std::future::Future;
@@ -20,11 +18,8 @@ use crate::body_policy::RequestBodyWaf;
 use crate::body_policy::{collect_and_scan_request_body, BodyPolicyError};
 use crate::challenge_paths::maybe_handle_challenge_paths;
 use crate::challenge_paths::ChallengePathWaf;
-use crate::request_parse::{
-    early_waf_decision, extract_request_metadata, should_skip_waf_from_trust_cookie,
-};
+use crate::request_parse::{extract_request_metadata, should_skip_waf_from_trust_cookie};
 use crate::response_builder::build_response_with_alt_svc;
-use crate::response_helpers::format_secure_http_only_cookie;
 use crate::streaming_request_fast_path::{
     maybe_handle_streaming_request_fast_path, StreamingRequestFastPathOutcome,
 };
@@ -59,7 +54,7 @@ pub async fn prepare_request_preflight<W, LogFn, DropFn>(
     alt_svc: Option<String>,
     main_config: Arc<MainConfig>,
     mut on_log: LogFn,
-    mut on_drop: DropFn,
+    _on_drop: DropFn,
 ) -> Result<RequestPreflightOutcome, hyper::Error>
 where
     W: BufferedRequestWaf + Send + Sync + 'static,
@@ -77,107 +72,16 @@ where
     let (parts, body) = req.into_parts();
     let (method, path, host, user_agent, cookies) = extract_request_metadata(&parts);
     let cookies_ref = cookies.as_deref();
+    // Trust-token bypass is evaluated here; the former always-`Pass` early WAF
+    // stage was removed in Phase 19 (block-store admission lives in the worker
+    // composition root). Every request proceeds directly to routing and the
+    // full buffered/streaming WAF dispatch below.
     let skip_waf = should_skip_waf_from_trust_cookie(waf.as_ref(), client_ip, cookies_ref);
     if skip_waf {
         tracing::debug!(
             "Bypassing WAF check due to valid trust token for {}",
             client_ip
         );
-    }
-
-    let early_decision = early_waf_decision(waf.as_ref(), client_ip, &path, cookies_ref, skip_waf);
-
-    match early_decision {
-        synvoid_proxy::WafDecision::Drop => {
-            counter!("synvoid.http.early_drop").increment(1);
-            on_drop();
-            on_log(
-                0,
-                "unknown",
-                false,
-                method.as_str(),
-                &path,
-                user_agent.as_deref(),
-            );
-            let resp = Response::builder()
-                .status(http::StatusCode::NOT_FOUND)
-                .body(Full::new(Bytes::from_static(&[])).boxed())
-                .unwrap_or_else(|_| crate::response_builder::fallback_error_boxed());
-            return Ok(RequestPreflightOutcome::Respond(resp));
-        }
-        synvoid_proxy::WafDecision::ChallengeWithCookie {
-            challenge_type: _,
-            html,
-            session_cookie_name,
-            session_cookie_value,
-            session_cookie_max_age,
-        } => {
-            let cookie = format_secure_http_only_cookie(
-                &session_cookie_name,
-                &session_cookie_value,
-                session_cookie_max_age,
-            );
-            on_log(
-                200,
-                "unknown",
-                false,
-                method.as_str(),
-                &path,
-                user_agent.as_deref(),
-            );
-            return Ok(RequestPreflightOutcome::Respond(
-                crate::response_builder::build_response_with_cookie(
-                    200,
-                    html,
-                    "text/html",
-                    &cookie,
-                    &alt_svc,
-                    main_config.as_ref(),
-                ),
-            ));
-        }
-        synvoid_proxy::WafDecision::Challenge(_type, html) => {
-            on_log(
-                200,
-                "unknown",
-                false,
-                method.as_str(),
-                &path,
-                user_agent.as_deref(),
-            );
-            return Ok(RequestPreflightOutcome::Respond(
-                crate::response_builder::build_response_with_alt_svc(
-                    200,
-                    html,
-                    "text/html",
-                    &alt_svc,
-                    main_config.as_ref(),
-                ),
-            ));
-        }
-        synvoid_proxy::WafDecision::Block(status, message) => {
-            let body = waf.render_page_with_theme(status, Some(&message), None);
-            on_log(
-                status,
-                "unknown",
-                false,
-                method.as_str(),
-                &path,
-                user_agent.as_deref(),
-            );
-            return Ok(RequestPreflightOutcome::Respond(
-                crate::response_builder::build_response_with_alt_svc(
-                    status,
-                    body,
-                    "text/html",
-                    &alt_svc,
-                    main_config.as_ref(),
-                ),
-            ));
-        }
-        synvoid_proxy::WafDecision::Pass
-        | synvoid_proxy::WafDecision::Stall
-        | synvoid_proxy::WafDecision::Tarpit(_) => {}
     }
 
     let route = router.route_with_local_addr(&host, &path, local_addr);

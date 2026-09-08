@@ -34,7 +34,7 @@ Phase 10 closure audit. Classifies every public surface of the SynVoid codebase 
 | `http_client` | `split_required` | transitional | synvoid-http-client + root | QUIC tunnel dispatch depends on root infra |
 | `plugin` | `split_required` | transitional | root (composition) + synvoid-plugin-runtime | Plugin lifecycle management root-owned |
 | `tls` | `split_required` | transitional | synvoid-tls + root | Local HttpsServer depends on root HTTP infra |
-| `waf` | `split_required` | transitional | synvoid-waf + root | WafCore and adapters are root-owned (1056 lines) |
+| `waf` | `keep_app_root` | stable | synvoid-waf (engine) + root (composition) | WafCore/AppWaf composition + adapters root-owned; detectors/policy/traits canonical in crate (Phase 19) |
 
 ### Compatibility Facades (facade_existing_crate)
 
@@ -93,8 +93,8 @@ Phase 10 closure audit. Classifies every public surface of the SynVoid codebase 
 | `OptionExt` | `utils::OptionExt` | `internal_public_for_crate_boundary` | stable_within_workspace | Extension trait |
 | `ResultExt` | `utils::ResultExt` | `internal_public_for_crate_boundary` | stable_within_workspace | Extension trait |
 | `RunningFlag` | `utils::RunningFlag` | `internal_public_for_crate_boundary` | stable_within_workspace | Shared running flag |
-| `WafCore` | `waf::WafCore` | `internal_public_for_crate_boundary` | stable_within_workspace | Root-owned WAF core |
-| `WafCoreConfig` | `waf::WafCoreConfig` | `internal_public_for_crate_boundary` | stable_within_workspace | Root-owned WAF config |
+| `WafCore` | `waf::WafCore` | `internal_public_for_crate_boundary` | stable_within_workspace | Root-owned WAF application composition (`AppWaf` alias) |
+| `WafCoreConfig` | `waf::WafCoreConfig` | `internal_public_for_crate_boundary` | stable_within_workspace | Root-owned composition constructor (`AppWafConfig` alias) |
 
 ## 2. Binary Targets
 

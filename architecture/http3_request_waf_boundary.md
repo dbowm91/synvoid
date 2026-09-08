@@ -158,7 +158,7 @@ waf.check_request_full_owned(
 | user_agent | ✅ | ✅ | ✅ |
 | ja4_hash | None | None | ✅ |
 | site_bot_config | ✅ | ✅ | ✅ |
-| Early WAF check | ✅ (`early_waf_decision`) | ❌ | Gap |
+| Early WAF check | ✅ (trust-token bypass only; former always-`Pass` stage removed Phase 19) | ❌ | Gap |
 | Challenge path routes | ✅ (`maybe_handle_challenge_paths`) | ❌ | Gap |
 
 **Gaps documented but intentionally accepted:**

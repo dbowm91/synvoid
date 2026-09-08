@@ -24,8 +24,8 @@ Strict and composed lookup wrappers (`lookup_*_policy_strict`, `lookup_*_policy_
 | `apply_sync` (`threat_intel.rs:1982`) | Delegates to `handle_incoming_threat` | enforcement via delegation | same gate | gated |
 | `handle_hot_threat_gossip` (`threat_intel.rs:592`) | Delegates to `handle_incoming_threat` | enforcement via delegation | same gate | gated |
 | Mesh ThreatSync/ThreatSyncResponse handlers (`threat_intel.rs:2541,2597`) | Delegate to `handle_incoming_threat` | enforcement via delegation | same gate | gated |
-| WAF `check_block_store` (`waf/mod.rs:541`) | Reads BlockStore, not ThreatIntelligenceManager | enforcement via BlockStore | BlockStore populated by gated mesh path | audited |
-| WAF `check_early` (`waf/mod.rs:709`) | Reads BlockStore | enforcement via BlockStore | BlockStore populated by gated mesh path | audited |
+| WAF block admission (worker composition root; former `check_block_store` stub removed Phase 19) | Reads BlockStore, not ThreatIntelligenceManager | enforcement via BlockStore | BlockStore populated by gated mesh path | audited |
+| Former WAF `check_early` (removed Phase 19; always returned `Pass`) | Read nothing (dead stage) | none — removal is behavior-preserving | n/a | removed |
 | WAF `maybe_escalate_and_block` (`waf/mod.rs:682`) | Escalates to block_ip via BlockStore | enforcement via BlockStore | BlockStore populated by gated mesh path | audited |
 | WAF ASN scraping (`waf/asn_tracker.rs:152`) | Calls block_ip directly (local-origin detection) | local-origin detection | first-party, correctly ungated | audited |
 | WAF honeypot block (`waf/mod.rs:734`) | Calls block_ip directly (local-origin detection) | local-origin detection | first-party, correctly ungated | audited |

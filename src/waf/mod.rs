@@ -1,3 +1,18 @@
+//! Root WAF application composition over the canonical `synvoid-waf` engine.
+//!
+//! Ownership: `synvoid-waf` owns reusable request-policy evaluation and detector
+//! state (attack detection, bots, endpoints, flood, rate-limit sliding windows,
+//! traffic buckets/`ConnectionLimiter`, probe/violation trackers, enforcement
+//! adapters, narrow traits). This module owns construction/wiring of
+//! runtime-specific services and compatibility adapters (`WafCore`/`AppWaf`).
+//! See `architecture/waf_ownership_convergence.md`. Request-path code must
+//! consume narrow traits (`WafProcessor`, `WafAccess`, `BlockListStore`),
+//! never concrete composition types.
+//!
+//! Block-store enforcement lives in the worker admission boundary, not in WAF
+//! mutation shims. Timed blocks go through `block_ip_with_provenance` with a
+//! `BlockProvenanceKind` on the control-plane path.
+
 use std::collections::HashSet;
 use std::net::IpAddr;
 use std::path::PathBuf;
@@ -136,6 +151,16 @@ pub struct RateLimitConfigStore {
     pub cleanup_interval_secs: u64,
 }
 
+/// Composition constructor for [`WafCore`]/[`AppWaf`].
+///
+/// This is root-owned application wiring, not reusable domain configuration:
+/// data-only WAF policy (`waf_config`, `attack_detection_config`, `test_mode`,
+/// `whitelist`) plus an explicit dependency bundle of service configs and
+/// handles (rate-limit/bot/endpoint/threat/feed/probe/traffic/ASN configs,
+/// `auth_manager`, `geoip`, `data_dir`, `tarpit_defaults`). Reusable WAF logic
+/// in `synvoid-waf` never touches this type (the crate does not import root).
+/// Prefer data-only `synvoid_waf::primitives::{WafConfig, TestModeConfig}` for
+/// domain needs. See `architecture/waf_ownership_convergence.md`.
 pub struct WafCoreConfig {
     pub rate_config: RateLimitConfigStore,
     pub memory_config: RateLimitMemoryConfig,
@@ -159,6 +184,18 @@ pub struct WafCoreConfig {
     pub tarpit_defaults: Option<crate::config::TarpitDefaults>,
 }
 
+/// Root-owned WAF application composition over the canonical `synvoid-waf`
+/// domain engine.
+///
+/// After Phase 19 this type is deliberately composition, not the canonical
+/// policy engine: reusable detector/policy state lives in `synvoid-waf` (bot,
+/// endpoints, attack detection, flood, sliding windows, traffic buckets,
+/// probe/violation trackers, enforcement adapters); this struct wires those
+/// together with runtime services (rate-limiter manager, challenge/auth
+/// managers, threat-level, feeds, GeoIP, tarpit, traffic shaper, ASN tracker,
+/// upload validator, `RequestServices`). Field classification lives in
+/// `architecture/waf_ownership_convergence.md`. Request-path code must consume
+/// narrow traits (`WafProcessor`, `WafAccess`), never this concrete type.
 pub struct WafCore {
     pub rate_limiter: RateLimiterManager,
     pub bot_detector: BotDetector,
@@ -188,6 +225,13 @@ pub struct WafCore {
     pub flood_protector: Option<Arc<FloodProtector>>,
     pub trust_token_key: [u8; 32],
 }
+
+/// Root composition alias: `WafCore` is application wiring over `synvoid-waf`.
+/// Prefer narrow traits (`WafProcessor`, `WafAccess`) at request-path call
+/// sites; use this alias where the composition type itself must be named.
+pub type AppWaf = WafCore;
+/// Composition-constructor alias for [`WafCoreConfig`].
+pub type AppWafConfig = WafCoreConfig;
 
 impl synvoid_proxy::protocol::trait_def::WafCoreBackend for WafCore {}
 
@@ -482,18 +526,16 @@ impl WafCore {
     ///
     /// Stages:
     ///
-    /// 1. admission state that may safely short-circuit (pre-existing
-    ///    block/blackhole). The block store itself is checked at the worker
-    ///    composition root, not here; `check_block_store` is a stub that
-    ///    yields no claim.
-    /// 2. cheap local policy checks (rate limit, endpoint policy).
-    /// 3. challenge/bot/rate/flood candidates (honeypot, bot, flood).
-    /// 4. expensive attack/body inspection — skipped when stages 1–3 already
+    /// 1. cheap local policy checks (rate limit, endpoint policy). Block-store
+    ///    admission is checked at the worker composition root before this
+    ///    pipeline runs, never here.
+    /// 2. challenge/bot/rate/flood candidates (honeypot, bot, flood).
+    /// 3. expensive attack/body inspection — skipped when stages 1–2 already
     ///    selected `Drop` or `Block`, which attack inspection (Block-class
     ///    only) cannot outrank. Documented resource-protection short-circuit:
     ///    the interim winner's provenance is retained.
-    /// 5. deterministic reduction of all claimed candidates.
-    /// 6. response rendering/dispatch from the winner's directive at the HTTP
+    /// 4. deterministic reduction of all claimed candidates.
+    /// 5. response rendering/dispatch from the winner's directive at the HTTP
     ///    dispatch layer.
     pub async fn check_request_full(
         &self,
@@ -509,15 +551,13 @@ impl WafCore {
         site_bot_config: Option<&crate::config::site::SiteBotConfig>,
         _ctx: Option<&RequestServices>,
     ) -> WafDecision {
-        // Stage 1: admission state (stub — composition root owns block store).
-        let _admission: Option<WafDecision> = self.check_block_store(ip, site_id);
         let mut best: Option<StagedOutcome> = None;
 
-        // Stage 2: cheap local policy checks.
+        // Stage 1: cheap local policy checks.
         best = fold_outcome(best, self.check_rate_limits(ip, site_id).await);
         best = fold_outcome(best, self.check_endpoint_block(path, method));
 
-        // Stage 3: challenge/bot/rate/flood candidates.
+        // Stage 2: challenge/bot/rate/flood candidates.
         best = fold_outcome(best, self.check_honeypot(ip, path, method, ua));
         best = fold_outcome(
             best,
@@ -525,7 +565,7 @@ impl WafCore {
         );
         best = fold_outcome(best, self.check_flood(ip));
 
-        // Stage 4: expensive attack inspection (skipped on interim Drop/Block).
+        // Stage 3: expensive attack inspection (skipped on interim Drop/Block).
         let interim_is_denied = matches!(
             best,
             Some(ref outcome)
@@ -625,14 +665,6 @@ impl WafCore {
         }
     }
 
-    /// Block-store is checked in the worker composition root, not here.
-    /// See `architecture/worker_data_plane_composition_root.md`.
-    /// This stub always returns `None` and exists only to preserve the
-    /// historical call site in `check_request_full`.
-    fn check_block_store(&self, _ip: IpAddr, _site_id: Option<&str>) -> Option<WafDecision> {
-        None
-    }
-
     fn check_endpoint_block(&self, path: &str, method: &str) -> Option<StagedOutcome> {
         let result = self.endpoint_blocker.check(path, method);
         let candidate = endpoint_candidate(&result)?;
@@ -649,7 +681,7 @@ impl WafCore {
         }
     }
 
-    /// Stage 3 flood candidate. The candidate mapping is single-sourced from
+    /// Stage 2 flood candidate. The candidate mapping is single-sourced from
     /// `synvoid_waf::enforcement::flood_candidate`; rendering preserves the
     /// historical 429/`Drop` outcomes.
     fn check_flood(&self, ip: IpAddr) -> Option<StagedOutcome> {
@@ -664,7 +696,7 @@ impl WafCore {
         Some(StagedOutcome::new(decision, candidate))
     }
 
-    /// Stage 4 expensive attack inspection. Produces Block-class claims only.
+    /// Stage 3 expensive attack inspection. Produces Block-class claims only.
     async fn check_attack(
         &self,
         ip: IpAddr,
@@ -878,54 +910,11 @@ impl WafCore {
             .map(|outcome| outcome.decision)
     }
 
-    /// Compatibility shim — always returns `WafDecision::Pass`.
-    ///
-    /// WAF request path does not own blocklist mutation capability.
-    /// Blocklist writes occur via dedicated local/control-plane enforcement paths.
-    /// This method is retained only for API compatibility (Iteration 59).
-    pub fn check_early(
-        &self,
-        _client_ip: IpAddr,
-        _path: &str,
-        _cookies: Option<&str>,
-        _ua: Option<&str>,
-    ) -> WafDecision {
-        WafDecision::Pass
-    }
-
     pub fn streaming(&self) -> Option<crate::waf::attack_detection::StreamingWafCore> {
         self.attack_detector
             .load()
             .as_ref()
             .map(|ad| ad.clone().streaming())
-    }
-
-    /// Compatibility shim — no-op (does not mutate block store).
-    ///
-    /// WAF request path does not own blocklist mutation capability.
-    /// Blocklist writes occur via dedicated local/control-plane enforcement paths.
-    /// This method is retained only for API compatibility (Iteration 59).
-    pub fn block_ip_for_honeypot(
-        &self,
-        _ip: IpAddr,
-        _reason: &str,
-        _duration_secs: u64,
-        _scope: &str,
-    ) {
-    }
-
-    /// Compatibility shim — no-op (does not mutate block store).
-    ///
-    /// WAF request path does not own blocklist mutation capability.
-    /// Blocklist writes occur via dedicated local/control-plane enforcement paths.
-    /// This method is retained only for API compatibility (Iteration 59).
-    pub fn block_ip_with_threat_intel(
-        &self,
-        _ip: IpAddr,
-        _reason: &str,
-        _duration_secs: u64,
-        _scope: &str,
-    ) {
     }
 
     pub fn set_flood_protector(&mut self, protector: Arc<FloodProtector>) {
@@ -941,6 +930,8 @@ impl WafCore {
         }
     }
 
+    /// Deprecated no-op placeholder (Phase 19): suspicious-word recording is not
+    /// wired in this composition. No production call site may rely on it.
     pub fn record_suspicious_words(
         &self,
         _ip: IpAddr,
@@ -951,6 +942,8 @@ impl WafCore {
         // Placeholder
     }
 
+    /// Deprecated no-op placeholder (Phase 19): WAF composition owns no
+    /// background tasks. No production call site may rely on it.
     pub fn start_background_tasks(&self) {
         // Placeholder
     }
@@ -1001,11 +994,16 @@ impl WafCore {
         (false, None)
     }
 
+    /// Deprecated no-op placeholder (Phase 19): attack-detector reloads go
+    /// through the rule-feed/control-plane path. Always returns `Ok`.
     pub fn reload_attack_detector(&self) -> Result<(), String> {
         // Placeholder
         Ok(())
     }
 
+    /// Deprecated no-op placeholder (Phase 19): request services are threaded
+    /// through dispatch call sites instead. No production call site may rely
+    /// on it.
     pub fn set_request_services(&self, _services: Arc<RequestServices>) {
         // Placeholder
     }
@@ -1015,23 +1013,9 @@ impl synvoid_http::request_parse::EarlyWafHooks for WafCore {
     fn verify_trust_token(&self, client_ip: IpAddr, token: &str) -> bool {
         WafCore::verify_trust_token(self, client_ip, token)
     }
-
-    fn check_early(
-        &self,
-        client_ip: IpAddr,
-        path: &str,
-        cookies: Option<&str>,
-        user_agent: Option<&str>,
-    ) -> synvoid_waf::WafDecision {
-        WafCore::check_early(self, client_ip, path, cookies, user_agent)
-    }
 }
 
 impl synvoid_http::ChallengePathWaf for WafCore {
-    fn block_ip_for_honeypot(&self, ip: IpAddr, reason: &str, duration_secs: u64, scope: &str) {
-        WafCore::block_ip_for_honeypot(self, ip, reason, duration_secs, scope);
-    }
-
     fn generate_challenge_page(
         &self,
         ip: &IpAddr,
@@ -1072,16 +1056,6 @@ impl synvoid_http::ChallengePathWaf for WafCore {
 impl synvoid_http::UploadValidationWaf for WafCore {
     fn get_upload_validator(&self) -> Option<Arc<synvoid_upload::UploadValidator>> {
         WafCore::get_upload_validator(self)
-    }
-
-    fn block_ip_with_threat_intel(
-        &self,
-        ip: IpAddr,
-        reason: &str,
-        duration_secs: u64,
-        scope: &str,
-    ) {
-        WafCore::block_ip_with_threat_intel(self, ip, reason, duration_secs, scope)
     }
 
     fn render_upload_validation_error_page(

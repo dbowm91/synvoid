@@ -129,20 +129,20 @@ each stage yields `Option<StagedOutcome>` (`WafDecision` directive +
 `EnforcementCandidate`); outcomes fold through the canonical reducer with no
 allocation on the allow path.
 
-1. **Admission state (may short-circuit).** Pre-existing block/blackhole.
-   The block store itself is checked at the worker composition root, not in
-   the WAF (`check_block_store` is a documented stub yielding no claim), so
-   request-path code gains no mutation capability. A future admission claim
-   would map to `BlockStore/blocklisted` and participate in reduction.
-2. **Cheap local policy:** rate limit, endpoint policy.
-3. **Challenge/bot/rate/flood candidates:** honeypot, bot protection, flood.
-4. **Expensive attack inspection — conditional.** Skipped when stages 1–3
+1. **Cheap local policy:** rate limit, endpoint policy. Block-store admission
+   is checked at the worker composition root before this pipeline runs, never
+   here (the former always-`None` `check_block_store` stage was removed in
+   Phase 19), so request-path code gains no mutation capability. A future
+   admission claim would map to `BlockStore/blocklisted` and participate in
+   reduction.
+2. **Challenge/bot/rate/flood candidates:** honeypot, bot protection, flood.
+3. **Expensive attack inspection — conditional.** Skipped when stages 1–2
    already selected `Drop` or `Block`: attack inspection produces
    Block-class claims only, which cannot outrank the interim winner, so
    running it would only burn CPU on an already-denied request. The interim
    winner's provenance is retained. This is a documented
    resource-protection short-circuit, not an ordering artifact.
-5. **Deterministic reduction** (folded across stages 1–4) + observability.
+4. **Deterministic reduction** (folded across stages 1–3) + observability.
 6. **Response rendering/dispatch** from the winner's directive at the HTTP
    dispatch layer (`synvoid-http`), which never re-decides policy.
 

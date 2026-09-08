@@ -8,10 +8,14 @@ use std::sync::Arc;
 use synvoid_config::MainConfig;
 use synvoid_upload::{is_upload_content_type, UploadValidationError, UploadValidator};
 
+/// Narrow capability consumed by upload-validation dispatch.
+///
+/// Post-Phase 19 this trait carries only validator access and error rendering.
+/// Malware verdicts deny the immediate upload here; timed IP blocks are worker
+/// admission / control-plane authority (`block_ip_with_provenance`), never a
+/// WAF convenience write. See `architecture/waf_ownership_convergence.md`.
 pub trait UploadValidationWaf {
     fn get_upload_validator(&self) -> Option<Arc<UploadValidator>>;
-
-    fn block_ip_with_threat_intel(&self, ip: IpAddr, reason: &str, duration_secs: u64, scope: &str);
 
     fn render_upload_validation_error_page(
         &self,
@@ -23,7 +27,7 @@ pub trait UploadValidationWaf {
 #[allow(clippy::too_many_arguments)]
 pub async fn maybe_handle_upload_validation<W: UploadValidationWaf>(
     waf: Arc<W>,
-    target_site_id: String,
+    _target_site_id: String,
     path: String,
     client_ip: IpAddr,
     full_body_arc: Arc<Bytes>,
@@ -53,9 +57,10 @@ pub async fn maybe_handle_upload_validation<W: UploadValidationWaf>(
                 client_ip = %client_ip,
                 mime_type = %result.mime_type,
                 matches = ?result.yara_matches,
-                "Malware detected in upload, blocking client IP"
+                "Malware detected in upload, denying upload"
             );
-            waf.block_ip_with_threat_intel(client_ip, "malware_upload", 3600, &target_site_id);
+            // Phase 19: deny the immediate upload here; timed blocks stay with
+            // worker admission / control-plane authority.
             let body = waf
                 .render_upload_validation_error_page(403, Some("Upload blocked: malware detected"));
             Some(crate::response_builder::build_response_with_alt_svc(
@@ -79,13 +84,7 @@ pub async fn maybe_handle_upload_validation<W: UploadValidationWaf>(
                         path = %path,
                         client_ip = %client_ip,
                         matches = ?matches,
-                        "Malware detected in upload, blocking client IP"
-                    );
-                    waf.block_ip_with_threat_intel(
-                        client_ip,
-                        "malware_upload",
-                        3600,
-                        &target_site_id,
+                        "Malware detected in upload, denying upload"
                     );
                     (403, "Upload blocked: malware detected")
                 }

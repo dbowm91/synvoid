@@ -593,7 +593,7 @@ Documentation drift cleanup for the now-stable threat-intel enforcement model. C
 - Documented request/WAF boundary: WAF reads BlockStore, not ThreatIntelligenceManager directly
 
 **Request/WAF audit findings:**
-- WAF request path (`check_block_store`, `check_early`, `maybe_escalate_and_block`) reads BlockStore state, not threat-intel directly
+- Worker admission owns the block-store request check; the WAF pipeline scalds no threat-intel state (former always-`None`/`Pass` `check_block_store`/`check_early` stages removed in Phase 19; `maybe_escalate_and_block` records violations without mutating the block store)
 - Strict/composed lookup wrappers have zero external production callers — defined but not yet consumed
 - All mesh enforcement gating is centralized in `handle_incoming_threat`
 - No migration needed; the existing WAF/BlockStore boundary is correct
@@ -730,7 +730,7 @@ The enforcement plane applies policy-gated mutations to local enforcement state 
 The WAF request path does not query `ThreatIntelligenceManager` directly. Instead:
 
 1. **Mesh enforcement** (`handle_incoming_threat`) populates `BlockStore` state through the enforcement plane.
-2. **WAF request code** (`check_block_store`, `check_early`, `maybe_escalate_and_block`) reads `BlockStore` as local enforcement state.
+2. **Worker admission** checks `BlockStore` as local enforcement state before the WAF pipeline runs; the WAF pipeline itself queries no threat-intel manager and mutates no block state.
 3. **Raw DHT/local advisory lookups** are not on the request/WAF hot path.
 
 This boundary is correct and must be preserved. New threat-intel integrations that want to affect WAF behavior should either:

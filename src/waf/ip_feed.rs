@@ -306,6 +306,12 @@ mod tests {
     }
 
     #[test]
+    fn test_blocked_network_ipv4_zero_prefix() {
+        let network = super::BlockedNetwork::Ipv4("0.0.0.0".parse().unwrap(), 0);
+        assert!(network.contains(&"203.0.113.10".parse().unwrap()));
+    }
+
+    #[test]
     fn test_blocked_network_ipv6_contains() {
         use std::net::{IpAddr, Ipv6Addr};
 

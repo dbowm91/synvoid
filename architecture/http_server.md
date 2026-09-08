@@ -480,7 +480,7 @@ Automatic release on drop with acquire semantics for per-site upgrades.
 ## 12. Relationship to Other Modules
 
 - **Router**: Site resolution via `router.route_with_local_addr()`
-- **WAF Core**: `waf.check_early()`, `waf.check_request_full()`, `waf.streaming()`
+- **WAF Core**: `waf.check_request_full()`, `waf.streaming()` (the former always-`Pass` `check_early` stage was removed in Phase 19; trust-token bypass via `should_skip_waf_from_trust_cookie()`)
 - **HTTP Client**: `HttpClient`, `ErasedHttpClient`, upstream request sending
 - **Proxy Module**: Headers filtering, forward header building, response size limits
 - **Plugin Manager**: WASM filter and response transform application

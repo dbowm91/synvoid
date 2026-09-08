@@ -690,51 +690,9 @@ impl HttpsServer {
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string());
 
-        let cookies = parts.headers.get("cookie").and_then(|v| v.to_str().ok());
-
-        // Note: Site config not available yet at this point (routing happens later).
-        // Site-specific bot config (enable_css_honeypot, etc.) will be used in check_challenge.
-        let early_decision = waf.check_early(client_ip, &path, cookies, None);
-        match early_decision {
-            crate::proxy::WafDecision::Drop => {
-                counter!("synvoid.https.early_drop").increment(1);
-                http_conn.request_drop();
-                let resp = Response::new(Full::new(Bytes::from_static(&[])).boxed());
-                return Ok(resp);
-            }
-            crate::proxy::WafDecision::ChallengeWithCookie {
-                challenge_type: _,
-                html,
-                session_cookie_name,
-                session_cookie_value,
-                session_cookie_max_age,
-            } => {
-                let cookie = format!(
-                    "{}={}; path=/; max-age={}; Secure; SameSite=Strict",
-                    session_cookie_name, session_cookie_value, session_cookie_max_age
-                );
-                return Ok(Self::build_response_with_cookie(
-                    200,
-                    html,
-                    "text/html",
-                    &cookie,
-                ));
-            }
-            crate::proxy::WafDecision::Challenge(_type, html) => {
-                return Ok(Self::build_response(200, html, "text/html"));
-            }
-            crate::proxy::WafDecision::Block(status, message) => {
-                let body =
-                    waf.error_page_manager
-                        .render_page_with_theme(status, Some(&message), None);
-                return Ok(Self::build_response(status, body, "text/html"));
-            }
-            crate::proxy::WafDecision::Pass
-            | crate::proxy::WafDecision::Stall
-            | crate::proxy::WafDecision::Tarpit(_) => {
-                // Proceed to full body collection and full WAF check
-            }
-        }
+        // Phase 19: the former always-`Pass` early WAF stage is removed.
+        // Block-store admission lives in the worker composition root; every
+        // request proceeds directly to body collection and the full WAF check.
 
         let bandwidth = get_global_bandwidth_tracker_or_log();
 
@@ -754,12 +712,9 @@ impl HttpsServer {
         if path.starts_with(HONEYPOT_PREFIX) {
             counter!("synvoid.honeypot.hit").increment(1);
             tracing::info!("HTTPS honeypot accessed: {} by {}", path, client_ip);
-            waf.block_ip_for_honeypot(
-                client_ip,
-                "honeypot",
-                waf.config.honeypot_ban_duration_secs,
-                "global",
-            );
+            // Phase 19: timed blocks are worker admission / control-plane
+            // authority, not WAF convenience writes. Deny the immediate
+            // request here.
             return Ok(Self::build_response(
                 408,
                 "Request timeout".to_string(),
@@ -818,12 +773,8 @@ impl HttpsServer {
                     "Bot detected via CSS aspect-ratio trap (TLS): IP {}",
                     client_ip
                 );
-                waf.block_ip_for_honeypot(
-                    client_ip,
-                    "css_trap_hit",
-                    waf.config.honeypot_ban_duration_secs,
-                    "global",
-                );
+                // Phase 19: no WAF block-store write here; the trap denies via
+                // the redirect/drop action below.
             }
 
             match action {
@@ -1231,14 +1182,10 @@ impl HttpsServer {
                                                 client_ip = %client_ip,
                                                 mime_type = %result.mime_type,
                                                 matches = ?result.yara_matches,
-                                                "Malware detected in upload, blocking client IP"
+                                                "Malware detected in upload, denying upload"
                                             );
-                                            waf.block_ip_with_threat_intel(
-                                                client_ip,
-                                                "malware_upload",
-                                                3600,
-                                                &site_id,
-                                            );
+                                            // Phase 19: deny here; timed blocks stay with
+                                            // worker admission / control-plane authority.
                                             let body = waf.error_page_manager.render_page(
                                                 403,
                                                 Some("Upload blocked: malware detected"),
@@ -1265,13 +1212,7 @@ impl HttpsServer {
                                                     path = %path,
                                                     client_ip = %client_ip,
                                                     matches = ?matches,
-                                                    "Malware detected in upload, blocking client IP"
-                                                );
-                                                waf.block_ip_with_threat_intel(
-                                                    client_ip,
-                                                    "malware_upload",
-                                                    3600,
-                                                    &site_id,
+                                                    "Malware detected in upload, denying upload"
                                                 );
                                                 (403, "Upload blocked: malware detected")
                                             }

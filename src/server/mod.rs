@@ -343,6 +343,9 @@ impl UnifiedServer {
         self.waf.threat_level.clone()
     }
 
+    /// Deprecated no-op (Phase 19): rule-pattern merges go through the global
+    /// rule-pattern store; detector reloads need no explicit step. Retained
+    /// for API compatibility; always returns `Ok`. No new callers.
     pub fn reload_attack_detector(&self) -> Result<(), String> {
         self.waf.reload_attack_detector()
     }

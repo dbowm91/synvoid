@@ -115,17 +115,24 @@ To add a new capability to the request path:
 3. Pass `Arc<dyn YourTrait>` to request-path modules
 4. Never pass the concrete type directly to request-path code
 
-## WAF Blocklist No-Op Shims (Iteration 59)
+## WAF Blocklist No-Op Shims (removed in Phase 19)
 
-The following `WafCore` methods are **API-compatibility shims** — they do not mutate block store state:
+Phase 19 (`architecture/waf_ownership_convergence.md`) deleted the former
+`WafCore` compatibility shims outright instead of retaining them:
 
-| Method | Behavior |
-|--------|----------|
-| `check_early()` | Always returns `WafDecision::Pass` |
-| `block_ip_for_honeypot()` | No-op (empty body) |
-| `block_ip_with_threat_intel()` | No-op (empty body) |
+| Former method | Former behavior | Replacement |
+|--------|----------|-------------|
+| `check_early()` | Always returned `WafDecision::Pass` | Removed with `EarlyWafHooks::check_early` and the `early_waf_decision` helper. Every request proceeds directly to full preparation; block-store admission lives in the worker composition root. `verify_trust_token` remains the only early hook. |
+| `block_ip_for_honeypot()` | No-op (empty body) | Removed with `ChallengePathWaf::block_ip_for_honeypot`. Honeypot/CSS-trap hits deny the immediate request; timed blocks are worker admission / control-plane authority. |
+| `block_ip_with_threat_intel()` | No-op (empty body) | Removed with `UploadValidationWaf::block_ip_with_threat_intel`. Malware verdicts deny the immediate upload; timed blocks are worker admission / control-plane authority. |
+| `check_block_store()` | Always returned `None` | Removed from `WafCore::check_request_full`; the pipeline no longer contains an always-`None` stage. |
 
-These methods are retained only for trait compatibility (`EarlyWafHooks`, `ChallengePathWaf`, `UploadValidationWaf`). Blocklist writes occur via dedicated local/control-plane enforcement paths, not through the WAF request path.
+Blocklist writes occur via dedicated local/control-plane enforcement paths
+(`block_ip_with_provenance` with `BlockProvenanceKind`), not through the WAF
+request path. Remaining non-hot-path placeholders (`record_suspicious_words`,
+`start_background_tasks`, `reload_attack_detector`, `set_request_services`,
+mesh/YARA stubs) are documented as deprecated no-ops in `src/waf/mod.rs` and
+covered by `tests/waf_ownership_guard.rs` (no new production callers).
 
 `check_dht_threat_lookup()` and `get_threat_intel()` were removed in Iteration 59 — they were dead code referencing concrete `ThreatIntelligenceManager` on the request path.
 

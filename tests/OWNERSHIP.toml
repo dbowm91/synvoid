@@ -194,3 +194,9 @@ name = "worker_supervision_control_flow"
 class = "composition"
 owners = ["synvoid-worker", "synvoid-mesh"]
 reason = "validates worker+mesh supervision control flow composition"
+
+[[test]]
+name = "waf_ownership_guard"
+class = "static_policy"
+owners = ["synvoid-waf"]
+reason = "validates Phase 19 WAF ownership convergence (crate engine vs root composition)"

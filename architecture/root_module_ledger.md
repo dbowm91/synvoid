@@ -79,7 +79,7 @@ Status vocabulary:
 | upstream | Upstream proxy | facade_existing_crate | synvoid-upstream | root re-export (`pub use`) | Prefer `synvoid_upstream` in domain crates |
 | utils | Utility types and helpers | keep_app_root | root app crate (composition) + synvoid-utils (shared) | facade with local helpers — re-exports shared types from synvoid-utils crate; root-only ResultExt/OptionExt/errors/urlencoding/HotHashMap | Duplicate ArcStr, parse_duration, timestamp functions, etc. removed; re-exported from crate |
 | vpn_client | VPN client | facade_existing_crate | synvoid-vpn-client | pure re-export facade | Prefer `synvoid_vpn_client` in domain crates |
-| waf | WAF engine and adapters | split_required | synvoid-waf (core) + root (WafCore, adapters) | mixed — massive real implementation (1056 lines) + re-exports | WafCore and root adapters are the dominant code; core WAF traits/primitives in synvoid-waf |
+| waf | WAF application composition over the canonical synvoid-waf engine | keep_app_root | root app crate (composition: WafCore/AppWaf, adapters, threat-level, rule/threat feeds, ASN, rate-limit core, traffic global) + synvoid-waf (detectors/policy/traits) | facade with local composition — reusable detectors are crate-owned thin facades; WafCore is documented composition (AppWaf alias); duplicates and hot-path placeholders removed (Phase 19) | Full WafCore move blocked: would pull GeoIP facade, tarpit handler, theme error pages, upload-validator static, traffic metrics, threat-level sqlite persistence, and worker RequestServices into the domain crate |
 | worker | Worker process runtime and composition | keep_app_root | root app crate | real implementation + re-exports | Worker process entry points and composition root |
 
 ## Re-export Summary
@@ -106,8 +106,8 @@ The following root paths are direct crate re-exports (not module declarations):
 | `OptionExt` | `utils::OptionExt` | Extension trait |
 | `ResultExt` | `utils::ResultExt` | Extension trait |
 | `RunningFlag` | `utils::RunningFlag` | Shared running flag |
-| `WafCore` | `waf::WafCore` | Root-owned WAF core |
-| `WafCoreConfig` | `waf::WafCoreConfig` | Root-owned WAF config |
+| `WafCore` | `waf::WafCore` | Root-owned WAF application composition (`AppWaf` alias) |
+| `WafCoreConfig` | `waf::WafCoreConfig` | Root-owned composition constructor (`AppWafConfig` alias) |
 
 ## Feature-Gated Modules
 

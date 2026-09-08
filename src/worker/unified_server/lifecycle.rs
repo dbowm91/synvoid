@@ -679,16 +679,13 @@ pub fn spawn_ipc_loop(
                         );
                     }
 
-                    if let Err(e) = state.unified_server.reload_attack_detector() {
-                        tracing::error!(
-                            "Failed to reload attack detector with new patterns: {}",
-                            e
-                        );
-                    } else {
-                        tracing::info!(
-                            "Successfully reloaded attack detector with new rule patterns"
-                        );
-                    }
+                    // Phase 19: patterns merge via the global rule-pattern store
+                    // above; `reload_attack_detector` is a deprecated no-op that
+                    // always reports Ok, so it is no longer called here.
+                    tracing::info!(
+                        "Merged rule patterns update v{} into the global pattern store",
+                        version
+                    );
                 }
                 #[cfg(feature = "mesh")]
                 Some(Message::ThreatFeedUpdate {

@@ -124,7 +124,7 @@ Root-module ownership policy lives in `architecture/root_module_ledger.md` — p
 ### Threat-Intel Enforcement
 
 1. Raw lookups (`lookup_local_indicator*`, `lookup_threat_indicator_in_dht`) are diagnostic-only; enforcement uses `lookup_*_policy_strict`.
-2. WAF reads BlockStore, not `ThreatIntelligenceManager` — mesh enforcement populates BlockStore.
+2. Worker admission reads BlockStore, not `ThreatIntelligenceManager` — mesh enforcement populates BlockStore; the WAF pipeline itself queries no block/threat state and mutates none.
 3. New block-store writes use `block_ip_with_provenance` with `BlockProvenanceKind` (`LegacyUnknown` only for compat/tests/mocks).
 4. Mesh-ID blocks are admin/control-plane only — `is_mesh_id_blocked()` must never appear in WAF/request/proxy/HTTP/3 code.
 5. New consumers need `ThreatIntelConsumerKind::Enforcement` + `ThreatIntelConsumerAction::PermitAction` before mutating state.
@@ -152,7 +152,7 @@ Primary doc per subsystem (deep dives live beside each as `<topic>_deep_dive.md`
 | Request pipeline (HTTP/1 + HTTP/3) | `http_request_pipeline.md`, `http_server.md`, `http_shared.md`, `http3_request_waf_boundary.md` |
 | Worker data plane | `worker_data_plane_composition_root.md`, `worker_task_lifecycle.md`, `unified_server_startup.md` |
 | Supervisor & process model | `supervisor.md`, `supervisor_lifecycle.md`, `process_lifecycle.md`, `cli_supervisor_command_dispatch.md` |
-| WAF | `waf.md`, `streaming.md`, `challenge.md`, `enforcement_decision_contract.md` |
+| WAF | `waf.md`, `waf_ownership_convergence.md`, `streaming.md`, `challenge.md`, `enforcement_decision_contract.md` |
 | Proxy, upstream, cache, tunnels | `proxy.md`, `upstream.md`, `proxy_cache.md`, `tunnel_deep_dive.md` |
 | Mesh, DHT, Raft, trust | `mesh.md`, `mesh_transport_lifecycle.md`, `mesh_trust_domains.md`, `block_store.md` |
 | Threat-intel enforcement | `threat_intel_consumer_actionability.md`, `manual_enforcement_ownership.md`, `admin_control_plane_authority.md` |

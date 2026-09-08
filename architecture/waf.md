@@ -1,5 +1,11 @@
 # WAF Module Architecture
 
+> Ownership (Phase 19): `synvoid-waf` (`crates/synvoid-waf/`) owns reusable
+> request-policy evaluation and detector state. `src/waf/` is root
+> application composition over that engine (`WafCore`, also aliased `AppWaf`).
+> Full per-file ownership matrix:
+> `architecture/waf_ownership_convergence.md`.
+
 ## 1. Purpose and Responsibility
 
 The Web Application Firewall (WAF) module (`src/waf/`) provides comprehensive request filtering, attack detection, and threat mitigation for the SynVoid proxy. It serves as the primary security layer that inspects incoming HTTP requests and determines whether to allow, block, or challenge traffic based on multiple detection mechanisms.
@@ -15,48 +21,60 @@ The Web Application Firewall (WAF) module (`src/waf/`) provides comprehensive re
 
 ## 2. Key Submodules and Their Responsibilities
 
-### 2.1 `mod.rs` - WafCore (936 lines)
+### 2.1 `mod.rs` - WafCore / AppWaf (root application composition)
 
-The central orchestrator that coordinates all WAF components.
+The composition root that wires runtime services around the canonical
+`synvoid-waf` engine and runs the staged enforcement pipeline
+(`check_request_full` + canonical reducer, see
+`architecture/enforcement_decision_contract.md`).
 
-**WafCore** - Main entry point for request processing:
-- Manages the complete request checking pipeline
-- Coordinates between rate limiting, bot detection, attack detection, and threat intelligence
+**WafCore** - Composition entry point for request processing:
+- Runs the staged policy pipeline (rate limit, endpoint, honeypot, bot,
+  flood, conditional attack inspection) with deterministic reduction
+- Wires canonical-crate detectors (`synvoid_waf::{bot,endpoints,
+  attack_detection,flood,traffic_shaper,probe_tracker,violation_tracker}`)
+  with runtime services (challenge/auth managers, threat-level, feeds,
+  GeoIP, tarpit, traffic shaper, ASN tracker)
 - Handles decision escalation based on threat levels
 - Manages honeypot interactions and tarpit responses
+- Block-store admission is checked at the worker composition root before
+  this pipeline runs; the WAF pipeline mutates no block state
 
-**Key Components (30 fields):**
+**Key Components:**
 ```rust
 pub struct WafCore {
     pub rate_limiter: RateLimiterManager,
-    pub bot_detector: BotDetector,
-    pub endpoint_blocker: EndpointBlockerManager,
-    pub sensitive_endpoint_manager: SensitiveEndpointManager,
-    pub error_page_manager: ErrorPageManager,
-    pub challenge_manager: ChallengeManager,
-    pub auth_manager: Arc<AuthManager>,
-    pub attack_detector: ArcSwapOption<AttackDetector>,
+    pub bot_detector: BotDetector,                       // synvoid_waf::bot
+    pub endpoint_blocker: EndpointBlockerManager,        // synvoid_waf::endpoints
+    pub sensitive_endpoint_manager: SensitiveEndpointManager, // synvoid_waf::endpoints
+    pub error_page_manager: ErrorPageManager,            // root composition (theme)
+    pub challenge_manager: ChallengeManager,             // synvoid-challenge
+    pub auth_manager: Arc<AuthManager>,                  // synvoid-auth
+    pub attack_detector: ArcSwapOption<AttackDetector>,  // synvoid_waf::attack_detection
     pub attack_detection_config: ArcSwapOption<AttackDetectionConfig>,
-    pub block_store: Option<Arc<BlockStore>>,
-    pub config: WafConfig,
+    pub config: WafConfig,                               // synvoid_waf::primitives
     pub whitelist: Arc<HashSet<IpAddr>>,
-    tarpit_generator: Arc<crate::tarpit::generator::MarkovChain>,
+    _tarpit_generator: Arc<crate::tarpit::MarkovChain>,
     tarpit_defaults: crate::config::TarpitDefaults,
-    pub threat_level: Option<Arc<ThreatLevelManager>>,
-    pub violation_tracker: Option<Arc<ViolationTracker>>,
-    pub ip_feed: Option<Arc<IpFeedManager>>,
-    pub probe_tracker: Option<Arc<ProbeTracker>>,
+    pub threat_level: Option<Arc<ThreatLevelManager>>,   // root composition (sqlite)
+    pub violation_tracker: Option<Arc<ViolationTracker>>, // synvoid_waf
+    pub ip_feed: Option<Arc<IpFeedManager>>,             // root feed integration
+    pub probe_tracker: Option<Arc<ProbeTracker>>,        // synvoid_waf
     pub suspicious_word_tracker: Option<Arc<SuspiciousWordTracker>>,
     pub upstream_error_tracker: Option<Arc<UpstreamErrorTracker>>,
-    pub traffic_shaper: Option<Arc<GlobalTrafficShaper>>,
-    pub connection_limiter: Option<Arc<ConnectionLimiter>>,
-    pub asn_tracker: Option<Arc<AsnTracker>>,
-    pub test_mode: TestModeConfig,
+    pub traffic_shaper: Option<Arc<GlobalTrafficShaper>>, // root composition
+    pub connection_limiter: Option<Arc<ConnectionLimiter>>, // synvoid_waf
+    pub asn_tracker: Option<Arc<AsnTracker>>,            // root composition (GeoIP)
+    pub test_mode: TestModeConfig,                       // synvoid_waf::primitives
     pub honeypot_ban_duration_secs: u64,
     pub request_services: ArcSwapOption<RequestServices>,
-    pub flood_protector: Option<Arc<FloodProtector>>,
+    pub flood_protector: Option<Arc<FloodProtector>>,    // synvoid_waf::flood
     pub trust_token_key: [u8; 32],
 }
+
+/// Root composition alias. Request-path code must consume narrow traits
+/// (`WafProcessor`, `WafAccess`), never this concrete type.
+pub type AppWaf = WafCore;
 ```
 
 **Main Entry Point - `check_request_full()`:**
@@ -421,19 +439,16 @@ impl WafCore {
         ua: Option<&str>,
     ) -> WafDecision
 
-    // Early check (pre-block list only)
-    pub fn check_early(
-        &self,
-        client_ip: IpAddr,
-        _path: &str,
-        _cookies: Option<&str>,
-        _ua: Option<&str>,
-    ) -> WafDecision
-
     // Get streaming WAF for body inspection
     pub fn streaming(&self) -> Option<StreamingWafCore>
 }
 ```
+
+> Removed in Phase 19: the always-`Pass` `check_early`, the always-`None`
+> `check_block_store` stage, and the no-op `block_ip_for_honeypot` /
+> `block_ip_with_threat_intel` writers. Trust-token bypass survives via
+> `verify_trust_token` + `should_skip_waf_from_trust_cookie()`; timed blocks
+> are worker admission / control-plane authority.
 
 ### StreamingWafCore Body Inspection
 
@@ -528,9 +543,13 @@ impl ConnectionLimiter {
 
 ### BlockStore Integration
 
-The WAF integrates with `BlockStore` for IP blocking:
-- Pre-blocked IPs checked via `check_block_store()` in request pipeline
-- Violation tracker can block IPs via `store.block_ip()`
+Block-store enforcement lives in the worker admission boundary, not in the
+WAF pipeline:
+- Worker admission checks pre-blocked IPs before `check_request_full` runs
+- `ViolationTracker::record_violation` records violation history without
+  mutating the block store from the request path
+- Timed blocks go through `block_ip_with_provenance` with a
+  `BlockProvenanceKind` on dedicated local/control-plane paths
 - Block store supports site-scoped blocking ("global" or site-specific)
 
 ### Challenge System Integration
@@ -606,12 +625,7 @@ Allows disabling individual WAF components for testing.
 ## 7. Request Processing Flow
 
 ```
-Request Received
-       │
-       ▼
-┌──────────────────┐
-│  check_block_store │ ──► Block/Drop if pre-blocked
-└──────────────────┘
+Worker admission (block-store check, before WAF)
        │
        ▼
 ┌──────────────────┐
@@ -683,6 +697,9 @@ Request Received
 ## 9. Configuration Reference
 
 ```rust
+/// Root-owned composition constructor: data-only WAF policy plus an explicit
+/// dependency bundle of service configs/handles. Reusable `synvoid-waf` logic
+/// never touches this type. Aliased as `AppWafConfig`.
 pub struct WafCoreConfig {
     rate_config: RateLimitConfigStore,
     memory_config: RateLimitMemoryConfig,
@@ -690,7 +707,6 @@ pub struct WafCoreConfig {
     endpoint_config: BlockedDefaults,
     waf_config: WafConfig,
     whitelist: Vec<String>,
-    block_store: Option<Arc<BlockStore>>,
     attack_detection_config: Option<AttackDetectionConfig>,
     auth_manager: Option<Arc<AuthManager>>,
     threat_level_config: Option<ThreatLevelConfig>,

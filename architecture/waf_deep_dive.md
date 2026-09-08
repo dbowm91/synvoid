@@ -17,7 +17,7 @@ The `FloodProtector` (`crates/synvoid-waf/src/flood/mod.rs:127`) provides compre
 - **Userspace backend:** Default fallback using atomic counters
 
 #### Per-IP Connection Limiting
-The `ConnectionLimiter` (`src/waf/traffic_shaper/limiter.rs`) enforces connection limits:
+The `ConnectionLimiter` (`crates/synvoid-waf/src/traffic_shaper/limiter.rs`, canonical since Phase 19) enforces connection limits:
 - **Global connection limit:** Default 1,000 concurrent connections
 - **Per-IP limits:** Default 10 connections per IP
 - **Burst tokens:** IP burst allowance (default 5) enables short-term bursts

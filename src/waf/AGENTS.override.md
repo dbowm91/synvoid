@@ -2,20 +2,36 @@
 
 ## Module Overview
 
-The WAF module (`src/waf/`) provides attack detection, request sanitization, and response handling.
+The WAF module (`src/waf/`) is root application composition over the canonical
+`synvoid-waf` engine. Ownership matrix: `architecture/waf_ownership_convergence.md`.
+
+- Reusable policy/detection lives in `crates/synvoid-waf/` (attack detection,
+  bots, endpoints, flood, rate-limit sliding windows, traffic buckets +
+  `ConnectionLimiter`, probe/violation trackers, enforcement adapters, narrow
+  traits). New detector/policy code belongs there, never in `src/waf/`.
+- `src/waf/` owns `WafCore`/`AppWaf` wiring, `adapter.rs`/`adapters.rs`
+  trait bridges, and control-plane integrations (threat-level, rule/threat
+  feeds, ASN tracker, rate-limit core, traffic-shaper global).
+- Request-path code consumes narrow traits (`WafProcessor`, `WafAccess`,
+  `BlockListStore`), never concrete `WafCore`.
+- Timed blocks are worker admission / control-plane authority via
+  `block_ip_with_provenance` + `BlockProvenanceKind`, never WAF shims.
 
 ## Key Files
 
-- `src/waf/mod.rs` - WafCore, request handling, threat intel integration
-- `src/waf/attack_detection/` - Rule matching and detection engines
+- `src/waf/mod.rs` - WafCore/AppWaf composition, staged enforcement pipeline
+- `crates/synvoid-waf/src/attack_detection/` - Canonical rule matching and detection engines
+- `src/waf/adapters.rs` - BlockStore/GeoIP/challenge/violation trait bridges
 - `src/server/waf_handler.rs` - WafResponseIntent, ProtocolAdapter trait, WafContext
 
 ## Hot Path
 
-`src/waf/attack_detection/` — WAF rule matching runs per-request on all inputs. Critical hot path:
+`crates/synvoid-waf/src/attack_detection/` — WAF rule matching runs per-request on all inputs. Critical hot path:
 - Every allocation compounds at 1000K rps
 - Avoid O(n) operations; prefer O(1) lookups
 - Use thread-local buffers and object pools
+- No always-`None`/always-`Pass` placeholder stages in `check_request_full`
+  (removed Phase 19); worker admission owns the block-store check
 
 ## Module-Specific Patterns
 
@@ -195,7 +211,7 @@ Note: The adapters return the built response; actual wire sending is done by the
 
 ### SiteConnectionLimiter Removed (Previously BUG-WAF-3)
 
-`SiteConnectionLimiter` struct has been removed from `src/waf/traffic_shaper/limiter.rs`. Per-site connection limiting works via `try_acquire_with_limits()` on a global `ConnectionLimiter` with `site_id` parameter. Architecture docs still reference the removed struct (waf.md:180, waf_deep_dive.md:24, networking_deep_dive.md:82) — see plan items DOC-K2, DOC-K5, DOC-G3.
+`SiteConnectionLimiter` struct has been removed. Per-site connection limiting works via `try_acquire_with_limits()` on a global `ConnectionLimiter` with `site_id` parameter. Canonical implementation: `crates/synvoid-waf/src/traffic_shaper/limiter.rs` (the former root copy at `src/waf/traffic_shaper/limiter.rs` was an uncompiled orphan deleted in Phase 19 after porting its increment-then-validate fix into the crate).
 
 ---
 

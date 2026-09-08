@@ -77,7 +77,7 @@ SynVoid is at the forefront of post-quantum security:
 SynVoid leverages Rust's ownership model and a custom `BufferPool` to minimize data copying and allocation overhead. The buffer pool (see `crates/synvoid-utils/src/buffer/pool.rs`) provides reusable buffers across IO operations, significantly reducing garbage collection pressure. True zero-copy paths exist in specific hot paths, but most handlers currently copy data between network and application layers.
 
 ### 2. Connection Limiting
-The `ConnectionLimiter` (`src/waf/traffic_shaper/limiter.rs`) provides fine-grained control over concurrent connections at multiple levels:
+The `ConnectionLimiter` (`crates/synvoid-waf/src/traffic_shaper/limiter.rs`, canonical since Phase 19) provides fine-grained control over concurrent connections at multiple levels:
 - **Global Limit:** Total connections the WAF instance will accept.
 - **Per-Site Limit:** Per-site connection counting via `try_acquire_with_limits()` which applies limits by site_id parameter.
 - **Per-IP Limit:** Prevents connection exhaustion attacks from a single source.

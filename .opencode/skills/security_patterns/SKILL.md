@@ -1357,7 +1357,7 @@ if site.proxy.tls_passthrough && site.proxy.tls_passthrough_enforce_waf {
 
 ### Connection Limiter Slot Hash Collisions
 
-**Location**: `src/waf/flood/connection_limiter.rs:8,119-121`
+**Location**: `crates/synvoid-waf/src/flood/connection_limiter.rs:8` (canonical since Phase 19; the former root copy was an uncompiled orphan)
 
 **Issue**: `CONNECTION_TRACKER_SLOTS = 65536` with simple modulo hash - high collision risk.
 
