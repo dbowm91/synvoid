@@ -39,19 +39,27 @@ Total LOC removed from root: ~688 lines of duplicate/dead code.
 - Root `utils` tests — 51/51 passed
 - Root `platform` tests — 2 passed, 2 pre-existing failures (sandbox stub tests fail on clean tree too)
 
+## Phase 18 Closure (auth + challenge)
+
+Phase 18 extracted both high-value root dependencies ahead of the WAF ownership phase:
+
+- `auth` (`src/auth/`, ~1,202 lines) → canonical `crates/synvoid-auth/` (`AuthManager`, session/CSRF/lockout, `BasicAuthManager`); `src/auth/mod.rs` is now `pub use synvoid_auth::*;`. Only `DrainFlag` (already in `synvoid-utils`) and `SiteBasicAuthConfig` (already in `synvoid-config`) blocked extraction; no cycle introduced.
+- `challenge` (`ChallengeManager`/`ChallengeConfig`/attempt tracking + `mesh_pow.rs`, ~865 lines) → canonical `crates/synvoid-challenge/src/manager.rs` + `mesh_pow.rs`; `src/challenge/mod.rs` is now a pure re-export facade. Mesh-PoW has no mesh-transport dependency (config-only), so no narrow adapter was needed. Rendering stays directional (`synvoid-challenge` → `synvoid-theme`).
+- WAF (`src/waf/mod.rs`, `adapters.rs`), TLS (`src/tls/server.rs`), and server (`src/server/mod.rs`) now import `synvoid_auth` / `synvoid_challenge` directly; no `crate::auth` / `crate::challenge` imports remain in `src/`.
+
 ## Remaining `split_required` Modules
 
 | Module | LOC | Blocker |
 |--------|-----|---------|
 | `admin` | 8,358+ | Mixed Axum router + handlers; extract after Phase 12 legacy endpoint closure |
-| `auth` | 1,235 | Good extraction candidate for synvoid-auth; touches admin heavily |
-| `challenge` | 865 | ChallengeManager orchestration root-owned; primitives in synvoid-challenge |
 | `http` | 4,720+ | Largest/high-risk; plan after WAF/request boundaries settle |
 | `http_client` | 219 | Small; QUIC tunnel dispatch depends on root tunnel infra |
 | `plugin` | 608 | Composition root stays root; runtime in synvoid-plugin-runtime |
+| `tls` | — | Local `HttpsServer` depends on root HTTP infra; core TLS in dedicated crate |
+| `waf` | 1,056+ | `WafCore` and root adapters root-owned; core traits/primitives in synvoid-waf |
 
 ## Next Recommended Cluster
 
-1. `auth` — 1,235 LOC, minimal root dependencies (DrainFlag only), good candidate for `synvoid-auth`
-2. `challenge` — 865 LOC, move manager orchestration or classify root-owned
-3. `http_client` — 219 LOC, smallest remaining, could be reclassified as facade
+1. `http_client` — 219 LOC, smallest remaining, could be reclassified as facade
+2. `waf` — Phase 19 ownership convergence (now unblocked: `WafCore` no longer pins root auth/challenge impls)
+3. `tls` — server integration still root-owned; core TLS already extracted

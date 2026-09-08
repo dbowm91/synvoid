@@ -1,8 +1,8 @@
-use crate::config::site::SiteBasicAuthConfig;
 use base64::Engine;
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
+use synvoid_config::SiteBasicAuthConfig;
 
 pub struct BasicAuthManager {
     realm: String,

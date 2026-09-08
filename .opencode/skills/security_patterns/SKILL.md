@@ -428,7 +428,7 @@ pub fn is_privileged(&self) -> bool {
 
 ### CSRF Token Validation
 
-**Location**: `src/auth/mod.rs:validate_csrf_token()`, `src/admin/state.rs:validate_csrf()`
+**Location**: `crates/synvoid-auth/src/lib.rs:validate_csrf_token()` (`src/auth/` facade), `src/admin/state.rs:validate_csrf()`
 
 **Issue**: Timing attacks on CSRF token comparison using `==` operator.
 
@@ -946,7 +946,7 @@ fn refresh_sparse_buckets(&self) {
 
 | File | Fix |
 |------|-----|
-| `src/auth/mod.rs` | Constant-time CSRF comparison |
+| `crates/synvoid-auth/src/lib.rs` | Constant-time CSRF comparison |
 | `src/admin/state.rs` | Constant-time session ID comparison |
 | `crates/synvoid-dns/src/crypto_rng.rs` | Result-based RNG with error propagation |
 | `crates/synvoid-mesh/src/mesh/peer_auth.rs` | Role-based Ed25519 + PoW authentication |
@@ -957,7 +957,7 @@ fn refresh_sparse_buckets(&self) {
 | `crates/synvoid-mesh/src/mesh/threat_intel.rs` | Composite DHT keys |
 | `crates/synvoid-mesh/src/mesh/transport_global.rs` | Distributed revocation |
 | `crates/synvoid-mesh/src/mesh/dht/capability_attestation.rs` | Capability attestation |
-| `src/challenge/mod.rs` | Reduced PoW timeout (12s) |
+| `crates/synvoid-challenge/src/manager.rs` | Reduced PoW timeout (12s) |
 | `crates/synvoid-config/src/admin.rs` | bcrypt cost minimum 12 |
 
 ---
@@ -1110,7 +1110,7 @@ let session_id_hash = hex::encode(sha2::Sha256::digest(session_id.as_bytes()));
 
 ```bash
 # Check constant-time comparisons are used
-rg "ct_eq" src/auth/mod.rs src/admin/state.rs
+rg "ct_eq" crates/synvoid-auth/src/lib.rs src/admin/state.rs
 
 # Check crypto RNG returns Result
 rg "fn random_" crates/synvoid-dns/src/crypto_rng.rs
@@ -1144,7 +1144,7 @@ rg "unsafe \{" src/ --glob '*.rs' -l | xargs -I{} rg "SAFETY" {}
 
 ### Session Fixation Prevention
 
-**Location**: `src/auth/mod.rs:479-493`
+**Location**: `crates/synvoid-auth/src/lib.rs:479-493`
 
 **Issue**: When a user logs in, existing sessions for that user were NOT invalidated. An attacker with a valid session could continue using it after legitimate user login.
 

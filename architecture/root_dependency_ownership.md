@@ -100,7 +100,8 @@ Classification values:
 | synvoid-utils | throughout | composition_runtime | default | Shared utilities (DrainFlag, buffer, IP utils) | keep |
 | synvoid-core | waf, proxy | composition_runtime | default | Core WAF and proxy types | keep |
 | synvoid-tarpit | tarpit | composition_runtime | default | Tarpit Markov chain generation | keep |
-| synvoid-challenge | challenge | composition_runtime | default | Challenge primitives (PoW, CSS, honeypot) | keep |
+| synvoid-auth | auth, waf | compat_facade | default | Canonical AuthManager/session/CSRF/lockout; root auth is thin facade | keep |
+| synvoid-challenge | challenge, waf, tls, server | compat_facade | default | Canonical ChallengeManager/ChallengeConfig/mesh-PoW + primitives; root challenge is thin facade | keep |
 | synvoid-waf | waf | composition_runtime | default | WAF rule engine and detection | keep |
 | synvoid-plugin-runtime | plugin | composition_runtime | default | WASM plugin runtime and instance pooling | keep |
 | synvoid-tls | tls | composition_runtime | default | TLS termination and ACME | keep |

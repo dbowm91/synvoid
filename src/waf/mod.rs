@@ -44,8 +44,6 @@ pub use threat_level::{ThreatHistorySample, ThreatLevelManager};
 pub use traffic_shaper::{ConnectionLimiter, ConnectionToken, GlobalTrafficShaper};
 pub use violation_tracker::ViolationTracker;
 
-use crate::auth::AuthManager;
-use crate::challenge::{ChallengeConfig, ChallengeManager};
 use crate::config::defaults::{AsnScrapingConfig, BlockedDefaults, BotDefaults};
 use crate::config::limits::RateLimitMemoryConfig;
 use crate::config::traffic::{BandwidthConfig, TrafficShapingConfig};
@@ -60,6 +58,8 @@ use crate::waf::endpoints::{
 };
 use crate::waf::ip_feed::IpFeedManager;
 pub use request_sanitization::RequestSanitizer;
+use synvoid_auth::AuthManager;
+use synvoid_challenge::{ChallengeConfig, ChallengeManager};
 
 pub use flood::{FloodConfig, FloodDecision, FloodProtector};
 pub use ratelimit::{RateLimitResult, RateLimiterManager};
@@ -398,7 +398,7 @@ impl WafCore {
             theme: crate::theme::ThemeConfig::default(),
             challenge_max_attempts: bot_config.challenge_max_attempts,
             challenge_rate_limit_window_secs: bot_config.challenge_rate_limit_window_secs,
-            challenge_priority: crate::challenge::ChallengePriority::default(),
+            challenge_priority: synvoid_challenge::ChallengePriority::default(),
             mesh_pow_enabled: false,
             mesh_pow_key_exchange_enabled: false,
             mesh_pow_auditing_enabled: false,
@@ -1053,8 +1053,8 @@ impl synvoid_http::ChallengePathWaf for WafCore {
         session_id: &str,
         asset_name: &str,
     ) -> (
-        crate::challenge::AssetRequestResult,
-        crate::challenge::CssAssetAction,
+        synvoid_challenge::css::AssetRequestResult,
+        synvoid_challenge::css::CssAssetAction,
     ) {
         self.challenge_manager
             .record_css_asset_request(session_id, asset_name)

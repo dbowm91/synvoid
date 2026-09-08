@@ -190,7 +190,7 @@ Root-owned orchestration code (see [`root_module_ledger.md`](./root_module_ledge
 | Component | Crate(s) | Purpose | Doc |
 |-----------|----------|---------|-----|
 | **WAF Engine** | `synvoid-waf` + `src/waf/` | 16 attack detectors, normalizer (overlong UTF-8, homoglyphs…), bot detection, narrow traits (`WafProcessor`, `BlockListStore`), rate limiting, threat level, rule feeds | [`waf_deep_dive.md`](./waf_deep_dive.md) |
-| **Auth** | `src/auth/` | Users, bcrypt sessions, brute-force lockout, CSRF, HTTP Basic | [`auth_deep_dive.md`](./auth_deep_dive.md) |
+| **Auth** | `synvoid-auth` (`src/auth/` facade) | Users, bcrypt sessions, brute-force lockout, CSRF, HTTP Basic | [`auth_deep_dive.md`](./auth_deep_dive.md) |
 | **Challenge** | `synvoid-challenge` | SHA-256 PoW (constant-time verify), CSS fingerprinting, adaptive difficulty, honeypot fields | [`challenge_deep_dive.md`](./challenge_deep_dive.md) |
 | **Browser PoW module** | `synvoid-wasm-pow` | WASM solver served to clients; hybrid X25519+ML-KEM key exchange; request signing | [`wasm_pow.md`](./wasm_pow.md) |
 | **Block Store** | `synvoid-block-store` | Persistent IP/mesh-ID blocklists, 64-shard LRU, provenance tracking, sequence-numbered event log for peer catch-up | [`block_store_deep_dive.md`](./block_store_deep_dive.md) · [`block_store.md`](./block_store.md) |

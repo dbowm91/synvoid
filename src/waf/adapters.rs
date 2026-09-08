@@ -8,9 +8,9 @@ use synvoid_waf::traits::{
 };
 
 use crate::block_store::BlockStore;
-use crate::challenge::ChallengeManager;
 use crate::geoip::GeoIpManager;
 use crate::waf::violation_tracker::ViolationTracker;
+use synvoid_challenge::ChallengeManager;
 
 pub struct BlockStoreAdapter {
     inner: Arc<BlockStore>,

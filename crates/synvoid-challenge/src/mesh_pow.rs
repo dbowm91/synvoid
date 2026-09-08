@@ -1,9 +1,10 @@
-use crate::theme::{ChallengePageTemplate, ThemeConfig};
-use crate::utils::current_timestamp;
+use crate::pow::has_leading_zeros_ct;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use synvoid_theme::{ChallengePageTemplate, ThemeConfig};
+use synvoid_utils::current_timestamp;
 
 #[derive(Debug, Clone)]
 pub struct MeshPowChallenge {
@@ -172,7 +173,7 @@ impl MeshPowManager {
         let input = format!("{}{}", challenge, client_nonce);
         let hash = Sha256::digest(input.as_bytes());
 
-        super::has_leading_zeros_ct(&hash, self.difficulty as usize).into()
+        has_leading_zeros_ct(&hash, self.difficulty as usize).into()
     }
 
     pub fn generate_challenge_page(&self, honeypot_html: &str) -> String {
@@ -180,7 +181,7 @@ impl MeshPowManager {
         let timeout_ms = self.timeout_secs * 1000;
         let mesh_config_json = serde_json::to_string(&challenge.mesh_config).unwrap_or_default();
 
-        let challenge_js = include_str!("../../static/mesh_pow_challenge.js");
+        let challenge_js = include_str!("../static/mesh_pow_challenge.js");
         let challenge_js = challenge_js
             .replace("{{challenge}}", &challenge.challenge)
             .replace("{{difficulty}}", &challenge.difficulty.to_string())
@@ -260,6 +261,7 @@ pub enum MeshPowResult {
 
 #[cfg(test)]
 pub(crate) fn solve_pow_sync(challenge: &str, difficulty: u8) -> Option<String> {
+    use crate::pow::has_leading_zeros;
     const MAX_NONCE: u64 = 100_000_000;
     let zeros = difficulty as usize;
 
@@ -267,7 +269,7 @@ pub(crate) fn solve_pow_sync(challenge: &str, difficulty: u8) -> Option<String> 
         let input = format!("{}{}", challenge, nonce);
         let hash = Sha256::digest(input.as_bytes());
 
-        if super::has_leading_zeros(&hash, zeros) {
+        if has_leading_zeros(&hash, zeros) {
             return Some(nonce.to_string());
         }
     }

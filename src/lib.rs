@@ -56,8 +56,6 @@ pub mod worker;
 // Mixed application/domain modules. These still expose root-side implementation
 // or adapters and need targeted extraction plans before becoming pure facades.
 pub mod admin;
-pub mod auth;
-pub mod challenge;
 pub mod filter;
 pub mod http;
 pub mod http_client;
@@ -72,7 +70,9 @@ pub mod utils;
 // compatibility while root coupling is reduced.
 // See architecture/root_module_ledger.md.
 pub mod app_server;
+pub mod auth;
 pub mod block_store;
+pub mod challenge;
 pub mod buffer {
     pub use synvoid_utils::buffer::pool;
     pub use synvoid_utils::buffer::pool::{BufferPool, PooledBuf};

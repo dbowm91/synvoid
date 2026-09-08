@@ -7957,6 +7957,7 @@ dependencies = [
  "synvoid-admin",
  "synvoid-app-handlers",
  "synvoid-app-server",
+ "synvoid-auth",
  "synvoid-block-store",
  "synvoid-challenge",
  "synvoid-cli",
@@ -8091,6 +8092,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "synvoid-auth"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "bcrypt",
+ "chrono",
+ "hex",
+ "http 1.4.1",
+ "parking_lot",
+ "proptest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "subtle",
+ "synvoid-config",
+ "synvoid-utils",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "synvoid-block-store"
 version = "0.1.0"
 dependencies = [
@@ -8120,6 +8145,7 @@ dependencies = [
  "parking_lot",
  "rand 0.9.4",
  "serde",
+ "serde_json",
  "sha2",
  "subtle",
  "synvoid-theme",

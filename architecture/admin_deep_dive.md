@@ -71,10 +71,10 @@ SynVoid supports two client classes with distinct trust boundaries:
 - Constant-time CSRF comparison via `subtle::ConstantTimeEq`
 
 **Key Files:**
-- `src/auth/mod.rs` - `AuthManager` struct
-- `src/auth/mod.rs` - `create_user()` registration
-- `src/auth/mod.rs` - `verify_login()` authentication
-- `src/auth/mod.rs` - `validate_session()` session management
+- `crates/synvoid-auth/src/lib.rs` (`src/auth/` is a thin facade) - `AuthManager` struct
+- `crates/synvoid-auth/src/lib.rs` - `create_user()` registration
+- `crates/synvoid-auth/src/lib.rs` - `verify_login()` authentication
+- `crates/synvoid-auth/src/lib.rs` - `validate_session()` session management
 
 **User Auth Flow:**
 1. User registration via `POST /api/auth/register` (if enabled) or Admin API
@@ -335,11 +335,11 @@ Separate rate limits for YARA operations:
 
 ---
 
-## Authentication Module (`src/auth/`)
+## Authentication Module (`crates/synvoid-auth/`; facade `src/auth/`)
 
 ### User Authentication System
 
-**Location:** `src/auth/mod.rs`
+**Location:** `crates/synvoid-auth/src/lib.rs`
 
 **Features:**
 - User registration with bcrypt password hashing
@@ -357,7 +357,7 @@ Separate rate limits for YARA operations:
 
 ### HTTP Basic Auth
 
-**Location:** `src/auth/basic.rs`
+**Location:** `crates/synvoid-auth/src/basic.rs`
 
 - Site-level Basic Auth configuration
 - Per-site realm configuration

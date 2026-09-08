@@ -28,8 +28,8 @@ Phase 10 closure audit. Classifies every public surface of the SynVoid codebase 
 | Module | Classification | Stability | Owner | Notes |
 |--------|---------------|-----------|-------|-------|
 | `admin` | `split_required` | transitional | root (composition) + synvoid-admin | Admin API routes, auth, CORS; inventory in progress |
-| `auth` | `split_required` | transitional | potential synvoid-auth | Real implementation (1135 lines); extraction candidate |
-| `challenge` | `split_required` | transitional | root (orchestration) + synvoid-challenge | Hybrid: re-exports + local ChallengeManager |
+| `auth` | `facade_existing_crate` | transitional | synvoid-auth | Pure re-export facade; canonical `AuthManager`/session/CSRF/lockout in crate |
+| `challenge` | `facade_existing_crate` | transitional | synvoid-challenge | Pure re-export facade; canonical `ChallengeManager`/`ChallengeConfig`/mesh-PoW in crate |
 | `http` | `split_required` | transitional | root (composition) + synvoid-http | 43 submodules; large module needs targeted extraction |
 | `http_client` | `split_required` | transitional | synvoid-http-client + root | QUIC tunnel dispatch depends on root infra |
 | `plugin` | `split_required` | transitional | root (composition) + synvoid-plugin-runtime | Plugin lifecycle management root-owned |
@@ -424,7 +424,7 @@ SynVoid is pre-1.0. Semver is not yet meaningful for external consumers. All cra
 | Risk | Severity | Mitigation | Status |
 |------|----------|-----------|--------|
 | Pre-1.0 semver | Medium | Documented; no external API promises | Accepted |
-| `split_required` modules still in root | Low | Extraction plan exists; 8 modules tracked | In progress |
+| `split_required` modules still in root | Low | Extraction plan exists; 6 modules tracked | In progress |
 | Mesh protocol has ~130 message types | Low | Fuzz coverage exists for decode paths | Accepted |
 | Config fuzzing not implemented | Medium | Listed in ci_fuzz_failure_injection.md | Deferred |
 | `serder` module is stale | Low | Candidate for removal | Accepted |

@@ -23,7 +23,9 @@ if bool::from(computed.ct_eq(&original)) { ... }
 ```
 
 **Locations requiring constant-time comparison**:
-- CSRF token validation (`src/auth/mod.rs`)
+- CSRF token validation (`crates/synvoid-auth/src/lib.rs`; `src/auth/mod.rs` is a thin `pub use synvoid_auth::*;` facade)
+
+Canonical implementation lives in `crates/synvoid-auth`. New code must import `synvoid_auth` directly; do not add domain logic under `src/auth/`.
 
 ## Skills Reference
 

@@ -25,12 +25,12 @@ use tokio::net::TcpListener;
 use tokio::sync::broadcast;
 use tokio_rustls::TlsAcceptor;
 
-use crate::challenge::HONEYPOT_PREFIX;
 use crate::config::site::ProxyHeadersConfig;
 use crate::config::HttpConfig;
 use crate::config::MainConfig;
 use crate::http::headers::{generate_stealth_timestamp, inject_security_headers};
 use crate::http::response_helpers::apply_security_headers;
+use synvoid_challenge::honeypot::HONEYPOT_PREFIX;
 
 use crate::http_client::{
     send_request_streaming, send_request_streaming_generic, ErasedBodyImpl, ErasedHttpClient,
@@ -813,7 +813,7 @@ impl HttpsServer {
                 .challenge_manager
                 .record_css_asset_request(&session_id, asset_name);
 
-            if res == crate::challenge::AssetRequestResult::InvalidAsset {
+            if res == synvoid_challenge::css::AssetRequestResult::InvalidAsset {
                 tracing::warn!(
                     "Bot detected via CSS aspect-ratio trap (TLS): IP {}",
                     client_ip
@@ -827,7 +827,7 @@ impl HttpsServer {
             }
 
             match action {
-                crate::challenge::CssAssetAction::RedirectWithCookie => {
+                synvoid_challenge::css::CssAssetAction::RedirectWithCookie => {
                     let verified_cookie_name = waf.challenge_manager.css_verified_cookie_name();
                     let window_secs = waf.challenge_manager.css_window_secs();
                     let cookie = format!(
@@ -842,7 +842,7 @@ impl HttpsServer {
                         .unwrap_or_else(|_| crate::http::fallback_error_boxed());
                     return Ok(resp);
                 }
-                crate::challenge::CssAssetAction::DropConnection => {
+                synvoid_challenge::css::CssAssetAction::DropConnection => {
                     return Ok(Self::build_response(204, "".to_string(), "text/plain"));
                 }
             }

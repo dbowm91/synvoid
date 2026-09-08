@@ -42,7 +42,7 @@ Sessions are stored in-memory with TTL-based expiration.
 
 ### Rate Limiting
 
-The `AuthManager` (`src/auth/mod.rs`) handles brute-force protection directly:
+The `AuthManager` (`crates/synvoid-auth/src/lib.rs`) handles brute-force protection directly:
 
 - **Max failed attempts**: Configurable (default 5)
 - **Lockout duration**: Configurable (default 300 seconds / 5 minutes)

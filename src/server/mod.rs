@@ -990,12 +990,12 @@ impl UnifiedServer {
 }
 
 #[allow(dead_code)]
-fn parse_challenge_priority(priority: &str) -> crate::challenge::ChallengePriority {
+fn parse_challenge_priority(priority: &str) -> synvoid_challenge::ChallengePriority {
     match priority.to_lowercase().as_str() {
-        "pow_then_css" => crate::challenge::ChallengePriority::PowThenCss,
-        "css_then_pow" => crate::challenge::ChallengePriority::CssThenPow,
-        "pow_only" => crate::challenge::ChallengePriority::PowOnly,
-        "css_only" => crate::challenge::ChallengePriority::CssOnly,
-        _ => crate::challenge::ChallengePriority::PowThenCss,
+        "pow_then_css" => synvoid_challenge::ChallengePriority::PowThenCss,
+        "css_then_pow" => synvoid_challenge::ChallengePriority::CssThenPow,
+        "pow_only" => synvoid_challenge::ChallengePriority::PowOnly,
+        "css_only" => synvoid_challenge::ChallengePriority::CssOnly,
+        _ => synvoid_challenge::ChallengePriority::PowThenCss,
     }
 }

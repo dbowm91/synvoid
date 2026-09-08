@@ -2,7 +2,7 @@
 
 ## 1. Purpose and Responsibility
 
-The Auth module (`src/auth/`) provides **user authentication, session management, and access control** for the SynVoid proxy server. It handles:
+The Auth module (canonical: `crates/synvoid-auth/`; compatibility facade: `src/auth/` re-exporting `synvoid_auth`) provides **user authentication, session management, and access control** for the SynVoid proxy server. It handles:
 
 - **User Management**: Registration, deletion, role assignment, and site permissions
 - **Password Handling**: Bcrypt hashing with configurable cost factor
@@ -18,7 +18,7 @@ The Auth module (`src/auth/`) provides **user authentication, session management
 
 ## 2. Key Submodules and Their Responsibilities
 
-### `src/auth/mod.rs` - Core Authentication
+### `crates/synvoid-auth/src/lib.rs` - Core Authentication (`crates/synvoid-auth/src/lib.rs` is a thin facade)
 
 The main module containing:
 
@@ -32,7 +32,7 @@ The main module containing:
 | `AuthError` | Error type enumeration for all auth failures |
 | `basic` | HTTP Basic authentication implementation |
 
-### `src/auth/basic.rs` - HTTP Basic Auth
+### `crates/synvoid-auth/src/basic.rs` - HTTP Basic Auth
 
 Provides per-site HTTP Basic authentication:
 
@@ -358,7 +358,7 @@ tokio::spawn(async move {
 
 ## 7. Challenge/CAPTCHA System (Related Module)
 
-The Challenge module (`src/challenge/`) is **related but separate** from Auth. It handles bot detection and challenge challenges, not user authentication.
+The Challenge module (`crates/synvoid-challenge/`) is **related but separate** from Auth. It handles bot detection and challenge challenges, not user authentication.
 
 ### Challenge Types
 
@@ -434,7 +434,7 @@ However, the Challenge module supports optional sub-features:
 ### Constant-Time Operations
 
 ```rust
-// CSRF token validation (src/auth/mod.rs:772)
+// CSRF token validation (crates/synvoid-auth/src/lib.rs:772)
 if let Some(stored) = session.csrf_token.as_deref() {
     return bool::from(stored.as_bytes().ct_eq(csrf_token.as_bytes()));
 }
@@ -500,7 +500,7 @@ Arc::new(AuthManager::new(
     lockout_duration_secs,       // e.g., 300 (5 minutes)
 ))
 
-// Basic Auth per site (from src/auth/basic.rs)
+// Basic Auth per site (from crates/synvoid-auth/src/basic.rs)
 BasicAuthManager::new(&SiteBasicAuthConfig {
     enabled: true,
     realm: Some("Admin Area".to_string()),
