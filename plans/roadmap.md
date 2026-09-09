@@ -1,6 +1,6 @@
 # SynVoid Architecture Hardening Roadmap
 
-Status: extended roadmap. Tracks 1 and 2 are complete. Track 3 is planned and ready for implementation.
+Status: extended roadmap. Tracks 1, 2, and 3 are complete. The only active handoff item is the Track 3 post-closure corrective pass (`plans/track3_post_closure_corrective.md`).
 
 Scope: this roadmap covers architecture hardening, trust-boundary closure, verification, release readiness, post-hardening cleanup, and the architecture-convergence work required before another broad feature-expansion pass.
 
@@ -11,6 +11,21 @@ Primary principle: request path remains local, narrow, and capability-driven; co
 SynVoid has completed the initial 10-phase architecture-hardening track and the six-phase post-hardening closure track. The repo now has typed startup/resource/runtime ownership for `UnifiedServer`, supervisor task ownership, request-path capability boundaries, blocklist convergence hardening, admin mutation authority types, plugin sandbox capability types, CI/fuzz/failure-injection scaffolding, security observability artifacts, final surface/release-hardening reports, a first root-module burn-down pass, and an operator deployment drill.
 
 The remaining risk is concentrated rather than broad: enforcement semantics still overlap across adjacent detector/transport result types; the highest-coupling root modules remain mixed; process-jail modes are fail-closed stubs rather than operational isolation; distributed-state consistency guarantees are documented in several places rather than one binding namespace contract; and the final convergence work needs adversarial/performance evidence before compatibility surfaces can be retired confidently.
+
+> **Post-Track-3 current state (supersedes the paragraph above):** the
+> canonical enforcement contract exists (Phase 17); auth/challenge are
+> canonical crate owners with root facades (Phase 18); WAF/HTTP mixed
+> ownership is resolved into explicit composition-vs-domain boundaries
+> (Phases 19–20); admin/plugin ownership is explicit (Phase 21); sandbox
+> jail IPC is operational with versioned bounded supervised execution
+> (Phase 22); the binding distributed-state contract exists
+> (`architecture/distributed_state_contract.md`, Phase 23); zero
+> `split_required` modules remain across all ledgers (Phases 21/24);
+> routine CI (`cargo xtask verify`, single Ubuntu job in
+> `.github/workflows/ci.yml`) passes on the final Track 3 commit
+> `23949197311f1066abd4bc622c43cada615b1425`; only the corrective
+> verification/documentation residuals in
+> `plans/track3_post_closure_corrective.md` remain.
 
 ## Track 1: Architecture Hardening Baseline — Complete
 
@@ -112,7 +127,7 @@ Result: operator start/stop/reload/status, enforcement, plugin-failure, mesh, an
 
 ## Track 3: Architecture Convergence and Underdeveloped Boundary Closure — Complete
 
-Track 3 is the current handoff line. It should be completed before broad feature expansion. The objective is not to add another set of subsystems; it is to make the existing subsystem set compose through fewer canonical contracts and to close the largest remaining implementation-vs-architecture gaps.
+Track 3 is complete through Phase 24. It was completed before broad feature expansion. The objective was not to add another set of subsystems; it was to make the existing subsystem set compose through fewer canonical contracts and to close the largest remaining implementation-vs-architecture gaps.
 
 ### Phase 17: Canonical Request Enforcement Decision Contract
 

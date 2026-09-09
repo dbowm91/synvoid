@@ -409,7 +409,7 @@ fn test_concurrent_notification_burst() {
 
 ### Fuzzing Targets
 
-The fuzz directory (`fuzz/`, 20 targets) provides coverage-guided fuzzing
+The fuzz directory (`fuzz/`, 21 targets) provides coverage-guided fuzzing
 for critical paths. The canonical inventory lives in
 `architecture/ci_fuzz_failure_injection.md` — consult it instead of any
 table here. Mesh/Raft-relevant targets include `fuzz_protocol_proto_decode`,

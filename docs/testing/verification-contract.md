@@ -277,7 +277,7 @@ See [`docs/releasing.md`](../releasing.md) for the manual publication procedure.
 
 These are explicit separate tools, not silently included:
 
-- **Fuzzing**: `cargo +nightly fuzz run <target> -- -runs=1000` (17 targets)
+- **Fuzzing**: `cargo +nightly fuzz run <target> -- -runs=1000` (21 targets)
 - **Miri**: `cargo miri test -p synvoid-utils`
 - **Stress/endurance**: Not yet implemented
 - **Platform-specific**: Cross-compilation checks (manual or nightly)
@@ -421,12 +421,13 @@ These verification activities are not bundled into any automated command. They a
 cargo +nightly fuzz run <target> -- -runs=1000
 cargo +nightly fuzz run <target> -- -max_total_time=60
 
-# Available targets (17 total):
+# Available targets (21 total):
 #   admin_mutation_result_decode, blocklist_event_decode, blocklist_snapshot_decode,
-#   dns_message_decode, fuzz_attack_detection, fuzz_early_parse, fuzz_ipc,
-#   fuzz_protocol_proto_decode, fuzz_raft_commit_notification, fuzz_raft_response,
-#   fuzz_serialization, fuzz_serialization_new, http_header_normalization,
-#   http_path_normalization, mesh_protocol_compressed_decode, parsed_query_parse,
+#   config_parse_validation, dns_message_decode, fuzz_attack_detection, fuzz_early_parse,
+#   fuzz_ipc, fuzz_protocol_proto_decode, fuzz_raft_commit_notification, fuzz_raft_response,
+#   fuzz_serialization, fuzz_serialization_new, http_chunked_framing,
+#   http_header_normalization, http_path_normalization, http_routing_matcher,
+#   jail_ipc_frame_decode, mesh_protocol_compressed_decode, parsed_query_parse,
 #   plugin_manifest
 ```
 

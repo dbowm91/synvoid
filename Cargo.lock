@@ -8279,6 +8279,7 @@ dependencies = [
  "postcard",
  "serde_json",
  "synvoid",
+ "synvoid-config",
  "synvoid-core",
  "synvoid-dns",
  "synvoid-http",

@@ -1,5 +1,14 @@
 # Phase 14 Fuzz Execution Report
 
+> **Historical note (Track 3 post-closure corrective):** this report records
+> the CI/fuzz topology as it existed when Phase 14 landed (including the
+> `fuzz-smoke` matrix job in the former
+> `.github/workflows/nightly-qualification.yml`). That topology is superseded:
+> the current repository has only `.github/workflows/ci.yml` (single Ubuntu
+> job running `cargo xtask verify`), and fuzz smoke is manual per the frozen
+> `docs/testing/verification-contract.md`. Do not use the CI section below as
+> current operational instructions.
+
 Phase 14: Fuzz Smoke Execution and Parser Boundary Expansion.
 
 ## Tooling

@@ -30,6 +30,19 @@ Root app plus 17 crates including `synvoid-http`, `synvoid-proxy`, `synvoid-bloc
 
 ## 5. Related Docs
 
-- [`serder.md`](./serder.md)
 - [`core_types.md`](./core_types.md)
 - [`buffer_pool`](../.opencode/skills/buffer_pool/SKILL.md) skill note (implementation details of the sharded pool)
+
+## 6. Serialization Strategy
+
+Canonical owner: `synvoid_utils::serialization` (re-exported at the root as
+`synvoid::serialization`). The former `src/serder.rs` migration stub was
+removed in the Track 3 post-closure corrective pass; no migration guidance
+remains outstanding.
+
+| Path | Format | Reason |
+|------|--------|--------|
+| DHT/Mesh/Persistence | Postcard | Compact, single-allocation encoding |
+| IPC Messages | Postcard | Performance, type safety |
+| High-perf paths | Rkyv | Zero-copy deserialization |
+| Admin API | JSON | Human-readable, OpenAPI compatible |

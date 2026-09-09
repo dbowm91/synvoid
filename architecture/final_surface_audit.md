@@ -78,9 +78,10 @@ Phase 10 closure audit. Classifies every public surface of the SynVoid codebase 
 
 ### Legacy/Stale Modules
 
-| Module | Classification | Stability | Notes |
-|--------|---------------|-----------|-------|
-| `serder` | `legacy_or_stale` | deprecated | 98% doc comments, 2 lines of code; candidate for removal |
+No remaining entries in this table. (The former `serder` row — the only
+`legacy_or_stale` module — was removed in the Track 3 post-closure
+corrective pass: zero internal/external consumers, canonical serialization
+lives at `synvoid_utils::serialization`.)
 
 ### Top-Level Re-exports
 
@@ -416,8 +417,7 @@ SynVoid is pre-1.0. Semver is not yet meaningful for external consumers. All cra
 ### Deprecation Process
 
 1. Root facade modules are transitional; new code should import dedicated crates directly.
-2. `serder` module is deprecated and removable.
-3. Compatibility re-exports (`ConfigManager`, etc.) remain for transitional API compatibility.
+2. Compatibility re-exports (`ConfigManager`, etc.) remain for transitional API compatibility.
 4. No compatibility promises for root facades until 1.0.
 
 ### Residual Risks
@@ -427,8 +427,8 @@ SynVoid is pre-1.0. Semver is not yet meaningful for external consumers. All cra
 | Pre-1.0 semver | Medium | Documented; no external API promises | Accepted |
 | `split_required` modules still in root | None | Closed (Phase 21: zero remaining; re-verified Phase 24 across ledger, burn-down, dependency ownership, and this audit) | Closed |
 | Mesh protocol has ~130 message types | Low | Fuzz coverage exists for decode paths (+ `jail_ipc_frame_decode`, `http_chunked_framing`, `http_routing_matcher` in Phase 24) | Accepted |
-| Config fuzzing not implemented | Medium | Listed in ci_fuzz_failure_injection.md | Deferred |
-| `serder` module is stale | Low | Candidate for removal | Accepted |
+| Config fuzzing not implemented | None | Implemented as `config_parse_validation` (corrective pass) | Closed |
+| `serder` module removed | None | Removed (corrective pass); canonical path is `synvoid_utils::serialization` | Closed |
 | Duplicate admin route registrations | Low | Investigate in Phase 11 | Known |
 | No domain crate root imports | None | Guard passes | Clean |
 | No request-path control-plane imports | None | Guard passes | Clean |

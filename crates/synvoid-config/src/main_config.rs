@@ -143,11 +143,26 @@ pub struct MainConfig {
 }
 
 impl MainConfig {
+    /// Parse and validate a main config from a TOML string.
+    ///
+    /// In-memory seam shared by [`MainConfig::from_file`] and the
+    /// `config_parse_validation` fuzz target: no filesystem reads, no socket
+    /// creation, no child processes. Validation follows the exact production
+    /// path, including admin-token validation (which may consult the
+    /// `SYNVOID_ADMIN_TOKEN` environment variable or generate an ephemeral
+    /// token, exactly as file loads do). Operator side-effects that require
+    /// the filesystem (mesh key/identity loading) live in `from_file` only.
+    pub fn from_toml_str(input: &str) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        let config: MainConfig = toml::from_str(input)?;
+        config.validate()?;
+        Ok(config)
+    }
+
     pub fn from_file<P: AsRef<std::path::Path>>(
         path: P,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let content = std::fs::read_to_string(path)?;
-        let mut config: MainConfig = toml::from_str(&content)?;
+        let mut config = Self::from_toml_str(&content)?;
 
         if config.admin.token.is_empty() || config.admin.token == "changeme" {
             config.admin.token = config.admin.resolve_token();
@@ -283,5 +298,57 @@ impl MainConfig {
 impl Default for MainConfig {
     fn default() -> Self {
         Self::default_config()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Fixed strong token (40 hex chars, no weak patterns) so seam tests are
+    /// deterministic regardless of the surrounding environment.
+    const TEST_TOKEN: &str = "7f3a9c1e5b8d2f4a6c0e9b3d7f1a5c8e0d4b6";
+
+    fn valid_toml() -> String {
+        let mut cfg = MainConfig::default_config();
+        cfg.admin.token = TEST_TOKEN.to_string();
+        cfg.admin.token_env_var = None;
+        toml::to_string(&cfg).expect("default config must serialize")
+    }
+
+    #[test]
+    fn from_toml_str_rejects_garbage_without_panicking() {
+        assert!(MainConfig::from_toml_str("").is_err());
+        assert!(MainConfig::from_toml_str("\x00\x01\x02{{{").is_err());
+        assert!(MainConfig::from_toml_str("[unclosed").is_err());
+    }
+
+    #[test]
+    fn from_toml_str_rejects_invalid_values_with_typed_error() {
+        // Structurally valid TOML, but the server host is not a valid IP.
+        let mut cfg = MainConfig::default_config();
+        cfg.admin.token = TEST_TOKEN.to_string();
+        cfg.admin.token_env_var = None;
+        let mut text = toml::to_string(&cfg).expect("default config must serialize");
+        text = text.replacen("0.0.0.0", "not a host !!!", 1);
+        let err = MainConfig::from_toml_str(&text).unwrap_err();
+        assert!(!err.to_string().is_empty());
+    }
+
+    #[test]
+    fn from_toml_str_accepts_valid_config() {
+        let parsed = MainConfig::from_toml_str(&valid_toml()).expect("valid TOML must parse");
+        assert_eq!(parsed.server.port, 8080);
+    }
+
+    #[test]
+    fn from_file_delegates_to_toml_str_seam() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("main.toml");
+        let text = valid_toml();
+        std::fs::write(&path, &text).unwrap();
+        let via_file = MainConfig::from_file(&path).expect("from_file must succeed");
+        let via_str = MainConfig::from_toml_str(&text).expect("from_toml_str must succeed");
+        assert_eq!(via_file.server.port, via_str.server.port);
     }
 }

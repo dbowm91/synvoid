@@ -113,7 +113,9 @@ All 27 guard tests pass.
 
 ### Known Deferrals (Not Release-Blocking)
 
-- [ ] Config parse fuzz target: listed in `ci_fuzz_failure_injection.md`, not yet implemented
+- [x] Config parse fuzz target: implemented as `config_parse_validation` in the
+  corrective pass (production `MainConfig::from_toml_str` /
+  `SiteConfig::from_toml_str` seams; 1000-run bounded smoke, no crashes)
 
 ### Phase 24 Closure Amendments (Track 3 closeout)
 
@@ -121,7 +123,8 @@ All 27 guard tests pass.
 - [x] URL/path routing matcher fuzz: implemented as `http_routing_matcher` (normalizer + `LocationMatcher` table)
 - [x] Jail IPC frame decoder fuzz: implemented as `jail_ipc_frame_decode` (`read_frame` + envelope validators)
 - [x] `split_required` module extraction: **closed — zero remaining** since Phase 21 (`architecture/root_module_ledger.md`, `architecture/root_module_burndown_report.md`, `architecture/final_surface_audit.md` agree; the "11 modules" line above was a stale Phase 10 residual and is superseded by this amendment)
-- [ ] `serder` module removal: stale legacy module, candidate for deletion
+- [x] `serder` module removal: removed in the corrective pass (zero consumers;
+  canonical serialization at `synvoid_utils::serialization`)
 
 ## 5. Summary
 
@@ -129,13 +132,19 @@ All 27 guard tests pass.
 
 - 5 profile checks: all pass
 - 27 guard tests: all pass
-- 17 fuzz targets: all exist (11 existing + 5 new in Phase 14 + 1 existing `parsed_query_parse` added to CI), plus 3 new in Phase 24 (`http_chunked_framing`, `jail_ipc_frame_decode`, `http_routing_matcher`) for a total of 20
+- 17 fuzz targets: all exist (11 existing + 5 new in Phase 14 + 1 existing `parsed_query_parse` added to CI), plus 3 new in Phase 24 (`http_chunked_framing`, `jail_ipc_frame_decode`, `http_routing_matcher`) for a total of 20, plus `config_parse_validation` in the corrective pass for a total of 21
 - No known release-blocking defects
 - All architectural invariants enforced by automated guards
 - Public surface classified and documented
 - Residual risks documented and accepted
 
 ### Phase 11 CI Verification (2026-06-29)
+
+> **Historical note (Track 3 post-closure corrective):** this section records
+> the multi-job workflow topology as it existed when Phase 11 landed. It is
+> superseded by the CI simplification: the current repository has only
+> `.github/workflows/ci.yml` (single Ubuntu job running
+> `cargo xtask verify`); see the frozen `docs/testing/verification-contract.md`.
 
 CI workflow (`.github/workflows/ci.yml`) was fixed in Phase 11. The `summary` job had broken dynamic expressions (`${{ needs.${{ job }}.result }}`) that caused a workflow parse error, preventing all 16 jobs from running. Fixed by replacing with static `${{ needs.<job>.result }}` references.
 

@@ -122,6 +122,20 @@ with no crashes and no hangs:
 - `jail_ipc_frame_decode`: 300 runs, DONE
 - `http_routing_matcher`: 300 runs, DONE (coverage 3057)
 
+> **Corrective amendment:** the three targets were re-run at the declared
+> 1000-run bounded smoke standard (`cargo +nightly fuzz`, cargo-fuzz 0.13.2,
+> nightly 1.100.0) with no crashes, hangs, or sanitizer findings:
+>
+> - `http_chunked_framing`: 1000 runs, DONE (cov 242), no crashes
+> - `jail_ipc_frame_decode`: 1000 runs, DONE (cov 211), no crashes
+> - `http_routing_matcher`: 1000 runs, DONE (cov 3171), no crashes
+>
+> The corrective pass also added `config_parse_validation` (production
+> `MainConfig::from_toml_str` / `SiteConfig::from_toml_str` seams): 1000
+> runs, DONE (cov 680), no crashes. See
+> `architecture/track3_post_closure_corrective_report.md` for the full
+> evidence table.
+
 Command form (standard 1000-run smoke per
 `architecture/ci_fuzz_failure_injection.md`):
 

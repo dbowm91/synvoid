@@ -96,7 +96,6 @@ pub mod proxy;
 pub use synvoid_proxy_cache as proxy_cache;
 pub mod router;
 pub mod router_adapter;
-pub mod serder;
 pub use synvoid_utils::serialization;
 pub mod serverless;
 pub mod spin;

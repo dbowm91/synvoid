@@ -1,6 +1,6 @@
 # AGENTS.md
 
-SynVoid is a high-performance WAF & reverse proxy in Rust with a mesh networking layer and multi-process architecture (Supervisor + UnifiedServerWorker data plane + CPU offload). 45-member Cargo workspace: root app, 38 `synvoid-*` crates under `crates/`, plus `pqc`, `admin-ui` (Yew/WASM via Trunk), `examples/*`, `fuzz`, `tools/{xtask,synvoid-repo-guards}`. Linux is the primary deployment target.
+SynVoid is a high-performance WAF & reverse proxy in Rust with a mesh networking layer and multi-process architecture (Supervisor + UnifiedServerWorker data plane + CPU offload). 45-member Cargo workspace: root app, 37 `synvoid-*` crates under `crates/`, plus `pqc`, `admin-ui` (Yew/WASM via Trunk), `examples/*`, `fuzz`, `tools/{xtask,synvoid-repo-guards}`. Linux is the primary deployment target.
 
 ## Build & Setup
 
@@ -46,7 +46,7 @@ Testing quirks:
 - `security_regression` must run single-threaded: `cargo test --test security_regression --profile ci -- --test-threads=1`.
 - Some guard suites need features: `--test mesh_task_ownership_guard --features mesh,dns` (same for `worker_supervision_control_flow`, `composition_root_behavioral`).
 - Stress/endurance suites are NOT in verify-full: `dns_stress`, `worker_supervision_control_flow -- --test-threads=1`, `fault_injection_test`.
-- Fuzz smoke tests need nightly + cargo-fuzz: `cargo +nightly fuzz run <target> -- -runs=1000` (20 targets in `fuzz/`). See `architecture/ci_fuzz_failure_injection.md`.
+- Fuzz smoke tests need nightly + cargo-fuzz: `cargo +nightly fuzz run <target> -- -runs=1000` (21 targets in `fuzz/`). See `architecture/ci_fuzz_failure_injection.md`.
 - Publication is manual via `cargo publish` only — see `docs/releasing.md`.
 
 ## Test Placement Rules
@@ -144,7 +144,7 @@ Root-module ownership policy lives in `architecture/root_module_ledger.md` — p
 - **Module overrides**: each subsystem dir has an `AGENTS.override.md` with extra rules — read before working there: `src/{waf,http,http3,http_client,proxy,config,admin,auth,platform,plugin,worker,tunnel,app_server,theme,static_files,serverless}/AGENTS.override.md` and `crates/synvoid-{dns,honeypot,tarpit}/AGENTS.override.md`.
 - **Skills**: `.opencode/skills/<name>/SKILL.md` — 35 per-subsystem guides (e.g. `dns_dnssec`, `serverless_wasm`, `ipc_hardening`, `raft_consensus`, `org_key_trust_chain`, `proxy_upstream`, `supervisor`, `worker_data_plane`). Load before working in an unfamiliar subsystem; keep path references canonical when editing them.
 - **Config paths**: `--config-path` takes the DIRECTORY containing `main.toml` + `sites/`, not the TOML file. Caveat: `--configtest` ignores `--config-path` and validates `./config/` relative to CWD.
-- **Key docs**: start at `architecture/overview.md` (verified module index), then use the Architecture Index below. User/operator docs live in `docs/`; `architecture/` (128 docs) and `plans/` are development artifacts.
+- **Key docs**: start at `architecture/overview.md` (verified module index), then use the Architecture Index below. User/operator docs live in `docs/`; `architecture/` (~130 docs) and `plans/` are development artifacts.
 
 ## Architecture Index
 

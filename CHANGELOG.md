@@ -210,6 +210,14 @@ Pre-release candidate. See [1.1.0] entry above for full details.
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Removed the `synvoid::serder` root module (deprecated migration-documentation
+  stub with a feature-gated `rkyv` re-export; zero internal/external
+  consumers). Use the canonical `synvoid_utils::serialization` path (also
+  re-exported as `synvoid::serialization`). The `rkyv` Cargo feature and the
+  `rkyv` dependency are unchanged.
+
 ### Architecture convergence (Track 3, Phases 17–24)
 
 Internal ownership hardening with no operator-facing configuration changes:
@@ -219,7 +227,7 @@ Internal ownership hardening with no operator-facing configuration changes:
 - `synvoid-waf` is the canonical WAF engine owner; `synvoid-http` owns parsing/normalization/framing with fail-closed ambiguity rejection shared by routing and WAF
 - Sandbox jail modes (`--wasm-jail` / `--yara-jail`) execute real bounded workloads through supervised versioned IPC and fail closed when required isolation is unavailable
 - Binding distributed-state authority/partition contract (`architecture/distributed_state_contract.md`): canonical Raft state vs advisory DHT, typed `QuorumUnavailable`, freshness-classified reads
-- Focused adversarial, concurrency, and hot-path benchmark coverage; 20 bounded fuzz targets; routine CI unchanged in structure (7 fast suites added to the existing guard invocation)
+- Focused adversarial, concurrency, and hot-path benchmark coverage; 21 bounded fuzz targets; routine CI unchanged in structure (7 fast suites added to the existing guard invocation)
 
 ## [1.0.0] - 2026-02-23
 

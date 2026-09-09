@@ -26,33 +26,41 @@ Architecture doc for Phase 8: profile CI matrix, fuzz target inventory, and fail
 | `http_chunked_framing` | `&[u8]` → header-block bytes → framing validators | **New (Phase 24)** | 1s smoke / manual long | `synvoid-http` | High |
 | `jail_ipc_frame_decode` | `&[u8]` → jail frame + envelope bytes | **New (Phase 24)** | 1s smoke / manual long | `synvoid-ipc` | High |
 | `http_routing_matcher` | `&[u8]` → path bytes → normalizer + route table | **New (Phase 24)** | 1s smoke / manual long | `synvoid-proxy` | High |
+| `config_parse_validation` | `&[u8]` → TOML bytes → main/site parse + validate | **New (corrective)** | 1s smoke / manual long | `synvoid-config` | High |
 
 ### Tooling Status
 
 - **cargo-fuzz**: Installed (v0.13.2) via `cargo install cargo-fuzz`.
 - **Nightly toolchain**: Required for ASAN instrumentation; `nightly-x86_64-unknown-linux-gnu` installed.
 - **Compilation**: Fuzz targets require nightly + ASAN; initial compilation is slow for large workspace.
-- **CI integration**: Fuzz smoke tests integrated in CI (`fuzz-smoke` job). Dedicated tarpit and mesh test jobs added in Milestone D Phase 4.
+- **CI integration**: Fuzz smoke tests are **manual only** (bounded
+  `cargo +nightly fuzz run <target> -- -runs=1000`; see
+  `docs/testing/verification-contract.md` §10). The routine CI workflow
+  (`.github/workflows/ci.yml`) is a single Ubuntu job running
+  `cargo xtask verify` and contains no `fuzz-smoke` job. Historical
+  `fuzz-smoke` / dedicated tarpit/mesh CI jobs described in earlier
+  revisions of this doc and in `architecture/phase_14_fuzz_execution_report.md`
+  were removed during CI simplification and no longer exist.
 - **Smoke command**: `cargo +nightly fuzz run <target> -- -runs=1000` for bounded smoke.
 
 ### High-Value Targets Not Yet Implemented
 
-| Target | Input type | Priority | Notes |
-|--------|------------|----------|-------|
-| Config parse & validate | `&[u8]` → TOML | Medium | Malformed config should fail closed |
-
-Phase 24 closed the other three high-value rows (`http_chunked_framing`,
-`http_routing_matcher`, `jail_ipc_frame_decode`). No fuzz target was added
-for pure internal constructors with no hostile/external input surface, per
-the phase constraint.
+No remaining high-value parser targets. The corrective pass closed the last
+open row (`config_parse_validation`, covering `MainConfig::from_toml_str` /
+`SiteConfig::from_toml_str`). Phase 24 had already closed the other three
+high-value rows (`http_chunked_framing`, `http_routing_matcher`,
+`jail_ipc_frame_decode`). No fuzz target was added for pure internal
+constructors with no hostile/external input surface, per the phase
+constraint.
 
 ### CI Smoke Commands
 
 ```bash
-# All 20 fuzz targets (sorted alphabetically)
+# All 21 fuzz targets (sorted alphabetically)
 cargo +nightly fuzz run admin_mutation_result_decode -- -runs=1000
 cargo +nightly fuzz run blocklist_event_decode -- -runs=1000
 cargo +nightly fuzz run blocklist_snapshot_decode -- -runs=1000
+cargo +nightly fuzz run config_parse_validation -- -runs=1000
 cargo +nightly fuzz run dns_message_decode -- -runs=1000
 cargo +nightly fuzz run fuzz_attack_detection -- -runs=1000
 cargo +nightly fuzz run fuzz_early_parse -- -runs=1000

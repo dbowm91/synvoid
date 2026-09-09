@@ -23,10 +23,10 @@ synvoid/
 ├── pqc/                    # Post-quantum crypto (ML-KEM-768/1024, ML-DSA-44)
 ├── admin-ui/               # Yew/WASM admin frontend (Trunk build)
 ├── tools/                  # xtask runner + repo-guard helpers
-├── fuzz/                   # 17 fuzz targets
+├── fuzz/                   # 21 fuzz targets (see `architecture/ci_fuzz_failure_injection.md`)
 ├── examples/               # dynamic-plugin, embedded-app, dns examples
-├── architecture/           # This documentation tree (~125 docs)
-├── .opencode/skills/       # Per-subsystem skill guides (32)
+├── architecture/           # This documentation tree (~130 docs)
+├── .opencode/skills/       # Per-subsystem skill guides (35)
 ├── docs/                   # User/operator docs, testing contracts, releasing
 ├── plans/                  # Implementation tracking artifacts
 ├── proto/                  # Protobuf definitions (gRPC control plane)
@@ -35,7 +35,7 @@ synvoid/
 └── scripts/                # CI/build scripts
 ```
 
-**Workspace**: 44 members — root app, 36 `synvoid-*` crates, `pqc`, `admin-ui`, 2 examples, `fuzz`, `tools/{xtask,synvoid-repo-guards}`.
+**Workspace**: 45 members — root app, 37 `synvoid-*` crates, `pqc`, `admin-ui`, 2 examples, `fuzz`, `tools/{xtask,synvoid-repo-guards}`.
 
 Binaries: `synvoid` (`src/main.rs`, the supervisor/worker entry), plus standalone `synvoid-vpn` and a reserved VPN-dashboard `server` binary under `src/bin/`.
 
@@ -264,7 +264,7 @@ Root-owned orchestration code (see [`root_module_ledger.md`](./root_module_ledge
 |-----------|------|---------|-----|
 | **xtask** | `tools/xtask` | `cargo xtask verify[-full|-release]`, focused test lanes | [`developer_tooling.md`](./developer_tooling.md) |
 | **Repo guards** | `tools/synvoid-repo-guards` + root `tests/` | ~12 static guard suites enforcing boundaries/invariants | [`developer_tooling.md`](./developer_tooling.md) · [`root_module_ledger.md`](./root_module_ledger.md) |
-| **Fuzzing** | `fuzz/` | 17 targets; smoke runs need nightly | [`ci_fuzz_failure_injection.md`](./ci_fuzz_failure_injection.md) |
+| **Fuzzing** | `fuzz/` | 21 targets; smoke runs need nightly | [`ci_fuzz_failure_injection.md`](./ci_fuzz_failure_injection.md) |
 
 ---
 

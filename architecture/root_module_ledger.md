@@ -60,7 +60,6 @@ Status vocabulary:
 | router | URL routing | facade_existing_crate | synvoid-proxy | pure re-export facade | Prefer `synvoid_proxy::router` in domain crates |
 | router_adapter | Router adapter | facade_existing_crate | synvoid-proxy | pure re-export facade | Prefer `synvoid_proxy::router_adapter` in domain crates |
 | sandbox | Sandbox process modes (WASM/YARA jails) | keep_app_root | root app crate | real implementation — jail entry points + WASM/YARA execution services + policy client; protocol DTOs/supervision in synvoid-ipc | Phase 22 operational; spec `architecture/sandbox_jail_protocol.md` |
-| serder | Rkyv migration documentation stub | legacy_or_stale | none | stale — 98% doc comments, 2 lines of code | Candidate for removal; actual serialization lives in synvoid-utils |
 | serialization | Serialization re-export from synvoid-utils | facade_existing_crate | synvoid-utils | root re-export (`pub use`) | Prefer `synvoid_utils::serialization` in domain crates |
 | server | UnifiedServer composition root | keep_app_root | root app crate | real implementation (1344 lines) | Heavy composition root wiring all subsystems |
 | serverless | Serverless runtime | facade_existing_crate | synvoid-serverless | pure re-export facade | Prefer `synvoid_serverless` in domain crates |

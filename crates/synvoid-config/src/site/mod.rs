@@ -172,15 +172,14 @@ impl SiteConfig {
         }
     }
 
-    pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {
-        let content = std::fs::read_to_string(&path).with_context(|| {
-            format!(
-                "Failed to read site config from {}",
-                path.as_ref().display()
-            )
-        })?;
+    /// Parse and validate a site config from a TOML string.
+    ///
+    /// In-memory seam shared by [`SiteConfig::from_file`] and the
+    /// `config_parse_validation` fuzz target: no filesystem reads, no
+    /// environment access, no randomness, no socket creation.
+    pub fn from_toml_str(input: &str) -> Result<Self> {
         let config: SiteConfig =
-            toml::from_str(&content).context("Failed to parse site config TOML")?;
+            toml::from_str(input).context("Failed to parse site config TOML")?;
 
         if config.site.domains.is_empty() {
             anyhow::bail!("Site config must have at least one domain");
@@ -188,6 +187,16 @@ impl SiteConfig {
 
         config.validate()?;
         Ok(config)
+    }
+
+    pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {
+        let content = std::fs::read_to_string(&path).with_context(|| {
+            format!(
+                "Failed to read site config from {}",
+                path.as_ref().display()
+            )
+        })?;
+        Self::from_toml_str(&content)
     }
 
     pub fn validate(&self) -> Result<(), ConfigValidationError> {
@@ -206,7 +215,6 @@ impl SiteConfig {
     pub fn site_id(&self) -> String {
         self.site.domains.first().cloned().unwrap_or_default()
     }
-
     pub fn app_server_config(&self) -> crate::app_server::AppServerConfig {
         let site_config = &self.app_server;
 
@@ -260,5 +268,57 @@ impl SiteConfig {
             log_verbose: site_config.log_verbose.unwrap_or(false),
             require_hashes: site_config.require_hashes.unwrap_or(false),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const VALID_SITE_TOML: &str = r#"
+[site]
+domains = ["example.com"]
+
+[site.upstream]
+default = "http://localhost:3000"
+
+[[site.listen]]
+port = 8080
+"#;
+
+    #[test]
+    fn from_toml_str_accepts_valid_site() {
+        let parsed = SiteConfig::from_toml_str(VALID_SITE_TOML).expect("valid TOML must parse");
+        assert_eq!(parsed.site_id(), "example.com");
+    }
+
+    #[test]
+    fn from_toml_str_rejects_garbage_without_panicking() {
+        assert!(SiteConfig::from_toml_str("").is_err());
+        assert!(SiteConfig::from_toml_str("\x00\x01\x02{{{").is_err());
+        assert!(SiteConfig::from_toml_str("[unclosed").is_err());
+    }
+
+    #[test]
+    fn from_toml_str_rejects_empty_domains() {
+        let input = r#"
+[site]
+domains = []
+
+[site.upstream]
+default = "http://localhost:3000"
+"#;
+        assert!(SiteConfig::from_toml_str(input).is_err());
+    }
+
+    #[test]
+    fn from_file_delegates_to_toml_str_seam() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("site.toml");
+        std::fs::write(&path, VALID_SITE_TOML).unwrap();
+        let via_file = SiteConfig::from_file(&path).expect("from_file must succeed");
+        let via_str =
+            SiteConfig::from_toml_str(VALID_SITE_TOML).expect("from_toml_str must succeed");
+        assert_eq!(via_file.site_id(), via_str.site_id());
     }
 }

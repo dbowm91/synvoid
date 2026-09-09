@@ -119,9 +119,10 @@ After Phases 18–21 the ledger contains zero `split_required` entries:
 (Phase 20), `admin`/`plugin` (this phase). `http_client` and similar remain
 `facade_existing_crate` with documented local adapters (QUIC dispatch,
 `ProxyServer` alias, `file_manager`); those are deliberate composition
-footnotes, not ownership ambiguity, and each names its blocker. `serder` and
-the removed `captcha`/`logging` entries stay `legacy_or_stale` with removal
-notes. Ledger, burn-down report, and final surface audit now agree on names
+footnotes, not ownership ambiguity, and each names its blocker. The removed
+`captcha`/`logging` entries stay `legacy_or_stale` with removal notes
+(`serder` was likewise removed in the Track 3 post-closure corrective pass).
+Ledger, burn-down report, and final surface audit now agree on names
 and counts (guard-enforced by `admin_plugin_boundary_guard`).
 
 ## F. Guardrails added
