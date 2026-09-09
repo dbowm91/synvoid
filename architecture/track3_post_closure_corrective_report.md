@@ -6,7 +6,8 @@ not duplicate the Track 3 performance or architecture reports.
 
 ## 1. Corrective revision
 
-- Corrective implementation commit: (final commit SHA recorded at closeout)
+- Corrective implementation commit: `29ae0b4f` (code, docs, and this report;
+  closeout metadata finalized on the current head)
 - Base: Track 3 closeout `23949197311f1066abd4bc622c43cada615b1425`
   (Phase 24) via handoff commit `945a29b7` (corrective plan)
 - Fuzz toolchain: cargo-fuzz 0.13.2, nightly rustc 1.100.0
@@ -29,7 +30,10 @@ execution. Fuzz smoke is manual
   the corrective tree. (One transient Apple-clang-21 linker segfault on
   `async-trait` during clippy required a retry per verification-contract
   §14 BUG-002 workaround; environment-only, unrelated to the changes.)
-- Remote CI (push to `main`): (status/link recorded after push).
+- Remote CI (push to `main`): the implementation head initially failed only in
+  the runner's `apt-get update` step (Google-Chrome mirror Hash Sum mismatch,
+  before any repository code compiled — three consecutive occurrences, all
+  environment-only). Final outcome recorded in the closeout commit below.
 
 ## 4. `verify-full` result
 
