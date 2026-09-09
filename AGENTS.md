@@ -94,6 +94,7 @@ Root-module ownership policy lives in `architecture/root_module_ledger.md` — p
 | `src/main.rs` (command dispatch) | `src/commands/plan.rs` + `execute.rs` + `runtime_launch.rs` |
 | `src/tls/acme.rs`, `src/tls/acme_dns.rs` | `crates/synvoid-tls/src/acme*.rs` |
 | `src/plugin/wasm_runtime.rs` | `crates/synvoid-plugin-runtime/src/wasm_runtime.rs` |
+| `src/plugin/mod.rs` (PluginManager/Lifecycle) | `crates/synvoid-plugin-runtime/src/plugin_manager.rs` (canonical; root is facade + mesh adapter) |
 | `serialize_headers` (inline) | `crates/synvoid-plugin-runtime/src/abi_frame.rs` (canonical) |
 | `src/plugin/instance_pool.rs` | `crates/synvoid-plugin-runtime/src/instance_pool.rs` |
 | `src/config/admin.rs` | `crates/synvoid-config/src/admin.rs` |
@@ -102,6 +103,8 @@ Root-module ownership policy lives in `architecture/root_module_ledger.md` — p
 | `src/server/mod.rs` (monolithic) | `src/server/` (split: `startup_plan.rs`, `resources.rs`, `runtime_handles.rs`, `plugin_runtime.rs`) |
 | `src/dns/*.rs` (legacy copies) | `crates/synvoid-dns/src/` (canonical) |
 | `src/waf/attack_detection/*.rs` (impl) | `crates/synvoid-waf/src/attack_detection/` (root path is a re-export shim) |
+| `src/admin/handlers/{logs,probes,stats,system}.rs`, `common.rs` DTOs, `auth.rs`, `rate_limit.rs` | `crates/synvoid-admin/src/` (canonical; root paths are facades + transport helpers) |
+| `src/spin/*.rs`, `src/serverless/*.rs` (impl) | `crates/synvoid-plugin-runtime/src/spin/`, `crates/synvoid-serverless/src/` (root paths are re-export shims) |
 | `src/proxy/*.rs`, `src/http3/*.rs` (impl) | `crates/synvoid-proxy/src/`, `crates/synvoid-http3/src/` (root paths are re-export shims) |
 
 ## Security Invariants (violations break guard tests)
@@ -158,7 +161,7 @@ Primary doc per subsystem (deep dives live beside each as `<topic>_deep_dive.md`
 | Threat-intel enforcement | `threat_intel_consumer_actionability.md`, `manual_enforcement_ownership.md`, `admin_control_plane_authority.md` |
 | DNS (`dns` feature) | `dns.md`, `dns_config_runtime_matrix.md`, `dns_zone_lifecycle.md`, `dns_operations_diagnostics.md` |
 | Plugins, WASM, serverless | `plugin_runtime_sandbox.md`, `plugin_wasm.md`, `serverless.md`, `unsafe_native_extensions.md` |
-| Admin UI/API & auth | `admin_deep_dive.md`, `auth.md`, `admin_ui.md` |
+| Admin UI/API & auth | `admin_deep_dive.md`, `auth.md`, `admin_ui.md`, `admin_root_ownership.md` (Phase 21 root-boundary matrix) |
 | Config system | `config.md`, `core_types.md` |
 | TLS, PQC, integrity | `tls.md`, `pqc.md`, `integrity.md` |
 | Platform & sandboxing | `platform.md`, `layer_3_5_deep_dive.md`, `icmp_filter.md` |

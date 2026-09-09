@@ -84,10 +84,46 @@ application composition:
 
 ## Remaining `split_required` Modules
 
-| Module | LOC | Blocker |
-|--------|-----|---------|
-| `admin` | 8,358+ | Mixed Axum router + handlers; extract after Phase 12 legacy endpoint closure |
-| `plugin` | 608 | Composition root stays root; runtime in synvoid-plugin-runtime |
+No remaining `split_required` modules. All entries closed:
+
+- `admin` — closed by Phase 21 (this report, below): `keep_app_root` (composition)
+- `plugin` — closed by Phase 21 (this report, below): `keep_app_root` (lifecycle composition)
+
+## Phase 21 Closure (admin + plugin root-boundary closure)
+
+Phase 21 closed the last two `split_required` modules per
+`plans/phase_21_admin_plugin_root_boundary_closure.md`. Full inventory:
+`architecture/admin_root_ownership.md`.
+
+- `admin` (`split_required` → `keep_app_root`, composition). The module is
+  predominantly Axum application/control-plane composition; extracting a crate
+  around the handlers would only relocate files while keeping the same
+  dependency fan-in. The reusable transport-neutral layer (auth primitives,
+  rate limiting, schema helpers, `AdminStateProvider` narrow trait,
+  `logs`/`probes`/`stats`/`system`/`common` handler logic) already lives in
+  the existing `synvoid-admin` crate. Mutating handlers follow the typed
+  `AdminMutationResult` + `AdminAuditEvent` flow; read handlers consume
+  `synvoid-metrics`, mesh/service APIs, the plugin runtime owner, and
+  `synvoid-config` without reconstructing subsystem state.
+- `plugin` (`split_required` → `keep_app_root`, lifecycle composition).
+  Deleted the root duplicate unified manager (~480 lines): `src/plugin/mod.rs`
+  now re-exports the canonical `synvoid_plugin_runtime::plugin_manager`
+  `PluginManager`/`PluginManagerLifecycle`. The mesh-store load preference is
+  preserved via root adapter `load_wasm_plugin_with_mesh_fallback()` plus a
+  mesh-agnostic `load_plugins_from_dir_with_resolver()` hook (the crate takes
+  bytes, never root mesh types). The `AxumDynamicRouterLookup` /
+  `WasmFilterBackend` impls moved to `synvoid-http::plugin_backend` (local
+  trait + foreign type; no new dependency).
+- `src/admin/handlers/common.rs` (~390→~130 lines): pagination/response DTOs
+  re-exported from `synvoid_admin::handlers::common`; root keeps only
+  `require_role`, `config_path`, `write_config_file_secure`. Removed
+  `check_rate_limit`/`get_client_ip` (superseded by the tower rate-limit
+  layer and `extract_client_ip_middleware`) and the duplicate `parse_ip`.
+- Added `tests/admin_plugin_boundary_guard.rs` (4 tests): no root runtime
+  type definitions, crate takes no `synvoid::` paths, root common
+  re-exports DTOs, ledger/burn-down/surface-audit agree on `split_required`.
+- Reconciled `root_module_ledger.md`, this report, and `final_surface_audit.md`
+  (zero `split_required` entries everywhere).
 
 ## Phase 19 Closure (WAF ownership convergence)
 
@@ -115,5 +151,10 @@ policy/detection logic and reduced `src/waf/` to root application composition:
 
 ## Next Recommended Cluster
 
-1. `admin` — largest remaining `split_required` module
-2. `plugin` — composition root stays root; runtime already extracted
+All `split_required` modules are closed (Phase 21). Remaining follow-ups are
+composition footnotes with named owners, not ownership ambiguity:
+
+1. `http_client` QUIC tunnel dispatch (root-owned; depends on root tunnel/QUIC infra)
+2. `ProxyServer` root trait-bound alias over `synvoid-proxy`
+3. `static_files` local `file_manager` submodule (needs investigation)
+4. `HttpsServer::handle_request_with_cache` flow convergence (TLS data-path rewrite, out of scope)

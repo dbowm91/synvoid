@@ -15,36 +15,54 @@ This skill covers the Admin API implementation patterns for SynVoid, including c
 
 The Admin API provides REST endpoints for configuration management, system monitoring, and operational control. It is located in `src/admin/` with handlers in `src/admin/handlers/`.
 
+**Ownership (Phase 21, `architecture/admin_root_ownership.md`)**: root
+`admin` is `keep_app_root` Axum transport/composition — route registration,
+middleware ordering, operator-identity extraction, response adaptation, and
+explicit typed service wiring via `AdminState`. Reusable transport-neutral
+logic (auth primitives, rate limiting, schema helpers, the
+`AdminStateProvider` narrow trait, and the `logs`/`probes`/`stats`/`system`/
+`common` handler logic) lives in the `synvoid-admin` crate: put new shared
+DTOs and transport-neutral handler logic there, and keep root handlers thin
+adapters over typed manager operations returning `AdminMutationResult` plus
+`AdminAuditEvent`.
+
 ## Core Components
 
 ### AdminState (`src/admin/state.rs`)
 
-The shared state for all admin handlers:
+The shared state for all admin handlers — explicit typed-handle composition
+(no service locator). `AdminState` implements
+`synvoid_admin::handlers::state::AdminStateProvider` so crate-owned handlers
+consume it through a narrow trait:
 
 ```rust
 pub struct AdminState {
-    pub process: Arc<AdminProcessState>,
-    pub config: RwLock<ConfigManager>,
-    pub config_versions: ConfigVersionManager,  // Added in Wave 5.13
-    // ... other fields
+    pub metrics: MetricsState, // broadcasters, history, request logs
+    pub waf_tracking: WafTrackingState, // probe/word/upstream/threat/rule-feed handles
+    pub security: SecurityState, // admin token, sessions, CSRF stores
+    pub mesh: MeshState, // mesh transport / org-key / audit handles
+    pub honeypot: HoneypotState, // honeypot controller/runner, ICMP filter
+    pub process: ProcessState, // config, process/plugin/alert managers
+    pub plugins: PluginsState, // plugin reload log
+    pub audit: AuditState,
+    pub config_versions: ConfigVersionManager,
+    pub secure_cookie: bool,
 }
 ```
 
 ### ConfigVersionManager (`src/admin/audit.rs`)
 
-Tracks configuration versions and enables rollback:
+Tracks configuration versions and enables rollback (synchronous API):
 
 ```rust
-pub struct ConfigVersionManager {
-    versions_dir: PathBuf,
-    max_versions: usize,
-}
+pub struct ConfigVersionManager { /* versions_dir: PathBuf, ... */ }
 
 impl ConfigVersionManager {
-    pub async fn save_snapshot(&self, content: &str, description: Option<&str>) -> Result<ConfigVersion>;
-    pub async fn list_versions(&self) -> Result<Vec<ConfigVersion>>;
-    pub async fn get_version(&self, id: &str) -> Result<String>;
-    pub async fn rollback(&self, id: &str) -> Result<()>;
+    pub fn save_version(&self, toml_content: &str, description: Option<String>) -> Result<ConfigVersion, String>;
+    pub fn list_versions(&self) -> Vec<ConfigVersion>;
+    pub fn get_version(&self, id: &str) -> Option<ConfigVersion>;
+    pub fn get_version_content(&self, id: &str) -> Option<String>;
+    pub fn rollback(&self, id: &str, target_path: &PathBuf) -> Result<(), String>;
 }
 ```
 
@@ -96,7 +114,9 @@ pub async fn get_my_feature_config(
 }
 ```
 
-3. **Add PUT handler** (should save snapshot first):
+3. **Add PUT handler** (must return a typed `AdminMutationResult` and emit an
+`AdminAuditEvent` — see "Typed Mutation Results" below; save a config
+snapshot first):
 
 ```rust
 #[utoipa::path(
@@ -114,16 +134,15 @@ pub async fn update_my_feature_config(
     _auth: OptionalAuth,
 ) -> Result<Json<()>, StatusCode> {
     // Save snapshot BEFORE making changes
-    state.config_versions.save_snapshot(
+    state.config_versions.save_version(
         &state.config.main.to_toml(),
         Some("before my_feature update")
-    ).await.ok();
-    
-    // Apply changes
-    state.config.write().await.main.my_feature.enabled = req.enabled;
+    ).ok();
+
+    // Apply changes through the canonical config owner, then return a typed
+    // AdminMutationResult and emit an AdminAuditEvent (never ad-hoc JSON).
     // ...
-    
-    Ok(Json(()))
+
 }
 ```
 
@@ -359,7 +378,7 @@ Request logs redact sensitive query parameters: `token`, `secret`, `password`, `
 
 ## Typed Mutation Results (Phase 6, Phase 12 Complete)
 
-All mutating admin endpoints must return `AdminMutationResult<T>` from `synvoid_core::admin_mutation`. Phase 12 completed the conversion of all legacy mutating endpoints (mesh, ICMP, honeypot, YARA, alerting, threat-level, serverless, spin, rule-feed, plugin, PHP). Only config PUT endpoints remain deferred.
+All mutating admin endpoints must return `AdminMutationResult<T>` from `synvoid_core::admin_mutation`.
 
 ### Required pattern for mutating handlers:
 
@@ -399,7 +418,7 @@ return Ok(Json(AdminMutationResult {
 ```
 
 ### Forbidden patterns:
-- `Json(json!({"success": true, ...}))` — use `AdminMutationResult` instead (config PUT endpoints remain deferred)
+- `Json(json!({"success": true, ...}))` — use `AdminMutationResult` instead
 - `StatusCode::OK` with ad-hoc JSON — use typed responses
 - Raw session tokens in `AdminActor` — hash them first
 - Defaulting to `AdminManual` authority for compatibility paths — use `CompatibilityLegacy`
@@ -407,4 +426,4 @@ return Ok(Json(AdminMutationResult {
 ### Audit logging:
 - Use `state.audit.log_audit_event(&event)` for typed audit events
 - Block/unblock operations must emit audit events
-- Config mutations should emit audit events (deferred to future phase)
+- Config mutations emit audit events via the typed flow

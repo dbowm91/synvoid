@@ -251,6 +251,14 @@ impl Default for PluginManager {
 
 // ─── PluginManagerLifecycle ──────────────────────────────────────────────────
 
+/// Per-stem resolver returning mesh-distributed (or otherwise externally
+/// sourced) WASM bytes for a plugin file stem.
+///
+/// Mesh-agnostic hook: the application composition root passes a closure that
+/// resolves bytes from its own store, so the runtime crate never imports root
+/// mesh types. See `PluginManagerLifecycle::load_plugins_from_dir_with_resolver`.
+pub type PluginBytesResolver = dyn Fn(&str) -> Option<Vec<u8>>;
+
 /// Manages plugin lifecycle: load, unload, reload, and hot-reload via file watching.
 pub struct PluginManagerLifecycle {
     plugin_manager: Arc<PluginManager>,
@@ -269,8 +277,23 @@ impl PluginManagerLifecycle {
         }
     }
 
-    /// Load all WASM plugins from a directory
+    /// Load all WASM plugins from a directory, with no external byte resolver.
     pub fn load_plugins_from_dir(&mut self, dir: &Path) -> Result<usize, WasmPluginError> {
+        self.load_plugins_from_dir_with_resolver(dir, None)
+    }
+
+    /// Load all WASM plugins from a directory.
+    ///
+    /// When `resolver` is provided, it is consulted first per plugin file stem:
+    /// a returned byte vector is loaded via `load_wasm_plugin_from_bytes`
+    /// instead of the on-disk file. This mesh-agnostic hook lets the root
+    /// application composition prefer mesh-distributed modules without the
+    /// runtime crate importing root mesh types.
+    pub fn load_plugins_from_dir_with_resolver(
+        &mut self,
+        dir: &Path,
+        resolver: Option<&PluginBytesResolver>,
+    ) -> Result<usize, WasmPluginError> {
         if !dir.is_dir() {
             return Err(WasmPluginError::LoadFailed(format!(
                 "plugin directory does not exist: {}",
@@ -295,6 +318,31 @@ impl PluginManagerLifecycle {
             let path = entry.path();
             if let Some(ext) = path.extension() {
                 if ext == "wasm" || ext == "wat" {
+                    if let Some(resolver) = resolver {
+                        let stem = path
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or_default()
+                            .to_string();
+                        if let Some(data) = resolver(&stem) {
+                            match self.plugin_manager.load_wasm_plugin_from_bytes(&stem, data) {
+                                Ok(()) => {
+                                    loaded += 1;
+                                    crate::wasm_metrics::record_plugin_load("unknown", "loaded");
+                                    tracing::info!("Loaded plugin: {}", path.display());
+                                }
+                                Err(e) => {
+                                    crate::wasm_metrics::record_plugin_load("unknown", "failed");
+                                    tracing::error!(
+                                        "Failed to load plugin {}: {}",
+                                        path.display(),
+                                        e
+                                    );
+                                }
+                            }
+                            continue;
+                        }
+                    }
                     match self.plugin_manager.load_wasm_plugin(&path) {
                         Ok(()) => {
                             loaded += 1;

@@ -23,17 +23,17 @@ Phase 10 closure audit. Classifies every public surface of the SynVoid codebase 
 | `utils` | `keep_app_root` | internal | root | Re-exports from synvoid-utils; root-only helpers |
 | `worker` | `keep_app_root` | internal | root | Worker process runtime and composition |
 | `http` | `keep_app_root` | internal | root (composition) + synvoid-http (shared) | 24 thin facades + 11 narrow-trait adapters + 5 app handlers + HttpServer composition root; canonical parsing/normalization/dispatch in crate (Phase 20) |
+| `admin` | `keep_app_root` | internal | root (composition) + synvoid-admin (handler logic/DTOs) | Axum transport/router/middleware composition + thin adapters over typed manager ops; reusable handler logic canonical in synvoid-admin (Phase 21) |
+| `plugin` | `keep_app_root` | internal | root (composition) + synvoid-plugin-runtime (runtime) | Facade re-exporting crate PluginManager/Lifecycle + root-owned mesh-aware resolution; watcher/epoch owned by PluginRuntimeOwner (Phase 21) |
 | `tls` | `keep_app_root` | internal | synvoid-tls (core) + root (server integration) | Re-exports + root-owned `HttpsServer` listener/integration (Phase 20) |
 | `http_client` | `facade_existing_crate` | transitional | synvoid-http-client + root | Re-exports crate; root retains only QUIC tunnel dispatch (Phase 20) |
 
-### Mixed Application/Domain Modules (split_required)
+### Application Composition Modules (closed `split_required`; see ledger)
 
 | Module | Classification | Stability | Owner | Notes |
 |--------|---------------|-----------|-------|-------|
-| `admin` | `split_required` | transitional | root (composition) + synvoid-admin | Admin API routes, auth, CORS; inventory in progress |
 | `auth` | `facade_existing_crate` | transitional | synvoid-auth | Pure re-export facade; canonical `AuthManager`/session/CSRF/lockout in crate |
 | `challenge` | `facade_existing_crate` | transitional | synvoid-challenge | Pure re-export facade; canonical `ChallengeManager`/`ChallengeConfig`/mesh-PoW in crate |
-| `plugin` | `split_required` | transitional | root (composition) + synvoid-plugin-runtime | Plugin lifecycle management root-owned |
 | `waf` | `keep_app_root` | stable | synvoid-waf (engine) + root (composition) | WafCore/AppWaf composition + adapters root-owned; detectors/policy/traits canonical in crate (Phase 19) |
 
 ### Compatibility Facades (facade_existing_crate)
@@ -254,7 +254,7 @@ Phase 10 closure audit. Classifies every public surface of the SynVoid codebase 
 | `PluginInvocationGuard` | `crates/synvoid-plugin-runtime/src/sandbox/types.rs:741` | internal_public_for_crate_boundary | stable | Per-plugin invocation guard: capability checks, input size, concurrency, timeout |
 | `GlobalPluginManager` | `crates/synvoid-plugin-runtime/src/global.rs:117` | internal_public_for_crate_boundary | stable | Singleton wrapping WasmPluginManager + GlobalWasmMemoryBudget |
 | `PluginManager` | `crates/synvoid-plugin-runtime/src/plugin_manager.rs:16` | internal_public_for_crate_boundary | stable | Unified manager for WASM + Axum plugins |
-| `PluginManagerLifecycle` | `crates/synvoid-plugin-runtime/src/plugin_manager.rs:169` | internal_public_for_crate_boundary | stable | Lifecycle manager with file watching and hot reload |
+| `PluginManagerLifecycle` | `crates/synvoid-plugin-runtime/src/plugin_manager.rs:255` | internal_public_for_crate_boundary | stable | Lifecycle manager with file watching and hot reload |
 
 ### WASM Guest ABI (provided to WASM plugins)
 
@@ -425,7 +425,7 @@ SynVoid is pre-1.0. Semver is not yet meaningful for external consumers. All cra
 | Risk | Severity | Mitigation | Status |
 |------|----------|-----------|--------|
 | Pre-1.0 semver | Medium | Documented; no external API promises | Accepted |
-| `split_required` modules still in root | Low | Extraction plan exists; 2 modules tracked | In progress |
+| `split_required` modules still in root | None | Closed (Phase 21: zero remaining) | Closed |
 | Mesh protocol has ~130 message types | Low | Fuzz coverage exists for decode paths | Accepted |
 | Config fuzzing not implemented | Medium | Listed in ci_fuzz_failure_injection.md | Deferred |
 | `serder` module is stale | Low | Candidate for removal | Accepted |

@@ -2,9 +2,31 @@
 
 Specialized guidance for WASM plugin runtime.
 
+## Ownership (Phase 21: `keep_app_root` lifecycle composition)
+
+Canonical runtime code lives in `crates/synvoid-plugin-runtime/`.
+`src/plugin/mod.rs` is a facade re-exporting the crate
+`PluginManager`/`PluginManagerLifecycle` plus a root-owned mesh-aware
+resolution adapter; `src/plugin/unsafe_native_loader.rs` is a thin shim.
+`src/spin/` and `src/serverless/` are pure re-export facades over
+`synvoid_plugin_runtime::spin` and `synvoid_serverless`.
+
+- Do NOT add manifest/capability validation, trust-tier/signature decisions,
+  execution policy, timeout/resource limits, or quarantine logic in root —
+  those are crate-owned (`sandbox/types.rs`, `wasm_runtime.rs`).
+- Root owns: loading from application config, mesh-aware byte resolution
+  (`resolve_mesh_plugin_bytes`), worker-state attachment, and supervisor task
+  ownership via `src/server/plugin_runtime.rs` (`PluginRuntimeOwner` owns the
+  watcher + epoch incrementer; never `std::mem::forget`).
+- Request-path adapters `AxumDynamicRouterLookup`/`WasmFilterBackend` are
+  implemented for the crate `PluginManager` in
+  `crates/synvoid-http/src/plugin_backend.rs`.
+- Full matrix: `architecture/admin_root_ownership.md` §D. Guard:
+  `cargo test --test admin_plugin_boundary_guard`.
+
 ## Hot Path
 
-`src/plugin/wasm_runtime.rs` — WASM plugin filter/transform per request. Critical hot path:
+`crates/synvoid-plugin-runtime/src/wasm_runtime.rs` — WASM plugin filter/transform per request. Critical hot path:
 - Every allocation compounds at 1000K rps
 - Avoid O(n) operations; prefer O(1) lookups
 - Use thread-local buffers and object pools.
@@ -18,16 +40,18 @@ Specialized guidance for WASM plugin runtime.
 
 ### PooledInstance Lifecycle
 
-The `PooledInstance` trait in `src/plugin/pool.rs:15-31` requires `prepare_for_request()` to reset all fields:
-- `start`, `timeout`, `env`, `fuel` (basic resets)
+`PooledInstance` (`crates/synvoid-plugin-runtime/src/pool.rs`) is a struct
+whose `prepare_for_request()` resets all per-request fields:
+- `start`, `timeout`, `env`, fuel (basic resets)
 - `allowed_dht_prefixes` - MUST be reset to prevent DHT prefix leakage between requests
 - `body_receiver` - MUST be reset to `None` to prevent body receiver leakage
+- `capability_violation` - MUST be reset to `None`
 
-See `src/plugin/instance_pool.rs:219-233` for the correct pattern.
+See `crates/synvoid-plugin-runtime/src/pool.rs:26-44` for the current reset.
 
 ### Spin Manifest Validation
 
-Spin manifest parsing (`src/spin/manifest.rs`) now validates:
+Spin manifest parsing (`crates/synvoid-plugin-runtime/src/spin/manifest.rs`) now validates:
 - HTTP triggers require at least one component with a `url` route defined
 - If not, returns `SpinManifestError::NoHttpRoutes`
 
@@ -134,34 +158,32 @@ Test WASM modules now export `guest_alloc`/`guest_free` bump allocators. The `mi
 
 ### Spin Cold-Start Bug (FIXED 2026-05-26)
 
-`src/spin/runtime.rs:251` created new `SpinAppInstance` per request via `instantiate_app()`. No instance reuse was implemented, causing significant cold-start overhead on every request.
+`crates/synvoid-plugin-runtime/src/spin/runtime.rs:251` created new `SpinAppInstance` per request via `instantiate_app()`. No instance reuse was implemented, causing significant cold-start overhead on every request.
 
 **Fix**: `SpinRuntime` now has `cached_instances` field (line 123) and `get_or_create_instance()` method (lines 288-295) that caches and reuses `SpinAppInstance` by component_id with 5-minute idle timeout. The `reuse()` method on `SpinAppInstance` (lines 103-105) updates request timestamps without creating new instances.
 
 ### PooledInstance DHT/Body Leak (PLUGIN-2 - FIXED 2026-05-27)
 
-`src/plugin/pool.rs:15-31` - The generic `PooledInstance` trait's `prepare_for_request()` now properly resets:
+`crates/synvoid-plugin-runtime/src/pool.rs` - `PooledInstance::prepare_for_request()` resets:
 - `start`, `timeout`, `env`, `fuel` (basic resets)
 - `allowed_dht_prefixes` - now properly reset
 - `body_receiver` - now properly reset to `None`
 
 ### Spin WASI Isolation (PLUGIN-11 - FIXED 2026-05-27)
 
-`src/spin/runtime.rs:196-209` - WASI is now configurable per-component via manifest. Defaults to `true` if not specified.
+`crates/synvoid-plugin-runtime/src/spin/runtime.rs:196-209` - WASI is now configurable per-component via manifest. Defaults to `true` if not specified.
 
 ### Unauthorized DHT Query Logging (PLUGIN-10 - FIXED 2026-05-27)
 
-At `src/plugin/wasm_runtime.rs:867`, unauthorized DHT queries now log at `error` level for security audit trail.
+At `crates/synvoid-plugin-runtime/src/wasm_runtime.rs:867`, unauthorized DHT queries now log at `error` level for security audit trail.
 
 ### Serverless Warmup (PLUGIN-8 - FIXED 2026-05-27)
 
-`src/serverless/manager.rs:464-471` - `InstancePool::initialize()` is now called from `ServerlessManager::initialize()` to pre-warm instances before the autoscaler begins.
+`crates/synvoid-serverless/src/manager.rs:464-471` - `InstancePool::initialize()` is now called from `ServerlessManager::initialize()` to pre-warm instances before the autoscaler begins.
 
 ## Skills Reference
 
-- `skills/spin_wasm.md` — Spin WASM runtime
-- `skills/serverless_wasm.md` — Serverless WASM patterns
-- `skills/wasm_components.md` — WASM component model patterns
+- `.opencode/skills/serverless_wasm/SKILL.md` — Serverless WASM patterns
 
 ## M2 Phase 05: Request/Response Serialization Semantics
 

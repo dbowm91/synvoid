@@ -29,6 +29,7 @@ pub mod internal_endpoint_dispatch;
 pub mod internal_handlers;
 pub mod listener;
 pub mod mesh_backend_dispatch;
+pub mod plugin_backend;
 pub mod request_frontdoor;
 pub mod request_parse;
 pub mod request_preparation;

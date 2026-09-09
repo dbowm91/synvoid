@@ -10,6 +10,12 @@ owners = ["synvoid-plugin-runtime"]
 reason = "validates ABI memory boundary across workspace plugin boundary"
 
 [[test]]
+name = "admin_plugin_boundary_guard"
+class = "static_policy"
+owners = ["synvoid-plugin-runtime", "synvoid-admin"]
+reason = "validates Phase 21 admin/plugin root-boundary closure (no duplicate runtime/DTOs, ledger agreement)"
+
+[[test]]
 name = "admin_mutation_blocklist"
 class = "composition"
 owners = ["synvoid-block-store", "synvoid-core"]

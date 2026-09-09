@@ -170,7 +170,7 @@ Root-owned orchestration code (see [`root_module_ledger.md`](./root_module_ledge
 | **CPU offload** | `src/worker/cpu_task/` | Bounded heavy transforms off the request loop | [`worker_architecture.md`](./worker_architecture.md) |
 | **Bootstrap/daemon/sandbox stub** | `src/startup/`, `src/process/`, `src/sandbox/` | Daemonize + PID files, IPC manager root-side code, jail-process stub | [`process_lifecycle.md`](./process_lifecycle.md) |
 
-> Note on the root crate: many `src/*` paths are thin re-export facades over crates (e.g., `src/proxy/`, `src/dns/`, `src/mesh/`, `src/router.rs`). Others still hold **real root-owned code**: `src/admin/`, `src/worker/`, `src/process/` (~10K lines beside its facade `mod.rs`), `src/waf/` (rate limiting, rule feeds, threat level), `src/http/` (dispatch/WebDAV/file manager), `src/platform/`, `src/tcp/`+`src/udp/`, `src/tls/` (HttpsServer), `src/honeypot_port/` (responders/controller). Check [`root_module_ledger.md`](./root_module_ledger.md) before assuming a path is a shim.
+> Note on the root crate: many `src/*` paths are thin re-export facades over crates (e.g., `src/proxy/`, `src/dns/`, `src/mesh/`, `src/router.rs`). Others still hold **real root-owned code**: `src/admin/` (Axum transport composition; per-handler matrix in [`admin_root_ownership.md`](./admin_root_ownership.md)), `src/worker/`, `src/process/` (~10K lines beside its facade `mod.rs`), `src/waf/` (rate limiting, rule feeds, threat level), `src/http/` (dispatch/WebDAV/file manager), `src/platform/`, `src/tcp/`+`src/udp/`, `src/tls/` (HttpsServer), `src/honeypot_port/` (responders/controller). Check [`root_module_ledger.md`](./root_module_ledger.md) before assuming a path is a shim.
 
 ### Layer 1 — Core Infrastructure
 

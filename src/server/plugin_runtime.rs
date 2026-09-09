@@ -90,6 +90,11 @@ impl PluginRuntimeOwner {
     /// that automatically reloads modified `.wasm`/`.wat` files. The watcher is
     /// owned by `self` and will be stopped when the `PluginRuntimeOwner` is
     /// dropped.
+    ///
+    /// Under the `mesh` feature, per-file mesh-distributed bytes are preferred
+    /// over the on-disk file (same preference the pre-Phase-21 root
+    /// `PluginManager::load_wasm_plugin` applied), resolved through the
+    /// mesh-agnostic resolver hook so the runtime crate stays root-free.
     pub fn enable_hot_reload_if_configured(&mut self, plugin_dir: &Path) -> Result<(), String> {
         if !plugin_dir.is_dir() {
             return Err(format!(
@@ -98,7 +103,14 @@ impl PluginRuntimeOwner {
             ));
         }
         let mut lifecycle = PluginManagerLifecycle::new(self.manager.clone());
-        match lifecycle.load_plugins_from_dir(plugin_dir) {
+        #[cfg(feature = "mesh")]
+        let initial_load = lifecycle.load_plugins_from_dir_with_resolver(
+            plugin_dir,
+            Some(&|name| crate::plugin::resolve_mesh_plugin_bytes(name)),
+        );
+        #[cfg(not(feature = "mesh"))]
+        let initial_load = lifecycle.load_plugins_from_dir(plugin_dir);
+        match initial_load {
             Ok(count) if count > 0 => {
                 tracing::info!(
                     "Auto-loaded {} WASM plugins from {}",

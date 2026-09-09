@@ -2,6 +2,31 @@
 
 Specialized guidance for Admin API patterns.
 
+## Ownership (Phase 21: `keep_app_root` transport composition)
+
+Root `admin` is Axum transport/composition: route registration in `mod.rs`
+(`build_router_from_state`), middleware ordering, operator-identity
+extraction, response adaptation, and explicit typed service wiring via
+`AdminState`. Full per-handler matrix:
+`architecture/admin_root_ownership.md`. Guard:
+`cargo test --test admin_plugin_boundary_guard`.
+
+- Reusable transport-neutral logic lives in the `synvoid-admin` crate (auth
+  primitives, rate limiting, schema helpers, `AdminStateProvider` narrow
+  trait, `logs`/`probes`/`stats`/`system`/`common` handler logic). New shared
+  DTOs and transport-neutral handler logic go there; root handlers stay thin
+  adapters over typed manager operations.
+- `auth.rs` / `rate_limit.rs` are pure re-export facades; `handlers/common.rs`
+  re-exports crate DTOs and keeps only `require_role`, `config_path`,
+  `write_config_file_secure`.
+- Mutating handlers must return typed `AdminMutationResult`
+  (`synvoid_core::admin_mutation`) and emit `AdminAuditEvent` via
+  `state.audit.log_audit_event()` — never generic `{"success": true}`.
+- Read handlers consume `synvoid-metrics`, mesh/service APIs, the plugin
+  runtime owner, and `synvoid-config` directly; do not reconstruct subsystem
+  state in the handler.
+- Skills: `.opencode/skills/admin_api/SKILL.md`.
+
 ## Router Architecture (Phase 1)
 
 The admin router uses a two-tier architecture:
@@ -74,7 +99,7 @@ The Admin API middleware stack (in order, from outermost to innermost):
 
 ## Skills Reference
 
-See `skills/admin_api.md` for Admin API patterns.
+See `.opencode/skills/admin_api/SKILL.md` for Admin API patterns.
 
 ## Security Issues
 
