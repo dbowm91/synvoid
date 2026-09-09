@@ -30,10 +30,13 @@ execution. Fuzz smoke is manual
   the corrective tree. (One transient Apple-clang-21 linker segfault on
   `async-trait` during clippy required a retry per verification-contract
   §14 BUG-002 workaround; environment-only, unrelated to the changes.)
-- Remote CI (push to `main`): the implementation head initially failed only in
-  the runner's `apt-get update` step (Google-Chrome mirror Hash Sum mismatch,
-  before any repository code compiled — three consecutive occurrences, all
-  environment-only). Final outcome recorded in the closeout commit below.
+- Remote CI (push to `main`): PASS on the closeout head — run 34385974465
+  (`https://github.com/dbowm91/synvoid/actions/runs/34385974465`), single
+  `ci` job, `cargo xtask verify` green. (The implementation head first
+  failed only in the runner's `apt-get update` step — Google-Chrome mirror
+  Hash Sum mismatch, before any repository code compiled — and passed on
+  rerun after the mirror recovered; environment-only, unrelated to the
+  changes.)
 
 ## 4. `verify-full` result
 
