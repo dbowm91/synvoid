@@ -133,10 +133,50 @@ fn benchmark_pool_vs_fresh(c: &mut Criterion) {
     group.finish();
 }
 
+/// Jail IPC round-trip overhead, isolated from WASM execution cost
+/// (Phase 24 hot path). Pure in-process codec: envelope encode + framed
+/// payload decode for a representative invoke pair.
+fn benchmark_jail_ipc_roundtrip(c: &mut Criterion) {
+    use synvoid_ipc::jail_protocol::{
+        decode_request, decode_response, encode_request, encode_response, JailOperation,
+        JailOutput, JailRequest, JailResponse, JailResult,
+    };
+
+    let request = JailRequest::new(
+        1,
+        JailOperation::WasmInvoke {
+            module_id: "bench-mod".to_string(),
+            method: "GET".to_string(),
+            uri: "/bench".to_string(),
+            headers: vec![("host".to_string(), "example.com".to_string())],
+            body: b"benchmark-body".to_vec(),
+        },
+    );
+    let response = JailResponse::new(1, JailResult::Ok(JailOutput::Pong));
+    let req_frame = encode_request(&request).expect("bench request encodes");
+    let res_frame = encode_response(&response).expect("bench response encodes");
+
+    let mut group = c.benchmark_group("jail_ipc_roundtrip");
+    group.bench_function("encode_request", |b| {
+        b.iter(|| criterion::black_box(encode_request(&request)));
+    });
+    group.bench_function("decode_request", |b| {
+        b.iter(|| criterion::black_box(decode_request(&req_frame[4..])));
+    });
+    group.bench_function("encode_response", |b| {
+        b.iter(|| criterion::black_box(encode_response(&response)));
+    });
+    group.bench_function("decode_response", |b| {
+        b.iter(|| criterion::black_box(decode_response(&res_frame[4..])));
+    });
+    group.finish();
+}
+
 criterion_group!(
     benches,
     benchmark_fresh_instance,
     benchmark_pooled_instance,
-    benchmark_pool_vs_fresh
+    benchmark_pool_vs_fresh,
+    benchmark_jail_ipc_roundtrip
 );
 criterion_main!(benches);

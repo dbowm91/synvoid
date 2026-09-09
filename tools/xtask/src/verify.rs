@@ -163,6 +163,13 @@ fn verify_steps() -> Vec<(&'static str, &'static str)> {
              --test root_test_ownership_guard \
              --test worker_mesh_supervision_boundary_guard \
              --test mesh_task_ownership_guard \
+             --test enforcement_decision_contract_guard \
+             --test http_normalization_ownership_guard \
+             --test waf_ownership_guard \
+             --test admin_plugin_boundary_guard \
+             --test track3_invariant_closure \
+             --test http_differential_closure \
+             --test track3_concurrency_closure \
              --features mesh",
         ),
         (
@@ -1400,6 +1407,13 @@ pub fn run_guards(dry_run: bool, json_output: bool, verbose: bool) -> Result<(),
              --test root_test_ownership_guard \
              --test worker_mesh_supervision_boundary_guard \
              --test mesh_task_ownership_guard \
+             --test enforcement_decision_contract_guard \
+             --test http_normalization_ownership_guard \
+             --test waf_ownership_guard \
+             --test admin_plugin_boundary_guard \
+             --test track3_invariant_closure \
+             --test http_differential_closure \
+             --test track3_concurrency_closure \
              --features mesh",
         ),
         (

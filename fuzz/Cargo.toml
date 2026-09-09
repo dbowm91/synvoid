@@ -16,6 +16,9 @@ synvoid-core = { path = "../crates/synvoid-core" }
 synvoid-waf = { path = "../crates/synvoid-waf" }
 synvoid-mesh = { path = "../crates/synvoid-mesh" }
 synvoid-dns = { path = "../crates/synvoid-dns" }
+synvoid-http = { path = "../crates/synvoid-http" }
+synvoid-ipc = { path = "../crates/synvoid-ipc" }
+synvoid-proxy = { path = "../crates/synvoid-proxy" }
 http = "1"
 postcard = "1"
 serde_json = "1"
@@ -87,3 +90,15 @@ path = "mesh_protocol_compressed_decode.rs"
 [[bin]]
 name = "parsed_query_parse"
 path = "parsed_query_parse.rs"
+
+[[bin]]
+name = "http_chunked_framing"
+path = "http_chunked_framing.rs"
+
+[[bin]]
+name = "jail_ipc_frame_decode"
+path = "jail_ipc_frame_decode.rs"
+
+[[bin]]
+name = "http_routing_matcher"
+path = "http_routing_matcher.rs"

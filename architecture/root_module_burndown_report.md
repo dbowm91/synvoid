@@ -149,6 +149,33 @@ policy/detection logic and reduced `src/waf/` to root application composition:
   over `synvoid-waf`); ledgers, burn-down, surface audit, and `waf.md`
   reconciled. Full matrix: `architecture/waf_ownership_convergence.md`.
 
+## Phase 24 Closure (adversarial/performance/surface closeout)
+
+Phase 24 re-verified the zero-`split_required` state after all Track 3
+phases and reconciled every ledger. No module changed classification: the
+closure evidence is additive (tests, benches, fuzz targets, audits), not a
+reorganization.
+
+- `architecture/root_module_ledger.md`, this report,
+  `architecture/root_dependency_ownership.md`,
+  `architecture/final_surface_audit.md`, and
+  `architecture/release_hardening_report.md` agree: zero `split_required`
+  entries. (The release report's stale "11 modules" line was a Phase 10
+  residual, corrected by amendment in Phase 24.)
+- New coverage pinning the converged boundaries:
+  `tests/track3_invariant_closure.rs` (15 enforcement-composition tests),
+  `tests/http_differential_closure.rs` (7 normalization/routing/framing
+  property tests), `tests/track3_concurrency_closure.rs` (7 contention
+  tests), plus 3 new fuzz targets and 5 new benchmark groups (see
+  `architecture/track3_performance_report.md`).
+- Stale artifacts removed: empty `crates/synvoid-testkit/` directory,
+  `bench_attack_detection_wave10.rs` dead-API TODO, toy microbenchmark in
+  `bench_attack_detection.rs` (replaced with real reducer/adapter groups).
+- New audits: `architecture/crate_granularity_audit.md` (no merges
+  executed; two future candidates recorded),
+  `architecture/track3_performance_report.md` (closure baselines, no
+  absolute throughput claims).
+
 ## Next Recommended Cluster
 
 All `split_required` modules are closed (Phase 21). Remaining follow-ups are

@@ -129,7 +129,8 @@ Dropping at XDP level vs userspace:
 - Userspace block: ~1000-5000 ns per packet
 - **100x improvement** in packet processing overhead
 
-At 1M RPS with 10% blocked IPs:
+At 1M RPS with 10% blocked IPs (illustrative capacity arithmetic, not a
+measured throughput claim):
 - Without eBPF: 50ms/sec overhead from blocking
 - With eBPF: 0.5ms/sec overhead from blocking
 

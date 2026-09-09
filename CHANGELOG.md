@@ -210,7 +210,16 @@ Pre-release candidate. See [1.1.0] entry above for full details.
 
 ## [Unreleased]
 
-No pending changes. All planned work for 1.1.0 is complete.
+### Architecture convergence (Track 3, Phases 17–24)
+
+Internal ownership hardening with no operator-facing configuration changes:
+
+- One canonical enforcement classification/source/reason/precedence contract across WAF, rate limiting, bots, flood protection, and HTTP framing, with deterministic conflict reduction
+- Authentication/session/CSRF/lockout and challenge orchestration extracted to canonical `synvoid-auth` / `synvoid-challenge` crates (root paths are re-export facades)
+- `synvoid-waf` is the canonical WAF engine owner; `synvoid-http` owns parsing/normalization/framing with fail-closed ambiguity rejection shared by routing and WAF
+- Sandbox jail modes (`--wasm-jail` / `--yara-jail`) execute real bounded workloads through supervised versioned IPC and fail closed when required isolation is unavailable
+- Binding distributed-state authority/partition contract (`architecture/distributed_state_contract.md`): canonical Raft state vs advisory DHT, typed `QuorumUnavailable`, freshness-classified reads
+- Focused adversarial, concurrency, and hot-path benchmark coverage; 20 bounded fuzz targets; routine CI unchanged in structure (7 fast suites added to the existing guard invocation)
 
 ## [1.0.0] - 2026-02-23
 

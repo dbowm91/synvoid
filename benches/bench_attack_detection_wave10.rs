@@ -102,9 +102,6 @@ fn benchmark_attack_detection_xss(c: &mut Criterion) {
     group.finish();
 }
 
-// TODO: feature removed — check_request_anomaly_scoring method no longer exists on AttackDetector
-// fn benchmark_anomaly_scoring(c: &mut Criterion) { ... }
-
 criterion_group!(
     benches,
     benchmark_attack_detection_common,

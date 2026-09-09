@@ -218,3 +218,21 @@ name = "http_normalization_ownership_guard"
 class = "static_policy"
 owners = ["synvoid-http"]
 reason = "validates Phase 20 HTTP normalization ownership convergence (canonical framing/parser vs root composition)"
+
+[[test]]
+name = "track3_invariant_closure"
+class = "composition"
+owners = ["synvoid-core", "synvoid-waf", "synvoid-proxy", "synvoid-http"]
+reason = "validates Phase 24 Track 3 enforcement invariant closure across canonical adapters"
+
+[[test]]
+name = "http_differential_closure"
+class = "composition"
+owners = ["synvoid-http", "synvoid-waf", "synvoid-proxy"]
+reason = "validates Phase 24 HTTP differential/property closure (normalization, routing/WAF agreement, framing fail-closed)"
+
+[[test]]
+name = "track3_concurrency_closure"
+class = "composition"
+owners = ["synvoid-block-store", "synvoid-waf", "synvoid-ipc"]
+reason = "validates Phase 24 targeted concurrency invariants for rate limiting, block storage, and jail codec"

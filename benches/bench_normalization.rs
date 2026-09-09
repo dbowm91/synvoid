@@ -176,12 +176,67 @@ struct TestRequest<'a> {
     body: Option<&'a str>,
 }
 
+/// Framing/body-policy common path (Phase 24 hot path).
+///
+/// Measures the canonical fail-closed validators on benign vs adversarial
+/// header sets: the per-request cost paid before routing/WAF evaluation.
+fn benchmark_framing_policy(c: &mut Criterion) {
+    use synvoid_http::framing::{validate_request_framing, validate_transfer_framing};
+
+    let benign: HeaderMap = [
+        ("host", "example.com"),
+        ("content-length", "11"),
+        ("content-type", "application/x-www-form-urlencoded"),
+    ]
+    .into_iter()
+    .map(|(k, v)| {
+        (
+            http::header::HeaderName::from_lowercase(k.as_bytes()).unwrap(),
+            http::HeaderValue::from_str(v).unwrap(),
+        )
+    })
+    .collect();
+    let hostile_cl_te: HeaderMap = [
+        ("host", "example.com"),
+        ("content-length", "11"),
+        ("transfer-encoding", "chunked"),
+    ]
+    .into_iter()
+    .map(|(k, v)| {
+        (
+            http::header::HeaderName::from_lowercase(k.as_bytes()).unwrap(),
+            http::HeaderValue::from_str(v).unwrap(),
+        )
+    })
+    .collect();
+    let uri: http::Uri = "/bench".parse().unwrap();
+
+    let mut group = c.benchmark_group("framing_policy");
+    group.bench_function("transfer_benign", |b| {
+        b.iter(|| criterion::black_box(validate_transfer_framing(&benign)));
+    });
+    group.bench_function("transfer_hostile_cl_te", |b| {
+        b.iter(|| criterion::black_box(validate_transfer_framing(&hostile_cl_te)));
+    });
+    group.bench_function("request_framing_benign", |b| {
+        b.iter(|| {
+            criterion::black_box(validate_request_framing(
+                &benign,
+                &uri,
+                http::Version::HTTP_11,
+            ))
+        });
+    });
+    group.finish();
+}
+
 criterion_group!(
     benches,
     benchmark_normalize_benign,
     benchmark_normalize_encoded,
     benchmark_normalize_all_small,
     benchmark_normalize_all_with_body,
-    benchmark_normalize_large_body
+    benchmark_normalize_large_body,
+    benchmark_framing_policy
 );
 criterion_main!(benches);

@@ -46,7 +46,7 @@ Testing quirks:
 - `security_regression` must run single-threaded: `cargo test --test security_regression --profile ci -- --test-threads=1`.
 - Some guard suites need features: `--test mesh_task_ownership_guard --features mesh,dns` (same for `worker_supervision_control_flow`, `composition_root_behavioral`).
 - Stress/endurance suites are NOT in verify-full: `dns_stress`, `worker_supervision_control_flow -- --test-threads=1`, `fault_injection_test`.
-- Fuzz smoke tests need nightly + cargo-fuzz: `cargo +nightly fuzz run <target> -- -runs=1000` (17 targets in `fuzz/fuzz_targets/`). See `architecture/ci_fuzz_failure_injection.md`.
+- Fuzz smoke tests need nightly + cargo-fuzz: `cargo +nightly fuzz run <target> -- -runs=1000` (20 targets in `fuzz/`). See `architecture/ci_fuzz_failure_injection.md`.
 - Publication is manual via `cargo publish` only — see `docs/releasing.md`.
 
 ## Test Placement Rules
@@ -167,6 +167,7 @@ Primary doc per subsystem (deep dives live beside each as `<topic>_deep_dive.md`
 | TLS, PQC, integrity | `tls.md`, `pqc.md`, `integrity.md` |
 | Platform & sandboxing | `platform.md`, `layer_3_5_deep_dive.md`, `icmp_filter.md` |
 | CI, fuzzing, releases | `ci_fuzz_failure_injection.md`, `developer_tooling.md`, `release_profile_matrix.md`, `semver_stability_policy.md` |
+| Track 3 closure (Phase 24) | `track3_performance_report.md` (hot-path baselines), `crate_granularity_audit.md` (no merges; future candidates), `root_module_burndown_report.md` (zero `split_required`, re-verified) |
 
 ## Known Issues
 

@@ -8281,8 +8281,11 @@ dependencies = [
  "synvoid",
  "synvoid-core",
  "synvoid-dns",
+ "synvoid-http",
+ "synvoid-ipc",
  "synvoid-mesh",
  "synvoid-plugin-runtime",
+ "synvoid-proxy",
  "synvoid-waf",
 ]
 

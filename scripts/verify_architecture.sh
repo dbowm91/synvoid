@@ -43,6 +43,20 @@ cargo test --test worker_mesh_supervision_boundary_guard --features mesh,dns
 cargo test --test mesh_task_ownership_guard --features mesh,dns
 cargo test --test abi_memory_boundary_guard
 cargo test --test root_test_ownership_guard
+echo ""
+echo "=== Track 3 ownership/enforcement guards (Phases 17-21) ==="
+cargo test --test enforcement_decision_contract_guard
+cargo test --test http_normalization_ownership_guard
+cargo test --test waf_ownership_guard
+cargo test --test admin_plugin_boundary_guard
+echo ""
+echo "=== Phase 24 closure suites ==="
+cargo test --test track3_invariant_closure
+cargo test --test http_differential_closure
+cargo test --test track3_concurrency_closure
+cargo test --test jail_isolation_guard
+cargo test --test composition_root_behavioral --features mesh,dns
+cargo test --test worker_supervision_control_flow --features mesh,dns
 
 echo ""
 echo "=== Security regression (single-threaded) ==="

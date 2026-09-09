@@ -425,8 +425,8 @@ SynVoid is pre-1.0. Semver is not yet meaningful for external consumers. All cra
 | Risk | Severity | Mitigation | Status |
 |------|----------|-----------|--------|
 | Pre-1.0 semver | Medium | Documented; no external API promises | Accepted |
-| `split_required` modules still in root | None | Closed (Phase 21: zero remaining) | Closed |
-| Mesh protocol has ~130 message types | Low | Fuzz coverage exists for decode paths | Accepted |
+| `split_required` modules still in root | None | Closed (Phase 21: zero remaining; re-verified Phase 24 across ledger, burn-down, dependency ownership, and this audit) | Closed |
+| Mesh protocol has ~130 message types | Low | Fuzz coverage exists for decode paths (+ `jail_ipc_frame_decode`, `http_chunked_framing`, `http_routing_matcher` in Phase 24) | Accepted |
 | Config fuzzing not implemented | Medium | Listed in ci_fuzz_failure_injection.md | Deferred |
 | `serder` module is stale | Low | Candidate for removal | Accepted |
 | Duplicate admin route registrations | Low | Investigate in Phase 11 | Known |

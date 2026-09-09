@@ -23,6 +23,9 @@ Architecture doc for Phase 8: profile CI matrix, fuzz target inventory, and fail
 | `http_header_normalization` | `&[u8]` → WAF input normalizer | **New** | 1s smoke / manual long | `synvoid-waf` | High |
 | `mesh_protocol_compressed_decode` | `&[u8]` → gzip+protobuf MeshMessage | **New** | 1s smoke / manual long | `synvoid-mesh` | High |
 | `parsed_query_parse` | `&[u8]` → DNS query bytes | Existing | 1s smoke / manual long | `synvoid-dns` | Medium |
+| `http_chunked_framing` | `&[u8]` → header-block bytes → framing validators | **New (Phase 24)** | 1s smoke / manual long | `synvoid-http` | High |
+| `jail_ipc_frame_decode` | `&[u8]` → jail frame + envelope bytes | **New (Phase 24)** | 1s smoke / manual long | `synvoid-ipc` | High |
+| `http_routing_matcher` | `&[u8]` → path bytes → normalizer + route table | **New (Phase 24)** | 1s smoke / manual long | `synvoid-proxy` | High |
 
 ### Tooling Status
 
@@ -37,13 +40,16 @@ Architecture doc for Phase 8: profile CI matrix, fuzz target inventory, and fail
 | Target | Input type | Priority | Notes |
 |--------|------------|----------|-------|
 | Config parse & validate | `&[u8]` → TOML | Medium | Malformed config should fail closed |
-| HTTP chunked body framing | `&[u8]` → chunked transfer | High | Request smuggling vector |
-| URL/path routing matcher | `&[u8]` → route table input | High | Routing correctness under adversarial paths |
+
+Phase 24 closed the other three high-value rows (`http_chunked_framing`,
+`http_routing_matcher`, `jail_ipc_frame_decode`). No fuzz target was added
+for pure internal constructors with no hostile/external input surface, per
+the phase constraint.
 
 ### CI Smoke Commands
 
 ```bash
-# All 17 fuzz targets (sorted alphabetically)
+# All 20 fuzz targets (sorted alphabetically)
 cargo +nightly fuzz run admin_mutation_result_decode -- -runs=1000
 cargo +nightly fuzz run blocklist_event_decode -- -runs=1000
 cargo +nightly fuzz run blocklist_snapshot_decode -- -runs=1000
@@ -56,8 +62,11 @@ cargo +nightly fuzz run fuzz_raft_commit_notification -- -runs=1000
 cargo +nightly fuzz run fuzz_raft_response -- -runs=1000
 cargo +nightly fuzz run fuzz_serialization -- -runs=1000
 cargo +nightly fuzz run fuzz_serialization_new -- -runs=1000
+cargo +nightly fuzz run http_chunked_framing -- -runs=1000
 cargo +nightly fuzz run http_header_normalization -- -runs=1000
 cargo +nightly fuzz run http_path_normalization -- -runs=1000
+cargo +nightly fuzz run http_routing_matcher -- -runs=1000
+cargo +nightly fuzz run jail_ipc_frame_decode -- -runs=1000
 cargo +nightly fuzz run mesh_protocol_compressed_decode -- -runs=1000
 cargo +nightly fuzz run parsed_query_parse -- -runs=1000
 cargo +nightly fuzz run plugin_manifest -- -runs=1000

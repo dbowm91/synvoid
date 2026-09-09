@@ -409,18 +409,12 @@ fn test_concurrent_notification_burst() {
 
 ### Fuzzing Targets
 
-The fuzz directory (`fuzz/`) provides coverage-guided fuzzing for critical paths:
-
-| Target | Purpose |
-|--------|---------|
-| `fuzz_attack_detection` | HTTP attack pattern parsing |
-| `fuzz_ipc` | IPC message serialization |
-| `fuzz_serialization` | Postcard round-trip fuzzing |
-| `fuzz_serialization_new` | Extended serialization coverage |
-| `fuzz_early_parse` | Early request parsing |
-| `fuzz_protocol_proto_decode` | Mesh protocol decode |
-| `fuzz_raft_response` | RaftResponse message decoding |
-| `fuzz_raft_commit_notification` | RaftCommitNotification decoding |
+The fuzz directory (`fuzz/`, 20 targets) provides coverage-guided fuzzing
+for critical paths. The canonical inventory lives in
+`architecture/ci_fuzz_failure_injection.md` — consult it instead of any
+table here. Mesh/Raft-relevant targets include `fuzz_protocol_proto_decode`,
+`fuzz_raft_response`, `fuzz_raft_commit_notification`, and
+`mesh_protocol_compressed_decode`.
 
 Fuzz targets use `libfuzzer-sys` and integrate with `cargo-fuzz`:
 

@@ -10,6 +10,13 @@ description: Organization key trust chain for hierarchical mesh node authenticat
 SynVoid uses a hierarchical trust chain for mesh node authentication:
 `Genesis Key` → `Global Nodes (2/3 Quorum)` → `Org Keys` → `Member Certificates` → `Edge Nodes`
 
+The 2/3 threshold here is the BFT attestation policy for DHT-advertised
+`OrgPublicKey` records (`verify_quorum`), not the Raft commit quorum
+(openraft N/2+1 majority). Binding partition semantics live in
+`architecture/distributed_state_contract.md` §2 (MESH-15 original wording
+closed as stale; canonical writes without Raft majority fail typed
+`QuorumUnavailable`).
+
 This skill provides context for working with organization keys, quorum signatures, and member certificates.
 
 ## Key Components

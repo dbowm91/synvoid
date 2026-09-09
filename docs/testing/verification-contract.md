@@ -2,6 +2,10 @@
 
 > Frozen: 2026-07-29 | Phase 1 of CI Simplification Roadmap
 > Updated: 2026-08-08 | Phase 1 follow-up — Release qualification semantics
+> Amended: 2026-09-09 | Phase 24 — Track 3 closure adds 7 fast suites
+> (3 static guards + 1 boundary guard + 3 closure regression suites) to the
+> existing consolidated nextest invocation. No new jobs, no new invocations,
+> no feature/profile changes; the <10min budget is unaffected.
 
 This document is the single source of truth for what SynVoid CI must verify, at what frequency, and with what commands. It replaces the four-lane system as the authoritative verification specification.
 
@@ -28,6 +32,10 @@ cargo nextest run --cargo-profile ci --profile ci \
   --test admin_mutation_response_guard --test admin_mutation_blocklist \
   --test abi_memory_boundary_guard --test root_test_ownership_guard \
   --test worker_mesh_supervision_boundary_guard --test mesh_task_ownership_guard \
+  --test enforcement_decision_contract_guard \
+  --test http_normalization_ownership_guard --test waf_ownership_guard \
+  --test admin_plugin_boundary_guard --test track3_invariant_closure \
+  --test http_differential_closure --test track3_concurrency_closure \
   --features mesh
 cargo nextest run -p synvoid-core --cargo-profile ci --profile ci \
   --test admin_auth_boundary --test mesh_admin_edge_cases
@@ -43,7 +51,7 @@ cargo test --test failure_injection --profile ci
 | Core-only compilation | `cargo check --no-default-features --profile ci` | Yes |
 | Architecture static guards | `cargo nextest run -p synvoid-repo-guards` | Yes |
 | Security regression detection | `cargo test --test security_regression --profile ci --test-threads=1` | Yes |
-| Composition, lifecycle, plugin, CLI, admin, mesh, ABI, and ownership guards | 13 root guard tests via consolidated nextest | Yes |
+| Composition, lifecycle, plugin, CLI, admin, mesh, ABI, and ownership guards | 20 root guard tests via consolidated nextest | Yes |
 | synvoid-core admin/mesh edge cases | 2 synvoid-core tests via nextest | Yes |
 | Failure injection (supervisor, block-store, plugin) | `cargo test --test failure_injection --profile ci` | Yes |
 
@@ -290,7 +298,7 @@ Every current CI command classified by product property and routine eligibility:
 | Full mesh+dns compile | `cargo check --no-default-features --features mesh,dns` | No | Full local |
 | Repo-guards crate | `cargo nextest run -p synvoid-repo-guards` | Yes | Keep in routine |
 | Security regression | `cargo test --test security_regression --profile ci --test-threads=1` | Yes | Keep in routine |
-| 13 root guard tests | `cargo nextest run ... root-guards` (consolidated) | Yes | Keep in routine |
+| 20 root guard tests | `cargo nextest run ... root-guards` (consolidated; 13 + 7 Phase 24 additions) | Yes | Keep in routine |
 | synvoid-core admin/mesh | `cargo nextest run -p synvoid-core ... core-admin-tests` (consolidated) | Yes | Keep in routine |
 | Failure injection | `cargo test --test failure_injection --profile ci` | Yes | Keep in routine |
 | Root test ownership | Included in root-guards consolidation | Yes | Keep in routine |
@@ -565,6 +573,10 @@ Phase 5 resolved WAF detection false positives:
 34. Normalizer idempotency bug fixed — NFKC normalization no longer creates new percent-encoding sequences
 35. `verify-release` assembly and packaged-source phases correctly skip crates with path dependencies
 36. Eight WAF wave10 tests resolved (test disposition table updated in Section 2)
+
+Phase 24 closed Track 3 within the routine contract (no new jobs/invocations):
+37. `root-guards` consolidation grows 13 → 20 suites in the same nextest invocation: `enforcement_decision_contract_guard`, `http_normalization_ownership_guard`, `waf_ownership_guard`, `admin_plugin_boundary_guard` (Track 3 static guards) plus `track3_invariant_closure`, `http_differential_closure`, `track3_concurrency_closure` (closure regression suites). All seven are seconds-scale; the <10min budget stands.
+38. Sandbox/jail live-child drills (`jail_isolation_guard`), mesh/dns composition suites, fuzz smoke, and Criterion benches stay manual/local/nightly per the bounded-CI policy — documented release-candidate commands, not always-on jobs.
 
 Phase 1 follow-up (release qualification semantics):
 37. Per-crate qualification states: Assembled, PackagedSourceVerified, DeferredOnInternalPredecessors, NotPrepublishable, Failed

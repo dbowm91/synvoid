@@ -114,9 +114,13 @@ All 27 guard tests pass.
 ### Known Deferrals (Not Release-Blocking)
 
 - [ ] Config parse fuzz target: listed in `ci_fuzz_failure_injection.md`, not yet implemented
-- [ ] HTTP chunked body framing fuzz: listed as high-value target, not yet implemented
-- [ ] URL/path routing matcher fuzz: listed as high-value target, not yet implemented
-- [ ] `split_required` module extraction: 11 modules tracked in root_module_ledger.md
+
+### Phase 24 Closure Amendments (Track 3 closeout)
+
+- [x] HTTP chunked body framing fuzz: implemented as `http_chunked_framing` (canonical `synvoid_http::framing` validators)
+- [x] URL/path routing matcher fuzz: implemented as `http_routing_matcher` (normalizer + `LocationMatcher` table)
+- [x] Jail IPC frame decoder fuzz: implemented as `jail_ipc_frame_decode` (`read_frame` + envelope validators)
+- [x] `split_required` module extraction: **closed — zero remaining** since Phase 21 (`architecture/root_module_ledger.md`, `architecture/root_module_burndown_report.md`, `architecture/final_surface_audit.md` agree; the "11 modules" line above was a stale Phase 10 residual and is superseded by this amendment)
 - [ ] `serder` module removal: stale legacy module, candidate for deletion
 
 ## 5. Summary
@@ -125,7 +129,7 @@ All 27 guard tests pass.
 
 - 5 profile checks: all pass
 - 27 guard tests: all pass
-- 17 fuzz targets: all exist (11 existing + 5 new in Phase 14 + 1 existing `parsed_query_parse` added to CI)
+- 17 fuzz targets: all exist (11 existing + 5 new in Phase 14 + 1 existing `parsed_query_parse` added to CI), plus 3 new in Phase 24 (`http_chunked_framing`, `jail_ipc_frame_decode`, `http_routing_matcher`) for a total of 20
 - No known release-blocking defects
 - All architectural invariants enforced by automated guards
 - Public surface classified and documented

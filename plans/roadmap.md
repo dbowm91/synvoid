@@ -110,7 +110,7 @@ Detailed plan: `plans/phase_16_runtime_operations_deployment_drill.md`.
 
 Result: operator start/stop/reload/status, enforcement, plugin-failure, mesh, and degraded-feature workflows have an explicit drill/verification contract.
 
-## Track 3: Architecture Convergence and Underdeveloped Boundary Closure — Planned
+## Track 3: Architecture Convergence and Underdeveloped Boundary Closure — Complete
 
 Track 3 is the current handoff line. It should be completed before broad feature expansion. The objective is not to add another set of subsystems; it is to make the existing subsystem set compose through fewer canonical contracts and to close the largest remaining implementation-vs-architecture gaps.
 
@@ -170,13 +170,13 @@ Goal: define authority, consistency, versioning, TTL, conflict, partition-read/w
 
 Key result required: canonical and advisory state cannot be confused during partition or rejoin, and operator mutation results describe local/best-effort/canonical completion truthfully.
 
-### Phase 24: Adversarial Verification, Performance Baselines, and Surface Closure
+### Phase 24: Adversarial Verification, Performance Baselines, and Surface Closure — Complete
 
 Detailed plan: `plans/phase_24_adversarial_performance_surface_closure.md`.
 
 Goal: add only the focused hostile-input, concurrency, state-machine, and performance evidence needed for the Track 3 refactors, remove stale benchmark/compatibility artifacts, audit crate granularity, and reconcile final root/public surface documentation.
 
-Key result required: Track 3 closes with measurable regression protection without re-expanding CI complexity.
+Result: Track 3 invariant suites (`track3_invariant_closure`, `http_differential_closure`, `track3_concurrency_closure`), 3 bounded fuzz targets at the uncovered boundaries, 5 new hot-path benchmark groups with closure baselines (`architecture/track3_performance_report.md`), stale artifacts removed (empty `synvoid-testkit` dir, dead bench TODO, toy microbenchmark), crate granularity audit with no merges (`architecture/crate_granularity_audit.md`), and zero-`split_required` agreement across all ledgers. Routine CI gains 7 fast suites in the existing consolidated invocation (no new jobs).
 
 ## Track 3 Dependency Order
 
@@ -238,4 +238,4 @@ Track 1: Complete.
 
 Track 2: Complete through Phase 16.
 
-Track 3: Planned through Phase 24; implementation handoff ready.
+Track 3: Complete through Phase 24 (adversarial/performance/surface closure recorded in `architecture/track3_performance_report.md` and `architecture/crate_granularity_audit.md`; ledgers agree on zero `split_required`).
