@@ -149,7 +149,7 @@ Primary doc per subsystem (deep dives live beside each as `<topic>_deep_dive.md`
 | Subsystem | Primary doc(s) |
 |-----------|----------------|
 | Overview & module ownership | `overview.md`, `root_module_ledger.md`, `request_path_capability_boundary.md` |
-| Request pipeline (HTTP/1 + HTTP/3) | `http_request_pipeline.md`, `http_server.md`, `http_shared.md`, `http3_request_waf_boundary.md` |
+| Request pipeline (HTTP/1 + HTTP/3) | `http_request_pipeline.md`, `http_server.md`, `http_shared.md`, `http_ownership_convergence.md`, `http3_request_waf_boundary.md` |
 | Worker data plane | `worker_data_plane_composition_root.md`, `worker_task_lifecycle.md`, `unified_server_startup.md` |
 | Supervisor & process model | `supervisor.md`, `supervisor_lifecycle.md`, `process_lifecycle.md`, `cli_supervisor_command_dispatch.md` |
 | WAF | `waf.md`, `waf_ownership_convergence.md`, `streaming.md`, `challenge.md`, `enforcement_decision_contract.md` |

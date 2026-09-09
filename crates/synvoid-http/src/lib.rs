@@ -12,6 +12,7 @@ pub mod cgi_backend_dispatch;
 pub mod challenge_paths;
 pub mod early_parse;
 pub mod fastcgi_php_backend_dispatch;
+pub mod framing;
 pub mod headers;
 pub mod http3_body;
 pub mod http3_buffered_upstream_dispatch;
@@ -67,6 +68,11 @@ pub use buffered_request_waf_dispatch::maybe_handle_buffered_request_waf;
 pub use cgi_backend_dispatch::maybe_handle_cgi_backend;
 pub use challenge_paths::{maybe_handle_challenge_paths, ChallengePathWaf};
 pub use fastcgi_php_backend_dispatch::maybe_handle_fastcgi_or_php_backend;
+pub use framing::{
+    is_tls_client_hello, is_valid_http_request_start, validate_host_authority,
+    validate_request_framing, validate_transfer_framing, FramingError, ValidatedAuthority,
+    HTTP_VALID_METHODS,
+};
 pub use http3_body::{
     collect_http3_request_body, Http3BodyCollectionOutcome, Http3CollectedBody, Http3RequestStream,
 };

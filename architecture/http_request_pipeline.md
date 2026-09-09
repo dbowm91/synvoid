@@ -10,7 +10,7 @@ Every inbound HTTP request — whether HTTP/1.1 over TCP or HTTP/3 over QUIC —
 
 | Stage | Description | HTTP/1 File | HTTP/3 File |
 |-------|-------------|-------------|-------------|
-| **Metadata Normalization** | Extract method, path, host, user_agent, client_ip, headers into a structured context. | `request_preparation.rs` → `extract_request_metadata()` | `http3_request_prelude.rs` → `prepare_http3_request_prelude()` |
+| **Metadata Normalization** | Extract method, path, host, user_agent, client_ip, headers into a structured context; fail closed on framing/authority ambiguity (`framing::validate_request_framing`). | `request_preparation.rs` → `extract_request_metadata()` | `http3_request_prelude.rs` → `prepare_http3_request_prelude()` |
 | **Route Resolution** | Match normalized request against the routing table. | `request_preparation.rs` → `router.route_with_local_addr()` | `http3_request_prelude.rs` → `router.route()` |
 | **Body Policy** | Decide: collect full body, stream through WAF, reject (too large), or tarpit. | `body_policy.rs` → `collect_and_scan_request_body()` | `http3_body.rs` → `collect_http3_request_body()` |
 | **WAF Evaluation** | Run WAF checks (trust-token bypass, streaming, buffered) and produce a decision. | `request_parse.rs` → `should_skip_waf_from_trust_cookie()`, `buffered_request_waf_dispatch.rs` → `full_request_waf_decision()` | `http3_request_dispatch.rs` → `waf.check_request_full()`, `http3_waf_dispatch.rs` → `maybe_handle_http3_waf_decision()` |

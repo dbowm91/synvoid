@@ -1640,7 +1640,7 @@ The mesh supports ACME HTTP-01 challenges across edge/origin topologies. When an
 
 ### Two Serving Paths
 
-**Path A — Direct HTTP server** (`src/http/server.rs:551-579`):
+**Path A — Direct HTTP server** (`crates/synvoid-http/src/challenge_paths.rs`, via `request_preparation.rs` preflight; `special_request_paths.rs` under `mesh`):
 The edge node's own HTTP server handles ACME requests. This path serves requests that arrive via the normal HTTP/TCP flow (ACME server → edge node directly).
 
 **Path B — Mesh QUIC stream** (`crates/synvoid-mesh/src/mesh/transport_peer.rs:2345-2366`):
@@ -1670,7 +1670,7 @@ The challenge store on the edge must be populated BEFORE the ACME server probes.
 | `crates/synvoid-mesh/src/mesh/transport.rs` | 478-491 | `store_http01_challenge()` stores to LRU cache |
 | `crates/synvoid-mesh/src/mesh/transport.rs` | 493-497 | `get_http01_challenge()` retrieves (dns-gated) |
 | `crates/synvoid-mesh/src/mesh/transport_peer.rs` | 2345-2366 | ACME path check in proxy stream handler |
-| `src/http/server.rs` | 551-579 | Direct HTTP server challenge serving |
+| `src/http/server.rs` (`HttpServer` composition; challenge serving via `synvoid_http::challenge_paths`) | Direct HTTP server challenge serving |
 | `crates/synvoid-mesh/src/mesh/transport_peer.rs` | 1870-1884 | Receiving `UpstreamOwnershipChallenge` from mesh |
 
 ---

@@ -8,30 +8,10 @@ use parking_lot::Mutex;
 use crate::worker::drain_state::WorkerDrainState;
 use synvoid_utils::RunningFlag;
 
-pub(super) const HTTP_VALID_METHODS: &[&str] = &[
-    "GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH", "CONNECT", "TRACE",
-];
-
-pub(super) fn is_valid_http_request_start(bytes: &[u8]) -> bool {
-    if bytes.is_empty() {
-        return false;
-    }
-
-    for method in HTTP_VALID_METHODS {
-        let method_bytes = method.as_bytes();
-        if bytes.len() > method_bytes.len()
-            && bytes[..method_bytes.len()] == *method_bytes
-            && bytes[method_bytes.len()] == b' '
-        {
-            return true;
-        }
-    }
-    false
-}
-
-pub(super) fn is_tls_client_hello(bytes: &[u8]) -> bool {
-    bytes.len() >= 3 && bytes[0] == 0x16 && bytes[1] == 0x03 && (bytes[2] <= 0x03)
-}
+// Canonical protocol-sniff helpers (Phase 20): single implementation in
+// `synvoid_http::framing`, re-exported here for the accept loop. Behavior
+// tests live canonically in `crates/synvoid-http/src/framing.rs`.
+pub(super) use synvoid_http::framing::{is_tls_client_hello, is_valid_http_request_start};
 
 pub(super) struct ProtocolValidatingStream<S> {
     stream: S,

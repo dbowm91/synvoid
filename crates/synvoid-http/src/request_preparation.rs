@@ -71,6 +71,39 @@ where
 
     let (parts, body) = req.into_parts();
     let (method, path, host, user_agent, cookies) = extract_request_metadata(&parts);
+    // Canonical framing policy (Phase 20): transfer-framing ambiguity and
+    // host/authority conflicts fail closed here, before routing and WAF
+    // evaluation see the request. `finalize_request_preparation` re-validates
+    // via the same helpers so there is exactly one implementation to audit.
+    if let Err(framing_error) =
+        crate::framing::validate_request_framing(&parts.headers, &parts.uri, parts.version)
+    {
+        tracing::warn!(
+            client_ip = %client_ip,
+            method = %method,
+            path = %path,
+            error = ?framing_error,
+            "Rejecting request with ambiguous framing/authority"
+        );
+        counter!("synvoid.http.framing_rejected").increment(1);
+        on_log(
+            400,
+            &host,
+            false,
+            method.as_str(),
+            &path,
+            user_agent.as_deref(),
+        );
+        return Ok(RequestPreflightOutcome::Respond(
+            crate::response_builder::build_response_with_alt_svc(
+                400,
+                crate::response_builder::reason_phrase(400).to_string(),
+                "text/plain",
+                &alt_svc,
+                main_config.as_ref(),
+            ),
+        ));
+    }
     let cookies_ref = cookies.as_deref();
     // Trust-token bypass is evaluated here; the former always-`Pass` early WAF
     // stage was removed in Phase 19 (block-store admission lives in the worker
@@ -241,11 +274,27 @@ where
     W: BufferedRequestWaf + Send + Sync + 'static,
     LogFn: FnMut(u16, bool) + Send + 'static,
 {
-    let content_length: Option<usize> = parts
-        .headers
-        .get("content-length")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.parse().ok());
+    let content_length: Option<usize> =
+        match crate::framing::validate_transfer_framing(&parts.headers) {
+            Ok(content_length) => content_length,
+            Err(framing_error) => {
+                tracing::warn!(
+                    client_ip = %client_ip,
+                    error = ?framing_error,
+                    "Rejecting request with ambiguous transfer framing before body policy"
+                );
+                counter!("synvoid.http.framing_rejected").increment(1);
+                return Ok(RequestPreparationOutcome::Respond(
+                    build_response_with_alt_svc(
+                        400,
+                        crate::response_builder::reason_phrase(400).to_string(),
+                        "text/plain",
+                        &alt_svc,
+                        main_config.as_ref(),
+                    ),
+                ));
+            }
+        };
 
     let (full_body, request_body_size) = match collect_and_scan_request_body(
         body,

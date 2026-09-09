@@ -38,9 +38,9 @@ Status vocabulary:
 | filter | Protocol filtering traits and config | facade_existing_crate | synvoid-filter | pure re-export facade | Prefer `synvoid_filter` in domain crates |
 | geoip | GeoIP lookups | facade_existing_crate | synvoid-geoip | root re-export (`pub use`) | Prefer `synvoid_geoip` in domain crates |
 | honeypot_port | Honeypot port detection | facade_existing_crate | synvoid-honeypot | pure re-export facade | Prefer `synvoid_honeypot` in domain crates |
-| http | HTTP server modules (43 submodules) | split_required | root app crate (composition) + synvoid-http (shared) | mixed — submodule hub with real root-owned code | Large module; inventory submodules for domain types that could move |
+| http | HTTP server application composition (42 submodules) | keep_app_root | root app crate (composition) + synvoid-http (shared) | root application composition — 24 thin facades + 11 narrow-trait adapters + 5 application handlers + HttpServer composition root; shared parsing/normalization/dispatch canonical in synvoid-http | Full matrix: `architecture/http_ownership_convergence.md` (Phase 20) |
 | http3 | HTTP/3 QUIC server | facade_existing_crate | synvoid-http3 | pure re-export facade — only `Http3Server` and `Http3WafBackend` re-exported | Prefer `synvoid_http3` in domain crates |
-| http_client | HTTP client + QUIC tunnel dispatch | split_required | synvoid-http-client (pool/client) + root (QUIC dispatch) | facade with local adapter — re-exports crate + root-owned `quic_tunnel_dispatch` and `streaming_waf_body` submodules | QUIC tunnel dispatch depends on root tunnel/QUIC infra; cannot fully extract yet |
+| http_client | HTTP client + QUIC tunnel dispatch | facade_existing_crate | synvoid-http-client (pool/client) + root (QUIC dispatch) | facade with local adapter — re-exports crate + root-owned `quic_tunnel_dispatch`; `streaming_waf_body` is a pure re-export shim | QUIC tunnel dispatch depends on root tunnel/QUIC infra; cannot fully extract |
 | icmp_filter | ICMP filtering (feature-gated) | keep_app_root | root app crate | feature-gated | Network-level filtering; root-owned |
 | integrity | Integrity checking | facade_existing_crate | synvoid-integrity | root re-export (`pub use`) | Prefer `synvoid_integrity` in domain crates |
 | listener | Connection listener | facade_existing_crate | synvoid-http | pure re-export facade | Prefer `synvoid_http::listener` in domain crates |
@@ -72,7 +72,7 @@ Status vocabulary:
 | tarpit | Tarpit response generation | keep_app_root | root app crate (handler) + synvoid-tarpit (Markov chain) | facade with local submodules — re-exports MarkovChain/TarpitConfig from synvoid-tarpit crate; root-owned TarpitHandler/TarpitManager | Dead generator.rs removed; facade documentation added |
 | tcp | TCP proxy with protocol detection | keep_app_root | root app crate | real implementation | Network-level proxy; root-owned |
 | theme | Theme/rendering | facade_existing_crate | synvoid-theme | pure re-export facade | Prefer `synvoid_theme` in domain crates |
-| tls | TLS termination and ACME | split_required | synvoid-tls (core) + root (server integration) | mixed — re-exports + local `server` submodule | Local `HttpsServer` depends on root HTTP infra; core TLS in dedicated crate |
+| tls | TLS termination and ACME | keep_app_root | synvoid-tls (core) + root (server integration) | root runtime owner — re-exports + local `server` submodule (`HttpsServer` listener/integration depends on root HTTP infra); core TLS canonical in dedicated crate | `HttpsServer` request-flow convergence tracked as follow-up; see `http_ownership_convergence.md` §4 |
 | tunnel | Tunnel backend routing | facade_existing_crate | synvoid-tunnel | pure re-export facade | Prefer `synvoid_tunnel` in domain crates |
 | udp | UDP proxy | keep_app_root | root app crate | real implementation | Network-level proxy; root-owned |
 | upload | Upload handling | facade_existing_crate | synvoid-upload | pure re-export facade | Prefer `synvoid_upload` in domain crates |

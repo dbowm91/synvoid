@@ -57,30 +57,7 @@ const ALPN_HTTP2: &[u8] = b"h2";
 
 use synvoid_tls::sni_peek::compute_ja4;
 
-fn is_tls_client_hello(bytes: &[u8]) -> bool {
-    bytes.len() >= 3 && bytes[0] == 0x16 && bytes[1] == 0x03 && (bytes[2] <= 0x03)
-}
-
-const HTTP_VALID_METHODS: &[&str] = &[
-    "GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH", "CONNECT", "TRACE",
-];
-
-fn is_valid_http_request_start(bytes: &[u8]) -> bool {
-    if bytes.is_empty() {
-        return false;
-    }
-
-    for method in HTTP_VALID_METHODS {
-        let method_bytes = method.as_bytes();
-        if bytes.len() > method_bytes.len()
-            && bytes[..method_bytes.len()] == *method_bytes
-            && bytes[method_bytes.len()] == b' '
-        {
-            return true;
-        }
-    }
-    false
-}
+use synvoid_http::framing::is_valid_http_request_start;
 
 struct HttpsConnection {
     io: Mutex<Option<TokioIo<tokio_rustls::server::TlsStream<tokio::net::TcpStream>>>>,
@@ -2133,63 +2110,15 @@ pub async fn proxy_raw_tcp(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use synvoid_http::framing::{is_tls_client_hello, HTTP_VALID_METHODS};
 
+    // Behavior tests for the sniff helpers live canonically in
+    // `crates/synvoid-http/src/framing.rs`; this module only pins the
+    // canonical constant and root-local constants.
     #[test]
-    fn test_is_valid_http_request_start_valid_methods() {
-        for method in HTTP_VALID_METHODS {
-            let request = format!("{} / HTTP/1.1\r\n", method);
-            assert!(
-                is_valid_http_request_start(request.as_bytes()),
-                "Should recognize valid method: {}",
-                method
-            );
-        }
-    }
-
-    #[test]
-    fn test_is_valid_http_request_start_invalid() {
-        assert!(!is_valid_http_request_start(b""));
-        assert!(!is_valid_http_request_start(b"GET"));
-        assert!(!is_valid_http_request_start(b"GET/ HTTP/1.1"));
-        assert!(!is_valid_http_request_start(b"INVALID / HTTP/1.1\r\n"));
-    }
-
-    #[test]
-    fn test_is_valid_http_request_start_with_query() {
-        assert!(is_valid_http_request_start(
-            b"POST /path?query=value HTTP/1.1\r\n"
-        ));
-        assert!(is_valid_http_request_start(
-            b"GET /api/users?id=123 HTTP/1.0\r\n"
-        ));
-    }
-
-    #[test]
-    fn test_is_tls_client_hello_valid() {
-        let tls_hello = [0x16, 0x03, 0x00];
-        assert!(is_tls_client_hello(&tls_hello));
-
-        let tls_hello = [0x16, 0x03, 0x01];
-        assert!(is_tls_client_hello(&tls_hello));
-
-        let tls_hello = [0x16, 0x03, 0x03];
-        assert!(is_tls_client_hello(&tls_hello));
-    }
-
-    #[test]
-    fn test_is_tls_client_hello_invalid() {
+    fn test_is_tls_client_hello_spot_check() {
+        assert!(is_tls_client_hello(&[0x16, 0x03, 0x01]));
         assert!(!is_tls_client_hello(b"GET / HTTP/1.1"));
-        assert!(!is_tls_client_hello(&[0x16, 0x03, 0x04]));
-        assert!(!is_tls_client_hello(&[0x15]));
-        assert!(!is_tls_client_hello(&[]));
-        assert!(!is_tls_client_hello(&[0x16, 0x04]));
-    }
-
-    #[test]
-    fn test_is_tls_client_hello_minimum_length() {
-        assert!(!is_tls_client_hello(&[0x16, 0x03]));
-        assert!(!is_tls_client_hello(&[0x16]));
-        assert!(!is_tls_client_hello(&[]));
     }
 
     #[test]

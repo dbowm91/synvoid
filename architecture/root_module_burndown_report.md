@@ -47,15 +47,47 @@ Phase 18 extracted both high-value root dependencies ahead of the WAF ownership 
 - `challenge` (`ChallengeManager`/`ChallengeConfig`/attempt tracking + `mesh_pow.rs`, ~865 lines) → canonical `crates/synvoid-challenge/src/manager.rs` + `mesh_pow.rs`; `src/challenge/mod.rs` is now a pure re-export facade. Mesh-PoW has no mesh-transport dependency (config-only), so no narrow adapter was needed. Rendering stays directional (`synvoid-challenge` → `synvoid-theme`).
 - WAF (`src/waf/mod.rs`, `adapters.rs`), TLS (`src/tls/server.rs`), and server (`src/server/mod.rs`) now import `synvoid_auth` / `synvoid_challenge` directly; no `crate::auth` / `crate::challenge` imports remain in `src/`.
 
+## Phase 20 Closure (HTTP normalization ownership convergence)
+
+Phase 20 made `synvoid-http` the canonical owner of reusable HTTP
+parsing/normalization/dispatch logic and reduced `src/http/` to root
+application composition:
+
+- Added canonical fail-closed framing policy
+  (`crates/synvoid-http/src/framing.rs`, 19 unit tests): duplicate
+  `Content-Length`, `Content-Length` + `Transfer-Encoding`, unsupported
+  codings, malformed/overflowing lengths, duplicate `Host`,
+  absolute-form/origin-form conflicts, per-version missing-host policy.
+  Enforced in `prepare_request_preflight` (400 before routing/WAF) and
+  re-validated in `finalize_request_preparation` via the same helpers;
+  duplicate-`Host` also fails closed on the HTTP/3 prelude.
+- Moved listener sniff helpers (`HTTP_VALID_METHODS`,
+  `is_tls_client_hello`, `is_valid_http_request_start`) into
+  `synvoid_http::framing`; deleted both root copies (`src/http/server/`
+  and `src/tls/server.rs`) and the duplicated sniff test modules (behavior
+  pinned canonically in `framing.rs`).
+- Documented the full 42-module matrix in
+  `architecture/http_ownership_convergence.md`: 24 thin facades,
+  11 narrow-trait adapters, 5 application handlers, 1 composition root,
+  1 deprecated alias. No duplicate implementation remains.
+- Added `tests/http_normalization_ownership_guard.rs` (4 tests): no second
+  parser, shims delegate to crate, no duplicate WAF-decision tables,
+  facades resolve to canonical modules.
+- Reclassified `http` (`split_required` → `keep_app_root`, composition),
+  `tls` (`split_required` → `keep_app_root`, server integration),
+  `http_client` (`split_required` → `facade_existing_crate`, QUIC adapter
+  only); ledgers, burn-down, surface audit, and `http_server.md` reconciled.
+- Residual (documented, not forced): `HttpsServer::handle_request_with_cache`
+  keeps its own flow instead of the canonical postlude composition —
+  converging it is a TLS data-path rewrite, explicitly out of scope per the
+  phase rejection criteria.
+
 ## Remaining `split_required` Modules
 
 | Module | LOC | Blocker |
 |--------|-----|---------|
 | `admin` | 8,358+ | Mixed Axum router + handlers; extract after Phase 12 legacy endpoint closure |
-| `http` | 4,720+ | Largest/high-risk; plan after WAF/request boundaries settle |
-| `http_client` | 219 | Small; QUIC tunnel dispatch depends on root tunnel infra |
 | `plugin` | 608 | Composition root stays root; runtime in synvoid-plugin-runtime |
-| `tls` | — | Local `HttpsServer` depends on root HTTP infra; core TLS in dedicated crate |
 
 ## Phase 19 Closure (WAF ownership convergence)
 
@@ -83,5 +115,5 @@ policy/detection logic and reduced `src/waf/` to root application composition:
 
 ## Next Recommended Cluster
 
-1. `http_client` — 219 LOC, smallest remaining, could be reclassified as facade
-2. `tls` — server integration still root-owned; core TLS already extracted
+1. `admin` — largest remaining `split_required` module
+2. `plugin` — composition root stays root; runtime already extracted

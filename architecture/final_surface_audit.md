@@ -22,6 +22,9 @@ Phase 10 closure audit. Classifies every public surface of the SynVoid codebase 
 | `udp` | `keep_app_root` | internal | root | UDP proxy |
 | `utils` | `keep_app_root` | internal | root | Re-exports from synvoid-utils; root-only helpers |
 | `worker` | `keep_app_root` | internal | root | Worker process runtime and composition |
+| `http` | `keep_app_root` | internal | root (composition) + synvoid-http (shared) | 24 thin facades + 11 narrow-trait adapters + 5 app handlers + HttpServer composition root; canonical parsing/normalization/dispatch in crate (Phase 20) |
+| `tls` | `keep_app_root` | internal | synvoid-tls (core) + root (server integration) | Re-exports + root-owned `HttpsServer` listener/integration (Phase 20) |
+| `http_client` | `facade_existing_crate` | transitional | synvoid-http-client + root | Re-exports crate; root retains only QUIC tunnel dispatch (Phase 20) |
 
 ### Mixed Application/Domain Modules (split_required)
 
@@ -30,10 +33,7 @@ Phase 10 closure audit. Classifies every public surface of the SynVoid codebase 
 | `admin` | `split_required` | transitional | root (composition) + synvoid-admin | Admin API routes, auth, CORS; inventory in progress |
 | `auth` | `facade_existing_crate` | transitional | synvoid-auth | Pure re-export facade; canonical `AuthManager`/session/CSRF/lockout in crate |
 | `challenge` | `facade_existing_crate` | transitional | synvoid-challenge | Pure re-export facade; canonical `ChallengeManager`/`ChallengeConfig`/mesh-PoW in crate |
-| `http` | `split_required` | transitional | root (composition) + synvoid-http | 43 submodules; large module needs targeted extraction |
-| `http_client` | `split_required` | transitional | synvoid-http-client + root | QUIC tunnel dispatch depends on root infra |
 | `plugin` | `split_required` | transitional | root (composition) + synvoid-plugin-runtime | Plugin lifecycle management root-owned |
-| `tls` | `split_required` | transitional | synvoid-tls + root | Local HttpsServer depends on root HTTP infra |
 | `waf` | `keep_app_root` | stable | synvoid-waf (engine) + root (composition) | WafCore/AppWaf composition + adapters root-owned; detectors/policy/traits canonical in crate (Phase 19) |
 
 ### Compatibility Facades (facade_existing_crate)
@@ -209,6 +209,7 @@ Phase 10 closure audit. Classifies every public surface of the SynVoid codebase 
 | `request_path_capability_boundary_guard` | Request path uses narrow traits | Strong (fail-closed) | None | Yes |
 | `data_plane_composition_boundary_guard` | Request path doesn't import concrete infra | Strong (fail-closed) | None | Yes |
 | `http_request_pipeline_boundary_guard` | HTTP dispatch doesn't import lifecycle | Strong (fail-closed) | None | Yes |
+| `http_normalization_ownership_guard` | No second HTTP parser; shims delegate; no duplicate WAF-decision tables; facades resolve | Strong (fail-closed) | None | Yes |
 | `http3_waf_boundary_guard` | HTTP/3 uses narrow traits only | Strong (fail-closed) | None | Yes |
 | `mesh_id_boundary_guard` | Mesh-ID blocks admin-only | Strong (fail-closed) | None | Yes |
 | `threat_intel_boundary_guard` | No raw lookups in enforcement | Strong (fail-closed) | None | Yes |
@@ -424,7 +425,7 @@ SynVoid is pre-1.0. Semver is not yet meaningful for external consumers. All cra
 | Risk | Severity | Mitigation | Status |
 |------|----------|-----------|--------|
 | Pre-1.0 semver | Medium | Documented; no external API promises | Accepted |
-| `split_required` modules still in root | Low | Extraction plan exists; 6 modules tracked | In progress |
+| `split_required` modules still in root | Low | Extraction plan exists; 2 modules tracked | In progress |
 | Mesh protocol has ~130 message types | Low | Fuzz coverage exists for decode paths | Accepted |
 | Config fuzzing not implemented | Medium | Listed in ci_fuzz_failure_injection.md | Deferred |
 | `serder` module is stale | Low | Candidate for removal | Accepted |

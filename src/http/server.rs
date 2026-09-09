@@ -393,63 +393,9 @@ mod tests {
     use synvoid_http::response_transform::path_looks_like_image;
     use synvoid_mesh::proxy::get_cached_regex;
 
-    #[test]
-    fn test_is_valid_http_request_start_valid_methods() {
-        for method in HTTP_VALID_METHODS {
-            let request = format!("{} / HTTP/1.1\r\n", method);
-            assert!(
-                is_valid_http_request_start(request.as_bytes()),
-                "Should recognize valid method: {}",
-                method
-            );
-        }
-    }
-
-    #[test]
-    fn test_is_valid_http_request_start_invalid() {
-        assert!(!is_valid_http_request_start(b""));
-        assert!(!is_valid_http_request_start(b"GET"));
-        assert!(!is_valid_http_request_start(b"GET/ HTTP/1.1"));
-        assert!(!is_valid_http_request_start(b"INVALID / HTTP/1.1\r\n"));
-    }
-
-    #[test]
-    fn test_is_valid_http_request_start_with_query() {
-        assert!(is_valid_http_request_start(
-            b"POST /path?query=value HTTP/1.1\r\n"
-        ));
-        assert!(is_valid_http_request_start(
-            b"GET /api/users?id=123 HTTP/1.0\r\n"
-        ));
-    }
-
-    #[test]
-    fn test_is_tls_client_hello_valid() {
-        let tls_hello = [0x16, 0x03, 0x00];
-        assert!(is_tls_client_hello(&tls_hello));
-
-        let tls_hello = [0x16, 0x03, 0x01];
-        assert!(is_tls_client_hello(&tls_hello));
-
-        let tls_hello = [0x16, 0x03, 0x03];
-        assert!(is_tls_client_hello(&tls_hello));
-    }
-
-    #[test]
-    fn test_is_tls_client_hello_invalid() {
-        assert!(!is_tls_client_hello(b"GET / HTTP/1.1"));
-        assert!(!is_tls_client_hello(&[0x16, 0x03, 0x04]));
-        assert!(!is_tls_client_hello(&[0x15]));
-        assert!(!is_tls_client_hello(&[]));
-        assert!(!is_tls_client_hello(&[0x16, 0x04]));
-    }
-
-    #[test]
-    fn test_is_tls_client_hello_minimum_length() {
-        assert!(!is_tls_client_hello(&[0x16, 0x03]));
-        assert!(!is_tls_client_hello(&[0x16]));
-        assert!(!is_tls_client_hello(&[]));
-    }
+    // Behavior tests for the protocol-sniff helpers live canonically in
+    // `crates/synvoid-http/src/framing.rs`; this module only covers
+    // root-local connection behavior below.
 
     #[test]
     fn test_protocol_validating_stream_initial_bytes() {

@@ -54,6 +54,14 @@ pub fn prepare_http3_request_prelude<B>(
     }
 
     let (parts, _body) = request.into_parts();
+    // QUIC frames carry explicit lengths so there is no transfer-framing
+    // ambiguity on this path, but a duplicated `Host` header is still
+    // fail-closed to match the HTTP/1 canonical policy in `framing.rs`.
+    if parts.headers.get_all(http::header::HOST).iter().count() > 1 {
+        tracing::warn!("Rejecting HTTP/3 request with duplicate Host header");
+        counter!("synvoid.http3.framing_rejected").increment(1);
+        return Http3RequestPreludeOutcome::Respond;
+    }
     let path = parts.uri.path().to_string();
     let query_string = parts.uri.query().map(String::from);
     let host = extract_host(&parts.headers);

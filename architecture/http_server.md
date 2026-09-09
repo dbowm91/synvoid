@@ -18,53 +18,56 @@ The HTTP Server module (`src/http/`) is the core request handling component of S
 
 ## 2. Submodules and Responsibilities
 
+Root `src/http/` is application composition (Phase 20, `keep_app_root`).
+Reusable parsing/normalization/dispatch lives canonically in `synvoid-http`;
+the full 42-module matrix is `architecture/http_ownership_convergence.md`.
+Summary by class:
+
+| Class | Modules |
+|-------|---------|
+| **Thin facades** (pure re-exports over `synvoid-http`) | `app_server_backend_dispatch`, `early_parse`, `headers`, `internal_endpoint_dispatch`, `internal_handlers`, `mesh_backend_dispatch`, `request_parse`, `response_builder`, `response_helpers`, `response_transform`, `serverless_backend_dispatch`, `shared_handler`, `special_request_paths`, `spin_backend_dispatch`, `static_backend_dispatch`, `streaming_waf_decision`, `upload_validation_dispatch`, `upstream_buffered_dispatch`, `upstream_proxy_dispatch`, `upstream_proxy_dispatch_plan`, `upstream_response_transform`, `upstream_streaming_dispatch`, `validation_helpers`, `waf_decision` |
+| **Root adapters** (narrow root services to crate traits) | `axum_dynamic_dispatch`, `body_policy`, `buffered_request_waf_dispatch`, `cgi_backend_dispatch`, `challenge_paths`, `fastcgi_php_backend_dispatch`, `streaming_request_fast_path`, `streaming_waf_upstream_dispatch`, `wasm_filter_dispatch`, `websocket_dispatch`, `websocket_upgrade_dispatch` |
+| **Application handlers** (root-owned) | `directory_viewer`, `file_manager`, `file_manager_ui`, `webdav` |
+| **Composition root** (root-owned) | `server` (+ `server/`: `accept_loop`, `connection_types`, `observability`) — listener/socket lifecycle, `HttpServerRuntime` service bundle, request task ownership/drain |
+| **Other** | `image_rights` (facade over `synvoid-static-files`), `image_poisoning` (deprecated alias, do not use) |
+
+Canonical normalization/policy modules in `synvoid-http`:
+
 | Module | File | Responsibility |
 |--------|------|----------------|
-| **server** | `server.rs` (4848 lines) | Core HTTP server, request handling pipeline, connection management |
-| **shared_handler** | `shared_handler.rs` | Request context traits, streamed body with WAF, body collection protocol |
-| **response_builder** | `response_builder.rs` | HTTP response construction with alt-svc, cookies, JSON helpers |
-| **headers** | `headers.rs` | Security/CORS header injection, WebSocket key computation, stealth timestamps |
+| **framing** | `framing.rs` | Fail-closed transfer-framing + authority policy; listener sniff helpers |
 | **early_parse** | `early_parse.rs` | Early HTTP request parsing for fast-path routing |
-| **internal_handlers** | `internal_handlers.rs` | Internal endpoints: `/__internal__/drain`, `/__internal__/health`, etc. |
-| **response_helpers** | `response_helpers.rs` | Security header application, response building helpers |
+| **headers** | `headers.rs` | Security/CORS header injection, WebSocket key computation, stealth timestamps |
+| **request_parse** | `request_parse.rs` | Single metadata extraction, trust-token bypass, internal-endpoint classification |
+| **request_frontdoor** | `request_frontdoor.rs` | Trusted-proxy sanitization, internal endpoints, mesh special paths |
+| **request_preparation** | `request_preparation.rs` | Preflight (framing validation, routing) + body collection orchestration |
+| **body_policy** | `body_policy.rs` | Body collection + chunk WAF scan + size policy |
+| **waf_decision** | `waf_decision.rs` | Single WAF-decision→response mapping |
+| **response_builder** | `response_builder.rs` | HTTP response construction with alt-svc, cookies, JSON helpers |
+| **response_helpers** | `response_helpers.rs` | Security header application, WebSocket handshake responses |
 | **response_transform** | `response_transform.rs` | Compression, minification, image rights marking |
 | **validation_helpers** | `validation_helpers.rs` | WebSocket upgrade validation |
-| **directory_viewer** | `directory_viewer.rs` | Directory listing for static serving |
-| **file_manager** | `file_manager.rs` | File management operations |
-| **file_manager_ui** | `file_manager_ui.rs` | File manager web UI |
-| **webdav** | `webdav.rs` | WebDAV protocol support |
 
 ---
 
 ## 3. Key Data Structures and Types
 
 ### HttpServer
+
+Root-owned application composition (Phase 20). Long-lived services are
+grouped in `HttpServerRuntime` (router, `WafCore`, flood protector, clients,
+configs, drain state, metrics, IPC, connection limit, upstream registry,
+per-tenant `HttpAppBackends`, mesh handles); `HttpServer` itself holds the
+bind address, shutdown channel, and the runtime bundle. Request stages are
+delegated to `synvoid-http` (`prepare_http_request_flow`,
+`handle_http_request_postlude`); root adapters narrow `WafCore` /
+`PluginManager` / supervisor handles to crate traits at the call site.
+Full ownership rationale: `architecture/http_ownership_convergence.md` §3.
 ```rust
 pub struct HttpServer {
     addr: SocketAddr,
-    router: Arc<Router>,
-    waf: Arc<WafCore>,
-    flood_protector: Option<Arc<FloodProtector>>,
-    client: HttpClient,
     shutdown_rx: broadcast::Receiver<()>,
-    http_config: HttpConfig,
-    alt_svc: Option<String>,
-    main_config: Arc<MainConfig>,
-    drain_state: Option<Arc<WorkerDrainState>>,
-    #[cfg(feature = "mesh")]
-    mesh_config: Option<Arc<MeshConfig>>,
-    #[cfg(feature = "mesh")]
-    mesh_transport: Option<Arc<MeshTransportManager>>,
-    metrics: Option<Arc<WorkerMetrics>>,
-    ipc: Option<Arc<tokio::sync::Mutex<IpcStream>>>,
-    worker_id: Option<WorkerId>,
-    serverless_manager: Option<Arc<ServerlessManager>>,
-    connection_limit: Arc<Semaphore>,
-    app_servers: Option<Arc<RwLock<HashMap<String, Arc<GranianSupervisor>>>>>,
-    #[cfg(feature = "mesh")]
-    mesh_backend_pool: Option<Arc<MeshBackendPool>>,
-    upstream_client_registry: Arc<UpstreamClientRegistry>,
-    erased_http_client: ErasedHttpClient,
+    runtime: HttpServerRuntime,
 }
 ```
 
@@ -186,123 +189,67 @@ The central request processing function (~4700 lines of processing logic).
 
 ## 5. Request Handling Flow
 
-### Phase 1: Connection Management (lines 688-702)
+### Phase 1: Connection Management
 1. Acquire connection limit semaphore
 2. Return 503 if semaphore closed
 
-### Phase 2: IP Extraction & Sanitization (lines 704-718)
-1. Extract `client_addr` IP
-2. Apply `RequestSanitizer` for X-Forwarded-For trusted proxy handling
-3. Sanitize request headers
+### Phase 2: Listener Protocol Sniffing
+`framing::{is_tls_client_hello, is_valid_http_request_start}` (canonical in
+`synvoid-http`) reject cross-protocol bytes when `strict_protocol_validation`
+is enabled.
 
-### Phase 3: Internal Endpoints (lines 726-753)
+### Phase 3: Frontdoor (`prepare_request_frontdoor`)
+1. Extract `client_addr` IP; `RequestSanitizer` trusted-proxy handling
+2. Internal endpoints (`/__internal__/drain`, `/drain-status`, `/health`, `/ready`)
+3. Mesh special paths (key exchange, HTTP-01 challenge)
+
+### Phase 4: Traffic Control
+Global connection limiter, per-site limits, bandwidth limit.
+
+### Phase 5: Request Preflight (`prepare_request_preflight`)
+1. `extract_request_metadata` — the single method/path/host/UA/cookie
+   extraction shared by routing and WAF
+2. `framing::validate_request_framing` — ambiguous framing/authority fails
+   closed with `400` before routing and WAF
+3. Trust-token (`sv_trust` cookie) bypass check
+4. `router.route_with_local_addr`
+
+### Phase 6: Streaming Fast Path
+For streamable upstream routes: header-only WAF verdict, then streaming
+upstream dispatch without full body collection.
+
+### Phase 7: Body Collection (`finalize_request_preparation`)
+Framing re-validated via the same canonical helpers, then
+`collect_and_scan_request_body` (chunk-WAF scan above 256KB, full scan
+above 1MB, `max_streaming_body_size` bound).
+
+### Phase 8: Honeypot & Challenge Assets
 ```
-/__internal__/drain       -> handle_drain_request() (localhost only)
-/__internal__/drain-status -> handle_drain_status_request() (localhost only)
-/__internal__/health      -> handle_health_request()
-/__internal__/ready       -> handle_ready_request()
-```
-
-### Phase 4: Key Exchange Requests (lines 756-777)
-Mesh global node key exchange endpoints:
-- `/key-request-origin` - POST for key request origin
-- `/key-confirm` - POST for key confirmation
-- `/health` - GET for health check
-
-### Phase 4.5: Mesh HTTP-01 Challenge (lines 782-808)
-```
-/.well-known/synvoid-challenge/<token> -> Serve HTTP-01 ACME challenge
-```
-
-### Phase 5: Connection Limiting (lines 810-854)
-1. Check global connection limiter
-2. Per-site connection limits via `try_acquire_with_limits()`
-3. ConnectionTokenGuard for automatic release
-
-### Phase 6: Bandwidth Limiting (lines 856-870)
-Check global bandwidth limit via `waf.is_over_bandwidth_limit()`.
-
-### Phase 7: WebSocket Detection (lines 872-880)
-Parse `Upgrade` and `Connection` headers to detect WebSocket upgrades.
-
-### Phase 8: Request Parsing (lines 882-928)
-Extract method, path, query string, host, user-agent, cookies.
-
-### Phase 8.5: Trust Token Fast Path (lines 908-928)
-Check for `sv_trust` cookie; if valid, skip WAF checks.
-
-### Phase 9: WAF Early Decision (lines 930-1057)
-```
-WafDecision::Drop -> Return 404, request connection drop
-WafDecision::ChallengeWithCookie -> Return 200 with Set-Cookie
-WafDecision::Challenge -> Return 200 with HTML challenge
-WafDecision::Block -> Return block status with error page
-WafDecision::Pass|Stall|Tarpit -> Continue
-```
-
-### Phase 10: Routing & Site Resolution (lines 1062-1174)
-```rust
-let route = router.route_with_local_addr(&host, &path, local_addr);
-```
-Apply per-site connection limits after routing.
-
-### Phase 9.5: Upstream Streaming Fast Path (lines 1176-1510)
-For `Upstream`/`Serverless` backends with streaming policy:
-1. Run WAF full check
-2. Dispatch to serverless or forward to upstream with streaming body
-
-### Phase 10: Body Collection (lines 1513-1627)
-For non-streaming paths:
-1. If body > 256KB: Use `collect_body_with_chunk_waf()` 
-2. If body > 1MB: Run WAF full body scan in 64KB chunks
-
-### Phase 11: Honeypot & Challenge Assets (lines 1642-1846)
-```
-HONEYPOT_PREFIX/*         -> Block IP, return 408
-/_waf_css_challenge/*     -> Serve CSS challenge page
+HONEYPOT_PREFIX/*         -> Deny with 408 (no timed block writes; Phase 19)
+/_waf_css_challenge/*     -> CSS challenge page
 /_waf_assets/rnd-<name>.png -> CSS asset verification
 ```
 
-### Phase 12: Full WAF Check (lines 1860-1892)
-Run `waf.check_request_full()` with collected body (unless serverless with `waf_mode=Off`).
-
-### Phase 13: WAF Decision Handling (lines 1894-2113)
+### Phase 9: Full WAF Check + Decision Mapping
+`waf.check_request_full()` (unless trust-token/serverless-Off bypass), then
+the single canonical mapping in `waf_decision::resolve_full_request_waf_decision`:
 ```
 Drop -> 404 with connection drop
-Stall -> Sleep 0-keepalive_timeout then 408
-Block -> Error page with status
+Stall -> sleep to timeout then 408 (concurrency-capped)
+Block -> error page with status
 Challenge -> 200 with HTML
 ChallengeWithCookie -> 200 with Set-Cookie
-Tarpit -> Streaming tarpit response
-Pass -> Continue to backend dispatch
+Tarpit -> streaming tarpit response
+Pass -> continue to backend dispatch
 ```
 
-### Phase 14: Backend Dispatch (lines 2114-3026)
-Supported backend types:
-- **WebSocket**: Upgrade tunnel to upstream or AppServer
-- **AxumDynamic**: Plugin router via `plugin_manager.get_axum_router()`
-- **Static**: `static_handler.serve()` with compression/minification
-- **Serverless**: `serverless_manager.handle_serverless_function()`
-- **Spin**: `SpinHttpHandler` for WASM apps
-- **FastCgi/PHP**: `fastcgi::get_pool().execute()` or PHP client
-- **CGI**: `CgiHandler::execute()`
-- **AppServer**: `GranianSupervisor.forward_request()`
-- **Mesh**: `mesh_backend_pool.select_backend().proxy_request()`
+### Phase 10: Backend Dispatch (`handle_pass_backend_dispatch`)
+WebSocket upgrade, AxumDynamic, Static, Serverless, Spin, FastCGI/PHP, CGI,
+AppServer, Mesh, WASM filters, upload validation, upstream proxy with
+response transforms (minification, compression, image rights marking) and
+security headers.
 
-### Phase 15: WASM Filters (lines 3028-3152)
-Apply WASM request filters via `plugin_manager.apply_wasm_filters()`.
-
-### Phase 16: Upload Validation (lines 3155-3246)
-If content-type is upload, validate with YARA scanning and size limits.
-
-### Phase 17: Upstream Proxy (lines 3247-3844)
-- Prepare upstream target with URL/headers/timeouts
-- Check body buffering policy for ErasedHttpClient streaming
-- Forward request via `send_request_streaming_generic()` or `send_request_with_body_and_timeout()`
-- Apply response transforms (minification, compression, image rights marking)
-- Inject security headers
-
-### Phase 18: Request Logging (lines 3848-3869)
+### Phase 11: Request Logging
 Log via IPC if verbose logging enabled with rate limiting.
 
 ---
@@ -369,8 +316,10 @@ struct ProtocolValidatingStream<S> {
 Wraps a stream with initial bytes buffer for protocol validation on first read.
 
 ### TLS Detection
+Canonical in `synvoid_http::framing::is_tls_client_hello` (Phase 20; both
+`src/http/server/` and `src/tls/server.rs` share the one implementation):
 ```rust
-fn is_tls_client_hello(bytes: &[u8]) -> bool {
+pub fn is_tls_client_hello(bytes: &[u8]) -> bool {
     bytes.len() >= 3 && bytes[0] == 0x16 && bytes[1] == 0x03 && (bytes[2] <= 0x03)
 }
 ```

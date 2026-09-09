@@ -108,7 +108,7 @@ Classification values:
 | synvoid-proxy-cache | proxy_cache | composition_runtime | default | Proxy response caching | keep |
 | synvoid-admin | admin | composition_runtime | default | Admin API handler types | keep |
 | synvoid-proxy | proxy | composition_runtime | default | Reverse proxy routing and location matching | keep |
-| synvoid-http | http | composition_runtime | default | HTTP server listener and shared handler | keep |
+| synvoid-http | http | composition_runtime | default | Canonical HTTP parsing/normalization/body-policy/dispatch; root `http` is application composition over it (Phase 20) | keep |
 | synvoid-http3 | http3 | composition_runtime | default | HTTP/3 QUIC server | keep |
 | synvoid-serverless | serverless | composition_runtime | default | Serverless WASM function runtime | keep |
 | synvoid-geoip | geoip | composition_runtime | default | GeoIP database lookups | keep |

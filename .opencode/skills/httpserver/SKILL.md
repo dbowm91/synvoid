@@ -7,9 +7,15 @@ description: HTTP server architecture with dual-mode implementation for request 
 
 ## Overview
 
-SynVoid has two HTTP server implementations:
-1. **HttpServer** (`src/http/server.rs`) - handles plain HTTP
-2. **HttpsServer** (`src/tls/server.rs`) - handles TLS/SSL
+SynVoid has two HTTP server integrations over one canonical pipeline:
+1. **HttpServer** (`src/http/server.rs` + `src/http/server/`) - plain HTTP listener + application composition
+2. **HttpsServer** (`src/tls/server.rs`) - TLS listener + connection handling
+
+Reusable parsing/normalization/dispatch lives canonically in `synvoid-http`
+(`crates/synvoid-http/src/`). Root `src/http/` is application composition
+(`keep_app_root`, Phase 20): 24 thin facades, 11 narrow-trait adapters over
+root services, 5 application handlers, and the `HttpServer` composition root.
+Full matrix: `architecture/http_ownership_convergence.md`.
 
 Both share the same request processing logic. The unified handler architecture (`src/server/request_handler.rs`) provides a shared abstraction to eliminate code duplication.
 
@@ -48,8 +54,9 @@ pub struct TlsContext {
 
 | File | Purpose |
 |------|---------|
-| `src/http/server.rs` | HTTP server (plain connections) |
-| `src/tls/server.rs` | HTTPS server (TLS connections) |
+| `src/http/server.rs` + `src/http/server/` | HTTP listener, `HttpServerRuntime` service bundle, accept loop (root composition) |
+| `src/tls/server.rs` | HTTPS listener + `HttpsConnection` handling (root integration; core TLS in `synvoid-tls`) |
+| `crates/synvoid-http/src/` | Canonical stages: `framing`, `early_parse`, `headers`, `request_parse`, `request_frontdoor`, `request_preparation`, `body_policy`, `waf_decision`, backend dispatches |
 | `src/server/request_handler.rs` | Unified handler traits and utilities |
 | `src/server/mod.rs` | UnifiedServer orchestration |
 
@@ -201,3 +208,19 @@ HTTP/1 and HTTP/3 pipelines now share the same stage vocabulary documented in `a
 HTTP/3 dispatch uses `Http3RequestMetadata` (request fields) and `Http3DispatchDeps` (service handles) context structs
 instead of 21 discrete parameters. Both pipelines consume `RequestServices` or narrower handles, never
 `UnifiedServerWorkerState`. Guard tests in `tests/http_request_pipeline_boundary_guard.rs` enforce this boundary.
+
+## Canonical Framing Policy (Phase 20)
+
+Transfer-framing and authority validation has one fail-closed implementation:
+`crates/synvoid-http/src/framing.rs` (`validate_request_framing`,
+`validate_transfer_framing`, `validate_host_authority`, plus the shared
+listener sniff helpers `is_tls_client_hello` / `is_valid_http_request_start`).
+
+- Enforced in `prepare_request_preflight` (400 before routing/WAF) and
+  re-validated in `finalize_request_preparation` via the same helpers.
+- Duplicate `Host` also fails closed on the HTTP/3 prelude; QUIC has no
+  transfer-framing ambiguity (explicit frame lengths).
+- Do not add parsing/normalization under `src/http` or `src/tls` — extend
+  `framing.rs` and cover new ambiguity cases with unit tests there.
+- Guard: `cargo test --test http_normalization_ownership_guard`.
+- Full module matrix: `architecture/http_ownership_convergence.md`.

@@ -1,6 +1,6 @@
 # Phase 20 Plan: HTTP Normalization, Dispatch, and Ownership Convergence
 
-Status: detailed handoff plan.
+Status: complete — implemented; evidence in `architecture/http_ownership_convergence.md` (matrix, pipeline, H3/WS mapping, residual blockers) and `architecture/root_module_burndown_report.md` (Phase 20 closure).
 
 Roadmap position: Track 3, Phase 20 of `plans/roadmap.md`.
 
