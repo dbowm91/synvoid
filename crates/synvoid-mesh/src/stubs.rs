@@ -52,6 +52,13 @@ pub mod metrics {
     pub fn record_blocklist_catchup_event_applied() {}
     pub fn record_blocklist_catchup_event_noop() {}
     pub fn record_blocklist_catchup_event_stale() {}
+    // Phase 23 distributed-state contract observability (stub mirrors; root
+    // crate provides the real recorder). All labels are allowlisted.
+    pub fn record_canonical_snapshot_freshness(_class: &str) {}
+    pub fn record_distributed_canonical_outcome(_outcome: &str) {}
+    pub fn record_distributed_propagation_outcome(_outcome: &str) {}
+    pub fn record_distributed_stale_rejected() {}
+    pub fn record_distributed_replay_suppressed() {}
 
     pub mod bandwidth {
         use parking_lot::RwLock;

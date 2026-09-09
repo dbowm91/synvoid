@@ -747,6 +747,142 @@ impl CanonicalTrustReader for CanonicalTrustSnapshot {
     }
 }
 
+/// Authority taxonomy for distributed state (Phase 23).
+///
+/// Code equivalent of `architecture/distributed_state_contract.md` §1.
+/// Every security-relevant replicated namespace is exactly one variant.
+/// If a namespace does not fit, define a precise additional category rather
+/// than allowing ambiguous mixed authority.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DistributedNamespaceAuthority {
+    /// Local node owns state; replication is informational/best-effort.
+    LocalAuthoritative,
+    /// Remote data may inform policy but cannot establish canonical trust.
+    AdvisoryDistributed,
+    /// Only committed canonical (Raft) state is authoritative.
+    CanonicalConsensusBacked,
+    /// Reconstructible only from an authoritative source; carries
+    /// freshness/version metadata; never independent authority in partition.
+    DerivedCacheMaterialization,
+}
+
+impl DistributedNamespaceAuthority {
+    /// Bounded metric/observability label (no secrets, no peer IDs).
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::LocalAuthoritative => "local_authoritative",
+            Self::AdvisoryDistributed => "advisory_distributed",
+            Self::CanonicalConsensusBacked => "canonical_consensus_backed",
+            Self::DerivedCacheMaterialization => "derived_cache",
+        }
+    }
+}
+
+/// Bounded observability label for a namespace authority.
+///
+/// Returns an allowlisted label; unknown inputs map to `"unknown"`
+/// (never reflected back) to preserve bounded cardinality.
+pub fn distributed_authority_label(authority: DistributedNamespaceAuthority) -> &'static str {
+    authority.label()
+}
+
+/// Typed outcome of a canonical (Raft) write attempt (Phase 23).
+///
+/// Writes without quorum must yield `QuorumUnavailable` (fail-closed) and
+/// must never be reported as success or queued canonical commit. Committed
+/// writes carry the Raft `(term, index)` proof.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CanonicalWriteOutcome {
+    /// Raft commit proven.
+    Committed { term: u64, index: u64 },
+    /// No Raft quorum (partition/minority). Fail-closed.
+    QuorumUnavailable { detail: String },
+    /// Contacted node is not the leader (caller may retry at hint).
+    NotLeader { hint: Option<String> },
+    /// Rejected as stale / not-authoritative (never retried as canonical).
+    RejectedStale { reason: String },
+    /// Deferred (e.g. canonical unknown, leader election in progress).
+    Deferred { reason: String },
+}
+
+impl CanonicalWriteOutcome {
+    /// True only for proven commits.
+    pub fn is_committed(&self) -> bool {
+        matches!(self, Self::Committed { .. })
+    }
+
+    /// True for quorum-unavailable (fail-closed) outcomes.
+    pub fn is_quorum_unavailable(&self) -> bool {
+        matches!(self, Self::QuorumUnavailable { .. })
+    }
+
+    /// Map to the truthful `PropagationStatus` for admin/control-plane replies.
+    ///
+    /// `Committed` → `CanonicalCommitted`; `QuorumUnavailable` →
+    /// `QuorumUnavailable` (never success); `RejectedStale` → `NotApplicable`
+    /// with a stale status at the `AdminMutationStatus` layer; others →
+    /// `Deferred`.
+    pub fn propagation_status(&self) -> synvoid_core::admin_mutation::PropagationStatus {
+        use synvoid_core::admin_mutation::PropagationStatus;
+        match self {
+            Self::Committed { .. } => PropagationStatus::CanonicalCommitted,
+            Self::QuorumUnavailable { .. } => PropagationStatus::QuorumUnavailable,
+            Self::NotLeader { .. } | Self::Deferred { .. } => PropagationStatus::Deferred,
+            Self::RejectedStale { .. } => PropagationStatus::NotApplicable,
+        }
+    }
+
+    /// Bounded observability label (allowlisted; no terms/indexes/peer IDs).
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Committed { .. } => "committed",
+            Self::QuorumUnavailable { .. } => "quorum_unavailable",
+            Self::NotLeader { .. } => "not_leader",
+            Self::RejectedStale { .. } => "rejected_stale",
+            Self::Deferred { .. } => "deferred",
+        }
+    }
+}
+
+/// Bounded label for a canonical write outcome (allowlisted).
+pub fn canonical_write_outcome_label(outcome: &CanonicalWriteOutcome) -> &'static str {
+    outcome.label()
+}
+
+/// Bounded label for a canonical snapshot freshness state.
+///
+/// Exactly the five classes from `classify_canonical_snapshot`; no ages,
+/// timestamps, or node IDs are ever labels.
+pub fn canonical_snapshot_freshness_label(state: CanonicalSnapshotFreshnessState) -> &'static str {
+    match state {
+        CanonicalSnapshotFreshnessState::Fresh { .. } => "fresh",
+        CanonicalSnapshotFreshnessState::StaleWithinGrace { .. } => "stale_within_grace",
+        CanonicalSnapshotFreshnessState::Expired { .. } => "expired",
+        CanonicalSnapshotFreshnessState::Invalid => "invalid",
+        CanonicalSnapshotFreshnessState::Missing => "missing",
+    }
+}
+
+/// Bounded label for a propagation status.
+///
+/// Allowlisted to the seven contract outcomes; used for metrics without
+/// high-cardinality or secret data.
+pub fn propagation_outcome_label(
+    status: synvoid_core::admin_mutation::PropagationStatus,
+) -> &'static str {
+    use synvoid_core::admin_mutation::PropagationStatus;
+    match status {
+        PropagationStatus::NotApplicable => "not_applicable",
+        PropagationStatus::QueuedBestEffort => "queued_best_effort",
+        PropagationStatus::AppliedLocalOnly => "applied_local_only",
+        PropagationStatus::SnapshotRepairRequired => "snapshot_repair_required",
+        PropagationStatus::FailedToQueue => "failed_to_queue",
+        PropagationStatus::Deferred => "deferred",
+        PropagationStatus::CanonicalCommitted => "canonical_committed",
+        PropagationStatus::QuorumUnavailable => "quorum_unavailable",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1692,5 +1828,109 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    // =========================================================================
+    // Phase 23: distributed-state authority / write-outcome / label tests
+    // =========================================================================
+
+    #[test]
+    fn distributed_authority_labels_are_bounded() {
+        use super::DistributedNamespaceAuthority as A;
+        let cases = [
+            (A::LocalAuthoritative, "local_authoritative"),
+            (A::AdvisoryDistributed, "advisory_distributed"),
+            (A::CanonicalConsensusBacked, "canonical_consensus_backed"),
+            (A::DerivedCacheMaterialization, "derived_cache"),
+        ];
+        for (authority, expected) in cases {
+            assert_eq!(authority.label(), expected);
+            assert_eq!(distributed_authority_label(authority), expected);
+        }
+    }
+
+    #[test]
+    fn canonical_write_outcome_never_reports_quorum_loss_as_success() {
+        use super::CanonicalWriteOutcome as O;
+        use synvoid_core::admin_mutation::PropagationStatus;
+
+        let committed = O::Committed { term: 3, index: 42 };
+        assert!(committed.is_committed());
+        assert!(!committed.is_quorum_unavailable());
+        assert_eq!(
+            committed.propagation_status(),
+            PropagationStatus::CanonicalCommitted
+        );
+        assert_eq!(committed.label(), "committed");
+
+        let unavailable = O::QuorumUnavailable {
+            detail: "no majority".into(),
+        };
+        assert!(!unavailable.is_committed());
+        assert!(unavailable.is_quorum_unavailable());
+        assert_eq!(
+            unavailable.propagation_status(),
+            PropagationStatus::QuorumUnavailable
+        );
+        assert_eq!(unavailable.label(), "quorum_unavailable");
+        assert_eq!(
+            canonical_write_outcome_label(&unavailable),
+            "quorum_unavailable"
+        );
+
+        // Detail strings (terms, hints, peer IDs) never leak into labels.
+        let with_secret_detail = O::QuorumUnavailable {
+            detail: "peer-abc term=9 index=1 secret=xyz".into(),
+        };
+        assert_eq!(with_secret_detail.label(), "quorum_unavailable");
+        assert!(!with_secret_detail.label().contains("peer-abc"));
+
+        let not_leader = O::NotLeader { hint: None };
+        assert_eq!(not_leader.label(), "not_leader");
+        assert_eq!(not_leader.propagation_status(), PropagationStatus::Deferred);
+
+        let stale = O::RejectedStale {
+            reason: "old term".into(),
+        };
+        assert_eq!(stale.label(), "rejected_stale");
+
+        let deferred = O::Deferred {
+            reason: "election".into(),
+        };
+        assert_eq!(deferred.label(), "deferred");
+    }
+
+    #[test]
+    fn snapshot_freshness_and_propagation_labels_are_bounded() {
+        use super::CanonicalSnapshotFreshnessState as S;
+        assert_eq!(
+            canonical_snapshot_freshness_label(S::Fresh { age_ms: 1 }),
+            "fresh"
+        );
+        assert_eq!(
+            canonical_snapshot_freshness_label(S::StaleWithinGrace { age_ms: 999 }),
+            "stale_within_grace"
+        );
+        assert_eq!(
+            canonical_snapshot_freshness_label(S::Expired { age_ms: 1_000_000 }),
+            "expired"
+        );
+        assert_eq!(canonical_snapshot_freshness_label(S::Invalid), "invalid");
+        assert_eq!(canonical_snapshot_freshness_label(S::Missing), "missing");
+
+        use synvoid_core::admin_mutation::PropagationStatus as P;
+        let cases = [
+            (P::NotApplicable, "not_applicable"),
+            (P::QueuedBestEffort, "queued_best_effort"),
+            (P::AppliedLocalOnly, "applied_local_only"),
+            (P::SnapshotRepairRequired, "snapshot_repair_required"),
+            (P::FailedToQueue, "failed_to_queue"),
+            (P::Deferred, "deferred"),
+            (P::CanonicalCommitted, "canonical_committed"),
+            (P::QuorumUnavailable, "quorum_unavailable"),
+        ];
+        for (status, expected) in cases {
+            assert_eq!(propagation_outcome_label(status), expected);
+        }
     }
 }

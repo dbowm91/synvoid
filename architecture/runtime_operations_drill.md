@@ -206,7 +206,11 @@ cargo test --test mesh_admin_edge_cases --features mesh,dns
 - Snapshot/catchup helper functions work via tests
 - Convergence health visible via admin diagnostics
 - Request path remains local-only
-- Mesh propagation described as best-effort
+- Mesh propagation described as best-effort (`QueuedBestEffort` never canonical success); canonical writes use `CanonicalCommitted` / `QuorumUnavailable` per `architecture/distributed_state_contract.md` §7
+
+### Partition Drill (Phase 23, no external cluster)
+
+Deterministic coverage lives in `crates/synvoid-mesh/tests/distributed_state_partition.rs` (14 tests). Operator equivalent: isolate a majority of Global nodes, verify canonical writes return typed `QuorumUnavailable` (not success), edge reads report freshness class and defer/deny per `stale_mode`, advisory gossip does not enforce without canonical trust, local blocks continue with `QueuedBestEffort`, and on heal `last_sync_index`/cursors converge with no stale resurrection and revocations intact. Binding semantics: `architecture/distributed_state_contract.md` §8, §11.
 
 ### Observability Signals
 

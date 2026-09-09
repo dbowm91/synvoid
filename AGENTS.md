@@ -60,7 +60,7 @@ Testing quirks:
 - **Supervisor**: `src/supervisor/` — lifecycle, IPC, control-plane
 - **Data plane**: `src/worker/unified_server/` — HTTP + WAF + proxy in ONE Tokio event loop; CPU offload in `src/worker/cpu_task/`
 - **Process model**: Supervisor (1) → UnifiedServerWorker (1) + CpuWorker (1). Workers are NOT process-per-tenant. Note: the legacy `--worker` flag (`src/process/worker.rs` `BaseWorkerProcess`) has NO dispatch branch in `src/commands/plan.rs` and falls through to the default `RuntimeCommand::Supervisor`; HTTP serving uses `--unified-server-worker` / `--cpu-worker`.
-- **Mesh**: `crates/synvoid-mesh/src/mesh/` — DHT, transport, Raft, peer auth
+- **Mesh**: `crates/synvoid-mesh/src/mesh/` — DHT, transport, Raft, peer auth. Binding distributed-state contract: `architecture/distributed_state_contract.md` (authority taxonomy `DistributedNamespaceAuthority`, typed `QuorumUnavailable`/`CanonicalCommitted` outcomes, partition/rejoin tests in `crates/synvoid-mesh/tests/distributed_state_partition.rs`; MESH-15 closed as stale).
 - Many legacy root paths re-export crate contents for compat (e.g., `src/dns/mod.rs` re-exports `synvoid_dns::*`).
 
 ### Composition Boundary (guard-enforced)
@@ -119,7 +119,7 @@ Root-module ownership policy lives in `architecture/root_module_ledger.md` — p
 
 ### Admin Control-Plane Authority
 
-- Mutating endpoints return typed `AdminMutationResult` (`synvoid_core::admin_mutation`), attributed to an `AdminMutationAuthority` variant (compat paths use `CompatibilityLegacy`) — never generic `{"success": true}`.
+- Mutating endpoints return typed `AdminMutationResult` (`synvoid_core::admin_mutation`), attributed to an `AdminMutationAuthority` variant (compat paths use `CompatibilityLegacy`) — never generic `{"success": true}`. Canonical commits use `PropagationStatus::CanonicalCommitted`; quorum loss uses `PropagationStatus::QuorumUnavailable` (never success); best-effort gossip stays `QueuedBestEffort`.
 - Block/unblock emits `AdminAuditEvent` via `state.audit.log_audit_event()`. Never store raw session tokens in audit logs (`AdminActor.session_id_hash` is hashed).
 - Browser clients: HttpOnly session cookie + CSRF token; bearer token only for session exchange; WebSocket auth via session cookie only. Frontend treats 401/403 as session expiry.
 - Admin responses carry `nosniff`, `X-Frame-Options: DENY`, CSP `frame-ancestors 'none'`, strict referrer policy.
@@ -158,7 +158,7 @@ Primary doc per subsystem (deep dives live beside each as `<topic>_deep_dive.md`
 | Supervisor & process model | `supervisor.md`, `supervisor_lifecycle.md`, `process_lifecycle.md`, `cli_supervisor_command_dispatch.md` |
 | WAF | `waf.md`, `waf_ownership_convergence.md`, `streaming.md`, `challenge.md`, `enforcement_decision_contract.md` |
 | Proxy, upstream, cache, tunnels | `proxy.md`, `upstream.md`, `proxy_cache.md`, `tunnel_deep_dive.md` |
-| Mesh, DHT, Raft, trust | `mesh.md`, `mesh_transport_lifecycle.md`, `mesh_trust_domains.md`, `block_store.md` |
+| Mesh, DHT, Raft, trust | `mesh.md`, `mesh_transport_lifecycle.md`, `mesh_trust_domains.md`, `block_store.md`, `distributed_state_contract.md` (binding, Phase 23) |
 | Threat-intel enforcement | `threat_intel_consumer_actionability.md`, `manual_enforcement_ownership.md`, `admin_control_plane_authority.md` |
 | DNS (`dns` feature) | `dns.md`, `dns_config_runtime_matrix.md`, `dns_zone_lifecycle.md`, `dns_operations_diagnostics.md` |
 | Plugins, WASM, serverless | `plugin_runtime_sandbox.md`, `plugin_wasm.md`, `serverless.md`, `unsafe_native_extensions.md`, `sandbox_jail_protocol.md` |

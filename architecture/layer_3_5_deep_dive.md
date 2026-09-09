@@ -83,19 +83,19 @@ Yes, the mesh layer (`Layer 5`) is **highly complex** and represents the greates
 *   **Current Architecture:** It uses a custom Kademlia-style DHT (`ShardedRecordStore`) over QUIC for peer discovery, threat intelligence sharing, and dynamic routing, combined with a custom PKI trust chain and PQC handshakes.
 *   **The Issue:** Maintaining state consistency and preventing split-brain scenarios in a high-churn, globally distributed Kademlia DHT is notoriously difficult. Custom cryptographic wrappers over QUIC streams increase the surface area for logic bugs compared to standard mTLS.
 *   **Room for Simplification:**
-    1.  **Raft Consensus:** Global nodes use Raft consensus (`crates/synvoid-mesh/src/mesh/raft/`) for state consistency. The Raft implementation handles leader election and log replication, though quorum deadlock risks during network partitions remain a known limitation (see MESH-15).
+    1.  **Raft Consensus:** Global nodes use Raft consensus (`crates/synvoid-mesh/src/mesh/raft/`, openraft majority) for state consistency. Partition behavior is fail-closed with typed `QuorumUnavailable` and freshness-classified reads — see `architecture/distributed_state_contract.md` §2 (MESH-15 closed as stale).
     2.  **Standardize mTLS:** Edge and Origin nodes could simply connect to Global nodes using standard TLS 1.3 mTLS (with PQC enabled) rather than custom KEM handshake protocols over raw QUIC streams.
 
 ## 4. The Trust Model: Genesis to Edge
 
 **Are there flaws in the trust system?**
 The trust model follows a robust, SPIFFE-like hierarchical chain:
-`Genesis Key` → `Global Nodes (2/3 Quorum)` → `Org Keys` → `Member Certificates` → `Edge/Origin Nodes`
+`Genesis Key` → `Global Nodes (Raft majority)` → `Org Keys` → `Member Certificates` → `Edge/Origin Nodes`
 
-*   **Strengths:** This is cryptographically sound. An attacker cannot forge an `OrgKey` without compromising 2/3 of the Global nodes.
-*   **Potential Flaws:** 
-    *   **Quorum Deadlock (MESH-15):** The reliance on a `2/3 Quorum` of Global nodes to sign new `OrgPublicKey` records is dangerous in a purely DHT-based system without a consensus leader. If the network experiences a temporary partition, or if exactly 1/3 of the global nodes go offline, the entire network loses the ability to onboard new organizations or rotate keys.
-    *   **Certificate Revocation:** While a `GlobalNodeRevocationList` exists, distributing revocation lists reliably across a Kademlia DHT during an active attack is a known hard problem.
+*   **Strengths:** This is cryptographically sound. An attacker cannot forge an `OrgKey` without compromising Raft majority of the Global nodes and committing through the leader.
+*   **Potential Flaws:**
+    *   **Quorum Unavailability (MESH-15 CLOSED, replaced):** The old MESH-15 text described a "2/3 Quorum … in a purely DHT-based system without a consensus leader." That design predates Raft (Waves 6–11) and is stale. The precise current limitation is standard Raft majority unavailability: if the Global cluster loses majority during partition, canonical writes (onboarding, key rotation, revocation) fail typed/fail-closed (`QuorumUnavailable`) while edge reads serve last committed snapshots per freshness policy. DHT/advisory state never becomes fallback authority. Binding contract: `architecture/distributed_state_contract.md` §2.
+    *   **Certificate Revocation:** `GlobalNodeRevocationList` is Raft-authoritative (`Namespace::Revocation`, append-only, permanent) and distributed via commit notifications + edge replicas with hard-limit freshness enforcement — not best-effort DHT gossip alone. See `architecture/distributed_state_contract.md` §3a.
 
 ## 5. Origin Node Protections & Isolation
 
@@ -176,13 +176,11 @@ Hybrid signatures (Ed25519 + ML-DSA-44) have significant size overhead:
 - DHT storage: Higher memory/disk usage for signed records
 - **Mitigation**: Fallback to Ed25519-only when PQ not required (`pqc-mesh` feature flag)
 
-### Raft Consensus Quorum Deadlock Risk (L35-9, MESH-15)
+### Raft Consensus Quorum Behavior (L35-9, MESH-15 CLOSED)
 
-The mesh Global tier uses Raft consensus (`crates/synvoid-mesh/src/mesh/raft/`) for state consistency. Known limitation:
+The mesh Global tier uses Raft consensus (`crates/synvoid-mesh/src/mesh/raft/`, openraft N/2+1 majority) for state consistency. Historical limitation note:
 
-> **MESH-15**: Quorum Deadlock Risk During Partition
->
-> The reliance on a `2/3 Quorum` of Global nodes to sign new `OrgPublicKey` records is dangerous in a purely DHT-based system without a consensus leader. If the network experiences a temporary partition, or if exactly 1/3 of the global nodes go offline, the entire network loses the ability to onboard new organizations or rotate keys.
+> **MESH-15 (CLOSED as stale in Phase 23):** The original "Quorum Deadlock Risk During Partition" text described manual 2/3 signing "in a purely DHT-based system without a consensus leader." That predates Raft and no longer describes the implementation. It is replaced by the binding partition contract in `architecture/distributed_state_contract.md` §2: without Raft majority, canonical writes fail typed `QuorumUnavailable` (fail-closed, never success); reads serve last committed snapshots per freshness policy; DHT never becomes fallback authority; on heal, Raft log + snapshots converge and edge replicas refresh (stale divergent writes rejected, revocations permanent).
 
 See [Raft Consensus Skill](../.opencode/skills/raft_consensus/SKILL.md) for detailed Raft implementation status.
 

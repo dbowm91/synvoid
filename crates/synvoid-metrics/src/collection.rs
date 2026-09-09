@@ -162,6 +162,46 @@ pub(crate) static BLOCKLIST_CATCHUP_EVENT_NOOP: LazyLock<AtomicU64> =
 pub(crate) static BLOCKLIST_CATCHUP_EVENT_STALE: LazyLock<AtomicU64> =
     LazyLock::new(|| AtomicU64::new(0));
 
+// Phase 23 distributed-state contract counters (bounded labels only).
+pub(crate) static DISTRIBUTED_SNAPSHOT_FRESH: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static DISTRIBUTED_SNAPSHOT_STALE_WITHIN_GRACE: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static DISTRIBUTED_SNAPSHOT_EXPIRED: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static DISTRIBUTED_SNAPSHOT_INVALID: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static DISTRIBUTED_SNAPSHOT_MISSING: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static DISTRIBUTED_CANONICAL_COMMITTED: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static DISTRIBUTED_CANONICAL_QUORUM_UNAVAILABLE: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static DISTRIBUTED_CANONICAL_NOT_LEADER: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static DISTRIBUTED_CANONICAL_DEFERRED: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static DISTRIBUTED_CANONICAL_REJECTED_STALE: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static DISTRIBUTED_PROPAGATION_QUEUED_BEST_EFFORT: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static DISTRIBUTED_PROPAGATION_CANONICAL_COMMITTED: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static DISTRIBUTED_PROPAGATION_QUORUM_UNAVAILABLE: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static DISTRIBUTED_PROPAGATION_FAILED_TO_QUEUE: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static DISTRIBUTED_PROPAGATION_DEFERRED: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static DISTRIBUTED_PROPAGATION_APPLIED_LOCAL_ONLY: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static DISTRIBUTED_PROPAGATION_NOT_APPLICABLE: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static DISTRIBUTED_STALE_REJECTED_TOTAL: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static DISTRIBUTED_REPLAY_SUPPRESSED_TOTAL: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+
 pub(crate) static DHT_RECORD_COUNT: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 pub(crate) static DHT_REPLICA_COUNT: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 pub(crate) static DHT_QUORUM_ACHIEVED_COUNT: LazyLock<AtomicU64> =
@@ -1063,6 +1103,105 @@ pub fn get_blocklist_catchup_event_stale() -> u64 {
     BLOCKLIST_CATCHUP_EVENT_STALE.load(Ordering::Relaxed)
 }
 
+// Phase 23 distributed-state contract observability (bounded labels only).
+//
+// All `class`/`outcome` parameters are allowlisted. Unknown values increment
+// nothing, preserving bounded cardinality. No key material, tokens, peer IDs,
+// or payload data are ever used as labels.
+
+pub fn record_canonical_snapshot_freshness(class: &str) {
+    match class {
+        "fresh" => DISTRIBUTED_SNAPSHOT_FRESH.fetch_add(1, Ordering::Relaxed),
+        "stale_within_grace" => {
+            DISTRIBUTED_SNAPSHOT_STALE_WITHIN_GRACE.fetch_add(1, Ordering::Relaxed)
+        }
+        "expired" => DISTRIBUTED_SNAPSHOT_EXPIRED.fetch_add(1, Ordering::Relaxed),
+        "invalid" => DISTRIBUTED_SNAPSHOT_INVALID.fetch_add(1, Ordering::Relaxed),
+        "missing" => DISTRIBUTED_SNAPSHOT_MISSING.fetch_add(1, Ordering::Relaxed),
+        _ => 0,
+    };
+}
+
+pub fn record_distributed_canonical_outcome(outcome: &str) {
+    match outcome {
+        "committed" => DISTRIBUTED_CANONICAL_COMMITTED.fetch_add(1, Ordering::Relaxed),
+        "quorum_unavailable" => {
+            DISTRIBUTED_CANONICAL_QUORUM_UNAVAILABLE.fetch_add(1, Ordering::Relaxed)
+        }
+        "not_leader" => DISTRIBUTED_CANONICAL_NOT_LEADER.fetch_add(1, Ordering::Relaxed),
+        "deferred" => DISTRIBUTED_CANONICAL_DEFERRED.fetch_add(1, Ordering::Relaxed),
+        "rejected_stale" => DISTRIBUTED_CANONICAL_REJECTED_STALE.fetch_add(1, Ordering::Relaxed),
+        _ => 0,
+    };
+}
+
+pub fn record_distributed_propagation_outcome(outcome: &str) {
+    match outcome {
+        "queued_best_effort" => {
+            DISTRIBUTED_PROPAGATION_QUEUED_BEST_EFFORT.fetch_add(1, Ordering::Relaxed)
+        }
+        "canonical_committed" => {
+            DISTRIBUTED_PROPAGATION_CANONICAL_COMMITTED.fetch_add(1, Ordering::Relaxed)
+        }
+        "quorum_unavailable" => {
+            DISTRIBUTED_PROPAGATION_QUORUM_UNAVAILABLE.fetch_add(1, Ordering::Relaxed)
+        }
+        "failed_to_queue" => {
+            DISTRIBUTED_PROPAGATION_FAILED_TO_QUEUE.fetch_add(1, Ordering::Relaxed)
+        }
+        "deferred" => DISTRIBUTED_PROPAGATION_DEFERRED.fetch_add(1, Ordering::Relaxed),
+        "applied_local_only" => {
+            DISTRIBUTED_PROPAGATION_APPLIED_LOCAL_ONLY.fetch_add(1, Ordering::Relaxed)
+        }
+        "not_applicable" => DISTRIBUTED_PROPAGATION_NOT_APPLICABLE.fetch_add(1, Ordering::Relaxed),
+        _ => 0,
+    };
+}
+
+pub fn record_distributed_stale_rejected() {
+    DISTRIBUTED_STALE_REJECTED_TOTAL.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_distributed_replay_suppressed() {
+    DISTRIBUTED_REPLAY_SUPPRESSED_TOTAL.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn get_distributed_snapshot_fresh() -> u64 {
+    DISTRIBUTED_SNAPSHOT_FRESH.load(Ordering::Relaxed)
+}
+
+pub fn get_distributed_snapshot_stale_within_grace() -> u64 {
+    DISTRIBUTED_SNAPSHOT_STALE_WITHIN_GRACE.load(Ordering::Relaxed)
+}
+
+pub fn get_distributed_snapshot_expired() -> u64 {
+    DISTRIBUTED_SNAPSHOT_EXPIRED.load(Ordering::Relaxed)
+}
+
+pub fn get_distributed_snapshot_invalid() -> u64 {
+    DISTRIBUTED_SNAPSHOT_INVALID.load(Ordering::Relaxed)
+}
+
+pub fn get_distributed_snapshot_missing() -> u64 {
+    DISTRIBUTED_SNAPSHOT_MISSING.load(Ordering::Relaxed)
+}
+
+pub fn get_distributed_canonical_committed() -> u64 {
+    DISTRIBUTED_CANONICAL_COMMITTED.load(Ordering::Relaxed)
+}
+
+pub fn get_distributed_canonical_quorum_unavailable() -> u64 {
+    DISTRIBUTED_CANONICAL_QUORUM_UNAVAILABLE.load(Ordering::Relaxed)
+}
+
+pub fn get_distributed_stale_rejected_total() -> u64 {
+    DISTRIBUTED_STALE_REJECTED_TOTAL.load(Ordering::Relaxed)
+}
+
+pub fn get_distributed_replay_suppressed_total() -> u64 {
+    DISTRIBUTED_REPLAY_SUPPRESSED_TOTAL.load(Ordering::Relaxed)
+}
+
 // Worker task registry metrics
 
 pub fn record_worker_task_started() {
@@ -1614,6 +1753,110 @@ mod tests {
         assert_eq!(
             BLOCKLIST_CATCHUP_EVENT_STALE.load(Ordering::Relaxed),
             stale_before + 1
+        );
+    }
+
+    // ── Phase 23 distributed-state contract observability ────────────────────
+
+    #[test]
+    fn distributed_snapshot_freshness_labels_mapped_bounded() {
+        let fresh_before = DISTRIBUTED_SNAPSHOT_FRESH.load(Ordering::Relaxed);
+        let grace_before = DISTRIBUTED_SNAPSHOT_STALE_WITHIN_GRACE.load(Ordering::Relaxed);
+        let expired_before = DISTRIBUTED_SNAPSHOT_EXPIRED.load(Ordering::Relaxed);
+        let invalid_before = DISTRIBUTED_SNAPSHOT_INVALID.load(Ordering::Relaxed);
+        let missing_before = DISTRIBUTED_SNAPSHOT_MISSING.load(Ordering::Relaxed);
+
+        record_canonical_snapshot_freshness("fresh");
+        record_canonical_snapshot_freshness("stale_within_grace");
+        record_canonical_snapshot_freshness("expired");
+        record_canonical_snapshot_freshness("invalid");
+        record_canonical_snapshot_freshness("missing");
+        record_canonical_snapshot_freshness("peer-abc-secret"); // unknown: no increment
+        record_canonical_snapshot_freshness(""); // unknown: no increment
+
+        assert_eq!(
+            DISTRIBUTED_SNAPSHOT_FRESH.load(Ordering::Relaxed),
+            fresh_before + 1
+        );
+        assert_eq!(
+            DISTRIBUTED_SNAPSHOT_STALE_WITHIN_GRACE.load(Ordering::Relaxed),
+            grace_before + 1
+        );
+        assert_eq!(
+            DISTRIBUTED_SNAPSHOT_EXPIRED.load(Ordering::Relaxed),
+            expired_before + 1
+        );
+        assert_eq!(
+            DISTRIBUTED_SNAPSHOT_INVALID.load(Ordering::Relaxed),
+            invalid_before + 1
+        );
+        assert_eq!(
+            DISTRIBUTED_SNAPSHOT_MISSING.load(Ordering::Relaxed),
+            missing_before + 1
+        );
+    }
+
+    #[test]
+    fn distributed_canonical_and_propagation_outcomes_mapped_bounded() {
+        let committed_before = DISTRIBUTED_CANONICAL_COMMITTED.load(Ordering::Relaxed);
+        let quorum_before = DISTRIBUTED_CANONICAL_QUORUM_UNAVAILABLE.load(Ordering::Relaxed);
+
+        record_distributed_canonical_outcome("committed");
+        record_distributed_canonical_outcome("quorum_unavailable");
+        record_distributed_canonical_outcome("not_leader");
+        record_distributed_canonical_outcome("deferred");
+        record_distributed_canonical_outcome("rejected_stale");
+        record_distributed_canonical_outcome("term=9 peer=secret"); // unknown
+
+        assert_eq!(
+            DISTRIBUTED_CANONICAL_COMMITTED.load(Ordering::Relaxed),
+            committed_before + 1
+        );
+        assert_eq!(
+            DISTRIBUTED_CANONICAL_QUORUM_UNAVAILABLE.load(Ordering::Relaxed),
+            quorum_before + 1
+        );
+
+        let queued_before = DISTRIBUTED_PROPAGATION_QUEUED_BEST_EFFORT.load(Ordering::Relaxed);
+        let canonical_before = DISTRIBUTED_PROPAGATION_CANONICAL_COMMITTED.load(Ordering::Relaxed);
+        let unavailable_before = DISTRIBUTED_PROPAGATION_QUORUM_UNAVAILABLE.load(Ordering::Relaxed);
+
+        record_distributed_propagation_outcome("queued_best_effort");
+        record_distributed_propagation_outcome("canonical_committed");
+        record_distributed_propagation_outcome("quorum_unavailable");
+        record_distributed_propagation_outcome("failed_to_queue");
+        record_distributed_propagation_outcome("deferred");
+        record_distributed_propagation_outcome("applied_local_only");
+        record_distributed_propagation_outcome("not_applicable");
+        record_distributed_propagation_outcome("peer=secret"); // unknown
+
+        assert_eq!(
+            DISTRIBUTED_PROPAGATION_QUEUED_BEST_EFFORT.load(Ordering::Relaxed),
+            queued_before + 1
+        );
+        assert_eq!(
+            DISTRIBUTED_PROPAGATION_CANONICAL_COMMITTED.load(Ordering::Relaxed),
+            canonical_before + 1
+        );
+        assert_eq!(
+            DISTRIBUTED_PROPAGATION_QUORUM_UNAVAILABLE.load(Ordering::Relaxed),
+            unavailable_before + 1
+        );
+    }
+
+    #[test]
+    fn distributed_stale_and_replay_counters_increment() {
+        let stale_before = DISTRIBUTED_STALE_REJECTED_TOTAL.load(Ordering::Relaxed);
+        let replay_before = DISTRIBUTED_REPLAY_SUPPRESSED_TOTAL.load(Ordering::Relaxed);
+        record_distributed_stale_rejected();
+        record_distributed_replay_suppressed();
+        assert_eq!(
+            DISTRIBUTED_STALE_REJECTED_TOTAL.load(Ordering::Relaxed),
+            stale_before + 1
+        );
+        assert_eq!(
+            DISTRIBUTED_REPLAY_SUPPRESSED_TOTAL.load(Ordering::Relaxed),
+            replay_before + 1
         );
     }
 }

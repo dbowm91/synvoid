@@ -71,6 +71,67 @@ pub enum RaftAwareClientError {
     RaftWriteFailed(String),
     #[error("Not the leader")]
     NotLeader,
+    /// Canonical write failed for lack of Raft quorum (partition/minority).
+    ///
+    /// Fail-closed: callers must not report success or queued canonical
+    /// commit. Maps to `PropagationStatus::QuorumUnavailable`. See
+    /// `architecture/distributed_state_contract.md` §2, §7, §8.
+    /// `RaftUnreachable` and `Timeout` on writes are also quorum-unavailable
+    /// conditions (see `is_quorum_unavailable`); this variant is the explicit
+    /// typed form for new code.
+    #[error("Raft quorum unavailable: {detail}")]
+    QuorumUnavailable { detail: String },
+}
+
+impl RaftAwareClientError {
+    /// True for quorum-unavailable (fail-closed) conditions.
+    ///
+    /// Covers the explicit `QuorumUnavailable` variant plus the legacy
+    /// write-path failures that imply no quorum: `RaftUnreachable`,
+    /// `Timeout`, and `NoGlobalNodes`. `NotLeader` alone is a routing hint,
+    /// not proof of quorum loss, so it is excluded.
+    pub fn is_quorum_unavailable(&self) -> bool {
+        matches!(
+            self,
+            Self::QuorumUnavailable { .. }
+                | Self::RaftUnreachable
+                | Self::Timeout(_)
+                | Self::NoGlobalNodes
+        )
+    }
+
+    /// Map to the truthful admin/control-plane propagation status.
+    ///
+    /// Quorum-unavailable conditions → `QuorumUnavailable` (never success).
+    /// All other errors → `FailedToQueue` (local propagation failure) so
+    /// callers cannot mistake them for canonical commits.
+    pub fn to_propagation_status(&self) -> synvoid_core::admin_mutation::PropagationStatus {
+        use synvoid_core::admin_mutation::PropagationStatus;
+        if self.is_quorum_unavailable() {
+            PropagationStatus::QuorumUnavailable
+        } else {
+            PropagationStatus::FailedToQueue
+        }
+    }
+
+    /// Map to the Phase 23 canonical write outcome.
+    pub fn to_canonical_write_outcome(&self) -> crate::canonical::CanonicalWriteOutcome {
+        use crate::canonical::CanonicalWriteOutcome;
+        match self {
+            Self::QuorumUnavailable { detail } => CanonicalWriteOutcome::QuorumUnavailable {
+                detail: detail.clone(),
+            },
+            Self::RaftUnreachable | Self::Timeout(_) | Self::NoGlobalNodes => {
+                CanonicalWriteOutcome::QuorumUnavailable {
+                    detail: self.to_string(),
+                }
+            }
+            Self::NotLeader => CanonicalWriteOutcome::NotLeader { hint: None },
+            other => CanonicalWriteOutcome::Deferred {
+                reason: other.to_string(),
+            },
+        }
+    }
 }
 
 pub struct RaftAwareClient {

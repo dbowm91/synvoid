@@ -76,10 +76,12 @@ pub use behavioral::{BehavioralFeatures, BehavioralFingerprint};
 pub use behavioral_intel::{BehavioralConfig, BehavioralIntelligenceManager, RequestFeatures};
 pub use canonical::FreshnessBoundCanonicalReader;
 pub use canonical::{
-    classify_canonical_snapshot, CanonicalFreshness, CanonicalSnapshotFreshnessPolicy,
-    CanonicalSnapshotFreshnessState, CanonicalSnapshotStaleMode, CanonicalTrustDecision,
-    CanonicalTrustReader, CanonicalTrustReason, CanonicalTrustSnapshot,
-    SnapshotCanonicalTrustReader, StaticCanonicalTrustReader,
+    canonical_snapshot_freshness_label, canonical_write_outcome_label, classify_canonical_snapshot,
+    distributed_authority_label, propagation_outcome_label, CanonicalFreshness,
+    CanonicalSnapshotFreshnessPolicy, CanonicalSnapshotFreshnessState, CanonicalSnapshotStaleMode,
+    CanonicalTrustDecision, CanonicalTrustReader, CanonicalTrustReason, CanonicalTrustSnapshot,
+    CanonicalWriteOutcome, DistributedNamespaceAuthority, SnapshotCanonicalTrustReader,
+    StaticCanonicalTrustReader,
 };
 pub use cert::MeshCertManager;
 pub use cli::{MeshArgs, MeshCommand};

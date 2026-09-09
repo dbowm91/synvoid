@@ -9,6 +9,8 @@ description: Raft consensus integration for global control plane coordination an
 
 Wave 6-7 implemented Raft consensus for the SynVoid Global Control Plane, replacing the previous quorum-based signature approach that required 2/3 of Global nodes to manually sign records.
 
+**Phase 23 binding contract**: `architecture/distributed_state_contract.md` §2 reconciles Raft behavior with code evidence and closes original MESH-15 wording as stale. Quorum is openraft N/2+1 majority; without quorum canonical writes fail typed `QuorumUnavailable` (fail-closed, never success or queued-canonical); reads serve last committed snapshots per `CanonicalSnapshotFreshnessPolicy`. DHT canonical namespaces are derived caches requiring attestation/proof, never independent authority. Code: `CanonicalWriteOutcome` (`canonical.rs`), `RaftAwareClientError::QuorumUnavailable` (`raft/client.rs`), `PropagationStatus::{CanonicalCommitted, QuorumUnavailable}` (`synvoid-core`). Tests: `crates/synvoid-mesh/tests/distributed_state_partition.rs`.
+
 ## Architecture
 
 ### Key Components

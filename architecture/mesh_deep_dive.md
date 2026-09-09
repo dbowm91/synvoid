@@ -32,12 +32,12 @@ Peer and service discovery are handled via a Kademlia-based **Distributed Hash T
 - **Hierarchical Routing:** [RESERVED/PLANNED] Future multi-region topology feature using Bloom filters and regional hubs for memory-efficient route announcement checking. Not yet active. See [`hierarchical_routing.rs`](crates/synvoid-mesh/src/mesh/hierarchical_routing.rs) for implementation details.
 
 ### 4. Raft Consensus
-Global nodes use Raft consensus (`crates/synvoid-mesh/src/mesh/raft/*.rs`) for **canonical global authority**:
-- **Leader Election:** Global nodes elect a leader to coordinate state changes.
-- **Log Replication:** Authority records are replicated across Global nodes via Raft log.
-- **Quorum Requirements:** Write operations require quorum (2/3) of Global nodes.
-- **Canonical Authority:** Raft commits are the single source of truth for OrgPublicKey, ThreatIntel, and GlobalNodeRevocationList. DHT records for these namespaces are derived from Raft commits, not created independently.
-- **Note:** Quorum deadlock risk during network partition (see MESH-15).
+Global nodes use Raft consensus (`crates/synvoid-mesh/src/mesh/raft/*.rs`, openraft) for **canonical global authority**:
+- **Leader Election:** Global nodes elect a leader to coordinate state changes (standard openraft election over `MeshMessage::Raft`).
+- **Log Replication:** Authority records are replicated across Global nodes via Raft log with persisted `(term, index)`.
+- **Quorum Requirements:** Write operations require openraft majority (N/2+1) of Global nodes. Without quorum, writes fail typed/fail-closed (`QuorumUnavailable`); they are never reported as success.
+- **Canonical Authority:** Raft commits are the single source of truth for `Namespace::{Org, Intel, Revocation, AuthorizedGlobalNodes}`. DHT records for these namespaces require Raft attestation or quorum proof at ingress; they are derived caches, not independent authority.
+- **Partition semantics (MESH-15 CLOSED):** The old MESH-15 "2/3 manual-quorum deadlock in a purely DHT-based system without a leader" wording is stale and closed (Raft has existed since Waves 6–11). The precise current limitation is standard Raft majority unavailability during partition: canonical writes become unavailable while edge reads serve last committed snapshots per freshness policy. See `architecture/distributed_state_contract.md` §2 for the binding contract with code evidence.
 
 See `architecture/mesh_trust_domains.md` for the advisory vs. canonical distinction and trust-domain invariants. See `CanonicalTrustReader` in `crates/synvoid-mesh/src/mesh/canonical.rs` (Iteration 8) and `architecture/mesh_trust_domains.md`. Canonical snapshot freshness policy (`classify_canonical_snapshot()`, `FreshnessBoundCanonicalReader`) enforces age bounds on trust decisions — see Iteration 31 in `architecture/mesh_trust_domains.md`. Config wiring (Iteration 32) sources freshness thresholds from `AuthorityFreshnessConfig` at runtime.
 

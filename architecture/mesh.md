@@ -19,6 +19,8 @@ The Mesh module is responsible for:
 
 A trust-domain classification and invariants document exists at `architecture/mesh_trust_domains.md` (advisory DHT vs. canonical Raft, policy as decision layer) for future reviews. See `CanonicalTrustReader` in `crates/synvoid-mesh/src/mesh/canonical.rs` (Iteration 8) and `architecture/mesh_trust_domains.md`. Canonical snapshot freshness policy (`classify_canonical_snapshot()`, `FreshnessBoundCanonicalReader`) enforces age bounds on trust decisions — see Iteration 31 in `architecture/mesh_trust_domains.md`. Config wiring (Iteration 32) sources freshness thresholds from `AuthorityFreshnessConfig` at runtime.
 
+The binding per-namespace authority/consistency/versioning/TTL/conflict/partition contract is `architecture/distributed_state_contract.md` (Phase 23). It is authoritative over any consistency language elsewhere in mesh docs; other mesh documents link here rather than redefining semantics.
+
 ---
 
 ## 2. Module Structure

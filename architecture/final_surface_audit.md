@@ -434,3 +434,4 @@ SynVoid is pre-1.0. Semver is not yet meaningful for external consumers. All cra
 | No request-path control-plane imports | None | Guard passes | Clean |
 | No raw threat-intel enforcement | None | Guard passes | Clean |
 | No mem::forget lifecycle leaks | None | Guard passes | Clean |
+| Partition quorum loss | Low | Fail-closed `QuorumUnavailable` + freshness-classified reads per binding `architecture/distributed_state_contract.md` (MESH-15 closed) | Accepted |

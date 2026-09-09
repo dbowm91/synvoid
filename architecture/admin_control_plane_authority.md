@@ -59,13 +59,15 @@ pub struct AdminActor {
 | Status | Description |
 |--------|-------------|
 | `NotApplicable` | Propagation is not applicable (local-only operation) |
-| `QueuedBestEffort` | Mutation queued for best-effort mesh propagation (NOT guaranteed delivery) |
+| `QueuedBestEffort` | Mutation queued for best-effort mesh propagation (NOT guaranteed delivery; never canonical success) |
 | `AppliedLocalOnly` | Mutation applied locally only; no propagation attempted |
 | `SnapshotRepairRequired` | Snapshot repair needed for peer consistency |
 | `FailedToQueue` | Queuing failed |
 | `Deferred` | Propagation deferred to later |
+| `CanonicalCommitted` | Canonical (Raft) commit proven for canonical namespaces (Phase 23; never for gossip alone) |
+| `QuorumUnavailable` | Canonical write failed for lack of quorum; never success; `local_store_mutated=false` (Phase 23) |
 
-**Non-guarantee**: `QueuedBestEffort` does NOT mean all peers received the mutation. It means the event was placed in the propagation queue. Actual delivery depends on network conditions, peer availability, and queue processing.
+**Non-guarantee**: `QueuedBestEffort` does NOT mean all peers received the mutation. It means the event was placed in the propagation queue. Actual delivery depends on network conditions, peer availability, and queue processing. `QueuedBestEffort` must never be presented as `CanonicalCommitted`. Binding partition/propagation semantics: `architecture/distributed_state_contract.md` §7.
 
 ### AdminMutationResult
 
@@ -81,7 +83,7 @@ pub struct AdminMutationResult<T = serde_json::Value> {
 }
 ```
 
-Builder methods: `applied()`, `applied_with_propagation()`, `noop()`, `duplicate()`, `stale()`, `invalid()`, `failed()`, `with_event_id()`, `with_audit_id()`, `with_propagation()`.
+Builder methods: `applied()`, `applied_with_propagation()`, `noop()`, `duplicate()`, `stale()`, `invalid()`, `failed()`, `canonical_committed()`, `quorum_unavailable()`, `with_event_id()`, `with_audit_id()`, `with_propagation()`.
 
 ## Audit Event Schema
 

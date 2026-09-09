@@ -154,6 +154,7 @@ pub enum PropagationStatus {
     NotApplicable,
     /// The mutation was queued for best-effort mesh propagation.
     /// This does NOT guarantee delivery to all peers.
+    /// Must never be presented as canonical commit success.
     QueuedBestEffort,
     /// The mutation was applied locally only; no propagation was attempted.
     AppliedLocalOnly,
@@ -163,6 +164,15 @@ pub enum PropagationStatus {
     FailedToQueue,
     /// Propagation was deferred to a later time.
     Deferred,
+    /// A canonical (Raft) commit completed with proven term/index.
+    /// Only for canonical consensus-backed namespaces. Never use for
+    /// best-effort gossip alone. See `architecture/distributed_state_contract.md` §7.
+    CanonicalCommitted,
+    /// A canonical write failed because Raft quorum was unavailable.
+    /// The caller must not report success or queued canonical commit, and
+    /// `local_store_mutated` must be false. See
+    /// `architecture/distributed_state_contract.md` §2, §7, §8.
+    QuorumUnavailable,
 }
 
 impl std::fmt::Display for PropagationStatus {
@@ -174,6 +184,8 @@ impl std::fmt::Display for PropagationStatus {
             Self::SnapshotRepairRequired => write!(f, "Snapshot Repair Required"),
             Self::FailedToQueue => write!(f, "Failed to Queue"),
             Self::Deferred => write!(f, "Deferred"),
+            Self::CanonicalCommitted => write!(f, "Canonical Committed"),
+            Self::QuorumUnavailable => write!(f, "Quorum Unavailable"),
         }
     }
 }
@@ -293,6 +305,40 @@ impl<T> AdminMutationResult<T> {
             target,
             local_store_mutated: false,
             propagation: PropagationStatus::NotApplicable,
+            event_id: None,
+            audit_id: None,
+            message: message.into(),
+        }
+    }
+
+    /// Create a canonical-commit result (Phase 23).
+    ///
+    /// Use only when a Raft commit is proven (term/index known) for a
+    /// canonical consensus-backed namespace. Never use for best-effort
+    /// gossip alone (`QueuedBestEffort`).
+    pub fn canonical_committed(target: T, message: impl Into<String>) -> Self {
+        Self {
+            status: AdminMutationStatus::Applied,
+            target,
+            local_store_mutated: true,
+            propagation: PropagationStatus::CanonicalCommitted,
+            event_id: None,
+            audit_id: None,
+            message: message.into(),
+        }
+    }
+
+    /// Create a quorum-unavailable result (Phase 23).
+    ///
+    /// Use when a canonical write fails for lack of Raft quorum. The result
+    /// never reports success and never marks the local store mutated.
+    /// Callers must not present this as queued canonical commit.
+    pub fn quorum_unavailable(target: T, message: impl Into<String>) -> Self {
+        Self {
+            status: AdminMutationStatus::Failed,
+            target,
+            local_store_mutated: false,
+            propagation: PropagationStatus::QuorumUnavailable,
             event_id: None,
             audit_id: None,
             message: message.into(),
@@ -432,6 +478,8 @@ mod tests {
             PropagationStatus::SnapshotRepairRequired,
             PropagationStatus::FailedToQueue,
             PropagationStatus::Deferred,
+            PropagationStatus::CanonicalCommitted,
+            PropagationStatus::QuorumUnavailable,
         ];
         for status in &statuses {
             let json = serde_json::to_string(status).expect("serialize");
@@ -493,5 +541,26 @@ mod tests {
         assert_eq!(result.event_id.as_deref(), Some("evt-123"));
         assert_eq!(result.audit_id.as_deref(), Some("aud-456"));
         assert_eq!(result.propagation, PropagationStatus::QueuedBestEffort);
+    }
+
+    #[test]
+    fn quorum_unavailable_never_reports_success() {
+        let result = AdminMutationResult::quorum_unavailable("org:acme", "quorum unavailable");
+        assert_eq!(result.status, AdminMutationStatus::Failed);
+        assert_eq!(result.propagation, PropagationStatus::QuorumUnavailable);
+        assert!(!result.local_store_mutated);
+        // Serializes with stable snake_case names.
+        let json = serde_json::to_string(&result.propagation).expect("serialize");
+        assert_eq!(json, "\"quorum_unavailable\"");
+    }
+
+    #[test]
+    fn canonical_committed_requires_applied() {
+        let result = AdminMutationResult::canonical_committed("org:acme", "raft committed");
+        assert_eq!(result.status, AdminMutationStatus::Applied);
+        assert_eq!(result.propagation, PropagationStatus::CanonicalCommitted);
+        assert!(result.local_store_mutated);
+        let json = serde_json::to_string(&result.propagation).expect("serialize");
+        assert_eq!(json, "\"canonical_committed\"");
     }
 }

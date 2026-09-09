@@ -181,6 +181,7 @@ These are pure helper functions that perform classification or composition witho
 
 ## Related Documents
 
+- `architecture/distributed_state_contract.md` — Binding per-namespace authority/consistency/partition contract (Phase 23; authoritative)
 - `architecture/threat_intel_request_waf_audit.md` — Request/WAF boundary audit
 - `architecture/mesh_trust_domains.md` — Trust domain classification and invariants
 - `docs/THREAT_INTEL.md` — User-facing threat-intel documentation

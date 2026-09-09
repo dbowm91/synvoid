@@ -253,3 +253,5 @@ All snapshot items (IP blocks, mesh-ID blocks, and target-state records) are pag
 - `BlocklistSnapshotCursor`: page token for offset-based pagination
 - `BlocklistSnapshotChunk`: response with separate `ip_blocks`, `mesh_blocks`, `target_state_records` lists
 - `BlocklistSnapshotApplyResult`: counts of applied, updated, stale, invalid, and expired records
+
+> Binding ordering/expiry/partition semantics for block namespaces live in `architecture/distributed_state_contract.md` §3d–§5, §8 (Phase 23). This document remains the storage-engine reference; the contract is authoritative where they overlap.

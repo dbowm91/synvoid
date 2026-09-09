@@ -757,6 +757,16 @@ Raw consumer audit conclusions:
 
 The trust-domain/freshness/enforcement track is a reasonable stopping point. Move to a different architecture track next; do not expand proxy, YARA/WASM, routing, or WAF consumers without a separate design pass.
 
+### Iteration 37 — Phase 23 Distributed-State Contract Binding
+
+Phase 23 makes the per-namespace contract explicit in `architecture/distributed_state_contract.md` (authoritative matrix). This document remains the trust-domain invariant companion; the contract is binding where they overlap.
+
+- Authority taxonomy code equivalent: `DistributedNamespaceAuthority` (`canonical.rs`) — `LocalAuthoritative` / `AdvisoryDistributed` / `CanonicalConsensusBacked` / `DerivedCacheMaterialization`.
+- Canonical write outcomes: `CanonicalWriteOutcome::{Committed{term,index}, QuorumUnavailable, NotLeader, RejectedStale, Deferred}` → truthful `PropagationStatus::{CanonicalCommitted, QuorumUnavailable, Deferred, NotApplicable}`. `RaftAwareClientError::QuorumUnavailable` + `is_quorum_unavailable()` / `to_propagation_status()` cover the Raft client surface.
+- MESH-15 as worded here historically is closed as stale; the binding partition semantics live in the contract §2 (openraft N/2+1 majority, fail-closed `QuorumUnavailable`, freshness-classified reads, DHT never fallback authority).
+- Partition/rejoin scenarios are pinned in `crates/synvoid-mesh/tests/distributed_state_partition.rs` (14 deterministic tests, no external cluster).
+- Observability labels are bounded (`canonical_snapshot_freshness_label`, `propagation_outcome_label`, `canonical_write_outcome_label`, `distributed_authority_label`) with counters in `synvoid-metrics` (`record_canonical_snapshot_freshness`, `record_distributed_canonical_outcome`, `record_distributed_propagation_outcome`, `record_distributed_stale_rejected`, `record_distributed_replay_suppressed`).
+
 ---
 
 ## References

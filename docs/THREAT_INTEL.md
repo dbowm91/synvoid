@@ -714,6 +714,7 @@ The system records metrics for monitoring:
 - [Attack Detection](./ATTACK_DETECTION.md) - WAF detection pipeline and attack types
 - [BOT_PROTECTION.md](./BOT_PROTECTION.md) - Bot detection including honeypots
 - [UPLOADS.md](./UPLOADS.md) - File upload handling and scanning
+- [Distributed State Contract](../architecture/distributed_state_contract.md) - Binding authority/consistency/versioning/TTL/conflict/partition contract for threat-intel and all replicated namespaces (Phase 23; authoritative over consistency language here)
 
 ## Key Source Files
 

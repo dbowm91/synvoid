@@ -243,7 +243,7 @@ Root-owned orchestration code (see [`root_module_ledger.md`](./root_module_ledge
 
 | Component | Crate(s) | Purpose | Doc |
 |-----------|----------|--------|-----|
-| **Mesh** | `synvoid-mesh` | DHT (signed records, Merkle sync), transports (QUIC/WireGuard), openraft consensus, org keys/trust domains, reputation, behavioral intel | [`mesh_deep_dive.md`](./mesh_deep_dive.md) · [`mesh_trust_domains.md`](./mesh_trust_domains.md) · [`mesh_transport_lifecycle.md`](./mesh_transport_lifecycle.md) |
+| **Mesh** | `synvoid-mesh` | DHT (signed records, Merkle sync), transports (QUIC/WireGuard), openraft consensus, org keys/trust domains, reputation, behavioral intel | [`distributed_state_contract.md`](./distributed_state_contract.md) (binding) · [`mesh_deep_dive.md`](./mesh_deep_dive.md) · [`mesh_trust_domains.md`](./mesh_trust_domains.md) · [`mesh_transport_lifecycle.md`](./mesh_transport_lifecycle.md) |
 | **DNS** | `synvoid-dns` | Authoritative+recursive, DNSSEC sign/validate, DoT/DoH/DoQ, TSIG, RPZ, RFC2136 updates, zone trie, anycast sync | [`dns_deep_dive.md`](./dns_deep_dive.md) · [`dns_zone_lifecycle.md`](./dns_zone_lifecycle.md) |
 | **Post-Quantum Crypto** | `pqc` | ML-KEM-768/1024, ML-DSA-44 primitives (aws-lc-rs / libcrux) | [`pqc.md`](./pqc.md) |
 | **Org key trust chain** | `synvoid-mesh` | Hierarchical organization/node key management | [org_key_trust_chain skill](../.opencode/skills/org_key_trust_chain/SKILL.md) |
