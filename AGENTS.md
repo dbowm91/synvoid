@@ -115,6 +115,7 @@ Root-module ownership policy lives in `architecture/root_module_ledger.md` — p
 - **SignedSandboxed plugins**: empty `binary_sha256`/`manifest_sha256` rejected in production.
 - **Plugin ABI memory boundary**: guest pointer ops require `guest_alloc`/`guest_free` and `checked_guest_range` (no fixed-offset fallback). Frame serialization only via `abi_frame::serialize_headers_canonical` / `build_request_frame`.
 - **Native extensions**: disabled by default; production load requires explicit risk acknowledgement + path allowlist. They are NOT sandboxed; retain the `Library` handle via `Arc` for the lifetime of derived values.
+- **Sandbox jail IPC** (`--wasm-jail` / `--yara-jail`, spec `architecture/sandbox_jail_protocol.md`): parent-created stdio pipes only (no post-sandbox bind/connect); versioned length-bounded typed protocol, no generic exec op; no secrets/payloads in argv/env; jail logs to stderr (stdout is framed IPC); `IsolationPolicy::Required` fails closed, never silently falls back; digest re-verified in jail (constant-time); hook-only capabilities inside the jail.
 
 ### Admin Control-Plane Authority
 
@@ -160,7 +161,7 @@ Primary doc per subsystem (deep dives live beside each as `<topic>_deep_dive.md`
 | Mesh, DHT, Raft, trust | `mesh.md`, `mesh_transport_lifecycle.md`, `mesh_trust_domains.md`, `block_store.md` |
 | Threat-intel enforcement | `threat_intel_consumer_actionability.md`, `manual_enforcement_ownership.md`, `admin_control_plane_authority.md` |
 | DNS (`dns` feature) | `dns.md`, `dns_config_runtime_matrix.md`, `dns_zone_lifecycle.md`, `dns_operations_diagnostics.md` |
-| Plugins, WASM, serverless | `plugin_runtime_sandbox.md`, `plugin_wasm.md`, `serverless.md`, `unsafe_native_extensions.md` |
+| Plugins, WASM, serverless | `plugin_runtime_sandbox.md`, `plugin_wasm.md`, `serverless.md`, `unsafe_native_extensions.md`, `sandbox_jail_protocol.md` |
 | Admin UI/API & auth | `admin_deep_dive.md`, `auth.md`, `admin_ui.md`, `admin_root_ownership.md` (Phase 21 root-boundary matrix) |
 | Config system | `config.md`, `core_types.md` |
 | TLS, PQC, integrity | `tls.md`, `pqc.md`, `integrity.md` |

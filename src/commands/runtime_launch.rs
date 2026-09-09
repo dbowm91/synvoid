@@ -14,7 +14,9 @@
 
 use std::path::PathBuf;
 
-use crate::startup::bootstrap::{init_logging_simple, print_test_mode_warning};
+use crate::startup::bootstrap::{
+    init_logging_simple, init_logging_simple_stderr, print_test_mode_warning,
+};
 use crate::startup::daemon::acquire_pid_file;
 use crate::startup::worker::{build_cpu_worker_args, build_unified_server_worker_args};
 use crate::supervisor::run_supervisor_mode;
@@ -279,12 +281,14 @@ pub fn execute_runtime_launch(plan: RuntimeLaunchPlan) -> RuntimeLaunchOutcome {
             RuntimeLaunchOutcome::Completed
         }
         RuntimeLaunchPlan::WasmJail => {
-            init_logging_simple();
+            // Stderr logging: stdout is the jail IPC frame channel.
+            init_logging_simple_stderr();
             crate::sandbox::run_wasm_jail_mode();
             RuntimeLaunchOutcome::Completed
         }
         RuntimeLaunchPlan::YaraJail => {
-            init_logging_simple();
+            // Stderr logging: stdout is the jail IPC frame channel.
+            init_logging_simple_stderr();
             crate::sandbox::run_yara_jail_mode();
             RuntimeLaunchOutcome::Completed
         }

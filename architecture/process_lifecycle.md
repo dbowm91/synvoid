@@ -7,6 +7,7 @@ SynVoid uses a two-tier architecture with a latency-sensitive unified worker dat
 ## The Hierarchy
 
 ### 1. Supervisor (Control Plane)
+
 The Supervisor is the top-level process that manages worker lifecycle, upgrades, health monitoring, and control-plane APIs.
 
 - **Responsibilities:**
@@ -21,8 +22,36 @@ The Supervisor is the top-level process that manages worker lifecycle, upgrades,
 - **Entry Point:** `run_supervisor_mode()` (`src/main.rs:531-537`).
 - **IPC Role:** Acts as the central hub for worker coordination.
 
-### 2. Worker (The Data Plane)
-Workers are request-handling engines managed by the Supervisor. SynVoid uses a unified worker, CPU offload workers, and one legacy raw TCP/UDP worker type:
+### 2. Jail Processes (Sandboxed Execution Plane, Phase 22 Operational)
+
+WASM plugin execution and YARA rule evaluation can run in dedicated jail
+processes (`synvoid --wasm-jail`, `synvoid --yara-jail`), supervised by the
+parent via `JailHandle` (`crates/synvoid-ipc/src/jail_process.rs`):
+
+- **Transport:** parent-created anonymous stdio pipes inherited by the child.
+  No socket bind/connect happens after sandboxing; peer identity rests on
+  descriptor inheritance. Jail logs go to stderr — stdout carries only
+  length-delimited frames.
+- **Protocol:** versioned (`SVJL`/v1), length-bounded (8 MiB frames, 1 MiB
+  invoke I/O, 4 MiB scan input), typed narrow operations only (module/rule
+  load, invoke/scan, unload, ping, shutdown). Spec:
+  [`sandbox_jail_protocol.md`](./sandbox_jail_protocol.md).
+- **Supervision:** bounded restarts (default budget 5, exponential backoff
+  100 ms–5 s), quarantine-and-restart on any timeout/protocol violation/desync
+  instead of continuing on a desynchronized stream, deterministic shutdown
+  (stop → drain → `Shutdown` → grace → `kill` → reap). One in-flight request
+  per jail; no pipelining.
+- **Policy:** `InProcess` (default) / `Preferred` (documented fallback only
+  where safe) / `Required` (fail closed, never silently falls back).
+  Production routing defaults to in-process; jail adoption is per-call-site
+  explicit.
+- **Trust:** the parent validates signatures/manifests/capabilities before any
+  load; the jail re-verifies content digests (constant-time) and enforces
+  fuel/memory/timeout limits with hook-only capabilities (ambient filesystem,
+  network, mesh, admin authority is unexpressible inside the jail).
+
+### 3. Worker (The Data Plane)
+Workers are request-handling engines managed by the Supervisor. SynVoid uses a unified worker, CPU offload workers, one legacy raw TCP/UDP worker type, plus the jail execution plane above:
 
 - **UnifiedServerWorker:** Primary worker handling HTTP/HTTPS/HTTP3 + WAF + proxy via a single Tokio async event loop. Handles all site routing and security enforcement.
 - **CPU Offload Worker (historically `StaticWorker`):** Dedicated worker for bounded heavy tasks like CSS/JS minification, compression, image transforms, YARA scans, and other expensive transforms. The legacy `StaticWorker` IPC names are retained for compatibility.

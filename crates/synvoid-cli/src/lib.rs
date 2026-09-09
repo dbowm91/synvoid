@@ -16,10 +16,16 @@ pub struct Args {
     #[arg(long, help = "Run as mesh agent process (control plane)")]
     pub mesh_agent: bool,
 
-    #[arg(long, help = "Run as WASM plugin execution jail")]
+    #[arg(
+        long,
+        help = "Run as WASM plugin execution jail (supervised child: strict sandbox, framed stdio IPC, stderr logs)"
+    )]
     pub wasm_jail: bool,
 
-    #[arg(long, help = "Run as YARA rule evaluation jail")]
+    #[arg(
+        long,
+        help = "Run as YARA rule evaluation jail (supervised child: strict sandbox, framed stdio IPC, stderr logs)"
+    )]
     pub yara_jail: bool,
 
     #[arg(

@@ -118,6 +118,12 @@ owners = ["synvoid-http", "synvoid-waf", "synvoid-proxy", "synvoid-dns", "synvoi
 reason = "validates full-stack composition across all major subsystems"
 
 [[test]]
+name = "jail_isolation_guard"
+class = "composition"
+owners = ["synvoid-ipc", "synvoid-plugin-runtime", "synvoid-upload"]
+reason = "validates sandbox jail IPC composition across ipc protocol/supervision, wasm/yara child services, and policy routing (Phase 22)"
+
+[[test]]
 name = "lifecycle_task_guard"
 class = "static_policy"
 owners = ["synvoid-worker", "synvoid-supervisor"]

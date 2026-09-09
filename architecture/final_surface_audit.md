@@ -12,7 +12,7 @@ Phase 10 closure audit. Classifies every public surface of the SynVoid codebase 
 | `common` | `keep_app_root` | internal | root | Panic handler setup (53 lines) |
 | `drain` | `keep_app_root` | internal | root | Connection drain state for graceful shutdown |
 | `log_controller` | `keep_app_root` | internal | root | Runtime log level management |
-| `sandbox` | `keep_app_root` | internal | root | Process sandbox entry points (mostly TODO stubs) |
+| `sandbox` | `keep_app_root` | internal | root | Supervised WASM/YARA jail entry points + execution services + policy client (Phase 22 operational; spec: `sandbox_jail_protocol.md`) |
 | `server` | `keep_app_root` | internal | root | UnifiedServer composition root (1344 lines) |
 | `startup` | `keep_app_root` | internal | root | Process startup and bootstrap |
 | `supervisor` | `keep_app_root` | internal | root | Supervisor process lifecycle (re-exports submodules) |
@@ -126,8 +126,8 @@ Phase 10 closure audit. Classifies every public surface of the SynVoid codebase 
 | `--cpu-worker` | runtime launch | starts CPU worker | none | IPC to supervisor | plan tests |
 | `--unified-server-worker` | runtime launch | starts unified worker | none | IPC to supervisor | plan tests |
 | `--mesh-agent` | runtime launch | starts mesh agent | none | mesh feature | plan tests |
-| `--wasm-jail` | runtime launch | starts WASM jail | none | none | plan tests |
-| `--yara-jail` | runtime launch | starts YARA jail | none | none | plan tests |
+| `--wasm-jail` | runtime launch | starts WASM jail (framed stdio IPC, stderr logs) | none | none | plan tests + jail_isolation_guard |
+| `--yara-jail` | runtime launch | starts YARA jail (framed stdio IPC, stderr logs) | none | none | plan tests + jail_isolation_guard |
 
 ## 4. Admin Endpoints Summary
 

@@ -10,6 +10,14 @@ pub fn init_logging_simple() {
     log_controller::init_logging_with_dynamic_level("info");
 }
 
+/// Logging init for stdio-framed jail children (`--wasm-jail`, `--yara-jail`).
+///
+/// Jail IPC frames travel over stdout, so jail logs must go to stderr;
+/// a stdout log line would corrupt the frame stream and force a restart.
+pub fn init_logging_simple_stderr() {
+    log_controller::init_logging_with_dynamic_level_stderr("info");
+}
+
 pub fn print_test_mode_warning(test_flags: &[String]) {
     let mut disabled = Vec::new();
 

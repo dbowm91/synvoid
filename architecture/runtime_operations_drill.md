@@ -160,8 +160,7 @@ curl -X POST http://127.0.0.1:18081/api/admin/block \
 
 ```bash
 cargo test -p synvoid-plugin-runtime --test plugin_failure_does_not_poison_manager
-cargo test --test plugin_capability_boundary_guard
-cargo test --test plugin_signature_policy_guard
+cargo test --test plugin_guard
 ```
 
 ### Expected Results
@@ -249,6 +248,37 @@ cargo check
 - Feature gate compilation flags visible in build output
 - Runtime startup logs show enabled/disabled subsystems
 
+## Drill 7: Sandbox Jail Round Trip and Fail-Closed Behavior
+
+### Steps
+
+```bash
+cargo test -p synvoid-ipc --lib jail
+cargo test --test jail_isolation_guard
+```
+
+### Expected Results
+
+- WASM `handle_request` and YARA scan round trips succeed through the framed
+  loop and through live `--wasm-jail` / `--yara-jail` child processes
+- Oversized, truncated, malformed, and wrong-version frames are rejected;
+  the child exits rather than hanging on a desynchronized stream
+- `Required` isolation without a live jail fails closed (never silently
+  falls back to in-process execution)
+- Silent or instantly-exiting children surface deadline-bounded typed errors
+- Orderly shutdown reaps every jail child (no orphans); restart after child
+  exit is transparent within budget and fails closed once the budget is spent
+- On platforms without a strict sandbox backend, jail startup fails closed
+  unless the test-only `SYNVOID_JAIL_PERMIT_NO_SANDBOX=1` hatch is set
+  (production spawn paths never set it)
+
+### Observability Signals
+
+- Jail starts, restarts, exits, and shutdowns logged with kind + bounded reason
+- `jail_metrics_snapshot()` counters: starts/restarts/exits, per-kind
+  invocations, per-error-code failures, timeouts (no string labels)
+- No module names, digests, paths, or rule text in logs or metrics
+
 ## Observability Checklist
 
 | Drill | Logs | Metrics | Admin Diagnostic | Audit Event | Notes |
@@ -259,6 +289,7 @@ cargo check
 | 4: Plugin Failure | ✓ | ✓ | — | — | Manager isolation verified |
 | 5: Mesh Convergence | ✓ | ✓ | ✓ | — | Best-effort propagation |
 | 6: Degraded Features | ✓ | — | ✓ | — | Profile state visible |
+| 7: Sandbox Jail | ✓ | ✓ | — | — | Round trip + fail-closed verified |
 
 ## Verification Commands
 

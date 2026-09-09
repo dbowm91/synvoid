@@ -278,3 +278,23 @@ pub enum SandboxError {
 3. **Use appropriate levels** - Basic for development, Strict for production
 4. **Test on target platforms** - Sandboxing behavior varies across OS versions
 5. **Enable incrementally** - Start with Basic, verify functionality, then Strict
+
+## Sandbox Jail Processes (Phase 22)
+
+The strict sandbox above confines the WASM/YARA jail children
+(`synvoid --wasm-jail`, `synvoid --yara-jail`, entry points in `src/sandbox/`).
+Full jail contract: `architecture/sandbox_jail_protocol.md`. Rules when
+touching jail code:
+
+- IPC uses parent-created anonymous stdio pipes established before spawn;
+  never add post-sandbox bind/connect, and never add a connectable namespace.
+- Jail logs go to stderr; stdout carries only length-delimited frames
+  (a stdout log line corrupts the stream and forces a restart).
+- No generic exec operation, no secrets/payloads in argv or env, digests
+  re-verified in the child with constant-time comparison.
+- `IsolationPolicy::Required` fails closed; never add silent in-process
+  fallback to a required path. Production routing defaults to `InProcess`;
+  adopt per call site with result-comparison tests.
+- On unsupported platforms the child fails closed; the only bypass is the
+  test-only `SYNVOID_JAIL_PERMIT_NO_SANDBOX=1` hatch, which production spawn
+  paths must never set (asserted by `tests/jail_isolation_guard.rs`).

@@ -1,6 +1,16 @@
 # Phase 22 Plan: Sandbox Jail IPC and Runtime Closure
 
-Status: detailed handoff plan.
+Status: COMPLETE (implemented; `cargo xtask verify` 8/8 green locally).
+
+Implementation map: spec `architecture/sandbox_jail_protocol.md`; protocol
+`crates/synvoid-ipc/src/jail_protocol.rs`; supervision
+`crates/synvoid-ipc/src/jail_process.rs`; child services + policy client
+`src/sandbox/`; coverage `tests/jail_isolation_guard.rs` (+ `OWNERSHIP.toml`)
+and `synvoid-ipc` unit tests. Plan verification names
+`supervisor_spawn_guard` / `plugin_capability_guard` do not exist as test
+targets; coverage lives in `jail_isolation_guard` plus existing
+`plugin_guard` (see protocol doc §11). No CI workflow changes (frozen
+contract; new tests run via `verify-full` workspace nextest).
 
 Roadmap position: Track 3, Phase 22 of `plans/roadmap.md`.
 

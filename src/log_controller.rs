@@ -15,6 +15,22 @@ pub fn init_logging_with_dynamic_level(level: &str) {
         .init();
 }
 
+/// Stderr variant for stdio-framed children: stdout is the IPC frame channel
+/// and must carry nothing but length-delimited frames.
+pub fn init_logging_with_dynamic_level_stderr(level: &str) {
+    *LOG_LEVEL.write() = level.to_string();
+
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level));
+
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(std::io::stderr as fn() -> std::io::Stderr),
+        )
+        .init();
+}
+
 pub fn get_log_level() -> String {
     LOG_LEVEL.read().clone()
 }

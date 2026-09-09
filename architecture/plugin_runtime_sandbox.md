@@ -933,3 +933,49 @@ Production hot reload requires explicit `production_enabled = true`. Native hot 
 - `quarantine_plugin(name, reason)` — blocks all invocations
 
 All operations emit lifecycle transitions with generation, hashes, and timestamps.
+
+## Phase 22: Out-of-Process Jail (Operational)
+
+The former jail-process stubs (`src/sandbox/mod.rs` exiting 1 with "IPC not
+implemented") are now a supervised out-of-process execution boundary. Normative
+spec: `architecture/sandbox_jail_protocol.md`.
+
+### What runs where
+
+- Child (`--wasm-jail`): `WasmJailService` (`src/sandbox/wasm_service.rs`)
+  loads parent-approved modules via `WasmRuntime::load_from_bytes_with_priority`
+  and invokes `handle_request` with bounded input. Capabilities are rebuilt
+  from the four hook flags in the load request; filesystem, network, mesh,
+  admin, persistence, and metrics authority are unexpressible inside the jail.
+- Child (`--yara-jail`): `YaraJailService` (`src/sandbox/yara_service.rs`)
+  compiles parent-approved rule text (`YaraRulesSource::Inline`) and scans
+  bounded buffers with per-scan timeouts. Compile/scan errors are typed and
+  never terminate the jail.
+- Parent: `JailHandle` (`crates/synvoid-ipc/src/jail_process.rs`) spawns with
+  piped stdio, handshakes with `Ping`, serializes one in-flight call at a
+  time, and quarantines/restarts within a bounded budget on any
+  timeout/violation/desync. `JailClient` (`src/sandbox/policy.rs`) routes per
+  `IsolationPolicy` (`InProcess` default, `Preferred`, `Required` fail-closed).
+
+### Trust preservation (Track 2 unchanged)
+
+Plugin signature/capability policy remains authoritative outside the jail:
+the parent validates identity and trust before any load; the jail verifies
+content digests (constant-time SHA-256) and enforces fuel/memory/timeout
+limits. The jail never decides trust or signature policy.
+
+### Scope notes
+
+- v1 exposes `handle_request` only; `filter_request`/`transform_response`
+  stay in-process until their fail-closed pipeline integration migrates.
+- Production routing defaults to `InProcess`; each call site opts in
+  explicitly with in-process vs jail result-comparison tests.
+- Jail logs go to stderr; stdout carries only length-delimited frames
+  (asserted by `tests/jail_isolation_guard.rs`).
+
+### Tests
+
+```bash
+cargo test -p synvoid-ipc --lib jail
+cargo test --test jail_isolation_guard
+```
