@@ -2,7 +2,7 @@
 
 ## 1. Purpose and Responsibility
 
-The Upload module (`src/upload/`) provides a **comprehensive upload validation pipeline** with MIME type checking, YARA malware scanning, sandbox quarantine, file signature verification, rate limiting, and multipart parsing.
+The Upload module (canonical: `crates/synvoid-upload/`; the former `src/upload/` compatibility facade was removed in Phase 03 — see `facade_disposition_matrix.md` §4) provides a **comprehensive upload validation pipeline** with MIME type checking, YARA malware scanning, sandbox quarantine, file signature verification, rate limiting, and multipart parsing.
 
 **Core Responsibilities:**
 - File upload validation (size, type, content)

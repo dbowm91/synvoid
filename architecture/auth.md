@@ -2,7 +2,7 @@
 
 ## 1. Purpose and Responsibility
 
-The Auth module (canonical: `crates/synvoid-auth/`; compatibility facade: `src/auth/` re-exporting `synvoid_auth`) provides **user authentication, session management, and access control** for the SynVoid proxy server. It handles:
+The Auth module (canonical: `crates/synvoid-auth/`; the former `src/auth/` compatibility facade was removed in Phase 03 — see `facade_disposition_matrix.md` §4) provides **user authentication, session management, and access control** for the SynVoid proxy server. It handles:
 
 - **User Management**: Registration, deletion, role assignment, and site permissions
 - **Password Handling**: Bcrypt hashing with configurable cost factor

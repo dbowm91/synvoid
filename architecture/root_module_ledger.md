@@ -24,25 +24,25 @@ Status vocabulary:
 | admin | Admin API transport: Axum router/middleware composition plus thin adapters over typed manager operations | keep_app_root | root app crate (composition) + synvoid-admin (reusable handler logic/DTOs) | root application composition — transport, route registration, middleware ordering, operator-identity extraction, response adaptation, explicit typed service wiring; reusable handler logic canonical in synvoid-admin | Full matrix: `architecture/admin_root_ownership.md` (Phase 21) |
 | commands | CLI and supervisor command dispatch (plan + execute + runtime-launch boundary + typed result boundary + one-shot adapter) | keep_app_root | root app crate | typed command plan, execution layer, runtime-launch boundary, supervisor-control adapter, and one-shot adapter with typed outcomes/errors | Thin dispatch module; delegates to existing runtime/supervisor modules via typed adapters |
 | app_server | Granian app-server integration | facade_existing_crate | synvoid-app-server | pure re-export facade | Prefer `synvoid_app_server` in domain crates |
-| auth | Authentication, session management, CSRF, brute-force lockout | facade_existing_crate | synvoid-auth | pure re-export facade | Prefer `synvoid_auth` in domain crates |
+| auth | Authentication, session management, CSRF, brute-force lockout | legacy_or_stale | none | removed (Phase 03; zero workspace consumers) | Module removed; canonical `synvoid_auth` — see `architecture/facade_disposition_matrix.md` §4 |
 | block_store | Block-store re-exports | facade_existing_crate | synvoid-block-store / synvoid-core | pure re-export facade | Prefer `synvoid_block_store` in domain crates |
 | buffer | Buffer pool re-export from synvoid-utils | facade_existing_crate | synvoid-utils | inline re-export | Prefer `synvoid_utils::buffer` in domain crates |
 | captcha | SVG captcha generation and verification | legacy_or_stale | none | removed (dead code, zero consumers) | Module removed; CaptchaPageTemplate in synvoid-theme is independent |
-| cgi | CGI handler | facade_existing_crate | synvoid-app-handlers | pure re-export facade | Prefer `synvoid_app_handlers::cgi` in domain crates |
-| challenge | Challenge orchestration (PoW, CSS, honeypot, mesh-PoW) | facade_existing_crate | synvoid-challenge | pure re-export facade | Prefer `synvoid_challenge` in domain crates; `ChallengeManager`/`ChallengeConfig`/mesh-PoW canonical in crate |
+| cgi | CGI handler | legacy_or_stale | none | removed (Phase 03; zero workspace consumers) | Module removed; canonical `synvoid_app_handlers::cgi` — see `architecture/facade_disposition_matrix.md` §4 |
+| challenge | Challenge orchestration (PoW, CSS, honeypot, mesh-PoW) | legacy_or_stale | none | removed (Phase 03; zero workspace consumers since Phase 18) | Module removed; canonical `synvoid_challenge` — see `architecture/facade_disposition_matrix.md` §4 |
 | common | Panic handler setup | keep_app_root | root app crate | small utility (53 lines) | Process-level panic hook; root-owned |
 | config | Configuration types and loaders | facade_existing_crate | synvoid-config | facade with compat submodules | Prefer `synvoid_config` in domain crates; compat shims (`main`, `site`, `dns`, `protection`, `traffic`) provide legacy paths |
 | dns | DNS server with DNSSEC (feature-gated) | facade_existing_crate | synvoid-dns | feature-gated re-export | Prefer `synvoid_dns` in domain crates |
 | drain | Connection drain state for graceful shutdown | keep_app_root | root app crate | real implementation (94 lines) | Process-level shutdown coordination; root-owned |
 | fastcgi | FastCGI handler | facade_existing_crate | synvoid-app-handlers | pure re-export facade | Prefer `synvoid_app_handlers::fastcgi` in domain crates |
-| filter | Protocol filtering traits and config | facade_existing_crate | synvoid-filter | pure re-export facade | Prefer `synvoid_filter` in domain crates |
+| filter | Protocol filtering traits and config | legacy_or_stale | none | removed (Phase 03; zero workspace consumers) | Module removed; canonical `synvoid_filter` — see `architecture/facade_disposition_matrix.md` §4 |
 | geoip | GeoIP lookups | facade_existing_crate | synvoid-geoip | root re-export (`pub use`) | Prefer `synvoid_geoip` in domain crates |
 | honeypot_port | Honeypot port detection | facade_existing_crate | synvoid-honeypot | pure re-export facade | Prefer `synvoid_honeypot` in domain crates |
 | http | HTTP server application composition (42 submodules) | keep_app_root | root app crate (composition) + synvoid-http (shared) | root application composition — 24 thin facades + 11 narrow-trait adapters + 5 application handlers + HttpServer composition root; shared parsing/normalization/dispatch canonical in synvoid-http | Full matrix: `architecture/http_ownership_convergence.md` (Phase 20) |
 | http3 | HTTP/3 QUIC server | facade_existing_crate | synvoid-http3 | pure re-export facade — only `Http3Server` and `Http3WafBackend` re-exported | Prefer `synvoid_http3` in domain crates |
 | http_client | HTTP client + QUIC tunnel dispatch | facade_existing_crate | synvoid-http-client (pool/client) + root (QUIC dispatch) | facade with local adapter — re-exports crate + root-owned `quic_tunnel_dispatch`; `streaming_waf_body` is a pure re-export shim | QUIC tunnel dispatch depends on root tunnel/QUIC infra; cannot fully extract |
 | icmp_filter | ICMP filtering (feature-gated) | keep_app_root | root app crate | feature-gated | Network-level filtering; root-owned |
-| integrity | Integrity checking | facade_existing_crate | synvoid-integrity | root re-export (`pub use`) | Prefer `synvoid_integrity` in domain crates |
+| integrity | Integrity checking | legacy_or_stale | none | removed (Phase 03; zero workspace consumers) | Re-export removed; canonical `synvoid_integrity` — see `architecture/facade_disposition_matrix.md` §4 |
 | listener | Connection listener | facade_existing_crate | synvoid-http | pure re-export facade | Prefer `synvoid_http::listener` in domain crates |
 | location_matcher | URL location matching | facade_existing_crate | synvoid-proxy | pure re-export facade | Prefer `synvoid_proxy::location_matcher` in domain crates |
 | log_controller | Log controller | keep_app_root | root app crate | log management | Process-level logging; root-owned |
@@ -50,13 +50,13 @@ Status vocabulary:
 | mesh | Mesh networking | facade_existing_crate | synvoid-mesh | pure re-export facade | Prefer `synvoid_mesh` in domain crates; feature-gated `mesh` |
 | metrics | Metrics re-exports | facade_existing_crate | synvoid-metrics | facade with local tests — glob re-export plus root-level test module | Prefer `synvoid_metrics` in domain crates |
 | mime | MIME type handling | facade_existing_crate | synvoid-app-handlers | pure re-export facade | Prefer `synvoid_app_handlers::mime` in domain crates |
-| php | PHP handler | facade_existing_crate | synvoid-app-handlers | pure re-export facade | Prefer `synvoid_app_handlers::php` in domain crates |
+| php | PHP handler | legacy_or_stale | none | removed (Phase 03; zero workspace consumers) | Module removed; canonical `synvoid_app_handlers::php` — see `architecture/facade_disposition_matrix.md` §4 |
 | platform | Platform abstraction (OS detection, IPC, sandbox) | keep_app_root | root app crate (composition) + synvoid-platform (core) | facade with local submodules — thin facade re-exports Platform/PlatformError/fs from synvoid-platform crate; root-owned sandbox/socket/ipc/process/service modules | Duplicate fs.rs removed; Platform enum and detection re-exported from crate |
 | plugin | Plugin lifecycle/application composition plus facade over the canonical runtime | keep_app_root | root app crate (composition) + synvoid-plugin-runtime (runtime) | facade with local adapter — re-exports crate `PluginManager`/`PluginManagerLifecycle`; root-owned mesh-aware byte resolution; watcher/epoch owned by `PluginRuntimeOwner` | Full matrix: `architecture/admin_root_ownership.md` §D (Phase 21) |
 | process | IPC/process-mode integration | facade_existing_crate | synvoid-ipc | pure re-export facade | Prefer `synvoid_ipc` in domain crates |
 | protocol | Protocol detection types | facade_existing_crate | synvoid-proxy | pure re-export facade | Prefer `synvoid_proxy::protocol` in domain crates |
 | proxy | Reverse proxy and routing | facade_existing_crate | synvoid-proxy | facade with local adapter — glob re-export + root trait-bound `ProxyServer` type alias | Prefer `synvoid_proxy` in domain crates; type alias `ProxyServer` has root trait bound |
-| proxy_cache | Proxy caching | facade_existing_crate | synvoid-proxy-cache | root re-export (`pub use`) | Prefer `synvoid_proxy_cache` in domain crates |
+| proxy_cache | Proxy caching | legacy_or_stale | none | removed (Phase 03; zero workspace consumers) | Re-export removed; canonical `synvoid_proxy_cache` — see `architecture/facade_disposition_matrix.md` §4 |
 | router | URL routing | facade_existing_crate | synvoid-proxy | pure re-export facade | Prefer `synvoid_proxy::router` in domain crates |
 | router_adapter | Router adapter | facade_existing_crate | synvoid-proxy | pure re-export facade | Prefer `synvoid_proxy::router_adapter` in domain crates |
 | sandbox | Sandbox process modes (WASM/YARA jails) | keep_app_root | root app crate | real implementation — jail entry points + WASM/YARA execution services + policy client; protocol DTOs/supervision in synvoid-ipc | Phase 22 operational; spec `architecture/sandbox_jail_protocol.md` |
@@ -74,7 +74,7 @@ Status vocabulary:
 | tls | TLS termination and ACME | keep_app_root | synvoid-tls (core) + root (server integration) | root runtime owner — re-exports + local `server` submodule (`HttpsServer` listener/integration depends on root HTTP infra); core TLS canonical in dedicated crate | `HttpsServer` request-flow convergence complete (Phase 01): canonical `prepare_http_request_flow` + `handle_http_request_postlude` with `ForwardedProtocol::Https` + JA4; see `http_ownership_convergence.md` §4 and `http_request_pipeline.md` stage matrix |
 | tunnel | Tunnel backend routing | facade_existing_crate | synvoid-tunnel | pure re-export facade | Prefer `synvoid_tunnel` in domain crates |
 | udp | UDP proxy | keep_app_root | root app crate | real implementation | Network-level proxy; root-owned |
-| upload | Upload handling | facade_existing_crate | synvoid-upload | pure re-export facade | Prefer `synvoid_upload` in domain crates |
+| upload | Upload handling | legacy_or_stale | none | removed (Phase 03; single test consumer migrated) | Module removed; canonical `synvoid_upload` — see `architecture/facade_disposition_matrix.md` §4 |
 | upstream | Upstream proxy | facade_existing_crate | synvoid-upstream | root re-export (`pub use`) | Prefer `synvoid_upstream` in domain crates |
 | utils | Utility types and helpers | keep_app_root | root app crate (composition) + synvoid-utils (shared) | facade with local helpers — re-exports shared types from synvoid-utils crate; root-only ResultExt/OptionExt/errors/urlencoding/HotHashMap | Duplicate ArcStr, parse_duration, timestamp functions, etc. removed; re-exported from crate |
 | vpn_client | VPN client | facade_existing_crate | synvoid-vpn-client | pure re-export facade | Prefer `synvoid_vpn_client` in domain crates |
@@ -88,11 +88,11 @@ The following root paths are direct crate re-exports (not module declarations):
 | Root path | Re-exported crate | Classification |
 |-----------|-------------------|----------------|
 | `geoip` | `synvoid_geoip` | facade_existing_crate |
-| `integrity` | `synvoid-integrity` | facade_existing_crate |
-| `proxy_cache` | `synvoid-proxy-cache` | facade_existing_crate |
 | `serialization` | `synvoid_utils::serialization` | facade_existing_crate |
 | `upstream` | `synvoid-upstream` | facade_existing_crate |
 | `buffer` | `synvoid_utils::buffer` | facade_existing_crate |
+
+(`integrity` and `proxy_cache` re-exports removed in Phase 03; see disposition matrix §4.)
 
 ## Top-Level Re-exports from `src/lib.rs`
 

@@ -32,9 +32,10 @@ Phase 10 closure audit. Classifies every public surface of the SynVoid codebase 
 
 | Module | Classification | Stability | Owner | Notes |
 |--------|---------------|-----------|-------|-------|
-| `auth` | `facade_existing_crate` | transitional | synvoid-auth | Pure re-export facade; canonical `AuthManager`/session/CSRF/lockout in crate |
-| `challenge` | `facade_existing_crate` | transitional | synvoid-challenge | Pure re-export facade; canonical `ChallengeManager`/`ChallengeConfig`/mesh-PoW in crate |
 | `waf` | `keep_app_root` | stable | synvoid-waf (engine) + root (composition) | WafCore/AppWaf composition + adapters root-owned; detectors/policy/traits canonical in crate (Phase 19) |
+
+(`auth` and `challenge` pure facades removed in Phase 03; canonical
+`synvoid_auth` / `synvoid_challenge` — see `facade_disposition_matrix.md` §4.)
 
 ### Compatibility Facades (facade_existing_crate)
 
@@ -43,26 +44,21 @@ Phase 10 closure audit. Classifies every public surface of the SynVoid codebase 
 | `app_server` | `facade_existing_crate` | transitional | synvoid-app-server | Pure re-export facade |
 | `block_store` | `facade_existing_crate` | transitional | synvoid-block-store | Pure re-export facade |
 | `buffer` | `facade_existing_crate` | transitional | synvoid-utils | Inline re-export |
-| `cgi` | `facade_existing_crate` | transitional | synvoid-app-handlers | Pure re-export facade |
 | `config` | `facade_existing_crate` | transitional | synvoid-config | Facade with compat submodules |
 | `dns` | `facade_existing_crate` | transitional | synvoid-dns | Feature-gated re-export |
 | `fastcgi` | `facade_existing_crate` | transitional | synvoid-app-handlers | Pure re-export facade |
-| `filter` | `facade_existing_crate` | transitional | synvoid-filter | Pure re-export facade |
 | `geoip` | `facade_existing_crate` | transitional | synvoid-geoip | Root re-export (`pub use`) |
 | `honeypot_port` | `facade_existing_crate` | transitional | synvoid-honeypot | Pure re-export facade |
 | `http3` | `facade_existing_crate` | transitional | synvoid-http3 | Pure re-export facade |
 | `icmp_filter` | `keep_app_root` | internal | root | Feature-gated; network-level filtering |
-| `integrity` | `facade_existing_crate` | transitional | synvoid-integrity | Root re-export (`pub use`) |
 | `listener` | `facade_existing_crate` | transitional | synvoid-http | Pure re-export facade |
 | `location_matcher` | `facade_existing_crate` | transitional | synvoid-proxy | Pure re-export facade |
 | `mesh` | `facade_existing_crate` | transitional | synvoid-mesh | Pure re-export facade; feature-gated |
 | `metrics` | `facade_existing_crate` | transitional | synvoid-metrics | Facade with local tests |
 | `mime` | `facade_existing_crate` | transitional | synvoid-app-handlers | Pure re-export facade |
-| `php` | `facade_existing_crate` | transitional | synvoid-app-handlers | Pure re-export facade |
 | `process` | `facade_existing_crate` | transitional | synvoid-ipc | Pure re-export facade |
 | `protocol` | `facade_existing_crate` | transitional | synvoid-proxy | Pure re-export facade |
 | `proxy` | `facade_existing_crate` | transitional | synvoid-proxy | Facade with local adapter |
-| `proxy_cache` | `facade_existing_crate` | transitional | synvoid-proxy-cache | Root re-export (`pub use`) |
 | `router` | `facade_existing_crate` | transitional | synvoid-proxy | Pure re-export facade |
 | `router_adapter` | `facade_existing_crate` | transitional | synvoid-proxy | Pure re-export facade |
 | `serialization` | `facade_existing_crate` | transitional | synvoid-utils | Root re-export (`pub use`) |
@@ -72,16 +68,14 @@ Phase 10 closure audit. Classifies every public surface of the SynVoid codebase 
 | `streaming` | `facade_existing_crate` | transitional | synvoid-proxy | Pure re-export facade |
 | `theme` | `facade_existing_crate` | transitional | synvoid-theme | Pure re-export facade |
 | `tunnel` | `facade_existing_crate` | transitional | synvoid-tunnel | Pure re-export facade |
-| `upload` | `facade_existing_crate` | transitional | synvoid-upload | Pure re-export facade |
 | `upstream` | `facade_existing_crate` | transitional | synvoid-upstream | Root re-export (`pub use`) |
 | `vpn_client` | `facade_existing_crate` | transitional | synvoid-vpn-client | Pure re-export facade |
 
 ### Legacy/Stale Modules
 
-No remaining entries in this table. (The former `serder` row — the only
-`legacy_or_stale` module — was removed in the Track 3 post-closure
-corrective pass: zero internal/external consumers, canonical serialization
-lives at `synvoid_utils::serialization`.)
+| Module | Classification | Stability | Notes |
+|--------|---------------|-----------|-------|
+| `auth`, `cgi`, `challenge`, `filter`, `integrity`, `php`, `proxy_cache`, `upload` | `legacy_or_stale` | removed | Removed in Phase 03 (zero-value facades; canonical crates in `facade_disposition_matrix.md` §4). Former `serder` row removed earlier (canonical `synvoid_utils::serialization`). |
 
 ### Top-Level Re-exports
 

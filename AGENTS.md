@@ -61,7 +61,7 @@ Testing quirks:
 - **Data plane**: `src/worker/unified_server/` — HTTP + WAF + proxy in ONE Tokio event loop; CPU offload in `src/worker/cpu_task/`
 - **Process model**: Supervisor (1) → UnifiedServerWorker (1) + CpuWorker (1). Workers are NOT process-per-tenant. Note: the legacy `--worker` flag (`src/process/worker.rs` `BaseWorkerProcess`) has NO dispatch branch in `src/commands/plan.rs` and falls through to the default `RuntimeCommand::Supervisor`; HTTP serving uses `--unified-server-worker` / `--cpu-worker`.
 - **Mesh**: `crates/synvoid-mesh/src/mesh/` — DHT, transport, Raft, peer auth. Binding distributed-state contract: `architecture/distributed_state_contract.md` (authority taxonomy `DistributedNamespaceAuthority`, typed `QuorumUnavailable`/`CanonicalCommitted` outcomes, partition/rejoin tests in `crates/synvoid-mesh/tests/distributed_state_partition.rs`; MESH-15 closed as stale).
-- Many legacy root paths re-export crate contents for compat (e.g., `src/dns/mod.rs` re-exports `synvoid_dns::*`).
+- Many legacy root paths re-export crate contents for compat (e.g., `src/dns/mod.rs` re-exports `synvoid_dns::*`). Binding facade policy: `architecture/facade_disposition_matrix.md` (Phase 03 retirement rules + per-facade canonical paths; `auth`/`cgi`/`challenge`/`filter`/`integrity`/`php`/`proxy_cache`/`upload` root paths removed).
 
 ### Composition Boundary (guard-enforced)
 
@@ -75,7 +75,7 @@ Request-path code consumes **narrow traits**, never concrete infrastructure:
 
 To add a capability: define a narrow trait in `crates/synvoid-waf/src/traits.rs` or `crates/synvoid-core/`, implement on concrete type in a composition root, pass `Arc<dyn Trait>` to request-path modules.
 
-Root-module ownership policy lives in `architecture/root_module_ledger.md` — prefer dedicated `synvoid-*` crates unless the ledger says `keep_app_root`.
+Root-module ownership policy lives in `architecture/root_module_ledger.md` — prefer dedicated `synvoid-*` crates unless the ledger says `keep_app_root`. Compatibility-facade dispositions (retain vs removed + canonical paths) live in `architecture/facade_disposition_matrix.md`.
 
 ## Stale Path Map (use the Correct path)
 
@@ -107,6 +107,14 @@ Root-module ownership policy lives in `architecture/root_module_ledger.md` — p
 | `src/spin/*.rs`, `src/serverless/*.rs` (impl) | `crates/synvoid-plugin-runtime/src/spin/`, `crates/synvoid-serverless/src/` (root paths are re-export shims) |
 | `src/proxy/*.rs`, `src/http3/*.rs` (impl) | `crates/synvoid-proxy/src/`, `crates/synvoid-http3/src/` (root paths are re-export shims) |
 | `src/static_files/file_manager.rs` (impl) | `crates/synvoid-static-files/src/file_manager.rs` (canonical; root is pure facade; security via injected `FileManagerSecurityBackend`, adapter in `src/http/file_manager.rs`) |
+| `crate::auth` / `synvoid::auth` (removed Phase 03) | `synvoid_auth` |
+| `crate::cgi` (removed Phase 03) | `synvoid_app_handlers::cgi` |
+| `crate::challenge` (removed Phase 03) | `synvoid_challenge` |
+| `crate::filter` (removed Phase 03) | `synvoid_filter` |
+| `crate::integrity` (removed Phase 03) | `synvoid_integrity` |
+| `crate::php` (removed Phase 03) | `synvoid_app_handlers::php` |
+| `crate::proxy_cache` (removed Phase 03) | `synvoid_proxy_cache` |
+| `crate::upload` (removed Phase 03) | `synvoid_upload` |
 
 ## Security Invariants (violations break guard tests)
 
@@ -142,7 +150,7 @@ Root-module ownership policy lives in `architecture/root_module_ledger.md` — p
 
 ## Repo-Specific Pointers
 
-- **Module overrides**: each subsystem dir has an `AGENTS.override.md` with extra rules — read before working there: `src/{waf,http,http3,http_client,proxy,config,admin,auth,platform,plugin,worker,tunnel,app_server,theme,static_files,serverless}/AGENTS.override.md` and `crates/synvoid-{dns,honeypot,tarpit}/AGENTS.override.md`.
+- **Module overrides**: each subsystem dir has an `AGENTS.override.md` with extra rules — read before working there: `src/{waf,http,http3,http_client,proxy,config,admin,platform,plugin,worker,tunnel,app_server,theme,static_files,serverless}/AGENTS.override.md` and `crates/synvoid-{dns,honeypot,tarpit}/AGENTS.override.md`.
 - **Skills**: `.opencode/skills/<name>/SKILL.md` — 35 per-subsystem guides (e.g. `dns_dnssec`, `serverless_wasm`, `ipc_hardening`, `raft_consensus`, `org_key_trust_chain`, `proxy_upstream`, `supervisor`, `worker_data_plane`). Load before working in an unfamiliar subsystem; keep path references canonical when editing them.
 - **Config paths**: `--config-path` takes the DIRECTORY containing `main.toml` + `sites/`, not the TOML file. Caveat: `--configtest` ignores `--config-path` and validates `./config/` relative to CWD.
 - **Key docs**: start at `architecture/overview.md` (verified module index), then use the Architecture Index below. User/operator docs live in `docs/`; `architecture/` (~130 docs) and `plans/` are development artifacts.
@@ -153,7 +161,7 @@ Primary doc per subsystem (deep dives live beside each as `<topic>_deep_dive.md`
 
 | Subsystem | Primary doc(s) |
 |-----------|----------------|
-| Overview & module ownership | `overview.md`, `root_module_ledger.md`, `request_path_capability_boundary.md` |
+| Overview & module ownership | `overview.md`, `root_module_ledger.md`, `facade_disposition_matrix.md` (Phase 03), `request_path_capability_boundary.md` |
 | Request pipeline (HTTP/1 + HTTP/3) | `http_request_pipeline.md`, `http_server.md`, `http_shared.md`, `http_ownership_convergence.md`, `http3_request_waf_boundary.md` |
 | Worker data plane | `worker_data_plane_composition_root.md`, `worker_task_lifecycle.md`, `unified_server_startup.md` |
 | Supervisor & process model | `supervisor.md`, `supervisor_lifecycle.md`, `process_lifecycle.md`, `cli_supervisor_command_dispatch.md` |

@@ -257,7 +257,7 @@ See `architecture/mesh_transport_lifecycle.md` for the full task inventory and i
 | Type | Location | Purpose |
 |------|----------|---------|
 | `HybridSignature` | `crates/synvoid-mesh/src/mesh/hybrid_signature.rs:17` | Combined Ed25519 + ML-DSA-44 signature. Contains both signature components and public keys. |
-| `HybridSigner` | `crates/synvoid-mesh/src/mesh/hybrid_signature.rs` (reexport from `crate::integrity`) | Signs data with both Ed25519 and ML-DSA. |
+| `HybridSigner` | `crates/synvoid-mesh/src/mesh/hybrid_signature.rs` (re-exported from `synvoid_integrity`) | Signs data with both Ed25519 and ML-DSA. |
 | `MeshMlDsaSigner` | `crates/synvoid-mesh/src/mesh/ml_dsa.rs:18` | ML-DSA-44 signing wrapper with key generation, signing, verification. |
 | `MeshMlDsaVerifier` | `crates/synvoid-mesh/src/mesh/ml_dsa.rs:97` | ML-DSA-44 verification wrapper. |
 | `MlKem768` | `crates/synvoid-mesh/src/mesh/kem/ml_kem.rs` | ML-KEM-768 key encapsulation. |

@@ -46,7 +46,7 @@ The HTTP/3 crate must NOT import:
 - `GeoIpManager`
 - `ViolationTracker`
 - `WafCore`, `WafProcessor` (concrete type)
-- Any `crate::waf`, `crate::block_store`, `crate::challenge`, `crate::geoip`, `crate::mesh` paths
+- Any `crate::waf`, `crate::block_store`, `crate::geoip`, `crate::mesh` paths (plus `synvoid_challenge` concrete types; the `crate::challenge` facade was removed in Phase 03)
 
 ### Boundary Guard Test
 

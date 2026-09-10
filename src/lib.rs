@@ -40,60 +40,56 @@
 
 // Root-owned application/runtime composition modules. These coordinate
 // processes, workers, supervisor state, sockets, startup, or app-level
-// integration. See architecture/root_module_ledger.md.
+// integration. See architecture/root_module_ledger.md and
+// architecture/facade_disposition_matrix.md (Phase 03).
+pub mod admin;
 pub mod commands;
 pub mod common;
 pub mod drain;
+pub mod http;
 pub mod log_controller;
+pub mod platform;
+pub mod plugin;
 pub mod sandbox;
 pub mod server;
 pub mod startup;
 pub mod supervisor;
+pub mod tarpit;
 pub mod tcp;
+pub mod tls;
 pub mod udp;
+pub mod utils;
+pub mod waf;
 pub mod worker;
 
-// Mixed application/domain modules. These still expose root-side implementation
-// or adapters and need targeted extraction plans before becoming pure facades.
-pub mod admin;
-pub mod filter;
-pub mod http;
-pub mod http_client;
-pub mod listener;
-pub mod platform;
-pub mod plugin;
-pub mod tarpit;
-pub mod utils;
-
-// Compatibility facades over dedicated crates. New domain code should import
-// the dedicated crate directly; these root paths remain for transitional API
-// compatibility while root coupling is reduced.
-// See architecture/root_module_ledger.md.
+// Compatibility facades over dedicated crates. New domain code must import
+// the dedicated crate directly (see architecture/facade_disposition_matrix.md
+// for the canonical path per facade); these root paths remain as intentional
+// compatibility aliases for root composition, bins, and tests.
+// Adapters live here only where documented in the ledger: `config` compat
+// submodules, `proxy::ProxyServer` (root WAF bound), and
+// `http_client::quic_tunnel_dispatch` (root tunnel/QUIC infra).
 pub mod app_server;
-pub mod auth;
 pub mod block_store;
-pub mod challenge;
 pub mod buffer {
     pub use synvoid_utils::buffer::pool;
     pub use synvoid_utils::buffer::pool::{BufferPool, PooledBuf};
 }
-pub mod cgi;
 pub mod config;
 pub mod fastcgi;
 pub use synvoid_geoip as geoip;
 pub mod honeypot_port;
 pub mod http3;
-pub use synvoid_integrity as integrity;
+pub mod http_client;
+pub mod listener;
 pub mod location_matcher;
 #[cfg(feature = "mesh")]
 pub mod mesh;
 pub mod metrics;
 pub mod mime;
-pub mod php;
 pub mod process;
 pub mod protocol;
 pub mod proxy;
-pub use synvoid_proxy_cache as proxy_cache;
 pub mod router;
 pub mod router_adapter;
 pub use synvoid_utils::serialization;
@@ -102,12 +98,9 @@ pub mod spin;
 pub mod static_files;
 pub mod streaming;
 pub mod theme;
-pub mod tls;
 pub mod tunnel;
-pub mod upload;
 pub use synvoid_upstream as upstream;
 pub mod vpn_client;
-pub mod waf;
 
 #[cfg(feature = "icmp-filter")]
 pub mod icmp_filter;

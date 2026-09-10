@@ -218,6 +218,31 @@ restrictions) and reduced `src/static_files/` to a pure re-export facade:
 - Reclassified `static_files` (`facade with local adapter` → `pure
   re-export facade`); ledger, this report, and `static_files.md` reconciled.
 
+## Phase 03 Closure (compatibility-facade burn-down)
+
+Phase 03 executed the first low-risk burn-down per
+`plans/architecture_phase_03_compatibility_facade_burndown.md`. Binding disposition
+matrix + retirement policy: `architecture/facade_disposition_matrix.md`.
+
+- Removed 8 zero-value pure facades (7 with zero baseline workspace consumers +
+  `upload` after migrating its single test consumer):
+  `auth` → `synvoid_auth`, `cgi` → `synvoid_app_handlers::cgi`,
+  `challenge` → `synvoid_challenge`, `filter` → `synvoid_filter`,
+  `integrity` → `synvoid_integrity`, `php` → `synvoid_app_handlers::php`,
+  `proxy_cache` → `synvoid_proxy_cache`, `upload` → `synvoid_upload`
+  (migrated `tests/integration_test.rs` yara_scanner import to `synvoid_upload`).
+- No duplicate implementation introduced or removed (alias overlap only); no
+  `keep_app_root` composition moved into domain crates.
+- Every remaining `facade_existing_crate` entry has an explicit disposition
+  (`retain_stable_compat` or `adapter_keep_app_root`) with rationale in the matrix.
+- `src/lib.rs` module grouping reconciled with the ledger (root-owned composition vs
+  intentional compat facades; adapters documented inline). The stale "mixed modules
+  need extraction plans" comment was removed: zero `split_required` remains.
+- Added `tests/facade_disposition_guard.rs`: pure facades stay thin, removed paths
+  stay removed, adapters stay documented.
+- Ledger (`root_module_ledger.md`), surface audit (`final_surface_audit.md`), and this
+  report reconciled.
+
 ## Next Recommended Cluster
 
 All `split_required` modules are closed (Phase 21). Remaining follow-ups are

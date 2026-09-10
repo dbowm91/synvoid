@@ -2,7 +2,7 @@
 
 ## 1. Purpose and Responsibility
 
-The CGI module (`src/cgi/`) provides **classic CGI script execution** with path traversal protection, extension validation, and CGI/1.1 response parsing.
+The CGI module (canonical: `crates/synvoid-app-handlers/src/cgi/`; the former `src/cgi/` compatibility facade was removed in Phase 03 — see `facade_disposition_matrix.md` §4) provides **classic CGI script execution** with path traversal protection, extension validation, and CGI/1.1 response parsing.
 
 **Core Responsibilities:**
 - CGI script execution with environment setup

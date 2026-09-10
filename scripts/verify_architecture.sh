@@ -48,6 +48,8 @@ echo "=== Track 3 ownership/enforcement guards (Phases 17-21) ==="
 cargo test --test enforcement_decision_contract_guard
 cargo test --test http_normalization_ownership_guard
 cargo test --test waf_ownership_guard
+cargo test --test static_file_manager_ownership_guard
+cargo test --test facade_disposition_guard
 cargo test --test admin_plugin_boundary_guard
 echo ""
 echo "=== Phase 24 closure suites ==="

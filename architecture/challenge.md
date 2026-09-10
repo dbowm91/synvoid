@@ -2,7 +2,7 @@
 
 ## 1. Purpose and Responsibility
 
-The Challenge module (canonical: `crates/synvoid-challenge/`; compatibility facade: `src/challenge/` re-exporting `synvoid_challenge`) provides a **multi-modal browser verification system** with Proof-of-Work (SHA-256), CSS-based JavaScript challenges, mesh PoW, and honeypot tracking. Supports adaptive difficulty and rate limiting. `ChallengeManager`/`ChallengeConfig`/attempt tracking and mesh-PoW live in `manager.rs`/`mesh_pow.rs`; rendering stays directional (`synvoid-challenge` → `synvoid-theme`).
+The Challenge module (canonical: `crates/synvoid-challenge/`; the former `src/challenge/` compatibility facade was removed in Phase 03 — see `facade_disposition_matrix.md` §4) provides a **multi-modal browser verification system** with Proof-of-Work (SHA-256), CSS-based JavaScript challenges, mesh PoW, and honeypot tracking. Supports adaptive difficulty and rate limiting. `ChallengeManager`/`ChallengeConfig`/attempt tracking and mesh-PoW live in `manager.rs`/`mesh_pow.rs`; rendering stays directional (`synvoid-challenge` → `synvoid-theme`).
 
 **Core Responsibilities:**
 - Multi-modal challenge generation (PoW, CSS, Mesh PoW)

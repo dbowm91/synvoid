@@ -2,7 +2,7 @@
 
 ## 1. Purpose and Responsibility
 
-The Integrity module (`src/integrity/`) provides **end-to-end integrity verification for HTTP traffic** through edge WAF nodes using Ed25519 signing, X25519 key exchange, and optional origin-signed key exchange protocol.
+The Integrity module (canonical: `crates/synvoid-integrity/`; the former `crate::integrity` root re-export was removed in Phase 03 — see `facade_disposition_matrix.md` §4) provides **end-to-end integrity verification for HTTP traffic** through edge WAF nodes using Ed25519 signing, X25519 key exchange, and optional origin-signed key exchange protocol.
 
 **Core Responsibilities:**
 - HTTP request/response signing (Ed25519)

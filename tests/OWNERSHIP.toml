@@ -248,3 +248,9 @@ name = "static_file_manager_ownership_guard"
 class = "static_policy"
 owners = ["synvoid-static-files"]
 reason = "validates Phase 02 static file-manager ownership convergence (canonical FileManager vs root facade, no no-op refresh)"
+
+[[test]]
+name = "facade_disposition_guard"
+class = "static_policy"
+owners = []
+reason = "validates Phase 03 facade disposition (removed paths stay removed, pure facades stay thin, adapters stay documented)"

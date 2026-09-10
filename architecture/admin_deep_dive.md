@@ -71,7 +71,7 @@ SynVoid supports two client classes with distinct trust boundaries:
 - Constant-time CSRF comparison via `subtle::ConstantTimeEq`
 
 **Key Files:**
-- `crates/synvoid-auth/src/lib.rs` (`src/auth/` is a thin facade) - `AuthManager` struct
+- `crates/synvoid-auth/src/lib.rs` - `AuthManager` struct
 - `crates/synvoid-auth/src/lib.rs` - `create_user()` registration
 - `crates/synvoid-auth/src/lib.rs` - `verify_login()` authentication
 - `crates/synvoid-auth/src/lib.rs` - `validate_session()` session management
@@ -335,7 +335,7 @@ Separate rate limits for YARA operations:
 
 ---
 
-## Authentication Module (`crates/synvoid-auth/`; facade `src/auth/`)
+## Authentication Module (`crates/synvoid-auth/`)
 
 ### User Authentication System
 
@@ -453,7 +453,7 @@ The `/alerting/test-webhook` endpoint returns the full `WebhookDeliveryResult` a
 - Protects admin API endpoints
 - Bearer token or session cookie
 
-**User Auth** (`src/auth/mod.rs`) = Multi-tenant user access
+**User Auth** (`crates/synvoid-auth`) = Multi-tenant user access
 - Multiple users with registration
 - Protects tenant resources
 - Username/password login with session

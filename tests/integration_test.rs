@@ -503,7 +503,7 @@ mod tests {
 
     #[allow(dead_code)]
     mod upload_scanning_tests {
-        use synvoid::upload::yara_scanner::{DEFAULT_MALWARE_RULES, NO_EXCLUDED_CATEGORIES};
+        use synvoid_upload::yara_scanner::{DEFAULT_MALWARE_RULES, NO_EXCLUDED_CATEGORIES};
 
         #[test]
         fn test_no_excluded_categories_is_empty() {

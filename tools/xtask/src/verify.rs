@@ -167,6 +167,7 @@ fn verify_steps() -> Vec<(&'static str, &'static str)> {
              --test http_normalization_ownership_guard \
              --test waf_ownership_guard \
              --test static_file_manager_ownership_guard \
+             --test facade_disposition_guard \
              --test admin_plugin_boundary_guard \
              --test track3_invariant_closure \
              --test http_differential_closure \
@@ -1412,6 +1413,7 @@ pub fn run_guards(dry_run: bool, json_output: bool, verbose: bool) -> Result<(),
              --test http_normalization_ownership_guard \
              --test waf_ownership_guard \
              --test static_file_manager_ownership_guard \
+             --test facade_disposition_guard \
              --test admin_plugin_boundary_guard \
              --test track3_invariant_closure \
              --test http_differential_closure \

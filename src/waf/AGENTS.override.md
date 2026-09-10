@@ -118,7 +118,7 @@ This ensures pattern matching has full overlapping context when attacks span chu
 
 ### JS Challenge Reference (Fixed)
 
-JS Challenge is at `src/challenge/pow.rs` (WASM-based PoW), not `src/challenge/js.rs` (doesn't exist).
+JS Challenge is at `crates/synvoid-challenge/src/pow.rs` (WASM-based PoW), not `src/challenge/js.rs` (doesn't exist; the `src/challenge/` facade was removed in Phase 03).
 
 ### Stall/Tarpit Concurrency Safety
 

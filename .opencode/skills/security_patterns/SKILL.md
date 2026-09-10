@@ -428,7 +428,7 @@ pub fn is_privileged(&self) -> bool {
 
 ### CSRF Token Validation
 
-**Location**: `crates/synvoid-auth/src/lib.rs:validate_csrf_token()` (`src/auth/` facade), `src/admin/state.rs:validate_csrf()`
+**Location**: `crates/synvoid-auth/src/lib.rs:validate_csrf_token()`, `src/admin/state.rs:validate_csrf()`
 
 **Issue**: Timing attacks on CSRF token comparison using `==` operator.
 
