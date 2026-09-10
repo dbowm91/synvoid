@@ -278,7 +278,7 @@ Request dispatch consumes `RequestServices` or narrower handles. Neither protoco
 Body and streaming behavior is intentionally NOT unified between HTTP/1 and HTTP/3. Different stream types,
 flow-control, and backpressure semantics require protocol-specific implementations.
 
-## UnifiedServer Startup Split (Phase 2)
+## UnifiedServer Startup Split (Phase 2, decomposed Phase 04)
 
 The `src/server/` module was split into focused submodules to separate validation,
 resource construction, and runtime handle ownership:
@@ -289,8 +289,15 @@ resource construction, and runtime handle ownership:
 | `resources.rs` | Constructed WAF, TCP/UDP pools, TLS, tunnels, DNS |
 | `runtime_handles.rs` | Named task handles with class-based shutdown |
 | `plugin_runtime.rs` | Owned plugin lifecycle (replaces `mem::forget`) |
+| `service_assembly.rs` (Phase 04) | Subsystem assembly for `run()`: plugin owner, router, HTTP runtime context, threat autoscale spawn, QUIC tunnel start — each returns a narrow bundle; order stays visible in `run()` |
+| `listener_tasks.rs` (Phase 04) | Protocol-listener task families: HTTP/HTTPS/HTTP/3 spawns, TCP/UDP pools, DNS + ACME (feature-gated) — one `spawn_*` per family, no hidden second root |
+| `waf_handler.rs` | Protocol adapters + WAF response-intent mapping |
 
 Rules:
 - No long-lived task or file-watcher handle may exist without an owner.
 - The lifecycle guard test enforces no `std::mem::forget` in server/plugin code.
 - Every `tokio::spawn` must have a `// reason:` comment documenting ownership.
+- Phase 04 adds no crates and no DI machinery: `run()` only wires narrow
+  bundles in startup order (tunnel → autoscale → plugin → router → context →
+  listeners → pools → DNS → ACME → shutdown/drain via
+  `wait_for_shutdown_and_drain`).

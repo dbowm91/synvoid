@@ -147,7 +147,19 @@ Terminal `Drop` outranks `Block` outranks `Stall` per the reducer, covered by
   ownership, final surface audit, `waf.md`, and `src/waf/AGENTS.override.md`
   reconciled.
 
-## 7. Benchmarks
+## 8. Phase 04 internal assembly (no ownership change)
+
+`WafCore::new` was decomposed into staged root-private builders in
+`src/waf/assembly.rs` without moving ownership: rate limiter → threat services
+→ feed trackers → traffic controls → detectors → render/backends
+(whitelist/auth/trust-key). The constructor in `mod.rs` only orchestrates these
+narrow bundles in dependency order. Feature gates stay local to the relevant
+stage (disabled → explicitly `None`, never a placeholder object). Characterization
+tests in `assembly.rs` prove disabled yields `None` and enabled yields the
+service (threat-level, attack detector); the enforcement pipeline and
+precedence are unchanged.
+
+## 9. Benchmarks
 
 Relevant benches (`--profile ci -- --quick`, post-change, Apple M-series
 dev machine — relative reference for Phase 24, not a CI gate):

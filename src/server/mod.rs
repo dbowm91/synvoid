@@ -29,9 +29,11 @@ use crate::worker::drain_state::WorkerDrainState;
 use std::sync::Mutex as StdMutex;
 use synvoid_http::runtime::HttpRuntimeContext;
 
+pub mod listener_tasks;
 pub mod plugin_runtime;
 pub mod resources;
 pub mod runtime_handles;
+pub mod service_assembly;
 pub mod startup_plan;
 pub mod waf_handler;
 
@@ -45,22 +47,22 @@ pub use runtime_handles::{
 pub use startup_plan::{UnifiedServerStartupPlan, UnifiedServerStartupPlanError};
 
 #[derive(Clone)]
-struct ServerSharedState {
-    config: Arc<RwLock<ConfigManager>>,
-    router: Arc<Router>,
-    waf: Arc<WafCore>,
-    flood_protector: Option<Arc<FloodProtector>>,
-    drain_state: Option<Arc<WorkerDrainState>>,
+pub(crate) struct ServerSharedState {
+    pub(crate) config: Arc<RwLock<ConfigManager>>,
+    pub(crate) router: Arc<Router>,
+    pub(crate) waf: Arc<WafCore>,
+    pub(crate) flood_protector: Option<Arc<FloodProtector>>,
+    pub(crate) drain_state: Option<Arc<WorkerDrainState>>,
     #[cfg(feature = "mesh")]
-    mesh_transport: Option<Arc<crate::mesh::transport::MeshTransportManager>>,
+    pub(crate) mesh_transport: Option<Arc<crate::mesh::transport::MeshTransportManager>>,
     #[cfg(feature = "mesh")]
-    mesh_backend_pool: Option<Arc<crate::mesh::MeshBackendPool>>,
-    metrics: Option<Arc<WorkerMetrics>>,
-    ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
-    worker_id: Option<WorkerId>,
-    serverless_manager: Option<Arc<crate::serverless::manager::ServerlessManager>>,
-    app_servers: Arc<RwLock<HashMap<String, Arc<crate::app_server::GranianSupervisor>>>>,
-    _http_runtime_context: Option<
+    pub(crate) mesh_backend_pool: Option<Arc<crate::mesh::MeshBackendPool>>,
+    pub(crate) metrics: Option<Arc<WorkerMetrics>>,
+    pub(crate) ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
+    pub(crate) worker_id: Option<WorkerId>,
+    pub(crate) serverless_manager: Option<Arc<crate::serverless::manager::ServerlessManager>>,
+    pub(crate) app_servers: Arc<RwLock<HashMap<String, Arc<crate::app_server::GranianSupervisor>>>>,
+    pub(crate) _http_runtime_context: Option<
         HttpRuntimeContext<
             RootWafProcessor,
             RouterRouteResolver,
@@ -72,50 +74,50 @@ struct ServerSharedState {
 
 #[derive(Clone)]
 pub struct UnifiedServer {
-    config: Arc<RwLock<ConfigManager>>,
-    http_addr: SocketAddr,
-    http_addr_v6: Option<SocketAddr>,
-    https_addr: Option<SocketAddr>,
-    https_addr_v6: Option<SocketAddr>,
-    http3_addr: Option<SocketAddr>,
-    http3_addr_v6: Option<SocketAddr>,
-    tcp_pool: Option<TcpListenerPool>,
-    udp_pool: Option<UdpListenerPool>,
-    waf: Arc<WafCore>,
-    flood_protector: Option<Arc<FloodProtector>>,
-    shutdown_tx: broadcast::Sender<()>,
-    stop_accepting_tx: broadcast::Sender<()>,
-    tls_config: InternalTlsConfig,
-    http3_config: Http3Config,
-    cert_resolver: Option<Arc<CertResolver>>,
+    pub(crate) config: Arc<RwLock<ConfigManager>>,
+    pub(crate) http_addr: SocketAddr,
+    pub(crate) http_addr_v6: Option<SocketAddr>,
+    pub(crate) https_addr: Option<SocketAddr>,
+    pub(crate) https_addr_v6: Option<SocketAddr>,
+    pub(crate) http3_addr: Option<SocketAddr>,
+    pub(crate) http3_addr_v6: Option<SocketAddr>,
+    pub(crate) tcp_pool: Option<TcpListenerPool>,
+    pub(crate) udp_pool: Option<UdpListenerPool>,
+    pub(crate) waf: Arc<WafCore>,
+    pub(crate) flood_protector: Option<Arc<FloodProtector>>,
+    pub(crate) shutdown_tx: broadcast::Sender<()>,
+    pub(crate) stop_accepting_tx: broadcast::Sender<()>,
+    pub(crate) tls_config: InternalTlsConfig,
+    pub(crate) http3_config: Http3Config,
+    pub(crate) cert_resolver: Option<Arc<CertResolver>>,
     // SAFETY_REASON: Debugging - stored for introspection
     #[allow(dead_code)]
     tunnel_manager: Option<Arc<TunnelManager>>,
-    tunnel_router: Option<Arc<Mutex<TunnelRouter>>>,
-    tunnel_config: Option<TunnelConfig>,
-    drain_state: Option<Arc<WorkerDrainState>>,
+    pub(crate) tunnel_router: Option<Arc<Mutex<TunnelRouter>>>,
+    pub(crate) tunnel_config: Option<TunnelConfig>,
+    pub(crate) drain_state: Option<Arc<WorkerDrainState>>,
     #[cfg(feature = "mesh")]
-    mesh_transport: Option<Arc<crate::mesh::transport::MeshTransportManager>>,
+    pub(crate) mesh_transport: Option<Arc<crate::mesh::transport::MeshTransportManager>>,
     #[cfg(feature = "mesh")]
-    mesh_backend_pool: Option<Arc<crate::mesh::MeshBackendPool>>,
-    metrics: Option<Arc<WorkerMetrics>>,
-    ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
-    worker_id: Option<WorkerId>,
+    pub(crate) mesh_backend_pool: Option<Arc<crate::mesh::MeshBackendPool>>,
+    pub(crate) metrics: Option<Arc<WorkerMetrics>>,
+    pub(crate) ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
+    pub(crate) worker_id: Option<WorkerId>,
     block_store: Option<Arc<crate::block_store::BlockStore>>,
-    serverless_manager: Option<Arc<crate::serverless::manager::ServerlessManager>>,
-    app_servers: Arc<RwLock<HashMap<String, Arc<crate::app_server::GranianSupervisor>>>>,
+    pub(crate) serverless_manager: Option<Arc<crate::serverless::manager::ServerlessManager>>,
+    pub(crate) app_servers: Arc<RwLock<HashMap<String, Arc<crate::app_server::GranianSupervisor>>>>,
 
     // DNS Server
     #[cfg(feature = "dns")]
     _dns_config: Option<crate::config::dns::DnsConfig>,
     #[cfg(feature = "dns")]
-    dns_server: Option<Arc<DnsServer>>,
+    pub(crate) dns_server: Option<Arc<DnsServer>>,
     #[cfg(feature = "dns")]
     _dns_addr: Option<SocketAddr>,
     #[cfg(feature = "dns")]
     _dns_addr_v6: Option<SocketAddr>,
     #[cfg(feature = "dns")]
-    acme_manager: Arc<StdMutex<Option<Arc<AcmeManager>>>>,
+    pub(crate) acme_manager: Arc<StdMutex<Option<Arc<AcmeManager>>>>,
 }
 
 impl UnifiedServer {
@@ -360,123 +362,28 @@ impl UnifiedServer {
         self.app_servers.clone()
     }
 
+    /// Phase 04 orchestration: subsystem assembly order is visible here.
+    ///
+    /// Stages: tunnel → threat autoscale → plugin → router → HTTP context →
+    /// shared state → protocol listeners → aux pools → DNS → ACME → shutdown.
+    /// Each stage lives in `service_assembly` / `listener_tasks`; this method
+    /// only wires narrow bundles in order.
     pub async fn run(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        use runtime_handles::{spawn_registered, spawn_registered_unit, RuntimeHandleClass};
-
         let mut handles = UnifiedServerRuntimeHandles::new();
 
         let config = self.config.clone();
         let waf = self.waf.clone();
-        let tls_config = self.tls_config.clone();
-        let http3_config = self.http3_config.clone();
-        let cert_resolver = self.cert_resolver.clone();
 
         // ── QUIC tunnel ──────────────────────────────────────────────
-        if let Some(ref tunnel_router) = self.tunnel_router {
-            if let Some(ref tunnel_config) = self.tunnel_config {
-                if tunnel_config.quic.enabled {
-                    tracing::info!("Starting QUIC tunnel router for server-WAF mode");
-                    let mut router = tunnel_router.lock().await;
-                    router.start().await?;
-
-                    tracing::info!(
-                        "QUIC tunnel server listening on {}:{}",
-                        tunnel_config.quic.bind_address,
-                        tunnel_config.quic.port
-                    );
-                }
-            }
-        }
+        service_assembly::start_quic_tunnel(&self.tunnel_router, &self.tunnel_config).await?;
 
         // ── Threat-level auto-scale (registered) ────────────────────
-        let threat_level = waf.threat_level.clone();
-        if let Some(ref tl) = threat_level {
-            let config = tl.get_legacy_config();
-            if config.auto_scale {
-                let tl_clone = tl.clone();
-                let mut shutdown_rx = self.shutdown_tx.subscribe();
-                spawn_registered_unit(
-                    &mut handles,
-                    "threat_level_auto_scale",
-                    RuntimeHandleClass::Maintenance,
-                    async move {
-                        loop {
-                            tokio::select! {
-                                _ = shutdown_rx.recv() => break,
-                                _ = tokio::time::sleep(std::time::Duration::from_secs(10)) => {
-                                    tl_clone.check_and_scale();
-                                }
-                            }
-                        }
-                    },
-                );
-            }
-        }
+        service_assembly::spawn_threat_autoscale(&mut handles, &waf, &self.shutdown_tx);
 
         // ── Plugin runtime (kept alive until after shutdown) ────────
         let plugin_owner = {
             let cfg = config.read().await;
-            let mut main_config = cfg.main.clone();
-
-            // ── Wire unsafe native extension config to runtime ──────────
-            if main_config.plugins.migrate_deprecated_native_plugins() {
-                tracing::warn!(
-                    "DEPRECATION: [plugins.native_plugins] is deprecated. \
-                     Use [plugins.unsafe_native] instead."
-                );
-            }
-            let native_cfg = &main_config.plugins.unsafe_native;
-            let runtime_native_config = crate::plugin::UnsafeNativeExtensionConfig {
-                enabled: native_cfg.enabled,
-                allow_in_production: native_cfg.allow_in_production,
-                risk_acknowledgement: native_cfg.risk_acknowledgement.clone(),
-                allowed_dirs: native_cfg.allowed_dirs.clone(),
-                hot_reload_enabled: native_cfg.hot_reload_enabled,
-                ..Default::default()
-            };
-            crate::plugin::set_global_unsafe_native_config(runtime_native_config);
-
-            // ── Startup log for unsafe native extension status ──────────
-            if native_cfg.enabled {
-                if crate::plugin::is_production_env() {
-                    if native_cfg.allow_in_production {
-                        tracing::warn!("Unsafe native extensions: ENABLED in production mode");
-                    } else {
-                        tracing::warn!(
-                            "Unsafe native extensions: enabled but blocked in production \
-                             (allow_in_production=false)"
-                        );
-                    }
-                } else {
-                    tracing::info!("Unsafe native extensions: enabled in development mode");
-                }
-            } else {
-                tracing::debug!("Unsafe native extensions: disabled");
-            }
-
-            let mut owner = crate::server::plugin_runtime::PluginRuntimeOwner::new(Arc::new(
-                crate::plugin::PluginManager::new(),
-            ));
-            owner.load_configured_plugins(&main_config.plugins.wasm.plugins);
-
-            if let Some(plugin_cfg) = main_config.plugins.wasm.plugins.first() {
-                let plugin_dir = std::path::Path::new(&plugin_cfg.path)
-                    .parent()
-                    .unwrap_or(std::path::Path::new("/opt/synvoid/plugins"))
-                    .to_path_buf();
-                if plugin_dir.is_dir() {
-                    if let Err(e) = owner.enable_hot_reload_if_configured(&plugin_dir) {
-                        tracing::debug!("Hot-reload not enabled: {}", e);
-                    }
-                }
-            }
-
-            // Start epoch incrementer after plugins are loaded so that any
-            // engine with epoch_deadline_enabled=true will have its epoch
-            // advanced. Default interval: 1 second.
-            owner.start_epoch_incrementer(std::time::Duration::from_secs(1));
-
-            owner
+            service_assembly::assemble_plugin_runtime(&cfg.main)
         };
 
         let plugin_manager = plugin_owner.manager().clone();
@@ -486,28 +393,20 @@ impl UnifiedServer {
             let cfg = config.read().await;
             let main_config = cfg.main.clone();
             let sites = cfg.sites.clone();
-            Router::new(&main_config, sites).with_plugin_manager(plugin_manager)
+            Arc::new(service_assembly::assemble_router(
+                &main_config,
+                sites,
+                plugin_manager,
+            ))
         };
-        let router = Arc::new(router);
 
         // ── HTTP runtime context ────────────────────────────────────
-        let http_runtime_context = {
-            let root_waf = RootWafProcessor::new(waf.clone());
-            let route_resolver = RouterRouteResolver::new(router.clone());
-            match (&self.metrics, &self.drain_state) {
-                (Some(metrics), Some(drain)) => {
-                    let metrics_sink = WorkerMetricsSink::new(metrics.clone());
-                    let drain_adapter = WorkerDrainStateAdapter::new(drain.clone());
-                    Some(HttpRuntimeContext::new(
-                        Arc::new(root_waf),
-                        Arc::new(route_resolver),
-                        Arc::new(metrics_sink),
-                        Arc::new(drain_adapter),
-                    ))
-                }
-                _ => None,
-            }
-        };
+        let http_runtime_context = service_assembly::assemble_http_runtime_context(
+            &waf,
+            &router,
+            &self.metrics,
+            &self.drain_state,
+        );
 
         let shared_state = Arc::new(ServerSharedState {
             config: config.clone(),
@@ -527,229 +426,46 @@ impl UnifiedServer {
             _http_runtime_context: http_runtime_context,
         });
 
-        // ── Protocol listener tasks (registered) ────────────────────
-        let http_addr = self.http_addr;
-        spawn_registered(
+        // ── Protocol listener tasks (registered, in startup order) ──
+        listener_tasks::spawn_http_listeners(
             &mut handles,
-            "http_v4",
-            RuntimeHandleClass::CriticalServer,
-            {
-                let shutdown_rx = self.shutdown_tx.subscribe();
-                let state = shared_state.clone();
-                async move { Self::run_http_server_inner(state, http_addr, shutdown_rx).await }
-            },
+            &shared_state,
+            &self.shutdown_tx,
+            self.http_addr,
+            self.http_addr_v6,
         );
-
-        if let Some(addr_v6) = self.http_addr_v6 {
-            let shutdown_rx = self.shutdown_tx.subscribe();
-            let state = shared_state.clone();
-            spawn_registered(
-                &mut handles,
-                "http_v6",
-                RuntimeHandleClass::ProtocolListener,
-                async move {
-                    tracing::info!("Starting HTTP server on IPv6 {}", addr_v6);
-                    Self::run_http_server_inner(state, addr_v6, shutdown_rx).await
-                },
-            );
-        }
-
-        if let (Some(addr), Some(resolver)) = (self.https_addr, cert_resolver.clone()) {
-            let shutdown_rx = self.shutdown_tx.subscribe();
-            let state = shared_state.clone();
-            let main_config = {
-                let cfg = self.config.read().await;
-                cfg.main.clone()
-            };
-            let http_config = main_config.http.clone();
-            let tls_cfg = tls_config.clone();
-            spawn_registered(
-                &mut handles,
-                "https_v4",
-                RuntimeHandleClass::CriticalServer,
-                async move {
-                    Self::run_https_server_inner(
-                        state,
-                        addr,
-                        resolver,
-                        tls_cfg,
-                        http_config,
-                        main_config,
-                        shutdown_rx,
-                    )
-                    .await
-                },
-            );
-        }
-
-        if let (Some(addr_v6), Some(resolver)) = (self.https_addr_v6, cert_resolver.clone()) {
-            let shutdown_rx = self.shutdown_tx.subscribe();
-            let state = shared_state.clone();
-            let main_config = {
-                let cfg = self.config.read().await;
-                cfg.main.clone()
-            };
-            let http_config = main_config.http.clone();
-            let tls_cfg = tls_config.clone();
-            spawn_registered(
-                &mut handles,
-                "https_v6",
-                RuntimeHandleClass::ProtocolListener,
-                async move {
-                    tracing::info!("Starting HTTPS server on IPv6 {}", addr_v6);
-                    Self::run_https_server_inner(
-                        state,
-                        addr_v6,
-                        resolver,
-                        tls_cfg,
-                        http_config,
-                        main_config,
-                        shutdown_rx,
-                    )
-                    .await
-                },
-            );
-        }
-
-        if let (Some(addr), Some(resolver)) = (self.http3_addr, cert_resolver.clone()) {
-            let shutdown_rx = self.shutdown_tx.subscribe();
-            let state = shared_state.clone();
-            let h3_cfg = http3_config.clone();
-            spawn_registered(
-                &mut handles,
-                "http3_v4",
-                RuntimeHandleClass::ProtocolListener,
-                async move {
-                    Self::run_http3_server_inner(state, addr, resolver, h3_cfg, shutdown_rx).await
-                },
-            );
-        }
-
-        if let (Some(addr_v6), Some(resolver)) = (self.http3_addr_v6, cert_resolver.clone()) {
-            let shutdown_rx = self.shutdown_tx.subscribe();
-            let state = shared_state.clone();
-            let h3_cfg = http3_config.clone();
-            spawn_registered(
-                &mut handles,
-                "http3_v6",
-                RuntimeHandleClass::ProtocolListener,
-                async move {
-                    tracing::info!("Starting HTTP/3 server on IPv6 {}", addr_v6);
-                    Self::run_http3_server_inner(state, addr_v6, resolver, h3_cfg, shutdown_rx)
-                        .await
-                },
-            );
-        }
-
-        if let Some(ref pool) = self.tcp_pool {
-            let pool = pool.clone();
-            spawn_registered_unit(
-                &mut handles,
-                "tcp_pool",
-                RuntimeHandleClass::ProtocolListener,
-                async move { pool.start().await },
-            );
-        }
-
-        if let Some(ref pool) = self.udp_pool {
-            let pool = pool.clone();
-            spawn_registered_unit(
-                &mut handles,
-                "udp_pool",
-                RuntimeHandleClass::ProtocolListener,
-                async move { pool.start().await },
-            );
-        }
+        listener_tasks::spawn_https_listeners(&mut handles, &shared_state, self).await;
+        listener_tasks::spawn_http3_listeners(&mut handles, &shared_state, self);
+        listener_tasks::spawn_aux_pools(&mut handles, self);
 
         // ── DNS server (registered) ─────────────────────────────────
         #[cfg(feature = "dns")]
         {
-            if let Some(ref dns_server) = self.dns_server {
-                #[cfg(feature = "mesh")]
-                let is_global = self
-                    .mesh_transport
-                    .as_ref()
-                    .map(|mt| mt.is_global_node())
-                    .unwrap_or(false);
-                #[cfg(not(feature = "mesh"))]
-                let is_global = false;
-                #[cfg(feature = "mesh")]
-                let dns_mesh_mode_only = {
-                    let topology = self.mesh_transport.as_ref().map(|mt| mt.get_topology());
-                    if let Some(ref t) = topology {
-                        let cfg = t.config();
-                        cfg.dht
-                            .as_ref()
-                            .map(|d| d.dns_mesh_mode_only)
-                            .unwrap_or(true)
-                    } else {
-                        true
-                    }
-                };
-                #[cfg(not(feature = "mesh"))]
-                let dns_mesh_mode_only = true;
-                let can_start = !dns_mesh_mode_only || is_global;
-
-                if can_start {
-                    let dns_server = dns_server.clone();
-                    spawn_registered(
-                        &mut handles,
-                        "dns",
-                        RuntimeHandleClass::ProtocolListener,
-                        async move {
-                            let mut server = (*dns_server).clone();
-                            server.start().await.map_err(|e| e.to_string())
-                        },
-                    );
-                } else {
-                    tracing::info!(
-                        "Skipping DNS server: dns_mesh_mode_only=true and node is not global"
-                    );
-                }
-            }
+            listener_tasks::spawn_dns_service(&mut handles, self);
         }
 
         // ── ACME init/renewal (registered) ──────────────────────────
         #[cfg(feature = "dns")]
         {
-            if let Some(ref acme_mgr) = *self
-                .acme_manager
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-            {
-                let acme_clone = acme_mgr.clone();
-                let mut shutdown_rx = self.shutdown_tx.subscribe();
-                spawn_registered(
-                    &mut handles,
-                    "acme_init_renewal",
-                    RuntimeHandleClass::Maintenance,
-                    async move {
-                        tokio::select! {
-                            result = acme_clone.init() => {
-                                match result {
-                                    Ok(()) => {
-                                        acme_clone.spawn_renewal_task();
-                                        Ok(())
-                                    }
-                                    Err(e) => {
-                                        tracing::error!("Failed to initialize ACME manager: {}", e);
-                                        Err(e.to_string())
-                                    }
-                                }
-                            }
-                            _ = shutdown_rx.recv() => Ok(()),
-                        }
-                    },
-                );
-            }
+            listener_tasks::spawn_acme_service(&mut handles, self);
         }
 
         // ── ACME cert reload IPC notification (short-lived callback) ──
         // This spawn is owned by the ACME renew_callback and is short-lived.
         // It is exempt from handle registration per BoundedShortLived policy.
 
+        Self::wait_for_shutdown_and_drain(handles, &self.shutdown_tx, plugin_owner).await
+    }
+
+    /// Wait for the shutdown trigger, broadcast, drain all registered tasks,
+    /// then drop the plugin owner after drain (hot-reload watcher lifetime).
+    async fn wait_for_shutdown_and_drain(
+        mut handles: UnifiedServerRuntimeHandles,
+        shutdown_tx: &broadcast::Sender<()>,
+        plugin_owner: PluginRuntimeOwner,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // ── Wait for shutdown signal or critical task exit ───────────
-        let mut shutdown_rx = self.shutdown_tx.subscribe();
+        let mut shutdown_rx = shutdown_tx.subscribe();
         let (critical_tx, mut critical_rx) = tokio::sync::oneshot::channel::<String>();
 
         let shutdown_trigger = async {
@@ -773,7 +489,7 @@ impl UnifiedServer {
         tracing::info!(cause = %shutdown_cause, "Shutdown trigger received, broadcasting shutdown");
 
         // ── Broadcast shutdown and drain all tasks ───────────────────
-        let _ = self.shutdown_tx.send(());
+        let _ = shutdown_tx.send(());
 
         let report = handles
             .shutdown_and_join(std::time::Duration::from_secs(30))
@@ -798,7 +514,7 @@ impl UnifiedServer {
         Ok(())
     }
 
-    async fn run_http_server_inner(
+    pub(crate) async fn run_http_server_inner(
         state: Arc<ServerSharedState>,
         http_addr: SocketAddr,
         shutdown_rx: broadcast::Receiver<()>,
@@ -889,7 +605,7 @@ impl UnifiedServer {
         }
     }
 
-    async fn run_https_server_inner(
+    pub(crate) async fn run_https_server_inner(
         state: Arc<ServerSharedState>,
         https_addr: SocketAddr,
         cert_resolver: Arc<CertResolver>,
@@ -943,7 +659,7 @@ impl UnifiedServer {
         server.serve().await
     }
 
-    async fn run_http3_server_inner(
+    pub(crate) async fn run_http3_server_inner(
         state: Arc<ServerSharedState>,
         http3_addr: SocketAddr,
         cert_resolver: Arc<CertResolver>,

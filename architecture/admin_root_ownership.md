@@ -125,7 +125,21 @@ footnotes, not ownership ambiguity, and each names its blocker. The removed
 Ledger, burn-down report, and final surface audit now agree on names
 and counts (guard-enforced by `admin_plugin_boundary_guard`).
 
-## F. Guardrails added
+## F. Phase 04 route-family decomposition (no ownership change)
+
+`build_router_from_state` was partitioned into root-private family builders in
+`src/admin/routes.rs` without duplicating `AdminState` or middleware:
+observability, stats, sites/upstreams, config, infra/probes/threat/rules,
+system/process/auth/theme, honeypot, plus feature-gated `dns_routes`,
+`mesh_config_routes`, `mesh_routes`, and `icmp_routes`. The top-level function
+only merges families in visible order, nests under `/api`, and applies
+auth/CSRF + security/CORS/rate-limit layers once. Feature gates live inside
+the relevant family builder (disabled → family omitted). Characterization
+tests in `tests/admin_router_composition.rs` (route presence/absence,
+public/protected delivery) plus unit construction tests in `routes.rs` prove
+behavioral equivalence.
+
+## G. Guardrails added
 
 `tests/admin_plugin_boundary_guard.rs` (static_policy):
 

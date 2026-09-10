@@ -31,6 +31,7 @@ use synvoid_waf::enforcement::{
 
 pub mod adapters;
 pub mod asn_tracker;
+pub mod assembly;
 pub mod attack_detection;
 pub mod endpoints;
 pub mod flood;
@@ -74,7 +75,7 @@ use crate::waf::endpoints::{
 use crate::waf::ip_feed::IpFeedManager;
 pub use request_sanitization::RequestSanitizer;
 use synvoid_auth::AuthManager;
-use synvoid_challenge::{ChallengeConfig, ChallengeManager};
+use synvoid_challenge::ChallengeManager;
 
 pub use flood::{FloodConfig, FloodDecision, FloodProtector};
 pub use ratelimit::{RateLimitResult, RateLimiterManager};
@@ -296,6 +297,10 @@ impl WafCore {
         subtle::ConstantTimeEq::ct_eq(expected.as_bytes(), token.as_bytes()).unwrap_u8() == 1
     }
 
+    /// Phase 04 orchestration: `WafCore::new` wires narrow staged bundles in
+    /// dependency order (rate limiter → threat → feeds → traffic → detectors
+    /// → whitelist/auth/trust-key). Each stage lives in `assembly`; this
+    /// constructor stays at one abstraction level and changes no behavior.
     pub fn new(config: WafCoreConfig) -> Self {
         let WafCoreConfig {
             rate_config,
@@ -320,195 +325,63 @@ impl WafCore {
             tarpit_defaults,
         } = config;
 
-        let rate_limiter = RateLimiterManager::new(
-            rate_config.ip,
-            rate_config.global,
-            rate_config.cleanup_interval_secs,
-            memory_config,
+        // Stage 1: rate limiter (no dependencies).
+        let rate_limiter = assembly::assemble_rate_limiter(rate_config, memory_config);
+
+        // Stage 2: threat-level + violation escalation.
+        let threat_bundle = assembly::assemble_threat_services(&threat_level_config, &data_dir);
+
+        // Stage 3: threat/rule-feed integration trackers.
+        let feed_bundle = assembly::assemble_feed_trackers(
+            ip_feed_config,
+            probe_config,
+            suspicious_words_config,
+            upstream_errors_config,
+            &data_dir,
         );
 
-        let threat_level = threat_level_config
-            .as_ref()
-            .map(|config| ThreatLevelManager::new(config.clone(), data_dir.clone(), None));
-
-        let violation_tracker = threat_level_config.as_ref().and_then(|config| {
-            if config.escalation.enabled {
-                Some(ViolationTracker::new(
-                    config.escalation.clone(),
-                    data_dir.clone(),
-                    config.persist_interval_normal_secs,
-                    config.persist_interval_attack_secs,
-                ))
-            } else {
-                None
-            }
-        });
-
-        let ip_feed = ip_feed_config.and_then(|config| {
-            if config.enabled {
-                let manager = IpFeedManager::new(config);
-                manager.start_background_fetching();
-                Some(manager)
-            } else {
-                None
-            }
-        });
-
-        let probe_tracker = probe_config.and_then(|config| {
-            if config.enabled {
-                let probe_config = crate::waf::probe_tracker::ProbeConfig {
-                    enabled: config.enabled,
-                    max_endpoints_per_window: config.max_endpoints_per_window,
-                    window_secs: config.window_secs,
-                    retention_days: config.retention_days,
-                    max_records: config.max_records,
-                    auto_ban_elevated_threat: config.auto_ban_elevated_threat,
-                    elevated_threat_threshold: config.elevated_threat_threshold,
-                    elevated_ban_duration: config.elevated_ban_duration,
-                };
-                Some(ProbeTracker::new(probe_config, data_dir.clone()))
-            } else {
-                None
-            }
-        });
-
-        let suspicious_word_tracker = suspicious_words_config.and_then(|config| {
-            if config.enabled {
-                Some(SuspiciousWordTracker::new(config))
-            } else {
-                None
-            }
-        });
-
-        let upstream_error_tracker = upstream_errors_config.and_then(|config| {
-            if config.enabled {
-                Some(UpstreamErrorTracker::new(config))
-            } else {
-                None
-            }
-        });
-
-        let bot_detector = BotDetector::new(
-            bot_config.known_bots_allow.clone(),
-            bot_config.ai_crawlers_block.clone(),
-            bot_config.scraper_patterns.clone(),
-            bot_config.block_ai_crawlers,
+        // Stage 4: rate/traffic controls + ASN tracker.
+        let traffic_bundle = assembly::assemble_traffic_controls(
+            &traffic_shaping_config,
+            &bandwidth_config,
+            &asn_scraping_config,
+            &geoip,
         );
 
-        let traffic_shaper_instance = traffic_shaping_config.as_ref().map(|config| {
-            Arc::new(GlobalTrafficShaper::new(
-                config.global.clone(),
-                bandwidth_config.clone(),
-            ))
-        });
+        // Stage 5: detector/policy setup (bot, endpoints, challenge, attack).
+        let detectors =
+            assembly::assemble_detectors(&bot_config, &endpoint_config, attack_detection_config);
 
-        let connection_limiter_instance = traffic_shaping_config
-            .as_ref()
-            .map(|config| ConnectionLimiter::new(config.connection_limits.clone()));
-
-        let asn_tracker_instance = asn_scraping_config
-            .as_ref()
-            .map(|config| Arc::new(AsnTracker::new(config.clone(), geoip.clone())));
-
-        let endpoint_blocker = EndpointBlockerManager::new(
-            endpoint_config.paths.clone(),
-            endpoint_config.use_regex,
-            endpoint_config.block_methods.clone(),
-            endpoint_config.block_response_code,
-            None, // block_page_html missing in defaults
-        );
-
-        let sensitive_endpoint_manager =
-            SensitiveEndpointManager::from_file("honeypot_endpoints.txt"); // dummy path
-        let error_page_manager = ErrorPageManager::new("error_pages", None, true);
-        let challenge_manager = ChallengeManager::new(ChallengeConfig {
-            cookie_name: bot_config.challenge_cookie_name.clone(),
-            pow_enabled: false, // from separate config usually
-            pow_difficulty: 1,
-            pow_adaptive_difficulty: false,
-            pow_max_difficulty: 10,
-            pow_window_secs: 300,
-            pow_timeout_secs: 60,
-            css_enabled: false,
-            css_window_secs: 300,
-            css_invalid_min: 1,
-            css_invalid_max: 3,
-            css_valid_count: 5,
-            css_asset_path: "".to_string(),
-            css_verification_window_secs: 60,
-            honeypot_enabled: true,
-            honeypot_paths_per_ip: 5,
-            honeypot_ttl_secs: 3600,
-            theme: crate::theme::ThemeConfig::default(),
-            challenge_max_attempts: bot_config.challenge_max_attempts,
-            challenge_rate_limit_window_secs: bot_config.challenge_rate_limit_window_secs,
-            challenge_priority: synvoid_challenge::ChallengePriority::default(),
-            mesh_pow_enabled: false,
-            mesh_pow_key_exchange_enabled: false,
-            mesh_pow_auditing_enabled: false,
-            mesh_id: None,
-            mesh_global_node_url: None,
-            mesh_audit_urls: Vec::new(),
-        });
-
+        // Stage 6: render/backends (tarpit, whitelist, auth, trust key).
         let tarpit_defaults = tarpit_defaults.unwrap_or_default();
         let tarpit_generator = Arc::new(crate::tarpit::MarkovChain::new());
-
-        let mut whitelist_set = HashSet::new();
-        for ip_str in whitelist {
-            if let Ok(ip) = ip_str.parse::<IpAddr>() {
-                whitelist_set.insert(ip);
-            }
-        }
-
-        let ad_instance =
-            attack_detection_config.map(|config| Arc::new(AttackDetector::new(config)));
-
-        let auth_manager_instance = auth_manager.unwrap_or_else(|| {
-            Arc::new(AuthManager::new(
-                data_dir.clone().unwrap_or_else(|| PathBuf::from("data")),
-                3600, // session_duration_secs
-                3,    // max_failed_attempts
-                300,  // lockout_duration_secs
-            ))
-        });
-
-        let mut trust_token_key = [0u8; 32];
-        // M-04: Use OsRng (getrandom) for bearer-secret seeding. `rand::fill`
-        // uses the thread-local ChaCha12 RNG (seeded via getrandom) — practically
-        // OK, but security audit expects an explicit OsRng contract for 32-byte
-        // bearer secrets.
-        {
-            use rand::{RngCore, TryRngCore};
-            if let Err(e) = rand::rngs::OsRng.try_fill_bytes(&mut trust_token_key) {
-                tracing::error!(error = %e, "OsRng failed seeding trust-token key; falling back to thread RNG");
-                rand::rng().fill_bytes(&mut trust_token_key);
-            }
-        }
+        let whitelist_set = assembly::assemble_whitelist(whitelist);
+        let auth_manager_instance = assembly::assemble_auth_manager(auth_manager, &data_dir);
+        let trust_token_key = assembly::generate_trust_token_key();
 
         Self {
             rate_limiter,
-            bot_detector,
-            endpoint_blocker,
-            sensitive_endpoint_manager,
-            error_page_manager,
-            challenge_manager,
+            bot_detector: detectors.bot_detector,
+            endpoint_blocker: detectors.endpoint_blocker,
+            sensitive_endpoint_manager: detectors.sensitive_endpoint_manager,
+            error_page_manager: detectors.error_page_manager,
+            challenge_manager: detectors.challenge_manager,
             auth_manager: auth_manager_instance,
-            attack_detector: ArcSwapOption::new(ad_instance),
+            attack_detector: ArcSwapOption::new(detectors.attack_detector),
             attack_detection_config: ArcSwapOption::new(None),
             config: waf_config,
-            whitelist: Arc::new(whitelist_set),
+            whitelist: whitelist_set,
             _tarpit_generator: tarpit_generator,
             tarpit_defaults,
-            threat_level,
-            violation_tracker,
-            ip_feed,
-            probe_tracker,
-            suspicious_word_tracker,
-            upstream_error_tracker,
-            traffic_shaper: traffic_shaper_instance,
-            connection_limiter: connection_limiter_instance,
-            asn_tracker: asn_tracker_instance,
+            threat_level: threat_bundle.threat_level,
+            violation_tracker: threat_bundle.violation_tracker,
+            ip_feed: feed_bundle.ip_feed,
+            probe_tracker: feed_bundle.probe_tracker,
+            suspicious_word_tracker: feed_bundle.suspicious_word_tracker,
+            upstream_error_tracker: feed_bundle.upstream_error_tracker,
+            traffic_shaper: traffic_bundle.traffic_shaper,
+            connection_limiter: traffic_bundle.connection_limiter,
+            asn_tracker: traffic_bundle.asn_tracker,
             test_mode,
             honeypot_ban_duration_secs: 86400,
             request_services: ArcSwapOption::new(None),

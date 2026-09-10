@@ -76,8 +76,8 @@
 | Surface | File | Classification |
 |---------|------|----------------|
 | `DataPlaneServices` | `services.rs:26` | Worker/data-plane composition |
-| `UnifiedServer` HTTP/3 spawn | `src/server/mod.rs:984` | Worker/data-plane composition |
-| `state.waf` injection | `src/server/mod.rs:1295` | Worker/data-plane composition |
+| `UnifiedServer` HTTP/3 spawn | `src/server/listener_tasks.rs` (`spawn_http3_listeners`) | Worker/data-plane composition |
+| `state.waf` injection | `src/server/mod.rs` (`run_http_server_inner` / `ServerSharedState`) | Worker/data-plane composition |
 
 ---
 

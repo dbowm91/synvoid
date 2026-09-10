@@ -100,7 +100,7 @@ Root-module ownership policy lives in `architecture/root_module_ledger.md` — p
 | `src/config/admin.rs` | `crates/synvoid-config/src/admin.rs` |
 | `src/admin/authority.rs` | `crates/synvoid-core/src/admin_mutation.rs` |
 | `src/wasm_pow/` | `crates/synvoid-wasm-pow/` |
-| `src/server/mod.rs` (monolithic) | `src/server/` (split: `startup_plan.rs`, `resources.rs`, `runtime_handles.rs`, `plugin_runtime.rs`) |
+| `src/server/mod.rs` (monolithic) | `src/server/` (split: `startup_plan.rs`, `resources.rs`, `runtime_handles.rs`, `plugin_runtime.rs`, `service_assembly.rs`, `listener_tasks.rs`, `waf_handler.rs` — Phase 04: `run()` orchestrates narrow subsystem/family builders, no new crates) |
 | `src/dns/*.rs` (legacy copies) | `crates/synvoid-dns/src/` (canonical) |
 | `src/waf/attack_detection/*.rs` (impl) | `crates/synvoid-waf/src/attack_detection/` (root path is a re-export shim) |
 | `src/admin/handlers/{logs,probes,stats,system}.rs`, `common.rs` DTOs, `auth.rs`, `rate_limit.rs` | `crates/synvoid-admin/src/` (canonical; root paths are facades + transport helpers) |

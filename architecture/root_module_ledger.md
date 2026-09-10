@@ -61,7 +61,7 @@ Status vocabulary:
 | router_adapter | Router adapter | facade_existing_crate | synvoid-proxy | pure re-export facade | Prefer `synvoid_proxy::router_adapter` in domain crates |
 | sandbox | Sandbox process modes (WASM/YARA jails) | keep_app_root | root app crate | real implementation — jail entry points + WASM/YARA execution services + policy client; protocol DTOs/supervision in synvoid-ipc | Phase 22 operational; spec `architecture/sandbox_jail_protocol.md` |
 | serialization | Serialization re-export from synvoid-utils | facade_existing_crate | synvoid-utils | root re-export (`pub use`) | Prefer `synvoid_utils::serialization` in domain crates |
-| server | UnifiedServer composition root | keep_app_root | root app crate | real implementation (1344 lines) | Heavy composition root wiring all subsystems |
+| server | UnifiedServer composition root | keep_app_root | root app crate | real implementation (modular: `startup_plan` + `resources` + `runtime_handles` + `plugin_runtime` + `service_assembly` + `listener_tasks` + `waf_handler`; Phase 04 `run()` orchestrates narrow subsystem/family builders) | Heavy composition root wiring all subsystems |
 | serverless | Serverless runtime | facade_existing_crate | synvoid-serverless | pure re-export facade | Prefer `synvoid_serverless` in domain crates |
 | spin | Spin WASM runtime | facade_existing_crate | synvoid-plugin-runtime | pure re-export facade | Prefer `synvoid_plugin_runtime::spin` in domain crates |
 | startup | Process startup and bootstrap | keep_app_root | root app crate | real implementation | Supervisor-level startup orchestration |

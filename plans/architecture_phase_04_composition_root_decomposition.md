@@ -1,6 +1,6 @@
 # Phase 04 — Composition-Root Decomposition Without New Crates
 
-Status: implementation handoff plan
+Status: implemented (2026-09-10)
 Baseline: root-module ledger, WAF/HTTP ownership convergence documents
 
 ## Objective
