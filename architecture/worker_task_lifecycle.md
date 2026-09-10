@@ -130,10 +130,15 @@ All long-lived spawned tasks are listed below, grouped by subsystem.
 | 29 | DNS RFC 5011 refresh | `resolver.rs:785` | RestartableBackground | HickoryResolver | watch channel | Retained | graceful | DNSSEC key rollover per RFC 5011 |
 | 30 | DNS anycast sync | `anycast_sync.rs:176` | RestartableBackground | (unowned) | NONE | Dropped | runs forever | Anycast endpoint synchronization |
 | 31 | Proxy cache cleanup | `store.rs:308` | RestartableBackground | ProxyCache | watch channel `shutdown_rx` | Returned | graceful | Expired entry eviction |
-| 32 | Static files YARA refresh | `file_manager.rs:283` | RestartableBackground | (unowned) | NONE | Returned | runs forever | YARA rule refresh for static file scanning |
-| 33 | System health monitor | `health.rs:12` | CriticalService | SystemHealthMonitor | NONE | Dropped | runs forever | OS-level health telemetry |
-| 34 | Serverless instance pool cleanup | `instance_pool.rs:416` | RestartableBackground | InstancePool | watch channel `shutdown_tx` | Managed | graceful | Idle WASM instance eviction |
-| 35 | FastCGI health check | `pool.rs:152` | RestartableBackground | FastCgiPool | `handle.abort()` | Retained | abortable | FastCGI backend health probe |
+| 32 | System health monitor | `health.rs:12` | CriticalService | SystemHealthMonitor | NONE | Dropped | runs forever | OS-level health telemetry |
+| 33 | Serverless instance pool cleanup | `instance_pool.rs:416` | RestartableBackground | InstancePool | watch channel `shutdown_tx` | Managed | graceful | Idle WASM instance eviction |
+| 34 | FastCGI health check | `pool.rs:152` | RestartableBackground | FastCgiPool | `handle.abort()` | Retained | abortable | FastCGI backend health probe |
+
+> Phase 02 removed the unowned "Static files YARA refresh" background task
+> (`file_manager.rs` periodic refresh): it reported success without performing
+> work and had zero production callers. Rule lifecycle is now explicit — the
+> injected `FileManagerSecurityBackend` owns its scanner generation with no
+> background task to own or cancel.
 
 ### CPU Worker (`src/worker/cpu_task/`)
 

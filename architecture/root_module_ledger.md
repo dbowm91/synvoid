@@ -65,7 +65,7 @@ Status vocabulary:
 | serverless | Serverless runtime | facade_existing_crate | synvoid-serverless | pure re-export facade | Prefer `synvoid_serverless` in domain crates |
 | spin | Spin WASM runtime | facade_existing_crate | synvoid-plugin-runtime | pure re-export facade | Prefer `synvoid_plugin_runtime::spin` in domain crates |
 | startup | Process startup and bootstrap | keep_app_root | root app crate | real implementation | Supervisor-level startup orchestration |
-| static_files | Static file handling | facade_existing_crate | synvoid-static-files | facade with local adapter — re-exports crate + root-owned `file_manager` submodule | Prefer `synvoid_static_files` in domain crates; local `file_manager` needs investigation |
+| static_files | Static file handling | facade_existing_crate | synvoid-static-files | pure re-export facade | Prefer `synvoid_static_files` in domain crates; `FileManager` canonical in crate with injected `FileManagerSecurityBackend` (Phase 02) |
 | streaming | Bidirectional streaming proxy | facade_existing_crate | synvoid-proxy | pure re-export facade | Prefer `synvoid_proxy::bidirectional` in domain crates |
 | supervisor | Supervisor process lifecycle | keep_app_root | root app crate | facade over submodules | Process-level supervision; root-owned |
 | tarpit | Tarpit response generation | keep_app_root | root app crate (handler) + synvoid-tarpit (Markov chain) | facade with local submodules — re-exports MarkovChain/TarpitConfig from synvoid-tarpit crate; root-owned TarpitHandler/TarpitManager | Dead generator.rs removed; facade documentation added |

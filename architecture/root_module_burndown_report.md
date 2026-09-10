@@ -176,6 +176,48 @@ reorganization.
   `architecture/track3_performance_report.md` (closure baselines, no
   absolute throughput claims).
 
+## Phase 02 Closure (static file-manager ownership convergence)
+
+Phase 02 made `synvoid-static-files` the canonical owner of the reusable
+`FileManager` (filesystem validation, directory listing/mutations, upload
+restrictions) and reduced `src/static_files/` to a pure re-export facade:
+
+- Moved `src/static_files/file_manager.rs` (~1,488 lines) to canonical
+  `crates/synvoid-static-files/src/file_manager.rs`; deleted the root copy.
+  `src/static_files/mod.rs` is now `pub use` re-exports only.
+- Upload security capabilities (malware scanning, rate limiting, content MIME
+  detection) are injected through the narrow `FileManagerSecurityBackend`
+  trait (`scan_upload_bytes` / `check_upload_rate_allowed` /
+  `detect_content_mime_types` / `yara_rule_version`). The production
+  `UploadFileManagerBackend` adapter lives in the root HTTP layer
+  (`src/http/file_manager.rs`) over `synvoid-upload` types. The trait
+  boundary keeps `synvoid-static-files` free of the `synvoid-upload` →
+  `synvoid-mesh` → `synvoid-proxy` → `synvoid-static-files` dependency cycle
+  and free of the root `synvoid` crate.
+- Removed the no-op `reload_yara_rules_if_needed()` success placeholder and
+  the misleading `new_with_periodic_refresh` / `start_periodic_yara_refresh`
+  background surface (zero production callers). Rule lifecycle is now honest:
+  the backend owns its scanner generation, the active version is observable
+  via `FileManager::yara_rule_version()`, and new rules require a new backend
+  + manager. Mesh-distributed feeds stay owned by `UploadValidator`.
+- Strengthened path safety: `MAX_PATH_DEPTH` is now enforced before any
+  filesystem access so missing-leaf mutation paths observe the same bound as
+  existing targets (previously the ancestor-walk early return skipped it).
+- Froze behavior with 16 crate tests covering `..` escape variants, null
+  bytes, symlinked-ancestor escape (existing + missing-leaf), hidden-file
+  policy, blocked/allowed extensions, depth bound, size limits, dir/file type
+  confusion, non-empty-dir delete, malware detection, scan-error fail-open,
+  rate limiting, MIME allowlists, and version delegation.
+- `src/http/file_manager.rs` and `src/http/webdav.rs` import the canonical
+  `synvoid_static_files::file_manager` path; HTTP status mapping and admin
+  auth stay in the root adapters (`FileManagerError::status_code() -> u16`
+  remains transport-neutral in the crate).
+- Added `tests/static_file_manager_ownership_guard.rs` (5 tests): single
+  canonical implementation, no no-op refresh surface, crate purity (no
+  `synvoid::` imports), facade thinness, consumer convergence.
+- Reclassified `static_files` (`facade with local adapter` → `pure
+  re-export facade`); ledger, this report, and `static_files.md` reconciled.
+
 ## Next Recommended Cluster
 
 All `split_required` modules are closed (Phase 21). Remaining follow-ups are
@@ -183,5 +225,4 @@ composition footnotes with named owners, not ownership ambiguity:
 
 1. `http_client` QUIC tunnel dispatch (root-owned; depends on root tunnel/QUIC infra)
 2. `ProxyServer` root trait-bound alias over `synvoid-proxy`
-3. `static_files` local `file_manager` submodule (needs investigation)
-4. `HttpsServer::handle_request_with_cache` flow convergence (TLS data-path rewrite, out of scope)
+3. `HttpsServer::handle_request_with_cache` flow convergence (TLS data-path rewrite, out of scope)

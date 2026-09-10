@@ -1,5 +1,5 @@
 # Static Files Root Compatibility Path
 
-`src/static_files` is a transitional compatibility surface. The canonical static file implementation lives in `crates/synvoid-static-files`.
+`src/static_files` is a pure re-export facade. The canonical static file implementation — including `FileManager` (`crates/synvoid-static-files/src/file_manager.rs`) — lives in `crates/synvoid-static-files`.
 
-Do not add new domain implementation here. Root-local adapters may remain only when they are documented in `architecture/root_module_ledger.md` and cannot yet move without introducing a circular dependency. The local `file_manager` submodule is a known root-owned adapter that needs investigation before it can be extracted.
+Do not add domain implementation here. Upload security capabilities (malware scanning, rate limiting, MIME detection) are injected into `FileManager` through the narrow `FileManagerSecurityBackend` trait; the production `UploadFileManagerBackend` adapter lives in the root HTTP layer (`src/http/file_manager.rs`). There is no periodic YARA-refresh background task: rule updates require a new backend + manager (see `FileManager::yara_rule_version`).

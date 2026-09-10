@@ -1,5 +1,36 @@
 #![allow(unexpected_cfgs)]
 
+//! Canonical file-manager implementation.
+//!
+//! `FileManager` is reusable domain logic (filesystem validation, directory
+//! listing/mutations, upload restrictions) owned by `synvoid-static-files`.
+//! HTTP status mapping and admin authentication stay in the root HTTP/admin
+//! adapters; this module only exposes transport-neutral
+//! `FileManagerError::status_code() -> u16`.
+//!
+//! Upload security capabilities (malware scanning, upload rate limiting,
+//! content MIME detection) are injected through the narrow
+//! [`FileManagerSecurityBackend`] trait. The composition root (which may use
+//! `synvoid-upload` types) implements the trait and passes
+//! `Arc<dyn FileManagerSecurityBackend>` to [`FileManager::new`]. This keeps
+//! `synvoid-static-files` free of the `synvoid-upload` dependency (which
+//! would cycle via `synvoid-mesh` → `synvoid-proxy` → `synvoid-static-files`)
+//! and free of the root `synvoid` crate.
+//!
+//! Rule-update lifecycle: the security backend owns its scanner generation.
+//! There is deliberately no periodic-refresh background task in this module —
+//! a background operation must not report successful work that is not
+//! performed. To pick up new YARA rules, the owner constructs a new backend
+//! (or restarts the owning service). Mesh-distributed rule feeds are owned by
+//! `synvoid-upload`'s `UploadValidator`, not by this manager. The active rule
+//! version is observable via [`FileManager::yara_rule_version`].
+//!
+//! Archive extraction (`extract_archive` zip/tar paths) is currently inactive:
+//! the `archive`-gated decoders are not wired to a Cargo feature, so those
+//! formats return `FileManagerError::OperationNotPermitted`. This preserves
+//! the pre-extraction behavior; enabling archive support is future work,
+//! not part of this ownership closure.
+
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -11,11 +42,56 @@ use serde::{Deserialize, Serialize};
 use tokio::fs;
 use walkdir::WalkDir;
 
-use crate::config::site::SiteStaticConfig;
-use synvoid_upload::malware_scanner::MalwareScanner;
-use synvoid_upload::rate_limit::{RateLimitConfig, UploadRateLimiter};
-use synvoid_upload::yara_scanner::YaraScanner;
-use synvoid_upload::YaraError;
+use synvoid_config::site::SiteStaticConfig;
+
+/// Narrow upload-security backend injected at the composition boundary.
+///
+/// Implementors live outside `synvoid-static-files` (e.g. a root adapter over
+/// `synvoid-upload` types) so this crate stays free of heavyweight scanner
+/// dependencies and dependency cycles.
+#[async_trait::async_trait]
+pub trait FileManagerSecurityBackend: Send + Sync {
+    /// Scan upload bytes; returns matched rule names (empty when clean).
+    ///
+    /// `Err(message)` signals a scan error. `FileManager` treats scan errors
+    /// as fail-open with a warning (preserving historical behavior) and
+    /// surfaces matches as `FileManagerError::MalwareDetected`.
+    async fn scan_upload_bytes(&self, data: &[u8]) -> Result<Vec<String>, String>;
+
+    /// Rate-limit check for an upload of `bytes` under `client_key`.
+    /// Returns `true` when the upload is allowed.
+    fn check_upload_rate_allowed(&self, client_key: &str, bytes: u64) -> bool;
+
+    /// Content-based MIME detection used for `allowed_mime_types` enforcement.
+    /// Returns detected MIME types (empty when unknown).
+    fn detect_content_mime_types(&self, data: &[u8]) -> Vec<String>;
+
+    /// Observable scanner rule version, if the backend carries one.
+    /// `None` means scanning is disabled or unversioned.
+    fn yara_rule_version(&self) -> Option<String> {
+        None
+    }
+}
+
+/// Permissive backend for unit tests that exercise filesystem policy without
+/// security enforcement. NOT for production use.
+#[derive(Debug, Default)]
+pub struct AllowAllSecurityBackend;
+
+#[async_trait::async_trait]
+impl FileManagerSecurityBackend for AllowAllSecurityBackend {
+    async fn scan_upload_bytes(&self, _data: &[u8]) -> Result<Vec<String>, String> {
+        Ok(Vec::new())
+    }
+
+    fn check_upload_rate_allowed(&self, _client_key: &str, _bytes: u64) -> bool {
+        true
+    }
+
+    fn detect_content_mime_types(&self, _data: &[u8]) -> Vec<String> {
+        Vec::new()
+    }
+}
 
 fn make_blocked_extensions_set() -> HashSet<String> {
     BLOCKED_EXTENSIONS
@@ -74,8 +150,10 @@ pub struct FileManagerConfig {
     pub blocked_extensions: Vec<String>,
     pub allowed_extensions: Vec<String>,
     pub allowed_mime_types: Vec<String>,
+    /// Hint for backend construction (whether the owner should enable YARA).
+    /// `FileManager` always invokes the injected backend for scans; owners
+    /// construct the backend with or without YARA based on this flag.
     pub scan_on_upload: bool,
-    pub rate_limit_config: RateLimitConfig,
     pub allow_hidden_files: bool,
     pub allow_symlinks: bool,
     pub archive_max_depth: u32,
@@ -92,7 +170,6 @@ impl Default for FileManagerConfig {
             allowed_extensions: Vec::new(),
             allowed_mime_types: Vec::new(),
             scan_on_upload: true,
-            rate_limit_config: RateLimitConfig::default(),
             allow_hidden_files: false,
             allow_symlinks: false,
             archive_max_depth: DEFAULT_ARCHIVE_MAX_DEPTH,
@@ -117,7 +194,6 @@ impl FileManagerConfig {
             allowed_extensions: Vec::new(),
             allowed_mime_types: Vec::new(),
             scan_on_upload: true,
-            rate_limit_config: RateLimitConfig::default(),
             allow_hidden_files: config.block_hidden_files.map(|v| !v).unwrap_or(false),
             allow_symlinks: config.allow_symlinks.unwrap_or(false),
             archive_max_depth: DEFAULT_ARCHIVE_MAX_DEPTH,
@@ -230,70 +306,30 @@ pub struct Permissions {
 
 pub struct FileManager {
     config: Arc<FileManagerConfig>,
-    malware_scanner: Arc<MalwareScanner>,
-    rate_limiter: Arc<UploadRateLimiter>,
-    _reload_lock: parking_lot::RwLock<()>,
+    security: Arc<dyn FileManagerSecurityBackend>,
 }
 
 impl FileManager {
-    pub fn new(config: FileManagerConfig) -> Self {
-        let malware_scanner = if config.scan_on_upload {
-            match YaraScanner::new(synvoid_upload::yara_scanner::YaraRulesSource::Bundled) {
-                Ok(scanner) => Arc::new(MalwareScanner::with_yara(Some(scanner))),
-                Err(e) => {
-                    tracing::warn!("Failed to create YARA scanner for FileManager: {}, using built-in rules only", e);
-                    Arc::new(MalwareScanner::new())
-                }
-            }
-        } else {
-            Arc::new(MalwareScanner::with_yara(None))
-        };
-
-        let rate_limiter = Arc::new(UploadRateLimiter::new(config.rate_limit_config.clone()));
-
+    /// Construct a `FileManager` with an injected security backend.
+    ///
+    /// The caller (composition root) owns scanner/rule lifecycle: construct
+    /// the backend with the desired YARA generation and rate-limit state,
+    /// then pass it here. `FileManager` never spawns background refresh
+    /// tasks; to pick up new rules, build a new backend + manager.
+    pub fn new(config: FileManagerConfig, security: Arc<dyn FileManagerSecurityBackend>) -> Self {
         Self {
             config: Arc::new(config),
-            malware_scanner,
-            rate_limiter,
-            _reload_lock: parking_lot::RwLock::new(()),
+            security,
         }
     }
 
-    pub fn new_with_periodic_refresh(
-        config: FileManagerConfig,
-        interval_secs: u64,
-    ) -> (Arc<Self>, tokio::task::JoinHandle<()>) {
-        let file_manager = Arc::new(Self::new(config));
-        let handle = Self::start_periodic_yara_refresh(file_manager.clone(), interval_secs);
-        (file_manager, handle)
-    }
-
-    fn reload_yara_rules_if_needed(&self) -> Result<(), YaraError> {
-        #[cfg(feature = "mesh")]
-        {
-            let _ = self;
-        }
-        #[cfg(not(feature = "mesh"))]
-        {
-            let _ = self;
-        }
-        Ok(())
-    }
-
-    pub fn start_periodic_yara_refresh(
-        file_manager: Arc<Self>,
-        interval_secs: u64,
-    ) -> tokio::task::JoinHandle<()> {
-        tokio::spawn(async move {
-            let mut interval =
-                tokio::time::interval(tokio::time::Duration::from_secs(interval_secs));
-            loop {
-                interval.tick().await;
-                if let Err(e) = file_manager.reload_yara_rules_if_needed() {
-                    tracing::debug!("Periodic YARA rule refresh failed (will retry): {}", e);
-                }
-            }
-        })
+    /// Current YARA rule version reported by the injected backend, if any.
+    ///
+    /// Exposes the observable scanner generation so operators can verify
+    /// which rules an instance was built with. `None` means scanning is
+    /// disabled or the backend carries no version tag.
+    pub fn yara_rule_version(&self) -> Option<String> {
+        self.security.yara_rule_version()
     }
 
     pub fn config(&self) -> &FileManagerConfig {
@@ -312,6 +348,17 @@ impl FileManager {
             return Err(FileManagerError::InvalidPath(
                 "null byte in path".to_string(),
             ));
+        }
+
+        // Enforced before any filesystem access so both existing targets and
+        // missing-leaf mutation paths (which return early from the ancestor
+        // walk below) observe the same depth bound.
+        let depth = user_path.trim_start_matches('/').matches('/').count();
+        if depth > MAX_PATH_DEPTH {
+            return Err(FileManagerError::InvalidPath(format!(
+                "path depth exceeds maximum of {}",
+                MAX_PATH_DEPTH
+            )));
         }
 
         let canonical = tokio::fs::canonicalize(&self.config.root_path)
@@ -384,14 +431,6 @@ impl FileManager {
                 canonical.display()
             );
             return Err(FileManagerError::PathTraversal);
-        }
-
-        let depth = user_path.trim_start_matches('/').matches('/').count();
-        if depth > MAX_PATH_DEPTH {
-            return Err(FileManagerError::InvalidPath(format!(
-                "path depth exceeds maximum of {}",
-                MAX_PATH_DEPTH
-            )));
         }
 
         Ok(target_canonical)
@@ -761,11 +800,11 @@ impl FileManager {
             )));
         }
 
-        let rate_result = self
-            .rate_limiter
-            .check_rate_limit("file_manager", data.len() as u64);
-        if !rate_result.is_allowed() {
-            tracing::warn!("Upload rate limit exceeded: {:?}", rate_result);
+        if !self
+            .security
+            .check_upload_rate_allowed("file_manager", data.len() as u64)
+        {
+            tracing::warn!("Upload rate limit exceeded for file_manager");
             return Err(FileManagerError::InvalidPath(
                 "Rate limit exceeded for uploads".to_string(),
             ));
@@ -794,21 +833,18 @@ impl FileManager {
         }
 
         if !self.config.allowed_mime_types.is_empty() {
-            let registry = synvoid_upload::signature::global_signature_registry();
-            if let Some(detected) = registry.detect(&data) {
-                let detected_mime = detected.detected_mime_types.first();
-                if let Some(mime) = detected_mime {
-                    if !self.config.allowed_mime_types.iter().any(|m| m == *mime) {
-                        tracing::warn!(
-                            "Upload rejected: MIME type {} not in allowed list: {:?}",
-                            mime,
-                            self.config.allowed_mime_types
-                        );
-                        return Err(FileManagerError::InvalidPath(format!(
-                            "MIME type {} not allowed",
-                            mime
-                        )));
-                    }
+            let detected_mime_types = self.security.detect_content_mime_types(&data);
+            if let Some(mime) = detected_mime_types.first() {
+                if !self.config.allowed_mime_types.iter().any(|m| m == mime) {
+                    tracing::warn!(
+                        "Upload rejected: MIME type {} not in allowed list: {:?}",
+                        mime,
+                        self.config.allowed_mime_types
+                    );
+                    return Err(FileManagerError::InvalidPath(format!(
+                        "MIME type {} not allowed",
+                        mime
+                    )));
                 }
             }
 
@@ -819,39 +855,29 @@ impl FileManager {
                     .allowed_mime_types
                     .iter()
                     .any(|m| m == &claimed_mime)
+                    && detected_mime_types.iter().any(|m| *m != claimed_mime)
                 {
-                    let registry = synvoid_upload::signature::global_signature_registry();
-                    if let Some(detected) = registry.detect(&data) {
-                        if detected
-                            .detected_mime_types
-                            .iter()
-                            .any(|m| *m != claimed_mime)
-                        {
-                            tracing::warn!(
-                                "Upload warning: extension MIME mismatch - claimed: {}, detected: {:?}",
-                                claimed_mime,
-                                detected.detected_mime_types
-                            );
-                        }
-                    }
+                    tracing::warn!(
+                        "Upload warning: extension MIME mismatch - claimed: {}, detected: {:?}",
+                        claimed_mime,
+                        detected_mime_types
+                    );
                 }
             }
         }
 
         if self.config.scan_on_upload {
-            if let Err(e) = self.reload_yara_rules_if_needed() {
-                tracing::error!("Failed to reload YARA rules for FileManager (continuing with existing rules): {}", e);
-            }
-
-            match self.malware_scanner.scan_bytes(&data).await {
-                Ok(scan_result) if !scan_result.is_clean() => {
-                    let matched_names: Vec<String> = scan_result.matched_rule_names();
+            // Scanner generation is owned by the injected backend; rule
+            // updates require constructing a new backend + manager.
+            // See module docs for the rule-update lifecycle.
+            match self.security.scan_upload_bytes(&data).await {
+                Ok(matched) if !matched.is_empty() => {
                     tracing::warn!(
                         "Upload blocked: malware detected in file {} - matches: {:?}",
                         filename,
-                        matched_names
+                        matched
                     );
-                    return Err(FileManagerError::MalwareDetected(matched_names.join(", ")));
+                    return Err(FileManagerError::MalwareDetected(matched.join(", ")));
                 }
                 Err(e) => {
                     tracing::warn!("Malware scan error for file {}: {}", filename, e);
@@ -1376,6 +1402,59 @@ fn parse_size(s: &str) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+
+    fn test_manager(config: FileManagerConfig) -> FileManager {
+        FileManager::new(config, Arc::new(AllowAllSecurityBackend))
+    }
+
+    /// Configurable backend for policy tests (malware, rate limit, MIME).
+    #[derive(Debug)]
+    struct TestBackend {
+        scan_matches: Vec<String>,
+        scan_error: Option<String>,
+        rate_allowed: bool,
+        mime_types: Vec<String>,
+        version: Option<String>,
+    }
+
+    impl Default for TestBackend {
+        fn default() -> Self {
+            Self {
+                scan_matches: Vec::new(),
+                scan_error: None,
+                rate_allowed: true,
+                mime_types: Vec::new(),
+                version: None,
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl FileManagerSecurityBackend for TestBackend {
+        async fn scan_upload_bytes(&self, _data: &[u8]) -> Result<Vec<String>, String> {
+            if let Some(err) = &self.scan_error {
+                return Err(err.clone());
+            }
+            Ok(self.scan_matches.clone())
+        }
+
+        fn check_upload_rate_allowed(&self, _client_key: &str, _bytes: u64) -> bool {
+            self.rate_allowed
+        }
+
+        fn detect_content_mime_types(&self, _data: &[u8]) -> Vec<String> {
+            self.mime_types.clone()
+        }
+
+        fn yara_rule_version(&self) -> Option<String> {
+            self.version.clone()
+        }
+    }
+
+    fn test_manager_with_backend(config: FileManagerConfig, backend: TestBackend) -> FileManager {
+        FileManager::new(config, Arc::new(backend))
+    }
 
     #[test]
     fn test_parse_size() {
@@ -1397,8 +1476,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_extension_blocking_with_allowlist() {
-        let mut config = FileManagerConfig::default();
-        config.allowed_extensions = vec!["txt".to_string(), "md".to_string()];
+        let config = FileManagerConfig {
+            allowed_extensions: vec!["txt".to_string(), "md".to_string()],
+            ..FileManagerConfig::default()
+        };
 
         assert!(!config.is_extension_blocked("txt"));
         assert!(!config.is_extension_blocked("md"));
@@ -1413,7 +1494,7 @@ mod tests {
             root_path: temp_dir.path().to_path_buf(),
             ..FileManagerConfig::default()
         };
-        let manager = FileManager::new(config);
+        let manager = test_manager(config);
 
         manager.create_directory("/new/nested").await.unwrap();
         manager
@@ -1435,7 +1516,7 @@ mod tests {
             root_path: temp_dir.path().to_path_buf(),
             ..FileManagerConfig::default()
         };
-        let manager = FileManager::new(config);
+        let manager = test_manager(config);
 
         assert!(matches!(
             manager
@@ -1456,7 +1537,7 @@ mod tests {
             root_path: temp_dir.path().to_path_buf(),
             ..FileManagerConfig::default()
         };
-        let manager = FileManager::new(config);
+        let manager = test_manager(config);
 
         let dest_dir = temp_dir.path().join("extract_dest");
 
@@ -1484,5 +1565,324 @@ mod tests {
             !dest_dir.join("../../../etc/passwd").exists(),
             "Path traversal must not write outside destination"
         );
+    }
+
+    #[tokio::test]
+    async fn test_dotdot_escape_variants_rejected() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config = FileManagerConfig {
+            enabled: true,
+            root_path: temp_dir.path().to_path_buf(),
+            ..FileManagerConfig::default()
+        };
+        let manager = test_manager(config);
+
+        for path in [
+            "/..",
+            "/../outside.txt",
+            "/a/../../escape.txt",
+            "/a/b/../../../../escape.txt",
+        ] {
+            assert!(
+                matches!(
+                    manager.write_file(path, b"blocked".to_vec()).await,
+                    Err(FileManagerError::PathTraversal)
+                ),
+                "expected PathTraversal for {path}"
+            );
+        }
+
+        for path in ["", "/\0evil", "evil\0.txt"] {
+            assert!(
+                matches!(
+                    manager.read_file(path).await,
+                    Err(FileManagerError::InvalidPath(_))
+                ),
+                "expected InvalidPath for {path:?}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_symlinked_ancestor_escape_rejected() {
+        use std::os::unix::fs::symlink;
+
+        let outside_dir = tempfile::tempdir().unwrap();
+        std::fs::write(outside_dir.path().join("secret.txt"), b"secret").unwrap();
+
+        let root_dir = tempfile::tempdir().unwrap();
+        symlink(outside_dir.path(), root_dir.path().join("link")).unwrap();
+
+        let config = FileManagerConfig {
+            enabled: true,
+            root_path: root_dir.path().to_path_buf(),
+            ..FileManagerConfig::default()
+        };
+        let manager = test_manager(config);
+
+        // Existing file reached through a symlinked ancestor escapes the root.
+        assert!(matches!(
+            manager.read_file("/link/secret.txt").await,
+            Err(FileManagerError::PathTraversal)
+        ));
+
+        // Missing-leaf mutation under a symlinked ancestor whose nearest
+        // existing ancestor is outside the root must also be rejected.
+        assert!(matches!(
+            manager
+                .write_file("/link/new-evil.txt", b"blocked".to_vec())
+                .await,
+            Err(FileManagerError::PathTraversal)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_hidden_file_policy() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        std::fs::write(temp_dir.path().join(".hidden.txt"), b"h").unwrap();
+        std::fs::write(temp_dir.path().join("visible.txt"), b"v").unwrap();
+
+        let hidden_closed = test_manager(FileManagerConfig {
+            enabled: true,
+            root_path: temp_dir.path().to_path_buf(),
+            allow_hidden_files: false,
+            ..FileManagerConfig::default()
+        });
+        let listing = hidden_closed.list_directory("/").await.unwrap();
+        assert!(listing.entries.iter().all(|e| !e.is_hidden));
+        assert!(listing.entries.iter().any(|e| e.name == "visible.txt"));
+
+        let hidden_open = test_manager(FileManagerConfig {
+            enabled: true,
+            root_path: temp_dir.path().to_path_buf(),
+            allow_hidden_files: true,
+            ..FileManagerConfig::default()
+        });
+        let listing = hidden_open.list_directory("/").await.unwrap();
+        assert!(listing.entries.iter().any(|e| e.name == ".hidden.txt"));
+    }
+
+    #[tokio::test]
+    async fn test_blocked_extension_enforced_on_write_and_upload() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let manager = test_manager(FileManagerConfig {
+            enabled: true,
+            root_path: temp_dir.path().to_path_buf(),
+            ..FileManagerConfig::default()
+        });
+
+        assert!(matches!(
+            manager.write_file("/evil.exe", b"x".to_vec()).await,
+            Err(FileManagerError::ExtensionBlocked(_))
+        ));
+        assert!(matches!(
+            manager.upload_file("/", "evil.dll", b"x".to_vec()).await,
+            Err(FileManagerError::ExtensionBlocked(_))
+        ));
+        manager
+            .write_file("/ok.txt", b"fine".to_vec())
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_max_path_depth_enforced_for_missing_leaf() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let manager = test_manager(FileManagerConfig {
+            enabled: true,
+            root_path: temp_dir.path().to_path_buf(),
+            ..FileManagerConfig::default()
+        });
+
+        let deep = format!("/{}/leaf.txt", vec!["a"; 60].join("/"));
+        assert!(matches!(
+            manager.write_file(&deep, b"x".to_vec()).await,
+            Err(FileManagerError::InvalidPath(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_file_size_limits() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let manager = test_manager(FileManagerConfig {
+            enabled: true,
+            root_path: temp_dir.path().to_path_buf(),
+            max_file_size: 4,
+            ..FileManagerConfig::default()
+        });
+
+        assert!(matches!(
+            manager.write_file("/big.txt", b"12345".to_vec()).await,
+            Err(FileManagerError::FileTooLarge(_))
+        ));
+        assert!(matches!(
+            manager.upload_file("/", "big.txt", b"12345".to_vec()).await,
+            Err(FileManagerError::FileTooLarge(_))
+        ));
+
+        // Existing oversized file is rejected on read.
+        std::fs::write(temp_dir.path().join("big.txt"), b"12345").unwrap();
+        assert!(matches!(
+            manager.read_file("/big.txt").await,
+            Err(FileManagerError::FileTooLarge(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_directory_file_type_confusion() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(temp_dir.path().join("subdir")).unwrap();
+        std::fs::write(temp_dir.path().join("file.txt"), b"data").unwrap();
+        let manager = test_manager(FileManagerConfig {
+            enabled: true,
+            root_path: temp_dir.path().to_path_buf(),
+            ..FileManagerConfig::default()
+        });
+
+        assert!(matches!(
+            manager.read_file("/subdir").await,
+            Err(FileManagerError::InvalidPath(_))
+        ));
+        assert!(matches!(
+            manager.list_directory("/file.txt").await,
+            Err(FileManagerError::InvalidPath(_))
+        ));
+        assert!(matches!(
+            manager.search("x", "/file.txt").await,
+            Err(FileManagerError::InvalidPath(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_delete_rejects_non_empty_directory() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(temp_dir.path().join("full")).unwrap();
+        std::fs::write(temp_dir.path().join("full/a.txt"), b"a").unwrap();
+        std::fs::create_dir(temp_dir.path().join("empty")).unwrap();
+        let manager = test_manager(FileManagerConfig {
+            enabled: true,
+            root_path: temp_dir.path().to_path_buf(),
+            ..FileManagerConfig::default()
+        });
+
+        assert!(matches!(
+            manager.delete("/full").await,
+            Err(FileManagerError::DirectoryNotEmpty(_))
+        ));
+        assert!(matches!(
+            manager.delete("/missing").await,
+            Err(FileManagerError::NotFound(_))
+        ));
+        manager.delete("/empty").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_upload_malware_detection_and_scan_error_policy() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config = || FileManagerConfig {
+            enabled: true,
+            root_path: temp_dir.path().to_path_buf(),
+            ..FileManagerConfig::default()
+        };
+
+        let infected = test_manager_with_backend(
+            config(),
+            TestBackend {
+                scan_matches: vec!["EvilRule".to_string()],
+                ..TestBackend::default()
+            },
+        );
+        assert!(matches!(
+            infected
+                .upload_file("/", "evil.txt", b"payload".to_vec())
+                .await,
+            Err(FileManagerError::MalwareDetected(_))
+        ));
+
+        // Scan errors fail open with a warning (historical behavior): the
+        // upload still succeeds.
+        let flaky = test_manager_with_backend(
+            config(),
+            TestBackend {
+                scan_error: Some("scanner unavailable".to_string()),
+                ..TestBackend::default()
+            },
+        );
+        flaky
+            .upload_file("/", "maybe.txt", b"payload".to_vec())
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_upload_rate_limit_and_mime_allowlist() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config = |mime_types: Vec<String>| FileManagerConfig {
+            enabled: true,
+            root_path: temp_dir.path().to_path_buf(),
+            allowed_mime_types: mime_types,
+            ..FileManagerConfig::default()
+        };
+
+        let throttled = test_manager_with_backend(
+            config(Vec::new()),
+            TestBackend {
+                rate_allowed: false,
+                ..TestBackend::default()
+            },
+        );
+        assert!(matches!(
+            throttled.upload_file("/", "a.txt", b"x".to_vec()).await,
+            Err(FileManagerError::InvalidPath(msg)) if msg.contains("Rate limit")
+        ));
+
+        let mime_enforced = test_manager_with_backend(
+            config(vec!["text/plain".to_string()]),
+            TestBackend {
+                mime_types: vec!["application/x-dosexec".to_string()],
+                ..TestBackend::default()
+            },
+        );
+        assert!(matches!(
+            mime_enforced.upload_file("/", "a.txt", b"MZ".to_vec()).await,
+            Err(FileManagerError::InvalidPath(msg)) if msg.contains("MIME type")
+        ));
+
+        let mime_ok = test_manager_with_backend(
+            config(vec!["text/plain".to_string()]),
+            TestBackend {
+                mime_types: vec!["text/plain".to_string()],
+                ..TestBackend::default()
+            },
+        );
+        mime_ok
+            .upload_file("/", "ok.txt", b"hello".to_vec())
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_yara_rule_version_delegates_to_backend() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let manager = test_manager_with_backend(
+            FileManagerConfig {
+                enabled: true,
+                root_path: temp_dir.path().to_path_buf(),
+                ..FileManagerConfig::default()
+            },
+            TestBackend {
+                version: Some("v42".to_string()),
+                ..TestBackend::default()
+            },
+        );
+        assert_eq!(manager.yara_rule_version(), Some("v42".to_string()));
+
+        let unversioned = test_manager(FileManagerConfig {
+            enabled: true,
+            root_path: temp_dir.path().to_path_buf(),
+            ..FileManagerConfig::default()
+        });
+        assert_eq!(unversioned.yara_rule_version(), None);
     }
 }

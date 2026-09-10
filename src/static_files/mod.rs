@@ -1,13 +1,12 @@
-//! Transitional compatibility surface for `synvoid_static_files`.
+//! Compatibility facade over `synvoid_static_files`.
 //!
-//! Most static-file implementation belongs in `synvoid_static_files`. This root
-//! module still exposes compatibility shims and a local `file_manager` adapter
-//! during the modularization transition. See `architecture/root_module_ledger.md`
-//! before adding new implementation here.
+//! Canonical static-file implementation (including `file_manager`) lives in
+//! `synvoid_static_files`. This root module only re-exports crate modules.
+//! See `architecture/root_module_ledger.md` before adding code here.
 
 pub use synvoid_static_files::client;
 pub use synvoid_static_files::directory;
-pub mod file_manager;
+pub use synvoid_static_files::file_manager;
 pub use synvoid_static_files::minifier;
 
 pub use synvoid_config::mesh::{

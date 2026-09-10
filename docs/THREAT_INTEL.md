@@ -210,20 +210,24 @@ YARA rules follow a content-addressed distribution model:
 
 ### File Upload Scanning
 
-The FileManager integrates with YARA rules for malware scanning on upload:
+The canonical `FileManager` (`crates/synvoid-static-files/src/file_manager.rs`)
+scans uploads through the injected `FileManagerSecurityBackend` trait (the
+production `UploadFileManagerBackend` in `src/http/file_manager.rs` wraps the
+`synvoid-upload` scanner + rate limiter + signature registry):
 
 ```rust
-// In src/static_files/file_manager.rs
-fn reload_yara_rules_if_needed(&self) -> Result<(), YaraError> {
-    // Check version from YaraRulesManager
-    // Reload scanner when version changes
-}
-
-if self.scan_on_upload {
-    // Scan file with YARA before storing
-    let matches = scanner.scan_file(&path)?;
-    if !matches.is_empty() {
-        return Err(YaraError::MalwareDetected(matches));
+// Scanning is backend-owned; there is no periodic-refresh method.
+// The active rule version is observable via `yara_rule_version()`.
+if self.config.scan_on_upload {
+    // Scan bytes with the injected backend before storing
+    match self.security.scan_upload_bytes(&data).await {
+        Ok(matched) if !matched.is_empty() => {
+            return Err(FileManagerError::MalwareDetected(matched.join(", ")));
+        }
+        Err(e) => {
+            tracing::warn!("Malware scan error for file {}: {}", filename, e);
+        }
+        _ => {}
     }
 }
 ```
@@ -724,5 +728,6 @@ The system records metrics for monitoring:
 | `crates/synvoid-mesh/src/mesh/yara_rules.rs` | YaraRulesManager implementation |
 | `crates/synvoid-mesh/src/mesh/dht/keys.rs` | DHT key definitions and formats |
 | `crates/synvoid-mesh/src/mesh/config.rs` | Configuration structures |
-| `src/static_files/file_manager.rs` | YARA integration for file scanning |
+| `crates/synvoid-static-files/src/file_manager.rs` | Canonical `FileManager` + `FileManagerSecurityBackend` trait (upload scanning boundary) |
+| `src/http/file_manager.rs` | Production `UploadFileManagerBackend` over `synvoid-upload` types |
 | `src/block_store.rs` | IP blocking implementation |

@@ -34,6 +34,7 @@ cargo nextest run --cargo-profile ci --profile ci \
   --test worker_mesh_supervision_boundary_guard --test mesh_task_ownership_guard \
   --test enforcement_decision_contract_guard \
   --test http_normalization_ownership_guard --test waf_ownership_guard \
+  --test static_file_manager_ownership_guard \
   --test admin_plugin_boundary_guard --test track3_invariant_closure \
   --test http_differential_closure --test track3_concurrency_closure \
   --features mesh
@@ -51,7 +52,7 @@ cargo test --test failure_injection --profile ci
 | Core-only compilation | `cargo check --no-default-features --profile ci` | Yes |
 | Architecture static guards | `cargo nextest run -p synvoid-repo-guards` | Yes |
 | Security regression detection | `cargo test --test security_regression --profile ci --test-threads=1` | Yes |
-| Composition, lifecycle, plugin, CLI, admin, mesh, ABI, and ownership guards | 20 root guard tests via consolidated nextest | Yes |
+| Composition, lifecycle, plugin, CLI, admin, mesh, ABI, and ownership guards | 21 root guard tests via consolidated nextest | Yes |
 | synvoid-core admin/mesh edge cases | 2 synvoid-core tests via nextest | Yes |
 | Failure injection (supervisor, block-store, plugin) | `cargo test --test failure_injection --profile ci` | Yes |
 
@@ -298,7 +299,7 @@ Every current CI command classified by product property and routine eligibility:
 | Full mesh+dns compile | `cargo check --no-default-features --features mesh,dns` | No | Full local |
 | Repo-guards crate | `cargo nextest run -p synvoid-repo-guards` | Yes | Keep in routine |
 | Security regression | `cargo test --test security_regression --profile ci --test-threads=1` | Yes | Keep in routine |
-| 20 root guard tests | `cargo nextest run ... root-guards` (consolidated; 13 + 7 Phase 24 additions) | Yes | Keep in routine |
+| 21 root guard tests | `cargo nextest run ... root-guards` (consolidated; 13 + 7 Phase 24 additions + 1 Phase 02 static file-manager guard) | Yes | Keep in routine |
 | synvoid-core admin/mesh | `cargo nextest run -p synvoid-core ... core-admin-tests` (consolidated) | Yes | Keep in routine |
 | Failure injection | `cargo test --test failure_injection --profile ci` | Yes | Keep in routine |
 | Root test ownership | Included in root-guards consolidation | Yes | Keep in routine |

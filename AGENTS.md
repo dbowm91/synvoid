@@ -106,6 +106,7 @@ Root-module ownership policy lives in `architecture/root_module_ledger.md` — p
 | `src/admin/handlers/{logs,probes,stats,system}.rs`, `common.rs` DTOs, `auth.rs`, `rate_limit.rs` | `crates/synvoid-admin/src/` (canonical; root paths are facades + transport helpers) |
 | `src/spin/*.rs`, `src/serverless/*.rs` (impl) | `crates/synvoid-plugin-runtime/src/spin/`, `crates/synvoid-serverless/src/` (root paths are re-export shims) |
 | `src/proxy/*.rs`, `src/http3/*.rs` (impl) | `crates/synvoid-proxy/src/`, `crates/synvoid-http3/src/` (root paths are re-export shims) |
+| `src/static_files/file_manager.rs` (impl) | `crates/synvoid-static-files/src/file_manager.rs` (canonical; root is pure facade; security via injected `FileManagerSecurityBackend`, adapter in `src/http/file_manager.rs`) |
 
 ## Security Invariants (violations break guard tests)
 

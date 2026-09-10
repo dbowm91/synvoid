@@ -1,5 +1,6 @@
 pub mod client;
 pub mod directory;
+pub mod file_manager;
 pub mod image_poisoning;
 pub mod image_rights;
 pub mod minifier;

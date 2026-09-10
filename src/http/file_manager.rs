@@ -11,7 +11,80 @@ use tokio::sync::RwLock as TokioRwLock;
 
 use crate::admin::verify_admin_token;
 use crate::config::ConfigManager;
-use crate::static_files::file_manager::FileManager;
+use synvoid_static_files::file_manager::{FileManager, FileManagerSecurityBackend};
+
+/// Production upload-security backend over `synvoid-upload` types.
+///
+/// Composition-root adapter: owns the concrete `MalwareScanner` (with bundled
+/// YARA rules when `scan_on_upload`) and `UploadRateLimiter`, plus content
+/// MIME detection via the upload signature registry. `synvoid-static-files`
+/// consumes only the narrow `FileManagerSecurityBackend` trait so the domain
+/// crate stays free of the upload → mesh → proxy → static-files cycle.
+pub struct UploadFileManagerBackend {
+    scanner: synvoid_upload::malware_scanner::MalwareScanner,
+    rate_limiter: synvoid_upload::rate_limit::UploadRateLimiter,
+}
+
+impl UploadFileManagerBackend {
+    pub fn new(
+        scan_on_upload: bool,
+        rate_config: synvoid_upload::rate_limit::RateLimitConfig,
+    ) -> Self {
+        let scanner = if scan_on_upload {
+            match synvoid_upload::yara_scanner::YaraScanner::new(
+                synvoid_upload::yara_scanner::YaraRulesSource::Bundled,
+            ) {
+                Ok(yara) => synvoid_upload::malware_scanner::MalwareScanner::with_yara(Some(yara)),
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to create YARA scanner for FileManager: {}, using built-in rules only",
+                        e
+                    );
+                    synvoid_upload::malware_scanner::MalwareScanner::new()
+                }
+            }
+        } else {
+            synvoid_upload::malware_scanner::MalwareScanner::with_yara(None)
+        };
+        Self {
+            scanner,
+            rate_limiter: synvoid_upload::rate_limit::UploadRateLimiter::new(rate_config),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl FileManagerSecurityBackend for UploadFileManagerBackend {
+    async fn scan_upload_bytes(&self, data: &[u8]) -> Result<Vec<String>, String> {
+        self.scanner
+            .scan_bytes(data)
+            .await
+            .map(|result| result.matched_rule_names())
+            .map_err(|e| e.to_string())
+    }
+
+    fn check_upload_rate_allowed(&self, client_key: &str, bytes: u64) -> bool {
+        self.rate_limiter
+            .check_rate_limit(client_key, bytes)
+            .is_allowed()
+    }
+
+    fn detect_content_mime_types(&self, data: &[u8]) -> Vec<String> {
+        synvoid_upload::signature::global_signature_registry()
+            .detect(data)
+            .map(|m| {
+                m.detected_mime_types
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn yara_rule_version(&self) -> Option<String> {
+        self.scanner.get_yara_version()
+    }
+}
 
 #[derive(Debug, Serialize)]
 struct ApiResponse<T> {
@@ -373,12 +446,11 @@ pub fn create_file_manager_router(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::static_files::file_manager::FileManagerConfig;
     use std::path::PathBuf;
+    use synvoid_static_files::file_manager::{AllowAllSecurityBackend, FileManagerConfig};
 
     #[tokio::test]
     async fn test_file_manager_creation() {
-        use synvoid_upload::rate_limit::RateLimitConfig;
         let config = FileManagerConfig {
             enabled: true,
             root_path: PathBuf::from("/tmp"),
@@ -387,14 +459,29 @@ mod tests {
             allowed_extensions: vec![],
             allowed_mime_types: vec![],
             scan_on_upload: false,
-            rate_limit_config: RateLimitConfig::default(),
             allow_hidden_files: false,
             allow_symlinks: false,
             archive_max_depth: 3,
             archive_max_size: 100 * 1024 * 1024,
         };
 
-        let fm = FileManager::new(config);
+        let fm = FileManager::new(config, Arc::new(AllowAllSecurityBackend));
         assert!(fm.config().enabled);
+    }
+
+    #[tokio::test]
+    async fn test_upload_backend_reports_yara_version() {
+        let backend = UploadFileManagerBackend::new(
+            true,
+            synvoid_upload::rate_limit::RateLimitConfig::default(),
+        );
+        // Bundled YARA rules compile to an `init-<hash>` generation.
+        assert!(backend.yara_rule_version().is_some());
+
+        let backend_no_scan = UploadFileManagerBackend::new(
+            false,
+            synvoid_upload::rate_limit::RateLimitConfig::default(),
+        );
+        assert_eq!(backend_no_scan.yara_rule_version(), None);
     }
 }

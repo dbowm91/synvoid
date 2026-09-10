@@ -242,3 +242,9 @@ name = "track3_concurrency_closure"
 class = "composition"
 owners = ["synvoid-block-store", "synvoid-waf", "synvoid-ipc"]
 reason = "validates Phase 24 targeted concurrency invariants for rate limiting, block storage, and jail codec"
+
+[[test]]
+name = "static_file_manager_ownership_guard"
+class = "static_policy"
+owners = ["synvoid-static-files"]
+reason = "validates Phase 02 static file-manager ownership convergence (canonical FileManager vs root facade, no no-op refresh)"

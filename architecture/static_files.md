@@ -2,7 +2,8 @@
 
 ## 1. Purpose and Responsibility
 
-The Static Files module (`src/static_files/`) provides **full-featured static file serving** with path traversal protection, ETag/Last-Modified caching, range requests, pre-compressed file support, on-the-fly compression, minification, directory listing, and zero-copy support.
+The Static Files subsystem (canonical: `crates/synvoid-static-files`, root
+`src/static_files/` is a pure re-export facade) provides **full-featured static file serving** with path traversal protection, ETag/Last-Modified caching, range requests, pre-compressed file support, on-the-fly compression, minification, directory listing, and zero-copy support — plus the canonical `FileManager` for filesystem mutations (directory listing/mutations, upload restrictions).
 
 **Core Responsibilities:**
 - Secure static file serving with path traversal prevention
@@ -13,6 +14,7 @@ The Static Files module (`src/static_files/`) provides **full-featured static fi
 - CSS/JS minification integration
 - Directory listing with sorting/pagination
 - Zero-copy file-to-socket transfer
+- `FileManager` mutations with traversal/symlink/hidden-file/extension/size policy
 
 ---
 
@@ -86,17 +88,41 @@ pub enum StaticError {
 | `into_response(result) -> Response` | Convert to HTTP response |
 | `get_matching_location(path)` | Find matching location |
 | `with_mesh_config(protection, compression, minification)` | Mesh configuration |
+| `FileManager::new(config, security)` | Mutation manager + injected `FileManagerSecurityBackend` |
+| `FileManager::yara_rule_version()` | Observable scanner rule version (backend-owned) |
+
+---
+
+## 3b. FileManager ownership and security backend (Phase 02)
+
+`FileManager` (`crates/synvoid-static-files/src/file_manager.rs`) is the
+single canonical implementation. `src/static_files/mod.rs` is a pure
+re-export facade; `src/http/file_manager.rs` and `src/http/webdav.rs` import
+the canonical `synvoid_static_files::file_manager` path and keep HTTP status
+mapping plus admin authentication in the root adapters.
+
+Upload security (malware scanning, rate limiting, content MIME detection) is
+injected through the narrow `FileManagerSecurityBackend` trait. The
+production `UploadFileManagerBackend` adapter lives in
+`src/http/file_manager.rs` over `synvoid-upload` types; the trait boundary
+avoids the `synvoid-upload` → `synvoid-mesh` → `synvoid-proxy` →
+`synvoid-static-files` dependency cycle. There is no periodic-refresh
+background task: the backend owns its scanner generation, `yara_rule_version`
+exposes it, and new rules require a new backend + manager. Mesh rule feeds
+stay owned by `UploadValidator`.
 
 ---
 
 ## 4. Integration Points
 
 - **HTTP Server**: Static file serving in request pipeline
+- **HTTP file-manager/WebDAV adapters** (`src/http/file_manager.rs`, `src/http/webdav.rs`): root-owned auth + status mapping over canonical `FileManager`; production `UploadFileManagerBackend` adapter
 - **MIME**: Content-type detection
 - **Zero Copy**: Kernel-level file transfer
 - **Theme**: Directory listing rendering
 - **Minification**: CSS/JS minification
 - **Mesh**: Image protection and compression config
+- **Upload scanning** (`synvoid-upload`): malware/YARA scanning, rate limiting, signature MIME detection — consumed only through `FileManagerSecurityBackend`
 
 ---
 
@@ -109,8 +135,12 @@ pub enum StaticError {
 - **Zero-Copy**: sendfile(2) on Linux/macOS for large files
 - **Directory Listing**: Sortable, paginated, filterable listings
 
-The root-owned file-manager adapter resolves mutation paths by normalizing
+The canonical file manager resolves mutation paths by normalizing
 relative components and canonicalizing the nearest existing ancestor. This
 allows safe creation of new files/directories while retaining root-prefix and
-symlink-escape checks. TAR/TAR.GZ extraction rejects symbolic and hard-link
-entries; archive paths are checked before writing.
+symlink-escape checks. `MAX_PATH_DEPTH` is enforced before any filesystem
+access so missing-leaf paths observe the same bound as existing targets.
+TAR/TAR.GZ extraction rejects symbolic and hard-link entries; archive paths
+are checked before writing. `FileManagerError::status_code() -> u16` stays
+transport-neutral in the crate; Axum status mapping lives in the root HTTP
+adapters.

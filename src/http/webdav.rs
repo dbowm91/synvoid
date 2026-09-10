@@ -22,7 +22,7 @@ use tokio::sync::RwLock as TokioRwLock;
 
 use crate::admin::verify_admin_token;
 use crate::config::ConfigManager;
-use crate::static_files::file_manager::FileManager;
+use synvoid_static_files::file_manager::FileManager;
 
 /// WebDAV configuration
 #[derive(Debug, Clone)]
@@ -159,7 +159,7 @@ async fn propfind_handler(
 /// Generate PROPFIND XML response
 fn generate_propfind_response(
     path: &str,
-    listing: &crate::static_files::file_manager::DirectoryListing,
+    listing: &synvoid_static_files::file_manager::DirectoryListing,
 ) -> String {
     let mut xml = String::new();
     xml.push_str(r#"<?xml version="1.0" encoding="UTF-8"?>"#);

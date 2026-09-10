@@ -7,13 +7,17 @@ description: Static file serving, directory listing templates, and filesystem co
 
 ## Overview
 
-The static files module (`src/static_files/`) serves static content from the filesystem with optional custom directory listing templates.
+The static files subsystem (canonical: `crates/synvoid-static-files/`) serves static content from the filesystem with optional custom directory listing templates, plus the canonical `FileManager` for filesystem mutations. Root `src/static_files/mod.rs` is a pure re-export facade — do not add implementation there.
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `src/static_files/mod.rs` | StaticFileHandler, main serving logic, directory listing rendering |
+| `crates/synvoid-static-files/src/lib.rs` | StaticFileHandler, main serving logic, directory listing rendering |
+| `crates/synvoid-static-files/src/file_manager.rs` | Canonical `FileManager` + `FileManagerSecurityBackend` trait |
+| `src/static_files/mod.rs` | Pure re-export facade (no implementation) |
+| `src/http/file_manager.rs` | Root HTTP adapter + production `UploadFileManagerBackend` |
+| `src/http/webdav.rs` | Root WebDAV adapter over canonical `FileManager` |
 | `crates/synvoid-config/src/site/static_files.rs` | SiteStaticThemeConfig |
 
 ## StaticFileHandler
@@ -155,11 +159,30 @@ locations = [
 
 When serving a directory, the location's theme takes precedence over the site-wide theme.
 
+## FileManager
+
+The canonical `FileManager` (`crates/synvoid-static-files/src/file_manager.rs`) owns filesystem validation, directory listing/mutations, upload restrictions (hidden files, blocked/allowed extensions, size limits, depth bound, archive policy), and path-traversal/symlink safety.
+
+Upload security (malware scanning, rate limiting, content MIME detection) is injected through the narrow `FileManagerSecurityBackend` trait — never import `synvoid-upload` or root `synvoid::` paths from the crate (dependency cycle via mesh → proxy). The production `UploadFileManagerBackend` adapter lives in `src/http/file_manager.rs`.
+
+There is no periodic YARA-refresh background task. The backend owns its scanner generation; `FileManager::yara_rule_version()` exposes the observable version. To pick up new rules, construct a new backend + manager (mesh feeds stay owned by `UploadValidator`).
+
+```rust
+let manager = FileManager::new(config, security_backend);
+```
+
 ## Testing
 
 ```bash
-# Run integration tests
-cargo test --test integration_test
+# File-manager unit tests (path safety, upload policy)
+cargo test -p synvoid-static-files --profile ci file_manager
+
+# HTTP adapter tests
+cargo test --lib --profile ci file_manager
+cargo test --lib --profile ci webdav
+
+# Ownership guard
+cargo test --test static_file_manager_ownership_guard --profile ci
 
 # Check compilation
 cargo check --lib

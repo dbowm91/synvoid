@@ -43,3 +43,4 @@ synvoid-ipc = { path = "../synvoid-ipc" , version = "0.1" }
 synvoid-theme = { path = "../synvoid-theme" , version = "0.1" }
 synvoid-utils = { path = "../synvoid-utils" , version = "0.1" }
 synvoid-app-handlers = { path = "../synvoid-app-handlers" , version = "0.1" }
+async-trait = "0.1"

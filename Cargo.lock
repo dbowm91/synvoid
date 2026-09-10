@@ -8732,6 +8732,7 @@ name = "synvoid-static-files"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "brotli",
  "bytes",
  "flate2",
