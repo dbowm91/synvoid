@@ -45,6 +45,7 @@ mod accept_loop;
 mod connection_types;
 mod observability;
 
+pub(crate) use connection_types::DrainGuard;
 pub(crate) use observability::send_request_log_if_enabled;
 
 use connection_types::*;
@@ -305,6 +306,7 @@ impl HttpServer {
             #[cfg(feature = "mesh")]
             serverless_manager.clone(),
             Arc::clone(&upstream_client_registry),
+            None,
         )
         .await?;
 
@@ -355,6 +357,8 @@ impl HttpServer {
                 upstream_client_registry: Arc::clone(&upstream_client_registry),
                 request_drop: Arc::clone(&request_drop),
                 request_log: send_request_log_if_enabled,
+                ja4_hash: None,
+                forwarded_protocol: synvoid_proxy::ForwardedProtocol::Http,
                 #[cfg(feature = "mesh")]
                 serverless_manager: serverless_manager.clone(),
                 #[cfg(feature = "mesh")]

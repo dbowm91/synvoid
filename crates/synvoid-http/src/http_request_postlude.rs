@@ -111,6 +111,14 @@ pub struct HttpRequestPostludeContext<W> {
     pub upstream_client_registry: Arc<UpstreamClientRegistry>,
     pub request_drop: Arc<dyn Fn() + Send + Sync>,
     pub request_log: RequestLogFn,
+    /// Phase 01 (TLS convergence): JA4 fingerprint from the TLS handshake.
+    /// `None` on plaintext HTTP; `Some` on HTTPS so the buffered WAF check
+    /// keeps the same signal `HttpsServer` previously passed directly.
+    pub ja4_hash: Option<String>,
+    /// Phase 01: downstream scheme reported to upstreams via
+    /// `X-Forwarded-Proto`. `Http` preserves existing plaintext behavior;
+    /// HTTPS passes `Https`.
+    pub forwarded_protocol: synvoid_proxy::ForwardedProtocol,
     #[cfg(feature = "mesh")]
     pub serverless_manager: Option<Arc<synvoid_serverless::ServerlessManager>>,
     #[cfg(feature = "mesh")]
@@ -181,6 +189,8 @@ where
         upstream_client_registry,
         request_drop,
         request_log,
+        ja4_hash,
+        forwarded_protocol,
         #[cfg(feature = "mesh")]
         serverless_manager,
         #[cfg(feature = "mesh")]
@@ -237,6 +247,7 @@ where
     let headers_for_waf_for_check_for_closure = headers_for_waf_for_check.clone();
     let site_bot_config_for_waf_for_closure = site_bot_config_for_waf.clone();
     let query_string_for_closure = query_string.map(|s| s.to_string());
+    let ja4_for_closure = ja4_hash.clone();
     let waf_for_closure = Arc::clone(&waf);
     if let Some(response) = maybe_handle_buffered_request_waf(
         target_for_waf,
@@ -261,6 +272,7 @@ where
             let headers_for_waf_for_check = headers_for_waf_for_check_for_closure.clone();
             let site_bot_config_for_waf = site_bot_config_for_waf_for_closure.clone();
             let query_string = query_string_for_closure.clone();
+            let ja4_hash = ja4_for_closure.clone();
             async move {
                 waf.check_request_full_owned(
                     Some(site_id),
@@ -271,7 +283,7 @@ where
                     headers_for_waf_for_check,
                     None,
                     user_agent,
-                    None,
+                    ja4_hash,
                     Some(site_bot_config_for_waf),
                 )
                 .await
@@ -417,6 +429,7 @@ where
         body_slice,
         upstream_client_registry,
         client,
+        forwarded_protocol,
         #[cfg(feature = "mesh")]
         serverless_manager,
         #[cfg(feature = "mesh")]

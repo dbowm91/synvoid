@@ -17,47 +17,39 @@ Reusable parsing/normalization/dispatch lives canonically in `synvoid-http`
 root services, 5 application handlers, and the `HttpServer` composition root.
 Full matrix: `architecture/http_ownership_convergence.md`.
 
-Both share the same request processing logic. The unified handler architecture (`src/server/request_handler.rs`) provides a shared abstraction to eliminate code duplication.
+Both share the same request processing logic (Phase 01 convergence):
+`HttpServer::handle_request` and `HttpsServer::handle_request_with_cache`
+compose the same canonical `synvoid_http::prepare_http_request_flow` +
+`synvoid_http::handle_http_request_postlude` stages. TLS keeps only
+connection/transport work (accept, flood protection, handshake, ALPN,
+certificate/SNI selection, JA4 extraction, connection lifecycle).
 
-## Unified Handler Architecture
+## Converged Request Composition (Phase 01)
 
-### ConnectionMeta Trait
+Transport differences cross the boundary as narrow values, not traits:
 
-Both connection types implement the `ConnectionMeta` trait:
+- `ja4_hash: Option<String>` — `HttpsConnection::get_ja4()` on TLS,
+  `None` on plaintext; threaded into both the streaming fast-path header
+  check (prelude) and the buffered WAF check (postlude).
+- `forwarded_protocol: ForwardedProtocol` — `Https` on TLS, `Http` on
+  plaintext; only forwarded header that differs (`X-Forwarded-Proto`).
+- `alt_svc: None` on TLS (Alt-Svc advertisement stays an HTTP-plane
+  concern); `local_addr` captured pre-handshake for vhost routing;
+  `mesh_backend_pool: None` on TLS (never wired there).
 
-```rust
-pub trait ConnectionMeta: Send + Sync {
-    fn request_drop(&self);
-    fn should_drop(&self) -> bool;
-    fn get_ja4(&self) -> Option<String>;
-    fn supports_websocket(&self) -> bool { true }
-    fn protocol(&self) -> &'static str;
-    fn tls_context(&self) -> TlsContext;
-}
-```
-
-### TlsContext
-
-TLS metadata is carried through the request pipeline via `TlsContext`:
-
-```rust
-pub struct TlsContext {
-    pub ja4_hash: Option<String>,
-    pub protocol: &'static str,
-}
-```
-
-- **HttpConnection**: `get_ja4()` returns `None`, `protocol()` returns `"http"`
-- **HttpsConnection**: `get_ja4()` returns the actual JA4 hash, `protocol()` returns `"https"`
+Do not reintroduce a shared connection trait or `dyn Any` abstraction to
+make the servers look identical — the Phase 01 plan rejects that. Guard:
+`tls_request_flow_stays_converged` in
+`tests/http_normalization_ownership_guard.rs`; parity:
+`tests/http_tls_parity.rs`.
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
 | `src/http/server.rs` + `src/http/server/` | HTTP listener, `HttpServerRuntime` service bundle, accept loop (root composition) |
-| `src/tls/server.rs` | HTTPS listener + `HttpsConnection` handling (root integration; core TLS in `synvoid-tls`) |
+| `src/tls/server.rs` | HTTPS listener + `HttpsConnection` handling (root integration; core TLS in `synvoid-tls`); request policy via canonical `synvoid-http` stages |
 | `crates/synvoid-http/src/` | Canonical stages: `framing`, `early_parse`, `headers`, `request_parse`, `request_frontdoor`, `request_preparation`, `body_policy`, `waf_decision`, backend dispatches |
-| `src/server/request_handler.rs` | Unified handler traits and utilities |
 | `src/server/mod.rs` | UnifiedServer orchestration |
 
 Note: `src/server/` is split into focused modules — `startup_plan.rs`, `resources.rs`, `runtime_handles.rs`, `plugin_runtime.rs`, `waf_handler.rs` — with `mod.rs` re-exporting. See `architecture/worker_data_plane_composition_root.md`.
@@ -73,65 +65,49 @@ Note: `src/server/` is split into focused modules — `startup_plan.rs`, `resour
 │                                     └─ HttpsConnection         │
 └─────────────────────────────────────────────────────────────────┘
 
-Both connections implement ConnectionMeta:
+Both compose the same canonical stages:
     │
     ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│ ConnectionMeta Trait                                           │
-│  ├─ HttpConnection  ──► tls_context.protocol = "http"         │
-│  └─ HttpsConnection ──► tls_context.protocol = "https"      │
-│                            tls_context.ja4_hash = Some(...)     │
+│ synvoid-http canonical composition                             │
+│  ├─ prepare_http_request_flow (frontdoor/traffic/preflight/    │
+│  │   streaming-fast-path/body-policy/challenge)                │
+│  └─ handle_http_request_postlude (buffered WAF + dispatch +    │
+│      accounting)                                               │
+│  boundary: ja4_hash (Some on TLS) + ForwardedProtocol::Https   │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-## Working with the Unified Handler
+## Working with the Converged Handler
 
 ### Accessing JA4 Hash
 
 ```rust
-fn process_request<C: ConnectionMeta>(connection: Arc<C>) {
-    let tls_context = connection.tls_context();
-    if let Some(ja4) = tls_context.ja4_hash {
-        tracing::debug!("JA4 fingerprint: {}", ja4);
-    }
-}
+// In HttpsServer::handle_request_with_cache:
+let ja4_hash: Option<String> = http_conn.get_ja4();
+// threaded into prepare_http_request_flow + HttpRequestPostludeContext
 ```
 
 ### Checking Protocol
 
-```rust
-fn process_request<C: ConnectionMeta>(connection: Arc<C>) {
-    match connection.protocol() {
-        "https" => { /* TLS-specific logic */ }
-        "http" => { /* Plain HTTP logic */ }
-        _ => {}
-    }
-}
-```
+Upstreams observe the downstream scheme via `X-Forwarded-Proto`
+(`ForwardedProtocol::Https` on TLS, `Http` on plaintext). Request-path
+code must not branch on transport outside this header.
 
 ### WebSocket Support
 
-```rust
-fn process_request<C: ConnectionMeta>(connection: Arc<C>) {
-    if connection.supports_websocket() {
-        // Handle WebSocket upgrade
-    }
-}
-```
+WebSocket upgrades validate via canonical `validate_websocket_upgrade` in
+preflight and dispatch via `maybe_handle_websocket_upgrade` in the
+postlude on both transports. `.with_upgrades()` stays on each
+connection builder.
 
-## JA4 Wiring (O.1)
-
-JA4 fingerprinting is now accessible via `ConnectionMeta`:
+## JA4 Wiring (Phase 01)
 
 1. `HttpsConnection::new()` computes JA4 from TLS ClientHello
-2. `connection.get_ja4()` returns the hash
-3. Pass to WAF via `check_bot_protection()` to enable JA4-based bot detection
-
-```rust
-// In request handler
-let ja4_hash = connection.get_ja4();
-waf.check_bot_protection_with_ja4(client_ip, path, user_agent, ja4_hash.as_deref());
-```
+2. `http_conn.get_ja4()` returns the hash per request
+3. Passed as `ja4_hash` into `prepare_http_request_flow` (streaming
+   fast-path header check) and `HttpRequestPostludeContext::ja4_hash`
+   (buffered `check_request_full_owned`) for JA4-based bot detection
 
 ## Connection Structs
 
@@ -167,33 +143,32 @@ cargo check
 cargo clippy --lib -- -D warnings
 ```
 
-## Migration Progress
+## Migration Progress (Phase 01 complete)
 
 | Step | Status |
 |------|--------|
-| ConnectionMeta trait | ✅ Complete |
-| TlsContext struct | ✅ Complete |
-| JA4 accessible via trait | ✅ Complete |
-| Migrate request processing | ✅ Complete |
-| Remove duplicate code | ✅ Complete |
-| Wire JA4 to WAF | ✅ Complete |
+| Canonical prelude/postlude shared | ✅ Complete |
+| JA4 threaded into both WAF checks | ✅ Complete |
+| ForwardedProtocol boundary param | ✅ Complete |
+| Duplicate HTTPS pipeline removed | ✅ Complete |
+| Parity tests + convergence guard | ✅ Complete |
 
 ## Adding New Connection Types
 
-To add a new connection type (e.g., QUIC):
-
-1. Implement `ConnectionMeta` trait
-2. Add impl block in `src/server/request_handler.rs`
-3. Ensure `get_ja4()` returns appropriate value
+To add a new connection type (e.g., QUIC): keep transport work
+(handshake, ALPN, fingerprinting) in the transport module and call the
+same `prepare_http_request_flow` + `handle_http_request_postlude`
+composition with narrow boundary values (`ja4_hash`,
+`forwarded_protocol`). Do not add a shared connection trait.
 
 ## Common Issues
 
 ### WebSocket Not Working on HTTPS
 
 If WebSocket upgrades fail on HTTPS:
-1. Check that `supports_websocket()` returns `true`
-2. Verify `.with_upgrades()` is called on the HTTP/1 connection builder
-3. Ensure `hyper::upgrade::on()` is called before consuming the request body
+1. Verify `.with_upgrades()` is called on the HTTP/1 connection builder
+2. Ensure `hyper::upgrade::on()` is called before consuming the request body (canonical preflight does this)
+3. Check route target websocket config allows the upgrade
 
 ### JA4 Hash Not Available
 

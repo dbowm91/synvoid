@@ -34,6 +34,7 @@ pub fn prepare_upstream_proxy_dispatch_plan(
     parts: &http::request::Parts,
     upstream_client_registry: &Arc<UpstreamClientRegistry>,
     client: &HttpClient,
+    forwarded_protocol: ForwardedProtocol,
 ) -> UpstreamProxyDispatchPlan {
     let upstream_target =
         PreparedUpstreamTarget::new(&target.upstream, path, Some(&target.site_config.proxy));
@@ -89,7 +90,7 @@ pub fn prepare_upstream_proxy_dispatch_plan(
                     .headers
                     .as_ref()
                     .unwrap_or(&ProxyHeadersConfig::default()),
-                ForwardedProtocol::Http,
+                forwarded_protocol,
             ),
             client: upstream_client_registry
                 .get_or_create_streaming(&target.site_id, site_tls_config.as_ref()),

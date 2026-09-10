@@ -102,12 +102,12 @@ impl HttpConnection {
     }
 }
 
-pub(super) struct DrainGuard {
+pub(crate) struct DrainGuard {
     state: Option<Arc<WorkerDrainState>>,
 }
 
 impl DrainGuard {
-    pub(super) fn new(state: Option<Arc<WorkerDrainState>>) -> Self {
+    pub(crate) fn new(state: Option<Arc<WorkerDrainState>>) -> Self {
         if let Some(ref ds) = state {
             ds.increment_active();
         }

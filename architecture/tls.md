@@ -46,7 +46,15 @@ src/tls/
 **Entry Points:**
 - `HttpsServer::new()` — Constructor with all dependencies.
 - `HttpsServer::serve()` — Main loop: accepts TCP connections, performs flood checks, spawns async tasks for TLS handshakes, and routes HTTP/1.1 vs HTTP/2 based on ALPN negotiation.
-- `HttpsServer::handle_request_with_cache()` — Full request pipeline including early WAF decisions, bandwidth tracking, body collection, site routing, and upstream proxy dispatch.
+- `HttpsServer::handle_request_with_cache()` — Phase 01 converged handler:
+  composes the same canonical `synvoid_http::prepare_http_request_flow` +
+  `handle_http_request_postlude` stages as plaintext HTTP (frontdoor,
+  traffic control, preflight, streaming fast path, body policy, challenge
+  paths, buffered WAF decision, backend dispatch, accounting) with
+  `ForwardedProtocol::Https`, handshake JA4, `alt_svc: None`, and
+  pre-handshake `local_addr`. No HTTPS-local routing/body/WAF/challenge/
+  upstream/cache pipeline remains (see `http_request_pipeline.md` stage
+  matrix).
 
 **Flood Protection:** L3/L4 flood protection (`FloodProtector`) is applied **before** the TLS handshake, fixing an earlier bug where checks were done post-handshake.
 

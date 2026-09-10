@@ -73,6 +73,7 @@ pub struct BackendDispatchContext<W> {
     pub body_slice: Option<Arc<Bytes>>,
     pub upstream_client_registry: Arc<UpstreamClientRegistry>,
     pub client: synvoid_http_client::HttpClient,
+    pub forwarded_protocol: synvoid_proxy::ForwardedProtocol,
     #[cfg(feature = "mesh")]
     pub serverless_manager: Option<Arc<synvoid_serverless::ServerlessManager>>,
     #[cfg(feature = "mesh")]
@@ -167,6 +168,7 @@ where
         body_slice,
         upstream_client_registry,
         client,
+        forwarded_protocol,
         #[cfg(feature = "mesh")]
         serverless_manager,
         #[cfg(feature = "mesh")]
@@ -456,6 +458,7 @@ where
         &parts,
         &upstream_client_registry,
         &client,
+        forwarded_protocol,
     );
 
     handle_pass_upstream_proxy_phase(
@@ -471,6 +474,8 @@ where
         main_config,
         metrics,
         request_body_size,
+        client_ip,
+        forwarded_protocol,
         #[cfg(feature = "mesh")]
         mesh_transport,
         quictunnel_request,

@@ -1,5 +1,6 @@
 //! Root-test ownership: STATIC_POLICY
 //! Rationale: validates Phase 20 HTTP normalization ownership convergence
+//! plus Phase 01 TLS request-flow convergence
 //!
 //! Guards for `architecture/http_ownership_convergence.md`:
 //!
@@ -13,6 +14,11 @@
 //!   http3_waf_dispatch}`)
 //! - every `pub use synvoid_http::…` facade resolves to a real module in
 //!   `crates/synvoid-http/src` (prevents facade drift)
+//! - Phase 01: `src/tls/server.rs` composes the canonical
+//!   `prepare_http_request_flow` / `handle_http_request_postlude` stages and
+//!   must not reacquire its own request-policy pipeline (routing, body
+//!   collection, WAF-decision mapping, challenge rendering, upstream
+//!   dispatch, proxy-cache dispatch)
 
 use std::path::{Path, PathBuf};
 
@@ -153,6 +159,67 @@ fn root_http_has_no_duplicate_waf_decision_tables() {
     assert!(
         offenders.is_empty(),
         "root http must not duplicate WAF-decision mapping tables:\n{}",
+        offenders.join("\n")
+    );
+}
+
+/// Phase 01 (TLS convergence): `HttpsServer` must compose the canonical
+/// request-policy stages rather than maintaining its own pipeline.
+/// TLS connection handling stays root-owned (handshake, ALPN, SNI/certs,
+/// JA4 extraction, flood protection); request policy must not fork.
+#[test]
+fn tls_request_flow_stays_converged() {
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let text = read(&repo, "src/tls/server.rs");
+
+    // Canonical composition must be present: both stages invoked.
+    for required in [
+        "prepare_http_request_flow",
+        "handle_http_request_postlude",
+        "ForwardedProtocol::Https",
+        "ja4_hash",
+    ] {
+        assert!(
+            text.contains(required),
+            "src/tls/server.rs must compose canonical request policy (`{required}` missing)"
+        );
+    }
+
+    // Duplicate request-policy pipeline tokens must not reappear.
+    // (Each is owned by `synvoid-http` or the proxy/WAF crates.)
+    let forbidden: &[&str] = &[
+        "route_with_local_addr",
+        "check_request_full(",
+        "check_request_full_owned(",
+        "collect_body_with_chunk_waf",
+        "WafDecision::Drop",
+        "WafDecision::Block",
+        "WafDecision::Stall",
+        "WafDecision::Tarpit",
+        "WafDecision::Challenge",
+        "WafDecision::Pass",
+        "HONEYPOT_PREFIX",
+        "generate_challenge_page",
+        "record_css_asset_request",
+        "ProxyServer::new_with_tls",
+        "send_request_streaming",
+        "StreamingWafBody::new",
+        "build_forward_headers",
+        "apply_security_headers",
+        "INTERNAL_HEALTH_PATH",
+        "INTERNAL_READY_PATH",
+    ];
+    let mut offenders = Vec::new();
+    for token in forbidden {
+        if text.contains(token) {
+            offenders.push(format!(
+                "  src/tls/server.rs: contains duplicate request-policy token `{token}` (canonical: synvoid-http / synvoid-proxy)"
+            ));
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "HTTPS must not reacquire its own request-policy pipeline:\n{}",
         offenders.join("\n")
     );
 }

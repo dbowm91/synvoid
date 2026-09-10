@@ -167,12 +167,19 @@ exist on that path. The overlapping policy is shared:
 - Phase 20 change: deleted the duplicated `is_tls_client_hello` /
   `is_valid_http_request_start` / `HTTP_VALID_METHODS` copies; both servers
   now use `synvoid_http::framing`.
-- Residual (documented, not forced): `HttpsServer::handle_request_with_cache`
-  still carries its own request-handling flow rather than calling the
-  canonical `prepare_http_request_flow`/`handle_http_request_postlude`
-  composition. Converging it is a behavior-risk rewrite of the TLS data
-  path; tracked as follow-up work, explicitly not a Phase 20 gate per the
-  "no broad server rewrite" rejection criterion.
+- Phase 01 change (residual closed): `HttpsServer::handle_request_with_cache`
+  now composes the same canonical `prepare_http_request_flow` /
+  `handle_http_request_postlude` stages as `HttpServer::handle_request`.
+  Transport adaptations at the boundary: `ForwardedProtocol::Https`,
+  handshake JA4 threaded into both WAF checks, `alt_svc: None`,
+  pre-handshake `local_addr` capture (fixing peer-as-local misrouting),
+  `mesh_backend_pool: None`. Retired: the HTTPS-local routing/body/WAF/
+  challenge/backend/cache pipeline (~1300 lines), the per-site `ProxyServer`
+  response-cache map (plaintext never used it), and the `synvoid.https.*` /
+  `BandwidthProtocol::Https` request-accounting fork (canonical
+  `WorkerMetrics`/`Http` path for both; `synvoid.tls.*` handshake/ALPN/flood
+  counters stay transport-specific). Full stage matrix:
+  `architecture/http_request_pipeline.md` ("HTTP-vs-HTTPS Stage Matrix").
 
 ### HTTP client — `facade_existing_crate` + root QUIC adapter
 
@@ -200,6 +207,21 @@ exist on that path. The overlapping policy is shared:
   pins the canonical normalization module set (`framing`, `early_parse`,
   `headers`, `body_policy`, `request_parse`, `request_preparation`,
   `request_frontdoor`, `waf_decision`).
+- `tls_request_flow_stays_converged` (Phase 01) — `src/tls/server.rs`
+  invokes both canonical stages with `ForwardedProtocol::Https` + JA4 and
+  contains none of the forked-pipeline tokens (`route_with_local_addr`,
+  `check_request_full(`, `WafDecision::*`, `HONEYPOT_PREFIX`,
+  `ProxyServer::new_with_tls`, `send_request_streaming`, …).
+
+Behavioral coverage: `tests/http_tls_parity.rs` (8 tests: framing
+fail-closed, trusted-proxy, internal endpoints, WebSocket validation,
+body-policy terminal mapping, forwarded-header scheme-only diff) plus
+`framing.rs` unit tests (19 tests: duplicate/conflicting
+`Content-Length`, `Transfer-Encoding` + `Content-Length`, unsupported/obfuscated
+codings, malformed/overflowing lengths, duplicate `Host`, absolute-form vs
+origin-form, missing-host policy per version, sniff helpers) plus the
+pre-existing `early_parse` suite (obs-fold, whitespace, null-byte, smuggled
+request-line cases).
 
 Behavioral coverage: `framing.rs` unit tests (19 tests: duplicate/conflicting
 `Content-Length`, `Transfer-Encoding` + `Content-Length`, unsupported/obfuscated

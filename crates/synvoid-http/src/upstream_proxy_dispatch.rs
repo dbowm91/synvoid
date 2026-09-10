@@ -33,6 +33,8 @@ pub async fn handle_pass_upstream_proxy_phase<MarkImageRightsFn, MarkImageRights
     main_config: Arc<MainConfig>,
     metrics: Option<Arc<WorkerMetrics>>,
     request_body_size: u64,
+    client_ip: std::net::IpAddr,
+    forwarded_protocol: synvoid_proxy::ForwardedProtocol,
     #[cfg(feature = "mesh")] mesh_transport: Option<Arc<MeshTransportManager>>,
     quictunnel_request: impl Fn(
         http::Method,
@@ -109,6 +111,8 @@ where
         main_config,
         metrics,
         request_body_size,
+        client_ip,
+        forwarded_protocol,
         #[cfg(feature = "mesh")]
         mesh_transport,
         quictunnel_request,

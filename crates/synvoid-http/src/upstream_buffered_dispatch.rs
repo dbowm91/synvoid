@@ -16,7 +16,7 @@ use synvoid_metrics::bandwidth::{BandwidthProtocol, EgressDirection};
 use synvoid_metrics::WorkerMetrics;
 
 use synvoid_proxy::{apply_response_size_limit, filter_response_headers_buf};
-use synvoid_proxy::{RouteTarget, Router};
+use synvoid_proxy::{ForwardedProtocol, RouteTarget, Router};
 
 use crate::response_builder::build_response_with_alt_svc;
 use crate::response_helpers::apply_security_headers;
@@ -40,6 +40,8 @@ pub async fn handle_buffered_upstream_request<MarkImageRightsFn, MarkImageRights
     main_config: Arc<MainConfig>,
     metrics: Option<Arc<WorkerMetrics>>,
     request_body_size: u64,
+    client_ip: std::net::IpAddr,
+    forwarded_protocol: ForwardedProtocol,
     #[cfg(feature = "mesh")] mesh_transport: Option<Arc<MeshTransportManager>>,
     quictunnel_request: impl Fn(
         http::Method,
@@ -63,21 +65,38 @@ where
     ) -> MarkImageRightsFut,
     MarkImageRightsFut: Future<Output = Bytes>,
 {
+    // Phase 01 (TLS convergence): the buffered upstream path now forwards the
+    // canonical `X-Forwarded-*` set like the streaming path does. Previously
+    // this function sent only method/url/body and dropped client headers,
+    // which diverged from `HttpsServer`'s streaming dispatch that built
+    // forward headers explicitly.
+    let forward_headers = synvoid_proxy::build_forward_headers(
+        client_ip,
+        &parts.headers,
+        target
+            .site_config
+            .proxy
+            .headers
+            .as_ref()
+            .unwrap_or(&synvoid_config::site::ProxyHeadersConfig::default()),
+        forwarded_protocol,
+    );
     let resp = if synvoid_http_client::is_quictunnel_url(&target.upstream) {
         quictunnel_request(
             method.clone(),
             &upstream_url,
-            Some(parts.headers.clone()),
+            Some(forward_headers),
             Some(full_body_arc.as_ref().clone()),
             Some(upstream_timeout),
         )
         .await
     } else {
-        synvoid_http_client::send_request_with_body_and_timeout(
+        synvoid_http_client::send_request_with_body_headers_and_timeout(
             forwarding_client.as_ref(),
             method.clone(),
             &upstream_url,
             Some(full_body_arc.as_ref().clone()),
+            forward_headers,
             Some(upstream_timeout),
         )
         .await

@@ -390,6 +390,7 @@ pub async fn prepare_request_after_preflight<W, OnLimitLogFn, FinalLogFn, PassFn
     on_final_log: FinalLogFn,
     handle_pass: PassFn,
     request_drop: DropFn,
+    ja4_hash: Option<String>,
 ) -> Result<RequestPreparationOutcome, hyper::Error>
 where
     W: BufferedRequestWaf + Send + Sync + 'static,
@@ -461,6 +462,7 @@ where
     let check_parts = parts.clone();
     let check_target = target.clone();
     let check_user_agent = user_agent.clone();
+    let check_ja4 = ja4_hash.clone();
     let check_waf = Arc::clone(&waf);
     let check_request_full = move || {
         let site_id = check_site_id;
@@ -469,6 +471,7 @@ where
         let parts = check_parts;
         let target = check_target;
         let user_agent = check_user_agent;
+        let ja4_hash = check_ja4.clone();
         let waf = check_waf;
         async move {
             waf.check_request_full_owned(
@@ -480,7 +483,7 @@ where
                 parts.headers,
                 None,
                 user_agent,
-                None,
+                ja4_hash,
                 Some(target.site_config.bot.clone()),
             )
             .await
@@ -589,6 +592,7 @@ pub async fn prepare_request_before_buffered_waf<
     on_final_log: FinalLogFn,
     handle_pass: PassFn,
     request_drop_after_preflight: DropFn,
+    ja4_hash: Option<String>,
 ) -> Result<RequestPreparationOutcome, hyper::Error>
 where
     W: BufferedRequestWaf + Send + Sync + 'static,
@@ -644,6 +648,7 @@ where
         on_final_log,
         handle_pass,
         request_drop_after_preflight,
+        ja4_hash,
     )
     .await?;
 

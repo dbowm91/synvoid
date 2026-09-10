@@ -217,7 +217,13 @@ reason = "validates Phase 19 WAF ownership convergence (crate engine vs root com
 name = "http_normalization_ownership_guard"
 class = "static_policy"
 owners = ["synvoid-http"]
-reason = "validates Phase 20 HTTP normalization ownership convergence (canonical framing/parser vs root composition)"
+reason = "validates Phase 20 HTTP normalization ownership convergence (canonical framing/parser vs root composition) plus Phase 01 TLS request-flow convergence"
+
+[[test]]
+name = "http_tls_parity"
+class = "composition"
+owners = ["synvoid-http", "synvoid-proxy"]
+reason = "validates Phase 01 HTTP/HTTPS request-policy parity through canonical helpers (framing, trusted-proxy, internal endpoints, websocket, body policy, forwarded headers)"
 
 [[test]]
 name = "track3_invariant_closure"

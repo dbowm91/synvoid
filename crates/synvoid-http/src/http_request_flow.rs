@@ -77,6 +77,7 @@ pub async fn prepare_http_request_flow<W, D>(
         Arc<synvoid_serverless::ServerlessManager>,
     >,
     _upstream_client_registry: Arc<UpstreamClientRegistry>,
+    ja4_hash: Option<String>,
 ) -> Result<HttpRequestFlowOutcome, hyper::Error>
 where
     W: BufferedRequestWaf + crate::RequestBodyWaf + Send + Sync + 'static,
@@ -297,6 +298,7 @@ where
                 (request_drop.as_ref())();
             }
         },
+        ja4_hash,
     )
     .await?;
 

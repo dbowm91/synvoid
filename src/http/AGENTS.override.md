@@ -32,6 +32,18 @@ accounting. WAF and routing consume the same `path` from
 
 Guard: `cargo test --test http_normalization_ownership_guard`.
 
+## TLS Convergence (Phase 01)
+
+`HttpsServer::handle_request_with_cache` (`src/tls/server.rs`) composes the
+same canonical stages (`prepare_http_request_flow` +
+`handle_http_request_postlude`) with boundary adaptations
+(`ForwardedProtocol::Https`, handshake JA4, `alt_svc: None`, pre-handshake
+`local_addr`, `mesh_backend_pool: None`). Do not fork routing/body/WAF/
+challenge/upstream logic back into `src/tls/server.rs` — the
+`tls_request_flow_stays_converged` guard fails on it. Parity:
+`cargo test --test http_tls_parity`. Stage matrix:
+`architecture/http_request_pipeline.md`.
+
 ## Hot Path
 
 `src/http/server.rs` — HTTP request handling and dispatch executes on every request. Critical hot path:

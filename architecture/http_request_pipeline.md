@@ -2,9 +2,20 @@
 
 Internal architecture reference for developers working on request handling in `crates/synvoid-http/`. Both HTTP/1 and HTTP/3 follow the same conceptual stages but use different stream types, body collection strategies, and dispatch modules. This document maps stages to files.
 
+Phase 01 closed the last plaintext/HTTPS policy fork: `HttpServer::handle_request`
+(`src/http/server.rs`) and `HttpsServer::handle_request_with_cache`
+(`src/tls/server.rs`) now compose the same canonical
+`prepare_http_request_flow` + `handle_http_request_postlude` stages. TLS keeps
+only connection/transport work (TCP accept, flood protection, handshake, ALPN,
+certificate/SNI selection, JA4 extraction, connection lifecycle); all request
+policy is shared. Parity is pinned by `tests/http_tls_parity.rs` and the
+`tls_request_flow_stays_converged` guard in
+`tests/http_normalization_ownership_guard.rs`.
+
 ## Overview
 
-Every inbound HTTP request — whether HTTP/1.1 over TCP or HTTP/3 over QUIC — flows through seven conceptual stages: metadata extraction, route resolution, body policy, WAF evaluation, terminal response, backend dispatch, and accounting. The pipelines share the `Router`, `WafDecision`, and `RouteTarget` types from `synvoid-proxy` but diverge in stream ownership, backpressure models, and upstream dispatch (boxed body vs. QUIC stream). Each stage has a dedicated file; stage boundaries are enforced by the composition root boundary guard.
+Every inbound HTTP request — whether plaintext HTTP/1.1 over TCP, HTTPS
+(HTTP/1.1 or HTTP/2 over TLS), or HTTP/3 over QUIC — flows through seven conceptual stages: metadata extraction, route resolution, body policy, WAF evaluation, terminal response, backend dispatch, and accounting. The pipelines share the `Router`, `WafDecision`, and `RouteTarget` types from `synvoid-proxy` but diverge in stream ownership, backpressure models, and upstream dispatch (boxed body vs. QUIC stream). Each stage has a dedicated file; stage boundaries are enforced by the composition root boundary guard.
 
 ## Shared Stage Vocabulary
 
@@ -17,6 +28,49 @@ Every inbound HTTP request — whether HTTP/1.1 over TCP or HTTP/3 over QUIC —
 | **Terminal Response** | Handle terminal decisions (not-found, error, blocked) before upstream dispatch. | `request_frontdoor.rs` → `dispatch_internal_endpoint()` | `http3_terminal.rs` → `maybe_handle_http3_terminal_route_result()` |
 | **Backend Dispatch** | Route to the correct backend (upstream, app server, static, serverless, WASM, etc.). | `backend_dispatch.rs` → `handle_pass_backend_dispatch()` | `http3_route_dispatch.rs` → `handle_http3_found_route()` → `http3_buffered_upstream_dispatch.rs` / `http3_streaming_upstream_dispatch.rs` |
 | **Accounting** | Record bandwidth, metrics, latency, and request logs. | `http_request_postlude.rs` → `RequestMetricsAdapter` | Inline in dispatch and upstream modules |
+
+## HTTP-vs-HTTPS Stage Matrix (Phase 01)
+
+Per the Phase 01 plan, the exact stage-by-stage diff between
+`HttpServer::handle_request` and the old `HttpsServer::handle_request_with_cache`
+before convergence. Every row now resolves to the HTTP column via the canonical
+composition; the "Old HTTPS" column is retained so reviewers can detect
+accidental behavior loss.
+
+| Stage | Plaintext HTTP (canonical) | Old HTTPS (removed) | Phase 01 resolution |
+|-------|---------------------------|---------------------|---------------------|
+| Client-IP / trusted-proxy | `request_frontdoor` → `sanitize_and_resolve_client_ip` | raw `client_addr.ip()`, no proxy resolution | HTTPS now uses frontdoor; gains trusted-proxy handling |
+| Internal / special paths | frontdoor `dispatch_internal_endpoint` (drain, drain-status, health, ready) + mesh special paths | only `/__internal__/health`, `/__internal__/ready` via local builder | HTTPS gains drain endpoints + canonical health/ready |
+| Traffic controls | `maybe_enforce_request_traffic_limits` (connection limiter + bandwidth) + per-site limits + semaphore permit | bandwidth-limit check only; no limiter, no semaphore | HTTPS gains connection limiting + semaphore |
+| Request metadata | `extract_request_metadata` (method/path/host/UA/cookies) + trust-token bypass | manual method/path/host/UA, no cookies, no trust-token bypass | HTTPS gains trust-token bypass |
+| Routing | `router.route_with_local_addr(host, path, local_addr)` (real local addr) | `route_with_local_addr(host, path, Some(client_addr))` — peer addr mis-passed as local | fixed: local addr captured pre-handshake, matching HTTP |
+| Framing validation | `framing::validate_request_framing` fail-closed 400 before routing/WAF | none | HTTPS gains fail-closed framing validation |
+| WebSocket upgrade | `validate_websocket_upgrade` in preflight + `maybe_handle_websocket_upgrade` in postlude | none (upgrades fell through as plain requests) | HTTPS gains upgrade validation/dispatch |
+| Streaming fast path | canonical conditions (Upstream or Serverless, plugin-aware, `body_buffering_policy`) | Upstream-only, no plugin check, extra cache/quictunnel carve-outs, direct `check_request_full` | canonical conditions for both; JA4 threaded into header check on both |
+| Body collection / policy | `collect_and_scan_request_body` → 403 blocked / 413 too-large | custom collect; too-large continued with `None` body into WAF | canonical 413 fail-closed for both; streaming metrics converge to `synvoid.http.*` |
+| Challenge evaluation | `maybe_handle_challenge_paths` (honeypot, CSS challenge/assets, alt_svc + logging) | manual honeypot/CSS copies without alt_svc/logging | canonical challenge paths for both |
+| Full WAF decision | `maybe_handle_buffered_request_waf` (exhaustive `WafDecision` mapping + canonical counters) | manual `match waf_decision` with `synvoid.https.*` counters + `BandwidthProtocol::Https` egress | canonical mapping/accounting for both; JA4 passed on HTTPS, `None` on HTTP |
+| Backend dispatch | `handle_pass_backend_dispatch` (websocket, axum, static, appserver, serverless+mesh, spin, fastcgi/php, cgi, mesh, wasm, upload validation, upstream proxy + transforms) | manual per-backend copies + per-site `ProxyServer` response-cache map + `ForwardedProtocol::Https` manual headers | canonical dispatch for both with `forwarded_protocol` param (`Http` vs `Https`); per-site `ProxyServer` cache map retired (HTTP never used it) |
+| Response transforms | `transform_upstream_response` + `apply_security_headers` + Alt-Svc | manual security-header/date/server-token copies | canonical transforms for both |
+| Metrics / accounting | `RequestMetricsAdapter` + `record_http_request_latency` + request log | manual `synvoid.https.*` counters + `BandwidthProtocol::Https` | canonical accounting for both; `synvoid.tls.*` handshake/ALPN/flood counters stay transport-specific |
+| Drain / runtime | frontdoor drain state + `DrainGuard` active-count | `_drain_state` ignored | HTTPS now honors drain state + active-count |
+
+Remaining transport-specific differences (by design, tested):
+
+- TLS handshake failures, certificate/SNI selection, ALPN negotiation
+  (`h2` vs `http/1.1` branches), TLS protocol/cipher metrics
+  (`synvoid.tls.handshakes`, `synvoid.tls.alpn`, `synvoid.tls.flood_*`,
+  `synvoid.tls.http_on_tls_port`), rustls acceptor lifecycle, and
+  pre-request timeout/error mapping stay in `src/tls/server.rs`.
+- JA4 fingerprint: computed from the ClientHello in `HttpsConnection::new`
+  and threaded as `ja4_hash` into both WAF checks; plaintext passes `None`.
+- `X-Forwarded-Proto`: `Https` on TLS, `Http` on plaintext (only forwarded
+  header that differs; pinned by `forwarded_headers_agree_except_scheme`).
+- `alt_svc`: `None` on TLS (Alt-Svc advertisement stays an HTTP-plane
+  concern); the canonical builder omits the header.
+- `mesh_backend_pool`: `None` on TLS (never wired there); preserved as-is.
+- Listener lifecycle, `SO_REUSEPORT` bind, cert-watch reload, and
+  TLS-passthrough raw-TCP proxy (`proxy_raw_tcp`) are untouched.
 
 ## Context Structs
 
@@ -128,6 +182,8 @@ consolidated into a single compilation unit, `tests/boundary_composition_guard.r
 | `tests/mesh_id_boundary_guard.rs` | Mesh-ID enforcement never called from WAF/request/proxy/HTTP/3 code |
 | `tests/security_guard.rs` | Threat-intel raw lookups separated from enforcement (consolidates the former `threat_intel_boundary_guard`) |
 | `tests/enforcement_decision_contract_guard.rs` | No unregistered request-disposition enums in request-path crates; adapter registry matches `enforcement_decision_contract.md` |
+| `tests/http_normalization_ownership_guard.rs::tls_request_flow_stays_converged` | `src/tls/server.rs` composes `prepare_http_request_flow` + `handle_http_request_postlude`; no forked routing/body/WAF/challenge/upstream/cache pipeline |
+| `tests/http_tls_parity.rs` | HTTP/HTTPS behavioral parity: framing fail-closed, trusted-proxy, internal endpoints, WebSocket validation, body-policy mapping, forwarded headers (scheme-only diff) |
 
 Run all boundary guards:
 
@@ -135,4 +191,6 @@ Run all boundary guards:
 cargo test --test boundary_composition_guard
 cargo test --test mesh_id_boundary_guard
 cargo test --test security_guard
+cargo test --test http_normalization_ownership_guard
+cargo test --test http_tls_parity
 ```
