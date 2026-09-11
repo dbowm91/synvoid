@@ -1,4 +1,5 @@
 use std::net::IpAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -15,7 +16,7 @@ pub struct DnsCookieServer {
 struct InnerCookieServer {
     secret_key: [u8; 32],
     cookies: RwLock<lru_time_cache::LruCache<String, CookieEntry>>,
-    enable_validation: bool,
+    enable_validation: AtomicBool,
 }
 
 struct CookieEntry {
@@ -24,20 +25,26 @@ struct CookieEntry {
 }
 
 impl DnsCookieServer {
-    pub fn new() -> Self {
-        let secret_key =
-            super::crypto_rng::random_array::<32>().expect("Crypto RNG failure at startup");
+    pub fn try_new() -> Result<Self, super::crypto_rng::CryptoRngError> {
+        let secret_key = super::crypto_rng::random_array::<32>()?;
         let cookies = lru_time_cache::LruCache::with_capacity(10000);
-        Self {
+        Ok(Self {
             inner: Arc::new(InnerCookieServer {
                 secret_key,
                 cookies: RwLock::new(cookies),
-                enable_validation: true,
+                enable_validation: AtomicBool::new(true),
             }),
-        }
+        })
     }
 
-    pub fn with_validation(self, _enable: bool) -> Self {
+    pub fn new() -> Self {
+        Self::try_new().expect("Crypto RNG failure at startup")
+    }
+
+    pub fn with_validation(self, enable: bool) -> Self {
+        self.inner
+            .enable_validation
+            .store(enable, Ordering::Relaxed);
         self
     }
 
@@ -69,7 +76,7 @@ impl DnsCookieServer {
         client_cookie: &[u8],
         server_cookie: &[u8],
     ) -> bool {
-        if !self.inner.enable_validation {
+        if !self.inner.enable_validation.load(Ordering::Relaxed) {
             return true;
         }
 

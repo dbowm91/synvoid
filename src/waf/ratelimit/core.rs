@@ -177,10 +177,8 @@ impl AtomicSlidingWindow {
             let buckets_to_clear = std::cmp::min(current_bucket - last_rotate, self.bucket_count);
 
             for i in 0..buckets_to_clear {
-                let idx = (current_bucket
-                    .wrapping_sub(self.bucket_count)
-                    .wrapping_add(i)
-                    % self.bucket_count) as usize;
+                let idx =
+                    (last_rotate.wrapping_add(1).wrapping_add(i) % self.bucket_count) as usize;
                 let cleared = self.buckets[idx].swap(0, Ordering::AcqRel);
                 let _ = self
                     .running_sum
@@ -842,6 +840,40 @@ mod tests {
 
         window.reset();
         assert_eq!(window.get_count(100), 0);
+    }
+
+    #[test]
+    fn test_atomic_sliding_window_rotate_clears_advancing_buckets_small_current() {
+        // Regression test: current_bucket < bucket_count must clear
+        // (last_rotate+1..=current) mod bucket_count, not
+        // (current - bucket_count + i) mod bucket_count.
+        let window = AtomicSlidingWindow::new(60, 60);
+        window.buckets[2].store(10, Ordering::Relaxed);
+        window.buckets[22].store(7, Ordering::Relaxed);
+        window.running_sum.store(17, Ordering::Relaxed);
+
+        window.rotate_buckets(5000);
+
+        assert_eq!(window.buckets[2].load(Ordering::Relaxed), 0);
+        assert_eq!(window.buckets[22].load(Ordering::Relaxed), 7);
+        assert_eq!(window.running_sum.load(Ordering::Relaxed), 7);
+    }
+
+    #[test]
+    fn test_atomic_sliding_window_rotate_clears_advancing_buckets_partial() {
+        // Regression test: with current=100, last=95, bc=60 the advancing set is
+        // 96..=100 mod 60 = 36..=40; bucket 44 must survive.
+        let window = AtomicSlidingWindow::new(60, 60);
+        window.last_rotate_ms.store(95, Ordering::Relaxed);
+        window.buckets[36].store(5, Ordering::Relaxed);
+        window.buckets[44].store(9, Ordering::Relaxed);
+        window.running_sum.store(14, Ordering::Relaxed);
+
+        window.rotate_buckets(100_000);
+
+        assert_eq!(window.buckets[36].load(Ordering::Relaxed), 0);
+        assert_eq!(window.buckets[44].load(Ordering::Relaxed), 9);
+        assert_eq!(window.running_sum.load(Ordering::Relaxed), 9);
     }
 
     #[test]

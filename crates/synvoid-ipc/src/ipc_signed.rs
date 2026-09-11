@@ -211,7 +211,9 @@ impl IpcSigner {
                 let key_hex = key_hex.trim();
                 let key = parse_hex_key(key_hex).ok()?;
                 let signer = Self::new(&key);
-                let _ = std::fs::remove_file(&key_file);
+                if let Err(e) = std::fs::remove_file(&key_file) {
+                    tracing::warn!("Failed to delete one-time IPC key file {key_file}: {e}");
+                }
                 return Some(signer);
             }
         }
@@ -236,9 +238,15 @@ impl IpcSigner {
                     return None;
                 }
                 let key_hex = std::fs::read_to_string(path).ok()?;
-                let _ = std::fs::remove_file(path);
                 let key = parse_hex_key(key_hex.trim()).ok()?;
-                return Some(Self::new(&key));
+                let signer = Self::new(&key);
+                if let Err(e) = std::fs::remove_file(path) {
+                    tracing::warn!(
+                        "Failed to delete one-time IPC key file {}: {e}",
+                        path.display()
+                    );
+                }
+                return Some(signer);
             }
         }
         if let Ok(key_hex) = std::env::var("SYNVOID_IPC_KEY") {
@@ -627,7 +635,12 @@ fn read_ipc_key_file_impl(path: &std::path::Path) -> Option<Arc<IpcSigner>> {
     let key_hex = key_hex.trim();
     let key = parse_hex_key(key_hex).ok()?;
     let signer = Arc::new(IpcSigner::new(&key));
-    let _ = std::fs::remove_file(path);
+    if let Err(e) = std::fs::remove_file(path) {
+        tracing::warn!(
+            "Failed to delete one-time IPC key file {}: {e}",
+            path.display()
+        );
+    }
     Some(signer)
 }
 
@@ -650,7 +663,12 @@ fn read_ipc_key_file_impl(path: &std::path::Path) -> Option<Arc<IpcSigner>> {
     let key_hex = std::fs::read_to_string(path).ok()?;
     let key = parse_hex_key(key_hex.trim()).ok()?;
     let signer = Arc::new(IpcSigner::new(&key));
-    let _ = std::fs::remove_file(path);
+    if let Err(e) = std::fs::remove_file(path) {
+        tracing::warn!(
+            "Failed to delete one-time IPC key file {}: {e}",
+            path.display()
+        );
+    }
     Some(signer)
 }
 

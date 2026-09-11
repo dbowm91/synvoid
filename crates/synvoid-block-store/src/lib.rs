@@ -909,12 +909,30 @@ impl BlockStore {
                                 pending = Some(req);
                             }
                             if let Some(req) = pending.take() {
-                                let _ = Self::persist_request(
+                                let mut persisted = Self::persist_request(
                                     &path,
                                     mesh_path.as_ref(),
                                     &req,
                                     max_entries_clone,
-                                ).await;
+                                )
+                                .await;
+                                if !persisted {
+                                    // One synchronous retry: the non-shutdown path
+                                    // re-queues for retry, but there is no later
+                                    // tick once we break out of the loop.
+                                    persisted = Self::persist_request(
+                                        &path,
+                                        mesh_path.as_ref(),
+                                        &req,
+                                        max_entries_clone,
+                                    )
+                                    .await;
+                                }
+                                if !persisted {
+                                    tracing::error!(
+                                        "Failed to persist block store snapshot during shutdown; newest snapshot may be lost on restart"
+                                    );
+                                }
                             }
                             tracing::info!("Block store persistence task shutting down");
                             let _ = done_tx.send(());

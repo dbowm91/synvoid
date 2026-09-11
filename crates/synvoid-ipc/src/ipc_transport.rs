@@ -165,11 +165,18 @@ impl IpcListener {
         let socket_path = endpoint.socket_path();
 
         if let Some(parent) = socket_path.parent() {
-            tokio::fs::create_dir_all(parent).await.ok();
+            tokio::fs::create_dir_all(parent).await.map_err(|e| {
+                io::Error::new(
+                    e.kind(),
+                    format!("failed to create IPC socket dir {}: {e}", parent.display()),
+                )
+            })?;
         }
 
-        if socket_path.exists() {
-            tokio::fs::remove_file(socket_path).await?;
+        match tokio::fs::remove_file(socket_path).await {
+            Ok(()) => {}
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e),
         }
 
         let listener = UnixListener::bind(socket_path)?;

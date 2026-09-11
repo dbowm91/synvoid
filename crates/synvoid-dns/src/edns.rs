@@ -547,18 +547,21 @@ impl DnsPadding {
         edns.padding_requested
     }
 
-    pub fn generate_padding(&mut self, target_size: usize) -> Vec<u8> {
+    pub fn generate_padding(
+        &mut self,
+        target_size: usize,
+    ) -> Result<Vec<u8>, crate::crypto_rng::CryptoRngError> {
         use crate::crypto_rng::random_bytes;
 
         let block_size = self.block_size;
         let blocks = target_size.div_ceil(block_size);
         let total_size = blocks * block_size;
 
-        let padding = random_bytes(total_size).expect("Crypto RNG failure for EDNS padding");
+        let padding = random_bytes(total_size)?;
 
         self.generated_padding = padding.clone();
 
-        padding
+        Ok(padding)
     }
 
     pub fn build_padding_option(&self, target_size: usize) -> Vec<u8> {

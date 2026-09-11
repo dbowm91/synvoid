@@ -317,16 +317,14 @@ pub struct SoftHsm {
 }
 
 impl SoftHsm {
+    pub fn try_new(key_id: String) -> Result<Self, super::crypto_rng::CryptoRngError> {
+        let seed = super::crypto_rng::random_array::<32>()?;
+        let key = ed25519_dalek::SigningKey::from_bytes(&seed);
+        Ok(Self { key, key_id })
+    }
+
     pub fn new(key_id: String) -> Self {
-        let bytes =
-            super::crypto_rng::random_bytes(32).expect("Crypto RNG failure at startup for HSM");
-        let key = ed25519_dalek::SigningKey::from_bytes(
-            bytes
-                .as_slice()
-                .try_into()
-                .expect("random_bytes(32) should return exactly 32 bytes"),
-        );
-        Self { key, key_id }
+        Self::try_new(key_id).expect("Crypto RNG failure at startup for HSM")
     }
 
     pub fn from_bytes(key_id: String, seed: &[u8]) -> Self {
@@ -376,7 +374,8 @@ impl HsmManager {
                 if config.module_path.is_empty() {
                     tracing::warn!("PKCS#11 module path not specified, falling back to SoftHSM");
                     let key_id = "soft-hsm-key".to_string();
-                    let hsm = SoftHsm::new(key_id);
+                    let hsm = SoftHsm::try_new(key_id)
+                        .map_err(|e| HsmError::InitializationFailed(e.to_string()))?;
                     *self.backend.write() = Some(Box::new(hsm));
                     tracing::info!("HSM initialized (SoftHSM fallback)");
                     return Ok(());
@@ -402,14 +401,16 @@ impl HsmManager {
                             e
                         );
                         let key_id = "soft-hsm-key".to_string();
-                        let hsm = SoftHsm::new(key_id);
+                        let hsm = SoftHsm::try_new(key_id)
+                            .map_err(|e| HsmError::InitializationFailed(e.to_string()))?;
                         *self.backend.write() = Some(Box::new(hsm));
                     }
                 }
             }
             synvoid_config::dns::HsmProvider::Soft => {
                 let key_id = "soft-hsm-key".to_string();
-                let hsm = SoftHsm::new(key_id);
+                let hsm = SoftHsm::try_new(key_id)
+                    .map_err(|e| HsmError::InitializationFailed(e.to_string()))?;
                 *self.backend.write() = Some(Box::new(hsm));
                 tracing::info!("HSM initialized (SoftHSM)");
             }
