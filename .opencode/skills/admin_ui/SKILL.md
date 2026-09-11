@@ -33,8 +33,7 @@ admin-ui/
 │   │   ├── workers.rs     # Worker management
 │   │   └── ...               # Other pages (23 total)
 │   ├── services/          # API client
-│   │   ├── api.rs         # ApiService with all REST methods
-│   │   └── websocket.rs   # WebSocket for realtime updates
+│   │   └── api.rs         # ApiService with all REST methods (single owner of paths)
 │   ├── types/             # Shared TypeScript-like types
 │   │   ├── mod.rs         # Type exports
 │   │   └── presets.rs     # Preset configurations
@@ -135,11 +134,13 @@ The `use_websocket_or_poll` hook provides a WebSocket connection with automatic 
 
 ```rust
 pub fn use_websocket_or_poll<T: DeserializeOwned + Clone + 'static>(
-    ws_path: &str,       // Relative WebSocket path (e.g., "/api/ws/metrics")
-    poll_path: &str,     // HTTP poll endpoint (e.g., "/api/stats/history?seconds=60")
+    ws_path: &str,       // Full WS path (e.g., WS_METRICS_PATH = "/api/ws/metrics")
+    poll_path: &str,     // ApiService path WITHOUT /api prefix (e.g., "/stats/summary")
     poll_interval_ms: u32,
 ) -> (UseWebSocketState<T>, Callback<()>)
 ```
+
+Canonical WS constants live in `services/api.rs` (`WS_METRICS_PATH`, `WS_LOGS_PATH`, matching backend `src/admin/ws/mod.rs`); import them instead of duplicating literals. `ApiService::get/post/put` prepend `"/api"`, so poll paths must omit it — `"/stats/summary"`, never `"/api/stats/summary"` (double-prefix 404s).
 
 **State machine**: `Connecting` → `Connected(T)` | `Polling` | `Disconnected` | `Error(String)`
 
@@ -152,7 +153,7 @@ pub fn use_websocket_or_poll<T: DeserializeOwned + Clone + 'static>(
 
 **Data freshness**: Components should track `last_received_at` timestamp and display "Stale" when `now - last_received > 15s` (3x the 5s poll interval). See `realtime_header.rs` for the reference implementation.
 
-**Range controls**: `range_to_seconds(secs)` maps button values (60/300/900/3600) to API query parameters. Components fetch historical data from `/api/stats/history?seconds=<N>` when the selected range changes.
+**Range controls**: `range_to_seconds(secs)` maps button values (60/300/900/3600) to API query parameters. Components fetch historical data from `"/stats/history?seconds=<N>"` (no `/api` prefix — `ApiService` prepends it) when the selected range changes.
 
 **Do not**: pass bearer tokens to WebSocket hooks (auth uses HttpOnly session cookies).
 
@@ -398,7 +399,11 @@ match api.call_endpoint().await {
 
 **Login form semantics**: Uses `<form onsubmit>` with `type="password"` input and `type="submit"` button. Keyboard Enter works. Submit is disabled during flight.
 
-**Logout**: Visible button in sidebar footer. Calls `DELETE /api/auth/session` and redirects to `/login`.
+**Logout**: Visible button in sidebar footer. `ApiService::logout()` calls `DELETE /api/auth/session` with atomic transitions: success / 401-403 clears CSRF + unauthenticated and redirects to `/login`; 5xx / network errors retain CSRF/auth so the UI stays authenticated and a retry can still mutate.
+
+**Capabilities**: Sidebar fetches `GET /system/capabilities` via `ApiService::get_capabilities()` and gates nav through the pure `sidebar_visibility()` decision function (unit-tested, no browser suite). Flags track build features (`mesh_admin`→`mesh`, `dns_admin`→`dns`, `icmp_admin`→`icmp-filter`).
+
+**Route contract (Phase 05)**: Every `ApiService` endpoint is checked against backend registration in `tests/admin_route_contract.rs` (+ capabilities/discovery/auth classification in `tests/admin_router_composition.rs`). New endpoints must be added to `ApiService` (never ad-hoc `Request::get("/api/...")` in pages) and covered by the contract. User-controlled query/path values must go through `encode_query_value()` / `encode_path_segment()`. Removed paths (`/system/master`, `/api/logs/realtime`, singular worker restart) must stay absent.
 
 ## Building
 

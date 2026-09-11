@@ -5,7 +5,8 @@ use yew_router::prelude::*;
 use crate::app::Route;
 use crate::components::charts::{Gauge, MultiSeriesLineChart, StackedAreaChart};
 use crate::components::realtime_header::RealtimeHeader;
-use crate::hooks::use_websocket::{use_websocket_or_poll, UseWebSocketState};
+use crate::hooks::use_websocket::{use_websocket_or_poll, UseWebSocketState, WS_METRICS_PATH};
+use crate::services::api::POLL_STATS_SUMMARY_PATH;
 use crate::services::ApiService;
 use crate::types::{RealtimeMetrics, SiteStats, SystemStats};
 
@@ -126,7 +127,7 @@ pub fn Dashboard() -> Html {
     let error = use_state(|| None::<String>);
 
     let (ws_state, _) =
-        use_websocket_or_poll::<RealtimeMetrics>("/api/ws/metrics", "/api/stats/summary", 5000);
+        use_websocket_or_poll::<RealtimeMetrics>(WS_METRICS_PATH, POLL_STATS_SUMMARY_PATH, 5000);
 
     {
         let selected_window = selected_window.clone();

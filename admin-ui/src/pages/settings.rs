@@ -4655,7 +4655,7 @@ fn ProcessSection() -> Html {
         move |_| {
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
-                let master = api.get_master_status().await;
+                let master = api.get_supervisor().await;
                 let workers = api.get_workers().await;
                 loading.set(false);
                 if let Ok(data) = master {
@@ -4678,7 +4678,7 @@ fn ProcessSection() -> Html {
             <p class="text-sm text-secondary">{ "Process and worker status overview." }</p>
             if let Some(data) = &*master_status {
                 <div class="bg-tertiary p-4 rounded-lg border border-default">
-                    <h4 class="text-primary font-medium mb-3">{"Master Process"}</h4>
+                    <h4 class="text-primary font-medium mb-3">{"Supervisor Process"}</h4>
                     <div class="grid grid-cols-2 gap-4">
                         <div>
                             <p class="text-secondary text-sm">{"PID"}</p>

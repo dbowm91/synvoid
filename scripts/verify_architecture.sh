@@ -18,6 +18,8 @@ echo "--- mesh only ---"
 cargo check --no-default-features --features mesh
 echo "--- dns only ---"
 cargo check --no-default-features --features dns
+echo "--- icmp-filter only ---"
+cargo check --no-default-features --features icmp-filter
 echo "--- mesh,dns ---"
 cargo check --no-default-features --features mesh,dns
 
@@ -59,6 +61,12 @@ cargo test --test track3_concurrency_closure
 cargo test --test jail_isolation_guard
 cargo test --test composition_root_behavioral --features mesh,dns
 cargo test --test worker_supervision_control_flow --features mesh,dns
+
+echo ""
+echo "=== Phase 05 admin contract (route/capability/discovery/auth) ==="
+cargo test --test admin_route_contract --features mesh,dns,icmp-filter
+cargo test --test admin_router_composition --features mesh,dns,icmp-filter
+cargo test --test admin_smoke_flow --features mesh,dns,icmp-filter
 
 echo ""
 echo "=== Security regression (single-threaded) ==="

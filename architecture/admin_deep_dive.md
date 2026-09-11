@@ -154,8 +154,11 @@ To prevent session enumeration attacks, admin auth includes timing normalization
 
 ```rust
 // Applies to: POST, PUT, PATCH, DELETE
-// Exempts: /ws/*, /stats/*, /health, /config/schema, /logs
+// Exact exemptions: /api/ws/metrics, /api/ws/logs (per-connection auth),
+//   /health (root), /api/config/schema (read-only schema)
 // Exempts: Bearer token authenticated requests
+// Note (Phase 05): bare `/stats` / `/config/schema` prefixes never matched
+// real `/api`-namespaced routes and were removed; exemptions are exact.
 ```
 
 ---
@@ -180,11 +183,13 @@ Request
 ### Auth Middleware (`auth_middleware_with_state`)
 
 ```rust
-// Public routes bypass auth:
+// Public routes bypass auth (exact match, never broad prefixes):
 // - GET /health
-// - GET /api/openapi.json  
+// - GET /api/openapi.json
 // - GET /api/docs/*
-// - WS /ws/* (auth per-connection)
+// - WS upgrades ONLY at /api/ws/metrics and /api/ws/logs
+//   (each WS handler still enforces per-connection bearer/session auth;
+//   non-canonical /api/ws/* paths are NOT bypassed)
 ```
 
 **AuthenticatedUser Extension:**
@@ -251,9 +256,12 @@ Request
 
 **System/Process** (`/system/*`):
 - `/system/info` - System information
+- `/system/capabilities` - Capability flags tracking compiled route families
+  (Phase 05: `mesh_admin`→`mesh`, `dns_admin`→`dns`, `icmp_admin`→`icmp-filter`;
+  `honeypot`/`process_manager` always true)
 - `/system/workers` - Worker process management
-- `/system/master` - Master status
-- `/system/overseer` - Overseer status (functional endpoint; overseer code is legacy, will be removed in Supervisor migration)
+- `/system/supervisor` - Supervisor status (canonical; `/system/master`,
+  `/system/overseer`, and `/config/overseer` were removed and are guarded absent)
 
 **Stats/Metrics** (`/stats/*`):
 - `/stats/summary` - Aggregated metrics
@@ -268,12 +276,15 @@ Request
 - DHT/Raft status
 - YARA rules management
 
-### WebSocket Endpoints
+### WebSocket Endpoints (canonical; see `src/admin/ws/mod.rs`)
 
 | Endpoint | Purpose | Auth |
 |----------|---------|------|
-| `/api/ws/metrics` | Real-time metrics stream | Session cookie |
-| `/api/ws/logs` | Real-time log stream | Session cookie |
+| `/api/ws/metrics` | Real-time metrics stream | Session cookie or bearer, per connection |
+| `/api/ws/logs` | Real-time log stream | Session cookie or bearer, per connection |
+
+Stale `/api/logs/realtime` was removed; the contract test asserts its absence.
+Middleware exclusions match these two paths exactly — no `/api/ws/` prefix bypass.
 
 ---
 
@@ -457,6 +468,31 @@ The `/alerting/test-webhook` endpoint returns the full `WebhookDeliveryResult` a
 - Multiple users with registration
 - Protects tenant resources
 - Username/password login with session
+
+---
+
+## Phase 05 — Admin contract and feature-profile verification
+
+Route families live in `src/admin/routes.rs` (Phase 04); `build_router_from_state()`
+only merges, nests under `/api`, and applies middleware. Phase 05 makes drift
+mechanically detectable:
+
+- `tests/admin_route_contract.rs` — every frontend-consumed endpoint checked
+  against path + method registration (405 vs 404 distinguishes wrong method
+  from missing route); stale paths (`/system/master`, `/system/overseer`,
+  `/config/overseer`, singular worker restart, `/api/logs/realtime`,
+  non-canonical `/api/ws/*`) asserted absent.
+- `tests/admin_router_composition.rs` — capability ↔ route-family cross-check,
+  discovery/OpenAPI consistency (WS documented separately), auth/middleware
+  classification (exact exclusions, CSRF 403 + bearer bypass, per-connection
+  WS auth).
+- `tests/admin_smoke_flow.rs` — 15-step session lifecycle incl. logout.
+- Logout is atomic: success / 401-403 clears CSRF + unauthenticated; 5xx /
+  network retains CSRF/auth for retry.
+- Bounded feature matrix in `cargo xtask verify-full`: minimal,
+  `mesh`, `dns`, `icmp-filter`, `mesh,dns`. Routine `cargo xtask verify` runs
+  the contract with `--features mesh,dns,icmp-filter`. Full powerset is
+  intentionally not tested.
 
 ---
 

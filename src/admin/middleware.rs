@@ -88,7 +88,11 @@ pub async fn auth_middleware_with_state(
 ) -> Response {
     let path = request.uri().path();
 
-    if path == "/health" || path.starts_with("/api/ws/") {
+    // Public surface is exact-matched on purpose: a broad `/api/ws/` prefix
+    // bypass would silently expose any future route nested under that prefix.
+    // Only the two canonical WebSocket upgrade paths skip blanket REST auth
+    // (each WS handler still enforces per-connection bearer/session auth).
+    if path == "/health" || super::ws::is_canonical_ws_path(path) {
         return next.run(request).await;
     }
 
@@ -171,11 +175,15 @@ pub async fn csrf_middleware(
     let path = request.uri().path();
     let method = request.method();
 
+    // CSRF applies to state-changing methods only. Exemptions are exact
+    // `/api`-namespaced paths: the previous bare `/stats` and `/config/schema`
+    // prefixes never matched real routes (`/api/stats/*`, `/api/config/schema`)
+    // and are removed so the exemption list cannot hide a bypass.
+    // WebSocket upgrades carry no CSRF header (per-connection auth instead).
     let requires_csrf = matches!(method.as_str(), "POST" | "PUT" | "PATCH" | "DELETE")
-        && !path.starts_with("/api/ws/")
-        && !path.starts_with("/stats")
+        && !super::ws::is_canonical_ws_path(path)
         && !path.eq("/health")
-        && !path.eq("/config/schema");
+        && !path.eq("/api/config/schema");
 
     if !requires_csrf {
         return next.run(request).await;

@@ -1,3 +1,3 @@
 mod sidebar;
 
-pub use sidebar::Sidebar;
+pub use sidebar::{Capabilities, Sidebar};

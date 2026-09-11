@@ -3,7 +3,8 @@ use yew_router::prelude::*;
 
 use crate::app::Route;
 use crate::components::charts::Gauge;
-use crate::hooks::use_websocket::{use_websocket_or_poll, UseWebSocketState};
+use crate::hooks::use_websocket::{use_websocket_or_poll, UseWebSocketState, WS_METRICS_PATH};
+use crate::services::api::POLL_STATS_SUMMARY_PATH;
 use crate::services::ApiService;
 use crate::types::{RealtimeMetrics, SiteStats};
 
@@ -65,7 +66,7 @@ pub fn SiteDetail(props: &SiteDetailProps) -> Html {
     let error = use_state(|| None as Option<String>);
 
     let (ws_state, _) =
-        use_websocket_or_poll::<RealtimeMetrics>("/api/ws/metrics", "/api/stats/summary", 5000);
+        use_websocket_or_poll::<RealtimeMetrics>(WS_METRICS_PATH, POLL_STATS_SUMMARY_PATH, 5000);
 
     {
         let site_stats = site_stats.clone();

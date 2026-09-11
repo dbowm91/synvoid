@@ -1,9 +1,9 @@
-use gloo::net::http::Request;
 use yew::prelude::*;
 use yew_router::prelude::*;
 
 use crate::app::Route;
 use crate::hooks::use_theme::Theme;
+use crate::services::api::ApiService;
 
 #[derive(Debug, Clone, PartialEq, serde::Deserialize)]
 pub struct Capabilities {
@@ -17,6 +17,30 @@ pub struct Capabilities {
     pub honeypot: bool,
     #[serde(default)]
     pub process_manager: bool,
+}
+
+/// Pure gating decision: which nav families are visible for a capability set.
+/// Kept free of browser I/O so the contract can be unit-tested at the
+/// data/decision level (no full-browser suite required).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SidebarVisibility {
+    pub show_mesh: bool,
+    pub show_tier_keys: bool,
+    pub show_dns: bool,
+    pub show_process_management: bool,
+    pub show_honeypot: bool,
+    pub show_icmp: bool,
+}
+
+pub fn sidebar_visibility(cap: &Capabilities) -> SidebarVisibility {
+    SidebarVisibility {
+        show_mesh: cap.mesh_admin,
+        show_tier_keys: cap.mesh_admin,
+        show_dns: cap.dns_admin,
+        show_process_management: cap.process_manager,
+        show_honeypot: cap.honeypot,
+        show_icmp: cap.icmp_admin,
+    }
 }
 
 impl Default for Capabilities {
@@ -49,10 +73,11 @@ pub fn Sidebar(props: &SidebarProps) -> Html {
         use_effect_with((), move |_| {
             let capabilities = capabilities.clone();
             wasm_bindgen_futures::spawn_local(async move {
-                if let Ok(resp) = Request::get("/api/system/capabilities").send().await {
-                    if let Ok(cap) = resp.json::<Capabilities>().await {
-                        capabilities.set(cap);
-                    }
+                // Centralized through ApiService so the `/system/capabilities`
+                // path is owned in one place and covered by the route contract.
+                let api = ApiService::new();
+                if let Ok(cap) = api.get_capabilities().await {
+                    capabilities.set(cap);
                 }
             });
             || ()
@@ -60,6 +85,7 @@ pub fn Sidebar(props: &SidebarProps) -> Html {
     }
 
     let cap = (*capabilities).clone();
+    let vis = sidebar_visibility(&cap);
 
     html! {
         <nav class="w-64 bg-secondary border-r border-default min-h-screen flex flex-col">
@@ -85,18 +111,20 @@ pub fn Sidebar(props: &SidebarProps) -> Html {
                     <NavItem to={Route::Workers} icon="cpu" label="Workers" />
                     <NavItem to={Route::Upstreams} icon="server" label="Upstreams" />
                     <NavItem to={Route::Sites} icon="globe" label="Sites" />
-                    if cap.mesh_admin {
+                    if vis.show_mesh {
                         <NavItem to={Route::Mesh} icon="mesh" label="Mesh" />
+                    }
+                    if vis.show_tier_keys {
                         <NavItem to={Route::TierKeys} icon="key" label="Tier Keys" />
                     }
                 </NavSection>
 
                 <NavSection title="Configuration">
                     <NavItem to={Route::Settings} icon="settings" label="Settings" />
-                    if cap.dns_admin {
+                    if vis.show_dns {
                         <NavItem to={Route::Dns} icon="dns" label="DNS" />
                     }
-                    if cap.process_manager {
+                    if vis.show_process_management {
                         <NavItem to={Route::ProcessManagement} icon="process" label="Process Management" />
                     }
                     <NavItem to={Route::ThreatLevel} icon="shield" label="Threat Level" />
@@ -105,10 +133,10 @@ pub fn Sidebar(props: &SidebarProps) -> Html {
 
                 <NavSection title="System">
                     <NavItem to={Route::SystemStatus} icon="status" label="System Status" />
-                    if cap.honeypot {
+                    if vis.show_honeypot {
                         <NavItem to={Route::Honeypot} icon="honeypot" label="Port Honeypot" />
                     }
-                    if cap.icmp_admin {
+                    if vis.show_icmp {
                         <NavItem to={Route::Icmp} icon="network" label="ICMP Filter" />
                     }
                 </NavSection>
@@ -267,5 +295,69 @@ fn icon(name: &str) -> Html {
             </svg>
         },
         _ => html! {},
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn all_enabled() -> Capabilities {
+        Capabilities {
+            mesh_admin: true,
+            dns_admin: true,
+            icmp_admin: true,
+            honeypot: true,
+            process_manager: true,
+        }
+    }
+
+    #[test]
+    fn all_enabled_shows_everything() {
+        let vis = sidebar_visibility(&all_enabled());
+        assert!(vis.show_mesh);
+        assert!(vis.show_tier_keys);
+        assert!(vis.show_dns);
+        assert!(vis.show_process_management);
+        assert!(vis.show_honeypot);
+        assert!(vis.show_icmp);
+    }
+
+    #[test]
+    fn mesh_off_hides_mesh_and_tier_keys_only() {
+        let mut cap = all_enabled();
+        cap.mesh_admin = false;
+        let vis = sidebar_visibility(&cap);
+        assert!(!vis.show_mesh);
+        assert!(!vis.show_tier_keys);
+        assert!(vis.show_dns);
+        assert!(vis.show_icmp);
+    }
+
+    #[test]
+    fn dns_off_hides_dns_only() {
+        let mut cap = all_enabled();
+        cap.dns_admin = false;
+        let vis = sidebar_visibility(&cap);
+        assert!(!vis.show_dns);
+        assert!(vis.show_mesh);
+    }
+
+    #[test]
+    fn icmp_off_hides_icmp_only() {
+        let mut cap = all_enabled();
+        cap.icmp_admin = false;
+        let vis = sidebar_visibility(&cap);
+        assert!(!vis.show_icmp);
+        assert!(vis.show_mesh);
+    }
+
+    #[test]
+    fn capabilities_default_to_all_enabled() {
+        // Sidebar starts optimistic before `/system/capabilities` resolves.
+        let vis = sidebar_visibility(&Capabilities::default());
+        assert!(vis.show_mesh);
+        assert!(vis.show_dns);
+        assert!(vis.show_icmp);
     }
 }

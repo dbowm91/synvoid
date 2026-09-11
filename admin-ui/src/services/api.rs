@@ -8,6 +8,40 @@ use crate::types::{MasterStatus, SystemInfo, WorkerStatus};
 
 const MAX_ERROR_BODY: usize = 512;
 
+/// Canonical WebSocket paths — must match backend `src/admin/ws/mod.rs`
+/// (`WS_METRICS_PATH` / `WS_LOGS_PATH`). Import these instead of duplicating
+/// string literals so the route-contract test catches drift mechanically.
+pub const WS_METRICS_PATH: &str = "/api/ws/metrics";
+pub const WS_LOGS_PATH: &str = "/api/ws/logs";
+
+/// `ApiService::get/post/put` prepend `"/api"` to `path`, so callers must pass
+/// `"/stats/..."`-style paths (never `"/api/stats/..."`). WebSocket hooks take
+/// the full `"/api/ws/..."` path because they build a `ws(s)://` URL directly
+/// instead of going through `ApiService`.
+pub const POLL_STATS_SUMMARY_PATH: &str = "/stats/summary";
+
+/// Percent-encode a single query-string value (RFC 3986 unreserved set left
+/// intact). Used for user-controlled filter values so `&`, `=`, `?`, spaces,
+/// and non-ASCII input cannot break the query structure.
+pub fn encode_query_value(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for b in value.as_bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(*b as char)
+            }
+            _ => out.push_str(&format!("%{:02X}", b)),
+        }
+    }
+    out
+}
+
+/// Percent-encode a single URL path segment (same unreserved set as query
+/// values; `/` is encoded so ids cannot escape their segment).
+pub fn encode_path_segment(value: &str) -> String {
+    encode_query_value(value)
+}
+
 /// Truncate a string to at most `max_bytes` bytes without splitting a UTF-8 code point.
 /// Returns the original string unchanged if it fits.
 fn truncate_utf8_safe(text: &str, max_bytes: usize) -> String {
@@ -166,6 +200,15 @@ impl ApiService {
     }
 
     /// Logout: invalidate the server session and clear client state.
+    ///
+    /// State transitions are atomic from the UI's perspective:
+    /// - success → clear CSRF + caller treats as unauthenticated;
+    /// - 401/403 (server confirms the session is already invalid) → clear CSRF
+    ///   + caller treats as unauthenticated;
+    /// - 5xx / network failure (session may still be valid) → retain CSRF and
+    ///   auth state, report the error so the caller stays authenticated.
+    /// Never clear the only mutation credential while telling the UI it
+    /// remains authenticated.
     pub async fn logout() -> Result<(), ApiError> {
         let url = "/api/auth/session";
         let mut builder = Request::delete(url);
@@ -183,11 +226,16 @@ impl ApiService {
                 message: format!("Logout request failed: {}", e),
             })?;
 
-        clear_auth_state();
-
         if request.ok() {
+            clear_auth_state();
             Ok(())
+        } else if request.status() == 401 || request.status() == 403 {
+            // Server confirms the session is invalid — converge locally.
+            clear_auth_state();
+            let body = Self::read_error_body(&request).await;
+            Err(ApiError::from_response(request.status(), &body))
         } else {
+            // Recoverable failure: retain CSRF/auth so a retry can still mutate.
             let body = Self::read_error_body(&request).await;
             Err(ApiError::from_response(request.status(), &body))
         }
@@ -322,10 +370,21 @@ impl ApiService {
 
     #[allow(dead_code)]
     pub async fn health_check(&self) -> Result<bool, ApiError> {
-        match self.get_text("/health").await {
-            Ok(_) => Ok(true),
+        // Root `/health` is public and lives outside the `/api` namespace, so
+        // it cannot go through `self.get` (which prepends `/api`).
+        match Request::get("/health").send().await {
+            Ok(resp) => Ok(resp.ok()),
             Err(_) => Ok(false),
         }
+    }
+
+    /// Capability report backing sidebar gating. Mirrors backend
+    /// `CapabilitiesResponse` with `#[serde(default)]` tolerance so new backend
+    /// flags do not break older UI builds.
+    pub async fn get_capabilities(
+        &self,
+    ) -> Result<crate::components::layout::Capabilities, ApiError> {
+        self.get("/system/capabilities").await
     }
 
     pub async fn get_stats_summary(&self) -> Result<crate::types::SystemStats, ApiError> {
@@ -367,16 +426,16 @@ impl ApiService {
         let mut params = Vec::new();
 
         if let Some(site_id) = site_id {
-            params.push(format!("site_id={}", site_id));
+            params.push(format!("site_id={}", encode_query_value(site_id)));
         }
         if let Some(method) = method {
-            params.push(format!("method={}", method));
+            params.push(format!("method={}", encode_query_value(method)));
         }
         if let Some(status) = status {
-            params.push(format!("status={}", status));
+            params.push(format!("status={}", encode_query_value(status)));
         }
         if let Some(search) = search {
-            params.push(format!("search={}", search));
+            params.push(format!("search={}", encode_query_value(search)));
         }
         if let Some(limit) = limit {
             params.push(format!("limit={}", limit));
@@ -398,16 +457,15 @@ impl ApiService {
         self.get("/system/info").await
     }
 
-    pub async fn get_master_status(&self) -> Result<MasterStatus, ApiError> {
-        self.get("/system/master").await
+    /// Supervisor status (canonical `/system/supervisor`). The legacy
+    /// `/system/master` path never existed on the backend and was removed from
+    /// the client so the route-contract test fails on any reintroduction.
+    pub async fn get_supervisor(&self) -> Result<MasterStatus, ApiError> {
+        self.get("/system/supervisor").await
     }
 
     pub async fn get_workers(&self) -> Result<Vec<WorkerStatus>, ApiError> {
         self.get("/system/workers").await
-    }
-
-    pub async fn get_supervisor(&self) -> Result<MasterStatus, ApiError> {
-        self.get("/system/supervisor").await
     }
 
     pub async fn get_workers_status(&self) -> Result<Vec<WorkerStatus>, ApiError> {
@@ -420,7 +478,7 @@ impl ApiService {
 
     pub async fn restart_worker(&self, worker_id: &str) -> Result<serde_json::Value, ApiError> {
         self.post(
-            &format!("/system/workers/{}/restart", worker_id),
+            &format!("/system/workers/{}/restart", encode_path_segment(worker_id)),
             &serde_json::json!({}),
         )
         .await
@@ -500,7 +558,8 @@ impl ApiService {
         &self,
         site_id: &str,
     ) -> Result<Option<crate::types::SiteThemeResponse>, ApiError> {
-        self.get(&format!("/sites/{}/theme", site_id)).await
+        self.get(&format!("/sites/{}/theme", encode_path_segment(site_id)))
+            .await
     }
 
     pub async fn update_site_theme(
@@ -508,15 +567,22 @@ impl ApiService {
         site_id: &str,
         request: &crate::types::UpdateThemeRequest,
     ) -> Result<crate::types::SiteThemeResponse, ApiError> {
-        self.put(&format!("/sites/{}/theme", site_id), request)
-            .await
+        self.put(
+            &format!("/sites/{}/theme", encode_path_segment(site_id)),
+            request,
+        )
+        .await
     }
 
     pub async fn get_site_error_pages(
         &self,
         site_id: &str,
     ) -> Result<crate::types::SiteErrorPagesResponse, ApiError> {
-        self.get(&format!("/sites/{}/error-pages", site_id)).await
+        self.get(&format!(
+            "/sites/{}/error-pages",
+            encode_path_segment(site_id)
+        ))
+        .await
     }
 
     pub async fn update_site_error_pages(
@@ -524,8 +590,11 @@ impl ApiService {
         site_id: &str,
         request: &crate::types::UpdateSiteErrorPagesRequest,
     ) -> Result<crate::types::SiteErrorPagesResponse, ApiError> {
-        self.put(&format!("/sites/{}/error-pages", site_id), request)
-            .await
+        self.put(
+            &format!("/sites/{}/error-pages", encode_path_segment(site_id)),
+            request,
+        )
+        .await
     }
 
     pub async fn get_threat_level_status(
@@ -582,7 +651,10 @@ impl ApiService {
     }
 
     pub async fn delete_threat_level_backup(&self, backup_id: &str) -> Result<bool, ApiError> {
-        let url = format!("/threat-level/history/backups?path={}", backup_id);
+        let url = format!(
+            "/threat-level/history/backups?path={}",
+            encode_query_value(backup_id)
+        );
         let response = self.request("DELETE", &url).await?;
         if response.ok() {
             Ok(true)
@@ -597,7 +669,8 @@ impl ApiService {
     }
 
     pub async fn get_site(&self, site_id: &str) -> Result<serde_json::Value, ApiError> {
-        self.get(&format!("/sites/{}", site_id)).await
+        self.get(&format!("/sites/{}", encode_path_segment(site_id)))
+            .await
     }
 
     pub async fn update_site(
@@ -605,11 +678,12 @@ impl ApiService {
         site_id: &str,
         request: &serde_json::Value,
     ) -> Result<serde_json::Value, ApiError> {
-        self.put(&format!("/sites/{}", site_id), request).await
+        self.put(&format!("/sites/{}", encode_path_segment(site_id)), request)
+            .await
     }
 
     pub async fn delete_site(&self, site_id: &str) -> Result<serde_json::Value, ApiError> {
-        let url = format!("/sites/{}", site_id);
+        let url = format!("/sites/{}", encode_path_segment(site_id));
         let response = self.request("DELETE", &url).await?;
         if response.ok() {
             Ok(serde_json::json!({ "status": "ok" }))
@@ -621,7 +695,7 @@ impl ApiService {
 
     pub async fn trigger_health_check(&self, site_id: &str) -> Result<serde_json::Value, ApiError> {
         self.post(
-            &format!("/upstreams/{}/check", site_id),
+            &format!("/upstreams/{}/check", encode_path_segment(site_id)),
             &serde_json::json!({}),
         )
         .await
@@ -1019,5 +1093,36 @@ mod tests {
         // "abc" = 3, "日" = 3 (ends at 6), "本" = 3 (ends at 9)
         let result = truncate_utf8_safe(text, 6);
         assert_eq!(result, "abc日...");
+    }
+
+    #[test]
+    fn encode_query_value_leaves_unreserved_intact() {
+        assert_eq!(encode_query_value("abcXYZ019-_.~"), "abcXYZ019-_.~");
+    }
+
+    #[test]
+    fn encode_query_value_escapes_reserved_and_space() {
+        assert_eq!(encode_query_value("a&b=c?d e/f"), "a%26b%3Dc%3Fd%20e%2Ff");
+    }
+
+    #[test]
+    fn encode_query_value_escapes_non_ascii() {
+        // "é" = U+00E9 = UTF-8 C3 A9
+        assert_eq!(encode_query_value("café"), "caf%C3%A9");
+    }
+
+    #[test]
+    fn encode_path_segment_escapes_slash() {
+        assert_eq!(encode_path_segment("a/b"), "a%2Fb");
+    }
+
+    #[test]
+    fn ws_and_poll_path_constants_follow_namespacing_rules() {
+        // WebSocket hooks take the full `/api/ws/...` path; ApiService poll
+        // paths must NOT include the `/api` prefix (service prepends it).
+        assert!(WS_METRICS_PATH.starts_with("/api/ws/"));
+        assert!(WS_LOGS_PATH.starts_with("/api/ws/"));
+        assert!(POLL_STATS_SUMMARY_PATH.starts_with("/stats/"));
+        assert!(!POLL_STATS_SUMMARY_PATH.starts_with("/api/"));
     }
 }

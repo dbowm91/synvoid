@@ -30,7 +30,8 @@ pub fn SystemStatus() -> Html {
                     Ok(info) => system_info.set(Some(info)),
                     Err(e) => error.set(Some(e.to_string())),
                 }
-                match api.get_master_status().await {
+                // Canonical supervisor endpoint (`/system/supervisor`).
+                match api.get_supervisor().await {
                     Ok(status) => master_status.set(Some(status)),
                     Err(e) => error.set(Some(e.to_string())),
                 }
@@ -198,7 +199,7 @@ pub fn SystemStatus() -> Html {
                 </div>
 
                 <div class="bg-secondary rounded-lg border border-default p-6">
-                    <h2 class="text-lg font-semibold mb-4">{ "Master Process" }</h2>
+                    <h2 class="text-lg font-semibold mb-4">{ "Supervisor Process" }</h2>
                     if let Some(status) = &*master_status {
                         <div class="space-y-3">
                             <div class="flex justify-between">
@@ -283,20 +284,13 @@ pub fn SystemStatus() -> Html {
                     <div class="flex items-center gap-8">
                         <div class="text-center">
                             <div class="w-24 h-24 rounded-full bg-blue-600 flex items-center justify-center text-white font-bold text-lg">
-                                { "Overseer" }
+                                { "Supervisor" }
                             </div>
-                            <p class="text-sm text-secondary mt-2">{ "Supervisor" }</p>
+                            <p class="text-sm text-secondary mt-2">{ "Lifecycle" }</p>
                         </div>
                         <div class="w-16 h-1 bg-tertiary"></div>
                         <div class="text-center">
                             <div class="w-24 h-24 rounded-full bg-green-600 flex items-center justify-center text-white font-bold text-lg">
-                                { "Master" }
-                            </div>
-                            <p class="text-sm text-secondary mt-2">{ "Process" }</p>
-                        </div>
-                        <div class="w-16 h-1 bg-tertiary"></div>
-                        <div class="text-center">
-                            <div class="w-24 h-24 rounded-full bg-purple-600 flex items-center justify-center text-white font-bold text-lg">
                                 { "Workers" }
                             </div>
                             <p class="text-sm text-secondary mt-2">{ "Request Handler" }</p>
@@ -304,7 +298,7 @@ pub fn SystemStatus() -> Html {
                     </div>
                 </div>
                 <p class="text-sm text-secondary text-center mt-4">
-                    { "Overseer monitors Master, Master manages Workers, Workers handle requests" }
+                    { "Supervisor manages worker lifecycle; workers handle requests" }
                 </p>
             </div>
 

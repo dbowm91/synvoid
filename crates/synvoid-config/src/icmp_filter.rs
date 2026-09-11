@@ -118,7 +118,11 @@ pub struct IcmpFilterConfig {
     #[serde(default)]
     pub direction: Direction,
 
-    #[serde(default)]
+    // `All` serializes as null under the untagged representation, which TOML
+    // cannot represent (`toml::to_string_pretty` errors and every config PUT
+    // then persists with 500). Omitting the default preserves the round-trip:
+    // a missing key deserializes back to `All` via the field + type defaults.
+    #[serde(default, skip_serializing_if = "InterfaceSpec::is_all")]
     pub interfaces: InterfaceSpec,
 
     #[serde(default = "default_table_name")]
@@ -228,6 +232,36 @@ mod tests {
         let deserialized: IcmpFilterConfig = serde_json::from_str(&json).unwrap();
 
         assert_eq!(deserialized.table_name, "waf_rules");
+    }
+
+    #[test]
+    fn test_toml_round_trip_default_interfaces() {
+        // Regression: `InterfaceSpec::All` under the untagged representation
+        // serializes as null, which TOML cannot represent. The field is
+        // skipped when default so every config PUT can persist (previously
+        // all persists returned 500 with `icmp-filter` enabled).
+        let config = IcmpFilterConfig::new();
+        let toml_str =
+            toml::to_string_pretty(&config).expect("default config must serialize to TOML");
+        let round_tripped: IcmpFilterConfig =
+            toml::from_str(&toml_str).expect("default config must deserialize from TOML");
+        assert!(round_tripped.interfaces.is_all());
+        assert_eq!(round_tripped.table_name, "synvoid-icmp");
+    }
+
+    #[test]
+    fn test_toml_round_trip_specific_interfaces() {
+        let mut config = IcmpFilterConfig::new();
+        config.interfaces = InterfaceSpec::Specific(vec!["eth0".to_string()]);
+        let toml_str =
+            toml::to_string_pretty(&config).expect("specific config must serialize to TOML");
+        assert!(toml_str.contains("eth0"));
+        let round_tripped: IcmpFilterConfig =
+            toml::from_str(&toml_str).expect("specific config must deserialize from TOML");
+        assert_eq!(
+            round_tripped.interfaces.interfaces(),
+            Some(&["eth0".to_string()][..])
+        );
     }
 
     #[test]

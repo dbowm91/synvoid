@@ -1,5 +1,8 @@
 use crate::components::charts::Sparkline;
-use crate::hooks::use_websocket::{range_to_seconds, use_websocket_or_poll, UseWebSocketState};
+use crate::hooks::use_websocket::{
+    range_to_seconds, use_websocket_or_poll, UseWebSocketState, WS_METRICS_PATH,
+};
+use crate::services::api::{ApiService, POLL_STATS_SUMMARY_PATH};
 use crate::types::RealtimeMetrics;
 use gloo::timers::callback::Interval;
 use yew::prelude::*;
@@ -20,11 +23,10 @@ fn get_threat_level_color_and_label(level: u8) -> (&'static str, &'static str) {
 
 #[function_component]
 pub fn RealtimeHeader() -> Html {
-    let metrics_state = use_websocket_or_poll::<RealtimeMetrics>(
-        "/api/ws/metrics",
-        "/api/stats/history?seconds=60",
-        5000,
-    );
+    // WS path is the full `/api/ws/...` path; poll paths omit `/api` because
+    // `ApiService` prepends it.
+    let metrics_state =
+        use_websocket_or_poll::<RealtimeMetrics>(WS_METRICS_PATH, POLL_STATS_SUMMARY_PATH, 5000);
 
     let (ws_state, _refresh) = metrics_state;
 
@@ -81,8 +83,8 @@ pub fn RealtimeHeader() -> Html {
             let set_blocked_history = set_blocked_history.clone();
             let set_current_metrics = set_current_metrics.clone();
             wasm_bindgen_futures::spawn_local(async move {
-                let api = crate::services::api::ApiService::new();
-                let url = format!("/api/stats/history?seconds={}", secs);
+                let api = ApiService::new();
+                let url = format!("/stats/history?seconds={}", secs);
                 if let Ok(data) = api.get::<Vec<RealtimeMetrics>>(&url).await {
                     if let Some(last) = data.last() {
                         set_current_metrics.set(Some(last.clone()));

@@ -4,6 +4,11 @@ use wasm_bindgen::JsCast;
 use web_sys::{MessageEvent, WebSocket};
 use yew::prelude::*;
 
+/// Canonical WebSocket paths — re-exported from the API service so hooks,
+/// pages, and tests share one source of truth with the backend
+/// (`src/admin/ws/mod.rs`). Do not duplicate these literals.
+pub use crate::services::api::{WS_LOGS_PATH, WS_METRICS_PATH};
+
 #[derive(Debug, PartialEq)]
 pub enum UseWebSocketState<T> {
     Connecting,

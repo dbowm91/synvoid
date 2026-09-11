@@ -348,10 +348,12 @@ fn build_router_from_state(
         ));
 
     // ── WebSocket routes (session-authenticated upgrade, no blanket middleware) ──
-    // Canonical paths: /api/ws/metrics and /api/ws/logs (matching frontend namespace)
+    // Canonical paths live in `ws::{WS_METRICS_PATH, WS_LOGS_PATH}` so the
+    // router, middleware exclusions, frontend hooks, and contract tests share
+    // one source of truth.
     let ws_routes = Router::new()
-        .route("/api/ws/metrics", get(ws::ws_metrics_handler))
-        .route("/api/ws/logs", get(ws::ws_logs_handler));
+        .route(ws::WS_METRICS_PATH, get(ws::ws_metrics_handler))
+        .route(ws::WS_LOGS_PATH, get(ws::ws_logs_handler));
 
     // ── Root health (public, no auth) ─────────────────────────────────────
     let health_route = Router::new().route("/health", get(health_check));

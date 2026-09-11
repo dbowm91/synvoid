@@ -122,7 +122,7 @@ The API specification can be exported without starting the server:
 ./target/release/synvoid --export-api-spec > synvoid-admin-openapi.json
 ```
 
-See `docs/ADMIN_UI.md` and `docs/API_REFERENCE.md` for the operator interface and API details.
+See `docs/ADMIN_UI.md` and `docs/API_REFERENCE.md` for the operator interface and API details. Frontend/backend drift is guarded mechanically: `tests/admin_route_contract.rs` checks every UI-consumed endpoint against backend path + method, and `tests/admin_router_composition.rs` checks capabilities, discovery/OpenAPI, and auth classification (bounded feature matrix: minimal, `mesh`, `dns`, `icmp-filter`, `mesh,dns`).
 
 ## Operational CLI
 

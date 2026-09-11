@@ -165,7 +165,7 @@ pub(crate) fn mesh_routes() -> Router<Arc<AdminState>> {
 }
 ```
 
-**Important**: Auth middleware is applied to the `/api` nest, not individual routes. Public routes (health, OpenAPI) are exempted by path in the auth middleware.
+**Important**: Auth middleware is applied to the `/api` nest, not individual routes. Public routes (root `/health`, OpenAPI, docs) and the two canonical WebSocket upgrades (`/api/ws/metrics`, `/api/ws/logs` — exact match in `src/admin/ws/mod.rs`, never a broad `/api/ws/` prefix) are exempted by exact path in the auth middleware. Each WS handler still enforces per-connection bearer/session auth.
 
 ## Supervisor Status Pattern
 
@@ -274,9 +274,18 @@ pub struct DhtStatsResponse {
 # Integration tests
 cargo test --test integration_test
 
+# Phase 05 admin contract (route alignment, capabilities, discovery/OpenAPI, auth classification)
+cargo nextest run --cargo-profile ci --profile ci \
+  --test admin_route_contract \
+  --test admin_router_composition \
+  --test admin_smoke_flow \
+  --features mesh,dns,icmp-filter
+
 # Test specific endpoint
 curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/config/versions
 ```
+
+Bounded feature matrix (`cargo xtask verify-full`): minimal (`--no-default-features`), `mesh`, `dns`, `icmp-filter`, `mesh,dns`. Full powerset is intentionally not tested. Capability flags (`mesh_admin`, `dns_admin`, `icmp_admin`) must track compiled route families — see `capabilities_match_compiled_route_families`. Stale paths (`/system/master`, `/system/overseer`, `/config/overseer`, singular worker restart, `/api/logs/realtime`) must stay absent.
 
 ## Authentication and Session Model
 
@@ -314,11 +323,15 @@ The admin server uses `ConnectInfo<SocketAddr>` for direct peer IP extraction. T
 
 ### WebSocket Authentication
 
-WebSocket endpoints (`/api/ws/metrics`, `/api/ws/logs`) authenticate via:
+WebSocket endpoints (`/api/ws/metrics`, `/api/ws/logs` — canonical constants in `src/admin/ws/mod.rs`) authenticate per connection via:
 1. Bearer token in `Authorization` header (API clients)
 2. HttpOnly session cookie (browser clients)
 
-The legacy `synvoid_ws_token` JavaScript-readable cookie is **not** supported. Browser WebSockets authenticate from the bounded session cookie.
+The legacy `synvoid_ws_token` JavaScript-readable cookie is **not** supported. Browser WebSockets authenticate from the bounded session cookie. Middleware skips blanket REST auth for exactly these two paths; handlers reject unauthenticated upgrades with 401.
+
+### CSRF exemptions (exact paths)
+
+CSRF applies to POST/PUT/PATCH/DELETE with exact exemptions for `/api/ws/metrics`, `/api/ws/logs`, root `/health`, and `/api/config/schema`. Bearer-authenticated requests bypass CSRF. Bare `/stats` / `/config/schema` prefixes never matched real routes and were removed (Phase 05).
 
 ### Security Headers
 

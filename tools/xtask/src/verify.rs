@@ -181,6 +181,21 @@ fn verify_steps() -> Vec<(&'static str, &'static str)> {
              --test mesh_admin_edge_cases",
         ),
         (
+            // Phase 05 admin contract: frontend/backend route alignment,
+            // capability ↔ route-family cross-check, discovery/OpenAPI
+            // consistency, and auth/middleware classification. Runs with all
+            // optional admin families enabled so every cfg-gated assertion
+            // executes; absence cases are covered by the same tests' cfg-not
+            // branches in the minimal-profile `verify-full` compilation plus
+            // the dedicated feature-gate tests.
+            "admin-contract",
+            "cargo nextest run --cargo-profile ci --profile ci \
+             --test admin_route_contract \
+             --test admin_router_composition \
+             --test admin_smoke_flow \
+             --features mesh,dns,icmp-filter",
+        ),
+        (
             "failure-injection",
             "cargo test --test failure_injection --profile ci",
         ),
@@ -208,18 +223,30 @@ fn verify_full_steps() -> Vec<(&'static str, &'static str)> {
             "clippy",
             "cargo clippy --profile ci --all-targets -- -D warnings",
         ),
-        // Feature profile compilation
+        // Bounded admin-contract feature matrix (Phase 05). Each entry maps
+        // to a real optional admin route/capability family; the full powerset
+        // is intentionally NOT tested (combinatorial, no measured benefit).
+        // `default` is covered by clippy/nextest above; the rows below cover
+        // the minimal surface plus each optional family alone and combined.
+        (
+            "profile-minimal",
+            "cargo check --no-default-features --profile ci",
+        ),
         (
             "profile-mesh",
-            "cargo check --no-default-features --features mesh",
+            "cargo check --no-default-features --features mesh --profile ci",
         ),
         (
             "profile-dns",
-            "cargo check --no-default-features --features dns",
+            "cargo check --no-default-features --features dns --profile ci",
         ),
         (
-            "profile-full",
-            "cargo check --no-default-features --features mesh,dns",
+            "profile-icmp",
+            "cargo check --no-default-features --features icmp-filter --profile ci",
+        ),
+        (
+            "profile-mesh-dns",
+            "cargo check --no-default-features --features mesh,dns --profile ci",
         ),
         // Broad deterministic tests — covers workspace unit/integration,
         // guard tests, security regression, DNS, plugin-runtime, honeypot,

@@ -255,7 +255,7 @@ Destructive actions (like deleting sites) show confirmation dialogs to prevent a
 
 ## Real-time Updates
 
-The admin UI uses WebSocket for real-time updates. The WebSocket URL is derived automatically from the page location (http → ws, https → wss):
+The admin UI uses WebSocket for real-time updates. The WebSocket URL is derived automatically from the page location (http → ws, https → wss). Canonical paths (single source of truth: backend `src/admin/ws/mod.rs`, frontend `ApiService::{WS_METRICS_PATH, WS_LOGS_PATH}`):
 
 ### Metrics WebSocket
 
@@ -266,8 +266,42 @@ The admin UI uses WebSocket for real-time updates. The WebSocket URL is derived 
 ### Logs WebSocket
 
 ```
-/api/logs/realtime
+/api/ws/logs
 ```
+
+Poll fallback paths omit the `/api` prefix because `ApiService` prepends it (e.g. `"/stats/summary"`, not `"/api/stats/summary"`). WebSocket hooks take the full `"/api/ws/..."` path because they build a `ws(s)://` URL directly.
+
+## Capability gating
+
+The sidebar fetches `GET /api/system/capabilities` once on mount (via `ApiService::get_capabilities()`) and gates nav families through a pure `sidebar_visibility()` decision function (unit-tested, no browser suite required):
+
+| Capability | Gates | Backend feature |
+|---|---|---|
+| `mesh_admin` | Mesh, Tier Keys | `mesh` |
+| `dns_admin` | DNS | `dns` |
+| `icmp_admin` | ICMP Filter | `icmp-filter` |
+| `honeypot` | Port Honeypot | always on |
+| `process_manager` | Process Management | always on |
+
+Capability flags track compile-time features; `tests/admin_router_composition.rs::capabilities_match_compiled_route_families` fails if a flag advertises an absent route family.
+
+## Route contract (Phase 05)
+
+Every endpoint consumed by the UI is mechanically checked against backend path + method registration:
+
+- `tests/admin_route_contract.rs` — exhaustive UI coverage (auth, stats, sites, upstreams, config, workers/supervisor, alerts, probes/threat/rules, capabilities, WebSockets, DNS/mesh/ICMP/tier-key/serverless/plugin families when compiled). Fails on singular/plural typos, wrong methods (405 vs 404 distinguished), missing `/api` namespace, stale gates, or frontend-only routes.
+- `tests/admin_router_composition.rs` — capability ↔ route-family cross-check, API discovery/OpenAPI consistency, and auth/middleware classification (public/health/OpenAPI, session bootstrap, protected REST 401, CSRF 403 + bearer bypass, per-connection WebSocket auth, exact middleware exclusions).
+- `tests/admin_smoke_flow.rs` — 15-step auth/session lifecycle plus CSRF, bearer, security-header, and OpenAPI checks.
+
+Feature-profile matrix (`cargo xtask verify-full`): minimal (`--no-default-features`), `mesh`, `dns`, `icmp-filter`, `mesh,dns`. Full powerset is intentionally not tested. Routine CI (`cargo xtask verify`) runs the contract with `--features mesh,dns,icmp-filter`.
+
+## Logout semantics
+
+`ApiService::logout()` transitions atomically:
+
+- success → clear CSRF + unauthenticated;
+- 401/403 (session already invalid) → clear CSRF + unauthenticated;
+- 5xx / network failure (session may still be valid) → retain CSRF/auth, report the error so the UI stays authenticated and a retry can still mutate.
 
 ## Keyboard Shortcuts
 

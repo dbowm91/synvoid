@@ -6,6 +6,13 @@
 > (3 static guards + 1 boundary guard + 3 closure regression suites) to the
 > existing consolidated nextest invocation. No new jobs, no new invocations,
 > no feature/profile changes; the <10min budget is unaffected.
+> Amended: 2026-09-11 | Phase 05 — Admin contract adds 1 fast routine
+> invocation (`admin-contract`: route/capability/discovery/auth classification
+> with `--features mesh,dns,icmp-filter`) and bounds `verify-full` profiles to
+> minimal/mesh/dns/icmp-filter/mesh,dns. Rationale: admin drift was the only
+> multi-authored surface without a mechanical CI gate; the added invocation is
+> seconds-scale oneshot tests, and the profile rows map 1:1 to optional admin
+> route families (full powerset stays excluded). Cargo invocations 8 → 9.
 
 This document is the single source of truth for what SynVoid CI must verify, at what frequency, and with what commands. It replaces the four-lane system as the authoritative verification specification.
 
@@ -17,7 +24,7 @@ The routine contract runs on every pull request. It is expressed as a single com
 cargo xtask verify
 ```
 
-Or equivalently, the raw commands (8 Cargo invocations):
+Or equivalently, the raw commands (9 Cargo invocations):
 
 ```bash
 cargo fmt --all -- --check
@@ -40,6 +47,9 @@ cargo nextest run --cargo-profile ci --profile ci \
   --features mesh
 cargo nextest run -p synvoid-core --cargo-profile ci --profile ci \
   --test admin_auth_boundary --test mesh_admin_edge_cases
+cargo nextest run --cargo-profile ci --profile ci \
+  --test admin_route_contract --test admin_router_composition \
+  --test admin_smoke_flow --features mesh,dns,icmp-filter
 cargo test --test failure_injection --profile ci
 ```
 
@@ -54,6 +64,7 @@ cargo test --test failure_injection --profile ci
 | Security regression detection | `cargo test --test security_regression --profile ci --test-threads=1` | Yes |
 | Composition, lifecycle, plugin, CLI, admin, mesh, ABI, and ownership guards | 21 root guard tests via consolidated nextest | Yes |
 | synvoid-core admin/mesh edge cases | 2 synvoid-core tests via nextest | Yes |
+| Admin route/capability/discovery/auth contract | `admin_route_contract`, `admin_router_composition`, `admin_smoke_flow` with `--features mesh,dns,icmp-filter` | Yes |
 | Failure injection (supervisor, block-store, plugin) | `cargo test --test failure_injection --profile ci` | Yes |
 
 ### What it deliberately omits
@@ -74,7 +85,7 @@ cargo test --test failure_injection --profile ci
 
 - **Target**: <10 minutes wall time on warm-cache Ubuntu runner
 - **Blocking threshold**: >15 minutes
-- **Cargo invocations**: 8 (fmt + 7 Cargo invocations)
+- **Cargo invocations**: 9 (fmt + 8 Cargo invocations)
 
 ### No affected-package selection
 
@@ -92,17 +103,20 @@ Full local verification is manually invoked before risky merges and during focus
 cargo xtask verify-full
 ```
 
-Or equivalently, the raw commands (7 Cargo invocations):
+Or equivalently, the raw commands (9 Cargo invocations):
 
 ```bash
 # Format + lint preflight (shared with routine, cheap)
 cargo fmt --all -- --check
 cargo clippy --profile ci --all-targets -- -D warnings
 
-# Feature profile compilation
-cargo check --no-default-features --features mesh
-cargo check --no-default-features --features dns
-cargo check --no-default-features --features mesh,dns
+# Bounded admin-contract feature matrix (Phase 05): each row maps to a real
+# optional admin route/capability family. Full powerset intentionally excluded.
+cargo check --no-default-features --profile ci
+cargo check --no-default-features --features mesh --profile ci
+cargo check --no-default-features --features dns --profile ci
+cargo check --no-default-features --features icmp-filter --profile ci
+cargo check --no-default-features --features mesh,dns --profile ci
 
 # Broad deterministic workspace tests (single invocation)
 cargo nextest run --workspace --cargo-profile ci --profile ci --exclude synvoid-fuzz
@@ -115,9 +129,11 @@ cargo test --workspace --doc --profile ci
 
 | Property | Command |
 |----------|---------|
-| Mesh-only feature gate compiles cleanly | `cargo check --no-default-features --features mesh` |
-| DNS-only feature gate compiles cleanly | `cargo check --no-default-features --features dns` |
-| Combined mesh+dns feature gate compiles cleanly | `cargo check --no-default-features --features mesh,dns` |
+| Minimal (no optional admin families) compiles cleanly | `cargo check --no-default-features --profile ci` |
+| Mesh-only feature gate compiles cleanly | `cargo check --no-default-features --features mesh --profile ci` |
+| DNS-only feature gate compiles cleanly | `cargo check --no-default-features --features dns --profile ci` |
+| ICMP-only feature gate compiles cleanly | `cargo check --no-default-features --features icmp-filter --profile ci` |
+| Combined mesh+dns feature gate compiles cleanly | `cargo check --no-default-features --features mesh,dns --profile ci` |
 | Full workspace unit/integration behavior | `cargo nextest run --workspace` |
 | Documentation compilation | `cargo test --workspace --doc` |
 
@@ -301,6 +317,7 @@ Every current CI command classified by product property and routine eligibility:
 | Security regression | `cargo test --test security_regression --profile ci --test-threads=1` | Yes | Keep in routine |
 | 21 root guard tests | `cargo nextest run ... root-guards` (consolidated; 13 + 7 Phase 24 additions + 1 Phase 02 static file-manager guard) | Yes | Keep in routine |
 | synvoid-core admin/mesh | `cargo nextest run -p synvoid-core ... core-admin-tests` (consolidated) | Yes | Keep in routine |
+| Admin contract (route/capability/discovery/auth) | `cargo nextest run ... --test admin_route_contract --test admin_router_composition --test admin_smoke_flow --features mesh,dns,icmp-filter` | Yes | Keep in routine (Phase 05; seconds-scale oneshot) |
 | Failure injection | `cargo test --test failure_injection --profile ci` | Yes | Keep in routine |
 | Root test ownership | Included in root-guards consolidation | Yes | Keep in routine |
 | Full workspace tests | `cargo nextest run --workspace --exclude synvoid-fuzz` | No | Full local |
@@ -383,14 +400,15 @@ Measured after Phase 1 consolidation on a warm-cache Linux x86_64 workstation (4
 | 5 | `cargo test --test security_regression --profile ci --test-threads=1` | ~120s | 0 |
 | 6 | `cargo nextest run ... root-guards` (13 tests, consolidated) | ~200s | 0 |
 | 7 | `cargo nextest run -p synvoid-core ... core-admin-tests` (2 tests) | ~40s | 0 |
-| 8 | `cargo test --test failure_injection --profile ci` | ~70s | 0 |
+| 8 | `cargo nextest run ... admin-contract` (3 tests, oneshot, seconds-scale) | ~60s | 0 |
+| 9 | `cargo test --test failure_injection --profile ci` | ~70s | 0 |
 
 ### Summary
 
 | Metric | Value |
 |--------|-------|
-| Cargo invocations | 8 (fmt + 7) |
-| Properties covered | 13 (formatting, linting, compilation, guards, security, architecture, composition, lifecycle, plugin, CLI, admin, mesh, ABI, ownership, failure injection) |
+| Cargo invocations | 9 (fmt + 8) |
+| Properties covered | 14 (formatting, linting, compilation, guards, security, architecture, composition, lifecycle, plugin, CLI, admin, mesh, ABI, ownership, admin contract, failure injection) |
 | Duplicate test targets | 0 (each step tests a distinct target or consolidated group) |
 
 ### Budget assessment
@@ -399,7 +417,7 @@ Measured after Phase 1 consolidation on a warm-cache Linux x86_64 workstation (4
 |-----------|----------|--------|
 | Target <10min | TBD (warm-cache hosted) | — |
 | Blocking threshold >15min | — | — |
-| Cargo invocations ≤8 | 8 | ✓ |
+| Cargo invocations ≤9 | 9 | ✓ |
 
 ## 9. Full Verification Overlap
 
@@ -504,11 +522,11 @@ cargo test -p synvoid-dns --profile ci
 
 | # | Requirement | Method | Result |
 |---|-------------|--------|--------|
-| 1 | `verify` returns nonzero for a failed first command | Inject formatting violation in `worker_id.rs`; run `cargo xtask verify` | Exit code 1 at step `fmt`. Steps 2-8 skipped. ✓ |
-| 2 | `verify` returns nonzero for a failed test late in the sequence | Inject `assert!(false)` in `root_test_ownership_guard.rs` (step 6, root-guards); run `cargo xtask verify` | Exit code 1 at step `root-guards`. Steps 1-5 passed, step 7-8 skipped. ✓ |
+| 1 | `verify` returns nonzero for a failed first command | Inject formatting violation in `worker_id.rs`; run `cargo xtask verify` | Exit code 1 at step `fmt`. Steps 2-9 skipped. ✓ |
+| 2 | `verify` returns nonzero for a failed test late in the sequence | Inject `assert!(false)` in `root_test_ownership_guard.rs` (step 6, root-guards); run `cargo xtask verify` | Exit code 1 at step `root-guards`. Steps 1-5 passed, step 7-9 skipped. ✓ |
 | 3 | `verify-full` does not report success when an added full-only test fails | Inject `assert!(false)` in a DNS test file; run `cargo xtask verify-full` | Exit code 1 at step `nextest-all`. Subsequent steps skipped. ✓ |
 | 4 | Product guard command reports the specific violated invariant | Inject inverted assertion in `boundary_composition_guard.rs::simulated_violation_in_waf_is_detected`; run `cargo xtask test guards` | Exit code 1 at step `root-guards`. Test name and assertion failure printed. ✓ |
-| 5 | Deleting lane manifest does not affect `verify` | `testing/lanes.toml` deleted in Phase 3. `cargo xtask verify` does not reference it. | `verify` runs 8 steps without lane parsing. ✓ |
+| 5 | Deleting lane manifest does not affect `verify` | `testing/lanes.toml` deleted in Phase 3. `cargo xtask verify` does not reference it. | `verify` runs 9 steps without lane parsing. ✓ |
 | 6 | Deleting selector does not alter routine command selection | `scripts/ci/select-affected.py` deleted in Phase 3. No selector code remains. | `verify` runs fixed command set. No selection logic. ✓ |
 | 7 | Command wrapper outside repo root resolves root or fails precisely | Run `cargo xtask verify` from `/tmp` | Error: `reached filesystem root without finding workspace Cargo.toml`. Exit code 1. ✓ |
 

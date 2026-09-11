@@ -9,14 +9,14 @@ cargo build --release   # default features: socket-handoff, mesh, dns, erased_po
 ```
 
 - **protoc is required**: the default `mesh` feature triggers protobuf codegen in `build.rs` (`tonic-prost-build`). Install `protobuf-compiler` (CI does) or builds fail confusingly.
-- All feature profiles must compile: `cargo check --no-default-features [--features mesh | dns | mesh,dns]`.
+- All feature profiles must compile: `cargo check --no-default-features [--features mesh | dns | icmp-filter | mesh,dns]` (bounded Phase 05 matrix; full powerset intentionally not tested).
 
 ## Verification
 
 **Authority**: `docs/testing/verification-contract.md` (frozen contract). The single CI workflow (`.github/workflows/ci.yml`) runs exactly:
 
 ```bash
-cargo xtask verify   # fmt → clippy --profile ci --all-targets -D warnings → core compile check → repo-guards → security regression → root guard suite → core admin tests → failure injection
+cargo xtask verify   # fmt → clippy --profile ci --all-targets -D warnings → core compile check → repo-guards → security regression → root guard suite → core admin tests → admin contract (mesh,dns,icmp-filter) → failure injection
 ```
 
 xtask subcommands (options: `--dry-run`, `--json`, `--verbose`, `--allow-dirty`):
@@ -52,7 +52,7 @@ Testing quirks:
 ## Test Placement Rules
 
 - Every root `tests/*.rs` file MUST have an entry in `tests/OWNERSHIP.toml` or `root_test_ownership_guard` fails; `class = "domain"` entries are rejected — single-crate tests belong in the owning crate's `tests/`. Classification guide: `docs/testing/root-test-ownership.md`.
-- Suites outside routine CI (run when touching those areas): DNS full/interop (`cargo test -p synvoid-dns --profile ci`, conformance via `./scripts/dns/conformance.sh`), plugin runtime (`plugin_failure_does_not_poison_manager`, `manifest_authority_wiring`), honeypot/tarpit (`--all-targets`), `admin_route_contract` (frontend/backend API alignment).
+- Suites outside routine CI (run when touching those areas): DNS full/interop (`cargo test -p synvoid-dns --profile ci`, conformance via `./scripts/dns/conformance.sh`), plugin runtime (`plugin_failure_does_not_poison_manager`, `manifest_authority_wiring`), honeypot/tarpit (`--all-targets`). The admin contract (`admin_route_contract`, `admin_router_composition`, `admin_smoke_flow`) runs in routine CI with `--features mesh,dns,icmp-filter`; run `admin_route_contract` explicitly when touching frontend/backend API alignment.
 
 ## Architecture Facts
 
@@ -130,7 +130,8 @@ Root-module ownership policy lives in `architecture/root_module_ledger.md` — p
 
 - Mutating endpoints return typed `AdminMutationResult` (`synvoid_core::admin_mutation`), attributed to an `AdminMutationAuthority` variant (compat paths use `CompatibilityLegacy`) — never generic `{"success": true}`. Canonical commits use `PropagationStatus::CanonicalCommitted`; quorum loss uses `PropagationStatus::QuorumUnavailable` (never success); best-effort gossip stays `QueuedBestEffort`.
 - Block/unblock emits `AdminAuditEvent` via `state.audit.log_audit_event()`. Never store raw session tokens in audit logs (`AdminActor.session_id_hash` is hashed).
-- Browser clients: HttpOnly session cookie + CSRF token; bearer token only for session exchange; WebSocket auth via session cookie only. Frontend treats 401/403 as session expiry.
+- Browser clients: HttpOnly session cookie + CSRF token; bearer token only for session exchange; WebSocket auth per connection (session cookie or bearer) at exactly `/api/ws/metrics` + `/api/ws/logs` (constants in `src/admin/ws/mod.rs`); no broad `/api/ws/` prefix bypass. Frontend treats 401/403 as session expiry. Logout is atomic: success/401-403 clears CSRF + unauthenticated; 5xx/network retains CSRF/auth for retry.
+- Admin contract (Phase 05): every UI-consumed endpoint is checked against backend path + method in `tests/admin_route_contract.rs`; capabilities ↔ route families, discovery/OpenAPI consistency, and auth/middleware classification in `tests/admin_router_composition.rs`. Capability flags track features (`mesh_admin`→`mesh`, `dns_admin`→`dns`, `icmp_admin`→`icmp-filter`). Stale paths (`/system/master`, `/system/overseer`, `/config/overseer`, singular worker restart, `/api/logs/realtime`) must stay absent. Bounded feature matrix: minimal, `mesh`, `dns`, `icmp-filter`, `mesh,dns`.
 - Admin responses carry `nosniff`, `X-Frame-Options: DENY`, CSP `frame-ancestors 'none'`, strict referrer policy.
 - Mesh propagation is best-effort (`QueuedBestEffort`) — never promise delivery to all peers. Details: `architecture/admin_control_plane_authority.md`.
 

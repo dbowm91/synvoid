@@ -123,8 +123,7 @@ Error bodies are capped at 512 bytes. The frontend treats 401/403 as session exp
 
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
-| `/health` | GET | No | Basic health check |
-| `/api/health` | GET | Yes | Detailed health status |
+| `/health` | GET | No | Basic health check (public, outside `/api`) |
 
 ### /health (No Auth Required)
 
@@ -140,12 +139,7 @@ curl http://127.0.0.1:8081/health
 }
 ```
 
-### /api/health (Authenticated)
-
-```bash
-curl -H "Authorization: Bearer your-admin-token" \
-  http://127.0.0.1:8081/api/health
-```
+There is no `/api/health` route; the admin `ApiService.health_check()` fetches root `/health` directly (it cannot go through the `/api`-prefixed client).
 
 ---
 
@@ -608,7 +602,25 @@ const wsScheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
 const ws = new WebSocket(`${wsScheme}//${location.host}/api/ws/metrics`);
 ```
 
-WebSocket authentication uses the HttpOnly session cookie — no bearer token is needed.
+WebSocket authentication uses the HttpOnly session cookie or a bearer token per connection — no JavaScript-readable token store. The legacy `synvoid_ws_token` cookie is not supported.
+
+OpenAPI (`/api/openapi.json`, public) documents operator-facing REST endpoints only; WebSocket semantics are documented here, not modeled as ordinary HTTP paths.
+
+---
+
+## Capability reporting
+
+`GET /api/system/capabilities` reports which route families the build supports (tracked by `capabilities_match_compiled_route_families` so flags cannot drift from registration):
+
+| Flag | Route family | Feature |
+|---|---|---|
+| `mesh_admin` | `/api/mesh/*`, `/api/tier-keys*`, `/api/yara/*`, `/api/plugins/*`, `/api/serverless/*`, `/api/spin/*` | `mesh` |
+| `dns_admin` | `/api/config/dns` | `dns` |
+| `icmp_admin` | `/api/icmp/*` | `icmp-filter` |
+| `honeypot` | `/api/honeypot/*` | always on |
+| `process_manager` | `/api/system/workers*`, `/api/config/process-manager` | always on |
+
+Removed paths that must stay absent: `/api/system/master`, `/api/system/overseer`, `/api/config/overseer`, `/api/system/worker/{id}/restart` (singular), `/api/logs/realtime` (use `/api/ws/logs`).
 
 ---
 

@@ -22,8 +22,17 @@ Dashboard, Sites (list/editor/detail), DNS, Mesh, Settings, Workers, Logs, Reque
 
 - Browser clients authenticate with an **HttpOnly session cookie + CSRF token**; bearer tokens are used only to bootstrap a session via exchange.
 - 401/403 responses are treated as session expiry by the frontend, never as retryable errors.
-- WebSocket connections authenticate via session cookie only.
+- WebSocket connections authenticate per connection via session cookie or bearer (`/api/ws/metrics`, `/api/ws/logs` — exact paths in `src/admin/ws/mod.rs`); the legacy `synvoid_ws_token` cookie is unsupported.
+- Logout is atomic: success / 401-403 clears CSRF + unauthenticated; 5xx / network retains CSRF/auth for retry.
+- `ApiService` owns all REST paths (base `"/api"`; poll paths omit the prefix, WS hooks take the full path) and URL-encodes user-controlled query/path values.
 - These rules mirror `architecture/admin_control_plane_authority.md`; see also [`admin_deep_dive.md`](./admin_deep_dive.md) for the backend contract.
+
+## 6. Contract tests (Phase 05)
+
+- `tests/admin_route_contract.rs` — exhaustive UI endpoint ↔ backend path+method check (405 vs 404 distinguishes wrong method from missing route).
+- `tests/admin_router_composition.rs` — capability ↔ family cross-check, discovery/OpenAPI consistency (WS documented separately), auth/middleware classification with exact exclusions.
+- Sidebar gating is a pure `sidebar_visibility()` decision function (unit-tested).
+- Bounded feature matrix: minimal, `mesh`, `dns`, `icmp-filter`, `mesh,dns` (`cargo xtask verify-full`); routine CI runs the contract with `--features mesh,dns,icmp-filter`.
 
 ## 6. Related Docs
 

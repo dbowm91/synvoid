@@ -1,4 +1,5 @@
 use crate::components::skeleton::LoadingSpinner;
+use crate::hooks::use_websocket::{build_ws_url, WS_LOGS_PATH};
 use crate::services::ApiService;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::JsCast;
@@ -100,15 +101,7 @@ pub fn Logs() -> Html {
         let ws_ref = ws_ref.clone();
 
         use_effect_with((), move |_| {
-            let window = web_sys::window().unwrap();
-            let location = window.location();
-            let protocol = if location.protocol().unwrap_or_default() == "https:" {
-                "wss:"
-            } else {
-                "ws:"
-            };
-            let host = location.host().unwrap_or_default();
-            let ws_url = format!("{}//{}/api/ws/logs", protocol, host);
+            let ws_url = build_ws_url(WS_LOGS_PATH);
 
             let ws = match WebSocket::new(&ws_url) {
                 Ok(ws) => ws,

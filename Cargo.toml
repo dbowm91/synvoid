@@ -23,21 +23,21 @@ path = "src/bin/server.rs"
 
 [features]
 default = ["socket-handoff", "mesh", "dns", "erased_pool", "swagger-ui"]
-dns = ["synvoid-config/dns", "synvoid-tls/dns", "synvoid-dns", "synvoid-dns/mesh", "synvoid-http/dns", "dep:hickory-proto", "dep:hickory-resolver", "dep:cryptoki", "dep:getrandom"]
-socket-handoff = []
-wireguard = ["synvoid-tunnel/wireguard"]
-icmp-filter = ["dep:synvoid-icmp-filter", "synvoid-config/icmp-filter"]
-flood-ebpf = ["dep:aya"]
+dns = ["synvoid-config/dns", "synvoid-tls/dns", "synvoid-dns", "synvoid-dns/mesh", "synvoid-http/dns", "synvoid-admin/dns", "dep:hickory-proto", "dep:hickory-resolver", "dep:cryptoki", "dep:getrandom"]
+socket-handoff = ["synvoid-admin/socket-handoff"]
+wireguard = ["synvoid-tunnel/wireguard", "synvoid-admin/wireguard"]
+icmp-filter = ["dep:synvoid-icmp-filter", "synvoid-config/icmp-filter", "synvoid-admin/icmp-filter"]
+flood-ebpf = ["dep:aya", "synvoid-admin/flood-ebpf"]
 origin_key_exchange = ["synvoid-integrity/origin_key_exchange"]
 audit = []
-post-quantum = ["synvoid-http-client/post-quantum"]  # Marker feature; PQ TLS handled by rustls prefer-post-quantum
+post-quantum = ["synvoid-http-client/post-quantum", "synvoid-admin/post-quantum"]  # Marker feature; PQ TLS handled by rustls prefer-post-quantum
 verify-pq = []
 tun-rs = ["synvoid-tunnel/tun-rs"]
-mesh = ["synvoid-config/mesh", "synvoid-http/mesh", "synvoid-static-files/mesh", "synvoid-serverless/mesh", "dep:openraft", "dep:synvoid-mesh", "synvoid-mesh/mesh", "synvoid-block-store/mesh", "synvoid-honeypot/mesh"]
+mesh = ["synvoid-config/mesh", "synvoid-http/mesh", "synvoid-static-files/mesh", "synvoid-serverless/mesh", "synvoid-admin/mesh", "dep:openraft", "dep:synvoid-mesh", "synvoid-mesh/mesh", "synvoid-block-store/mesh", "synvoid-honeypot/mesh"]
 buffer = ["synvoid-utils/buffer"]
 erased_pool = []
 rkyv = []
-macos-sandbox = []  # Enable macOS sandbox enforcement
+macos-sandbox = ["synvoid-admin/macos-sandbox"]  # Enable macOS sandbox enforcement
 test-utils = []
 swagger-ui = ["dep:utoipa-swagger-ui"]
 fastcgi_streaming = []  # Additive, opt-in: streaming FastCGI response handling (no default impact)
@@ -294,6 +294,17 @@ panic = "unwind"
 strip = true
 
 [dev-dependencies]
+# NOTE (Phase 05 residual): this self edge intentionally keeps
+# `default-features` enabled. Setting `default-features = false` would make
+# `cargo test --no-default-features` honestly minimal, but ~4 existing targets
+# (src/http/server.rs + src/worker/unified_server/init_mesh.rs test code,
+# tests/integration_test.rs, tests/mesh_startup_rollback.rs) use mesh/dns
+# items without cfg gates and only compile because of this leak — so every
+# `#[cfg(not(feature = "mesh"/"dns"))]` runtime absence test repo-wide is
+# currently a compile-out-only branch under cargo test/nextest. See
+# architecture/admin_contract_phase05_closeout.md. Gating those targets is a
+# separate phase; icmp-filter absence IS live (off by default) and stale-path
+# absence always runs.
 synvoid = { path = ".", features = ["test-utils"] , version = "1.1" }
 libfuzzer-sys = "0.4"
 proptest = "1.5"

@@ -1,5 +1,24 @@
 pub mod broadcaster;
 
+/// Canonical WebSocket paths (single source of truth for the admin control plane).
+///
+/// Both paths live under the `/api` namespace so browser clients use one
+/// same-origin policy. `build_router_from_state`, the auth/CSRF middleware
+/// exclusions, the frontend `use_websocket` hook, and the route-contract tests
+/// must all reference these constants instead of duplicating string literals.
+pub const WS_METRICS_PATH: &str = "/api/ws/metrics";
+pub const WS_LOGS_PATH: &str = "/api/ws/logs";
+
+/// Canonical WebSocket inventory for contract tests and middleware exact-matching.
+pub const CANONICAL_WS_PATHS: [&str; 2] = [WS_METRICS_PATH, WS_LOGS_PATH];
+
+/// Returns true only for the two canonical WebSocket upgrade paths.
+/// Used by middleware so future `/api/ws/*` routes cannot accidentally inherit
+/// the WebSocket auth bypass.
+pub fn is_canonical_ws_path(path: &str) -> bool {
+    path == WS_METRICS_PATH || path == WS_LOGS_PATH
+}
+
 use super::auth::verify_admin_token;
 use super::state::AdminState;
 use axum::{

@@ -252,3 +252,15 @@ Three propagation channels exist for block/unblock operations:
 - Audit events are emitted before response return, but durable storage is not guaranteed in this phase.
 - Config mutations are local-only; they do not propagate to mesh peers.
 - Supervisor gRPC commands are local to the supervisor process; they do not propagate to mesh.
+
+## Phase 05 contract enforcement
+
+Authority shape is guarded by `tests/admin_mutation_response_guard.rs`; route
+registration, capability ↔ family alignment, discovery/OpenAPI consistency,
+and auth/middleware classification are guarded by
+`tests/admin_route_contract.rs`, `tests/admin_router_composition.rs`, and
+`tests/admin_smoke_flow.rs` (bounded feature matrix in `cargo xtask
+verify-full`; routine CI runs the contract with
+`--features mesh,dns,icmp-filter`). Browser session/CSRF rules live in
+`architecture/admin_ui.md` + `admin_deep_dive.md`; logout is atomic
+(success / 401-403 clears, 5xx/network retains for retry).
