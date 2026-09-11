@@ -10,6 +10,7 @@ cargo build --release   # default features: socket-handoff, mesh, dns, erased_po
 
 - **protoc is required**: the default `mesh` feature triggers protobuf codegen in `build.rs` (`tonic-prost-build`). Install `protobuf-compiler` (CI does) or builds fail confusingly.
 - All feature profiles must compile: `cargo check --no-default-features [--features mesh | dns | icmp-filter | mesh,dns]` (bounded Phase 05 matrix; full powerset intentionally not tested).
+- `--no-default-features` is NOT honestly minimal under `cargo test`/`nextest`: the root `[dev-dependencies]` self-edge (`synvoid = { path = ".", features = ["test-utils"] }`) leaks default features into test targets, so mesh/dns `cfg-not` absence branches compile out but never execute — only `icmp-filter` absence is live. See `Cargo.toml:296-308` + `architecture/admin_contract_phase05_closeout.md`.
 
 ## Verification
 
@@ -181,4 +182,5 @@ Primary doc per subsystem (deep dives live beside each as `<topic>_deep_dive.md`
 
 ## Known Issues
 
-- `wasmtime` 40.0.4 arrives transitively via yara-x (YARA rule compilation only, not the wasm sandbox); direct wasmtime is patched to 42.0.2 via `[patch.crates-io]`. 13 advisory ignores in `deny.toml`, re-audit date 2026-10-01.
+- `wasmtime` 40.0.4 arrives transitively via yara-x (YARA rule compilation only, not the wasm sandbox); direct wasmtime is patched to 42.0.2 via `[patch.crates-io]`. 16 advisory ignores in `deny.toml`, re-audit date 2026-10-01.
+- macOS-only (BUG-002, `docs/testing/verification-contract.md` §14): `rkyv_derive` 0.7 (transitive via `lightningcss` → `parcel_sourcemap`, not SynVoid code) segfaults Apple clang 21 at link time — non-deterministic, retry often succeeds; Linux CI unaffected. Do not "fix" by touching the dependency chain.
