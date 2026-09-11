@@ -13,7 +13,7 @@ This skill documents the serverless function architecture in SynVoid, including 
 
 ### ServerlessManager
 
-The `ServerlessManager` at `src/serverless/manager.rs` manages serverless function lifecycle:
+The `ServerlessManager` in `crates/synvoid-serverless/src/manager.rs` (canonical; root `src/serverless/` is a re-export facade) manages serverless function lifecycle:
 
 ```rust
 pub struct ServerlessManager {
@@ -27,7 +27,7 @@ pub struct ServerlessManager {
 
 ### InstancePool
 
-The `InstancePool` at `src/serverless/instance_pool.rs` manages pooled WASM instances:
+The `InstancePool` in `crates/synvoid-serverless/src/instance_pool.rs` (canonical; root is a facade) manages pooled WASM instances:
 
 ```rust
 pub struct InstancePool {
@@ -194,7 +194,7 @@ let providers = self.weighted_shuffle_providers(providers, scores);
 
 ## Scheduler Support (Wave 3.13)
 
-The `ServerlessScheduler` at `src/serverless/scheduler.rs` provides cron-like scheduling:
+The `ServerlessScheduler` in `crates/synvoid-serverless/src/scheduler.rs` (canonical; root is a facade) provides cron-like scheduling:
 
 ```rust
 pub struct ServerlessScheduler {

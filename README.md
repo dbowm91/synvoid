@@ -23,7 +23,14 @@ With the default `mesh` feature enabled, the Supervisor also owns the gRPC contr
 
 ## Build from source
 
-A Rust toolchain with Cargo is required.
+A Rust toolchain with Cargo is required. The default feature set includes
+`mesh`, which triggers protobuf codegen at build time — install
+`protobuf-compiler` (`protoc`) first or the build fails:
+
+```bash
+# Debian/Ubuntu (CI does this); use the equivalent on other platforms.
+sudo apt-get install -y protobuf-compiler
+```
 
 ```bash
 git clone https://github.com/dbowm91/synvoid.git

@@ -577,7 +577,7 @@ WAF reports metrics via `metrics` crate:
 ### Upload Validation
 
 ```rust
-pub fn get_upload_validator() -> Option<Arc<crate::upload::UploadValidator>>
+pub fn get_upload_validator() -> Option<Arc<synvoid_upload::UploadValidator>>
 ```
 
 ### RequestServices Context

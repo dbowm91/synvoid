@@ -1285,7 +1285,7 @@ $ synvoid
 - `crates/synvoid-mesh/src/mesh/config_identity.rs` - `derive_signing_key_from_genesis()`
 - `crates/synvoid-mesh/src/mesh/config.rs` - `genesis_key_base64` field
 - `crates/synvoid-mesh/src/mesh/config_mesh.rs` - `load_node_identity()` derives from genesis
-- `src/config/main.rs` - calls `load_node_identity()` during config load
+- `crates/synvoid-config/src/` - config load wiring that calls `load_node_identity()` (root `src/config/` is override-docs only; there is no `src/config/main.rs`)
 - `src/main.rs` - `--genesis` and `--show-node-info` flags
 
 ## Origin Reachability System

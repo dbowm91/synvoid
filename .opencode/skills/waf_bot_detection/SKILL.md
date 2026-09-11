@@ -169,7 +169,7 @@ pub struct BotDetector {
 | `src/tls/server.rs:84-97` | JA4 computation in HttpsConnection |
 | `src/waf/mod.rs:398-411` | check_request_full() signature |
 | `src/http/server.rs` | Plain HTTP (no JA4 available) |
-| `src/proxy.rs` | Proxy path (no JA4 available) |
+| `crates/synvoid-proxy/src/` (canonical; `src/proxy/` is a re-export shim) | Proxy path (no JA4 available) |
 
 ## JA4 vs JA3
 

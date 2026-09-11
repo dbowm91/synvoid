@@ -162,7 +162,7 @@ pub(crate) fn prepare_for_request(&mut self, env: ..., timeout: Duration) {
 
 ### Serverless Ignore Limits (P0.4)
 
-**Location**: `src/serverless/manager.rs:479-491,506-518`
+**Location**: `crates/synvoid-serverless/src/manager.rs` (root `src/serverless/` is a facade)
 
 **Issue**: `_limits` was constructed but NOT passed to `load_plugin_from_memory()` / `load_plugin()`. Memory/CPU/timeout limits were silently discarded.
 
@@ -1332,7 +1332,7 @@ Quorum table:
 
 ### TLS Passthrough WAF Enforcement
 
-**Location**: `src/worker/unified_server/:214-226`, `src/config/site/proxy.rs`
+**Location**: `src/worker/unified_server/`, `crates/synvoid-config/src/site/proxy.rs` (root `src/config/` holds only override docs; there is no `src/config/site/proxy.rs`)
 
 **Issue**: When `tls_passthrough = true`, L7 WAF inspection was completely bypassed.
 

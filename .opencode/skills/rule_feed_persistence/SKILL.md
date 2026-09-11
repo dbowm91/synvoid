@@ -48,7 +48,7 @@ Rules are stored in `storage_dir/rules.json` with the following structure:
 ### Pattern Merging
 
 The `get_merged_patterns` function combines three sources of rules:
-1. **DefaultPatterns**: Built-in hardcoded patterns (src/waf/attack_detection/patterns.rs).
+1. **DefaultPatterns**: Built-in hardcoded patterns (`crates/synvoid-waf/src/attack_detection/patterns.rs`; `src/waf/` is a re-export facade only).
 2. **Local Config**: Patterns defined in the site TOML configuration.
 3. **Rule Feed**: Dynamic patterns fetched from the signed update server.
 

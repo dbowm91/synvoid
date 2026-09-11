@@ -60,7 +60,7 @@ Testing quirks:
 - **Entry point**: `src/main.rs` → delegates to `src/commands/{plan,execute,runtime_launch}.rs`
 - **Supervisor**: `src/supervisor/` — lifecycle, IPC, control-plane
 - **Data plane**: `src/worker/unified_server/` — HTTP + WAF + proxy in ONE Tokio event loop; CPU offload in `src/worker/cpu_task/`
-- **Process model**: Supervisor (1) → UnifiedServerWorker (1) + CpuWorker (1). Workers are NOT process-per-tenant. Note: the legacy `--worker` flag (`src/process/worker.rs` `BaseWorkerProcess`) has NO dispatch branch in `src/commands/plan.rs` and falls through to the default `RuntimeCommand::Supervisor`; HTTP serving uses `--unified-server-worker` / `--cpu-worker`.
+- **Process model**: Supervisor (1) → N `UnifiedServerWorker` data-plane processes (`spawn_unified_server_workers(config.unified_server_workers)` in `src/supervisor/process.rs`; shipped `config/main.toml` sets `[defaults.worker_pool] workers = 4`, code default 1) + CpuWorker offload. Workers are NOT process-per-tenant. Note: the legacy `--worker` flag (`src/process/worker.rs` `BaseWorkerProcess`) has NO dispatch branch in `src/commands/plan.rs` and falls through to the default `RuntimeCommand::Supervisor`; HTTP serving uses `--unified-server-worker` / `--cpu-worker`.
 - **Mesh**: `crates/synvoid-mesh/src/mesh/` — DHT, transport, Raft, peer auth. Binding distributed-state contract: `architecture/distributed_state_contract.md` (authority taxonomy `DistributedNamespaceAuthority`, typed `QuorumUnavailable`/`CanonicalCommitted` outcomes, partition/rejoin tests in `crates/synvoid-mesh/tests/distributed_state_partition.rs`; MESH-15 closed as stale).
 - Many legacy root paths re-export crate contents for compat (e.g., `src/dns/mod.rs` re-exports `synvoid_dns::*`). Binding facade policy: `architecture/facade_disposition_matrix.md` (Phase 03 retirement rules + per-facade canonical paths; `auth`/`cgi`/`challenge`/`filter`/`integrity`/`php`/`proxy_cache`/`upload` root paths removed).
 
@@ -99,6 +99,8 @@ Root-module ownership policy lives in `architecture/root_module_ledger.md` — p
 | `serialize_headers` (inline) | `crates/synvoid-plugin-runtime/src/abi_frame.rs` (canonical) |
 | `src/plugin/instance_pool.rs` | `crates/synvoid-plugin-runtime/src/instance_pool.rs` |
 | `src/config/admin.rs` | `crates/synvoid-config/src/admin.rs` |
+| `src/config/main.rs`, `src/config/site/*.rs` | `crates/synvoid-config/src/` (`main_config.rs`, `mesh.rs`, `site/` — root `src/config/` holds only `AGENTS.override.md`) |
+| `src/proxy.rs` | `crates/synvoid-proxy/src/` (root `src/proxy/` files are re-export shims) |
 | `src/admin/authority.rs` | `crates/synvoid-core/src/admin_mutation.rs` |
 | `src/wasm_pow/` | `crates/synvoid-wasm-pow/` |
 | `src/server/mod.rs` (monolithic) | `src/server/` (split: `startup_plan.rs`, `resources.rs`, `runtime_handles.rs`, `plugin_runtime.rs`, `service_assembly.rs`, `listener_tasks.rs`, `waf_handler.rs` — Phase 04: `run()` orchestrates narrow subsystem/family builders, no new crates) |
@@ -153,9 +155,9 @@ Root-module ownership policy lives in `architecture/root_module_ledger.md` — p
 ## Repo-Specific Pointers
 
 - **Module overrides**: each subsystem dir has an `AGENTS.override.md` with extra rules — read before working there: `src/{waf,http,http3,http_client,proxy,config,admin,platform,plugin,worker,tunnel,app_server,theme,static_files,serverless}/AGENTS.override.md` and `crates/synvoid-{dns,honeypot,tarpit}/AGENTS.override.md`.
-- **Skills**: `.opencode/skills/<name>/SKILL.md` — 35 per-subsystem guides (e.g. `dns_dnssec`, `serverless_wasm`, `ipc_hardening`, `raft_consensus`, `org_key_trust_chain`, `proxy_upstream`, `supervisor`, `worker_data_plane`). Load before working in an unfamiliar subsystem; keep path references canonical when editing them.
+- **Skills**: `.opencode/skills/<name>/SKILL.md` — 37 per-subsystem guides (e.g. `dns_dnssec`, `serverless_wasm`, `ipc_hardening`, `raft_consensus`, `org_key_trust_chain`, `proxy_upstream`, `supervisor`, `worker_data_plane`, `config_system`, `admin_contract`). Load before working in an unfamiliar subsystem; cite canonical `crates/synvoid-*` paths, never root facades (see Stale Path Map); maintenance cadence in `architecture/agent_knowledge_maintenance.md`.
 - **Config paths**: `--config-path` takes the DIRECTORY containing `main.toml` + `sites/`, not the TOML file. Caveat: `--configtest` ignores `--config-path` and validates `./config/` relative to CWD.
-- **Key docs**: start at `architecture/overview.md` (verified module index), then use the Architecture Index below. User/operator docs live in `docs/`; `architecture/` (~130 docs) and `plans/` are development artifacts.
+- **Key docs**: start at `architecture/overview.md` (verified module index), then use the Architecture Index below. User/operator docs live in `docs/`; `architecture/` (~135 docs) and `plans/` (completed-phase handoff history, retained as-is) are development artifacts.
 
 ## Architecture Index
 
@@ -178,6 +180,7 @@ Primary doc per subsystem (deep dives live beside each as `<topic>_deep_dive.md`
 | TLS, PQC, integrity | `tls.md`, `pqc.md`, `integrity.md` |
 | Platform & sandboxing | `platform.md`, `layer_3_5_deep_dive.md`, `icmp_filter.md` |
 | CI, fuzzing, releases | `ci_fuzz_failure_injection.md`, `developer_tooling.md`, `release_profile_matrix.md`, `semver_stability_policy.md` |
+| Agent knowledge (skills/docs upkeep) | `agent_knowledge_maintenance.md` (audit checklist + 2026-09-11 findings) |
 | Track 3 closure (Phase 24) | `track3_performance_report.md` (hot-path baselines), `crate_granularity_audit.md` (no merges; future candidates), `root_module_burndown_report.md` (zero `split_required`, re-verified) |
 
 ## Known Issues
