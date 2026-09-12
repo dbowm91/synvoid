@@ -412,7 +412,7 @@ let stream = PlatformIpcStream::connect(&path)?;
 
 ### 4.5 Sandbox Application
 ```rust
-use crate::platform::sandbox::{ProcessSandbox, SandboxLevel, SandboxPaths};
+use synvoid_platform::sandbox::{ProcessSandbox, SandboxLevel, SandboxPaths};
 
 let sandbox = ProcessSandbox::with_paths(
     SandboxLevel::Strict,

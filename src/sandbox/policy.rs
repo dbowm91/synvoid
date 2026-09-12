@@ -4,48 +4,32 @@
 //! according to [`synvoid_ipc::IsolationPolicy`]. Migration is incremental:
 //! production defaults to in-process execution and each call site opts into
 //! jail routing explicitly. The single decision point is
-//! [`synvoid_ipc::resolve_route`]; this module adds handle ownership and the
-//! shared header-encoding helper used identically by the jail service and by
-//! in-process comparison paths.
+//! [`synvoid_ipc::resolve_route`]; this module adds handle ownership.
+//!
+//! Header encoding (`headers_to_guest_json`) is canonically owned by
+//! `synvoid-jail-runtime` (Phase 29) and re-exported here for in-process
+//! comparison harnesses so both paths observe identical input.
+//!
+//! Binary resolution: production call sites should use
+//! [`JailClient::spawn_resolved`] (dedicated `synvoid-*-jail` binaries via
+//! exe-dir lookup, no CWD/PATH search). [`JailClient::spawn`] is retained for
+//! hermetic tests that pass an explicit program path.
 //!
 //! Fallback rule: [`synvoid_ipc::IsolationPolicy::Preferred`] with
 //! `fallback_in_process: true` is only safe where the call site documents the
 //! fallback (YARA detection scans, fail-open response transforms). Fail-closed
 //! request filtering must use `Required` or `Preferred { fallback: false }`.
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
 use synvoid_ipc::{
     IsolationPolicy, JailError, JailHandle, JailHandleConfig, JailKind, JailOperation, JailOutput,
-    JailRoute, JailSpawnSpec, JAIL_MAX_HEADERS, JAIL_MAX_HEADER_NAME_LEN,
-    JAIL_MAX_HEADER_VALUE_LEN,
+    JailRoute, JailSpawnSpec,
 };
 
-/// Encode guest header pairs to the JSON object string the `handle_request`
-/// ABI expects (same encoding as the in-process serverless path: duplicate
-/// names collapse last-wins). Used by the jail WASM service and by
-/// in-process comparison harnesses so both paths observe identical input.
-pub fn headers_to_guest_json(headers: &[(String, String)]) -> Result<String, JailError> {
-    if headers.len() > JAIL_MAX_HEADERS {
-        return Err(JailError::Oversized("too many headers".to_string()));
-    }
-    let mut map: HashMap<&str, &str> = HashMap::with_capacity(headers.len());
-    for (name, value) in headers {
-        if name.is_empty()
-            || name.len() > JAIL_MAX_HEADER_NAME_LEN
-            || value.len() > JAIL_MAX_HEADER_VALUE_LEN
-        {
-            return Err(JailError::Oversized(
-                "header name/value length out of bounds".to_string(),
-            ));
-        }
-        map.insert(name.as_str(), value.as_str());
-    }
-    serde_json::to_string(&map)
-        .map_err(|e| JailError::FramingError(format!("header encoding failed: {e}")))
-}
+/// Canonical header encoder re-export (owner: `synvoid-jail-runtime`).
+pub use synvoid_jail_runtime::headers_to_guest_json;
 
 /// Policy plus supervised handles for both jail kinds.
 pub struct JailClient {
@@ -56,8 +40,10 @@ pub struct JailClient {
 }
 
 impl JailClient {
-    /// Spawn supervised jails for both kinds. Any spawn/handshake failure
-    /// fails closed with the typed error (no partial client).
+    /// Spawn supervised jails for both kinds from an explicit program path.
+    /// Any spawn/handshake failure fails closed with the typed error (no
+    /// partial client). Tests use this with `CARGO_BIN_EXE_synvoid` or the
+    /// dedicated binaries; production should prefer [`JailClient::spawn_resolved`].
     pub fn spawn(
         program: PathBuf,
         wasm_policy: IsolationPolicy,
@@ -80,6 +66,32 @@ impl JailClient {
                 env: Vec::new(),
                 kind: JailKind::Yara,
             },
+            config,
+        )?;
+        Ok(Self {
+            wasm_policy,
+            yara_policy,
+            wasm: Some(wasm),
+            yara: Some(yara),
+        })
+    }
+
+    /// Spawn supervised jails via deterministic dedicated-binary resolution
+    /// (Phase 29 Part C): `synvoid-wasm-jail` / `synvoid-yara-jail` beside
+    /// the current executable when installed, otherwise the legacy compat
+    /// fallback. Never searches CWD, `PATH`, or writable plugin dirs.
+    /// Any spawn/handshake failure fails closed (no partial client).
+    pub fn spawn_resolved(
+        wasm_policy: IsolationPolicy,
+        yara_policy: IsolationPolicy,
+        config: JailHandleConfig,
+    ) -> Result<Self, JailError> {
+        let wasm = JailHandle::spawn(
+            synvoid_ipc::resolved_jail_spawn_spec(JailKind::Wasm, Vec::new()),
+            config.clone(),
+        )?;
+        let yara = JailHandle::spawn(
+            synvoid_ipc::resolved_jail_spawn_spec(JailKind::Yara, Vec::new()),
             config,
         )?;
         Ok(Self {

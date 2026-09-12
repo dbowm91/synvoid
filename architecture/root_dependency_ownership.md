@@ -74,8 +74,8 @@ reference fails the guard until the row is reclassified with a reason.
 | synvoid-dns | dns | composition_runtime | dns | DNS server with DNSSEC validation | keep | dns |
 | synvoid-icmp-filter | icmp_filter | composition_runtime | icmp-filter | ICMP filtering | keep | icmp_filter |
 | synvoid-honeypot | honeypot_port | composition_runtime | default | Honeypot port detection | keep | honeypot_port |
-| synvoid-upload | http, sandbox, waf, worker | composition_runtime | default | File upload handling in synvoid_upload; root upload/ removed Phase 03 | keep | http, sandbox, waf, worker |
-| synvoid-yara | sandbox, worker, supervisor | composition_runtime | default | Canonical YARA engine for jail service + CPU worker + mesh validator injection (Phase 26 single yara-x owner) | keep | sandbox, supervisor, worker |
+| synvoid-upload | http, waf, worker | composition_runtime | default | File upload handling in synvoid_upload; root upload/ removed Phase 03 | keep | http, waf, worker |
+| synvoid-yara | worker, supervisor | composition_runtime | default | Canonical YARA engine for CPU worker + mesh validator injection (Phase 26 single yara-x owner; Phase 29 jail service lives in synvoid-jail-runtime) | keep | supervisor, worker |
 | synvoid-ipc | process | composition_runtime | default | IPC transport abstractions | keep | http, process, sandbox, supervisor, worker |
 | synvoid-http-client | http_client | composition_runtime | default | HTTP client pool and QUIC dispatch | keep | http, http_client, tls |
 | synvoid-platform | platform | composition_runtime | default | Platform detection and OS abstractions | keep | platform |
@@ -116,6 +116,7 @@ reference fails the guard until the row is reclassified with a reason.
 | synvoid-challenge | server, waf | compat_facade | default | Canonical ChallengeManager/ChallengeConfig/mesh-PoW in synvoid_challenge; root challenge/ removed Phase 03; consumed from src/server, src/waf | keep | server, waf |
 | synvoid-waf | waf | composition_runtime | default | WAF rule engine and detection | keep | http, server, waf |
 | synvoid-plugin-runtime | plugin | composition_runtime | default | WASM plugin runtime and instance pooling | keep | admin, plugin, sandbox, spin, worker |
+| synvoid-jail-runtime | sandbox | composition_runtime | default | Child-side jail execution package (Phase 29): WASM/YARA services + sandbox-entry sequencing + dedicated binaries; root sandbox facades/shims delegate to it | keep | sandbox |
 | synvoid-tls | tls | composition_runtime | default | TLS termination and ACME | keep | supervisor, tls |
 | synvoid-proxy-cache | — | migration_blocker | default | No direct root consumer in src/ (measured 2026-09-12); root proxy_cache/ removed Phase 03; canonical synvoid_proxy_cache | Phase 31 removal audit | — |
 | synvoid-admin | admin | composition_runtime | default | Admin API handler types | keep | admin |

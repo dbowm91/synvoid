@@ -120,8 +120,8 @@ reason = "validates full-stack composition across all major subsystems"
 [[test]]
 name = "jail_isolation_guard"
 class = "composition"
-owners = ["synvoid-ipc", "synvoid-plugin-runtime", "synvoid-upload"]
-reason = "validates sandbox jail IPC composition across ipc protocol/supervision, wasm/yara child services, and policy routing (Phase 22)"
+owners = ["synvoid-ipc", "synvoid-jail-runtime", "synvoid-plugin-runtime", "synvoid-yara"]
+reason = "validates sandbox jail IPC composition across ipc protocol/supervision/binary resolution, jail-runtime child services/entry, parent policy routing, and engine execution (Phase 22 + Phase 29 package split)"
 
 [[test]]
 name = "lifecycle_task_guard"

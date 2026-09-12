@@ -10,6 +10,7 @@ pub mod ipc_pool;
 pub mod ipc_rate_limit;
 pub mod ipc_signed;
 pub mod ipc_transport;
+pub mod jail_binary;
 pub mod jail_process;
 pub mod jail_protocol;
 pub mod manager;
@@ -24,6 +25,11 @@ pub use ipc_rate_limit::{IpcRateLimiter, RateLimitExceeded};
 
 pub use ipc_signed::{generate_session_key, IpcSigner, SignedIpcMessage};
 
+pub use jail_binary::{
+    dedicated_jail_binary_path, ensure_dedicated_jail_binaries_available, is_dedicated_jail_binary,
+    jail_binary_name, jail_spawn_args, resolve_jail_binary, resolved_jail_spawn_spec,
+    verify_jail_binary, JAIL_WASM_BINARY_NAME, JAIL_YARA_BINARY_NAME,
+};
 pub use jail_process::{
     serve_jail_connection, JailHandle, JailHandleConfig, JailHandler, JailSpawnSpec,
     RestartTracker, ServeOutcome,

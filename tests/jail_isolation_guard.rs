@@ -1,22 +1,29 @@
 //! Root-test ownership: COMPOSITION
 //! Rationale: validates sandbox jail IPC across synvoid-ipc (protocol +
-//! supervision), src/sandbox (child services + policy), synvoid-plugin-runtime
-//! (in-jail WASM execution), and synvoid-upload (in-jail YARA scanning).
+//! supervision + binary resolution), synvoid-jail-runtime (child services +
+//! sandbox entry, Phase 29), src/sandbox (parent policy/composition facades),
+//! synvoid-plugin-runtime (in-jail WASM execution), and synvoid-yara
+//! (canonical YARA engine, Phase 26).
 //!
-//! Phase 22 (sandbox jail IPC and runtime closure) coverage:
+//! Phase 22 (sandbox jail IPC and runtime closure) coverage plus Phase 29
+//! (jail runtime package/process split):
 //!
 //! - static policy: no generic exec RPC, no secrets/payloads in argv or env,
 //!   no test-hatch wiring in production spawn paths, no detached children,
-//!   composition-boundary imports respected
+//!   composition-boundary imports respected, deterministic exe-dir binary
+//!   resolution (no CWD/PATH/writable-dir search)
 //! - behavioral: WASM/YARA round trips (in-process services, framed loop, and
-//!   live child processes), adversarial framing, deadlines, crash isolation
-//!   with bounded restart, required-mode fail-closed, graceful reaping
+//!   live child processes via compat shims and dedicated binaries),
+//!   adversarial framing, deadlines, crash isolation with bounded restart,
+//!   required-mode fail-closed, graceful reaping
 //!
 //! Live-child tests spawn `CARGO_BIN_EXE_synvoid --wasm-jail/--yara-jail`
-//! with `SYNVOID_JAIL_PERMIT_NO_SANDBOX=1` (test-only hatch: hermetic on any
+//! (compat shims forwarding to `synvoid-jail-runtime`) with
+//! `SYNVOID_JAIL_PERMIT_NO_SANDBOX=1` (test-only hatch: hermetic on any
 //! platform; every other jail property — framing, digests, limits,
-//! supervision — is exercised for real). Tests that need POSIX-only helpers
-//! are `cfg(unix)`-gated and recorded in
+//! supervision — is exercised for real). Dedicated-binary round trips live in
+//! `crates/synvoid-jail-runtime/tests/jail_binary_integration.rs`. Tests that
+//! need POSIX-only helpers are `cfg(unix)`-gated and recorded in
 //! `architecture/sandbox_jail_protocol.md`.
 
 use std::io::{Read, Write};
@@ -233,6 +240,36 @@ fn jail_spawn_argv_carries_no_payload_or_secrets() {
             "jail spawn path must not handle {forbidden:?}"
         );
     }
+    // Deterministic exe-dir resolution (Phase 29): no CWD/PATH/plugin-dir
+    // search in the resolver. Absence checks use stripped code (no comments
+    // or strings); presence checks use raw source because the local
+    // strip helper treats `'static` lifetimes as char literals and string
+    // literals (binary names) are stripped by design.
+    let resolver_stripped =
+        strip_comments_and_strings(&read_source("crates/synvoid-ipc/src/jail_binary.rs"));
+    for forbidden in [
+        "current_dir",
+        "var(\"PATH\")",
+        "var(\"Path\")",
+        "search_path",
+        "which(",
+        "plugin_dir",
+        "PLUGINS_DIR",
+    ] {
+        assert!(
+            !resolver_stripped.contains(forbidden),
+            "jail resolver must not search {forbidden:?}"
+        );
+    }
+    let resolver_raw = read_source("crates/synvoid-ipc/src/jail_binary.rs");
+    assert!(
+        resolver_raw.contains("current_exe"),
+        "resolver must anchor on current_exe dir"
+    );
+    assert!(
+        resolver_raw.contains("synvoid-wasm-jail") && resolver_raw.contains("synvoid-yara-jail"),
+        "resolver must name both dedicated binaries"
+    );
 }
 
 #[test]
@@ -242,9 +279,13 @@ fn jail_parent_never_sets_test_hatch() {
     for file in [
         "crates/synvoid-ipc/src/jail_process.rs",
         "crates/synvoid-ipc/src/jail_protocol.rs",
+        "crates/synvoid-ipc/src/jail_binary.rs",
         "src/sandbox/policy.rs",
         "src/sandbox/wasm_service.rs",
         "src/sandbox/yara_service.rs",
+        "crates/synvoid-jail-runtime/src/wasm_service.rs",
+        "crates/synvoid-jail-runtime/src/yara_service.rs",
+        "crates/synvoid-jail-runtime/src/headers.rs",
     ] {
         let text = read_source(file);
         assert!(
@@ -252,13 +293,24 @@ fn jail_parent_never_sets_test_hatch() {
             "{file} must not reference the test hatch"
         );
     }
-    let child = read_source("src/sandbox/mod.rs");
+    // Canonical child entry owns the hatch literal; the root facade
+    // re-exports the const (name only, no literal).
+    let child = read_source("crates/synvoid-jail-runtime/src/sandbox_entry.rs");
     assert!(
         child.contains(JAIL_PERMIT_NO_SANDBOX_ENV),
-        "child entry point must document the hatch"
+        "jail-runtime sandbox entry must document the hatch"
     );
     assert!(
         !strip_comments_and_strings(&child).contains("set_var"),
+        "jail-runtime must never set environment variables"
+    );
+    let facade = read_source("src/sandbox/mod.rs");
+    assert!(
+        facade.contains("JAIL_PERMIT_NO_SANDBOX_ENV"),
+        "root sandbox facade must re-export the hatch const"
+    );
+    assert!(
+        !strip_comments_and_strings(&facade).contains("set_var"),
         "src/sandbox must never set environment variables"
     );
 }
@@ -268,10 +320,16 @@ fn jail_code_owns_its_children_without_forget() {
     for file in [
         "crates/synvoid-ipc/src/jail_process.rs",
         "crates/synvoid-ipc/src/jail_protocol.rs",
+        "crates/synvoid-ipc/src/jail_binary.rs",
         "src/sandbox/mod.rs",
         "src/sandbox/policy.rs",
         "src/sandbox/wasm_service.rs",
         "src/sandbox/yara_service.rs",
+        "crates/synvoid-jail-runtime/src/lib.rs",
+        "crates/synvoid-jail-runtime/src/sandbox_entry.rs",
+        "crates/synvoid-jail-runtime/src/wasm_service.rs",
+        "crates/synvoid-jail-runtime/src/yara_service.rs",
+        "crates/synvoid-jail-runtime/src/headers.rs",
     ] {
         let text = strip_comments_and_strings(&read_source(file));
         assert!(
@@ -297,6 +355,7 @@ fn jail_code_owns_its_children_without_forget() {
 fn jail_respects_composition_boundary() {
     // Request-path-adjacent jail code consumes narrow traits/services only:
     // no mesh/DHT/Raft, block-store mutation, or admin authority imports.
+    // The jail runtime must additionally never import root/supervisor paths.
     for file in [
         "src/sandbox/mod.rs",
         "src/sandbox/policy.rs",
@@ -304,6 +363,12 @@ fn jail_respects_composition_boundary() {
         "src/sandbox/yara_service.rs",
         "crates/synvoid-ipc/src/jail_process.rs",
         "crates/synvoid-ipc/src/jail_protocol.rs",
+        "crates/synvoid-ipc/src/jail_binary.rs",
+        "crates/synvoid-jail-runtime/src/lib.rs",
+        "crates/synvoid-jail-runtime/src/sandbox_entry.rs",
+        "crates/synvoid-jail-runtime/src/wasm_service.rs",
+        "crates/synvoid-jail-runtime/src/yara_service.rs",
+        "crates/synvoid-jail-runtime/src/headers.rs",
     ] {
         let text = strip_comments_and_strings(&read_source(file));
         for forbidden in [
@@ -317,6 +382,30 @@ fn jail_respects_composition_boundary() {
             assert!(
                 !text.contains(forbidden),
                 "{file}: forbidden composition import {forbidden:?}"
+            );
+        }
+    }
+    for file in [
+        "crates/synvoid-jail-runtime/src/lib.rs",
+        "crates/synvoid-jail-runtime/src/sandbox_entry.rs",
+        "crates/synvoid-jail-runtime/src/wasm_service.rs",
+        "crates/synvoid-jail-runtime/src/yara_service.rs",
+        "crates/synvoid-jail-runtime/src/headers.rs",
+        "crates/synvoid-jail-runtime/src/bin/synvoid-wasm-jail.rs",
+        "crates/synvoid-jail-runtime/src/bin/synvoid-yara-jail.rs",
+    ] {
+        let text = strip_comments_and_strings(&read_source(file));
+        for forbidden in [
+            "synvoid::supervisor",
+            "synvoid::admin",
+            "synvoid::mesh",
+            "crate::supervisor",
+            "crate::admin",
+            "use synvoid::",
+        ] {
+            assert!(
+                !text.contains(forbidden),
+                "{file}: jail runtime must not import root implementation {forbidden:?}"
             );
         }
     }
@@ -336,11 +425,22 @@ fn jail_stdout_carries_frames_only() {
         "src/sandbox/policy.rs",
         "src/sandbox/wasm_service.rs",
         "src/sandbox/yara_service.rs",
+        "crates/synvoid-jail-runtime/src/lib.rs",
+        "crates/synvoid-jail-runtime/src/sandbox_entry.rs",
+        "crates/synvoid-jail-runtime/src/wasm_service.rs",
+        "crates/synvoid-jail-runtime/src/yara_service.rs",
+        "crates/synvoid-jail-runtime/src/headers.rs",
+        "crates/synvoid-jail-runtime/src/bin/synvoid-wasm-jail.rs",
+        "crates/synvoid-jail-runtime/src/bin/synvoid-yara-jail.rs",
     ] {
+        // `eprintln!` (stderr) is allowed for diagnostics; only stdout
+        // prints corrupt the frame stream. Strip the `e` prefix before
+        // asserting so `eprintln!` does not false-positive on `println!`.
         let text = strip_comments_and_strings(&read_source(file));
+        let text = text.replace("eprintln!", "").replace("eprint!", "");
         assert!(
             !text.contains("println!"),
-            "{file}: println! forbidden (stdout is framed IPC)"
+            "{file}: println! forbidden (stdout is framed IPC; use tracing/eprintln)"
         );
         assert!(
             !text.contains("print!"),

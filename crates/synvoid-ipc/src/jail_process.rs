@@ -250,6 +250,9 @@ pub struct JailSpawnSpec {
 
 impl JailSpawnSpec {
     /// Spawn spec for the current executable (`synvoid --wasm-jail` etc.).
+    /// Prefer [`crate::resolved_jail_spawn_spec`] (dedicated binaries with
+    /// exe-dir lookup) for production; this compat constructor is retained
+    /// for hermetic tests and dev builds.
     pub fn current_exe(kind: JailKind) -> std::io::Result<Self> {
         let program = std::env::current_exe()?;
         Ok(Self {
@@ -258,6 +261,13 @@ impl JailSpawnSpec {
             env: Vec::new(),
             kind,
         })
+    }
+
+    /// Deterministic production resolution: dedicated `synvoid-*-jail`
+    /// binary beside the current executable when installed, otherwise the
+    /// legacy compat fallback. Never searches CWD, `PATH`, or plugin dirs.
+    pub fn resolved(kind: JailKind) -> Self {
+        crate::resolved_jail_spawn_spec(kind, Vec::new())
     }
 }
 

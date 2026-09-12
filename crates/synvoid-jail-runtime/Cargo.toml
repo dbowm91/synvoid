@@ -1,0 +1,36 @@
+[package]
+name = "synvoid-jail-runtime"
+version = "0.1.0"
+edition = "2021"
+license.workspace = true
+repository.workspace = true
+description = "Child-side WASM/YARA jail execution: services, sandbox-entry sequencing, and dedicated binaries (Phase 29)"
+
+[features]
+default = ["wasm", "yara"]
+wasm = ["dep:synvoid-plugin-runtime"]
+yara = ["dep:synvoid-yara"]
+
+[dependencies]
+synvoid-ipc = { path = "../synvoid-ipc", version = "0.1" }
+synvoid-platform = { path = "../synvoid-platform", version = "0.1" }
+synvoid-plugin-runtime = { path = "../synvoid-plugin-runtime", version = "0.1", optional = true }
+synvoid-yara = { path = "../synvoid-yara", version = "0.1", optional = true }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tokio = { version = "1", features = ["rt", "time", "sync", "macros"] }
+
+[dev-dependencies]
+wat = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
+
+[[bin]]
+name = "synvoid-wasm-jail"
+path = "src/bin/synvoid-wasm-jail.rs"
+required-features = ["wasm"]
+
+[[bin]]
+name = "synvoid-yara-jail"
+path = "src/bin/synvoid-yara-jail.rs"
+required-features = ["yara"]

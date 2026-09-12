@@ -986,6 +986,56 @@ fn validate_package_contents(
     Ok(())
 }
 
+/// Validate Phase 29 jail runtime artifacts.
+///
+/// Ensures the dedicated child binaries cannot be silently omitted from
+/// release packaging: the crate must be a workspace member, both binary
+/// sources must exist, and both binaries must be registered in
+/// `cargo metadata` for the `synvoid-jail-runtime` package.
+fn validate_jail_runtime_artifacts(
+    workspace_root: &Path,
+    metadata: &serde_json::Value,
+) -> Result<(), String> {
+    let crate_dir = workspace_root.join("crates/synvoid-jail-runtime");
+    for required in [
+        "Cargo.toml",
+        "src/lib.rs",
+        "src/bin/synvoid-wasm-jail.rs",
+        "src/bin/synvoid-yara-jail.rs",
+    ] {
+        if !crate_dir.join(required).exists() {
+            return Err(format!(
+                "jail runtime artifact missing: crates/synvoid-jail-runtime/{required} \
+                 (release must ship synvoid-wasm-jail + synvoid-yara-jail atomically with synvoid)"
+            ));
+        }
+    }
+    let packages = metadata["packages"]
+        .as_array()
+        .ok_or("missing packages in metadata")?;
+    let pkg = packages
+        .iter()
+        .find(|p| p["name"].as_str() == Some("synvoid-jail-runtime"))
+        .ok_or(
+            "synvoid-jail-runtime missing from cargo metadata (workspace member?)".to_string(),
+        )?;
+    let targets = pkg["targets"].as_array().ok_or("missing targets")?;
+    for bin in ["synvoid-wasm-jail", "synvoid-yara-jail"] {
+        let found = targets.iter().any(|t| {
+            t["name"].as_str() == Some(bin)
+                && t["kind"]
+                    .as_array()
+                    .is_some_and(|k| k.iter().any(|v| v.as_str() == Some("bin")))
+        });
+        if !found {
+            return Err(format!(
+                "jail runtime binary target missing from cargo metadata: {bin}"
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Check that the working tree is clean (no uncommitted changes).
 fn check_dirty_tree(workspace_root: &Path) -> Result<bool, String> {
     let status = Command::new("git")
@@ -1132,6 +1182,14 @@ pub fn run_verify_release(
     validate_package_contents(&publishable, &workspace_root, verbose, allow_dirty)?;
     if !json_output {
         println!("  ✓ Package contents valid for all publishable crates");
+        println!();
+    }
+
+    // Phase 29: jail runtime artifacts must ship atomically with the main
+    // binary; omission fails release qualification.
+    validate_jail_runtime_artifacts(&workspace_root, &metadata)?;
+    if !json_output {
+        println!("  ✓ Jail runtime artifacts present (synvoid-wasm-jail + synvoid-yara-jail)");
         println!();
     }
 

@@ -108,7 +108,7 @@ Two-tier model: a Supervisor-owned control plane and a data plane built around o
 └──────────────────────────────┘
 ```
 
-Plus two supervised **sandbox jail** processes (`--wasm-jail` / `--yara-jail`): parent-created stdio pipes, versioned length-bounded typed protocol, no secrets in argv/env — see [`sandbox_jail_protocol.md`](./sandbox_jail_protocol.md).
+Plus two supervised **sandbox jail** processes (dedicated `synvoid-wasm-jail` / `synvoid-yara-jail` binaries from `synvoid-jail-runtime`, Phase 29; legacy `--wasm-jail` / `--yara-jail` flags are forwarding shims): parent-created stdio pipes, deterministic exe-dir binary resolution (no CWD/PATH search), versioned length-bounded typed protocol, no secrets in argv/env — see [`sandbox_jail_protocol.md`](./sandbox_jail_protocol.md).
 
 | Process | Flag | Purpose | Default |
 |---------|------|---------|---------|
@@ -199,7 +199,7 @@ Root-owned orchestration code (see [`root_module_ledger.md`](./root_module_ledge
 | **UnifiedServer composition root** | `src/server/` | Validated startup plan, resource construction (WAF/TLS/listeners), runtime handles, RAII plugin owner | [`unified_server_startup.md`](./unified_server_startup.md) · [`worker_data_plane_composition_root.md`](./worker_data_plane_composition_root.md) |
 | **Worker data plane** | `src/worker/` | UnifiedServerWorker event loop (HTTP+WAF+proxy), task registry, mesh supervision, drain adapter | [`worker_deep_dive.md`](./worker_deep_dive.md) · [`worker_task_lifecycle.md`](./worker_task_lifecycle.md) · [`worker_architecture.md`](./worker_architecture.md) |
 | **CPU offload** | `src/worker/cpu_task/` | Bounded heavy transforms off the request loop | [`worker_architecture.md`](./worker_architecture.md) |
-| **Bootstrap/daemon/sandbox jail** | `src/startup/`, `src/process/`, `src/sandbox/` | Daemonize + PID files, IPC manager root-side code, supervised WASM/YARA jail processes (framed stdio IPC) | [`process_lifecycle.md`](./process_lifecycle.md) · [`sandbox_jail_protocol.md`](./sandbox_jail_protocol.md) |
+| **Bootstrap/daemon/sandbox jail** | `src/startup/`, `src/process/`, `src/sandbox/` (parent policy) + `synvoid-jail-runtime` (child execution) + `synvoid-ipc` (protocol/supervision/binary resolution) | Daemonize + PID files, IPC manager root-side code, supervised WASM/YARA jail processes (dedicated binaries, framed stdio IPC) | [`process_lifecycle.md`](./process_lifecycle.md) · [`sandbox_jail_protocol.md`](./sandbox_jail_protocol.md) |
 
 > Note on the root crate: many `src/*` paths are thin re-export facades over crates (e.g., `src/proxy/`, `src/dns/`, `src/mesh/`, `src/router.rs`). Others still hold **real root-owned code**: `src/admin/` (Axum transport composition; per-handler matrix in [`admin_root_ownership.md`](./admin_root_ownership.md)), `src/worker/`, `src/process/` (~10K lines beside its facade `mod.rs`), `src/waf/` (rate limiting, rule feeds, threat level), `src/http/` (dispatch/WebDAV/file manager), `src/platform/`, `src/tcp/`+`src/udp/`, `src/tls/` (HttpsServer), `src/honeypot_port/` (responders/controller). Check [`root_module_ledger.md`](./root_module_ledger.md) before assuming a path is a shim.
 

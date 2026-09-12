@@ -7973,6 +7973,7 @@ dependencies = [
  "synvoid-icmp-filter",
  "synvoid-integrity",
  "synvoid-ipc",
+ "synvoid-jail-runtime",
  "synvoid-mesh",
  "synvoid-mesh-protocol",
  "synvoid-metrics",
@@ -8503,6 +8504,21 @@ dependencies = [
  "tokio",
  "tracing",
  "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "synvoid-jail-runtime"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "synvoid-ipc",
+ "synvoid-platform",
+ "synvoid-plugin-runtime",
+ "synvoid-yara",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "wat",
 ]
 
 [[package]]

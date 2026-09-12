@@ -101,7 +101,7 @@ sandbox_no_access_paths = ["/etc/passwd", "/etc/shadow"]
 ## Usage Example
 
 ```rust
-use crate::platform::sandbox::{ProcessSandbox, SandboxLevel, SandboxPaths};
+use synvoid_platform::sandbox::{ProcessSandbox, SandboxLevel, SandboxPaths};
 
 let paths = SandboxPaths::new()
     .add_read_path("/var/lib/synvoid")

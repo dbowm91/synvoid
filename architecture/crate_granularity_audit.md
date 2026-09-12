@@ -1,7 +1,7 @@
 # Crate Granularity Audit
 
-Status: Phase 28 closure audit (adds `synvoid-native-extension`; Phase 24
-closure text retained below with counts updated). One row per workspace crate
+Status: Phase 29 closure audit (adds `synvoid-jail-runtime`; Phase 28 closure
+text retained below with counts updated). One row per workspace crate
 from the actual final dependency graph (generated from each `Cargo.toml` plus
 root `Cargo.toml`; LOC via `wc -l` over each crate `src/`).
 
@@ -30,7 +30,7 @@ no sources, not a workspace member, zero references) was removed.
 | `tools/xtask` (1999 LOC) | `cargo xtask verify*` CI orchestration | Keep (tooling isolation) |
 | `tools/synvoid-repo-guards` (226 LOC) | Static repo guards run by CI + `verify_architecture.sh` | Keep (tooling isolation) |
 
-## `synvoid-*` crates (41 members, Phase 28 adds `synvoid-native-extension`)
+## `synvoid-*` crates (42 members, Phase 29 adds `synvoid-jail-runtime`)
 
 Columns: LOC ≈ `src/` lines; "In-crate rev" = other workspace crates
 depending on it (root app crate depends on all of them as composition
@@ -50,9 +50,10 @@ inputs, so it is not listed per row).
 | synvoid-mesh | DHT, transport, Raft, trust, policy gates (Phase 23 authority) | 100655 | Yes — consensus, key policy, partition semantics | Limited (mesh deployments) | 6 | 13 (incl. mesh-protocol) | Keep | Control-plane boundary; `mesh` feature isolates openraft/proto; depends downward on `synvoid-mesh-protocol` (Phase 27) |
 | synvoid-mesh-protocol | Stable mesh wire/identity vocabulary: constants, `HybridSignature` envelope, Ed25519 `ProtocolSigner` verification, replay protection, threat taxonomy, framing (Phase 27) | ~900 | Yes — wire-compat golden vectors, fail-closed framing, deterministic verification | Yes — verification-only consumers without DHT/Raft/SQLite/YARA | 1 (mesh) + root feed verification | none (leaf by design) | Keep | Dependency-isolation boundary; strict budget guard (`mesh_protocol_boundary`); `synvoid-mesh` re-exports compat paths |
 | synvoid-block-store | Enforcement block state + provenance + cursors | 8530 | Yes — capacity, expiry, replay, concurrency | Limited | root only | config, core, mesh, utils, waf | Keep | Enforcement-state boundary; worker admission reads this, not TIM |
-| synvoid-ipc | IPC transport + jail protocol/supervision (Phase 22) | 12420 | Yes — framed protocol, digests, restart bounds, fail-closed routing | Limited | 4 | config, metrics, platform, tls, utils | Keep | Trust boundary for process isolation; versioned wire protocol |
+| synvoid-ipc | IPC transport + jail protocol/supervision/binary resolution (Phase 22, Phase 29 exe-dir lookup) | 12420 | Yes — framed protocol, digests, restart bounds, fail-closed routing, deterministic helper resolution | Limited | 5 (incl. jail-runtime) | config, metrics, platform, tls, utils | Keep | Trust boundary for process isolation; versioned wire protocol |
 | synvoid-plugin-runtime | WASM runtime, sandbox, instance pool, manifests (+ optional native facade) | 19736 | Yes — capability gating, ABI boundary, reload prepare-commit | Limited | 4 | utils (+ optional native-extension) | Keep | Sandbox boundary; wasmtime version patch point; default graph links no shared-library loader (Phase 28) |
 | synvoid-native-extension | Explicit unsafe in-process native loader + narrow backend trait + non-executing external-host seam (Phase 28) | ~2400 | Yes — production/path/hash/permission gates, ABI checks, generation-aware lifetime, contract-bound validation | Limited (opt-in native deployments) | 0-1 (plugin-runtime optional; root optional) | none (leaf: axum/libloading/metrics only) | Keep | Capability-isolation boundary; `unsafe-native-extensions` feature off by default; `synvoid-mesh`/`synvoid-upload` must never depend on it |
+| synvoid-jail-runtime | Child-side jail execution + dedicated binaries (Phase 29): `WasmJailService`/`YaraJailService`, sandbox-entry sequencing, `synvoid-wasm-jail` + `synvoid-yara-jail` binaries | ~1500 | Yes — digest re-verification, hook-only capabilities, strict sandbox ordering, wrong-kind rejection, fail-closed entry | Limited (jail deployments) | 1 (root facades/shims) | ipc, platform, plugin-runtime (wasm), yara (yara) | Keep | Process-boundary isolation; `wasm`/`yara` features separate engines per binary; never imports root/supervisor/admin/mesh |
 | synvoid-admin | Transport-neutral admin handler logic + DTOs (Phase 21) | 3315 | Yes — mutation/audit contract alignment | Limited | root only | app-server, config, core, ipc, metrics, static-files, waf | Keep | Lets root stay transport composition; frontend contract tested |
 | synvoid-dns | Authoritative/recursive DNS + DNSSEC (feature-gated) | 40281 | Yes — wire codec, DNSSEC, zone lifecycle | Yes | root only | config, core, geoip, mesh, platform, tls, utils | Keep | `dns` feature isolates hickory/cryptoki; largest optional surface |
 | synvoid-tls | TLS termination core + ACME | 1963 | Yes — cert lifecycle, ACME DNS/HTTP | Limited | 3 | config | Keep | Crypto-facing boundary; root keeps only server integration |
@@ -68,7 +69,7 @@ inputs, so it is not listed per row).
 | synvoid-static-files | Static serving, minification, file manager | 4668 | Yes — path traversal prevention, caching | Limited | 3 | app-handlers, config, ipc, theme, utils | Keep | Owns minification dep tree (build isolation) |
 | synvoid-upload | Upload validation + YARA policy/orchestration (facade over `synvoid-yara`) | 10538 | Yes — validation, in-jail scanning | Limited | 1 | app-handlers, config, http-client, mesh, platform, utils, yara | Keep | Upload trust boundary; engine implementation moved to `synvoid-yara` (Phase 26) |
 | synvoid-yara | Canonical YARA execution boundary: engine, artifact binding, executor contract (Phase 26) | ~2600 | Yes — bounded compile/scan, digest/version binding, narrow executor | Limited (upload/mesh/jail consumers) | 2 (upload, root jail/cpu) | none (leaf; yara-x isolated here) | Keep | Security boundary; single `yara-x` production owner; mesh has no compiler reference |
-| synvoid-platform | OS abstraction, paths, sandbox primitives | 4309 | Yes — platform detection, secure dirs | Yes | 7 | ipc | Keep | Platform isolation; `macos-sandbox` surface |
+| synvoid-platform | OS abstraction, paths, sandbox backends (Phase 29 canonical) | 4309 | Yes — platform detection, secure dirs, Landlock/Capsicum/Pledge/Job-Object/Seatbelt enforcement | Yes | 8 (incl. jail-runtime) | ipc | Keep | Platform isolation; `macos-sandbox` surface |
 | synvoid-metrics | Metrics registry + recorder | 3806 | Yes — observability boundary, label cardinality | Yes | 5 | core, utils, waf | Keep | Single metrics owner; security_observability guard target |
 | synvoid-theme | Templates, error pages, captcha widget | 2043 | Limited — rendering | Yes | 2 | config | Keep | Rendering isolation; challenge depends directionally |
 | synvoid-geoip | GeoIP lookups | 1227 | Yes — lookup semantics | Yes | 2 | config, http-client | Keep | Isolates maxminddb dep |

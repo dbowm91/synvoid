@@ -410,7 +410,7 @@ SynVoid supports two deployment modes:
 
 ### macOS Seatbelt Sandboxing
 
-macOS Seatbelt sandboxing is **implemented but disabled by default** - requires `macos-sandbox` Cargo feature (`src/platform/sandbox.rs:1036-1044`). Other platforms use Landlock (Linux), Capsicum (FreeBSD), or Pledge+Unveil (OpenBSD).
+macOS Seatbelt sandboxing is **implemented but disabled by default** - requires `macos-sandbox` Cargo feature (`crates/synvoid-platform/src/sandbox.rs (canonical; src/platform/sandbox.rs is a facade):1036-1044`). Other platforms use Landlock (Linux), Capsicum (FreeBSD), or Pledge+Unveil (OpenBSD).
 
 ---
 

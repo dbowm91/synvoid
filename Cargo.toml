@@ -37,7 +37,7 @@ mesh = ["synvoid-config/mesh", "synvoid-http/mesh", "synvoid-static-files/mesh",
 buffer = ["synvoid-utils/buffer"]
 erased_pool = []
 rkyv = []
-macos-sandbox = ["synvoid-admin/macos-sandbox"]  # Enable macOS sandbox enforcement
+macos-sandbox = ["synvoid-admin/macos-sandbox", "synvoid-platform/macos-sandbox"]  # Enable macOS sandbox enforcement
 test-utils = []
 swagger-ui = ["dep:utoipa-swagger-ui"]
 fastcgi_streaming = []  # Additive, opt-in: streaming FastCGI response handling (no default impact)
@@ -60,7 +60,7 @@ unsafe-native-extensions = ["synvoid-plugin-runtime/unsafe-native-extensions", "
 wasmtime = { git = "https://github.com/bytecodealliance/wasmtime", tag = "v42.0.2" }
 
 [workspace]
-members = [".", "pqc", "crates/synvoid-wasm-pow", "admin-ui", "examples/dynamic-plugin-example", "examples/embedded-app-example", "fuzz", "crates/synvoid-utils", "crates/synvoid-config", "crates/synvoid-core", "crates/synvoid-auth", "crates/synvoid-challenge", "crates/synvoid-tarpit", "crates/synvoid-waf", "crates/synvoid-proxy-cache", "crates/synvoid-tls", "crates/synvoid-plugin-runtime", "crates/synvoid-native-extension", "crates/synvoid-http-client", "crates/synvoid-serverless", "crates/synvoid-geoip", "crates/synvoid-integrity", "crates/synvoid-upstream", "crates/synvoid-tunnel", "crates/synvoid-proxy", "crates/synvoid-http", "crates/synvoid-http3", "crates/synvoid-dns", "crates/synvoid-admin", "crates/synvoid-mesh", "crates/synvoid-mesh-protocol", "crates/synvoid-app-handlers", "crates/synvoid-platform", "crates/synvoid-cli", "crates/synvoid-metrics", "crates/synvoid-theme", "crates/synvoid-icmp-filter", "crates/synvoid-honeypot", "crates/synvoid-upload", "crates/synvoid-yara", "crates/synvoid-ipc", "crates/synvoid-block-store", "crates/synvoid-app-server", "crates/synvoid-vpn-client", "crates/synvoid-static-files", "crates/synvoid-filter", "tools/synvoid-repo-guards", "tools/xtask"]
+members = [".", "pqc", "crates/synvoid-wasm-pow", "admin-ui", "examples/dynamic-plugin-example", "examples/embedded-app-example", "fuzz", "crates/synvoid-utils", "crates/synvoid-config", "crates/synvoid-core", "crates/synvoid-auth", "crates/synvoid-challenge", "crates/synvoid-tarpit", "crates/synvoid-waf", "crates/synvoid-proxy-cache", "crates/synvoid-tls", "crates/synvoid-plugin-runtime", "crates/synvoid-native-extension", "crates/synvoid-jail-runtime", "crates/synvoid-http-client", "crates/synvoid-serverless", "crates/synvoid-geoip", "crates/synvoid-integrity", "crates/synvoid-upstream", "crates/synvoid-tunnel", "crates/synvoid-proxy", "crates/synvoid-http", "crates/synvoid-http3", "crates/synvoid-dns", "crates/synvoid-admin", "crates/synvoid-mesh", "crates/synvoid-mesh-protocol", "crates/synvoid-app-handlers", "crates/synvoid-platform", "crates/synvoid-cli", "crates/synvoid-metrics", "crates/synvoid-theme", "crates/synvoid-icmp-filter", "crates/synvoid-honeypot", "crates/synvoid-upload", "crates/synvoid-yara", "crates/synvoid-ipc", "crates/synvoid-block-store", "crates/synvoid-app-server", "crates/synvoid-vpn-client", "crates/synvoid-static-files", "crates/synvoid-filter", "tools/synvoid-repo-guards", "tools/xtask"]
 
 [workspace.package]
 license = "MIT"
@@ -211,6 +211,7 @@ synvoid-challenge = { path = "crates/synvoid-challenge" , version = "0.1" }
 synvoid-waf = { path = "crates/synvoid-waf" , version = "0.1" }
 synvoid-plugin-runtime = { path = "crates/synvoid-plugin-runtime" , version = "0.1" }
 synvoid-native-extension = { path = "crates/synvoid-native-extension", optional = true , version = "0.1" }
+synvoid-jail-runtime = { path = "crates/synvoid-jail-runtime" , version = "0.1" }
 synvoid-tls = { path = "crates/synvoid-tls" , version = "0.1" }
 synvoid-proxy-cache = { path = "crates/synvoid-proxy-cache" , version = "0.1" }
 synvoid-admin = { path = "crates/synvoid-admin" , version = "0.1" }

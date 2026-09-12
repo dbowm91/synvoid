@@ -6,6 +6,10 @@ license.workspace = true
 repository.workspace = true
 description = "Platform-specific abstractions and syscall wrappers"
 
+[features]
+default = []
+macos-sandbox = []
+
 [dependencies]
 thiserror = "2"
 tracing = "0.1"

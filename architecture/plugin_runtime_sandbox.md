@@ -946,28 +946,34 @@ Production hot reload requires explicit `production_enabled = true`. Native hot 
 
 All operations emit lifecycle transitions with generation, hashes, and timestamps.
 
-## Phase 22: Out-of-Process Jail (Operational)
+## Phase 22: Out-of-Process Jail (Operational) + Phase 29 Package Split
 
 The former jail-process stubs (`src/sandbox/mod.rs` exiting 1 with "IPC not
 implemented") are now a supervised out-of-process execution boundary. Normative
-spec: `architecture/sandbox_jail_protocol.md`.
+spec: `architecture/sandbox_jail_protocol.md`. Phase 29 moves child execution
+into the explicit `synvoid-jail-runtime` package with dedicated
+`synvoid-wasm-jail` / `synvoid-yara-jail` binaries; root `src/sandbox/` retains
+only parent policy/composition facades plus `--wasm-jail`/`--yara-jail`
+forwarding shims.
 
 ### What runs where
 
-- Child (`--wasm-jail`): `WasmJailService` (`src/sandbox/wasm_service.rs`)
+- Child (`synvoid-wasm-jail`): `WasmJailService` (`crates/synvoid-jail-runtime/src/wasm_service.rs`)
   loads parent-approved modules via `WasmRuntime::load_from_bytes_with_priority`
   and invokes `handle_request` with bounded input. Capabilities are rebuilt
   from the four hook flags in the load request; filesystem, network, mesh,
   admin, persistence, and metrics authority are unexpressible inside the jail.
-- Child (`--yara-jail`): `YaraJailService` (`src/sandbox/yara_service.rs`)
+- Child (`synvoid-yara-jail`): `YaraJailService` (`crates/synvoid-jail-runtime/src/yara_service.rs`)
   compiles parent-approved rule text (`YaraRulesSource::Inline`) and scans
   bounded buffers with per-scan timeouts. Compile/scan errors are typed and
   never terminate the jail.
-- Parent: `JailHandle` (`crates/synvoid-ipc/src/jail_process.rs`) spawns with
+- Parent: `JailHandle` (`crates/synvoid-ipc/src/jail_process.rs`, resolved via
+  `crates/synvoid-ipc/src/jail_binary.rs` exe-dir lookup) spawns with
   piped stdio, handshakes with `Ping`, serializes one in-flight call at a
   time, and quarantines/restarts within a bounded budget on any
   timeout/violation/desync. `JailClient` (`src/sandbox/policy.rs`) routes per
-  `IsolationPolicy` (`InProcess` default, `Preferred`, `Required` fail-closed).
+  `IsolationPolicy` (`InProcess` default, `Preferred`, `Required` fail-closed;
+  production spawns via `spawn_resolved`).
 
 ### Trust preservation (Track 2 unchanged)
 

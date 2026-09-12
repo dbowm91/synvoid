@@ -282,15 +282,15 @@ pub fn execute_runtime_launch(plan: RuntimeLaunchPlan) -> RuntimeLaunchOutcome {
         }
         RuntimeLaunchPlan::WasmJail => {
             // Stderr logging: stdout is the jail IPC frame channel.
+            // (`run_wasm_jail_mode` diverges via `!`; compat shim forwards to
+            // `synvoid-jail-runtime` entry sequencing.)
             init_logging_simple_stderr();
             crate::sandbox::run_wasm_jail_mode();
-            RuntimeLaunchOutcome::Completed
         }
         RuntimeLaunchPlan::YaraJail => {
             // Stderr logging: stdout is the jail IPC frame channel.
             init_logging_simple_stderr();
             crate::sandbox::run_yara_jail_mode();
-            RuntimeLaunchOutcome::Completed
         }
     }
 }

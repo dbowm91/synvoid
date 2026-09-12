@@ -132,15 +132,27 @@ fn synvoid_yara_has_no_forbidden_reverse_deps() {
 
 #[test]
 fn yara_jail_uses_generic_engine_directly() {
-    let service = read_repo("src/sandbox/yara_service.rs");
+    // Phase 29: canonical YARA jail service lives in `synvoid-jail-runtime`;
+    // the root path is a pure facade. Both layers must use the generic engine
+    // directly, never the upload domain.
+    let service = read_repo("crates/synvoid-jail-runtime/src/yara_service.rs");
     let code = prepare_for_scanning(&service);
     assert!(
         code.contains("synvoid_yara"),
-        "yara_service.rs must import the generic synvoid-yara engine (Phase 26 Part E)"
+        "jail-runtime yara_service.rs must import the generic synvoid-yara engine (Phase 26 Part E)"
     );
     assert!(
         !code.contains("synvoid_upload"),
-        "yara_service.rs must not couple to the upload domain (use synvoid-yara directly)"
+        "jail-runtime yara_service.rs must not couple to the upload domain (use synvoid-yara directly)"
+    );
+    let facade = prepare_for_scanning(&read_repo("src/sandbox/yara_service.rs"));
+    assert!(
+        facade.contains("synvoid_jail_runtime::YaraJailService"),
+        "root yara_service.rs must remain a facade over synvoid-jail-runtime (Phase 29)"
+    );
+    assert!(
+        !facade.contains("synvoid_upload"),
+        "root yara facade must not couple to the upload domain"
     );
 }
 

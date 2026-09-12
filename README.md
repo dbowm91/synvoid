@@ -17,7 +17,7 @@ The default build includes the WAF/proxy data plane plus mesh networking, DNS, s
 
 ## Runtime model
 
-A normal `synvoid` invocation starts the **Supervisor**. The Supervisor loads the selected configuration directory, owns process lifecycle and control-plane state, and starts the configured number of `UnifiedServerWorker` data-plane processes. Those workers keep connection handling, HTTP/TLS processing, WAF evaluation, routing, and proxy streaming on the request path. Dedicated CPU-worker and sandbox modes exist for work that should not run directly on the latency-sensitive path.
+A normal `synvoid` invocation starts the **Supervisor**. The Supervisor loads the selected configuration directory, owns process lifecycle and control-plane state, and starts the configured number of `UnifiedServerWorker` data-plane processes. Those workers keep connection handling, HTTP/TLS processing, WAF evaluation, routing, and proxy streaming on the request path. Dedicated CPU-worker and sandbox modes exist for work that should not run directly on the latency-sensitive path. Sandboxed WASM/YARA execution runs in dedicated `synvoid-wasm-jail` / `synvoid-yara-jail` child binaries (from the `synvoid-jail-runtime` crate, resolved beside the main executable with no `PATH`/working-directory search); release packages must ship all three binaries together atomically (see `docs/releasing.md` §4a).
 
 With the default `mesh` feature enabled, the Supervisor also owns the gRPC control API used by operational commands and mesh coordination.
 

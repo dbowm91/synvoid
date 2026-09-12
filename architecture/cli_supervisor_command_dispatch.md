@@ -158,8 +158,8 @@ The guard test `execute_rs_does_not_build_runtimes_or_worker_args` ensures `exec
 | `--cpu-worker` | Runtime | `run_cpu_worker()` |
 | `--unified-server-worker` | Runtime | `run_unified_server_worker()` |
 | `--mesh-agent` | Runtime | `run_mesh_agent_mode()` |
-| `--wasm-jail` | Runtime | `run_wasm_jail_mode()` — strict sandbox, then versioned framed stdio request loop (`WasmJailService`); stderr logs |
-| `--yara-jail` | Runtime | `run_yara_jail_mode()` — strict sandbox, then versioned framed stdio request loop (`YaraJailService`); stderr logs |
+| `--wasm-jail` | Runtime | `run_wasm_jail_mode()` — compat forwarding shim to `synvoid-jail-runtime` WASM entry (strict sandbox via `synvoid-platform`, then versioned framed stdio request loop); production spawns dedicated `synvoid-wasm-jail` binary; stderr logs |
+| `--yara-jail` | Runtime | `run_yara_jail_mode()` — compat forwarding shim to `synvoid-jail-runtime` YARA entry; production spawns dedicated `synvoid-yara-jail` binary; stderr logs |
 | (default) | Runtime | `run_supervisor_mode()` |
 
 ## CLI Flag Inventory
@@ -197,8 +197,8 @@ Complete mapping of all CLI flags to their plan categories and behavior.
 | `--cpu-worker` | Runtime(CpuWorker) | none | none | 0 |
 | `--unified-server-worker` | Runtime(UnifiedServerWorker) | none | none | 0 |
 | `--mesh-agent` | Runtime(MeshAgent) | none | mesh | 0 |
-| `--wasm-jail` | Runtime(WasmJail) | none (parent spawns with piped stdio; no secret/payload argv) | none | 0 (clean shutdown/EOF) / 1 (fail-closed) |
-| `--yara-jail` | Runtime(YaraJail) | none (parent spawns with piped stdio; no secret/payload argv) | none | 0 (clean shutdown/EOF) / 1 (fail-closed) |
+| `--wasm-jail` | Runtime(WasmJail) | none (compat shim; production spawns dedicated `synvoid-wasm-jail` with piped stdio and empty argv via exe-dir lookup; no secret/payload argv) | none | 0 (clean shutdown/EOF) / 1 (fail-closed) |
+| `--yara-jail` | Runtime(YaraJail) | none (compat shim; production spawns dedicated `synvoid-yara-jail` with piped stdio and empty argv) | none | 0 (clean shutdown/EOF) / 1 (fail-closed) |
 
 ### Modifier Flags
 

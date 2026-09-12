@@ -1,26 +1,42 @@
-# Sandbox Jail IPC Protocol (Phase 22, Phase 26 YARA boundary)
+# Sandbox Jail IPC Protocol (Phase 22, Phase 26 YARA boundary, Phase 29 package split)
 
-Status: operational. WASM and YARA jail entry points (`--wasm-jail`, `--yara-jail`)
-serve a real bounded request loop over a parent-created stdio transport. This document
-is the normative spec for the jail frame protocol, operations, transport ordering,
-supervision, failure semantics, and observability.
+Status: operational. WASM and YARA jail children run as dedicated binaries
+(`synvoid-wasm-jail`, `synvoid-yara-jail` from `synvoid-jail-runtime`, Phase 29)
+with legacy `synvoid --wasm-jail` / `--yara-jail` forwarding shims retained for
+compat. All serve a real bounded request loop over a parent-created stdio
+transport. This document is the normative spec for the jail frame protocol,
+operations, transport ordering, supervision, failure semantics, and
+observability.
 
-Canonical implementation:
+Canonical implementation (Phase 29):
 
-- Protocol DTOs, framing, policy, errors, limits, and metrics:
-  `crates/synvoid-ipc/src/jail_protocol.rs`
-- Parent handle, restart policy, and the child serve-loop driver:
-  `crates/synvoid-ipc/src/jail_process.rs`
-- Child execution services and policy-gated call sites: `src/sandbox/`
-  (`wasm_service.rs`, `yara_service.rs`, `policy.rs`)
+- Protocol DTOs, framing, policy, errors, limits, metrics, parent handle,
+  restart policy, child serve-loop driver, and deterministic binary resolution:
+  `crates/synvoid-ipc/src/` (`jail_protocol.rs`, `jail_process.rs`,
+  `jail_binary.rs` — exe-dir lookup only, no CWD/PATH/writable-dir search)
+- Child execution services, sandbox-entry sequencing, and child-only
+  observability: `crates/synvoid-jail-runtime/src/` (`wasm_service.rs`,
+  `yara_service.rs`, `sandbox_entry.rs`, `headers.rs`; binaries in `src/bin/`)
+- Parent policy/composition facades: `src/sandbox/` (`policy.rs`
+  `JailClient` + `spawn_resolved`, `mod.rs` forwarding shims,
+  `wasm_service.rs`/`yara_service.rs` pure re-exports)
+- OS sandbox backends (Landlock, Capsicum, Pledge, Job Objects, Seatbelt):
+  `crates/synvoid-platform/src/sandbox.rs` (canonical; root
+  `src/platform/sandbox.rs` is a pure facade)
 - YARA engine (Phase 26 canonical owner): `crates/synvoid-yara/src/`
   (`engine.rs`, `artifact.rs`, `executor.rs`). The jail service uses
   `synvoid_yara::{YaraScanner, YaraRulesSource}` directly, never
   `synvoid-upload`.
+- WASM engine: `crates/synvoid-plugin-runtime/src/` consumed by the jail
+  runtime (hook-only capabilities rebuilt in-jail).
 - Behavioral + static-policy coverage: `tests/jail_isolation_guard.rs`
-  (composition; unit coverage in `synvoid-ipc` for pure framing) plus
+  (composition; unit coverage in `synvoid-ipc` for pure framing, golden pins
+  in `crates/synvoid-ipc/tests/jail_protocol_golden.rs`, packaged-binary
+  round trips in
+  `crates/synvoid-jail-runtime/tests/jail_binary_integration.rs`) plus
   `tools/synvoid-repo-guards/tests/yara_execution_boundary.rs` (Phase 26
-  ownership: single `yara-x` owner, mesh has no compiler reference).
+  ownership) and `tools/synvoid-repo-guards/tests/jail_runtime_boundary.rs`
+  (Phase 29 package/process split).
 
 Related: `architecture/process_lifecycle.md` (jail supervision),
 `architecture/plugin_runtime_sandbox.md` (Phase 22 jail section),
@@ -75,9 +91,18 @@ namespace and would require post-sandbox bind/connect. Postcard framing
 conventions from `ipc_framing.rs` (4-byte big-endian length prefix +
 postcard payload) are reused.
 
-No secrets or payloads travel in argv or environment. The child argv is exactly
-`synvoid --wasm-jail` or `synvoid --yara-jail`. The single test-only exception
-is `SYNVOID_JAIL_PERMIT_NO_SANDBOX=1` (Section 8), which carries no secret.
+No secrets or payloads travel in argv or environment. Dedicated binaries take
+empty argv (binary identity implies kind); the legacy compat fallback argv is
+exactly `synvoid --wasm-jail` or `synvoid --yara-jail`. The single test-only
+exception is `SYNVOID_JAIL_PERMIT_NO_SANDBOX=1` (Section 8), which carries no
+secret. Parent binary resolution (`synvoid_ipc::resolve_jail_binary`) uses
+only the current-executable directory plus the compat fallback — never the
+working directory, `PATH`, or writable plugin directories. `verify_jail_binary`
+checks existence/regular-file/non-empty (+ Unix executable bit) where
+practical; `ensure_dedicated_jail_binaries_available()` is the startup
+preflight for jail-required deployments. `synvoid-wasm-jail --version` /
+`synvoid-yara-jail --version` report the jail runtime version plus the `SVJL`
+protocol version (wire compat is governed by `JAIL_PROTOCOL_VERSION`, v1).
 
 ## 3. Frame protocol (versioned, length-bounded, typed)
 
@@ -173,7 +198,7 @@ operation enum is versioned for extension.
 
 ## 5. Execution containment inside the jail
 
-WASM service (`src/sandbox/wasm_service.rs`):
+WASM service (`crates/synvoid-jail-runtime/src/wasm_service.rs`):
 
 - modules instantiate via `WasmResourceLimits` derived from the load request
   (fuel required nonzero, memory cap, per-invocation timeout, epoch deadline on,
@@ -183,7 +208,7 @@ WASM service (`src/sandbox/wasm_service.rs`):
   stays loaded (failures are per-invocation) unless the runtime is corrupted,
   in which case the child exits and the parent restarts it
 
-YARA service (`src/sandbox/yara_service.rs` over `crates/synvoid-yara`):
+YARA service (`crates/synvoid-jail-runtime/src/yara_service.rs` over `crates/synvoid-yara`):
 
 - one `synvoid_yara::YaraScanner` per rules ID with per-scan timeout,
   single-flight scan semaphore, bounded input; compile/scan errors are typed
@@ -196,7 +221,8 @@ from the `JAIL_MAX_*` consts before delegating to the underlying runtime.
 ## 6. Supervision and shutdown
 
 Jail processes are supervisor-owned (`JailHandle` in `synvoid_ipc::jail_process`,
-driven from `src/sandbox/` composition):
+spawned via deterministic `synvoid_ipc::resolve_jail_binary` exe-dir lookup and
+driven from `src/sandbox/policy.rs` `JailClient::spawn_resolved` composition):
 
 - restart policy: bounded restarts (`max_restarts`, default 5) with exponential
   backoff (`base_backoff` 100 ms, 2× growth, `max_backoff` 5 s cap) to avoid
@@ -237,8 +263,9 @@ Child startup order:
 2. apply `ProcessSandbox::with_paths(SandboxLevel::Strict, …)`
 3. enter the framed request loop
 
-Sandbox backends are platform-selected (`src/platform/sandbox.rs`: Landlock on
-Linux, Seatbelt/sandbox-exec profile on macOS where available, stub elsewhere).
+Sandbox backends are platform-selected (`crates/synvoid-platform/src/sandbox.rs`:
+Landlock on Linux, Seatbelt/sandbox-exec profile on macOS where available, stub
+elsewhere; root `src/platform/sandbox.rs` is a pure facade).
 On platforms without a strict backend, or when restriction fails, the child
 exits nonzero (fail closed) **unless** the test-only escape hatch
 `SYNVOID_JAIL_PERMIT_NO_SANDBOX=1` is set, in which case it logs an explicit

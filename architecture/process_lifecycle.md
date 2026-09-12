@@ -22,11 +22,15 @@ The Supervisor is the top-level process that manages worker lifecycle, upgrades,
 - **Entry Point:** `run_supervisor_mode()` (`src/main.rs:531-537`).
 - **IPC Role:** Acts as the central hub for worker coordination.
 
-### 2. Jail Processes (Sandboxed Execution Plane, Phase 22 Operational)
+### 2. Jail Processes (Sandboxed Execution Plane, Phase 22 Operational, Phase 29 Packaged)
 
-WASM plugin execution and YARA rule evaluation can run in dedicated jail
-processes (`synvoid --wasm-jail`, `synvoid --yara-jail`), supervised by the
-parent via `JailHandle` (`crates/synvoid-ipc/src/jail_process.rs`):
+WASM plugin execution and YARA rule evaluation run in dedicated jail binaries
+(`synvoid-wasm-jail`, `synvoid-yara-jail` from `synvoid-jail-runtime`, Phase 29;
+legacy `synvoid --wasm-jail` / `--yara-jail` flags remain only as internal
+forwarding shims with no unisolated path), supervised by the parent via
+`JailHandle` (`crates/synvoid-ipc/src/jail_process.rs`, resolved via
+`crates/synvoid-ipc/src/jail_binary.rs` exe-dir lookup — never CWD/PATH/plugin
+dirs — with `JailClient::spawn_resolved` in `src/sandbox/policy.rs`):
 
 - **Transport:** parent-created anonymous stdio pipes inherited by the child.
   No socket bind/connect happens after sandboxing; peer identity rests on

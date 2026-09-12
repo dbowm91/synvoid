@@ -48,7 +48,7 @@ Windows uses Job Objects for process containment with memory limits and automati
 
 ### Implementation
 
-**Location**: `src/platform/sandbox.rs:610-785`
+**Location**: `crates/synvoid-platform/src/sandbox.rs`
 
 ```rust
 pub struct WindowsSandbox {
@@ -126,7 +126,7 @@ macOS uses the Sandbox framework with policy profiles.
 
 ### Implementation
 
-**Location**: `src/platform/sandbox.rs:787-911`
+**Location**: `crates/synvoid-platform/src/sandbox.rs`
 
 ```rust
 pub struct SeatbeltSandbox {
@@ -209,7 +209,7 @@ Linux uses the Landlock LSM for filesystem restrictions.
 
 ### Implementation
 
-**Location**: `src/platform/sandbox.rs:199-620`
+**Location**: `crates/synvoid-platform/src/sandbox.rs`
 
 Key steps:
 1. Create ruleset with `SYS_landlock_create_ruleset`
@@ -222,7 +222,7 @@ Capsicum provides capability mode for FreeBSD.
 
 ### Implementation
 
-**Location**: `src/platform/sandbox.rs:323-467`
+**Location**: `crates/synvoid-platform/src/sandbox.rs`
 
 Key operations:
 - `cap_enter()` - Enter capability mode
@@ -234,7 +234,7 @@ Pledge provides system call filtering on OpenBSD.
 
 ### Implementation
 
-**Location**: `src/platform/sandbox.rs:469-611`
+**Location**: `crates/synvoid-platform/src/sandbox.rs`
 
 Key operations:
 - `pledge()` - Promise minimal syscall access
@@ -245,7 +245,7 @@ Key operations:
 Use `SandboxPaths` to configure allowed/denied paths:
 
 ```rust
-use crate::platform::sandbox::{ProcessSandbox, SandboxLevel, SandboxPaths};
+use synvoid_platform::sandbox::{ProcessSandbox, SandboxLevel, SandboxPaths};
 
 let sandbox = ProcessSandbox::with_paths(
     SandboxLevel::Strict,
@@ -279,10 +279,14 @@ pub enum SandboxError {
 4. **Test on target platforms** - Sandboxing behavior varies across OS versions
 5. **Enable incrementally** - Start with Basic, verify functionality, then Strict
 
-## Sandbox Jail Processes (Phase 22)
+## Sandbox Jail Processes (Phase 22, Phase 29 packaged)
 
-The strict sandbox above confines the WASM/YARA jail children
-(`synvoid --wasm-jail`, `synvoid --yara-jail`, entry points in `src/sandbox/`).
+The strict sandbox above confines the WASM/YARA jail children (dedicated
+`synvoid-wasm-jail` / `synvoid-yara-jail` binaries from
+`crates/synvoid-jail-runtime/`, legacy `synvoid --wasm-jail` /
+`--yara-jail` flags remain only as forwarding shims; child entry in
+`crates/synvoid-jail-runtime/src/sandbox_entry.rs`, backends canonical in
+`crates/synvoid-platform/src/sandbox.rs`).
 Full jail contract: `architecture/sandbox_jail_protocol.md`. Rules when
 touching jail code:
 

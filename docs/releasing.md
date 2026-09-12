@@ -46,6 +46,9 @@ Crates must be published in this exact order. Each crate's path dependencies mus
 | 11 | `synvoid-http-client` | synvoid-config, synvoid-core |
 | 12 | `synvoid-app-server` | synvoid-utils, synvoid-http-client |
 | 13 | `synvoid-tls` | synvoid-config |
+| 13a | `synvoid-mesh-protocol` | *(none — leaf wire vocabulary, Phase 27)* |
+| 13b | `synvoid-yara` | *(none — leaf engine, single `yara-x` owner, Phase 26)* |
+| 13c | `synvoid-native-extension` | *(none — leaf loader, Phase 28, opt-in)* |
 | 14 | `synvoid-plugin-runtime` | synvoid-utils |
 | 15 | `synvoid-integrity` | pqc |
 | 16 | `synvoid-geoip` | synvoid-config, synvoid-http-client |
@@ -62,6 +65,7 @@ Crates must be published in this exact order. Each crate's path dependencies mus
 | 27 | `synvoid-static-files` | synvoid-config, synvoid-ipc, synvoid-theme, synvoid-utils, synvoid-app-handlers |
 | 28 | `synvoid-honeypot` | synvoid-config, synvoid-utils, synvoid-http-client, synvoid-mesh |
 | 29 | `synvoid-upload` | synvoid-config, synvoid-utils, synvoid-http-client, synvoid-platform, synvoid-app-handlers, synvoid-mesh |
+| 29a | `synvoid-jail-runtime` | synvoid-ipc, synvoid-platform, synvoid-plugin-runtime, synvoid-yara (Phase 29; ships `synvoid-wasm-jail` + `synvoid-yara-jail` binaries) |
 | 30 | `synvoid-admin` | synvoid-core, synvoid-config, synvoid-ipc, synvoid-waf, synvoid-metrics, synvoid-static-files, synvoid-app-server |
 | 31 | `synvoid-http` | synvoid-core, synvoid-config, synvoid-metrics, synvoid-waf, synvoid-challenge, synvoid-http-client, synvoid-app-server, synvoid-app-handlers, synvoid-proxy, synvoid-upload, synvoid-plugin-runtime, synvoid-utils, synvoid-mesh, synvoid-serverless, synvoid-static-files, synvoid-ipc |
 | 32 | `synvoid-http3` | synvoid-core, synvoid-config, synvoid-http, synvoid-http-client, synvoid-proxy, synvoid-waf, synvoid-metrics, synvoid-platform |
@@ -110,6 +114,37 @@ For publishable crates with internal path dependencies:
 - **Dev-dependencies**: Follow Cargo publication rules; not treated as runtime publication predecessors
 
 The requirement is validated using cargo metadata's parsed `req` field, not substring extraction.
+
+### 4a. Jail Binary Artifacts (Phase 29)
+
+The `synvoid-jail-runtime` crate ships two dedicated child binaries:
+
+| Binary | Engine linked | Purpose |
+|--------|--------------|---------|
+| `synvoid-wasm-jail` | WASM only (`synvoid-plugin-runtime`; no YARA) | Supervised WASM plugin execution child |
+| `synvoid-yara-jail` | YARA only (`synvoid-yara`; no unrelated HTTP/mesh/admin) | Supervised YARA rule evaluation child |
+
+Release rules:
+
+- The main `synvoid` artifact must never be installed with jail-required
+  configuration while silently missing its jail binaries. Ship all three
+  binaries together in one archive/package, atomically.
+- Parent resolution (`synvoid_ipc::resolve_jail_binary`) looks only in the
+  directory containing the running executable — never CWD, `PATH`, or
+  writable plugin directories — and falls back to the legacy
+  `synvoid --wasm-jail` / `--yara-jail` forwarding shims only when the
+  dedicated binaries are absent (removal target: require dedicated binaries).
+- Startup preflight for jail-required deployments:
+  `synvoid_ipc::ensure_dedicated_jail_binaries_available()` fails closed
+  listing what is missing.
+- Diagnostics: `synvoid-wasm-jail --version` and
+  `synvoid-yara-jail --version` report the jail runtime version plus the
+  `SVJL` protocol version (wire compat is governed by
+  `JAIL_PROTOCOL_VERSION`, currently v1).
+- `verify-release` validates that `synvoid-jail-runtime` is a workspace
+  member, both `src/bin/*.rs` files exist, and both binaries are registered
+  in `cargo metadata` for that package. Accidental omission fails release
+  qualification.
 
 ## 5. Release Procedure
 
