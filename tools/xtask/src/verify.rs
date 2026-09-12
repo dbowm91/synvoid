@@ -135,6 +135,11 @@ fn verify_steps() -> Vec<(&'static str, &'static str)> {
             "clippy",
             "cargo clippy --profile ci --all-targets -- -D warnings",
         ),
+        // Phase 25: routine blocking dependency-policy gate. Uses the pinned
+        // cargo-deny version (see docs/testing/verification-contract.md).
+        // Advisory freshness is additionally covered by the dedicated
+        // `dependency-security` CI job (deny + audit) and the daily schedule.
+        ("dependency-policy", "cargo deny check"),
         (
             "core-compile",
             "cargo check --no-default-features --profile ci",
@@ -247,6 +252,15 @@ fn verify_full_steps() -> Vec<(&'static str, &'static str)> {
         (
             "profile-mesh-dns",
             "cargo check --no-default-features --features mesh,dns --profile ci",
+        ),
+        // Phase 25: honestly-minimal test execution. The root self dev-edge
+        // keeps default-features = false, so this run executes the
+        // `#[cfg(not(feature = "mesh"/"dns"))]` absence branches instead of
+        // compiling them out (lib unit tests + feature-gated integration
+        // suites with live absence cases).
+        (
+            "minimal-tests",
+            "cargo test --no-default-features --profile ci --lib --test integration_test --test admin_router_composition",
         ),
         // Broad deterministic tests — covers workspace unit/integration,
         // guard tests, security regression, DNS, plugin-runtime, honeypot,
@@ -1037,6 +1051,11 @@ pub fn run_verify_release(
 
     let mut release_steps = verify_full_steps();
     release_steps.extend_from_slice(&[
+        // Phase 25: release qualification repeats both dependency checks with
+        // pinned tool versions and records versions/results (see
+        // docs/testing/verification-contract.md). NEVER publishes.
+        ("dependency-policy-release", "cargo deny check"),
+        ("advisory-audit-release", "cargo audit"),
         // All-features clippy (catches eBPF and other feature-gated warnings)
         (
             "clippy-all-features",

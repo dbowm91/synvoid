@@ -26,19 +26,19 @@ The IPC & Process module is responsible for:
 | Submodule | File | Responsibility |
 |-----------|------|----------------|
 | **mod.rs** | `src/process/mod.rs` | Module root; re-exports all public types; defines `CURRENT_WORKER_ID` global |
-| **manager.rs** | `src/process/manager.rs` | `ProcessManager` for worker lifecycle, health monitoring, restart policies |
-| **ipc.rs** | `src/process/ipc.rs` | `Message` enum (all IPC message types), `IpcStream` (sync), `WorkerId` |
-| **ipc_transport.rs** | `src/process/ipc_transport.rs` | Async IPC transport via `tokio::net::UnixStream` |
-| **ipc_framing.rs** | `src/process/ipc_framing.rs` | Length-prefixed message framing for sync/async I/O |
-| **ipc_signed.rs** | `src/process/ipc_signed.rs` | HMAC-SHA3-256 signed messages, nonce cache for replay protection |
-| **ipc_rate_limit.rs** | `src/process/ipc_rate_limit.rs` | Token bucket rate limiter with per-worker tracking |
-| **ipc_pool.rs** | `src/process/ipc_pool.rs` | Connection pooling for IPC endpoints |
-| **ipc_windows.rs** | `src/process/ipc_windows.rs` | Windows named pipe utilities |
-| **worker.rs** | `src/process/worker.rs` | `BaseWorkerProcess`, `WorkerProcess`, `StaticWorkerProcess` / `CpuWorkerProcess`, `UnifiedServerWorkerProcess` |
-| **command.rs** | `src/process/command.rs` | `CommandClient` for sending commands to master via socket/signal/grpc |
-| **socket_path.rs** | `src/process/socket_path.rs` | Socket path resolution, generation tracking, permissions |
-| **socket_fd.rs** | `src/process/socket_fd.rs` | Unix socket creation and file descriptor passing |
-| **pidfile.rs** | `src/process/pidfile.rs` | `PidFileManager`, `SupervisorLockFile` for process single-instance |
+| **manager.rs** | `crates/synvoid-ipc/src/manager.rs` | `ProcessManager` for worker lifecycle, health monitoring, restart policies |
+| **ipc.rs** | `crates/synvoid-ipc/src/ipc.rs` | `Message` enum (all IPC message types), `IpcStream` (sync), `WorkerId` |
+| **ipc_transport.rs** | `crates/synvoid-ipc/src/ipc_transport.rs` | Async IPC transport via `tokio::net::UnixStream` |
+| **ipc_framing.rs** | `crates/synvoid-ipc/src/ipc_framing.rs` | Length-prefixed message framing for sync/async I/O |
+| **ipc_signed.rs** | `crates/synvoid-ipc/src/ipc_signed.rs` | HMAC-SHA3-256 signed messages, nonce cache for replay protection |
+| **ipc_rate_limit.rs** | `crates/synvoid-ipc/src/ipc_rate_limit.rs` | Token bucket rate limiter with per-worker tracking |
+| **ipc_pool.rs** | `crates/synvoid-ipc/src/ipc_pool.rs` | Connection pooling for IPC endpoints |
+| **ipc_windows.rs** | `crates/synvoid-ipc/src/ipc_windows.rs` | Windows named pipe utilities |
+| **worker.rs** | `crates/synvoid-ipc/src/worker.rs` | `BaseWorkerProcess`, `WorkerProcess`, `StaticWorkerProcess` / `CpuWorkerProcess`, `UnifiedServerWorkerProcess` |
+| **command.rs** | `crates/synvoid-ipc/src/command.rs` | `CommandClient` for sending commands to master via socket/signal/grpc |
+| **socket_path.rs** | `crates/synvoid-ipc/src/socket_path.rs` | Socket path resolution, generation tracking, permissions |
+| **socket_fd.rs** | `crates/synvoid-ipc/src/` | Unix socket creation and file descriptor passing |
+| **pidfile.rs** | `crates/synvoid-ipc/src/pidfile.rs` | `PidFileManager`, `SupervisorLockFile` for process single-instance |
 
 ---
 

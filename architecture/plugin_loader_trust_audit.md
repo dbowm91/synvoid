@@ -25,8 +25,8 @@ Scope: Every code path that loads, reloads, or hot-reloads a plugin. Verifies tr
 | 15 | `PluginRuntimeOwner::load_configured_plugins` | src/server/plugin_runtime.rs | Config entries | Delegates per entry | Delegates per entry | Delegates per entry | Enforced |
 | 16 | `PluginRuntimeOwner::enable_hot_reload_if_configured` | src/server/plugin_runtime.rs | None | Delegates | Delegates | Delegates | Enforced |
 | 17 | Admin POST `/plugins/{name}/reload` | src/admin/handlers/plugins.rs | None | Delegates | Delegates | Delegates | Enforced |
-| 18 | `ServerlessFunctionManager::load_function_wasm` (mesh) | serverless/manager.rs | None | Delegates | Delegates | Delegates | Enforced |
-| 19 | `ServerlessFunctionManager::load_function_wasm` (file) | serverless/manager.rs | None | Delegates | Delegates | Delegates | Enforced |
+| 18 | `ServerlessFunctionManager::load_function_wasm` (mesh) | crates/synvoid-serverless/src/manager.rs | None | Delegates | Delegates | Delegates | Enforced |
+| 19 | `ServerlessFunctionManager::load_function_wasm` (file) | crates/synvoid-serverless/src/manager.rs | None | Delegates | Delegates | Delegates | Enforced |
 | 20 | `SpinRuntime::instantiate_app(component_id)` | spin/runtime.rs | Spin manifest | No check | No check | Loads WASM from Spin manifest | Enforced |
 | 21 | `InstancePool::new` (serverless) | serverless/instance_pool.rs | None | Delegates | Delegates | Delegates | Enforced |
 

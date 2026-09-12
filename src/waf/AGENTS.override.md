@@ -134,7 +134,7 @@ Stall actions can exhaust worker resources at high traffic. Use bounded stall wi
 
 ### IPC-4: TokenBucket Refill Precision
 
-Fixed in `src/process/ipc_rate_limit.rs:132-141`. The original formula:
+Fixed in `crates/synvoid-ipc/src/ipc_rate_limit.rs:132-141`. The original formula:
 ```rust
 let ticks = ((elapsed.as_millis() as u64).saturating_mul(self.refill_rate)) / 1000;
 ```

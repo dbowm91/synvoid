@@ -784,6 +784,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "mesh")]
     fn disabled_mesh_init_status_remains_disabled() {
         let status = crate::worker::mesh_supervision::WorkerMeshStatus::default();
         assert_eq!(
@@ -793,6 +794,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "mesh")]
     fn disabled_mesh_never_creates_required_fallback_policy() {
         let config = synvoid_config::MeshSupervisionConfig::default();
         let policy = crate::worker::mesh_supervision::build_mesh_supervision_policy(false, &config);
@@ -800,6 +802,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "mesh")]
     fn disabled_mesh_ready_without_policy() {
         let policy: Option<crate::worker::mesh_supervision::MeshSupervisionPolicy> = None;
         let ready = match &policy {

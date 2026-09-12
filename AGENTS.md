@@ -10,14 +10,14 @@ cargo build --release   # default features: socket-handoff, mesh, dns, erased_po
 
 - **protoc is required**: the default `mesh` feature triggers protobuf codegen in `build.rs` (`tonic-prost-build`). Install `protobuf-compiler` (CI does) or builds fail confusingly.
 - All feature profiles must compile: `cargo check --no-default-features [--features mesh | dns | icmp-filter | mesh,dns]` (bounded Phase 05 matrix; full powerset intentionally not tested).
-- `--no-default-features` is NOT honestly minimal under `cargo test`/`nextest`: the root `[dev-dependencies]` self-edge (`synvoid = { path = ".", features = ["test-utils"] }`) leaks default features into test targets, so mesh/dns `cfg-not` absence branches compile out but never execute — only `icmp-filter` absence is live. See `Cargo.toml:296-308` + `architecture/admin_contract_phase05_closeout.md`.
+- `--no-default-features` is honestly minimal (Phase 25): the root `[dev-dependencies]` self-edge keeps `default-features = false`, mesh/dns absence branches execute under `cargo test --no-default-features` (see `minimal-tests` in `docs/testing/verification-contract.md`). Only `icmp-filter` was live before; now mesh/dns absence is live too. `tests/mesh_startup_rollback` needs `--features mesh` (`required-features`).
 
 ## Verification
 
 **Authority**: `docs/testing/verification-contract.md` (frozen contract). The single CI workflow (`.github/workflows/ci.yml`) runs exactly:
 
 ```bash
-cargo xtask verify   # fmt → clippy --profile ci --all-targets -D warnings → core compile check → repo-guards → security regression → root guard suite → core admin tests → admin contract (mesh,dns,icmp-filter) → failure injection
+cargo xtask verify   # fmt → clippy --profile ci --all-targets -D warnings → cargo deny check → core compile check → repo-guards → security regression → root guard suite → core admin tests → admin contract (mesh,dns,icmp-filter) → failure injection (+ blocking dependency-security CI job runs deny + audit; daily schedule)
 ```
 
 xtask subcommands (options: `--dry-run`, `--json`, `--verbose`, `--allow-dirty`):
@@ -60,7 +60,7 @@ Testing quirks:
 - **Entry point**: `src/main.rs` → delegates to `src/commands/{plan,execute,runtime_launch}.rs`
 - **Supervisor**: `src/supervisor/` — lifecycle, IPC, control-plane
 - **Data plane**: `src/worker/unified_server/` — HTTP + WAF + proxy in ONE Tokio event loop; CPU offload in `src/worker/cpu_task/`
-- **Process model**: Supervisor (1) → N `UnifiedServerWorker` data-plane processes (`spawn_unified_server_workers(config.unified_server_workers)` in `src/supervisor/process.rs`; shipped `config/main.toml` sets `[defaults.worker_pool] workers = 4`, code default 1) + CpuWorker offload. Workers are NOT process-per-tenant. Note: the legacy `--worker` flag (`src/process/worker.rs` `BaseWorkerProcess`) has NO dispatch branch in `src/commands/plan.rs` and falls through to the default `RuntimeCommand::Supervisor`; HTTP serving uses `--unified-server-worker` / `--cpu-worker`.
+- **Process model**: Supervisor (1) → N `UnifiedServerWorker` data-plane processes (`spawn_unified_server_workers(config.unified_server_workers)` in `src/supervisor/process.rs`; shipped `config/main.toml` sets `[defaults.worker_pool] workers = 4`, code default 1) + CpuWorker offload. Workers are NOT process-per-tenant. Note: the legacy `--worker` flag (`crates/synvoid-ipc/src/worker.rs` `BaseWorkerProcess`) has NO dispatch branch in `src/commands/plan.rs` and falls through to the default `RuntimeCommand::Supervisor`; HTTP serving uses `--unified-server-worker` / `--cpu-worker`.
 - **Mesh**: `crates/synvoid-mesh/src/mesh/` — DHT, transport, Raft, peer auth. Binding distributed-state contract: `architecture/distributed_state_contract.md` (authority taxonomy `DistributedNamespaceAuthority`, typed `QuorumUnavailable`/`CanonicalCommitted` outcomes, partition/rejoin tests in `crates/synvoid-mesh/tests/distributed_state_partition.rs`; MESH-15 closed as stale).
 - Many legacy root paths re-export crate contents for compat (e.g., `src/dns/mod.rs` re-exports `synvoid_dns::*`). Binding facade policy: `architecture/facade_disposition_matrix.md` (Phase 03 retirement rules + per-facade canonical paths; `auth`/`cgi`/`challenge`/`filter`/`integrity`/`php`/`proxy_cache`/`upload` root paths removed).
 
@@ -185,5 +185,5 @@ Primary doc per subsystem (deep dives live beside each as `<topic>_deep_dive.md`
 
 ## Known Issues
 
-- `wasmtime` 40.0.4 arrives transitively via yara-x (YARA rule compilation only, not the wasm sandbox); direct wasmtime is patched to 42.0.2 via `[patch.crates-io]`. 16 advisory ignores in `deny.toml`, re-audit date 2026-10-01.
+- `wasmtime` 40.0.4 arrives transitively via yara-x (YARA rule compilation only, not the wasm sandbox); direct wasmtime is 42.0.2 via `[patch.crates-io]` (fixed for the 2026-04 advisories, but AFFECTED by RUSTSEC-2026-0269 with `wasmtime-wasi` unreachable — never call it patched for 0269; ≥46.0.3 upgrade blocked by bumpalo conflict, tracked for Phase 26). 16 advisory ignores in `deny.toml` (mirrored in `.cargo/audit.toml`), re-audit tied to Phase 26. See `architecture/dependency_security_baseline_phase25.md`.
 - macOS-only (BUG-002, `docs/testing/verification-contract.md` §14): `rkyv_derive` 0.7 (transitive via `lightningcss` → `parcel_sourcemap`, not SynVoid code) segfaults Apple clang 21 at link time — non-deterministic, retry often succeeds; Linux CI unaffected. Do not "fix" by touching the dependency chain.

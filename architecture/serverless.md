@@ -44,7 +44,7 @@ The Serverless module provides a **WASM-based serverless function execution plat
 ### Serverless Core Types
 
 ```rust
-// src/serverless/manager.rs
+// crates/synvoid-serverless/src/manager.rs
 
 // Caller context for mesh-distributed invocations
 pub struct CallerContext {
@@ -90,7 +90,7 @@ pub enum ServerlessError {
 ### Instance Pool Types
 
 ```rust
-// src/serverless/instance_pool.rs
+// crates/synvoid-serverless/src/instance_pool.rs
 
 // Configuration for instance pool behavior
 pub struct InstancePoolConfig {
@@ -137,7 +137,7 @@ pub struct InstanceMetrics {
 ### Routing Types
 
 ```rust
-// src/serverless/routing.rs
+// crates/synvoid-serverless/src/routing.rs
 
 // Path matching strategies
 pub enum RouteMatch {
@@ -167,7 +167,7 @@ pub struct ServerlessRoute {
 ### Registry Types
 
 ```rust
-// src/serverless/registry.rs
+// crates/synvoid-serverless/src/registry.rs
 
 // Global registry singleton
 pub fn get_global_serverless_registry() -> Arc<ServerlessRegistry>;
@@ -281,7 +281,7 @@ pub struct PluginManagerLifecycle {
 
 ## 4. Key APIs and Entry Points
 
-### ServerlessManager (src/serverless/manager.rs)
+### ServerlessManager (crates/synvoid-serverless/src/manager.rs)
 
 ```rust
 impl ServerlessManager {
@@ -346,7 +346,7 @@ impl ServerlessManager {
 **Note:** This function is only exported when `#[cfg(feature = "mesh")]`.
 
 ```rust
-// src/serverless/manager.rs:1049
+// crates/synvoid-serverless/src/manager.rs:1049
 #[cfg(feature = "mesh")]
 pub async fn handle_serverless_function(
     manager: &ServerlessManager,
@@ -363,7 +363,7 @@ pub async fn handle_serverless_function(
 For streaming request bodies, use the streaming variant:
 
 ```rust
-// src/serverless/manager.rs:1224
+// crates/synvoid-serverless/src/manager.rs:1224
 pub async fn handle_serverless_function_streaming(
     manager: &ServerlessManager,
     method: &Method,
@@ -376,7 +376,7 @@ pub async fn handle_serverless_function_streaming(
 
 This variant accepts a `Box<dyn ErasedBody>` for streaming body chunks via `synvoid_read_body_chunk()` host function.
 
-### InstancePool (src/serverless/instance_pool.rs)
+### InstancePool (crates/synvoid-serverless/src/instance_pool.rs)
 
 ```rust
 impl InstancePool {

@@ -43,7 +43,15 @@ swagger-ui = ["dep:utoipa-swagger-ui"]
 fastcgi_streaming = []  # Additive, opt-in: streaming FastCGI response handling (no default impact)
 
 [patch.crates-io]
-# Patch the application runtime's Wasmtime dependency to the audited version.
+# Phase 25: direct Wasmtime stays at 42.0.2 via this Git patch (crates.io has no
+# 42.x patch release carrying the older fixes; 42.0.2 is patched for
+# RUSTSEC-2026-0085/0086/0087/0088/0089/0091/0092/0093/0094/0095/0096/0114/0222
+# but is AFFECTED by RUSTSEC-2026-0269 whose fix starts at 46.0.3).
+# Upgrade to >=46.0.3 is blocked: wasmtime 46 requires bumpalo ^3.20.2 while
+# minify-html 0.18.1 -> oxc_allocator 0.95.0 pins bumpalo =3.19.0 (same major,
+# unresolvable; cargo cannot split). See
+# architecture/dependency_security_baseline_phase25.md. Removal target: Phase 26
+# (reassess when minify-html/oxc relaxes bumpalo or yara-x moves off wasmtime 40).
 wasmtime = { git = "https://github.com/bytecodealliance/wasmtime", tag = "v42.0.2" }
 
 [workspace]
@@ -294,18 +302,13 @@ panic = "unwind"
 strip = true
 
 [dev-dependencies]
-# NOTE (Phase 05 residual): this self edge intentionally keeps
-# `default-features` enabled. Setting `default-features = false` would make
-# `cargo test --no-default-features` honestly minimal, but ~4 existing targets
-# (src/http/server.rs + src/worker/unified_server/init_mesh.rs test code,
-# tests/integration_test.rs, tests/mesh_startup_rollback.rs) use mesh/dns
-# items without cfg gates and only compile because of this leak — so every
-# `#[cfg(not(feature = "mesh"/"dns"))]` runtime absence test repo-wide is
-# currently a compile-out-only branch under cargo test/nextest. See
-# architecture/admin_contract_phase05_closeout.md. Gating those targets is a
-# separate phase; icmp-filter absence IS live (off by default) and stale-path
-# absence always runs.
-synvoid = { path = ".", features = ["test-utils"] , version = "1.1" }
+# Phase 25: this self edge MUST keep `default-features = false`. Enabling default
+# features here leaks mesh/dns into nominal `--no-default-features` test builds,
+# which silently compiles out every `#[cfg(not(feature = ...))]` absence branch
+# repo-wide (see architecture/admin_contract_phase05_closeout.md and the
+# `root_no_default_feature_leak_guard`). Tests needing mesh/dns declare explicit
+# `required-features` on their [[test]] target or `#[cfg(feature = ...)]` gates.
+synvoid = { path = ".", features = ["test-utils"], default-features = false , version = "1.1" }
 libfuzzer-sys = "0.4"
 proptest = "1.5"
 proptest-derive = "0.4"
@@ -345,3 +348,10 @@ harness = false
 [[bench]]
 name = "bench_attack_detection_wave10"
 harness = false
+
+# Phase 25: feature-specific integration targets. These tests import mesh-gated
+# items at top level and cannot build minimally; `required-features` keeps
+# `cargo test --no-default-features` honest instead of failing to compile.
+[[test]]
+name = "mesh_startup_rollback"
+required-features = ["mesh"]

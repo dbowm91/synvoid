@@ -13,6 +13,15 @@
 > multi-authored surface without a mechanical CI gate; the added invocation is
 > seconds-scale oneshot tests, and the profile rows map 1:1 to optional admin
 > route families (full powerset stays excluded). Cargo invocations 8 → 9.
+> Amended: 2026-09-12 | Phase 25 — Dependency-security baseline. Routine `verify`
+> gains a blocking `dependency-policy` step (`cargo deny check` with pinned
+> cargo-deny 0.20.2); `verify-release` repeats `cargo deny check` + `cargo audit`
+> (pinned cargo-audit 0.22.2); a dedicated blocking `dependency-security` CI job
+> runs both checks on every PR plus a daily schedule; `verify-full` gains a
+> `minimal-tests` step that executes `#[cfg(not(feature))]` absence branches
+> honestly (self dev-edge keeps `default-features = false`).
+> Toolchain pinned to Rust 1.98.1 via `rust-toolchain.toml`; third-party Actions
+> pinned to commit SHAs; tool versions recorded in §15.
 
 This document is the single source of truth for what SynVoid CI must verify, at what frequency, and with what commands. It replaces the four-lane system as the authoritative verification specification.
 
@@ -24,11 +33,12 @@ The routine contract runs on every pull request. It is expressed as a single com
 cargo xtask verify
 ```
 
-Or equivalently, the raw commands (9 Cargo invocations):
+Or equivalently, the raw commands (10 Cargo invocations):
 
 ```bash
 cargo fmt --all -- --check
 cargo clippy --profile ci --all-targets -- -D warnings
+cargo deny check
 cargo check --no-default-features --profile ci
 cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci
 cargo test --test security_regression --profile ci -- --test-threads=1
@@ -59,6 +69,7 @@ cargo test --test failure_injection --profile ci
 |----------|---------|:-----------:|
 | Formatting conformance | `cargo fmt --all -- --check` | Yes |
 | Lint correctness (ci profile) | `cargo clippy --profile ci --all-targets -- -D warnings` | Yes |
+| Dependency policy (bans/licenses/sources/advisories) | `cargo deny check` (pinned cargo-deny) | Yes |
 | Core-only compilation | `cargo check --no-default-features --profile ci` | Yes |
 | Architecture static guards | `cargo nextest run -p synvoid-repo-guards` | Yes |
 | Security regression detection | `cargo test --test security_regression --profile ci --test-threads=1` | Yes |
@@ -77,7 +88,7 @@ cargo test --test failure_injection --profile ci
 | Cross-platform builds | Expensive; manual local verification |
 | DNS full suite | Large suite; run locally via `verify-full` |
 | Plugin runtime full suite | Large suite; run locally via `verify-full` |
-| Dependency audit | Not per-commit; manual `cargo deny check` or `cargo audit` |
+| Advisory freshness (`cargo audit`) | Network-fetch per commit; dedicated blocking `dependency-security` CI job + daily schedule instead (release repeats it) |
 | Fuzz smoke | Expensive; manual `cargo +nightly fuzz run <target>` |
 | Miri | Expensive; manual `cargo miri test -p synvoid-utils` |
 
@@ -85,7 +96,7 @@ cargo test --test failure_injection --profile ci
 
 - **Target**: <10 minutes wall time on warm-cache Ubuntu runner
 - **Blocking threshold**: >15 minutes
-- **Cargo invocations**: 9 (fmt + 8 Cargo invocations)
+- **Cargo invocations**: 10 (fmt + deny + 8 Cargo invocations)
 
 ### No affected-package selection
 
@@ -103,7 +114,7 @@ Full local verification is manually invoked before risky merges and during focus
 cargo xtask verify-full
 ```
 
-Or equivalently, the raw commands (9 Cargo invocations):
+Or equivalently, the raw commands (10 Cargo invocations):
 
 ```bash
 # Format + lint preflight (shared with routine, cheap)
@@ -117,6 +128,11 @@ cargo check --no-default-features --features mesh --profile ci
 cargo check --no-default-features --features dns --profile ci
 cargo check --no-default-features --features icmp-filter --profile ci
 cargo check --no-default-features --features mesh,dns --profile ci
+
+# Honestly-minimal absence execution (Phase 25): the self dev-edge keeps
+# default-features = false, so mesh/dns `cfg(not)` branches execute here
+# instead of compiling out.
+cargo test --no-default-features --profile ci --lib --test integration_test --test admin_router_composition
 
 # Broad deterministic workspace tests (single invocation)
 cargo nextest run --workspace --cargo-profile ci --profile ci --exclude synvoid-fuzz
@@ -134,6 +150,7 @@ cargo test --workspace --doc --profile ci
 | DNS-only feature gate compiles cleanly | `cargo check --no-default-features --features dns --profile ci` |
 | ICMP-only feature gate compiles cleanly | `cargo check --no-default-features --features icmp-filter --profile ci` |
 | Combined mesh+dns feature gate compiles cleanly | `cargo check --no-default-features --features mesh,dns --profile ci` |
+| mesh/dns absence branches execute (honestly minimal) | `cargo test --no-default-features ... --lib --test integration_test --test admin_router_composition` |
 | Full workspace unit/integration behavior | `cargo nextest run --workspace` |
 | Documentation compilation | `cargo test --workspace --doc` |
 
@@ -181,6 +198,10 @@ Or equivalently, the raw sequence:
 
 ```bash
 # Full local verification (all commands above)
+
+# Dependency policy + advisory audit (Phase 25, pinned tools, blocking)
+cargo deny check
+cargo audit
 
 # All-features clippy (catches eBPF and other feature-gated warnings)
 cargo clippy --all-targets --all-features -- -D warnings
@@ -254,6 +275,8 @@ After assembly, `verify-release` attempts `cargo package` (with verify) for each
 | Property | Command |
 |----------|---------|
 | Release-mode correctness | `cargo test --lib --no-run --release` |
+| Dependency policy (blocking) | `cargo deny check` |
+| Advisory audit (blocking) | `cargo audit` |
 | All-features lint correctness | `cargo clippy --all-features` |
 | Package metadata validity | Metadata validation per publishable crate |
 | Dependency version compatibility | cargo metadata `req` field validation |
@@ -308,6 +331,8 @@ Every current CI command classified by product property and routine eligibility:
 |----------|----------------|:-----------:|-------------|
 | Formatting | `cargo fmt --all -- --check` | Yes | Keep in routine |
 | Clippy (ci profile) | `cargo clippy --profile ci --all-targets -- -D warnings` | Yes | Keep in routine |
+| Dependency policy | `cargo deny check` | Yes | Keep in routine (Phase 25; pinned cargo-deny) |
+| Advisory audit | `cargo audit` | Dedicated job | Blocking `dependency-security` job + schedule + release (Phase 25) |
 | Clippy (all features) | `cargo clippy --all-targets --all-features -- -D warnings` | No | Release only |
 | Core profile compile | `cargo check --no-default-features --profile ci` | Yes | Keep in routine |
 | Mesh-only compile | `cargo check --no-default-features --features mesh` | No | Full local |
@@ -325,8 +350,8 @@ Every current CI command classified by product property and routine eligibility:
 | DNS full suite | `cargo nextest run -p synvoid-dns` | No | Full local (via nextest --workspace) |
 | Plugin runtime full | `cargo nextest run -p synvoid-plugin-runtime` | No | Full local (via nextest --workspace) |
 | Profile matrix (5 variants) | `cargo check <features>` | No | Full local |
-| Security audit | `cargo audit` | No | Full local or nightly |
-| Dependency audit | `cargo deny check` | No | Full local or nightly |
+| Security audit | `cargo audit` | Dedicated job | Blocking `dependency-security` job + release (Phase 25) |
+| Dependency audit | `cargo deny check` | Yes | Routine `verify` + release (Phase 25) |
 | Cross-platform builds | `cross build --target <target> --release` | No | Release only |
 | Release packaging | `cargo build --release` | No | Release only |
 
@@ -395,20 +420,21 @@ Measured after Phase 1 consolidation on a warm-cache Linux x86_64 workstation (4
 |---|---------|-----------|------|
 | 1 | `cargo fmt --all -- --check` | ~5s | 0 |
 | 2 | `cargo clippy --profile ci --all-targets -- -D warnings` | ~180s | 0 |
-| 3 | `cargo check --no-default-features --profile ci` | ~60s | 0 |
-| 4 | `cargo nextest run -p synvoid-repo-guards` | ~4s | 0 |
-| 5 | `cargo test --test security_regression --profile ci --test-threads=1` | ~120s | 0 |
-| 6 | `cargo nextest run ... root-guards` (13 tests, consolidated) | ~200s | 0 |
-| 7 | `cargo nextest run -p synvoid-core ... core-admin-tests` (2 tests) | ~40s | 0 |
-| 8 | `cargo nextest run ... admin-contract` (3 tests, oneshot, seconds-scale) | ~60s | 0 |
-| 9 | `cargo test --test failure_injection --profile ci` | ~70s | 0 |
+| 3 | `cargo deny check` (Phase 25; measured 1.7s local, ~30s cold) | ~30s | 0 |
+| 4 | `cargo check --no-default-features --profile ci` | ~60s | 0 |
+| 5 | `cargo nextest run -p synvoid-repo-guards` | ~4s | 0 |
+| 6 | `cargo test --test security_regression --profile ci --test-threads=1` | ~120s | 0 |
+| 7 | `cargo nextest run ... root-guards` (21 tests, consolidated) | ~200s | 0 |
+| 8 | `cargo nextest run -p synvoid-core ... core-admin-tests` (2 tests) | ~40s | 0 |
+| 9 | `cargo nextest run ... admin-contract` (3 tests, oneshot, seconds-scale) | ~60s | 0 |
+| 10 | `cargo test --test failure_injection --profile ci` | ~70s | 0 |
 
 ### Summary
 
 | Metric | Value |
 |--------|-------|
-| Cargo invocations | 9 (fmt + 8) |
-| Properties covered | 14 (formatting, linting, compilation, guards, security, architecture, composition, lifecycle, plugin, CLI, admin, mesh, ABI, ownership, admin contract, failure injection) |
+| Cargo invocations | 10 (fmt + deny + 8) |
+| Properties covered | 15 (formatting, linting, dependency policy, compilation, guards, security, architecture, composition, lifecycle, plugin, CLI, admin, mesh, ABI, ownership, admin contract, failure injection) |
 | Duplicate test targets | 0 (each step tests a distinct target or consolidated group) |
 
 ### Budget assessment
@@ -417,7 +443,7 @@ Measured after Phase 1 consolidation on a warm-cache Linux x86_64 workstation (4
 |-----------|----------|--------|
 | Target <10min | TBD (warm-cache hosted) | — |
 | Blocking threshold >15min | — | — |
-| Cargo invocations ≤9 | 9 | ✓ |
+| Cargo invocations ≤10 | 10 | ✓ |
 
 ## 9. Full Verification Overlap
 
@@ -549,7 +575,7 @@ cargo test -p synvoid-dns --profile ci
 ## 13. Disposition
 
 Phase 1 completed the routine latency contraction:
-1. `cargo xtask verify` uses 8 Cargo invocations (down from 22)
+1. `cargo xtask verify` uses 9 Cargo invocations (down from 22; Phase 25 adds the `dependency-policy` step for 10 total)
 2. All routine compile/lint/test commands use one primary Cargo profile (`ci`)
 3. `cargo test --lib --no-run` removed (redundant with clippy compilation)
 4. 13 root guard tests consolidated into one nextest invocation
@@ -660,5 +686,30 @@ SynVoid's own crates use `rkyv 0.8.16` only. The `rkyv 0.7.46` is pulled in excl
 5. **Wait for upstream** — `parcel_sourcemap` or `lightningcss` may drop the `rkyv 0.7` dependency in a future release
 
 **Impact**: macOS-only. Linux CI is unaffected. No SynVoid code change can resolve this without breaking the dependency chain.
+
+## 15. Pinned Toolchain and Verification Tools (Phase 25)
+
+Reproducible builds require pinned tools. These versions are authoritative; bump
+them intentionally in the same commit that updates the pins below.
+
+| Tool | Pinned version | Pin location |
+|------|---------------|--------------|
+| Rust compiler | 1.98.1 | `rust-toolchain.toml` (`channel = "1.98.1"`) |
+| cargo-nextest | 0.9.140 | CI `taiki-e/install-action` `tool: nextest@0.9.140` |
+| cargo-deny | 0.20.2 | CI `taiki-e/install-action` `tool: cargo-deny@0.20.2` |
+| cargo-audit | 0.22.2 | CI `taiki-e/install-action` `tool: cargo-audit@0.22.2` |
+| GitHub Actions | immutable SHAs + tag comments | `.github/workflows/ci.yml` |
+
+- The `dtolnay/rust-toolchain` CI step takes no `toolchain:` input on purpose:
+  `rust-toolchain.toml` is authoritative locally and in CI.
+- `cargo deny check` runs in routine `verify` (blocking); `cargo audit` runs in the
+  dedicated blocking `dependency-security` CI job (every PR + daily schedule) and
+  in `verify-release`. Both tools agree via mirrored ignores (`deny.toml` +
+  `.cargo/audit.toml`); evidence lives in
+  `architecture/dependency_security_baseline_phase25.md`.
+- Routine invocation count is 9 → 10 Cargo invocations (fmt + deny + 8);
+  `verify-full` raw commands are 9 → 10 with `minimal-tests`.
+- Rust 1.98.1 also satisfies wasmtime ≥46 `rust-version` requirements for the
+  Phase 26 upgrade (see the dependency-security baseline §4).
 
 If implementation reveals an invalid command, correct this document in the same commit with an explicit rationale. Do not improvise a broader suite or restore selector behavior.

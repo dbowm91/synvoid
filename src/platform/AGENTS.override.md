@@ -11,11 +11,11 @@ This module covers foundational systems code including IPC, process management, 
 | `src/platform/ipc.rs` | Platform IPC trait abstraction |
 | `src/platform/unix.rs` | Unix platform implementations |
 | `src/platform/windows_impl.rs` | Windows platform implementations |
-| `src/process/ipc.rs` | Main IPC message protocol (1889 lines) |
-| `src/process/ipc_signed.rs` | Signed IPC framing with replay protection |
-| `src/process/ipc_transport.rs` | Async IPC transport layer |
-| `src/process/socket_path.rs` | Secure socket directory management |
-| `src/process/pidfile.rs` | PID file and lock file management |
+| `crates/synvoid-ipc/src/ipc.rs` | Main IPC message protocol (1889 lines) |
+| `crates/synvoid-ipc/src/ipc_signed.rs` | Signed IPC framing with replay protection |
+| `crates/synvoid-ipc/src/ipc_transport.rs` | Async IPC transport layer |
+| `crates/synvoid-ipc/src/socket_path.rs` | Secure socket directory management |
+| `crates/synvoid-ipc/src/pidfile.rs` | PID file and lock file management |
 | `crates/synvoid-utils/src/buffer/pool.rs` | Custom buffer pool (sharded mutex + TLS cache) |
 
 ## Critical Patterns
@@ -53,8 +53,8 @@ pub struct SandboxCapabilities {
 All privileged IPC (Stop, ReloadConfig) requires signed messages. Use `IpcSigner` for HMAC-SHA3-256 verification with 60-second replay protection.
 
 Key files:
-- `src/process/ipc_signed.rs` — signed framing
-- `src/process/ipc_framing.rs` — unsigned framing
+- `crates/synvoid-ipc/src/ipc_signed.rs` — signed framing
+- `crates/synvoid-ipc/src/ipc_framing.rs` — unsigned framing
 
 ### 4. Buffer Pool Safety
 

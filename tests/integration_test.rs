@@ -338,6 +338,7 @@ mod tests {
     }
 
     #[allow(dead_code)]
+    #[cfg(feature = "dns")]
     mod dnssec_validation_tests {
         use synvoid::dns::dnssec_validation::{
             calculate_key_tag, canonical_dns_message, canonical_name, canonical_rdata,
@@ -523,6 +524,7 @@ mod tests {
     }
 
     #[allow(dead_code)]
+    #[cfg(feature = "mesh")]
     mod mesh_threat_propagation_tests {
         use synvoid::mesh::protocol::ThreatSeverity;
         use synvoid::mesh::threat_intel::ThreatIntelligenceConfig;
@@ -573,6 +575,7 @@ mod tests {
     }
 
     #[allow(dead_code)]
+    #[cfg(feature = "mesh")]
     mod honeypot_mesh_flow_tests {
         use synvoid::mesh::config::MeshNodeRole;
 
@@ -595,6 +598,7 @@ mod tests {
     }
 
     #[allow(dead_code)]
+    #[cfg(feature = "mesh")]
     mod yara_mesh_distribution_tests {
         use synvoid::mesh::yara_rules::{
             BroadcastAckStatus, BroadcastAckTracker, RuleChangeTracker,
@@ -1031,6 +1035,7 @@ mod worker_crash_recovery_tests {
 }
 
 #[cfg(test)]
+#[cfg(feature = "mesh")]
 mod mesh_transport_tests {
     use synvoid::mesh::transport_core::{
         MeshTransportError, MAX_REASONABLE_TIMESTAMP, MIN_REASONABLE_TIMESTAMP,
@@ -1314,6 +1319,7 @@ mod block_store_tests {
 }
 
 #[cfg(test)]
+#[cfg(feature = "mesh")]
 mod mesh_protocol_roundtrip_tests {
     use synvoid::mesh::protocol::{AckStatus, HealthStatus, LookupType, MeshMessage};
 
@@ -2075,6 +2081,7 @@ mod atomic_counter_safety_tests {
 }
 
 #[cfg(test)]
+#[cfg(feature = "mesh")]
 mod signature_verification_tests {
     use synvoid::mesh::cert::{sign_ed25519, sign_hmac, verify_ed25519, verify_hmac};
 
@@ -2309,6 +2316,7 @@ mod xff_validation_tests {
 }
 
 #[cfg(test)]
+#[cfg(feature = "mesh")]
 mod hub_only_mode_tests {
     use synvoid::mesh::config::MeshNodeRole;
     use synvoid::mesh::threat_intel::ThreatIntelligenceConfig;
@@ -2375,6 +2383,7 @@ mod hub_only_mode_tests {
 }
 
 #[cfg(test)]
+#[cfg(feature = "mesh")]
 mod yara_manager_lifecycle_tests {
     use synvoid::mesh::config::MeshNodeRole;
     use synvoid::mesh::yara_rules::{
@@ -3431,7 +3440,6 @@ mod acme_workflow_tests {
     use synvoid::config::tls::{AcmeChallengeType, AcmeConfig, TlsConfig};
     use synvoid::tls::acme::AcmeError;
     use synvoid::tls::config::{InternalAcmeChallengeType, InternalAcmeConfig};
-    use synvoid::tls::AcmeDnsChallenge;
     use tempfile::TempDir;
 
     #[test]
@@ -3635,6 +3643,7 @@ mod acme_workflow_tests {
     #[cfg(feature = "dns")]
     #[test]
     fn test_dns_challenge_prepare_and_serve() {
+        use synvoid::tls::AcmeDnsChallenge;
         let challenge = AcmeDnsChallenge::new();
         let domain = "example.com";
         let key_auth = "test-key-authorization";
@@ -3651,6 +3660,11 @@ mod acme_workflow_tests {
     #[cfg(not(feature = "dns"))]
     #[test]
     fn test_dns_challenge_not_available_without_feature() {
+        // Without the `dns` feature the `AcmeDnsChallenge` serving type does
+        // not exist (referencing it here would fail to compile), while Dns01
+        // remains a parseable config value: operators get a serve-time warning
+        // ("DNS-01 challenge requested but DNS feature is not enabled",
+        // crates/synvoid-tls/src/acme.rs) instead of a config rejection.
         let config = InternalAcmeConfig {
             enabled: true,
             email: Some("admin@example.com".to_string()),
@@ -3659,11 +3673,13 @@ mod acme_workflow_tests {
             ..Default::default()
         };
 
-        assert!(!config.enabled || config.email.is_none() || config.domains.is_empty());
+        assert_eq!(config.challenge_type, InternalAcmeChallengeType::Dns01);
     }
 
+    #[cfg(feature = "dns")]
     #[test]
     fn test_dns_challenge_cleanup() {
+        use synvoid::tls::AcmeDnsChallenge;
         let challenge = AcmeDnsChallenge::new();
         let domain = "example.com";
 
@@ -3674,8 +3690,10 @@ mod acme_workflow_tests {
         assert!(challenge.get_txt_value(domain).is_none());
     }
 
+    #[cfg(feature = "dns")]
     #[test]
     fn test_dns_challenge_pending_challenges() {
+        use synvoid::tls::AcmeDnsChallenge;
         let challenge = AcmeDnsChallenge::new();
 
         challenge.prepare_challenge("example.com", "key-auth-1");

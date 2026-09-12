@@ -10,11 +10,12 @@
 //! - documented adapters (`config`, `proxy`, `http_client`, `metrics`) are exempt
 //!   from thinness but must be documented in the matrix + ledger.
 //!
-//! NOTE: several facade directories contain pre-existing orphan `.rs` files that are
-//! not reachable from `src/lib.rs` (e.g. `src/process/ipc.rs`, sibling files under
-//! `src/honeypot_port/` / `src/serverless/`). Those orphans are not compiled and are
-//! out of scope for this guard; it inspects only the compiled entry file
-//! (`src/<name>/mod.rs`, `src/<name>.rs`, or the inline block in `src/lib.rs`).
+//! NOTE (Phase 25): the pre-existing orphan `.rs` files that used to sit beside
+//! these facades (e.g. `src/process/ipc.rs`, sibling files under
+//! `src/honeypot_port/` / `src/serverless/`) were dead source — not reachable
+//! from `src/lib.rs` (no `mod` declaration, no `#[path]`, no `include!`) and
+//! therefore never compiled. Phase 25 deleted them and this guard now prohibits
+//! their return via `pure_facade_dirs_contain_no_orphan_sources` below.
 
 use std::path::PathBuf;
 
@@ -63,6 +64,7 @@ const PURE_FACADES: &[&str] = &[
     "vpn_client",
     "buffer:inline",
     "dns",
+    "icmp_filter",
 ];
 
 /// Documented adapters exempt from thinness (must be documented, not thin).
@@ -319,6 +321,135 @@ fn documented_adapters_stay_documented() {
     assert!(
         violations.is_empty(),
         "documented adapters must stay declared and documented:\n{}",
+        violations.join("\n")
+    );
+}
+
+/// Declared child modules of a module file: `mod <name>;` / `pub mod <name>;`
+/// (attributes such as `#[cfg]` on preceding lines do not matter) plus explicit
+/// `#[path = "..."]` file mappings.
+fn declared_children(src: &str) -> (Vec<String>, Vec<String>) {
+    let mut mods = Vec::new();
+    for line in src.lines() {
+        let trimmed = line.trim();
+        // Strip a leading `pub(...)` qualifier if present.
+        let rest = if let Some(after_pub) = trimmed.strip_prefix("pub") {
+            let after_pub = after_pub.trim_start();
+            if let Some(paren_end) = after_pub.strip_prefix('(').and_then(|s| s.find(')')) {
+                after_pub[paren_end + 1..].trim_start()
+            } else {
+                after_pub
+            }
+        } else {
+            trimmed
+        };
+        if let Some(after_mod) = rest.strip_prefix("mod ") {
+            let name: String = after_mod
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            if !name.is_empty() {
+                mods.push(name);
+            }
+        }
+    }
+    let mut paths = Vec::new();
+    let mut search = src;
+    while let Some(idx) = search.find("#[path") {
+        let rest = &search[idx..];
+        if let Some(q1) = rest.find('"') {
+            if let Some(q2) = rest[q1 + 1..].find('"') {
+                paths.push(rest[q1 + 1..q1 + 1 + q2].to_string());
+            }
+        }
+        search = &rest[1..];
+    }
+    (mods, paths)
+}
+
+fn collect_rs_files_recursive(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    let entries = std::fs::read_dir(dir).unwrap_or_else(|_| panic!("read {}", dir.display()));
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_rs_files_recursive(&path, out);
+        } else if path.extension().map(|e| e == "rs").unwrap_or(false) {
+            out.push(path);
+        }
+    }
+}
+
+#[test]
+fn pure_facade_dirs_contain_no_orphan_sources() {
+    // Phase 25: every `.rs` file under a pure-facade directory must be the entry
+    // `mod.rs` or a file reachable through `mod` declarations (including
+    // `#[path]` mappings). Undeclared files are never compiled; they rot, confuse
+    // audits, and must be deleted — not left beside the facade.
+    let repo = workspace_root();
+    let mut violations = Vec::new();
+
+    for facade in PURE_FACADES {
+        let short = facade.split(':').next().unwrap_or(facade);
+        if facade.contains(':') {
+            continue; // inline/file facades have no directory to audit
+        }
+        let dir = repo.join(format!("src/{short}"));
+        if !dir.is_dir() {
+            continue; // flat `src/<name>.rs` facades: nothing to audit
+        }
+        let mut files = Vec::new();
+        collect_rs_files_recursive(&dir, &mut files);
+        // Expected set: each dir's mod.rs plus declared children.
+        let mut expected = std::collections::BTreeSet::new();
+        // Seed with every mod.rs (each directory level needs its entry file).
+        for f in &files {
+            if f.file_name().map(|n| n == "mod.rs").unwrap_or(false) {
+                expected.insert(f.clone());
+            }
+        }
+        // Expand declared children relative to the declaring file's directory.
+        // Iterate to a fixed point for nested declarations.
+        loop {
+            let mut added = false;
+            let snapshot: Vec<std::path::PathBuf> = expected.iter().cloned().collect();
+            for f in &snapshot {
+                let src = std::fs::read_to_string(f).unwrap_or_default();
+                let parent = f.parent().unwrap_or(&dir);
+                let (mods, paths) = declared_children(&src);
+                for m in mods {
+                    for candidate in [
+                        parent.join(format!("{m}.rs")),
+                        parent.join(&m).join("mod.rs"),
+                    ] {
+                        if candidate.is_file() && expected.insert(candidate) {
+                            added = true;
+                        }
+                    }
+                }
+                for p in paths {
+                    let candidate = parent.join(&p);
+                    if candidate.is_file() && expected.insert(candidate) {
+                        added = true;
+                    }
+                }
+            }
+            if !added {
+                break;
+            }
+        }
+        for f in &files {
+            if !expected.contains(f) {
+                violations.push(format!(
+                    "orphan source under pure facade `src/{short}/`: {} is not declared by any `mod`/`#[path]` (delete it — undeclared files are never compiled)",
+                    f.strip_prefix(&repo).unwrap_or(f).display()
+                ));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "pure-facade directories must not contain undeclared `.rs` files:\n{}",
         violations.join("\n")
     );
 }

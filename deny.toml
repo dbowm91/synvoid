@@ -1,7 +1,16 @@
-# SynVoid dependency policy
-# Reviewed: 2026-07-08 (Milestone B release cleanup — license metadata + BSL-1.0 allowlist)
+# SynVoid dependency policy (Phase 25 baseline)
+# Reviewed: 2026-09-12 (Phase 25 — dependency security baseline and entitlement)
 # Run: cargo deny check && cargo audit
 # Owner: security / release
+# Pinned tool: cargo-deny 0.20.2 (see docs/testing/verification-contract.md)
+# Evidence: architecture/dependency_security_baseline_phase25.md (binding for
+# version/feature/capability separation; this file summarizes, that file proves).
+#
+# Advisory-ignore metadata rule (enforced by deny_ignore_metadata_guard):
+# every ignored advisory MUST state dependency path, affected capability,
+# whether wasmtime-wasi is resolved, exposure, owner, and a review/remove-by
+# date tied to Phase 26. Stale "patched" language for RUSTSEC-2026-0269 is
+# forbidden: 42.0.2 is affected, capability-gated, upgrade-blocked (see §4).
 
 [licenses]
 allow = [
@@ -26,19 +35,22 @@ confidence-threshold = 0.8
 # Ignored advisories are re-audited on each major release.
 ignore = [
     # RUSTSEC-2023-0071: rsa Marvin Attack (Bleichenbacher timing)
-    # Exposure: transitive via yara-x → rsa crate. RSA is only used for optional YARA rule
-    #   signature verification. SynVoid uses ed25519-dalek for rule feed signing instead.
-    #   The rsa code path is never invoked in SynVoid operation.
-    # Risk: low — RSA signing/decryption is not called; Marvin Attack requires chosen ciphertext.
-    # Review: 2026-07-07. Re-audit: 2026-10-01.
+    # Dependency path: yara-x 1.15 -> rsa 0.9.10 (transitive; also direct root rsa for legacy auth).
+    # Affected capability: RSA signing/decryption timing side-channel.
+    # Exposure: LOW — yara-x uses RSA only for optional rule signature verification;
+    #   SynVoid verifies rule feeds with ed25519-dalek instead. The rsa code path is
+    #   never invoked in SynVoid operation.
+    # Owner: security. Review: 2026-07-07. Remove-by: Phase 26 (reassess with yara-x consolidation) or re-audit 2026-10-01.
     # Escalation: If RSA-based YARA signing is ever enabled, this advisory MUST be resolved.
     "RUSTSEC-2023-0071",
 
-    # wasmtime 40.0.4 advisories — transitive via yara-x (YARA compilation only, not wasm sandbox).
-    # Mitigated by [patch.crates-io] pinning wasmtime 42.0.2 for direct usage.
-    # yara-x's transitive wasmtime 40.0.4 is only used for YARA rule compilation.
-    # Review: 2026-07-07. Re-audit: 2026-10-01.
-    # Escalation: Upgrade yara-x when upstream ships wasmtime ≥42.x support.
+    # wasmtime 40.0.4 advisories — transitive via yara-x 1.15 (YARA rule compilation
+    # only, never the WASM plugin sandbox). The direct runtime is wasmtime 42.0.2 via
+    # [patch.crates-io], which IS a fixed version for each advisory in this group
+    # (fixed ranges include >=42.0.2,<43.0.0); only the yara-x 40.0.4 instance is ignored.
+    # wasmtime-wasi resolved: NO (absent from Cargo.lock; see dependency_security_baseline_phase25.md §1-§2).
+    # Owner: security. Review: 2026-07-07. Remove-by: Phase 26 (yara-x consolidation) or re-audit 2026-10-01.
+    # Escalation: Upgrade yara-x when upstream moves off wasmtime 40.x.
     "RUSTSEC-2026-0085",
     "RUSTSEC-2026-0086",
     "RUSTSEC-2026-0087",
@@ -52,45 +64,67 @@ ignore = [
     "RUSTSEC-2026-0096",
     "RUSTSEC-2026-0114",
 
-    # RUSTSEC-2026-0222: wasmtime 40.0.4 remains transitive through yara-x
-    # 1.15, whose dependency constraint cannot use SynVoid's patched 42.0.2.
-    # Exposure: YARA compilation only; SynVoid's runtime sandbox uses the
-    # patched 42.0.2 dependency. Review: 2026-08-28. Re-audit: 2026-10-01.
+    # RUSTSEC-2026-0222: wasmtime type-index confusion.
+    # Dependency path: yara-x 1.15 -> wasmtime 40.0.4 (transitive, YARA compilation only).
+    # Affected capability: multi-engine type-index mixing (requires hostile multi-engine
+    #   guest setup; yara-x runs single-engine rule bytecode).
+    # wasmtime-wasi resolved: NO. Exposure: LOW for the yara-x path; direct 42.0.2 is patched.
+    # Owner: security. Review: 2026-08-28. Remove-by: Phase 26 or re-audit 2026-10-01.
     "RUSTSEC-2026-0222",
 
-    # RUSTSEC-2026-0269: Wasmtime 40.0.4 filesystem sandbox escape. The
-    # vulnerable version remains transitive through yara-x 1.15 and is used
-    # only for YARA rule compilation; SynVoid's WASM runtime uses the patched
-    # direct Wasmtime 42.0.2 dependency. Upgrade yara-x when it supports a
-    # patched Wasmtime release without the current workspace dependency
-    # conflict. Review: 2026-08-31. Re-audit: 2026-10-01.
+    # RUSTSEC-2026-0269: Wasmtime filesystem sandbox escape (trailing-slash paths/symlinks).
+    # Dependency path: (a) yara-x 1.15 -> wasmtime 40.0.4 (transitive); (b) direct
+    #   wasmtime 42.0.2 via [patch.crates-io] (synvoid-plugin-runtime). BOTH versions
+    #   are in the affected range 37.0.0..=46.0.2. 42.0.2 is NOT patched for this advisory.
+    # Affected capability: wasmtime-wasi filesystem preopen sandboxing.
+    # wasmtime-wasi resolved: NO — absent from Cargo.lock; neither consumer links the
+    #   vulnerable crate, so the trailing-slash handling is unreachable (capability
+    #   absence, proven from the resolved graph in dependency_security_baseline_phase25.md §3).
+    # Upgrade blocked: wasmtime >=46.0.3 needs bumpalo ^3.20.2, oxc_allocator 0.95.0
+    #   (via minify-html 0.18.1) pins bumpalo =3.19.0 — unresolvable, see baseline §4.
+    # Owner: security. Remove-by: Phase 26 (re-attempt >=46.0.3 upgrade) or re-audit 2026-10-01.
     "RUSTSEC-2026-0269",
 
-    # RUSTSEC-2026-0235: rkyv 0.7.46 is transitive through
-    # minify-html -> lightningcss -> parcel_sourcemap. SynVoid does not use
-    # this archive format in the static-file path, and all direct rkyv users
-    # are on 0.8.18. Review: 2026-08-28. Re-audit: 2026-10-01.
+    # RUSTSEC-2026-0235: rkyv 0.7.46 insufficient archive validation (Rc/Arc OOB reads).
+    # Dependency path: minify-html -> lightningcss -> parcel_sourcemap -> rkyv 0.7.46 (transitive).
+    # Affected capability: archive deserialization with Rc/Arc.
+    # Exposure: LOW — SynVoid's own code uses rkyv 0.8.x; the 0.7 instance only handles
+    #   minifier-internal sourcemaps, never untrusted network archives.
+    # Owner: security. Review: 2026-08-28. Remove-by: Phase 26 (lightningcss/parcel_sourcemap change) or re-audit 2026-10-01.
     "RUSTSEC-2026-0235",
 ]
 
 # Deny yanked crates (prevents accidental use of withdrawn versions)
 yanked = "deny"
-
-# Deny unused dependencies
-unmaintained = "none"
+# Phase 25: scope unmaintained/unsound gating to workspace crates (cargo-deny 0.20
+# schema: all | workspace | transitive | none). Rationale: "all" renders every
+# transitive notice (bincode-compat, yew-chain proc-macro-error, im-rc/sized-chunks
+# via admin-ui) as a hard error, which would force broader ignores — explicitly a
+# Phase 25 rejection criterion. "workspace" keeps teeth where we have agency (our
+# own crates must never go unmaintained/unsound without failing this gate) while
+# transitive notices stay visible via `cargo audit` warnings + the SECURITY.md
+# triage table. This is a reassessment, not silencing: "none" checked nothing.
+unmaintained = "workspace"
+unsound = "workspace"
 
 [bans]
 multiple-versions = "warn"
-wildcards = "allow"
+# Phase 25: wildcard version requirements are denied for workspace crates.
+# No workspace manifest uses `*` (verified 2026-09-12); verify-release rejects them too.
+wildcards = "deny"
 
-# Deny known-vulnerable wasmtime versions in the lockfile.
-# SynVoid pins wasmtime 42.0.2 (direct) and yara-x transitive wasmtime must not exceed 42.x.
-# wasmtime 40.0.4 (yanked) had Cranelift aarch64 sandbox escape (CVE-2024-XXXXXX).
+# Duplicate-version allowlist (narrow): the wasmtime 40.0.4 (yara-x transitive) +
+# 42.0.2 (direct runtime) split is documented in
+# architecture/dependency_security_baseline_phase25.md §4/§6 and collapses in Phase 26.
+# The skip silences only the multiple-versions warning for the direct runtime pin.
 [[bans.skip]]
 name = "wasmtime"
 version = "=42.0.2"
 
 [sources]
-unknown-registry = "warn"
+# Phase 25: unknown registries are denied (crates.io only). Unknown git sources are
+# denied; exactly one git source is allowlisted (the wasmtime 42.0.2 runtime patch,
+# removal tracked in dependency_security_baseline_phase25.md §4).
+unknown-registry = "deny"
 unknown-git = "deny"
 allow-git = ["https://github.com/bytecodealliance/wasmtime"]

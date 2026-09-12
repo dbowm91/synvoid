@@ -254,7 +254,7 @@ pub struct WorkerDrainState {
 ### 3.3 IPC Message Types (Worker ↔ Supervisor)
 
 ```rust
-// src/process/ipc.rs:729-761 - Drain Protocol Messages
+// crates/synvoid-ipc/src/ipc.rs:729-761 - Drain Protocol Messages
 Message::DrainRequest {
     timeout_secs: u64,
     drain_id: u64,
@@ -280,7 +280,7 @@ Message::StopAcceptingAck {
 ### 3.4 Process Manager Configuration
 
 ```rust
-// src/process/manager.rs:37-59
+// crates/synvoid-ipc/src/manager.rs:37-59
 pub struct ProcessManagerConfig {
     pub min_workers: usize,
     pub max_workers: usize,
@@ -433,7 +433,7 @@ Starts tonic gRPC server with `ControlPlaneServer` service.
 
 ### 5.2 ProcessManager Responsibilities
 
-The `ProcessManager` (in `src/process/manager.rs`) handles:
+The `ProcessManager` (in `crates/synvoid-ipc/src/manager.rs`) handles:
 
 - **Worker spawning** via `spawn_unified_server_workers(count)` and `spawn_cpu_worker()`
 - **Health monitoring** via periodic heartbeats
@@ -795,7 +795,7 @@ crate::common::setup_panic_handler("SUPERVISOR", Some(&supervisor_panic_log));
 ### 11.3 Process Manager Health Checks
 
 ```rust
-// src/process/manager.rs
+// crates/synvoid-ipc/src/manager.rs
 // Periodic checks every health_check_interval_secs (default 5s)
 process_manager.check_workers_health().await;
 
@@ -810,7 +810,7 @@ process_manager.reap_zombies().await;
 | Unix | Unix domain | `/var/run/synvoid/master.sock` (or `XDG_RUNTIME_DIR/synvoid/master.sock`) |
 | Windows | Named pipe | `\\.\pipe\synvoid-master` |
 
-See `src/process/socket_path.rs` for full resolution logic including versioned paths for upgrades.
+See `crates/synvoid-ipc/src/socket_path.rs` for full resolution logic including versioned paths for upgrades.
 
 ## 13. Summary
 

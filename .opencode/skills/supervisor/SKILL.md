@@ -34,7 +34,7 @@ Use this skill when:
 | `src/supervisor/mesh.rs` | Mesh agent-mode composition |
 | `src/supervisor/drain_manager.rs` | Drain-aware shutdown coordination |
 | `src/supervisor/task_registry.rs` | Supervised task registry |
-| `src/process/manager.rs` | Child process manager (passes `--worker` etc.) |
+| `crates/synvoid-ipc/src/manager.rs` | Child process manager (passes `--worker` etc.) |
 | `src/commands/{plan,execute,runtime_launch}.rs` | CLI arg → runtime command planning/dispatch |
 
 ## Invariants
@@ -44,7 +44,7 @@ Use this skill when:
 2. **Exit codes**: worker shutdown causes map through `WorkerShutdownCause::exit_code()`;
    only the worker composition root may call `std::process::exit()`.
 3. **Config path**: `--config-path` takes the DIRECTORY containing `main.toml` + `sites/`.
-4. The legacy `BaseWorkerProcess` (`src/process/worker.rs`) is retained for non-HTTP
+4. The legacy `BaseWorkerProcess` (`crates/synvoid-ipc/src/worker.rs`) is retained for non-HTTP
    legacy paths; HTTP serving happens exclusively in UnifiedServerWorker.
 
 ## Verification

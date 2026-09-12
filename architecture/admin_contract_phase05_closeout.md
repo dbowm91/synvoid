@@ -75,6 +75,17 @@ local `cargo xtask verify` + `verify-full` profiles run pre-push).
 
 ## Known limitation: mesh/dns runtime absence branches (residual)
 
+> **Closed by Phase 25 (2026-09-12).** The self dev-edge now keeps
+> `default-features = false`; `src/http/server.rs` mesh test imports,
+> `src/worker/unified_server/init_mesh.rs` mesh-supervision tests,
+> `tests/integration_test.rs` mesh/dns/ACME-DNS mods, the
+> `iter87_behavioral_guardrails` mod, and `tests/mesh_startup_rollback.rs`
+> (`required-features = ["mesh"]`) are gated. `cargo test
+> --no-default-features` executes the absence branches (650 lib tests + 202
+> integration + 18 admin composition pass minimally), and `verify-full`
+> runs them via the `minimal-tests` step. The original Phase 05 note is
+> preserved below for history.
+
 `#[cfg(not(feature = "mesh"/"dns"))]` runtime tests — including the
 capability-absence direction of
 `capabilities_match_compiled_route_families` and the pre-existing

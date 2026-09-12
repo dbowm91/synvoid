@@ -159,8 +159,8 @@ Library and binary crates are published on [crates.io](https://crates.io/crates/
 - [ ] `cargo fmt --all -- --check` passes
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` passes
 - [ ] `cargo test --release --no-fail-fast` passes (all tests, zero failures)
-- [ ] `cargo deny check` passes (license and dependency audit)
-- [ ] `cargo audit` passes (security advisory check)
+- [ ] `cargo deny check` passes (license and dependency audit; pinned cargo-deny 0.20.2, also a routine `verify` step)
+- [ ] `cargo audit` passes (security advisory check; pinned cargo-audit 0.22.2, mirrored ignores in `.cargo/audit.toml`)
 - [ ] Guard suite passes (all architecture invariant tests)
 - [ ] CHANGELOG.md is updated with all changes since the last release
 - [ ] Version is bumped in `Cargo.toml`
@@ -173,7 +173,7 @@ Library and binary crates are published on [crates.io](https://crates.io/crates/
 - [ ] Working tree is clean (dirty trees block release verification)
 - [ ] Stabilization period complete (minimum 3 days after RC tag)
 - [ ] All gates re-pass after stabilization fixes
-- [ ] `cargo xtask verify-release` passes (per-crate qualification + package inspection)
+- [ ] `cargo xtask verify-release` passes (dependency policy + advisory audit + per-crate qualification + package inspection; pinned toolchain 1.98.1 via `rust-toolchain.toml`)
 - [ ] All crates published to crates.io in dependency order
 - [ ] Crates.io availability verified for each published crate
 - [ ] Git tag created: `vMAJOR.MINOR.PATCH` (after publication succeeds)
@@ -255,7 +255,7 @@ The following items are known limitations or tracked exceptions that operators s
 |------|---------------|--------|-------|
 | `icmp-ebpf` eBPF ICMP filter | **Beta** | Feature-gated, not in default profile | Requires Linux with kernel BTF, CAP_NET_ADMIN or root, precompiled eBPF object. Falls back to nftables when unavailable |
 | `--all-features` workspace check | **Tracked exception** | Does not pass `cargo check --all-features` | `synvoid-icmp-filter` eBPF dependency resolution fails in `--all-features` mode. Individual crate checks pass. Not in default profile |
-| wasmtime 40.0.4 (via yara-x) | **Tracked** | 13 advisory ignores in `deny.toml` | Used for YARA compilation only, not WASM sandbox. Re-audit date: 2026-10-01 |
+| wasmtime 40.0.4 (via yara-x) + direct 42.0.2 | **Tracked** | 16 advisory ignores in `deny.toml` (mirrored in `.cargo/audit.toml`) | YARA compilation only; direct runtime fixed for 2026-04 advisories but affected by RUSTSEC-2026-0269 with `wasmtime-wasi` unreachable; ≥46.0.3 upgrade blocked (bumpalo). Remove-by Phase 26. See `architecture/dependency_security_baseline_phase25.md` |
 | Email alerting (`src/admin/alerting/mod.rs:349`) | **Stub** | Logs and returns Ok, no actual sending | Not production-ready; implementation deferred |
 | `spin` idle instance eviction | **Known gap** | Old UUID entries are never cleaned up | Tracked as plan DOC-L7 |
 | Archive inspection | **Limitation** | ZIP-only, non-recursive | Does not inspect nested archives or non-ZIP formats |

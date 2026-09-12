@@ -1152,6 +1152,7 @@ fn restart_mesh_uses_mesh_configuration_invariant() {
 //
 // These tests exercise real code — not text-based source inspection.
 
+#[cfg(feature = "mesh")]
 mod iter87_behavioral_guardrails {
     use std::sync::Arc;
 

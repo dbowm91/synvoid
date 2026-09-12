@@ -41,7 +41,7 @@ For high-performance, sandboxed edge computing, SynVoid integrates a WebAssembly
 - **Instance Pooling:** Maintains a pool of pre-initialized WASM instances to eliminate cold start latency. (Note: Instance pooling is supported for WAF plugins; the Spin runtime does not use instance pooling.)
 
 **Serverless InstancePool (APP-3):**
-The `InstancePool` at `src/serverless/instance_pool.rs:11` provides sophisticated pooling:
+The `InstancePool` at `crates/synvoid-serverless/src/instance_pool.rs:11` provides sophisticated pooling:
 - Per-function instance pools with `min_instances` / `max_instances` bounds
 - Idle timeout eviction (default 5 minutes)
 - Autoscaling based on utilization thresholds (10s tick)
@@ -68,7 +68,7 @@ Spin is **not** the same as the generic WASM edge functions described above. Key
 | **Manifest** | Configuration-driven routes | `spin.toml` parsed via `src/spin/manifest.rs` |
 | **Registration** | Part of site configuration | Manual registration via Admin API |
 | **Components** | Single WASM module per route | Multiple named components in manifest |
-| **HTTP Dispatch** | `ServerlessRoute` (generic WASM) in server pipeline at `src/serverless/routing.rs:112` | `SpinHttpHandler` at `src/spin/handler.rs:117`, handler creation at `src/http/server.rs:2378` |
+| **HTTP Dispatch** | `ServerlessRoute` (generic WASM) in server pipeline at `crates/synvoid-serverless/src/routing.rs:112` | `SpinHttpHandler` at `src/spin/handler.rs:117`, handler creation at `src/http/server.rs:2378` |
 
 Spin applications are registered using `SpinAppsManager::register()` and handled via `SpinHttpHandler` which wraps the `SpinRuntime`. The Spin runtime parses its manifest at startup to determine component routes and trigger configurations.
 
@@ -99,4 +99,4 @@ Serverless WASM functions can be distributed across the mesh:
 - `ServerlessManager` registers functions in DHT via `RecordStoreManager::store_and_announce()`
 - Announces via `MeshTransport::announce_serverless()`
 - Hierarchical routing as `serverless_function:{name}`
-- Implementation: `src/serverless/manager.rs:117` + mesh integration at `crates/synvoid-mesh/src/mesh/`
+- Implementation: `crates/synvoid-serverless/src/manager.rs:117` + mesh integration at `crates/synvoid-mesh/src/mesh/`

@@ -4,6 +4,10 @@ on:
   pull_request:
   push:
     branches: [main]
+  # Phase 25: scheduled security run so newly published advisories are
+  # detected even when the repo has no commit.
+  schedule:
+    - cron: "0 6 * * *"
   workflow_dispatch:
 
 concurrency:
@@ -21,19 +25,52 @@ jobs:
       CARGO_TERM_COLOR: always
       RUST_BACKTRACE: 1
     steps:
-      - uses: actions/checkout@v4
+      # Pinned third-party Actions (Phase 25 reproducible baseline).
+      # Each pin is an immutable commit SHA; the trailing comment records
+      # the human-readable tag for maintenance. Bump intentionally only.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      # Toolchain comes from rust-toolchain.toml (pinned Rust 1.98.1).
+      # No `toolchain:` input on purpose: the repo file is authoritative.
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable as of 2026-09-12
         with:
           components: rustfmt, clippy
 
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
-      - name: Install nextest
-        uses: taiki-e/install-action@nextest
+      # Pinned verification tools (versions recorded in
+      # docs/testing/verification-contract.md). taiki-e/install-action
+      # supports `tool@version` pinning for all three.
+      - name: Install pinned verification tools
+        uses: taiki-e/install-action@9534c84618278caac52cb373bb164ed464dbd8af # v2
+        with:
+          tool: nextest@0.9.140,cargo-deny@0.20.2,cargo-audit@0.22.2
 
       - name: Verify
         run: cargo xtask verify
+
+  dependency-security:
+    name: dependency-security
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable as of 2026-09-12
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Install pinned verification tools
+        uses: taiki-e/install-action@9534c84618278caac52cb373bb164ed464dbd8af # v2
+        with:
+          tool: cargo-deny@0.20.2,cargo-audit@0.22.2
+
+      - name: Dependency policy (cargo-deny)
+        run: cargo deny check
+
+      - name: Advisory audit (cargo-audit)
+        run: cargo audit

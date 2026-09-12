@@ -243,7 +243,7 @@ pub fn load_directory_template(template_path: &str) -> Result<String, StaticErro
 
 ### XSS Prevention in Directory Listing
 
-**Location**: `crates/synvoid-static-files/src/directory.rs`, `src/theme/dir_listing.rs`
+**Location**: `crates/synvoid-static-files/src/directory.rs`, `crates/synvoid-theme/src/dir_listing.rs`
 
 **Fix**: Always escape user-controlled data in HTML:
 
@@ -547,7 +547,7 @@ pub fn generate_global_node_auth(
 
 ### Overseer-Worker Communication
 
-**Location**: `src/process/ipc.rs`, `src/supervisor/ipc.rs`, `src/process/ipc_signed.rs`
+**Location**: `crates/synvoid-ipc/src/ipc.rs`, `src/supervisor/ipc.rs`, `crates/synvoid-ipc/src/ipc_signed.rs`
 
 **Issue**: IPC messages between overseer and workers were unsigned.
 
@@ -606,7 +606,7 @@ fs::rename(&temp_path, &path)?;
 
 ### Nonce Cache Size Limit
 
-**Location**: `src/process/ipc_signed.rs`
+**Location**: `crates/synvoid-ipc/src/ipc_signed.rs`
 
 **Issue**: Unbounded LRU cache could grow indefinitely.
 
@@ -950,8 +950,8 @@ fn refresh_sparse_buckets(&self) {
 | `src/admin/state.rs` | Constant-time session ID comparison |
 | `crates/synvoid-dns/src/crypto_rng.rs` | Result-based RNG with error propagation |
 | `crates/synvoid-mesh/src/mesh/peer_auth.rs` | Role-based Ed25519 + PoW authentication |
-| `src/process/ipc.rs` | IPC signing with HMAC |
-| `src/process/ipc_signed.rs` | Signed message deserialization |
+| `crates/synvoid-ipc/src/ipc.rs` | IPC signing with HMAC |
+| `crates/synvoid-ipc/src/ipc_signed.rs` | Signed message deserialization |
 | `src/supervisor/ipc.rs` | Signed supervisor IPC |
 | `crates/synvoid-mesh/src/mesh/config_identity.rs` | 0o600 key permissions, multi-genesis keys |
 | `crates/synvoid-mesh/src/mesh/threat_intel.rs` | Composite DHT keys |
@@ -1160,7 +1160,7 @@ store.sessions.insert(session.id.clone(), session.clone());
 
 ### IPC Nonce Cache Poisoning Prevention
 
-**Location**: `src/process/ipc_signed.rs:230-262`
+**Location**: `crates/synvoid-ipc/src/ipc_signed.rs:230-262`
 
 **Issue**: Nonce was inserted into cache BEFORE HMAC verification. An attacker could flood nonce cache with fake nonces before HMAC rejection.
 
@@ -1639,7 +1639,7 @@ impl DhtRecord {
 
 ### Trusted Proxy XFF Handling
 
-**Location**: `src/proxy/headers.rs`
+**Location**: `crates/synvoid-proxy/src/headers.rs`
 
 **Issue**: `get_real_ip()` returned `ips[0]` (first IP) but standard XFF order is `client, proxy1, proxy2`. The client is the first untrusted public IP before the trusted proxy suffix, not the first IP overall.
 
@@ -1700,7 +1700,7 @@ use subtle::ConstantTimeEq;
 
 ### Retry Policy Honesty
 
-**Location**: `src/proxy/mod.rs`, `src/proxy/retry.rs`
+**Location**: `src/proxy/mod.rs`, `crates/synvoid-proxy/src/retry.rs`
 
 **Issue**: `RetryConfig.enabled` was never checked - retries happened even when disabled. `retry_non_idempotent` was ignored. Off-by-one in attempt counting.
 
@@ -1719,7 +1719,7 @@ pub fn should_retry_request(method: &Method, config: &RetryConfig) -> bool {
 
 ### Request Header Forwarding
 
-**Location**: `src/proxy/headers.rs`
+**Location**: `crates/synvoid-proxy/src/headers.rs`
 
 **Issue**: Default forwarding only preserved 4 headers (X-Real-IP, XFF, XFP, Host). Application headers like Authorization, Content-Type, Cookie were dropped.
 

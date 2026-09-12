@@ -25,7 +25,7 @@ SynVoid uses signed IPC for privileged operations with HMAC-SHA3-256 verificatio
 
 ### IpcSigner
 
-**Location**: `src/process/ipc_signed.rs:108`
+**Location**: `crates/synvoid-ipc/src/ipc_signed.rs:108`
 
 ```rust
 pub struct IpcSigner {
@@ -58,7 +58,7 @@ Unix key file uses `O_EXCL | O_NOFOLLOW` to prevent symlink attacks.
 
 ### Replay Protection
 
-**Location**: `src/process/ipc_signed.rs:45-106`
+**Location**: `crates/synvoid-ipc/src/ipc_signed.rs:45-106`
 
 ```rust
 const MAX_NONCE_CACHE_SIZE: usize = 10_000;

@@ -395,6 +395,7 @@ impl HttpServer {
 mod tests {
     use super::*;
     use synvoid_http::response_transform::path_looks_like_image;
+    #[cfg(feature = "mesh")]
     use synvoid_mesh::proxy::get_cached_regex;
 
     // Behavior tests for the protocol-sniff helpers live canonically in
@@ -411,6 +412,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "mesh")]
     fn test_get_cached_regex_valid_pattern() {
         let pattern = r"\.(?:jpe?g|png|gif)$";
         let regex = get_cached_regex(pattern);
@@ -421,6 +423,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "mesh")]
     fn test_get_cached_regex_invalid_pattern() {
         let pattern = r"[";
         let regex = get_cached_regex(pattern);
@@ -428,6 +431,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "mesh")]
     fn test_get_cached_regex_caches_result() {
         let pattern = r"test\d+";
         let regex1 = get_cached_regex(pattern);

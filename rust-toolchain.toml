@@ -1,0 +1,7 @@
+[toolchain]
+# Phase 25 dependency-security baseline: pinned compiler for reproducible builds.
+# Bumped intentionally only (see docs/testing/verification-contract.md §toolchain).
+# Rust 1.98.1 repairs the 1.98.0 vtable miscompilation; required by wasmtime ≥46.
+channel = "1.98.1"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

@@ -12,7 +12,7 @@ The Listener module (`src/listener/`) provides a minimal shared base type for ne
 
 ## 2. Key Data Structures
 
-### Shared (`src/listener/common.rs`)
+### Shared (`crates/synvoid-http/src/listener/common.rs`)
 
 ```rust
 pub struct ConnectionContext {
