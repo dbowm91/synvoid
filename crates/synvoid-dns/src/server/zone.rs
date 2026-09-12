@@ -519,7 +519,10 @@ impl DnsServer {
     /// Key rollover affects all zones, so the entire cache is cleared.
     pub fn start_key_rollover(&self, key_type: crate::dnssec::KeyType) -> Result<(), String> {
         if let Some(ref dnssec) = self.dnssec {
-            dnssec.write().start_key_rollover(key_type)?;
+            dnssec
+                .write()
+                .start_key_rollover(key_type)
+                .map_err(|e| e.to_string())?;
             self.zones.for_each_mut(|zone| {
                 zone.health.dnssec_state = DnssecState::KeyRollover;
             });
@@ -536,7 +539,10 @@ impl DnsServer {
     /// Complete a DNSSEC key rollover and invalidate all cached DNSSEC-signed responses.
     pub fn complete_key_rollover(&self, key_type: crate::dnssec::KeyType) -> Result<(), String> {
         if let Some(ref dnssec) = self.dnssec {
-            dnssec.write().complete_key_rollover(key_type)?;
+            dnssec
+                .write()
+                .complete_key_rollover(key_type)
+                .map_err(|e| e.to_string())?;
             self.zones.for_each_mut(|zone| {
                 zone.health.dnssec_state = DnssecState::Signed;
             });

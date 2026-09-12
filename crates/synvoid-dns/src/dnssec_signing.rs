@@ -1,37 +1,19 @@
-// DNSSEC signing: RRSET signing, NSEC/NSEC3 record generation, RRSIG creation
+// DNSSEC signing facade: narrow signing entry + NSEC/NSEC3 proof construction.
+// Phase 30: private-key signing lives in `synvoid-dnssec-keystore` behind
+// `SealedSigningKey::sign` (no raw private bytes cross this module).
+// NSEC/NSEC3/RRSIG wire construction stays here: it needs only public
+// metadata (algorithm, key tag) plus caller-supplied signatures.
 
-use ed25519_dalek::Signer;
 use sha2::{Digest, Sha256};
 use synvoid_core::time::current_timestamp_secs;
 
-use super::dnssec::{Algorithm, CryptoRngAdapter, Nsec3Config, ZoneSigningKey};
+use super::dnssec::{Nsec3Config, ZoneSigningKey};
 
+/// Sign caller-supplied canonical bytes with the sealed key handle.
+/// Compat wrapper over [`SealedSigningKey::sign`]; the query path should
+/// prefer `key.sign(canonical)` directly.
 pub fn sign_data(data: &[u8], key: &ZoneSigningKey) -> Result<Vec<u8>, String> {
-    match key.algorithm {
-        Algorithm::Ed25519 => {
-            let signing_key = ed25519_dalek::SigningKey::from_bytes(
-                key.private_key
-                    .as_slice()
-                    .try_into()
-                    .map_err(|_| "Invalid Ed25519 private key length")?,
-            );
-            let sig = signing_key.sign(data);
-            Ok(sig.to_bytes().to_vec())
-        }
-        Algorithm::RSA => {
-            use rsa::pkcs1v15::Pkcs1v15Sign;
-            use rsa::pkcs8::DecodePrivateKey;
-            use rsa::traits::SignatureScheme;
-
-            let private_key = rsa::RsaPrivateKey::from_pkcs8_der(&key.private_key)
-                .map_err(|e| format!("Invalid RSA private key: {}", e))?;
-            let hashed = Sha256::digest(data);
-            let scheme = Pkcs1v15Sign::new::<Sha256>();
-            scheme
-                .sign(Some(&mut CryptoRngAdapter), &private_key, &hashed)
-                .map_err(|e| format!("RSA signing failed: {}", e))
-        }
-    }
+    key.sign(data).map_err(|e| e.to_string())
 }
 
 pub fn create_rrsig_record(
@@ -45,7 +27,7 @@ pub fn create_rrsig_record(
     let mut rrsig = Vec::new();
 
     rrsig.extend_from_slice(&type_covered.to_be_bytes());
-    rrsig.push(key.algorithm.to_u8());
+    rrsig.push(key.algorithm().to_u8());
     rrsig.push(labels_count);
     rrsig.extend_from_slice(&original_ttl.to_be_bytes());
 
@@ -55,7 +37,7 @@ pub fn create_rrsig_record(
 
     rrsig.extend_from_slice(&(sig_expire as u32).to_be_bytes());
     rrsig.extend_from_slice(&(sig_inception as u32).to_be_bytes());
-    rrsig.extend_from_slice(&key.key_tag.to_be_bytes());
+    rrsig.extend_from_slice(&key.key_tag().to_be_bytes());
 
     let signer_name_labels = signer_name.trim_end_matches('.');
     let signer_name_parts: Vec<&str> = signer_name_labels.split('.').collect();
@@ -292,27 +274,25 @@ pub fn base32_encode(input: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dnssec::{KeyType, ZoneSigningKey};
+    use crate::dnssec::Algorithm;
 
     fn ed25519_test_key() -> ZoneSigningKey {
-        let mut private_bytes = [0u8; 32];
-        getrandom::getrandom(&mut private_bytes).expect("getrandom failed");
-        let signing_key = ed25519_dalek::SigningKey::from_bytes(&private_bytes);
-        let verifying_key = signing_key.verifying_key().to_bytes().to_vec();
-        let private_bytes = signing_key.to_bytes().to_vec();
-
-        ZoneSigningKey {
-            key_id: "test-key".to_string(),
-            algorithm: Algorithm::Ed25519,
-            key_type: KeyType::ZSK,
-            created_at: 0,
-            expires_at: u64::MAX,
-            public_key: verifying_key,
-            private_key: private_bytes,
-            key_tag: 12345,
-            flags: 256,
-            key_size: None,
-        }
+        // Sealed handle via the custody boundary: generate in a temp
+        // keystore, clone the handle out, and drop the dir.
+        let dir = tempfile::Builder::new()
+            .prefix("dnssec_signing_test_")
+            .tempdir()
+            .unwrap();
+        let mut ks = synvoid_dnssec_keystore::DnssecKeystore::new(dir.path().to_path_buf());
+        ks.initialize().unwrap();
+        ks.generate_key(
+            synvoid_dnssec_keystore::Algorithm::Ed25519,
+            synvoid_dnssec_keystore::KeyType::ZSK,
+            0,
+            90,
+        )
+        .unwrap();
+        (*ks.active_zsk().unwrap()).clone()
     }
 
     #[test]
@@ -334,9 +314,15 @@ mod tests {
     }
 
     #[test]
-    fn test_sign_data_invalid_key_length() {
-        let mut key = ed25519_test_key();
-        key.private_key = vec![0; 16];
+    fn test_sign_data_public_only_handle_refuses() {
+        let key = ZoneSigningKey::from_public_parts(
+            "test".to_string(),
+            Algorithm::Ed25519,
+            crate::dnssec::KeyType::ZSK,
+            vec![0u8; 32],
+            12345,
+            256,
+        );
         let result = sign_data(b"test", &key);
         assert!(result.is_err());
     }

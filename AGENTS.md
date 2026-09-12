@@ -1,6 +1,6 @@
 # AGENTS.md
 
-SynVoid is a high-performance WAF & reverse proxy in Rust with a mesh networking layer and multi-process architecture (Supervisor + UnifiedServerWorker data plane + CPU offload). 49-member Cargo workspace: root app, 41 `synvoid-*` crates under `crates/` (Phase 28 adds `synvoid-native-extension`, Phase 29 adds `synvoid-jail-runtime`), plus `pqc`, `admin-ui` (Yew/WASM via Trunk), `examples/*`, `fuzz`, `tools/{xtask,synvoid-repo-guards}`. Linux is the primary deployment target.
+SynVoid is a high-performance WAF & reverse proxy in Rust with a mesh networking layer and multi-process architecture (Supervisor + UnifiedServerWorker data plane + CPU offload). 50-member Cargo workspace: root app, 42 `synvoid-*` crates under `crates/` (Phase 28 adds `synvoid-native-extension`, Phase 29 adds `synvoid-jail-runtime`, Phase 30 adds `synvoid-dnssec-keystore`), plus `pqc`, `admin-ui` (Yew/WASM via Trunk), `examples/*`, `fuzz`, `tools/{xtask,synvoid-repo-guards}`. Linux is the primary deployment target.
 
 ## Build & Setup
 
@@ -126,10 +126,14 @@ Root-module ownership policy lives in `architecture/root_module_ledger.md` — p
 | `crate::upload` (removed Phase 03) | `synvoid_upload` |
 | `synvoid_mesh::protocol::MeshMessageSigner` (verification-only use) | `synvoid_mesh_protocol::signer::{ProtocolSigner, verify_ed25519}` (runtime signing stays in `synvoid-mesh`) |
 | `synvoid_mesh::protocol::{ThreatType, ThreatSeverity, ThreatIndicator}` (value types) | `synvoid_mesh_protocol::{ThreatType, ThreatSeverity, ThreatIndicator}` (`synvoid-mesh` re-exports for compat) |
+| `crates/synvoid-dns/src/{dnssec_key_mgmt.rs,hsm.rs}` (key/HSM impl) | `crates/synvoid-dnssec-keystore/src/{keystore.rs,hsm.rs}` (canonical; DNS modules are facades + public proof/validation code) |
+| `synvoid_dns::{DnsSecKeyManager, ZoneSigningKey}` private-key access (field reads, struct literals) | `synvoid_dnssec_keystore::{DnssecKeystore, SealedSigningKey}` via `sign()` + `KeyMetadata` (handles are `#[non_exhaustive]`, no private getters) |
+| `synvoid_dns::mesh_dnssec::MeshTrustAnchor` with private keys | `KeyMetadata`-only anchors (never distribute private keys via mesh) |
 
 ## Security Invariants (violations break guard tests)
 
-- **Constant-time comparison**: use `subtle::ConstantTimeEq` for secrets, keys, MACs, auth tokens (PoW solution verification included). Private key files get mode `0o600`.
+- **Constant-time comparison**: use `subtle::ConstantTimeEq` for secrets, keys, MACs, auth tokens (PoW solution verification included). DNSSEC private key files get mode `0o600` (key dirs `0700`, atomic write/rename, overly-permissive files refused on load).
+- **DNSSEC key custody** (Phase 30, guard `dnssec_keystore_boundary`): private signing-key/HSM authority lives in `crates/synvoid-dnssec-keystore/` behind `SealedSigningKey::sign()` + `KeyMetadata` — no API returns raw private bytes (handles are `#[non_exhaustive]`). Query/transport/resolver code must never touch `private_key` tokens or `cryptoki` directly; `cryptoki` is opt-in only (`synvoid-dns/hsm`, root `dns-hsm`), off by default with no silent software fallback for HSM-required zones; mesh anchors are `KeyMetadata`-only (never distribute private keys via mesh); SHA-1 stays narrowly scoped to DS digest type 1 / NSEC3 algorithm 1 interop.
 - **Overlong UTF-8**: WAF normalizer decodes overlong percent-encoded sequences (`%C0%BE` → `>`); sets `OVERLONG` flag on `NormalizationFlags`; `strict_normalization` rejects them. Tests: `test_overlong_*`, `test_waf_corpus_xss_invalid_utf8`.
 - **Plugin lifecycle**: own hot-reload watchers with `PluginRuntimeOwner`; never `std::mem::forget`. Reload is prepare-then-commit with generation-aware atomic swaps — a failed reload must never replace a working plugin. File-based loading reads WASM bytes once (TOCTOU closure via `PreparedPluginLoad.wasm_bytes`).
 - **SignedSandboxed plugins**: empty `binary_sha256`/`manifest_sha256` rejected in production.
@@ -181,7 +185,7 @@ Primary doc per subsystem (deep dives live beside each as `<topic>_deep_dive.md`
 | Proxy, upstream, cache, tunnels | `proxy.md`, `upstream.md`, `proxy_cache.md`, `tunnel_deep_dive.md` |
 | Mesh, DHT, Raft, trust | `mesh.md`, `mesh_transport_lifecycle.md`, `mesh_trust_domains.md`, `block_store.md`, `distributed_state_contract.md` (binding, Phase 23) |
 | Threat-intel enforcement | `threat_intel_consumer_actionability.md`, `manual_enforcement_ownership.md`, `admin_control_plane_authority.md` |
-| DNS (`dns` feature) | `dns.md`, `dns_config_runtime_matrix.md`, `dns_zone_lifecycle.md`, `dns_operations_diagnostics.md` |
+| DNS (`dns` feature) | `dns.md`, `dnssec_keystore.md` (Phase 30 custody boundary), `dns_config_runtime_matrix.md`, `dns_zone_lifecycle.md`, `dns_operations_diagnostics.md` |
 | Plugins, WASM, serverless | `plugin_runtime_sandbox.md`, `plugin_wasm.md`, `serverless.md`, `unsafe_native_extensions.md`, `sandbox_jail_protocol.md` |
 | Admin UI/API & auth | `admin_deep_dive.md`, `auth.md`, `admin_ui.md`, `admin_root_ownership.md` (Phase 21 root-boundary matrix) |
 | Config system | `config.md`, `core_types.md` |

@@ -1,38 +1,20 @@
-// DNSSEC validation: signature verification, chain of trust, NSEC3 hashing, DS records
+// DNSSEC validation: signature verification, chain of trust, NSEC3 hashing, DS records.
+// Phase 30: public-only. These helpers touch algorithm/flags/public_key/key_tag
+// via the sealed-handle accessors; they never access private bytes.
 
 use sha2::{Digest, Sha256, Sha384};
 use subtle::ConstantTimeEq;
 
 use super::dnssec::{DsDigestType, ZoneSigningKey};
 
+/// Key-tag calculation delegates to the custody crate so DNS and keystore
+/// agree by construction (single implementation in `synvoid-dnssec-keystore`).
 pub fn calculate_key_tag(flags: u16, protocol: u8, algorithm: u8, public_key: &[u8]) -> u16 {
-    let mut buf = Vec::with_capacity(4 + public_key.len());
-    buf.extend_from_slice(&flags.to_be_bytes());
-    buf.push(protocol);
-    buf.push(algorithm);
-    buf.extend_from_slice(public_key);
-
-    let mut sum: u32 = 0;
-    for (i, byte) in buf.iter().enumerate() {
-        if i & 1 == 0 {
-            sum += (*byte as u32) << 8;
-        } else {
-            sum += *byte as u32;
-        }
-    }
-
-    (sum + (sum >> 16)) as u16
+    synvoid_dnssec_keystore::calculate_key_tag(flags, protocol, algorithm, public_key)
 }
 
 pub fn compute_dnskey(key: &ZoneSigningKey) -> Vec<u8> {
-    let mut dnskey = Vec::new();
-
-    dnskey.extend_from_slice(&key.flags.to_be_bytes());
-    dnskey.push(0x03);
-    dnskey.push(key.algorithm.to_u8());
-    dnskey.extend_from_slice(&key.public_key);
-
-    dnskey
+    key.dnskey_rdata()
 }
 
 pub fn get_dnskey_record(key: &ZoneSigningKey) -> Vec<u8> {
@@ -40,11 +22,7 @@ pub fn get_dnskey_record(key: &ZoneSigningKey) -> Vec<u8> {
 
     record.push(0x00);
     record.push(0x00);
-
-    record.extend_from_slice(&key.flags.to_be_bytes());
-    record.push(0x03);
-    record.push(key.algorithm.to_u8());
-    record.extend_from_slice(&key.public_key);
+    record.extend_from_slice(&key.dnskey_rdata());
 
     record
 }
@@ -280,15 +258,15 @@ pub fn create_ds_record(
 ) -> Result<Vec<u8>, String> {
     let mut ds_data = Vec::new();
 
-    ds_data.extend_from_slice(&key.key_tag.to_be_bytes());
-    ds_data.push(key.algorithm.to_u8());
+    ds_data.extend_from_slice(&key.key_tag().to_be_bytes());
+    ds_data.push(key.algorithm().to_u8());
     ds_data.push(digest_type.to_u8());
 
     let canonical_dnskey = compute_dnskey_canonical(
-        key.flags,
+        key.flags(),
         3, // protocol
-        key.algorithm.to_u8(),
-        &key.public_key,
+        key.algorithm().to_u8(),
+        key.public_key(),
     );
 
     let digest = match digest_type {
@@ -352,24 +330,22 @@ mod tests {
     use crate::dnssec::{Algorithm, KeyType, ZoneSigningKey};
 
     fn ed25519_test_key() -> ZoneSigningKey {
-        let mut private_bytes = [0u8; 32];
-        getrandom::getrandom(&mut private_bytes).expect("getrandom failed");
-        let signing_key = ed25519_dalek::SigningKey::from_bytes(&private_bytes);
+        // Public-only handle: validation helpers never need private bytes.
+        let mut seed = [0u8; 32];
+        getrandom::getrandom(&mut seed).expect("getrandom failed");
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&seed);
         let verifying_key = signing_key.verifying_key().to_bytes().to_vec();
-        let private_bytes = signing_key.to_bytes().to_vec();
+        let key_tag =
+            crate::dnssec::calculate_key_tag(257, 3, Algorithm::Ed25519.to_u8(), &verifying_key);
 
-        ZoneSigningKey {
-            key_id: "test-key".to_string(),
-            algorithm: Algorithm::Ed25519,
-            key_type: KeyType::KSK,
-            created_at: 0,
-            expires_at: u64::MAX,
-            public_key: verifying_key,
-            private_key: private_bytes,
-            key_tag: 12345,
-            flags: 257,
-            key_size: None,
-        }
+        ZoneSigningKey::from_public_parts(
+            "test-key".to_string(),
+            Algorithm::Ed25519,
+            KeyType::KSK,
+            verifying_key,
+            key_tag,
+            257,
+        )
     }
 
     #[test]

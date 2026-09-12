@@ -82,7 +82,9 @@ pub use firewall::{
     DnsFirewall, DnsFirewallAction, DnsFirewallDecision, DnsFirewallRule, DnsFirewallRuleType,
     DnsFirewallStats,
 };
-pub use hsm::{HsmBackend, HsmError, HsmManager, HsmSigner, Pkcs11Hsm, SoftHsm};
+#[cfg(feature = "hsm")]
+pub use hsm::Pkcs11Hsm;
+pub use hsm::{HsmBackend, HsmError, HsmManager, HsmSigner, SoftHsm};
 pub use limits::{ConnectionLimitError, ConnectionLimits, ConnectionStats};
 pub use messages::{
     DnsAnycastHealthUpdate, DnsAnycastNodeRegistration, DnsEdgeHealthReport, DnsHealthUpdate,

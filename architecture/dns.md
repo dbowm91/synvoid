@@ -33,15 +33,15 @@ The module is located at `crates/synvoid-dns/` and exports a rich set of submodu
 | `server/rate_limit.rs` | `crates/synvoid-dns/src/server/rate_limit.rs` | Rate limiting (Response Rate Limiting - RRL) |
 | `server/sharded_store.rs` | `crates/synvoid-dns/src/server/sharded_store.rs` | `ShardedZoneStore` for concurrent zone access |
 
-### 2.2 DNSSEC
+### 2.2 DNSSEC (Phase 30 custody boundary — see `dnssec_keystore.md`)
 
 | Submodule | File | Responsibility |
 |-----------|------|----------------|
-| `dnssec.rs` | `crates/synvoid-dns/src/dnssec.rs` | Core types: `Algorithm`, `KeyType`, `ZoneSigningKey`, `Nsec3Config`, `KeyRotationConfig` |
-| `dnssec_key_mgmt.rs` | `crates/synvoid-dns/src/dnssec_key_mgmt.rs` | `DnsSecKeyManager` - key generation, storage |
-| `dnssec_signing.rs` | `crates/synvoid-dns/src/dnssec_signing.rs` | RRSIG creation, NSEC/NSEC3 record generation |
-| `dnssec_validation.rs` | `crates/synvoid-dns/src/dnssec_validation.rs` | Signature verification, canonicalization, DS digest |
-| `trust_anchor.rs` | `crates/synvoid-dns/src/trust_anchor.rs` | RFC 5011 trust anchor state machine |
+| `dnssec.rs` | `crates/synvoid-dns/src/dnssec.rs` | Facade: re-exports custody types (`Algorithm`, `KeyType`, `ZoneSigningKey` = opaque `SealedSigningKey`, `DnsSecKeyManager`, rotation/status) from `synvoid-dnssec-keystore`; retains public `Nsec3Config` |
+| `dnssec_key_mgmt.rs` | `crates/synvoid-dns/src/dnssec_key_mgmt.rs` | Facade over `synvoid-dnssec-keystore::keystore` (generation/sealed storage/rotation live in the keystore) |
+| `dnssec_signing.rs` | `crates/synvoid-dns/src/dnssec_signing.rs` | Narrow `sign_data` over sealed handles + RRSIG creation, NSEC/NSEC3 record generation (public-only) |
+| `dnssec_validation.rs` | `crates/synvoid-dns/src/dnssec_validation.rs` | Signature verification, canonicalization, DS digest (public-only; key-tag delegates to the keystore) |
+| `trust_anchor.rs` | `crates/synvoid-dns/src/trust_anchor.rs` | RFC 5011 trust anchor state machine (public-only; intentionally stays in `synvoid-dns`, not the keystore) |
 
 ### 2.3 Resolvers
 
@@ -97,8 +97,8 @@ The module is located at `crates/synvoid-dns/` and exports a rich set of submodu
 | `rpz.rs` | `crates/synvoid-dns/src/rpz.rs` | Response Policy Zones |
 | `dns64.rs` | `crates/synvoid-dns/src/dns64.rs` | DNS64 translator |
 | `anycast.rs` | `crates/synvoid-dns/src/anycast.rs` | Anycast support |
-| `hsm.rs` | `crates/synvoid-dns/src/hsm.rs` | HSM-backed key management |
-| `crypto_rng.rs` | `crates/synvoid-dns/src/crypto_rng.rs` | Cryptographic RNG |
+| `hsm.rs` | `crates/synvoid-dns/src/hsm.rs` | Facade over `synvoid-dnssec-keystore::hsm` (PKCS#11 behind opt-in `hsm` feature, fail-closed, no silent fallback) |
+| `crypto_rng.rs` | `crates/synvoid-dns/src/crypto_rng.rs` | Cryptographic RNG (transport/cookie/salt uses; key-generation RNG lives in the keystore) |
 
 ---
 
@@ -149,15 +149,17 @@ pub struct DnsServer {
 }
 ```
 
-### 3.2 Zone (server/mod.rs:129)
+### 3.2 Zone (server/mod.rs:129; Phase 30 custody)
 
 ```rust
 pub struct Zone {
     pub origin: String,
     pub records: HashMap<(String, RecordType), Vec<DnsZoneRecord>>,
     pub serial: u32,
-    pub ksk_key: Option<ZoneSigningKey>,
-    pub zsk_key: Option<ZoneSigningKey>,
+    // Opaque sealed handles (Arc clone, never raw bytes). Sign via
+    // `handle.sign(canonical)`; DNSKEY/DS via public metadata.
+    pub ksk_key: Option<Arc<ZoneSigningKey>>,
+    pub zsk_key: Option<Arc<ZoneSigningKey>>,
     pub dnskey_ttl: Option<u32>,
     pub nsec3_enabled: bool,
     pub nsec_enabled: bool,
@@ -194,25 +196,18 @@ pub enum TrustAnchorState {
 }
 ```
 
-### 3.5 Key DNSSEC Types
+### 3.5 Key DNSSEC Types (Phase 30: canonical in `synvoid-dnssec-keystore`)
 
 ```rust
-// dnssec.rs
+// synvoid-dnssec-keystore (re-exported via synvoid-dns::dnssec for compat)
 pub enum Algorithm { Ed25519, RSA }
 pub enum KeyType { KSK, ZSK }
 pub enum DsDigestType { Sha1 = 1, Sha256 = 2, Sha384 = 4 }
-pub struct ZoneSigningKey {
-    pub key_id: String,
-    pub algorithm: Algorithm,
-    pub key_type: KeyType,
-    pub created_at: u64,
-    pub expires_at: u64,
-    pub public_key: Vec<u8>,
-    pub private_key: Vec<u8>,
-    pub key_tag: u16,
-    pub flags: u16,
-    pub key_size: Option<u32>,
-}
+// Opaque, #[non_exhaustive]: no private getters. Sign via `sign()`,
+// share via `KeyMetadata` (public-only).
+pub struct SealedSigningKey { /* private_key: Zeroizing<Vec<u8>> (crate-private) */ }
+pub type ZoneSigningKey = SealedSigningKey;
+pub struct KeyMetadata { /* public-only snapshot: ids, tags, flags, public_key */ }
 pub struct Nsec3Config {
     pub algorithm: u8,
     pub flags: u8,
@@ -249,8 +244,10 @@ pub struct RolloverState {
     pub zsk_rollover_started: Option<u64>,
     pub publish_dnssec: bool,
 }
-// CryptoRngAdapter - wraps getrandom for rand_core 0.6 traits (RSA crate compat)
-pub(crate) struct CryptoRngAdapter;
+// Phase 30: rotation/status types above are canonical in
+// synvoid-dnssec-keystore (re-exported via synvoid-dns::dnssec). The RSA
+// rand_core-0.6 adapter lives in the keystore (`keystore::rng`); the old
+// `synvoid-dns` `CryptoRngAdapter` was removed with the extraction.
 ```
 
 ### 3.6 DnsResolver Trait (resolver.rs:131)
@@ -436,11 +433,11 @@ impl TrustAnchorManager {
 }
 ```
 
-### 4.6 DNSSEC Key Management
+### 4.6 DNSSEC Key Management (Phase 30: canonical in `synvoid-dnssec-keystore`)
 
 ```rust
-// dnssec.rs (re-exports)
-pub use dnssec_key_mgmt::DnsSecKeyManager;
+// synvoid-dns/src/dnssec.rs (facade re-exports; see dnssec_keystore.md)
+pub use synvoid_dnssec_keystore::{DnssecKeystore /* (DnsSecKeyManager alias) */, SealedSigningKey /* (ZoneSigningKey alias) */, KeyMetadata, ...};
 pub use dnssec_signing::{sign_data, create_rrsig_record, create_nsec_record, create_nsec3_record, ...};
 pub use dnssec_validation::{calculate_key_tag, canonical_rdata, compute_dnskey, compute_ds_digest, ...};
 ```
@@ -656,12 +653,12 @@ DNS Response + RRSIG + DNSKEY + DS
 └───────────────────────────────────┘
 ```
 
-### 6.3 DNSSEC Key Components
+### 6.3 DNSSEC Key Components (Phase 30: custody in `synvoid-dnssec-keystore`)
 
 | Component | File | Purpose |
 |-----------|------|---------|
-| `DnsSecKeyManager` | `dnssec_key_mgmt.rs` | Key generation, storage, rollover |
-| `sign_data()` | `dnssec_signing.rs` | Ed25519/RSA signing |
+| `DnssecKeystore` (`DnsSecKeyManager` alias) | `synvoid-dnssec-keystore/src/keystore.rs` (facade: `synvoid-dns/src/dnssec_key_mgmt.rs`) | Sealed generation, storage, rollover |
+| `SealedSigningKey::sign()` (`sign_data()` compat) | `synvoid-dnssec-keystore/src/key.rs` (facade: `synvoid-dns/src/dnssec_signing.rs`) | Ed25519/RSA signing over caller canonical bytes |
 | `create_rrsig_record()` | `dnssec_signing.rs` | Build RRSIG record |
 | `create_nsec_record()` | `dnssec_signing.rs` | NSEC proof |
 | `create_nsec3_record()` | `dnssec_signing.rs` | NSEC3 proof |
@@ -1228,7 +1225,7 @@ Completed 2026-07-03. 390/390 DNS lib tests pass, 30/30 authoritative_negative t
 - **Signed NODATA/NXDOMAIN**: The signed negative response path uses `build_nxdomain_response`/`build_nodata_response` which assemble NSEC/NSEC3 + RRSIG records. These are now routed through `encode_rr` and `ResponseEnvelope`.
 - **NSEC3 closest-encloser**: Phase 2 fixed the next-closer NSEC3 emission (RFC 5155 §7.2.6) and corrected NODATA next_domain hash chain. SHA-256 base32 encoding works in practice but is not rigorously tested against RFC 5155 test vectors. **Full NSEC3 closest-encloser proofs remain deferred** — the corrective pass did not close this gap.
 - **RFC 5001 / RFC 5155 compliance**: Partially audited; core denial-of-existence paths tested. Full compliance audit deferred.
-- **DNSSEC signing**: Zones can have KSK/ZSK and generate RRSIGs. Key lifecycle now includes `load_keys_from_disk()` for persistence across restarts, private keys are chmod 0o600, and 97 DNSSEC unit tests cover signing, validation, key management, and trust anchor lifecycle.
+- **DNSSEC signing**: Zones hold opaque sealed KSK/ZSK handles and generate RRSIGs via the keystore signer. Key lifecycle (including `load_keys_from_disk()` persistence, `0600` private files with atomic writes, fail-closed permission checks) lives in `synvoid-dnssec-keystore` (see `dnssec_keystore.md`); DNSSEC unit tests cover signing, validation, key management, and trust anchor lifecycle.
 
 ### 11.4 External Interoperability
 

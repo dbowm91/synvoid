@@ -263,24 +263,27 @@ format!(r#"<td><a href="{}">{} {}</a></td>"#, entry.href, icon, escaped_name)
 
 ### RSA 1024 Auto-Upgrade in DNSSEC
 
-**Location**: `crates/synvoid-dns/src/dnssec_key_mgmt.rs:232-254`
+**Location**: `crates/synvoid-dnssec-keystore/src/key.rs` (`generate_keypair`;
+Phase 30 moved key generation out of `synvoid-dns`)
 
 **Fix**: Auto-upgrade RSA 1024 to 2048:
 
 ```rust
-let bits = if _rsa_key_size == 0 {
+let bits = if rsa_key_size == 0 {
     2048_usize
 } else {
-    let requested_bits = _rsa_key_size as usize;
-    if requested_bits == 1024 {
+    let requested = rsa_key_size as usize;
+    if requested == 1024 {
         tracing::warn!("RSA 1024 is insecure, auto-upgrading to 2048");
         2048
     } else {
-        requested_bits
+        requested
     }
 };
 if !matches!(bits, 2048 | 4096) {
-    return Err(format!("Unsupported RSA key size {}. Use 2048 or 4096.", bits));
+    return Err(KeystoreError::UnsupportedAlgorithm(format!(
+        "unsupported RSA key size {bits}; use 2048 or 4096"
+    )));
 }
 ```
 

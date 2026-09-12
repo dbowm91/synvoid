@@ -4,12 +4,15 @@ use std::sync::Arc;
 use ed25519_dalek::Verifier;
 use parking_lot::RwLock;
 
-use crate::dnssec::{Algorithm, ZoneSigningKey};
+use crate::dnssec::{Algorithm, KeyMetadata};
+
+// Phase 30: mesh trust anchors carry public key metadata only. Raw private
+// signing keys are never distributed through DHT/best-effort gossip (Part F).
 
 #[derive(Clone)]
 pub struct MeshTrustAnchor {
     pub zone_name: String,
-    pub dnskeys: Vec<ZoneSigningKey>,
+    pub dnskeys: Vec<KeyMetadata>,
     pub ds_records: Vec<DsRecord>,
     pub validated_at: u64,
 }
@@ -174,7 +177,7 @@ impl MeshDnsSecValidator {
     pub fn create_trust_anchor_from_dnskeys(
         &self,
         zone_name: String,
-        dnskeys: Vec<ZoneSigningKey>,
+        dnskeys: Vec<KeyMetadata>,
     ) -> MeshTrustAnchor {
         use sha2::{Digest, Sha256};
 

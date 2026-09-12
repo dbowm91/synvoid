@@ -7890,7 +7890,6 @@ dependencies = [
  "chrono",
  "clap",
  "criterion",
- "cryptoki",
  "daemonize2",
  "dashmap 7.0.0-rc2",
  "digest",
@@ -8218,7 +8217,6 @@ dependencies = [
  "bytes",
  "chrono",
  "criterion",
- "cryptoki",
  "digest",
  "ed25519-dalek",
  "futures",
@@ -8242,7 +8240,6 @@ dependencies = [
  "proptest",
  "quinn",
  "rand 0.9.4",
- "rand_core 0.6.4",
  "rkyv 0.8.18",
  "rsa",
  "rusqlite",
@@ -8254,6 +8251,7 @@ dependencies = [
  "subtle",
  "synvoid-config",
  "synvoid-core",
+ "synvoid-dnssec-keystore",
  "synvoid-geoip",
  "synvoid-mesh",
  "synvoid-platform",
@@ -8267,6 +8265,29 @@ dependencies = [
  "toml 0.8.23",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "synvoid-dnssec-keystore"
+version = "0.1.0"
+dependencies = [
+ "cryptoki",
+ "digest",
+ "ed25519-dalek",
+ "getrandom 0.2.17",
+ "parking_lot",
+ "rand_core 0.6.4",
+ "rsa",
+ "serde",
+ "serde_json",
+ "sha1",
+ "sha2",
+ "subtle",
+ "synvoid-core",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
  "zeroize",
 ]
 

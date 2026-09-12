@@ -20,19 +20,29 @@ crates/synvoid-dns/src/
 ├── recursive.rs              # RecursiveDnsServer with caching
 ├── recursive_cache.rs        # Cache implementation with DNSSEC tracking
 ├── resolver.rs              # HickoryRecursor, HickoryResolver, TrustAnchorManager
-├── trust_anchor.rs          # RFC 5011 trust anchor state machine
-├── dnssec.rs                # DNSSEC types and re-exports
-├── dnssec_signing.rs        # RRSIG creation, NSEC/NSEC3 generation
-├── dnssec_validation.rs     # Key tag calculation, DS digest, canonicalization
+├── trust_anchor.rs          # RFC 5011 trust anchor state machine (public-only, stays here)
+├── dnssec.rs                # Facade: custody types re-exported from synvoid-dnssec-keystore + Nsec3Config
+├── dnssec_key_mgmt.rs       # Facade over the keystore (no key logic here)
+├── dnssec_signing.rs        # Sealed signing entry + RRSIG/NSEC/NSEC3 wire construction (public-only)
+├── dnssec_validation.rs     # Key tag (delegates to keystore), DS digest, canonicalization (public-only)
+├── hsm.rs                   # Facade: HSM config conversion + re-exports (PKCS#11 behind `hsm` feature)
+├── mesh_dnssec.rs           # Mesh validation with KeyMetadata-only trust anchors (no private keys)
 ├── server/
-│   ├── mod.rs              # DnsServer, DnsHandler
-│   ├── dnssec_impl.rs      # Authoritative DNSSEC implementation
+│   ├── mod.rs              # DnsServer, DnsHandler (zones hold opaque Arc<SealedSigningKey> handles)
+│   ├── dnssec_impl.rs      # Authoritative DNSSEC implementation (signs via sealed handles)
 │   ├── query.rs             # Query handling with NSEC/NSEC3
 │   ├── response.rs          # Response building with AD bit
 │   └── response_encoder.rs  # Typed wire-format response encoder
-└── config/
-    ├── dns_recursive.rs     # Recursive DNS config
-    └── dns_dnssec.rs        # DNSSEC and trust anchor config
+crates/synvoid-dnssec-keystore/src/   # Phase 30 custody boundary (private keys live here)
+├── key.rs                   # SealedSigningKey (opaque, #[non_exhaustive]) + KeyMetadata (public)
+├── keystore.rs              # DnssecKeystore: generation, sealed storage, rotation, sign_canonical
+├── hsm.rs                   # HsmSigner/HsmManager/SoftHsm (+ Pkcs11Hsm behind `pkcs11`, fail-closed)
+├── signer.rs                # DnssecSigner narrow trait for the request path
+├── algorithm.rs             # Signing algorithm vocabulary (Ed25519=15, RSASHA256=8)
+└── digests.rs               # DS digests incl. protocol-scoped SHA-1 (type 1)
+crates/synvoid-config/src/dns/
+├── dns_recursive.rs         # Recursive DNS config
+└── dns_dnssec.rs            # DNSSEC, HSM, and trust anchor config
 ```
 
 ## Resolver Types
@@ -198,16 +208,40 @@ pub fn len(&self) -> usize {
 - **Inception**: now - 86400 (1 day past, for clock skew)
 - **Expiration**: now + 604800 (7 days)
 
+## DNSSEC Key Custody Boundary (Phase 30)
+
+Private signing keys and HSM handles live in `crates/synvoid-dnssec-keystore/`,
+never in query/transport code. Full spec: `architecture/dnssec_keystore.md`.
+
+- **Sealed handles**: `SealedSigningKey` (`#[non_exhaustive]`, no private
+  getters). Sign via `key.sign(canonical_bytes)`; share via `KeyMetadata`
+  (public-only). Zones hold `Option<Arc<SealedSigningKey>>`.
+- **Keystore API**: `DnssecKeystore::sign_canonical(bytes, KeyType)`,
+  `public_dnskeys()`, `signing_handles()`, plus explicit management
+  (`generate_key`, `start/complete_key_rollover`, `check_and_rotate`).
+  Files are `0600` (dirs `0700`), atomic writes, overly-permissive files
+  refused on load.
+- **HSM**: `cryptoki` is opt-in (`synvoid-dns/hsm`, root `dns-hsm`), off by
+  default. PKCS#11 failures fail closed — never silent software fallback.
+  Convert config via `synvoid_dns::hsm::keystore_config_from_dns`.
+- **Never**: read `private_key` fields or struct-literal `ZoneSigningKey`
+  (does not compile), use `cryptoki` from `synvoid-dns`, or put private
+  keys in mesh anchors (use `KeyMetadata`), admin DTOs, logs, or metrics.
+  SHA-1 stays scoped to DS type 1 / NSEC3 algorithm 1 interop.
+
 ## Key Files
 
 | File | Purpose |
 |------|---------|
+| `crates/synvoid-dnssec-keystore/src/key.rs` | Sealed keys, KeyMetadata, key-tag, ephemeral generation |
+| `crates/synvoid-dnssec-keystore/src/keystore.rs` | Generation, sealed storage, rotation lifecycle |
+| `crates/synvoid-dnssec-keystore/src/hsm.rs` | HSM backends (PKCS#11 feature-gated, fail-closed) |
 | `crates/synvoid-dns/src/resolver.rs` | HickoryRecursor, HickoryResolver, TrustAnchorManager |
 | `crates/synvoid-dns/src/recursive.rs` | RecursiveDnsServer with caching |
-| `crates/synvoid-dns/src/trust_anchor.rs` | RFC 5011 state machine |
-| `crates/synvoid-dns/src/dnssec_signing.rs` | RRSIG creation, NSEC/NSEC3 |
-| `crates/synvoid-dns/src/dnssec_validation.rs` | Key tag, DS digest, canonicalization |
-| `crates/synvoid-dns/src/server/dnssec_impl.rs` | Authoritative DNSSEC |
+| `crates/synvoid-dns/src/trust_anchor.rs` | RFC 5011 state machine (public-only) |
+| `crates/synvoid-dns/src/dnssec_signing.rs` | Sealed signing entry, RRSIG creation, NSEC/NSEC3 |
+| `crates/synvoid-dns/src/dnssec_validation.rs` | Key tag, DS digest, canonicalization (public-only) |
+| `crates/synvoid-dns/src/server/dnssec_impl.rs` | Authoritative DNSSEC (sealed-handle signing) |
 | `crates/synvoid-dns/src/server/query.rs` | Query handling |
 | `crates/synvoid-dns/src/server/response.rs` | Response building |
 

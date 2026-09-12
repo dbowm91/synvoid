@@ -1029,7 +1029,7 @@ impl DnsServer {
                 records,
                 dnssec_ok,
                 edns_options.as_ref(),
-                zone.zsk_key.as_ref(),
+                zone.zsk_key.as_deref(),
                 &origin_canonical,
                 rd,
             );
@@ -1060,7 +1060,7 @@ impl DnsServer {
                     cname_records,
                     dnssec_ok,
                     edns_options.as_ref(),
-                    zone.zsk_key.as_ref(),
+                    zone.zsk_key.as_deref(),
                     &origin_canonical,
                     rd,
                 );
@@ -1106,7 +1106,7 @@ impl DnsServer {
                     &all_records,
                     dnssec_ok,
                     edns_options.as_ref(),
-                    zone.zsk_key.as_ref(),
+                    zone.zsk_key.as_deref(),
                     &origin_canonical,
                     rd,
                 );
@@ -1122,7 +1122,7 @@ impl DnsServer {
                     &dnskey_records,
                     dnssec_ok,
                     edns_options.as_ref(),
-                    zone.ksk_key.as_ref(),
+                    zone.ksk_key.as_deref(),
                     &origin_canonical,
                     rd,
                 );
@@ -1139,7 +1139,7 @@ impl DnsServer {
                         &cds_records,
                         dnssec_ok,
                         edns_options.as_ref(),
-                        zone.ksk_key.as_ref(),
+                        zone.ksk_key.as_deref(),
                         &origin_canonical,
                         rd,
                     );
@@ -1156,7 +1156,7 @@ impl DnsServer {
                     &cdnskey_records,
                     dnssec_ok,
                     edns_options.as_ref(),
-                    zone.ksk_key.as_ref(),
+                    zone.ksk_key.as_deref(),
                     &origin_canonical,
                     rd,
                 );
@@ -1173,7 +1173,7 @@ impl DnsServer {
                         &ds_records,
                         dnssec_ok,
                         edns_options.as_ref(),
-                        zone.ksk_key.as_ref(),
+                        zone.ksk_key.as_deref(),
                         &origin_canonical,
                         rd,
                     );
@@ -1192,7 +1192,7 @@ impl DnsServer {
                         &[nsec3param_record],
                         dnssec_ok,
                         edns_options.as_ref(),
-                        zone.zsk_key.as_ref(),
+                        zone.zsk_key.as_deref(),
                         &origin_canonical,
                         rd,
                     );
@@ -1209,7 +1209,7 @@ impl DnsServer {
                 if !mesh_records.is_empty() {
                     tracing::debug!("Resolved {} from mesh network", parsed.qname);
                     let mesh_zone = ctx.zones.find_by_suffix(&parsed.qname);
-                    let zsk = mesh_zone.as_ref().and_then(|zone| zone.zsk_key.as_ref());
+                    let zsk = mesh_zone.as_ref().and_then(|zone| zone.zsk_key.as_deref());
                     let (resp, _report) = Self::build_response(
                         query_id,
                         &parsed.qname,
@@ -1291,7 +1291,7 @@ impl DnsServer {
                     .and_then(|records| records.first().cloned());
                 if zone.nsec3_enabled {
                     let nsec3_records = Self::build_nsec3_nodata(&zone, &parsed.qname, record_type);
-                    let zsk = zone.zsk_key.as_ref();
+                    let zsk = zone.zsk_key.as_deref();
                     return Some(Self::build_nodata_response(
                         parsed.id,
                         &parsed.qname,
@@ -1307,7 +1307,7 @@ impl DnsServer {
                     ));
                 } else if zone.nsec_enabled {
                     let nsec_records = Self::build_nsec_records(&zone, &parsed.qname, record_type);
-                    let zsk = zone.zsk_key.as_ref();
+                    let zsk = zone.zsk_key.as_deref();
                     return Some(Self::build_nodata_response(
                         parsed.id,
                         &parsed.qname,
@@ -1337,7 +1337,7 @@ impl DnsServer {
                 if zone.nsec_enabled {
                     let nsec_records = Self::build_nsec_records(&zone, &parsed.qname, record_type);
                     if !nsec_records.is_empty() {
-                        let zsk = zone.zsk_key.as_ref();
+                        let zsk = zone.zsk_key.as_deref();
                         return Some(Self::build_nxdomain_response(
                             parsed.id,
                             &parsed.qname,
@@ -1356,7 +1356,7 @@ impl DnsServer {
                     let nsec3_records =
                         Self::build_nsec3_records(&zone, &parsed.qname, record_type);
                     if !nsec3_records.is_empty() {
-                        let zsk = zone.zsk_key.as_ref();
+                        let zsk = zone.zsk_key.as_deref();
                         return Some(Self::build_nxdomain_response(
                             parsed.id,
                             &parsed.qname,

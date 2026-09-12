@@ -2,6 +2,13 @@
 
 DNS server, DNSSEC validation, TSIG authentication, and dual-mode DNS architecture patterns.
 
+> Phase 30: private-key custody lives in `crates/synvoid-dnssec-keystore/`
+> (see `architecture/dnssec_keystore.md` and the `dns_dnssec` skill). In this
+> crate use sealed handles (`sign()`) and `KeyMetadata` only — never
+> `private_key` bytes or `cryptoki`. Signing test handles come from
+> `SealedSigningKey::generate_ephemeral()`; shape-only fixtures use
+> `from_public_parts()`.
+
 ## Verification Gate Tests (Phase 5)
 
 20 tests in `tests/verification_gate.rs` covering gate areas 2–6:

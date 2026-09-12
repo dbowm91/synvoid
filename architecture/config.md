@@ -582,7 +582,8 @@ rkyv = []          # Rkyv serialization (optional)
 
 | Feature | Components Affected | Dependencies | Default |
 |---------|-------------------|--------------|---------|
-| `dns` | `dns/` module, `MainConfig.dns` | `hickory-proto`, `hickory-resolver`, `tokio-dstip`, `cryptoki`, `getrandom` | **On** |
+| `dns` | `dns/` module, `MainConfig.dns` | `hickory-proto`, `hickory-resolver`, `tokio-dstip`, `getrandom` | **On** |
+| `dns-hsm` | DNSSEC HSM backing via the keystore custody boundary | `cryptoki` (through `synvoid-dnssec-keystore/pkcs11`; fail-closed, no silent fallback) | **Off** |
 | `icmp-filter` | `icmp_filter.rs`, `MainConfig.icmp_filter` | None | **Off** |
 | `mesh` | `mesh.rs` module, `TunnelConfig.mesh`, `MeshConfig` | `ed25519-dalek`, `openraft` | **On** |
 | `socket-handoff` | Socket handoff support | None | **On** |

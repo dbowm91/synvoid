@@ -122,19 +122,29 @@ if let (Some(nonce), Some(pk)) = (pow_nonce, pow_public_key) {
 }
 ```
 
-### File Permissions for Private Keys
+### File Permissions for Private Keys (Phase 30: owned by `synvoid-dnssec-keystore`)
 
-Always set restrictive permissions on private key files:
+Private-key custody lives in `crates/synvoid-dnssec-keystore/src/keystore.rs`
+— never reimplement key storage in `synvoid-dns`. The keystore writes private
+files atomically (unique temp file in the same directory + fsync + rename)
+with mode `0600` regardless of umask, restricts key dirs to `0700`, and
+refuses overly-permissive private files on load (fail-closed). DNS-side code
+holds only opaque `Arc<SealedSigningKey>` handles or public `KeyMetadata`:
+no `private_key` field access (enforced by `dnssec_keystore_boundary` guards
+and by `#[non_exhaustive]` + crate-private fields, which do not compile
+externally). Tests needing signing handles use
+`SealedSigningKey::generate_ephemeral()`; shape-only tests use
+`from_public_parts()`.
 
-```rust
-use std::fs;
-use std::os::unix::fs::PermissionsExt;
+### HSM Fail-Closed (Phase 30)
 
-let temp_path = path.with_extension("tmp");
-fs::write(&temp_path, &key_data)?;
-fs::set_permissions(&temp_path, fs::Permissions::from_mode(0o600))?;
-fs::rename(&temp_path, path)?;
-```
+PKCS#11 lives behind the keystore `pkcs11`/`hsm` features (off by default;
+`synvoid-dns/hsm`, root `dns-hsm`). Convert config with
+`crate::hsm::keystore_config_from_dns()` — never construct keystore HSM
+config by hand around the PIN (it is zeroized at the boundary and never
+logged). PKCS#11 establishment failures return typed `HsmError` and never
+fall back to software keys; zones requiring HSM must refuse signed answers
+when the backend is unavailable. Mesh trust anchors are `KeyMetadata`-only.
 
 ## DNSSEC Validation by Provider Type
 

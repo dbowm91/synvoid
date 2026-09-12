@@ -27,15 +27,15 @@ The DNS module is gated by the `dns` feature in `Cargo.toml`.
 | `server/zone.rs` | Zone data structures, serial management (RFC 1982) |
 | `server/rate_limit.rs` | Rate limiting (RRL - Response Rate Limiting) |
 | `server/sharded_store.rs` | Sharded zone storage for high concurrency |
-| `dnssec.rs` | DNSSEC types, algorithms, key rotation config |
-| `dnssec_signing.rs` | RRSIG creation, NSEC/NSEC3 record generation |
-| `dnssec_validation.rs` | Signature verification, chain of trust, DS record handling |
-| `dnssec_key_mgmt.rs` | DNSSEC key lifecycle management |
+| `dnssec.rs` | DNSSEC facade (custody types from keystore) + `Nsec3Config` |
+| `dnssec_signing.rs` | Sealed signing entry; RRSIG creation, NSEC/NSEC3 record generation |
+| `dnssec_validation.rs` | Signature verification, chain of trust, DS record handling (public-only) |
+| `dnssec_key_mgmt.rs` | Facade over `synvoid-dnssec-keystore` (key lifecycle lives there) |
 | `tsig.rs` | TSIG authentication for dynamic updates and zone transfers |
 | `resolver.rs` | Recursive DNS resolver using `hickory_resolver::TokioResolver` |
 | `recursive_cache.rs` | Cache for recursive resolver responses |
-| `trust_anchor.rs` | RFC 5011 trust anchor management |
-| `hsm.rs` | HSM-based key storage and signing |
+| `trust_anchor.rs` | RFC 5011 trust anchor management (public-only; stays in `synvoid-dns`) |
+| `hsm.rs` | Facade over `synvoid-dnssec-keystore::hsm` (PKCS#11 opt-in, fail-closed) |
 | `cookie.rs` | RFC 7873 DNS cookies - client authentication via EDNS cookie exchange |
 | `update.rs` | Dynamic DNS updates (RFC 2136) |
 | `transfer.rs` | Zone transfers (AXFR/IXFR) |
@@ -138,10 +138,10 @@ Production-safe transport handling with fail-fast startup, enforced limits, and 
   4. Verify signature using the DNSKEY's algorithm
   5. For authenticated denial of existence, verify NSEC/NSEC3 proofs
 
-**Key Management** (`dnssec_key_mgmt.rs`):
-- KSK (Key Signing Key) / ZSK (Zone Signing Key) separation
+**Key Management** (`synvoid-dnssec-keystore`; Phase 30 extraction, see `dnssec_keystore.md`):
+- KSK (Key Signing Key) / ZSK (Zone Signing Key) separation behind opaque `SealedSigningKey` handles
 - Automatic key rotation with configurable intervals (KSK: 30d, ZSK: 7d)
-- HSM support via `HsmManager` (PKCS#11 backend optional)
+- HSM support via `HsmManager` (PKCS#11 backend opt-in via `hsm`/`dns-hsm`, fail-closed, no silent fallback)
 
 **Trust Anchors** (`trust_anchor.rs`):
 - RFC 5011 automated trust anchor updates

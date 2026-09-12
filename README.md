@@ -12,7 +12,7 @@ The default build includes the WAF/proxy data plane plus mesh networking, DNS, s
 - **Web application firewall** — request inspection for SQL injection, XSS, path traversal, RFI, SSRF, SSTI, command injection, XXE, JWT abuse, request smuggling, LDAP injection, XPath injection, and open redirects.
 - **Abuse and bot controls** — rate limiting, blocked-path rules, threat levels, CSS and proof-of-work challenges, bot classification, honeypot endpoints, tarpitting, and deception listeners.
 - **Administration and observability** — a browser admin UI, authenticated REST API, WebSocket-backed live state, request/system logs, Prometheus-oriented metrics, site and upstream management, alert webhooks, and OpenAPI discovery.
-- **Distributed security services** — the `mesh` feature provides DHT/Raft-backed coordination and threat-intelligence distribution (authority/partition contract in `architecture/distributed_state_contract.md`: canonical Raft state vs advisory DHT, fail-closed quorum behavior, freshness-classified reads). The `dns` feature provides the DNS subsystem, including DNSSEC and encrypted DNS transports.
+- **Distributed security services** — the `mesh` feature provides DHT/Raft-backed coordination and threat-intelligence distribution (authority/partition contract in `architecture/distributed_state_contract.md`: canonical Raft state vs advisory DHT, fail-closed quorum behavior, freshness-classified reads). The `dns` feature provides the DNS subsystem, including DNSSEC and encrypted DNS transports. DNSSEC private keys live behind a dedicated custody boundary (`crates/synvoid-dnssec-keystore`, see `architecture/dnssec_keystore.md`); HSM/PKCS#11 backing is opt-in via `dns-hsm` and fails closed.
 - **Extensibility and auxiliary services** — sandboxed WASM plugins, serverless/app handlers, tunnel/VPN components, YARA integration, and bounded CPU-worker execution paths are present in the workspace and can be enabled/configured as required.
 
 ## Runtime model
@@ -57,7 +57,7 @@ cargo build --release --no-default-features --features mesh
 cargo build --release --no-default-features --features dns
 ```
 
-Additional opt-in feature flags currently include `wireguard`, `icmp-filter`, `flood-ebpf`, `origin_key_exchange`, `audit`, `post-quantum`, `verify-pq`, `tun-rs`, `macos-sandbox`, `fastcgi_streaming`, and `unsafe-native-extensions` (in-process native plugin loading; off by default — the sandboxed WASM runtime needs no feature flag). See `Cargo.toml` for the complete current feature surface. Prefer enabling only the features required by a deployment rather than treating `--all-features` as a deployment profile; several opt-ins are platform- or environment-specific.
+Additional opt-in feature flags currently include `wireguard`, `icmp-filter`, `flood-ebpf`, `origin_key_exchange`, `audit`, `post-quantum`, `verify-pq`, `tun-rs`, `macos-sandbox`, `fastcgi_streaming`, `dns-hsm` (PKCS#11/HSM backing for DNSSEC via the keystore custody boundary; off by default, fails closed), and `unsafe-native-extensions` (in-process native plugin loading; off by default — the sandboxed WASM runtime needs no feature flag). See `Cargo.toml` for the complete current feature surface. Prefer enabling only the features required by a deployment rather than treating `--all-features` as a deployment profile; several opt-ins are platform- or environment-specific.
 
 ## Quick start
 

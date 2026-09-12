@@ -1,7 +1,7 @@
 # Crate Granularity Audit
 
-Status: Phase 29 closure audit (adds `synvoid-jail-runtime`; Phase 28 closure
-text retained below with counts updated). One row per workspace crate
+Status: Phase 30 closure audit (adds `synvoid-dnssec-keystore`; Phase 29
+closure text retained below with counts updated). One row per workspace crate
 from the actual final dependency graph (generated from each `Cargo.toml` plus
 root `Cargo.toml`; LOC via `wc -l` over each crate `src/`).
 
@@ -30,7 +30,7 @@ no sources, not a workspace member, zero references) was removed.
 | `tools/xtask` (1999 LOC) | `cargo xtask verify*` CI orchestration | Keep (tooling isolation) |
 | `tools/synvoid-repo-guards` (226 LOC) | Static repo guards run by CI + `verify_architecture.sh` | Keep (tooling isolation) |
 
-## `synvoid-*` crates (42 members, Phase 29 adds `synvoid-jail-runtime`)
+## `synvoid-*` crates (43 members, Phase 30 adds `synvoid-dnssec-keystore`)
 
 Columns: LOC ≈ `src/` lines; "In-crate rev" = other workspace crates
 depending on it (root app crate depends on all of them as composition
@@ -55,7 +55,8 @@ inputs, so it is not listed per row).
 | synvoid-native-extension | Explicit unsafe in-process native loader + narrow backend trait + non-executing external-host seam (Phase 28) | ~2400 | Yes — production/path/hash/permission gates, ABI checks, generation-aware lifetime, contract-bound validation | Limited (opt-in native deployments) | 0-1 (plugin-runtime optional; root optional) | none (leaf: axum/libloading/metrics only) | Keep | Capability-isolation boundary; `unsafe-native-extensions` feature off by default; `synvoid-mesh`/`synvoid-upload` must never depend on it |
 | synvoid-jail-runtime | Child-side jail execution + dedicated binaries (Phase 29): `WasmJailService`/`YaraJailService`, sandbox-entry sequencing, `synvoid-wasm-jail` + `synvoid-yara-jail` binaries | ~1500 | Yes — digest re-verification, hook-only capabilities, strict sandbox ordering, wrong-kind rejection, fail-closed entry | Limited (jail deployments) | 1 (root facades/shims) | ipc, platform, plugin-runtime (wasm), yara (yara) | Keep | Process-boundary isolation; `wasm`/`yara` features separate engines per binary; never imports root/supervisor/admin/mesh |
 | synvoid-admin | Transport-neutral admin handler logic + DTOs (Phase 21) | 3315 | Yes — mutation/audit contract alignment | Limited | root only | app-server, config, core, ipc, metrics, static-files, waf | Keep | Lets root stay transport composition; frontend contract tested |
-| synvoid-dns | Authoritative/recursive DNS + DNSSEC (feature-gated) | 40281 | Yes — wire codec, DNSSEC, zone lifecycle | Yes | root only | config, core, geoip, mesh, platform, tls, utils | Keep | `dns` feature isolates hickory/cryptoki; largest optional surface |
+| synvoid-dns | Authoritative/recursive DNS + DNSSEC protocol/transport (feature-gated; private-key custody extracted Phase 30) | ~35400 | Yes — wire codec, public-only DNSSEC validation/proofs, zone lifecycle | Yes | root only | config, core, dnssec-keystore, geoip, mesh, platform, tls, utils | Keep | `dns` feature isolates hickory; `hsm` feature gates PKCS#11 via the keystore; largest optional surface |
+| synvoid-dnssec-keystore | DNSSEC private-key custody: sealed generation/storage/rotation/signing/HSM (Phase 30) | ~2600 | Yes — opaque sealed handles, 0600/atomic persistence, fail-closed HSM, KAT/rotation/permission/redaction tests | Limited (DNS deployments) | 1 (dns) | core | Keep | Security boundary; one-way leaf (no hickory/hyper/quinn/sqlite/mesh); `pkcs11`/`hsm` features off by default so normal builds carry no `cryptoki` |
 | synvoid-tls | TLS termination core + ACME | 1963 | Yes — cert lifecycle, ACME DNS/HTTP | Limited | 3 | config | Keep | Crypto-facing boundary; root keeps only server integration |
 | synvoid-http-client | Egress HTTP client pool (+ QUIC marker) | 2131 | Yes — pool, retry, PQC marker | Yes | 9 | config, core | Keep | Egress chokepoint; rustls-native-certs owner |
 | synvoid-upstream | Upstream pool, balancing, health | 2401 | Yes — selection, health gating | Limited | 2 | http-client, utils | Keep | Narrow egress boundary consumed by proxy/tunnel |

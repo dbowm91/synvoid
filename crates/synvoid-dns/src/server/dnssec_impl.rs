@@ -6,37 +6,41 @@ impl DnsServer {
         let dnssec = self.dnssec.as_ref().ok_or("DNSSEC not enabled")?;
         let mut manager = dnssec.write();
 
-        manager.initialize()?;
-        manager.load_keys_from_disk()?;
+        manager.initialize().map_err(|e| e.to_string())?;
+        manager.load_keys_from_disk().map_err(|e| e.to_string())?;
 
-        if manager.key_signing_key.is_none() {
-            let algorithm = self.config.dnssec.algorithm.into();
-            manager.generate_key(
-                algorithm,
-                crate::dnssec::KeyType::KSK,
-                self.config.dnssec.ksk_key_size,
-                365,
-            )?;
+        if manager.active_ksk().is_err() {
+            let algorithm = crate::dnssec::algorithm_from_config(self.config.dnssec.algorithm);
+            manager
+                .generate_key(
+                    algorithm,
+                    crate::dnssec::KeyType::KSK,
+                    self.config.dnssec.ksk_key_size,
+                    365,
+                )
+                .map_err(|e| e.to_string())?;
         }
 
-        if manager.zone_signing_key.is_none() {
-            let algorithm = self.config.dnssec.algorithm.into();
-            manager.generate_key(
-                algorithm,
-                crate::dnssec::KeyType::ZSK,
-                self.config.dnssec.rsa_key_size,
-                90,
-            )?;
+        if manager.active_zsk().is_err() {
+            let algorithm = crate::dnssec::algorithm_from_config(self.config.dnssec.algorithm);
+            manager
+                .generate_key(
+                    algorithm,
+                    crate::dnssec::KeyType::ZSK,
+                    self.config.dnssec.rsa_key_size,
+                    90,
+                )
+                .map_err(|e| e.to_string())?;
         }
 
-        let ksk = manager.key_signing_key.clone();
-        let zsk = manager.zone_signing_key.clone();
+        let ksk = manager.active_ksk().map_err(|e| e.to_string())?;
+        let zsk = manager.active_zsk().map_err(|e| e.to_string())?;
 
         drop(manager);
 
         self.zones.for_each_mut(|zone| {
-            zone.ksk_key = ksk.clone();
-            zone.zsk_key = zsk.clone();
+            zone.ksk_key = Some(Arc::clone(&ksk));
+            zone.zsk_key = Some(Arc::clone(&zsk));
             tracing::info!("Initialized DNSSEC keys for zone: {}", zone.origin);
         });
 
@@ -122,7 +126,7 @@ impl DnsServer {
     pub fn export_ds_records(&self, zone_name: &str) -> Result<Vec<DsRecordExport>, String> {
         let zone = self.zones.get(zone_name).ok_or("Zone not found")?;
 
-        let ksk = zone.ksk_key.as_ref().ok_or("KSK not configured")?;
+        let ksk = zone.ksk_key.as_deref().ok_or("KSK not configured")?;
 
         let mut exports = Vec::new();
 
@@ -563,12 +567,12 @@ impl DnsServer {
         let mut rrsig = Vec::new();
 
         rrsig.extend_from_slice(&u16::from(record.record_type).to_be_bytes());
-        rrsig.push(key.algorithm.to_u8());
+        rrsig.push(key.algorithm().to_u8());
         rrsig.push(labels);
         rrsig.extend_from_slice(&record.ttl.to_be_bytes());
         rrsig.extend_from_slice(&(sig_expire as u32).to_be_bytes());
         rrsig.extend_from_slice(&(sig_inception as u32).to_be_bytes());
-        rrsig.extend_from_slice(&key.key_tag.to_be_bytes());
+        rrsig.extend_from_slice(&key.key_tag().to_be_bytes());
 
         let signer = signer_name.trim_end_matches('.');
         for part in signer.split('.') {
@@ -623,7 +627,7 @@ impl DnsServer {
     pub fn get_dnssec_status(&self) -> Option<crate::dnssec::DnsSecKeyStatus> {
         self.dnssec.as_ref().and_then(|d| {
             let manager = d.read();
-            manager.get_key_status().ok()
+            manager.key_status().ok()
         })
     }
 }

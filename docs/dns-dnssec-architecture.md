@@ -64,9 +64,21 @@ The AD bit is set on responses only when:
 
 In forwarding mode AD is passed through from upstream. In authoritative mode AD is **never set** — authoritative servers do not perform validation; AD is a recursive resolver signal (per RFC 4035 §3.1.6).
 
+## Key Custody (Phase 30)
+
+Authoritative signing keys are owned by `crates/synvoid-dnssec-keystore/`
+(opaque sealed handles, `0600` atomic persistence, rotation lifecycle).
+The DNS crate holds no private key bytes: zones keep sealed handles and
+sign via the keystore; trust anchors and mesh anchors are public-only.
+HSM/PKCS#11 backing is opt-in (`dns-hsm` feature) and fails closed with
+no silent software fallback. Details: `architecture/dnssec_keystore.md`.
+
 ## Relevant Source
 
-- `crates/synvoid-dns/src/dnssec.rs` — NSEC3 generation, base32 encoding, key tag calculation
+- `crates/synvoid-dnssec-keystore/src/` — sealed keys, keystore, HSM backends, DS digests
+- `crates/synvoid-dns/src/dnssec.rs` — custody facade + `Nsec3Config`
+- `crates/synvoid-dns/src/dnssec_signing.rs` — sealed signing entry, NSEC3 generation, base32 encoding
+- `crates/synvoid-dns/src/dnssec_validation.rs` — key tag calculation, DS digests, canonicalization
 - `crates/synvoid-dns/src/trust_anchor.rs` — RFC 5011 state machine
 - `crates/synvoid-dns/src/server/dnssec_impl.rs` — DNSSEC response assembly
 - `crates/synvoid-dns/src/server/dnssec_impl.rs` — Server-side NSEC3 synthesis

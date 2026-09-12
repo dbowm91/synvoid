@@ -169,7 +169,7 @@ From the root `Cargo.toml`. All four compile profiles must build (`cargo check -
 |---------|---------|---------|
 | `socket-handoff` | ✅ | Socket FD transfer between processes |
 | `mesh` | ✅ | Mesh networking, DHT, Raft consensus (`openraft`) |
-| `dns` | ✅ | DNS server: DNSSEC, DoT/DoH/DoQ (`hickory`, `cryptoki` HSM) |
+| `dns` | ✅ | DNS server: DNSSEC, DoT/DoH/DoQ (`hickory`; private-key custody in `synvoid-dnssec-keystore`, HSM via opt-in `dns-hsm`) |
 | `erased_pool` | ✅ | Type-erased HTTP client pool |
 | `swagger-ui` | ✅ | OpenAPI/Swagger UI for admin API |
 | `post-quantum` | — | Marker: PQ TLS via rustls `prefer-post-quantum` (upstream connections) |

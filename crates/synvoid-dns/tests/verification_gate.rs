@@ -67,24 +67,9 @@ fn build_test_zone() -> Zone {
 }
 
 fn ed25519_test_key() -> ZoneSigningKey {
-    let mut private_bytes = [0u8; 32];
-    getrandom::getrandom(&mut private_bytes).expect("getrandom failed");
-    let signing_key = ed25519_dalek::SigningKey::from_bytes(&private_bytes);
-    let verifying_key = signing_key.verifying_key().to_bytes().to_vec();
-    let private_bytes = signing_key.to_bytes().to_vec();
-
-    ZoneSigningKey {
-        key_id: "test-key".to_string(),
-        algorithm: Algorithm::Ed25519,
-        key_type: KeyType::ZSK,
-        created_at: 0,
-        expires_at: u64::MAX,
-        public_key: verifying_key,
-        private_key: private_bytes,
-        key_tag: 12345,
-        flags: 256,
-        key_size: None,
-    }
+    // Phase 30: sealed ephemeral handle from the custody boundary.
+    ZoneSigningKey::generate_ephemeral(Algorithm::Ed25519, KeyType::ZSK)
+        .expect("ephemeral test key must generate")
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -468,7 +453,7 @@ fn rrsig_creation_with_valid_key() {
 
     // Key tag at offset 16 (2+1+1+4+4+4)
     let key_tag = u16::from_be_bytes([rrsig[16], rrsig[17]]);
-    assert_eq!(key_tag, key.key_tag, "key tag must match");
+    assert_eq!(key_tag, key.key_tag(), "key tag must match");
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -1008,26 +993,26 @@ fn transport_class_cache_isolation() {
 fn dnskey_flags_ksk_zsk_distinct() {
     use synvoid_dns::dnssec::{KeyType, ZoneSigningKey};
 
-    let ksk = ZoneSigningKey {
-        key_id: "ksk".into(),
-        algorithm: Algorithm::Ed25519,
-        key_type: KeyType::KSK,
-        created_at: 0,
-        expires_at: u64::MAX,
-        public_key: vec![0u8; 32],
-        private_key: vec![0u8; 32],
-        key_tag: 0,
-        flags: 257, // SEP=1
-        key_size: None,
-    };
-    let zsk = ZoneSigningKey {
-        flags: 256, // ZSK
-        ..ksk.clone()
-    };
+    let ksk = ZoneSigningKey::from_public_parts(
+        "ksk".into(),
+        Algorithm::Ed25519,
+        KeyType::KSK,
+        vec![0u8; 32],
+        0,
+        257, // SEP=1
+    );
+    let zsk = ZoneSigningKey::from_public_parts(
+        "zsk".into(),
+        Algorithm::Ed25519,
+        KeyType::ZSK,
+        vec![0u8; 32],
+        0,
+        256, // ZSK
+    );
 
-    assert_eq!(ksk.flags, 257, "KSK must have SEP bit set (257)");
-    assert_eq!(zsk.flags, 256, "ZSK must not have SEP bit (256)");
-    assert_ne!(ksk.flags, zsk.flags, "KSK and ZSK flags must differ");
+    assert_eq!(ksk.flags(), 257, "KSK must have SEP bit set (257)");
+    assert_eq!(zsk.flags(), 256, "ZSK must not have SEP bit (256)");
+    assert_ne!(ksk.flags(), zsk.flags(), "KSK and ZSK flags must differ");
 }
 
 /// RFC 4034 §2: DNSKEY RDATA protocol field is always 3.
@@ -1040,19 +1025,26 @@ fn dnskey_protocol_is_3() {
     assert_eq!(rdata[2], 3, "DNSKEY protocol field must be 3");
 
     // ZSK
-    let zsk = ZoneSigningKey {
-        key_type: KeyType::ZSK,
-        ..key.clone()
-    };
+    let zsk = ZoneSigningKey::from_public_parts(
+        "test-key".to_string(),
+        Algorithm::Ed25519,
+        KeyType::ZSK,
+        key.public_key().to_vec(),
+        key.key_tag(),
+        256,
+    );
     let rdata2 = synvoid_dns::dnssec_validation::compute_dnskey(&zsk);
     assert_eq!(rdata2[2], 3, "DNSKEY protocol field must be 3 (ZSK)");
 
     // KSK
-    let ksk = ZoneSigningKey {
-        key_type: KeyType::KSK,
-        flags: 257,
-        ..key
-    };
+    let ksk = ZoneSigningKey::from_public_parts(
+        "test-key".to_string(),
+        Algorithm::Ed25519,
+        KeyType::KSK,
+        key.public_key().to_vec(),
+        key.key_tag(),
+        257,
+    );
     let rdata3 = synvoid_dns::dnssec_validation::compute_dnskey(&ksk);
     assert_eq!(rdata3[2], 3, "DNSKEY protocol field must be 3 (KSK)");
 }
@@ -1115,25 +1107,21 @@ fn rrsig_labels_field_matches_owner_name() {
 fn ds_digest_lengths_match_rfc_6605() {
     use synvoid_dns::dnssec::{KeyType, ZoneSigningKey};
 
-    let key = ZoneSigningKey {
-        key_id: "k".into(),
-        algorithm: Algorithm::Ed25519,
-        key_type: KeyType::ZSK,
-        created_at: 0,
-        expires_at: u64::MAX,
-        public_key: vec![0u8; 32],
-        private_key: vec![0u8; 32],
-        key_tag: 0,
-        flags: 256,
-        key_size: None,
-    };
+    let key = ZoneSigningKey::from_public_parts(
+        "k".into(),
+        Algorithm::Ed25519,
+        KeyType::ZSK,
+        vec![0u8; 32],
+        0,
+        256,
+    );
 
     let sha1 = synvoid_dns::dnssec_validation::compute_ds_digest(
         DsDigestType::Sha1.to_u8(),
         256,
         3,
         15,
-        &key.public_key,
+        key.public_key(),
     )
     .expect("SHA-1 digest must succeed");
     let sha256 = synvoid_dns::dnssec_validation::compute_ds_digest(
@@ -1141,7 +1129,7 @@ fn ds_digest_lengths_match_rfc_6605() {
         256,
         3,
         15,
-        &key.public_key,
+        key.public_key(),
     )
     .expect("SHA-256 digest must succeed");
     let sha384 = synvoid_dns::dnssec_validation::compute_ds_digest(
@@ -1149,7 +1137,7 @@ fn ds_digest_lengths_match_rfc_6605() {
         256,
         3,
         15,
-        &key.public_key,
+        key.public_key(),
     )
     .expect("SHA-384 digest must succeed");
     assert_eq!(sha1.len(), 20, "SHA-1 DS digest must be 20 bytes");

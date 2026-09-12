@@ -231,18 +231,14 @@ pub(super) fn encode_rr(
             } else {
                 crate::dnssec::KeyType::ZSK
             };
-            compute_dnskey(&crate::dnssec::ZoneSigningKey {
-                key_id: String::new(),
+            compute_dnskey(&crate::dnssec::ZoneSigningKey::from_public_parts(
+                String::new(),
                 algorithm,
                 key_type,
-                created_at: 0,
-                expires_at: 0,
                 public_key,
-                private_key: Vec::new(),
-                key_tag: 0,
+                0,
                 flags,
-                key_size: None,
-            })
+            ))
         }
         RecordType::DS => hex::decode(&record.value).map_err(|_| "Invalid DS hex value")?,
         RecordType::PTR => {

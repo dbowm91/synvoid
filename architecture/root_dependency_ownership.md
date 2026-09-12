@@ -103,7 +103,7 @@ reference fails the guard until the row is reclassified with a reason.
 | rustls-pki-types | — | migration_blocker | default | No direct root consumer in src/ (measured 2026-09-12); canonical use in domain crates; retained pending Phase 31 per-crate feature audit | Phase 31 removal audit | — |
 | aws-lc-rs | — | migration_blocker | default | No direct root consumer in src/ (measured 2026-09-12); retained for workspace TLS feature unification (unstable for ML-DSA); direct use in synvoid-tls | Phase 31 per-crate feature audit | — |
 | subtle | admin, bin, process, waf | composition_runtime | default | Constant-time comparisons for security | keep | admin, bin, process, waf |
-| cryptoki | — | migration_blocker | dns | No direct root consumer in src/ (measured 2026-09-12); retained for dns feature-surface wiring (dep:cryptoki, PKCS#11 HSM) | Phase 31 removal audit | — |
+| cryptoki | — | remove_candidate | — | Phase 30: removed from root (no `dep:cryptoki` edge). PKCS#11/HSM ownership moved to `synvoid-dnssec-keystore` behind its opt-in `pkcs11`/`hsm` features (root `dns-hsm`); normal builds carry no PKCS#11 provider surface | Phase 30 extraction | — |
 | quinn | http3, tunnel | composition_runtime | default | QUIC protocol implementation | keep | tcp |
 | zip | serverless | composition_runtime | default | ZIP archive handling for WASM bundles | keep | platform |
 | libloading | platform (Windows Wintun only) | composition_runtime | windows-target only | Independent platform use only (src/platform/windows/wintun.rs, `#[cfg(windows)]`). Must NOT be used for plugin loading: plugin loader authority moved to synvoid-native-extension in Phase 28 | keep | platform |

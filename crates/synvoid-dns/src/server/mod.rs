@@ -489,13 +489,17 @@ impl fmt::Display for DnssecState {
     }
 }
 
+/// Phase 30: zone key handles are opaque [`SealedSigningKey`] references.
+/// Cloning a `Zone` clones the `Arc` handles, never raw private bytes; the
+/// query path signs via `handle.sign(canonical)` and builds DNSKEY/DS via
+/// public metadata. Private bytes are not accessible from this module.
 #[derive(Debug, Clone)]
 pub struct Zone {
     pub origin: String,
     pub records: HashMap<(String, RecordType), Vec<DnsZoneRecord>>,
     pub serial: u32,
-    pub ksk_key: Option<super::dnssec::ZoneSigningKey>,
-    pub zsk_key: Option<super::dnssec::ZoneSigningKey>,
+    pub ksk_key: Option<Arc<super::dnssec::ZoneSigningKey>>,
+    pub zsk_key: Option<Arc<super::dnssec::ZoneSigningKey>>,
     pub dnskey_ttl: Option<u32>,
     pub nsec3_enabled: bool,
     pub nsec_enabled: bool,
@@ -1807,10 +1811,14 @@ impl DnsServer {
             (None, None)
         };
 
+        // Phase 30: HSM establishment is fail-closed. A PKCS#11 failure
+        // never falls back to software keys; zones requiring HSM must
+        // refuse signed answers (callers check `is_available()`).
         let hsm_manager = if config.dnssec.enabled || config.dnssec.hsm.enabled {
             let hsm = super::hsm::HsmManager::new();
-            if let Err(e) = hsm.initialize(&config.dnssec.hsm) {
-                tracing::warn!("Failed to initialize HSM: {}", e);
+            let ks_config = super::hsm::keystore_config_from_dns(&config.dnssec.hsm);
+            if let Err(e) = hsm.initialize(&ks_config) {
+                tracing::warn!("Failed to initialize HSM (fail-closed, no fallback): {}", e);
             }
             Some(hsm)
         } else {

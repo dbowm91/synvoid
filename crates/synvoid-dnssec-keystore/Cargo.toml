@@ -1,0 +1,37 @@
+[package]
+name = "synvoid-dnssec-keystore"
+version = "0.1.0"
+edition = "2021"
+license.workspace = true
+repository.workspace = true
+description = "DNSSEC private-key custody boundary: generation/signing/HSM/software storage (Phase 30 extraction)"
+
+[features]
+default = []
+# Optional PKCS#11/HSM backend. Off by default so normal software-key builds
+# carry no dynamic library/provider loading surface (Phase 30 Part C).
+pkcs11 = ["dep:cryptoki"]
+# Operator-facing alias for the HSM backend.
+hsm = ["pkcs11"]
+
+[dependencies]
+synvoid-core = { path = "../synvoid-core", version = "0.1" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tracing = "0.1"
+parking_lot = "0.12"
+zeroize = { version = "1", features = ["derive"] }
+ed25519-dalek = { version = "2" }
+rsa = "0.9"
+sha2 = { version = "0.10", features = ["oid"] }
+sha1 = "0.10"
+digest = { version = "0.10", features = ["oid"] }
+getrandom = { version = "0.2", features = ["std"] }
+rand_core_06 = { package = "rand_core", version = "0.6" }
+subtle = "2"
+tokio = { version = "1", features = ["rt", "time", "sync", "macros"] }
+cryptoki = { version = "0.12", optional = true }
+
+[dev-dependencies]
+tempfile = "3"

@@ -14,64 +14,33 @@ use synvoid_dns::dnssec_validation::{
 use synvoid_dns::server::{DnsZoneRecord, RecordType, Zone};
 
 // ── Helpers ─────────────────────────────────────────────────────────────
+// Phase 30: sealed handles come from the custody boundary. Signing tests use
+// in-memory ephemeral keys (private bytes never leave the handle);
+// public-shape tests use `from_public_parts`.
 
 fn ed25519_ksk() -> ZoneSigningKey {
-    let mut priv_bytes = [0u8; 32];
-    getrandom::getrandom(&mut priv_bytes).expect("getrandom");
-    let signing_key = ed25519_dalek::SigningKey::from_bytes(&priv_bytes);
-    let verifying = signing_key.verifying_key().to_bytes().to_vec();
-    let private = signing_key.to_bytes().to_vec();
-    ZoneSigningKey {
-        key_id: "test-ksk".to_string(),
-        algorithm: Algorithm::Ed25519,
-        key_type: KeyType::KSK,
-        created_at: 0,
-        expires_at: u64::MAX,
-        public_key: verifying,
-        private_key: private,
-        key_tag: 12345,
-        flags: 257,
-        key_size: None,
-    }
+    ZoneSigningKey::generate_ephemeral(Algorithm::Ed25519, KeyType::KSK)
+        .expect("ephemeral KSK must generate")
 }
 
 fn ed25519_zsk() -> ZoneSigningKey {
-    let mut priv_bytes = [0u8; 32];
-    getrandom::getrandom(&mut priv_bytes).expect("getrandom");
-    let signing_key = ed25519_dalek::SigningKey::from_bytes(&priv_bytes);
-    let verifying = signing_key.verifying_key().to_bytes().to_vec();
-    let private = signing_key.to_bytes().to_vec();
-    ZoneSigningKey {
-        key_id: "test-zsk".to_string(),
-        algorithm: Algorithm::Ed25519,
-        key_type: KeyType::ZSK,
-        created_at: 0,
-        expires_at: u64::MAX,
-        public_key: verifying,
-        private_key: private,
-        key_tag: 12346,
-        flags: 256,
-        key_size: None,
-    }
+    ZoneSigningKey::generate_ephemeral(Algorithm::Ed25519, KeyType::ZSK)
+        .expect("ephemeral ZSK must generate")
 }
 
 #[allow(dead_code)]
 fn rsa_test_key() -> ZoneSigningKey {
-    // Use a fixed 256-byte RSA public key representation for testing
-    // (avoids rand_core version conflicts between rsa and getrandom)
+    // Public-only shape for RSA wire-format tests (no private material).
     let pub_key: Vec<u8> = (0..256).map(|i| (i % 251) as u8).collect();
-    ZoneSigningKey {
-        key_id: "test-rsa".to_string(),
-        algorithm: Algorithm::RSA,
-        key_type: KeyType::ZSK,
-        created_at: 0,
-        expires_at: u64::MAX,
-        public_key: pub_key.clone(),
-        private_key: vec![0u8; 256],
-        key_tag: 54321,
-        flags: 256,
-        key_size: Some(2048),
-    }
+    let key_tag = synvoid_dns::dnssec::calculate_key_tag(256, 3, 8, &pub_key);
+    ZoneSigningKey::from_public_parts(
+        "test-rsa".to_string(),
+        Algorithm::RSA,
+        KeyType::ZSK,
+        pub_key,
+        key_tag,
+        256,
+    )
 }
 
 fn build_test_zone() -> Zone {
@@ -199,9 +168,9 @@ fn rrsig_construction_shape() {
         sig_inc
     );
 
-    // key_tag = 12346
+    // key_tag must match the signing key's tag.
     let kt = u16::from_be_bytes(rrsig[16..18].try_into().unwrap());
-    assert_eq!(kt, 12346, "key_tag must match ZSK");
+    assert_eq!(kt, key.key_tag(), "key_tag must match ZSK");
 
     // Signer name is wire-encoded "signed.test."
     // Skip signer name to reach signature
@@ -222,11 +191,21 @@ fn rrsig_construction_shape() {
 /// RRSIG construction shape with different key tag.
 #[test]
 fn rrsig_different_key_tag() {
-    let mut key = ed25519_zsk();
-    key.key_tag = 9999;
+    // Sealed key tags are immutable (private-field boundary); the shape path
+    // is exercised with a public-only handle carrying tag 9999 while the
+    // signature itself comes from a real sealed key.
+    let key = ed25519_zsk();
     let data = b"rrsig tag test";
     let signature = sign_data(data, &key).unwrap();
-    let rrsig = create_rrsig_record(&key, 1, 300, "signed.test.", &signature, 2);
+    let shape_key = ZoneSigningKey::from_public_parts(
+        "shape".to_string(),
+        Algorithm::Ed25519,
+        KeyType::ZSK,
+        key.public_key().to_vec(),
+        9999,
+        256,
+    );
+    let rrsig = create_rrsig_record(&shape_key, 1, 300, "signed.test.", &signature, 2);
 
     let kt = u16::from_be_bytes(rrsig[16..18].try_into().unwrap());
     assert_eq!(kt, 9999, "key_tag must match");
