@@ -1,14 +1,16 @@
-//! Re-export the canonical unsafe native loader from the plugin-runtime crate.
+//! Pure-facade re-export of the canonical unsafe native loader.
 //!
-//! The root crate delegates to `synvoid_plugin_runtime::unsafe_native_loader`
-//! for all loading logic. This module exists only so that `src/plugin/mod.rs`
-//! can refer to `unsafe_native_loader::load_plugin_full` without adding a
-//! direct dependency on the runtime crate at every call site.
+//! Phase 28: loading authority lives in `synvoid-native-extension` and is
+//! re-exported through `synvoid_plugin_runtime::unsafe_native_loader`. This
+//! module contains no loading logic: it only re-exports the extension status
+//! types and delegates `load_plugin_full` to the runtime facade (which, in
+//! builds without the `unsafe-native-extensions` feature, always reports
+//! `Unsupported` instead of loading).
 
 pub use synvoid_plugin_runtime::unsafe_native_loader::UnsafeNativeExtension;
 pub use synvoid_plugin_runtime::unsafe_native_loader::UnsafeNativeExtensionStatus;
 
-/// Load an unsafe native extension, delegating entirely to the runtime crate.
+/// Load an unsafe native extension, delegating entirely to the runtime facade.
 pub fn load_plugin_full(
     path: &std::path::Path,
     allowed_dirs: &[String],

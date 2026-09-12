@@ -1,0 +1,20 @@
+[package]
+name = "synvoid-native-extension"
+version = "0.1.0"
+edition = "2021"
+license.workspace = true
+repository.workspace = true
+description = "Explicit unsafe in-process native extension loader (Phase 28 capability isolation)"
+
+[dependencies]
+axum = "0.8"
+libloading = "0.8"
+parking_lot = "0.12"
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
+thiserror = "2"
+tracing = "0.1"
+metrics = "0.22"
+
+[dev-dependencies]
+tempfile = "3"

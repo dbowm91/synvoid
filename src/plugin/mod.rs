@@ -16,6 +16,17 @@
 
 pub mod unsafe_native_loader;
 
+/// Narrow native-extension backend wiring (Phase 28).
+///
+/// Available only with the `unsafe-native-extensions` feature. The root
+/// composition may inject a backend via `PluginManager::with_native_backend`;
+/// request-path code stays on the narrow trait and never sees loader handles.
+/// Re-exported from the canonical `synvoid-native-extension` crate directly
+/// so the capability owner is explicit at the composition root.
+#[cfg(feature = "unsafe-native-extensions")]
+pub use synvoid_native_extension::{
+    InProcessNativeBackend, NativeExtensionBackend, NativeExtensionHandle,
+};
 pub use synvoid_plugin_runtime::plugin_manager::{
     AxumPluginError, PluginManager, PluginManagerLifecycle, UnsafeNativePluginError,
 };

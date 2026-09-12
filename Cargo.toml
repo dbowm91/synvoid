@@ -41,6 +41,11 @@ macos-sandbox = ["synvoid-admin/macos-sandbox"]  # Enable macOS sandbox enforcem
 test-utils = []
 swagger-ui = ["dep:utoipa-swagger-ui"]
 fastcgi_streaming = []  # Additive, opt-in: streaming FastCGI response handling (no default impact)
+# Phase 28: explicit opt-in for in-process unsafe native extensions. Off by
+# default so default builds carry no shared-library loader for plugins.
+# (Independent platform uses of libloading such as Windows Wintun keep working;
+# the isolation target is the plugin-runtime capability, not the crate universe.)
+unsafe-native-extensions = ["synvoid-plugin-runtime/unsafe-native-extensions", "dep:synvoid-native-extension"]
 
 [patch.crates-io]
 # Phase 25: direct Wasmtime stays at 42.0.2 via this Git patch (crates.io has no
@@ -55,7 +60,7 @@ fastcgi_streaming = []  # Additive, opt-in: streaming FastCGI response handling 
 wasmtime = { git = "https://github.com/bytecodealliance/wasmtime", tag = "v42.0.2" }
 
 [workspace]
-members = [".", "pqc", "crates/synvoid-wasm-pow", "admin-ui", "examples/dynamic-plugin-example", "examples/embedded-app-example", "fuzz", "crates/synvoid-utils", "crates/synvoid-config", "crates/synvoid-core", "crates/synvoid-auth", "crates/synvoid-challenge", "crates/synvoid-tarpit", "crates/synvoid-waf", "crates/synvoid-proxy-cache", "crates/synvoid-tls", "crates/synvoid-plugin-runtime", "crates/synvoid-http-client", "crates/synvoid-serverless", "crates/synvoid-geoip", "crates/synvoid-integrity", "crates/synvoid-upstream", "crates/synvoid-tunnel", "crates/synvoid-proxy", "crates/synvoid-http", "crates/synvoid-http3", "crates/synvoid-dns", "crates/synvoid-admin", "crates/synvoid-mesh", "crates/synvoid-mesh-protocol", "crates/synvoid-app-handlers", "crates/synvoid-platform", "crates/synvoid-cli", "crates/synvoid-metrics", "crates/synvoid-theme", "crates/synvoid-icmp-filter", "crates/synvoid-honeypot", "crates/synvoid-upload", "crates/synvoid-yara", "crates/synvoid-ipc", "crates/synvoid-block-store", "crates/synvoid-app-server", "crates/synvoid-vpn-client", "crates/synvoid-static-files", "crates/synvoid-filter", "tools/synvoid-repo-guards", "tools/xtask"]
+members = [".", "pqc", "crates/synvoid-wasm-pow", "admin-ui", "examples/dynamic-plugin-example", "examples/embedded-app-example", "fuzz", "crates/synvoid-utils", "crates/synvoid-config", "crates/synvoid-core", "crates/synvoid-auth", "crates/synvoid-challenge", "crates/synvoid-tarpit", "crates/synvoid-waf", "crates/synvoid-proxy-cache", "crates/synvoid-tls", "crates/synvoid-plugin-runtime", "crates/synvoid-native-extension", "crates/synvoid-http-client", "crates/synvoid-serverless", "crates/synvoid-geoip", "crates/synvoid-integrity", "crates/synvoid-upstream", "crates/synvoid-tunnel", "crates/synvoid-proxy", "crates/synvoid-http", "crates/synvoid-http3", "crates/synvoid-dns", "crates/synvoid-admin", "crates/synvoid-mesh", "crates/synvoid-mesh-protocol", "crates/synvoid-app-handlers", "crates/synvoid-platform", "crates/synvoid-cli", "crates/synvoid-metrics", "crates/synvoid-theme", "crates/synvoid-icmp-filter", "crates/synvoid-honeypot", "crates/synvoid-upload", "crates/synvoid-yara", "crates/synvoid-ipc", "crates/synvoid-block-store", "crates/synvoid-app-server", "crates/synvoid-vpn-client", "crates/synvoid-static-files", "crates/synvoid-filter", "tools/synvoid-repo-guards", "tools/xtask"]
 
 [workspace.package]
 license = "MIT"
@@ -193,8 +198,10 @@ quinn = { version = "0.11", features = ["runtime-tokio"] }
 # maxminddb: removed; owned by synvoid-geoip (see plans/root_dependency_ownership.md)
 zip = "2"
 
-# Dynamic plugin loading
-libloading = "0.8"
+# Dynamic plugin loading lives in synvoid-native-extension (Phase 28, opt-in via
+# the `unsafe-native-extensions` feature). There is no unconditional root
+# `libloading` edge: the only remaining direct use is the Windows Wintun
+# loader (src/platform/windows/wintun.rs, #[cfg(windows)]), scoped below.
 
 synvoid-utils = { path = "crates/synvoid-utils", features = ["buffer"] , version = "0.1" }
 synvoid-core = { path = "crates/synvoid-core", features = ["utoipa"] , version = "0.1" }
@@ -203,6 +210,7 @@ synvoid-auth = { path = "crates/synvoid-auth" , version = "0.1" }
 synvoid-challenge = { path = "crates/synvoid-challenge" , version = "0.1" }
 synvoid-waf = { path = "crates/synvoid-waf" , version = "0.1" }
 synvoid-plugin-runtime = { path = "crates/synvoid-plugin-runtime" , version = "0.1" }
+synvoid-native-extension = { path = "crates/synvoid-native-extension", optional = true , version = "0.1" }
 synvoid-tls = { path = "crates/synvoid-tls" , version = "0.1" }
 synvoid-proxy-cache = { path = "crates/synvoid-proxy-cache" , version = "0.1" }
 synvoid-admin = { path = "crates/synvoid-admin" , version = "0.1" }
@@ -280,6 +288,12 @@ async-stream = "0.3.6"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 aya = { version = "0.13", optional = true }
+
+[target.'cfg(windows)'.dependencies]
+# Phase 28: independent platform use only (Wintun DLL loading). Plugin loader
+# authority lives in synvoid-native-extension; this edge must not be used for
+# plugin loading.
+libloading = "0.8"
 
 [build-dependencies]
 tonic-prost-build = "0.14"

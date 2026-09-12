@@ -430,7 +430,16 @@ pub extern "C" fn create_router() -> *mut Router<()> {
 
 ### Configuration
 
-Unsafe native extensions are **disabled by default**. In production, loading requires explicit operator risk acknowledgement.
+Unsafe native extensions are **disabled by default** at both layers: the
+`unsafe-native-extensions` compile feature is off by default (default builds
+carry no shared-library loader for plugins — the sandboxed WASM runtime
+links no `libloading`), and runtime loading is disabled by default in all
+modes. To use in-process native extensions, rebuild with
+`--features unsafe-native-extensions` AND enable them at runtime. In
+production, loading additionally requires explicit operator risk
+acknowledgement. A config that enables native extensions in a binary built
+without the feature fails closed: startup logs an explicit error and every
+load reports `Unsupported`.
 
 ```toml
 [plugins]
@@ -492,7 +501,9 @@ In-process native extensions should be treated as a development convenience or t
 
 ### Lifecycle and Library Handle Safety
 
-The `UnsafeNativeExtension` struct retains an `Arc<libloading::Library>` handle for the lifetime of the extension. This prevents use-after-free: the shared library cannot be unloaded while any plugin-derived router or handler may still execute.
+The `UnsafeNativeExtension` struct retains an `Arc<libloading::Library>` handle for the lifetime of the extension, and every derived router carries its own keep-alive. This prevents use-after-free: the shared library cannot be unloaded while any plugin-derived router or handler may still execute.
+
+Panic containment is limited: `catch_unwind` around the factory call catches Rust panics only. Arbitrary native undefined behavior can still corrupt or crash the host process — in-process native code is never sandboxed.
 
 Hot-reload for native extensions is **gated separately** from WASM hot-reload via `hot_reload_enabled`. When a native extension is reloaded, the old library stays loaded until all in-flight references are dropped.
 

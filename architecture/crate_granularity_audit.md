@@ -1,8 +1,9 @@
 # Crate Granularity Audit
 
-Status: Phase 24 closure audit. One row per workspace crate from the actual
-final dependency graph (generated from each `Cargo.toml` plus root
-`Cargo.toml`; LOC via `wc -l` over each crate `src/`).
+Status: Phase 28 closure audit (adds `synvoid-native-extension`; Phase 24
+closure text retained below with counts updated). One row per workspace crate
+from the actual final dependency graph (generated from each `Cargo.toml` plus
+root `Cargo.toml`; LOC via `wc -l` over each crate `src/`).
 
 Retain rule (from the phase plan): keep a crate when it provides one or more
 of independently testable invariants/security boundary, reusable/public API,
@@ -29,7 +30,7 @@ no sources, not a workspace member, zero references) was removed.
 | `tools/xtask` (1999 LOC) | `cargo xtask verify*` CI orchestration | Keep (tooling isolation) |
 | `tools/synvoid-repo-guards` (226 LOC) | Static repo guards run by CI + `verify_architecture.sh` | Keep (tooling isolation) |
 
-## `synvoid-*` crates (40 members, Phase 27 adds `synvoid-mesh-protocol`)
+## `synvoid-*` crates (41 members, Phase 28 adds `synvoid-native-extension`)
 
 Columns: LOC ≈ `src/` lines; "In-crate rev" = other workspace crates
 depending on it (root app crate depends on all of them as composition
@@ -50,7 +51,8 @@ inputs, so it is not listed per row).
 | synvoid-mesh-protocol | Stable mesh wire/identity vocabulary: constants, `HybridSignature` envelope, Ed25519 `ProtocolSigner` verification, replay protection, threat taxonomy, framing (Phase 27) | ~900 | Yes — wire-compat golden vectors, fail-closed framing, deterministic verification | Yes — verification-only consumers without DHT/Raft/SQLite/YARA | 1 (mesh) + root feed verification | none (leaf by design) | Keep | Dependency-isolation boundary; strict budget guard (`mesh_protocol_boundary`); `synvoid-mesh` re-exports compat paths |
 | synvoid-block-store | Enforcement block state + provenance + cursors | 8530 | Yes — capacity, expiry, replay, concurrency | Limited | root only | config, core, mesh, utils, waf | Keep | Enforcement-state boundary; worker admission reads this, not TIM |
 | synvoid-ipc | IPC transport + jail protocol/supervision (Phase 22) | 12420 | Yes — framed protocol, digests, restart bounds, fail-closed routing | Limited | 4 | config, metrics, platform, tls, utils | Keep | Trust boundary for process isolation; versioned wire protocol |
-| synvoid-plugin-runtime | WASM runtime, sandbox, instance pool, manifests | 19736 | Yes — capability gating, ABI boundary, reload prepare-commit | Limited | 4 | utils | Keep | Sandbox boundary; wasmtime version patch point |
+| synvoid-plugin-runtime | WASM runtime, sandbox, instance pool, manifests (+ optional native facade) | 19736 | Yes — capability gating, ABI boundary, reload prepare-commit | Limited | 4 | utils (+ optional native-extension) | Keep | Sandbox boundary; wasmtime version patch point; default graph links no shared-library loader (Phase 28) |
+| synvoid-native-extension | Explicit unsafe in-process native loader + narrow backend trait + non-executing external-host seam (Phase 28) | ~2400 | Yes — production/path/hash/permission gates, ABI checks, generation-aware lifetime, contract-bound validation | Limited (opt-in native deployments) | 0-1 (plugin-runtime optional; root optional) | none (leaf: axum/libloading/metrics only) | Keep | Capability-isolation boundary; `unsafe-native-extensions` feature off by default; `synvoid-mesh`/`synvoid-upload` must never depend on it |
 | synvoid-admin | Transport-neutral admin handler logic + DTOs (Phase 21) | 3315 | Yes — mutation/audit contract alignment | Limited | root only | app-server, config, core, ipc, metrics, static-files, waf | Keep | Lets root stay transport composition; frontend contract tested |
 | synvoid-dns | Authoritative/recursive DNS + DNSSEC (feature-gated) | 40281 | Yes — wire codec, DNSSEC, zone lifecycle | Yes | root only | config, core, geoip, mesh, platform, tls, utils | Keep | `dns` feature isolates hickory/cryptoki; largest optional surface |
 | synvoid-tls | TLS termination core + ACME | 1963 | Yes — cert lifecycle, ACME DNS/HTTP | Limited | 3 | config | Keep | Crypto-facing boundary; root keeps only server integration |

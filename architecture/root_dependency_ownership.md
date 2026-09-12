@@ -106,7 +106,8 @@ reference fails the guard until the row is reclassified with a reason.
 | cryptoki | — | migration_blocker | dns | No direct root consumer in src/ (measured 2026-09-12); retained for dns feature-surface wiring (dep:cryptoki, PKCS#11 HSM) | Phase 31 removal audit | — |
 | quinn | http3, tunnel | composition_runtime | default | QUIC protocol implementation | keep | tcp |
 | zip | serverless | composition_runtime | default | ZIP archive handling for WASM bundles | keep | platform |
-| libloading | plugin_runtime | composition_runtime | default | Dynamic library loading for native plugins | keep | platform |
+| libloading | platform (Windows Wintun only) | composition_runtime | windows-target only | Independent platform use only (src/platform/windows/wintun.rs, `#[cfg(windows)]`). Must NOT be used for plugin loading: plugin loader authority moved to synvoid-native-extension in Phase 28 | keep | platform |
+| synvoid-native-extension | plugin | composition_runtime | unsafe-native-extensions (opt-in, off by default) | Explicit unsafe in-process native extension loader (Phase 28): ABI/version checks, path/hash/permission validation, library lifetime, narrow backend trait | keep | plugin |
 | aya | worker | composition_runtime | flood-ebpf | eBPF program loading for SYN flood detection | keep | icmp_filter, waf |
 | synvoid-utils | throughout | composition_runtime | default | Shared utilities (DrainFlag, buffer, IP utils) | keep | admin, http, lib, utils, waf, worker |
 | synvoid-core | waf, proxy | composition_runtime | default | Core WAF and proxy types | keep | admin, supervisor, waf, worker |

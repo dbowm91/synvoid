@@ -23,7 +23,7 @@ The Plugin/WASM module (`src/plugin/`) provides dynamic loading and secure sandb
 | `wasm_runtime.rs` | Core WASM execution engine using `wasmtime`. Loads modules, links host functions, executes filter/transform/handle handlers | `WasmPluginManager`, `WasmRuntime`, `WasmResourceLimits`, `PluginInfo` |
 | `instance_pool.rs` | Per-runtime instance pooling with `WasmInstancePool` (reuses instantiated modules) | `WasmInstancePool` |
 | `pool.rs` | Generic `PooledInstance` trait and struct for pooled WASM instances | `PooledInstance`, `WasmPool` trait |
-| `axum_loader.rs` | Dynamic loading of native `.so`/`.dylib`/`.dll` plugins using `libloading` | `load_plugin()`, `validate_plugin_path()` |
+| `unsafe_native_loader.rs` | Compatibility facade only (Phase 28): re-exports the canonical loader from `synvoid-native-extension` when the `unsafe-native-extensions` feature is on, otherwise exposes stubs reporting `Unsupported` | `load_plugin()`, `UnsafeNativeExtensionConfig` |
 | `global.rs` | Global singletons: `GlobalPluginManager` and `GlobalWasmMemoryBudget` | `GlobalPluginManager`, `GlobalWasmMemoryBudget`, `get_global_plugin_manager()` |
 | `wasm_metrics.rs` | Atomic metrics collection for plugin invocations, decisions, fuel consumption | `WasmPluginMetrics`, `record_wasm_*` functions |
 
@@ -788,9 +788,16 @@ WASM plugin support is enabled by default (no feature gate). The `wasmtime` depe
 wasmtime = { version = "42.0.2", features = ["component-model"] }
 ```
 
-### Axum Plugin Loading
+### Native Extension Loading (Phase 28 capability isolation)
 
-Native plugin loading via `libloading` is always available, no separate feature gate.
+Native `.so`/`.dylib`/`.dll` loading authority lives in the dedicated
+`synvoid-native-extension` crate behind the `unsafe-native-extensions`
+compile feature (off by default) plus runtime gates. The sandboxed WASM
+runtime links no shared-library loader in its default graph
+(`cargo tree -p synvoid-plugin-runtime` shows no `libloading`);
+`PluginManager` consumes a narrow `NativeExtensionBackend` interface, and
+feature-disabled builds report `Unsupported` explicitly. See
+`architecture/unsafe_native_extensions.md` for the full design.
 
 ---
 

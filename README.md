@@ -57,7 +57,7 @@ cargo build --release --no-default-features --features mesh
 cargo build --release --no-default-features --features dns
 ```
 
-Additional opt-in feature flags currently include `wireguard`, `icmp-filter`, `flood-ebpf`, `origin_key_exchange`, `audit`, `post-quantum`, `verify-pq`, `tun-rs`, `macos-sandbox`, and `fastcgi_streaming`. See `Cargo.toml` for the complete current feature surface. Prefer enabling only the features required by a deployment rather than treating `--all-features` as a deployment profile; several opt-ins are platform- or environment-specific.
+Additional opt-in feature flags currently include `wireguard`, `icmp-filter`, `flood-ebpf`, `origin_key_exchange`, `audit`, `post-quantum`, `verify-pq`, `tun-rs`, `macos-sandbox`, `fastcgi_streaming`, and `unsafe-native-extensions` (in-process native plugin loading; off by default — the sandboxed WASM runtime needs no feature flag). See `Cargo.toml` for the complete current feature surface. Prefer enabling only the features required by a deployment rather than treating `--all-features` as a deployment profile; several opt-ins are platform- or environment-specific.
 
 ## Quick start
 

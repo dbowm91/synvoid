@@ -14,7 +14,7 @@ Scope: Every code path that loads, reloads, or hot-reloads a plugin. Verifies tr
 | 4 | `WasmPluginManager::load_plugin_with_limits(path, limits)` | wasm_runtime.rs | None | No check | No check | Loads any WASM | Enforced |
 | 5 | `WasmPluginManager::reload_plugin(path)` | wasm_runtime.rs | None | No check | No check | Loads any WASM | Enforced |
 | 6 | `WasmPluginManager::reload_plugin_by_name(name)` | wasm_runtime.rs | None | Delegates to #5 | Delegates to #5 | Delegates to #5 | Enforced |
-| 7 | `axum_loader::load_plugin(path)` (crate) | axum_loader.rs | None | No check | No check | Loads .so/.dylib/.dll | Enforced |
+| 7 | `synvoid_native_extension::load_plugin(path)` (canonical native loader; Phase 28) | crates/synvoid-native-extension/src/loader.rs | None | No check | No check | Loads .so/.dylib/.dll | Enforced |
 | 8 | `PluginManager::load_wasm_plugin(path)` (root) | src/plugin/mod.rs | None | Delegates | Delegates | Delegates | Enforced |
 | 9 | `PluginManager::load_wasm_plugin_from_bytes(name, bytes)` | plugin_manager.rs | None | Delegates | Delegates | Delegates | Enforced |
 | 10 | `PluginManager::load_axum_plugin(path)` | plugin_manager.rs | None | Delegates | Delegates | Delegates | Enforced |

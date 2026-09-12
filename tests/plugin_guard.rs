@@ -1311,19 +1311,20 @@ fn lifecycle_transition_audit_trail() {
 
 /// Native and WASM plugins use separate namespaces.
 ///
-/// `PluginManager` must store native extensions and WASM plugins in
-/// separate fields so that name collisions across plugin types are
-/// impossible.
+/// `PluginManager` must store WASM state separately from native state, and —
+/// Phase 28 — must never own concrete shared-library handles: native support
+/// goes through a narrow `native_backend` interface (feature-gated) or is
+/// absent entirely (feature-disabled builds).
 #[test]
 fn native_wasm_namespace_separation() {
     let file = plugin_runtime_src().join("plugin_manager.rs");
     let cleaned = read_cleaned(&file);
 
-    // PluginManager struct must have both fields
+    // PluginManager struct must have the WASM field.
     let mut in_struct = false;
     let mut brace_depth = 0i32;
     let mut has_wasm_manager = false;
-    let mut has_unsafe_native = false;
+    let mut has_native_backend = false;
 
     for line in cleaned.lines() {
         let trimmed = line.trim();
@@ -1331,7 +1332,7 @@ fn native_wasm_namespace_separation() {
             in_struct = true;
             brace_depth = 0;
             has_wasm_manager = false;
-            has_unsafe_native = false;
+            has_native_backend = false;
         }
         if in_struct {
             brace_depth += trimmed.matches('{').count() as i32;
@@ -1339,8 +1340,8 @@ fn native_wasm_namespace_separation() {
             if trimmed.contains("wasm_manager:") {
                 has_wasm_manager = true;
             }
-            if trimmed.contains("unsafe_native_extensions:") {
-                has_unsafe_native = true;
+            if trimmed.contains("native_backend:") {
+                has_native_backend = true;
             }
             if brace_depth <= 0 && in_struct {
                 break;
@@ -1353,13 +1354,25 @@ fn native_wasm_namespace_separation() {
         "PluginManager must have 'wasm_manager' field for WASM plugins"
     );
     assert!(
-        has_unsafe_native,
-        "PluginManager must have 'unsafe_native_extensions' field for native plugins"
+        has_native_backend,
+        "PluginManager must consume native extensions through a narrow \
+         'native_backend' interface (Phase 28), not alongside WASM state"
     );
-    assert!(
-        has_wasm_manager && has_unsafe_native,
-        "PluginManager must store WASM and native plugins in separate fields to prevent namespace collision"
-    );
+
+    // The concrete pre-Phase-28 wrapper must be gone: no struct may retain a
+    // shared-library handle next to WASM state.
+    for forbidden in [
+        "struct UnsafeNativeExtensionWrapper",
+        "unsafe_native_extensions:",
+        "libloading",
+        "Arc<Library>",
+    ] {
+        assert!(
+            !cleaned.contains(forbidden),
+            "PluginManager must not contain concrete native handle '{forbidden}' \
+             (Phase 28: narrow backend interface only)"
+        );
+    }
 }
 
 /// PluginDetail must include hash and last_error fields.
@@ -2679,4 +2692,347 @@ fn mesh_memory_load_path_enforces_policy() {
          (which enforces trust-tier policy), but found no reference in the method body:\n{}",
         fn_body
     );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Section: Phase 28 native-extension capability isolation
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// The sandboxed WASM plugin runtime must not unconditionally link a
+// shared-library loader. Unsafe native loading authority lives in
+// `crates/synvoid-native-extension` behind the `unsafe-native-extensions`
+// compile feature plus runtime gates. `PluginManager` consumes a narrow
+// backend interface; feature-disabled builds report `Unsupported` explicitly.
+
+fn native_extension_src() -> PathBuf {
+    repo_root()
+        .join("crates")
+        .join("synvoid-native-extension")
+        .join("src")
+}
+
+fn non_comment_lines(path: &Path) -> Vec<String> {
+    let text =
+        std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read {}: {}", path.display(), e));
+    let cleaned = strip_comments_and_strings(&text);
+    cleaned.lines().map(|l| l.to_string()).collect()
+}
+
+/// `synvoid-plugin-runtime` default manifest must not declare `libloading`.
+///
+/// The loader dependency lives only in `synvoid-native-extension` (always) and
+/// as an optional, feature-gated edge from the plugin runtime.
+#[test]
+fn native_loader_not_in_plugin_runtime_default_graph() {
+    let repo = repo_root();
+    let manifest = std::fs::read_to_string(
+        repo.join("crates")
+            .join("synvoid-plugin-runtime")
+            .join("Cargo.toml"),
+    )
+    .expect("read synvoid-plugin-runtime/Cargo.toml");
+
+    // No unconditional libloading edge: any mention must be commented out.
+    for (i, line) in manifest.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') {
+            continue;
+        }
+        assert!(
+            !trimmed.starts_with("libloading"),
+            "synvoid-plugin-runtime/Cargo.toml:{} must not declare libloading \
+             unconditionally (Phase 28): {}",
+            i + 1,
+            trimmed
+        );
+    }
+
+    // The opt-in edge must exist and be optional + feature-gated.
+    assert!(
+        manifest.contains("synvoid-native-extension"),
+        "synvoid-plugin-runtime must optionally depend on synvoid-native-extension"
+    );
+    assert!(
+        manifest.contains("optional = true"),
+        "synvoid-native-extension edge must be optional"
+    );
+    assert!(
+        manifest.contains("unsafe-native-extensions"),
+        "synvoid-plugin-runtime must define the unsafe-native-extensions feature"
+    );
+
+    // The native crate itself owns the loader dependency.
+    let native_manifest = std::fs::read_to_string(
+        repo.join("crates")
+            .join("synvoid-native-extension")
+            .join("Cargo.toml"),
+    )
+    .expect("read synvoid-native-extension/Cargo.toml");
+    assert!(
+        native_manifest.lines().any(|l| {
+            let t = l.trim();
+            !t.starts_with('#') && t.starts_with("libloading")
+        }),
+        "synvoid-native-extension must own the libloading dependency"
+    );
+}
+
+/// Native loader code is confined to the approved crate.
+///
+/// `libloading` usage and `Library::new` calls must not appear in
+/// `synvoid-plugin-runtime/src` or the root `src/plugin/` facade. Independent
+/// platform uses (e.g. Windows Wintun) are out of scope for this guard.
+#[test]
+fn native_loader_code_confined_to_approved_crate() {
+    let repo = repo_root();
+    let scoped = [
+        repo.join("crates")
+            .join("synvoid-plugin-runtime")
+            .join("src"),
+        repo.join("src").join("plugin"),
+    ];
+    let mut violations = Vec::new();
+    for dir in &scoped {
+        for file in rust_files_under(dir) {
+            let rel = file
+                .strip_prefix(&repo)
+                .unwrap_or(&file)
+                .display()
+                .to_string();
+            for line in non_comment_lines(&file) {
+                let t = line.trim();
+                if t.contains("libloading") || t.contains("Library::new") || t.contains("Symbol<") {
+                    violations.push(format!("{rel}: {t}"));
+                }
+            }
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "shared-library loader code outside synvoid-native-extension:\n{}",
+        violations.join("\n")
+    );
+
+    // The canonical loader must exist in the approved crate.
+    assert!(
+        native_extension_src().join("loader.rs").exists(),
+        "crates/synvoid-native-extension/src/loader.rs must exist"
+    );
+    assert!(
+        native_extension_src().join("backend.rs").exists(),
+        "crates/synvoid-native-extension/src/backend.rs must exist"
+    );
+}
+
+/// Root compatibility shim remains a pure facade.
+///
+/// `src/plugin/unsafe_native_loader.rs` must delegate without loader logic.
+#[test]
+fn native_root_shim_is_pure_facade() {
+    let repo = repo_root();
+    let shim = repo
+        .join("src")
+        .join("plugin")
+        .join("unsafe_native_loader.rs");
+    let text = std::fs::read_to_string(&shim).expect("read root unsafe_native_loader shim");
+    let cleaned = strip_comments_and_strings(&text);
+    assert!(
+        cleaned.contains("pub use synvoid_plugin_runtime::unsafe_native_loader::"),
+        "root shim must re-export the runtime facade"
+    );
+    assert!(
+        cleaned.contains("synvoid_plugin_runtime::unsafe_native_loader::load_plugin"),
+        "root shim must delegate loading to the runtime facade"
+    );
+    for forbidden in [
+        "Library::new",
+        "validate_plugin_path",
+        "compute_sha256",
+        "enforce_production_gate",
+        "struct UnsafeNativeExtension",
+        "enum UnsafeNativePluginError",
+    ] {
+        assert!(
+            !cleaned.contains(forbidden),
+            "root shim must not contain loader implementation '{forbidden}'"
+        );
+    }
+}
+
+/// Every load path reaches all gates before the first `Library::new`.
+///
+/// Static ordering check on the canonical loader: within `load_plugin`, the
+/// production gate, path validation, and hash verification precede the call
+/// into `load_native_library` (the only function containing `Library::new`).
+#[test]
+fn native_gates_precede_first_library_new() {
+    let loader = native_extension_src().join("loader.rs");
+    let text = std::fs::read_to_string(&loader).expect("read native loader.rs");
+
+    let load_fn = text
+        .find("pub fn load_plugin(")
+        .expect("load_plugin must exist");
+    let load_body = &text[load_fn..];
+    // Bound the body at the next top-level item after the function: find the
+    // inner loader fn, which starts after load_plugin's body in this file.
+    let inner = text
+        .find("unsafe fn load_native_library(")
+        .expect("inner loader must exist");
+    assert!(
+        inner > load_fn,
+        "load_native_library must be defined after load_plugin"
+    );
+
+    let gate = load_body
+        .find("enforce_production_gate")
+        .expect("production gate call");
+    let path_check = load_body
+        .find("validate_plugin_path")
+        .expect("path validation call");
+    let hash_check = load_body
+        .find("compute_sha256")
+        .expect("hash verification call");
+    let inner_call = load_body
+        .find("load_native_library")
+        .expect("inner loader call");
+    assert!(
+        gate < path_check && path_check < hash_check && hash_check < inner_call,
+        "load_plugin must order: production gate -> path validation -> hash check -> Library::new"
+    );
+
+    let inner_body = &text[inner..];
+    let inner_end = inner_body
+        .find("\n}\n")
+        .map(|p| inner + p)
+        .unwrap_or(text.len());
+    assert!(
+        text[inner..inner_end].contains("Library::new"),
+        "load_native_library must contain the (single) Library::new call"
+    );
+    // No other Library::new in code (doc comments excluded: they describe the
+    // call but must not introduce new load paths).
+    let cleaned_all = strip_comments_and_strings(&text);
+    assert_eq!(
+        cleaned_all.matches("Library::new").count(),
+        1,
+        "exactly one Library::new call may exist in the canonical loader"
+    );
+}
+
+/// No placeholder execution claims: the old `ExternalPluginClient` trait with
+/// its `filter_request` method must be gone, and `catch_unwind` must not be
+/// described as a sandbox.
+#[test]
+fn native_no_execution_claim_or_sandbox_language() {
+    let loader = native_extension_src().join("loader.rs");
+    let text = std::fs::read_to_string(&loader).expect("read native loader.rs");
+    assert!(
+        !text.contains("fn filter_request"),
+        "removed placeholder must not claim a filter_request execution method"
+    );
+    assert!(
+        !text.contains("trait ExternalPluginClient"),
+        "removed ExternalPluginClient placeholder must stay removed"
+    );
+    // Honesty about catch_unwind: Rust panics only, still unsandboxed.
+    assert!(
+        text.contains("NOT a sandbox") || text.contains("panics only"),
+        "loader docs must state catch_unwind catches Rust panics only"
+    );
+    assert!(
+        text.contains("unsandboxed") || text.contains("UNSANDBOXED"),
+        "loader docs must state in-process native code is unsandboxed"
+    );
+}
+
+/// Production config without compiled support fails closed and loudly.
+///
+/// `assemble_plugin_runtime` must contain the explicit compiled-out error so
+/// operators see the feature/config mismatch instead of silent success.
+#[test]
+fn native_production_config_requires_compiled_support() {
+    let repo = repo_root();
+    let asm = repo.join("src").join("server").join("service_assembly.rs");
+    let text = std::fs::read_to_string(&asm).expect("read service_assembly.rs");
+    assert!(
+        text.contains("without the `unsafe-native-extensions` feature"),
+        "service assembly must log an explicit error when config enables \
+         native extensions but the binary lacks compiled support"
+    );
+    assert!(
+        text.contains("Unsupported"),
+        "service assembly must reference the Unsupported outcome for compiled-out loads"
+    );
+}
+
+/// Feature-disabled builds have no load path and report explicitly.
+///
+/// Runs in the default guard profile (no `unsafe-native-extensions`): every
+/// load attempt surfaces a gate error or `Unsupported`, router/status queries
+/// are empty, and unload reports false.
+#[cfg(not(feature = "unsafe-native-extensions"))]
+#[test]
+fn native_disabled_build_reports_unsupported() {
+    use synvoid_plugin_runtime::plugin_manager::{PluginManager, UnsafeNativePluginError};
+
+    let manager = PluginManager::new();
+    let dir = std::env::temp_dir();
+    let probe = dir.join("phase28_disabled_probe.so");
+    let _ = std::fs::write(&probe, b"fake");
+    let err = manager
+        .load_unsafe_native_extension(&probe, &[], None)
+        .unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        matches!(err, UnsafeNativePluginError::Unsupported)
+            || matches!(err, UnsafeNativePluginError::LoadFailed(_))
+            || matches!(err, UnsafeNativePluginError::ProductionDenied)
+            || matches!(err, UnsafeNativePluginError::RiskAcknowledgementRequired)
+            || matches!(err, UnsafeNativePluginError::NoAllowedDirs),
+        "disabled builds must report an explicit native error, got: {msg}"
+    );
+    assert!(manager.get_axum_router().is_none());
+    assert!(manager.get_axum_router_by_name("x").is_none());
+    assert!(manager.get_axum_routers().is_empty());
+    assert!(!manager.unload_axum_plugin("x"));
+    assert!(manager.unsafe_native_status().is_empty());
+    let global = manager.unsafe_native_global_status();
+    assert_eq!(global.loaded_count, 0);
+    assert!(global.extensions.is_empty());
+    let _ = std::fs::remove_file(&probe);
+}
+
+/// Feature-enabled builds delegate through the narrow backend.
+///
+/// Compiled only with `--features unsafe-native-extensions`: a fresh manager
+/// exposes an empty backend, rejects fake artifacts with loader errors (never
+/// `Unsupported`), and round-trips unload/status explicitly.
+#[cfg(feature = "unsafe-native-extensions")]
+#[test]
+fn native_enabled_build_delegates_to_backend() {
+    use synvoid_plugin_runtime::plugin_manager::{PluginManager, UnsafeNativePluginError};
+
+    let manager = PluginManager::new();
+    assert!(manager.get_axum_router().is_none());
+    assert_eq!(manager.unsafe_native_global_status().loaded_count, 0);
+
+    let dir = std::env::temp_dir();
+    let probe = dir.join("phase28_enabled_probe.so");
+    let _ = std::fs::write(&probe, b"fake");
+    synvoid_plugin_runtime::set_global_unsafe_native_config(
+        synvoid_plugin_runtime::UnsafeNativeExtensionConfig {
+            enabled: true,
+            production_mode_override: Some(false),
+            ..Default::default()
+        },
+    );
+    let err = manager
+        .load_unsafe_native_extension(&probe, &[], None)
+        .unwrap_err();
+    assert!(
+        !matches!(err, UnsafeNativePluginError::Unsupported),
+        "enabled builds must attempt real loading, never report Unsupported"
+    );
+    assert!(manager.last_native_load_error().is_some());
+    let _ = std::fs::remove_file(&probe);
 }

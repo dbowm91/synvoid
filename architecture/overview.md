@@ -271,7 +271,7 @@ Root-owned orchestration code (see [`root_module_ledger.md`](./root_module_ledge
 | Component | Crate(s) | Purpose | Doc |
 |-----------|----------|--------|-----|
 | **Plugin Runtime** | `synvoid-plugin-runtime` + `src/plugin/` | Sandboxed WASM plugins: trust tiers, capabilities, canonical ABI frames, instance pooling, generation-aware hot-reload | [`plugin_deep_dive.md`](./plugin_deep_dive.md) · [`plugin_runtime_sandbox.md`](./plugin_runtime_sandbox.md) · [`plugin_wasm.md`](./plugin_wasm.md) · [`plugin_loader_trust_audit.md`](./plugin_loader_trust_audit.md) |
-| **Native Extensions** | (via plugin-runtime) | Unsafe native loading: risk acknowledgement, path allowlist, hash pinning, Arc-retained handles | [`unsafe_native_extensions.md`](./unsafe_native_extensions.md) |
+| **Native Extensions** | (via synvoid-native-extension, opt-in) | Explicit unsafe loader behind `unsafe-native-extensions` (off by default) + runtime gates: risk acknowledgement, path allowlist, hash pinning, Arc-retained handles | [`unsafe_native_extensions.md`](./unsafe_native_extensions.md) |
 | **Serverless** | `synvoid-serverless` | WASM function registry/routing, autoscaling instance pools, async compilation, mesh invocation, pub/sub | [`serverless.md`](./serverless.md) · [`serverless_deep_dive.md`](./serverless_deep_dive.md) |
 | **Spin runtime** | `synvoid-plugin-runtime::spin` | Fermyon Spin WASM integration | [`spin.md`](./spin.md) |
 

@@ -1,6 +1,6 @@
 # AGENTS.md
 
-SynVoid is a high-performance WAF & reverse proxy in Rust with a mesh networking layer and multi-process architecture (Supervisor + UnifiedServerWorker data plane + CPU offload). 47-member Cargo workspace: root app, 39 `synvoid-*` crates under `crates/` (Phase 27 adds `synvoid-mesh-protocol`), plus `pqc`, `admin-ui` (Yew/WASM via Trunk), `examples/*`, `fuzz`, `tools/{xtask,synvoid-repo-guards}`. Linux is the primary deployment target.
+SynVoid is a high-performance WAF & reverse proxy in Rust with a mesh networking layer and multi-process architecture (Supervisor + UnifiedServerWorker data plane + CPU offload). 48-member Cargo workspace: root app, 40 `synvoid-*` crates under `crates/` (Phase 28 adds `synvoid-native-extension`), plus `pqc`, `admin-ui` (Yew/WASM via Trunk), `examples/*`, `fuzz`, `tools/{xtask,synvoid-repo-guards}`. Linux is the primary deployment target.
 
 ## Build & Setup
 
@@ -95,6 +95,8 @@ Root-module ownership policy lives in `architecture/root_module_ledger.md` — p
 | `src/main.rs` (command dispatch) | `src/commands/plan.rs` + `execute.rs` + `runtime_launch.rs` |
 | `src/tls/acme.rs`, `src/tls/acme_dns.rs` | `crates/synvoid-tls/src/acme*.rs` |
 | `src/plugin/wasm_runtime.rs` | `crates/synvoid-plugin-runtime/src/wasm_runtime.rs` |
+| `crates/synvoid-plugin-runtime/src/unsafe_native_loader.rs` (impl) | `crates/synvoid-native-extension/src/loader.rs` (canonical; plugin-runtime path is a feature-gated facade, root `src/plugin/unsafe_native_loader.rs` is a pure shim) |
+| `synvoid_plugin_runtime::unsafe_native_loader::{UnsafeNativeExtension, UnsafeNativePluginError}` (direct impl use) | `synvoid_native_extension::{UnsafeNativeExtension, UnsafeNativePluginError}` for loader internals; `PluginManager` consumes `NativeExtensionBackend`, never `Library` handles |
 | `src/plugin/mod.rs` (PluginManager/Lifecycle) | `crates/synvoid-plugin-runtime/src/plugin_manager.rs` (canonical; root is facade + mesh adapter) |
 | `serialize_headers` (inline) | `crates/synvoid-plugin-runtime/src/abi_frame.rs` (canonical) |
 | `src/plugin/instance_pool.rs` | `crates/synvoid-plugin-runtime/src/instance_pool.rs` |
@@ -128,7 +130,7 @@ Root-module ownership policy lives in `architecture/root_module_ledger.md` — p
 - **Plugin lifecycle**: own hot-reload watchers with `PluginRuntimeOwner`; never `std::mem::forget`. Reload is prepare-then-commit with generation-aware atomic swaps — a failed reload must never replace a working plugin. File-based loading reads WASM bytes once (TOCTOU closure via `PreparedPluginLoad.wasm_bytes`).
 - **SignedSandboxed plugins**: empty `binary_sha256`/`manifest_sha256` rejected in production.
 - **Plugin ABI memory boundary**: guest pointer ops require `guest_alloc`/`guest_free` and `checked_guest_range` (no fixed-offset fallback). Frame serialization only via `abi_frame::serialize_headers_canonical` / `build_request_frame`.
-- **Native extensions**: disabled by default; production load requires explicit risk acknowledgement + path allowlist. They are NOT sandboxed; retain the `Library` handle via `Arc` for the lifetime of derived values.
+- **Native extensions**: capability-isolated in `crates/synvoid-native-extension` behind the `unsafe-native-extensions` compile feature (off by default) PLUS runtime gates (disabled by default; production load requires explicit risk acknowledgement + path allowlist). They are NOT sandboxed; `catch_unwind` catches Rust panics only, never native UB. The sandboxed runtime (`synvoid-plugin-runtime` default graph) links no `libloading`; `PluginManager` consumes the narrow `NativeExtensionBackend` trait, never `Library` handles; feature-disabled builds report `Unsupported`. Retain the `Library` handle via `Arc` (plus per-router keep-alives) for the lifetime of derived values.
 - **Sandbox jail IPC** (`--wasm-jail` / `--yara-jail`, spec `architecture/sandbox_jail_protocol.md`): parent-created stdio pipes only (no post-sandbox bind/connect); versioned length-bounded typed protocol, no generic exec op; no secrets/payloads in argv/env; jail logs to stderr (stdout is framed IPC); `IsolationPolicy::Required` fails closed, never silently falls back; digest re-verified in jail (constant-time); hook-only capabilities inside the jail.
 
 ### Admin Control-Plane Authority

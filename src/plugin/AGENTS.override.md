@@ -11,6 +11,14 @@ resolution adapter; `src/plugin/unsafe_native_loader.rs` is a thin shim.
 `src/spin/` and `src/serverless/` are pure re-export facades over
 `synvoid_plugin_runtime::spin` and `synvoid_serverless`.
 
+Unsafe native loading authority lives in `crates/synvoid-native-extension/`
+(Phase 28 capability isolation) behind the `unsafe-native-extensions`
+compile feature (off by default) plus runtime gates. The plugin-runtime
+`unsafe_native_loader` module is a feature-gated facade over it; the default
+plugin-runtime graph links no `libloading`. `PluginManager` consumes the
+narrow `NativeExtensionBackend` trait (inject via `with_native_backend`);
+feature-disabled builds report `Unsupported` instead of loading.
+
 - Do NOT add manifest/capability validation, trust-tier/signature decisions,
   execution policy, timeout/resource limits, or quarantine logic in root —
   those are crate-owned (`sandbox/types.rs`, `wasm_runtime.rs`).
@@ -238,9 +246,12 @@ Native shared-library plugins are classified as **unsafe native extensions**, no
 - Deprecated config alias `native_plugins_enabled` migrates to `unsafe_native_enabled` with a deprecation warning.
 
 ### Key invariants:
-- The canonical loader is in `crates/synvoid-plugin-runtime/src/unsafe_native_loader.rs`
-- The root crate's `src/plugin/unsafe_native_loader.rs` is a thin re-export wrapper
-- `UnsafeNativeExtension` retains `Arc<Library>` — never drop it while handlers may execute
+- The canonical loader is in `crates/synvoid-native-extension/src/loader.rs`
+- The plugin-runtime `unsafe_native_loader` module is a feature-gated facade (re-export when `unsafe-native-extensions` is on, `Unsupported` stubs when off)
+- The root crate's `src/plugin/unsafe_native_loader.rs` is a pure re-export shim (no logic)
+- `UnsafeNativeExtension` retains `Arc<Library>` plus per-router keep-alives — never drop them while handlers may execute
+- `PluginManager` consumes `NativeExtensionBackend`, never `Library` handles; inject via `with_native_backend`
+- `catch_unwind` catches Rust panics only — never native UB; in-process native code is unsandboxed
 - Config struct: `UnsafeNativePluginConfig` in `crates/synvoid-config/src/plugins.rs`
 - Errors: `UnsafeNativePluginError` (with `AxumPluginError` backward-compat alias)
 - Hot-reload for native extensions is gated by `hot_reload_enabled`, separate from WASM
@@ -251,8 +262,8 @@ Native shared-library plugins are classified as **unsafe native extensions**, no
 - `synvoid_unsafe_native_extension_reloaded_total` — hot-reload events
 - `synvoid_unsafe_native_extension_request_total` — per-plugin request counters
 
-### ExternalPluginClient Placeholder
-- `ExternalPluginClient` trait exists in `unsafe_native_loader.rs` as a placeholder for future out-of-process native plugin architecture.
+### External-host seam
+- The old `ExternalPluginClient` placeholder (unimplemented `filter_request`) is removed. The follow-up seam is typed DTOs + contract bounds in `crates/synvoid-native-extension/src/external_seam.rs` with no execution API.
 
 ### Forbidden patterns:
 - Never load native extensions without going through the config gate

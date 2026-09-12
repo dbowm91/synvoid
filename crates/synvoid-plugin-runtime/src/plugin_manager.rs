@@ -8,28 +8,39 @@ use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use parking_lot::RwLock;
 
 use crate::sandbox::types::PluginLoadConfig;
+#[cfg(not(feature = "unsafe-native-extensions"))]
+use crate::unsafe_native_loader::UnsafeNativeExtensionConfig;
+use crate::unsafe_native_loader::UnsafeNativeExtensionStatus;
+pub use crate::unsafe_native_loader::{AxumPluginError, UnsafeNativePluginError};
 use crate::wasm_runtime::{
     WasmFilterResult, WasmPluginError, WasmPluginManager, WasmResourceLimits,
 };
+
+#[cfg(feature = "unsafe-native-extensions")]
+use synvoid_native_extension::{InProcessNativeBackend, NativeExtensionBackend};
 
 // ─── PluginManager (public API) ──────────────────────────────────────────────
 
 pub struct PluginManager {
     wasm_manager: Arc<WasmPluginManager>,
-    unsafe_native_extensions: RwLock<Vec<Arc<UnsafeNativeExtensionWrapper>>>,
+    /// Narrow native-extension backend (Phase 28).
+    ///
+    /// The manager never owns concrete shared-library handles: with the
+    /// `unsafe-native-extensions` feature it delegates to an in-process
+    /// backend through [`NativeExtensionBackend`]; without the feature there
+    /// is no native state at all and every load reports `Unsupported`.
+    #[cfg(feature = "unsafe-native-extensions")]
+    native_backend: Arc<dyn NativeExtensionBackend>,
     /// Tracks the last error from a native extension load attempt.
     last_native_load_error: RwLock<Option<String>>,
-}
-
-struct UnsafeNativeExtensionWrapper {
-    extension: std::sync::Arc<crate::unsafe_native_loader::UnsafeNativeExtension>,
 }
 
 impl PluginManager {
     pub fn new() -> Self {
         PluginManager {
             wasm_manager: Arc::new(WasmPluginManager::new()),
-            unsafe_native_extensions: RwLock::new(Vec::new()),
+            #[cfg(feature = "unsafe-native-extensions")]
+            native_backend: Arc::new(InProcessNativeBackend::new()),
             last_native_load_error: RwLock::new(None),
         }
     }
@@ -37,7 +48,8 @@ impl PluginManager {
     pub fn with_wasm_limits(limits: WasmResourceLimits) -> Self {
         PluginManager {
             wasm_manager: Arc::new(WasmPluginManager::new().with_limits(limits)),
-            unsafe_native_extensions: RwLock::new(Vec::new()),
+            #[cfg(feature = "unsafe-native-extensions")]
+            native_backend: Arc::new(InProcessNativeBackend::new()),
             last_native_load_error: RwLock::new(None),
         }
     }
@@ -45,9 +57,21 @@ impl PluginManager {
     pub fn with_load_config(config: PluginLoadConfig) -> Self {
         PluginManager {
             wasm_manager: Arc::new(WasmPluginManager::new().with_load_config(config)),
-            unsafe_native_extensions: RwLock::new(Vec::new()),
+            #[cfg(feature = "unsafe-native-extensions")]
+            native_backend: Arc::new(InProcessNativeBackend::new()),
             last_native_load_error: RwLock::new(None),
         }
+    }
+
+    /// Inject a narrow native-extension backend (composition-root wiring).
+    ///
+    /// Only available with the `unsafe-native-extensions` feature. Lets the
+    /// root composition choose the backend implementation while request-path
+    /// code stays on the narrow [`NativeExtensionBackend`] interface.
+    #[cfg(feature = "unsafe-native-extensions")]
+    pub fn with_native_backend(mut self, backend: Arc<dyn NativeExtensionBackend>) -> Self {
+        self.native_backend = backend;
+        self
     }
 
     pub fn set_load_config(&self, config: PluginLoadConfig) {
@@ -81,22 +105,31 @@ impl PluginManager {
         allowed_dirs: &[String],
         expected_hash: Option<&str>,
     ) -> Result<Arc<Router>, UnsafeNativePluginError> {
-        match crate::unsafe_native_loader::load_plugin(path, allowed_dirs, expected_hash) {
-            Ok(ext) => {
-                *self.last_native_load_error.write() = None;
-                let router = ext.router.clone();
-                let wrapper = UnsafeNativeExtensionWrapper {
-                    extension: Arc::new(ext),
-                };
-                self.unsafe_native_extensions
-                    .write()
-                    .push(Arc::new(wrapper));
-                Ok(router)
+        #[cfg(feature = "unsafe-native-extensions")]
+        {
+            match self.native_backend.load(path, allowed_dirs, expected_hash) {
+                Ok(handle) => {
+                    *self.last_native_load_error.write() = None;
+                    Ok(handle.router)
+                }
+                Err(e) => {
+                    *self.last_native_load_error.write() = Some(e.to_string());
+                    Err(e)
+                }
             }
-            Err(e) => {
-                *self.last_native_load_error.write() = Some(e.to_string());
-                Err(e)
+        }
+        #[cfg(not(feature = "unsafe-native-extensions"))]
+        {
+            let _ = path;
+            let _ = expected_hash;
+            let config = crate::unsafe_native_loader::get_global_unsafe_native_config();
+            if let Err(gate) = config.validate_for_load(allowed_dirs) {
+                *self.last_native_load_error.write() = Some(gate.to_string());
+                return Err(gate);
             }
+            let err = UnsafeNativePluginError::Unsupported;
+            *self.last_native_load_error.write() = Some(err.to_string());
+            Err(err)
         }
     }
 
@@ -107,48 +140,65 @@ impl PluginManager {
 
     /// Get the first loaded unsafe native extension router, if any
     pub fn get_axum_router(&self) -> Option<Arc<Router>> {
-        self.unsafe_native_extensions
-            .read()
-            .first()
-            .map(|w| w.extension.router.clone())
+        #[cfg(feature = "unsafe-native-extensions")]
+        {
+            self.native_backend.first_router()
+        }
+        #[cfg(not(feature = "unsafe-native-extensions"))]
+        {
+            None
+        }
     }
 
     /// Get an unsafe native extension router by name
     pub fn get_axum_router_by_name(&self, name: &str) -> Option<Arc<Router>> {
-        self.unsafe_native_extensions
-            .read()
-            .iter()
-            .find(|w| w.extension.name == name)
-            .map(|w| w.extension.router.clone())
+        #[cfg(feature = "unsafe-native-extensions")]
+        {
+            self.native_backend.router(name)
+        }
+        #[cfg(not(feature = "unsafe-native-extensions"))]
+        {
+            let _ = name;
+            None
+        }
     }
 
     /// Get all loaded unsafe native extension routers
     pub fn get_axum_routers(&self) -> Vec<Arc<Router>> {
-        self.unsafe_native_extensions
-            .read()
-            .iter()
-            .map(|w| w.extension.router.clone())
-            .collect()
+        #[cfg(feature = "unsafe-native-extensions")]
+        {
+            self.native_backend.routers()
+        }
+        #[cfg(not(feature = "unsafe-native-extensions"))]
+        {
+            Vec::new()
+        }
     }
 
     /// Remove an unsafe native extension by name. Returns true if found and removed.
-    /// The old router stays in memory until all references are dropped.
+    /// The old generation stays mapped until all outstanding handles/routers are dropped.
     pub fn unload_axum_plugin(&self, name: &str) -> bool {
-        let mut plugins = self.unsafe_native_extensions.write();
-        let before = plugins.len();
-        plugins.retain(|w| w.extension.name != name);
-        plugins.len() < before
+        #[cfg(feature = "unsafe-native-extensions")]
+        {
+            self.native_backend.unload(name)
+        }
+        #[cfg(not(feature = "unsafe-native-extensions"))]
+        {
+            let _ = name;
+            false
+        }
     }
 
     /// Returns status information for all loaded unsafe native extensions.
-    pub fn unsafe_native_status(
-        &self,
-    ) -> Vec<crate::unsafe_native_loader::UnsafeNativeExtensionStatus> {
-        self.unsafe_native_extensions
-            .read()
-            .iter()
-            .map(|w| w.extension.status())
-            .collect()
+    pub fn unsafe_native_status(&self) -> Vec<UnsafeNativeExtensionStatus> {
+        #[cfg(feature = "unsafe-native-extensions")]
+        {
+            self.native_backend.status()
+        }
+        #[cfg(not(feature = "unsafe-native-extensions"))]
+        {
+            Vec::new()
+        }
     }
 
     /// Returns global status of the unsafe native extension subsystem,
@@ -156,22 +206,29 @@ impl PluginManager {
     pub fn unsafe_native_global_status(
         &self,
     ) -> crate::unsafe_native_loader::UnsafeNativeGlobalStatus {
-        let config = crate::unsafe_native_loader::get_global_unsafe_native_config();
-        let extensions: Vec<crate::unsafe_native_loader::UnsafeNativeExtensionStatus> = self
-            .unsafe_native_extensions
-            .read()
-            .iter()
-            .map(|w| w.extension.status())
-            .collect();
-        let last_load_error = self.last_native_load_error.read().clone();
-        crate::unsafe_native_loader::UnsafeNativeGlobalStatus {
-            enabled: config.enabled,
-            production_mode: config.is_production(),
-            allow_in_production: config.allow_in_production,
-            hot_reload_enabled: config.hot_reload_enabled,
-            loaded_count: extensions.len(),
-            last_load_error,
-            extensions,
+        #[cfg(feature = "unsafe-native-extensions")]
+        {
+            let mut status = self.native_backend.global_status();
+            // Prefer the manager-observed error so direct backend use and
+            // manager-mediated loads report consistently.
+            if status.last_load_error.is_none() {
+                status.last_load_error = self.last_native_load_error.read().clone();
+            }
+            status
+        }
+        #[cfg(not(feature = "unsafe-native-extensions"))]
+        {
+            let config: UnsafeNativeExtensionConfig =
+                crate::unsafe_native_loader::get_global_unsafe_native_config();
+            crate::unsafe_native_loader::UnsafeNativeGlobalStatus {
+                enabled: config.enabled,
+                production_mode: config.is_production(),
+                allow_in_production: config.allow_in_production,
+                hot_reload_enabled: config.hot_reload_enabled,
+                loaded_count: 0,
+                last_load_error: self.last_native_load_error.read().clone(),
+                extensions: Vec::new(),
+            }
         }
     }
 
@@ -221,27 +278,6 @@ impl PluginManager {
         &self.wasm_manager
     }
 }
-
-#[derive(Debug, thiserror::Error)]
-pub enum UnsafeNativePluginError {
-    #[error("Failed to load unsafe native extension: {0}")]
-    LoadFailed(String),
-    #[error(
-        "Unsafe native extension ABI version {plugin} does not match expected version {expected}"
-    )]
-    AbiMismatch { plugin: String, expected: String },
-    #[error("Symbol not found: {0}")]
-    SymbolNotFound(String),
-    #[error("Unsafe native extension not allowed in production mode")]
-    ProductionDenied,
-    #[error("Risk acknowledgement missing or incorrect")]
-    RiskAcknowledgementRequired,
-    #[error("No allowed directories configured for unsafe native extensions")]
-    NoAllowedDirs,
-}
-
-/// Backward-compatible alias.
-pub type AxumPluginError = UnsafeNativePluginError;
 
 impl Default for PluginManager {
     fn default() -> Self {
@@ -361,7 +397,11 @@ impl PluginManagerLifecycle {
         Ok(loaded)
     }
 
-    /// Load all unsafe native extensions (.so/.dylib/.dll) from a directory
+    /// Load all unsafe native extensions (.so/.dylib/.dll) from a directory.
+    ///
+    /// Without the `unsafe-native-extensions` feature this reports
+    /// `Unsupported` when the directory contains any native artifact instead
+    /// of silently loading nothing.
     pub fn load_axum_plugins_from_dir(
         &mut self,
         dir: &Path,
@@ -373,39 +413,60 @@ impl PluginManagerLifecycle {
             )));
         }
 
-        let mut loaded = 0;
-        let entries = std::fs::read_dir(dir).map_err(|e| {
-            UnsafeNativePluginError::LoadFailed(format!("failed to read dir: {}", e))
-        })?;
+        #[cfg(not(feature = "unsafe-native-extensions"))]
+        {
+            let has_native_artifact = std::fs::read_dir(dir)
+                .map(|entries| {
+                    entries.flatten().any(|e| {
+                        e.path()
+                            .extension()
+                            .and_then(|x| x.to_str())
+                            .is_some_and(|x| x == "so" || x == "dylib" || x == "dll")
+                    })
+                })
+                .unwrap_or(false);
+            if has_native_artifact {
+                return Err(UnsafeNativePluginError::Unsupported);
+            }
+            Ok(0)
+        }
 
-        for entry in entries {
-            let entry = match entry {
-                Ok(e) => e,
-                Err(e) => {
-                    tracing::warn!("Failed to read plugin directory entry: {}", e);
-                    continue;
-                }
-            };
-            let path = entry.path();
-            if let Some(ext) = path.extension() {
-                if ext == "so" || ext == "dylib" || ext == "dll" {
-                    match self.plugin_manager.load_axum_plugin(&path) {
-                        Ok(_) => {
-                            loaded += 1;
-                        }
-                        Err(e) => {
-                            tracing::error!(
-                                "Failed to load unsafe native extension {}: {}",
-                                path.display(),
-                                e
-                            );
+        #[cfg(feature = "unsafe-native-extensions")]
+        {
+            let mut loaded = 0;
+            let entries = std::fs::read_dir(dir).map_err(|e| {
+                UnsafeNativePluginError::LoadFailed(format!("failed to read dir: {}", e))
+            })?;
+
+            for entry in entries {
+                let entry = match entry {
+                    Ok(e) => e,
+                    Err(e) => {
+                        tracing::warn!("Failed to read plugin directory entry: {}", e);
+                        continue;
+                    }
+                };
+                let path = entry.path();
+                if let Some(ext) = path.extension() {
+                    if ext == "so" || ext == "dylib" || ext == "dll" {
+                        match self.plugin_manager.load_axum_plugin(&path) {
+                            Ok(_) => {
+                                loaded += 1;
+                            }
+                            Err(e) => {
+                                tracing::error!(
+                                    "Failed to load unsafe native extension {}: {}",
+                                    path.display(),
+                                    e
+                                );
+                            }
                         }
                     }
                 }
             }
-        }
 
-        Ok(loaded)
+            Ok(loaded)
+        }
     }
 
     /// Enable hot-reload watching on a directory.

@@ -38,10 +38,17 @@ pub use sandbox::types::{
     PluginSignatureVerification, PluginStateModel, PluginTrustTier, ResourceLimitError,
     SigningPolicy, SigningViolation, TrustedPluginKey, VerifiedPluginSignature,
 };
+#[cfg(feature = "unsafe-native-extensions")]
+pub use synvoid_native_extension::{
+    InProcessNativeBackend, NativeExtensionBackend, NativeExtensionHandle,
+};
 pub use unsafe_native_loader::{
-    current_generation, get_global_unsafe_native_config, is_production_env,
-    set_global_unsafe_native_config, UnsafeNativeExtension, UnsafeNativeExtensionConfig,
-    UnsafeNativeExtensionStatus, UnsafeNativeGlobalStatus,
+    create_plugin_library_example, current_generation, drain_audit_events,
+    get_global_unsafe_native_config, is_production_env, load_plugin, peek_audit_events,
+    record_audit_event, set_global_unsafe_native_config, AxumPluginError, UnsafeNativeAuditEvent,
+    UnsafeNativeAuditEventKind, UnsafeNativeExtension, UnsafeNativeExtensionConfig,
+    UnsafeNativeExtensionStatus, UnsafeNativeGlobalStatus, UnsafeNativePluginError,
+    RISK_ACKNOWLEDGEMENT,
 };
 pub use wasm_metrics::{
     get_all_wasm_metrics, get_wasm_metrics, record_concurrency_limit_exceeded,

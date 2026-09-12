@@ -83,6 +83,11 @@ sha256 = "abc123..."
 
 ### `[plugins.unsafe_native]` — `UnsafeNativePluginConfig`
 
+> **Compile gate (Phase 28):** these settings take effect only in binaries
+> built with `--features unsafe-native-extensions` (off by default). In
+> default builds every native load reports `Unsupported` regardless of the
+> values below.
+
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enabled` | `bool` | `false` | Enable loading of unsafe native extensions |

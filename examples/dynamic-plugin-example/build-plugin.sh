@@ -3,7 +3,8 @@
 # Build script for creating a dynamic Axum plugin (.so/.dylib)
 #
 # This builds your Axum app as a shared library that can be loaded
-# by synvoid at runtime using libloading.
+# by synvoid at runtime (requires the unsafe-native-extensions feature;
+# see architecture/unsafe_native_extensions.md).
 #
 # Usage:
 #   ./build-plugin.sh           # Build release plugin

@@ -56,6 +56,21 @@ pub(crate) fn assemble_plugin_runtime(main_config: &MainConfig) -> PluginRuntime
     };
     crate::plugin::set_global_unsafe_native_config(runtime_native_config);
 
+    // Phase 28: a config that enables native extensions cannot take effect in
+    // a binary built without the `unsafe-native-extensions` feature. Fail
+    // closed (nothing loads; every load reports `Unsupported`) and log an
+    // explicit error so the mismatch is operator-visible instead of silent.
+    #[cfg(not(feature = "unsafe-native-extensions"))]
+    if native_cfg.enabled {
+        tracing::error!(
+            "Unsafe native extensions are enabled in configuration but this binary \
+             was built without the `unsafe-native-extensions` feature; native \
+             extension loading is compiled out and every load will report \
+             `Unsupported`. Rebuild with `--features unsafe-native-extensions` \
+             to compile native support in (runtime gates still apply)."
+        );
+    }
+
     if native_cfg.enabled {
         if crate::plugin::is_production_env() {
             if native_cfg.allow_in_production {

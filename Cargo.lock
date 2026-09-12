@@ -7976,6 +7976,7 @@ dependencies = [
  "synvoid-mesh",
  "synvoid-mesh-protocol",
  "synvoid-metrics",
+ "synvoid-native-extension",
  "synvoid-platform",
  "synvoid-plugin-runtime",
  "synvoid-proxy",
@@ -8619,6 +8620,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "synvoid-native-extension"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "libloading",
+ "metrics 0.22.4",
+ "parking_lot",
+ "serde",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
 name = "synvoid-platform"
 version = "0.1.0"
 dependencies = [
@@ -8645,13 +8661,13 @@ dependencies = [
  "http 1.4.1",
  "http-body",
  "http-body-util",
- "libloading",
  "metrics 0.22.4",
  "notify",
  "parking_lot",
  "serde",
  "serde_json",
  "sha2",
+ "synvoid-native-extension",
  "synvoid-utils",
  "tempfile",
  "thiserror 2.0.18",

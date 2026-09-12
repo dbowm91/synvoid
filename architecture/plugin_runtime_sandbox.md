@@ -16,23 +16,35 @@ The `PluginTrustTier` enum controls what a plugin can request and how strictly i
 
 Serialization uses `snake_case` (`"local_sandboxed"`, `"signed_sandboxed"`, etc.).
 
-## Unsafe Native Extensions (Separate from WASM Sandbox) — Phase 8 COMPLETE
+## Unsafe Native Extensions (Separate from WASM Sandbox) — Phase 8 COMPLETE, Phase 28 ISOLATED
 
-Native shared-library extensions loaded via `libloading` run inside the Synvoid address space with full process authority. They are **not** subject to the WASM sandbox, trust tiers, capability manifest, signing policy, fuel/epoch limits, or host API sub-capabilities described above.
+Native shared-library extensions run inside the Synvoid address space with full process authority. They are **not** subject to the WASM sandbox, trust tiers, capability manifest, signing policy, fuel/epoch limits, or host API sub-capabilities described above.
+
+Phase 28 isolates this capability: loading authority lives in the dedicated
+`synvoid-native-extension` crate behind the `unsafe-native-extensions`
+compile feature (off by default) plus the runtime gates below. The sandboxed
+runtime's default graph links no shared-library loader
+(`cargo tree -p synvoid-plugin-runtime | grep libloading` is empty);
+`PluginManager` consumes the narrow `NativeExtensionBackend` interface, and
+feature-disabled builds report `Unsupported` explicitly. Compile-time
+capability, runtime enablement, and the still-unsandboxed nature of
+in-process native code are distinct states — see
+`architecture/unsafe_native_extensions.md`.
 
 Unsafe native extensions are:
-- Disabled by default in all modes
+- Compiled in only with the `unsafe-native-extensions` feature (off by default)
+- Disabled by default in all modes at runtime
 - Requiring explicit operator acknowledgement in production
 - Path-scoped with allowlisted directories
 - Optional SHA-256 hash verification
-- Retaining `Arc<Library>` handles to prevent use-after-free
+- Retaining `Arc<Library>` handles (plus per-router keep-alives) to prevent use-after-free
 - Exposed via separate observability status and metrics
 
 ### Phase 8 Closure Summary
 
 The production gate is now fully enforced via `validate_for_load()`, which checks `is_production`, `allow_in_production`, `risk_acknowledgement`, and `allowed_dirs` before any load proceeds. Error variants that were previously dead code are now active enforcement points.
 
-**FFI panic handling:** Native panics crossing the FFI boundary are caught via `std::panic::catch_unwind` around `factory()` and `Box::from_raw()`, preventing undefined behavior.
+**FFI panic handling:** Native Rust panics crossing the FFI boundary are caught via `std::panic::catch_unwind` around `factory()` and `Box::from_raw()` so a Rust panic does not unwind across FFI. This is NOT a sandbox: arbitrary native UB can still corrupt or crash the host process.
 
 **Hot-reload gating:** Native extension hot-reload is separately gated via `hot_reload_enabled` config, independent of WASM hot-reload settings.
 
@@ -44,7 +56,7 @@ The production gate is now fully enforced via `validate_for_load()`, which check
 
 **Metrics:** `synvoid_unsafe_native_extension_loaded_total`, `synvoid_unsafe_native_extension_load_failed_total`, `synvoid_unsafe_native_extension_reloaded_total`, and per-plugin request counters are emitted.
 
-**ExternalPluginClient placeholder:** A trait exists in `unsafe_native_loader.rs` for future out-of-process native plugin architecture.
+**External-host seam:** Phase 28 removes the `ExternalPluginClient` placeholder (which claimed an unimplemented `filter_request` method) and replaces it with a non-executing typed seam (`ExternalHostRequest`/`ExternalHostDecision` DTOs plus contract bounds in `synvoid-native-extension/src/external_seam.rs`) for a future out-of-process host. No generic remote-execution API is provided.
 
 See `docs/PLUGINS.md` for the unsafe native extension configuration reference and `architecture/unsafe_native_extensions.md` for the full design.
 

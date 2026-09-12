@@ -260,12 +260,12 @@ Phase 10 closure audit. Classifies every public surface of the SynVoid codebase 
 | `handle_request` (export) | `crates/synvoid-plugin-runtime/src/wasm_runtime.rs:41` | stable_within_workspace | stable | Serverless handler |
 | Host functions | `crates/synvoid-plugin-runtime/src/wasm_runtime.rs:726+` | stable_within_workspace | stable | abort, check_timeout, get_env, mesh_query_dht, mesh_check_threat, mesh_emit_event, synvoid_read_body_chunk |
 
-### Axum Native Plugin ABI (libloading)
+### Unsafe Native Extension ABI (Phase 28: canonical in `synvoid-native-extension`)
 
 | Item | File | Classification | Stability | Notes |
 |------|------|---------------|-----------|-------|
-| `synvoid_abi_version` | `crates/synvoid-plugin-runtime/src/axum_loader.rs:109` | stable_within_workspace | stable | ABI version check; plugin .so must export matching CARGO_PKG_VERSION |
-| `create_router` | `crates/synvoid-plugin-runtime/src/axum_loader.rs:126` | stable_within_workspace | stable | Factory function returning *mut Router<()> |
+| `synvoid_abi_version` | `crates/synvoid-native-extension/src/loader.rs` | stable_within_workspace | stable | ABI version check; plugin .so must export matching CARGO_PKG_VERSION |
+| `create_router` | `crates/synvoid-native-extension/src/loader.rs` | stable_within_workspace | stable | Factory function returning *mut Router<()> |
 
 ### Spin Compatibility Layer
 

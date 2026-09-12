@@ -100,7 +100,7 @@ extraction debt. Reclassified `split_required` → `keep_app_root`
 | `PluginManager` struct + inherent methods (~245 lines) | stale duplicate of `synvoid_plugin_runtime::plugin_manager::PluginManager` | Deleted; root re-exports the crate type. Crate version is a superset (adds `load_wasm_plugin_from_bytes`) |
 | `PluginManagerLifecycle` struct (~240 lines) | stale duplicate of crate lifecycle | Deleted; root re-exports the crate type |
 | `load_wasm_plugin` mesh-store preference (`#[cfg(feature = "mesh")]`) | application lifecycle composition (mesh + plugin) | Preserved as root adapter `load_wasm_plugin_with_mesh_fallback()` + mesh-agnostic `load_plugins_from_dir_with_resolver()` hook in the crate; `PluginRuntimeOwner` passes the mesh resolver. No `synvoid::*` import added to the crate |
-| `unsafe_native_loader.rs` | thin shim (already facade) | Retained; delegates to `synvoid_plugin_runtime::unsafe_native_loader::load_plugin` |
+| `unsafe_native_loader.rs` | thin shim (already facade) | Retained as pure facade; Phase 28 delegates to `synvoid_plugin_runtime::unsafe_native_loader::load_plugin`, whose canonical implementation lives in `synvoid-native-extension` (feature-gated, off by default) |
 | `impl AxumDynamicRouterLookup / WasmFilterBackend for PluginManager` | request-path adapter | Moved to `synvoid-http` (`plugin_backend.rs`; local trait + foreign type is orphan-legal, no new dependency — `synvoid-http` already depends on `synvoid-plugin-runtime`) |
 | Manifest/capability validation, trust-tier/signature decisions, WASM execution policy, timeout/resource limits, quarantine/failure accounting | reusable runtime | Canonical in `synvoid-plugin-runtime` (`sandbox/types.rs`, `wasm_runtime.rs`); no root copies exist or remain (guard-enforced) |
 

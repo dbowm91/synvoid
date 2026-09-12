@@ -151,11 +151,18 @@ public_key = "base64-url-no-pad..."
 
 Native shared-library plugins (`.so`/`.dylib`/`.dll`) run inside the SynVoid address space with **full process authority**. They are NOT sandboxed, NOT subject to capability checks, fuel limits, or any WASM constraints.
 
+**Compile-time gate (Phase 28):** default builds do NOT include native
+loading support at all. The binary must be built with
+`--features unsafe-native-extensions`; otherwise every load reports
+`Unsupported` and startup logs an explicit error when the config enables
+native extensions. Verify support with the operator status endpoint before
+deploying native artifacts.
+
 **This is a security boundary.** Only load native extensions from trusted sources.
 
 ### Production Gate Requirements
 
-All four conditions must be met for a native extension to load:
+All four conditions must be met for a native extension to load (plus compiled-in support above):
 
 ```toml
 [plugins.unsafe_native]
@@ -175,8 +182,8 @@ allowed_dirs = ["/opt/synvoid/native-extensions"]  # Must be non-empty
 
 ### Additional Protections
 
-- FFI panics are caught via `std::panic::catch_unwind`
-- `Arc<Library>` handles retained for plugin lifetime (prevents use-after-free)
+- Rust panics in the factory are caught via `std::panic::catch_unwind` (panics only — not a sandbox; native UB can still crash the process)
+- `Arc<Library>` handles retained for plugin lifetime plus per-router keep-alives (prevents use-after-free)
 - Optional SHA-256 hash verification for loaded binaries
 - Separate hot-reload gate (`unsafe_native_enabled`)
 

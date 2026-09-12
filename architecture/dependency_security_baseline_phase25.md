@@ -126,7 +126,7 @@ exists), follow-up (owner + phase).
 | Duplicated `ahash` 0.7.8 / 0.8.12 | 0.7 via `parcel_sourcemap` (lightningcss chain); 0.8 direct | justified — minor build cost only, no security impact; collapses if lightningcss drops `parcel_sourcemap` |
 | Duplicated `wasmtime` 40.0.4 / 42.0.2 | 40 via yara-x (stale compiler backend); 42 direct runtime | follow-up — Phase 26 owns yara-x consolidation; §4 owns direct ≥46.0.3 upgrade |
 | Duplicated `rkyv` 0.7.46 / 0.8.x | 0.7 via `parcel_sourcemap`; direct code on 0.8 | follow-up — collapses with the same lightningcss change; 0.7 covered by RUSTSEC-2026-0235 ignore with review date |
-| Native/FFI (`aws-lc-rs`, `ring` transitive, `libloading`, `bumpalo`-linked compiles) | TLS PQC backend, DNS/QUIC crypto, native-extension loading (disabled by default + allowlisted) | justified — each has an owning security invariant (see `AGENTS.md`); `libloading` isolation is Phase 28 |
+| Native/FFI (`aws-lc-rs`, `ring` transitive, `libloading`, `bumpalo`-linked compiles) | TLS PQC backend, DNS/QUIC crypto, native-extension loading (compiled out by default + disabled by default + allowlisted) | justified — each has an owning security invariant (see `AGENTS.md`); `libloading` plugin-loader isolation complete in Phase 28 (`synvoid-native-extension` + `unsafe-native-extensions` feature, off by default) |
 | Git sources | exactly one: wasmtime 42.0.2 patch (this file §1/§4) | follow-up — remove with the §4 upgrade; `deny.toml` `allow-git` lists only it |
 | Build dependencies executing code at build time | `tonic-prost-build` (protobuf codegen, mesh admin/control APIs), `chrono` (codegen timestamps) | justified — pinned via lockfile; codegen inputs are checked-in protos |
 
