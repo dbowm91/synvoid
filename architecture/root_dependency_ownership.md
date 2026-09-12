@@ -12,7 +12,7 @@ Classification values:
 
 `Allowed root paths` is the mechanically checked entitlement: top-level `src/`
 paths (file stems for root files, directory names otherwise) where root code may
-reference the dependency, measured 2026-09-12 and enforced by
+reference the dependency, measured 2026-09-12, re-verified Phase 31 (2026-09-12) and enforced by
 `root_dependency_entitlement_guard` in `tools/synvoid-repo-guards/tests/module_ownership.rs`.
 `tests/, benches/` means test/tooling use only; `—` means no root consumer is
 entitled (any new `use` must reclassify the row first). `test_or_tooling` rows are
@@ -27,35 +27,35 @@ reference fails the guard until the row is reclassified with a reason.
 | tokio | server, supervisor, worker, startup, commands | composition_runtime | default | async runtime and task orchestration | keep | admin, bin, commands, honeypot_port, http, http_client, platform, process, sandbox, server, serverless, startup, supervisor, tarpit, tcp, test_utils, tls, udp, waf, worker |
 | hyper | http, http_client | composition_runtime | default | HTTP/1 and HTTP/2 server and client | keep | http, tls |
 | hyper-util | http, http_client | composition_runtime | default | HTTP connection pooling and utilities | keep | http, tls |
-| hyper-rustls | — | migration_blocker | default | No direct root consumer in src/ (measured 2026-09-12); canonical use in domain crates; retained pending Phase 31 per-crate feature audit | Phase 31 removal audit | — |
-| tower | tests | test_or_tooling | default | Production use moved to domain crates (tower-http stack); root references only in tests/ | keep | tests/, benches/ |
+| hyper-rustls | — | remove_candidate | — | Phase 31: removed from root (0 src uses; egress TLS owned by synvoid-http-client) | removed Phase 31 | — |
+| tower | tests | remove_candidate | — | Phase 31: moved from [dependencies] to [dev-dependencies] (test-only: tower::ServiceExt::oneshot) | moved to dev-deps Phase 31 | — |
 | tower-http | http, admin | composition_runtime | default | HTTP middleware (filesystem, CORS) | keep | admin |
 | axum | admin, http | composition_runtime | default | REST API framework for admin endpoints | keep | admin, bin, http |
-| axum-extra | — | migration_blocker | default | No direct root consumer in src/ (measured 2026-09-12); canonical use in domain crates; retained pending Phase 31 per-crate feature audit | Phase 31 removal audit | — |
-| http-body | — | migration_blocker | default | No direct root consumer in src/ (measured 2026-09-12); canonical use in domain crates; retained pending Phase 31 per-crate feature audit | Phase 31 removal audit | — |
+| axum-extra | — | remove_candidate | — | Phase 31: removed from root (0 src uses; canonical use in domain crates) | removed Phase 31 | — |
+| http-body | — | remove_candidate | — | Phase 31: removed from root (0 `http_body::` uses; BoxBody adapters use http-body-util) | removed Phase 31 | — |
 | http-body-util | http, http_client | composition_runtime | default | HTTP body adapter utilities | keep | honeypot_port, http, server, tls |
 | bytes | utils, buffer | composition_runtime | default | Efficient byte buffer management | keep | honeypot_port, http, http_client, mesh, server, serverless, tarpit, tls, waf, worker |
 | serde | config, throughout | composition_runtime | default | Serialization framework | keep | admin, bin, honeypot_port, http, icmp_filter, mesh, platform, process, waf, worker |
 | serde_json | config, admin, logging | composition_runtime | default | JSON serialization | keep | admin, bin, commands, honeypot_port, http, icmp_filter, platform, process, sandbox, server, serverless, supervisor, waf, worker |
 | postcard | utils, mesh | composition_runtime | default | Compact binary serialization for distributed state | keep | supervisor, worker |
-| rkyv | — | migration_blocker | default | No direct root consumer in src/ (last refs were Phase 25-removed facade copies; direct rkyv 0.8 use in domain crates); retained pending Phase 31 per-crate feature audit | Phase 31 removal audit | — |
+| rkyv | — | remove_candidate | — | Phase 31: removed from root (0 src uses; canonical rkyv 0.8 use in domain crates) | removed Phase 31 | — |
 | toml | config | composition_runtime | default | TOML config file parsing | keep | admin, bin |
 | anyhow | throughout | composition_runtime | default | Error context and chaining | keep | http_client, server |
-| bitflags | — | migration_blocker | default | No direct root consumer in src/ (measured 2026-09-12); canonical use in domain crates; retained pending Phase 31 per-crate feature audit | Phase 31 removal audit | — |
+| bitflags | — | remove_candidate | — | Phase 31: removed from root (0 src uses) | removed Phase 31 | — |
 | tracing | throughout | composition_runtime | default | Structured logging framework | keep | admin, bin, commands, common, honeypot_port, http, icmp_filter, log_controller, mesh, platform, plugin, process, sandbox, server, serverless, startup, supervisor, tcp, tls, udp, utils, waf, worker |
 | tracing-subscriber | startup | composition_runtime | default | Log output formatting and filtering | keep | bin, log_controller |
-| tracing-appender | — | migration_blocker | default | No direct root consumer in src/ (measured 2026-09-12); canonical use in domain crates; retained pending Phase 31 per-crate feature audit | Phase 31 removal audit | — |
+| tracing-appender | — | remove_candidate | — | Phase 31: removed from root (0 src uses) | removed Phase 31 | — |
 | stegoeggo | worker | composition_runtime | default | Steganography detection in worker image-rights admission (src/worker/image_rights.rs), not WAF | keep | worker |
 | regex | waf, logging, admin | composition_runtime | default | Pattern matching for WAF rules and log parsing | keep | admin, honeypot_port |
 | parking_lot | throughout | composition_runtime | default | Fast mutex and RwLock implementations | keep | admin, honeypot_port, http, log_controller, process, serverless, supervisor, tarpit, tcp, tls, udp, waf, worker |
 | dashmap | http_client, mesh | composition_runtime | default | Concurrent hash map for connection pools | keep | mesh, process, udp, waf, worker |
 | arc-swap | config, http_client | composition_runtime | default | Atomic Arc pointer swapping for hot config | keep | waf |
-| moka | — | migration_blocker | default | No direct root consumer in src/ (measured 2026-09-12); canonical use in domain crates; retained pending Phase 31 per-crate feature audit | Phase 31 removal audit | — |
+| moka | — | remove_candidate | — | Phase 31: removed from root (0 src uses) | removed Phase 31 | — |
 | memmap2 | block_store | composition_runtime | default | Memory-mapped file I/O for block store | keep | waf |
 | metrics | metrics | composition_runtime | default | Metrics facade for observability | keep | admin, honeypot_port, http, icmp_filter, process, server, supervisor, tarpit, tcp, tls, udp, waf, worker |
 | metrics-exporter-prometheus | metrics | composition_runtime | default | Prometheus metrics endpoint | keep | admin |
 | http | http, http_client | composition_runtime | default | HTTP type definitions | keep | admin, honeypot_port, http, http_client, server, serverless, theme, tls, waf, worker |
-| ipnetwork | — | migration_blocker | default | No direct root consumer in src/ (measured 2026-09-12); canonical use in domain crates; retained pending Phase 31 per-crate feature audit | Phase 31 removal audit | — |
+| ipnetwork | — | remove_candidate | — | Phase 31: removed from root (0 src uses) | removed Phase 31 | — |
 | rand | admin, commands, honeypot_port, process, supervisor, tarpit, waf | composition_runtime | default | Random number generation (admin tokens, PoW challenges, request IDs) | keep | admin, commands, honeypot_port, process, supervisor, tarpit, waf |
 | base64 | utils, mesh | composition_runtime | default | Base64 encoding/decoding | keep | admin, commands, waf |
 | sha2 | admin, process, supervisor, waf, worker | composition_runtime | default | SHA-256 hashing | keep | admin, process, supervisor, waf, worker |
@@ -64,11 +64,11 @@ reference fails the guard until the row is reclassified with a reason.
 | sysinfo | admin, startup | composition_runtime | default | System resource monitoring | keep | admin, process, worker |
 | nix | platform, process | composition_runtime | default | Unix system calls (signals, sockets, process) | keep | platform, process, tls, worker |
 | chrono | config, logging | composition_runtime | default | Date/time handling with serde support | keep | admin, http, serverless, waf |
-| notify | — | migration_blocker | default | No direct root consumer in src/ (measured 2026-09-12); canonical use in domain crates; retained pending Phase 31 per-crate feature audit | Phase 31 removal audit | — |
-| aho-corasick | — | migration_blocker | default | No direct root consumer in src/ (last ref was a Phase 25-removed honeypot_port facade copy; canonical WAF use in synvoid-waf); retained pending Phase 31 per-crate feature audit | Phase 31 removal audit | — |
-| unicode-normalization | — | migration_blocker | default | No direct root consumer in src/ (measured 2026-09-12); canonical use in domain crates; retained pending Phase 31 per-crate feature audit | Phase 31 removal audit | — |
-| libinjectionrs | — | migration_blocker | default | No direct root consumer in src/ (measured 2026-09-12); canonical use in domain crates; retained pending Phase 31 per-crate feature audit | Phase 31 removal audit | — |
-| serde_bytes | — | migration_blocker | default | No direct root consumer in src/ (last ref was the Phase 25-removed src/process/ipc_signed.rs facade copy; canonical use in synvoid-ipc); retained pending Phase 31 per-crate feature audit | Phase 31 removal audit | — |
+| notify | — | remove_candidate | — | Phase 31: removed from root (0 `notify::` uses; watcher owned by synvoid-tls + synvoid-plugin-runtime) | removed Phase 31 | — |
+| aho-corasick | — | remove_candidate | — | Phase 31: removed from root (0 src uses; canonical WAF use in synvoid-waf) | removed Phase 31 | — |
+| unicode-normalization | — | remove_candidate | — | Phase 31: removed from root (0 src uses) | removed Phase 31 | — |
+| libinjectionrs | — | remove_candidate | — | Phase 31: removed from root (0 src uses; canonical WAF use in synvoid-waf) | removed Phase 31 | — |
+| serde_bytes | — | remove_candidate | — | Phase 31: removed from root (0 src uses; canonical use in synvoid-ipc) | removed Phase 31 | — |
 | synvoid-cli | commands | composition_runtime | default | CLI argument parsing definitions | keep | commands, main |
 | synvoid-config | config | composition_runtime | default | Configuration types and ConfigManager | keep | admin, commands, config, http, static_files, supervisor, waf, worker |
 | synvoid-dns | dns | composition_runtime | dns | DNS server with DNSSEC validation | keep | dns |
@@ -81,27 +81,27 @@ reference fails the guard until the row is reclassified with a reason.
 | synvoid-platform | platform | composition_runtime | default | Platform detection and OS abstractions | keep | platform |
 | synvoid-upstream | upstream | composition_runtime | default | Upstream server selection | keep | lib |
 | synvoid-tunnel | tunnel | composition_runtime | default | Tunnel backend routing | keep | tunnel |
-| hickory-proto | — | migration_blocker | dns | No direct root consumer in src/ (measured 2026-09-12); retained for dns feature-surface wiring (dep:hickory-proto) | Phase 31 removal audit | — |
-| hickory-resolver | — | migration_blocker | dns | No direct root consumer in src/ (measured 2026-09-12); retained for dns feature-surface wiring (dep:hickory-resolver) | Phase 31 removal audit | — |
+| hickory-proto | — | remove_candidate | — | Phase 31: removed from root + dns feature (0 src uses; DNS wire owned by synvoid-dns) | removed Phase 31 | — |
+| hickory-resolver | — | remove_candidate | — | Phase 31: removed from root + dns feature (0 src uses; resolution owned by synvoid-dns) | removed Phase 31 | — |
 | thiserror | throughout | composition_runtime | default | Derive macro for error types | keep | admin, honeypot_port, icmp_filter, mesh, platform, process, server, serverless |
-| getrandom | — | migration_blocker | dns | No direct root consumer in src/ (measured 2026-09-12); retained for dns feature-surface wiring (dep:getrandom) | Phase 31 removal audit | — |
+| getrandom | — | remove_candidate | — | Phase 31: removed from root + dns feature (0 `getrandom::` uses) | removed Phase 31 | — |
 | clap | commands | composition_runtime | default | CLI subcommand parsing | keep | bin, main |
-| tempfile | tests | test_or_tooling | default | Test fixtures (integration suites + src unit tests); last production ref was the Phase 25-removed src/process/manager.rs facade copy | keep | tests/, benches/ |
+| tempfile | tests | remove_candidate | — | Phase 31: moved from [dependencies] to [dev-dependencies] (test fixtures + src unit tests) | moved to dev-deps Phase 31 | — |
 | uuid | config, tests | composition_runtime | default | UUID generation for request IDs | keep | admin, serverless |
-| pin-project-lite | — | migration_blocker | default | No direct root consumer in src/ (measured 2026-09-12); canonical use in domain crates; retained pending Phase 31 per-crate feature audit | Phase 31 removal audit | — |
+| pin-project-lite | — | remove_candidate | — | Phase 31: removed from root (0 src uses) | removed Phase 31 | — |
 | bcrypt | admin | composition_runtime | default | Password hashing for admin auth | keep | admin |
-| dirs | — | migration_blocker | default | No direct root consumer in src/ (last ref was a Phase 25-removed src/process facade copy; canonical use in domain crates); retained pending Phase 31 per-crate feature audit | Phase 31 removal audit | — |
-| flate2 | worker (unit tests) | test_or_tooling | default | Gzip fixtures for worker minifier unit tests (src/worker/mod.rs); production bundles moved to synvoid-serverless | keep | tests/, benches/ |
-| tar | — | migration_blocker | default | No direct root consumer in src/ (measured 2026-09-12); canonical use in domain crates; retained pending Phase 31 per-crate feature audit | Phase 31 removal audit | — |
+| dirs | — | remove_candidate | — | Phase 31: removed from root (0 `dirs::` uses) | removed Phase 31 | — |
+| flate2 | tests | remove_candidate | — | Phase 31: moved from [dependencies] to [dev-dependencies] (worker minifier unit-test fixtures) | moved to dev-deps Phase 31 | — |
+| tar | — | remove_candidate | — | Phase 31: removed from root (0 `tar::` uses) | removed Phase 31 | — |
 | mime_guess | admin | composition_runtime | default | MIME type detection for SPA static file serving | keep | admin |
-| pqc | — | migration_blocker | default | No direct root consumer in src/ (measured 2026-09-12); canonical use in domain crates; retained pending Phase 31 per-crate feature audit | Phase 31 removal audit | — |
-| zeroize | — | migration_blocker | default | No direct root consumer in src/ (measured 2026-09-12); canonical use in domain crates; retained pending Phase 31 per-crate feature audit | Phase 31 removal audit | — |
-| walkdir | — | migration_blocker | default | No direct root consumer in src/ (measured 2026-09-12); canonical use in domain crates; retained pending Phase 31 per-crate feature audit | Phase 31 removal audit | — |
+| pqc | — | remove_candidate | — | Phase 31: removed from root (0 src uses; owned by synvoid-config/synvoid-integrity) | removed Phase 31 | — |
+| zeroize | — | remove_candidate | — | Phase 31: removed from root (0 src uses; owned by synvoid-dnssec-keystore) | removed Phase 31 | — |
+| walkdir | — | remove_candidate | — | Phase 31: removed from root (0 src uses) | removed Phase 31 | — |
 | rusqlite | block_store | composition_runtime | default | SQLite for block store persistence | keep | honeypot_port, waf |
 | tokio-rustls | http_client, tls | composition_runtime | default | TLS stream integration with Tokio | keep | tls |
-| rustls | — | migration_blocker | default | No direct root consumer in src/ (measured 2026-09-12); retained for workspace TLS feature unification (prefer-post-quantum, aws-lc-rs); direct use in synvoid-tls | Phase 31 per-crate feature audit | — |
-| rustls-pki-types | — | migration_blocker | default | No direct root consumer in src/ (measured 2026-09-12); canonical use in domain crates; retained pending Phase 31 per-crate feature audit | Phase 31 removal audit | — |
-| aws-lc-rs | — | migration_blocker | default | No direct root consumer in src/ (measured 2026-09-12); retained for workspace TLS feature unification (unstable for ML-DSA); direct use in synvoid-tls | Phase 31 per-crate feature audit | — |
+| rustls | — | remove_candidate | — | Phase 31: removed from root (0 direct `rustls::` uses; PQ/TLS features owned by synvoid-tls + synvoid-http-client) | removed Phase 31 | — |
+| rustls-pki-types | — | remove_candidate | — | Phase 31: removed from root (0 src uses; owned by synvoid-tls + synvoid-http-client) | removed Phase 31 | — |
+| aws-lc-rs | — | remove_candidate | — | Phase 31: removed from root (0 src uses; TLS backend owned by synvoid-tls) | removed Phase 31 | — |
 | subtle | admin, bin, process, waf | composition_runtime | default | Constant-time comparisons for security | keep | admin, bin, process, waf |
 | cryptoki | — | remove_candidate | — | Phase 30: removed from root (no `dep:cryptoki` edge). PKCS#11/HSM ownership moved to `synvoid-dnssec-keystore` behind its opt-in `pkcs11`/`hsm` features (root `dns-hsm`); normal builds carry no PKCS#11 provider surface | Phase 30 extraction | — |
 | quinn | http3, tunnel | composition_runtime | default | QUIC protocol implementation | keep | tcp |
@@ -118,7 +118,7 @@ reference fails the guard until the row is reclassified with a reason.
 | synvoid-plugin-runtime | plugin | composition_runtime | default | WASM plugin runtime and instance pooling | keep | admin, plugin, sandbox, spin, worker |
 | synvoid-jail-runtime | sandbox | composition_runtime | default | Child-side jail execution package (Phase 29): WASM/YARA services + sandbox-entry sequencing + dedicated binaries; root sandbox facades/shims delegate to it | keep | sandbox |
 | synvoid-tls | tls | composition_runtime | default | TLS termination and ACME | keep | supervisor, tls |
-| synvoid-proxy-cache | — | migration_blocker | default | No direct root consumer in src/ (measured 2026-09-12); root proxy_cache/ removed Phase 03; canonical synvoid_proxy_cache | Phase 31 removal audit | — |
+| synvoid-proxy-cache | — | remove_candidate | — | Phase 31: removed from root (0 src uses; root proxy_cache/ removed Phase 03) | removed Phase 31 | — |
 | synvoid-admin | admin | composition_runtime | default | Admin API handler types | keep | admin |
 | synvoid-proxy | proxy | composition_runtime | default | Reverse proxy routing and location matching | keep | http, location_matcher, protocol, proxy, router, router_adapter, streaming, tls, waf |
 | synvoid-http | http | composition_runtime | default | Canonical HTTP parsing/normalization/body-policy/dispatch; root `http` is application composition over it (Phase 20) | keep | http, listener, server, tls, waf, worker |
@@ -138,35 +138,35 @@ reference fails the guard until the row is reclassified with a reason.
 | synvoid-static-files | static_files | composition_runtime | default | Static file serving and directory listing | keep | http, static_files, tls, worker |
 | url | config, http | composition_runtime | default | URL parsing and manipulation | keep | admin, http |
 | syslog | logging | remove_candidate | default | Syslog transport (dead module - logging removed) | removed with logging module | — |
-| log | — | migration_blocker | default | Prior claim of src/waf/endpoints.rs use is stale (no log:: reference repo-wide, measured 2026-09-12); logging facade use moved to domain crates | Phase 31 removal audit | — |
+| log | — | remove_candidate | — | Phase 31: removed from root (0 `log::` uses; tracing is the facade) | removed Phase 31 | — |
 | schemars | config | composition_runtime | default | JSON Schema generation for config | keep | admin, commands, mesh |
 | utoipa | admin | composition_runtime | default | OpenAPI schema generation | keep | admin |
 | utoipa-swagger-ui | admin | composition_runtime | swagger-ui | Swagger UI for API docs | keep | admin |
-| prost | — | migration_blocker | default | No direct root consumer in src/ (measured 2026-09-12); canonical use in domain crates; retained pending Phase 31 per-crate feature audit | Phase 31 removal audit | — |
+| prost | supervisor (codegen) | composition_runtime | default | Required for tonic codegen: build.rs tonic-prost-build emits `::prost::Message` derives consumed via supervisor::api::proto (OUT_DIR, not src/ `use`); exempted in ENTITLEMENT_EXCEPTIONS | keep (codegen runtime) | supervisor |
 | lru_time_cache | http_client | composition_runtime | default | Time-expiring LRU cache | keep | waf |
 | indexmap | config, http | composition_runtime | default | Insertion-ordered hash map | keep | waf |
 | ahash | http_client, mesh | composition_runtime | default | Fast hashing for concurrent maps | keep | utils |
-| smallvec | — | migration_blocker | default | No direct root consumer in src/ (measured 2026-09-12); canonical use in domain crates; retained pending Phase 31 per-crate feature audit | Phase 31 removal audit | — |
-| aes-gcm | — | migration_blocker | default | No direct root consumer in src/ (measured 2026-09-12); canonical use in domain crates; retained pending Phase 31 per-crate feature audit | Phase 31 removal audit | — |
+| smallvec | — | remove_candidate | — | Phase 31: removed from root (0 src uses) | removed Phase 31 | — |
+| aes-gcm | — | remove_candidate | — | Phase 31: removed from root (0 src uses) | removed Phase 31 | — |
 | async-trait | throughout | composition_runtime | default | Async trait support | keep | honeypot_port, http, mesh, waf, worker |
 | daemonize2 | startup | composition_runtime | default | Process daemonization | keep | platform, startup |
-| digest | — | migration_blocker | default | No direct root consumer in src/ (measured 2026-09-12); canonical use in domain crates; retained pending Phase 31 per-crate feature audit | Phase 31 removal audit | — |
+| digest | — | remove_candidate | — | Phase 31: removed from root (0 `digest::` uses) | removed Phase 31 | — |
 | ed25519-dalek | supervisor, waf | composition_runtime | default | Ed25519 signatures | keep | supervisor, waf |
-| rsa | — | migration_blocker | default | No direct root consumer in src/ (measured 2026-09-12); canonical use in domain crates; retained pending Phase 31 per-crate feature audit | Phase 31 removal audit | — |
-| rand_core_06 | — | migration_blocker | default | No direct root consumer in src/ (measured 2026-09-12); canonical use in domain crates; retained pending Phase 31 per-crate feature audit | Phase 31 removal audit | — |
+| rsa | — | remove_candidate | — | Phase 31: removed from root (0 `rsa::` uses; verification owned by synvoid-dns/keystore) | removed Phase 31 | — |
+| rand_core_06 | — | remove_candidate | — | Phase 31: removed from root with pqc (shim owned by pqc crate) | removed Phase 31 | — |
 | hkdf | supervisor, worker | composition_runtime | default | HKDF key derivation | keep | supervisor, worker |
 | hmac | process, waf | composition_runtime | default | HMAC message authentication | keep | process, waf |
 | socket2 | platform | composition_runtime | default | Low-level socket options | keep | process, tcp, udp |
-| sha1 | — | migration_blocker | default | No direct root consumer in src/ (measured 2026-09-12); canonical use in domain crates; retained pending Phase 31 per-crate feature audit | Phase 31 removal audit | — |
-| sha3 | — | migration_blocker | default | No direct root consumer in src/ (last ref was a Phase 25-removed src/process facade copy; canonical use in domain crates); retained pending Phase 31 per-crate feature audit | Phase 31 removal audit | — |
-| x25519-dalek | — | migration_blocker | default | No direct root consumer in src/ (measured 2026-09-12); canonical use in domain crates; retained pending Phase 31 per-crate feature audit | Phase 31 removal audit | — |
-| base32 | — | migration_blocker | default | No direct root consumer in src/ (measured 2026-09-12); canonical use in domain crates; retained pending Phase 31 per-crate feature audit | Phase 31 removal audit | — |
+| sha1 | — | remove_candidate | — | Phase 31: removed from root (0 `sha1::` uses; DS/NSEC3 interop owned by synvoid-dns/keystore) | removed Phase 31 | — |
+| sha3 | — | remove_candidate | — | Phase 31: removed from root (0 `sha3::` uses) | removed Phase 31 | — |
+| x25519-dalek | — | remove_candidate | — | Phase 31: removed from root (0 src uses) | removed Phase 31 | — |
+| base32 | — | remove_candidate | — | Phase 31: removed from root (0 src uses) | removed Phase 31 | — |
 | libc | platform, process | composition_runtime | default | Raw libc bindings for Unix syscalls | keep | icmp_filter, platform, process, tcp |
 | windows-sys | platform | composition_runtime | default | Windows API bindings | keep | icmp_filter, platform, process |
 | tonic | admin | composition_runtime | default | gRPC framework for supervisor control | keep | supervisor |
-| tonic-reflection | — | migration_blocker | default | No direct root consumer in src/ (measured 2026-09-12); canonical use in domain crates; retained pending Phase 31 per-crate feature audit | Phase 31 removal audit | — |
-| tonic-prost | — | migration_blocker | default | No direct root consumer in src/ (measured 2026-09-12); canonical use in domain crates; retained pending Phase 31 per-crate feature audit | Phase 31 removal audit | — |
-| openraft | — | migration_blocker | mesh | No direct root consumer in src/ (measured 2026-09-12); retained for mesh feature-surface wiring (dep:openraft); mesh Raft lives in synvoid-mesh | Phase 31 removal audit | — |
+| tonic-reflection | — | remove_candidate | — | Phase 31: removed from root (0 src uses) | removed Phase 31 | — |
+| tonic-prost | supervisor (codegen) | composition_runtime | default | Required for tonic gRPC Codec (ProstCodec) backing supervisor control API; no direct `tonic_prost::` in src/ (generated code only); exempted in ENTITLEMENT_EXCEPTIONS | keep (codegen runtime) | supervisor |
+| openraft | — | remove_candidate | — | Phase 31: removed from root + mesh feature (0 src uses; Raft owned by synvoid-mesh) | removed Phase 31 | — |
 | async-stream | http_client, mesh | composition_runtime | default | Async stream macro | keep | tarpit |
 
 ## Build Dependencies

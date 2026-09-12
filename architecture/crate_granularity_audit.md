@@ -1,9 +1,9 @@
 # Crate Granularity Audit
 
-Status: Phase 30 closure audit (adds `synvoid-dnssec-keystore`; Phase 29
-closure text retained below with counts updated). One row per workspace crate
-from the actual final dependency graph (generated from each `Cargo.toml` plus
-root `Cargo.toml`; LOC via `wc -l` over each crate `src/`).
+Status: Phase 31 closeout audit (Track 4 deltas in §Phase 31; per-crate rows
+re-verified, count corrected to 42 `synvoid-*` members). One row per workspace
+crate from the actual final dependency graph (generated from each `Cargo.toml`
+plus root `Cargo.toml`; LOC via `wc -l` over each crate `src/`).
 
 Retain rule (from the phase plan): keep a crate when it provides one or more
 of independently testable invariants/security boundary, reusable/public API,
@@ -30,7 +30,7 @@ no sources, not a workspace member, zero references) was removed.
 | `tools/xtask` (1999 LOC) | `cargo xtask verify*` CI orchestration | Keep (tooling isolation) |
 | `tools/synvoid-repo-guards` (226 LOC) | Static repo guards run by CI + `verify_architecture.sh` | Keep (tooling isolation) |
 
-## `synvoid-*` crates (43 members, Phase 30 adds `synvoid-dnssec-keystore`)
+## `synvoid-*` crates (42 members; Phase 26 adds `synvoid-yara`, Phase 27 adds `synvoid-mesh-protocol`, Phase 28 adds `synvoid-native-extension`, Phase 29 adds `synvoid-jail-runtime`, Phase 30 adds `synvoid-dnssec-keystore`)
 
 Columns: LOC ≈ `src/` lines; "In-crate rev" = other workspace crates
 depending on it (root app crate depends on all of them as composition
@@ -115,3 +115,37 @@ inputs, so it is not listed per row).
 No other crate qualifies as a merge candidate: each carries independent
 invariants, a reusable surface, dependency isolation, feature isolation,
 or a compile-time ownership boundary.
+
+## Phase 31 closeout deltas (Track 4)
+
+Recomputed 2026-09-12 (`cargo metadata --all-features`, `cargo tree
+--workspace`, `cargo tree -d`, `cargo tree -i
+wasmtime/wasmtime-wasi/yara-x/libloading/cryptoki/synvoid-mesh/mesh-protocol`).
+No crate created or removed in this phase; all four Track 4 additions
+re-verified against the retain bar (no "keep" solely for being new):
+
+- `synvoid-yara` (Phase 26): dependency isolation (single `yara-x` owner;
+  mesh has no compiler ref) + security boundary (bounded compile/scan,
+  digest/version binding). Reverse deps: upload, jail-runtime, root.
+- `synvoid-mesh-protocol` (Phase 27): dependency isolation (leaf: no
+  DHT/Raft/SQLite/YARA) + wire-compat invariants. Reverse deps: mesh + root
+  feed verification.
+- `synvoid-native-extension` (Phase 28): capability isolation (explicit
+  unsafe loader, off-by-default feature). Reverse deps: 0-1 (optional).
+- `synvoid-jail-runtime` (Phase 29): process-boundary isolation (child
+  services + dedicated binaries, never imports root/mesh). Reverse deps: root.
+- `synvoid-dnssec-keystore` (Phase 30): security boundary (sealed custody,
+  one-way leaf, HSM opt-in). Reverse deps: dns only.
+
+Root direct surface: 38 unused edges removed, 3 test-only moved to
+`[dev-dependencies]`, `prost`/`tonic-prost` retained as codegen runtimes with
+guard exceptions (see `root_dependency_ownership.md`). Default/minimal
+feature behavior unchanged (defaults stay full-featured for compatibility;
+`--no-default-features` is the supported hardened profile).
+
+Previously rejected extractions re-evaluated on the final graph (verdict: no
+change — see `track4_dependency_security_closeout.md` §5): no
+`synvoid-admin-server`, no `synvoid-waf-runtime`, no egress collapse, no
+`synvoid-filter` merge, no app-server/handlers merge, and no `synvoid-sdk`
+umbrella (explicitly deferred: pre-1.0 internal crates, no external
+aggregation demand, remaining root deps are live composition).

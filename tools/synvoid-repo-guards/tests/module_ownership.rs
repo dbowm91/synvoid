@@ -290,7 +290,19 @@ fn ledger_classifications_are_valid() {
 /// Narrow exceptions for dependencies that cannot be mechanically attributed.
 /// Each entry is (manifest dependency name, reason). Adding an entry requires a
 /// ledger row justifying it; the guard fails on unknown names.
-const ENTITLEMENT_EXCEPTIONS: &[(&str, &str)] = &[];
+// Phase 31: prost + tonic-prost are codegen runtimes for the supervisor gRPC
+// control API (OUT_DIR/synvoid.control.rs references `::prost::Message` and
+// ProstCodec); no direct `prost::`/`tonic_prost::` in src/ to attribute.
+const ENTITLEMENT_EXCEPTIONS: &[(&str, &str)] = &[
+    (
+        "prost",
+        "tonic codegen runtime (::prost::Message in OUT_DIR, not src/)",
+    ),
+    (
+        "tonic-prost",
+        "tonic gRPC Codec runtime (generated ProstCodec, not src/)",
+    ),
+];
 
 fn parse_entitlement_rows(ledger: &str) -> Vec<(String, String, Vec<String>, bool)> {
     // Returns (dep, classification, allowed_paths, is_build_table).

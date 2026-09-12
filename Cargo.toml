@@ -23,7 +23,7 @@ path = "src/bin/server.rs"
 
 [features]
 default = ["socket-handoff", "mesh", "dns", "erased_pool", "swagger-ui"]
-dns = ["synvoid-config/dns", "synvoid-tls/dns", "synvoid-dns", "synvoid-dns/mesh", "synvoid-http/dns", "synvoid-admin/dns", "dep:hickory-proto", "dep:hickory-resolver", "dep:getrandom"]
+dns = ["synvoid-config/dns", "synvoid-tls/dns", "synvoid-dns", "synvoid-dns/mesh", "synvoid-http/dns", "synvoid-admin/dns"]
 # Phase 30: opt-in PKCS#11/HSM backing for DNSSEC via the keystore custody
 # boundary. Off by default so normal builds carry no `cryptoki` in the
 # dependency graph and perform no dynamic provider loading.
@@ -37,7 +37,7 @@ audit = []
 post-quantum = ["synvoid-http-client/post-quantum", "synvoid-admin/post-quantum"]  # Marker feature; PQ TLS handled by rustls prefer-post-quantum
 verify-pq = []
 tun-rs = ["synvoid-tunnel/tun-rs"]
-mesh = ["synvoid-config/mesh", "synvoid-http/mesh", "synvoid-static-files/mesh", "synvoid-serverless/mesh", "synvoid-admin/mesh", "dep:openraft", "dep:synvoid-mesh", "dep:synvoid-mesh-protocol", "synvoid-mesh/mesh", "synvoid-block-store/mesh", "synvoid-honeypot/mesh"]
+mesh = ["synvoid-config/mesh", "synvoid-http/mesh", "synvoid-static-files/mesh", "synvoid-serverless/mesh", "synvoid-admin/mesh", "dep:synvoid-mesh", "dep:synvoid-mesh-protocol", "synvoid-mesh/mesh", "synvoid-block-store/mesh", "synvoid-honeypot/mesh"]
 buffer = ["synvoid-utils/buffer"]
 erased_pool = []
 rkyv = []
@@ -87,40 +87,38 @@ synvoid-filter = { path = "crates/synvoid-filter" , version = "0.1" }
 tokio = { workspace = true }
 hyper = { version = "1", features = ["http1", "http2", "server", "client"] }
 hyper-util = { version = "0.1", features = ["tokio", "server-auto", "server-graceful", "http1", "http2", "client", "client-legacy"] }
-hyper-rustls = { version = "0.27", features = ["http2"] }
-# rustls-native-certs: moved to synvoid-http-client (see plans/root_dependency_ownership.md)
-tower = { version = "0.5", features = ["util"] }
+# hyper-rustls: Phase 31 removed; owned by synvoid-http-client (egress TLS)
+# tower: Phase 31 moved to [dev-dependencies] (test-only: tower::ServiceExt::oneshot in admin contract tests)
 tower-http = { version = "0.6", features = ["fs", "cors"] }
 axum = { version = "0.8", features = ["ws", "macros", "json"] }
-axum-extra = { version = "0.10", features = ["typed-header"] }
-http-body = "1"
+# axum-extra: Phase 31 removed; 0 root src uses (canonical use in domain crates)
+# http-body: Phase 31 removed; 0 root src uses (http-body-util retained for BoxBody adapters)
 http-body-util = "0.1"
 # tokio-util: removed; owned by synvoid-static-files (see plans/root_dependency_ownership.md)
 bytes = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# postcard for distributed state, rkyv (renamed to avoid lightningcss conflict) for high-perf paths
+# postcard for distributed state (Phase 31: direct rkyv removed; 0 root src uses, canonical use in domain crates)
 postcard = { version = "1", features = ["alloc"] }
-rkyv = { package = "rkyv", version = "0.8", features = ["std", "alloc"] }
 
 toml = "0.8"
 anyhow = "1"
-bitflags = "2"
+# bitflags: Phase 31 removed; 0 root src uses (canonical use in domain crates)
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-tracing-appender = "0.2"
+# tracing-appender: Phase 31 removed; 0 root src uses
 # isbot: moved to synvoid-waf (see plans/root_dependency_ownership.md)
 stegoeggo = "0.2"
 regex = "1"
 parking_lot = "0.12"
 dashmap = "7.0.0-rc2"
 arc-swap = "1"
-moka = { version = "0.12", features = ["sync", "future"] }
+# moka: Phase 31 removed; 0 root src uses (canonical use in domain crates)
 memmap2 = "0.9"
 metrics = "0.22"
 metrics-exporter-prometheus = "0.18"
 http = "1"
-ipnetwork = "0.18"
+# ipnetwork: Phase 31 removed; 0 root src uses (canonical use in domain crates)
 rand = "0.9"
 base64 = "0.22"
 sha2 = "0.10"
@@ -129,11 +127,11 @@ futures = "0.3"
 sysinfo = "0.38"
 nix = { version = "0.29", features = ["signal", "process", "socket", "fs", "net", "uio", "sched"] }
 chrono = { version = "0.4", features = ["serde"] }
-notify = "9.0.0-rc.3"
-aho-corasick = "1.1"
-unicode-normalization = "0.1"
-libinjectionrs = "0.1"
-serde_bytes = "0.11"
+# notify: Phase 31 removed from root; owned by synvoid-tls (cert watcher) + synvoid-plugin-runtime (hot-reload)
+# aho-corasick: Phase 31 removed; 0 root src uses (canonical WAF use in synvoid-waf)
+# unicode-normalization: Phase 31 removed; 0 root src uses (canonical use in domain crates)
+# libinjectionrs: Phase 31 removed; 0 root src uses (canonical WAF use in synvoid-waf)
+# serde_bytes: Phase 31 removed; 0 root src uses (canonical use in synvoid-ipc)
 synvoid-cli = { path = "crates/synvoid-cli" , version = "0.1" }
 synvoid-config = { path = "crates/synvoid-config" , version = "0.1" }
 synvoid-dns = { path = "crates/synvoid-dns", optional = true , version = "0.1" }
@@ -147,45 +145,37 @@ synvoid-platform = { path = "crates/synvoid-platform" , version = "0.1" }
 synvoid-upstream = { path = "crates/synvoid-upstream" , version = "0.1" }
 synvoid-tunnel = { path = "crates/synvoid-tunnel" , version = "0.1" }
 
-# DNS support
-hickory-proto = { version = "0.26", features = ["dnssec-ring"], optional = true }
-hickory-resolver = { version = "0.26", features = ["system-config", "recursor", "dnssec-ring"], optional = true }
+# DNS support (Phase 31: hickory-proto/hickory-resolver/getrandom removed from root;
+# 0 root src uses — DNS wire/resolution owned by synvoid-dns via its own hickory edges)
 thiserror = { version = "2", package = "thiserror" }
-getrandom = { version = "0.2", features = ["std"], optional = true }
 
 clap = { version = "4", features = ["derive"] }
 # infer: removed; owned by synvoid-app-handlers (see plans/root_dependency_ownership.md)
-tempfile = "3"
+# tempfile: Phase 31 moved to [dev-dependencies] (test-only fixtures)
 uuid = { version = "1", features = ["v4", "serde"] }
-pin-project-lite = "0.2"
+# pin-project-lite: Phase 31 removed; 0 root src uses (canonical use in domain crates)
 bcrypt = "0.19"
-dirs = "5"
-flate2 = "1"
-tar = "0.4"
+# dirs: Phase 31 removed; 0 root src uses (canonical use in domain crates)
+# flate2: Phase 31 moved to [dev-dependencies] (worker minifier unit-test fixtures only)
+# tar: Phase 31 removed; 0 root src uses (canonical use in domain crates)
 mime_guess = "2"
 
-# Post-Quantum Cryptography
-pqc = { path = "pqc", features = ["async"] , version = "0.1" }
-zeroize = { version = "1", features = ["derive"] }
-
+# Post-Quantum Cryptography (Phase 31: pqc/zeroize removed from root;
+# pqc owned by synvoid-config/synvoid-integrity, zeroize by keystore cratess)
 # Minification deps: all moved to synvoid-static-files (see plans/root_dependency_ownership.md)
 
-# File system utilities
-walkdir = "2"
+# File system utilities (Phase 31: walkdir removed; 0 root src uses)
 
 # Database
 rusqlite = { version = "0.32", features = ["bundled", "backup"] }
 
-# TLS + Post-Quantum Cryptography
+# TLS + Post-Quantum Cryptography (Phase 31: rustls/rustls-pki-types/aws-lc-rs
+# removed from root; 0 direct `rustls::` uses — PQ/TLS features owned by
+# synvoid-tls + synvoid-http-client, unified via Cargo feature resolution)
 tokio-rustls = "0.26"
-rustls = { version = "0.23", features = ["prefer-post-quantum", "aws-lc-rs"] }
-rustls-pki-types = "1"
 # rustls-post-quantum: removed; PQ handled by rustls `prefer-post-quantum` + `aws-lc-rs` features (see plans/root_dependency_ownership.md)
 # x509-parser: removed from root (RHP-R02 batch 1); declared in synvoid-tls and synvoid-mesh
 # instant-acme: moved to synvoid-tls (see plans/root_dependency_ownership.md)
-
-# Post-Quantum Cryptography (aws-lc-rs with unstable for ML-DSA)
-aws-lc-rs = { version = "1", features = ["unstable"] }
 
 # Cryptography utilities
 subtle = "2"
@@ -218,7 +208,7 @@ synvoid-plugin-runtime = { path = "crates/synvoid-plugin-runtime" , version = "0
 synvoid-native-extension = { path = "crates/synvoid-native-extension", optional = true , version = "0.1" }
 synvoid-jail-runtime = { path = "crates/synvoid-jail-runtime" , version = "0.1" }
 synvoid-tls = { path = "crates/synvoid-tls" , version = "0.1" }
-synvoid-proxy-cache = { path = "crates/synvoid-proxy-cache" , version = "0.1" }
+# synvoid-proxy-cache: Phase 31 removed; 0 root src uses (root proxy_cache/ removed Phase 03)
 synvoid-admin = { path = "crates/synvoid-admin" , version = "0.1" }
 synvoid-proxy = { path = "crates/synvoid-proxy" , version = "0.1" }
 synvoid-http = { path = "crates/synvoid-http" , version = "0.1" }
@@ -253,42 +243,43 @@ url = "2"
 # systemd readiness notification
 # sd-notify: removed (see plans/root_dependency_ownership.md)
 
-# Logging facade
-log = "0.4"
+# Logging facade (Phase 31: log removed; 0 `log::` uses — tracing is the facade)
 
 # OpenAPI / Swagger UI
 schemars = "0.8"
 utoipa = { version = "5", features = ["axum_extras", "chrono"] }
 utoipa-swagger-ui = { version = "9", features = ["axum", "vendored"], optional = true }
+# prost is required for tonic codegen: build.rs `tonic-prost-build` emits
+# `::prost::Message` derives in OUT_DIR/synvoid.control.rs (Phase 31: retained
+# as composition_runtime for gRPC control API, no direct `prost::` in src/).
 prost = "0.14"
 # prost-build: removed from root (RHP-R02 batch 1); 0 uses anywhere; was in wrong [dependencies] section
 lru_time_cache = "0.11"
 # linked-hash-map: removed (see plans/root_dependency_ownership.md)
 indexmap = "2"
 ahash = "0.8"
-smallvec = "1"
-aes-gcm = "0.10"
+# smallvec: Phase 31 removed; 0 root src uses
+# aes-gcm: Phase 31 removed; 0 root src uses (canonical use in domain crates)
 async-trait = "0.1"
 daemonize2 = "0.6"
-digest = "0.10"
+# digest: Phase 31 removed; 0 `digest::` uses (sha2::Digest via sha2 crate)
 ed25519-dalek = { version = "2" }
-rsa = "0.9"
-rand_core_06 = { package = "rand_core", version = "0.6" } # shim for pqc rand 0.8 compat vs root rand 0.9; keep in sync with pqc/Cargo.toml:18
+# rsa: Phase 31 removed; 0 `rsa::` uses (verification via synvoid-dns/keystore)
+# rand_core_06: Phase 31 removed with pqc (shim owned by pqc crate)
 hkdf = "0.12"
 hmac = "0.12"
 socket2 = "0.6"
-sha1 = "0.10"
-sha3 = "0.10"
-x25519-dalek = { version = "2", features = ["static_secrets"] }
-base32 = "0.5"
+# sha1: Phase 31 removed; 0 `sha1::` uses (DS/NSEC3 interop owned by synvoid-dns/keystore)
+# sha3: Phase 31 removed; 0 `sha3::` uses (canonical use in domain crates)
+# x25519-dalek: Phase 31 removed; 0 root src uses
+# base32: Phase 31 removed; 0 root src uses
 libc = "0.2"
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_LibraryLoader", "Win32_System_Pipes", "Win32_System_Threading", "Win32_System_Console", "Win32_Networking_WinSock", "Win32_Security"] }
 tonic = { version = "0.14", features = ["gzip", "transport", "tls-native-roots"] }
-tonic-reflection = "0.14"
+# tonic-reflection: Phase 31 removed; 0 root src uses
 tonic-prost = "0.14"
 
-# Raft consensus for global nodes
-openraft = { version = "0.10.0-alpha.18", features = ["serde"], optional = true }
+# Raft consensus (Phase 31: openraft removed from root; 0 root src uses — Raft owned by synvoid-mesh)
 # openraft-legacy: removed from root (RHP-R02 batch 1); 0 uses anywhere
 async-stream = "0.3.6"
 
@@ -337,6 +328,10 @@ proptest-derive = "0.4"
 criterion = { version = "0.5", features = ["html_reports"] }
 wasmtime = "42.0.2"
 wat = "1"
+# Phase 31: test-only runtime deps moved from [dependencies] (0 production src uses)
+tower = { version = "0.5", features = ["util"] }
+tempfile = "3"
+flate2 = "1"
 
 [[bench]]
 name = "bench_attack_detection"

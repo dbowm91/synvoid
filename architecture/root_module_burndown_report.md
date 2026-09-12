@@ -243,6 +243,17 @@ matrix + retirement policy: `architecture/facade_disposition_matrix.md`.
 - Ledger (`root_module_ledger.md`), surface audit (`final_surface_audit.md`), and this
   report reconciled.
 
+## Phase 31 Re-verification (Track 4 closeout)
+
+No module changed classification. Zero `split_required` re-verified across
+the ledger, this report, `root_dependency_ownership.md`, and
+`final_surface_audit.md`. Track 4 added four crates (`mesh-protocol`,
+`native-extension`, `jail-runtime`, `dnssec-keystore`) plus `yara` without
+reopening ownership: child jail execution, native loading, mesh vocabulary,
+key custody, and YARA compilation each have a canonical owner with guards.
+Root direct dependency cleanup (38 removed, 3 to dev-deps) moved no
+implementation.
+
 ## Next Recommended Cluster
 
 All `split_required` modules are closed (Phase 21). Remaining follow-ups are

@@ -50,12 +50,27 @@ For a smaller build without default feature-gated services:
 cargo build --release --no-default-features
 ```
 
+The `--no-default-features` build is the supported hardened/minimal profile
+(Phase 31): core WAF/proxy data plane only, with no mesh (DHT/Raft/gRPC),
+no DNS (hickory/DNSSEC), no socket-handoff FD passing, and no Swagger UI.
+It is continuously compiled and tested (`cargo xtask verify-full` covers
+`minimal`, `mesh`, `dns`, `icmp-filter`, and `mesh,dns`; mesh/DNS absence
+branches execute honestly). Prefer it for single-node deployments that do
+not need distributed coordination or DNS serving.
+
 Mesh-only and DNS-only examples:
 
 ```bash
 cargo build --release --no-default-features --features mesh
 cargo build --release --no-default-features --features dns
 ```
+
+The default feature set stays full-featured (`socket-handoff, mesh, dns,
+erased_pool, swagger-ui`) for operator compatibility: changing defaults
+would silently remove mesh coordination, DNS serving, and the admin API
+docs from existing deployments. Defaults are not changed to shrink
+`cargo tree`; use the minimal profile explicitly where attack surface
+matters.
 
 Additional opt-in feature flags currently include `wireguard`, `icmp-filter`, `flood-ebpf`, `origin_key_exchange`, `audit`, `post-quantum`, `verify-pq`, `tun-rs`, `macos-sandbox`, `fastcgi_streaming`, `dns-hsm` (PKCS#11/HSM backing for DNSSEC via the keystore custody boundary; off by default, fails closed), and `unsafe-native-extensions` (in-process native plugin loading; off by default — the sandboxed WASM runtime needs no feature flag). See `Cargo.toml` for the complete current feature surface. Prefer enabling only the features required by a deployment rather than treating `--all-features` as a deployment profile; several opt-ins are platform- or environment-specific.
 

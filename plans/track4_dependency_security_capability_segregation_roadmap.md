@@ -1,6 +1,7 @@
 # Track 4 Roadmap: Dependency Security and Capability Segregation
 
-Status: ready for implementation.
+Status: complete (Phases 25-31 landed; closeout evidence in
+`architecture/track4_dependency_security_closeout.md`).
 
 Scope: follow-on work after the completed Track 3 architecture-convergence line. Track 4 is intentionally narrower: reduce security-sensitive dependency authority, make dependency-policy evidence truthful and continuously enforced, and introduce new crates/process boundaries only where they remove a meaningful capability from a broader process or package.
 

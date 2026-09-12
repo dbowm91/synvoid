@@ -7812,12 +7812,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
-name = "symlink"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7973cce6668464ea31f176d85b13c7ab3bba2cb3b77a2ed26abd7801688010a"
-
-[[package]]
 name = "syn"
 version = "1.0.109"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7871,84 +7865,54 @@ dependencies = [
 name = "synvoid"
 version = "1.1.0"
 dependencies = [
- "aes-gcm",
  "ahash 0.8.12",
- "aho-corasick 1.1.4",
  "anyhow",
  "arc-swap",
  "async-stream",
  "async-trait",
- "aws-lc-rs",
  "axum",
- "axum-extra",
  "aya",
- "base32",
  "base64",
  "bcrypt",
- "bitflags",
  "bytes",
  "chrono",
  "clap",
  "criterion",
  "daemonize2",
  "dashmap 7.0.0-rc2",
- "digest",
- "dirs",
  "ed25519-dalek",
  "flate2",
  "futures",
- "getrandom 0.2.17",
  "hex",
- "hickory-proto",
- "hickory-resolver",
  "hkdf",
  "hmac",
  "http 1.4.1",
- "http-body",
  "http-body-util",
  "hyper",
- "hyper-rustls",
  "hyper-util",
  "indexmap",
- "ipnetwork 0.18.0",
  "libc",
  "libfuzzer-sys",
- "libinjectionrs",
  "libloading",
- "log",
  "lru_time_cache",
  "memmap2",
  "metrics 0.22.4",
  "metrics-exporter-prometheus",
  "mime_guess",
- "moka",
  "nix 0.29.0",
- "notify",
- "openraft",
  "parking_lot",
- "pin-project-lite",
  "postcard",
- "pqc",
  "proptest",
  "proptest-derive",
  "prost",
  "quinn",
  "rand 0.9.4",
- "rand_core 0.6.4",
  "regex",
- "rkyv 0.8.18",
- "rsa",
  "rusqlite",
- "rustls",
- "rustls-pki-types",
  "schemars 0.8.22",
  "serde",
- "serde_bytes",
  "serde_json",
- "sha1",
  "sha2",
- "sha3",
- "smallvec",
  "socket2 0.6.4",
  "stegoeggo",
  "subtle",
@@ -7980,7 +7944,6 @@ dependencies = [
  "synvoid-platform",
  "synvoid-plugin-runtime",
  "synvoid-proxy",
- "synvoid-proxy-cache",
  "synvoid-serverless",
  "synvoid-static-files",
  "synvoid-tarpit",
@@ -7994,7 +7957,6 @@ dependencies = [
  "synvoid-waf",
  "synvoid-yara",
  "sysinfo 0.38.4",
- "tar",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
@@ -8003,23 +7965,17 @@ dependencies = [
  "tonic",
  "tonic-prost",
  "tonic-prost-build",
- "tonic-reflection",
  "tower",
  "tower-http",
  "tracing",
- "tracing-appender",
  "tracing-subscriber",
- "unicode-normalization",
  "url",
  "utoipa",
  "utoipa-swagger-ui",
  "uuid",
- "walkdir",
  "wasmtime 42.0.2",
  "wat",
  "windows-sys 0.59.0",
- "x25519-dalek",
- "zeroize",
  "zip 2.4.2",
 ]
 
@@ -9606,20 +9562,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tonic-reflection"
-version = "0.14.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "acccd136a4bf19810a1fde9c74edc6129b42a66b44d0c1c8aaa67aeb49a146a7"
-dependencies = [
- "prost",
- "prost-types",
- "tokio",
- "tokio-stream",
- "tonic",
- "tonic-prost",
-]
-
-[[package]]
 name = "tower"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9685,19 +9627,6 @@ dependencies = [
  "pin-project-lite",
  "tracing-attributes",
  "tracing-core",
-]
-
-[[package]]
-name = "tracing-appender"
-version = "0.2.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "050686193eb999b4bb3bc2acfa891a13da00f79734704c4b8b4ef1a10b368a3c"
-dependencies = [
- "crossbeam-channel",
- "symlink",
- "thiserror 2.0.18",
- "time",
- "tracing-subscriber",
 ]
 
 [[package]]

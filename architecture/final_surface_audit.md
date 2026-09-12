@@ -1,6 +1,8 @@
 # Final Public Surface Audit
 
-Phase 10 closure audit. Classifies every public surface of the SynVoid codebase as stable, internal, transitional, test-only, or deprecated.
+Phase 10 closure audit (Phase 31 re-verified: module classifications unchanged;
+feature matrix gains the hardened/minimal profile verdict, §5). Classifies
+every public surface of the SynVoid codebase as stable, internal, transitional, test-only, or deprecated.
 
 ## 1. Root Crate Exports (`src/lib.rs`)
 
@@ -178,8 +180,8 @@ Phase 10 closure audit. Classifies every public surface of the SynVoid codebase 
 
 | Profile | Command | Supported | CI Gated | Runtime Behavior |
 |---------|---------|-----------|----------|-----------------|
-| default | `cargo build` | Yes | Yes | socket-handoff + mesh + dns + erased_pool + swagger-ui |
-| no-default-features | `--no-default-features` | Yes | Yes | Core only; no mesh, DNS, socket-handoff |
+| default | `cargo build` | Yes | Yes | socket-handoff + mesh + dns + erased_pool + swagger-ui (stays full-featured for compatibility; Phase 31) |
+| no-default-features (hardened/minimal) | `--no-default-features` | Yes | Yes | Core only; no mesh, DNS, socket-handoff (supported hardened profile; Phase 31) |
 | mesh | `--features mesh` | Yes | Yes | Mesh networking enabled |
 | dns | `--features dns` | Yes | Yes | DNS server with DNSSEC |
 | mesh,dns | `--features mesh,dns` | Yes | Yes | Full feature set |

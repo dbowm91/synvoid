@@ -194,6 +194,7 @@ Primary doc per subsystem (deep dives live beside each as `<topic>_deep_dive.md`
 | CI, fuzzing, releases | `ci_fuzz_failure_injection.md`, `developer_tooling.md`, `release_profile_matrix.md`, `semver_stability_policy.md` |
 | Agent knowledge (skills/docs upkeep) | `agent_knowledge_maintenance.md` (audit checklist + 2026-09-11 findings) |
 | Track 3 closure (Phase 24) | `track3_performance_report.md` (hot-path baselines), `crate_granularity_audit.md` (no merges; future candidates), `root_module_burndown_report.md` (zero `split_required`, re-verified) |
+| Track 4 closeout (Phase 31) | `track4_dependency_security_closeout.md` (before/after capability map, advisory status, SDK/deferral verdicts), `crate_granularity_audit.md` §Phase 31, `root_dependency_ownership.md` (Phase 31: 38 unused root edges removed, 3 test-only to dev-deps, prost/tonic-prost codegen exceptions) |
 
 ## Known Issues
 

@@ -1,5 +1,7 @@
-# SynVoid dependency policy (Phase 25 baseline, Phase 26 YARA consolidation)
-# Reviewed: 2026-09-12 (Phase 25 baseline; Phase 26 narrows yara-x authority)
+# SynVoid dependency policy (Phase 25 baseline, Phase 26 YARA consolidation, Phase 31 closeout)
+# Reviewed: 2026-09-12 (Phase 31 closeout: re-ran with fresh DB; 16 ignores retained
+# with current blockers — wasmtime >=46.0.3 blocked by bumpalo conflict, yara-x
+# upstream still on wasmtime 40.x; no temporary exception removed without a fix)
 # Run: cargo deny check && cargo audit
 # Owner: security / release
 # Pinned tool: cargo-deny 0.20.2 (see docs/testing/verification-contract.md)

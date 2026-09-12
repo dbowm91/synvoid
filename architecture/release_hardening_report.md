@@ -199,3 +199,12 @@ cargo test --test unified_worker_composition_root_guard
 cargo test --test worker_mesh_supervision_boundary_guard
 cargo test --test mesh_task_ownership_guard
 ```
+
+## Phase 31 Note (Track 4 closeout, not a rewrite)
+
+No release-process changes were required: `cargo xtask verify-release`
+already validates jail binaries (`synvoid-wasm-jail` + `synvoid-yara-jail`
+atomically), package metadata/content for all four Track 4 crates, and the
+deferred-registry qualification model. Current release evidence lives in
+`architecture/track4_dependency_security_closeout.md` §6-§7; this report
+remains the Phase 10 historical record with Phase 24 amendments intact.
