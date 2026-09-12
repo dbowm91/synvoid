@@ -13,10 +13,18 @@ Hybrid signatures combine classical Ed25519 with post-quantum ML-DSA-44 to provi
 
 ## Key Files
 
-- `crates/synvoid-mesh/src/mesh/hybrid_signature.rs` - Core `HybridSignature` type and serialization
+- `crates/synvoid-mesh-protocol/src/hybrid.rs` - Canonical `HybridSignature` envelope value type (Phase 27; low-capability, no PQ runtime)
+- `crates/synvoid-mesh-protocol/src/signer.rs` - Canonical `ProtocolSigner` Ed25519 verification for verification-only consumers (Phase 27)
+- `crates/synvoid-mesh/src/mesh/hybrid_signature.rs` - Compatibility re-export + runtime `HybridSigner`/`MlDsa*` traits (PQ execution stays here)
 - `crates/synvoid-mesh/src/mesh/ml_dsa.rs` - `MeshMlDsaSigner` wrapper around pqc crate
-- `crates/synvoid-mesh/src/mesh/protocol.rs` - Extended `MeshMessageSigner` with hybrid methods
+- `crates/synvoid-mesh/src/mesh/protocol.rs` - `MeshMessageSigner` runtime service (delegates Ed25519 half to protocol crate)
 - `crates/synvoid-mesh/src/mesh/config.rs` - ML-DSA key configuration in `GlobalNodeConfig`
+
+> Phase 27 rule: verification-only code (e.g. `src/waf/threat_intel/feed_client.rs`)
+> uses `synvoid_mesh_protocol::signer::{ProtocolSigner, verify_ed25519}` and
+> `synvoid_mesh_protocol::{HybridSignature, ThreatType, ...}`, never full
+> `synvoid-mesh`. Runtime hybrid/PQ signing and `CryptoVerificationPool` offload
+> stay in `synvoid-mesh`.
 
 ## Usage
 

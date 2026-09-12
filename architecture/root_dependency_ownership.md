@@ -125,6 +125,7 @@ reference fails the guard until the row is reclassified with a reason.
 | synvoid-geoip | geoip | composition_runtime | default | GeoIP database lookups | keep | admin, lib |
 | synvoid-integrity | — | migration_blocker | default | No direct root consumer in src/ (measured 2026-09-12); retained for origin_key_exchange feature-surface wiring (synvoid-integrity/origin_key_exchange) | Phase 31 removal audit | — |
 | synvoid-mesh | mesh | composition_runtime | mesh | Mesh networking, DHT, transport, Raft | keep | admin, http, mesh, supervisor, worker |
+| synvoid-mesh-protocol | waf | composition_runtime | mesh | Low-capability wire/identity verification vocabulary (Phase 27); feed signature + threat value types without DHT/Raft/SQLite/YARA | keep | waf |
 | synvoid-app-handlers | fastcgi, mime | composition_runtime | default | Application protocol handlers; root cgi/ + php/ removed Phase 03 (canonical synvoid_app_handlers::cgi/php); root facades remain for fastcgi/mime | keep | fastcgi, mime |
 | synvoid-metrics | metrics | composition_runtime | default | Metrics collection and export | keep | admin, http, metrics, supervisor, tls, worker |
 | synvoid-theme | theme | composition_runtime | default | Theme rendering and templates | keep | theme |

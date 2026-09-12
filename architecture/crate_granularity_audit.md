@@ -29,7 +29,7 @@ no sources, not a workspace member, zero references) was removed.
 | `tools/xtask` (1999 LOC) | `cargo xtask verify*` CI orchestration | Keep (tooling isolation) |
 | `tools/synvoid-repo-guards` (226 LOC) | Static repo guards run by CI + `verify_architecture.sh` | Keep (tooling isolation) |
 
-## `synvoid-*` crates (39 members, Phase 26 adds `synvoid-yara`)
+## `synvoid-*` crates (40 members, Phase 27 adds `synvoid-mesh-protocol`)
 
 Columns: LOC ≈ `src/` lines; "In-crate rev" = other workspace crates
 depending on it (root app crate depends on all of them as composition
@@ -46,7 +46,8 @@ inputs, so it is not listed per row).
 | synvoid-proxy | Reverse-proxy engine: routing, headers, dispatch, protocols | 6861 | Yes — routing, header filter, protocol adapters | Yes | 3 | 11 (see graph) | Keep | Second engine crate; narrow-trait consumers in http/http3 |
 | synvoid-http | Canonical HTTP parse/normalize/framing/dispatch (Phase 20) | 11084 | Yes — fail-closed framing, normalization ownership | Yes | http3 | 16 (composition surface) | Keep | Canonical HTTP owner; wide fan-in is composition, not wrapper |
 | synvoid-http3 | HTTP/3 QUIC server + WAF boundary | 418 | Yes — QUIC/H3 dispatch, H3 WAF prelude | Limited | root only | config, core, http, http-client, metrics, platform, proxy, waf | Keep | Feature/build isolation for QUIC stack (h3/quinn) |
-| synvoid-mesh | DHT, transport, Raft, trust, policy gates (Phase 23 authority) | 100655 | Yes — consensus, key policy, partition semantics | Limited (mesh deployments) | 6 | 12 | Keep | Control-plane boundary; `mesh` feature isolates openraft/proto |
+| synvoid-mesh | DHT, transport, Raft, trust, policy gates (Phase 23 authority) | 100655 | Yes — consensus, key policy, partition semantics | Limited (mesh deployments) | 6 | 13 (incl. mesh-protocol) | Keep | Control-plane boundary; `mesh` feature isolates openraft/proto; depends downward on `synvoid-mesh-protocol` (Phase 27) |
+| synvoid-mesh-protocol | Stable mesh wire/identity vocabulary: constants, `HybridSignature` envelope, Ed25519 `ProtocolSigner` verification, replay protection, threat taxonomy, framing (Phase 27) | ~900 | Yes — wire-compat golden vectors, fail-closed framing, deterministic verification | Yes — verification-only consumers without DHT/Raft/SQLite/YARA | 1 (mesh) + root feed verification | none (leaf by design) | Keep | Dependency-isolation boundary; strict budget guard (`mesh_protocol_boundary`); `synvoid-mesh` re-exports compat paths |
 | synvoid-block-store | Enforcement block state + provenance + cursors | 8530 | Yes — capacity, expiry, replay, concurrency | Limited | root only | config, core, mesh, utils, waf | Keep | Enforcement-state boundary; worker admission reads this, not TIM |
 | synvoid-ipc | IPC transport + jail protocol/supervision (Phase 22) | 12420 | Yes — framed protocol, digests, restart bounds, fail-closed routing | Limited | 4 | config, metrics, platform, tls, utils | Keep | Trust boundary for process isolation; versioned wire protocol |
 | synvoid-plugin-runtime | WASM runtime, sandbox, instance pool, manifests | 19736 | Yes — capability gating, ABI boundary, reload prepare-commit | Limited | 4 | utils | Keep | Sandbox boundary; wasmtime version patch point |
@@ -84,7 +85,10 @@ inputs, so it is not listed per row).
   normalization ownership) are crate-level tests.
 - `synvoid-mesh` is the largest crate (100 kLOC) but is feature-gated out
   of default-minimal builds; splitting it further is explicitly out of
-  scope (rejected: new crates solely to reduce LOC).
+  scope (rejected: new crates solely to reduce LOC). Phase 27 extracts only
+  the low-capability wire/identity vocabulary (`synvoid-mesh-protocol`) so
+  verification-only consumers avoid DHT/Raft/SQLite/YARA — success is measured
+  by reduced consumer dependencies, not LOC.
 - `synvoid-waf` ↔ `synvoid-mesh` edge: WAF depends on mesh types only for
   threat-intel policy gating (narrow), while mesh depends on nothing from
   WAF at the type level except stubs via block-store; the request-path

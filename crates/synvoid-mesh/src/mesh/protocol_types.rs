@@ -1,12 +1,8 @@
 use super::*;
 use crate::behavioral::{BehavioralFeatures, BehavioralFingerprint};
 
-pub enum ReplayResult {
-    Valid,
-    ReplayDetected,
-    ExpiredTimestamp,
-    FutureTimestamp,
-}
+// Phase 27: `ReplayResult` and priority-tier constants are owned by
+// `synvoid-mesh-protocol` and re-exported via `super::*`. No local duplicates.
 
 pub struct AuthChallenge {
     challenge: [u8; 32],
@@ -71,10 +67,8 @@ impl PendingAuthChallenge {
     }
 }
 
-pub const PRIORITY_TIER_FREE: u32 = 0;
-pub const PRIORITY_TIER_PAID: u32 = 1;
-pub const PRIORITY_TIER_PREMIUM: u32 = 2;
-pub const PRIORITY_TIER_ENTERPRISE: u32 = 3;
+// Phase 27: priority-tier constants owned by `synvoid-mesh-protocol`
+// (re-exported via `super::*`).
 
 impl From<&MeshCapabilities> for proto::MeshCapabilities {
     fn from(c: &MeshCapabilities) -> Self {
@@ -398,16 +392,8 @@ impl From<proto::WafPolicy> for WafPolicy {
     }
 }
 
-impl AnnounceAction {
-    pub fn from_u8(v: u8) -> Result<Self, String> {
-        match v {
-            0 => Ok(AnnounceAction::Add),
-            1 => Ok(AnnounceAction::Update),
-            2 => Ok(AnnounceAction::Remove),
-            _ => Err(format!("Unknown AnnounceAction value: {}", v)),
-        }
-    }
-}
+// Phase 27: `AnnounceAction::from_u8` lives in `synvoid-mesh-protocol`.
+// No local inherent impl (orphan rule forbids it for the external type).
 
 impl RouteQueryResult {
     pub fn is_expired(&self) -> bool {
@@ -480,38 +466,8 @@ impl MeshPeerInfo {
     }
 }
 
-impl AckStatus {
-    pub fn from_u8(v: u8) -> Self {
-        match v {
-            0 => AckStatus::Success,
-            1 => AckStatus::Processing,
-            2 => AckStatus::InvalidMessage,
-            3 => AckStatus::Unauthorized,
-            4 => AckStatus::NotFound,
-            5 => AckStatus::RateLimited,
-            6 => AckStatus::InternalError,
-            _ => AckStatus::InternalError,
-        }
-    }
-
-    pub fn as_u8(&self) -> u8 {
-        match self {
-            AckStatus::Success => 0,
-            AckStatus::Processing => 1,
-            AckStatus::InvalidMessage => 2,
-            AckStatus::Unauthorized => 3,
-            AckStatus::NotFound => 4,
-            AckStatus::RateLimited => 5,
-            AckStatus::InternalError => 6,
-        }
-    }
-}
-
-impl Default for ReplayProtection {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+// Phase 27: `AckStatus::{from_u8,as_u8}` and `Default for ReplayProtection`
+// live in `synvoid-mesh-protocol`. Local inherent impls removed (orphan rule).
 
 impl From<&ThreatIndicator> for proto::ThreatIndicator {
     fn from(i: &ThreatIndicator) -> Self {
@@ -707,14 +663,5 @@ impl From<&proto::BehavioralFingerprint> for BehavioralFingerprint {
     }
 }
 
-impl From<ThreatSeverity> for i32 {
-    fn from(s: ThreatSeverity) -> Self {
-        match s {
-            ThreatSeverity::Unspecified => 0,
-            ThreatSeverity::Low => 1,
-            ThreatSeverity::Medium => 2,
-            ThreatSeverity::High => 3,
-            ThreatSeverity::Critical => 4,
-        }
-    }
-}
+// Phase 27: `From<ThreatSeverity> for i32` lives in `synvoid-mesh-protocol`
+// (orphan rule forbids the external-trait/external-type impl here).

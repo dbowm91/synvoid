@@ -2,7 +2,9 @@
 
 **Status**: Iteration 36 — Doc drift cleanup, three-plane model, request/WAF audit boundary.  
 **Date**: 2026-06-11  
-**Scope**: `crates/synvoid-mesh` (re-exported via `src/mesh`).  
+**Scope**: `crates/synvoid-mesh` (re-exported via `src/mesh`) plus
+`crates/synvoid-mesh-protocol` (Phase 27 low-capability wire/identity vocabulary;
+`synvoid-mesh` depends downward and re-exports compat paths).  
 **Goal**: Define trust-domain boundaries and invariants before any internal module split.  
 **Key Invariant** (from plan):
 
@@ -71,7 +73,8 @@ Classification uses the exact domain definitions from the plan (Phase 1):
 | crates/synvoid-mesh/src/mesh/transports/manager.rs | transport | advisory_dht | MeshTransportManager: peer selection, retry, reachability (owns record_store handle for advisory use only). |
 | crates/synvoid-mesh/src/mesh/transports/quic.rs | transport | (none) | QUIC implementation. |
 | crates/synvoid-mesh/src/mesh/transports/stack.rs | transport | (none) | Transport stack composition. |
-| crates/synvoid-mesh/src/mesh/protocol.rs | transport | identity | MeshMessage wire format + MeshMessageSigner (signing primitive only). |
+| crates/synvoid-mesh/src/mesh/protocol.rs | transport | identity | MeshMessage wire format + MeshMessageSigner runtime service (Ed25519 half delegates to `synvoid-mesh-protocol`). |
+| crates/synvoid-mesh-protocol/src/{signer,hybrid,replay,wire,threat,framing}.rs | transport | identity | Phase 27 canonical wire/identity vocabulary: `ProtocolSigner` verification, `HybridSignature` envelope, replay protection, threat taxonomy, framing. No DHT/Raft/policy/transport ownership. |
 | crates/synvoid-mesh/src/mesh/protocol_message.rs | transport | (none) | Message category and encoding. |
 | crates/synvoid-mesh/src/mesh/protocol_proto_decode.rs | transport | (none) | Protobuf decode path. |
 | crates/synvoid-mesh/src/mesh/protocol_proto_encode.rs | transport | (none) | Protobuf encode path. |

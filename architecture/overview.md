@@ -279,7 +279,7 @@ Root-owned orchestration code (see [`root_module_ledger.md`](./root_module_ledge
 
 | Component | Crate(s) | Purpose | Doc |
 |-----------|----------|--------|-----|
-| **Mesh** | `synvoid-mesh` | DHT (signed records, Merkle sync), transports (QUIC/WireGuard), openraft consensus, org keys/trust domains, reputation, behavioral intel | [`distributed_state_contract.md`](./distributed_state_contract.md) (binding) · [`mesh.md`](./mesh.md) · [`mesh_deep_dive.md`](./mesh_deep_dive.md) · [`mesh_trust_domains.md`](./mesh_trust_domains.md) · [`mesh_transport_lifecycle.md`](./mesh_transport_lifecycle.md) |
+| **Mesh** | `synvoid-mesh` + `synvoid-mesh-protocol` (Phase 27) | DHT (signed records, Merkle sync), transports (QUIC/WireGuard), openraft consensus, org keys/trust domains, reputation, behavioral intel; low-capability wire/identity vocabulary (`HybridSignature`, `ProtocolSigner`, threat taxonomy, framing) in `synvoid-mesh-protocol` | [`distributed_state_contract.md`](./distributed_state_contract.md) (binding) · [`mesh.md`](./mesh.md) · [`mesh_deep_dive.md`](./mesh_deep_dive.md) · [`mesh_trust_domains.md`](./mesh_trust_domains.md) · [`mesh_transport_lifecycle.md`](./mesh_transport_lifecycle.md) |
 | **DNS** | `synvoid-dns` | Authoritative+recursive, DNSSEC sign/validate, DoT/DoH/DoQ, TSIG, RPZ, RFC2136 updates, zone trie, anycast sync | [`dns.md`](./dns.md) · [`dns_deep_dive.md`](./dns_deep_dive.md) · [`dns_zone_lifecycle.md`](./dns_zone_lifecycle.md) · [`dns_operations_diagnostics.md`](./dns_operations_diagnostics.md) · [`dns_production_profiles.md`](./dns_production_profiles.md) |
 | **Post-Quantum Crypto** | `pqc` | ML-KEM-768/1024, ML-DSA-44 primitives (aws-lc-rs / libcrux) | [`pqc.md`](./pqc.md) |
 

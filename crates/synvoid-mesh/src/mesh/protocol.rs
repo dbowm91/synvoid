@@ -1,7 +1,6 @@
 use base64::Engine;
 use ed25519_dalek::Signer;
 use ed25519_dalek::SigningKey;
-use ed25519_dalek::Verifier;
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use prost::Message;
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
@@ -23,11 +22,13 @@ use crate::ml_dsa::MeshMlDsaSigner;
 use crate::organization::TierClaim;
 use crate::transports::MeshTransportType;
 
-pub const MESH_MESSAGE_VERSION: u8 = 1;
-pub const COMPRESSION_THRESHOLD: usize = 512;
-pub const NONCE_SIZE: usize = 16;
-pub const REPLAY_WINDOW_SECS: u64 = 60;
-pub const MAX_REPLAY_CACHE_SIZE: usize = 10000;
+// Phase 27: canonical wire constants owned by `synvoid-mesh-protocol`.
+// Re-exported here for `synvoid_mesh::protocol::*` compatibility.
+pub use synvoid_mesh_protocol::{
+    COMPRESSION_THRESHOLD, MAX_REPLAY_CACHE_SIZE, MAX_WIRE_MESSAGE_SIZE, MESH_MESSAGE_VERSION,
+    NONCE_SIZE, PRIORITY_TIER_ENTERPRISE, PRIORITY_TIER_FREE, PRIORITY_TIER_PAID,
+    PRIORITY_TIER_PREMIUM, REPLAY_WINDOW_SECS,
+};
 
 #[derive(Clone)]
 pub struct MeshMessageSigner {
@@ -105,23 +106,9 @@ impl MeshMessageSigner {
             return self.verify_hybrid(content, &hybrid);
         }
 
-        // Fallback to legacy Ed25519
-        if signature.len() != 64 || public_key.len() != 32 {
-            return false;
-        }
-
-        let mut sig_array = [0u8; 64];
-        sig_array.copy_from_slice(signature);
-
-        let mut pk_array = [0u8; 32];
-        pk_array.copy_from_slice(public_key);
-
-        match ed25519_dalek::VerifyingKey::from_bytes(&pk_array) {
-            Ok(pk) => pk
-                .verify(content, &ed25519_dalek::Signature::from_bytes(&sig_array))
-                .is_ok(),
-            Err(_) => false,
-        }
+        // Fallback to legacy Ed25519 via the canonical protocol-crate primitive
+        // (byte-compatible; differential-tested in `tests/protocol_contract.rs`).
+        synvoid_mesh_protocol::signer::verify_ed25519(content, signature, public_key)
     }
 
     pub fn verify_hybrid(&self, content: &[u8], hybrid: &HybridSignature) -> bool {
@@ -153,19 +140,7 @@ impl MeshMessageSigner {
     }
 
     fn verify_ed25519_internal(&self, content: &[u8], signature: &[u8], public_key: &[u8]) -> bool {
-        if signature.len() != 64 || public_key.len() != 32 {
-            return false;
-        }
-        let mut sig_array = [0u8; 64];
-        sig_array.copy_from_slice(signature);
-        let mut pk_array = [0u8; 32];
-        pk_array.copy_from_slice(public_key);
-        match ed25519_dalek::VerifyingKey::from_bytes(&pk_array) {
-            Ok(pk) => pk
-                .verify(content, &ed25519_dalek::Signature::from_bytes(&sig_array))
-                .is_ok(),
-            Err(_) => false,
-        }
+        synvoid_mesh_protocol::signer::verify_ed25519(content, signature, public_key)
     }
 
     pub fn sign_smart(&self, content: &[u8], force_hybrid: bool) -> Vec<u8> {
@@ -270,56 +245,13 @@ impl MeshMessageSigner {
     }
 }
 
-#[derive(Clone)]
-pub struct ReplayProtection {
-    seen_nonces: std::collections::HashSet<String>,
-}
+// Phase 27: canonical replay protection owned by `synvoid-mesh-protocol`.
+// Re-exported here for `synvoid_mesh::protocol::*` compatibility. The local
+// clock behavior is preserved: `check_and_add` uses wall-clock time, matching
+// the pre-extraction `synvoid_utils::safe_unix_timestamp` semantics.
+pub use synvoid_mesh_protocol::{ReplayProtection, ReplayResult};
 
-impl ReplayProtection {
-    pub fn new() -> Self {
-        Self {
-            seen_nonces: std::collections::HashSet::new(),
-        }
-    }
-
-    pub fn check_and_add(&mut self, nonce: &str, timestamp: u64) -> ReplayResult {
-        let now = synvoid_utils::safe_unix_timestamp();
-
-        if timestamp > now + 60 {
-            return ReplayResult::FutureTimestamp;
-        }
-
-        if now.saturating_sub(timestamp) > REPLAY_WINDOW_SECS {
-            return ReplayResult::ExpiredTimestamp;
-        }
-
-        let nonce_key = format!("{}:{}", timestamp, nonce);
-        if self.seen_nonces.contains(&nonce_key) {
-            return ReplayResult::ReplayDetected;
-        }
-
-        if self.seen_nonces.len() >= MAX_REPLAY_CACHE_SIZE {
-            let old_count = self.seen_nonces.len() / 4;
-            let to_remove: Vec<_> = self.seen_nonces.iter().take(old_count).cloned().collect();
-            for key in to_remove {
-                self.seen_nonces.remove(&key);
-            }
-        }
-
-        self.seen_nonces.insert(nonce_key);
-        ReplayResult::Valid
-    }
-
-    pub fn clear(&mut self) {
-        self.seen_nonces.clear();
-    }
-}
-
-pub use protocol_types::{AuthChallenge, PendingAuthChallenge, ReplayResult};
-
-pub use protocol_types::{
-    PRIORITY_TIER_ENTERPRISE, PRIORITY_TIER_FREE, PRIORITY_TIER_PAID, PRIORITY_TIER_PREMIUM,
-};
+pub use protocol_types::{AuthChallenge, PendingAuthChallenge};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum MeshMessage {
@@ -1597,99 +1529,15 @@ pub struct RateLimitOverride {
     pub burst_size: Option<u64>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum AnnounceAction {
-    Add,
-    Update,
-    Remove,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum GlobalNodeAction {
-    Add,
-    Remove,
-    UpdateKeyExchange,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum LookupType {
-    KeyValue,
-    Route,
-    Peer,
-    Certificate,
-    Config,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum HealthStatus {
-    Healthy,
-    Degraded,
-    Unhealthy,
-    Unknown,
-}
-
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    serde::Serialize,
-    serde::Deserialize,
-    Archive,
-    RkyvSerialize,
-    RkyvDeserialize,
-)]
-pub enum ThreatType {
-    Unspecified,
-    IpBlock,
-    IpThrottle,
-    RateLimitViolation,
-    SuspiciousActivity,
-    AsnBlock,
-    DomainBlock,
-    UrlBlock,
-    CertBlock,
-}
-
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    serde::Serialize,
-    serde::Deserialize,
-    Archive,
-    RkyvSerialize,
-    RkyvDeserialize,
-)]
-pub enum ThreatSeverity {
-    Unspecified,
-    Low,
-    Medium,
-    High,
-    Critical,
-}
-
-#[derive(
-    Debug, Clone, serde::Serialize, serde::Deserialize, Archive, RkyvSerialize, RkyvDeserialize,
-)]
-pub struct ThreatIndicator {
-    pub threat_type: ThreatType,
-    pub indicator_value: String,
-    pub severity: ThreatSeverity,
-    pub reason: String,
-    pub ttl_seconds: u64,
-    pub source_node_id: String,
-    pub timestamp: u64,
-    pub site_scope: String,
-    pub rate_limit_requests: Option<u64>,
-    pub rate_limit_window_secs: Option<u64>,
-    pub suspicious_pattern: Option<String>,
-    pub signature: Vec<u8>,
-    pub signer_public_key: Option<String>,
-}
+// Phase 27: stable wire enums owned by `synvoid-mesh-protocol` (value semantics).
+// Re-exported here for `synvoid_mesh::protocol::*` compatibility. Pure
+// constructors (`from_u8`/`as_u8`/`name`) live in the protocol crate;
+// proto conversions stay in `protocol_types.rs` (they involve local generated
+// types and remain allowed trait impls).
+pub use synvoid_mesh_protocol::{
+    AckStatus, AnnounceAction, GlobalNodeAction, HealthStatus, LookupType, MessageCategory,
+    ThreatIndicator, ThreatSeverity, ThreatType, WasmModuleType,
+};
 
 #[derive(
     Debug,
@@ -1904,22 +1752,8 @@ pub struct MeshPeerInfo {
     pub dns_serving_healthy: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum AckStatus {
-    Success,
-    Processing,
-    InvalidMessage,
-    Unauthorized,
-    NotFound,
-    RateLimited,
-    InternalError,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub enum WasmModuleType {
-    Plugin = 0,
-    Serverless = 1,
-}
+// Phase 27: `AckStatus`/`WasmModuleType` owned by `synvoid-mesh-protocol`.
+// (Re-exported above; definitions removed to keep a single source of truth.)
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct WasmModuleInfo {
@@ -2094,51 +1928,5 @@ mod protocol_types;
 
 pub use protocol_proto_decode::ProtocolError;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum MessageCategory {
-    Handshake,
-    Sync,
-    Routing,
-    Upstream,
-    KeyExchange,
-    Dht,
-    Lookup,
-    Health,
-    Peer,
-    Organization,
-    ThreatIntel,
-    Yara,
-    Dns,
-    Anycast,
-    ZoneSync,
-    Wasm,
-    Config,
-    System,
-    Serverless,
-}
-
-impl MessageCategory {
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::Handshake => "Handshake",
-            Self::Sync => "Sync",
-            Self::Routing => "Routing",
-            Self::Upstream => "Upstream",
-            Self::KeyExchange => "KeyExchange",
-            Self::Dht => "DHT",
-            Self::Lookup => "Lookup",
-            Self::Health => "Health",
-            Self::Peer => "Peer",
-            Self::Organization => "Organization",
-            Self::ThreatIntel => "ThreatIntel",
-            Self::Yara => "YARA",
-            Self::Dns => "DNS",
-            Self::Anycast => "Anycast",
-            Self::ZoneSync => "ZoneSync",
-            Self::Wasm => "WASM",
-            Self::Config => "Config",
-            Self::System => "System",
-            Self::Serverless => "Serverless",
-        }
-    }
-}
+// Phase 27: `MessageCategory` owned by `synvoid-mesh-protocol` (re-exported
+// above with the other wire enums). No local duplicate.

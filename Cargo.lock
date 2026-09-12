@@ -7974,6 +7974,7 @@ dependencies = [
  "synvoid-integrity",
  "synvoid-ipc",
  "synvoid-mesh",
+ "synvoid-mesh-protocol",
  "synvoid-metrics",
  "synvoid-platform",
  "synvoid-plugin-runtime",
@@ -8557,6 +8558,7 @@ dependencies = [
  "synvoid-core",
  "synvoid-geoip",
  "synvoid-integrity",
+ "synvoid-mesh-protocol",
  "synvoid-platform",
  "synvoid-proxy",
  "synvoid-proxy-cache",
@@ -8579,6 +8581,22 @@ dependencies = [
  "x25519-dalek",
  "x509-parser 0.16.0",
  "zeroize",
+]
+
+[[package]]
+name = "synvoid-mesh-protocol"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "ed25519-dalek",
+ "postcard",
+ "rand 0.9.4",
+ "rkyv 0.8.18",
+ "serde",
+ "serde_json",
+ "sha2",
+ "subtle",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

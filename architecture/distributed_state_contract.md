@@ -4,6 +4,14 @@
 
 **Non-goals**: This phase does not replace the mesh architecture, does not introduce a second consensus protocol, does not weaken canonical trust for availability, and does not broaden request-path capabilities.
 
+**Type ownership (Phase 27, links only — semantics unchanged)**: stable wire/identity
+value types (`ThreatType`, `ThreatSeverity`, `ThreatIndicator`, `HybridSignature`
+envelope, replay constants, `MessageCategory`/`AckStatus` codes, framing) are owned by
+`crates/synvoid-mesh-protocol/` and re-exported by `synvoid-mesh::protocol` for
+compatibility. Runtime pools (`CryptoVerificationPool`), Raft/DHT/policy, and
+`MeshMessage` protobufs remain in `synvoid-mesh`. Partition/authority semantics below
+are unaffected.
+
 **Authority rule (binding)**:
 - DHT answers "what has been advertised?" Raft/canonical state answers "what is trusted?" Policy answers "what may be acted on?" Transport answers "how do peers communicate?"
 - Services consume policy outputs, not raw advisory records, for security decisions.

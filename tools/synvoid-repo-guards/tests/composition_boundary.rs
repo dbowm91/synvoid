@@ -68,11 +68,6 @@ const BOUNDARY_EXCEPTIONS: &[BoundaryException] = &[
     },
     BoundaryException {
         path_suffix: "src/waf/threat_intel/feed_client.rs",
-        token: "MeshMessageSigner",
-        reason: "Crypto verification only: used for feed signature check, not infrastructure ownership",
-    },
-    BoundaryException {
-        path_suffix: "src/waf/threat_intel/feed_client.rs",
         token: "crate::mesh::threat_intel::ThreatIntelligenceManager",
         reason: "Feed client uses TIM for signature verification and indicator management, not ownership",
     },

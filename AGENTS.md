@@ -1,6 +1,6 @@
 # AGENTS.md
 
-SynVoid is a high-performance WAF & reverse proxy in Rust with a mesh networking layer and multi-process architecture (Supervisor + UnifiedServerWorker data plane + CPU offload). 46-member Cargo workspace: root app, 38 `synvoid-*` crates under `crates/` (Phase 26 adds `synvoid-yara`), plus `pqc`, `admin-ui` (Yew/WASM via Trunk), `examples/*`, `fuzz`, `tools/{xtask,synvoid-repo-guards}`. Linux is the primary deployment target.
+SynVoid is a high-performance WAF & reverse proxy in Rust with a mesh networking layer and multi-process architecture (Supervisor + UnifiedServerWorker data plane + CPU offload). 47-member Cargo workspace: root app, 39 `synvoid-*` crates under `crates/` (Phase 27 adds `synvoid-mesh-protocol`), plus `pqc`, `admin-ui` (Yew/WASM via Trunk), `examples/*`, `fuzz`, `tools/{xtask,synvoid-repo-guards}`. Linux is the primary deployment target.
 
 ## Build & Setup
 
@@ -61,7 +61,7 @@ Testing quirks:
 - **Supervisor**: `src/supervisor/` — lifecycle, IPC, control-plane
 - **Data plane**: `src/worker/unified_server/` — HTTP + WAF + proxy in ONE Tokio event loop; CPU offload in `src/worker/cpu_task/`
 - **Process model**: Supervisor (1) → N `UnifiedServerWorker` data-plane processes (`spawn_unified_server_workers(config.unified_server_workers)` in `src/supervisor/process.rs`; shipped `config/main.toml` sets `[defaults.worker_pool] workers = 4`, code default 1) + CpuWorker offload. Workers are NOT process-per-tenant. Note: the legacy `--worker` flag (`crates/synvoid-ipc/src/worker.rs` `BaseWorkerProcess`) has NO dispatch branch in `src/commands/plan.rs` and falls through to the default `RuntimeCommand::Supervisor`; HTTP serving uses `--unified-server-worker` / `--cpu-worker`.
-- **Mesh**: `crates/synvoid-mesh/src/mesh/` — DHT, transport, Raft, peer auth. Binding distributed-state contract: `architecture/distributed_state_contract.md` (authority taxonomy `DistributedNamespaceAuthority`, typed `QuorumUnavailable`/`CanonicalCommitted` outcomes, partition/rejoin tests in `crates/synvoid-mesh/tests/distributed_state_partition.rs`; MESH-15 closed as stale).
+- **Mesh**: `crates/synvoid-mesh/src/mesh/` — DHT, transport, Raft, peer auth. Low-capability wire/identity vocabulary lives in `crates/synvoid-mesh-protocol/` (Phase 27: constants, `HybridSignature` envelope, `ProtocolSigner` Ed25519 verification, replay protection, threat taxonomy, framing; `synvoid-mesh` depends downward and re-exports compat paths). Binding distributed-state contract: `architecture/distributed_state_contract.md` (authority taxonomy `DistributedNamespaceAuthority`, typed `QuorumUnavailable`/`CanonicalCommitted` outcomes, partition/rejoin tests in `crates/synvoid-mesh/tests/distributed_state_partition.rs`; MESH-15 closed as stale).
 - Many legacy root paths re-export crate contents for compat (e.g., `src/dns/mod.rs` re-exports `synvoid_dns::*`). Binding facade policy: `architecture/facade_disposition_matrix.md` (Phase 03 retirement rules + per-facade canonical paths; `auth`/`cgi`/`challenge`/`filter`/`integrity`/`php`/`proxy_cache`/`upload` root paths removed).
 
 ### Composition Boundary (guard-enforced)
@@ -71,7 +71,7 @@ Request-path code consumes **narrow traits**, never concrete infrastructure:
 | Layer | May Own/Import |
 |-------|---------------|
 | Composition roots (`src/worker/unified_server/`, `src/supervisor/`, `src/server/`) | Concrete `BlockStore`, `ThreatIntelligenceManager`, mesh/DHT/Raft handles, IPC, config |
-| Request path (`src/waf/`, `src/proxy/`, `src/http/`, `crates/synvoid-waf/`, `crates/synvoid-proxy/`) | Narrow traits (`BlockListStore`, `WafProcessor`), config snapshots, request context |
+| Request path (`src/waf/`, `src/proxy/`, `src/http/`, `crates/synvoid-waf/`, `crates/synvoid-proxy/`) | Narrow traits (`BlockListStore`, `WafProcessor`), config snapshots, request context; verification-only `synvoid-mesh-protocol` (Ed25519/threat value types, never full `synvoid-mesh`) |
 | Control-plane (`crates/synvoid-mesh/`, `crates/synvoid-block-store/`) | Full infrastructure internals |
 
 To add a capability: define a narrow trait in `crates/synvoid-waf/src/traits.rs` or `crates/synvoid-core/`, implement on concrete type in a composition root, pass `Arc<dyn Trait>` to request-path modules.
@@ -118,6 +118,8 @@ Root-module ownership policy lives in `architecture/root_module_ledger.md` — p
 | `crate::php` (removed Phase 03) | `synvoid_app_handlers::php` |
 | `crate::proxy_cache` (removed Phase 03) | `synvoid_proxy_cache` |
 | `crate::upload` (removed Phase 03) | `synvoid_upload` |
+| `synvoid_mesh::protocol::MeshMessageSigner` (verification-only use) | `synvoid_mesh_protocol::signer::{ProtocolSigner, verify_ed25519}` (runtime signing stays in `synvoid-mesh`) |
+| `synvoid_mesh::protocol::{ThreatType, ThreatSeverity, ThreatIndicator}` (value types) | `synvoid_mesh_protocol::{ThreatType, ThreatSeverity, ThreatIndicator}` (`synvoid-mesh` re-exports for compat) |
 
 ## Security Invariants (violations break guard tests)
 
@@ -185,5 +187,5 @@ Primary doc per subsystem (deep dives live beside each as `<topic>_deep_dive.md`
 
 ## Known Issues
 
-- `wasmtime` 40.0.4 arrives transitively via `synvoid-yara` → `yara-x` (YARA execution boundary only, not the wasm sandbox; Phase 26: `synvoid-mesh` no longer links `yara-x`, `synvoid-upload` consumes it only via `synvoid-yara`); direct wasmtime is 42.0.2 via `[patch.crates-io]` (fixed for the 2026-04 advisories, but AFFECTED by RUSTSEC-2026-0269 with `wasmtime-wasi` unreachable — never call it patched for 0269; ≥46.0.3 upgrade blocked by bumpalo conflict, tracked for Phase 27). 16 advisory ignores in `deny.toml` (mirrored in `.cargo/audit.toml`), re-audit tied to Phase 27. See `architecture/dependency_security_baseline_phase25.md`. YARA canonical paths: engine `crates/synvoid-yara/src/engine.rs`, jail `src/sandbox/yara_service.rs` (imports `synvoid-yara` directly, never `synvoid-upload`).
+- `wasmtime` 40.0.4 arrives transitively via `synvoid-yara` → `yara-x` (YARA execution boundary only, not the wasm sandbox; Phase 26: `synvoid-mesh` no longer links `yara-x`, `synvoid-upload` consumes it only via `synvoid-yara`); direct wasmtime is 42.0.2 via `[patch.crates-io]` (fixed for the 2026-04 advisories, but AFFECTED by RUSTSEC-2026-0269 with `wasmtime-wasi` unreachable — never call it patched for 0269; ≥46.0.3 upgrade blocked by bumpalo conflict, tracked separately from Phase 27 protocol extraction). 16 advisory ignores in `deny.toml` (mirrored in `.cargo/audit.toml`), re-audit tied to the wasmtime upgrade track. See `architecture/dependency_security_baseline_phase25.md`. YARA canonical paths: engine `crates/synvoid-yara/src/engine.rs`, jail `src/sandbox/yara_service.rs` (imports `synvoid-yara` directly, never `synvoid-upload`).
 - macOS-only (BUG-002, `docs/testing/verification-contract.md` §14): `rkyv_derive` 0.7 (transitive via `lightningcss` → `parcel_sourcemap`, not SynVoid code) segfaults Apple clang 21 at link time — non-deterministic, retry often succeeds; Linux CI unaffected. Do not "fix" by touching the dependency chain.

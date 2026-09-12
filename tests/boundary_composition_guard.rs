@@ -441,13 +441,8 @@ const BOUNDARY_EXCEPTIONS: &[BoundaryException] = &[
         token: "MeshBackendPool",
         reason: "Pass-through: received from composition root for backend routing, not owned",
     },
-    // MeshMessageSigner in WAF feed client is used for crypto signature verification,
-    // not for infrastructure ownership
-    BoundaryException {
-        path_suffix: "src/waf/threat_intel/feed_client.rs",
-        token: "MeshMessageSigner",
-        reason: "Crypto verification only: used for feed signature check, not infrastructure ownership",
-    },
+    // Phase 27: feed verification uses `synvoid-mesh-protocol` signer, not full
+    // mesh `MeshMessageSigner`. No exception needed for the signer anymore.
     // ThreatIntelligenceManager in WAF feed_client is used for feed management, not request-path
     BoundaryException {
         path_suffix: "src/waf/threat_intel/feed_client.rs",

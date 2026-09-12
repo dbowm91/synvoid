@@ -266,7 +266,10 @@ See `architecture/mesh_transport_lifecycle.md` for the full task inventory and i
 | `KemSession` | `crates/synvoid-mesh/src/mesh/kem/kem_trait.rs` | Session abstraction for key encapsulation with rotation support. |
 | `MlKemKeyExchangeService` | `crates/synvoid-mesh/src/mesh/ml_kem_key_exchange.rs:35` | gRPC service for ML-KEM key exchange with proof-of-possession. |
 | `KeyExchangeService` | `crates/synvoid-mesh/src/mesh/passover_key_exchange.rs` | PASEO key exchange (alternate KEM). |
-| `MeshMessageSigner` | `crates/synvoid-mesh/src/mesh/protocol.rs:33` | Signs mesh messages with Ed25519, optionally producing hybrid signatures via ML-DSA signer. |
+| `MeshMessageSigner` | `crates/synvoid-mesh/src/mesh/protocol.rs:33` | Runtime signer service: Ed25519 + optional hybrid via ML-DSA signer, async `CryptoVerificationPool` offload. Delegates Ed25519 verification to `synvoid-mesh-protocol` (differential-tested). |
+| `ProtocolSigner` / `verify_ed25519` | `crates/synvoid-mesh-protocol/src/signer.rs` (Phase 27 canonical) | Low-capability Ed25519 value semantics for verification-only consumers; no pool, no PQ runtime. |
+| `HybridSignature` (canonical envelope) | `crates/synvoid-mesh-protocol/src/hybrid.rs` (Phase 27 canonical; re-exported by `synvoid-mesh/src/mesh/hybrid_signature.rs`) | Length-prefixed Ed25519+ML-DSA envelope value type. |
+| `ThreatType` / `ThreatSeverity` / `ThreatIndicator` (value types) | `crates/synvoid-mesh-protocol/src/{wire,threat}.rs` (Phase 27 canonical; re-exported by `synvoid-mesh::protocol`) | Wire vocabulary; enforcement stays in threat-intel policy / block-store. |
 | `MeshHybridSigner` | `crates/synvoid-mesh/src/mesh/ml_dsa.rs` | Trait/object for hybrid signing operations. |
 
 ### Security and Intelligence
@@ -366,7 +369,7 @@ pub struct HybridSignature {
 
 ### MeshMessageSigner (`crates/synvoid-mesh/src/mesh/protocol.rs:33`)
 
-Signs mesh messages. Optionally wraps an `MlDsaSigner`:
+Runtime signer service (class 3). Optionally wraps an `MlDsaSigner`:
 
 ```rust
 pub struct MeshMessageSigner {
@@ -718,3 +721,45 @@ crates/synvoid-mesh/src/mesh/
 | `src/tunnel/` | QUIC runtime (`crate::tunnel::quic::runtime`) is used by `MeshTransport` for actual I/O. |
 | `crates/synvoid-wasm-pow/` | WASM-based proof-of-work used for edge node PoW requirements. |
 | `crates/synvoid-config/` | Provides `MeshConfig` types, feature-gated `mesh` and `dns` features. |
+
+---
+
+## 12. Phase 27 protocol/identity extraction (wire contract)
+
+Canonical low-capability crate: `crates/synvoid-mesh-protocol/` (leaf, strict
+budget guard `mesh_protocol_boundary`). `synvoid-mesh` depends downward and
+re-exports compat paths (`synvoid_mesh::protocol::*` still valid).
+
+Owned by the protocol crate (classes 1–2): wire constants
+(`MESH_MESSAGE_VERSION`, replay window, framing bound), `HybridSignature`
+envelope, `ProtocolSigner` Ed25519 verification + `verify_ed25519` free function,
+`ReplayProtection`/`ReplayResult`, `MessageCategory`/`AckStatus`/`LookupType`/
+`HealthStatus`/`AnnounceAction`/`GlobalNodeAction`/`WasmModuleType` codes, threat
+taxonomy (`ThreatType`/`ThreatSeverity`/`ThreatIndicator`), framing helpers.
+Byte-compatible: same serde variant/field order (minus non-wire `schemars`
+derives); proven by `crates/synvoid-mesh-protocol/tests/golden_vectors.rs` and
+`crates/synvoid-mesh/tests/protocol_contract.rs` differentials.
+
+Stays in `synvoid-mesh` (classes 3–5): `MeshMessageSigner` runtime service
+(hybrid/PQ signing, `CryptoVerificationPool` offload, async verify),
+`MeshMlDsaSigner/Verifier`, `MeshMessage` + protobuf encode/decode + compression,
+DHT/Raft/policy/transports/persistence/YARA.
+
+Consumer migration: `src/waf/threat_intel/feed_client.rs` verifies feed
+signatures via `synvoid_mesh_protocol::signer::verify_ed25519` and carries
+`synvoid_mesh_protocol::{ThreatIndicator, ThreatType, ThreatSeverity}`; only the
+`ThreatIntelligenceManager` runtime handle still requires full mesh.
+
+Dependency impact (measured 2026-09-12):
+
+```bash
+cargo tree -p synvoid-mesh-protocol   # base64, ed25519-dalek, rand, rkyv, serde, sha2, subtle, thiserror only
+cargo tree -p synvoid-mesh            # + openraft, rusqlite, quinn, hyper/axum/tonic, yara-free, pqc, synvoid-mesh-protocol (downward)
+cargo tree -i synvoid-mesh-protocol --workspace  # synvoid-mesh + root feed verification
+cargo tree -i synvoid-mesh --workspace           # block-store, dns, honeypot, http, fuzz (unchanged authority paths)
+```
+
+Protobuf ownership: unchanged in Phase 27. Root `build.rs` (mesh-gated) and
+`crates/synvoid-mesh/build.rs` (unconditional) still generate `mesh.proto` into
+separate `OUT_DIR`s; no `-sys` crate introduced (per plan, only if it simplifies
+publishing). Shared wire protobufs remain future work, not a compat break.

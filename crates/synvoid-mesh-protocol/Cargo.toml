@@ -1,0 +1,21 @@
+[package]
+name = "synvoid-mesh-protocol"
+version = "0.1.0"
+edition = "2021"
+license.workspace = true
+repository.workspace = true
+description = "Low-capability mesh wire/identity/signature vocabulary (Phase 27 extraction)"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+ed25519-dalek = { version = "2" }
+base64 = "0.22"
+subtle = "2"
+sha2 = "0.10"
+rand = "0.9"
+thiserror = "2"
+rkyv = { package = "rkyv", version = "0.8", features = ["std", "alloc"] }
+
+[dev-dependencies]
+postcard = { version = "1", features = ["alloc"] }
+serde_json = "1"

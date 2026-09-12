@@ -7,9 +7,14 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::time;
 
-use crate::mesh::protocol::{MeshMessageSigner, ThreatIndicator, ThreatSeverity, ThreatType};
+// Phase 27: verification primitives come from the low-capability
+// `synvoid-mesh-protocol` crate, not full `synvoid-mesh`. `ThreatIndicator`
+// value types are protocol vocabulary; only `ThreatIntelligenceManager`
+// (runtime service) still requires the mesh control plane.
 use crate::mesh::safe_unix_timestamp;
 use crate::mesh::threat_intel::ThreatIntelligenceManager;
+use synvoid_mesh_protocol::signer::verify_ed25519;
+use synvoid_mesh_protocol::{ThreatIndicator, ThreatSeverity, ThreatType};
 
 const DEFAULT_FETCH_INTERVAL_SECS: u64 = 300;
 const DEFAULT_FEED_URL: &str = "https://threat-feed.example.com/v1/indicators";
@@ -275,12 +280,8 @@ impl ThreatFeedClient {
         }
 
         let content = Self::get_signable_content(payload);
-        let mut pk_array = [0u8; 32];
-        pk_array.copy_from_slice(&signer_pk_bytes);
 
-        let signer = MeshMessageSigner::new(pk_array);
-
-        let result = signer.verify(content.as_bytes(), &signature_bytes, &signer_pk_bytes);
+        let result = verify_ed25519(content.as_bytes(), &signature_bytes, &signer_pk_bytes);
 
         if !result {
             tracing::warn!("Ed25519 signature verification failed for feed payload");
