@@ -29,7 +29,7 @@ no sources, not a workspace member, zero references) was removed.
 | `tools/xtask` (1999 LOC) | `cargo xtask verify*` CI orchestration | Keep (tooling isolation) |
 | `tools/synvoid-repo-guards` (226 LOC) | Static repo guards run by CI + `verify_architecture.sh` | Keep (tooling isolation) |
 
-## `synvoid-*` crates (38 members)
+## `synvoid-*` crates (39 members, Phase 26 adds `synvoid-yara`)
 
 Columns: LOC ≈ `src/` lines; "In-crate rev" = other workspace crates
 depending on it (root app crate depends on all of them as composition
@@ -63,7 +63,8 @@ inputs, so it is not listed per row).
 | synvoid-app-handlers | CGI/FastCGI/PHP/MIME app handlers | 3005 | Yes — handler protocols | Limited | 3 | config, core, http-client, plugin-runtime, serverless | Keep | App-protocol boundary shared by http/static/upload |
 | synvoid-app-server | Granian app-server integration | 1163 | Limited — backend dispatch | Limited | 2 | http-client, utils | Keep | Dependency isolation for app-server deps |
 | synvoid-static-files | Static serving, minification, file manager | 4668 | Yes — path traversal prevention, caching | Limited | 3 | app-handlers, config, ipc, theme, utils | Keep | Owns minification dep tree (build isolation) |
-| synvoid-upload | Upload validation + YARA scanning | 10538 | Yes — validation, in-jail scanning | Limited | 1 | app-handlers, config, http-client, mesh, platform, utils | Keep | Upload trust boundary |
+| synvoid-upload | Upload validation + YARA policy/orchestration (facade over `synvoid-yara`) | 10538 | Yes — validation, in-jail scanning | Limited | 1 | app-handlers, config, http-client, mesh, platform, utils, yara | Keep | Upload trust boundary; engine implementation moved to `synvoid-yara` (Phase 26) |
+| synvoid-yara | Canonical YARA execution boundary: engine, artifact binding, executor contract (Phase 26) | ~2600 | Yes — bounded compile/scan, digest/version binding, narrow executor | Limited (upload/mesh/jail consumers) | 2 (upload, root jail/cpu) | none (leaf; yara-x isolated here) | Keep | Security boundary; single `yara-x` production owner; mesh has no compiler reference |
 | synvoid-platform | OS abstraction, paths, sandbox primitives | 4309 | Yes — platform detection, secure dirs | Yes | 7 | ipc | Keep | Platform isolation; `macos-sandbox` surface |
 | synvoid-metrics | Metrics registry + recorder | 3806 | Yes — observability boundary, label cardinality | Yes | 5 | core, utils, waf | Keep | Single metrics owner; security_observability guard target |
 | synvoid-theme | Templates, error pages, captcha widget | 2043 | Limited — rendering | Yes | 2 | config | Keep | Rendering isolation; challenge depends directionally |

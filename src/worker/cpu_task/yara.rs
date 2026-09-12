@@ -1,8 +1,11 @@
 // Submodule: YARA scanner construction for the static CPU offload worker.
+//
+// Phase 26: builds the canonical `synvoid-yara` engine directly. Upload
+// archive policy stays in `synvoid-upload` and is not forwarded here.
 
 use std::sync::Arc;
 
-use synvoid_upload::yara_scanner::{YaraRulesSource, YaraScanner};
+use synvoid_yara::{YaraRulesSource, YaraScanner};
 
 pub fn build_yara_scanner_from_main_config(
     main_config: &synvoid_config::MainConfig,
@@ -22,8 +25,6 @@ pub fn build_yara_scanner_from_main_config(
     match YaraScanner::with_timeout(
         source,
         defaults.yara_timeout_ms,
-        3,
-        100 * 1024 * 1024,
         defaults.yara_max_concurrent_scans,
         defaults.yara_max_queued_scans,
         defaults.yara_queue_timeout_ms,

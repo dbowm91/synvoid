@@ -20,8 +20,10 @@ pub use sandbox::{QuarantineEntry, Sandbox, SandboxConfig, SandboxError, Sandbox
 pub use signature::{FileCategory, FileSignature, SignatureRegistry};
 pub use yara_rule_feed::{ParsedYaraRules, YaraRuleFeedManager, YaraRuleSource};
 pub use yara_scanner::{
-    compute_sha256, YaraDirectoryConfig, YaraError, YaraMatch, YaraRuleManifest,
-    YaraRuleProvenance, YaraRuleSourceType, YaraRulesSource, YaraScanner, NO_EXCLUDED_CATEGORIES,
+    compute_sha256, validate_rules_syntax, verify_content_digest, yara_match_to_malware_match,
+    WindowedScanResult, YaraDirectoryConfig, YaraError, YaraMatch, YaraRuleManifest,
+    YaraRuleProvenance, YaraRuleSourceType, YaraRulesSource, YaraScanner, DEFAULT_MALWARE_RULES,
+    NO_EXCLUDED_CATEGORIES,
 };
 
 use std::sync::Arc;
@@ -393,8 +395,6 @@ impl UploadValidator {
             let scanner = YaraScanner::with_timeout(
                 source,
                 config.yara_timeout_ms,
-                3,
-                100 * 1024 * 1024,
                 config.yara_max_concurrent_scans,
                 config.yara_max_queued_scans,
                 config.yara_queue_timeout_ms,
@@ -430,8 +430,6 @@ impl UploadValidator {
             let scanner = YaraScanner::with_timeout(
                 source,
                 config.yara_timeout_ms,
-                3,
-                100 * 1024 * 1024,
                 config.yara_max_concurrent_scans,
                 config.yara_max_queued_scans,
                 config.yara_queue_timeout_ms,
@@ -3110,9 +3108,9 @@ mod tests {
 
             // Compile a minimal rule and apply via the manager.
             let rule_src = "rule mesh_test { condition: true }";
-            let compiled_rules = yara_x::compile(rule_src).expect("compile");
-            let mut compiled = Vec::new();
-            compiled_rules.serialize_into(&mut compiled).unwrap();
+            let compiled = synvoid_yara::CompiledArtifact::compile(rule_src)
+                .expect("compile")
+                .bytes;
             manager
                 .apply_compiled_rules(
                     rule_src.to_string(),
@@ -3229,9 +3227,9 @@ mod tests {
 
             // Apply both compiled and source rules — compiled should be preferred.
             let rule_src = "rule compiled_preferred { condition: true }";
-            let compiled_rules = yara_x::compile(rule_src).expect("compile");
-            let mut compiled = Vec::new();
-            compiled_rules.serialize_into(&mut compiled).unwrap();
+            let compiled = synvoid_yara::CompiledArtifact::compile(rule_src)
+                .expect("compile")
+                .bytes;
             manager
                 .apply_compiled_rules(
                     rule_src.to_string(),
@@ -3266,9 +3264,9 @@ mod tests {
 
             // Apply a rule that matches "AAAA".
             let rule_src = "rule detect_aaaa { strings: $s = \"AAAA\" condition: $s }";
-            let compiled_rules = yara_x::compile(rule_src).expect("compile");
-            let mut compiled = Vec::new();
-            compiled_rules.serialize_into(&mut compiled).unwrap();
+            let compiled = synvoid_yara::CompiledArtifact::compile(rule_src)
+                .expect("compile")
+                .bytes;
             manager
                 .apply_compiled_rules(
                     rule_src.to_string(),

@@ -1,13 +1,14 @@
 //! YARA jail execution service (child side).
 //!
 //! Implements [`synvoid_ipc::JailHandler`] for [`synvoid_ipc::JailKind::Yara`]
-//! by compiling parent-approved rule text with [`YaraScanner`] and scanning
-//! bounded buffers.
+//! by compiling parent-approved rule text with the canonical
+//! `synvoid-yara` engine and scanning bounded buffers.
 //!
-//! Trust model mirrors the WASM service: the parent validated rule provenance
-//! before sending; the jail verifies the content digest (constant-time) and
-//! enforces per-scan timeouts plus input/match bounds. Compilation and scan
-//! errors are typed and never terminate the jail.
+//! Phase 26: imports the generic engine directly (never
+//! `synvoid-upload`). Trust model mirrors the WASM service: the parent
+//! validated rule provenance before sending; the jail verifies the content
+//! digest (constant-time) and enforces per-scan timeouts plus input/match
+//! bounds. Compilation and scan errors are typed and never terminate the jail.
 
 use std::collections::HashMap;
 
@@ -15,7 +16,7 @@ use synvoid_ipc::{
     JailError, JailHandler, JailOperation, JailOutput, JailResult, YaraMatchDto, JAIL_MAX_MATCHES,
     JAIL_MAX_RULESETS,
 };
-use synvoid_upload::{YaraRulesSource, YaraScanner};
+use synvoid_yara::{YaraRulesSource, YaraScanner};
 
 /// Per-scan timeout inside the jail (parent call deadline is the outer bound;
 /// quarantine+restart applies if this is ever exceeded pathologically).

@@ -290,6 +290,16 @@ pub async fn init_mesh_control_plane(
             None, // feed_mgr
             None, // data_dir
         ));
+        // Phase 26: inject the narrow execution-boundary validator. Mesh
+        // itself never links yara-x; this closure runs in the supervisor
+        // composition root which owns `synvoid-yara`.
+        struct BoundaryValidator;
+        impl synvoid_mesh::yara_rules::YaraSyntaxValidator for BoundaryValidator {
+            fn validate(&self, rules: &str) -> Result<(), String> {
+                synvoid_yara::validate_rules_syntax(rules).map_err(|e| e.to_string())
+            }
+        }
+        yara_manager.set_syntax_validator(Arc::new(BoundaryValidator));
         yara_manager.start_background_tasks();
         yara_rules_out = Some(yara_manager);
     }

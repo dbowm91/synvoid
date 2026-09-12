@@ -4,6 +4,13 @@
 
 The Upload module (canonical: `crates/synvoid-upload/`; the former `src/upload/` compatibility facade was removed in Phase 03 — see `facade_disposition_matrix.md` §4) provides a **comprehensive upload validation pipeline** with MIME type checking, YARA malware scanning, sandbox quarantine, file signature verification, rate limiting, and multipart parsing.
 
+Phase 26: the generic YARA engine lives in `crates/synvoid-yara/` (single
+`yara-x` owner). `crates/synvoid-upload/src/yara_scanner.rs` is a policy
+facade that re-exports `synvoid_yara` contracts and adds only upload mapping
+(`YaraMatch` → `MalwareMatch`, upload-facing factories with archive policy
+kept in upload). Mesh distribution and the jail service consume `synvoid-yara`
+directly, never this facade's implementation.
+
 **Core Responsibilities:**
 - File upload validation (size, type, content)
 - YARA-based malware scanning

@@ -139,24 +139,31 @@ pub fn get_scan_quarantine_on_error() -> u64 {
     UPLOAD_SCAN_QUARANTINE_ON_ERROR.load(Ordering::Relaxed)
 }
 
+/// Phase 26: engine counters live in `synvoid-yara`. These wrappers delegate
+/// so existing upload dashboards keep working while the engine is canonical.
 pub fn increment_scan_queue_timeout() {
     YARA_SCAN_QUEUE_TIMEOUT.fetch_add(1, Ordering::Relaxed);
+    synvoid_yara::metrics::increment_scan_queue_timeout();
 }
 
 pub fn increment_scan_queue_full() {
     YARA_SCAN_QUEUE_FULL.fetch_add(1, Ordering::Relaxed);
+    synvoid_yara::metrics::increment_scan_queue_full();
 }
 
 pub fn increment_scan_timeout() {
     YARA_SCAN_TIMEOUT.fetch_add(1, Ordering::Relaxed);
+    synvoid_yara::metrics::increment_scan_timeout();
 }
 
 pub fn increment_yara_reload_success() {
     YARA_RELOAD_SUCCESS.fetch_add(1, Ordering::Relaxed);
+    synvoid_yara::metrics::increment_yara_reload_success();
 }
 
 pub fn increment_yara_reload_failure() {
     YARA_RELOAD_FAILURE.fetch_add(1, Ordering::Relaxed);
+    synvoid_yara::metrics::increment_yara_reload_failure();
 }
 
 pub fn get_scan_queue_timeout() -> u64 {

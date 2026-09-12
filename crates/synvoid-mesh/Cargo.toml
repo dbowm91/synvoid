@@ -128,8 +128,9 @@ tempfile = "3"
 # URL parsing
 url = "2"
 
-# YARA rules
-yara-x = { version = "1.15", default-features = false, features = ["default-modules", "linkme"] }
+# Phase 26: synvoid-mesh must not link yara-x. YARA execution/validation lives
+# in synvoid-yara; mesh owns distribution/approval/versioning only and accepts
+# an injected narrow validator from composition (see yara_rules.rs).
 
 # Raft consensus (always available so the crate compiles under every feature profile)
 openraft = { version = "0.10.0-alpha.18", features = ["serde"] }

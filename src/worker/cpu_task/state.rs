@@ -10,7 +10,7 @@ use crate::{DrainFlag, RunningFlag};
 use synvoid_config::ConfigManager;
 use synvoid_ipc::ipc_transport::IpcStream as AsyncIpcStream;
 use synvoid_static_files::minifier;
-use synvoid_upload::yara_scanner::YaraScanner;
+use synvoid_yara::YaraScanner;
 
 #[derive(Clone)]
 pub struct CpuWorkerArgs {

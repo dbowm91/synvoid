@@ -1,4 +1,4 @@
-# Sandbox Jail IPC Protocol (Phase 22)
+# Sandbox Jail IPC Protocol (Phase 22, Phase 26 YARA boundary)
 
 Status: operational. WASM and YARA jail entry points (`--wasm-jail`, `--yara-jail`)
 serve a real bounded request loop over a parent-created stdio transport. This document
@@ -13,8 +13,14 @@ Canonical implementation:
   `crates/synvoid-ipc/src/jail_process.rs`
 - Child execution services and policy-gated call sites: `src/sandbox/`
   (`wasm_service.rs`, `yara_service.rs`, `policy.rs`)
+- YARA engine (Phase 26 canonical owner): `crates/synvoid-yara/src/`
+  (`engine.rs`, `artifact.rs`, `executor.rs`). The jail service uses
+  `synvoid_yara::{YaraScanner, YaraRulesSource}` directly, never
+  `synvoid-upload`.
 - Behavioral + static-policy coverage: `tests/jail_isolation_guard.rs`
-  (composition; unit coverage in `synvoid-ipc` for pure framing)
+  (composition; unit coverage in `synvoid-ipc` for pure framing) plus
+  `tools/synvoid-repo-guards/tests/yara_execution_boundary.rs` (Phase 26
+  ownership: single `yara-x` owner, mesh has no compiler reference).
 
 Related: `architecture/process_lifecycle.md` (jail supervision),
 `architecture/plugin_runtime_sandbox.md` (Phase 22 jail section),
@@ -177,10 +183,12 @@ WASM service (`src/sandbox/wasm_service.rs`):
   stays loaded (failures are per-invocation) unless the runtime is corrupted,
   in which case the child exits and the parent restarts it
 
-YARA service (`src/sandbox/yara_service.rs`):
+YARA service (`src/sandbox/yara_service.rs` over `crates/synvoid-yara`):
 
-- one `YaraScanner` per rules ID with per-scan timeout, single-flight scan
-  semaphore, bounded input; compile/scan errors are typed and non-fatal
+- one `synvoid_yara::YaraScanner` per rules ID with per-scan timeout,
+  single-flight scan semaphore, bounded input; compile/scan errors are typed
+  and non-fatal (Phase 26: no `synvoid-upload` coupling; digest re-verified
+  in-jail via `verify_content_digest` semantics)
 
 Both services enforce the module/ruleset count caps and input/output bounds
 from the `JAIL_MAX_*` consts before delegating to the underlying runtime.

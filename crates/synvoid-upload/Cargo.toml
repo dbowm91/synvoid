@@ -17,6 +17,7 @@ synvoid-http-client = { path = "../synvoid-http-client" , version = "0.1" }
 synvoid-platform = { path = "../synvoid-platform" , version = "0.1" }
 synvoid-app-handlers = { path = "../synvoid-app-handlers" , version = "0.1" }
 synvoid-mesh = { path = "../synvoid-mesh", optional = true , version = "0.1" }
+synvoid-yara = { path = "../synvoid-yara" , version = "0.1" }
 parking_lot = "0.12"
 tokio = { version = "1", features = ["rt", "time", "sync", "macros"] }
 serde = { version = "1", features = ["derive"] }
@@ -32,7 +33,6 @@ base64 = "0.22"
 tempfile = "3"
 uuid = { version = "1", features = ["v4"] }
 arc-swap = "1"
-yara-x = { version = "1.15", default-features = false, features = ["default-modules", "linkme"] }
 zip = "2"
 
 [dev-dependencies]

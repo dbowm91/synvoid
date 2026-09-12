@@ -185,5 +185,5 @@ pub fn get_global_record_store() -> Option<Arc<crate::mesh::dht::RecordStoreMana
 pub use worker_integration::{ManagedMeshService, MeshFailureCause, MeshServiceHealth};
 pub use yara_rules::{
     YaraRuleSource, YaraRuleSubmission, YaraRuleSubmissionStatus, YaraRuleVersionInfo,
-    YaraRulesManager, YaraRulesStats,
+    YaraRulesManager, YaraRulesStats, YaraSyntaxValidator,
 };

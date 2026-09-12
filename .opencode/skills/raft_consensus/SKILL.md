@@ -345,23 +345,25 @@ impl EdgeReplicaManager {
 }
 ```
 
-### W8.6: YARA-X Binary Distribution
+### W8.6: YARA Rule Distribution (Phase 26 text-only)
 
-Global nodes serialize compiled YARA rules and distribute binary blobs to Edge nodes, eliminating Edge-side compilation overhead:
+Global nodes distribute signed canonical rule *text* plus digest/version.
+Mesh never compiles or deserializes rules (no `yara-x` in `synvoid-mesh`);
+only the execution boundary (`synvoid-yara`) compiles:
 
 ```rust
-// Global node: compile and serialize
-let compiled_rules = yara_x::Rules::serialize(&rules);
-broadcast_to_edges(RuleAnnouncement { compiled_rules, ... });
+// Global node: distribute canonical text (mesh, no compilation)
+yara_manager.apply_rules(source_text, version, YaraRuleSource::MeshGlobal)?;
 
-// Edge node: deserialize directly (no compilation)
-let rules = yara_x::Rules::deserialize(compiled_rules).unwrap();
+// Execution boundary: compile with engine-version binding
+let artifact = synvoid_yara::CompiledArtifact::compile(&source_text)?;
+let rules = artifact.deserialize_verified()?; // rejects wrong engine/format
 ```
 
-**Benefits:**
-- Edge nodes bypass YARA-X compilation (expensive at scale)
-- Binary format is stable across versions (with version field)
-- Fallback to source rules if deserialization fails
+**Invariants (Phase 26):**
+- Mesh owns distribution/approval/versioning only; `YaraCompiledRuleAnnounce.compiled_rules` stays empty for wire compat, receivers use `source_rules`.
+- Compiled blobs (if present from legacy peers) are opaque in mesh, never executed there.
+- Engine/format mismatches are rejected deterministically via `CompiledArtifact`.
 
 ### Clippy Cleanup
 

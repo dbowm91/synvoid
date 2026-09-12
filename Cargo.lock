@@ -7990,6 +7990,7 @@ dependencies = [
  "synvoid-utils",
  "synvoid-vpn-client",
  "synvoid-waf",
+ "synvoid-yara",
  "sysinfo 0.38.4",
  "tar",
  "tempfile",
@@ -8577,7 +8578,6 @@ dependencies = [
  "uuid",
  "x25519-dalek",
  "x509-parser 0.16.0",
- "yara-x",
  "zeroize",
 ]
 
@@ -8861,6 +8861,7 @@ dependencies = [
  "synvoid-mesh",
  "synvoid-platform",
  "synvoid-utils",
+ "synvoid-yara",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
@@ -8868,7 +8869,6 @@ dependencies = [
  "tracing",
  "uuid",
  "walkdir",
- "yara-x",
  "zip 2.4.2",
 ]
 
@@ -8977,6 +8977,30 @@ dependencies = [
  "wasm-bindgen-futures",
  "web-sys",
  "x25519-dalek",
+]
+
+[[package]]
+name = "synvoid-yara"
+version = "0.1.0"
+dependencies = [
+ "arc-swap",
+ "async-trait",
+ "base64",
+ "chrono",
+ "ed25519-dalek",
+ "hex",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "sha2",
+ "subtle",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "toml 0.8.23",
+ "tracing",
+ "walkdir",
+ "yara-x",
 ]
 
 [[package]]

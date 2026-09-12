@@ -303,7 +303,7 @@ See `architecture/mesh_transport_lifecycle.md` for the full task inventory and i
 | `AuditSession` | `crates/synvoid-mesh/src/mesh/audit_session.rs` | Session-scoped audit context. |
 | `SessionManager<T>` | `crates/synvoid-mesh/src/mesh/session/manager.rs` | Generic session manager for KEM key rotation. |
 | `WasmDistManager` | `crates/synvoid-mesh/src/mesh/wasm_dist.rs` | WASM module distribution. |
-| `YaraRulesManager` | `crates/synvoid-mesh/src/mesh/yara_rules.rs` | YARA rule distribution. |
+| `YaraRulesManager` | `crates/synvoid-mesh/src/mesh/yara_rules.rs` | YARA rule distribution/approval/versioning only (Phase 26: no `yara-x`; text-only distribution with injected `YaraSyntaxValidator`; compiled blobs opaque, never executed in mesh). |
 
 ---
 

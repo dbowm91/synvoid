@@ -20,6 +20,17 @@ use crate::dht::DEFAULT_GET_BY_PREFIX_LIMIT;
 use crate::protocol::MeshMessage;
 use crate::stubs::upload_stub::yara_rule_feed::YaraRuleFeedManager;
 
+/// Narrow YARA syntax-validation capability (Phase 26 Part C).
+///
+/// `synvoid-mesh` must not link `yara-x`. Distribution code validates rule
+/// text structurally by default; composition roots that own the execution
+/// boundary (e.g. supervisor linking `synvoid-yara`) may inject a full
+/// validator via [`YaraRulesManager::set_syntax_validator`]. Approval cannot
+/// cause local compilation without going through this capability.
+pub trait YaraSyntaxValidator: Send + Sync {
+    fn validate(&self, rules: &str) -> Result<(), String>;
+}
+
 #[derive(Debug, Error)]
 pub enum YaraRulesError {
     #[error("Record store not set")]
@@ -295,6 +306,9 @@ pub struct YaraRulesManager {
     signer: Option<Arc<crate::protocol::MeshMessageSigner>>,
     current_version: Arc<RwLock<Option<String>>>,
     local_rules: Arc<RwLock<Option<String>>>,
+    /// Opaque compiled-blob cache for backward compatibility with peers that
+    /// still send compiled artifacts. Mesh never deserializes or executes
+    /// these bytes (Phase 26); only the execution boundary does.
     local_compiled_rules: Arc<RwLock<Option<Vec<u8>>>>,
     submissions: Arc<RwLock<HashMap<String, YaraRuleSubmission>>>,
     submission_hashes: Arc<RwLock<HashMap<String, String>>>,
@@ -306,6 +320,7 @@ pub struct YaraRulesManager {
     rule_change_tracker: Arc<RwLock<RuleChangeTracker>>,
     record_store: Arc<RwLock<Option<Arc<crate::dht::RecordStoreManager>>>>,
     transport: Arc<RwLock<Option<Arc<crate::transport::MeshTransport>>>>,
+    syntax_validator: Arc<RwLock<Option<Arc<dyn YaraSyntaxValidator>>>>,
 }
 
 impl YaraRulesManager {
@@ -336,6 +351,7 @@ impl YaraRulesManager {
             rule_change_tracker: Arc::new(RwLock::new(RuleChangeTracker::default())),
             record_store: Arc::new(RwLock::new(None)),
             transport: Arc::new(RwLock::new(None)),
+            syntax_validator: Arc::new(RwLock::new(None)),
         };
 
         if manager.node_role.is_global() || manager.node_role.contains(MeshNodeRole::GLOBAL) {
@@ -428,6 +444,15 @@ impl YaraRulesManager {
         *rs = Some(record_store);
     }
 
+    /// Inject a narrow YARA syntax validator owned by the execution boundary.
+    ///
+    /// Composition roots linking `synvoid-yara` provide full validation here;
+    /// without injection, approval performs structural checks only and defers
+    /// compilation to the jail/in-process engine. Mesh never compiles locally.
+    pub fn set_syntax_validator(&self, validator: Arc<dyn YaraSyntaxValidator>) {
+        *self.syntax_validator.write() = Some(validator);
+    }
+
     fn compress_rules(&self, rules: &str) -> Result<Vec<u8>, YaraRulesError> {
         let mut encoder = GzEncoder::new(Vec::new(), Compression::new(YARA_COMPRESSION_LEVEL));
         encoder
@@ -499,26 +524,12 @@ impl YaraRulesManager {
         let content_hash = self.compute_rules_hash(&rules);
         let timestamp = synvoid_utils::safe_unix_timestamp();
 
-        // Compile rules for binary distribution
-        let compiled_rules = match yara_x::compile(rules.as_str()) {
-            Ok(compiled) => match compiled.serialize() {
-                Ok(bytes) => Some(bytes),
-                Err(e) => {
-                    tracing::warn!("Failed to serialize compiled YARA rules for DHT: {}", e);
-                    None
-                }
-            },
-            Err(e) => {
-                tracing::warn!("Failed to compile YARA rules for DHT: {}", e);
-                None
-            }
-        };
-
-        let compiled_hash = compiled_rules.as_ref().map(|c| {
-            let mut hasher = Sha256::new();
-            hasher.update(c);
-            hex::encode(hasher.finalize())
-        });
+        // Phase 26: mesh distributes signed canonical rule text plus
+        // digest/version only. Compiled-blob distribution is disabled: the
+        // control-plane process must not compile untrusted rules, and compiled
+        // artifacts carry engine-version compatibility risk. Peers that still
+        // advertise `compiled_hash` are treated as text-only (see sync path).
+        let compiled_hash: Option<String> = None;
 
         let compressed = match self.compress_rules(&rules) {
             Ok(c) => c,
@@ -676,26 +687,10 @@ impl YaraRulesManager {
             }
         }
 
-        // Publish compiled rules
-        if let Some(c_hash) = compiled_hash {
-            if let Some(c_rules) = compiled_rules {
-                let rule_key = DhtKey::yara_compiled_rule_content(&c_hash).as_str();
-                let rule_record = crate::dht::YaraCompiledRuleContentRecord {
-                    version: version.clone(),
-                    compiled_rules: c_rules,
-                    compiled_hash: c_hash,
-                    node_id: self.node_id.clone(),
-                    timestamp,
-                    signature: Vec::new(),
-                    signer_public_key: None,
-                    is_chunked: false,
-                };
-
-                if let Ok(bytes) = synvoid_utils::serialization::serialize(&rule_record) {
-                    record_store.store_and_announce(rule_key.to_string(), bytes, 86400);
-                }
-            }
-        }
+        // Phase 26: no compiled-blob publication. Legacy
+        // `YaraCompiledRuleContentRecord` type is retained for wire
+        // compatibility with older peers, but this node never writes it.
+        let _ = compiled_hash;
     }
 
     fn fetch_rules_from_dht(
@@ -743,6 +738,12 @@ impl YaraRulesManager {
         None
     }
 
+    /// Legacy compiled-blob fetch retained for wire compatibility.
+    ///
+    /// Phase 26: never called by the sync path. Mesh never deserializes or
+    /// executes compiled blobs; the execution boundary (`synvoid-yara`) owns
+    /// that. Kept so older stored records remain readable by tooling.
+    #[allow(dead_code)]
     fn fetch_compiled_rules_from_dht(
         &self,
         compiled_hash: &str,
@@ -1079,49 +1080,38 @@ impl YaraRulesManager {
                     }
                 }
 
-                // Prefer compiled rules if available
-                let compiled_rules_opt = if let Some(ref c_hash) = compiled_hash {
-                    self.fetch_compiled_rules_from_dht(c_hash, &record_store)
+                // Phase 26: text-only distribution. `compiled_hash` from legacy
+                // peers is ignored (never fetched/deserialized in mesh). The
+                // execution boundary compiles source text itself.
+                let _ = compiled_hash;
+                let rules_str_opt = if is_chunked {
+                    self.fetch_chunks_from_dht(
+                        &peer_hash,
+                        chunk_count,
+                        &record_store,
+                        &manifest_signer_pk,
+                    )
                 } else {
-                    None
+                    self.fetch_rules_from_dht(&peer_hash, &record_store)
                 };
 
-                let rules_data = if let Some((ver, compiled, ts)) = compiled_rules_opt {
-                    Some((ver, None, Some(compiled), ts))
-                } else {
-                    let rules_str_opt = if is_chunked {
-                        self.fetch_chunks_from_dht(
-                            &peer_hash,
-                            chunk_count,
-                            &record_store,
-                            &manifest_signer_pk,
-                        )
-                    } else {
-                        self.fetch_rules_from_dht(&peer_hash, &record_store)
-                    };
-
-                    rules_str_opt.map(|(ver, s, ts)| (ver, Some(s), None, ts))
-                };
-
-                let Some((version_str, rules_string_opt, compiled_rules_opt, timestamp)) =
-                    rules_data
-                else {
+                let Some((version_str, rules_string, timestamp)) = rules_str_opt else {
                     continue;
                 };
 
                 match &best_timestamp {
                     None => {
                         best_version = Some(version_str);
-                        best_rules = rules_string_opt;
-                        best_compiled_rules = compiled_rules_opt;
+                        best_rules = Some(rules_string);
+                        best_compiled_rules = None;
                         best_hash = Some(peer_hash);
                         best_timestamp = Some(timestamp);
                     }
                     Some(current_best) => {
                         if timestamp > *current_best {
                             best_version = Some(version_str);
-                            best_rules = rules_string_opt;
-                            best_compiled_rules = compiled_rules_opt;
+                            best_rules = Some(rules_string);
+                            best_compiled_rules = None;
                             best_hash = Some(peer_hash);
                             best_timestamp = Some(timestamp);
                         }
@@ -1147,32 +1137,10 @@ impl YaraRulesManager {
                         new_version
                     );
 
-                    if let Some(compiled) = best_compiled_rules {
-                        // We also need the source rules for some tasks (like re-broadcasting or fallback)
-                        // If we don't have them, we might need to fetch them too.
-                        // For now, if we only have compiled, we might be in trouble if we ever need the source.
-                        // But usually the manifest has both or we can fetch both.
-                        if let Some(source) = best_rules {
-                            self.apply_compiled_rules(
-                                source,
-                                compiled,
-                                new_version.clone(),
-                                YaraRuleSource::MeshGlobal,
-                            )?;
-                        } else {
-                            // Fetch source rules to accompany compiled rules
-                            if let Some((_, source, _)) =
-                                self.fetch_rules_from_dht(&new_hash, &record_store)
-                            {
-                                self.apply_compiled_rules(
-                                    source,
-                                    compiled,
-                                    new_version.clone(),
-                                    YaraRuleSource::MeshGlobal,
-                                )?;
-                            }
-                        }
-                    } else if let Some(source) = best_rules {
+                    // Phase 26: compiled blobs are never applied from DHT in
+                    // mesh. Opaque cache is dropped; source text is canonical.
+                    let _ = best_compiled_rules;
+                    if let Some(source) = best_rules {
                         self.apply_rules(source, new_version.clone(), YaraRuleSource::MeshGlobal)?;
                     }
                 }
@@ -1194,6 +1162,11 @@ impl YaraRulesManager {
         self.local_compiled_rules.read().clone()
     }
 
+    /// Store source text plus an opaque compiled blob (legacy compat).
+    ///
+    /// Phase 26: mesh never compiles or deserializes. The blob is stored
+    /// opaquely for consumers that still read it. New code should call
+    /// `apply_rules` with canonical text.
     pub fn apply_compiled_rules(
         &self,
         rules: String,
@@ -1467,16 +1440,27 @@ impl YaraRulesManager {
     }
 
     fn validate_rules_syntax(&self, rules: &str) -> Result<(), YaraRulesError> {
-        match yara_x::compile(rules) {
-            Ok(_) => {
-                tracing::debug!("YARA rules syntax validation passed");
-                Ok(())
-            }
-            Err(e) => {
-                tracing::warn!("YARA rules syntax validation failed: {}", e);
-                Err(YaraRulesError::InvalidYaraSyntax(e.to_string()))
-            }
+        // Phase 26: mesh never compiles rules locally. Structural checks run
+        // inline; full syntax validation is delegated to the injected
+        // execution-boundary validator when composition provides one.
+        if let Some(validator) = self.syntax_validator.read().clone() {
+            return validator
+                .validate(rules)
+                .map_err(|e| {
+                    tracing::warn!("YARA rules syntax validation failed: {}", e);
+                    YaraRulesError::InvalidYaraSyntax(e)
+                })
+                .inspect(|_| {
+                    tracing::debug!("YARA rules syntax validation passed (injected)");
+                });
         }
+        // Structural fallback: presence of a rule declaration. Full
+        // compilation happens in synvoid-yara (jail/in-process engine).
+        if !rules.contains("rule ") {
+            return Err(YaraRulesError::MissingRuleDeclaration);
+        }
+        tracing::debug!("YARA rules structural validation passed (deferred full syntax check)");
+        Ok(())
     }
 
     fn broadcast_submission(&self, submission: &YaraRuleSubmission) -> Result<(), YaraRulesError> {
@@ -1715,34 +1699,14 @@ impl YaraRulesManager {
 
             let signer_public_key = self.signer.as_ref().map(|s| s.get_public_key());
 
-            let compiled_rules = match yara_x::compile(rules.as_str()) {
-                Ok(compiled) => match compiled.serialize() {
-                    Ok(bytes) => bytes,
-                    Err(e) => {
-                        tracing::warn!("Failed to serialize compiled YARA rules: {}, falling back to text-only broadcast", e);
-                        Vec::new()
-                    }
-                },
-                Err(e) => {
-                    tracing::warn!("Failed to compile YARA rules for serialization: {}, falling back to text-only broadcast", e);
-                    Vec::new()
-                }
-            };
-
-            let checksum = if !compiled_rules.is_empty() {
-                let mut hasher = Sha256::new();
-                hasher.update(&compiled_rules);
-                hex::encode(hasher.finalize())
-            } else {
-                String::new()
-            };
+            // Phase 26: text-only broadcast. `compiled_rules` stays empty for
+            // wire compatibility; receivers must use `source_rules` and never
+            // deserialize in mesh.
+            let compiled_rules = Vec::new();
+            let checksum = String::new();
 
             let signature = if let Some(ref signer) = self.signer {
-                let sign_content = if compiled_rules.is_empty() {
-                    format!("{}:{}", version, rules)
-                } else {
-                    format!("{}:{}:{}", version, checksum, rules.len())
-                };
+                let sign_content = format!("{}:{}", version, rules);
                 signer.sign(sign_content.as_bytes())
             } else {
                 Vec::new()
@@ -2119,6 +2083,9 @@ impl YaraRulesManager {
                     compiled_rules.len()
                 );
 
+                // Phase 26: compiled blobs are never deserialized/executed in
+                // mesh. If a legacy peer sends one, verify its checksum for
+                // integrity logging, then ignore the bytes and use source text.
                 if !compiled_rules.is_empty() {
                     let mut hasher = Sha256::new();
                     hasher.update(compiled_rules);
@@ -2139,7 +2106,7 @@ impl YaraRulesManager {
                         });
                     }
                     tracing::debug!(
-                        "YARA compiled rules checksum verified: {}",
+                        "YARA compiled blob checksum verified (opaque, not executed): {}",
                         computed_checksum
                     );
                 }
@@ -2148,11 +2115,7 @@ impl YaraRulesManager {
                     && signer_public_key.as_ref().is_some_and(|s| !s.is_empty())
                 {
                     if let Some(ref signer) = self.signer {
-                        let sign_content = if !compiled_rules.is_empty() {
-                            format!("{}:{}:{}", version, checksum, source_rules.len())
-                        } else {
-                            format!("{}:{}", version, source_rules)
-                        };
+                        let sign_content = format!("{}:{}", version, source_rules);
                         let pk_bytes = URL_SAFE_NO_PAD
                             .decode(signer_public_key.as_deref().unwrap_or(""))
                             .unwrap_or_default();
@@ -2223,27 +2186,17 @@ impl YaraRulesManager {
                     });
                 }
 
-                let rules_to_apply = if !compiled_rules.is_empty() {
-                    match yara_x::Rules::deserialize(compiled_rules) {
-                        Ok(_rules) => {
-                            tracing::info!(
-                                "Deserialized compiled YARA rules successfully (version {})",
-                                version
-                            );
-                            source_rules.clone()
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                "Failed to deserialize compiled YARA rules from {}: {}, falling back to source rules",
-                                from_node,
-                                e
-                            );
-                            source_rules.clone()
-                        }
-                    }
-                } else {
-                    source_rules.clone()
-                };
+                // Phase 26: never deserialize in mesh. Source text is canonical;
+                // compiled bytes (if any) are ignored after checksum verification.
+                if !compiled_rules.is_empty() {
+                    tracing::debug!(
+                        "Ignoring {} compiled bytes from {} (version {}); using source text",
+                        compiled_rules.len(),
+                        from_node,
+                        version
+                    );
+                }
+                let rules_to_apply = source_rules.clone();
 
                 if let Err(e) =
                     self.handle_incoming_rules(version.clone(), rules_to_apply, from_node)
@@ -2551,6 +2504,7 @@ impl Clone for YaraRulesManager {
             rule_change_tracker: Arc::clone(&self.rule_change_tracker),
             record_store: Arc::clone(&self.record_store),
             transport: Arc::clone(&self.transport),
+            syntax_validator: Arc::clone(&self.syntax_validator),
         }
     }
 }

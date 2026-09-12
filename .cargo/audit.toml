@@ -1,15 +1,16 @@
-# cargo-audit configuration (Phase 25 baseline).
+# cargo-audit configuration (Phase 25 baseline, Phase 26 YARA consolidation).
 # Mirrors the narrow advisory ignores in deny.toml so the blocking `cargo audit`
 # gate (CI `dependency-security` job, `cargo xtask verify-release`) agrees with
 # dependency policy. Each ignore MUST match a deny.toml entry with full exposure
 # evidence in architecture/dependency_security_baseline_phase25.md.
 # Pinned tool: cargo-audit 0.22.2 (see docs/testing/verification-contract.md).
+# Phase 26: yara-x single owner is synvoid-yara; mesh no longer links it.
 
 [advisories]
 ignore = [
-    # RUSTSEC-2023-0071 (rsa, transitive via yara-x; never invoked; ed25519 used instead).
+    # RUSTSEC-2023-0071 (rsa, transitive via synvoid-yara -> yara-x; never invoked; ed25519 used instead).
     "RUSTSEC-2023-0071",
-    # wasmtime 40.0.4 via yara-x 1.15 (YARA compilation only; direct 42.0.2 patched for these).
+    # wasmtime 40.0.4 via synvoid-yara -> yara-x 1.15 (YARA compilation only; direct 42.0.2 patched for these; mesh out of scope).
     "RUSTSEC-2026-0085",
     "RUSTSEC-2026-0086",
     "RUSTSEC-2026-0087",
@@ -22,10 +23,10 @@ ignore = [
     "RUSTSEC-2026-0095",
     "RUSTSEC-2026-0096",
     "RUSTSEC-2026-0114",
-    # RUSTSEC-2026-0222 (wasmtime 40.0.4 via yara-x; single-engine rule bytecode).
+    # RUSTSEC-2026-0222 (wasmtime 40.0.4 via synvoid-yara -> yara-x; single-engine rule bytecode).
     "RUSTSEC-2026-0222",
     # RUSTSEC-2026-0269 (WASI fs escape; wasmtime-wasi absent from lock; upgrade blocked, see baseline §4).
-    # 42.0.2 is AFFECTED, capability-gated — never described as patched. Remove-by: Phase 26.
+    # 42.0.2 is AFFECTED, capability-gated — never described as patched. Remove-by: Phase 27.
     "RUSTSEC-2026-0269",
     # RUSTSEC-2026-0235 (rkyv 0.7.46 via parcel_sourcemap; minifier-internal sourcemaps only).
     "RUSTSEC-2026-0235",

@@ -75,6 +75,7 @@ reference fails the guard until the row is reclassified with a reason.
 | synvoid-icmp-filter | icmp_filter | composition_runtime | icmp-filter | ICMP filtering | keep | icmp_filter |
 | synvoid-honeypot | honeypot_port | composition_runtime | default | Honeypot port detection | keep | honeypot_port |
 | synvoid-upload | http, sandbox, waf, worker | composition_runtime | default | File upload handling in synvoid_upload; root upload/ removed Phase 03 | keep | http, sandbox, waf, worker |
+| synvoid-yara | sandbox, worker, supervisor | composition_runtime | default | Canonical YARA engine for jail service + CPU worker + mesh validator injection (Phase 26 single yara-x owner) | keep | sandbox, supervisor, worker |
 | synvoid-ipc | process | composition_runtime | default | IPC transport abstractions | keep | http, process, sandbox, supervisor, worker |
 | synvoid-http-client | http_client | composition_runtime | default | HTTP client pool and QUIC dispatch | keep | http, http_client, tls |
 | synvoid-platform | platform | composition_runtime | default | Platform detection and OS abstractions | keep | platform |

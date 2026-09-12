@@ -1,6 +1,6 @@
 # AGENTS.md
 
-SynVoid is a high-performance WAF & reverse proxy in Rust with a mesh networking layer and multi-process architecture (Supervisor + UnifiedServerWorker data plane + CPU offload). 45-member Cargo workspace: root app, 37 `synvoid-*` crates under `crates/`, plus `pqc`, `admin-ui` (Yew/WASM via Trunk), `examples/*`, `fuzz`, `tools/{xtask,synvoid-repo-guards}`. Linux is the primary deployment target.
+SynVoid is a high-performance WAF & reverse proxy in Rust with a mesh networking layer and multi-process architecture (Supervisor + UnifiedServerWorker data plane + CPU offload). 46-member Cargo workspace: root app, 38 `synvoid-*` crates under `crates/` (Phase 26 adds `synvoid-yara`), plus `pqc`, `admin-ui` (Yew/WASM via Trunk), `examples/*`, `fuzz`, `tools/{xtask,synvoid-repo-guards}`. Linux is the primary deployment target.
 
 ## Build & Setup
 
@@ -185,5 +185,5 @@ Primary doc per subsystem (deep dives live beside each as `<topic>_deep_dive.md`
 
 ## Known Issues
 
-- `wasmtime` 40.0.4 arrives transitively via yara-x (YARA rule compilation only, not the wasm sandbox); direct wasmtime is 42.0.2 via `[patch.crates-io]` (fixed for the 2026-04 advisories, but AFFECTED by RUSTSEC-2026-0269 with `wasmtime-wasi` unreachable — never call it patched for 0269; ≥46.0.3 upgrade blocked by bumpalo conflict, tracked for Phase 26). 16 advisory ignores in `deny.toml` (mirrored in `.cargo/audit.toml`), re-audit tied to Phase 26. See `architecture/dependency_security_baseline_phase25.md`.
+- `wasmtime` 40.0.4 arrives transitively via `synvoid-yara` → `yara-x` (YARA execution boundary only, not the wasm sandbox; Phase 26: `synvoid-mesh` no longer links `yara-x`, `synvoid-upload` consumes it only via `synvoid-yara`); direct wasmtime is 42.0.2 via `[patch.crates-io]` (fixed for the 2026-04 advisories, but AFFECTED by RUSTSEC-2026-0269 with `wasmtime-wasi` unreachable — never call it patched for 0269; ≥46.0.3 upgrade blocked by bumpalo conflict, tracked for Phase 27). 16 advisory ignores in `deny.toml` (mirrored in `.cargo/audit.toml`), re-audit tied to Phase 27. See `architecture/dependency_security_baseline_phase25.md`. YARA canonical paths: engine `crates/synvoid-yara/src/engine.rs`, jail `src/sandbox/yara_service.rs` (imports `synvoid-yara` directly, never `synvoid-upload`).
 - macOS-only (BUG-002, `docs/testing/verification-contract.md` §14): `rkyv_derive` 0.7 (transitive via `lightningcss` → `parcel_sourcemap`, not SynVoid code) segfaults Apple clang 21 at link time — non-deterministic, retry often succeeds; Linux CI unaffected. Do not "fix" by touching the dependency chain.

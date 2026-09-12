@@ -112,6 +112,6 @@ pub enum UploadScanFailurePolicy {
 |------|----------|---------|
 | `UploadValidator` | `crates/synvoid-upload/src/lib.rs` | Main entry point |
 | `ValidationResult` | `crates/synvoid-upload/src/lib.rs` | Rich result with scan status |
-| `YaraScanner` | `crates/synvoid-upload/src/yara_scanner.rs` | YARA compilation and scanning |
+| `YaraScanner` | `crates/synvoid-yara/src/engine.rs` (canonical; re-exported by `crates/synvoid-upload/src/yara_scanner.rs` facade) | YARA compilation and scanning (Phase 26 single owner) |
 | `Sandbox` | `crates/synvoid-upload/src/sandbox.rs` | File isolation |
-| `ArchiveInspectionConfig` | `crates/synvoid-upload/src/archive.rs` | Archive inspection parameters |
+| `ArchiveInspectionConfig` | `crates/synvoid-upload/src/archive.rs` | Archive inspection parameters (upload policy; engine owns only YARA-generic bounds) |
