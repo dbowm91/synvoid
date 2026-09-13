@@ -1,8 +1,9 @@
 # Track 4 Post-Closure Corrective Report
 
-Status: complete (implementation committed; closure commit records verify-release + final SHA). Plan: `plans/track4_post_closure_corrective.md` (now marked complete).
+Status: complete. Plan: `plans/track4_post_closure_corrective.md` (marked complete).
 Corrective base SHA: `b779fe3d` (plans: register Track 4 post-closure corrective handoff).
-Implementation commit: see git log for `track4-corrective` (this report amended with the result in the closure commit).
+Implementation commit: `236c71e1` (track4-corrective: truthfulness, time-aware re-audit guard, YARA trust-order proof, fuzz evidence).
+Closure commit: this commit (verify-release evidence + plan closure).
 
 This report records only current reproducible evidence for the corrective pass.
 It does not duplicate the Phase 31 closeout (`architecture/track4_dependency_security_closeout.md`).
@@ -134,7 +135,7 @@ structural gates stay inline; `yara-x` stays solely in `synvoid-yara`/jail.
 - `cargo fmt --all -- --check`: PASS
 - `cargo xtask verify`: PASS (10/10 steps, 505s)
 - `cargo xtask verify-full`: PASS (10/10 steps incl. all 4 feature profiles, full workspace nextest, doctests; 708s)
-- `cargo xtask verify-release`: pending clean-tree run after implementation commit (recorded in closure commit)
+- `cargo xtask verify-release`: PASS on clean tree `236c71e1` (14/14 steps, PRE-PUBLICATION READY WITH DEFERRED REGISTRY CHECKS; NEVER publishes)
 - `cargo deny check`: advisories/bans/licenses/sources ok
 - `cargo audit`: 0 errors, 9 allowed transitive warnings (unchanged baseline)
 - `cargo nextest run -p synvoid-mesh`: 1075 passed

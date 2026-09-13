@@ -1,6 +1,8 @@
 # Track 4 Post-Closure Corrective Plan
 
-Status: ready for implementation.
+Status: complete (2026-09-13). Implementation commit: `236c71e1`. Closure evidence: `architecture/track4_post_closure_corrective_report.md` (verify-release 14/14 on the clean implementation tree; closure commit records the result).
+
+The body below is the executed handoff specification, preserved as historical implementation guidance.
 
 Scope: narrow truthfulness, verification, and trust-path corrective pass after Track 4 (Phases 25-31) landed successfully on `main` through `688fa74ee764f1b0efbd2d109814f93c418b99cb` and the canonical GitHub Actions run for that SHA completed successfully (`CI` run 911; both `ci` and `dependency-security` jobs green).
 
