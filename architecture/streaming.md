@@ -2,7 +2,7 @@
 
 ## 1. Purpose and Responsibility
 
-The Streaming module (`src/streaming/`) provides **async bidirectional data copying** with optional WAF scanning, buffered writes, and BufferPool integration for high-performance proxying.
+The Streaming module (`crates/synvoid-proxy/src/bidirectional.rs`, re-exported by the `src/streaming/` compatibility facade) provides **async bidirectional data copying** with optional WAF scanning, buffered writes, and BufferPool integration for high-performance proxying.
 
 **Core Responsibilities:**
 - Bidirectional async data copy between client and upstream

@@ -4,7 +4,11 @@ SynVoid provides built-in, optimized handlers for various application types, all
 
 ## 1. Static File Handler
 
-The `StaticFileHandler` (`src/static_files/mod.rs:42`) is a high-performance engine for serving static assets. It includes features typically found in standalone web servers:
+> **Scope note:** static-file serving is canonically owned by `synvoid-static-files`
+> (`crates/synvoid-static-files/src/lib.rs:44`); this section describes how app-handler
+> dispatch reaches it. See [`static_files.md`](./static_files.md) for the full deep dive.
+
+The `StaticFileHandler` (`crates/synvoid-static-files/src/lib.rs:44`) is a high-performance engine for serving static assets. It includes features typically found in standalone web servers:
 
 - **Directory Listings:** Automatically generates index pages for directories with configurable themes.
 - **Path Normalization:** Protects against path traversal attacks by resolving and validating paths before access.
@@ -18,7 +22,9 @@ SynVoid handles dynamic PHP applications by interfacing directly with PHP-FPM (o
 
 - **Unix Socket & TCP Support:** Can connect to PHP-FPM via local Unix domain sockets for maximum performance or over TCP for remote backends.
 - **Environment Management:** Automatically populates FastCGI environment variables (e.g., `SCRIPT_FILENAME`, `QUERY_STRING`) required for PHP execution.
-- **Response Streaming:** Efficiently streams responses from the FastCGI backend via `src/fastcgi/streaming.rs`.
+- **Response Streaming:** Efficiently streams responses from the FastCGI backend via `crates/synvoid-app-handlers/src/fastcgi/streaming.rs`.
+- **PHP specialization:** FPM socket auto-detection, INI forwarding, and location config merging live in
+  `crates/synvoid-app-handlers/src/php/` — see [`php.md`](./php.md) for the full deep dive.
 
 ## 3. Python (Granian)
 
@@ -87,7 +93,7 @@ The `BackendType` enum at `src/router.rs:66-78` defines all backend variants:
 | `AxumDynamic` | `src/http/server.rs:2172` | Dynamic Axum routes |
 | `AppServer` | `src/http/server.rs:2821` | Granian Python ASGI/WSGI |
 | `Static` | `src/http/server.rs:2213` | Static file serving |
-| `QuicTunnel` | `src/upstream/address.rs:27` | QUIC tunnel proxy |
+| `QuicTunnel` | `crates/synvoid-upstream/src/address.rs:29` | QUIC tunnel proxy |
 | `Serverless` | `src/http/server.rs:1238` | WASM serverless functions (mesh-gated) |
 | `Mesh` | `src/http/server.rs:2872` | Mesh routing backend |
 | `Spin` | `src/http/server.rs:2421` | Spin framework WASM |

@@ -41,7 +41,7 @@ The Supervisor **consolidates** the legacy Overseer and Master hierarchy into a 
 
 | Entry Point | File | Purpose |
 |-------------|------|---------|
-| `run_supervisor_mode()` | `src/supervisor/process.rs:306` | Default entry point (no flags) |
+| `run_supervisor_mode()` | `src/supervisor/process.rs:460` | Default entry point (no flags) |
 | `run_mesh_agent_mode()` | `src/supervisor/mesh.rs:27` | Standalone mesh agent (`--mesh-agent`) |
 
 ## 2. Key Submodules and Their Responsibilities
@@ -202,7 +202,7 @@ Drain infrastructure for coordinated worker draining during upgrades.
 ### 3.1 Supervisor Process Structures
 
 ```rust
-// src/supervisor/process.rs:30-38
+// src/supervisor/process.rs:41-50
 pub struct SupervisorProcess {
     state: SupervisorState,
     process_manager: Arc<ProcessManager>,
@@ -211,6 +211,7 @@ pub struct SupervisorProcess {
     event_rx: mpsc::Receiver<ProcessEvent>,
     running: RunningFlag,
     ipc_listener: Option<IpcListener>,
+    supervisor_tasks: SupervisorTaskRegistry,
 }
 ```
 
@@ -356,7 +357,7 @@ Creates a new supervisor instance with:
 ### 4.2 Main Supervisor Run Loop
 
 ```rust
-// src/supervisor/process.rs:66-184
+// src/supervisor/process.rs:79-267
 pub async fn run(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
 ```
 
@@ -420,6 +421,11 @@ pub async fn start_grpc_server(
 ```
 
 Starts tonic gRPC server with `ControlPlaneServer` service.
+
+> **Mesh-gated:** the gRPC control API only runs with the `mesh` feature — `pub mod api` is
+> `#[cfg(feature = "mesh")]` (`src/supervisor/mod.rs:6`), its managed-task registration is gated
+> (`src/supervisor/process.rs:136`), and the server task itself is gated
+> (`src/supervisor/process.rs:445`). Without `mesh` there is no control-plane listener.
 
 ## 5. Process Supervision and Worker Orchestration
 
@@ -544,8 +550,9 @@ Full protocol:
 ### 6.3 Shutdown Timeout
 
 ```rust
-// src/supervisor/process.rs:20-21
+// src/supervisor/process.rs:25-27
 const DRAIN_POLL_INTERVAL_MS: u64 = 100;
+#[allow(dead_code)]
 const DEFAULT_DRAIN_TIMEOUT_SECS: u64 = 30;
 ```
 

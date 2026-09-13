@@ -2,7 +2,7 @@
 
 ## 1. Purpose and Responsibility
 
-The FastCGI module (`src/fastcgi/`) provides a **FastCGI protocol client** supporting Unix sockets and TCP, with connection pooling, health checking, drain/reload, and streaming response support.
+The FastCGI module (`crates/synvoid-app-handlers/src/fastcgi/`, re-exported by the `src/fastcgi/` compatibility facade) provides a **FastCGI protocol client** supporting Unix sockets and TCP, with connection pooling, health checking, drain/reload, and streaming response support.
 
 **Core Responsibilities:**
 - FastCGI protocol implementation

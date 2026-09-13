@@ -14,6 +14,12 @@
 
 Dashboard, Sites (list/editor/detail), DNS, Mesh, Settings, Workers, Logs, Request Logs, Alerts, Honeypot, ICMP, Probes, Process Management, System Status, TCP/UDP, Threat Level, Tier Keys, Traffic Shaping, Upstreams.
 
+> **Known gap:** the `TcpUdp` component (`admin-ui/src/pages/tcp_udp.rs`) is **not wired** — `pages/mod.rs`
+> declares 21 page modules but has no `mod tcp_udp;`, so the file is not compiled and no `Route`
+> renders it. TCP/UDP *defaults* remain editable via Settings (`TcpUdpDefaultsSection` in
+> `settings.rs:4973`, `tcp_udp_defaults` config docs). Wiring checklist: add `mod tcp_udp;` + export in
+> `pages/mod.rs`, add a `Route` variant + `switch()` arm in `app.rs`, add the sidebar entry.
+
 ## 4. Shared Components
 
 `charts`, `forms`, `tables`, `layout`, `confirm_dialog`, `toast`, `tooltip`, `skeleton`, `realtime_header` — plus service/type/hook layers wrapping the API client.
@@ -34,7 +40,7 @@ Dashboard, Sites (list/editor/detail), DNS, Mesh, Settings, Workers, Logs, Reque
 - Sidebar gating is a pure `sidebar_visibility()` decision function (unit-tested).
 - Bounded feature matrix: minimal, `mesh`, `dns`, `icmp-filter`, `mesh,dns` (`cargo xtask verify-full`); routine CI runs the contract with `--features mesh,dns,icmp-filter`.
 
-## 6. Related Docs
+## 7. Related Docs
 
 - [`admin_control_plane_authority.md`](./admin_control_plane_authority.md)
 - [`admin_deep_dive.md`](./admin_deep_dive.md)

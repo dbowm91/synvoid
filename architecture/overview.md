@@ -177,7 +177,7 @@ From the root `Cargo.toml`. All four compile profiles must build (`cargo check -
 | `origin_key_exchange` | — | Signed origin session keys (`synvoid-integrity`) |
 | `wireguard` | — | WireGuard tunnel transport (`boringtun`) |
 | `tun-rs` | — | TUN interface backend for tunnels |
-| `icmp-filter` | — | ICMP flood filtering (`nftables`/eBPF/pf/WFP backends) |
+| `icmp-filter` | — | ICMP flood filtering (`nftables`/eBPF/pf/WFP backends). Backend selection uses crate-level sub-features of `synvoid-icmp-filter` (not root flags): `icmp-ebpf` (Linux, `aya`), `icmp-pf` (macOS/FreeBSD), `icmp-winfw` / `icmp-wfp` (Windows) |
 | `flood-ebpf` | — | eBPF SYN-level flood dropping (Linux, `aya`) |
 | `macos-sandbox` | — | macOS Seatbelt sandbox enforcement |
 | `unsafe-native-extensions` | — | Opt-in in-process native-extension loader (`synvoid-native-extension`; off by default + runtime gates: risk acknowledgement, path allowlist, hash pinning) |
@@ -266,7 +266,7 @@ Root-owned orchestration code (see [`root_module_ledger.md`](./root_module_ledge
 | Component | Crate(s) | Purpose | Doc |
 |-----------|----------|---------|-----|
 | **App Handlers** | `synvoid-app-handlers` | Generic backend dispatcher trait; CGI/FastCGI/PHP sub-modules; MIME registry | [`app_handlers.md`](./app_handlers.md) |
-| **FastCGI / CGI / PHP** | (via app-handlers) | FastCGI client + pool + streaming; classic CGI exec; PHP dispatch | [`fastcgi.md`](./fastcgi.md) · [`cgi.md`](./cgi.md) |
+| **FastCGI / CGI / PHP** | (via app-handlers) | FastCGI client + pool + streaming; classic CGI exec; PHP dispatch | [`fastcgi.md`](./fastcgi.md) · [`cgi.md`](./cgi.md) · [`php.md`](./php.md) |
 | **App Server (Granian)** | `synvoid-app-server` | Managed Python ASGI/RSGI/WSGI processes, health monitoring, restart | [`app_server.md`](./app_server.md) |
 | **MIME** | `synvoid-app-handlers::mime` | Type registry and content detection | [`mime.md`](./mime.md) |
 | **Theme** | `synvoid-theme` | CSS generation (glassmorphism vars), challenge/error/login/captcha templates, stealth timestamps | [`theme.md`](./theme.md) |

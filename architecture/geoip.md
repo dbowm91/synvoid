@@ -2,7 +2,7 @@
 
 ## 1. Purpose and Responsibility
 
-The GeoIP module (`src/geoip/`) provides **MaxMind GeoIP database integration** with country/ASN/city lookup, country-based blocking/allowlisting, and automatic database updates with retry logic.
+The GeoIP module (`crates/synvoid-geoip/`) provides **MaxMind GeoIP database integration** with country/ASN/city lookup, country-based blocking/allowlisting, and automatic database updates with retry logic.
 
 **Core Responsibilities:**
 - IP geolocation (country, city, subdivision, ASN)

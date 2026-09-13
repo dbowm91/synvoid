@@ -25,9 +25,10 @@ The actual guard suites live in root `tests/` (~12 files, 100+ tests), covering:
 
 ## 4. Fuzzing (`fuzz/`)
 
-17 cargo-fuzz targets (nightly + cargo-fuzz required):
+21 cargo-fuzz targets (nightly + cargo-fuzz required; authoritative list in
+[`ci_fuzz_failure_injection.md`](./ci_fuzz_failure_injection.md)):
 
-`admin_mutation_result_decode`, `blocklist_event_decode`, `blocklist_snapshot_decode`, `dns_message_decode`, `fuzz_attack_detection`, `fuzz_early_parse`, `fuzz_ipc`, `fuzz_protocol_proto_decode`, `fuzz_raft_commit_notification`, `fuzz_raft_response`, `fuzz_serialization`, `fuzz_serialization_new`, `http_header_normalization`, `http_path_normalization`, `mesh_protocol_compressed_decode`, `parsed_query_parse`, `plugin_manifest`.
+`admin_mutation_result_decode`, `blocklist_event_decode`, `blocklist_snapshot_decode`, `config_parse_validation`, `dns_message_decode`, `fuzz_attack_detection`, `fuzz_early_parse`, `fuzz_ipc`, `fuzz_protocol_proto_decode`, `fuzz_raft_commit_notification`, `fuzz_raft_response`, `fuzz_serialization`, `fuzz_serialization_new`, `http_chunked_framing`, `http_header_normalization`, `http_path_normalization`, `http_routing_matcher`, `jail_ipc_frame_decode`, `mesh_protocol_compressed_decode`, `parsed_query_parse`, `plugin_manifest`.
 
 Smoke policy and failure-injection seams: [`ci_fuzz_failure_injection.md`](./ci_fuzz_failure_injection.md).
 
@@ -37,7 +38,7 @@ Smoke policy and failure-injection seams: [`ci_fuzz_failure_injection.md`](./ci_
 - `embedded-app-example/` — embedding SynVoid as a library.
 - `dns/` + `build-waf-app.sh` — DNS usage and WAF app build script.
 
-## 7. Related Docs
+## 6. Related Docs
 
 - `docs/testing/verification-contract.md`, `docs/testing/nextest-policy.md`, `docs/testing/root-test-ownership.md`
 - [`root_module_ledger.md`](./root_module_ledger.md) (what the guards enforce)

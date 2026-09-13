@@ -2,7 +2,7 @@
 
 ## 1. Purpose and Responsibility
 
-The Theme module (`src/theme/`) provides a **CSS-driven theming system** for WAF challenge/error/captcha/login pages with dark/light mode support, directory listing, and branded SVG icons.
+The Theme module (`crates/synvoid-theme/src/`, re-exported by the `src/theme/` compatibility facade) provides a **CSS-driven theming system** for WAF challenge/error/captcha/login pages with dark/light mode support, directory listing, and branded SVG icons.
 
 **Core Responsibilities:**
 - CSS generation from theme configuration

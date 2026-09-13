@@ -32,9 +32,11 @@ pub struct AiHoneypotResponder { /* AI backends */ }
 pub struct HoneypotIntelExtractor { /* threat intel */ }
 ```
 
-### Unified Honeypot
+### Unified Threat Profiling (no standalone module)
 
-The unified honeypot module (`src/honeypot_unified/`) provides global IP-based threat profiling. It does not currently exist as a standalone module — threat profiling is handled within the port honeypot subsystem via `HoneypotIntelExtractor`.
+There is no `src/honeypot_unified/` module — global IP-based threat profiling lives inside the port
+honeypot subsystem via `HoneypotIntelExtractor` (intel extraction, scoring, and mesh threat-intel
+emission). A standalone unified module was considered but never implemented; do not add the path.
 
 ---
 

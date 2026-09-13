@@ -4,7 +4,7 @@
 
 The Spin module provides a serverless WASM runtime for the SynVoid proxy. It enables execution of Spin Framework-compatible WebAssembly modules within the proxy architecture, supporting HTTP-triggered serverless functions with built-in key-value store, environment variables, and instance caching for cold-start optimization.
 
-**Module Location:** `src/spin/`
+**Module Location:** `crates/synvoid-plugin-runtime/src/spin/` (canonical; `src/spin/` is a re-export compatibility facade)
 
 **Key Dependencies:**
 - `wasmtime` (v42.0.2) - WebAssembly runtime

@@ -243,15 +243,15 @@ Request-path enforcement metrics must identify the local enforcement source (`Lo
 
 ## 8. Admin Diagnostics Endpoints
 
-Diagnostics endpoints return summary-oriented, bounded JSON responses. They are read-only and require admin authentication.
+Diagnostics endpoints return summary-oriented, bounded JSON responses. They are read-only and require admin authentication. Routes are registered as `/observability/*` and nested under `/api` (`src/admin/mod.rs:289,325`), so the served paths are `/api/observability/*`.
 
 | Endpoint | Returns | Bound |
 |----------|---------|-------|
-| `GET /admin/observability/tasks` | UnifiedServer + Worker + Supervisor task registry state | Summary counters |
-| `GET /admin/observability/blocklist-health` | Blocklist convergence: event apply, stale suppressions, snapshot fallbacks, cursor stats | Summary counters |
-| `GET /admin/observability/plugins` | Plugin runtime state: loaded count, per-plugin invocation/error/duration | Per-plugin summary |
-| `GET /admin/observability/features` | Active feature flags and compile-time profile | Single JSON object |
-| `GET /admin/observability/threat-intel` | Policy config, actionability summary, shadow mode state | Summary counters |
+| `GET /api/observability/tasks` | UnifiedServer + Worker + Supervisor task registry state | Summary counters |
+| `GET /api/observability/blocklist-health` | Blocklist convergence: event apply, stale suppressions, snapshot fallbacks, cursor stats | Summary counters |
+| `GET /api/observability/plugins` | Plugin runtime state: loaded count, per-plugin invocation/error/duration | Per-plugin summary |
+| `GET /api/observability/features` | Active feature flags and compile-time profile | Single JSON object |
+| `GET /api/observability/threat-intel` | Policy config, actionability summary, shadow mode state | Summary counters |
 
 ---
 

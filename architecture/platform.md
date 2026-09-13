@@ -632,8 +632,12 @@ Platforms without native sandbox support automatically use `StubSandbox`:
 
 ## 9. Directory Structure
 
+> **Canonical location:** `crates/synvoid-platform/src/` (the `synvoid-platform` crate).
+> `src/platform/` is a compatibility facade that re-exports the crate alongside root-owned
+> composition code (see `facade_disposition_matrix.md`). The tree below mirrors the crate layout.
+
 ```
-src/platform/
+crates/synvoid-platform/src/
 ├── mod.rs              # Main module, Platform enum, re-exports
 ├── fs.rs               # SecureDir, PlatformPaths, permissions
 ├── ipc.rs              # IpcTransport, IpcListener, IpcStream traits

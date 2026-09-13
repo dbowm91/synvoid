@@ -2,7 +2,7 @@
 
 ## 1. Purpose and Responsibility
 
-The Location Matcher module (`src/location_matcher.rs`) provides **nginx-style URI location matching** with four match types using a three-tier lookup structure for O(1) exact + longest-prefix + ordered-regex matching.
+The Location Matcher module (`crates/synvoid-proxy/src/location_matcher.rs`, re-exported by the `src/location_matcher.rs` compatibility facade) provides **nginx-style URI location matching** with four match types using a three-tier lookup structure for O(1) exact + longest-prefix + ordered-regex matching.
 
 **Core Responsibilities:**
 - Nginx-compatible location pattern parsing

@@ -15,7 +15,7 @@ The Log Controller module (`src/log_controller.rs`) provides **runtime-adjustabl
 ## 2. Key Data Structures
 
 ```rust
-static LOG_LEVEL: LazyLock<RwLock<String>> = LazyLock::new(|| {
+static LOG_LEVEL: LazyLock<parking_lot::RwLock<String>> = LazyLock::new(|| {
     RwLock::new("info".to_string())
 });
 ```
@@ -27,6 +27,7 @@ static LOG_LEVEL: LazyLock<RwLock<String>> = LazyLock::new(|| {
 | Method | Description |
 |--------|-------------|
 | `init_logging_with_dynamic_level(level)` | Initialize tracing with env filter |
+| `init_logging_with_dynamic_level_stderr(level)` | Stderr variant for stdio-framed jail children (stdout carries only IPC frames) |
 | `get_log_level() -> String` | Current log level |
 | `set_log_level(level) -> Result<String, String>` | Validate and set level |
 
@@ -42,7 +43,7 @@ static LOG_LEVEL: LazyLock<RwLock<String>> = LazyLock::new(|| {
 
 ## 5. Key Implementation Details
 
-- **Global State**: Single `RwLock<String>` for thread-safe access
+- **Global State**: Single `parking_lot::RwLock<String>` for thread-safe access
 - **Validation**: Only accepts valid tracing levels
 - **Non-blocking**: Reads are lock-free via `RwLock` read access
 - **Atomic Updates**: Level changes take effect immediately for new log events

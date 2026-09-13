@@ -9,7 +9,7 @@ SynVoid's authentication module handles user authentication, session management,
 ```
 Client ──► Admin API ──► Auth Middleware ──► Token Validation ──► Handler
                 │
-                ├── Rate Limit Check (5 attempts / 300s)
+                ├── Rate Limit Check (3 attempts / 300s, production default in `src/waf/assembly.rs`)
                 ├── Token Hash Comparison (bcrypt, DEFAULT_COST)
                 ├── Session Validation
                 └── CSRF Token Check (state mutations)
@@ -44,14 +44,14 @@ Sessions are stored in-memory with TTL-based expiration.
 
 The `AuthManager` (`crates/synvoid-auth/src/lib.rs`) handles brute-force protection directly:
 
-- **Max failed attempts**: Configurable (default 5)
+- **Max failed attempts**: Configurable (production default 3, see `assemble_auth_manager` in `src/waf/assembly.rs`)
 - **Lockout duration**: Configurable (default 300 seconds / 5 minutes)
 - **Min password length**: 8 characters
 - Per-IP lockout via `max_failed_attempts` and `lockout_duration_secs`
 
 ### Lockout Behavior
 
-1. First 5 failed attempts within 5 minutes → lockout
+1. First 3 failed attempts within 5 minutes → lockout (production default)
 2. Lockout duration: 5 minutes from first failure
 3. Successful attempt resets counter
 4. Lockout applies per-IP

@@ -74,25 +74,31 @@ pub enum AxumPluginError {
 
 ### WasmResourceLimits
 
-Per-plugin resource constraints defined in `wasm_runtime.rs:51-76`:
+Per-plugin resource constraints defined in `wasm_runtime.rs:337-357`:
 
 ```rust
 pub struct WasmResourceLimits {
     pub max_memory_mb: usize,           // Max linear memory (default: 64MB)
     pub max_table_elements: Option<usize>, // Max table elements (default: None/unlimited)
     pub max_cpu_fuel: u64,              // CPU fuel budget (default: 1,000,000)
-    pub timeout_seconds: u64,           // Wall-clock timeout (default: 30s)
+    pub timeout: Duration,              // Wall-clock timeout (default: 30s)
     pub max_instances: usize,           // Instance pool size (default: 1)
     pub memory_budget_mb: Option<usize>, // Per-plugin memory allocation
     pub wasi_enabled: bool,             // WASI support (default: false)
     pub allowed_dht_prefixes: Vec<String>, // DHT key prefix whitelist
+    pub capabilities: Arc<PluginCapabilities>, // Sub-capability set (M2 Phase 06)
+    pub epoch_deadline_enabled: bool,   // Epoch-based interruption (M2 Phase 06)
+    pub epoch_ticks_per_timeout: u64,   // Epoch ticks per timeout quantum
+    pub host_call_timeout: Duration,    // Per-host-call deadline
+    pub host_call_budget: HostCallBudget, // Host-call count/bytes budget
+    pub state_model: PluginStateModel,  // Cross-request pool state semantics
 }
 ```
 
 **Default values:**
 - `max_memory_mb`: 64
 - `max_cpu_fuel`: 1,000,000
-- `timeout_seconds`: 30
+- `timeout`: 30s
 - `max_instances`: 1
 - `wasi_enabled`: false
 - `allowed_dht_prefixes`: empty (default deny)
@@ -147,14 +153,17 @@ impl PooledInstance {
     pub fn prepare_for_request(
         &mut self,
         env: HashMap<String, String>,
-        timeout_seconds: u64,
+        timeout: Duration,
         allowed_dht_prefixes: Vec<String>,
+        capabilities: Arc<PluginCapabilities>,
     ) {
         self.store.data_mut().start = Instant::now();
-        self.store.data_mut().timeout = Duration::from_secs(timeout_seconds);
+        self.store.data_mut().timeout = timeout;
         self.store.data_mut().env = env;
         self.store.data_mut().body_receiver = None;  // MUST reset to prevent leak
         self.store.data_mut().allowed_dht_prefixes = allowed_dht_prefixes; // MUST reset to prevent leak
+        self.store.data_mut().capabilities = capabilities;
+        self.store.data_mut().capability_violation = None;
         if self.max_cpu_fuel > 0 {
             self.store.set_fuel(self.max_cpu_fuel).ok();
         }
@@ -197,10 +206,10 @@ Resolved policy for a plugin after merging manifest defaults, site overrides, an
 pub struct EffectivePluginPolicy {
     pub name: String,                    // Plugin name
     pub version: String,                 // Manifest version string
-    pub trust_tier: TrustTier,           // Trust level (e.g., Local, Remote, Federated)
-    pub capabilities: Vec<String>,       // Declared capabilities (e.g., "dht:read", "http:outbound")
+    pub trust_tier: PluginTrustTier,     // Trust level enforced at load time
+    pub capabilities: Arc<PluginCapabilities>, // Exactly those declared in the manifest
     pub limits: WasmResourceLimits,      // Effective runtime resource limits
-    pub manifest_limits: WasmResourceLimits, // Raw limits from the manifest (before overrides)
+    pub manifest_limits: PluginLimits,   // Raw limits from the manifest (before overrides)
     pub source: PluginSourceIdentity,    // Provenance of the loaded binary
 }
 ```
@@ -373,14 +382,14 @@ impl WasmPluginManager {
     pub fn get_plugin_policy_info(&self, name: &str) -> Option<EffectivePluginPolicy>
     // Returns the EffectivePluginPolicy for a loaded plugin, including resolved limits, capabilities, trust tier, and provenance.
     
-    // PluginInfo now includes manifest-derived metadata:
+    // PluginInfo now includes manifest-derived metadata (wasm_runtime.rs:498-510):
     // - version: String (from manifest)
-    // - trust_tier: TrustTier (from manifest / site config)
-    // - timeout_seconds: u64 (effective value after merge)
+    // - trust_tier: PluginTrustTier (from manifest / site config)
+    // - timeout: Duration (effective value after merge)
     // - max_memory_mb: usize (effective value after merge)
     // - max_cpu_fuel: u64 (effective value after merge)
     // - max_instances: usize (effective pool size after merge)
-    // - capabilities_summary: Vec<String> (declared capabilities from manifest)
+    // - capabilities_summary: Vec<(PluginCapability, bool)> (declared capabilities from manifest)
     
     // Filter/transform with priority ordering
     pub fn filter_request(&self, request: Request<Bytes>, env: HashMap<String, String>) -> Result<WasmFilterResult, WasmPluginError>
@@ -514,15 +523,16 @@ Host functions are pre-registered in the `Linker` during module loading (`wasm_r
 
 ### Memory Management
 
-Guest memory allocation via `guest_alloc` / `guest_free` or fallback to fixed offset:
+Guest memory allocation requires the `guest_alloc` export — the fixed-offset fallback was
+removed (M1 Phase 04; `wasm_runtime.rs:3228`). Guests that do not export `guest_alloc` fail
+frame serialization instead of silently writing to a reserved header area:
 
 ```rust
+// Requires `guest_alloc` export — the fixed-offset fallback is removed.
 fn write_to_guest_memory(...) -> Result<(i32, i32), WasmPluginError> {
-    let ptr = if let Some(alloc_fn) = &exports.guest_alloc {
-        alloc_fn.call(&mut *store, data_len as i32)?
-    } else {
-        1024i32  // Fallback: reserved header area
-    };
+    let alloc_fn = exports.guest_alloc.as_ref()
+        .ok_or(WasmPluginError::MissingGuestAlloc)?;
+    let ptr = alloc_fn.call(&mut *store, data_len as i32)?;
     // Memory growth if needed (within limits)
     // Write data to linear memory
 }
@@ -534,11 +544,11 @@ fn write_to_guest_memory(...) -> Result<(i32, i32), WasmPluginError> {
 
 ```rust
 impl ResourceLimiter for RequestContext {
-    fn memory_growing(&mut self, current: usize, desired: usize, maximum: Option<usize>) -> Result<bool, wasmtime::Error> {
+    fn memory_growing(&mut self, _current: usize, desired: usize, _maximum: Option<usize>) -> std::result::Result<bool, wasmtime::Error> {
         Ok(desired <= self.max_memory)  // Limit by max_memory_mb
     }
-    
-    fn table_growing(&mut self, current: usize, desired: usize, maximum: Option<usize>) -> Result<bool, wasmtime::Error> {
+
+    fn table_growing(&mut self, _current: usize, desired: usize, _maximum: Option<usize>) -> std::result::Result<bool, wasmtime::Error> {
         Ok(desired <= self.max_table_elements)  // Limit by max_table_elements
     }
 }
@@ -619,14 +629,17 @@ impl WasmPooledInstance {
     pub(crate) fn prepare_for_request(
         &mut self,
         env: HashMap<String, String>,
-        timeout_seconds: u64,
+        timeout: Duration,
         allowed_dht_prefixes: Vec<String>,
+        capabilities: Arc<PluginCapabilities>,
     ) {
         self.store.data_mut().start = Instant::now();
-        self.store.data_mut().timeout = Duration::from_secs(timeout_seconds);
+        self.store.data_mut().timeout = timeout;
         self.store.data_mut().env = env;
         self.store.data_mut().body_receiver = None;           // MUST reset
         self.store.data_mut().allowed_dht_prefixes = allowed_dht_prefixes; // MUST reset
+        self.store.data_mut().capabilities = capabilities;
+        self.store.data_mut().capability_violation = None;
         if self.max_cpu_fuel > 0 {
             self.store.set_fuel(self.max_cpu_fuel).ok();
         }
@@ -843,11 +856,17 @@ impl Default for WasmResourceLimits {
             max_memory_mb: 64,
             max_table_elements: None,
             max_cpu_fuel: 1_000_000,
-            timeout_seconds: 30,
+            timeout: Duration::from_secs(30),
             max_instances: 1,
             memory_budget_mb: None,
             wasi_enabled: false,
             allowed_dht_prefixes: Vec::new(),
+            capabilities: Arc::new(PluginCapabilities::default()),
+            epoch_deadline_enabled: true,
+            epoch_ticks_per_timeout: 10,
+            host_call_timeout: Duration::from_secs(5),
+            host_call_budget: HostCallBudget::default(),
+            state_model: PluginStateModel::default(),
         }
     }
 }

@@ -2,7 +2,7 @@
 
 ## 1. Purpose and Responsibility
 
-The Metrics module (`src/metrics/`) provides **centralized metrics collection** with atomic counters, per-site metrics, worker metrics, bandwidth tracking, and health status reporting.
+The Metrics module (`crates/synvoid-metrics/`, re-exported by the `src/metrics/` compatibility facade) provides **centralized metrics collection** with atomic counters, per-site metrics, worker metrics, bandwidth tracking, and health status reporting.
 
 **Core Responsibilities:**
 - Atomic counters for lock-free metrics updates
@@ -87,7 +87,7 @@ pub struct WorkerMetrics {
     pub per_serverless: Mutex<HashMap<String, ServerlessMetrics>>,
 }
 
-// Global atomic counters (50+ LazyLock<AtomicU64> in src/metrics/collection.rs)
+// Global atomic counters (50+ LazyLock<AtomicU64> in crates/synvoid-metrics/src/collection.rs)
 pub(crate) static PROXY_CACHE_HITS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 pub(crate) static PROXY_CACHE_MISSES: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 pub(crate) static ACTIVE_STALLED_REQUESTS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));

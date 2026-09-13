@@ -2,7 +2,7 @@
 
 ## 1. Purpose and Responsibility
 
-The Protocol module (`src/protocol/`) provides a **pluggable protocol detection and handling framework** supporting HTTP, HTTPS, WebSocket, gRPC, TCP, and UDP with WAF integration.
+The Protocol module (`crates/synvoid-proxy/src/protocol.rs`, re-exported by the `src/protocol/` compatibility facade) provides a **pluggable protocol detection and handling framework** supporting HTTP, HTTPS, WebSocket, gRPC, TCP, and UDP with WAF integration.
 
 **Core Responsibilities:**
 - Protocol detection from initial bytes

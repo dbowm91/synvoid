@@ -35,12 +35,12 @@ The proxy subsystem is SynVoid's reverse proxy that handles proxied HTTP/HTTPS r
 
 ### ProxyServer
 ```rust
-pub struct ProxyServer {
-    client: HttpClient,                    // Primary upstream client
+pub struct ProxyServer<W: WafProcessor> {   // Generic over the WAF bound (composition roots pass WafCore)
+    _client: HttpClient,                    // Primary upstream client
     revalidation_client: HttpClient,      // Client for cache revalidation
     erased_client: ErasedHttpClient,      // Type-erased client for dynamic dispatch
     upstream_url: String,                // Single upstream URL (fallback)
-    waf: Arc<WafCore>,                    // WAF for pre-forwarding checks
+    waf: Arc<W>,                          // WAF for pre-forwarding checks
     max_response_size: usize,             // Max response size limit
     upstream_error_tracker: Option<Arc<UpstreamErrorTracker>>,
     site_id: String,

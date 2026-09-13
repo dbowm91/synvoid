@@ -14,12 +14,12 @@ The Supervisor is the top-level process that manages worker lifecycle, upgrades,
   - **Process Management:** Spawns and monitors Worker processes via ProcessManager.
   - **Health Monitoring:** Monitors child process heartbeats and restarts failed processes.
   - **Zero-Downtime Upgrades:** Coordinating worker rotations and hot-reloads.
-  - **Drain Coordination:** Provides staged worker draining via `DrainManager` (`src/supervisor/drain_manager.rs`) during upgrades. The `drain_aware_shutdown()` method at `src/supervisor/process.rs:198-272` coordinates the full drain protocol.
+  - **Drain Coordination:** Provides staged worker draining via `DrainManager` (`src/supervisor/drain_manager.rs`) during upgrades. The `drain_aware_shutdown()` method at `src/supervisor/process.rs:269-356` coordinates the full drain protocol.
   - **Control Plane Coordination:** Handles Raft consensus, DHT routing, and Mesh transport.
   - **Configuration:** Loads and validates configuration using the `synvoid-config` crate.
   - **gRPC API:** Hosts the formal Control Plane API (`proto/control.proto`) for remote management.
 - **Key Logic:** `src/supervisor/`.
-- **Entry Point:** `run_supervisor_mode()` (`src/main.rs:531-537`).
+- **Entry Point:** `run_supervisor_mode()` (`src/supervisor/process.rs:460`).
 - **IPC Role:** Acts as the central hub for worker coordination.
 
 ### 2. Jail Processes (Sandboxed Execution Plane, Phase 22 Operational, Phase 29 Packaged)

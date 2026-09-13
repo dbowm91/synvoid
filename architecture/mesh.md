@@ -117,6 +117,7 @@ crates/synvoid-mesh/src/mesh/raft/
 ├── network.rs          # MeshRaftNetwork + MeshRaftNetworkFactory (raft network impl)
 ├── state_machine.rs    # GlobalRegistryStateMachine, GlobalNodeRevocationList, Namespace
 ├── client.rs           # RaftAwareClient (consistent read client)
+├── consensus.rs        # ConsensusTransport + RecordReader (canonical domain)
 ├── edge_replica.rs     # EdgeReplicaManager (edge node replica caching)
 └── regression_tests.rs # Raft regression tests
 ```
@@ -194,7 +195,7 @@ See `architecture/mesh_transport_lifecycle.md` for the full task inventory and i
 
 | Type | Location | Purpose |
 |------|----------|---------|
-| `MeshTransport` | `crates/synvoid-mesh/src/mesh/transport.rs:93` | Core QUIC-based transport. Owns peer connections, message dispatch, DHT query dedup, pending snapshots, org managers, and optionally Raft instance. |
+| `MeshTransport` | `crates/synvoid-mesh/src/mesh/transport.rs:113` | Core QUIC-based transport. Owns peer connections, message dispatch, DHT query dedup, pending snapshots, org managers, and optionally Raft instance. |
 | `MeshPeerConnection` | `crates/synvoid-mesh/src/mesh/transport_types.rs` | Per-peer connection state, message handlers, handshake state. |
 | `MeshTransportManager` | `crates/synvoid-mesh/src/mesh/transports/manager.rs` | Selection/caching layer wrapping `MeshTransport`. Provides peer selection strategies, connection pooling, health-check routing. |
 | `QuicMeshTransport` | `crates/synvoid-mesh/src/mesh/transports/quic.rs` | QUIC-specific transport implementation. |
@@ -205,7 +206,7 @@ See `architecture/mesh_transport_lifecycle.md` for the full task inventory and i
 
 | Type | Location | Purpose |
 |------|----------|---------|
-| `MeshProxy` | `crates/synvoid-mesh/src/mesh/proxy.rs:63` | Request forwarding between mesh peers. Maintains policy cache, provider stats, failed provider cooldown, tiered transform cache. |
+| `MeshProxy` | `crates/synvoid-mesh/src/mesh/proxy.rs:76` | Request forwarding between mesh peers. Maintains policy cache, provider stats, failed provider cooldown, tiered transform cache. |
 
 ### DHT
 
@@ -291,7 +292,7 @@ See `architecture/mesh_transport_lifecycle.md` for the full task inventory and i
 
 | Type | Location | Purpose |
 |------|----------|---------|
-| `MeshTopology` | `crates/synvoid-mesh/src/mesh/topology.rs:28` | Network topology state: peer store, routing cache, verified upstream cache, blocked upstreams, degraded mode tracking. |
+| `MeshTopology` | `crates/synvoid-mesh/src/mesh/topology.rs:29` | Network topology state: peer store, routing cache, verified upstream cache, blocked upstreams, degraded mode tracking. |
 | `MeshBloomFilter` | `crates/synvoid-mesh/src/mesh/hierarchical_routing.rs` | Bloom filter for efficient route advertisement. |
 | `HierarchicalRoutingManager` | `crates/synvoid-mesh/src/mesh/hierarchical_routing.rs` | Geo-distributed routing with regional hub info. |
 
@@ -593,12 +594,16 @@ Key external dependencies in the mesh module:
 
 ## 10. File Listing
 
-For reference, here is the complete file tree of `crates/synvoid-mesh/src/mesh/` (excluding test files):
+For reference, here is the file tree of `crates/synvoid-mesh/src/mesh/` (excluding test files).
+Line counts are approximate snapshots — `wc -l crates/synvoid-mesh/src/mesh/*.rs` is authoritative,
+as this fast-moving tree gains files regularly (e.g. `raft/consensus.rs`, `lifecycle.rs`,
+`task_group.rs`, `blocklist_event.rs`, `threat_intel_policy.rs`, `worker_integration.rs`,
+`cert_dist.rs` may post-date this snapshot):
 
 ```
 crates/synvoid-mesh/src/mesh/
 ├── mod.rs
-├── transport.rs                        (3834 lines - core transport)
+├── transport.rs                        (7410 lines - core transport)
 ├── transports/
 │   ├── mod.rs
 │   ├── manager.rs
@@ -609,15 +614,15 @@ crates/synvoid-mesh/src/mesh/
 │   ├── mod.rs
 │   ├── error.rs
 │   └── time.rs
-├── proxy.rs                           (1996 lines - mesh proxy)
-├── topology.rs                        (1807 lines - network topology)
-├── protocol.rs                        (2110 lines - messages, signing)
+├── proxy.rs                           (2121 lines - mesh proxy)
+├── topology.rs                        (1926 lines - network topology)
+├── protocol.rs                        (1932 lines - messages, signing)
 ├── config.rs
 ├── config_mesh.rs
 ├── config_defaults.rs
 ├── config_identity.rs
 ├── config_conversion.rs
-├── backend.rs                        (492 lines - initialization)
+├── backend.rs                        (513 lines - initialization)
 ├── session/
 │   ├── mod.rs
 │   └── manager.rs

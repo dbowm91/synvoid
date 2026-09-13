@@ -10,7 +10,7 @@ The `upstream` module provides **upstream connection pooling, load balancing, an
 - Supporting multiple protocols (HTTP, HTTPS, WebSocket, gRPC, QUIC tunnel, TCP)
 - Sharing connection state across multiple worker processes via memory-mapped files
 
-**Module location**: `src/upstream/`
+**Module location**: `crates/synvoid-upstream/src/` (the `synvoid-upstream` crate; there is no `src/upstream/` — the root re-exports it as `synvoid_upstream`)
 
 ## 2. Submodules and Responsibilities
 

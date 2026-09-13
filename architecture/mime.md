@@ -2,7 +2,7 @@
 
 ## 1. Purpose and Responsibility
 
-The MIME module (`src/mime/`) provides a **comprehensive MIME type registry** with extension-to-MIME mapping, file category classification, nginx-format MIME file parsing, and a global registry singleton.
+The MIME module (`crates/synvoid-app-handlers/src/mime/`, re-exported by the `src/mime/` compatibility facade) provides a **comprehensive MIME type registry** with extension-to-MIME mapping, file category classification, nginx-format MIME file parsing, and a global registry singleton.
 
 **Core Responsibilities:**
 - Bidirectional extension ↔ MIME mapping

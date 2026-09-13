@@ -2,7 +2,7 @@
 
 ## 1. Purpose and Responsibility
 
-The Listener module (`src/listener/`) provides a minimal shared base type for network listener configuration: `ConnectionContext`. Concrete listener implementations (`TcpListenerConfig`, `UdpListenerConfig`, `TcpSocketOptions`, `UdpSocketOptions`) live in their respective protocol modules.
+The Listener module (`crates/synvoid-http/src/listener/`, re-exported by the `src/listener/` compatibility facade) provides a minimal shared base type for network listener configuration: `ConnectionContext`. Concrete listener implementations (`TcpListenerConfig`, `UdpListenerConfig`, `TcpSocketOptions`, `UdpSocketOptions`) live in their respective protocol modules.
 
 **Core Responsibilities:**
 - Shared `ConnectionContext` for request tracking across protocols
