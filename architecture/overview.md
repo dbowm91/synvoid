@@ -33,9 +33,9 @@ synvoid/
 │   ├── tls/                # HttpsServer (cert resolver use lives in synvoid-tls)
 │   ├── honeypot_port/      # Honeypot responders / controller (wiring)
 │   └── {proxy,dns,mesh,…}/ # Thin re-export facades over crates/synvoid-*
-├── crates/                 # 37 dedicated synvoid-* library crates (canonical logic)
+├── crates/                 # 42 dedicated synvoid-* library crates (canonical logic)
 ├── pqc/                    # Post-quantum crypto (ML-KEM-768/1024, ML-DSA-44)
-├── admin-ui/               # Yew/WASM admin frontend (Trunk build → dist/)
+├── admin-ui/               # Yew/WASM admin frontend (Trunk build → dist/, ~22 pages)
 ├── tools/                  # xtask runner + repo-guard helpers
 ├── proto/                  # gRPC control-plane definitions (control.proto)
 ├── fuzz/                   # 21 fuzz targets (see `architecture/ci_fuzz_failure_injection.md`)
@@ -44,15 +44,15 @@ synvoid/
 ├── examples/               # dynamic-plugin, embedded-app, dns configs
 ├── config/                 # Default configuration (main.toml + sites/)
 ├── rules/                  # YARA rules (default.yar)
-├── benches/ benchmarks/    # Criterion hot-path benches + historical results
-├── architecture/           # This documentation tree (~130 docs)
-├── .opencode/skills/       # Per-subsystem skill guides (35)
+├── benches/ benchmarks/    # Criterion hot-path benches (11 files) + historical results
+├── architecture/           # This documentation tree (~140 docs)
+├── .opencode/skills/       # Per-subsystem skill guides (37)
 ├── docs/                   # User/operator docs, testing contracts, releasing
 ├── plans/                  # Implementation tracking artifacts
 └── scripts/                # CI/build/dns helper scripts
 ```
 
-**Workspace**: 45 members — root app, 37 `synvoid-*` crates, `pqc`, `admin-ui`, 2 examples, `fuzz`, `tools/{xtask,synvoid-repo-guards}`.
+**Workspace**: 50 members — root app, 42 `synvoid-*` crates under `crates/` (incl. `synvoid-wasm-pow`), `pqc`, `admin-ui`, 2 examples, `fuzz`, `tools/{xtask,synvoid-repo-guards}`.
 
 ### Binaries
 
@@ -113,7 +113,7 @@ Plus two supervised **sandbox jail** processes (dedicated `synvoid-wasm-jail` / 
 | Process | Flag | Purpose | Default |
 |---------|------|---------|---------|
 | **Supervisor** | (default) | Control plane, lifecycle, gRPC API | 1 |
-| **UnifiedServerWorker** | `--unified-server-worker` | Latency-sensitive HTTP/HTTPS/HTTP3 + WAF + proxy | 1 |
+| **UnifiedServerWorker** | `--unified-server-worker` | Latency-sensitive HTTP/HTTPS/HTTP3 + WAF + proxy | 1 (code default; shipped `config/main.toml` sets 4) |
 | **CPU Offload Worker** | `--cpu-worker` | Bounded heavy transforms | 1 |
 | **BaseWorkerProcess** | `--worker` | Legacy raw TCP/UDP worker (deprecated for HTTP) | — |
 
@@ -170,6 +170,7 @@ From the root `Cargo.toml`. All four compile profiles must build (`cargo check -
 | `socket-handoff` | ✅ | Socket FD transfer between processes |
 | `mesh` | ✅ | Mesh networking, DHT, Raft consensus (`openraft`) |
 | `dns` | ✅ | DNS server: DNSSEC, DoT/DoH/DoQ (`hickory`; private-key custody in `synvoid-dnssec-keystore`, HSM via opt-in `dns-hsm`) |
+| `dns-hsm` | — | Opt-in PKCS#11/HSM backing for DNSSEC via the keystore custody boundary (implies `dns`; off by default, no silent software fallback) |
 | `erased_pool` | ✅ | Type-erased HTTP client pool |
 | `swagger-ui` | ✅ | OpenAPI/Swagger UI for admin API |
 | `post-quantum` | — | Marker: PQ TLS via rustls `prefer-post-quantum` (upstream connections) |
@@ -179,6 +180,7 @@ From the root `Cargo.toml`. All four compile profiles must build (`cargo check -
 | `icmp-filter` | — | ICMP flood filtering (`nftables`/eBPF/pf/WFP backends) |
 | `flood-ebpf` | — | eBPF SYN-level flood dropping (Linux, `aya`) |
 | `macos-sandbox` | — | macOS Seatbelt sandbox enforcement |
+| `unsafe-native-extensions` | — | Opt-in in-process native-extension loader (`synvoid-native-extension`; off by default + runtime gates: risk acknowledgement, path allowlist, hash pinning) |
 | `fastcgi_streaming` | — | Streaming FastCGI response handling |
 | `buffer` / `rkyv` / `audit` / `verify-pq` / `test-utils` | — | Buffer pool, zero-copy serialization, audit, PQ verify, test helpers |
 
@@ -213,6 +215,7 @@ Root-owned orchestration code (see [`root_module_ledger.md`](./root_module_ledge
 | **Common** | `src/common/` | Panic handler + shared runtime glue | [`common.md`](./common.md) |
 | **Platform** | `synvoid-platform` | OS detection/capability queries, sandbox trait + backends, secure dirs, reuse-port binds | [`platform.md`](./platform.md) · [`platform_deep_dive.md`](./platform_deep_dive.md) |
 | **IPC & Process** | `synvoid-ipc` + `src/process/` | Unix-socket transport, FD passing, HMAC-SHA3-signed frames, rate limiting, pools, versioned sockets | [`ipc_deep_dive.md`](./ipc_deep_dive.md) · [`ipc_process.md`](./ipc_process.md) |
+| **Jail runtime (child side)** | `synvoid-jail-runtime` + `synvoid-ipc` (jail protocol, exe-dir binary resolution) + `src/sandbox/` (parent policy) | Sandboxed WASM/YARA jail execution in dedicated `synvoid-wasm-jail` / `synvoid-yara-jail` binaries; parent-created stdio pipes, versioned length-bounded typed protocol | [`sandbox_jail_protocol.md`](./sandbox_jail_protocol.md) · [`plugin_runtime_sandbox.md`](./plugin_runtime_sandbox.md) |
 | **CLI parsing** | `synvoid-cli` | Clap `Args` extraction (mode flags: supervisor/worker/cpu/mesh-agent/jails) | [`cli_supervisor_command_dispatch.md`](./cli_supervisor_command_dispatch.md) |
 | **Drain** | `src/drain/` + `synvoid-core::drain` | Graceful-drain state shared across processes | [`drain.md`](./drain.md) |
 | **Filter primitives** | `synvoid-filter` | Generic allowlist/denylist protocol filter core (used by ICMP filter, TCP/UDP listeners) | [`filter.md`](./filter.md) |
@@ -232,6 +235,8 @@ Root-owned orchestration code (see [`root_module_ledger.md`](./root_module_ledge
 | **Tarpit** | `synvoid-tarpit` | Markov-chain HTML trap, per-IP/global admission semaphores, session budgets | [`tarpit.md`](./tarpit.md) · [`tarpit_deep_dive.md`](./tarpit_deep_dive.md) |
 | **Honeypot** | `synvoid-honeypot` + `src/honeypot_port/` | Multi-protocol deception, AI responders (Anthropic/OpenAI/Ollama/static), intel extraction, port rotation | [`honeypot.md`](./honeypot.md) · [`honeypot_deep_dive.md`](./honeypot_deep_dive.md) |
 | **Upload Security** | `synvoid-upload` (policy) + `synvoid-yara` (canonical engine, Phase 26) | MIME validation, YARA scanning via `synvoid-yara` engine (multi-source rules incl. signed mesh feeds), archive inspection, quarantine | [`upload.md`](./upload.md) · [`upload_deep_dive.md`](./upload_deep_dive.md) |
+| **YARA engine** | `synvoid-yara` | Canonical YARA-X execution boundary: rule compilation, artifact-bound execution, metrics; consumed by upload scanning and jail `yara_service` | [`upload_deep_dive.md`](./upload_deep_dive.md) · [`sandbox_jail_protocol.md`](./sandbox_jail_protocol.md) |
+| **DNSSEC keystore** | `synvoid-dnssec-keystore` | Private-key/HSM custody boundary: key generation, `SealedSigningKey::sign()`, PKCS#11 opt-in (`dns-hsm`); query/transport code never touches private material | [`dnssec_keystore.md`](./dnssec_keystore.md) · [`dns_deep_dive.md`](./dns_deep_dive.md) |
 | **GeoIP** | `synvoid-geoip` | MaxMind country/ASN lookup, auto-update; wrapped as `ErasedGeoIp` for WAF | [`geoip.md`](./geoip.md) · [`geoip_deep_dive.md`](./geoip_deep_dive.md) |
 | **Integrity** | `synvoid-integrity` | Ed25519(+ML-DSA) message signing, X25519+ML-KEM session keys, attestation; browser client in `clients/` | [`integrity.md`](./integrity.md) · [`integrity_deep_dive.md`](./integrity_deep_dive.md) |
 | **ICMP Filter** | `synvoid-icmp-filter` | ICMP flood filtering via nftables/eBPF/pf/WFP backends with privilege detection | [`icmp_filter.md`](./icmp_filter.md) · [`layer_3_5_deep_dive.md`](./layer_3_5_deep_dive.md) |
@@ -288,7 +293,7 @@ Root-owned orchestration code (see [`root_module_ledger.md`](./root_module_ledge
 | Component | Crate(s)/Path | Purpose | Doc |
 |-----------|--------------|---------|-----|
 | **Admin API (backend)** | `src/admin/` + `synvoid-admin` | Axum REST API, session cookie+CSRF auth, typed mutation results, audit events, alerting, Prometheus exporter, OpenAPI/Swagger | [`admin_deep_dive.md`](./admin_deep_dive.md) · [`admin_control_plane_authority.md`](./admin_control_plane_authority.md) · [`admin_root_ownership.md`](./admin_root_ownership.md) |
-| **Admin UI (frontend)** | `admin-ui/` | Yew/WASM dashboard (~21 pages), Trunk build, REST + WS (`/api/ws/metrics`, `/api/ws/logs`) | [`admin_ui.md`](./admin_ui.md) |
+| **Admin UI (frontend)** | `admin-ui/` | Yew/WASM dashboard (~22 pages + shared components/hooks/services), Trunk build, REST + WS (`/api/ws/metrics`, `/api/ws/logs`) | [`admin_ui.md`](./admin_ui.md) |
 | **Metrics** | `synvoid-metrics` | Atomic per-site counters, bandwidth EMA tracker, scheduler-delay health monitor, global collection counters | [`metrics.md`](./metrics.md) |
 | **Logging** | `src/log_controller.rs`, `src/common/` | Dynamic log levels, syslog integration, panic handler | [`log_controller.md`](./log_controller.md) · [`common.md`](./common.md) |
 | **Security observability** | cross-cutting | Audit trails, alert correlation, dropped-event accounting, blockstore admin observability | [`security_observability.md`](./security_observability.md) · [`blockstore_admin_observability.md`](./blockstore_admin_observability.md) |
@@ -308,7 +313,7 @@ These are discrete review surfaces in their own right — build/verify tooling, 
 | **Integrity browser client** | `clients/integrity-client.js` | X25519+ML-KEM key exchange, Ed25519 signing, PoW solving for frontends | [`integrity_deep_dive.md`](./integrity_deep_dive.md) |
 | **Shipped config** | `config/` | `main.toml` + `sites/`, error pages, `mime.types`, honeypot paths | [`config.md`](./config.md) |
 | **YARA rules** | `rules/default.yar` | 14 upload/content rules (executables, macros, webshells, bombs) | [`upload_deep_dive.md`](./upload_deep_dive.md) |
-| **Benches** | `benches/` + `benchmarks/` | Criterion hot-path benches + historical result tracking | [`track3_performance_report.md`](./track3_performance_report.md) |
+| **Benches** | `benches/` + `benchmarks/` | Criterion hot-path benches (11 files: attack detection, normalization, proxy cache/headers, ratelimit, routing, DNS, WASM, broadcast) + historical result tracking | [`track3_performance_report.md`](./track3_performance_report.md) |
 | **Examples** | `examples/` | Embedded-app, dynamic-plugin, DNS profile configs | [`plugin_wasm.md`](./plugin_wasm.md) · [`dns_production_profiles.md`](./dns_production_profiles.md) |
 | **Scripts** | `scripts/` | `verify_architecture.sh`, DNS conformance/stress/bench, import checks | [`developer_tooling.md`](./developer_tooling.md) |
 
@@ -382,4 +387,4 @@ Start here, then descend into a discrete review track:
 | Verification | `docs/testing/verification-contract.md` · [`developer_tooling.md`](./developer_tooling.md) · [`ci_fuzz_failure_injection.md`](./ci_fuzz_failure_injection.md) · [`release_profile_matrix.md`](./release_profile_matrix.md) |
 | Historical / closure reports | [`phase_1_5_verification_report.md`](./phase_1_5_verification_report.md) · [`phase_8_verification_report.md`](./phase_8_verification_report.md) · [`phase_9_observability_report.md`](./phase_9_observability_report.md) · [`track3_performance_report.md`](./track3_performance_report.md) · [`crate_granularity_audit.md`](./crate_granularity_audit.md) · [`root_module_burndown_report.md`](./root_module_burndown_report.md) |
 
-External: [`AGENTS.md`](../AGENTS.md) (agent guide) · [`.opencode/skills/`](../.opencode/skills/) (35 subsystem guides) · [`docs/releasing.md`](../docs/releasing.md) · [`SECURITY.md`](../SECURITY.md)
+External: [`AGENTS.md`](../AGENTS.md) (agent guide) · [`.opencode/skills/`](../.opencode/skills/) (37 subsystem guides) · [`docs/releasing.md`](../docs/releasing.md) · [`SECURITY.md`](../SECURITY.md)
