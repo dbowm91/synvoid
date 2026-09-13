@@ -1,7 +1,43 @@
 # Agent Knowledge Maintenance
 
 How `AGENTS.md`, `.opencode/skills/`, `docs/`, `README.md`, and `plans/`
-stay accurate. For agents, by an agent audit (2026-09-11).
+stay accurate. For agents, by an agent audit (2026-09-11, follow-up 2026-09-13).
+
+## What was audited (2026-09-13 follow-up)
+
+- All 37 skills re-checked; thin (<100-line) skills verified as intentional
+  pointer-style guides with correct canonical paths — kept, not bulk-expanded.
+- 2 skill fixes: `dht_persistence` dangling code fence + Cyrillic typo;
+  `proxy_upstream` dropped a nonexistent `crates/synvoid-proxy/AGENTS.override.md`
+  reference.
+- 1 skill rewritten: `supply_chain_hashes` (single-fix record) →
+  `supply_chain` (deny/audit gates, ignore-metadata rules, wasmtime baseline,
+  pip `require_hashes`).
+- 5 skills added (previously uncovered guard-enforced subsystems):
+  `block_store`, `tls_termination`, `waf_engine`, `plugin_runtime`, `auth`
+  — 42 total.
+- 5 stale `skills/<name>.md` references fixed in `AGENTS.override.md` files
+  (`src/worker/`, `src/http3/`, `src/waf/`, `crates/synvoid-dns/`; the
+  `performance_patterns` ref mapped to the existing `implementation_patterns`
+  skill). Canonical form is `.opencode/skills/<name>/SKILL.md`.
+- `docs/`: 5 precision fixes — `PERFORMANCE.md` invalid `distributed`
+  rate-limit mode → `shared` (only `shared`|`isolated` validate);
+  `DEPLOYMENT.md` Docker healthcheck `/api/health` → `/health`;
+  `DEVELOPER.md` `unified_server_workers` 1 → 4 (shipped `config/main.toml`);
+  `CONFIGURATION.md` PQ `prefer_post_quantum` clarified as config-default-true
+  but requiring `--features post-quantum` at build, empty Threat Level heading
+  restructured; `WAF_MESH.md` compiled-by-default vs runtime-disabled note.
+  Claims checked and left alone: `MeshConfig::enabled` defaults `false`
+  (WAF_MESH "disabled by default" correct), gRPC control-plane TLS is a real
+  `control_api_tls` path (DEVELOPER.md checklist kept), `wasmtime` 40.0.4 +
+  42.0.2 still in `Cargo.lock` (AGENTS.md Known Issues current).
+- `architecture/`: 15 one-time phase/closure reports deliberately NOT moved
+  to `_archived/` — `overview.md` already labels them "Historical / closure
+  reports" in the Documentation Map, and moves would churn external links for
+  no agent value. Revisit only if a report starts getting cited as authority.
+- `README.md`, `plans/` (completed handoff history): no action needed.
+
+## What was audited (2026-09-11)
 
 ## What was audited (2026-09-11)
 
@@ -36,11 +72,20 @@ stay accurate. For agents, by an agent audit (2026-09-11).
    `synvoid_proxy_cache`, `synvoid_upload`).
 3. New `synvoid-*` crate or guard-enforced contract without a skill is a
    gap candidate — check the Skills list in `AGENTS.md`.
-4. `README.md` Build section vs `AGENTS.md` Build & Setup: prerequisites
+4. Skill cross-references use the canonical form
+   `.opencode/skills/<name>/SKILL.md` — bare `skills/<name>.md` refs in
+   `AGENTS.override.md` files are stale (audit 2026-09-13 fixed five).
+   Skill directory names must match the `name:` front-matter field.
+5. `README.md` Build section vs `AGENTS.md` Build & Setup: prerequisites
    (`protoc`, feature matrix) must agree.
-5. `AGENTS.md` process-model line vs `src/supervisor/process.rs`
+6. `AGENTS.md` process-model line vs `src/supervisor/process.rs`
    (`spawn_unified_server_workers(config.unified_server_workers)`) and
    `config/main.toml` (`[defaults.worker_pool] workers`).
+7. Operator docs vs config validation: rate-limit modes (`shared`|`isolated`
+   in `crates/synvoid-config/src/site/ratelimit.rs`), health path (`/health`,
+   no `/api` prefix), shipped worker count (`config/main.toml`), and
+   feature-gated config defaults (`prefer_post_quantum` needs the
+   `post-quantum` feature at build).
 
 ## Index
 

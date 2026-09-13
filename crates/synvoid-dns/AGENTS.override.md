@@ -177,7 +177,7 @@ HickoryRecursor correctly uses `ValidateWithStaticKey` when DNSSEC is enabled, p
 
 **To get DNSSEC validation**, use `upstream_provider = "Recursive"` with `dnssec_validation = true`.
 
-See `skills/dns_dnssec.md:130-146` for detailed explanation.
+See `.opencode/skills/dns_dnssec/SKILL.md:130-146` for detailed explanation.
 
 ## Known Integration Points
 

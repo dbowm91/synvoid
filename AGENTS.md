@@ -117,9 +117,17 @@ Many root `src/` paths are pure re-export facades. Rule: if a `crates/synvoid-*`
 ## Repo-Specific Pointers
 
 - **Module overrides**: read `src/*/AGENTS.override.md` before working in a subsystem (`waf`, `http`, `http3`, `http_client`, `proxy`, `config`, `admin`, `platform`, `plugin`, `worker`, `tunnel`, `app_server`, `theme`, `static_files`, `serverless`) plus `crates/synvoid-{dns,honeypot,tarpit}/AGENTS.override.md`.
-- **Skills**: `.opencode/skills/<name>/SKILL.md` — 37 per-subsystem guides (e.g. `dns_dnssec`, `ipc_hardening`, `raft_consensus`, `proxy_upstream`, `supervisor`, `worker_data_plane`, `config_system`, `admin_contract`). Load before working in an unfamiliar subsystem; cite canonical `crates/synvoid-*` paths, never root facades.
+- **Skills**: `.opencode/skills/<name>/SKILL.md` — 42 per-subsystem guides (e.g. `dns_dnssec`, `ipc_hardening`, `raft_consensus`, `proxy_upstream`, `supervisor`, `worker_data_plane`, `config_system`, `admin_contract`, `waf_engine`, `block_store`, `tls_termination`, `plugin_runtime`, `auth`, `supply_chain`). Load before working in an unfamiliar subsystem; cite canonical `crates/synvoid-*` paths, never root facades.
 - **Config paths**: `--config-path` takes the DIRECTORY containing `main.toml` + `sites/`, not the TOML file. Caveat: `--configtest` ignores `--config-path` and validates `./config/` relative to CWD.
-- **Docs**: start at `architecture/overview.md` (verified module index). `architecture/` holds binding design docs; `docs/` holds operator docs; `plans/` is retained phase-handoff history.
+- **Docs**: start at `architecture/overview.md` (verified module index + Documentation Map). `architecture/` holds binding design docs; `docs/` holds operator docs; `plans/` is retained phase-handoff history.
+- **Architecture index** (binding docs by topic; historical closure reports are labeled as such in the overview Documentation Map and stay in place):
+  - Composition/facades: `architecture/{root_module_ledger,facade_disposition_matrix,request_path_capability_boundary,root_dependency_ownership}.md`
+  - Admin authority: `architecture/{admin_control_plane_authority,admin_root_ownership,admin_contract_phase05_closeout}.md`
+  - Threat-intel enforcement: `architecture/{threat_intel_consumer_actionability,manual_enforcement_ownership,enforcement_decision_contract}.md`
+  - Mesh/distributed: `architecture/distributed_state_contract.md` (binding) + `mesh_{trust_domains,transport_lifecycle}.md`
+  - Supply chain: `architecture/dependency_security_baseline_phase25.md` (re-audit 2026-10-01)
+  - Jail IPC: `architecture/sandbox_jail_protocol.md`; DNSSEC custody: `architecture/dnssec_keystore.md`
+  - Knowledge maintenance: `architecture/agent_knowledge_maintenance.md` (last audit record + recurring checklist for future audits)
 
 ## Known Issues
 

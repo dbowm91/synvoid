@@ -172,9 +172,9 @@ synvoid.static.cpu_offload.task_timeouts
 
 ### Production Checklist
 
-- [ ] Enable TLS for gRPC control plane.
+- [ ] Enable TLS for gRPC control plane (`--control-api-tls`; serves `127.0.0.1:9443` loopback by default).
 - [ ] Configure mTLS for Supervisor-to-Supervisor communication.
-- [ ] Keep `unified_server_workers` at 1 unless explicitly running advanced isolation mode.
+- [ ] Size `unified_server_workers` deliberately (shipped `config/main.toml` sets 4; code default is 1) — more workers add throughput, not isolation.
 - [ ] Enable Landlock sandboxing on Linux for workers.
 
 ## Troubleshooting

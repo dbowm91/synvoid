@@ -176,9 +176,6 @@ Verification functions in `crates/synvoid-mesh/src/mesh/dht/signed.rs`:
 - `verify_dht_record_signature()` — verifies signature on a DhtRecord
 - `verify_dht_record_signature_for_key()` — verifies with expected record type
 
-const CURRENT_SCHEMA_VERSION: u32 = 1;
-```
-
 ## DHT Two-Phase Commit (W11.3)
 
 Records requiring quorum use a two-phase commit to prevent gossip of unconfirmed state:
@@ -316,7 +313,7 @@ if self.is_global_node() {
 }
 ```
 
-### Quorum Commit/Aborт
+### Quorum Commit/Abort
 When quorum commits or aborts, disk store is updated:
 ```rust
 // On commit_record_after_quorum():

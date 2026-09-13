@@ -217,6 +217,6 @@ Note: The adapters return the built response; actual wire sending is done by the
 
 ## Skills Reference
 
-- `skills/streaming_waf.md` — Streaming WAF engine patterns
-- `skills/security_patterns.md` — Constant-time comparison, path traversal, XSS prevention
-- `skills/performance_patterns.md` — Performance optimization patterns
+- `.opencode/skills/streaming_waf/SKILL.md` — Streaming WAF engine patterns
+- `.opencode/skills/security_patterns/SKILL.md` — Constant-time comparison, path traversal, XSS prevention
+- `.opencode/skills/implementation_patterns/SKILL.md` — Performance optimization patterns

@@ -1,0 +1,58 @@
+---
+name: waf_engine
+description: Core WAF engine — 16 attack detectors, normalizer, narrow request-path traits, enforcement verdicts. Use when adding detectors, touching normalization, or wiring WAF capabilities.
+---
+
+# Skill: WAF Engine
+
+## Context
+
+The WAF engine lives canonically in `crates/synvoid-waf`; `src/waf/` is
+root composition (rate limiting, rule feeds, threat level). Request-path
+code consumes narrow traits, never concrete infrastructure — see
+`architecture/request_path_capability_boundary.md`. Full reference:
+`architecture/waf.md`, `architecture/waf_deep_dive.md`,
+`architecture/waf_ownership_convergence.md`,
+`architecture/enforcement_decision_contract.md`.
+
+## When to Use
+
+- Adding or tuning an attack detector
+- Touching normalization (overlong UTF-8, homoglyphs) or anomaly scoring
+- Adding a capability to the request path (new narrow trait)
+- Changing enforcement verdicts or rate-limit/threat-level wiring
+
+## Key Files
+
+| File | Purpose |
+|------|---------|
+| `crates/synvoid-waf/src/traits.rs` | Narrow traits: `BlockListStore`, `WafProcessor`, `WafRequestServices`, `ChallengeService`, `ThreatLevelProvider`, `TarpitService` (+ `GeoIpLookup`, `WafPersistence`) |
+| `crates/synvoid-waf/src/attack_detection/` | Detector suite (see `streaming_waf` skill for chunked scanning) |
+| `crates/synvoid-waf/src/enforcement.rs` | Pass/Drop/Stall/Block/Challenge/Tarpit verdict contract |
+| `crates/synvoid-waf/src/ratelimit/` | Rate limiting (`shared` \| `isolated` modes only) |
+| `crates/synvoid-waf/src/bot.rs` | Bot detection (see `waf_bot_detection` skill) |
+| `src/waf/` | Root composition: rule feeds, threat level, rate-limit wiring |
+
+## Non-Negotiables
+
+1. **Composition boundary** (guard-enforced): request path consumes
+   `Arc<dyn Trait>` built in composition roots (`src/worker/unified_server/`,
+   `src/supervisor/`, `src/server/`). To add a capability, define the trait
+   in `crates/synvoid-waf/src/traits.rs` or `synvoid-core`, implement it on
+   the concrete type in a composition root, pass it down.
+2. **Overlong UTF-8**: the normalizer decodes overlong percent-encoded
+   sequences and sets `OVERLONG` on `NormalizationFlags`;
+   `strict_normalization` rejects them. Never silently drop the flag.
+3. **The WAF pipeline queries/mutates no block/threat state** — enforcement
+   reads come from BlockStore via the narrow traits (see `block_store` skill).
+4. **Rate-limit modes are `shared` | `isolated`** — there is no
+   `distributed` mode; config validation rejects anything else.
+5. **Constant-time comparison** (`subtle::ConstantTimeEq`) for all
+   secret/MAC/token compares, including PoW verification.
+
+## Verification
+
+```bash
+cargo nextest run -p synvoid-waf --cargo-profile ci --profile ci
+cargo nextest run --test boundary_composition_guard --cargo-profile ci --profile ci
+```

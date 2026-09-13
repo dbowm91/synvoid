@@ -51,8 +51,11 @@ Rate limiting mode can be tuned based on consistency vs overhead trade-offs:
 [ratelimit]
 mode = "isolated" # Per-worker limits (zero IPC overhead)
 # OR
-mode = "distributed" # Supervisor-coordinated (consistent across nodes)
+mode = "shared" # Coordinated limits (consistent across workers)
 ```
+
+Only `shared` and `isolated` are valid modes (anything else fails config
+validation).
 
 ### 5. HTTP/2 Scope Notes
 

@@ -4,7 +4,7 @@
 
 Worker lifecycle extensions (Mesh, DNS, Serverless, Honeypot) are managed via `ExtensionRuntime` trait and `ExtensionRegistry`.
 
-See `skills/extension_runtime.md` for full documentation.
+See `.opencode/skills/worker_data_plane/SKILL.md` for the data-plane composition rules.
 
 ### Key Types
 

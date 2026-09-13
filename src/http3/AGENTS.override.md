@@ -80,5 +80,5 @@ Both HTTP/1/2 and HTTP/3 pass individual fields to WAF check functions (not a `R
 
 ## Skills Reference
 
-- `skills/h3_proxy.md` — H3 proxy patterns
+- `.opencode/skills/h3_proxy/SKILL.md` — H3 proxy patterns
 - `architecture/http3_request_waf_boundary.md` — Full boundary documentation

@@ -46,7 +46,7 @@ synvoid/
 ├── rules/                  # YARA rules (default.yar)
 ├── benches/ benchmarks/    # Criterion hot-path benches (11 files) + historical results
 ├── architecture/           # This documentation tree (~140 docs)
-├── .opencode/skills/       # Per-subsystem skill guides (37)
+├── .opencode/skills/       # Per-subsystem skill guides (42)
 ├── docs/                   # User/operator docs, testing contracts, releasing
 ├── plans/                  # Implementation tracking artifacts
 └── scripts/                # CI/build/dns helper scripts
@@ -387,4 +387,4 @@ Start here, then descend into a discrete review track:
 | Verification | `docs/testing/verification-contract.md` · [`developer_tooling.md`](./developer_tooling.md) · [`ci_fuzz_failure_injection.md`](./ci_fuzz_failure_injection.md) · [`release_profile_matrix.md`](./release_profile_matrix.md) |
 | Historical / closure reports | [`phase_1_5_verification_report.md`](./phase_1_5_verification_report.md) · [`phase_8_verification_report.md`](./phase_8_verification_report.md) · [`phase_9_observability_report.md`](./phase_9_observability_report.md) · [`track3_performance_report.md`](./track3_performance_report.md) · [`crate_granularity_audit.md`](./crate_granularity_audit.md) · [`root_module_burndown_report.md`](./root_module_burndown_report.md) |
 
-External: [`AGENTS.md`](../AGENTS.md) (agent guide) · [`.opencode/skills/`](../.opencode/skills/) (37 subsystem guides) · [`docs/releasing.md`](../docs/releasing.md) · [`SECURITY.md`](../SECURITY.md)
+External: [`AGENTS.md`](../AGENTS.md) (agent guide) · [`.opencode/skills/`](../.opencode/skills/) (42 subsystem guides) · [`docs/releasing.md`](../docs/releasing.md) · [`SECURITY.md`](../SECURITY.md)

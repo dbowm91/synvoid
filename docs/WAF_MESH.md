@@ -4,7 +4,7 @@ SynVoid supports peer-to-peer mesh networking for distributed DDoS mitigation, t
 
 ## Opt-In by Default
 
-**Mesh networking is disabled by default.** A standalone SynVoid instance operates completely independently without any WAF-to-WAF, server-WAF, or VPN-WAF connections.
+**Mesh networking is disabled by default.** A standalone SynVoid instance operates completely independently without any WAF-to-WAF, server-WAF, or VPN-WAF connections. (The `mesh` Cargo feature is compiled in by default, but runtime participation requires `enabled = true` below — `MeshConfig::enabled` defaults to `false`.)
 
 To enable mesh networking:
 

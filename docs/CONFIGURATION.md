@@ -294,8 +294,13 @@ SynVoid supports hybrid post-quantum TLS key exchange for long-term security aga
 
 ```toml
 [tls]
-prefer_post_quantum = true  # Use hybrid PQ KEX (default: true)
+prefer_post_quantum = true  # Use hybrid PQ KEX (config default: true; requires a --features post-quantum build to take effect)
 ```
+
+> Note: `prefer_post_quantum = true` is the config default, but hybrid PQ key
+> exchange only activates in builds compiled with `--features post-quantum`.
+> Non-PQ builds log "disabled (feature not enabled)" at startup and negotiate
+> classical TLS regardless of this setting.
 
 **Why these defaults:**
 - `prefer_post_quantum = true` protects against future quantum computers that could break classical key exchange; there is no performance penalty when clients also support PQ
@@ -703,8 +708,6 @@ decay_half_life_secs = 3600                  # Score decay half-life (1 hour)
 - `mesh_enabled = false` (default) prevents any honeypot signals from being shared across the mesh network
 - `max_concurrent_connections = 256` and `max_connections_per_ip = 10` prevent resource exhaustion from legitimate or malicious connection storms
 
-## Threat Level System
-
 ## WAF Mesh Configuration
 
 Mesh and DHT security-sensitive options:
@@ -757,6 +760,8 @@ require_signed_sync_requests = true  # default-deny for unsigned DhtSyncRequest
 Legacy compatibility:
 - If `mesh.tls.mode` is omitted, SynVoid falls back to `mesh.tls.strict_certificate_validation` for backward compatibility.
 - Prefer setting `mesh.tls.mode` explicitly in all new configs.
+
+## Threat Level System
 
 ```toml
 [threat_level]

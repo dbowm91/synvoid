@@ -12,7 +12,7 @@ The reverse proxy is the core data-plane forwarding path. Implementation lives i
 (do not add new code there).
 
 Full reference: `architecture/proxy.md`, `architecture/upstream.md`, `architecture/proxy_cache.md`.
-Subsystem rules: `crates/synvoid-proxy/AGENTS.override.md` (if present) and `src/proxy/AGENTS.override.md`.
+Subsystem rules: `src/proxy/AGENTS.override.md`.
 
 ## When to Use
 
