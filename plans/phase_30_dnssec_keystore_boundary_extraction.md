@@ -1,6 +1,8 @@
 # Phase 30 Plan: DNSSEC Key-Custody Boundary Extraction
 
-Status: ready for implementation after Phase 25; may proceed in parallel with Phases 27-29.
+Status: complete (2026-09-12). Landing commit: `6351b39d442ee4295b4a24ae23d0c4b43304c92c`. Closure evidence: `architecture/track4_dependency_security_closeout.md`.
+
+The body below is the executed handoff specification, preserved as historical implementation guidance.
 
 Roadmap position: Track 4, Phase 30.
 

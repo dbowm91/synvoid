@@ -51,7 +51,8 @@ review/remove-by date:
 
 No Track 4 temporary exception removed without a fix; all carry upstream
 blockers (bumpalo conflict for ≥46.0.3, yara-x still on wasmtime 40.x) and
-review date 2026-10-01 / Phase 27. Source policy: exactly one git source
+Re-audit date 2026-10-01 with explicit remove conditions (see `deny.toml`).
+Source policy: exactly one git source
 (wasmtime 42.0.2 patch, `allow-git` only it), no unknown registries, lockfile
 checked in.
 
@@ -133,7 +134,7 @@ cargo-audit 0.22.2. See `docs/testing/verification-contract.md` §15.
 | Jail `synvoid-jail-runtime` + keystore `synvoid-dnssec-keystore` | PASS |
 | Plugin `plugin_failure_does_not_poison_manager` | PASS (6/6) |
 | DNS conformance `./scripts/dns/conformance.sh` | 7/7 internal suites PASS (external section operator-deferred; macOS bash lacks assoc arrays, Linux CI unaffected) |
-| Fuzz smoke (nightly, changed parsers) | Not re-run (Phase 31 is manifest/docs-only; no parser changed; existing targets `jail_ipc_frame_decode`, `http_chunked_framing`, `mesh_protocol_compressed_decode` cover Track 4 surfaces) |
+| Fuzz smoke (nightly, changed parsers) | Bounded 1000-run smokes re-run on the corrective tree; see `architecture/track4_post_closure_corrective_report.md` for commands/results (Phase 31 tree was manifest/docs-only, so no parser change required a re-run at that time; corrective pass records final evidence) |
 
 Exact commands, SHAs, and per-step timings are in CI logs (`ci` + 
 `dependency-security` jobs) and the release-qualification summary
@@ -144,9 +145,9 @@ Exact commands, SHAs, and per-step timings are in CI logs (`ci` +
 1. Wasmtime ≥46.0.3 upgrade blocked by bumpalo conflict (minify-html 0.18.1 →
    oxc_allocator 0.95.0 pins bumpalo =3.19.0; wasmtime 46 needs ^3.20.2).
    Re-attempt when upstream relaxes pin or yara-x moves off wasmtime 40.
-   Tracking: baseline §4, deny 0269 remove-by Phase 27 / 2026-10-01.
+   Tracking: baseline §4, deny 0269 Re-audit 2026-10-01 (remove condition: ≥46.0.3 upgrade unblocks).
 2. yara-x 1.15 still on wasmtime 40.0.4 (12 advisories ignored with exposure
-   evidence). Remove-by: yara-x upstream move off 40.x / 2026-10-01.
+   evidence). Remove condition: yara-x upstream move off 40.x. Re-audit: 2026-10-01.
 3. rkyv 0.7.46 via parcel_sourcemap (lightningcss) + macOS BUG-002 linker
    segfault (Apple clang 21, non-deterministic, Linux CI unaffected). Collapses
    if lightningcss drops parcel_sourcemap.

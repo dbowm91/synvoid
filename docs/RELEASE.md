@@ -255,7 +255,7 @@ The following items are known limitations or tracked exceptions that operators s
 |------|---------------|--------|-------|
 | `icmp-ebpf` eBPF ICMP filter | **Beta** | Feature-gated, not in default profile | Requires Linux with kernel BTF, CAP_NET_ADMIN or root, precompiled eBPF object. Falls back to nftables when unavailable |
 | `--all-features` workspace check | **Tracked exception** | Does not pass `cargo check --all-features` | `synvoid-icmp-filter` eBPF dependency resolution fails in `--all-features` mode. Individual crate checks pass. Not in default profile |
-| wasmtime 40.0.4 (via yara-x) + direct 42.0.2 | **Tracked** | 16 advisory ignores in `deny.toml` (mirrored in `.cargo/audit.toml`) | YARA compilation only; direct runtime fixed for 2026-04 advisories but affected by RUSTSEC-2026-0269 with `wasmtime-wasi` unreachable; ≥46.0.3 upgrade blocked (bumpalo). Remove-by Phase 26. See `architecture/dependency_security_baseline_phase25.md` |
+| wasmtime 40.0.4 (via yara-x) + direct 42.0.2 | **Tracked** | 16 advisory ignores in `deny.toml` (mirrored in `.cargo/audit.toml`) | YARA compilation only; direct runtime fixed for 2026-04 advisories but affected by RUSTSEC-2026-0269 with `wasmtime-wasi` unreachable; ≥46.0.3 upgrade blocked (bumpalo). Reviewed: 2026-09-13; Re-audit: 2026-10-01. See `architecture/dependency_security_baseline_phase25.md` |
 | Email alerting (`src/admin/alerting/mod.rs:349`) | **Stub** | Logs and returns Ok, no actual sending | Not production-ready; implementation deferred |
 | `spin` idle instance eviction | **Known gap** | Old UUID entries are never cleaned up | Tracked as plan DOC-L7 |
 | Archive inspection | **Limitation** | ZIP-only, non-recursive | Does not inspect nested archives or non-ZIP formats |

@@ -453,6 +453,49 @@ impl YaraRulesManager {
         *self.syntax_validator.write() = Some(validator);
     }
 
+    /// Construct with a full mesh config (corrective pass testability seam).
+    ///
+    /// The primary `new()` constructor takes the narrow
+    /// `YaraRulesManagerConfig`; this variant accepts `YaraRulesMeshConfig`
+    /// directly so tests can enable `allow_edge_submissions` and prove the
+    /// compiler-gate ordering on the edge-submit path.
+    pub fn new_with_mesh_config(
+        config: YaraRulesMeshConfig,
+        node_id: String,
+        node_role: MeshNodeRole,
+        signer: Option<Arc<crate::protocol::MeshMessageSigner>>,
+        feed_manager: Option<Arc<YaraRuleFeedManager>>,
+        data_dir: Option<std::path::PathBuf>,
+    ) -> Self {
+        let manager = Self {
+            config: Arc::new(config),
+            node_id,
+            node_role,
+            signer,
+            current_version: Arc::new(RwLock::new(None)),
+            local_rules: Arc::new(RwLock::new(None)),
+            local_compiled_rules: Arc::new(RwLock::new(None)),
+            submissions: Arc::new(RwLock::new(HashMap::new())),
+            submission_hashes: Arc::new(RwLock::new(HashMap::new())),
+            last_sync: RwLock::new(Instant::now()),
+            feed_manager,
+            mesh_sender: Arc::new(RwLock::new(None)),
+            data_dir,
+            broadcast_tracker: Arc::new(RwLock::new(None)),
+            rule_change_tracker: Arc::new(RwLock::new(RuleChangeTracker::default())),
+            record_store: Arc::new(RwLock::new(None)),
+            transport: Arc::new(RwLock::new(None)),
+            syntax_validator: Arc::new(RwLock::new(None)),
+        };
+
+        if manager.node_role.is_global() || manager.node_role.contains(MeshNodeRole::GLOBAL) {
+            let _ = manager.load_submissions_from_disk();
+            let _ = manager.load_rules_from_disk();
+        }
+
+        manager
+    }
+
     fn compress_rules(&self, rules: &str) -> Result<Vec<u8>, YaraRulesError> {
         let mut encoder = GzEncoder::new(Vec::new(), Compression::new(YARA_COMPRESSION_LEVEL));
         encoder
@@ -872,6 +915,18 @@ impl YaraRulesManager {
             }
         };
 
+        // Corrective hardening: bound decompressed output before use
+        // (decompression-bomb gate; no compiler invoked here).
+        let max_size = (self.config.max_rules_size_kb as usize) * 1024;
+        if rules_str.len() > max_size {
+            tracing::warn!(
+                "YARA sync: reassembled rules {} bytes exceed limit {} bytes, rejecting",
+                rules_str.len(),
+                max_size
+            );
+            return None;
+        }
+
         Some((version_str, rules_str, timestamp))
     }
 
@@ -1098,6 +1153,19 @@ impl YaraRulesManager {
                 let Some((version_str, rules_string, timestamp)) = rules_str_opt else {
                     continue;
                 };
+
+                // Corrective hardening: bound DHT-fetched single-record content
+                // before apply (no compiler invoked on this path).
+                let max_sync_size = (self.config.max_rules_size_kb as usize) * 1024;
+                if rules_string.len() > max_sync_size {
+                    tracing::warn!(
+                        "YARA sync: fetched rules {} bytes exceed limit {} bytes, skipping version {}",
+                        rules_string.len(),
+                        max_sync_size,
+                        version_str
+                    );
+                    continue;
+                }
 
                 match &best_timestamp {
                     None => {
@@ -1553,7 +1621,10 @@ impl YaraRulesManager {
 
         let rules = submission.rules.clone();
         let submission_id_str = submission.submission_id.clone();
-        let version = format!("edge-{}-{}", &submission_id_str[..8], now);
+        // Corrective hardening: peer-supplied submission IDs are untrusted and
+        // may be shorter than 8 chars; truncate safely instead of panicking.
+        let id_prefix_len = submission_id_str.len().min(8);
+        let version = format!("edge-{}-{}", &submission_id_str[..id_prefix_len], now);
 
         drop(submissions);
 
@@ -2331,6 +2402,24 @@ impl YaraRulesManager {
                 );
 
                 if self.node_role.is_global() || self.node_role.contains(MeshNodeRole::GLOBAL) {
+                    // Corrective hardening: bound + structurally check peer-submitted
+                    // rule text BEFORE storage (cheap checks only; the full
+                    // compiler/validator is never invoked on this remote path).
+                    if let Err(e) = self.validate_rules_content(rules) {
+                        tracing::warn!(
+                            "Rejecting oversized/malformed YARA submission {} from {}: {}",
+                            submission_id,
+                            from_node,
+                            e
+                        );
+                        return Some(MeshMessage::YaraRuleSubmissionResponse {
+                            original_request_id: request_id.clone(),
+                            submission_id: submission_id.clone(),
+                            node_id: self.node_id.clone().into(),
+                            status: format!("rejected: {e}").into(),
+                            timestamp: crate::protocol::MeshMessage::generate_timestamp(),
+                        });
+                    }
                     let submission = YaraRuleSubmission {
                         submission_id: submission_id.to_string(),
                         rules: rules.clone(),

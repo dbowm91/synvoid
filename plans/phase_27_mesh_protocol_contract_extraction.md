@@ -1,6 +1,8 @@
 # Phase 27 Plan: Mesh Protocol and Identity Contract Extraction
 
-Status: ready for implementation after Phase 25; may proceed in parallel with Phase 26.
+Status: complete (2026-09-12). Landing commit: `ac3b8e8732e6ebbba478e1daaded8f5728d10506`. Closure evidence: `architecture/track4_dependency_security_closeout.md`.
+
+The body below is the executed handoff specification, preserved as historical implementation guidance.
 
 Roadmap position: Track 4, Phase 27.
 

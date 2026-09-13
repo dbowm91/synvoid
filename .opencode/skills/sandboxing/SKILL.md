@@ -302,3 +302,12 @@ touching jail code:
 - On unsupported platforms the child fails closed; the only bypass is the
   test-only `SYNVOID_JAIL_PERMIT_NO_SANDBOX=1` hatch, which production spawn
   paths must never set (asserted by `tests/jail_isolation_guard.rs`).
+
+**YARA validation placement (corrective pass)**: full `synvoid-yara` syntax
+validation runs in-process in the supervisor composition root AFTER trust
+admission (edge-local submit only, post role/size gates) — deliberately NOT
+through the YARA jail, because no untrusted network/peer text reaches the
+compiler (remote ingress is size/signature-gated, approval distributes text
+without compiling). The jail remains the boundary for YARA *execution*
+(scanning); do not add a validation IPC op unless a future audit proves remote
+text can reach the compiler. Proof: `architecture/mesh.md` §13.

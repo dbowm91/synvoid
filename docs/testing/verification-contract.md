@@ -710,6 +710,19 @@ them intentionally in the same commit that updates the pins below.
 - Routine invocation count is 9 → 10 Cargo invocations (fmt + deny + 8);
   `verify-full` raw commands are 9 → 10 with `minimal-tests`.
 - Rust 1.98.1 also satisfies wasmtime ≥46 `rust-version` requirements for the
-  Phase 26 upgrade (see the dependency-security baseline §4).
+  tracked ≥46.0.3 upgrade (see the dependency-security baseline §4; Re-audit: 2026-10-01).
+
+### Reproducibility vs review-time semantics
+
+Advisory `Re-audit:` deadlines are intentionally time-sensitive: risk acceptance
+expires with calendar time, and `deny_ignore_metadata_guard` evaluates deadlines
+against the effective current UTC date (override: `SYNVOID_SECURITY_REVIEW_AS_OF=YYYY-MM-DD`
+for deterministic tests). An expired exception fails without any source edit.
+
+This does not make compilation non-reproducible. If `SOURCE_DATE_EPOCH` is set for
+package/release reproducibility, it is ignored for security-review time: review time
+is current UTC or the explicit security-review override, never a back-dated source
+epoch. A reproducible build of old sources with an expired exception must still fail
+the policy gate until the exception is re-triaged.
 
 If implementation reveals an invalid command, correct this document in the same commit with an explicit rationale. Do not improvise a broader suite or restore selector behavior.

@@ -1,6 +1,8 @@
 # Phase 29 Plan: Jail Runtime Package and Process Split
 
-Status: ready for implementation after Phase 26.
+Status: complete (2026-09-12). Landing commit: `fd10114507767b41eb40891d0b917e95dd206419`. Closure evidence: `architecture/track4_dependency_security_closeout.md`.
+
+The body below is the executed handoff specification, preserved as historical implementation guidance.
 
 Roadmap position: Track 4, Phase 29.
 

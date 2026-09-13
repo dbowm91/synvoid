@@ -7,6 +7,7 @@ description = "Lightweight static architecture guard tests for the SynVoid repos
 [dependencies]
 
 [dev-dependencies]
+chrono = "0.4"
 regex = "1"
 tempfile = "3"
 toml = "0.8"

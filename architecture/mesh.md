@@ -763,3 +763,28 @@ Protobuf ownership: unchanged in Phase 27. Root `build.rs` (mesh-gated) and
 `crates/synvoid-mesh/build.rs` (unconditional) still generate `mesh.proto` into
 separate `OUT_DIR`s; no `-sys` crate introduced (per plan, only if it simplifies
 publishing). Shared wire protobufs remain future work, not a compat break.
+
+## 13. YARA validation trust order (corrective pass, Outcome 1: retain direct)
+
+Full YARA syntax validation is intentionally in-process in the supervisor
+composition root, AFTER trust admission — not through the YARA jail. Rationale
+and proof (`crates/synvoid-mesh/tests/yara_approval_boundary.rs`):
+
+- The injected `YaraSyntaxValidator` (`src/supervisor/mesh.rs`
+  `BoundaryValidator` → `synvoid_yara::validate_rules_syntax`) is invoked in
+  exactly one place: `submit_rule_for_approval` (edge-local submit), and only
+  after the role gate (must be edge + `allow_edge_submissions`, default false)
+  and the size/content gates (`validate_rules_content`: ≤`max_rules_size_kb`,
+  must contain `rule `, ≤100 rules).
+- No remote/network ingress invokes the validator: inbound `YaraRuleSubmission`
+  receipt is size/content-gated before storage and returns an explicit
+  `rejected` response on violation; `YaraRuleAnnounce`/`YaraCompiledRuleAnnounce`
+  verify signatures (when `require_signature`) and size/version ordering via
+  `handle_incoming_rules` before `apply_rules`; DHT sync verifies manifest
+  signatures, timestamp bounds, and trusted-signer quorum, and bounds both
+  single-record fetches and reassembled chunk output before apply. Approval
+  (`approve_submission`) distributes canonical text without compiling.
+- `synvoid-mesh` links no `yara-x`/Wasmtime execution dependency (guard
+  `yara_execution_boundary`); compilation stays at the execution boundary
+  (`synvoid-yara`, jail/in-process engine). Future reordering across this
+  boundary fails the counting-validator regression tests above.

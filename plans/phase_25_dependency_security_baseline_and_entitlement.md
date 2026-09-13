@@ -1,6 +1,8 @@
 # Phase 25 Plan: Dependency Security Baseline and Entitlement Closure
 
-Status: ready for implementation.
+Status: complete (2026-09-12). Landing commit: `4d5cb580639c3c7bde8494ac3fbd551e568d22f9`. Closure evidence: `architecture/track4_dependency_security_closeout.md`.
+
+The body below is the executed handoff specification, preserved as historical implementation guidance.
 
 Roadmap position: Track 4, Phase 25 of `plans/track4_dependency_security_capability_segregation_roadmap.md`.
 

@@ -185,6 +185,9 @@ YARA (`JailOperation::Yara*`):
 - `YaraLoadRules { rules_id, digest_sha256_hex, rules_text }` — parent supplies
   already-validated rule text; child verifies the digest in constant time and
   compiles. Compilation errors are typed and never terminate the jail.
+  (Corrective pass: mesh-side full syntax validation stays in-process in the
+  supervisor AFTER trust admission — see `mesh.md` §13. The jail owns YARA
+  *execution*; no validation IPC op exists by design.)
 - `YaraScan { rules_id, data }` — scans a bounded buffer; returns bounded
   match DTOs (`rule_name`, `namespace`, `tags`, `category`, `severity`,
   `description`, each length-truncated, at most `JAIL_MAX_MATCHES`).

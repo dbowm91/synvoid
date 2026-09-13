@@ -1,7 +1,7 @@
 # Dependency Security Baseline — Phase 25 Evidence
 
 Status: binding evidence for Track 4 Phase 25 (`plans/phase_25_dependency_security_baseline_and_entitlement.md`).
-Owner: security / release. Review/remove-by: Phase 26 (see §5).
+Owner: security / release. Reviewed: 2026-09-13. Re-audit: 2026-10-01 (all advisory ignores; see §5).
 
 This file records version, features, and reachable capability **separately** for every
 security-relevant dependency decision. It is the authority the repo guards check
@@ -51,8 +51,9 @@ cargo deny check advisories
 ## 2. Transitive Wasmtime path (YARA compilation)
 
 - Version: **40.0.4** from crates.io, via `yara-x 1.15.0`.
-- Consumers (`cargo tree -i wasmtime@40.0.4`): `synvoid-mesh` and `synvoid-upload`
-  (both declare `yara-x` for rule compilation/validation).
+- Consumers (`cargo tree -i wasmtime@40.0.4`, verified 2026-09-13): `synvoid-yara`
+  (single owner since Phase 26) → `synvoid-upload`, `synvoid-jail-runtime`, root.
+  `synvoid-mesh` no longer links `yara-x`.
 - Enabled features (via yara-x `default-modules` + `linkme`): `cranelift`, `std`,
   `runtime`; **no `wasi` feature** in the resolved feature graph.
 - Reachable capability: YARA rule bytecode compilation/execution only.
@@ -95,9 +96,9 @@ clean lockfile and in an isolated scratch crate:
 
 Decision: keep direct Wasmtime at 42.0.2 (still fixed for the 2026-04 advisories)
 under this capability-absence finding, and re-attempt the ≥46.0.3 upgrade when the
-`bumpalo` conflict clears (upstream minify-html/oxc release) or at Phase 26 latest.
-The `deny.toml` 0269 ignore carries this owner and remove-by date; the guard below
-enforces it.
+`bumpalo` conflict clears (upstream minify-html/oxc release). Re-audit: 2026-10-01.
+The `deny.toml` 0269 ignore carries this owner, Re-audit date, and remove condition;
+the guard below enforces expiry against the current UTC date.
 
 ## 5. Guards (all in `tools/synvoid-repo-guards/tests/`)
 
@@ -106,8 +107,10 @@ enforces it.
   from `Cargo.lock` unless this file gains a new exposure section; the 0269 ignore must
   retain owner + Phase 26 remove-by metadata.
 - `deny_ignore_metadata_guard` (`dependency_security.rs`): every `RUSTSEC-*`/`GHSA-*`
-  ignore in `deny.toml` must carry a `Review:`/`Re-audit:` date and must not be past
-  its review date without an update.
+  ignore in `deny.toml` must carry `Owner:`, `Reviewed:`, a single future
+  `Re-audit: YYYY-MM-DD`, and a `Remove condition:`; `Re-audit` dates on or before
+  the effective current UTC date fail closed (see corrective report for the
+  time-aware design; `SYNVOID_SECURITY_REVIEW_AS_OF` overrides for deterministic tests).
 - Root dependency entitlement, pure-facade orphan, self-dev feature-leak, and
   verify-contract dry-run guards: see `module_ownership.rs` and
   `docs/testing/verification-contract.md`.
@@ -115,16 +118,17 @@ enforces it.
 ## 6. Dependency hygiene inventory (Phase 25 §H)
 
 Generated 2026-09-12 from `Cargo.lock` + manifests (method: `cargo tree`, `cargo deny`,
-`cargo audit`, manifest grep). Classifications: justified (keep), migrate (stable line
-exists), follow-up (owner + phase).
+`cargo audit`, manifest grep). Re-verified 2026-09-13 (corrective pass: `bincode` confirmed
+transitive-only; `rsa` confirmed no direct root edge). Classifications: justified (keep), migrate (stable line
+exists), follow-up (owner + Re-audit date).
 
 | Item | Detail | Classification |
 |------|--------|----------------|
 | `dashmap 7.0.0-rc2` (prerelease, direct root) | No stable 7.x line published; concurrent map for connection pools | justified — keep; reassess when stable 7.x ships (owner: platform) |
 | `notify 9.0.0-rc.3` (prerelease, direct root + plugin-runtime) | No stable 9.x line published; config hot-reload watcher | justified — keep; reassess when stable 9.x ships (owner: config) |
-| `openraft 0.10.0-alpha.18` (prerelease, optional root + mesh) | 0.x line is inherently pre-1.0; mesh Raft control plane | justified — keep; track upstream stable (owner: mesh, Phase 27) |
+| `openraft 0.10.0-alpha.18` (prerelease, optional root + mesh) | 0.x line is inherently pre-1.0; mesh Raft control plane | justified — keep; track upstream stable (owner: mesh; Re-audit: 2026-10-01) |
 | Duplicated `ahash` 0.7.8 / 0.8.12 | 0.7 via `parcel_sourcemap` (lightningcss chain); 0.8 direct | justified — minor build cost only, no security impact; collapses if lightningcss drops `parcel_sourcemap` |
-| Duplicated `wasmtime` 40.0.4 / 42.0.2 | 40 via yara-x (stale compiler backend); 42 direct runtime | follow-up — Phase 26 owns yara-x consolidation; §4 owns direct ≥46.0.3 upgrade |
+| Duplicated `wasmtime` 40.0.4 / 42.0.2 | 40 via yara-x (single `synvoid-yara` owner); 42 direct runtime | follow-up — §4 owns direct ≥46.0.3 upgrade (Re-audit: 2026-10-01) |
 | Duplicated `rkyv` 0.7.46 / 0.8.x | 0.7 via `parcel_sourcemap`; direct code on 0.8 | follow-up — collapses with the same lightningcss change; 0.7 covered by RUSTSEC-2026-0235 ignore with review date |
 | Native/FFI (`aws-lc-rs`, `ring` transitive, `libloading`, `bumpalo`-linked compiles) | TLS PQC backend, DNS/QUIC crypto, native-extension loading (compiled out by default + disabled by default + allowlisted) | justified — each has an owning security invariant (see `AGENTS.md`); `libloading` plugin-loader isolation complete in Phase 28 (`synvoid-native-extension` + `unsafe-native-extensions` feature, off by default) |
 | Git sources | exactly one: wasmtime 42.0.2 patch (this file §1/§4) | follow-up — remove with the §4 upgrade; `deny.toml` `allow-git` lists only it |

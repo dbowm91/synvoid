@@ -8730,6 +8730,7 @@ dependencies = [
 name = "synvoid-repo-guards"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "regex",
  "tempfile",
  "toml 0.8.23",

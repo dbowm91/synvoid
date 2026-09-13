@@ -1,6 +1,8 @@
 # Phase 31 Plan: Dependency Surface Closeout and Release Verification
 
-Status: final Track 4 closeout; implement after Phases 25-30.
+Status: complete (2026-09-12). Landing commit: `688fa74ee764f1b0efbd2d109814f93c418b99cb`. Closure evidence: `architecture/track4_dependency_security_closeout.md`. This was the final Track 4 closeout.
+
+The body below is the executed handoff specification, preserved as historical implementation guidance.
 
 Roadmap position: Track 4, Phase 31.
 

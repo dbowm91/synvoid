@@ -166,11 +166,105 @@ fn advisory_ids(deny: &str) -> Vec<String> {
     ids
 }
 
-/// Today's date as YYYY-MM-DD from the `SOURCE_DATE_EPOCH`-style environment is
-/// unavailable in tests; instead compare against a fixed Phase 25 horizon that
-/// maintainers bump deliberately. Any `Re-audit:`/`Remove-by:` date at or before
-/// the horizon fails closed to force re-triage.
-const REVIEW_HORIZON: &str = "2026-09-12";
+/// Effective review date for advisory `Re-audit:` deadlines (corrective pass).
+///
+/// Production uses the current UTC civil date so an exception expires
+/// automatically — no source-constant bump is required. Tests and release
+/// tooling may pin a deterministic date via
+/// `SYNVOID_SECURITY_REVIEW_AS_OF=YYYY-MM-DD`; a malformed override fails
+/// closed. `SOURCE_DATE_EPOCH` is deliberately ignored here: reproducible
+/// builds must not back-date security-review time (see
+/// `docs/testing/verification-contract.md`).
+pub fn effective_review_date() -> chrono::NaiveDate {
+    if let Ok(override_date) = std::env::var("SYNVOID_SECURITY_REVIEW_AS_OF") {
+        let trimmed = override_date.trim().to_string();
+        return parse_ymd(&trimmed).unwrap_or_else(|| {
+            panic!(
+                "SYNVOID_SECURITY_REVIEW_AS_OF={trimmed:?} is not a valid YYYY-MM-DD date — failing closed"
+            )
+        });
+    }
+    chrono::Utc::now().date_naive()
+}
+
+/// Parse a strict `YYYY-MM-DD` calendar date. Returns `None` for malformed
+/// values (wrong shape, out-of-range month/day, non-leap Feb 29, etc.).
+/// Uses chrono so leap years and month lengths are correct.
+pub fn parse_ymd(s: &str) -> Option<chrono::NaiveDate> {
+    if s.len() != 10 {
+        return None;
+    }
+    chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()
+}
+
+/// Extract every `Re-audit: YYYY-MM-DD` date token from a deny.toml comment
+/// block, in order. A `Re-audit:` marker anywhere in a comment line counts
+/// (both `# Re-audit: 2026-10-01.` on its own line and inline
+/// `# Owner: security. Re-audit: 2026-10-01.` forms). A marker without a
+/// parseable date yields `Err(malformed-line)`.
+pub fn re_audit_dates_in_block(block: &str) -> Result<Vec<chrono::NaiveDate>, String> {
+    let mut dates = Vec::new();
+    for line in block.lines() {
+        let t = line.trim_start_matches('#').trim();
+        let mut search = t;
+        while let Some(pos) = search.find("Re-audit:") {
+            let rest = search[pos + "Re-audit:".len()..].trim_start();
+            // First whitespace/comma/semicolon-delimited token is the date.
+            let token: String = rest
+                .chars()
+                .take_while(|c| !c.is_whitespace() && *c != ',' && *c != ';')
+                .collect::<String>()
+                .trim_end_matches('.')
+                .to_string();
+            match parse_ymd(&token) {
+                Some(d) => dates.push(d),
+                None => return Err(format!("malformed Re-audit date {token:?} in {t:?}")),
+            }
+            search = &rest[token.len()..];
+        }
+    }
+    Ok(dates)
+}
+
+/// Evaluate one advisory metadata block against an explicit `as_of` date.
+/// Returns violation strings (empty = ok). Pure and unit-testable.
+pub fn evaluate_advisory_block(id: &str, block: &str, as_of: chrono::NaiveDate) -> Vec<String> {
+    let mut violations = Vec::new();
+    if !block.contains("Owner:") {
+        violations.push(format!("{id}: ignore lacks mandatory `Owner:` metadata"));
+    }
+    let dates = match re_audit_dates_in_block(block) {
+        Ok(d) => d,
+        Err(e) => {
+            violations.push(format!("{id}: {e}"));
+            return violations;
+        }
+    };
+    if dates.is_empty() {
+        violations.push(format!(
+            "{id}: ignore lacks mandatory machine-readable `Re-audit: YYYY-MM-DD` deadline"
+        ));
+        return violations;
+    }
+    let first = dates[0];
+    for d in &dates[1..] {
+        if *d != first {
+            violations.push(format!(
+                "{id}: conflicting Re-audit dates in one metadata block ({} vs {})",
+                first.format("%Y-%m-%d"),
+                d.format("%Y-%m-%d")
+            ));
+        }
+    }
+    if first <= as_of {
+        violations.push(format!(
+            "{id}: Re-audit {} reached (as of {}) — re-triage and bump",
+            first.format("%Y-%m-%d"),
+            as_of.format("%Y-%m-%d")
+        ));
+    }
+    violations
+}
 
 #[test]
 fn advisory_ignores_carry_owner_and_review_metadata() {
@@ -180,54 +274,17 @@ fn advisory_ignores_carry_owner_and_review_metadata() {
         !ids.is_empty(),
         "no advisory ignores parsed from deny.toml — schema changed?"
     );
+    let as_of = effective_review_date();
     let mut violations = Vec::new();
     let blocks = ignore_comment_blocks(&deny);
     for id in &ids {
         let block = blocks.get(id).cloned().unwrap_or_default();
-        let has_owner = block.contains("Owner:");
-        let has_review = block.contains("Review:")
-            || block.contains("Re-audit:")
-            || block.contains("Remove-by:");
-        if !has_owner || !has_review {
-            violations.push(format!(
-                "{id}: ignore lacks mandatory metadata (Owner: + Review:/Re-audit:/Remove-by:)"
-            ));
-            continue;
-        }
-        // Deadlines must lie strictly after the review horizon.
-        for line in block.lines() {
-            let t = line.trim_start_matches('#').trim();
-            if t.starts_with("Re-audit:") || t.starts_with("Remove-by:") {
-                // Extract the first YYYY-MM-DD token, if any.
-                let mut found: Option<String> = None;
-                let bytes = t.as_bytes();
-                let mut i = 0;
-                while i + 10 <= bytes.len() {
-                    let cand = &t[i..i + 10];
-                    if cand.as_bytes()[4] == b'-'
-                        && cand.as_bytes()[7] == b'-'
-                        && cand[..4].chars().all(|c| c.is_ascii_digit())
-                        && cand[5..7].chars().all(|c| c.is_ascii_digit())
-                        && cand[8..].chars().all(|c| c.is_ascii_digit())
-                    {
-                        found = Some(cand.to_string());
-                        break;
-                    }
-                    i += 1;
-                }
-                if let Some(date) = found {
-                    if date.as_str() <= REVIEW_HORIZON {
-                        violations.push(format!(
-                            "{id}: review deadline {date} reached (horizon {REVIEW_HORIZON}) — re-triage and bump"
-                        ));
-                    }
-                }
-            }
-        }
+        violations.extend(evaluate_advisory_block(id, &block, as_of));
     }
     assert!(
         violations.is_empty(),
-        "deny.toml advisory-ignore metadata violations:\n{}",
+        "deny.toml advisory-ignore metadata violations (as of {}):\n{}",
+        as_of.format("%Y-%m-%d"),
         violations.join("\n")
     );
 }
@@ -236,21 +293,121 @@ fn advisory_ignores_carry_owner_and_review_metadata() {
 fn audit_config_mirrors_deny_ignores() {
     // cargo-audit does not read deny.toml: the blocking `cargo audit` gate needs
     // the same narrow exceptions in `.cargo/audit.toml`, or release verification
-    // fails on intentionally-accepted transitive findings.
+    // fails on intentionally-accepted transitive findings. The sets must match
+    // in both directions so neither tool silently accepts more than the other.
     let deny = read_repo("deny.toml");
     let audit = read_repo(".cargo/audit.toml");
     let deny_ids: BTreeSet<String> = advisory_ids(&deny).into_iter().collect();
-    let mut missing = Vec::new();
-    for id in &deny_ids {
-        if !audit.contains(id.as_str()) {
-            missing.push(id.clone());
-        }
+    let audit_ids: BTreeSet<String> = advisory_ids(&audit).into_iter().collect();
+    let mut violations = Vec::new();
+    for id in deny_ids.difference(&audit_ids) {
+        violations.push(format!(
+            ".cargo/audit.toml missing ignore present in deny.toml: {id}"
+        ));
+    }
+    for id in audit_ids.difference(&deny_ids) {
+        violations.push(format!(
+            "deny.toml missing ignore present in .cargo/audit.toml: {id}"
+        ));
     }
     assert!(
-        missing.is_empty(),
-        ".cargo/audit.toml missing ignores present in deny.toml:\n{}",
-        missing.join("\n")
+        violations.is_empty(),
+        "advisory ignore set mismatch:\n{}",
+        violations.join("\n")
     );
+}
+
+#[cfg(test)]
+mod re_audit_unit_tests {
+    use super::{evaluate_advisory_block, parse_ymd, re_audit_dates_in_block};
+
+    fn date(s: &str) -> chrono::NaiveDate {
+        parse_ymd(s).expect("test date must parse")
+    }
+
+    #[test]
+    fn parses_valid_dates_including_leap_day() {
+        assert!(parse_ymd("2026-10-01").is_some());
+        assert!(parse_ymd("2024-02-29").is_some()); // leap year
+        assert!(parse_ymd("2026-12-31").is_some());
+        assert!(parse_ymd("2026-01-01").is_some());
+    }
+
+    #[test]
+    fn rejects_malformed_dates() {
+        assert!(parse_ymd("2026-13-01").is_none()); // month 13
+        assert!(parse_ymd("2026-00-10").is_none());
+        assert!(parse_ymd("2025-02-29").is_none()); // non-leap Feb 29
+        assert!(parse_ymd("2026-02-30").is_none());
+        assert!(parse_ymd("2026-9-1").is_none()); // wrong shape
+        assert!(parse_ymd("not-a-date").is_none());
+        assert!(parse_ymd("").is_none());
+        assert!(parse_ymd("2026/10/01").is_none());
+    }
+
+    #[test]
+    fn year_boundary_comparison() {
+        let new_years_eve = date("2026-12-31");
+        let new_year = date("2027-01-01");
+        assert!(new_year > new_years_eve);
+        assert!(date("2026-10-01") > date("2026-09-13"));
+        assert!(date("2026-10-01") == date("2026-10-01"));
+    }
+
+    #[test]
+    fn deadline_before_on_after() {
+        let block = "# Owner: security.\n# Reviewed: 2026-09-13.\n# Re-audit: 2026-10-01.\n# Remove condition: test.";
+        assert!(evaluate_advisory_block("TEST-1", block, date("2026-09-13")).is_empty());
+        assert!(evaluate_advisory_block("TEST-1", block, date("2026-09-30")).is_empty());
+        // On the deadline day the exception has expired (fail closed).
+        assert_eq!(
+            evaluate_advisory_block("TEST-1", block, date("2026-10-01")).len(),
+            1
+        );
+        assert_eq!(
+            evaluate_advisory_block("TEST-1", block, date("2026-10-02")).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn missing_owner_or_deadline_fails() {
+        let no_owner = "# Re-audit: 2026-10-01.";
+        assert!(
+            evaluate_advisory_block("TEST-2", no_owner, date("2026-09-13"))
+                .iter()
+                .any(|v| v.contains("Owner"))
+        );
+        let no_deadline = "# Owner: security.\n# Reviewed: 2026-09-13.";
+        assert!(
+            evaluate_advisory_block("TEST-3", no_deadline, date("2026-09-13"))
+                .iter()
+                .any(|v| v.contains("Re-audit"))
+        );
+    }
+
+    #[test]
+    fn malformed_and_conflicting_dates_fail() {
+        let malformed = "# Owner: security.\n# Re-audit: not-a-date.";
+        assert!(!evaluate_advisory_block("TEST-4", malformed, date("2026-09-13")).is_empty());
+        let conflicting = "# Owner: security.\n# Re-audit: 2026-10-01.\n# Re-audit: 2026-11-01.";
+        assert!(
+            evaluate_advisory_block("TEST-5", conflicting, date("2026-09-13"))
+                .iter()
+                .any(|v| v.contains("conflicting"))
+        );
+        // Duplicate identical dates are tolerated (grouped-block rewrites).
+        let duplicate_same = "# Owner: security.\n# Re-audit: 2026-10-01.\n# Re-audit: 2026-10-01.";
+        assert!(evaluate_advisory_block("TEST-6", duplicate_same, date("2026-09-13")).is_empty());
+    }
+
+    #[test]
+    fn re_audit_extraction_ignores_reviewed_and_remove_condition() {
+        let block = "# Owner: security.\n# Reviewed: 2026-07-07.\n# Re-audit: 2026-10-01.\n# Remove condition: yara-x moves off wasmtime 40.x.";
+        let dates = re_audit_dates_in_block(block).expect("must parse");
+        assert_eq!(dates.len(), 1);
+        assert_eq!(dates[0], date("2026-10-01"));
+    }
 }
 
 // ---------------------------------------------------------------------------

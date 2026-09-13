@@ -1,6 +1,8 @@
 # Phase 28 Plan: Unsafe Native Extension Capability Isolation
 
-Status: ready for implementation after Phase 25.
+Status: complete (2026-09-12). Landing commit: `d3ad2bc2e81486604b09a3d1e553d6b11944a5de`. Closure evidence: `architecture/track4_dependency_security_closeout.md`.
+
+The body below is the executed handoff specification, preserved as historical implementation guidance.
 
 Roadmap position: Track 4, Phase 28.
 

@@ -1,6 +1,8 @@
 # Phase 26 Plan: YARA Execution Boundary Consolidation
 
-Status: ready for implementation after Phase 25.
+Status: complete (2026-09-12). Landing commit: `390af6abd76a7cd5945a560823f9e23bdd667f7b`. Closure evidence: `architecture/track4_dependency_security_closeout.md`.
+
+The body below is the executed handoff specification, preserved as historical implementation guidance.
 
 Roadmap position: Track 4, Phase 26.
 
