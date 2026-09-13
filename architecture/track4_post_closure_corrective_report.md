@@ -3,7 +3,7 @@
 Status: complete. Plan: `plans/track4_post_closure_corrective.md` (marked complete).
 Corrective base SHA: `b779fe3d` (plans: register Track 4 post-closure corrective handoff).
 Implementation commit: `236c71e1` (track4-corrective: truthfulness, time-aware re-audit guard, YARA trust-order proof, fuzz evidence).
-Closure commit: this commit (verify-release evidence + plan closure).
+Closure commit: `b267b1a4b1b881c9daec22195b3150ac06d69219` (track4-corrective closure: verify-release evidence, plan marked complete).
 
 This report records only current reproducible evidence for the corrective pass.
 It does not duplicate the Phase 31 closeout (`architecture/track4_dependency_security_closeout.md`).

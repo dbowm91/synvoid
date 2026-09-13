@@ -3,7 +3,7 @@
 Status: complete (Phases 25-31 landed; closeout evidence in
 `architecture/track4_dependency_security_closeout.md`).
 
-Post-closure handoff: `plans/track4_post_closure_corrective.md` is the active narrow corrective pass for plan/security metadata truth, real-time advisory expiry, final bounded fuzz evidence, and the mesh-to-YARA validation trust-path decision. Track 4 architecture remains closed unless that audit discovers a genuinely new boundary defect.
+Post-closure corrective pass: complete (2026-09-13). Plan: `plans/track4_post_closure_corrective.md`. Implementation: `236c71e1`; closure: `b267b1a4b1b881c9daec22195b3150ac06d69219`; evidence: `architecture/track4_post_closure_corrective_report.md`. No active Track 4 handoff remains; reopen only if new evidence demonstrates a boundary defect or an accepted upstream blocker changes.
 
 Scope: follow-on work after the completed Track 3 architecture-convergence line. Track 4 is intentionally narrower: reduce security-sensitive dependency authority, make dependency-policy evidence truthful and continuously enforced, and introduce new crates/process boundaries only where they remove a meaningful capability from a broader process or package.
 
