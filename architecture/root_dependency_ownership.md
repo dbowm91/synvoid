@@ -24,7 +24,7 @@ reference fails the guard until the row is reclassified with a reason.
 
 | Dependency | Root owner module(s) | Classification | Feature gate | Reason | Next action | Allowed root paths |
 |------------|----------------------|----------------|--------------|--------|-------------|--------------------|
-| tokio | server, supervisor, worker, startup, commands | composition_runtime | default | async runtime and task orchestration | keep | admin, bin, commands, honeypot_port, http, http_client, platform, process, sandbox, server, serverless, startup, supervisor, tarpit, tcp, test_utils, tls, udp, waf, worker |
+| tokio | server, supervisor, worker, startup, commands | composition_runtime | default | async runtime and task orchestration | keep | admin, bin, commands, honeypot_port, http, http_client, process, sandbox, server, serverless, startup, supervisor, tarpit, tcp, test_utils, tls, udp, waf, worker |
 | hyper | http, http_client | composition_runtime | default | HTTP/1 and HTTP/2 server and client | keep | http, tls |
 | hyper-util | http, http_client | composition_runtime | default | HTTP connection pooling and utilities | keep | http, tls |
 | hyper-rustls | — | remove_candidate | — | Phase 31: removed from root (0 src uses; egress TLS owned by synvoid-http-client) | removed Phase 31 | — |
@@ -42,7 +42,7 @@ reference fails the guard until the row is reclassified with a reason.
 | toml | config | composition_runtime | default | TOML config file parsing | keep | admin, bin |
 | anyhow | throughout | composition_runtime | default | Error context and chaining | keep | http_client, server |
 | bitflags | — | remove_candidate | — | Phase 31: removed from root (0 src uses) | removed Phase 31 | — |
-| tracing | throughout | composition_runtime | default | Structured logging framework | keep | admin, bin, commands, common, honeypot_port, http, icmp_filter, log_controller, mesh, platform, plugin, process, sandbox, server, serverless, startup, supervisor, tcp, tls, udp, utils, waf, worker |
+| tracing | throughout | composition_runtime | default | Structured logging framework | keep | admin, bin, commands, common, honeypot_port, http, icmp_filter, log_controller, mesh, plugin, process, sandbox, server, serverless, startup, supervisor, tcp, tls, udp, utils, waf, worker |
 | tracing-subscriber | startup | composition_runtime | default | Log output formatting and filtering | keep | bin, log_controller |
 | tracing-appender | — | remove_candidate | — | Phase 31: removed from root (0 src uses) | removed Phase 31 | — |
 | stegoeggo | worker | composition_runtime | default | Steganography detection in worker image-rights admission (src/worker/image_rights.rs), not WAF | keep | worker |
@@ -62,7 +62,7 @@ reference fails the guard until the row is reclassified with a reason.
 | hex | admin, commands, honeypot_port, waf | composition_runtime | default | Hex encoding/decoding | keep | admin, commands, honeypot_port, waf |
 | futures | http_client, proxy | composition_runtime | default | Async stream and future utilities | keep | admin, http, tarpit, waf, worker |
 | sysinfo | admin, startup | composition_runtime | default | System resource monitoring | keep | admin, process, worker |
-| nix | platform, process | composition_runtime | default | Unix system calls (signals, sockets, process) | keep | platform, process, tls, worker |
+| nix | tls, worker | composition_runtime | default | Unix system calls (signals, sockets, process) | keep | tls, worker |
 | chrono | config, logging | composition_runtime | default | Date/time handling with serde support | keep | admin, http, serverless, waf |
 | notify | — | remove_candidate | — | Phase 31: removed from root (0 `notify::` uses; watcher owned by synvoid-tls + synvoid-plugin-runtime) | removed Phase 31 | — |
 | aho-corasick | — | remove_candidate | — | Phase 31: removed from root (0 src uses; canonical WAF use in synvoid-waf) | removed Phase 31 | — |
@@ -78,12 +78,12 @@ reference fails the guard until the row is reclassified with a reason.
 | synvoid-yara | worker, supervisor | composition_runtime | default | Canonical YARA engine for CPU worker + mesh validator injection (Phase 26 single yara-x owner; Phase 29 jail service lives in synvoid-jail-runtime) | keep | supervisor, worker |
 | synvoid-ipc | process | composition_runtime | default | IPC transport abstractions | keep | http, process, sandbox, supervisor, worker |
 | synvoid-http-client | http_client | composition_runtime | default | HTTP client pool and QUIC dispatch | keep | http, http_client, tls |
-| synvoid-platform | platform | composition_runtime | default | Platform detection and OS abstractions | keep | platform |
+| synvoid-platform | platform facade + http, startup, supervisor, tls, worker | composition_runtime | default | Platform detection and OS abstractions (Phase 32: single owner; root internals import the crate directly) | keep | http, platform, startup, supervisor, tls, worker |
 | synvoid-upstream | upstream | composition_runtime | default | Upstream server selection | keep | lib |
 | synvoid-tunnel | tunnel | composition_runtime | default | Tunnel backend routing | keep | tunnel |
 | hickory-proto | — | remove_candidate | — | Phase 31: removed from root + dns feature (0 src uses; DNS wire owned by synvoid-dns) | removed Phase 31 | — |
 | hickory-resolver | — | remove_candidate | — | Phase 31: removed from root + dns feature (0 src uses; resolution owned by synvoid-dns) | removed Phase 31 | — |
-| thiserror | throughout | composition_runtime | default | Derive macro for error types | keep | admin, honeypot_port, icmp_filter, mesh, platform, process, server, serverless |
+| thiserror | throughout | composition_runtime | default | Derive macro for error types | keep | admin, honeypot_port, icmp_filter, mesh, process, server, serverless |
 | getrandom | — | remove_candidate | — | Phase 31: removed from root + dns feature (0 `getrandom::` uses) | removed Phase 31 | — |
 | clap | commands | composition_runtime | default | CLI subcommand parsing | keep | bin, main |
 | tempfile | tests | remove_candidate | — | Phase 31: moved from [dependencies] to [dev-dependencies] (test fixtures + src unit tests) | moved to dev-deps Phase 31 | — |
@@ -105,8 +105,8 @@ reference fails the guard until the row is reclassified with a reason.
 | subtle | admin, bin, process, waf | composition_runtime | default | Constant-time comparisons for security | keep | admin, bin, process, waf |
 | cryptoki | — | remove_candidate | — | Phase 30: removed from root (no `dep:cryptoki` edge). PKCS#11/HSM ownership moved to `synvoid-dnssec-keystore` behind its opt-in `pkcs11`/`hsm` features (root `dns-hsm`); normal builds carry no PKCS#11 provider surface | Phase 30 extraction | — |
 | quinn | http3, tunnel | composition_runtime | default | QUIC protocol implementation | keep | tcp |
-| zip | serverless | composition_runtime | default | ZIP archive handling for WASM bundles | keep | platform |
-| libloading | platform (Windows Wintun only) | composition_runtime | windows-target only | Independent platform use only (src/platform/windows/wintun.rs, `#[cfg(windows)]`). Must NOT be used for plugin loading: plugin loader authority moved to synvoid-native-extension in Phase 28 | keep | platform |
+| zip | — | remove_candidate | — | Phase 32: removed from root (0 src uses; Wintun extraction owned by synvoid-platform, server archives by synvoid-serverless) | removed Phase 32 | — |
+| libloading | — | remove_candidate | — | Phase 32: removed from root (0 src uses; Windows Wintun loading owned by synvoid-platform, `#[cfg(windows)]`). Must NOT be used for plugin loading: plugin loader authority moved to synvoid-native-extension in Phase 28 | removed Phase 32 | — |
 | synvoid-native-extension | plugin | composition_runtime | unsafe-native-extensions (opt-in, off by default) | Explicit unsafe in-process native extension loader (Phase 28): ABI/version checks, path/hash/permission validation, library lifetime, narrow backend trait | keep | plugin |
 | aya | worker | composition_runtime | flood-ebpf | eBPF program loading for SYN flood detection | keep | icmp_filter, waf |
 | synvoid-utils | throughout | composition_runtime | default | Shared utilities (DrainFlag, buffer, IP utils) | keep | admin, http, lib, utils, waf, worker |
@@ -149,20 +149,20 @@ reference fails the guard until the row is reclassified with a reason.
 | smallvec | — | remove_candidate | — | Phase 31: removed from root (0 src uses) | removed Phase 31 | — |
 | aes-gcm | — | remove_candidate | — | Phase 31: removed from root (0 src uses) | removed Phase 31 | — |
 | async-trait | throughout | composition_runtime | default | Async trait support | keep | honeypot_port, http, mesh, waf, worker |
-| daemonize2 | startup | composition_runtime | default | Process daemonization | keep | platform, startup |
+| daemonize2 | startup | composition_runtime | default | Process daemonization | keep | startup |
 | digest | — | remove_candidate | — | Phase 31: removed from root (0 `digest::` uses) | removed Phase 31 | — |
 | ed25519-dalek | supervisor, waf | composition_runtime | default | Ed25519 signatures | keep | supervisor, waf |
 | rsa | — | remove_candidate | — | Phase 31: removed from root (0 `rsa::` uses; verification owned by synvoid-dns/keystore) | removed Phase 31 | — |
 | rand_core_06 | — | remove_candidate | — | Phase 31: removed from root with pqc (shim owned by pqc crate) | removed Phase 31 | — |
 | hkdf | supervisor, worker | composition_runtime | default | HKDF key derivation | keep | supervisor, worker |
 | hmac | process, waf | composition_runtime | default | HMAC message authentication | keep | process, waf |
-| socket2 | platform | composition_runtime | default | Low-level socket options | keep | process, tcp, udp |
+| socket2 | tcp, udp | composition_runtime | default | Low-level socket options | keep | tcp, udp |
 | sha1 | — | remove_candidate | — | Phase 31: removed from root (0 `sha1::` uses; DS/NSEC3 interop owned by synvoid-dns/keystore) | removed Phase 31 | — |
 | sha3 | — | remove_candidate | — | Phase 31: removed from root (0 `sha3::` uses) | removed Phase 31 | — |
 | x25519-dalek | — | remove_candidate | — | Phase 31: removed from root (0 src uses) | removed Phase 31 | — |
 | base32 | — | remove_candidate | — | Phase 31: removed from root (0 src uses) | removed Phase 31 | — |
-| libc | platform, process | composition_runtime | default | Raw libc bindings for Unix syscalls | keep | icmp_filter, platform, process, tcp |
-| windows-sys | platform | composition_runtime | default | Windows API bindings | keep | icmp_filter, platform, process |
+| libc | tcp | composition_runtime | default | Raw libc bindings for Unix syscalls | keep | tcp |
+| windows-sys | — | remove_candidate | — | Phase 32: removed from root (0 src uses; Windows API bindings owned by synvoid-platform and other domain crates, `#[cfg(windows)]`) | removed Phase 32 | — |
 | tonic | admin | composition_runtime | default | gRPC framework for supervisor control | keep | supervisor |
 | tonic-reflection | — | remove_candidate | — | Phase 31: removed from root (0 src uses) | removed Phase 31 | — |
 | tonic-prost | supervisor (codegen) | composition_runtime | default | Required for tonic gRPC Codec (ProstCodec) backing supervisor control API; no direct `tonic_prost::` in src/ (generated code only); exempted in ENTITLEMENT_EXCEPTIONS | keep (codegen runtime) | supervisor |

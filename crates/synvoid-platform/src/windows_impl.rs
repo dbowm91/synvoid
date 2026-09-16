@@ -12,6 +12,7 @@ use synvoid_utils::RunningFlag;
 
 const PIPE_BUFFER_SIZE: u32 = 65536;
 
+#[derive(Debug)]
 pub struct WindowsSocketHandle {
     socket: RawSocket,
     owned: bool,
@@ -420,8 +421,10 @@ impl WindowsProcessControl {
         let ctrl_result = self.send_ctrl_c_to_process(pid);
 
         if ctrl_result.is_ok() {
-            // Wait for graceful shutdown with timeout
-            let timeout_ms = (self.graceful_shutdown_timeout_secs * 1000) as u32;
+            // Wait for graceful shutdown with timeout (clamp to u32::MAX)
+            let timeout_ms =
+                u32::try_from(self.graceful_shutdown_timeout_secs.saturating_mul(1000))
+                    .unwrap_or(u32::MAX);
             let wait_result = unsafe { WaitForSingleObject(handle, timeout_ms) };
 
             if wait_result == WAIT_TIMEOUT {
@@ -618,15 +621,12 @@ pub unsafe fn raw_socket_to_tcp_stream(socket: RawSocket) -> OwnedTcpStream {
 pub mod security {
     use std::io;
 
-    use windows_sys::Win32::Foundation::FILE_FLAG_OVERLAPPED;
     use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, PSID};
     use windows_sys::Win32::Security::{
-        AllocateAndInitializeSid, CopySid, EqualSid, FreeSid, GetLengthSid, GetNamedSecurityInfoW,
-        GetSecurityDescriptorDacl, InitializeSecurityDescriptor, LookupAccountNameW,
-        SetSecurityDescriptorDacl, ACL_SIZE_INFORMATION, DACL_SIZE_INFORMATION,
-        PSECURITY_DESCRIPTOR, SECURITY_DESCRIPTOR, SECURITY_DESCRIPTOR_REVISION, SID_NAME_USE,
+        CopySid, FreeSid, GetLengthSid, InitializeSecurityDescriptor, LookupAccountNameW,
+        SetSecurityDescriptorDacl, PSECURITY_DESCRIPTOR, SECURITY_DESCRIPTOR,
+        SECURITY_DESCRIPTOR_REVISION, SID_NAME_USE,
     };
-    use windows_sys::Win32::System::Memory::{LocalFree, RtlMoveMemory};
     use windows_sys::Win32::System::Pipes::{
         CreateNamedPipeW, PIPE_ACCESS_DUPLEX, PIPE_READMODE_MESSAGE, PIPE_TYPE_MESSAGE, PIPE_WAIT,
     };

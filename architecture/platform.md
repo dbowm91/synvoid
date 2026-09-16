@@ -2,7 +2,14 @@
 
 ## 1. Purpose and Responsibility
 
-The Platform module (`src/platform/`) provides a unified abstraction layer over operating system functionality, enabling SynVoid to operate consistently across different operating systems while leveraging platform-specific features where beneficial.
+The Platform subsystem provides a unified abstraction layer over operating system functionality, enabling SynVoid to operate consistently across different operating systems while leveraging platform-specific features where beneficial.
+
+**Canonical location:** `crates/synvoid-platform/src/` (the `synvoid-platform` crate).
+`src/platform/mod.rs` is a compatibility facade of module aliases plus historical
+top-level re-exports; it contains no implementations (enforced by
+`tests/platform_canonicalization_guard.rs`). New code must import
+`synvoid_platform` directly — never `crate::platform` outside the facade, and
+never the root path from domain crates.
 
 **Core Responsibilities:**
 - OS detection and capability enumeration (`Platform` enum)
@@ -11,11 +18,44 @@ The Platform module (`src/platform/`) provides a unified abstraction layer over 
 - Service lifecycle management (systemd, BSD rc.d, Windows Services)
 - WireGuard and TUN device support
 
+### 1.1 Ownership and disposition (Phase 32)
+
+Phase 32 made `synvoid-platform` the single compiled owner of reusable
+OS/platform primitives and deleted the parallel implementation copies that
+used to live under `src/platform/`. Every pair below was classified before
+cutover; the crate copy won in all duplicate cases (porting the newest fixes
+from either side), and no SynVoid application policy moved into the crate.
+
+| Area | Crate (`synvoid-platform`) | Root (`src/platform/`) | Disposition |
+|------|---------------------------|------------------------|-------------|
+| `ipc.rs` (traits, stubs, `get_default_ipc_path`) | canonical | deleted | byte/semantic duplicate → crate canonical, root is a module alias |
+| `process.rs` (`Signal`, traits, stubs, `terminate_process`, `is_process_running`) | canonical | deleted | duplicate → crate canonical (nix stays a unix-only crate dep) |
+| `socket.rs` (owned types, traits, `SocketInfo`, `create_listening_socket*`) | canonical | deleted | duplicate → crate canonical; local `bind_tcp_reuse`/`bind_udp_reuse` copies collapsed onto `socket_bind` |
+| `socket_bind.rs` (`bind_tcp_reuse`, `bind_udp_reuse`) | canonical (unchanged owner) | n/a (root re-exports via `socket`) | dedup target; broader reuse-port cfg list wins (see §12) |
+| `service/` (`ServiceControl`, systemd/rc.d/`sc` managers) | canonical (with root's newer rc.conf warning logs) | deleted | duplicate → crate canonical; SynVoid default identity stays as data, no new policy |
+| `unix.rs` (SCM_RIGHTS, Unix IPC, signals via nix, daemonize) | canonical (compiled via `mod unix`) | deleted | duplicate → crate canonical; `std::mem::take` handler drain kept |
+| `windows_impl.rs` (named pipes, Job Objects, Ctrl handler) | canonical (compiled via `mod windows_impl`) | deleted | duplicate → crate canonical; saturating timeout clamp kept |
+| `windows.rs` + `windows/` (firewall, interface resolver, Wintun) | canonical, now wired (`pub mod windows` + submodule declarations) | deleted | stale/dormant → activated; previously uncompiled on all targets and unresolvable on Windows |
+| `sandbox.rs` + backends | canonical (unchanged since Phase 29) | already a facade; file deleted, alias kept | no change |
+| `fs.rs` (`SecureDir`, `PlatformPaths`, permission helpers) | canonical (unchanged owner) | already re-exported; unchanged | extended with `for_app` (Part D), no path changes for `new()` |
+| Supervisor/worker policy, app metrics, runtime wiring | n/a (never moves here) | stays in `supervisor/`, `worker/`, `startup/` | genuine application composition, root-owned by policy |
+
+Dependency rules enforced at the boundary (see crate `Cargo.toml`):
+
+- OS syscall wrappers own target-scoped deps: `nix` + `daemonize2` (unix),
+  `windows-sys` + `libloading` + `zip` (Windows Wintun only), `tokio` `rt`+`signal`
+  (unix/Windows signal listeners), `synvoid-utils` (shared `RunningFlag`; acyclic).
+- Metrics emission stays at the caller — no `synvoid-metrics` edge.
+- No `synvoid-config`, root `synvoid`, or broad metrics edges.
+- `synvoid-ipc` stays above `synvoid-platform`; the crate must not depend on it,
+  not even as a dev-dependency (the old `socket_handoff_test.rs` use was rewritten).
+
 ## 2. Key Submodules and Responsibilities
 
-### 2.1 `mod.rs` (Main Module)
+### 2.1 Crate layout (`crates/synvoid-platform/src/lib.rs`)
 
-**Public Exports:**
+**Public modules:**
+
 ```rust
 pub mod fs;           // Filesystem paths with security
 pub mod ipc;          // Inter-process communication
@@ -23,7 +63,20 @@ pub mod process;      // Process control and signals
 pub mod sandbox;      // Process sandboxing
 pub mod service;      // Service management
 pub mod socket;       // Socket abstractions with FD passing
+pub mod socket_bind;  // SO_REUSEADDR/REUSEPORT bind helpers
+
+#[cfg(unix)]
+mod unix;             // Unix backends (private; reachable via Platform* aliases)
+#[cfg(windows)]
+mod windows_impl;     // Windows backends (private; reachable via Platform* aliases)
+#[cfg(windows)]
+pub mod windows;      // Operator helpers: firewall, interface_resolver, wintun
 ```
+
+Public traits/types are reachable through stable module paths (e.g.
+`synvoid_platform::ipc::PlatformIpcListener`) or top-level re-exports. Raw OS
+implementation modules stay private; the crate does not expose raw
+implementation details merely because the sources became canonical.
 
 **Platform Detection:**
 ```rust
@@ -72,11 +125,20 @@ pub enum Platform {
 | BSD | `/var/db/synvoid` | `/usr/local/etc/synvoid` | `/var/log/synvoid` | `/var/cache/synvoid` | `/var/run/synvoid` |
 | Windows | `%PROGRAMDATA%\synvoid` | `%PROGRAMDATA%\synvoid\config` | `%PROGRAMDATA%\synvoid\logs` | `%LOCALAPPDATA%\synvoid\cache` | `%LOCALAPPDATA%\synvoid\runtime` |
 
+**Types:**
+- `SecureDir` - Directory with secure permissions (0o700 on Unix)
+- `PlatformPaths` - Platform-aware directory paths; `new()` is the historical
+  SynVoid layout, `for_app(id)` is the application-neutral constructor
+
 **Key Methods:**
-- `PlatformPaths::new()` - Create with platform defaults
-- `PlatformPaths::with_base(path)` - Create with custom base directory
+- `PlatformPaths::new()` - Historical SynVoid paths; equivalent to `for_app("synvoid")`; deployment paths must not change
+- `PlatformPaths::for_app(app)` - Validated application-neutral layout (`InvalidAppId` on separators/traversal)
+- `PlatformPaths::with_base(path)` - SynVoid-compatible test helper with custom base directory (deterministic)
+- `validate_app_id(app)` - Standalone identifier check (`[A-Za-z0-9._-]`, non-empty, ≤64 bytes, not `.`/`..`)
 - `ensure_all()` - Create all required directories
-- `pid_file()`, `socket_path()`, `ipc_path()`, `master_socket_path()`, `unified_worker_socket_path()`, `panic_log_path()`
+- Generic primitives: `ipc_path(name)`, `*_dir()`, `*_shm_path()`, `panic_log_path(name)`
+- SynVoid-specific helpers (interpolate the owning app id, byte-identical for `new()`): `pid_file()`, `socket_path()`, `supervisor_socket_path()`, `cpu_worker_socket_path()`, `unified_worker_socket_path(id)`
+- `PlatformError::InvalidAppId(String)` - Rejection reason for bad application identifiers
 
 **Utility Functions:**
 - `set_file_permissions(path, read_only)` - Set 0o400/0o600 on Unix
@@ -309,8 +371,13 @@ pub trait ServiceControl: Send + Sync {
 |----------|---------------|-------|
 | Linux (systemd) | `UnixServiceManager` | systemd unit files, systemctl |
 | BSD (FreeBSD/OpenBSD) | `UnixServiceManager` | rc.d scripts, service/rcctl commands |
-| Windows | `WindowsService` | Windows Service API |
-| macOS | `UnixServiceManager` | launchd (plist files) |
+| Windows | `WindowsServiceManager` | `sc create/start/stop/delete/query` |
+| macOS / other | `UnixServiceManager` | install/start return `NotSupported`; status reports `Stopped` |
+
+`ServiceConfig::new(name)` takes the service identity explicitly; the
+`Default` impl and install templates carry the historical SynVoid identity for
+operator compatibility. New applications should construct the config
+explicitly rather than relying on the defaults.
 
 **BSD rc.d Script Features:**
 - Uses `/usr/sbin/daemon` for backgrounding
@@ -338,6 +405,7 @@ pub enum Platform {
 ```rust
 pub enum PlatformError {
     NotSupported(String),  // Feature not available
+    InvalidAppId(String),  // Application id rejected by validate_app_id (Phase 32)
     Io(std::io::Error),    // I/O errors
     Socket(String),        // Socket errors
     Ipc(String),           // IPC errors
@@ -377,20 +445,21 @@ terminate_process(child: &mut Child, graceful: bool, timeout_secs: u64) -> io::R
 is_process_running(pid: u32) -> bool
 
 // Using trait objects
-let process_control: Box<dyn ProcessControl> = Box::new(PlatformProcessControl::new());
+use synvoid_platform::process::{PlatformProcessControl, PlatformSignalHandler, ProcessControl, Signal, SignalHandler};
+let process_control = PlatformProcessControl;
 process_control.send_signal(pid, Signal::Terminate)?;
-process_control.is_process_running(pid)?;
+let running = process_control.is_process_running(pid);
 process_control.daemonize(Some(pid_file_path))?;
 
 // Signal handling
-let mut handler: Box<dyn SignalHandler> = Box::new(PlatformSignalHandler::new());
+let mut handler = PlatformSignalHandler::new();
 handler.register(Signal::Terminate, Box::new(|| { /* cleanup */ }))?;
 handler.start_listening();
 ```
 
 ### 4.3 Socket Creation with Platform Abstraction
 ```rust
-use crate::platform::socket::{create_listening_socket, OwnedTcpListener};
+use synvoid_platform::socket::{create_listening_socket, raw_fd_to_tcp_listener, OwnedTcpListener};
 
 fn create_server(port: u16, reuse_port: bool) -> Result<OwnedTcpListener, PlatformError> {
     let info = create_listening_socket(port, reuse_port)?;
@@ -402,12 +471,12 @@ fn create_server(port: u16, reuse_port: bool) -> Result<OwnedTcpListener, Platfo
 
 ### 4.4 IPC Setup
 ```rust
-use crate::platform::ipc::{PlatformIpcListener, PlatformIpcStream};
-use crate::platform::get_default_ipc_path;
+use synvoid_platform::fs::PlatformPaths;
+use synvoid_platform::ipc::{PlatformIpcListener, PlatformIpcStream};
 
-let path = get_default_ipc_path("synvoid-master");
-let listener = PlatformIpcListener::bind(&path)?;
-let stream = PlatformIpcStream::connect(&path)?;
+let paths = PlatformPaths::new();
+let listener = PlatformIpcListener::bind(&paths.supervisor_socket_path())?;
+let stream = PlatformIpcStream::connect(&paths.supervisor_socket_path())?;
 ```
 
 ### 4.5 Sandbox Application
@@ -427,24 +496,22 @@ let sandbox = ProcessSandbox::with_paths(
 
 ### 5.1 Conditional Compilation Strategy
 
-The module uses `#[cfg(...)]` extensively to include platform-specific code:
+The crate uses `#[cfg(...)]` to include platform-specific backends, and the
+root facade re-exports them as module aliases:
 
 ```rust
-// In mod.rs
+// In crates/synvoid-platform/src/lib.rs
 #[cfg(unix)]
-mod unix;
-#[cfg(unix)]
-pub use unix::*;
+mod unix;            // private backend module
+#[cfg(windows)]
+mod windows_impl;    // private backend module
+#[cfg(windows)]
+pub mod windows;     // operator helpers (firewall, interface_resolver, wintun)
 
-#[cfg(windows)]
-mod windows_impl;
-#[cfg(windows)]
-pub use windows_impl::*;
-
-#[cfg(windows)]
-pub mod windows;
-#[cfg(windows)]
-pub use windows::wintun;
+// In src/platform/mod.rs (facade: aliases only, no implementations)
+pub use synvoid_platform::ipc;
+pub use synvoid_platform::socket;
+// … plus historical top-level names (SocketHandoffError, Platform, …)
 ```
 
 ### 5.2 Cross-Platform Trait Pattern
@@ -452,12 +519,12 @@ pub use windows::wintun;
 Traits define the interface, with platform-specific implementations:
 
 ```rust
-// In process.rs
+// In crates/synvoid-platform/src/process.rs
 #[cfg(unix)]
-pub use super::unix::UnixProcessControl as PlatformProcessControl;
+pub use crate::unix::UnixProcessControl as PlatformProcessControl;
 
 #[cfg(windows)]
-pub use super::windows_impl::WindowsProcessControl as PlatformProcessControl;
+pub use crate::windows_impl::WindowsProcessControl as PlatformProcessControl;
 
 #[cfg(not(any(unix, windows)))]
 pub use stub::StubProcessControl as PlatformProcessControl;
@@ -633,28 +700,36 @@ Platforms without native sandbox support automatically use `StubSandbox`:
 ## 9. Directory Structure
 
 > **Canonical location:** `crates/synvoid-platform/src/` (the `synvoid-platform` crate).
-> `src/platform/` is a compatibility facade that re-exports the crate alongside root-owned
-> composition code (see `facade_disposition_matrix.md`). The tree below mirrors the crate layout.
+> `src/platform/` holds only `mod.rs` (module aliases + top-level re-exports) and
+> `AGENTS.override.md` — no implementations (see `facade_disposition_matrix.md` §5
+> and the `platform_canonicalization_guard`).
 
 ```
-crates/synvoid-platform/src/
-├── mod.rs              # Main module, Platform enum, re-exports
-├── fs.rs               # SecureDir, PlatformPaths, permissions
-├── ipc.rs              # IpcTransport, IpcListener, IpcStream traits
-├── process.rs          # Signal, ProcessControl, SignalHandler traits
-├── socket.rs           # SocketHandle, SocketFDPassing, owned types
-├── sandbox.rs          # SandboxBackend trait, ProcessSandbox, backends
-├── unix.rs             # Unix-specific implementations
-├── windows_impl.rs     # Windows-specific implementations
-├── windows.rs          # Stub module
-├── windows/
-│   ├── firewall.rs     # Windows Firewall API (if present)
-│   ├── interface_resolver.rs
-│   └── wintun.rs       # Wintun VPN driver integration
-└── service/
-    ├── mod.rs          # ServiceControl trait, re-exports
-    ├── stub_service.rs # Unix/Linux service management (systemd, rc.d)
-    └── windows_service.rs # Windows Service implementation
+crates/synvoid-platform/
+├── Cargo.toml            # target-gated nix/daemonize2/tokio/windows-sys/libloading/zip + synvoid-utils
+├── src/
+│   ├── lib.rs            # Platform enum, PlatformError, module wiring
+│   ├── fs.rs             # SecureDir, PlatformPaths (new/for_app/with_base), permissions
+│   ├── ipc.rs            # IpcTransport, IpcListener, IpcStream traits + Platform* aliases
+│   ├── process.rs        # Signal, ProcessControl, SignalHandler traits + aliases + helpers
+│   ├── socket.rs         # SocketHandle, SocketFDPassing, owned types, handoff helpers
+│   ├── socket_bind.rs    # Canonical bind_tcp_reuse / bind_udp_reuse
+│   ├── sandbox.rs        # SandboxBackend trait, ProcessSandbox, OS backends
+│   ├── unix.rs           # Unix backends (private module)
+│   ├── windows_impl.rs   # Windows backends (private module)
+│   ├── windows.rs        # Operator helpers root (cfg windows)
+│   ├── windows/
+│   │   ├── firewall.rs       # Windows Firewall API via netsh
+│   │   ├── interface_resolver.rs
+│   │   └── wintun.rs         # Wintun VPN driver integration (+ non-Windows stub)
+│   └── service/
+│       ├── mod.rs            # cfg-gated re-exports
+│       ├── stub_service.rs   # Unix/Linux service management (systemd, rc.d)
+│       └── windows_service.rs # Windows Service implementation (sc.exe)
+└── tests/
+    ├── socket_handoff_test.rs # IPC bind/connect round-trip, SCM_RIGHTS paths, reuse binds
+    ├── platform_paths_test.rs # new()/for_app() parity, id validation, traversal rejection
+    └── platform_core_test.rs  # detection, process, sockets, permissions, sandbox fail-closed
 ```
 
 ## 10. Integration Points
@@ -693,3 +768,28 @@ crates/synvoid-platform/src/
 ### 11.4 Sandbox Enforcement Failures
 - `SandboxLevel::Strict` requires backend with `can_enforce_strict() == true`
 - Returns `SandboxError::InsufficientCapabilities` if backend lacks read path allowlist
+
+## 12. Phase 32 Canonicalization Notes (2026-09-16)
+
+- Single owner: generic platform traits/types/backends compile exactly once,
+  under `crates/synvoid-platform`. `src/platform/` is a pure alias facade;
+  `tests/platform_canonicalization_guard.rs` fails any redefinition or any
+  non-`pub use` item under `src/platform/`.
+- Dormant modules activated: `ipc`, `process`, `socket`, `service`, `unix`,
+  `windows_impl` are now wired from `lib.rs`; `windows/` submodules are
+  declared (they previously compiled nowhere, and the old root `windows.rs`
+  stub meant `windows::wintun` could not have resolved on Windows).
+- `socket.rs` no longer defines its own `bind_tcp_reuse`/`bind_udp_reuse`; both
+  re-export `socket_bind`. Behavioral note: the surviving implementation sets
+  `SO_REUSEPORT` wherever the toolchain reports support (including NetBSD /
+  OpenBSD), while the deleted copy only did so on Linux/musl/macOS/FreeBSD.
+- Paths: `PlatformPaths::new()` output is byte-identical to before (guarded by
+  `platform_paths_test::test_new_matches_for_app_synvoid` and the historical
+  -name test). `for_app` generalizes the layout; `InvalidAppId` rejects
+  separators/traversal; `with_base` stays deterministic for tests.
+- No cycles: the crate depends on `synvoid-utils` (leaf, acyclic) plus
+  target-gated OS deps only. The former `synvoid-ipc` dev-dependency was
+  removed when the handoff test was rewritten against the crate surface.
+- Rejected alternatives: deleting the crate copies and keeping root canonical;
+  moving supervisor/application policy into the crate; adding `synvoid-config`
+  / metrics edges; per-file feature gates (dependency cost is negligible).

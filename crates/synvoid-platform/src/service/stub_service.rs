@@ -199,7 +199,14 @@ run_rc_command "$1"
             })?;
         }
 
-        let existing = std::fs::read_to_string(rc_conf_path).unwrap_or_default();
+        let existing = std::fs::read_to_string(rc_conf_path).unwrap_or_else(|e| {
+            tracing::warn!(
+                "Failed to read {}: {}; proceeding with empty content",
+                rc_conf_path,
+                e
+            );
+            String::new()
+        });
         let mut lines: Vec<&str> = existing.lines().collect();
 
         lines.retain(|line| !line.starts_with(&format!("{}_enable", name)));
@@ -241,7 +248,14 @@ run_rc_command "$1"
         };
 
         if std::path::Path::new(rc_conf_path).exists() {
-            let existing = std::fs::read_to_string(rc_conf_path).unwrap_or_default();
+            let existing = std::fs::read_to_string(rc_conf_path).unwrap_or_else(|e| {
+                tracing::warn!(
+                    "Failed to read {}: {}; proceeding with empty content",
+                    rc_conf_path,
+                    e
+                );
+                String::new()
+            });
             let lines: Vec<&str> = existing
                 .lines()
                 .filter(|line| !line.starts_with(&format!("{}_enable", name)))

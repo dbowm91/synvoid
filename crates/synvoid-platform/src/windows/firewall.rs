@@ -16,12 +16,16 @@
 use std::process::Command;
 
 fn is_safe_rule_name(name: &str) -> bool {
-    name.chars().all(|c| c.is_ascii_alphanumeric() || c == ' ' || c == '/' || c == '-')
+    name.chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == ' ' || c == '/' || c == '-')
 }
 
 pub fn inject_quic_firewall_rule(port: u16) -> Result<(), String> {
     let rule_name = format!("SynVoid HTTP/3 QUIC Port {}", port);
-    debug_assert!(is_safe_rule_name(&rule_name), "rule name failed safety check");
+    debug_assert!(
+        is_safe_rule_name(&rule_name),
+        "rule name failed safety check"
+    );
 
     if let Ok(exists) = check_rule_exists(&rule_name) {
         if exists {
@@ -61,7 +65,13 @@ pub fn remove_quic_firewall_rule(port: u16) -> Result<(), String> {
     let rule_name = format!("SynVoid HTTP/3 QUIC Port {}", port);
 
     let output = Command::new("netsh")
-        .args(["advfirewall", "firewall", "delete", "rule", &format!("name={}", rule_name)])
+        .args([
+            "advfirewall",
+            "firewall",
+            "delete",
+            "rule",
+            &format!("name={}", rule_name),
+        ])
         .output()
         .map_err(|e| format!("Failed to execute netsh: {}", e))?;
 
@@ -78,7 +88,13 @@ pub fn remove_quic_firewall_rule(port: u16) -> Result<(), String> {
 
 fn check_rule_exists(rule_name: &str) -> Result<bool, String> {
     let output = Command::new("netsh")
-        .args(["advfirewall", "firewall", "show", "rule", &format!("name={}", rule_name)])
+        .args([
+            "advfirewall",
+            "firewall",
+            "show",
+            "rule",
+            &format!("name={}", rule_name),
+        ])
         .output()
         .map_err(|e| format!("Failed to execute netsh: {}", e))?;
 
@@ -118,7 +134,11 @@ pub fn inject_http_firewall_rule(port: u16) -> Result<(), String> {
         ));
     }
 
-    tracing::info!("Added HTTP firewall rule '{}' for TCP port {}", rule_name, port);
+    tracing::info!(
+        "Added HTTP firewall rule '{}' for TCP port {}",
+        rule_name,
+        port
+    );
     Ok(())
 }
 

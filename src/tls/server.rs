@@ -248,7 +248,7 @@ impl HttpsServer {
         let server_config = self.cert_resolver.build_server_config()?;
         let acceptor = TlsAcceptor::from(server_config);
 
-        let std_listener = crate::platform::socket::bind_tcp_reuse(self.addr)?;
+        let std_listener = synvoid_platform::socket_bind::bind_tcp_reuse(self.addr)?;
         let listener = TcpListener::from_std(std_listener)?;
         tracing::info!(
             "HTTPS server listening on {} (TLS 1.3 {} PQC) (HTTP/1.1 + HTTP/2) [SO_REUSEPORT]",

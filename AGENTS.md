@@ -80,6 +80,7 @@ Many root `src/` paths are pure re-export facades. Rule: if a `crates/synvoid-*`
 | `crates/synvoid-mesh-protocol::signer::{ProtocolSigner, verify_ed25519}` (verification-only) | `synvoid_mesh::protocol::MeshMessageSigner` |
 | `crates/synvoid-config/src/` (`main_config.rs`, `mesh.rs`, `site/`, `admin.rs`) | `src/config/` (holds only `AGENTS.override.md`) |
 | `crates/synvoid-platform/src/sandbox.rs` (Landlock/Capsicum/Pledge/Job-Object/Seatbelt) | `src/platform/sandbox.rs` |
+| `crates/synvoid-platform/src/{lib,fs,ipc,process,socket,socket_bind,service,unix,windows_impl,windows}.rs` (all OS primitives + backends; Phase 32 single owner) | `src/platform/` (pure alias facade; guard `platform_canonicalization_guard`) |
 | `crates/synvoid-http/src/shared_handler.rs`, `crates/synvoid-proxy/src/`, `crates/synvoid-http3/src/`, `crates/synvoid-dns/src/`, `crates/synvoid-admin/src/`, `crates/synvoid-waf/src/attack_detection/` | corresponding `src/{http,proxy,http3,dns,admin,waf}` paths |
 | `synvoid_ipc::{resolve_jail_binary, resolved_jail_spawn_spec}` (exe-dir only, no CWD/PATH search) | `synvoid_ipc::JailSpawnSpec::current_exe` (compat) |
 | `synvoid_core::admin_mutation` (`AdminMutationResult`) | `src/admin/authority.rs` |

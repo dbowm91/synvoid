@@ -290,6 +290,7 @@ impl SocketFDPassing for StubSocketFDPassing {
 }
 
 #[cfg(not(any(unix, windows)))]
+#[derive(Debug)]
 pub struct StubSocketHandle;
 
 #[cfg(not(any(unix, windows)))]
@@ -352,49 +353,18 @@ pub fn create_listening_socket_v6(
     }
 }
 
+// Raw-handle conversion helpers for supervisor socket handoff (Phase 32):
+// the `SocketInfo.handle` returned above is only useful together with these.
+#[cfg(unix)]
+pub use crate::unix::{close_socket_fd, raw_fd_to_tcp_listener, raw_fd_to_tcp_stream};
+#[cfg(windows)]
+pub use crate::windows_impl::{close_socket, raw_socket_to_tcp_listener, raw_socket_to_tcp_stream};
+
 pub fn is_reuse_port_available() -> bool {
     crate::is_reuse_port_supported()
 }
 
-pub fn bind_tcp_reuse(addr: std::net::SocketAddr) -> io::Result<std::net::TcpListener> {
-    use socket2::{Domain, Protocol, Socket, Type};
-
-    let domain = if addr.is_ipv6() {
-        Domain::IPV6
-    } else {
-        Domain::IPV4
-    };
-
-    let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))?;
-
-    socket.set_reuse_address(true)?;
-    if is_reuse_port_available() {
-        socket.set_reuse_port(true)?;
-    }
-
-    socket.bind(&addr.into())?;
-    socket.listen(1024)?;
-
-    Ok(socket.into())
-}
-
-pub fn bind_udp_reuse(addr: std::net::SocketAddr) -> io::Result<std::net::UdpSocket> {
-    use socket2::{Domain, Protocol, Socket, Type};
-
-    let domain = if addr.is_ipv6() {
-        Domain::IPV6
-    } else {
-        Domain::IPV4
-    };
-
-    let socket = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP))?;
-
-    socket.set_reuse_address(true)?;
-    if is_reuse_port_available() {
-        socket.set_reuse_port(true)?;
-    }
-
-    socket.bind(&addr.into())?;
-
-    Ok(socket.into())
-}
+// Canonical reuse-bind implementations live in `socket_bind` (Phase 32 dedup:
+// this module previously defined byte-identical copies). Re-exported here so
+// `socket::bind_tcp_reuse` paths keep working.
+pub use crate::socket_bind::{bind_tcp_reuse, bind_udp_reuse};

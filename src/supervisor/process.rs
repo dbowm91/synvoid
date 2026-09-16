@@ -4,7 +4,6 @@ use std::time::Duration;
 
 use tokio::sync::{mpsc, RwLock};
 
-use crate::platform::fs::PlatformPaths;
 use crate::supervisor::drain_manager::{DrainManager, DrainProtocol};
 use crate::supervisor::shutdown::{SupervisorDrainReport, SupervisorShutdownCause};
 use crate::supervisor::task_registry::{
@@ -18,6 +17,7 @@ use synvoid_ipc::{
     IpcEndpoint, IpcListener, Message, PidFileManager, ProcessEvent, ProcessManager,
     ProcessManagerConfig, WorkerId,
 };
+use synvoid_platform::fs::PlatformPaths;
 
 use super::state::{SupervisorState, SupervisorStateTrackers};
 

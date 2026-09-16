@@ -1,6 +1,6 @@
 # Phase 32 Plan: Platform Canonicalization and Duplicate-Source Removal
 
-Status: planned (2026-09-16).
+Status: complete (2026-09-16).
 
 Roadmap: `plans/crate_boundary_reuse_followup_roadmap.md`.
 
@@ -198,3 +198,33 @@ cargo check --no-default-features --features mesh,dns
 ```
 
 Also run the repository architecture/facade guards and target compilation used by CI for Windows/macOS/BSD support where available.
+
+## Completion record (2026-09-16)
+
+All acceptance criteria met; all rejection criteria avoided:
+
+- Single owner: `ipc`, `process`, `socket`, `service`, `unix`, `windows_impl`,
+  and `windows/` (+ submodules) compile exactly once under
+  `crates/synvoid-platform` (wired from `lib.rs`; previously dormant). Root
+  `src/platform/` holds only `mod.rs` (module aliases + top-level re-exports).
+- Newest fixes from either copy ported into the crate (rc.conf warn logging,
+  saturating Windows timeout clamp, `mem::take` handler drain).
+- `socket.rs` `bind_tcp_reuse`/`bind_udp_reuse` copies collapsed onto
+  `socket_bind` (broader reuse-port cfg wins; noted in `architecture/platform.md` §12).
+- Deps: target-gated `nix`/`daemonize2` (unix), `tokio` rt+signal
+  (unix/Windows), `windows-sys`/`libloading`/`zip` (Windows), plus acyclic
+  `synvoid-utils`. No metrics/config/root/ipc edges; `synvoid-ipc` dev-dep
+  removed (handoff test rewritten against the crate surface).
+- Paths: `PlatformPaths::for_app(id)` + `validate_app_id` +
+  `PlatformError::InvalidAppId`; `new()` output byte-identical (tested).
+- Consumers migrated: root `tls`/`http`/`worker`/`startup`/`supervisor` import
+  `synvoid_platform` directly. Orphaned root manifest edges (`zip`,
+  `libloading`, `windows-sys`) removed; `root_dependency_ownership.md`
+  re-entitled (guard-verified).
+- Tests: 32 crate tests (`socket_handoff_test`, `platform_paths_test`,
+  `platform_core_test`); new `tests/platform_canonicalization_guard.rs`
+  (+ `OWNERSHIP.toml` entry).
+- Docs: `architecture/platform.md` (§1.1 disposition matrix, §12 notes),
+  `root_module_ledger.md`, `root_dependency_ownership.md`,
+  `crate_granularity_audit.md`, `AGENTS.md`, `src/platform/AGENTS.override.md`,
+  `windows_service` skill, plan status.

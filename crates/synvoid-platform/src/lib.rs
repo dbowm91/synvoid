@@ -1,12 +1,38 @@
 //! Platform detection, filesystem utilities, and sandbox primitives.
 //!
-//! This crate provides platform-specific abstractions without depending on the
-//! root `synvoid` crate, enabling use by higher-level crates that need platform
-//! detection or sandbox enforcement.
+//! Canonical owner (Phase 32) of reusable OS/platform primitives: platform
+//! detection, filesystem paths, IPC transports, process control, sockets,
+//! service management, and sandbox backends. The root `src/platform/` module
+//! is a compatibility facade over this crate; new code must import
+//! `synvoid_platform` directly.
+//!
+//! Dependency policy (Phase 32, Part C):
+//! - OS syscall wrappers own target-scoped deps (`nix`, `daemonize2` on unix;
+//!   `windows-sys`, `libloading`, `zip` for Wintun on Windows).
+//! - Metrics emission stays at the caller; this crate never depends on
+//!   `synvoid-metrics`.
+//! - SynVoid configuration types never become dependencies of this crate.
+//! - `synvoid-ipc` remains above `synvoid-platform`; this crate must never
+//!   depend on it (not even as a dev-dependency).
 
 pub mod fs;
+pub mod ipc;
+pub mod process;
 pub mod sandbox;
+pub mod service;
+pub mod socket;
 pub mod socket_bind;
+
+#[cfg(unix)]
+mod unix;
+#[cfg(windows)]
+mod windows_impl;
+
+/// Windows operator helpers (firewall, interface resolution, Wintun loader).
+/// Gated on Windows to match the historical root `src/platform/windows/`
+/// surface; the `wintun` submodule also carries a non-Windows stub.
+#[cfg(windows)]
+pub mod windows;
 
 pub use fs::{PlatformPaths, SecureDir};
 pub use sandbox::{
@@ -196,6 +222,9 @@ impl Platform {
 pub enum PlatformError {
     #[error("Feature not supported on this platform: {0}")]
     NotSupported(String),
+
+    #[error("Invalid application identifier for path construction: {0}")]
+    InvalidAppId(String),
 
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),

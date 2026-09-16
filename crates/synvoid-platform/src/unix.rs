@@ -19,6 +19,7 @@ fn nix_to_io_error(e: nix::errno::Errno) -> io::Error {
     io::Error::other(e.to_string())
 }
 
+#[derive(Debug)]
 pub struct UnixSocketHandle {
     fd: RawFd,
     owned: bool,
@@ -389,7 +390,7 @@ impl SignalHandler for UnixSignalHandler {
         self.running.set(true);
 
         let handlers: Vec<(Signal, Arc<dyn Fn() + Send + Sync>)> =
-            self.handlers.drain(..).collect();
+            std::mem::take(&mut self.handlers);
 
         for (signal, handler) in handlers {
             let sig = match signal {

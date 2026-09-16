@@ -3,8 +3,8 @@
 //! Pins the process-authority split: child execution lives in
 //! `synvoid-jail-runtime` (never root), sandbox backends live in
 //! `synvoid-platform` (never root-only), the wire/supervision vocabulary
-//! lives in `synvoid-ipc`, and root `src/sandbox` + `src/platform/sandbox`
-//! are pure parent-composition facades.
+//! lives in `synvoid-ipc`, and root `src/sandbox` + the `src/platform`
+//! sandbox alias are pure parent-composition facades.
 
 use std::fs;
 use synvoid_repo_guards::{prepare_for_scanning, workspace_root, Violations};
@@ -139,11 +139,14 @@ fn root_sandbox_services_remain_pure_facades() {
 
 #[test]
 fn root_platform_sandbox_remains_facade_over_crate() {
-    let facade = read_repo("src/platform/sandbox.rs");
+    // Phase 32: the sandbox facade file collapsed into src/platform/mod.rs
+    // (a `pub use synvoid_platform::sandbox;` module alias); the assertion
+    // target moved with it.
+    let facade = read_repo("src/platform/mod.rs");
     let code = prepare_for_scanning(&facade);
     assert!(
         code.contains("synvoid_platform::sandbox"),
-        "src/platform/sandbox.rs must re-export synvoid-platform (Phase 29)"
+        "src/platform/mod.rs must re-export synvoid-platform sandbox (Phase 32)"
     );
     for forbidden in [
         "LandlockSandbox",
@@ -156,7 +159,7 @@ fn root_platform_sandbox_remains_facade_over_crate() {
     ] {
         assert!(
             !code.contains(forbidden),
-            "src/platform/sandbox.rs must not own backends: found {forbidden}"
+            "src/platform/mod.rs must not own backends: found {forbidden}"
         );
     }
     let canonical = read_repo("crates/synvoid-platform/src/sandbox.rs");

@@ -13,7 +13,7 @@ This skill covers the Windows Service implementation and Developer Experience im
 
 ### 1. Windows Service Implementation
 
-**File**: `src/platform/service/windows_service.rs`
+**File**: `crates/synvoid-platform/src/service/windows_service.rs` (canonical; Phase 32. The root `src/platform/` is a pure re-export facade — never implement there.)
 
 Provides Windows service management capabilities:
 - `ServiceConfig` - Configuration for service installation
@@ -23,7 +23,7 @@ Provides Windows service management capabilities:
 - Properly sets service description via `sc description`
 
 ```rust
-use crate::platform::service::windows_service::{ServiceConfig, WindowsServiceManager, SERVICE_NAME};
+use synvoid_platform::service::{ServiceConfig, WindowsServiceManager};
 
 let config = ServiceConfig::new("SynVoid")
     .with_display_name("SynVoid Web Application Firewall")
@@ -36,7 +36,7 @@ manager.install(&config)?;
 
 ### 2. Interface Resolver
 
-**File**: `src/platform/windows/interface_resolver.rs`
+**File**: `crates/synvoid-platform/src/windows/interface_resolver.rs` (canonical; `#[cfg(windows)]` via `synvoid_platform::windows`)
 
 Resolves Windows network interface names to interface indices (required for WFP filtering):
 - `WindowsInterfaceResolver::resolve(interface_name)` - Get interface index by name
@@ -45,7 +45,7 @@ Resolves Windows network interface names to interface indices (required for WFP 
 - Uses PowerShell `Get-NetAdapter` and `Get-NetIPInterface`
 
 ```rust
-use crate::platform::windows::interface_resolver::WindowsInterfaceResolver;
+use synvoid_platform::windows::interface_resolver::WindowsInterfaceResolver;
 
 let index = WindowsInterfaceResolver::resolve("Ethernet 1")?;
 let all = WindowsInterfaceResolver::get_all_interfaces();
@@ -53,7 +53,7 @@ let all = WindowsInterfaceResolver::get_all_interfaces();
 
 ### 3. Firewall Rule Management
 
-**File**: `src/platform/windows/firewall.rs`
+**File**: `crates/synvoid-platform/src/windows/firewall.rs` (canonical; `#[cfg(windows)]`)
 
 Manages Windows Firewall rules for HTTP/HTTPS/QUIC:
 - `inject_quic_firewall_rule(port)` - Add UDP firewall rule for QUIC
@@ -63,7 +63,7 @@ Manages Windows Firewall rules for HTTP/HTTPS/QUIC:
 - Uses `netsh advfirewall`
 
 ```rust
-use crate::platform::windows::firewall;
+use synvoid_platform::windows::firewall;
 
 firewall::inject_quic_firewall_rule(443)?;
 firewall::inject_http_firewall_rule(8080)?;
@@ -93,8 +93,8 @@ firewall::inject_http_firewall_rule(8080)?;
 # Build on Windows
 cargo build --target x86_64-pc-windows-msvc
 
-# Service management tests (platform-specific)
-cargo test --lib windows_service
+# Platform crate tests (incl. service/path coverage)
+cargo test -p synvoid-platform --profile ci
 ```
 
 ## Dependencies

@@ -125,7 +125,7 @@ pub(super) async fn run_accept_loop(
     mut shutdown_rx: broadcast::Receiver<()>,
     runtime: HttpServerRuntime,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let std_listener = crate::platform::socket::bind_tcp_reuse(addr)?;
+    let std_listener = synvoid_platform::socket_bind::bind_tcp_reuse(addr)?;
     let listener = TcpListener::from_std(std_listener)?;
     tracing::info!(
         "HTTP server listening on {} (HTTP/1.1 + HTTP/2) [SO_REUSEPORT]",

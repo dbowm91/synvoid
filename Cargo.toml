@@ -47,7 +47,7 @@ swagger-ui = ["dep:utoipa-swagger-ui"]
 fastcgi_streaming = []  # Additive, opt-in: streaming FastCGI response handling (no default impact)
 # Phase 28: explicit opt-in for in-process unsafe native extensions. Off by
 # default so default builds carry no shared-library loader for plugins.
-# (Independent platform uses of libloading such as Windows Wintun keep working;
+# (Windows Wintun DLL loading lives in synvoid-platform, #[cfg(windows)];
 # the isolation target is the plugin-runtime capability, not the crate universe.)
 unsafe-native-extensions = ["synvoid-plugin-runtime/unsafe-native-extensions", "dep:synvoid-native-extension"]
 
@@ -191,12 +191,13 @@ quinn = { version = "0.11", features = ["runtime-tokio"] }
 
 # GeoIP support
 # maxminddb: removed; owned by synvoid-geoip (see plans/root_dependency_ownership.md)
-zip = "2"
+# zip: Phase 32 removed; 0 root src uses (Wintun extraction owned by
+# synvoid-platform, server archives by synvoid-serverless)
 
 # Dynamic plugin loading lives in synvoid-native-extension (Phase 28, opt-in via
-# the `unsafe-native-extensions` feature). There is no unconditional root
-# `libloading` edge: the only remaining direct use is the Windows Wintun
-# loader (src/platform/windows/wintun.rs, #[cfg(windows)]), scoped below.
+# the `unsafe-native-extensions` feature). There is no root `libloading` edge:
+# Windows Wintun loading moved to synvoid-platform with the Phase 32
+# canonicalization (crates/synvoid-platform, #[cfg(windows)]).
 
 synvoid-utils = { path = "crates/synvoid-utils", features = ["buffer"] , version = "0.1" }
 synvoid-core = { path = "crates/synvoid-core", features = ["utoipa"] , version = "0.1" }
@@ -274,7 +275,8 @@ socket2 = "0.6"
 # x25519-dalek: Phase 31 removed; 0 root src uses
 # base32: Phase 31 removed; 0 root src uses
 libc = "0.2"
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_LibraryLoader", "Win32_System_Pipes", "Win32_System_Threading", "Win32_System_Console", "Win32_Networking_WinSock", "Win32_Security"] }
+# windows-sys: Phase 32 removed; 0 root src uses (Windows API bindings owned by
+# synvoid-platform and other domain crates, #[cfg(windows)])
 tonic = { version = "0.14", features = ["gzip", "transport", "tls-native-roots"] }
 # tonic-reflection: Phase 31 removed; 0 root src uses
 tonic-prost = "0.14"
@@ -286,11 +288,9 @@ async-stream = "0.3.6"
 [target.'cfg(target_os = "linux")'.dependencies]
 aya = { version = "0.13", optional = true }
 
-[target.'cfg(windows)'.dependencies]
-# Phase 28: independent platform use only (Wintun DLL loading). Plugin loader
-# authority lives in synvoid-native-extension; this edge must not be used for
-# plugin loading.
-libloading = "0.8"
+# (No [target.'cfg(windows)'.dependencies]: Phase 32 removed the last
+# Windows-only root edge (libloading for Wintun); Windows API access is owned
+# by synvoid-platform and other domain crates.)
 
 [build-dependencies]
 tonic-prost-build = "0.14"

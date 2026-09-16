@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
-use crate::platform::fs::PlatformPaths;
 use crate::worker::{CpuWorkerArgs, UnifiedServerWorkerArgs};
+use synvoid_platform::fs::PlatformPaths;
 
 pub fn build_cpu_worker_args(
     cpu_worker_id: Option<usize>,

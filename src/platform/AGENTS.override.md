@@ -2,15 +2,29 @@
 
 This module covers foundational systems code including IPC, process management, platform abstraction, sandboxing, and buffer pools.
 
+## Canonical paths (Phase 32)
+
+`crates/synvoid-platform` is the single compiled owner of OS/platform
+primitives. `src/platform/` is a pure re-export facade (`mod.rs` only: module
+aliases + historical top-level names, no implementations — enforced by
+`tests/platform_canonicalization_guard.rs`). Implement in the crate, import
+`synvoid_platform` directly (including from root internals).
+
 ## Key Modules
 
 | Module | Purpose |
 |--------|---------|
-| `src/platform/mod.rs` | Platform enum, capability queries, re-exports |
-| `src/platform/sandbox.rs` | OS sandboxing backends (Landlock, Capsicum, Pledge, Seatbelt, Job Objects) |
-| `src/platform/ipc.rs` | Platform IPC trait abstraction |
-| `src/platform/unix.rs` | Unix platform implementations |
-| `src/platform/windows_impl.rs` | Windows platform implementations |
+| `crates/synvoid-platform/src/lib.rs` | Platform enum, capability queries, module wiring |
+| `crates/synvoid-platform/src/sandbox.rs` | OS sandboxing backends (Landlock, Capsicum, Pledge, Seatbelt, Job Objects) |
+| `crates/synvoid-platform/src/ipc.rs` | Platform IPC trait abstraction |
+| `crates/synvoid-platform/src/process.rs` | Signal enum, process control/signal traits, `terminate_process` |
+| `crates/synvoid-platform/src/socket.rs` | Socket traits, owned types, handoff helpers |
+| `crates/synvoid-platform/src/socket_bind.rs` | Canonical `bind_tcp_reuse` / `bind_udp_reuse` |
+| `crates/synvoid-platform/src/service/` | Service management (systemd, rc.d, `sc.exe`) |
+| `crates/synvoid-platform/src/fs.rs` | `SecureDir`, `PlatformPaths` (`new` = SynVoid layout, `for_app` = app-neutral) |
+| `crates/synvoid-platform/src/unix.rs` | Unix backends (private module; `Platform*` aliases are the API) |
+| `crates/synvoid-platform/src/windows_impl.rs` | Windows backends (private module) |
+| `crates/synvoid-platform/src/windows/` | Windows operator helpers (firewall, interface resolver, Wintun) |
 | `crates/synvoid-ipc/src/ipc.rs` | Main IPC message protocol (1889 lines) |
 | `crates/synvoid-ipc/src/ipc_signed.rs` | Signed IPC framing with replay protection |
 | `crates/synvoid-ipc/src/ipc_transport.rs` | Async IPC transport layer |
@@ -94,6 +108,14 @@ Socket directories are created with:
 2. Acquire exclusive lock
 3. Write content under lock
 
+### 8. Application-neutral paths
+
+`PlatformPaths::new()` returns the exact historical SynVoid layout (do not
+change deployment paths). New embedders use `PlatformPaths::for_app(id)`,
+which validates the id (`validate_app_id`: `[A-Za-z0-9._-]`, non-empty,
+≤64 bytes, not `.`/`..`) and substitutes it into the per-platform layout.
+`PlatformError::InvalidAppId` is the rejection signal.
+
 ## Hot Path Considerations
 
 - IPC framing is optimized for control-plane traffic (1 MiB max message size)
@@ -103,24 +125,33 @@ Socket directories are created with:
 ## Verification Commands
 
 ```bash
-cargo test --lib process
-cargo test --lib platform
-cargo test --lib buffer
+cargo test -p synvoid-platform --profile ci
+cargo test --test platform_canonicalization_guard --profile ci
 cargo test --test ipc_test
-cargo fmt && cargo clippy --lib -- -D warnings
+cargo fmt && cargo clippy -p synvoid-platform --all-targets -- -D warnings
 ```
 
-### 8. TUN Device Administration Check
+### 9. TUN Device Administration Check
 
-`Platform::is_admin_required_for_tun()` at `src/platform/mod.rs:166-176` correctly returns:
+`Platform::is_admin_required_for_tun()` at `crates/synvoid-platform/src/lib.rs`
+correctly returns:
 - `false` for Unix platforms (Linux, macOS, BSD)
 - `true` for Windows and Unknown platforms
 
 This is intentional - Unix platforms use `CAP_NET_ADMIN` capability which doesn't require root. TUN operations work because `can_modify_nftables()` correctly uses capability checks.
 
+## Dependency policy (Phase 32, Part C)
+
+- OS syscall wrappers own target-scoped deps in `crates/synvoid-platform/Cargo.toml`:
+  `nix` + `daemonize2` (unix), `tokio` `rt`+`signal` (unix/Windows signal
+  listeners), `windows-sys` + `libloading` + `zip` (Windows), `synvoid-utils`
+  (`RunningFlag`; acyclic — utils never depends on platform).
+- No `synvoid-metrics`, `synvoid-config`, root `synvoid`, or `synvoid-ipc`
+  edges from the platform crate — not even dev-dependencies.
+
 ## Known Limitations
 
 - FreeBSD Capsicum: `is_capsicum_available()` checks `cap_getmode()` first - does not call `cap_enter()` unless sandbox is explicitly applied. Note: `limit_fd()` method was **removed** - it was dead code never called in `apply()`.
-- macOS Seatbelt: Implemented at `sandbox.rs:1022-1205` but **disabled by default** - requires `macos-sandbox` Cargo feature to be enabled at compile time (feature gate at line 1037).
-- Windows sandbox: Filesystem restrictions NOT enforced (only process limits). DEP/ASLR mitigation via `SetProcessMitigationPolicy` at `sandbox.rs:925-958`.
+- macOS Seatbelt: Implemented in `crates/synvoid-platform/src/sandbox.rs` but **disabled by default** - requires `macos-sandbox` Cargo feature to be enabled at compile time.
+- Windows sandbox: Filesystem restrictions NOT enforced (only process limits). DEP/ASLR mitigation via `SetProcessMitigationPolicy`.
 - Non-Unix platforms: Socket FD passing not supported, returns `NotSupported`

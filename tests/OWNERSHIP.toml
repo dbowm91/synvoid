@@ -178,6 +178,12 @@ owners = []
 reason = "validates root facade boundary against domain crate imports"
 
 [[test]]
+name = "platform_canonicalization_guard"
+class = "static_policy"
+owners = []
+reason = "validates Phase 32 platform canonicalization (crate owns OS primitives, root stays a thin facade)"
+
+[[test]]
 name = "security_guard"
 class = "static_policy"
 owners = []

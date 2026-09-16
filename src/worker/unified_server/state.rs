@@ -14,7 +14,6 @@ use super::super::context::RequestServices;
 use super::super::drain_state::WorkerDrainState;
 use super::super::metrics::WorkerMetrics;
 use crate::common::setup_panic_handler;
-use crate::platform::fs::PlatformPaths;
 use crate::server::UnifiedServer;
 #[cfg(feature = "mesh")]
 use crate::worker::mesh_supervision::{MeshSupervisionPolicy, WorkerMeshStatus};
@@ -23,6 +22,7 @@ use synvoid_app_server::GranianSupervisor;
 use synvoid_config::ConfigManager;
 use synvoid_ipc::ipc_transport::IpcStream as AsyncIpcStream;
 use synvoid_ipc::{check_ports_available, WorkerId};
+use synvoid_platform::fs::PlatformPaths;
 
 #[derive(Clone)]
 pub struct UnifiedServerWorkerArgs {

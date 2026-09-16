@@ -1,7 +1,42 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-use super::Platform;
+use super::{Platform, PlatformError};
+
+/// Maximum length of an application identifier accepted by [`validate_app_id`].
+pub const MAX_APP_ID_LEN: usize = 64;
+
+/// Validates an application identifier for use in [`PlatformPaths::for_app`].
+///
+/// Accepted identifiers are non-empty, at most [`MAX_APP_ID_LEN`] bytes, use
+/// only `[A-Za-z0-9._-]`, and are not `.` or `..`. The character whitelist
+/// rejects path separators (`/`, `\`), drive syntax (`:`), and traversal
+/// sequences by construction, so a validated identifier can be interpolated
+/// into directory and file names without escaping.
+pub fn validate_app_id(app: &str) -> Result<(), PlatformError> {
+    if app.is_empty() {
+        return Err(PlatformError::InvalidAppId("empty application id".into()));
+    }
+    if app.len() > MAX_APP_ID_LEN {
+        return Err(PlatformError::InvalidAppId(format!(
+            "application id exceeds {MAX_APP_ID_LEN} bytes"
+        )));
+    }
+    if app == "." || app == ".." {
+        return Err(PlatformError::InvalidAppId(
+            "application id must not be '.' or '..'".into(),
+        ));
+    }
+    if !app
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-')
+    {
+        return Err(PlatformError::InvalidAppId(format!(
+            "application id {app:?} contains characters outside [A-Za-z0-9._-]"
+        )));
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone)]
 pub struct SecureDir {
@@ -53,7 +88,25 @@ impl SecureDir {
     }
 }
 
+/// Application-aware platform directory layout.
+///
+/// [`PlatformPaths::new`] preserves the exact historical SynVoid paths and is
+/// equivalent to `for_app("synvoid")`. External embedders should use
+/// [`PlatformPaths::for_app`] with their own validated identifier instead of
+/// inheriting SynVoid names.
+///
+/// Method naming convention (Phase 32, Part D):
+/// - generic primitives: [`PlatformPaths::ipc_path`], `*_dir`, `*_shm_path`,
+///   [`PlatformPaths::panic_log_path`] (caller-supplied names);
+/// - SynVoid-specific helpers: [`PlatformPaths::pid_file`],
+///   [`PlatformPaths::socket_path`], [`PlatformPaths::supervisor_socket_path`],
+///   [`PlatformPaths::cpu_worker_socket_path`],
+///   [`PlatformPaths::unified_worker_socket_path`]. These interpolate the
+///   owning application id, so they stay correct for `for_app` layouts while
+///   returning byte-identical SynVoid paths for `new()`.
+#[derive(Debug, Clone)]
 pub struct PlatformPaths {
+    app_id: String,
     data_dir: PathBuf,
     config_dir: PathBuf,
     log_dir: PathBuf,
@@ -62,30 +115,45 @@ pub struct PlatformPaths {
 }
 
 impl PlatformPaths {
+    /// Historical SynVoid layout. Equivalent to `for_app("synvoid")` and
+    /// guaranteed to return the exact deployment paths operators rely on.
+    /// Do not change the output of this constructor without a migration plan.
     pub fn new() -> Self {
+        Self::for_app("synvoid").expect("built-in SynVoid application id is valid")
+    }
+
+    /// Application-neutral layout for `app` on the current platform.
+    ///
+    /// Directory/file names follow the same per-platform conventions as
+    /// [`PlatformPaths::new`] with the application id substituted, e.g.
+    /// `/var/lib/<app>` + `/etc/<app>` + `/run/<app>` on Linux and
+    /// `%PROGRAMDATA%\<app>` on Windows. Rejects separators and traversal via
+    /// [`validate_app_id`].
+    pub fn for_app(app: &str) -> Result<Self, PlatformError> {
+        validate_app_id(app)?;
         let platform = Platform::current();
 
         let (data_dir, config_dir, log_dir, cache_dir, runtime_dir) = match platform {
             Platform::Linux | Platform::LinuxMusl => {
                 let data = std::env::var_os("XDG_DATA_DIRS")
                     .map(PathBuf::from)
-                    .unwrap_or_else(|| PathBuf::from("/var/lib/synvoid"));
+                    .unwrap_or_else(|| PathBuf::from(format!("/var/lib/{app}")));
 
                 let config = std::env::var_os("XDG_CONFIG_DIRS")
                     .map(PathBuf::from)
-                    .unwrap_or_else(|| PathBuf::from("/etc/synvoid"));
+                    .unwrap_or_else(|| PathBuf::from(format!("/etc/{app}")));
 
                 let log = std::env::var_os("XDG_LOG_DIR")
                     .map(PathBuf::from)
-                    .unwrap_or_else(|| PathBuf::from("/var/log/synvoid"));
+                    .unwrap_or_else(|| PathBuf::from(format!("/var/log/{app}")));
 
                 let cache = std::env::var_os("XDG_CACHE_DIR")
                     .map(PathBuf::from)
-                    .unwrap_or_else(|| PathBuf::from("/var/cache/synvoid"));
+                    .unwrap_or_else(|| PathBuf::from(format!("/var/cache/{app}")));
 
                 let runtime = std::env::var_os("XDG_RUNTIME_DIR")
-                    .map(|s| PathBuf::from(s).join("synvoid"))
-                    .unwrap_or_else(|| PathBuf::from("/run/synvoid"));
+                    .map(|s| PathBuf::from(s).join(app))
+                    .unwrap_or_else(|| PathBuf::from(format!("/run/{app}")));
 
                 (data, config, log, cache, runtime)
             }
@@ -96,23 +164,23 @@ impl PlatformPaths {
                     .unwrap_or_else(|| PathBuf::from("/tmp"));
 
                 (
-                    home.join(".local/share/synvoid"),
-                    home.join(".config/synvoid"),
-                    home.join(".local/log/synvoid"),
-                    home.join(".cache/synvoid"),
+                    home.join(format!(".local/share/{app}")),
+                    home.join(format!(".config/{app}")),
+                    home.join(format!(".local/log/{app}")),
+                    home.join(format!(".cache/{app}")),
                     std::env::var_os("TMPDIR")
                         .map(PathBuf::from)
                         .unwrap_or_else(|| PathBuf::from("/tmp"))
-                        .join("synvoid-runtime"),
+                        .join(format!("{app}-runtime")),
                 )
             }
 
             Platform::FreeBSD | Platform::OpenBSD | Platform::NetBSD => (
-                PathBuf::from("/var/db/synvoid"),
-                PathBuf::from("/usr/local/etc/synvoid"),
-                PathBuf::from("/var/log/synvoid"),
-                PathBuf::from("/var/cache/synvoid"),
-                PathBuf::from("/var/run/synvoid"),
+                PathBuf::from(format!("/var/db/{app}")),
+                PathBuf::from(format!("/usr/local/etc/{app}")),
+                PathBuf::from(format!("/var/log/{app}")),
+                PathBuf::from(format!("/var/cache/{app}")),
+                PathBuf::from(format!("/var/run/{app}")),
             ),
 
             Platform::Windows => {
@@ -125,41 +193,51 @@ impl PlatformPaths {
                     .unwrap_or_else(|| PathBuf::from("."));
 
                 (
-                    program_data.join("synvoid"),
-                    program_data.join("synvoid").join("config"),
-                    program_data.join("synvoid").join("logs"),
-                    app_data.join("synvoid").join("cache"),
-                    app_data.join("synvoid").join("runtime"),
+                    program_data.join(app),
+                    program_data.join(app).join("config"),
+                    program_data.join(app).join("logs"),
+                    app_data.join(app).join("cache"),
+                    app_data.join(app).join("runtime"),
                 )
             }
 
             Platform::Unknown => (
-                PathBuf::from("/var/lib/synvoid"),
-                PathBuf::from("/etc/synvoid"),
-                PathBuf::from("/var/log/synvoid"),
-                PathBuf::from("/var/cache/synvoid"),
-                PathBuf::from("/run/synvoid"),
+                PathBuf::from(format!("/var/lib/{app}")),
+                PathBuf::from(format!("/etc/{app}")),
+                PathBuf::from(format!("/var/log/{app}")),
+                PathBuf::from(format!("/var/cache/{app}")),
+                PathBuf::from(format!("/run/{app}")),
             ),
         };
 
-        Self {
+        Ok(Self {
+            app_id: app.to_string(),
             data_dir,
             config_dir,
             log_dir,
             cache_dir,
             runtime_dir,
-        }
+        })
     }
 
     pub fn with_base(base: impl Into<PathBuf>) -> Self {
         let base = base.into();
         Self {
+            // SynVoid-compatible test helper: preserves the historical
+            // `synvoid.*` socket/file names under a caller-supplied base.
+            app_id: "synvoid".to_string(),
             data_dir: base.join("data"),
             config_dir: base.join("config"),
             log_dir: base.join("logs"),
             cache_dir: base.join("cache"),
             runtime_dir: base.join("run"),
         }
+    }
+
+    /// Application id this layout was constructed for (`"synvoid"` for
+    /// [`PlatformPaths::new`] and [`PlatformPaths::with_base`]).
+    pub fn app_id(&self) -> &str {
+        &self.app_id
     }
 
     pub fn data_dir(&self) -> &Path {
@@ -200,11 +278,11 @@ impl PlatformPaths {
     }
 
     pub fn pid_file(&self) -> PathBuf {
-        self.runtime_dir.join("synvoid.pid")
+        self.runtime_dir.join(format!("{}.pid", self.app_id))
     }
 
     pub fn socket_path(&self) -> PathBuf {
-        self.runtime_dir.join("synvoid.sock")
+        self.runtime_dir.join(format!("{}.sock", self.app_id))
     }
 
     pub fn ipc_path(&self, name: &str) -> PathBuf {
@@ -212,11 +290,14 @@ impl PlatformPaths {
     }
 
     pub fn supervisor_socket_path(&self) -> PathBuf {
-        self.runtime_dir.join("synvoid-supervisor.sock")
+        self.runtime_dir
+            .join(format!("{}-supervisor.sock", self.app_id))
     }
 
     pub fn cpu_worker_socket_path(&self) -> PathBuf {
-        self.runtime_dir.join("synvoid-static-worker.sock")
+        // Keeps the historical `static-worker` infix for operator compatibility.
+        self.runtime_dir
+            .join(format!("{}-static-worker.sock", self.app_id))
     }
 
     #[deprecated(note = "Use cpu_worker_socket_path instead")]
@@ -226,7 +307,7 @@ impl PlatformPaths {
 
     pub fn unified_worker_socket_path(&self, worker_id: usize) -> PathBuf {
         self.runtime_dir
-            .join(format!("synvoid-unified-{}.sock", worker_id))
+            .join(format!("{}-unified-{}.sock", self.app_id, worker_id))
     }
 
     pub fn panic_log_path(&self, name: &str) -> PathBuf {

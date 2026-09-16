@@ -15,12 +15,27 @@ thiserror = "2"
 tracing = "0.1"
 libc = "0.2"
 socket2 = { version = "0.6", features = ["all"] }
+# Shared primitive: process/signal running flag. synvoid-utils does not depend
+# on synvoid-platform, so this edge is acyclic (Phase 32).
+synvoid-utils = { path = "../synvoid-utils", version = "0.1" }
+
+[target.'cfg(unix)'.dependencies]
+# OS syscall wrappers are the natural owner for these target-scoped deps
+# (Phase 32, Part C): signals/sockets (nix), daemonization (daemonize2).
+nix = { version = "0.29", features = ["signal", "process", "socket", "fs", "net", "uio"] }
+daemonize2 = "0.6"
+
+[target.'cfg(any(unix, windows))'.dependencies]
+# Signal listeners integrate with the async runtime via tokio::signal
+# (unix SignalKind streams, Windows Ctrl-C). Stub platforms do not need it.
+tokio = { version = "1", features = ["rt", "signal"] }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading", "Win32_System_Console", "Win32_System_Pipes", "Win32_System_Memory", "Win32_Networking_WinSock"] }
+# Wintun DLL loading only (never plugin loading; see root Cargo.toml libloading edge note).
+libloading = "0.8"
+zip = "2"
 
 [dev-dependencies]
 tempfile = "3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net"] }
-serde_json = "1"
-synvoid-ipc = { path = "../synvoid-ipc" , version = "0.1" }
