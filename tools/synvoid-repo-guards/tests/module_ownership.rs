@@ -383,11 +383,17 @@ fn is_ident_byte(b: u8) -> bool {
 }
 
 /// Code reference to `IDENT::` outside string literals and not as part of a
-/// longer identifier (`http_body_util::` must not entitle `http_body`).
+/// longer identifier (`http_body_util::` must not entitle `http_body`) nor a
+/// longer module path (`synvoid_core::url::` must not entitle the external
+/// `url` crate — Phase 35: `src/utils.rs` re-exports `synvoid_core::url`).
 fn has_path_ref(scanned: &str, ident: &str) -> bool {
     let needle = format!("{ident}::");
     for (i, _) in scanned.match_indices(&needle) {
         if i > 0 && is_ident_byte(scanned.as_bytes()[i - 1]) {
+            continue;
+        }
+        // Skip module-path segments: `foo::IDENT::` is a use of `foo`, not `IDENT`.
+        if i > 0 && scanned.as_bytes()[i - 1] == b':' {
             continue;
         }
         let line_start = scanned[..i].rfind('\n').map(|x| x + 1).unwrap_or(0);

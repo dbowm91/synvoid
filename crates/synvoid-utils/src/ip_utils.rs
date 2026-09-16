@@ -88,6 +88,11 @@ pub fn current_timestamp() -> u64 {
 }
 
 /// Returns the first non-loopback IPv4 address found on this machine.
+///
+/// Explicitly heuristic (Phase 35): binds a UDP socket and `connect()`s it to
+/// a public resolver (`8.8.8.8:53`) to observe the local address. No traffic
+/// is sent, but the result depends on routing and requires network access.
+/// Callers must treat failure as normal (offline/sandboxed hosts).
 pub fn get_first_non_loopback_ip() -> Result<std::net::IpAddr, String> {
     let socket = std::net::UdpSocket::bind("0.0.0.0:0")
         .map_err(|e| format!("Failed to bind socket: {}", e))?;
@@ -100,7 +105,12 @@ pub fn get_first_non_loopback_ip() -> Result<std::net::IpAddr, String> {
     Ok(local_addr.ip())
 }
 
-/// Compares two semver-style version strings, returns true if `new` > `current`.
+/// Compares two version strings, returns true if `new` > `current`.
+///
+/// Approximate ordering only — NOT real SemVer (Phase 35): compares numeric
+/// dot-separated prefixes, ignores pre-release/build metadata, and treats
+/// unparseable segments as absent. Do not advertise as SemVer; sufficient only
+/// for opportunistic feed-version gating where `"none"` sorts below any version.
 pub fn is_newer_version(new: &str, current: &str) -> bool {
     if new == current {
         return false;

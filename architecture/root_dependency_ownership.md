@@ -110,7 +110,7 @@ reference fails the guard until the row is reclassified with a reason.
 | synvoid-native-extension | plugin | composition_runtime | unsafe-native-extensions (opt-in, off by default) | Explicit unsafe in-process native extension loader (Phase 28): ABI/version checks, path/hash/permission validation, library lifetime, narrow backend trait | keep | plugin |
 | aya | worker | composition_runtime | flood-ebpf | eBPF program loading for SYN flood detection | keep | icmp_filter, waf |
 | synvoid-utils | throughout | composition_runtime | default | Shared utilities (DrainFlag, buffer, IP utils) | keep | admin, http, lib, utils, waf, worker |
-| synvoid-core | waf, proxy | composition_runtime | default | Core WAF and proxy types | keep | admin, supervisor, waf, worker |
+| synvoid-core | waf, proxy, utils | composition_runtime | default | Core WAF and proxy types + canonical URL decoding (`synvoid_core::url` re-exported by `src/utils.rs`, Phase 35 — no second copy) | keep | admin, supervisor, utils, waf, worker |
 | synvoid-tarpit | tarpit | composition_runtime | default | Tarpit Markov chain generation | keep | tarpit, waf |
 | synvoid-auth | waf | compat_facade | default | Canonical AuthManager/session/CSRF/lockout in synvoid_auth; root auth/ removed Phase 03; consumed from src/waf | keep | waf |
 | synvoid-challenge | server, waf | compat_facade | default | Canonical ChallengeManager/ChallengeConfig/mesh-PoW in synvoid_challenge; root challenge/ removed Phase 03; consumed from src/server, src/waf | keep | server, waf |

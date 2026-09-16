@@ -1,6 +1,6 @@
 # Phase 35 Plan: Crate Boundary and Reuse Closeout
 
-Status: planned (2026-09-16).
+Status: complete (2026-09-16). Closeout: `architecture/crate_boundary_reuse_closeout.md`.
 
 Roadmap: `plans/crate_boundary_reuse_followup_roadmap.md`.
 

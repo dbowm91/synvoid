@@ -5,27 +5,62 @@
 //! from `synvoid-utils`. Root-only helpers remain here.
 //!
 //! # Submodules
-//! - [`ratelimit`] - Rate limiting trait definitions
-//! - [`errors`] - Structured error message formatters
+//! - [`ratelimit`] - Rate limiting trait definitions (compat re-export over
+//!   `synvoid-rate-limit`; new code imports `synvoid_rate_limit` directly)
+//! - [`errors`] - Structured error message formatters (root-owned; application
+//!   error strings stay near their domain per Phase 35 — not moved into
+//!   `synvoid-utils`)
 //!
 //! # Re-exported from `synvoid-utils`
 //! - [`ArcStr`] - Atomically reference-counted string
 //! - [`RunningFlag`] / [`DrainFlag`] - Thread-safe state flags
 //! - [`parse_duration()`] - Parse duration strings
 //! - [`current_timestamp()`] / [`now_ms()`] / [`safe_unix_timestamp()`] - Time utilities
-//! - [`ip_to_slot()`] / [`hash_ip()`] - IP hashing
+//! - [`ip_to_slot()`] - IP hashing (canonical owner; `synvoid-rate-limit`
+//!   carries a tiny deliberate duplicate `slot::ip_to_slot` so that crate stays
+//!   a std-only leaf)
 //! - [`check_regex_complexity()`] - ReDoS protection
-//! - [`is_newer_version()`] - Semantic version comparison
-//! - [`get_first_non_loopback_ip()`] - Network utility
+//! - [`is_newer_version()`] - Approximate version ordering only, NOT real
+//!   SemVer (numeric-prefix comparison; `"none"` sorts below any version).
+//!   Do not advertise as SemVer.
+//! - [`get_first_non_loopback_ip()`] - Explicitly heuristic: binds a UDP
+//!   socket and connects to a public resolver (`8.8.8.8:53`) to observe the
+//!   local address. No traffic is sent, but the result depends on routing.
+//!
+//! # Re-exported from `synvoid-core`
+//! - [`urlencoding_decode()`] / [`urlencoding_decode_result()`] /
+//!   [`url_decode_all()`] - Canonical URL decoding lives in
+//!   `synvoid_core::url` (consumed by `synvoid-waf` detectors). This module
+//!   re-exports it so the previous root duplicate (which dropped the `%`
+//!   on non-ASCII escapes) cannot drift again.
 //!
 //! # Root-owned
-//! - [`ResultExt`] / [`OptionExt`] - Extension traits
-//! - [`errors`] - Error message formatters
-//! - [`HotHashMap`] / [`HotHashSet`] - Fast hash collections
-//! - [`parse_host_port()`] - Socket address parsing
-//! - [`urlencoding_decode()`] - URL decoding
+//! - [`ResultExt`] / [`OptionExt`] - Root/application-specific extension
+//!   traits (zero cross-crate consumers; retained for root composition only,
+//!   not promoted to `synvoid-utils` — no second consumer demands it)
+//! - [`errors`] - Application error-string formatters (kept near the root
+//!   composition that emits them, not in a generic utility crate)
+//! - [`HotHashMap`] / [`HotHashSet`] - Root-owned fast-hash aliases (zero
+//!   production consumers today; retained as root composition convenience,
+//!   not promoted — `std::collections` remains the default elsewhere)
+//! - [`parse_host_port()`] - Root/application-specific socket-address parsing
+//!   for Supervisor startup (`src/server/startup_plan.rs`); single-consumer,
+//!   not promoted to `synvoid-utils`
+//! - [`hash_ip()`] - Root-owned legacy IP hash (zero production consumers;
+//!   `src/udp/listener.rs` carries its own local shard hash, `ip_to_slot` is
+//!   the canonical slot helper). Retained for root tests/compat only.
+//! - [`format_duration()`] - Root-owned display helper (zero production
+//!   consumers; retained for root composition/tests, not promoted)
+//!
+//! Phase 35 disposition: no helper was moved into `synvoid-utils` in this
+//! phase (multiple-consumer + stable-semantics bar not met). URL decoding is
+//! the one consolidation: root now re-exports the canonical
+//! `synvoid-core` implementation instead of carrying a second copy.
 
 pub mod ratelimit;
+/// Root-owned application error-string formatters.
+/// Phase 35: intentionally NOT moved into `synvoid-utils` — error strings
+/// belong near the domain/composition that emits them, not in a generic crate.
 pub mod errors {
     pub mod ipc {
         pub fn connect_failed(e: &impl std::fmt::Display) -> String {
@@ -73,7 +108,8 @@ pub mod errors {
     }
 }
 
-/// Extension trait for Result types providing additional utility methods.
+/// Root-owned extension trait for Result types (root composition only).
+/// Phase 35: not promoted to `synvoid-utils` — no second consumer demands it.
 pub trait ResultExt<T, E> {
     /// Executes a closure if the result is an error, without changing the result.
     fn inspect_err(self, f: impl FnOnce(&E)) -> Self;
@@ -107,7 +143,8 @@ impl<T, E> ResultExt<T, E> for Result<T, E> {
     }
 }
 
-/// Extension trait for Option types providing additional utility methods.
+/// Root-owned extension trait for Option types (root composition only).
+/// Phase 35: not promoted to `synvoid-utils` — no second consumer demands it.
 pub trait OptionExt<T> {
     /// Executes a closure if the option contains a value.
     fn if_some<F: FnOnce(&T)>(self, f: F);
@@ -131,6 +168,8 @@ impl<T> OptionExt<T> for Option<T> {
 
 pub use synvoid_utils::{DrainFlag, RunningFlag};
 
+/// Root-owned display helper for operator-facing durations.
+/// Retained in root composition (zero cross-crate consumers); not promoted.
 pub fn format_duration(seconds: u64) -> String {
     if seconds == 0 {
         return "never".to_string();
@@ -147,66 +186,23 @@ pub fn format_duration(seconds: u64) -> String {
     format!("{}d", seconds / 86400)
 }
 
-/// URL decode a string.
-///
-/// This function handles:
-/// - Percent-encoding (%XX)
-/// - Plus-to-space conversion
-pub fn urlencoding_decode(input: &str) -> String {
-    let mut result = String::with_capacity(input.len());
-    let mut chars = input.chars().peekable();
-
-    while let Some(c) = chars.next() {
-        if c == '%' {
-            let hex: String = chars.by_ref().take(2).collect();
-            if hex.len() == 2 {
-                if let Ok(byte) = u8::from_str_radix(&hex, 16) {
-                    if byte.is_ascii() {
-                        result.push(byte as char);
-                        continue;
-                    } else {
-                        result.push_str(&hex);
-                        continue;
-                    }
-                }
-            }
-            result.push('%');
-            result.push_str(&hex);
-        } else if c == '+' {
-            result.push(' ');
-        } else {
-            result.push(c);
-        }
-    }
-
-    result
-}
-
-#[allow(clippy::result_unit_err)]
-pub fn urlencoding_decode_result(input: &str) -> Result<String, ()> {
-    Ok(urlencoding_decode(input))
-}
-
-pub fn url_decode_all(input: &str) -> String {
-    let mut result = input.to_string();
-
-    for _ in 0..10 {
-        let decoded = urlencoding_decode(&result);
-        if decoded == result {
-            break;
-        }
-        result = decoded;
-    }
-
-    result
-}
+/// Canonical URL decoding lives in `synvoid_core::url`.
+/// Phase 35: root carries no second implementation — this is a compat
+/// re-export so `synvoid::utils::{urlencoding_decode, ...}` paths keep
+/// compiling (e.g. `fuzz/http_path_normalization.rs`). New code imports
+/// `synvoid_core::url` directly.
+pub use synvoid_core::url::{url_decode_all, urlencoding_decode, urlencoding_decode_result};
 
 pub use synvoid_utils::{current_timestamp, now_ms, safe_unix_duration, safe_unix_timestamp};
 
 use ahash::AHashMap;
 use std::net::{IpAddr, SocketAddr};
 
+/// Root-owned fast-hash aliases (root composition convenience only).
+/// Phase 35: zero production consumers; retained in root, not promoted.
+/// Prefer `std::collections` elsewhere unless profiling demands ahash.
 pub type HotHashMap<K, V> = AHashMap<K, V>;
+/// Root-owned fast-hash set alias (see [`HotHashMap`]).
 pub type HotHashSet<T> = std::collections::HashSet<T, ahash::RandomState>;
 
 #[allow(clippy::redundant_pub_crate)]
@@ -214,6 +210,9 @@ pub mod collections {
     pub use ahash::{AHashMap, AHashSet};
 }
 
+/// Root/application-specific socket-address parsing for Supervisor startup.
+/// Single consumer (`src/server/startup_plan.rs`); not promoted to
+/// `synvoid-utils` (no second consumer, app-specific error strings).
 pub fn parse_host_port(host: &str, port: u16) -> Result<SocketAddr, String> {
     if host.starts_with('[') {
         if let Some(end_bracket) = host.find(']') {
@@ -245,6 +244,9 @@ pub fn is_ipv6_host(host: &str) -> bool {
 
 pub use synvoid_utils::ip_to_slot;
 
+/// Root-owned legacy IP hash (tests/compat only).
+/// Phase 35: zero production consumers. `ip_to_slot` is the canonical slot
+/// helper; `src/udp/listener.rs` carries its own local shard hash.
 #[inline]
 pub fn hash_ip(ip: IpAddr) -> usize {
     match ip {

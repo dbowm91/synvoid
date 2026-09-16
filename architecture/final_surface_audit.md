@@ -1,7 +1,10 @@
 # Final Public Surface Audit
 
 Phase 10 closure audit (Phase 31 re-verified: module classifications unchanged;
-feature matrix gains the hardened/minimal profile verdict, §5). Classifies
+feature matrix gains the hardened/minimal profile verdict, §5; Phase 35
+re-verified: `platform` is a pure alias facade with no root-owned
+implementations, `utils` URL decoding delegates to `synvoid-core`, counts are
+51 workspace members / 43 `synvoid-*` crates under `crates/`). Classifies
 every public surface of the SynVoid codebase as stable, internal, transitional, test-only, or deprecated.
 
 ## 1. Root Crate Exports (`src/lib.rs`)
@@ -18,17 +21,17 @@ every public surface of the SynVoid codebase as stable, internal, transitional, 
 | `server` | `keep_app_root` | internal | root | UnifiedServer composition root (1344 lines) |
 | `startup` | `keep_app_root` | internal | root | Process startup and bootstrap |
 | `supervisor` | `keep_app_root` | internal | root | Supervisor process lifecycle (re-exports submodules) |
-| `platform` | `keep_app_root` | internal | root | Thin facade re-exports from synvoid-platform; root-owned sandbox/socket/ipc modules |
+| `platform` | `facade_existing_crate` | transitional | synvoid-platform | Pure alias facade (module aliases + historical top-level re-exports only; no root-owned implementations since Phase 32; guard `platform_canonicalization_guard`) |
 | `tcp` | `keep_app_root` | internal | root | TCP proxy with protocol detection |
 | `tarpit` | `keep_app_root` | internal | root | Facade re-exports from synvoid-tarpit; root-owned handler/manager |
 | `udp` | `keep_app_root` | internal | root | UDP proxy |
-| `utils` | `keep_app_root` | internal | root | Re-exports from synvoid-utils; root-only helpers |
+| `utils` | `keep_app_root` | internal | root (composition) + synvoid-utils (shared) + synvoid-core (URL) + synvoid-rate-limit (ratelimit compat) | Re-exports from synvoid-utils; URL decoding re-exports synvoid-core (Phase 35, no second copy); `ratelimit/` compat over synvoid-rate-limit; root-only ResultExt/OptionExt/errors/HotHashMap/parse_host_port/hash_ip/format_duration (see `src/utils.rs` disposition) |
 | `worker` | `keep_app_root` | internal | root | Worker process runtime and composition |
 | `http` | `keep_app_root` | internal | root (composition) + synvoid-http (shared) | 24 thin facades + 11 narrow-trait adapters + 5 app handlers + HttpServer composition root; canonical parsing/normalization/dispatch in crate (Phase 20) |
 | `admin` | `keep_app_root` | internal | root (composition) + synvoid-admin (handler logic/DTOs) | Axum transport/router/middleware composition + thin adapters over typed manager ops; reusable handler logic canonical in synvoid-admin (Phase 21) |
 | `plugin` | `keep_app_root` | internal | root (composition) + synvoid-plugin-runtime (runtime) | Facade re-exporting crate PluginManager/Lifecycle + root-owned mesh-aware resolution; watcher/epoch owned by PluginRuntimeOwner (Phase 21) |
 | `tls` | `keep_app_root` | internal | synvoid-tls (core) + root (server integration) | Re-exports + root-owned `HttpsServer` listener/integration (Phase 20) |
-| `http_client` | `facade_existing_crate` | transitional | synvoid-http-client + root | Re-exports crate; root retains only QUIC tunnel dispatch (Phase 20) |
+| `http_client` | `facade_existing_crate` | transitional | synvoid-http-client + root | Re-exports crate; root retains only QUIC tunnel dispatch + `streaming_waf_body` shim pointing at `synvoid-http` (Phase 34); transport is policy-free (no config/core/metrics edges) |
 
 ### Application Composition Modules (closed `split_required`; see ledger)
 
@@ -226,6 +229,10 @@ every public surface of the SynVoid codebase as stable, internal, transitional, 
 | `mesh_admin_edge_cases` | Mesh admin edge cases | Strong (fail-closed) | None | Yes |
 | `plugin_failure_does_not_poison_manager` | Plugin failure isolation | Strong (fail-closed) | None | Yes |
 | `plugin_signature_policy_guard` | Plugin signature policy enforcement | Strong (fail-closed) | None | Yes |
+| `platform_canonicalization_guard` | No canonical platform redefinitions under `src/platform`; facade is re-exports only | Strong (fail-closed) | None | Yes |
+| `dnssec_keystore_boundary` | Keystore custody-only deps/imports; no raw `private_key`/`cryptoki` in DNS path; HSM fail-closed (Phase 35 also forbids `synvoid-core`) | Strong (fail-closed) | None | Yes |
+| `mesh_protocol_boundary` | Protocol leaf stays low-capability; mesh depends downward | Strong (fail-closed) | None | Yes |
+| `crate_boundary_reuse_closeout` | Rate-limit std-only + multi-consumer; http-client policy-free (no WAF/config); leaf crates avoid root facade; `utils/ratelimit` thin; no second URL copy | Strong (fail-closed) | None | Yes |
 
 ## 7. Plugin API Surface
 
@@ -395,7 +402,7 @@ every public surface of the SynVoid codebase as stable, internal, transitional, 
 
 ### Semver Status
 
-SynVoid is pre-1.0. Semver is not yet meaningful for external consumers. All crates are internal workspace implementation details unless explicitly documented otherwise.
+SynVoid is pre-1.0. Semver is not yet meaningful for external consumers. All crates are internal workspace implementation details unless explicitly documented otherwise. Phase 35 records the reuse/publication decision separately (see `architecture/crate_boundary_reuse_closeout.md` §reuse policy): no crate is published in this phase, and no `publish = false` was added — all `synvoid-*` crates remain technically publishable (description/license/repository present, publish order in `docs/releasing.md`) but carry no external support promise.
 
 ### Public API Intent
 
@@ -409,6 +416,24 @@ SynVoid is pre-1.0. Semver is not yet meaningful for external consumers. All cra
 | `synvoid-http` | Internal | stable within workspace |
 | `synvoid-mesh` | Internal | stable within workspace |
 | All other `synvoid-*` | Internal | stable within workspace |
+
+Phase 35 reuse classification (1 = application-internal, 2 = reusable workspace
+library without external support promise, 3 = reasonable public-library
+candidate, 4 = compatibility facade/transitional; no crate meets (3) yet —
+every candidate lacks an explicit MSRV/`rust-version` policy and a semver-support
+statement, so all stay (1)/(2) with no registry churn):
+
+| Crate | Class | Rationale |
+|-------|-------|-----------|
+| `synvoid-platform` | 2 | App-neutral `for_app` + validated IDs, no root/config/metrics edges, target-gated OS deps only; crate docs + `platform.md` disposition; missing MSRV/semver statement so not (3) |
+| `synvoid-rate-limit` | 2 | Std-only leaf, neutral contracts, 2 real consumers, deterministic tests, ~86ns hot path; missing MSRV/semver statement so not (3) |
+| `synvoid-dnssec-keystore` | 2 | One-way custody leaf, opaque handles, atomic/0600, fail-closed HSM, crate docs + runnable examples + doctests; DNS-scoped, missing MSRV/semver statement so not (3) |
+| `synvoid-filter` | 2 | Zero-dep narrow admission traits, stable path; thin but stable — future merge candidate only with stability review, not (3) alone |
+| `synvoid-yara` | 2 | Single `yara-x` owner, bounded compile/scan, digest binding; leaf engine for upload/jail; missing MSRV/semver statement so not (3) |
+| `synvoid-mesh-protocol` | 2 | Leaf wire/identity vocabulary, golden-vector compat, no DHT/Raft/SQLite/YARA; verification-only reuse; missing MSRV/semver statement so not (3) |
+| `synvoid-http-client` | 2 | Policy-free leaf transport (no config/core/metrics), parity suite, retained single owner per `egress_client_decision_phase34.md` with future-consolidation condition; missing MSRV/semver statement so not (3) |
+| Root `src/*` facades (`platform`, `utils/ratelimit`, `http_client/streaming_waf_body`, etc.) | 4 | Compatibility/transitional surfaces pinned thin by `facade_disposition_guard` + new `crate_boundary_reuse_closeout` guards |
+| All other `synvoid-*` | 1 | Application-internal implementation detail (domain composition, feature/build isolation, or security boundary without standalone reuse promise) |
 
 ### Deprecation Process
 

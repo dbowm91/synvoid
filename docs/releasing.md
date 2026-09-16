@@ -35,12 +35,15 @@ Crates must be published in this exact order. Each crate's path dependencies mus
 |---|-------|-------------------|
 | 1 | `pqc` | *(none)* |
 | 2 | `synvoid-utils` | *(none)* |
-| 3 | `synvoid-platform` | *(none)* |
+| 2a | `synvoid-rate-limit` | *(none — std-only leaf mechanism, Phase 33; no workspace deps)* |
+| 2b | `synvoid-dnssec-keystore` | *(none — custody leaf, Phase 30; no workspace deps; `src/time.rs` owns the clock)* |
+| 3 | `synvoid-platform` | synvoid-utils (Phase 32 single owner; plus target-gated nix/daemonize2/tokio/windows-sys/libloading/zip) |
 | 4 | `synvoid-core` | *(none)* |
 | 5 | `synvoid-cli` | *(none)* |
 | 6 | `synvoid-filter` | *(none)* |
 | 7 | `synvoid-proxy-cache` | *(none)* |
 | 8 | `synvoid-config` | pqc |
+| 8a | `synvoid-auth` | synvoid-config, synvoid-utils (Phase 18 canonical) |
 | 9 | `synvoid-theme` | synvoid-config |
 | 10 | `synvoid-challenge` | synvoid-theme, synvoid-utils |
 | 11 | `synvoid-http-client` | *(none — leaf transport; Phase 34 removed synvoid-config/synvoid-core)* |
@@ -55,8 +58,8 @@ Crates must be published in this exact order. Each crate's path dependencies mus
 | 17 | `synvoid-upstream` | synvoid-utils, synvoid-config, synvoid-http-client |
 | 18 | `synvoid-proxy` | synvoid-core, synvoid-config, synvoid-http-client, synvoid-upstream, synvoid-proxy-cache, synvoid-waf, synvoid-utils, synvoid-static-files, synvoid-plugin-runtime, synvoid-platform, synvoid-metrics |
 | 19 | `synvoid-tunnel` | synvoid-config, synvoid-upstream, synvoid-utils |
-| 20 | `synvoid-mesh` | synvoid-core, synvoid-config, synvoid-utils, synvoid-integrity, synvoid-geoip, synvoid-tls, synvoid-tunnel, synvoid-proxy, synvoid-proxy-cache, synvoid-serverless, pqc |
-| 21 | `synvoid-waf` | synvoid-core, synvoid-utils, synvoid-challenge, synvoid-config |
+| 20 | `synvoid-mesh` | synvoid-core, synvoid-config, synvoid-utils, synvoid-integrity, synvoid-geoip, synvoid-tls, synvoid-tunnel, synvoid-proxy, synvoid-proxy-cache, synvoid-serverless, synvoid-mesh-protocol, synvoid-platform, synvoid-rate-limit, pqc |
+| 21 | `synvoid-waf` | synvoid-core, synvoid-utils, synvoid-challenge, synvoid-config, synvoid-mesh |
 | 22 | `synvoid-metrics` | synvoid-core, synvoid-utils, synvoid-waf |
 | 23 | `synvoid-ipc` | synvoid-config, synvoid-utils, synvoid-platform, synvoid-metrics, synvoid-tls |
 | 24 | `synvoid-block-store` | synvoid-config, synvoid-core, synvoid-utils, synvoid-waf, synvoid-mesh |
@@ -64,12 +67,12 @@ Crates must be published in this exact order. Each crate's path dependencies mus
 | 26 | `synvoid-app-handlers` | synvoid-core, synvoid-config, synvoid-serverless, synvoid-plugin-runtime, synvoid-http-client |
 | 27 | `synvoid-static-files` | synvoid-config, synvoid-ipc, synvoid-theme, synvoid-utils, synvoid-app-handlers |
 | 28 | `synvoid-honeypot` | synvoid-config, synvoid-utils, synvoid-http-client, synvoid-mesh |
-| 29 | `synvoid-upload` | synvoid-config, synvoid-utils, synvoid-http-client, synvoid-platform, synvoid-app-handlers, synvoid-mesh |
+| 29 | `synvoid-upload` | synvoid-config, synvoid-utils, synvoid-http-client, synvoid-platform, synvoid-app-handlers, synvoid-mesh, synvoid-yara |
 | 29a | `synvoid-jail-runtime` | synvoid-ipc, synvoid-platform, synvoid-plugin-runtime, synvoid-yara (Phase 29; ships `synvoid-wasm-jail` + `synvoid-yara-jail` binaries) |
 | 30 | `synvoid-admin` | synvoid-core, synvoid-config, synvoid-ipc, synvoid-waf, synvoid-metrics, synvoid-static-files, synvoid-app-server |
 | 31 | `synvoid-http` | synvoid-core, synvoid-config, synvoid-metrics, synvoid-waf, synvoid-challenge, synvoid-http-client, synvoid-upstream, synvoid-app-server, synvoid-app-handlers, synvoid-proxy, synvoid-upload, synvoid-plugin-runtime, synvoid-utils, synvoid-mesh, synvoid-serverless, synvoid-static-files, synvoid-ipc |
 | 32 | `synvoid-http3` | synvoid-core, synvoid-config, synvoid-http, synvoid-http-client, synvoid-proxy, synvoid-waf, synvoid-metrics, synvoid-platform |
-| 33 | `synvoid-dns` | synvoid-core, synvoid-mesh, synvoid-config, synvoid-tls, synvoid-utils, synvoid-geoip |
+| 33 | `synvoid-dns` | synvoid-core, synvoid-mesh, synvoid-config, synvoid-tls, synvoid-utils, synvoid-geoip, synvoid-dnssec-keystore, synvoid-platform |
 | 34 | `synvoid-icmp-filter` | *(none)* |
 | 35 | `synvoid-tarpit` | *(none)* |
 | 36 | `synvoid-vpn-client` | synvoid-config, synvoid-tunnel, synvoid-platform, synvoid-utils |

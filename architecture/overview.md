@@ -52,7 +52,7 @@ synvoid/
 └── scripts/                # CI/build/dns helper scripts
 ```
 
-**Workspace**: 50 members — root app, 42 `synvoid-*` crates under `crates/` (incl. `synvoid-wasm-pow`), `pqc`, `admin-ui`, 2 examples, `fuzz`, `tools/{xtask,synvoid-repo-guards}`.
+**Workspace**: 51 members — root app, 43 `synvoid-*` crates under `crates/` (incl. `synvoid-wasm-pow` and `synvoid-rate-limit`), `pqc`, `admin-ui`, 2 examples, `fuzz`, `tools/{xtask,synvoid-repo-guards}`.
 
 ### Binaries
 
@@ -379,12 +379,12 @@ Start here, then descend into a discrete review track:
 | Topic | Docs |
 |-------|------|
 | Request path end-to-end | [`http_request_pipeline.md`](./http_request_pipeline.md) → [`http_deep_dive.md`](./http_deep_dive.md) → [`proxy_deep_dive.md`](./proxy_deep_dive.md) |
-| Boundaries (must-know) | [`root_module_ledger.md`](./root_module_ledger.md) · [`worker_data_plane_composition_root.md`](./worker_data_plane_composition_root.md) · [`request_path_capability_boundary.md`](./request_path_capability_boundary.md) · [`root_dependency_ownership.md`](./root_dependency_ownership.md) · [`egress_client_decision_phase34.md`](./egress_client_decision_phase34.md) |
+| Boundaries (must-know) | [`root_module_ledger.md`](./root_module_ledger.md) · [`worker_data_plane_composition_root.md`](./worker_data_plane_composition_root.md) · [`request_path_capability_boundary.md`](./request_path_capability_boundary.md) · [`root_dependency_ownership.md`](./root_dependency_ownership.md) · [`egress_client_decision_phase34.md`](./egress_client_decision_phase34.md) · [`crate_boundary_reuse_closeout.md`](./crate_boundary_reuse_closeout.md) (Phase 35 closeout) |
 | Admin & authority | [`admin_control_plane_authority.md`](./admin_control_plane_authority.md) → [`admin_deep_dive.md`](./admin_deep_dive.md) → [`admin_ui.md`](./admin_ui.md) |
 | Threat intel enforcement | [`threat_intel_consumer_actionability.md`](./threat_intel_consumer_actionability.md) · [`block_store_deep_dive.md`](./block_store_deep_dive.md) · [`manual_enforcement_ownership.md`](./manual_enforcement_ownership.md) |
 | Mesh internals | [`mesh_trust_domains.md`](./mesh_trust_domains.md) → [`mesh_transport_lifecycle.md`](./mesh_transport_lifecycle.md) → [`mesh_deep_dive.md`](./mesh_deep_dive.md) |
 | Lifecycle & ops | [`process_lifecycle.md`](./process_lifecycle.md) · [`supervisor_lifecycle.md`](./supervisor_lifecycle.md) · [`worker_task_lifecycle.md`](./worker_task_lifecycle.md) · [`drain.md`](./drain.md) · [`runtime_operations_drill.md`](./runtime_operations_drill.md) |
 | Verification | `docs/testing/verification-contract.md` · [`developer_tooling.md`](./developer_tooling.md) · [`ci_fuzz_failure_injection.md`](./ci_fuzz_failure_injection.md) · [`release_profile_matrix.md`](./release_profile_matrix.md) |
-| Historical / closure reports | [`phase_1_5_verification_report.md`](./phase_1_5_verification_report.md) · [`phase_8_verification_report.md`](./phase_8_verification_report.md) · [`phase_9_observability_report.md`](./phase_9_observability_report.md) · [`track3_performance_report.md`](./track3_performance_report.md) · [`crate_granularity_audit.md`](./crate_granularity_audit.md) · [`root_module_burndown_report.md`](./root_module_burndown_report.md) |
+| Historical / closure reports | [`phase_1_5_verification_report.md`](./phase_1_5_verification_report.md) · [`phase_8_verification_report.md`](./phase_8_verification_report.md) · [`phase_9_observability_report.md`](./phase_9_observability_report.md) · [`track3_performance_report.md`](./track3_performance_report.md) · [`crate_granularity_audit.md`](./crate_granularity_audit.md) · [`root_module_burndown_report.md`](./root_module_burndown_report.md) · [`crate_boundary_reuse_closeout.md`](./crate_boundary_reuse_closeout.md) |
 
 External: [`AGENTS.md`](../AGENTS.md) (agent guide) · [`.opencode/skills/`](../.opencode/skills/) (42 subsystem guides) · [`docs/releasing.md`](../docs/releasing.md) · [`SECURITY.md`](../SECURITY.md)

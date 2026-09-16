@@ -1,6 +1,6 @@
 # AGENTS.md
 
-SynVoid is a high-performance WAF & reverse proxy in Rust with mesh networking and a multi-process architecture (Supervisor + UnifiedServerWorker data plane + CPU offload). 50-member Cargo workspace: root app, 42 `synvoid-*` crates under `crates/`, plus `pqc`, `admin-ui` (Yew/WASM via Trunk), `examples/*`, `fuzz`, `tools/{xtask,synvoid-repo-guards}`. Linux is the primary deployment target.
+SynVoid is a high-performance WAF & reverse proxy in Rust with mesh networking and a multi-process architecture (Supervisor + UnifiedServerWorker data plane + CPU offload). 51-member Cargo workspace: root app, 43 `synvoid-*` crates under `crates/`, plus `pqc`, `admin-ui` (Yew/WASM via Trunk), `examples/*`, `fuzz`, `tools/{xtask,synvoid-repo-guards}`. Linux is the primary deployment target.
 
 ## Build & Setup
 
@@ -124,7 +124,7 @@ Many root `src/` paths are pure re-export facades. Rule: if a `crates/synvoid-*`
 - **Config paths**: `--config-path` takes the DIRECTORY containing `main.toml` + `sites/`, not the TOML file. Caveat: `--configtest` ignores `--config-path` and validates `./config/` relative to CWD.
 - **Docs**: start at `architecture/overview.md` (verified module index + Documentation Map). `architecture/` holds binding design docs; `docs/` holds operator docs; `plans/` is retained phase-handoff history.
 - **Architecture index** (binding docs by topic; historical closure reports are labeled as such in the overview Documentation Map and stay in place):
-  - Composition/facades: `architecture/{root_module_ledger,facade_disposition_matrix,request_path_capability_boundary,root_dependency_ownership}.md`
+  - Composition/facades: `architecture/{root_module_ledger,facade_disposition_matrix,request_path_capability_boundary,root_dependency_ownership,crate_boundary_reuse_closeout}.md`
   - Admin authority: `architecture/{admin_control_plane_authority,admin_root_ownership,admin_contract_phase05_closeout}.md`
   - Threat-intel enforcement: `architecture/{threat_intel_consumer_actionability,manual_enforcement_ownership,enforcement_decision_contract}.md`
   - Mesh/distributed: `architecture/distributed_state_contract.md` (binding) + `mesh_{trust_domains,transport_lifecycle}.md`

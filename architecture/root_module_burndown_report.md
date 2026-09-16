@@ -254,6 +254,31 @@ key custody, and YARA compilation each have a canonical owner with guards.
 Root direct dependency cleanup (38 removed, 3 to dev-deps) moved no
 implementation.
 
+## Phase 35 Re-verification (crate-boundary reuse closeout)
+
+No module changed classification. Zero `split_required` re-verified across
+the ledger, this report, `root_dependency_ownership.md`, and
+`final_surface_audit.md` (which now records `platform` as
+`facade_existing_crate` pure alias, not `keep_app_root` with root-owned
+implementations — the Phase 10 residual line is corrected).
+
+- `platform`: pure alias facade confirmed (no canonical redefinitions, no
+  non-`pub use` items; guard `platform_canonicalization_guard` + new
+  `crate_boundary_reuse_closeout` leaf checks).
+- `utils`: stays `keep_app_root` (composition) + `synvoid-utils` (shared) +
+  `synvoid-core` (URL, Phase 35) + `synvoid-rate-limit` (compat). URL decoding
+  is now a re-export (duplicate deleted, `%`-drop bug fixed); `ResultExt`/
+  `OptionExt`/`HotHashMap`/`format_duration`/`parse_host_port`/`hash_ip`/
+  `errors` retained root-owned with explicit Phase 35 disposition in
+  `src/utils.rs` (single/zero consumers — promotion bar not met).
+- `waf`/`http_client`: classifications unchanged; `http_client` transport is
+  policy-free (site→TLS in `synvoid-upstream`, WAF body in `synvoid-http`).
+- `synvoid-rate-limit` retention re-verified (2 real consumers, std-only leaf,
+  deterministic tests, ~36ns/24ns hot path) — not kept merely for being new.
+- `docs/releasing.md` publish order now includes the three missing crates
+  (`synvoid-auth`, `synvoid-dnssec-keystore`, `synvoid-rate-limit`) and
+  corrects `platform`/`mesh`/`waf`/`upload`/`dns` dependency lists.
+
 ## Next Recommended Cluster
 
 All `split_required` modules are closed (Phase 21). Remaining follow-ups are
