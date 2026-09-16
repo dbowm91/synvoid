@@ -91,8 +91,9 @@ pub enum StreamingWafDecision {
 (Canonical — there is no `NeedMore` variant. The crate-internal
 `synvoid_waf` decision is adapted to the shared
 `synvoid_core::streaming_waf::StreamingWafDecision` at the
-`StreamingWafCore::scan_chunk` boundary so `synvoid-http-client` can depend
-on it without a cycle.)
+`StreamingWafCore::scan_chunk` boundary so `synvoid-http` (body adapter)
+can depend on it without a cycle. The generic transport
+(`synvoid-http-client`) carries no WAF types since Phase 34.)
 
 Enforcement mapping: chunk outcomes project onto the canonical contract via
 `synvoid_waf::enforcement::streaming_candidate`
@@ -146,7 +147,7 @@ At 1000K RPS:
 
 ## StreamingWafBody for True Streaming (Wave P1)
 
-**Location**: `crates/synvoid-http-client/src/streaming_waf_body.rs` (re-exported via `src/http_client/streaming_waf_body.rs`)
+**Location**: `crates/synvoid-http/src/streaming_waf_body.rs` (canonical since Phase 34; was `crates/synvoid-http-client/src/streaming_waf_body.rs`; re-exported via `src/http_client/streaming_waf_body.rs`)
 
 For true streaming to upstream (without full body buffering), a `StreamingWafBody<B>` type was added that wraps `hyper::body::Body` and performs WAF scanning on chunks as they pass through:
 

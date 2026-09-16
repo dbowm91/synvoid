@@ -122,7 +122,7 @@ reference fails the guard until the row is reclassified with a reason.
 | synvoid-proxy-cache | — | remove_candidate | — | Phase 31: removed from root (0 src uses; root proxy_cache/ removed Phase 03) | removed Phase 31 | — |
 | synvoid-admin | admin | composition_runtime | default | Admin API handler types | keep | admin |
 | synvoid-proxy | proxy | composition_runtime | default | Reverse proxy routing and location matching | keep | http, location_matcher, protocol, proxy, router, router_adapter, streaming, tls, waf |
-| synvoid-http | http | composition_runtime | default | Canonical HTTP parsing/normalization/body-policy/dispatch; root `http` is application composition over it (Phase 20) | keep | http, listener, server, tls, waf, worker |
+| synvoid-http | http | composition_runtime | default | Canonical HTTP parsing/normalization/body-policy/dispatch; root `http` is application composition over it (Phase 20); root `http_client` shim re-exports the Phase 34 WAF-body owner (Phase 34) | keep | http, http_client, listener, server, tls, waf, worker |
 | synvoid-http3 | http3 | composition_runtime | default | HTTP/3 QUIC server | keep | http3 |
 | synvoid-serverless | serverless | composition_runtime | default | Serverless WASM function runtime | keep | serverless, worker |
 | synvoid-geoip | geoip | composition_runtime | default | GeoIP database lookups | keep | admin, lib |

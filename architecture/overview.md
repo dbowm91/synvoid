@@ -248,9 +248,9 @@ Root-owned orchestration code (see [`root_module_ledger.md`](./root_module_ledge
 |-----------|----------|---------|-----|
 | **HTTP Server pipeline** | `synvoid-http` | HTTP/1.1+HTTP/2, 7-stage pipeline, WebSocket, streaming WAF bodies | [`http_deep_dive.md`](./http_deep_dive.md) · [`http_request_pipeline.md`](./http_request_pipeline.md) · [`http_server.md`](./http_server.md) · [`http_shared.md`](./http_shared.md) |
 | **HTTP/3** | `synvoid-http3` | QUIC server (quinn/h3), trait-bound WAF backend, shared dispatch stages | [`http3_deep_dive.md`](./http3_deep_dive.md) · [`http3_request_waf_boundary.md`](./http3_request_waf_boundary.md) |
-| **HTTP Client** | `synvoid-http-client` | Pooled upstream clients (moka, 100/TTL300s), erased bodies, UDS support, PQ TLS option | [`http_client_deep_dive.md`](./http_client_deep_dive.md) |
+| **HTTP Client** | `synvoid-http-client` | Policy-free egress transport: pooled upstream clients (moka, 100/TTL300s), erased bodies, UDS support, PQ TLS option; site→TLS in upstream, WAF bodies in `synvoid-http` (Phase 34) | [`http_client_deep_dive.md`](./http_client_deep_dive.md) · [`egress_client_decision_phase34.md`](./egress_client_decision_phase34.md) |
 | **Proxy** | `synvoid-proxy` | Routing (matchit wildcard domains), header hygiene (hop-by-hop/XFF chains), retries w/ idempotency, cache tee | [`proxy.md`](./proxy.md) · [`proxy_deep_dive.md`](./proxy_deep_dive.md) |
-| **Upstream pools** | `synvoid-upstream` | Backend registry, 6 LB algorithms, health checking (HEAD/GET/TCP), tunnel connector trait | [`upstream.md`](./upstream.md) · [`upstream_deep_dive.md`](./upstream_deep_dive.md) |
+| **Upstream pools** | `synvoid-upstream` | Backend registry, 6 LB algorithms, health checking (HEAD/GET/TCP), tunnel connector trait, site→TLS adapter (Phase 34) | [`upstream.md`](./upstream.md) · [`upstream_deep_dive.md`](./upstream_deep_dive.md) |
 | **TLS** | `synvoid-tls` + `src/tls/` | Cert resolver w/ hot-reload, ACME (HTTP-01/DNS-01), SNI peeking, JA4 | [`tls.md`](./tls.md) · [`tls_deep_dive.md`](./tls_deep_dive.md) |
 | **Routing** | `synvoid-proxy::router` | Domain/path routing, radix trees, location semantics | [`routing_deep_dive.md`](./routing_deep_dive.md) · [`location_matcher.md`](./location_matcher.md) |
 | **Listeners / L3–L5** | `src/tcp/`, `src/udp/`, `src/listener/` | Raw listener pools, protocol detection, port filtering before admission | [`listener.md`](./listener.md) · [`layer_3_5_deep_dive.md`](./layer_3_5_deep_dive.md) · [`networking_deep_dive.md`](./networking_deep_dive.md) |
@@ -379,7 +379,7 @@ Start here, then descend into a discrete review track:
 | Topic | Docs |
 |-------|------|
 | Request path end-to-end | [`http_request_pipeline.md`](./http_request_pipeline.md) → [`http_deep_dive.md`](./http_deep_dive.md) → [`proxy_deep_dive.md`](./proxy_deep_dive.md) |
-| Boundaries (must-know) | [`root_module_ledger.md`](./root_module_ledger.md) · [`worker_data_plane_composition_root.md`](./worker_data_plane_composition_root.md) · [`request_path_capability_boundary.md`](./request_path_capability_boundary.md) · [`root_dependency_ownership.md`](./root_dependency_ownership.md) |
+| Boundaries (must-know) | [`root_module_ledger.md`](./root_module_ledger.md) · [`worker_data_plane_composition_root.md`](./worker_data_plane_composition_root.md) · [`request_path_capability_boundary.md`](./request_path_capability_boundary.md) · [`root_dependency_ownership.md`](./root_dependency_ownership.md) · [`egress_client_decision_phase34.md`](./egress_client_decision_phase34.md) |
 | Admin & authority | [`admin_control_plane_authority.md`](./admin_control_plane_authority.md) → [`admin_deep_dive.md`](./admin_deep_dive.md) → [`admin_ui.md`](./admin_ui.md) |
 | Threat intel enforcement | [`threat_intel_consumer_actionability.md`](./threat_intel_consumer_actionability.md) · [`block_store_deep_dive.md`](./block_store_deep_dive.md) · [`manual_enforcement_ownership.md`](./manual_enforcement_ownership.md) |
 | Mesh internals | [`mesh_trust_domains.md`](./mesh_trust_domains.md) → [`mesh_transport_lifecycle.md`](./mesh_transport_lifecycle.md) → [`mesh_deep_dive.md`](./mesh_deep_dive.md) |

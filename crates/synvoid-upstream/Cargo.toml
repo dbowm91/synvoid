@@ -8,6 +8,10 @@ description = "Upstream server selection and health checking"
 
 [dependencies]
 synvoid-utils = { path = "../synvoid-utils" , version = "0.1" }
+# Phase 34: owns the site-config → TLS-policy adapter
+# (`tls_adapter::upstream_tls_from_site_config`) so the generic transport
+# layer (`synvoid-http-client`) no longer depends on `synvoid-config`.
+synvoid-config = { path = "../synvoid-config" , version = "0.1" }
 synvoid-http-client = { path = "../synvoid-http-client" , version = "0.1" }
 parking_lot = "0.12"
 dashmap = "7.0.0-rc2"

@@ -15,7 +15,9 @@ pkcs11 = ["dep:cryptoki"]
 hsm = ["pkcs11"]
 
 [dependencies]
-synvoid-core = { path = "../synvoid-core", version = "0.1" }
+# Phase 34: no synvoid-core edge. The only historical use was the `u64`
+# wall-clock helper, now owned locally in `src/time.rs`, so the custody
+# boundary compiles without the SynVoid application core.
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"

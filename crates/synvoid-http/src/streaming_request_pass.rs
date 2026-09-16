@@ -5,12 +5,12 @@ use bytes::Bytes;
 use http::Response;
 use http_body_util::combinators::BoxBody;
 
+use crate::shared_handler::StreamingWafScanner;
+#[cfg(feature = "mesh")]
+use crate::streaming_waf_body::StreamingWafBody;
 #[cfg(feature = "mesh")]
 use http_body_util::{BodyExt, Full};
 use synvoid_config::MainConfig;
-#[cfg(feature = "mesh")]
-use synvoid_http_client::StreamingWafBody;
-use synvoid_http_client::StreamingWafScanner;
 use synvoid_proxy::client_registry::UpstreamClientRegistry;
 #[cfg(feature = "mesh")]
 use synvoid_proxy::BackendType;

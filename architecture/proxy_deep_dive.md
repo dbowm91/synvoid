@@ -169,8 +169,10 @@ TLS-configurable HTTP client creation, connection pooling, request sending utili
 
 | File | Responsibility |
 |------|----------------|
-| `mod.rs` | Main client creation, TLS config, request utilities, `StreamingWafBody` |
+| `client.rs` / `pool.rs` / `tls.rs` / `request.rs` / `response.rs` / `unix.rs` | Client creation, neutral TLS policy, request utilities (generic transport; Phase 34 keeps no config/WAF coupling) |
 | `erased_pool.rs` | Type-erased connection pool for 1M RPS scale |
+| `tls_adapter.rs` (`synvoid-upstream`) | Site-config → TLS conversion (Phase 34; was `tls.rs`) |
+| `streaming_waf_body.rs` (`synvoid-http`) | WAF-scanning body adapter (Phase 34; was here) |
 
 ### Connection Pooling Strategy
 
@@ -214,7 +216,7 @@ The erased pool is used for true streaming at 1M RPS scale to avoid per-request 
 
 ### Key Structs
 
-**`StreamingWafBody<B, S>`** (streaming_waf_body.rs:9-15)
+**`StreamingWafBody<B, S>`** (`crates/synvoid-http/src/streaming_waf_body.rs`; Phase 34 moved it out of the transport crate)
 - Body wrapper that performs WAF scanning on chunks during streaming
 - Fields: inner (B), streaming_waf (Option<S>), client_ip, blocked, error_sent
 - `poll_frame()` - Inspects each chunk via `sw.scan_chunk()` and blocks if WAFDecision::Block

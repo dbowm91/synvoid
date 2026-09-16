@@ -156,7 +156,7 @@ impl SealedSigningKey {
         key_type: KeyType,
     ) -> Result<Self, KeystoreError> {
         algorithm.validate_for_signing()?;
-        let now = synvoid_core::time::current_timestamp_secs();
+        let now = crate::time::now_secs();
         let expires_at = now.saturating_add(90 * 86400);
         let (public_key, private_key, key_tag, flags, key_size) =
             generate_keypair(algorithm, key_type, 2048)?;

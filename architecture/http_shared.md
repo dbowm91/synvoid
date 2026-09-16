@@ -19,7 +19,7 @@ The HTTP Client module (`src/http_client/`) provides **upstream proxy connection
 src/http_client/
 ├── mod.rs                  # Root re-export shim for synvoid-http-client crate
 ├── quic_tunnel_dispatch.rs # QUIC tunnel URL routing
-└── streaming_waf_body.rs   # Re-export shim for StreamingWafBody
+└── streaming_waf_body.rs   # Re-export shim for StreamingWafBody (points at synvoid-http since Phase 34)
 ```
 
 The canonical implementation lives in `crates/synvoid-http-client/`:
@@ -27,13 +27,22 @@ The canonical implementation lives in `crates/synvoid-http-client/`:
 crates/synvoid-http-client/src/
 ├── lib.rs              # Thin public facade + re-exports only
 ├── client.rs           # Public type aliases (HttpClient etc.), high-level create_* entry points, EmptyBody, is_quictunnel_url compat
-├── tls.rs              # TLS config, UpstreamTlsConfig, upstream_tls_from_site_config, build_tls_config, webpki/native fallback, custom CA, HostnameSkippingVerifier
+├── tls.rs              # TLS config, UpstreamTlsConfig, build_tls_config, webpki/native fallback, custom CA, HostnameSkippingVerifier
 ├── pool.rs             # UpstreamClientKey, moka client caches, build_upstream_client, create_upstream_* logic
 ├── unix.rs             # is_unix_socket_url, Unix client and request helpers
 ├── request.rs          # All send_request_* / streaming / get / post_json / auth helpers
 ├── response.rs         # HttpResponse + from_hyper conversion
-├── erased_pool.rs      # Type-erased connection pool (primary production path)
-└── streaming_waf_body.rs # Streaming WAF body scanning
+└── erased_pool.rs      # Type-erased connection pool (primary production path)
+```
+
+Phase 34 moves (transport stays policy-free): site-config → TLS conversion
+lives in `crates/synvoid-upstream/src/tls_adapter.rs`
+(`synvoid_upstream::upstream_tls_from_site_config`); the WAF-scanning body
+lives in `crates/synvoid-http/src/streaming_waf_body.rs`
+(`synvoid_http::StreamingWafBody`, scanner contract re-exported from
+`synvoid_core::streaming_waf` via `synvoid_http::shared_handler`).
+`crates/synvoid-http-client` keeps no `synvoid-config`/`synvoid-core`/`metrics`
+edges. Full decision record: `architecture/egress_client_decision_phase34.md`.
 ```
 
 ### 1. Core Module (`mod.rs`)
@@ -45,8 +54,8 @@ crates/synvoid-http-client/src/
 - `StreamingHttpClient = Client<HttpsConnector<HttpConnector>, BoxErasedBody>` — Streaming-capable client
 - `UnixHttpClient = Client<UnixConnector, Full<Bytes>>` — Unix domain socket client
 - `HttpResponse` — Response wrapper with status, headers, and body
-- `UpstreamTlsConfig` — TLS configuration for upstream connections
-- `StreamingWafBody<B>` — WAF-scanning body wrapper
+- `UpstreamTlsConfig` — TLS configuration for upstream connections (neutral policy; site conversion in `synvoid-upstream::tls_adapter`)
+- `StreamingWafBody<B>` — WAF-scanning body wrapper (canonical: `synvoid_http::streaming_waf_body`)
 
 **Key Functions:**
 - `create_http_client()` / `create_http_client_with_config()` — Creates default HTTPS client
@@ -110,7 +119,9 @@ pub struct UpstreamTlsConfig {
 }
 ```
 
-Created from `crate::config::site::UpstreamTlsConfig` via `UpstreamTlsConfig::from_site_config()`.
+Created from `synvoid_config::site::UpstreamTlsConfig` via
+`synvoid_upstream::tls_adapter::upstream_tls_from_site_config()` (Phase 34;
+previously `synvoid_http_client::upstream_tls_from_site_config`).
 
 ### `UpstreamClientKey`
 
@@ -124,7 +135,7 @@ struct UpstreamClientKey {
 
 Used as cache key for `UPSTREAM_CLIENT_CACHE` and `UPSTREAM_STREAMING_CLIENT_CACHE` (Moka LRU caches, max 100 entries, 5-minute TTL).
 
-### `StreamingWafBody<B>`
+### `StreamingWafBody<B>` (canonical: `synvoid_http::streaming_waf_body`, Phase 34)
 
 ```rust
 pub struct StreamingWafBody<B> {
@@ -371,11 +382,12 @@ This provides a tunneled HTTP proxy over QUIC with TLS passthrough support.
 The HTTP/3 server (`crates/synvoid-http3/src/server.rs`) uses `HttpClient` for upstream requests:
 
 ```rust
-use crate::http_client::{
+use synvoid_http_client::{
     create_http_client_with_config, send_request_streaming,
     send_request_streaming_generic, ErasedBodyImpl, HttpClient,
-    StreamingWafBody, UpstreamTlsConfig,
+    UpstreamTlsConfig,
 };
+use synvoid_http::streaming_waf_body::StreamingWafBody;
 ```
 
 **Request Flow in HTTP/3:**
@@ -420,7 +432,9 @@ Per `AGENTS.md` — Pure Rust crypto, battle-tested, no C bindings. Provides TLS
 | `src/http_client/mod.rs` | Root re-export shim for `synvoid-http-client` crate |
 | `crates/synvoid-http-client/src/lib.rs` | Thin public facade + re-exports; implementation in focused modules |
 | `crates/synvoid-http-client/src/client.rs` | Public type aliases (HttpClient etc.), high-level create_* entry points, EmptyBody, is_quictunnel_url compat |
-| `crates/synvoid-http-client/src/tls.rs` | TLS config, UpstreamTlsConfig, upstream_tls_from_site_config, build_tls_config, webpki/native fallback, custom CA, HostnameSkippingVerifier |
+| `crates/synvoid-http-client/src/tls.rs` | TLS config, UpstreamTlsConfig, build_tls_config, webpki/native fallback, custom CA, HostnameSkippingVerifier (site conversion moved to `synvoid-upstream::tls_adapter` in Phase 34) |
+| `crates/synvoid-upstream/src/tls_adapter.rs` | `upstream_tls_from_site_config` site→TLS adapter (Phase 34) |
+| `crates/synvoid-http/src/streaming_waf_body.rs` | WAF-scanning body adapter (Phase 34; was `synvoid-http-client`) |
 | `crates/synvoid-http-client/src/pool.rs` | UpstreamClientKey, moka client caches, build_upstream_client, create_upstream_* logic |
 | `crates/synvoid-http-client/src/unix.rs` | is_unix_socket_url, Unix client and request helpers |
 | `crates/synvoid-http-client/src/request.rs` | All send_request_* / streaming / get / post_json / auth helpers |

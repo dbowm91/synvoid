@@ -16,13 +16,13 @@ hyper-util = { version = "0.1", features = ["tokio", "http1", "http2", "client",
 hyper-rustls = { version = "0.27", features = ["http2"] }
 moka = { version = "0.12", features = ["sync"] }
 anyhow = "1"
-synvoid-config = { path = "../synvoid-config" , version = "0.1" }
-synvoid-core = { path = "../synvoid-core" , version = "0.1" }
+# Phase 34: generic transport core. No `synvoid-config` (site conversion lives
+# in `synvoid-upstream`), no `synvoid-core` (WAF scanner trait + body adapter
+# live in `synvoid-http`), no `metrics` (SynVoid metric names are domain-layer).
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
-metrics = "0.22"
 base64 = "0.22"
 rustls = { version = "0.23", features = ["prefer-post-quantum", "aws-lc-rs"] }
 rustls-native-certs = "0.8"
@@ -31,6 +31,20 @@ webpki-roots = "0.26"
 
 [target.'cfg(unix)'.dependencies]
 hyperlocal = { version = "0.9", features = ["hyper-util"] }
+
+[dev-dependencies]
+# Phase 34 parity suite reuses versions already in Cargo.lock (no new
+# supply-chain surface): hyper server pieces, rcgen via synvoid-tunnel/mesh,
+# tokio-rustls via the root app, tempfile via the keystore dev-deps.
+hyper = { version = "1", features = ["server", "http1", "http2"] }
+http-body-util = "0.1"
+tokio-rustls = "0.26"
+# Plain version: no extra crypto features, so the test build keeps the single
+# aws-lc-rs process provider from [dependencies] (adding `ring` here would make
+# the process CryptoProvider ambiguous and panic at ServerConfig build time).
+rustls = "0.23"
+rcgen = "0.13"
+tempfile = "3"
 
 [features]
 post-quantum = []

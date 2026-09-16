@@ -1,8 +1,10 @@
 # Phase 34 Plan: Reusable Library Boundary Cleanup and Egress Decision Gate
 
-Status: planned (2026-09-16).
+Status: complete (2026-09-16). Decision: **Branch 2 — retain `synvoid-http-client`**.
 
 Roadmap: `plans/crate_boundary_reuse_followup_roadmap.md`.
+Decision record: `architecture/egress_client_decision_phase34.md` (capability
+matrix + eggfetch-core 0.1.4 comparison + retention rationale + evidence).
 
 Primary goal: tighten the reusable boundaries of `synvoid-dnssec-keystore` and `synvoid-http-client`, then make an evidence-based decision about whether SynVoid should continue owning generic HTTP transport machinery or consume `eggfetch-core` behind SynVoid-specific adapters.
 
@@ -257,3 +259,43 @@ cargo check --no-default-features --features mesh,dns
 ```
 
 If eggfetch is adopted, add its targeted integration/parity suite and verify the exact selected feature set with `cargo tree -e features`.
+
+## Closeout (2026-09-16)
+
+- **Part A**: the only `synvoid-core` uses in the keystore were two
+  `current_timestamp_secs()` calls; replaced by a local `src/time.rs`
+  helper with identical fail-to-zero semantics. `synvoid-core` removed
+  from `crates/synvoid-dnssec-keystore/Cargo.toml`. No micro-crate created.
+- **Part B**: surface review holds on all rows (no raw-key API, opaque HSM,
+  atomic/0600 persistence, no config/Hickory/mesh/admin/Hyper/Quinn/SQLite
+  edges, DNSSEC-only algorithm types, opt-in fail-closed HSM, redacted
+  errors). Lib.rs now documents the dependency budget plus runnable
+  examples (ephemeral signing, persistent lifecycle, HSM); 3 new doctests.
+- **Part C**: `upstream_tls_from_site_config` (+ tests) moved to
+  `synvoid-upstream::tls_adapter`; `StreamingWafBody` moved to
+  `synvoid-http::streaming_waf_body` (metric moves with it into the domain
+  layer); scanner contract re-exported from `synvoid-core` via
+  `synvoid-http::shared_handler`. `synvoid-http-client` loses its
+  `synvoid-config`/`synvoid-core`/`metrics` edges (verified by
+  `cargo tree --depth 1` before/after). `is_quictunnel_url` stays as a
+  dependency-free scheme predicate; dispatch already lives in root.
+- **Parts D–F**: capability matrix covers all production consumers;
+  `eggfetch-core` 0.1.4 comparison finds material gaps (ring-only TLS, no
+  PQ knob; closed `RequestBody`; no direct-UDS parity; coarse verification
+  toggle; same transitive stack ⇒ zero dep win; pre-1.0 maturity) and no
+  required capability eggfetch uniquely provides (proxy/cookies/compression
+  unneeded). **Branch 2 retained** with a documented future-consolidation
+  condition. No new generic HTTP crate created.
+- **Part G**: `crates/synvoid-http-client/tests/egress_parity.rs` — 13
+  hermetic tests (14 with `post-quantum`), all green.
+- **Part H**: `cargo deny check` clean; `cargo audit` exit 0 (only
+  pre-existing allowed warnings); no new crates added (parity dev-deps
+  reuse locked versions).
+- Docs: decision record + `dnssec_keystore`, `http_shared`,
+  `http_client_deep_dive`, `enforcement_decision_contract`,
+  `crate_granularity_audit`, `upstream`, `overview` (map + index rows),
+  `facade_disposition_matrix`, `root_module_ledger`, `docs/releasing.md`
+  publish order, `AGENTS.md` facade row, `http_client` override,
+  `upstream` + `streaming_waf` skills.
+- Verification: `cargo xtask verify` + `verify-full` green locally (see
+  commit message for counts).

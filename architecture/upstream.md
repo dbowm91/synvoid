@@ -20,6 +20,7 @@ The `upstream` module provides **upstream connection pooling, load balancing, an
 | `health` | `health.rs` | Periodic health checking with configurable methods and thresholds |
 | `pool` | `pool.rs` | Core upstream pool management, load balancing, backend selection |
 | `shared_state` | `shared_state.rs` | Cross-process shared memory for distributed connection counting |
+| `tls_adapter` | `tls_adapter.rs` | Site-config → egress-TLS conversion (Phase 34; keeps `synvoid-http-client` policy-free) |
 
 ### 2.1 address.rs - Upstream Address Management
 

@@ -16,10 +16,11 @@ use crate::response_builder::{
     fallback_error_boxed,
 };
 
-// Re-export the unified StreamingWafScanner trait and StreamingWafDecision from
-// synvoid-http-client. The duplicate local definitions were removed in the
-// StreamingWafScanner unification pass.
-pub use synvoid_http_client::{StreamingWafDecision, StreamingWafScanner};
+// Re-export the unified StreamingWafScanner trait and StreamingWafDecision
+// from synvoid-core. The duplicate local definitions were removed in the
+// StreamingWafScanner unification pass; the re-export source moved here from
+// synvoid-http-client in Phase 34 (transport no longer carries WAF policy).
+pub use synvoid_core::streaming_waf::{StreamingWafDecision, StreamingWafScanner};
 
 pub struct SharedRequestHandler;
 

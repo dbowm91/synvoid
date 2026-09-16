@@ -44,6 +44,7 @@ pub mod spin_backend_dispatch;
 pub mod static_backend_dispatch;
 pub mod streaming_request_fast_path;
 pub mod streaming_request_pass;
+pub mod streaming_waf_body;
 pub mod streaming_waf_decision;
 pub mod streaming_waf_upstream_dispatch;
 pub mod traffic_control;
@@ -138,6 +139,7 @@ pub use streaming_request_fast_path::{
     maybe_handle_streaming_request_fast_path, StreamingRequestFastPathOutcome,
 };
 pub use streaming_request_pass::handle_streaming_request_pass;
+pub use streaming_waf_body::StreamingWafBody;
 pub use streaming_waf_decision::{maybe_handle_streaming_waf_decision, TarpitStream};
 pub use streaming_waf_upstream_dispatch::{
     handle_streaming_waf_upstream_pass, StreamingWafUpstreamError,

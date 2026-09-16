@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
 use crate::algorithm::Algorithm;
 use crate::error::KeystoreError;
 use crate::key::{KeyMetadata, KeyType, SealedSigningKey};
+use crate::time::now_secs;
 
 /// Rotation timing policy (days).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -80,10 +81,6 @@ pub struct RolloverState {
     pub ksk_rollover_started: Option<u64>,
     pub zsk_rollover_started: Option<u64>,
     pub publish_dnssec: bool,
-}
-
-fn now_secs() -> u64 {
-    synvoid_core::time::current_timestamp_secs()
 }
 
 /// Canonical key custodian. Clone shares no key material; share via `Arc`.

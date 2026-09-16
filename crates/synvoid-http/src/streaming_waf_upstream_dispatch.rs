@@ -6,18 +6,18 @@ use http::Response;
 use http_body_util::combinators::BoxBody;
 
 use synvoid_config::MainConfig;
-use synvoid_http_client::{
-    send_request_streaming_generic, upstream_tls_from_site_config, ErasedBodyImpl,
-    StreamingWafBody, StreamingWafScanner,
-};
+use synvoid_http_client::{send_request_streaming_generic, ErasedBodyImpl};
 use synvoid_proxy::client_registry::UpstreamClientRegistry;
 use synvoid_proxy::{
     build_forward_headers, build_headers_to_filter_for_site, filter_response_headers_buf,
     ForwardedProtocol, PreparedUpstreamTarget, RouteTarget,
 };
+use synvoid_upstream::upstream_tls_from_site_config;
 
 use crate::response_builder::build_response_with_alt_svc;
 use crate::response_helpers::apply_security_headers;
+use crate::shared_handler::StreamingWafScanner;
+use crate::streaming_waf_body::StreamingWafBody;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StreamingWafUpstreamError {

@@ -5,22 +5,31 @@
 //!
 //! This crate is split into focused modules while preserving 100% source-compatible
 //! public API via re-exports from lib.rs.
+//!
+//! Phase 34 boundary: this is the **generic transport core**. SynVoid policy
+//! adapters live one layer up and are deliberately absent here:
+//!
+//! - site-config → TLS conversion: `synvoid_upstream::tls_adapter`
+//! - WAF-scanning request bodies: `synvoid_http::streaming_waf_body`
+//! - QUIC/tunnel dispatch: root `src/http_client/quic_tunnel_dispatch.rs`
+//!
+//! `is_quictunnel_url` remains only as a dependency-free scheme predicate so
+//! existing dispatch call sites keep compiling; it performs no I/O and owns
+//! no tunnel state.
 
 mod client;
 mod erased_pool;
 mod pool;
 mod request;
 mod response;
-mod streaming_waf_body;
 mod tls;
 #[cfg(unix)]
 mod unix;
 
-// Re-export erased and streaming items unchanged.
+// Re-export erased items unchanged.
 pub use erased_pool::{
     ErasedBody, ErasedBodyImpl, ErasedConnectionPool, ErasedHttpClient, PoolKey,
 };
-pub use streaming_waf_body::{StreamingWafBody, StreamingWafDecision, StreamingWafScanner};
 
 // Client type aliases and entry points (client.rs owns the impls + EmptyBody).
 pub use client::{
@@ -35,8 +44,10 @@ pub use client::{create_unix_http_client, UnixHttpClient};
 // (client.rs uses it privately to define StreamingHttpClient type alias.)
 pub use erased_pool::BoxErasedBody;
 
-// TLS config (public surface only).
-pub use tls::{upstream_tls_from_site_config, UpstreamTlsConfig};
+// TLS config (public surface only). Site-config conversion lives in
+// `synvoid_upstream::tls_adapter` (Phase 34); the transport layer keeps
+// only the neutral policy type.
+pub use tls::UpstreamTlsConfig;
 
 // Unix helpers (public surface).
 #[cfg(unix)]

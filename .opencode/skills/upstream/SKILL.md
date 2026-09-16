@@ -20,6 +20,7 @@ The upstream crate manages connections to backend servers: connection pooling, l
 - `crates/synvoid-upstream/src/health.rs` — `HealthCheckConfig`, `HealthCheckMethod`, `HealthChecker`
 - `crates/synvoid-upstream/src/pool.rs` — `UpstreamPool`, `Backend`, `BackendProtocol`, `LoadBalanceAlgorithm`, `UpstreamMetrics`
 - `crates/synvoid-upstream/src/shared_state.rs` — `SharedConnectionTable`
+- `crates/synvoid-upstream/src/tls_adapter.rs` — `upstream_tls_from_site_config` site→TLS adapter (Phase 34; keeps `synvoid-http-client` policy-free)
 - `crates/synvoid-upstream/src/tunnel.rs` — `TunnelConnector` trait, `NoopTunnelConnector`
 
 ## Architecture

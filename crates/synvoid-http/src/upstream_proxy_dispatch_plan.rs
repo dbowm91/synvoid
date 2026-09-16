@@ -5,12 +5,13 @@ use http::HeaderMap;
 
 use synvoid_config::site::ProxyHeadersConfig;
 use synvoid_config::MainConfig;
-use synvoid_http_client::{upstream_tls_from_site_config, HttpClient, StreamingHttpClient};
+use synvoid_http_client::{HttpClient, StreamingHttpClient};
 use synvoid_proxy::client_registry::UpstreamClientRegistry;
 use synvoid_proxy::{
     build_forward_headers, build_headers_to_filter, ForwardedProtocol, PreparedUpstreamTarget,
     RouteTarget,
 };
+use synvoid_upstream::upstream_tls_from_site_config;
 
 pub struct UpstreamProxyDispatchPlan {
     pub upstream_target: PreparedUpstreamTarget,

@@ -6,8 +6,7 @@ use http::{header, Response, StatusCode};
 use metrics::counter;
 
 use crate::headers::generate_stealth_timestamp;
-use crate::shared_handler::StreamingWafScanner;
-use synvoid_http_client::StreamingWafDecision;
+use crate::shared_handler::{StreamingWafDecision, StreamingWafScanner};
 
 #[async_trait]
 pub trait Http3RequestStream {

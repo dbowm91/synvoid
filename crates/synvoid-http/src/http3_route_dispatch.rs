@@ -33,7 +33,7 @@ pub async fn handle_http3_found_route<W>(
     request_stream: &mut W,
     max_request_size: usize,
     body_bytes: Vec<u8>,
-    streaming_waf: Option<Box<dyn synvoid_http_client::StreamingWafScanner>>,
+    streaming_waf: Option<Box<dyn crate::shared_handler::StreamingWafScanner>>,
     connection_guard: Option<&ConnectionTokenGuard>,
     connection_limiter: Option<&Arc<ConnectionLimiter>>,
     main_config: &Arc<MainConfig>,

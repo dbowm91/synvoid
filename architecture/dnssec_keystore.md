@@ -25,9 +25,11 @@ split, not an authoritative-vs-recursive split and not a LOC reduction.
 | `KeyMetadata` (public-only shareable snapshot) | `MeshTrustAnchor` over `KeyMetadata` (public only) |
 
 Dependency direction: `synvoid-dns` → `synvoid-dnssec-keystore`
-(one-way). The keystore depends only on `synvoid-core` (time), serde,
-`ed25519-dalek`, `rsa`, `sha1`/`sha2`, `getrandom`/`rand_core_06`,
-`zeroize`, `parking_lot`, `tokio`, `tracing`, and optional `cryptoki`.
+(one-way). Phase 34 removed the last application edge: the keystore no
+longer depends on `synvoid-core` (the `u64` wall-clock helper is owned
+locally in `src/time.rs`). It depends only on serde, `ed25519-dalek`,
+`rsa`, `sha1`/`sha2`, `getrandom`/`rand_core_06`, `zeroize`,
+`parking_lot`, `tokio`, `tracing`, and optional `cryptoki`.
 It never touches Hickory, Hyper, Quinn, SQLite, mesh, admin, or config
 (the HSM config conversion lives in the `synvoid-dns` facade).
 
@@ -125,7 +127,8 @@ reclassified as secret storage.
 
 - `cargo tree -p synvoid-dns` (default features): no `cryptoki`.
 - `cargo tree -p synvoid-dnssec-keystore` (default): `ed25519-dalek`,
-  `rsa`, no `cryptoki`, no Hickory/Hyper/Quinn/SQLite.
+  `rsa`, no `cryptoki`, no Hickory/Hyper/Quinn/SQLite — and since
+  Phase 34, no `synvoid-core`/`synvoid-config` either (local `src/time.rs`).
 - With `pkcs11`: `cryptoki` appears only under the keystore.
 - `synvoid-dns` retains `rsa`/`ed25519-dalek`/`sha1`/`sha2` for
   verification-only and protocol uses (public-key verify, DS digests,

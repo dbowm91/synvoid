@@ -57,6 +57,10 @@ pub struct UpstreamTlsConfig {
 
 ### Streaming Body
 
+Phase 34: the WAF-scanning body adapter moved to `synvoid-http`
+(`crates/synvoid-http/src/streaming_waf_body.rs`) so the transport core
+stays policy-free. Shape (unchanged, new owner):
+
 ```rust
 pub struct StreamingWafBody<B, S> {
     inner: B,
@@ -95,8 +99,8 @@ where
 | `HttpClient` | `crates/synvoid-http-client/src/client.rs` | Standard HTTP client |
 | `StreamingHttpClient` | `crates/synvoid-http-client/src/client.rs` | Streaming HTTP client |
 | `UnixHttpClient` | `crates/synvoid-http-client/src/client.rs` | Unix socket HTTP client |
-| `UpstreamTlsConfig` | `crates/synvoid-http-client/src/tls.rs` | Per-upstream TLS |
-| `StreamingWafBody` | `crates/synvoid-http-client/src/streaming_waf_body.rs` | WAF-scanning body |
+| `UpstreamTlsConfig` | `crates/synvoid-http-client/src/tls.rs` | Per-upstream TLS (neutral policy; site conversion in `synvoid-upstream::tls_adapter`) |
+| `StreamingWafBody` | `crates/synvoid-http/src/streaming_waf_body.rs` (Phase 34; was `synvoid-http-client`) | WAF-scanning body |
 | `ErasedConnectionPool` | `crates/synvoid-http-client/src/erased_pool.rs` | Type-erased HTTP/1.1 pool |
 | `ErasedHttpClient` | `crates/synvoid-http-client/src/erased_pool.rs` | Type-erased HTTP client |
 | `ErasedBody` / `BoxErasedBody` | `crates/synvoid-http-client/src/erased_pool.rs` | Type-erased body trait/alias |

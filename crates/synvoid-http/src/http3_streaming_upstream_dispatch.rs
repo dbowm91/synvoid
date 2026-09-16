@@ -13,10 +13,7 @@ use tokio::sync::mpsc;
 
 use synvoid_config::site::ProxyHeadersConfig;
 use synvoid_config::MainConfig;
-use synvoid_http_client::{
-    send_request_streaming_generic, upstream_tls_from_site_config, ErasedBodyImpl,
-    StreamingWafBody, StreamingWafScanner,
-};
+use synvoid_http_client::{send_request_streaming_generic, ErasedBodyImpl};
 use synvoid_metrics::{
     bandwidth::{BandwidthProtocol, BandwidthTracker, EgressDirection},
     WorkerMetrics,
@@ -26,10 +23,13 @@ use synvoid_proxy::{
     build_forward_headers, build_headers_to_filter_for_site, filter_response_headers_buf,
     ForwardedProtocol, PreparedUpstreamTarget, RouteTarget,
 };
+use synvoid_upstream::upstream_tls_from_site_config;
 
 use crate::headers::generate_stealth_timestamp;
 use crate::http3_body::Http3RequestStream;
 use crate::response_helpers::apply_security_headers;
+use crate::shared_handler::StreamingWafScanner;
+use crate::streaming_waf_body::StreamingWafBody;
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 

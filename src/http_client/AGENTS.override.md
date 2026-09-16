@@ -7,8 +7,9 @@ The HTTP client module (`src/http_client/`) provides upstream proxy connections 
 ## Key Files
 
 - `crates/synvoid-http-client/src/lib.rs` — thin facade reexports only
-- `crates/synvoid-http-client/src/client.rs`, `tls.rs` (TLS config, UpstreamTlsConfig, upstream_tls_from_site_config, build_tls_config, webpki/native/custom CA, HostnameSkippingVerifier), `pool.rs` (caching, UpstreamClientKey, create_upstream_*), `unix.rs`, `request.rs`, `response.rs`, `erased_pool.rs`, `streaming_waf_body.rs`
-- Root: `mod.rs` (shim), `quic_tunnel_dispatch.rs` (root-only, tunnel dep), `streaming_waf_body.rs` (shim)
+- `crates/synvoid-http-client/src/client.rs`, `tls.rs` (TLS config, UpstreamTlsConfig, build_tls_config, webpki/native/custom CA, HostnameSkippingVerifier), `pool.rs` (caching, UpstreamClientKey, create_upstream_*), `unix.rs`, `request.rs`, `response.rs`, `erased_pool.rs`
+- Phase 34 (transport stays policy-free): site-config → TLS conversion lives in `crates/synvoid-upstream/src/tls_adapter.rs` (`synvoid_upstream::upstream_tls_from_site_config`); the WAF-scanning body lives in `crates/synvoid-http/src/streaming_waf_body.rs` (`synvoid_http::StreamingWafBody`); the crate keeps no `synvoid-config`/`synvoid-core`/`metrics` edges
+- Root: `mod.rs` (shim), `quic_tunnel_dispatch.rs` (root-only, tunnel dep), `streaming_waf_body.rs` (shim, now points at `synvoid-http`)
 
 ## Important Patterns
 
@@ -19,7 +20,7 @@ pub fn create_http_client_with_config(connect_timeout: Duration, pool_max_idle_p
 pub fn create_upstream_client(...) -> HttpClient  // Per-site TLS configuration
 ```
 
-### 2. StreamingWafBody
+### 2. StreamingWafBody (canonical: `crates/synvoid-http/src/streaming_waf_body.rs` since Phase 34)
 Wraps any `hyper::body::Body` and performs WAF scanning on chunks as they pass through:
 ```rust
 pub struct StreamingWafBody<B> {

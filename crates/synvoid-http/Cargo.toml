@@ -17,6 +17,8 @@ synvoid-metrics = { path = "../synvoid-metrics" , version = "0.1" }
 synvoid-waf = { path = "../synvoid-waf" , version = "0.1" }
 synvoid-challenge = { path = "../synvoid-challenge" , version = "0.1" }
 synvoid-http-client = { path = "../synvoid-http-client" , version = "0.1" }
+# Phase 34: site-config → TLS adapter + (transitively) generic egress transport.
+synvoid-upstream = { path = "../synvoid-upstream" , version = "0.1" }
 synvoid-app-server = { path = "../synvoid-app-server" , version = "0.1" }
 synvoid-app-handlers = { path = "../synvoid-app-handlers" , version = "0.1" }
 synvoid-proxy = { path = "../synvoid-proxy" , version = "0.1" }

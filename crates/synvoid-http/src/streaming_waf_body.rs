@@ -1,3 +1,18 @@
+//! Streaming WAF body adapter (Phase 34 canonical owner).
+//!
+//! [`StreamingWafBody`] wraps any `hyper::body::Body` and scans chunks
+//! through an injected [`StreamingWafScanner`] as they pass through,
+//! enabling true streaming: the body is scanned and forwarded without full
+//! buffering.
+//!
+//! This adapter used to live in `synvoid-http-client`, which forced the
+//! generic HTTP transport layer to depend on `synvoid-core` (for the scanner
+//! trait) and to emit the SynVoid-specific
+//! `synvoid.http.streaming_body_blocked` metric. It now lives here — next to
+//! the other WAF/upstream dispatch adapters — so the transport core stays
+//! policy-free. The narrow scanner contract itself remains in
+//! `synvoid_core::streaming_waf` (shared by `synvoid-waf` without cycles).
+
 use std::net::IpAddr;
 
 use bytes::Bytes;

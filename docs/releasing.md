@@ -43,7 +43,7 @@ Crates must be published in this exact order. Each crate's path dependencies mus
 | 8 | `synvoid-config` | pqc |
 | 9 | `synvoid-theme` | synvoid-config |
 | 10 | `synvoid-challenge` | synvoid-theme, synvoid-utils |
-| 11 | `synvoid-http-client` | synvoid-config, synvoid-core |
+| 11 | `synvoid-http-client` | *(none — leaf transport; Phase 34 removed synvoid-config/synvoid-core)* |
 | 12 | `synvoid-app-server` | synvoid-utils, synvoid-http-client |
 | 13 | `synvoid-tls` | synvoid-config |
 | 13a | `synvoid-mesh-protocol` | *(none — leaf wire vocabulary, Phase 27)* |
@@ -52,7 +52,7 @@ Crates must be published in this exact order. Each crate's path dependencies mus
 | 14 | `synvoid-plugin-runtime` | synvoid-utils |
 | 15 | `synvoid-integrity` | pqc |
 | 16 | `synvoid-geoip` | synvoid-config, synvoid-http-client |
-| 17 | `synvoid-upstream` | synvoid-utils, synvoid-http-client |
+| 17 | `synvoid-upstream` | synvoid-utils, synvoid-config, synvoid-http-client |
 | 18 | `synvoid-proxy` | synvoid-core, synvoid-config, synvoid-http-client, synvoid-upstream, synvoid-proxy-cache, synvoid-waf, synvoid-utils, synvoid-static-files, synvoid-plugin-runtime, synvoid-platform, synvoid-metrics |
 | 19 | `synvoid-tunnel` | synvoid-config, synvoid-upstream, synvoid-utils |
 | 20 | `synvoid-mesh` | synvoid-core, synvoid-config, synvoid-utils, synvoid-integrity, synvoid-geoip, synvoid-tls, synvoid-tunnel, synvoid-proxy, synvoid-proxy-cache, synvoid-serverless, pqc |
@@ -67,7 +67,7 @@ Crates must be published in this exact order. Each crate's path dependencies mus
 | 29 | `synvoid-upload` | synvoid-config, synvoid-utils, synvoid-http-client, synvoid-platform, synvoid-app-handlers, synvoid-mesh |
 | 29a | `synvoid-jail-runtime` | synvoid-ipc, synvoid-platform, synvoid-plugin-runtime, synvoid-yara (Phase 29; ships `synvoid-wasm-jail` + `synvoid-yara-jail` binaries) |
 | 30 | `synvoid-admin` | synvoid-core, synvoid-config, synvoid-ipc, synvoid-waf, synvoid-metrics, synvoid-static-files, synvoid-app-server |
-| 31 | `synvoid-http` | synvoid-core, synvoid-config, synvoid-metrics, synvoid-waf, synvoid-challenge, synvoid-http-client, synvoid-app-server, synvoid-app-handlers, synvoid-proxy, synvoid-upload, synvoid-plugin-runtime, synvoid-utils, synvoid-mesh, synvoid-serverless, synvoid-static-files, synvoid-ipc |
+| 31 | `synvoid-http` | synvoid-core, synvoid-config, synvoid-metrics, synvoid-waf, synvoid-challenge, synvoid-http-client, synvoid-upstream, synvoid-app-server, synvoid-app-handlers, synvoid-proxy, synvoid-upload, synvoid-plugin-runtime, synvoid-utils, synvoid-mesh, synvoid-serverless, synvoid-static-files, synvoid-ipc |
 | 32 | `synvoid-http3` | synvoid-core, synvoid-config, synvoid-http, synvoid-http-client, synvoid-proxy, synvoid-waf, synvoid-metrics, synvoid-platform |
 | 33 | `synvoid-dns` | synvoid-core, synvoid-mesh, synvoid-config, synvoid-tls, synvoid-utils, synvoid-geoip |
 | 34 | `synvoid-icmp-filter` | *(none)* |

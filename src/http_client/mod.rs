@@ -2,9 +2,12 @@
 // Canonical code lives in crates/synvoid-http-client (split modules post-iter6):
 // - tls.rs for TLS/webpki (UpstreamTlsConfig, build_tls_config, native/webpki/custom CA, HostnameSkippingVerifier)
 // - pool.rs for caching (UpstreamClientKey, moka caches, build_upstream/create_upstream_*)
-// - client.rs (aliases + create_*), unix.rs, request.rs, response.rs + erased_pool + streaming_waf_body
+// - client.rs (aliases + create_*), unix.rs, request.rs, response.rs + erased_pool
+// Phase 34 moves (transport stays policy-free):
+// - site-config → TLS conversion lives in synvoid-upstream (`tls_adapter`)
+// - WAF-scanning bodies live in synvoid-http (`streaming_waf_body`)
 // Root retains quic_tunnel_dispatch (depends on root tunnel/quic + QUIC_TUNNEL_REGISTRY; not suitable for crate)
-// and streaming_waf_body (pure re-export shim).
+// and streaming_waf_body (pure re-export shim, now pointing at synvoid-http).
 // No TLS implementation or typed-pool code remains in root.
 
 pub use synvoid_http_client::*;
