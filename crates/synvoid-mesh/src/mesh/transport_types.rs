@@ -4,7 +4,7 @@ use std::time::Instant;
 use quinn::{Connection, RecvStream, SendStream};
 use tokio::sync::Mutex;
 
-use crate::stubs::waf_stub::ratelimit::core::AtomicSlidingWindow;
+use synvoid_rate_limit::{AtomicSlidingWindow, WindowClock};
 
 const MAX_MESH_STREAM_POOL_SIZE: usize = 8;
 
@@ -47,6 +47,7 @@ impl MeshStreamPool {
 pub struct MeshGlobalRateLimiter {
     per_second: AtomicSlidingWindow,
     per_minute: AtomicSlidingWindow,
+    clock: WindowClock,
     limit_per_second: u64,
     limit_per_minute: u64,
 }
@@ -56,16 +57,15 @@ impl MeshGlobalRateLimiter {
         Self {
             per_second: AtomicSlidingWindow::new(1, 10),
             per_minute: AtomicSlidingWindow::new(60, 60),
+            clock: WindowClock::new(),
             limit_per_second: messages_per_second.max(1) as u64,
             limit_per_minute: messages_per_minute.max(1) as u64,
         }
     }
 
     pub(crate) fn check(&self) -> GlobalRateLimitCheck {
-        let now_ms = synvoid_utils::safe_unix_duration().as_millis() as u64;
-
-        let current_per_second = self.per_second.get_count(now_ms);
-        let current_per_minute = self.per_minute.get_count(now_ms);
+        let current_per_second = self.per_second.count_now(&self.clock);
+        let current_per_minute = self.per_minute.count_now(&self.clock);
 
         GlobalRateLimitCheck {
             current_per_second,
@@ -76,10 +76,8 @@ impl MeshGlobalRateLimiter {
     }
 
     pub fn record(&self) {
-        let now_ms = synvoid_utils::safe_unix_duration().as_millis() as u64;
-
-        self.per_second.increment(now_ms);
-        self.per_minute.increment(now_ms);
+        self.per_second.increment_now(&self.clock);
+        self.per_minute.increment_now(&self.clock);
     }
 }
 

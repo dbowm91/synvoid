@@ -18,6 +18,7 @@ verify-pq = []
 
 [dependencies]
 synvoid-core = { path = "../synvoid-core" , version = "0.1" }
+synvoid-rate-limit = { path = "../synvoid-rate-limit" , version = "0.1" }
 synvoid-mesh-protocol = { path = "../synvoid-mesh-protocol", version = "0.1" }
 synvoid-config = { path = "../synvoid-config", features = ["mesh"] , version = "0.1" }
 synvoid-utils = { path = "../synvoid-utils" , version = "0.1" }

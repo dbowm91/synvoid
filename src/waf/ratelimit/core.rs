@@ -1,12 +1,12 @@
 use crate::utils::ip_to_slot;
-use crate::utils::ratelimit::{
-    IpRateLimiter, RateLimitResult, RateLimitStats, RateLimitStatsProvider,
-};
 use crate::RunningFlag;
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
+use synvoid_rate_limit::{
+    AtomicSlidingWindow, IpRateLimiter, RateLimitResult, RateLimitStats, RateLimitStatsProvider,
+};
 
 const SHARD_COUNT: usize = 16;
 
@@ -70,7 +70,7 @@ impl ShardedRateLimiter {
 
         let now_ms = get_monotonic_time_ms();
 
-        let count = shard.window.increment(now_ms);
+        let count = shard.window.increment_at(now_ms);
 
         if count > shard.per_ip_limit as u64 {
             RateLimitDecision::Limited {
@@ -122,85 +122,6 @@ impl Default for GlobalRateLimitConfig {
     }
 }
 
-pub struct AtomicSlidingWindow {
-    buckets: Box<[AtomicU64]>,
-    bucket_count: u64,
-    bucket_duration_ms: u64,
-    last_rotate_ms: AtomicU64,
-    running_sum: AtomicU64,
-}
-
-impl AtomicSlidingWindow {
-    pub fn new(window_duration_secs: u64, bucket_count: u64) -> Self {
-        // Clamp degenerate inputs instead of panicking on the request path.
-        let bucket_count = bucket_count.max(1);
-        let buckets: Vec<AtomicU64> = (0..bucket_count).map(|_| AtomicU64::new(0)).collect();
-        let bucket_duration_ms = (window_duration_secs.saturating_mul(1000) / bucket_count).max(1);
-
-        Self {
-            buckets: buckets.into_boxed_slice(),
-            bucket_count,
-            bucket_duration_ms,
-            last_rotate_ms: AtomicU64::new(0),
-            running_sum: AtomicU64::new(0),
-        }
-    }
-
-    pub fn increment(&self, now_ms: u64) -> u64 {
-        self.rotate_buckets(now_ms);
-
-        let bucket_idx = ((now_ms / self.bucket_duration_ms) % self.bucket_count) as usize;
-        let _count = self.buckets[bucket_idx].fetch_add(1, Ordering::AcqRel) + 1;
-        self.running_sum.fetch_add(1, Ordering::AcqRel) + 1
-    }
-
-    pub fn get_count(&self, now_ms: u64) -> u64 {
-        self.rotate_buckets(now_ms);
-        self.running_sum.load(Ordering::Acquire)
-    }
-
-    fn rotate_buckets(&self, now_ms: u64) {
-        let current_bucket = now_ms / self.bucket_duration_ms;
-        let last_rotate = self.last_rotate_ms.load(Ordering::Acquire);
-
-        if current_bucket > last_rotate
-            && self
-                .last_rotate_ms
-                .compare_exchange(
-                    last_rotate,
-                    current_bucket,
-                    Ordering::AcqRel,
-                    Ordering::Acquire,
-                )
-                .is_ok()
-        {
-            let buckets_to_clear = std::cmp::min(current_bucket - last_rotate, self.bucket_count);
-
-            for i in 0..buckets_to_clear {
-                let idx =
-                    (last_rotate.wrapping_add(1).wrapping_add(i) % self.bucket_count) as usize;
-                let cleared = self.buckets[idx].swap(0, Ordering::AcqRel);
-                let _ = self
-                    .running_sum
-                    .fetch_update(Ordering::AcqRel, Ordering::Acquire, |v| {
-                        v.saturating_sub(cleared).into()
-                    });
-            }
-        }
-    }
-
-    fn get_count_unrotated(&self) -> u64 {
-        self.running_sum.load(Ordering::Relaxed)
-    }
-
-    pub fn reset(&self) {
-        for bucket in self.buckets.iter() {
-            bucket.store(0, Ordering::Relaxed);
-        }
-        self.running_sum.store(0, Ordering::Relaxed);
-    }
-}
-
 pub struct GlobalRateLimiter {
     second_window: AtomicSlidingWindow,
     minute_window: AtomicSlidingWindow,
@@ -234,12 +155,12 @@ impl GlobalRateLimiter {
     pub fn check_and_increment(&self) -> RateLimitDecision {
         let now_ms = self.start_instant.elapsed().as_millis() as u64;
 
-        let second_count = self.second_window.increment(now_ms);
-        let minute_count = self.minute_window.get_count(now_ms);
-        let five_min_count = self.five_min_window.get_count(now_ms);
+        let second_count = self.second_window.increment_at(now_ms);
+        let minute_count = self.minute_window.count_at(now_ms);
+        let five_min_count = self.five_min_window.count_at(now_ms);
 
         if !self.blackhole_active.is_running() {
-            return self.handle_blackhole_mode(second_count);
+            return self.handle_blackhole_mode(now_ms, second_count);
         }
 
         let entry_threshold = self.config.blackhole_entry_threshold;
@@ -280,9 +201,11 @@ impl GlobalRateLimiter {
         RateLimitDecision::Allowed
     }
 
-    fn handle_blackhole_mode(&self, current_rate: u64) -> RateLimitDecision {
+    fn handle_blackhole_mode(&self, now_ms: u64, current_rate: u64) -> RateLimitDecision {
         let sample_rate = self.sample_rate.load(Ordering::Relaxed);
-        let sample_counter = self.second_window.get_count_unrotated();
+        // `increment_at` above already rotated for this tick, so a rotating
+        // read observes the same value the unrotated read used to return.
+        let sample_counter = self.second_window.count_at(now_ms);
 
         if sample_counter.is_multiple_of(sample_rate as u64) {
             let exit_threshold =
@@ -346,9 +269,9 @@ impl GlobalRateLimiter {
         let now_ms = self.start_instant.elapsed().as_millis() as u64;
 
         GlobalRateLimitStats {
-            per_second: self.second_window.get_count(now_ms),
-            per_minute: self.minute_window.get_count(now_ms),
-            per_5min: self.five_min_window.get_count(now_ms),
+            per_second: self.second_window.count_at(now_ms),
+            per_minute: self.minute_window.count_at(now_ms),
+            per_5min: self.five_min_window.count_at(now_ms),
             blackhole_active: self.blackhole_active.is_running(),
             sample_rate: self.sample_rate.load(Ordering::Relaxed),
             consecutive_low_samples: self.consecutive_low_samples.load(Ordering::Relaxed),
@@ -697,17 +620,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_atomic_sliding_window_basic() {
-        let window = AtomicSlidingWindow::new(1, 10);
-
-        let count = window.increment(100);
-        assert_eq!(count, 1);
-
-        let count = window.increment(150);
-        assert_eq!(count, 2);
-    }
-
-    #[test]
     fn test_global_rate_limiter_normal() {
         let config = GlobalRateLimitConfig {
             per_second: 10,
@@ -817,63 +729,6 @@ mod tests {
 
         let decision = limiter.check_and_increment();
         assert!(matches!(decision, RateLimitDecision::Limited { .. }));
-    }
-
-    #[test]
-    fn test_atomic_sliding_window_count_after_rotation() {
-        let window = AtomicSlidingWindow::new(1, 10);
-
-        let _ = window.increment(100);
-        let _ = window.increment(100);
-        let _ = window.increment(100);
-
-        assert_eq!(window.get_count(100), 3);
-    }
-
-    #[test]
-    fn test_atomic_sliding_window_reset() {
-        let window = AtomicSlidingWindow::new(1, 10);
-
-        let _ = window.increment(100);
-        let _ = window.increment(100);
-        assert_eq!(window.get_count(100), 2);
-
-        window.reset();
-        assert_eq!(window.get_count(100), 0);
-    }
-
-    #[test]
-    fn test_atomic_sliding_window_rotate_clears_advancing_buckets_small_current() {
-        // Regression test: current_bucket < bucket_count must clear
-        // (last_rotate+1..=current) mod bucket_count, not
-        // (current - bucket_count + i) mod bucket_count.
-        let window = AtomicSlidingWindow::new(60, 60);
-        window.buckets[2].store(10, Ordering::Relaxed);
-        window.buckets[22].store(7, Ordering::Relaxed);
-        window.running_sum.store(17, Ordering::Relaxed);
-
-        window.rotate_buckets(5000);
-
-        assert_eq!(window.buckets[2].load(Ordering::Relaxed), 0);
-        assert_eq!(window.buckets[22].load(Ordering::Relaxed), 7);
-        assert_eq!(window.running_sum.load(Ordering::Relaxed), 7);
-    }
-
-    #[test]
-    fn test_atomic_sliding_window_rotate_clears_advancing_buckets_partial() {
-        // Regression test: with current=100, last=95, bc=60 the advancing set is
-        // 96..=100 mod 60 = 36..=40; bucket 44 must survive.
-        let window = AtomicSlidingWindow::new(60, 60);
-        window.last_rotate_ms.store(95, Ordering::Relaxed);
-        window.buckets[36].store(5, Ordering::Relaxed);
-        window.buckets[44].store(9, Ordering::Relaxed);
-        window.running_sum.store(14, Ordering::Relaxed);
-
-        window.rotate_buckets(100_000);
-
-        assert_eq!(window.buckets[36].load(Ordering::Relaxed), 0);
-        assert_eq!(window.buckets[44].load(Ordering::Relaxed), 9);
-        assert_eq!(window.running_sum.load(Ordering::Relaxed), 9);
     }
 
     #[test]

@@ -145,38 +145,9 @@ pub mod http {
 
 pub mod waf_stub {
     //! Stub WAF types. Root crate provides the real implementation.
-
-    pub mod ratelimit {
-        pub mod core {
-            pub struct AtomicSlidingWindow {
-                _window_secs: u64,
-                _max_events: usize,
-            }
-
-            impl AtomicSlidingWindow {
-                pub fn new(window_secs: u64, max_events: usize) -> Self {
-                    Self {
-                        _window_secs: window_secs,
-                        _max_events: max_events,
-                    }
-                }
-
-                pub fn try_acquire(&self) -> bool {
-                    true
-                }
-
-                pub fn count(&self) -> u64 {
-                    0
-                }
-
-                pub fn get_count(&self, _now_ms: u64) -> u64 {
-                    0
-                }
-
-                pub fn increment(&self, _now_ms: u64) {}
-            }
-        }
-    }
+    //!
+    //! Rate-limit sliding windows are NOT stubbed here: mesh consumes the
+    //! shared `synvoid-rate-limit` mechanism crate directly (Phase 33).
 
     pub mod threat_intel {
         pub mod feed_client {

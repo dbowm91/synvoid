@@ -9,13 +9,13 @@ use crate::config::defaults::AsnScrapingConfig;
 use crate::geoip::types::AsnInfo;
 use crate::geoip::GeoIpManager;
 use crate::proxy::WafDecision;
-use crate::waf::ratelimit::core::AtomicSlidingWindow;
 use dashmap::DashMap;
 use parking_lot::RwLock;
 use std::collections::HashSet;
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use synvoid_rate_limit::{AtomicSlidingWindow, WindowClock};
 
 /// Per-ASN sliding window state for request counting and unique IP tracking.
 struct AsnWindowState {
@@ -61,6 +61,7 @@ pub struct AsnTracker {
     geoip: Option<Arc<GeoIpManager>>,
     whitelisted_asns: Arc<RwLock<HashSet<u32>>>,
     last_cleanup: parking_lot::Mutex<Instant>,
+    clock: WindowClock,
 }
 
 impl AsnTracker {
@@ -73,6 +74,7 @@ impl AsnTracker {
             geoip,
             whitelisted_asns: Arc::new(RwLock::new(whitelisted)),
             last_cleanup: parking_lot::Mutex::new(Instant::now()),
+            clock: WindowClock::new(),
         }
     }
 
@@ -89,7 +91,10 @@ impl AsnTracker {
             return None;
         }
 
-        let now_ms = crate::utils::current_timestamp().saturating_mul(1000);
+        // Monotonic tick for the sliding windows (Phase 33): wall-clock
+        // seconds previously aliased adjacent buckets and could step
+        // backwards under NTP corrections. Limits are unchanged.
+        let now_ms = self.clock.now_ms();
         let truncated_ip = Self::truncate_ip(client_ip);
 
         let mut entry = self.asn_windows.entry(asn).or_insert_with(|| {
@@ -102,9 +107,9 @@ impl AsnTracker {
             AsnWindowState::new(org)
         });
 
-        let minute_count = entry.per_minute.increment(now_ms);
-        let five_min_count = entry.per_5min.increment(now_ms);
-        let hour_count = entry.per_hour.increment(now_ms);
+        let minute_count = entry.per_minute.increment_at(now_ms);
+        let five_min_count = entry.per_5min.increment_at(now_ms);
+        let hour_count = entry.per_hour.increment_at(now_ms);
 
         entry.unique_ips.insert(truncated_ip, now_ms);
         let unique_count = entry.unique_ips.len() as u32;
@@ -213,7 +218,9 @@ impl AsnTracker {
         drop(last);
 
         let window_secs = self.config.unique_ips_window_secs;
-        let now_ms = crate::utils::current_timestamp().saturating_mul(1000);
+        // Same monotonic baseline as the insert path above; mixing wall-clock
+        // here would corrupt expiry magnitudes.
+        let now_ms = self.clock.now_ms();
         let cutoff = now_ms.saturating_sub(window_secs.saturating_mul(1000));
 
         for entry in self.asn_windows.iter_mut() {

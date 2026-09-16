@@ -115,6 +115,7 @@ reference fails the guard until the row is reclassified with a reason.
 | synvoid-auth | waf | compat_facade | default | Canonical AuthManager/session/CSRF/lockout in synvoid_auth; root auth/ removed Phase 03; consumed from src/waf | keep | waf |
 | synvoid-challenge | server, waf | compat_facade | default | Canonical ChallengeManager/ChallengeConfig/mesh-PoW in synvoid_challenge; root challenge/ removed Phase 03; consumed from src/server, src/waf | keep | server, waf |
 | synvoid-waf | waf | composition_runtime | default | WAF rule engine and detection | keep | http, server, waf |
+| synvoid-rate-limit | waf, utils | composition_runtime | default | Shared lock-free rate-limit mechanism (Phase 33): sliding windows + neutral contracts consumed by root WAF composition (ratelimit core, ASN tracker); `utils/ratelimit` is a compat re-export over it | keep | utils, waf |
 | synvoid-plugin-runtime | plugin | composition_runtime | default | WASM plugin runtime and instance pooling | keep | admin, plugin, sandbox, spin, worker |
 | synvoid-jail-runtime | sandbox | composition_runtime | default | Child-side jail execution package (Phase 29): WASM/YARA services + sandbox-entry sequencing + dedicated binaries; root sandbox facades/shims delegate to it | keep | sandbox |
 | synvoid-tls | tls | composition_runtime | default | TLS termination and ACME | keep | supervisor, tls |

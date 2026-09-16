@@ -7944,6 +7944,7 @@ dependencies = [
  "synvoid-platform",
  "synvoid-plugin-runtime",
  "synvoid-proxy",
+ "synvoid-rate-limit",
  "synvoid-serverless",
  "synvoid-static-files",
  "synvoid-tarpit",
@@ -8554,6 +8555,7 @@ dependencies = [
  "synvoid-platform",
  "synvoid-proxy",
  "synvoid-proxy-cache",
+ "synvoid-rate-limit",
  "synvoid-serverless",
  "synvoid-tls",
  "synvoid-tunnel",
@@ -8726,6 +8728,10 @@ dependencies = [
  "tokio",
  "tracing",
 ]
+
+[[package]]
+name = "synvoid-rate-limit"
+version = "0.1.0"
 
 [[package]]
 name = "synvoid-repo-guards"

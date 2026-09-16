@@ -44,7 +44,7 @@ Every enum/type that can affect request disposition:
 | `synvoid_core::enforcement::EnforcementCandidate` | same | One detector claim | varies | No | **Canonical** |
 | `synvoid_waf::WafDecision` (`crates/synvoid-waf/src/primitives.rs`) | synvoid-waf | Rich response directive (status, HTML, cookies) | varies | **Yes** | Canonical-adjacent: exposes lossless `class()` mapping; rendering stays here |
 | `synvoid_proxy::protocol::WafAction` (`crates/synvoid-proxy/src/protocol/trait_def.rs`) | synvoid-proxy | Coarse protocol-handler action | varies | No | **Transport-local adapter**: exhaustive `class()` / `from_class()` mapping, tested |
-| `RateLimitResult` (`src/waf/ratelimit.rs`) | app root (WAF) | IP/site/global limiter outcome | `Limited`/`Blackholed` | No | Detector result; mapped inline in `WafCore::check_rate_limits` (`Allowed`→none, `Limited`→`Block/RateLimit/rate_limited`, `Blackholed`→`Drop/RateLimit/rate_limited`) |
+| `RateLimitResult` (`src/waf/ratelimit.rs`) | app root (WAF) | IP/site/global limiter outcome | `Limited`/`Blackholed` | No | Detector result; mapped inline in `WafCore::check_rate_limits` (`Allowed`→none, `Limited`→`Block/RateLimit/rate_limited`, `Blackholed`→`Drop/RateLimit/rate_limited`). Not the neutral `synvoid_rate_limit::RateLimitResult` (`Allowed`/`Limited{retry_after_secs}` only) — the shared mechanism reports counts and the WAF maps them onto this domain verdict. |
 | `RateLimitDecision` (`src/waf/ratelimit/core.rs`) | app root (WAF) | Limiter core outcome | `Limited`/`Blackholed` | No | Detector-internal; feeds `RateLimitResult` |
 | `SlidingDecision`, `SlidingGlobalDecision` (`crates/synvoid-waf/src/ratelimit/sliding.rs`) | synvoid-waf | Sliding-window outcomes | `Limited` | No | Detector-internal; feed the limiter core |
 | `FloodDecision` (`crates/synvoid-waf/src/flood/mod.rs`, re-exported by `src/waf/flood`) | synvoid-waf | SYN/connection/UDP flood outcome | `RateLimited`/`Blackholed` | No | Detector result; `synvoid_waf::enforcement::flood_candidate` |
@@ -202,7 +202,8 @@ document):
 - `crates/synvoid-http/src/body_policy.rs` — `BodyPolicyError` (HTTP adapter; single-keyword spelling, registered for documentation).
 - `crates/synvoid-proxy/src/protocol/trait_def.rs` — `WafAction` (transport-local adapter).
 - `src/waf/asn_tracker.rs` — `AsnCheckResult` (detector-internal, unstaged).
-- `src/waf/ratelimit.rs` — `RateLimitResult` (detector result).
+- `src/waf/ratelimit.rs` — `RateLimitResult` (detector result; distinct from
+  the neutral `synvoid_rate_limit::RateLimitResult` mechanism vocabulary).
 - `src/waf/ratelimit/core.rs` — `RateLimitDecision` (detector-internal core).
 
 ## 8. Benchmarks

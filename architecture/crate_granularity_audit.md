@@ -1,7 +1,7 @@
 # Crate Granularity Audit
 
-Status: Phase 31 closeout audit (Track 4 deltas in §Phase 31; per-crate rows
-re-verified, count corrected to 42 `synvoid-*` members). One row per workspace
+Status: Phase 33 closeout audit (Track 4 deltas in §Phase 31; per-crate rows
+re-verified, count corrected to 43 `synvoid-*` members). One row per workspace
 crate from the actual final dependency graph (generated from each `Cargo.toml`
 plus root `Cargo.toml`; LOC via `wc -l` over each crate `src/`).
 
@@ -30,7 +30,7 @@ no sources, not a workspace member, zero references) was removed.
 | `tools/xtask` (1999 LOC) | `cargo xtask verify*` CI orchestration | Keep (tooling isolation) |
 | `tools/synvoid-repo-guards` (226 LOC) | Static repo guards run by CI + `verify_architecture.sh` | Keep (tooling isolation) |
 
-## `synvoid-*` crates (42 members; Phase 26 adds `synvoid-yara`, Phase 27 adds `synvoid-mesh-protocol`, Phase 28 adds `synvoid-native-extension`, Phase 29 adds `synvoid-jail-runtime`, Phase 30 adds `synvoid-dnssec-keystore`)
+## `synvoid-*` crates (43 members; Phase 26 adds `synvoid-yara`, Phase 27 adds `synvoid-mesh-protocol`, Phase 28 adds `synvoid-native-extension`, Phase 29 adds `synvoid-jail-runtime`, Phase 30 adds `synvoid-dnssec-keystore`, Phase 33 adds `synvoid-rate-limit`)
 
 Columns: LOC ≈ `src/` lines; "In-crate rev" = other workspace crates
 depending on it (root app crate depends on all of them as composition
@@ -47,7 +47,7 @@ inputs, so it is not listed per row).
 | synvoid-proxy | Reverse-proxy engine: routing, headers, dispatch, protocols | 6861 | Yes — routing, header filter, protocol adapters | Yes | 3 | 11 (see graph) | Keep | Second engine crate; narrow-trait consumers in http/http3 |
 | synvoid-http | Canonical HTTP parse/normalize/framing/dispatch (Phase 20) | 11084 | Yes — fail-closed framing, normalization ownership | Yes | http3 | 16 (composition surface) | Keep | Canonical HTTP owner; wide fan-in is composition, not wrapper |
 | synvoid-http3 | HTTP/3 QUIC server + WAF boundary | 418 | Yes — QUIC/H3 dispatch, H3 WAF prelude | Limited | root only | config, core, http, http-client, metrics, platform, proxy, waf | Keep | Feature/build isolation for QUIC stack (h3/quinn) |
-| synvoid-mesh | DHT, transport, Raft, trust, policy gates (Phase 23 authority) | 100655 | Yes — consensus, key policy, partition semantics | Limited (mesh deployments) | 6 | 13 (incl. mesh-protocol) | Keep | Control-plane boundary; `mesh` feature isolates openraft/proto; depends downward on `synvoid-mesh-protocol` (Phase 27) |
+| synvoid-mesh | DHT, transport, Raft, trust, policy gates (Phase 23 authority) | 100655 | Yes — consensus, key policy, partition semantics | Limited (mesh deployments) | 6 | 14 (incl. mesh-protocol, rate-limit) | Keep | Control-plane boundary; `mesh` feature isolates openraft/proto; depends downward on `synvoid-mesh-protocol` (Phase 27); consumes shared `synvoid-rate-limit` windows, policy stays mesh-owned (Phase 33) |
 | synvoid-mesh-protocol | Stable mesh wire/identity vocabulary: constants, `HybridSignature` envelope, Ed25519 `ProtocolSigner` verification, replay protection, threat taxonomy, framing (Phase 27) | ~900 | Yes — wire-compat golden vectors, fail-closed framing, deterministic verification | Yes — verification-only consumers without DHT/Raft/SQLite/YARA | 1 (mesh) + root feed verification | none (leaf by design) | Keep | Dependency-isolation boundary; strict budget guard (`mesh_protocol_boundary`); `synvoid-mesh` re-exports compat paths |
 | synvoid-block-store | Enforcement block state + provenance + cursors | 8530 | Yes — capacity, expiry, replay, concurrency | Limited | root only | config, core, mesh, utils, waf | Keep | Enforcement-state boundary; worker admission reads this, not TIM |
 | synvoid-ipc | IPC transport + jail protocol/supervision/binary resolution (Phase 22, Phase 29 exe-dir lookup) | 12420 | Yes — framed protocol, digests, restart bounds, fail-closed routing, deterministic helper resolution | Limited | 5 (incl. jail-runtime) | config, metrics, platform, tls, utils | Keep | Trust boundary for process isolation; versioned wire protocol |
@@ -64,6 +64,7 @@ inputs, so it is not listed per row).
 | synvoid-proxy-cache | Proxy response cache | 1905 | Yes — cache key/TTL/revalidation | Limited | 2 | none | Keep | Zero-dep cache semantics; reusable without proxy engine |
 | synvoid-honeypot | Deception responders + intel extraction | 8199 | Yes — rotation, detection, budgets | Limited | root only | config, http-client, mesh, utils | Keep | Optional deception layer with own invariants |
 | synvoid-tarpit | Markov-chain tarpit core | 1349 | Yes — generation budgets | Limited | root only | none | Keep | Zero-dep generator core; root owns handler/manager |
+| synvoid-rate-limit | Shared lock-free rate-limit mechanism: sliding windows, neutral contracts, slot hash (Phase 33) | ~730 | Yes — rotation/overflow/reset determinism, shard spread | Yes — WAF + mesh consume it; policy-free by design | 2 (root WAF composition, mesh) + compat re-export | none (leaf: std only, no config/metrics/HTTP) | Keep | Mechanism extraction that deletes the mesh WAF-stub and the root window duplicate; blackhole/slotted/shm/token-bucket policy stays domain-owned |
 | synvoid-serverless | Serverless function runtime | 2951 | Yes — function lifecycle, mesh serverless | Limited | 3 | config, plugin-runtime | Keep | Runtime boundary over plugin-runtime |
 | synvoid-app-handlers | CGI/FastCGI/PHP/MIME app handlers | 3005 | Yes — handler protocols | Limited | 3 | config, core, http-client, plugin-runtime, serverless | Keep | App-protocol boundary shared by http/static/upload |
 | synvoid-app-server | Granian app-server integration | 1163 | Limited — backend dispatch | Limited | 2 | http-client, utils | Keep | Dependency isolation for app-server deps |
@@ -136,6 +137,9 @@ re-verified against the retain bar (no "keep" solely for being new):
   services + dedicated binaries, never imports root/mesh). Reverse deps: root.
 - `synvoid-dnssec-keystore` (Phase 30): security boundary (sealed custody,
   one-way leaf, HSM opt-in). Reverse deps: dns only.
+- `synvoid-rate-limit` (Phase 33): mechanism extraction (lock-free sliding
+  windows + neutral contracts, std-only leaf). Reverse deps: root WAF
+  composition + mesh; deletes the mesh stub and root duplicate.
 
 Root direct surface: 38 unused edges removed, 3 test-only moved to
 `[dev-dependencies]`, `prost`/`tonic-prost` retained as codegen runtimes with

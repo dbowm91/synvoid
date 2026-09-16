@@ -178,7 +178,7 @@ Classification uses the exact domain definitions from the plan (Phase 1):
 | File | Primary | Secondary | Justification |
 |------|---------|-----------|---------------|
 | crates/synvoid-mesh/src/lib.rs | compat | (none) | Thin re-export facade. |
-| crates/synvoid-mesh/src/stubs.rs | compat | (none) | All root-crate shims (metrics, http, block_store, etc.). |
+| crates/synvoid-mesh/src/stubs.rs | compat | (none) | Remaining root-crate shims (metrics, http, block_store, threat-intel). The WAF rate-limit stub was deleted Phase 33: mesh consumes shared `synvoid-rate-limit` windows directly. |
 | crates/synvoid-mesh/src/mesh/mod.rs | compat | (none) | Public facade + RECORD_STORE_GLOBAL/get_global_record_store (explicit legacy compat). |
 | crates/synvoid-mesh/src/mesh/cli.rs | compat | (none) | Mesh CLI shims. |
 | crates/synvoid-mesh/src/mesh/config_defaults.rs | compat | policy | Default config shims. |

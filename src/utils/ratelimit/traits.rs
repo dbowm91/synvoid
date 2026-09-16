@@ -1,30 +1,12 @@
-use std::hash::Hash;
-use std::net::IpAddr;
-use std::time::{Duration, Instant};
+//! Compatibility re-export over the canonical [`synvoid_rate_limit`] crate.
+//!
+//! Phase 33 moved the neutral admission vocabulary (`RateLimitResult`,
+//! `IpRateLimiter`, `KeyedRateLimiter`, `RateLimitStats`,
+//! `RateLimitStatsProvider`) into `synvoid-rate-limit` so WAF and mesh share
+//! one definition. This module stays only so existing `crate::utils::ratelimit`
+//! paths keep compiling; new domain code must import `synvoid_rate_limit`
+//! directly.
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RateLimitResult {
-    Allowed,
-    Limited { retry_after_secs: u32 },
-}
-
-pub trait IpRateLimiter: Send + Sync {
-    fn check(&self, ip: IpAddr) -> RateLimitResult;
-}
-
-pub trait KeyedRateLimiter<K: Eq + Hash + Clone>: Send + Sync {
-    fn check(&self, key: &K) -> RateLimitResult;
-    fn cleanup(&self, max_age: Duration);
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RateLimitStats {
-    pub current_count: u64,
-    pub limit: u64,
-    pub remaining: u64,
-    pub reset_at: Instant,
-}
-
-pub trait RateLimitStatsProvider {
-    fn get_stats(&self) -> Option<RateLimitStats>;
-}
+pub use synvoid_rate_limit::{
+    IpRateLimiter, KeyedRateLimiter, RateLimitResult, RateLimitStats, RateLimitStatsProvider,
+};

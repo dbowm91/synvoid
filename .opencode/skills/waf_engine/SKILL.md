@@ -30,6 +30,7 @@ code consumes narrow traits, never concrete infrastructure — see
 | `crates/synvoid-waf/src/attack_detection/` | Detector suite (see `streaming_waf` skill for chunked scanning) |
 | `crates/synvoid-waf/src/enforcement.rs` | Pass/Drop/Stall/Block/Challenge/Tarpit verdict contract |
 | `crates/synvoid-waf/src/ratelimit/` | Rate limiting (`shared` \| `isolated` modes only) |
+| `crates/synvoid-rate-limit/` | Shared mechanism (Phase 33): `AtomicSlidingWindow` (`increment_at`/`count_at` + `WindowClock`), neutral `RateLimitResult`/`IpRateLimiter`/`KeyedRateLimiter`/`RateLimitStats`, `ip_to_slot`. Std-only leaf — no config/metrics/HTTP/WAF-policy. Consumed by root WAF composition and mesh; blackhole/slotted/shm/token-bucket policy stays domain-owned |
 | `crates/synvoid-waf/src/bot.rs` | Bot detection (see `waf_bot_detection` skill) |
 | `src/waf/` | Root composition: rule feeds, threat level, rate-limit wiring |
 

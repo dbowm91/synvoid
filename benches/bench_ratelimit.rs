@@ -129,6 +129,28 @@ fn benchmark_sliding_limiter(c: &mut Criterion) {
     group.finish();
 }
 
+/// Extracted shared primitive (Phase 33 hot path).
+///
+/// Exercises `synvoid-rate-limit`'s lock-free `AtomicSlidingWindow` the way
+/// WAF/mesh policy code drives it: explicit monotonic ticks, no mutexes and
+/// no heap allocation per event. Compare against `sliding_limiter` above,
+/// which measures the keyed `synvoid-waf` limiter (intentionally specialized,
+/// lock-guarded map + O(N) bucket sums).
+fn benchmark_shared_window(c: &mut Criterion) {
+    use synvoid_rate_limit::{AtomicSlidingWindow, WindowClock};
+
+    let clock = WindowClock::new();
+    let window = AtomicSlidingWindow::new(60, 60);
+    let mut group = c.benchmark_group("shared_window");
+    group.bench_function("increment_at", |b| {
+        b.iter(|| criterion::black_box(window.increment_at(clock.now_ms())));
+    });
+    group.bench_function("count_at", |b| {
+        b.iter(|| criterion::black_box(window.count_at(clock.now_ms())));
+    });
+    group.finish();
+}
+
 /// Block-store lookup/admission (Phase 24 hot path).
 ///
 /// Pre-populated store; measures admission-path `is_blocked` hits, misses,
@@ -189,6 +211,7 @@ criterion_group!(
     benchmark_collections,
     benchmark_vec_contains,
     benchmark_sliding_limiter,
+    benchmark_shared_window,
     benchmark_blockstore_lookup
 );
 criterion_main!(benches);
