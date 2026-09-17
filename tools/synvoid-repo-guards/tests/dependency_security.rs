@@ -105,6 +105,250 @@ fn wasmtime_wasi_stays_absent_without_exposure_update() {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 38 Part E: supported Wasmtime ownership guards
+//
+// The direct plugin runtime is Wasmtime 36 LTS (36.0.14+ patched for
+// RUSTSEC-2026-0269); the transitive YARA engine is a separate 40.0.4
+// instance. These guards keep the two lines from being confused and fail
+// closed on ownership/source drift.
+// ---------------------------------------------------------------------------
+
+/// Extract `wasmtime` dependency declarations as (manifest-rel, version-req).
+fn wasmtime_declaring_manifests() -> Vec<(String, String)> {
+    let repo = workspace_root();
+    let mut out = Vec::new();
+    // Workspace crates.
+    let crates_dir = repo.join("crates");
+    if let Ok(entries) = std::fs::read_dir(&crates_dir) {
+        for entry in entries.flatten() {
+            let manifest_path = entry.path().join("Cargo.toml");
+            if !manifest_path.exists() {
+                continue;
+            }
+            let content = std::fs::read_to_string(&manifest_path).unwrap_or_default();
+            for line in content.lines() {
+                let t = line.trim();
+                if t.starts_with('#') {
+                    continue;
+                }
+                let code = t.split('#').next().unwrap_or("").trim();
+                // Match `wasmtime = ...` dependency declarations (not comments
+                // or unrelated keys containing the substring).
+                let is_decl = code.starts_with("wasmtime =") || code.starts_with("wasmtime=");
+                if is_decl {
+                    let rel = manifest_path
+                        .strip_prefix(&repo)
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    out.push((rel, code.to_string()));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Resolved wasmtime versions in Cargo.lock as (version, has-git-source).
+fn lock_wasmtime_versions(lock: &str) -> Vec<String> {
+    let mut versions = Vec::new();
+    let mut in_wasmtime = false;
+    for line in lock.lines() {
+        let t = line.trim();
+        if t == "name = \"wasmtime\"" {
+            in_wasmtime = true;
+            continue;
+        }
+        if in_wasmtime {
+            if t.starts_with("version = ") {
+                let v = t
+                    .trim_start_matches("version = ")
+                    .trim()
+                    .trim_matches('"')
+                    .to_string();
+                versions.push(v);
+            } else if t.starts_with("source = ") || t.starts_with('[') || t.is_empty() {
+                if t.starts_with('[') || t.starts_with("name = ") {
+                    in_wasmtime = false;
+                }
+                if t.starts_with("source = ") {
+                    // version line always precedes source; keep scanning.
+                }
+            }
+            if t.starts_with("[[package]]") {
+                in_wasmtime = false;
+            }
+        }
+        if t.starts_with("name = ") && t != "name = \"wasmtime\"" {
+            in_wasmtime = false;
+        }
+    }
+    versions
+}
+
+#[test]
+fn wasmtime_direct_ownership_is_narrow() {
+    // Direct Wasmtime belongs only to `synvoid-plugin-runtime` (production)
+    // plus the explicitly justified root dev-dependency for benches.
+    // Any new production consumer requires a baseline update first.
+    let declarers = wasmtime_declaring_manifests();
+    let mut violations = Vec::new();
+    for (rel, line) in &declarers {
+        if rel != "crates/synvoid-plugin-runtime/Cargo.toml" {
+            violations.push(format!(
+                "{rel} declares direct wasmtime ({line}); only synvoid-plugin-runtime may (plus the root bench dev-dep)"
+            ));
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "direct wasmtime ownership violations:\n{}",
+        violations.join("\n")
+    );
+    // The root bench dev-dep must exist and pin the same baseline version.
+    let baseline = read_repo("architecture/dependency_security_baseline_phase25.md");
+    let expected = guard_anchor(&baseline, "wasmtime-direct-version")
+        .expect("baseline must anchor wasmtime-direct-version");
+    let root_manifest = read_repo("Cargo.toml");
+    let mut root_pins = false;
+    let mut in_dev = false;
+    for line in root_manifest.lines() {
+        let t = line.trim();
+        if t.starts_with('[') {
+            in_dev = t == "[dev-dependencies]";
+            continue;
+        }
+        if in_dev && (t.starts_with("wasmtime =") || t.starts_with("wasmtime=")) {
+            root_pins = true;
+            assert!(
+                t.contains(&expected),
+                "root dev-dependency wasmtime must pin baseline {expected} (found: {t})"
+            );
+        }
+    }
+    assert!(
+        root_pins,
+        "root [dev-dependencies] wasmtime pin missing (benches/bench_wasm.rs justification)"
+    );
+}
+
+#[test]
+fn wasmtime_lockfile_matches_baseline() {
+    // Derive the resolved graph from Cargo.lock rather than trusting comments:
+    // exactly two wasmtime instances (direct LTS + transitive YARA), distinct
+    // versions, direct pinned to the baseline anchor.
+    let baseline = read_repo("architecture/dependency_security_baseline_phase25.md");
+    let expected_direct = guard_anchor(&baseline, "wasmtime-direct-version")
+        .expect("baseline must anchor wasmtime-direct-version");
+    let lock = read_repo("Cargo.lock");
+    let mut versions = lock_wasmtime_versions(&lock);
+    versions.sort();
+    versions.dedup();
+    assert_eq!(
+        versions.len(),
+        2,
+        "Cargo.lock must resolve exactly two wasmtime versions (direct LTS + transitive YARA); found: {versions:?}"
+    );
+    assert!(
+        versions.contains(&expected_direct),
+        "Cargo.lock must contain the baseline direct version {expected_direct}; found: {versions:?}"
+    );
+    let transitive: Vec<_> = versions
+        .iter()
+        .filter(|v| *v != &expected_direct)
+        .cloned()
+        .collect();
+    assert_eq!(
+        transitive.len(),
+        1,
+        "exactly one transitive wasmtime version expected alongside direct {expected_direct}; found: {versions:?}"
+    );
+    assert!(
+        transitive[0] != expected_direct,
+        "transitive wasmtime {} must not be mistaken for direct {expected_direct} in guard messages",
+        transitive[0]
+    );
+}
+
+#[test]
+fn wasmtime_has_no_git_source() {
+    // No direct Wasmtime git source may exist unless a future evidence
+    // document explicitly authorizes it (Phase 37 removed the 42.0.2 patch).
+    let root_manifest = read_repo("Cargo.toml");
+    assert!(
+        !root_manifest.contains("bytecodealliance/wasmtime"),
+        "root Cargo.toml must not carry a wasmtime git patch"
+    );
+    let lock = read_repo("Cargo.lock");
+    // Scope the git-source check to wasmtime packages: split the lock into
+    // per-package blocks and inspect only wasmtime blocks.
+    let mut violations = Vec::new();
+    let mut current_is_wasmtime = false;
+    for line in lock.lines() {
+        let t = line.trim();
+        if t == "[[package]]" {
+            current_is_wasmtime = false;
+            continue;
+        }
+        if t == "name = \"wasmtime\"" {
+            current_is_wasmtime = true;
+            continue;
+        }
+        if t.starts_with("name = ") {
+            current_is_wasmtime = false;
+            continue;
+        }
+        if current_is_wasmtime && t.contains("git+") {
+            violations.push(format!("wasmtime lock entry has git source: {t}"));
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "wasmtime git source violations:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn wasmtime_major_change_requires_baseline_update() {
+    // A new direct Wasmtime major requires the security authority document to
+    // describe it: the baseline direct anchor must share the major version
+    // with the plugin-runtime manifest pin.
+    let baseline = read_repo("architecture/dependency_security_baseline_phase25.md");
+    let anchored = guard_anchor(&baseline, "wasmtime-direct-version")
+        .expect("baseline must anchor wasmtime-direct-version");
+    let anchored_major = anchored.split('.').next().unwrap_or("").to_string();
+    let manifest = read_repo("crates/synvoid-plugin-runtime/Cargo.toml");
+    let mut manifest_version: Option<String> = None;
+    for line in manifest.lines() {
+        let t = line.trim();
+        if t.starts_with('#') {
+            continue;
+        }
+        let code = t.split('#').next().unwrap_or("").trim();
+        if code.starts_with("wasmtime =") || code.starts_with("wasmtime=") {
+            if let Some(pos) = code.find("version") {
+                let rest = &code[pos..];
+                if let Some(q1) = rest.find('"') {
+                    if let Some(q2) = rest[q1 + 1..].find('"') {
+                        manifest_version = Some(rest[q1 + 1..q1 + 1 + q2].to_string());
+                    }
+                }
+            }
+        }
+    }
+    let manifest_version = manifest_version.expect("plugin-runtime must pin wasmtime");
+    let manifest_major = manifest_version.split('.').next().unwrap_or("");
+    assert_eq!(
+        anchored_major, manifest_major,
+        "direct wasmtime major moved (manifest {manifest_version} vs baseline {anchored}): update architecture/dependency_security_baseline_phase25.md first"
+    );
+    assert!(
+        baseline.contains("36 LTS") || anchored_major != "36",
+        "baseline must describe the direct LTS line for the anchored major"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // deny_ignore_metadata_guard (Phase 25 Part D)
 // ---------------------------------------------------------------------------
 

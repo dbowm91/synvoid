@@ -170,3 +170,199 @@ fn upload_does_not_link_yara_x_directly() {
         "synvoid-upload/src/yara_scanner.rs must not reference yara_x (facade over synvoid-yara)"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Phase 38 Part D: compiled-byte boundary guards
+//
+// GHSA-2jx3-ff3v-j7jj: `yara_x::Rules::deserialize` on malformed serialized
+// bytes can cause memory corruption. Phase 36 removed every remote-bytes
+// path; these guards fail if one is reintroduced.
+// ---------------------------------------------------------------------------
+
+/// True if production code (comments/strings/tests stripped) calls the
+/// dangerous YARA deserializer. Narrow: matches only `Rules::deserialize`
+/// (the yara-x executable path), not benign serde/toml/postcard deserializes.
+fn calls_rules_deserialize(code: &str) -> bool {
+    code.contains("Rules::deserialize")
+}
+
+fn collect_production_rs(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        if let Ok(entries) = fs::read_dir(&d) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().map(|e| e == "rs").unwrap_or(false) {
+                    out.push(path);
+                }
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn mesh_must_not_call_rules_deserialize() {
+    let repo = workspace_root();
+    let mut violations = Violations::new();
+    for path in collect_production_rs(&repo.join("crates/synvoid-mesh/src")) {
+        let content = fs::read_to_string(&path).unwrap_or_default();
+        let code = prepare_for_scanning(&content);
+        if calls_rules_deserialize(&code) {
+            violations.push(format!(
+                "{} calls Rules::deserialize (mesh must never deserialize compiled YARA; recompile approved source via synvoid-yara)",
+                path.strip_prefix(&repo).unwrap_or(&path).display()
+            ));
+        }
+    }
+    violations.assert_ok("mesh Rules::deserialize violations");
+}
+
+#[test]
+fn upload_must_not_call_rules_deserialize() {
+    let repo = workspace_root();
+    let mut violations = Violations::new();
+    for path in collect_production_rs(&repo.join("crates/synvoid-upload/src")) {
+        let content = fs::read_to_string(&path).unwrap_or_default();
+        let code = prepare_for_scanning(&content);
+        if calls_rules_deserialize(&code) {
+            violations.push(format!(
+                "{} calls Rules::deserialize (upload must recompile approved source via synvoid-yara, never deserialize remote bytes)",
+                path.strip_prefix(&repo).unwrap_or(&path).display()
+            ));
+        }
+    }
+    violations.assert_ok("upload Rules::deserialize violations");
+}
+
+#[test]
+fn synvoid_yara_has_no_remote_deserialize_path() {
+    // Phase 36 removed `reload_with_compiled_rules`,
+    // `CompiledArtifact::{deserialize_verified, from_bytes_with_binding}`, and
+    // every other remote-bytes constructor. If a local verified-artifact path
+    // is ever re-added, this guard forces an explicit allowlist update here —
+    // it must not silently reappear.
+    let repo = workspace_root();
+    let mut violations = Violations::new();
+    for path in collect_production_rs(&repo.join("crates/synvoid-yara/src")) {
+        let content = fs::read_to_string(&path).unwrap_or_default();
+        let code = prepare_for_scanning(&content);
+        if calls_rules_deserialize(&code) {
+            violations.push(format!(
+                "{} calls Rules::deserialize (no remote deserialize path may exist in synvoid-yara without an explicit guard allowlist update)",
+                path.strip_prefix(&repo).unwrap_or(&path).display()
+            ));
+        }
+    }
+    violations.assert_ok("synvoid-yara Rules::deserialize violations");
+}
+
+#[test]
+fn mesh_must_not_prefer_compiled_bytes_over_source() {
+    // Removed Phase 36 APIs must not return under new names. Production mesh
+    // code must never select compiled bytes as the executable input.
+    let repo = workspace_root();
+    let forbidden = [
+        "reload_with_compiled_rules",
+        "deserialize_verified",
+        "from_bytes_with_binding",
+        "local_compiled_rules",
+        "apply_compiled_rules",
+        "get_current_compiled_rules",
+        "CompiledBundle",
+    ];
+    let mut violations = Violations::new();
+    for path in collect_production_rs(&repo.join("crates/synvoid-mesh/src")) {
+        let content = fs::read_to_string(&path).unwrap_or_default();
+        let code = prepare_for_scanning(&content);
+        for token in &forbidden {
+            if code.contains(token) {
+                violations.push(format!(
+                    "{} contains removed compiled-byte API `{token}` (source text is the only executable input since Phase 36)",
+                    path.strip_prefix(&repo).unwrap_or(&path).display()
+                ));
+            }
+        }
+    }
+    // Same tokens must not reappear as an executable input in synvoid-yara.
+    // (Doc comments explaining the Phase 36 removal are stripped by
+    // `prepare_for_scanning`, so any remaining hit is real code.)
+    for path in collect_production_rs(&repo.join("crates/synvoid-yara/src")) {
+        let content = fs::read_to_string(&path).unwrap_or_default();
+        let code = prepare_for_scanning(&content);
+        for token in [
+            "reload_with_compiled_rules",
+            "deserialize_verified",
+            "from_bytes_with_binding",
+            "CompiledBundle",
+        ] {
+            if code.contains(token) {
+                violations.push(format!(
+                    "{} contains removed compiled-byte API `{token}`",
+                    path.strip_prefix(&repo).unwrap_or(&path).display()
+                ));
+            }
+        }
+    }
+    violations.assert_ok("compiled-byte preference violations");
+}
+
+fn declared_yara_x_minor(manifest: &str) -> Option<String> {
+    for line in manifest.lines() {
+        let t = line.trim();
+        if t.starts_with('#') {
+            continue;
+        }
+        let code = t.split('#').next().unwrap_or("").trim();
+        if code.contains("yara-x") && code.contains("version") {
+            // Extract `version = "1.15"` (major.minor prefix; patch floats).
+            if let Some(pos) = code.find("version") {
+                let rest = &code[pos..];
+                if let Some(q1) = rest.find('"') {
+                    if let Some(q2) = rest[q1 + 1..].find('"') {
+                        let v = rest[q1 + 1..q1 + 1 + q2].to_string();
+                        let mut parts = v.split('.');
+                        if let (Some(maj), Some(min)) = (parts.next(), parts.next()) {
+                            return Some(format!("{maj}.{min}"));
+                        }
+                        return Some(v);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn engine_version_tag(lib: &str) -> Option<String> {
+    for line in lib.lines() {
+        let t = line.trim();
+        if t.starts_with("pub const YARA_ENGINE_VERSION") {
+            if let Some(q1) = t.find('"') {
+                if let Some(q2) = t[q1 + 1..].find('"') {
+                    return Some(t[q1 + 1..q1 + 1 + q2].to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+#[test]
+fn yara_engine_version_matches_manifest() {
+    // `YARA_ENGINE_VERSION` must track the declared yara-x major.minor line so
+    // old-engine artifacts reject deterministically after an upgrade.
+    let manifest = read_repo("crates/synvoid-yara/Cargo.toml");
+    let minor = declared_yara_x_minor(&manifest)
+        .expect("synvoid-yara manifest must declare yara-x version");
+    let artifact = read_repo("crates/synvoid-yara/src/artifact.rs");
+    let tag = engine_version_tag(&artifact).expect("artifact.rs must define YARA_ENGINE_VERSION");
+    let expected_prefix = format!("yara-x/{minor}");
+    assert!(
+        tag.starts_with(&expected_prefix),
+        "YARA_ENGINE_VERSION {tag:?} must match declared yara-x line {minor:?} (expected prefix {expected_prefix:?}); bump both together"
+    );
+}

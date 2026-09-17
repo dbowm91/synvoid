@@ -1,8 +1,9 @@
-# Dependency Security Baseline — Phase 25 Evidence
+# Dependency Security Baseline — Phase 25 Evidence (current through Phase 38)
 
 Status: binding evidence for Track 4 Phase 25 (`plans/phase_25_dependency_security_baseline_and_entitlement.md`).
-Owner: security / release. Reviewed: 2026-09-17 (Phase 37: direct runtime migrated
-to Wasmtime 36 LTS). Re-audit: 2026-10-01 (all advisory ignores; see §5).
+Owner: security / release. Reviewed: 2026-09-17 (Phase 38: runtime-security
+closeout; direct runtime on Wasmtime 36 LTS, YARA source-only trust).
+Re-audit: 2026-10-01 (all advisory ignores; see §5).
 
 This file records version, features, and reachable capability **separately** for every
 security-relevant dependency decision. It is the authority the repo guards check
@@ -18,7 +19,7 @@ Tool versions frozen by this phase (see `docs/testing/verification-contract.md`)
 | cargo-audit | 0.22.2 | CI `taiki-e/install-action` `tool: cargo-audit@0.22.2` |
 | GitHub Actions | SHAs in `.github/workflows/ci.yml` | immutable commit + tag comment |
 
-Evidence commands (run 2026-09-12, advisory DB current at run time):
+Evidence commands (run 2026-09-17 for the Phase 38 closeout, advisory DB current at run time):
 
 ```bash
 cargo tree -i wasmtime@36.0.15 --workspace
@@ -169,8 +170,9 @@ Closeout evidence for `plans/phase_36_yara_x_deserialization_exposure_closure.md
 (trust-model Parts A–C complete; engine upgrade Part D blocked, documented below).
 
 - Final `synvoid-yara` resolution: **yara-x 1.15.0** (unchanged), transitive
-  **wasmtime 40.0.4** (unchanged), direct **wasmtime 42.0.2** via
-  `[patch.crates-io]` (unchanged). Feature graph unchanged
+  **wasmtime 40.0.4** (unchanged). Direct runtime at this point in Phase 36
+  was still **wasmtime 42.0.2** via `[patch.crates-io]` (removed later by
+  Phase 37; see §8). Feature graph unchanged
   (`default-modules` + `linkme` on the 1.15 line; no `pulley`, no module
   removals). No parser/strictness delta: same engine line, source-only reload
   path re-validated (`cargo test -p synvoid-yara`, `-p synvoid-upload
@@ -228,3 +230,63 @@ Closeout evidence: `plans/phase_37_closeout_results.md` (plan:
   moves, not full `cargo generate-lockfile` (the latter floated
   `yara-x-macros`/`-parser` to 1.20.0 against `yara-x` 1.15.0 and broke the
   jail build; restored + targeted update fixed it).
+
+## 9. Phase 38 addendum (2026-09-17): runtime-security closeout
+
+Closeout evidence: `plans/phase_38_closeout_results.md` (plan:
+`plans/phase_38_runtime_dependency_security_closeout.md`).
+
+The Phase 38 plan expected YARA-X 1.20.x with a transitive Wasmtime 45.x line.
+That upgrade did NOT land: Phase 36 closed the deserialization exposure on
+yara-x 1.15 (source-only trust) while the >=1.19 engine upgrade stays blocked
+by the same-major `bumpalo` conflict (§4/§7). This addendum records the actual
+landed graph, not the planned one.
+
+- Landed graph: **yara-x 1.15.0**, transitive **wasmtime 40.0.4** (via
+  `synvoid-yara` only), direct **wasmtime 36.0.15 LTS** (via
+  `synvoid-plugin-runtime` + root bench dev-dep), single **bumpalo 3.19.0**,
+  **no `wasmtime-wasi`/`wasi-filesystem`**, **no git source**, **cryptoki
+  0.12.1** (bumped 0.12.0 → 0.12.1 for RUSTSEC-2026-0286; targeted
+  `cargo update -p cryptoki --precise 0.12.1`, 2-line lock diff).
+- Direct vs transitive, stated separately: the direct 36.0.15 LTS line is
+  PATCHED for RUSTSEC-2026-0269 (>=36.0.14) and needs no ignore (proven by a
+  clean isolated no-ignore `cargo audit`); the transitive 40.0.4 line IS
+  affected and capability-gated (`wasmtime-wasi` absent, no preopen API
+  reachable). The per-advisory 0269 ignore covers the transitive instance
+  only. Never read it as direct coverage; never call 40.0.4 patched.
+- YARA-X version and GHSA-2jx3-ff3v-j7jj disposition: engine stays 1.15
+  (<=1.18 affected range; NOT patched; no ignore added — the advisory has no
+  RUSTSEC ID so audit/deny do not fire). The remotely-exploitable path is
+  closed by construction: `reload_with_compiled_rules`,
+  `CompiledArtifact::{deserialize_verified, from_bytes_with_binding}`, mesh
+  `local_compiled_rules`/`apply_compiled_rules`/`get_current_compiled_rules`,
+  and `YaraRuleSourceType::CompiledBundle` are removed; upload/mesh/jail
+  recompile approved source locally. `YARA_ENGINE_VERSION` stays `yara-x/1.15`
+  with a guard pinning it to the manifest major.minor.
+- `wasmtime-wasi` reachability: absent from `Cargo.lock` (no `wasmtime-wasi`,
+  `wasi-filesystem`, `wasi-common` filesystem, or `cap-std` filesystem
+  packages); neither consumer links a preopen API. The
+  `wasmtime_wasi_stays_absent_without_exposure_update` guard fails closed on
+  appearance. Direct features remain defaults + `component-model` (minimization
+  deferred with rationale in §8).
+- Remaining advisory exceptions: 16 ignores, verified exact 2026-09-17 by
+  removing `.cargo/audit.toml` and confirming every one fires
+  (0071 rsa; 0085–0096/0114/0222/0269 wasmtime 40.0.4; 0235 rkyv 0.7.46).
+  No stale 40.x/42.x entries beyond the live 40.0.4 line; no direct-42
+  exception remains. Re-audit: 2026-10-01; remove condition for the wasmtime
+  group is yara-x moving off wasmtime 40.x.
+- `minify-html`/Oxc `bumpalo` constraint: unchanged — `minify-html` 0.18.1 →
+  `oxc_allocator` 0.95.0 pins `bumpalo =3.19.0`; wasmtime >=43 needs
+  `bumpalo ^3.20.0`. Blocks both the yara-x >=1.19 upgrade and any >=46/48
+  direct-line move until an upstream minify-html/oxc release relaxes the pin.
+- Source policy: crates.io only. `deny.toml` sets `unknown-git = "deny"` with
+  no `allow-git`; `Cargo.lock` contains no `git+` source. Re-adding any git
+  source requires an allow entry plus baseline evidence. The
+  `wasmtime_has_no_git_source` guard scopes the check to wasmtime lock blocks.
+- Next re-audit triggers (event-based): yara-x moves to a supported Wasmtime
+  line clearing the transitive 0269 advisory; Wasmtime 48 LTS becomes
+  resolver-compatible (bumpalo blocker clears); SynVoid intentionally adds WASI
+  filesystem capabilities; a new YARA serialized-artifact consumer appears;
+  the 36 LTS line approaches end of support (2027-08-20); any new advisory
+  affecting a resolved package (cf. cryptoki 0286, fixed here by upgrade, not
+  ignore).

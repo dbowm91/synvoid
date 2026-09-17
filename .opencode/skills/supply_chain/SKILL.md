@@ -39,7 +39,12 @@ Pinned tools: cargo-deny 0.20.2, cargo-audit 0.22.2
    whether `wasmtime-wasi` is resolved, exposure, `Owner:`, `Reviewed:`,
    `Re-audit:` (single machine-enforced future deadline), and a `Remove
    condition:` (upstream event, never a date). Mirror the ignore in
-   `.cargo/audit.toml`.
+   `.cargo/audit.toml`. Verify ignores are exact: remove `.cargo/audit.toml`
+   temporarily and confirm every ignore fires on the live graph (Phase 38:
+   all 16 fire — 0071 rsa, 0085–0096/0114/0222/0269 wasmtime 40.0.4, 0235
+   rkyv 0.7.46). A fixable finding (cf. cryptoki RUSTSEC-2026-0286, fixed
+   0.12.0 → 0.12.1 via targeted `cargo update -p`) gets an upgrade, not an
+   ignore.
 2. **Never call transitive wasmtime 40.0.4 "patched" for RUSTSEC-2026-0269.**
    The direct runtime is 36.0.15 LTS from crates.io (supported through
    2027-08-20, no git patch) and IS patched (>=36.0.14; proven by a clean
@@ -56,6 +61,12 @@ Pinned tools: cargo-deny 0.20.2, cargo-audit 0.22.2
    The trust-model closure (source-only execution, remote bytes never
    deserialized) lands on 1.15; never add an advisory ignore for the GHSA to
    pretend 1.15 is fine, and never call 1.15 "patched".
+   Phase 38 guards: `yara_execution_boundary.rs` fails on any
+   `Rules::deserialize` in mesh/upload/synvoid-yara production code, on
+   removed compiled-byte tokens, and on `YARA_ENGINE_VERSION`/manifest drift;
+   `dependency_security.rs` fails on broadened direct-wasmtime ownership, lock
+   drift (must be exactly direct LTS + transitive YARA), git sources, or major
+   moves without a baseline update.
 3. **Prefer pure-Rust deps over C bindings** for new dependencies
    (serialization/crypto standards in `AGENTS.md`).
 4. **pip installs honor `require_hashes`**: `AppServerConfig.require_hashes`

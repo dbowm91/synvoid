@@ -174,7 +174,7 @@ Mesh transport uses structured lifecycle management (Iterations 68–81):
 - `running_projection: Arc<AtomicBool>` provides lock-free `is_running()` observation — set on commit, cleared on shutdown entry
 - Per-peer children bounded by `max_concurrent_handshakes`
 - All periodic loops are cancellation-aware via `watch::Receiver<bool>`
-- Worker mesh supervision is staged but **explicitly deferred** (Outcome B from Iteration 70)
+- Worker mesh supervision is implemented: `src/worker/mesh_supervision.rs` (policy/status, Iteration 82) with the worker-side supervision loop in `src/worker/unified_server/supervision_loop.rs`, corrected by Iteration 85 (see `architecture/worker_task_lifecycle.md` Iteration 85: construction-free disabled mesh, disabled restart, topology/DHT handles in the task registry, JoinSet YARA broadcast, direct required-startup handling, singular status ownership). The Iteration 70 Outcome B deferral is superseded.
 - **Persistent buffered response-sequence parsing (Iteration 81)**: one shared `try_parse_http_response_head` parser for both leftover and socket bytes
 - **Close-delimited body reader (Iteration 81)**: `read_close_delimited_http_response_body` with total deadline
 - **Independent trailer byte accounting (Iteration 81)**: `TrailerTooLarge` error variant

@@ -709,8 +709,11 @@ them intentionally in the same commit that updates the pins below.
   `architecture/dependency_security_baseline_phase25.md`.
 - Routine invocation count is 9 → 10 Cargo invocations (fmt + deny + 8);
   `verify-full` raw commands are 9 → 10 with `minimal-tests`.
-- Rust 1.98.1 also satisfies wasmtime ≥46 `rust-version` requirements for the
-  tracked ≥46.0.3 upgrade (see the dependency-security baseline §4; Re-audit: 2026-10-01).
+- Rust 1.98.1 satisfies the `rust-version` requirements of the landed direct
+  runtime (wasmtime 36.0.15 LTS) and the transitive yara-x 40.0.4 line; a
+  future ≥46/48 move (re-attempted only after the `bumpalo` blocker clears —
+  see the dependency-security baseline §4/§9; Re-audit: 2026-10-01) re-checks
+  this toolchain bound at that time.
 
 ### Reproducibility vs review-time semantics
 
