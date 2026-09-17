@@ -1,14 +1,19 @@
-//! Canonical YARA execution boundary (Phase 26).
+//! Canonical YARA execution boundary (Phase 26, closed by Phase 36).
 //!
 //! `synvoid-yara` is the single production owner of `yara-x`. It owns only
 //! YARA-domain primitives reusable across upload policy, mesh distribution,
 //! and the jail execution service:
 //!
 //! - [`engine`]: `YaraScanner`, rule sources, bounded compile/scan, match DTOs;
-//! - [`artifact`]: engine-versioned compiled-blob binding;
+//! - [`artifact`]: local-compile binding metadata (no remote deserialization);
 //! - [`executor`]: narrow `YaraExecutor` contract separating orchestration
 //!   from execution;
 //! - [`metrics`]: engine-local counters.
+//!
+//! Trust model (Phase 36): signed/approved source text is the canonical
+//! executable input. Compilation happens locally; wire compiled bytes are
+//! opaque metadata and never reach `yara_x::Rules::deserialize` (the API no
+//! longer exists in this crate).
 //!
 //! The crate has no dependency on mesh, upload, HTTP, admin, WAF, or the root
 //! crate. Upload policy and mesh distribution consume these contracts; the

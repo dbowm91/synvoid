@@ -295,7 +295,7 @@ Every rule generation carries `YaraRuleProvenance` metadata:
 
 ```rust
 struct YaraRuleProvenance {
-    source_type: YaraRuleSourceType,  // Bundled/Directory/Inline/Mesh/CompiledBundle
+    source_type: YaraRuleSourceType,  // Bundled/Directory/Inline/Mesh (Phase 36: no CompiledBundle)
     version: Option<String>,          // human-readable version tag
     content_sha256: String,           // SHA-256 of combined source text
     manifest_sha256: Option<String>,  // SHA-256 of signed manifest (if available)
@@ -315,7 +315,14 @@ struct YaraRuleProvenance {
 | `Directory` | Operator | Loaded from local directory (strict mode) |
 | `Inline` | High | Provided directly via config/admin |
 | `Mesh` | Network | Ed25519-verified mesh peer delivery |
-| `CompiledBundle` | Operator | Pre-compiled YARA-X binary |
+
+Phase 36 source-only trust: the `CompiledBundle` source type was removed.
+Signed/approved source text is the only executable input; mesh/upload/jail
+paths recompile locally via `reload_with_rules`. A mesh version bump with no
+acceptable source retains the previous generation (fail-closed per upload
+policy). Wire compiled bytes are opaque metadata, never stored or
+deserialized (GHSA-2jx3-ff3v-j7jj has no remote path post-closure; the
+yara-x >=1.19 engine upgrade is bumpalo-blocked — see `SECURITY.md`).
 
 ### Directory Loading Hardening
 

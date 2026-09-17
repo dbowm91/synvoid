@@ -43,9 +43,16 @@ Pinned tools: cargo-deny 0.20.2, cargo-audit 0.22.2
 2. **Never call wasmtime 42.0.2 "patched" for RUSTSEC-2026-0269.**
    42.0.2 (direct, via `[patch.crates-io]`) is AFFECTED; the finding is
    closed by capability absence (`wasmtime-wasi` unreachable), not a patch.
-   Transitive 40.0.4 arrives via `synvoid-yara` → `yara-x` (YARA boundary
+   Transitive 40.0.4 arrives via `synvoid-yara` → `yara-x` 1.15 (YARA boundary
    only, not the WASM sandbox). Upgrade to ≥46.0.3 is blocked by a bumpalo
    conflict. Details in the baseline doc §4.
+   Phase 36 addendum: the yara-x >=1.19 upgrade (GHSA-2jx3-ff3v-j7jj fix) is
+   blocked by the SAME conflict (wasmtime >=43 needs `bumpalo ^3.20.0`;
+   `minify-html` 0.18.1 → `oxc_allocator` 0.95.0 pins `=3.19.0`; cargo cannot
+   split same-major — reproduced 2026-09-17 in an isolated scratch crate).
+   The trust-model closure (source-only execution, remote bytes never
+   deserialized) lands on 1.15; never add an advisory ignore for the GHSA to
+   pretend 1.15 is fine, and never call 1.15 "patched".
 3. **Prefer pure-Rust deps over C bindings** for new dependencies
    (serialization/crypto standards in `AGENTS.md`).
 4. **pip installs honor `require_hashes`**: `AppServerConfig.require_hashes`

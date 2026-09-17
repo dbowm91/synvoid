@@ -306,10 +306,11 @@ pub struct YaraRulesManager {
     signer: Option<Arc<crate::protocol::MeshMessageSigner>>,
     current_version: Arc<RwLock<Option<String>>>,
     local_rules: Arc<RwLock<Option<String>>>,
-    /// Opaque compiled-blob cache for backward compatibility with peers that
-    /// still send compiled artifacts. Mesh never deserializes or executes
-    /// these bytes (Phase 26); only the execution boundary does.
-    local_compiled_rules: Arc<RwLock<Option<Vec<u8>>>>,
+    // Phase 36: no compiled-blob cache. Wire `compiled_rules` fields remain
+    // for protocol compatibility but production paths treat those bytes as
+    // opaque/non-executable metadata (never stored, never deserialized).
+    // Canonical executable input is source text; compilation happens locally
+    // in the execution boundary (`synvoid-yara`).
     submissions: Arc<RwLock<HashMap<String, YaraRuleSubmission>>>,
     submission_hashes: Arc<RwLock<HashMap<String, String>>>,
     last_sync: RwLock<Instant>,
@@ -340,7 +341,6 @@ impl YaraRulesManager {
             signer,
             current_version: Arc::new(RwLock::new(None)),
             local_rules: Arc::new(RwLock::new(None)),
-            local_compiled_rules: Arc::new(RwLock::new(None)),
             submissions: Arc::new(RwLock::new(HashMap::new())),
             submission_hashes: Arc::new(RwLock::new(HashMap::new())),
             last_sync: RwLock::new(Instant::now()),
@@ -474,7 +474,6 @@ impl YaraRulesManager {
             signer,
             current_version: Arc::new(RwLock::new(None)),
             local_rules: Arc::new(RwLock::new(None)),
-            local_compiled_rules: Arc::new(RwLock::new(None)),
             submissions: Arc::new(RwLock::new(HashMap::new())),
             submission_hashes: Arc::new(RwLock::new(HashMap::new())),
             last_sync: RwLock::new(Instant::now()),
@@ -781,36 +780,6 @@ impl YaraRulesManager {
         None
     }
 
-    /// Legacy compiled-blob fetch retained for wire compatibility.
-    ///
-    /// Phase 26: never called by the sync path. Mesh never deserializes or
-    /// executes compiled blobs; the execution boundary (`synvoid-yara`) owns
-    /// that. Kept so older stored records remain readable by tooling.
-    #[allow(dead_code)]
-    fn fetch_compiled_rules_from_dht(
-        &self,
-        compiled_hash: &str,
-        record_store: &Arc<crate::dht::RecordStoreManager>,
-    ) -> Option<(String, Vec<u8>, u64)> {
-        let rule_key = DhtKey::yara_compiled_rule_content(compiled_hash);
-        let Some(rule_record) = record_store.get(&rule_key.as_str()) else {
-            tracing::debug!(
-                "YARA sync: no compiled rule record found for hash {}",
-                compiled_hash
-            );
-            return None;
-        };
-
-        if let Ok(record) = synvoid_utils::serialization::deserialize::<
-            crate::dht::YaraCompiledRuleContentRecord,
-        >(&rule_record.value)
-        {
-            return Some((record.version, record.compiled_rules, record.timestamp));
-        }
-
-        None
-    }
-
     fn fetch_chunks_from_dht(
         &self,
         content_hash: &str,
@@ -947,7 +916,6 @@ impl YaraRulesManager {
 
         let mut best_version: Option<String> = None;
         let mut best_rules: Option<String> = None;
-        let mut best_compiled_rules: Option<Vec<u8>> = None;
         let mut best_hash: Option<String> = None;
         let mut best_timestamp: Option<u64> = None;
 
@@ -1135,8 +1103,8 @@ impl YaraRulesManager {
                     }
                 }
 
-                // Phase 26: text-only distribution. `compiled_hash` from legacy
-                // peers is ignored (never fetched/deserialized in mesh). The
+                // Phase 36: text-only distribution. `compiled_hash` from legacy
+                // peers is ignored (never fetched/stored/deserialized). The
                 // execution boundary compiles source text itself.
                 let _ = compiled_hash;
                 let rules_str_opt = if is_chunked {
@@ -1171,7 +1139,6 @@ impl YaraRulesManager {
                     None => {
                         best_version = Some(version_str);
                         best_rules = Some(rules_string);
-                        best_compiled_rules = None;
                         best_hash = Some(peer_hash);
                         best_timestamp = Some(timestamp);
                     }
@@ -1179,7 +1146,6 @@ impl YaraRulesManager {
                         if timestamp > *current_best {
                             best_version = Some(version_str);
                             best_rules = Some(rules_string);
-                            best_compiled_rules = None;
                             best_hash = Some(peer_hash);
                             best_timestamp = Some(timestamp);
                         }
@@ -1205,9 +1171,8 @@ impl YaraRulesManager {
                         new_version
                     );
 
-                    // Phase 26: compiled blobs are never applied from DHT in
-                    // mesh. Opaque cache is dropped; source text is canonical.
-                    let _ = best_compiled_rules;
+                    // Phase 36: source text is canonical; no compiled blob
+                    // is ever applied from DHT.
                     if let Some(source) = best_rules {
                         self.apply_rules(source, new_version.clone(), YaraRuleSource::MeshGlobal)?;
                     }
@@ -1224,58 +1189,6 @@ impl YaraRulesManager {
 
     pub fn get_current_rules(&self) -> Option<String> {
         self.local_rules.read().clone()
-    }
-
-    pub fn get_current_compiled_rules(&self) -> Option<Vec<u8>> {
-        self.local_compiled_rules.read().clone()
-    }
-
-    /// Store source text plus an opaque compiled blob (legacy compat).
-    ///
-    /// Phase 26: mesh never compiles or deserializes. The blob is stored
-    /// opaquely for consumers that still read it. New code should call
-    /// `apply_rules` with canonical text.
-    pub fn apply_compiled_rules(
-        &self,
-        rules: String,
-        compiled_rules: Vec<u8>,
-        version: String,
-        source: YaraRuleSource,
-    ) -> Result<String, YaraRulesError> {
-        {
-            let mut local = self.local_rules.write();
-            *local = Some(rules);
-        }
-        {
-            let mut compiled = self.local_compiled_rules.write();
-            *compiled = Some(compiled_rules);
-        }
-        {
-            let mut current = self.current_version.write();
-            *current = Some(version.clone());
-        }
-
-        if let Err(e) = self.save_rules_to_disk() {
-            tracing::warn!(error = %e, version = %version, "failed to persist YARA rules to disk; in-memory rules applied");
-        }
-
-        self.rule_change_tracker.write().record_change(&version);
-
-        match source {
-            YaraRuleSource::Local
-            | YaraRuleSource::Feed
-            | YaraRuleSource::MeshEdgeApproved
-            | YaraRuleSource::MeshGlobal => {
-                self.publish_rules_to_dht();
-            }
-        }
-
-        tracing::info!(
-            "Applied YARA rules (including compiled binary) version {} from {:?}",
-            version,
-            source
-        );
-        Ok(version)
     }
 
     pub fn has_feed_manager(&self) -> bool {
@@ -1770,7 +1683,7 @@ impl YaraRulesManager {
 
             let signer_public_key = self.signer.as_ref().map(|s| s.get_public_key());
 
-            // Phase 26: text-only broadcast. `compiled_rules` stays empty for
+            // Phase 36: text-only broadcast. `compiled_rules` stays empty for
             // wire compatibility; receivers must use `source_rules` and never
             // deserialize in mesh.
             let compiled_rules = Vec::new();
@@ -2154,7 +2067,7 @@ impl YaraRulesManager {
                     compiled_rules.len()
                 );
 
-                // Phase 26: compiled blobs are never deserialized/executed in
+                // Phase 36: compiled blobs are never deserialized/executed in
                 // mesh. If a legacy peer sends one, verify its checksum for
                 // integrity logging, then ignore the bytes and use source text.
                 if !compiled_rules.is_empty() {
@@ -2257,7 +2170,7 @@ impl YaraRulesManager {
                     });
                 }
 
-                // Phase 26: never deserialize in mesh. Source text is canonical;
+                // Phase 36: never deserialize in mesh. Source text is canonical;
                 // compiled bytes (if any) are ignored after checksum verification.
                 if !compiled_rules.is_empty() {
                     tracing::debug!(
@@ -2582,7 +2495,6 @@ impl Clone for YaraRulesManager {
             signer: self.signer.clone(),
             current_version: Arc::clone(&self.current_version),
             local_rules: Arc::clone(&self.local_rules),
-            local_compiled_rules: Arc::clone(&self.local_compiled_rules),
             submissions: Arc::clone(&self.submissions),
             submission_hashes: Arc::clone(&self.submission_hashes),
             last_sync: RwLock::new(*self.last_sync.read()),

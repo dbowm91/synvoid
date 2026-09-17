@@ -22,6 +22,11 @@ parking_lot = "0.12"
 hex = "0.4"
 subtle = "2"
 async-trait = "0.1"
+# Phase 36: upgrade to yara-x >=1.19 (GHSA-2jx3-ff3v-j7jj fix) is BLOCKED by the
+# workspace bumpalo conflict (wasmtime >=43 needs bumpalo ^3.20.0, minify-html
+# 0.18.1 -> oxc_allocator 0.95.0 pins =3.19.0; cargo cannot split same-major).
+# Trust-model closure (source-only execution, no remote deserialize) lands on
+# 1.15; the engine bump is a tracked follow-up. See closeout evidence.
 yara-x = { version = "1.15", default-features = false, features = ["default-modules", "linkme"] }
 
 [dev-dependencies]

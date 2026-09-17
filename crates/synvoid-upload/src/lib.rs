@@ -522,6 +522,11 @@ impl UploadValidator {
     }
 
     pub fn reload_yara_rules_if_needed(&self) -> Result<(), YaraError> {
+        // Phase 36: source text is the canonical executable input. Remote
+        // compiled blobs are never deserialized (GHSA-2jx3-ff3v-j7jj); a new
+        // mesh version always triggers local compilation via
+        // `reload_with_rules`. A version bump with no acceptable source
+        // retains the previous generation (fail-closed per upload policy).
         #[cfg(feature = "mesh")]
         {
             if let Some(scanner) = &self.malware_scanner {
@@ -536,23 +541,19 @@ impl UploadValidator {
                             let new_version = yara_rules.get_current_version();
 
                             if current_version != new_version {
-                                if let Some(compiled_rules) =
-                                    yara_rules.get_current_compiled_rules()
-                                {
+                                if let Some(new_rules) = yara_rules.get_current_rules() {
                                     tracing::debug!(
                                         current_version = ?current_version,
                                         new_version = ?new_version,
-                                        "Reloading YARA rules with new version (pre-compiled binary)"
-                                    );
-                                    yara_scanner
-                                        .reload_with_compiled_rules(&compiled_rules, new_version)?;
-                                } else if let Some(new_rules) = yara_rules.get_current_rules() {
-                                    tracing::debug!(
-                                        current_version = ?current_version,
-                                        new_version = ?new_version,
-                                        "Reloading YARA rules with new version (source text)"
+                                        "Reloading YARA rules with new version (source text, local compile)"
                                     );
                                     yara_scanner.reload_with_rules(&new_rules, new_version)?;
+                                } else {
+                                    tracing::warn!(
+                                        current_version = ?current_version,
+                                        new_version = ?new_version,
+                                        "YARA version bump with no acceptable source text; retaining previous generation (no compiled-blob fallback)"
+                                    );
                                 }
                             }
                         }
@@ -3087,7 +3088,9 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn test_mesh_reload_compiled_rules_detected() {
+        async fn test_mesh_reload_source_rules_local_compile_detected() {
+            // Phase 36: mesh source text is recompiled locally; no compiled
+            // blob ever reaches the scanner.
             let manager = make_manager();
             let config = test_config(true, UploadScanFailurePolicy::FailClosed);
             let validator =
@@ -3106,21 +3109,18 @@ mod tests {
                 "scanner should have an init version"
             );
 
-            // Compile a minimal rule and apply via the manager.
+            // Apply canonical source text via the manager.
             let rule_src = "rule mesh_test { condition: true }";
-            let compiled = synvoid_yara::CompiledArtifact::compile(rule_src)
-                .expect("compile")
-                .bytes;
             manager
-                .apply_compiled_rules(
+                .apply_rules(
                     rule_src.to_string(),
-                    compiled,
-                    "v2-compiled".to_string(),
+                    "v2-source".to_string(),
                     YaraRuleSource::MeshGlobal,
                 )
                 .unwrap();
 
-            // reload_yara_rules_if_needed should detect the version mismatch and swap.
+            // reload_yara_rules_if_needed should detect the version mismatch,
+            // recompile locally, and swap.
             validator.reload_yara_rules_if_needed().unwrap();
 
             let new_version = validator
@@ -3130,7 +3130,7 @@ mod tests {
                 .get_yara_scanner()
                 .unwrap()
                 .get_version();
-            assert_eq!(new_version.as_deref(), Some("v2-compiled"));
+            assert_eq!(new_version.as_deref(), Some("v2-source"));
         }
 
         #[tokio::test]
@@ -3178,14 +3178,6 @@ mod tests {
             let validator =
                 UploadValidator::new_with_yara_rules(config, Some(manager.clone())).unwrap();
 
-            let init_version = validator
-                .malware_scanner
-                .as_ref()
-                .unwrap()
-                .get_yara_scanner()
-                .unwrap()
-                .get_version();
-
             // Apply rules with a new version...
             let rule_src = "rule noop { condition: false }";
             manager
@@ -3219,21 +3211,20 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn test_mesh_reload_compiled_preferred_over_source() {
+        async fn test_mesh_reload_source_canonical_no_compiled_preference() {
+            // Phase 36 regression: there is no compiled-blob preference path.
+            // Source text is the only executable input; a mesh update must
+            // recompile locally even if a legacy peer also carried bytes
+            // (bytes are never stored/deserialized — see mesh manager).
             let manager = make_manager();
             let config = test_config(true, UploadScanFailurePolicy::FailClosed);
             let validator =
                 UploadValidator::new_with_yara_rules(config, Some(manager.clone())).unwrap();
 
-            // Apply both compiled and source rules — compiled should be preferred.
-            let rule_src = "rule compiled_preferred { condition: true }";
-            let compiled = synvoid_yara::CompiledArtifact::compile(rule_src)
-                .expect("compile")
-                .bytes;
+            let rule_src = "rule source_canonical { condition: true }";
             manager
-                .apply_compiled_rules(
+                .apply_rules(
                     rule_src.to_string(),
-                    compiled,
                     "v2-both".to_string(),
                     YaraRuleSource::MeshGlobal,
                 )
@@ -3249,6 +3240,51 @@ mod tests {
                 .unwrap()
                 .get_version();
             assert_eq!(new_version.as_deref(), Some("v2-both"));
+            // The reloaded generation must actually match (proves local
+            // compilation, not a blob swap): condition:true matches anything.
+            let result = validator.validate_bytes(b"probe", "/upload").await;
+            assert!(
+                matches!(result, Err(UploadValidationError::MalwareDetected { .. })),
+                "source-canonical reload must produce matching rules, got: {result:?}"
+            );
+        }
+
+        #[tokio::test]
+        async fn test_mesh_reload_invalid_source_retains_previous() {
+            // Phase 36 Part B #6-7: invalid source fails closed per existing
+            // policy — the previous generation is retained, never replaced
+            // by a blob.
+            let manager = make_manager();
+            let config = test_config(true, UploadScanFailurePolicy::FailClosed);
+            let validator =
+                UploadValidator::new_with_yara_rules(config, Some(manager.clone())).unwrap();
+
+            let before = validator
+                .malware_scanner
+                .as_ref()
+                .unwrap()
+                .get_yara_scanner()
+                .unwrap()
+                .get_version();
+
+            manager
+                .apply_rules(
+                    "invalid rule syntax !!!!".to_string(),
+                    "v2-bad".to_string(),
+                    YaraRuleSource::MeshGlobal,
+                )
+                .unwrap();
+
+            // Invalid source: reload fails, previous generation retained.
+            assert!(validator.reload_yara_rules_if_needed().is_err());
+            let after = validator
+                .malware_scanner
+                .as_ref()
+                .unwrap()
+                .get_yara_scanner()
+                .unwrap()
+                .get_version();
+            assert_eq!(after, before);
         }
 
         #[tokio::test]
@@ -3262,15 +3298,11 @@ mod tests {
             let result = validator.validate_bytes(b"AAAA", "/upload").await.unwrap();
             assert_eq!(result.scan_status, UploadScanStatus::Clean);
 
-            // Apply a rule that matches "AAAA".
+            // Apply a rule that matches "AAAA" (source-only, local compile).
             let rule_src = "rule detect_aaaa { strings: $s = \"AAAA\" condition: $s }";
-            let compiled = synvoid_yara::CompiledArtifact::compile(rule_src)
-                .expect("compile")
-                .bytes;
             manager
-                .apply_compiled_rules(
+                .apply_rules(
                     rule_src.to_string(),
-                    compiled,
                     "v2-malicious".to_string(),
                     YaraRuleSource::MeshGlobal,
                 )

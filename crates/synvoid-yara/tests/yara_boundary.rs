@@ -1,8 +1,11 @@
-//! Phase 26 required coverage for the canonical YARA boundary.
+//! Phase 26 required coverage for the canonical YARA boundary
+//! (closed by Phase 36: source-only executable trust).
 //!
-//! Covers: validation equivalence, digest/version binding, serialized-version
+//! Covers: validation equivalence, digest/version binding, engine-version
 //! rejection, malformed/oversized rejection, executor load/scan/unload,
-//! and upload-behavior equivalence (via the generic engine).
+//! upload-behavior equivalence (via the generic engine), and the Phase 36
+//! invariant that no remote compiled bytes can reach deserialization
+//! (the API no longer exists; source recompile is the only reload path).
 
 use synvoid_yara::{
     compute_sha256, rule_digest, validate_rules_syntax, CompiledArtifact, InProcessYaraExecutor,
@@ -35,15 +38,36 @@ fn serialized_version_rejection_is_deterministic() {
     let mut artifact = CompiledArtifact::compile("rule a { condition: false }").expect("compile");
     assert_eq!(artifact.engine_version, YARA_ENGINE_VERSION);
     assert_eq!(artifact.format_version, COMPILED_FORMAT_VERSION);
-    // Wrong engine rejected without executing.
+    // Wrong engine rejected without executing (binding-only, no deserialize).
     artifact.engine_version = "yara-x/0.0".to_string();
     assert!(artifact.verify_binding().is_err());
-    assert!(artifact.deserialize_verified().is_err());
+
+    // Phase 36 Part E: foreign engine lines reject deterministically.
+    // (The >=1.19 upgrade is bumpalo-blocked; when it lands, pin a 1.15
+    // rejection here alongside the `YARA_ENGINE_VERSION` bump.)
+    let mut old = CompiledArtifact::compile("rule a { condition: false }").expect("compile");
+    old.engine_version = "yara-x/9.99".to_string();
+    assert!(old.verify_binding().is_err());
 
     // Tampered bytes rejected via digest binding.
     let mut artifact = CompiledArtifact::compile("rule a { condition: false }").expect("compile");
     artifact.bytes.push(0xFF);
     assert!(artifact.verify_binding().is_err());
+}
+
+#[test]
+fn local_recompile_from_canonical_source_succeeds() {
+    // Phase 36 Part E: successful local recompile from canonical source
+    // proves the engine upgrade did not break the source-only path.
+    let src = "rule a { condition: false }";
+    let artifact = CompiledArtifact::compile(src).expect("local compile must succeed");
+    assert!(artifact.verify_binding().is_ok());
+    assert_eq!(artifact.source_sha256, rule_digest(src));
+    let scanner = YaraScanner::new(YaraRulesSource::Inline(src.to_string())).expect("compile");
+    scanner
+        .reload_with_rules(src, Some("v-recompile".into()))
+        .expect("source recompile must succeed");
+    assert_eq!(scanner.get_version().as_deref(), Some("v-recompile"));
 }
 
 #[test]

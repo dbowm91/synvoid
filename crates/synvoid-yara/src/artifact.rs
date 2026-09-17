@@ -1,33 +1,50 @@
-//! Compiled-rule artifact binding (Phase 26 Part C).
+//! Compiled-rule artifact binding (Phase 26 Part C, closed by Phase 36).
 //!
-//! Mesh distributes signed canonical rule *text* plus digest/version by
-//! default. When a compiled blob is carried alongside (legacy peers, local
-//! cache), it must be bound to the source text and to the engine that
-//! produced it, and incompatible blobs must be rejected deterministically.
+//! Trust model (Phase 36): signed/approved YARA **source text** is the
+//! canonical executable input for remotely distributed rules. Compilation
+//! occurs locally inside the YARA execution boundary (`synvoid-yara`).
 //!
-//! The mesh process never deserializes/executes a mesh-provided compiled blob;
-//! only the execution boundary (`engine::YaraScanner`, jail service) does, via
-//! [`CompiledArtifact::deserialize_verified`].
+//! Mesh distributes signed canonical rule *text* plus digest/version. Wire
+//! `compiled_rules` fields are retained for protocol compatibility but
+//! production receive paths treat those bytes as opaque/non-executable
+//! metadata: they are never passed to `yara_x::Rules::deserialize`,
+//! directly or indirectly.
+//!
+//! This module therefore exposes only local-source helpers and metadata-only
+//! binding checks. There is deliberately no public constructor that turns an
+//! arbitrary `&[u8]` into executable rules: `from_bytes_with_binding` and
+//! `deserialize_verified` were removed in Phase 36 because a
+//! caller-supplied checksum is self-consistency, not trust proof.
 
 use crate::engine::{compute_sha256, YaraError};
 
 /// yara-x line that produced the current engine. Bumped when `yara-x` is
-/// upgraded; old blobs are rejected by [`CompiledArtifact::deserialize_verified`]
-/// when the recorded engine differs.
+/// upgraded; locally compiled blobs carrying a different engine tag are
+/// rejected deterministically by [`CompiledArtifact::verify_binding`].
+/// Phase 36: remains `yara-x/1.15` — the >=1.19 upgrade (GHSA-2jx3-ff3v-j7jj
+/// fix) is blocked by the workspace bumpalo conflict (see crate Cargo.toml);
+/// the trust-model closure lands first so no remote bytes can reach the
+/// deserializer even on this line.
 pub const YARA_ENGINE_VERSION: &str = "yara-x/1.15";
 
 /// Local serialization envelope version for [`CompiledArtifact`].
-/// Increment when the envelope layout changes; deserialization rejects
-/// unknown versions deterministically.
+/// Increment when the envelope layout/meaning changes; binding checks reject
+/// unknown versions deterministically. Phase 36: envelope layout unchanged
+/// from 1 (engine-only incompatibility), so this stays at 1.
 pub const COMPILED_FORMAT_VERSION: u32 = 1;
 
-/// Maximum compiled-blob bytes accepted by [`CompiledArtifact::deserialize_verified`].
+/// Maximum compiled-blob bytes accepted by [`CompiledArtifact::verify_binding`].
+/// Binding checks never deserialize; this bounds metadata handling only.
 pub const MAX_COMPILED_BYTES: usize = 8 * 1024 * 1024;
 
-/// A compiled YARA artifact with source/engine binding.
+/// A locally compiled YARA artifact with source/engine binding.
+///
+/// Produced only by [`CompiledArtifact::compile`] from local source text.
+/// There is no remote/deserialized constructor: mesh/remote bytes must never
+/// become a `CompiledArtifact`.
 #[derive(Debug, Clone)]
 pub struct CompiledArtifact {
-    /// Raw `yara_x::Rules::serialize` bytes.
+    /// Raw `yara_x::Rules::serialize` bytes (local compile output only).
     pub bytes: Vec<u8>,
     /// SHA-256 hex of the canonical source text the blob was compiled from.
     pub source_sha256: String,
@@ -40,7 +57,11 @@ pub struct CompiledArtifact {
 }
 
 impl CompiledArtifact {
-    /// Compile source text and bind the result to source + engine version.
+    /// Compile local source text and bind the result to source + engine version.
+    ///
+    /// The input is trusted local/canonical source (bundled, operator file,
+    /// or mesh-approved text already validated). This never accepts remote
+    /// serialized bytes.
     pub fn compile(source: &str) -> Result<Self, YaraError> {
         let rules =
             yara_x::compile(source).map_err(|e| YaraError::CompilationError(e.to_string()))?;
@@ -58,18 +79,14 @@ impl CompiledArtifact {
         })
     }
 
-    /// Verify digest binding and engine/format compatibility, then deserialize.
+    /// Check binding without deserializing (metadata-only).
     ///
-    /// Never executes the rules; returns the live `yara_x::Rules` for the
-    /// caller (execution boundary) to scan with.
-    pub fn deserialize_verified(&self) -> Result<yara_x::Rules, YaraError> {
-        self.verify_binding()?;
-        yara_x::Rules::deserialize(&self.bytes)
-            .map_err(|e| YaraError::CompilationError(format!("incompatible serialized rules: {e}")))
-    }
-
-    /// Check binding without deserializing (usable by distribution code that
-    /// must not execute rules).
+    /// Usable by distribution/tooling code that must not execute rules.
+    /// Passing this check does NOT authorize execution of the bytes: only
+    /// locally compiled artifacts (via [`CompiledArtifact::compile`]) are
+    /// executable inputs, and execution happens via source recompile
+    /// (`YaraScanner::reload_with_rules`), never via deserialization of
+    /// remote bytes.
     pub fn verify_binding(&self) -> Result<(), YaraError> {
         if self.bytes.len() > MAX_COMPILED_BYTES {
             return Err(YaraError::CompilationError(format!(
@@ -98,26 +115,6 @@ impl CompiledArtifact {
             )));
         }
         Ok(())
-    }
-
-    /// Build an artifact from already-serialized bytes with explicit binding.
-    /// Used when receiving a blob plus out-of-band source digest/version.
-    pub fn from_bytes_with_binding(
-        bytes: Vec<u8>,
-        source_sha256: String,
-        engine_version: String,
-        format_version: u32,
-    ) -> Result<Self, YaraError> {
-        let compiled_sha256 = compute_sha256(&bytes);
-        let artifact = Self {
-            bytes,
-            source_sha256,
-            compiled_sha256,
-            engine_version,
-            format_version,
-        };
-        artifact.verify_binding()?;
-        Ok(artifact)
     }
 }
 
@@ -150,12 +147,11 @@ mod tests {
     }
 
     #[test]
-    fn compile_and_verify_round_trip() {
+    fn compile_and_verify_binding() {
         let artifact = CompiledArtifact::compile("rule a { condition: false }").unwrap();
         assert_eq!(artifact.engine_version, YARA_ENGINE_VERSION);
         assert_eq!(artifact.format_version, COMPILED_FORMAT_VERSION);
         assert!(artifact.verify_binding().is_ok());
-        assert!(artifact.deserialize_verified().is_ok());
     }
 
     #[test]
@@ -163,7 +159,18 @@ mod tests {
         let mut artifact = CompiledArtifact::compile("rule a { condition: false }").unwrap();
         artifact.engine_version = "yara-x/0.0".to_string();
         assert!(artifact.verify_binding().is_err());
-        assert!(artifact.deserialize_verified().is_err());
+    }
+
+    #[test]
+    fn foreign_engine_line_rejected_deterministically() {
+        // Phase 36 Part E: artifacts tagged with a different engine line
+        // fail deterministically (binding-only, never deserialized). When
+        // the >=1.19 upgrade lands, `YARA_ENGINE_VERSION` bumps and 1.15
+        // artifacts must reject the same way (add a pinned 1.15-rejection
+        // test at that time).
+        let mut artifact = CompiledArtifact::compile("rule a { condition: false }").unwrap();
+        artifact.engine_version = "yara-x/9.99".to_string();
+        assert!(artifact.verify_binding().is_err());
     }
 
     #[test]
@@ -172,18 +179,5 @@ mod tests {
         artifact.bytes.push(0xFF);
         // Digest no longer matches recorded value.
         assert!(artifact.verify_binding().is_err());
-    }
-
-    #[test]
-    fn garbage_bytes_rejected_deterministically() {
-        let artifact = CompiledArtifact::from_bytes_with_binding(
-            b"not-valid-compiled-rules".to_vec(),
-            rule_digest("rule a { condition: false }"),
-            YARA_ENGINE_VERSION.to_string(),
-            COMPILED_FORMAT_VERSION,
-        )
-        .unwrap();
-        // Binding passes (digest matches bytes), but yara-x deserialization fails.
-        assert!(artifact.deserialize_verified().is_err());
     }
 }

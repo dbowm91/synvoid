@@ -138,3 +138,42 @@ No `cargo machete` run is recorded as authoritative: feature-gated and generated
 cases in this workspace require project-specific interpretation (see Part E), so the
 in-repo entitlement guard (`root_dependency_ownership.md` + `module_ownership.rs`)
 is authoritative and machete remains optional supporting evidence.
+
+## 7. Phase 36 addendum (2026-09-17): YARA deserialization exposure closure
+
+Closeout evidence for `plans/phase_36_yara_x_deserialization_exposure_closure.md`
+(trust-model Parts A–C complete; engine upgrade Part D blocked, documented below).
+
+- Final `synvoid-yara` resolution: **yara-x 1.15.0** (unchanged), transitive
+  **wasmtime 40.0.4** (unchanged), direct **wasmtime 42.0.2** via
+  `[patch.crates-io]` (unchanged). Feature graph unchanged
+  (`default-modules` + `linkme` on the 1.15 line; no `pulley`, no module
+  removals). No parser/strictness delta: same engine line, source-only reload
+  path re-validated (`cargo test -p synvoid-yara`, `-p synvoid-upload
+  --all-features`, `-p synvoid-jail-runtime --all-features`, mesh
+  `yara_approval_boundary`).
+- Removed ignores: **none** (no ignore ever covered GHSA-2jx3-ff3v-j7jj — it
+  has no RUSTSEC ID in the advisory DB, so `cargo audit`/`cargo deny` do not
+  fire on it; the 16 existing ignores are unrelated and retained with their
+  2026-10-01 Re-audit dates). Deliberately no new ignore was added: the 1.15
+  line is NOT patched and must never be described as such.
+- Trust closure (the remotely-exploitable path is gone even on 1.15):
+  `YaraScanner::reload_with_compiled_rules`,
+  `CompiledArtifact::{deserialize_verified, from_bytes_with_binding}`, mesh
+  `local_compiled_rules` / `apply_compiled_rules` /
+  `get_current_compiled_rules`, and `YaraRuleSourceType::CompiledBundle`
+  removed. Upload (`reload_yara_rules_if_needed`), mesh receive paths, and the
+  jail service recompile approved source text locally; a version bump with no
+  acceptable source retains the previous generation. `COMPILED_FORMAT_VERSION`
+  stays 1 (envelope layout unchanged; engine-only incompatibility will be
+  covered by the `YARA_ENGINE_VERSION` bump when the upgrade lands).
+- Upgrade block (concrete, reproduced): yara-x >=1.19 needs wasmtime >=43
+  (1.19.0 → `wasmtime ^43.0.2`; 1.20.0 → `wasmtime ^45.0.3`), and wasmtime
+  >=43 needs `bumpalo ^3.20.0`, while `minify-html` 0.18.1 (latest) →
+  `oxc_allocator` 0.95.0 (only 0.95.x) pins `bumpalo =3.19.0` exactly. Cargo
+  cannot split same-major selections (reproduced 2026-09-17 in an isolated
+  scratch crate depending only on `oxc_allocator =0.95.0` + `wasmtime =45.0.3`,
+  and again with two local crates pinning `bumpalo =3.19.0` vs `^3.20.0`).
+  `YARA_ENGINE_VERSION` therefore stays `yara-x/1.15`; bump it (and pin a
+  1.15-artifact rejection test, replacing the current foreign-line probe) when
+  the upstream pin relaxes. Re-audit with the 2026-10-01 dependency review.

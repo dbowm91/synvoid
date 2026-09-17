@@ -345,25 +345,27 @@ impl EdgeReplicaManager {
 }
 ```
 
-### W8.6: YARA Rule Distribution (Phase 26 text-only)
+### W8.6: YARA Rule Distribution (Phase 26 text-only, closed by Phase 36)
 
 Global nodes distribute signed canonical rule *text* plus digest/version.
 Mesh never compiles or deserializes rules (no `yara-x` in `synvoid-mesh`);
-only the execution boundary (`synvoid-yara`) compiles:
+only the execution boundary (`synvoid-yara`) compiles source text locally:
 
 ```rust
 // Global node: distribute canonical text (mesh, no compilation)
 yara_manager.apply_rules(source_text, version, YaraRuleSource::MeshGlobal)?;
 
-// Execution boundary: compile with engine-version binding
-let artifact = synvoid_yara::CompiledArtifact::compile(&source_text)?;
-let rules = artifact.deserialize_verified()?; // rejects wrong engine/format
+// Execution boundary: local source recompile (never remote deserialize)
+scanner.reload_with_rules(&source_text, Some(version))?;
+// Binding metadata only: CompiledArtifact::compile + verify_binding
+// (deserialize_verified / from_bytes_with_binding removed in Phase 36).
 ```
 
-**Invariants (Phase 26):**
+**Invariants (Phase 36 source-only trust):**
 - Mesh owns distribution/approval/versioning only; `YaraCompiledRuleAnnounce.compiled_rules` stays empty for wire compat, receivers use `source_rules`.
-- Compiled blobs (if present from legacy peers) are opaque in mesh, never executed there.
-- Engine/format mismatches are rejected deterministically via `CompiledArtifact`.
+- Wire compiled bytes are opaque/non-executable metadata everywhere: never stored (`local_compiled_rules` removed), never deserialized (no `Rules::deserialize` call site remains for remote bytes).
+- Upload reloads recompile source locally via `reload_with_rules`; a version bump with no acceptable source retains the previous generation.
+- Engine/format mismatches are rejected deterministically via `CompiledArtifact::verify_binding` (metadata-only).
 
 ### Clippy Cleanup
 

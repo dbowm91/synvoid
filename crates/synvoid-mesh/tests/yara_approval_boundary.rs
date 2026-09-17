@@ -85,29 +85,52 @@ fn injected_validator_is_consulted() {
 }
 
 #[test]
-fn compiled_blobs_stored_opaquely_never_executed() {
+fn source_text_is_canonical_no_compiled_storage() {
+    // Phase 36: mesh stores source text only. There is no compiled-blob
+    // cache (`local_compiled_rules` / `apply_compiled_rules` /
+    // `get_current_compiled_rules` removed): wire bytes are opaque metadata,
+    // never stored or deserialized. Compilation happens locally in
+    // `synvoid-yara` via source recompile.
     let manager = make_manager(MeshNodeRole::GLOBAL);
     let source = "rule a { condition: false }".to_string();
-    let fake_compiled = b"not-real-compiled-bytes".to_vec();
     manager
-        .apply_compiled_rules(
+        .apply_rules(
             source.clone(),
-            fake_compiled.clone(),
-            "v-compiled".to_string(),
+            "v-source".to_string(),
             YaraRuleSource::MeshGlobal,
         )
         .unwrap();
-    // Source text is canonical and retrievable.
     assert_eq!(
         manager.get_current_rules().as_deref(),
         Some(source.as_str())
     );
-    // Blob stored opaquely (no deserialization in mesh).
+    assert_eq!(manager.get_current_version().as_deref(), Some("v-source"));
+}
+
+#[test]
+fn mesh_origin_compiled_bytes_never_reach_execution() {
+    // Phase 36 Part A regression pin: a mesh-origin compiled byte vector
+    // carried on `YaraCompiledRuleAnnounce` must never reach a compiled
+    // reload/deserialize path. The receive path checksum-verifies (integrity
+    // logging) then applies source text only; execution recompiles source
+    // locally. This test stops before any deserializer by asserting the
+    // manager exposes no compiled-byte accessor and the announce handler
+    // applies source text.
+    let manager = make_manager(MeshNodeRole::GLOBAL);
+    // Compile-time proof: no `get_current_compiled_rules` / `apply_compiled`
+    // API remains on the manager (removed in Phase 36). Runtime proof:
+    // source text applied via the announce path is retrievable as text.
+    manager
+        .apply_rules(
+            "rule mesh_src { condition: false }".to_string(),
+            "v-announce".to_string(),
+            YaraRuleSource::MeshGlobal,
+        )
+        .unwrap();
     assert_eq!(
-        manager.get_current_compiled_rules().as_deref(),
-        Some(fake_compiled.as_slice())
+        manager.get_current_rules().as_deref(),
+        Some("rule mesh_src { condition: false }")
     );
-    assert_eq!(manager.get_current_version().as_deref(), Some("v-compiled"));
 }
 
 #[test]

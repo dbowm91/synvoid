@@ -186,7 +186,13 @@ Active YARA rules carry provenance metadata tracking their source, verification 
 | `DirectoryWithFallback` | Operator-controlled | Directory rules with bundled fallback on failure |
 | `Inline` | High | Rules provided directly via config or admin API |
 | `Mesh` | Network-trusted | Rules received from mesh peers, Ed25519-verified |
-| `CompiledBundle` | Operator-controlled | Pre-compiled YARA-X binary rules |
+
+Phase 36 source-only trust: signed/approved source text is the canonical
+executable input; compilation happens locally in `synvoid-yara`. Wire
+compiled bytes are opaque/non-executable metadata (never stored, never
+deserialized). There is no `CompiledBundle` source type: a mesh version bump
+with no acceptable source retains the previous generation, and upload reloads
+recompile via `reload_with_rules`. See `crates/synvoid-yara/src/artifact.rs`.
 
 ### Directory Loading Hardening
 
@@ -312,6 +318,11 @@ in `.cargo/audit.toml` (cargo-audit does not read `deny.toml`).
 - **Affected path**: yara-x → wasmtime 40.0.4 (transitive)
 - **Mitigation**: single `synvoid-yara` owner for yara-x; current risk accepted with guard-enforced ignores (Reviewed: 2026-09-13; Re-audit: 2026-10-01)
 - **Recommendation**: Monitor yara-x releases; re-attempt direct ≥46.0.3 upgrade when the bumpalo conflict clears
+
+### yara-x Serialized-Rule Deserialization (GHSA-2jx3-ff3v-j7jj, Phase 36)
+- **Issue**: YARA-X <=1.18 `Rules::deserialize` on malformed serialized bytes can cause memory corruption. Fixed upstream in 1.19.0+. SynVoid is on yara-x 1.15 (no RUSTSEC ID mapped yet — `cargo audit`/`cargo deny` do not fire; tracked here instead).
+- **Exposure after Phase 36**: NO remote/mesh/wire bytes reach any deserializer. `YaraScanner::reload_with_compiled_rules`, `CompiledArtifact::deserialize_verified`, `from_bytes_with_binding`, mesh `local_compiled_rules`/`apply_compiled_rules`/`get_current_compiled_rules`, and the `CompiledBundle` source type were removed; upload/mesh/jail paths recompile approved source text locally. Residual risk is local-only (malformed bytes from a local operator artifact), fail-closed with previous-generation retention.
+- **Upgrade status**: yara-x >=1.19 upgrade BLOCKED by the workspace bumpalo conflict (wasmtime >=43 needs bumpalo ^3.20.0; `minify-html` 0.18.1 → `oxc_allocator` 0.95.0 pins `bumpalo =3.19.0`; reproduced 2026-09-17 including in an isolated scratch crate). No advisory ignore added for this GHSA (nothing to ignore — unmapped; documenting instead of silencing). Re-audit with the 2026-10-01 dependency review; remove this section when yara-x >=1.19 lands.
 
 ### Post-Quantum Architecture
 - **Hybrid Key Exchange**: X25519 + pqc_kyber provides defense-in-depth

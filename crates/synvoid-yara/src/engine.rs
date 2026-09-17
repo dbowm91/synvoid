@@ -17,6 +17,10 @@ use yara_x::Scanner;
 pub const NO_EXCLUDED_CATEGORIES: &[&str] = &[];
 
 /// Source type for YARA rule generation.
+///
+/// Phase 36: source text is the only executable input. There is deliberately
+/// no `CompiledBundle` variant: remote/wire compiled bytes are opaque
+/// metadata and must never become an executable generation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum YaraRuleSourceType {
     /// Rules loaded from bundled defaults.
@@ -27,8 +31,6 @@ pub enum YaraRuleSourceType {
     Inline,
     /// Rules loaded from mesh-distributed source.
     Mesh,
-    /// Rules loaded from a compiled binary bundle.
-    CompiledBundle,
 }
 
 impl std::fmt::Display for YaraRuleSourceType {
@@ -38,7 +40,6 @@ impl std::fmt::Display for YaraRuleSourceType {
             Self::Directory => write!(f, "directory"),
             Self::Inline => write!(f, "inline"),
             Self::Mesh => write!(f, "mesh"),
-            Self::CompiledBundle => write!(f, "compiled_bundle"),
         }
     }
 }
@@ -558,59 +559,6 @@ impl YaraScanner {
             self.set_last_reload_error(e.to_string());
         }
         result
-    }
-
-    /// Reload with pre-compiled binary rules.
-    ///
-    /// Deserializes the compiled rules, then atomically swaps the active generation.
-    /// On failure, the previous generation is retained.
-    pub fn reload_with_compiled_rules(
-        &self,
-        compiled_rules: &[u8],
-        version: Option<String>,
-    ) -> Result<(), YaraError> {
-        let new_rules = match yara_x::Rules::deserialize(compiled_rules) {
-            Ok(r) => r,
-            Err(e) => {
-                let err = YaraError::CompilationError(format!("Failed to deserialize: {}", e));
-                self.set_last_reload_error(err.to_string());
-                return Err(err);
-            }
-        };
-
-        let mut hasher = Sha256::new();
-        hasher.update(compiled_rules);
-        let hash = format!("{:x}", hasher.finalize());
-        let loaded_at = Utc::now();
-
-        let prev = self.generation.load();
-        let source_type = prev.provenance.source_type.clone();
-
-        let provenance = YaraRuleProvenance {
-            source_type,
-            version: version.clone(),
-            content_sha256: hash.clone(),
-            manifest_sha256: None,
-            signer: None,
-            verified: false,
-            loaded_at,
-            source_count: prev.provenance.source_count,
-            source_bytes: compiled_rules.len() as u64,
-        };
-
-        let generation = Arc::new(YaraRuleGeneration {
-            rules: new_rules,
-            version,
-            hash,
-            loaded_at,
-            provenance,
-        });
-
-        self.generation.store(generation);
-        self.clear_last_reload_error();
-        crate::metrics::increment_yara_reload_success();
-        tracing::info!("YARA-X rules reloaded from compiled binary source");
-        Ok(())
     }
 
     fn reload_from_source(
@@ -1343,7 +1291,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_compiled_rules_deserialization_failure_preserves_generation() {
+    async fn test_invalid_source_reload_preserves_generation() {
+        // Phase 36: the only reload path is source recompile. Invalid source
+        // must fail and preserve the previous generation (last-known-good).
         let scanner = YaraScanner::new(YaraRulesSource::Inline(
             "rule detect_pe { meta: description = \"test\" severity = \"high\" category = \"test\" strings: $mz = { 4D 5A } condition: $mz at 0 }".to_string(),
         ))
@@ -1352,9 +1302,8 @@ mod tests {
         let version_before = scanner.get_version();
         let hash_before = scanner.get_generation_hash();
 
-        // Try to reload with garbage compiled rules
-        let result =
-            scanner.reload_with_compiled_rules(b"not-valid-compiled-rules", Some("bad".into()));
+        // Invalid source text must be rejected without swapping generations.
+        let result = scanner.reload_with_rules("not-valid-source !!!!", Some("bad".into()));
         assert!(result.is_err());
         assert_eq!(scanner.get_version(), version_before);
         assert_eq!(scanner.get_generation_hash(), hash_before);
@@ -1779,24 +1728,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_compiled_reload_error_tracking() {
+    async fn test_source_reload_error_tracking() {
         let scanner = YaraScanner::new(YaraRulesSource::Inline(
             "rule a { condition: false }".to_string(),
         ))
         .expect("should compile");
 
-        // Bad compiled rules should set error
-        let result = scanner.reload_with_compiled_rules(b"garbage", Some("bad".into()));
+        // Bad source should set error
+        let result = scanner.reload_with_rules("invalid !!!!", Some("bad".into()));
         assert!(result.is_err());
         assert!(scanner.get_last_reload_error().is_some());
 
-        // Good compiled rules should clear error
-        let good_source = "rule c { condition: false }";
-        let compiled = yara_x::compile(good_source).unwrap();
-        let mut buf = Vec::new();
-        compiled.serialize_into(&mut buf).unwrap();
+        // Good source should clear error
         scanner
-            .reload_with_compiled_rules(&buf, Some("v2".into()))
+            .reload_with_rules("rule c { condition: false }", Some("v2".into()))
             .unwrap();
         assert!(scanner.get_last_reload_error().is_none());
     }
@@ -2009,7 +1954,6 @@ mod tests {
             (YaraRuleSourceType::Directory, "directory"),
             (YaraRuleSourceType::Inline, "inline"),
             (YaraRuleSourceType::Mesh, "mesh"),
-            (YaraRuleSourceType::CompiledBundle, "compiled_bundle"),
         ];
 
         for (variant, expected) in cases {
@@ -2069,24 +2013,19 @@ mod tests {
     }
 
     #[test]
-    fn test_provenance_on_compiled_rules_reload() {
+    fn test_provenance_on_source_reload() {
         let scanner = YaraScanner::new(YaraRulesSource::Inline(
             "rule a { condition: false }".to_string(),
         ))
         .expect("should compile");
 
-        let good_source = "rule c { condition: false }";
-        let compiled = yara_x::compile(good_source).unwrap();
-        let mut buf = Vec::new();
-        compiled.serialize_into(&mut buf).unwrap();
-
         scanner
-            .reload_with_compiled_rules(&buf, Some("compiled-v1".into()))
+            .reload_with_rules("rule c { condition: false }", Some("v1".into()))
             .unwrap();
 
         let prov = scanner.get_rule_provenance();
-        assert_eq!(prov.source_type, YaraRuleSourceType::Inline); // preserves original source type
-        assert_eq!(prov.version, Some("compiled-v1".into()));
+        assert_eq!(prov.source_type, YaraRuleSourceType::Inline);
+        assert_eq!(prov.version, Some("v1".into()));
         assert!(prov.source_bytes > 0);
     }
 
@@ -2151,7 +2090,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_reload_with_invalid_compiled_rules_preserves_generation() {
+    async fn test_reload_with_invalid_source_preserves_generation() {
         let scanner = YaraScanner::new(YaraRulesSource::Inline(
             "rule detect_pe { meta: description = \"test\" severity = \"high\" category = \"test\" strings: $mz = { 4D 5A } condition: $mz at 0 }".to_string(),
         ))
@@ -2161,9 +2100,8 @@ mod tests {
         let prov_before = scanner.get_rule_provenance();
         let loaded_before = prov_before.loaded_at;
 
-        // Garbage bytes should fail deserialization and preserve everything
-        let result =
-            scanner.reload_with_compiled_rules(b"definitely-not-compiled", Some("bad".into()));
+        // Invalid source must fail compilation and preserve everything.
+        let result = scanner.reload_with_rules("definitely-not-valid !!!!", Some("bad".into()));
         assert!(result.is_err());
 
         assert_eq!(scanner.get_generation_hash(), hash_before);
