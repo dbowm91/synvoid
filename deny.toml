@@ -15,8 +15,9 @@
 # whether wasmtime-wasi is resolved, exposure, Owner:, Reviewed: YYYY-MM-DD,
 # Re-audit: YYYY-MM-DD (single machine-enforced future deadline), and
 # Remove condition: (upstream/event, not a date). Stale "patched" language
-# for RUSTSEC-2026-0269 is forbidden: 42.0.2 is affected, capability-gated,
-# upgrade-blocked (see §4).
+# for RUSTSEC-2026-0269 is forbidden where it does not apply: the direct
+# 36 LTS runtime IS patched (>=36.0.14); the transitive yara-x 40.0.4 line is
+# affected and capability-gated (see §4 and the 0269 entry below).
 
 [licenses]
 allow = [
@@ -59,9 +60,10 @@ ignore = [
     # wasmtime 40.0.4 advisories — transitive via synvoid-yara -> yara-x 1.15
     # (YARA rule compilation only, never the WASM plugin sandbox; Phase 26:
     # mesh no longer links yara-x, so the control plane is out of scope).
-    # The direct runtime is wasmtime 42.0.2 via [patch.crates-io], which IS a
-    # fixed version for each advisory in this group (fixed ranges include
-    # >=42.0.2,<43.0.0); only the yara-x 40.0.4 instance is ignored.
+    # The direct runtime is wasmtime 36.0.15 (LTS, crates.io), which is NOT
+    # affected by any advisory in this group (proven by a clean `cargo audit`
+    # on an isolated wasmtime-36.0.15 resolve with no ignores, 2026-09-17);
+    # only the yara-x 40.0.4 instance is ignored here.
     # wasmtime-wasi resolved: NO (absent from Cargo.lock; see dependency_security_baseline_phase25.md §1-§2).
     # Owner: security.
     # Reviewed: 2026-09-13.
@@ -86,7 +88,7 @@ ignore = [
     #   (transitive, YARA compilation only; Phase 26: mesh out of scope).
     # Affected capability: multi-engine type-index mixing (requires hostile multi-engine
     #   guest setup; yara-x runs single-engine rule bytecode).
-    # wasmtime-wasi resolved: NO. Exposure: LOW for the yara-x path; direct 42.0.2 is patched.
+    # wasmtime-wasi resolved: NO. Exposure: LOW for the yara-x path; direct 36.0.15 LTS unaffected.
     # Owner: security.
     # Reviewed: 2026-09-13.
     # Re-audit: 2026-10-01.
@@ -94,20 +96,25 @@ ignore = [
     "RUSTSEC-2026-0222",
 
     # RUSTSEC-2026-0269: Wasmtime filesystem sandbox escape (trailing-slash paths/symlinks).
-    # Dependency path: (a) synvoid-yara -> yara-x 1.15 -> wasmtime 40.0.4
-    #   (transitive; Phase 26: mesh no longer links this path); (b) direct
-    #   wasmtime 42.0.2 via [patch.crates-io] (synvoid-plugin-runtime). BOTH versions
-    #   are in the affected range 37.0.0..=46.0.2. 42.0.2 is NOT patched for this advisory.
+    # Dependency path: synvoid-yara -> yara-x 1.15 -> wasmtime 40.0.4
+    #   (transitive; Phase 26: mesh no longer links this path). The direct
+    #   runtime (wasmtime 36.0.15 LTS, synvoid-plugin-runtime) is PATCHED
+    #   (advisory DB patched range includes >=36.0.14,<37.0.0; proven by a
+    #   clean `cargo audit` on an isolated 36.0.15 resolve with no ignores).
+    #   This per-advisory ignore is retained SOLELY for the transitive 40.0.4
+    #   instance until yara-x moves off wasmtime 40.x (Phase 38 normalizes the
+    #   final multi-version record); it must NOT be read as covering a direct
+    #   exposure — the direct path needs no ignore.
     # Affected capability: wasmtime-wasi filesystem preopen sandboxing.
     # wasmtime-wasi resolved: NO — absent from Cargo.lock; neither consumer links the
     #   vulnerable crate, so the trailing-slash handling is unreachable (capability
     #   absence, proven from the resolved graph in dependency_security_baseline_phase25.md §3).
-    # Upgrade blocked: wasmtime >=46.0.3 needs bumpalo ^3.20.2, oxc_allocator 0.95.0
+    # YARA-line upgrade blocked: wasmtime >=46.0.3 needs bumpalo ^3.20.2, oxc_allocator 0.95.0
     #   (via minify-html 0.18.1) pins bumpalo =3.19.0 — unresolvable, see baseline §4.
     # Owner: security.
-    # Reviewed: 2026-09-13.
+    # Reviewed: 2026-09-17.
     # Re-audit: 2026-10-01.
-    # Remove condition: wasmtime >=46.0.3 upgrade unblocked (bumpalo conflict clears).
+    # Remove condition: yara-x upstream moves off wasmtime 40.x.
     "RUSTSEC-2026-0269",
 
     # RUSTSEC-2026-0235: rkyv 0.7.46 insufficient archive validation (Rc/Arc OOB reads).
@@ -142,18 +149,19 @@ multiple-versions = "warn"
 wildcards = "deny"
 
 # Duplicate-version allowlist (narrow): the wasmtime 40.0.4 (yara-x transitive) +
-# 42.0.2 (direct runtime) split is documented in
+# 36.0.15 (direct LTS runtime) split is documented in
 # architecture/dependency_security_baseline_phase25.md §4/§6 and collapses when
-# yara-x moves off wasmtime 40.x / the >=46.0.3 upgrade unblocks.
+# yara-x moves off wasmtime 40.x.
 # The skip silences only the multiple-versions warning for the direct runtime pin.
 [[bans.skip]]
 name = "wasmtime"
-version = "=42.0.2"
+version = "=36.0.15"
 
 [sources]
-# Phase 25: unknown registries are denied (crates.io only). Unknown git sources are
-# denied; exactly one git source is allowlisted (the wasmtime 42.0.2 runtime patch,
-# removal tracked in dependency_security_baseline_phase25.md §4).
+# Phase 37: unknown registries are denied (crates.io only). Unknown git sources are
+# denied with NO exceptions: the wasmtime 42.0.2 git patch is removed (direct
+# runtime is 36.0.15 LTS from crates.io) and no other git dependency remains
+# (verified: no `git =` in any manifest, no `git+` source in Cargo.lock).
+# Re-adding any git source requires an allow-git entry plus baseline evidence.
 unknown-registry = "deny"
 unknown-git = "deny"
-allow-git = ["https://github.com/bytecodealliance/wasmtime"]

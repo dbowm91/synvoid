@@ -7,7 +7,7 @@ The Spin module provides a serverless WASM runtime for the SynVoid proxy. It ena
 **Module Location:** `crates/synvoid-plugin-runtime/src/spin/` (canonical; `src/spin/` is a re-export compatibility facade)
 
 **Key Dependencies:**
-- `wasmtime` (v42.0.2) - WebAssembly runtime
+- `wasmtime` (v36.0.15 LTS, crates.io) - WebAssembly runtime
 - `toml` - Manifest parsing
 
 ## 1. Purpose and Responsibility

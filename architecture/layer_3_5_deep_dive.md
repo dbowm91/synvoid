@@ -72,7 +72,7 @@ RUSTSEC-2023-0079: `ring` (used via `aws-lc-rs`) ML-KEM implementation uses cond
 The dependency tree is generally well-aligned around the modern Rust async ecosystem (`tokio`, `hyper`, `axum`, `rustls`). 
 
 *   **Non-Pure Rust Dependencies:** `aws-lc-rs` (AWS's fork of BoringSSL) is the primary heavy C/Assembly dependency, which is necessary for production-grade, audited PQC primitives. However, it is **not** the only non-pure Rust dependency. `rusqlite` brings in SQLite (C), and `yara-x` depends on `wasmtime` (which has complex system-level integrations). 
-*   **Security Posture:** The project proactively patches transitive vulnerabilities (e.g., patching `wasmtime` to `v42.0.2` in `Cargo.toml` to mitigate RUSTSEC-2026-0096).
+*   **Security Posture:** The project proactively manages transitive vulnerabilities (e.g., the direct WASM runtime rides the supported Wasmtime 36 LTS line, `v36.0.15`, patched for RUSTSEC-2026-0096 and RUSTSEC-2026-0269; the yara-x transitive 40.0.4 line is accepted with guard-enforced ignores — see `architecture/dependency_security_baseline_phase25.md`).
 *   **Overlap:** There is minimal ecosystem overlap. `rustls` is strictly used instead of `openssl`, avoiding dependency conflicts. 
 
 ## 3. Mesh Complexity & Maintenance

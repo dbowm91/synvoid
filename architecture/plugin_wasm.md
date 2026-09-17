@@ -797,8 +797,8 @@ When `mesh` is disabled:
 WASM plugin support is enabled by default (no feature gate). The `wasmtime` dependency is always included:
 
 ```toml
-# Cargo.toml:195-196
-wasmtime = { version = "42.0.2", features = ["component-model"] }
+# crates/synvoid-plugin-runtime/Cargo.toml (Phase 37: Wasmtime 36 LTS, crates.io, no git patch)
+wasmtime = { version = "36.0.15", features = ["component-model"] }
 ```
 
 ### Native Extension Loading (Phase 28 capability isolation)

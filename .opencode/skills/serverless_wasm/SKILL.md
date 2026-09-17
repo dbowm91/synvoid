@@ -131,22 +131,17 @@ if let Some(ref handle) = function.compilation_handle {
 
 Memory is cleared between requests via `_reset()` export or re-instantiation. For WASM plugins, `PluginStateModel` controls cross-request state behavior: `HostContextIsolated` resets host-side context only (guest memory/globals may persist), `FreshInstancePerRequest` instantiates a fresh instance per invocation, and `StatefulPooled` reuses instances with guest state preserved.
 
-### WASI Support (Wave 4.6)
+### WASI Filesystem Absent by Design
 
-WASI context is wired up via `wasmtime_wasi::WasiCtxBuilder`:
-
-```rust
-fn prepare_wasi_context(
-    linker: &mut wasmtime::Linker<WasmRuntimeState>,
-    config: &WasiConfig,
-) -> Result<wasmtime::WasiCtx> {
-    let mut ctx = wasmtime_wasi::WasiCtxBuilder::new()
-        .args(&config.args)
-        .envs(&config.env_vars)
-        .build();
-    Ok(ctx)
-}
-```
+`wasmtime-wasi` is NOT linked anywhere in the workspace (guard-enforced:
+`wasmtime_wasi_stays_absent_without_exposure_update`; `Cargo.lock` contains no
+`wasmtime-wasi`). The `wasi_enabled` flag in `WasmResourceLimits` /
+serverless configs is inert plumbing that defaults to `false` and can only
+emit a debug log — it cannot construct a WASI filesystem context because the
+implementation crate is absent. Do not add `wasmtime-wasi` or filesystem
+preopens without a separate security design (this is the RUSTSEC-2026-0269
+capability-absence boundary; see
+`architecture/dependency_security_baseline_phase25.md` §3).
 
 ## Mesh Serverless
 

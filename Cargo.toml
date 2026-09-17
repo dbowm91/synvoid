@@ -51,18 +51,6 @@ fastcgi_streaming = []  # Additive, opt-in: streaming FastCGI response handling 
 # the isolation target is the plugin-runtime capability, not the crate universe.)
 unsafe-native-extensions = ["synvoid-plugin-runtime/unsafe-native-extensions", "dep:synvoid-native-extension"]
 
-[patch.crates-io]
-# Phase 25: direct Wasmtime stays at 42.0.2 via this Git patch (crates.io has no
-# 42.x patch release carrying the older fixes; 42.0.2 is patched for
-# RUSTSEC-2026-0085/0086/0087/0088/0089/0091/0092/0093/0094/0095/0096/0114/0222
-# but is AFFECTED by RUSTSEC-2026-0269 whose fix starts at 46.0.3).
-# Upgrade to >=46.0.3 is blocked: wasmtime 46 requires bumpalo ^3.20.2 while
-# minify-html 0.18.1 -> oxc_allocator 0.95.0 pins bumpalo =3.19.0 (same major,
-# unresolvable; cargo cannot split). See
-# architecture/dependency_security_baseline_phase25.md. Removal target: Phase 26
-# (reassess when minify-html/oxc relaxes bumpalo or yara-x moves off wasmtime 40).
-wasmtime = { git = "https://github.com/bytecodealliance/wasmtime", tag = "v42.0.2" }
-
 [workspace]
 members = [".", "pqc", "crates/synvoid-wasm-pow", "admin-ui", "examples/dynamic-plugin-example", "examples/embedded-app-example", "fuzz", "crates/synvoid-rate-limit", "crates/synvoid-utils", "crates/synvoid-config", "crates/synvoid-core", "crates/synvoid-auth", "crates/synvoid-challenge", "crates/synvoid-tarpit", "crates/synvoid-waf", "crates/synvoid-proxy-cache", "crates/synvoid-tls", "crates/synvoid-plugin-runtime", "crates/synvoid-native-extension", "crates/synvoid-jail-runtime", "crates/synvoid-http-client", "crates/synvoid-serverless", "crates/synvoid-geoip", "crates/synvoid-integrity", "crates/synvoid-upstream", "crates/synvoid-tunnel", "crates/synvoid-proxy", "crates/synvoid-http", "crates/synvoid-http3", "crates/synvoid-dns", "crates/synvoid-dnssec-keystore", "crates/synvoid-admin", "crates/synvoid-mesh", "crates/synvoid-mesh-protocol", "crates/synvoid-app-handlers", "crates/synvoid-platform", "crates/synvoid-cli", "crates/synvoid-metrics", "crates/synvoid-theme", "crates/synvoid-icmp-filter", "crates/synvoid-honeypot", "crates/synvoid-upload", "crates/synvoid-yara", "crates/synvoid-ipc", "crates/synvoid-block-store", "crates/synvoid-app-server", "crates/synvoid-vpn-client", "crates/synvoid-static-files", "crates/synvoid-filter", "tools/synvoid-repo-guards", "tools/xtask"]
 
@@ -327,7 +315,10 @@ libfuzzer-sys = "0.4"
 proptest = "1.5"
 proptest-derive = "0.4"
 criterion = { version = "0.5", features = ["html_reports"] }
-wasmtime = "42.0.2"
+# Phase 37: direct Wasmtime is the 36 LTS line from crates.io (36.0.14+ carries
+# the RUSTSEC-2026-0269 fix; supported through 2027-08-20). Used by
+# benches/bench_wasm.rs; must match synvoid-plugin-runtime's direct version.
+wasmtime = "36.0.15"
 wat = "1"
 # Phase 31: test-only runtime deps moved from [dependencies] (0 production src uses)
 tower = { version = "0.5", features = ["util"] }

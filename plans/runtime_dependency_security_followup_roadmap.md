@@ -1,6 +1,7 @@
 # Post-Phase-35 Runtime and Dependency Security Roadmap
 
-Status: planned (2026-09-16).
+Status: Phase 36 complete; Phase 37 complete (2026-09-17, direct runtime on
+Wasmtime 36.0.15 LTS, git patch removed); Phase 38 pending.
 
 This roadmap follows the crate-boundary closeout in Phase 35. The next work is deliberately security- and evidence-driven rather than another decomposition pass.
 
@@ -32,10 +33,12 @@ Execute in this order:
    - Then upgrade `yara-x` from 1.15 to 1.20.x and refresh engine/artifact bindings.
    - Recompute the transitive Wasmtime advisory set instead of retaining the 40.x ignores mechanically.
 
-2. **Phase 37 — Direct Wasmtime migration to the supported 36 LTS line**
+2. **Phase 37 — Direct Wasmtime migration to the supported 36 LTS line** — DONE 2026-09-17
+   (see `plans/phase_37_closeout_results.md`).
    - Replace direct 42.0.2/git ownership with 36.0.15+ LTS if the production plugin ABI and containment controls pass parity.
    - Remove the git patch and source allowlist when no longer necessary.
-   - Tighten the direct Wasmtime feature surface only after behavior parity is established.
+   - Tighten the direct Wasmtime feature surface only after behavior parity is established
+     (evaluated; deferred to a follow-up — parity kept: defaults + `component-model`).
 
 3. **Phase 38 — Security baseline and guard closeout**
    - Recompute `cargo audit`/`cargo deny` state from the final graph.

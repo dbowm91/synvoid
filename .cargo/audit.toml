@@ -12,7 +12,7 @@
 ignore = [
     # RUSTSEC-2023-0071 (rsa, transitive via synvoid-yara -> yara-x; never invoked; ed25519 used instead).
     "RUSTSEC-2023-0071",
-    # wasmtime 40.0.4 via synvoid-yara -> yara-x 1.15 (YARA compilation only; direct 42.0.2 patched for these; mesh out of scope).
+    # wasmtime 40.0.4 via synvoid-yara -> yara-x 1.15 (YARA compilation only; direct 36.0.15 LTS unaffected — clean isolated audit; mesh out of scope).
     "RUSTSEC-2026-0085",
     "RUSTSEC-2026-0086",
     "RUSTSEC-2026-0087",
@@ -27,9 +27,12 @@ ignore = [
     "RUSTSEC-2026-0114",
     # RUSTSEC-2026-0222 (wasmtime 40.0.4 via synvoid-yara -> yara-x; single-engine rule bytecode).
     "RUSTSEC-2026-0222",
-    # RUSTSEC-2026-0269 (WASI fs escape; wasmtime-wasi absent from lock; upgrade blocked, see baseline §4).
-    # 42.0.2 is AFFECTED, capability-gated — never described as patched. Re-audit: 2026-10-01.
-    # Remove condition: wasmtime >=46.0.3 upgrade unblocked.
+    # RUSTSEC-2026-0269 retained SOLELY for transitive wasmtime 40.0.4 (via
+    # synvoid-yara -> yara-x; wasmtime-wasi absent from lock). The direct
+    # runtime (wasmtime 36.0.15 LTS) is PATCHED (>=36.0.14) and needs no
+    # ignore; audit ignores are per-advisory so this entry stays until yara-x
+    # moves off wasmtime 40.x. Re-audit: 2026-10-01.
+    # Remove condition: yara-x upstream moves off wasmtime 40.x.
     "RUSTSEC-2026-0269",
     # RUSTSEC-2026-0235 (rkyv 0.7.46 via parcel_sourcemap; minifier-internal sourcemaps only).
     "RUSTSEC-2026-0235",

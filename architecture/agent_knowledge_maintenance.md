@@ -1,7 +1,27 @@
 # Agent Knowledge Maintenance
 
 How `AGENTS.md`, `.opencode/skills/`, `docs/`, `README.md`, and `plans/`
-stay accurate. For agents, by an agent audit (2026-09-11, follow-up 2026-09-13).
+stay accurate. For agents, by an agent audit (2026-09-11, follow-up 2026-09-13,
+Phase 37 pass 2026-09-17).
+
+## What was audited (2026-09-17, Phase 37 Wasmtime LTS migration)
+
+- Direct runtime 42.0.2 → 36.0.15 LTS: updated `AGENTS.md` Known Issues,
+  `SECURITY.md` (triage rows, dependency-policy, patch sections, limitations),
+  `architecture/dependency_security_baseline_phase25.md` (§1/§3/§4/§6 + anchors),
+  `architecture/{plugin_wasm,spin,layer_3_5_deep_dive}.md`, `docs/RELEASE.md`,
+  `.opencode/skills/supply_chain/SKILL.md`.
+- Pruned `.opencode/skills/serverless_wasm/SKILL.md` "WASI Support (Wave 4.6)":
+  the `wasmtime_wasi::WasiCtxBuilder` sample described code that does not exist
+  (no `wasmtime_wasi` import anywhere; `wasi_enabled` is inert `false`
+  plumbing) and contradicted the guard-enforced WASI-absence invariant.
+  Replaced with the absence-by-design statement.
+- `README.md`: no version-pinned wasmtime content — correctly untouched.
+- Historical records deliberately NOT rewritten: `plans/*` phase/closeout
+  history, `architecture/track4_*`, `architecture/crate_boundary_reuse_closeout.md`,
+  the 2026-09-11/13 audit entries in this file.
+- New recurring checklist item 8 (wasmtime direct/transitive versions +
+  guard anchors) so the next audit catches version drift mechanically.
 
 ## What was audited (2026-09-13 follow-up)
 
@@ -86,6 +106,13 @@ stay accurate. For agents, by an agent audit (2026-09-11, follow-up 2026-09-13).
    no `/api` prefix), shipped worker count (`config/main.toml`), and
    feature-gated config defaults (`prefer_post_quantum` needs the
    `post-quantum` feature at build).
+8. Wasmtime versions vs `Cargo.lock`: `rg -n '42\.0\.2|wasmtime.*42' AGENTS.md
+   SECURITY.md deny.toml .cargo/audit.toml architecture/dependency_security_baseline_phase25.md
+   .opencode/skills/` — any direct-42 reference outside historical
+   phase/closeout reports is a bug (direct is 36.0.15 LTS; transitive 40.0.4
+   via yara-x only). Guard anchors in the baseline doc
+   (`wasmtime-direct-version`, `wasmtime-transitive-version`,
+   `wasmtime-wasi-absent-from-lock`) must match the lock.
 
 ## Index
 

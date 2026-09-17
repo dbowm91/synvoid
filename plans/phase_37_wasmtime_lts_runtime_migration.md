@@ -1,6 +1,6 @@
 # Phase 37 Plan: Direct Wasmtime Migration to Supported LTS
 
-Status: planned (2026-09-16).
+Status: complete (2026-09-17). Closeout: `plans/phase_37_closeout_results.md`.
 
 Roadmap: `plans/runtime_dependency_security_followup_roadmap.md`.
 Depends on: Phase 36 complete or sufficiently stable that the final YARA-X/Wasmtime transitive graph is known.

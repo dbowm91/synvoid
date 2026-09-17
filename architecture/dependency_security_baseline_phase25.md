@@ -1,7 +1,8 @@
 # Dependency Security Baseline — Phase 25 Evidence
 
 Status: binding evidence for Track 4 Phase 25 (`plans/phase_25_dependency_security_baseline_and_entitlement.md`).
-Owner: security / release. Reviewed: 2026-09-13. Re-audit: 2026-10-01 (all advisory ignores; see §5).
+Owner: security / release. Reviewed: 2026-09-17 (Phase 37: direct runtime migrated
+to Wasmtime 36 LTS). Re-audit: 2026-10-01 (all advisory ignores; see §5).
 
 This file records version, features, and reachable capability **separately** for every
 security-relevant dependency decision. It is the authority the repo guards check
@@ -20,8 +21,8 @@ Tool versions frozen by this phase (see `docs/testing/verification-contract.md`)
 Evidence commands (run 2026-09-12, advisory DB current at run time):
 
 ```bash
-cargo tree -i wasmtime@42.0.2 --workspace
-cargo tree -e features -i wasmtime@42.0.2 --workspace
+cargo tree -i wasmtime@36.0.15 --workspace
+cargo tree -e features -i wasmtime@36.0.15 --workspace
 cargo tree -i wasmtime@40.0.4 --workspace
 cargo tree -e features -i wasmtime@40.0.4 --workspace
 cargo tree -i yara-x --workspace
@@ -31,14 +32,18 @@ cargo deny check advisories
 
 ## 1. Direct Wasmtime path (plugin runtime)
 
-<!-- guard-anchor: wasmtime-direct-version = "42.0.2" -->
+<!-- guard-anchor: wasmtime-direct-version = "36.0.15" -->
 <!-- guard-anchor: wasmtime-transitive-version = "40.0.4" (via yara-x 1.15.0) -->
 <!-- guard-anchor: wasmtime-wasi-absent-from-lock = true -->
 
-- Version: **42.0.2** via `[patch.crates-io]` Git source (`tag = "v42.0.2"`).
-- Requested features (`crates/synvoid-plugin-runtime/Cargo.toml`): `component-model` only.
-- Consumers (`cargo tree -i wasmtime@42.0.2`): exactly `synvoid-plugin-runtime`
-  (plus the root dev-dependency used by `benches/bench_wasm.rs`).
+- Version: **36.0.15** (Wasmtime 36 LTS line, supported through 2027-08-20),
+  from crates.io. No `[patch.crates-io]` entry, no git source (Phase 37
+  removed the 42.0.2 git patch; `Cargo.lock` contains no `git+` source).
+- Requested features (`crates/synvoid-plugin-runtime/Cargo.toml`): `component-model` only
+  (default features still enabled; minimization evaluated and deferred — see §8).
+- Consumers (`cargo tree -i wasmtime@36.0.15`, verified 2026-09-17): exactly
+  `synvoid-plugin-runtime` (plus the root dev-dependency used by
+  `benches/bench_wasm.rs`, pinned to the same 36.0.15).
 - Reachable capability: core WASM compilation/execution + component model.
   **WASI filesystem is absent**: `synvoid-plugin-runtime` does not depend on
   `wasmtime-wasi`, no `wasmtime_wasi::` import exists in `crates/synvoid-plugin-runtime/src/`
@@ -63,11 +68,19 @@ cargo deny check advisories
 
 ## 3. RUSTSEC-2026-0269 assessment (GHSA-vqjp-4c8c-hfgg)
 
-- Affected range: Wasmtime 37.0.0 through 46.0.2. Patched: ≥46.0.3 (<47) or ≥47.0.4.
-- **Both resolved versions (direct 42.0.2, transitive 40.0.4) are inside the affected
-  range. Neither is described as patched.** Earlier comments calling 42.0.2 "patched"
-  referred to the 2026-04 Winch/Cranelift advisories (0085–0096, 0114, 0222), for which
-  42.0.2 is a fixed version; that language has been removed wherever it implied 0269 coverage.
+- Affected range: Wasmtime 37.0.0 through 46.0.2 except backported LTS lines.
+  Patched (advisory DB `patched` array): >=24.0.13,<25.0.0; **>=36.0.14,<37.0.0**;
+  >=46.0.3,<47.0.0; >=47.0.4.
+- **The direct 36.0.15 LTS line is patched** (36.0.15 >= 36.0.14; additionally
+  proven by a clean `cargo audit` on an isolated wasmtime-36.0.15 resolve with
+  no ignores, 2026-09-17 — zero findings). The direct plugin-runtime path needs
+  no 0269 ignore. The transitive 40.0.4 line (via yara-x 1.15) IS inside the
+  affected range and is NOT patched; the retained per-advisory ignore covers
+  that instance only (Phase 38 normalizes the final multi-version record).
+  Earlier comments calling 42.0.2 "patched" referred to the 2026-04
+  Winch/Cranelift advisories (0085–0096, 0114, 0222), for which 42.0.2 was a
+  fixed version; 42.0.2 is gone from the graph (no direct 42.x path remains)
+  and that language has been removed wherever it implied 0269 coverage.
 - Vulnerable code: `wasmtime-wasi` filesystem sandboxing (trailing-slash path/symlink
   handling). Per §1–§2 the vulnerable crate is **not resolved, not linked, and not
   reachable** from either Wasmtime consumer: no filesystem preopen API is linked, so
@@ -79,11 +92,11 @@ cargo deny check advisories
   fails if `wasmtime-wasi` (or `wasi-filesystem`) appears in `Cargo.lock` without an
   accompanying exposure update here.
 
-## 4. Why the direct runtime is not yet on 46.0.3
+## 4. Why the direct runtime is 36 LTS (Phase 37 resolution)
 
-Upgrade attempted 2026-09-12: `wasmtime 42.0.2 → 46.0.3` (smallest 0269-fixed line),
-`[patch.crates-io]` removal. Resolution fails deterministically, including from a
-clean lockfile and in an isolated scratch crate:
+Upgrade attempted 2026-09-12: `wasmtime 42.0.2 → 46.0.3` (smallest 0269-fixed
+normal line at the time), `[patch.crates-io]` removal. Resolution fails
+deterministically, including from a clean lockfile and in an isolated scratch crate:
 
 - wasmtime 46.0.3 requires `bumpalo ^3.20.2`.
 - `minify-html 0.18.1` (latest) → `oxc_allocator 0.95.0` (only 0.95.x) pins
@@ -94,18 +107,29 @@ clean lockfile and in an isolated scratch crate:
 - No newer minify-html exists upstream to relax the pin; dropping HTML minification
   to force the upgrade would be a product behavior change, explicitly out of scope.
 
-Decision: keep direct Wasmtime at 42.0.2 (still fixed for the 2026-04 advisories)
-under this capability-absence finding, and re-attempt the ≥46.0.3 upgrade when the
-`bumpalo` conflict clears (upstream minify-html/oxc release). Re-audit: 2026-10-01.
-The `deny.toml` 0269 ignore carries this owner, Re-audit date, and remove condition;
-the guard below enforces expiry against the current UTC date.
+Phase 37 resolution (2026-09-17, `plans/phase_37_wasmtime_lts_runtime_migration.md`):
+instead of a newer unsupported normal line, the direct runtime moved to the older
+*supported* 36 LTS line (36.0.15; LTS through 2027-08-20; 36.0.14+ patched for
+0269). Resolver proof before touching runtime code, in an isolated scratch crate
+depending on `wasmtime =36.0.15` + `bumpalo =3.19.0` + `oxc_allocator =0.95.0`:
+single `bumpalo 3.19.0` in the lock (wasmtime 36's `cranelift-codegen 0.123.15`
+accepts the 3.19 range), `wasmtime-wasi` absent, no git source. The workspace
+lock reproduces this exactly: `wasmtime 36.0.15` + `wasmtime 40.0.4` (yara-x
+transitive, unchanged), one `bumpalo 3.19.0`, no `wasmtime-wasi`, no `git+`
+source. The `deny.toml` 0269 ignore is retained solely for the transitive 40.0.4
+instance (per-advisory ignores cannot be split per package); Re-audit: 2026-10-01;
+remove condition is now yara-x moving off wasmtime 40.x. The >=46.0.3 normal-line
+upgrade (or 48 LTS) is re-attempted only after the `bumpalo` conflict clears via
+an upstream minify-html/oxc release.
 
 ## 5. Guards (all in `tools/synvoid-repo-guards/tests/`)
 
 - `wasmtime_baseline_guard` (`dependency_security.rs`): direct Wasmtime version must
-  equal the version recorded here; `wasmtime-wasi`/`wasi-filesystem` must stay absent
+  equal the version recorded here; no wasmtime git patch may exist in the root
+  manifest; `wasmtime-wasi`/`wasi-filesystem` must stay absent
   from `Cargo.lock` unless this file gains a new exposure section; the 0269 ignore must
-  retain owner + Phase 26 remove-by metadata.
+  be tracked in deny+audit with owner + remove condition, and this file must record
+  the direct 36 LTS line as patched.
 - `deny_ignore_metadata_guard` (`dependency_security.rs`): every `RUSTSEC-*`/`GHSA-*`
   ignore in `deny.toml` must carry `Owner:`, `Reviewed:`, a single future
   `Re-audit: YYYY-MM-DD`, and a `Remove condition:`; `Re-audit` dates on or before
@@ -128,10 +152,10 @@ exists), follow-up (owner + Re-audit date).
 | `notify 9.0.0-rc.3` (prerelease, direct root + plugin-runtime) | No stable 9.x line published; config hot-reload watcher | justified — keep; reassess when stable 9.x ships (owner: config) |
 | `openraft 0.10.0-alpha.18` (prerelease, optional root + mesh) | 0.x line is inherently pre-1.0; mesh Raft control plane | justified — keep; track upstream stable (owner: mesh; Re-audit: 2026-10-01) |
 | Duplicated `ahash` 0.7.8 / 0.8.12 | 0.7 via `parcel_sourcemap` (lightningcss chain); 0.8 direct | justified — minor build cost only, no security impact; collapses if lightningcss drops `parcel_sourcemap` |
-| Duplicated `wasmtime` 40.0.4 / 42.0.2 | 40 via yara-x (single `synvoid-yara` owner); 42 direct runtime | follow-up — §4 owns direct ≥46.0.3 upgrade (Re-audit: 2026-10-01) |
+| Duplicated `wasmtime` 40.0.4 / 36.0.15 | 40 via yara-x (single `synvoid-yara` owner); 36.0.15 direct LTS runtime (crates.io, no patch) | follow-up — collapses when yara-x moves off wasmtime 40.x; direct line needs no 0269 ignore (Re-audit: 2026-10-01) |
 | Duplicated `rkyv` 0.7.46 / 0.8.x | 0.7 via `parcel_sourcemap`; direct code on 0.8 | follow-up — collapses with the same lightningcss change; 0.7 covered by RUSTSEC-2026-0235 ignore with review date |
 | Native/FFI (`aws-lc-rs`, `ring` transitive, `libloading`, `bumpalo`-linked compiles) | TLS PQC backend, DNS/QUIC crypto, native-extension loading (compiled out by default + disabled by default + allowlisted) | justified — each has an owning security invariant (see `AGENTS.md`); `libloading` plugin-loader isolation complete in Phase 28 (`synvoid-native-extension` + `unsafe-native-extensions` feature, off by default) |
-| Git sources | exactly one: wasmtime 42.0.2 patch (this file §1/§4) | follow-up — remove with the §4 upgrade; `deny.toml` `allow-git` lists only it |
+| Git sources | none (Phase 37 removed the wasmtime 42.0.2 patch) | justified — `deny.toml` sets `unknown-git = "deny"` with no `allow-git`; re-adding one requires baseline evidence |
 | Build dependencies executing code at build time | `tonic-prost-build` (protobuf codegen, mesh admin/control APIs), `chrono` (codegen timestamps) | justified — pinned via lockfile; codegen inputs are checked-in protos |
 
 No `cargo machete` run is recorded as authoritative: feature-gated and generated-code
@@ -174,6 +198,33 @@ Closeout evidence for `plans/phase_36_yara_x_deserialization_exposure_closure.md
   cannot split same-major selections (reproduced 2026-09-17 in an isolated
   scratch crate depending only on `oxc_allocator =0.95.0` + `wasmtime =45.0.3`,
   and again with two local crates pinning `bumpalo =3.19.0` vs `^3.20.0`).
-  `YARA_ENGINE_VERSION` therefore stays `yara-x/1.15`; bump it (and pin a
-  1.15-artifact rejection test, replacing the current foreign-line probe) when
-  the upstream pin relaxes. Re-audit with the 2026-10-01 dependency review.
+   `YARA_ENGINE_VERSION` therefore stays `yara-x/1.15`; bump it (and pin a
+   1.15-artifact rejection test, replacing the current foreign-line probe) when
+   the upstream pin relaxes. Re-audit with the 2026-10-01 dependency review.
+
+## 8. Phase 37 addendum (2026-09-17): direct runtime on Wasmtime 36 LTS
+
+Closeout evidence: `plans/phase_37_closeout_results.md` (plan:
+`plans/phase_37_wasmtime_lts_runtime_migration.md`).
+
+- Landed direct version: **36.0.15** (36 LTS through 2027-08-20), crates.io, no
+  patch, no git source. Requested features unchanged: `component-model` on top
+  of defaults (minimization evaluated, deferred to a follow-up with rationale
+  in the closeout). Consumers unchanged in shape: `synvoid-plugin-runtime` +
+  root dev-dep (`benches/bench_wasm.rs`).
+- Resolver proof: isolated scratch crate (`wasmtime 36.0.15` + `bumpalo
+  =3.19.0` + `oxc_allocator =0.95.0`) → single `bumpalo 3.19.0`,
+  `wasmtime-wasi` absent. Workspace lock matches: 36.0.15 + 40.0.4, one
+  bumpalo 3.19.0, no wasi, no git.
+- API parity: zero runtime-code changes (all used APIs source-compatible in
+  36); 359 plugin-runtime + 20 serverless + 4 jail-runtime tests pass;
+  bench compiles. Bench deltas (same host): fresh instantiate 6.88→6.54 µs,
+  pooled call 305→279 ns — no regression.
+- Advisory proof: DB patched range includes >=36.0.14,<37.0.0; isolated
+  no-ignore `cargo audit` on 36.0.15 is clean, so the direct 36.0.15 LTS line
+  is patched and needs no 0269 ignore. The retained per-advisory ignore covers
+  the transitive 40.0.4 instance only (Phase 38 normalizes the record).
+- Process note: use targeted `cargo update -p <pkg> --precise <v>` for version
+  moves, not full `cargo generate-lockfile` (the latter floated
+  `yara-x-macros`/`-parser` to 1.20.0 against `yara-x` 1.15.0 and broke the
+  jail build; restored + targeted update fixed it).

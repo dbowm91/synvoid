@@ -111,9 +111,9 @@ The following vulnerabilities exist in transitive dependencies and are documente
 |---------------|-------|-----|--------|-------|
 | KyberSlash | `pqc_kyber` | RUSTSEC-2023-0079 | No fix | Used by wasm-pow for PoW challenges |
 | ~~Denial of Service~~ | ~~`quinn-proto`~~ | ~~RUSTSEC-2026-0037~~ | **Patched** | Fixed via git patch to 0.11.14 |
-| Winch compiler backend sandbox escape | `wasmtime` 40.0.4 (via yara-x) | RUSTSEC-2026-0095 | **Accepted (transitive)** | YARA compilation only; direct 42.0.2 fixed for this 2026-04 advisory (not for RUSTSEC-2026-0269); Reviewed: 2026-09-13; Re-audit: 2026-10-01; Remove condition: yara-x moves off wasmtime 40.x |
-| Cranelift aarch64 sandbox escape | `wasmtime` 40.0.4 (via yara-x) | RUSTSEC-2026-0096 | **Accepted (transitive)** | YARA compilation only; direct 42.0.2 fixed for this 2026-04 advisory (not for RUSTSEC-2026-0269); Reviewed: 2026-09-13; Re-audit: 2026-10-01; Remove condition: yara-x moves off wasmtime 40.x |
-| Filesystem sandbox escape (trailing-slash paths/symlinks) | `wasmtime` 40.0.4 (via yara-x) + direct 42.0.2 | RUSTSEC-2026-0269 | **Capability-gated** | Both versions affected; `wasmtime-wasi` absent from lock (unreachable); ≥46.0.3 upgrade blocked (bumpalo conflict); Reviewed: 2026-09-13; Re-audit: 2026-10-01; Remove condition: ≥46.0.3 upgrade unblocks. See `architecture/dependency_security_baseline_phase25.md`. |
+| Winch compiler backend sandbox escape | `wasmtime` 40.0.4 (via yara-x) | RUSTSEC-2026-0095 | **Accepted (transitive)** | YARA compilation only; direct 36.0.15 LTS unaffected (clean isolated `cargo audit`, no ignores); Reviewed: 2026-09-17; Re-audit: 2026-10-01; Remove condition: yara-x moves off wasmtime 40.x |
+| Cranelift aarch64 sandbox escape | `wasmtime` 40.0.4 (via yara-x) | RUSTSEC-2026-0096 | **Accepted (transitive)** | YARA compilation only; direct 36.0.15 LTS unaffected (clean isolated `cargo audit`, no ignores); Reviewed: 2026-09-17; Re-audit: 2026-10-01; Remove condition: yara-x moves off wasmtime 40.x |
+| Filesystem sandbox escape (trailing-slash paths/symlinks) | `wasmtime` 40.0.4 (via yara-x); direct 36.0.15 LTS patched | RUSTSEC-2026-0269 | **Capability-gated (transitive only)** | Transitive 40.0.4 affected but `wasmtime-wasi` absent from lock (unreachable); direct 36.0.15 needs no ignore (patched >=36.0.14; ignore retained solely for the transitive instance). Reviewed: 2026-09-17; Re-audit: 2026-10-01; Remove condition: yara-x moves off wasmtime 40.x. See `architecture/dependency_security_baseline_phase25.md`. |
 
 ### Medium Severity
 
@@ -230,14 +230,15 @@ let error = scanner.get_last_reload_error();
 
 `deny.toml` enforces (blocking in CI via `cargo deny check`):
 - Yanked crate denial (`yanked = "deny"`)
-- Unknown registries denied; unknown Git sources denied with exactly one
-  allowlisted Git source (wasmtime 42.0.2 runtime patch, removal tracked)
+- Unknown registries denied; unknown Git sources denied with NO exceptions
+  (Phase 37 removed the wasmtime 42.0.2 git patch; re-adding any git source
+  requires an `allow-git` entry plus baseline evidence)
 - Wildcard version requirements denied (`wildcards = "deny"`)
 - Unmaintained/unsound gating for workspace crates (see triage note above)
 - Documented rationale, exposure, owner, Reviewed/Re-audit dates, and remove
   conditions for all ignored advisories (guard-enforced by `deny_ignore_metadata_guard`)
 - Duplicate-version allowlist narrowed to the documented wasmtime split
-  (transitive 40.0.4 via yara-x + direct 42.0.2)
+  (transitive 40.0.4 via yara-x + direct 36.0.15 LTS)
 
 `cargo audit` runs as a blocking gate with the same narrow exceptions mirrored
 in `.cargo/audit.toml` (cargo-audit does not read `deny.toml`).
@@ -257,15 +258,15 @@ in `.cargo/audit.toml` (cargo-audit does not read `deny.toml`).
 ### wasmtime (RUSTSEC-2026-0095 and related 2026-04 advisories)
 - **Issue**: Winch compiler backend sandbox escape (CVE-2026-34987) + Cranelift/Winch/component-model advisories 0085-0096, 0114, 0222
 - **Severity**: High (0095/0096 critical-class sandbox escapes)
-- **Fix**: Direct runtime at `wasmtime 42.0.2` (a fixed version for these 2026-04 advisories, not for RUSTSEC-2026-0269); transitive 40.0.4 via yara-x accepted with ignores (Reviewed: 2026-09-13; Re-audit: 2026-10-01)
-- **Status**: Patched (direct) / accepted-transitive (yara-x) in Cargo.toml + deny.toml
+- **Fix**: Direct runtime at `wasmtime 36.0.15` LTS (unaffected by every advisory in this group — proven by a clean `cargo audit` on an isolated 36.0.15 resolve with no ignores, 2026-09-17); transitive 40.0.4 via yara-x accepted with ignores (Reviewed: 2026-09-17; Re-audit: 2026-10-01)
+- **Status**: Not affected (direct) / accepted-transitive (yara-x) in Cargo.toml + deny.toml
 
-### wasmtime (RUSTSEC-2026-0269 — NOT patched by 42.0.2)
+### wasmtime (RUSTSEC-2026-0269 — patched on the direct 36 LTS line)
 - **Issue**: Filesystem sandbox escape when paths/symlinks contain trailing slashes (GHSA-vqjp-4c8c-hfgg)
-- **Severity**: High (8.8). Affected: 37.0.0–46.0.2 (includes direct 42.0.2 and transitive 40.0.4)
-- **Exposure**: Capability-absent — `wasmtime-wasi` is not resolved, linked, or reachable from either consumer (proven from the lockfile/feature graph, not from absence of a PoC)
-- **Upgrade**: ≥46.0.3 blocked by a same-major `bumpalo` conflict (wasmtime 46 needs ^3.20.2; `oxc_allocator` 0.95.0 via `minify-html` pins =3.19.0); Re-audit: 2026-10-01; Remove condition: upstream pin relaxes
-- **Status**: Documented decision + guard-enforced (`wasmtime_baseline_guard`); never described as patched
+- **Severity**: High (8.8). Affected: 37.0.0–46.0.2 except backported LTS lines; patched ranges include >=36.0.14,<37.0.0. Direct 36.0.15 is PATCHED; transitive 40.0.4 is affected.
+- **Exposure**: Capability-absent for the transitive instance — `wasmtime-wasi` is not resolved, linked, or reachable from either consumer (proven from the lockfile/feature graph, not from absence of a PoC). The direct path needs no finding at all.
+- **Upgrade**: the per-advisory ignore is retained solely for transitive 40.0.4 until yara-x moves off wasmtime 40.x (Phase 38 normalizes the record); the yara-x >=1.19 line itself (wasmtime >=43) stays blocked by the same-major `bumpalo` conflict (wasmtime >=43 needs ^3.20.0; `oxc_allocator` 0.95.0 via `minify-html` pins =3.19.0). Re-audit: 2026-10-01; Remove condition: yara-x moves off wasmtime 40.x.
+- **Status**: Patched (direct) + documented decision + guard-enforced (`wasmtime_baseline_guard`); the transitive line is never described as patched
 - **Reference**: `architecture/dependency_security_baseline_phase25.md`
 
 ### rustls-pemfile Removal
@@ -314,10 +315,10 @@ in `.cargo/audit.toml` (cargo-audit does not read `deny.toml`).
 ### yara-x/wasmtime Transitive Vulnerability (RUSTSEC-2026-0096 and related)
 - **Issue**: yara-x pulls wasmtime 40.0.4 which has multiple vulnerabilities
 - **Severity**: CRITICAL - wasmtime 40.0.4 is yanked
-- **Your direct version**: wasmtime 42.0.2 (fixed for these 2026-04 advisories, but AFFECTED by RUSTSEC-2026-0269 — see above; capability-gated, Re-audit: 2026-10-01)
+- **Your direct version**: wasmtime 36.0.15 LTS from crates.io (patched for RUSTSEC-2026-0269 and unaffected by the 2026-04 advisories — see above; no git patch)
 - **Affected path**: yara-x → wasmtime 40.0.4 (transitive)
-- **Mitigation**: single `synvoid-yara` owner for yara-x; current risk accepted with guard-enforced ignores (Reviewed: 2026-09-13; Re-audit: 2026-10-01)
-- **Recommendation**: Monitor yara-x releases; re-attempt direct ≥46.0.3 upgrade when the bumpalo conflict clears
+- **Mitigation**: single `synvoid-yara` owner for yara-x; current risk accepted with guard-enforced ignores (Reviewed: 2026-09-17; Re-audit: 2026-10-01)
+- **Recommendation**: Monitor yara-x releases; Phase 38 normalizes the multi-version record when yara-x moves off wasmtime 40.x
 
 ### yara-x Serialized-Rule Deserialization (GHSA-2jx3-ff3v-j7jj, Phase 36)
 - **Issue**: YARA-X <=1.18 `Rules::deserialize` on malformed serialized bytes can cause memory corruption. Fixed upstream in 1.19.0+. SynVoid is on yara-x 1.15 (no RUSTSEC ID mapped yet — `cargo audit`/`cargo deny` do not fire; tracked here instead).
@@ -390,7 +391,7 @@ The following security measures are enabled by default in production builds:
 
 - **eBPF features require root** and Linux kernel 5.8+ with BTF support; falls back to nftables when unavailable
 - **Post-quantum features are experimental** — functional but limited real-world validation
-- **YARA compilation uses wasmtime** (40.0.4 via yara-x, affected by multiple advisories incl. RUSTSEC-2026-0269; direct 42.0.2 likewise affected but `wasmtime-wasi` is unreachable) with guard-enforced ignores (Reviewed: 2026-09-13; Re-audit: 2026-10-01); direct ≥46.0.3 upgrade blocked by bumpalo conflict (Remove condition: upstream pin relaxes)
+- **YARA compilation uses wasmtime** (40.0.4 via yara-x, affected by multiple advisories incl. RUSTSEC-2026-0269 with `wasmtime-wasi` unreachable; direct runtime is 36.0.15 LTS, patched) with guard-enforced ignores (Reviewed: 2026-09-17; Re-audit: 2026-10-01); ignore retained solely for the transitive line (Remove condition: yara-x moves off wasmtime 40.x)
 - **External DNSSEC tooling deferred** — zone signing is internal but external key management tooling is not yet shipped
 - **`pqc_kyber` has no fix** for RUSTSEC-2023-0079; used only in wasm-pow for Proof-of-Work challenges (not in TLS path)
 - **Archive inspection is ZIP-only and non-recursive** — TAR/GZIP/BZIP2/7z are detected by MIME but not opened; nested archives are counted but not recursively scanned

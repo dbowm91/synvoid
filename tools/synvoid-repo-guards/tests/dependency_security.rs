@@ -48,14 +48,18 @@ fn wasmtime_direct_version_matches_baseline() {
          upgrade requires updating the baseline evidence first"
     );
 
-    // 2. The [patch.crates-io] tag agrees (no silent dual-version direct runtime).
+    // 2. No wasmtime [patch.crates-io] git source may remain: the direct LTS
+    // runtime resolves from crates.io (Phase 37 removed the 42.0.2 git patch;
+    // re-adding one requires baseline evidence first).
     let root_manifest = read_repo("Cargo.toml");
     assert!(
-        root_manifest.contains(&format!("tag = \"v{expected}\"")),
-        "root [patch.crates-io] wasmtime tag must be v{expected}"
+        !root_manifest.contains("bytecodealliance/wasmtime"),
+        "root Cargo.toml must not carry a wasmtime git patch (direct LTS resolves from crates.io)"
     );
 
-    // 3. 42.0.2 must never be described as patched for RUSTSEC-2026-0269.
+    // 3. RUSTSEC-2026-0269 must be tracked explicitly (retained solely for the
+    // transitive yara-x 40.0.4 line), and the baseline must record the direct
+    // 36 LTS line as patched — never as affected.
     let deny = read_repo("deny.toml");
     let audit = read_repo(".cargo/audit.toml");
     for (name, content) in [
@@ -72,6 +76,10 @@ fn wasmtime_direct_version_matches_baseline() {
             && !baseline.contains("42.0.2 (patched")
             && !baseline.contains("patched for RUSTSEC-2026-0269"),
         "baseline must not describe 42.0.2 as patched for RUSTSEC-2026-0269"
+    );
+    assert!(
+        baseline.contains("direct 36.0.15 LTS line is patched"),
+        "baseline must record the direct 36.0.15 LTS line as patched for RUSTSEC-2026-0269"
     );
 }
 

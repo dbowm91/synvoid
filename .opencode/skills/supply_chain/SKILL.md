@@ -40,12 +40,15 @@ Pinned tools: cargo-deny 0.20.2, cargo-audit 0.22.2
    `Re-audit:` (single machine-enforced future deadline), and a `Remove
    condition:` (upstream event, never a date). Mirror the ignore in
    `.cargo/audit.toml`.
-2. **Never call wasmtime 42.0.2 "patched" for RUSTSEC-2026-0269.**
-   42.0.2 (direct, via `[patch.crates-io]`) is AFFECTED; the finding is
-   closed by capability absence (`wasmtime-wasi` unreachable), not a patch.
-   Transitive 40.0.4 arrives via `synvoid-yara` → `yara-x` 1.15 (YARA boundary
-   only, not the WASM sandbox). Upgrade to ≥46.0.3 is blocked by a bumpalo
-   conflict. Details in the baseline doc §4.
+2. **Never call transitive wasmtime 40.0.4 "patched" for RUSTSEC-2026-0269.**
+   The direct runtime is 36.0.15 LTS from crates.io (supported through
+   2027-08-20, no git patch) and IS patched (>=36.0.14; proven by a clean
+   isolated `cargo audit` with no ignores) — it needs no 0269 ignore. The
+   per-advisory ignore is retained SOLELY for transitive 40.0.4, which arrives
+   via `synvoid-yara` → `yara-x` 1.15 (YARA boundary only, not the WASM
+   sandbox) and is closed by capability absence (`wasmtime-wasi` unreachable),
+   not a patch. The yara-x >=1.19 line (wasmtime >=43) upgrade is blocked by a
+   bumpalo conflict. Details in the baseline doc §4.
    Phase 36 addendum: the yara-x >=1.19 upgrade (GHSA-2jx3-ff3v-j7jj fix) is
    blocked by the SAME conflict (wasmtime >=43 needs `bumpalo ^3.20.0`;
    `minify-html` 0.18.1 → `oxc_allocator` 0.95.0 pins `=3.19.0`; cargo cannot
