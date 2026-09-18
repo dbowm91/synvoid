@@ -1,6 +1,6 @@
 # SynVoid Architecture Hardening Roadmap
 
-Status: extended roadmap complete through Track 3 and its post-closure corrective pass. No active handoff remains in this roadmap.
+Status: Tracks 1-3 and their corrective closures remain complete. A new post-Phase-40 runtime-truthfulness/security/publication handoff is active; see `plans/runtime_truthfulness_security_publication_roadmap.md`.
 
 Scope: this roadmap covers architecture hardening, trust-boundary closure, verification, release readiness, post-hardening cleanup, and the architecture-convergence work required before another broad feature-expansion pass.
 
@@ -241,3 +241,36 @@ Track 2: Complete through Phase 16.
 Track 3: Complete through Phase 24 (adversarial/performance/surface closure recorded in `architecture/track3_performance_report.md` and `architecture/crate_granularity_audit.md`; ledgers agree on zero `split_required`).
 
 Post-Track-3 corrective closure: complete; see `plans/track3_post_closure_corrective.md` and `architecture/track3_post_closure_corrective_report.md`.
+
+
+## Active Post-Phase-40 Handoff: Runtime Truthfulness, Security Hardening, and Publication Readiness
+
+Status: active detailed handoff.
+
+Roadmap: `plans/runtime_truthfulness_security_publication_roadmap.md`.
+
+Baseline: `03cec2235fb250e64c33f29b66258eeb0607cdbc`.
+
+This campaign begins after the Phase 32-40 boundary/security work. It does not reopen the completed ownership decisions. It closes newly identified runtime truthfulness and security residuals, then evaluates a small set of reusable crates for an explicit external support contract.
+
+Execution order:
+
+1. Phase 41 — fail-closed configuration and process bounds.
+2. Phase 42 — shared-memory unsafe-boundary hardening.
+3. Phase 43 — authentication CPU isolation and durable persistence.
+4. Phase 44 — PQC dependency truth and KyberSlash closure.
+5. Phase 45 — DNS runtime-contract and protocol-completeness closure.
+6. Phase 46 — platform sandbox truthfulness and macOS closure.
+7. Phase 47 — public-crate release readiness.
+
+Detailed plans:
+
+- `plans/phase_41_fail_closed_config_and_process_bounds.md`
+- `plans/phase_42_shared_memory_unsafe_boundary_hardening.md`
+- `plans/phase_43_auth_cpu_and_persistence_hardening.md`
+- `plans/phase_44_pqc_dependency_truth_and_kyberslash_closure.md`
+- `plans/phase_45_dns_runtime_contract_and_protocol_completeness.md`
+- `plans/phase_46_platform_sandbox_truthfulness_and_macos_closure.md`
+- `plans/phase_47_public_crate_release_readiness.md`
+
+The current architecture remains the baseline: no broad crate split/merge campaign, no public `synvoid-utils`, no in-place mesh restart implementation in this line, and no independently supported public `synvoid-http-client` until the current eggfetch line is re-evaluated.
