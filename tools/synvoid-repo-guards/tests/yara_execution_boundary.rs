@@ -57,9 +57,19 @@ fn only_approved_crates_declare_yara_x() {
     // Root must never declare yara-x directly.
     let root_manifest = read_repo("Cargo.toml");
     // Check workspace-level + root package deps (ignore the workspace.members list
-    // which legitimately names crates/synvoid-yara).
+    // which legitimately names crates/synvoid-yara). `[patch.*]` sections are
+    // skipped: path overrides are not dependency declarations and are governed
+    // by the fork-temporariness guards (`*_fork_is_temporary_guard`) instead.
+    let mut in_patch = false;
     for line in root_manifest.lines() {
         let t = line.trim();
+        if t.starts_with('[') {
+            in_patch = t.starts_with("[patch");
+            continue;
+        }
+        if in_patch {
+            continue;
+        }
         if t.starts_with('#') || t.starts_with("members") || t.contains("crates/synvoid-yara") {
             continue;
         }
@@ -318,7 +328,7 @@ fn declared_yara_x_minor(manifest: &str) -> Option<String> {
         }
         let code = t.split('#').next().unwrap_or("").trim();
         if code.contains("yara-x") && code.contains("version") {
-            // Extract `version = "1.15"` (major.minor prefix; patch floats).
+            // Extract `version = "1.20"` (major.minor prefix; patch floats).
             if let Some(pos) = code.find("version") {
                 let rest = &code[pos..];
                 if let Some(q1) = rest.find('"') {

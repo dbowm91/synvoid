@@ -7,8 +7,14 @@
 # version/feature/capability separation; this file summarizes, that file proves).
 # Phase 26: `yara-x` single owner is `synvoid-yara`; `synvoid-mesh` no longer
 # links it, `synvoid-upload` consumes it only via `synvoid-yara` (guard:
-# yara_execution_boundary.rs). Transitive wasmtime 40.0.4 authority domain is
-# therefore the YARA runtime package only, not the mesh control plane.
+# yara_execution_boundary.rs). Phase 40: the YARA transitive Wasmtime line
+# is 47.0.4 (via the temporary `third-party/yara-x-compat` manifest-only
+# fork of official yara-x 1.20.0; see its README.SYNVOID.md). Wasmtime
+# 40.0.4 is gone from the graph, so the 40.x-only advisory ignores were
+# removed (RUSTSEC-2026-0085..0096, -0114, -0222, -0269); both resolved
+# Wasmtime lines (direct 36.0.15 LTS, transitive 47.0.4) are version-patched
+# for those advisories (see
+# architecture/dependency_security_baseline_phase25.md §4/§6/§11).
 #
 # Advisory-ignore metadata rule (enforced by deny_ignore_metadata_guard):
 # every ignored advisory MUST state dependency path, affected capability,
@@ -42,80 +48,32 @@ confidence-threshold = 0.8
 # Ignored advisories are re-audited on each major release.
 ignore = [
     # RUSTSEC-2023-0071: rsa Marvin Attack (Bleichenbacher timing)
-    # Dependency path: synvoid-yara -> yara-x 1.15 -> rsa 0.9.10 (transitive;
-    #   also via synvoid-dns/keystore/tls verification paths; no direct root edge
-    #   since Phase 31 removed the unused root rsa dependency).
+    # Dependency path: synvoid-yara -> yara-x 1.20.0 (compat fork) -> rsa
+    #   0.9.10 (transitive; also via synvoid-dns/keystore/tls verification
+    #   paths; no direct root edge since Phase 31 removed the unused root
+    #   rsa dependency). Still present after the Phase 40 upgrade (yara-x
+    #   `crypto` feature unchanged); no fixed upgrade available upstream.
     # Affected capability: RSA signing/decryption timing side-channel.
     # Exposure: LOW — yara-x uses RSA only for optional rule signature verification;
     #   SynVoid verifies rule feeds with ed25519-dalek instead. The rsa code path is
     #   never invoked in SynVoid operation.
     # Owner: security.
-    # Reviewed: 2026-09-13.
+    # Reviewed: 2026-09-18.
     # Re-audit: 2026-10-01.
     # Remove condition: yara-x moves off rsa, or RSA-based YARA signing is enabled
     #   (in which case this advisory MUST be resolved immediately).
     # Escalation: If RSA-based YARA signing is ever enabled, this advisory MUST be resolved.
     "RUSTSEC-2023-0071",
 
-    # wasmtime 40.0.4 advisories — transitive via synvoid-yara -> yara-x 1.15
-    # (YARA rule compilation only, never the WASM plugin sandbox; Phase 26:
-    # mesh no longer links yara-x, so the control plane is out of scope).
-    # The direct runtime is wasmtime 36.0.15 (LTS, crates.io), which is NOT
-    # affected by any advisory in this group (proven by a clean `cargo audit`
-    # on an isolated wasmtime-36.0.15 resolve with no ignores, 2026-09-17);
-    # only the yara-x 40.0.4 instance is ignored here.
-    # wasmtime-wasi resolved: NO (absent from Cargo.lock; see dependency_security_baseline_phase25.md §1-§2).
-    # Owner: security.
-    # Reviewed: 2026-09-13.
-    # Re-audit: 2026-10-01.
-    # Remove condition: yara-x upstream moves off wasmtime 40.x.
-    # Escalation: Upgrade yara-x when upstream moves off wasmtime 40.x.
-    "RUSTSEC-2026-0085",
-    "RUSTSEC-2026-0086",
-    "RUSTSEC-2026-0087",
-    "RUSTSEC-2026-0088",
-    "RUSTSEC-2026-0089",
-    "RUSTSEC-2026-0091",
-    "RUSTSEC-2026-0092",
-    "RUSTSEC-2026-0093",
-    "RUSTSEC-2026-0094",
-    "RUSTSEC-2026-0095",
-    "RUSTSEC-2026-0096",
-    "RUSTSEC-2026-0114",
-
-    # RUSTSEC-2026-0222: wasmtime type-index confusion.
-    # Dependency path: synvoid-yara -> yara-x 1.15 -> wasmtime 40.0.4
-    #   (transitive, YARA compilation only; Phase 26: mesh out of scope).
-    # Affected capability: multi-engine type-index mixing (requires hostile multi-engine
-    #   guest setup; yara-x runs single-engine rule bytecode).
-    # wasmtime-wasi resolved: NO. Exposure: LOW for the yara-x path; direct 36.0.15 LTS unaffected.
-    # Owner: security.
-    # Reviewed: 2026-09-13.
-    # Re-audit: 2026-10-01.
-    # Remove condition: yara-x upstream moves off wasmtime 40.x.
-    "RUSTSEC-2026-0222",
-
-    # RUSTSEC-2026-0269: Wasmtime filesystem sandbox escape (trailing-slash paths/symlinks).
-    # Dependency path: synvoid-yara -> yara-x 1.15 -> wasmtime 40.0.4
-    #   (transitive; Phase 26: mesh no longer links this path). The direct
-    #   runtime (wasmtime 36.0.15 LTS, synvoid-plugin-runtime) is PATCHED
-    #   (advisory DB patched range includes >=36.0.14,<37.0.0; proven by a
-    #   clean `cargo audit` on an isolated 36.0.15 resolve with no ignores).
-    #   This per-advisory ignore is retained SOLELY for the transitive 40.0.4
-    #   instance until yara-x moves off wasmtime 40.x (Phase 38 normalizes the
-    #   final multi-version record); it must NOT be read as covering a direct
-    #   exposure — the direct path needs no ignore.
-    # Affected capability: wasmtime-wasi filesystem preopen sandboxing.
-    # wasmtime-wasi resolved: NO — absent from Cargo.lock; neither consumer links the
-    #   vulnerable crate, so the trailing-slash handling is unreachable (capability
-    #   absence, proven from the resolved graph in dependency_security_baseline_phase25.md §3).
-    # YARA-line upgrade blocked: wasmtime >=46.0.3 needs bumpalo ^3.20.2, oxc_allocator 0.95.0
-    #   (via minify-html 0.18.1) pins bumpalo =3.19.0 — unresolvable, see baseline §4.
-    # Owner: security.
-    # Reviewed: 2026-09-17.
-    # Re-audit: 2026-10-01.
-    # Remove condition: yara-x upstream moves off wasmtime 40.x.
-    "RUSTSEC-2026-0269",
+    # Phase 40: wasmtime 40.0.4 is absent from Cargo.lock (YARA line is now
+    # 47.0.4 via the compat fork). The RUSTSEC-2026-0085..0096, -0114,
+    # -0222, and -0269 ignores lived only for that retired path and are
+    # removed here — `cargo deny check` emits `advisory-not-detected` if a
+    # stale ignore is re-added while no affected wasmtime resolves, and
+    # `wasmtime_transitive_matches_baseline` pins the expected YARA line.
+    # Do NOT re-add them without a version-affected wasmtime in the graph;
+    # do not describe a capability-unreachable advisory as patched (see the
+    # baseline §3 for the wasmtime-wasi absence evidence, which still holds).
 
     # RUSTSEC-2026-0235: rkyv 0.7.46 insufficient archive validation (Rc/Arc OOB reads).
     # Dependency path: minify-html -> lightningcss -> parcel_sourcemap -> rkyv 0.7.46 (transitive).
@@ -148,10 +106,12 @@ multiple-versions = "warn"
 # No workspace manifest uses `*` (verified 2026-09-12); verify-release rejects them too.
 wildcards = "deny"
 
-# Duplicate-version allowlist (narrow): the wasmtime 40.0.4 (yara-x transitive) +
-# 36.0.15 (direct LTS runtime) split is documented in
-# architecture/dependency_security_baseline_phase25.md §4/§6 and collapses when
-# yara-x moves off wasmtime 40.x.
+# Duplicate-version allowlist (narrow): the wasmtime 47.0.4 (YARA transitive,
+# via the temporary `third-party/yara-x-compat` fork of official yara-x
+# 1.20.0) + 36.0.15 (direct LTS runtime) split is documented in
+# architecture/dependency_security_baseline_phase25.md §4/§6/§11 and
+# collapses to a single supported line when an official fixed yara-x
+# release replaces the fork.
 # The skip silences only the multiple-versions warning for the direct runtime pin.
 [[bans.skip]]
 name = "wasmtime"

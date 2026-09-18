@@ -22,12 +22,15 @@ parking_lot = "0.12"
 hex = "0.4"
 subtle = "2"
 async-trait = "0.1"
-# Phase 36: upgrade to yara-x >=1.19 (GHSA-2jx3-ff3v-j7jj fix) is BLOCKED by the
-# workspace bumpalo conflict (wasmtime >=43 needs bumpalo ^3.20.0, minify-html
-# 0.18.1 -> oxc_allocator 0.95.0 pins =3.19.0; cargo cannot split same-major).
-# Trust-model closure (source-only execution, no remote deserialize) lands on
-# 1.15; the engine bump is a tracked follow-up. See closeout evidence.
-yara-x = { version = "1.15", default-features = false, features = ["default-modules", "linkme"] }
+# Phase 40: yara-x 1.20.0 via the temporary manifest-only compat fork in
+# `third-party/yara-x-compat` (root `[patch.crates-io]`; exact upstream
+# 1.20.0 sources, wasmtime 45.0.3 -> 47.0.4 per upstream PR #769, which is
+# still unreleased). This version-remediates GHSA-2jx3-ff3v-j7jj (>=1.19)
+# and retires the wasmtime 40.0.4 advisory set. The `linkme` feature was
+# removed upstream after 1.15, so only `default-modules` is requested.
+# Removal: replace with an official fixed yara-x release per the fork's
+# README.SYNVOID.md; enforced by `yara_fork_is_temporary_guard`.
+yara-x = { version = "1.20", default-features = false, features = ["default-modules"] }
 
 [dev-dependencies]
 tempfile = "3"

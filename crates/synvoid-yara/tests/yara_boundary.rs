@@ -43,10 +43,11 @@ fn serialized_version_rejection_is_deterministic() {
     assert!(artifact.verify_binding().is_err());
 
     // Phase 36 Part E: foreign engine lines reject deterministically.
-    // (The >=1.19 upgrade is bumpalo-blocked; when it lands, pin a 1.15
-    // rejection here alongside the `YARA_ENGINE_VERSION` bump.)
+    // Phase 40: the 1.15 line rejects the same way under the 1.20 tag.
     let mut old = CompiledArtifact::compile("rule a { condition: false }").expect("compile");
     old.engine_version = "yara-x/9.99".to_string();
+    assert!(old.verify_binding().is_err());
+    old.engine_version = "yara-x/1.15".to_string();
     assert!(old.verify_binding().is_err());
 
     // Tampered bytes rejected via digest binding.

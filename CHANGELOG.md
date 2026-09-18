@@ -210,6 +210,18 @@ Pre-release candidate. See [1.1.0] entry above for full details.
 
 ## [Unreleased]
 
+### Security
+
+- Phase 40 YARA-X upgrade: `synvoid-yara` → `yara-x` 1.20.0 via the
+  temporary manifest-only compat fork `third-party/yara-x-compat` (exact
+  upstream 1.20.0 sources + the unreleased upstream PR #769 two-line delta:
+  wasmtime 45.0.3 → 47.0.4). Version-remediates GHSA-2jx3-ff3v-j7jj and
+  retires the wasmtime 40.0.4 line with its 14 advisory ignores; 2 ignores
+  remain (`rsa` RUSTSEC-2023-0071, `rkyv` RUSTSEC-2026-0235, re-audit
+  2026-10-01). `YARA_ENGINE_VERSION` is `yara-x/1.20`; pre-upgrade 1.15
+  artifacts reject deterministically. Source-only execution trust model
+  unchanged (no remote compiled-rule deserialization restored).
+
 ### Breaking Changes
 
 - Removed the `synvoid::serder` root module (deprecated migration-documentation

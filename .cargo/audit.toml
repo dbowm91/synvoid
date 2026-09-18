@@ -10,30 +10,12 @@
 
 [advisories]
 ignore = [
-    # RUSTSEC-2023-0071 (rsa, transitive via synvoid-yara -> yara-x; never invoked; ed25519 used instead).
+    # RUSTSEC-2023-0071 (rsa 0.9.10, transitive via synvoid-yara -> yara-x
+    # 1.20.0 compat fork; never invoked; ed25519 used instead).
     "RUSTSEC-2023-0071",
-    # wasmtime 40.0.4 via synvoid-yara -> yara-x 1.15 (YARA compilation only; direct 36.0.15 LTS unaffected — clean isolated audit; mesh out of scope).
-    "RUSTSEC-2026-0085",
-    "RUSTSEC-2026-0086",
-    "RUSTSEC-2026-0087",
-    "RUSTSEC-2026-0088",
-    "RUSTSEC-2026-0089",
-    "RUSTSEC-2026-0091",
-    "RUSTSEC-2026-0092",
-    "RUSTSEC-2026-0093",
-    "RUSTSEC-2026-0094",
-    "RUSTSEC-2026-0095",
-    "RUSTSEC-2026-0096",
-    "RUSTSEC-2026-0114",
-    # RUSTSEC-2026-0222 (wasmtime 40.0.4 via synvoid-yara -> yara-x; single-engine rule bytecode).
-    "RUSTSEC-2026-0222",
-    # RUSTSEC-2026-0269 retained SOLELY for transitive wasmtime 40.0.4 (via
-    # synvoid-yara -> yara-x; wasmtime-wasi absent from lock). The direct
-    # runtime (wasmtime 36.0.15 LTS) is PATCHED (>=36.0.14) and needs no
-    # ignore; audit ignores are per-advisory so this entry stays until yara-x
-    # moves off wasmtime 40.x. Re-audit: 2026-10-01.
-    # Remove condition: yara-x upstream moves off wasmtime 40.x.
-    "RUSTSEC-2026-0269",
+    # Phase 40: wasmtime 40.0.4 is absent (YARA line is 47.0.4, patched for
+    # RUSTSEC-2026-0085..0096, -0114, -0222, -0269); those ignores are
+    # removed. Mirrors deny.toml exactly (see audit_config_mirrors_deny_ignores).
     # RUSTSEC-2026-0235 (rkyv 0.7.46 via parcel_sourcemap; minifier-internal sourcemaps only).
     "RUSTSEC-2026-0235",
 ]

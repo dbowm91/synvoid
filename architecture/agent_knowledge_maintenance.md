@@ -2,7 +2,28 @@
 
 How `AGENTS.md`, `.opencode/skills/`, `docs/`, `README.md`, and `plans/`
 stay accurate. For agents, by an agent audit (2026-09-11, follow-up 2026-09-13,
-Phase 37 pass 2026-09-17).
+Phase 37 pass 2026-09-17, Phase 40 pass 2026-09-18).
+
+## What was audited (2026-09-18, Phase 40 YARA-X 1.20 upgrade)
+
+- YARA engine 1.15 → 1.20.0 (temporary `third-party/yara-x-compat` fork,
+  wasmtime 40.0.4 → 47.0.4): updated `AGENTS.md` Known Issues (new Phase 40
+  entry; Phase 36 entry kept with version-remediation noted),
+  `architecture/dependency_security_baseline_phase25.md` (title, §2/§3/§5/§6,
+  transitive anchor 40.0.4 → 47.0.4, new §11 addendum),
+  `architecture/{release_profile_matrix,layer_3_5_deep_dive}.md`,
+  `docs/RELEASE.md`, `CHANGELOG.md` (`[Unreleased]` entry; 1.1.0 history
+  untouched), `.opencode/skills/supply_chain/SKILL.md` (ignore count
+  16 → 2, fork ownership), and this file's checklist item 8.
+- `deny.toml` + `.cargo/audit.toml`: 14 retired 40.x-only ignores removed
+  (0085–0096, 0114, 0222, 0269); retained 0071 (`rsa`, no upstream fix) and
+  0235 (`rkyv` via minify chain).
+- Historical records deliberately NOT rewritten: `plans/*` phase/closeout
+  history (superseded by `plans/phase_40_closeout_results.md`),
+  `architecture/track4_*`, `docs/testing/verification-contract.md` (frozen).
+- Pruned: stale "bumpalo-blocked / Phase 40 owns the upgrade" forward
+  references in `crates/synvoid-yara` (manifest comment, `artifact.rs` doc,
+  boundary-test comment) — replaced with landed-state documentation.
 
 ## What was audited (2026-09-17, Phase 37 Wasmtime LTS migration)
 
@@ -109,8 +130,8 @@ Phase 37 pass 2026-09-17).
 8. Wasmtime versions vs `Cargo.lock`: `rg -n '42\.0\.2|wasmtime.*42' AGENTS.md
    SECURITY.md deny.toml .cargo/audit.toml architecture/dependency_security_baseline_phase25.md
    .opencode/skills/` — any direct-42 reference outside historical
-   phase/closeout reports is a bug (direct is 36.0.15 LTS; transitive 40.0.4
-   via yara-x only). Guard anchors in the baseline doc
+   phase/closeout reports is a bug (direct is 36.0.15 LTS; transitive 47.0.4
+   via the yara-x compat fork). Guard anchors in the baseline doc
    (`wasmtime-direct-version`, `wasmtime-transitive-version`,
    `wasmtime-wasi-absent-from-lock`) must match the lock.
 

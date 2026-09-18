@@ -378,6 +378,23 @@ required-features = ["mesh"]
 # `third-party/minify-html-compat/` as soon as an official minify-html
 # release eliminates the Oxc 0.95 / external bumpalo 3.19 path and passes
 # `crates/synvoid-static-files/tests/minify_parity.rs`. This must remain the
-# only `[patch]` section in the workspace.
+# only `[patch]` section in the workspace (it may carry both temporary
+# entries below; adding a third entry requires a new removal-tracked phase).
 [patch.crates-io]
 minify-html = { path = "third-party/minify-html-compat" }
+# Phase 40 (temporary): YARA-X security upgrade. Official `yara-x 1.20.0`
+# (crates.io) resolves wasmtime 45.0.3, affected by RUSTSEC-2026-0222 and
+# RUSTSEC-2026-0269; upstream PR #769 (wasmtime 47.0.4, still open as of
+# 2026-09-18) is the only reviewed fix and is unreleased. This path patch
+# redirects the single `yara-x` consumer (`synvoid-yara`) at workspace
+# builds to the vendored manifest-only compat fork in
+# `third-party/yara-x-compat` (exact 1.20.0 `src/`/`build.rs`, wasmtime
+# 45.0.3 -> 47.0.4, rust-version 1.93 -> 1.94 — the PR #769 change, NOT the
+# contributor's branch). No git source is introduced: `deny.toml` keeps
+# `unknown-git = "deny"` with zero allows. Owner: security / yara. Added:
+# 2026-09-18. Re-audit: 2026-10-01. Removal condition: delete this entry
+# and `third-party/yara-x-compat/` as soon as an official crates.io yara-x
+# release >=1.19 resolves a Wasmtime line patched for all advisories
+# relevant to the enabled feature set (see third-party/yara-x-compat/
+# README.SYNVOID.md and `yara_fork_is_temporary_guard`).
+yara-x = { path = "third-party/yara-x-compat" }

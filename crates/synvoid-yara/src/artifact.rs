@@ -21,11 +21,11 @@ use crate::engine::{compute_sha256, YaraError};
 /// yara-x line that produced the current engine. Bumped when `yara-x` is
 /// upgraded; locally compiled blobs carrying a different engine tag are
 /// rejected deterministically by [`CompiledArtifact::verify_binding`].
-/// Phase 36: remains `yara-x/1.15` — the >=1.19 upgrade (GHSA-2jx3-ff3v-j7jj
-/// fix) is blocked by the workspace bumpalo conflict (see crate Cargo.toml);
-/// the trust-model closure lands first so no remote bytes can reach the
-/// deserializer even on this line.
-pub const YARA_ENGINE_VERSION: &str = "yara-x/1.15";
+/// Phase 40: `yara-x/1.20` via the temporary manifest-only compat fork
+/// (`third-party/yara-x-compat`; exact upstream 1.20.0 sources, wasmtime
+/// 47.0.4). 1.15-tagged artifacts reject deterministically through the
+/// same binding check (see `old_engine_line_rejected_deterministically`).
+pub const YARA_ENGINE_VERSION: &str = "yara-x/1.20";
 
 /// Local serialization envelope version for [`CompiledArtifact`].
 /// Increment when the envelope layout/meaning changes; binding checks reject
@@ -164,13 +164,22 @@ mod tests {
     #[test]
     fn foreign_engine_line_rejected_deterministically() {
         // Phase 36 Part E: artifacts tagged with a different engine line
-        // fail deterministically (binding-only, never deserialized). When
-        // the >=1.19 upgrade lands, `YARA_ENGINE_VERSION` bumps and 1.15
-        // artifacts must reject the same way (add a pinned 1.15-rejection
-        // test at that time).
+        // fail deterministically (binding-only, never deserialized).
         let mut artifact = CompiledArtifact::compile("rule a { condition: false }").unwrap();
         artifact.engine_version = "yara-x/9.99".to_string();
         assert!(artifact.verify_binding().is_err());
+    }
+
+    #[test]
+    fn old_engine_line_rejected_deterministically() {
+        // Phase 40: pre-upgrade 1.15-tagged artifacts reject deterministically
+        // under the 1.20 engine tag (binding-only, never deserialized).
+        // Local compiled bytes are metadata; execution always recompiles
+        // approved source, so no migration path executes old blobs.
+        let mut artifact = CompiledArtifact::compile("rule a { condition: false }").unwrap();
+        artifact.engine_version = "yara-x/1.15".to_string();
+        let err = artifact.verify_binding().expect_err("1.15 tag must reject");
+        assert!(err.to_string().contains("incompatible YARA engine"));
     }
 
     #[test]
