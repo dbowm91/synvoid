@@ -19,7 +19,7 @@ pub fn is_canonical_ws_path(path: &str) -> bool {
     path == WS_METRICS_PATH || path == WS_LOGS_PATH
 }
 
-use super::auth::verify_admin_token;
+use super::auth::verify_admin_token_async;
 use super::state::AdminState;
 use axum::{
     extract::{
@@ -49,14 +49,14 @@ fn get_cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
         })
 }
 
-fn validate_bearer_token(headers: &HeaderMap, admin_token: &str) -> Result<(), StatusCode> {
+async fn validate_bearer_token(headers: &HeaderMap, admin_token: &str) -> Result<(), StatusCode> {
     let bearer_token = headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
-    if verify_admin_token(bearer_token, admin_token) {
+    if verify_admin_token_async(bearer_token, admin_token).await {
         Ok(())
     } else {
         Err(StatusCode::UNAUTHORIZED)
@@ -75,7 +75,9 @@ pub async fn ws_metrics_handler(
     State(state): State<Arc<AdminState>>,
     headers: HeaderMap,
 ) -> Response {
-    let has_valid_auth = validate_bearer_token(&headers, &state.security.admin_token).is_ok()
+    let has_valid_auth = validate_bearer_token(&headers, &state.security.admin_token)
+        .await
+        .is_ok()
         || validate_session_cookie(&headers, &state);
 
     if !has_valid_auth {
@@ -96,7 +98,9 @@ pub async fn ws_logs_handler(
     State(state): State<Arc<AdminState>>,
     headers: HeaderMap,
 ) -> Response {
-    let has_valid_auth = validate_bearer_token(&headers, &state.security.admin_token).is_ok()
+    let has_valid_auth = validate_bearer_token(&headers, &state.security.admin_token)
+        .await
+        .is_ok()
         || validate_session_cookie(&headers, &state);
 
     if !has_valid_auth {
@@ -208,27 +212,27 @@ async fn handle_logs_socket(socket: WebSocket, broadcaster: Arc<broadcaster::Bro
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_validate_bearer_token_no_header() {
+    #[tokio::test]
+    async fn test_validate_bearer_token_no_header() {
         let headers = axum::http::HeaderMap::new();
-        let result = validate_bearer_token(&headers, "test_hash");
+        let result = validate_bearer_token(&headers, "test_hash").await;
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), StatusCode::UNAUTHORIZED);
     }
 
-    #[test]
-    fn test_validate_bearer_token_invalid_format() {
+    #[tokio::test]
+    async fn test_validate_bearer_token_invalid_format() {
         use axum::http::header::AUTHORIZATION;
 
         let mut headers = axum::http::HeaderMap::new();
         headers.insert(AUTHORIZATION, "Basic abc".parse().unwrap());
 
-        let result = validate_bearer_token(&headers, "test_hash");
+        let result = validate_bearer_token(&headers, "test_hash").await;
         assert!(result.is_err());
     }
 
-    #[test]
-    fn test_validate_bearer_token_wrong_token() {
+    #[tokio::test]
+    async fn test_validate_bearer_token_wrong_token() {
         use axum::http::header::AUTHORIZATION;
 
         let token = "correct_token";
@@ -237,12 +241,12 @@ mod tests {
         let mut headers = axum::http::HeaderMap::new();
         headers.insert(AUTHORIZATION, format!("Bearer {}", hash).parse().unwrap());
 
-        let result = validate_bearer_token(&headers, "wrong_token");
+        let result = validate_bearer_token(&headers, "wrong_token").await;
         assert!(result.is_err());
     }
 
-    #[test]
-    fn test_validate_bearer_token_correct() {
+    #[tokio::test]
+    async fn test_validate_bearer_token_correct() {
         use axum::http::header::AUTHORIZATION;
 
         let token = "my_admin_token";
@@ -251,7 +255,7 @@ mod tests {
         let mut headers = axum::http::HeaderMap::new();
         headers.insert(AUTHORIZATION, format!("Bearer {}", token).parse().unwrap());
 
-        let result = validate_bearer_token(&headers, &hash);
+        let result = validate_bearer_token(&headers, &hash).await;
         assert!(result.is_ok());
     }
 

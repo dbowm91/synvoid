@@ -34,11 +34,17 @@ The main module containing:
 
 ### `crates/synvoid-auth/src/basic.rs` - HTTP Basic Auth
 
-Provides per-site HTTP Basic authentication:
+Provides per-site HTTP Basic authentication (Phase 43: async boundary):
 
-- `BasicAuthManager`: Manages realm and user credentials
-- `BasicAuthResult`: Enum indicating authentication outcome (`Authenticated`, `CredentialsRequired`, `Unauthorized`)
-- Uses bcrypt for password verification (same as main auth)
+- `BasicAuthManager`: Manages realm and user credentials plus a bounded
+  `PasswordCrypto` handle (never bcrypt inline on a Tokio core thread)
+- `BasicAuthResult`: `Authenticated`, `CredentialsRequired`, `Unauthorized`,
+  plus `BackendBusy` for crypto overload (HTTP maps Busy → 503, bad
+  credentials → 401, without revealing usernames)
+- Async API only (`check_credentials_async` / `authenticate_request_async`);
+  no `block_in_place` hidden in a sync wrapper
+- Unknown-user and wrong-password paths both execute exactly one bounded
+  bcrypt (dummy hash for unknown users); malformed headers fail closed
 - Integrated via `SiteBasicAuthConfig`
 
 ---
@@ -118,11 +124,11 @@ struct SessionData {
 ### Persistent Storage
 
 ```rust
-// AuthStore - saved to disk as JSON
+// AuthStore - saved to disk as JSON (Phase 43: atomic temp+fsync+rename)
 pub struct AuthStore {
     pub users: HashMap<String, User>,         // Key: lowercase username
     pub sessions: HashMap<String, Session>,    // Key: session ID
-    pub login_logs: Vec<LoginLog>,             // Audit log (max 10,000)
+    pub login_logs: Vec<LoginLog>,             // Audit log (bounded: MAX_LOGIN_LOGS = 1000, enforced on insertion)
 }
 
 // Login audit log entry
@@ -166,12 +172,16 @@ pub enum AuthError {
 
 ```rust
 impl AuthManager {
-    pub fn new(
+    // Fail-closed (Phase 43 F): missing store → Ok(empty); present but
+    // unreadable/corrupt/overly-permissive → Err(AuthStoreError).
+    pub fn try_new(
         data_dir: PathBuf,           // Base data directory
         session_duration_secs: u64,   // Session TTL (default: 3600)
         max_failed_attempts: u32,     // Lockout threshold (default: 3)
         lockout_duration_secs: u64,  // Lockout duration (default: 300)
-    ) -> Self
+    ) -> Result<Self, AuthStoreError>
+    // Backward-compatible new() panics on corrupt stores instead of
+    // silently starting empty. Production composition uses try_new().
 ```
 
 **Note:** The following parameters are **hardcoded** and not configurable via `new()`:
@@ -259,22 +269,23 @@ Client                    AuthManager                      AuthStore
   <-- Session -----------------+                               |
 ```
 
-### Password Verification Security
+### Password Verification Security (Phase 43)
 
-1. **Timing-attack mitigation**: For non-existent users, a dummy password hash is used to ensure consistent timing
-2. **Constant-time comparison**: CSRF tokens use `subtle::ConstantTimeEq`
-3. **Bcrypt**: Pure Rust implementation (no C bindings)
-
-```rust
-// From verify_login():
-let (user_exists, stored_hash) = match store.users.get_mut(&username_key) {
-    Some(user) => (true, user.password_hash.clone()),
-    None => (false, DUMMY_PASSWORD_HASH.to_string()),
-};
-
-// ... later for timing normalization:
-verify_dummy_password(password).await;
-```
+1. **Bounded CPU isolation**: all bcrypt runs behind `PasswordCrypto`
+   (semaphore-bounded `spawn_blocking`, default 4 permits / 2s acquire
+   timeout; overload → `AuthBackendBusy`, authenticates nobody). Never on a
+   Tokio core thread; never with `RwLock<AuthStore>` held. `create_user` /
+   `verify_login` / `update_password` snapshot minimal state, release the
+   lock, hash/verify, then reacquire and revalidate the password-hash
+   generation before mutating (lock/hash may change while bcrypt runs).
+2. **Single-verify timing**: exactly one bounded bcrypt per login (real hash
+   or `DUMMY_PASSWORD_HASH` for unknown users) plus a 200ms minimum-delay
+   pad — no second dummy bcrypt on failure. Admin bearer verification
+   (`verify_admin_token_async` / `verify_dummy_admin_token_async` in
+   `synvoid-admin`) follows the same single-verify discipline.
+3. **Constant-time comparison**: CSRF tokens use `subtle::ConstantTimeEq`
+4. **Bcrypt**: Pure Rust implementation (no C bindings), cost 12; existing
+   hashes keep verifying (no format change, no Argon2 migration)
 
 ### Session Refresh Logic
 
@@ -308,10 +319,20 @@ create (verify_login)     validate (with refresh)     destroy (explicit)
                     +-----> validate_session_with_ip() --> [HIJACKED] --> [REMOVED]
 ```
 
-### Session Storage
+### Session Storage (Phase 43 E/G)
 
 - In-memory `Arc<RwLock<AuthStore>>` for fast access
 - Async persistence to `{data_dir}/auth/store.json` every 5 seconds
+- Atomic durable write (DNSSEC-keystore discipline): restrictive dir,
+  owner-only temp from creation (`0600`), write-all, `sync_all`, atomic
+  rename, parent-dir sync where supported, temp cleanup on failure. Failures
+  preserve the previous valid store; the last valid store is never
+  deleted/replaced until the new file is complete. Windows uses same-volume
+  replacement with documented (weaker) durability.
+- Fail-closed load: `try_new` errors on corrupt/unreadable/overly-permissive
+  stores; recovery needs explicit operator action (quarantine + reset).
+- Bounded audit: `MAX_LOGIN_LOGS = 1000` enforced on insertion (N/N+1
+  eviction); expired sessions pruned from snapshots before queueing.
 - Batched writes persist the newest complete snapshot; older queued snapshots
   are never merged back over newer user/session state
 
@@ -440,18 +461,13 @@ if let Some(stored) = session.csrf_token.as_deref() {
 }
 ```
 
-### File Permissions
+### File Permissions (Phase 43 E)
 
-- Auth directory: `0o700` (owner only)
-- Store file: `0o600` (owner read/write)
-
-```rust
-#[cfg(unix)]
-{
-    std::fs::set_permissions(&auth_dir, std::fs::Permissions::from_mode(0o700));
-    std::fs::set_permissions(&store_path, std::fs::Permissions::from_mode(0o600));
-}
-```
+- Auth directory: `0o700` (owner only), enforced at creation
+- Store file: `0o600` (owner read/write) applied to the temp file **from
+  creation** (`OpenOptionsExt::mode`), never chmod-after-write
+- Overly-permissive existing stores (`mode & 0o077 != 0`) are refused at load
+  (fail closed), mirroring the DNSSEC keystore boundary
 
 ### Password Hashing
 
@@ -492,15 +508,18 @@ Users and sessions are managed via Admin API endpoints:
 ## 11. Configuration Example
 
 ```rust
-// AuthManager instantiation (from src/waf/mod.rs:399)
-Arc::new(AuthManager::new(
-    data_dir,                    // Path to auth data directory
-    session_duration_secs,       // e.g., 3600 (1 hour)
-    max_failed_attempts,         // e.g., 3
-    lockout_duration_secs,       // e.g., 300 (5 minutes)
-))
+// AuthManager instantiation (fail-closed; from src/waf/assembly.rs)
+Arc::new(
+    AuthManager::try_new(
+        data_dir,                    // Path to auth data directory
+        session_duration_secs,       // e.g., 3600 (1 hour)
+        max_failed_attempts,         // e.g., 3
+        lockout_duration_secs,       // e.g., 300 (5 minutes)
+    )
+    .expect("corrupt auth store: refusing to start with an empty database"),
+)
 
-// Basic Auth per site (from crates/synvoid-auth/src/basic.rs)
+// Basic Auth per site (async; from crates/synvoid-auth/src/basic.rs)
 BasicAuthManager::new(&SiteBasicAuthConfig {
     enabled: true,
     realm: Some("Admin Area".to_string()),
@@ -508,6 +527,8 @@ BasicAuthManager::new(&SiteBasicAuthConfig {
         ("admin".to_string(), bcrypt_hash),
     ]),
 })
+// Request path: manager.authenticate_request_async(&headers).await
+// BackendBusy → 503; Unauthorized/CredentialsRequired → 401.
 ```
 
 ---
@@ -525,6 +546,16 @@ The module includes comprehensive unit tests:
 - `test_list_users()` - User enumeration
 - `test_duplicate_user()` - Duplicate prevention
 - Property-based tests for `AuthError` (display, equality, clone)
+
+Phase 43 failure-injection tests (`crates/synvoid-auth`, `crypto.rs`,
+`basic.rs`):
+- crypto concurrency never exceeds permits; overload fails closed (`Busy`);
+  executor progress continues while crypto is saturated
+- no store lock held across bcrypt (concurrent read probe)
+- wrong-password / unknown-user single-verify paths
+- interrupted temp write + serialization failure preserve the previous store
+- corrupt store → `AuthStoreError::Corrupt`; `0600`/`0700` present from creation
+- login-log retention exact N/N+1 eviction; expired-session cleanup never resurrects
 
 ---
 

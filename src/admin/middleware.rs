@@ -136,7 +136,7 @@ pub async fn auth_middleware_with_state(
         .map(|t| t.to_string());
 
     if let Some(token) = bearer_token {
-        if super::auth::verify_admin_token(&token, &state.security.admin_token) {
+        if super::auth::verify_admin_token_async(&token, &state.security.admin_token).await {
             super::auth::AUTH_RATE_LIMITER.record_success(client_ip);
             request
                 .extensions_mut()

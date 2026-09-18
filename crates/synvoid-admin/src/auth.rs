@@ -34,6 +34,66 @@ pub fn verify_admin_token(token: &str, hash: &str) -> bool {
     bcrypt::verify(token, hash).unwrap_or(false)
 }
 
+/// Dummy hash for constant-work verification when no bearer token is present.
+/// Same cost family as production hashes; never logs secrets.
+pub const DUMMY_ADMIN_HASH: &str = "$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYzS.xJ5mW6";
+const ADMIN_CRYPTO_CONCURRENCY: usize = 4;
+const ADMIN_CRYPTO_ACQUIRE_TIMEOUT: Duration = Duration::from_secs(2);
+const ADMIN_MIN_DELAY: Duration = Duration::from_millis(200);
+
+static ADMIN_TOKEN_SEMAPHORE: std::sync::LazyLock<Arc<tokio::sync::Semaphore>> =
+    std::sync::LazyLock::new(|| Arc::new(tokio::sync::Semaphore::new(ADMIN_CRYPTO_CONCURRENCY)));
+
+async fn acquire_admin_permit() -> Option<tokio::sync::OwnedSemaphorePermit> {
+    let sem = Arc::clone(&ADMIN_TOKEN_SEMAPHORE);
+    match tokio::time::timeout(ADMIN_CRYPTO_ACQUIRE_TIMEOUT, async move {
+        sem.acquire_owned().await
+    })
+    .await
+    {
+        Ok(Ok(permit)) => Some(permit),
+        _ => None,
+    }
+}
+
+/// Bounded admin-token verification (Phase 43 D). Never runs bcrypt on a
+/// Tokio core thread; overload fails closed (`false`) and authenticates
+/// nobody. Exactly one bcrypt per call — callers must not add a second dummy
+/// verify after a failed real verify.
+pub async fn verify_admin_token_async(token: &str, hash: &str) -> bool {
+    let start = std::time::Instant::now();
+    let Some(_permit) = acquire_admin_permit().await else {
+        return false;
+    };
+    let token = token.to_string();
+    let hash = hash.to_string();
+    let valid =
+        tokio::task::spawn_blocking(move || bcrypt::verify(token, hash.as_str()).unwrap_or(false))
+            .await
+            .unwrap_or(false);
+    drop(_permit);
+    if start.elapsed() < ADMIN_MIN_DELAY {
+        tokio::time::sleep(ADMIN_MIN_DELAY - start.elapsed()).await;
+    }
+    valid
+}
+
+/// Constant-work dummy verification for missing/unparsable tokens.
+/// One bounded bcrypt plus minimum-delay padding; no second verify.
+pub async fn verify_dummy_admin_token_async() {
+    let start = std::time::Instant::now();
+    if let Some(_permit) = acquire_admin_permit().await {
+        let _ = tokio::task::spawn_blocking(|| {
+            bcrypt::verify("dummy_password_for_timing", DUMMY_ADMIN_HASH).unwrap_or(false)
+        })
+        .await;
+        drop(_permit);
+    }
+    if start.elapsed() < ADMIN_MIN_DELAY {
+        tokio::time::sleep(ADMIN_MIN_DELAY - start.elapsed()).await;
+    }
+}
+
 impl AuthRateLimiter {
     pub fn new() -> Self {
         Self {

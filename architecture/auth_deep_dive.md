@@ -10,10 +10,18 @@ SynVoid's authentication module handles user authentication, session management,
 Client ──► Admin API ──► Auth Middleware ──► Token Validation ──► Handler
                 │
                 ├── Rate Limit Check (3 attempts / 300s, production default in `src/waf/assembly.rs`)
-                ├── Token Hash Comparison (bcrypt, DEFAULT_COST)
+                ├── Token Hash Comparison (bounded async bcrypt: verify_admin_token_async, 4 permits / 2s timeout, single verify + 200ms pad)
                 ├── Session Validation
                 └── CSRF Token Check (state mutations)
 ```
+
+Phase 43: no CPU-hard bcrypt runs on a Tokio core thread. `synvoid-auth`
+uses `PasswordCrypto` (bounded `spawn_blocking`, no store lock held);
+`synvoid-admin` uses the same discipline (`verify_admin_token_async` /
+`verify_dummy_admin_token_async`, exactly one bcrypt per request, overload
+fails closed). Auth-store writes are atomic (temp + fsync + rename,
+`0600`/`0700` from creation); corrupt stores fail closed via `try_new`;
+login audit is bounded (`MAX_LOGIN_LOGS = 1000`).
 
 ### Token Management
 
@@ -92,10 +100,13 @@ For programmatic access (CLI, mesh agents), the admin API supports token-based a
 
 ### Hashing
 
-- **Algorithm**: bcrypt
-- **Cost factor**: `DEFAULT_COST` (12)
+- **Algorithm**: bcrypt (no format change; existing hashes verify; no Argon2 migration in Phase 43)
+- **Cost factor**: 12 (`PASSWORD_BCRYPT_COST`, formerly `DEFAULT_COST`)
 - **Salt**: Random per-password (handled by bcrypt)
 - **Comparison**: Constant-time via bcrypt internals
+- **CPU isolation**: bounded `spawn_blocking` behind `PasswordCrypto`
+  (unknown-user dummy hash, single verify, `AuthBackendBusy` on overload →
+  503 for Basic Auth, fail-closed 401/empty for logins/admin)
 
 ### Password Policy
 

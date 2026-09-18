@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock as TokioRwLock;
 
-use crate::admin::verify_admin_token;
+use crate::admin::verify_admin_token_async;
 use crate::config::ConfigManager;
 use synvoid_static_files::file_manager::{FileManager, FileManagerSecurityBackend};
 
@@ -152,14 +152,14 @@ struct FileManagerState {
     admin_token_hash: String,
 }
 
-fn require_auth(state: &FileManagerState, headers: &HeaderMap) -> Result<(), StatusCode> {
+async fn require_auth(state: &FileManagerState, headers: &HeaderMap) -> Result<(), StatusCode> {
     let token = headers
         .get("Authorization")
         .and_then(|v| v.to_str().ok())
         .and_then(|auth| auth.strip_prefix("Bearer "))
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
-    if !verify_admin_token(token, &state.admin_token_hash) {
+    if !verify_admin_token_async(token, &state.admin_token_hash).await {
         return Err(StatusCode::UNAUTHORIZED);
     }
 
@@ -171,7 +171,7 @@ async fn list_handler(
     Query(params): Query<FileManagerQuery>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, StatusCode> {
-    require_auth(&state, &headers)?;
+    require_auth(&state, &headers).await?;
 
     let path = params.path.unwrap_or_else(|| "/".to_string());
 
@@ -192,7 +192,7 @@ async fn read_handler(
     AxumPath(path): AxumPath<String>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, StatusCode> {
-    require_auth(&state, &headers)?;
+    require_auth(&state, &headers).await?;
 
     let path = format!("/{}", path);
     let data = state.file_manager.read_file(&path).await.map_err(|e| {
@@ -219,7 +219,7 @@ async fn write_handler(
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> Result<impl IntoResponse, StatusCode> {
-    require_auth(&state, &headers)?;
+    require_auth(&state, &headers).await?;
 
     let path = format!("/{}", path);
 
@@ -242,7 +242,7 @@ async fn delete_handler(
     AxumPath(path): AxumPath<String>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, StatusCode> {
-    require_auth(&state, &headers)?;
+    require_auth(&state, &headers).await?;
 
     let path = format!("/{}", path);
 
@@ -262,7 +262,7 @@ async fn mkdir_handler(
     headers: HeaderMap,
     Json(payload): Json<CreateDirectoryRequest>,
 ) -> Result<impl IntoResponse, StatusCode> {
-    require_auth(&state, &headers)?;
+    require_auth(&state, &headers).await?;
 
     state
         .file_manager
@@ -284,7 +284,7 @@ async fn rename_handler(
     headers: HeaderMap,
     Json(payload): Json<RenameRequest>,
 ) -> Result<impl IntoResponse, StatusCode> {
-    require_auth(&state, &headers)?;
+    require_auth(&state, &headers).await?;
 
     state
         .file_manager
@@ -307,7 +307,7 @@ async fn get_permissions_handler(
     AxumPath(path): AxumPath<String>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, StatusCode> {
-    require_auth(&state, &headers)?;
+    require_auth(&state, &headers).await?;
 
     let path = format!("/{}", path);
 
@@ -329,7 +329,7 @@ async fn set_permissions_handler(
     headers: HeaderMap,
     Json(payload): Json<SetPermissionsRequest>,
 ) -> Result<impl IntoResponse, StatusCode> {
-    require_auth(&state, &headers)?;
+    require_auth(&state, &headers).await?;
 
     state
         .file_manager
@@ -350,7 +350,7 @@ async fn search_handler(
     Query(params): Query<FileManagerQuery>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, StatusCode> {
-    require_auth(&state, &headers)?;
+    require_auth(&state, &headers).await?;
 
     let query = params.query.ok_or(StatusCode::BAD_REQUEST)?;
     let path = params.path.unwrap_or_else(|| "/".to_string());
@@ -373,7 +373,7 @@ async fn upload_handler(
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> Result<impl IntoResponse, StatusCode> {
-    require_auth(&state, &headers)?;
+    require_auth(&state, &headers).await?;
 
     let filename = headers
         .get("X-Filename")
@@ -400,7 +400,7 @@ async fn extract_handler(
     headers: HeaderMap,
     Json(payload): Json<ExtractArchiveRequest>,
 ) -> Result<impl IntoResponse, StatusCode> {
-    require_auth(&state, &headers)?;
+    require_auth(&state, &headers).await?;
 
     let extracted = state
         .file_manager

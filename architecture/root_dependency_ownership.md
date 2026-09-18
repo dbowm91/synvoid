@@ -89,7 +89,7 @@ reference fails the guard until the row is reclassified with a reason.
 | tempfile | tests | remove_candidate | — | Phase 31: moved from [dependencies] to [dev-dependencies] (test fixtures + src unit tests) | moved to dev-deps Phase 31 | — |
 | uuid | config, tests | composition_runtime | default | UUID generation for request IDs | keep | admin, serverless |
 | pin-project-lite | — | remove_candidate | — | Phase 31: removed from root (0 src uses) | removed Phase 31 | — |
-| bcrypt | admin | composition_runtime | default | Password hashing for admin auth | keep | admin |
+| bcrypt | — | remove_candidate | — | Phase 43: removed from root (0 src uses; canonical bcrypt use in synvoid-auth `PasswordCrypto` + synvoid-admin bounded verifier) | removed Phase 43 | — |
 | dirs | — | remove_candidate | — | Phase 31: removed from root (0 `dirs::` uses) | removed Phase 31 | — |
 | flate2 | tests | remove_candidate | — | Phase 31: moved from [dependencies] to [dev-dependencies] (worker minifier unit-test fixtures) | moved to dev-deps Phase 31 | — |
 | tar | — | remove_candidate | — | Phase 31: removed from root (0 `tar::` uses) | removed Phase 31 | — |

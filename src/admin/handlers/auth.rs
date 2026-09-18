@@ -5,7 +5,6 @@ use axum::{
     Json,
 };
 use std::sync::Arc;
-use tokio::time::{sleep, Duration as TokioDuration};
 
 use super::super::state::AdminState;
 use crate::admin::SESSION_COOKIE_NAME;
@@ -17,16 +16,6 @@ use synvoid_core::admin_mutation::{
 };
 use uuid::Uuid;
 
-async fn verify_dummy_admin_token() {
-    let dummy_hash = "$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYzS.xJ5mW6";
-    let start = std::time::Instant::now();
-    let _ = bcrypt::verify("dummy_password_for_timing", dummy_hash).unwrap_or(false);
-    let elapsed = start.elapsed();
-    if elapsed < std::time::Duration::from_millis(200) {
-        sleep(TokioDuration::from_millis(200) - elapsed).await;
-    }
-}
-
 pub async fn create_session(
     State(state): State<Arc<AdminState>>,
     headers: axum::http::HeaderMap,
@@ -37,12 +26,14 @@ pub async fn create_session(
         .and_then(|v| v.strip_prefix("Bearer "));
 
     let Some(token) = bearer_token else {
-        verify_dummy_admin_token().await;
+        // No token: one bounded dummy verify for constant work (Phase 43 D).
+        super::super::auth::verify_dummy_admin_token_async().await;
         return StatusCode::UNAUTHORIZED.into_response();
     };
 
-    if !super::super::auth::verify_admin_token(token, &state.security.admin_token) {
-        verify_dummy_admin_token().await;
+    // Exactly one bounded real verify. The async verifier already applies
+    // minimum-delay padding, so no second dummy bcrypt is added on failure.
+    if !super::super::auth::verify_admin_token_async(token, &state.security.admin_token).await {
         return StatusCode::UNAUTHORIZED.into_response();
     }
 

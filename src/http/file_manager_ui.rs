@@ -8,7 +8,7 @@ use axum::{
 use std::sync::Arc;
 use tokio::sync::RwLock as TokioRwLock;
 
-use crate::admin::verify_admin_token;
+use crate::admin::verify_admin_token_async;
 use crate::config::ConfigManager;
 use crate::theme::{ThemeConfig, ThemeRenderer};
 
@@ -20,14 +20,14 @@ struct FileManagerUiState {
     admin_token_hash: String,
 }
 
-fn require_auth(state: &FileManagerUiState, headers: &HeaderMap) -> Result<(), StatusCode> {
+async fn require_auth(state: &FileManagerUiState, headers: &HeaderMap) -> Result<(), StatusCode> {
     let token = headers
         .get("Authorization")
         .and_then(|v| v.to_str().ok())
         .and_then(|auth| auth.strip_prefix("Bearer "))
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
-    if !verify_admin_token(token, &state.admin_token_hash) {
+    if !verify_admin_token_async(token, &state.admin_token_hash).await {
         return Err(StatusCode::UNAUTHORIZED);
     }
 
@@ -38,7 +38,7 @@ async fn ui_handler(
     State(state): State<Arc<FileManagerUiState>>,
     headers: HeaderMap,
 ) -> Result<Html<String>, StatusCode> {
-    require_auth(&state, &headers)?;
+    require_auth(&state, &headers).await?;
 
     let theme_config = ThemeConfig::default();
     let renderer = ThemeRenderer::new(theme_config);

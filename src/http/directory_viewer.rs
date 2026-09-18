@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::{path::Path, sync::Arc};
 use tokio::sync::RwLock as TokioRwLock;
 
-use crate::admin::verify_admin_token;
+use crate::admin::verify_admin_token_async;
 use crate::config::ConfigManager;
 use crate::static_files::directory::{render_directory_listing, DirectoryListingParams};
 use crate::theme::ThemeConfig;
@@ -48,7 +48,7 @@ struct DirectoryViewerState {
     admin_token_hash: String,
 }
 
-fn require_auth(state: &DirectoryViewerState, headers: &HeaderMap) -> Result<(), StatusCode> {
+async fn require_auth(state: &DirectoryViewerState, headers: &HeaderMap) -> Result<(), StatusCode> {
     if !state.viewer_config.require_auth {
         return Ok(());
     }
@@ -59,7 +59,7 @@ fn require_auth(state: &DirectoryViewerState, headers: &HeaderMap) -> Result<(),
         .and_then(|auth| auth.strip_prefix("Bearer "))
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
-    if !verify_admin_token(token, &state.admin_token_hash) {
+    if !verify_admin_token_async(token, &state.admin_token_hash).await {
         return Err(StatusCode::UNAUTHORIZED);
     }
 
@@ -82,7 +82,7 @@ async fn list_handler(
     Query(params): Query<DirectoryQuery>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, StatusCode> {
-    require_auth(&state, &headers)?;
+    require_auth(&state, &headers).await?;
 
     let path = params.path.unwrap_or_else(|| "/".to_string());
     let format = params

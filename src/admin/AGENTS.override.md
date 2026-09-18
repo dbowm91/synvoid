@@ -71,13 +71,18 @@ Always use `subtle::ConstantTimeEq` for comparing secrets, tokens, keys, MACs:
 - Session ID comparison (`src/admin/state.rs`)
 - Cache purge token comparison
 
-### Session Timing Normalization (2026-05-23)
+### Session Timing Normalization (Phase 43)
 
-Admin auth now includes timing normalization to prevent session enumeration attacks:
+Admin auth uses single-verify timing normalization to prevent session
+enumeration without double bcrypt:
 
-- Dummy bcrypt verify with minimum 200ms delay on invalid tokens
-- Pattern: `verify_dummy_admin_token()` at `src/admin/handlers/auth.rs:14-22`
-- Applied before both `UNAUTHORIZED` returns in `create_session()`
+- Missing token: one bounded dummy verify
+  (`verify_dummy_admin_token_async` in `synvoid-admin`) + 200ms minimum pad
+- Present token: exactly one bounded real verify
+  (`verify_admin_token_async`, same pad) — never a second dummy verify
+- Middleware/WS/HTTP file surfaces (`middleware.rs`, `ws/mod.rs`,
+  `src/http/{file_manager,file_manager_ui,webdav,directory_viewer}.rs`)
+  all use the async bounded verifier; overload fails closed (401)
 
 ### Middleware Stack
 

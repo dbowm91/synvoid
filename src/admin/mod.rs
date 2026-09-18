@@ -23,7 +23,10 @@ mod state;
 mod ws;
 
 pub use audit::{AuditLog, AuditState, ConfigVersion, ConfigVersionManager};
-pub use auth::{hash_admin_token, hash_admin_token_with_cost, verify_admin_token};
+pub use auth::{
+    hash_admin_token, hash_admin_token_with_cost, verify_admin_token, verify_admin_token_async,
+    verify_dummy_admin_token_async,
+};
 use axum::{http::StatusCode, response::IntoResponse, routing::get, Json, Router};
 pub use metrics::start_metrics_publisher;
 pub use state::{

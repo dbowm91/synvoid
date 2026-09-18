@@ -191,6 +191,7 @@ The shipped configuration is a starting point, not a universal production policy
 - Supervisor startup currently logs a warning and falls back to built-in defaults if `main.toml` cannot be loaded. Treat configuration-load warnings as operational failures and validate configuration before deployment.
 - Linux provides the broadest networking/kernel feature coverage. Features such as eBPF filtering and some service/runtime integrations have additional OS, privilege, or kernel requirements.
 - Restrict admin and metrics exposure with host firewalling or equivalent network policy. Do not expose management surfaces merely because the data plane is internet-facing.
+- Authentication is CPU-isolated and fail-closed: password/admin-token bcrypt runs behind a bounded async executor (overload authenticates nobody), the auth store persists atomically (`0600`/`0700`) and a corrupt store fails startup instead of starting empty, and login audit retention is bounded. See `architecture/auth.md`.
 
 ## Documentation
 

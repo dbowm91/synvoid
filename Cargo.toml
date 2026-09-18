@@ -142,7 +142,7 @@ clap = { version = "4", features = ["derive"] }
 # tempfile: Phase 31 moved to [dev-dependencies] (test-only fixtures)
 uuid = { version = "1", features = ["v4", "serde"] }
 # pin-project-lite: Phase 31 removed; 0 root src uses (canonical use in domain crates)
-bcrypt = "0.19"
+# bcrypt: Phase 43 removed; 0 root src uses (canonical bcrypt use in synvoid-auth/synvoid-admin behind bounded executors)
 # dirs: Phase 31 removed; 0 root src uses (canonical use in domain crates)
 # flate2: Phase 31 moved to [dev-dependencies] (worker minifier unit-test fixtures only)
 # tar: Phase 31 removed; 0 root src uses (canonical use in domain crates)

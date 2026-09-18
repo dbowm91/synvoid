@@ -20,7 +20,7 @@ use axum::{
 use std::{path::Path, sync::Arc};
 use tokio::sync::RwLock as TokioRwLock;
 
-use crate::admin::verify_admin_token;
+use crate::admin::verify_admin_token_async;
 use crate::config::ConfigManager;
 use synvoid_static_files::file_manager::FileManager;
 
@@ -57,7 +57,7 @@ struct WebDavState {
 }
 
 /// Verify authentication from request headers
-fn require_auth(state: &WebDavState, headers: &HeaderMap) -> Result<(), StatusCode> {
+async fn require_auth(state: &WebDavState, headers: &HeaderMap) -> Result<(), StatusCode> {
     if !state.webdav_config.require_auth {
         return Ok(());
     }
@@ -68,7 +68,7 @@ fn require_auth(state: &WebDavState, headers: &HeaderMap) -> Result<(), StatusCo
         .and_then(|auth| auth.strip_prefix("Bearer "))
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
-    if !verify_admin_token(token, &state.admin_token_hash) {
+    if !verify_admin_token_async(token, &state.admin_token_hash).await {
         return Err(StatusCode::UNAUTHORIZED);
     }
 
@@ -126,7 +126,7 @@ async fn propfind_handler(
     path: &str,
     headers: &HeaderMap,
 ) -> Result<Response, StatusCode> {
-    require_auth(state, headers)?;
+    require_auth(state, headers).await?;
 
     let path = normalize_path(path);
     let depth = get_depth_header(headers);
@@ -246,7 +246,7 @@ async fn mkcol_handler(
     headers: &HeaderMap,
     body: axum::body::Bytes,
 ) -> Result<Response, StatusCode> {
-    require_auth(state, headers)?;
+    require_auth(state, headers).await?;
 
     let path = normalize_path(path);
 
@@ -297,7 +297,7 @@ async fn move_handler(
     path: &str,
     headers: &HeaderMap,
 ) -> Result<Response, StatusCode> {
-    require_auth(state, headers)?;
+    require_auth(state, headers).await?;
 
     let source = normalize_path(path);
     let destination = get_destination_header(headers)?;
@@ -376,7 +376,7 @@ async fn copy_handler(
     path: &str,
     headers: &HeaderMap,
 ) -> Result<Response, StatusCode> {
-    require_auth(state, headers)?;
+    require_auth(state, headers).await?;
 
     let source = normalize_path(path);
     let destination = get_destination_header(headers)?;
@@ -550,7 +550,7 @@ async fn get_handler(
     path: &str,
     headers: &HeaderMap,
 ) -> Result<Response, StatusCode> {
-    require_auth(state, headers)?;
+    require_auth(state, headers).await?;
 
     let path = normalize_path(path);
 
@@ -610,7 +610,7 @@ async fn put_handler(
     headers: &HeaderMap,
     body: axum::body::Bytes,
 ) -> Result<Response, StatusCode> {
-    require_auth(state, headers)?;
+    require_auth(state, headers).await?;
 
     let path = normalize_path(path);
 
@@ -644,7 +644,7 @@ async fn delete_handler(
     path: &str,
     headers: &HeaderMap,
 ) -> Result<Response, StatusCode> {
-    require_auth(state, headers)?;
+    require_auth(state, headers).await?;
 
     let path = normalize_path(path);
 

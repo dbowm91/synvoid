@@ -266,12 +266,17 @@ pub(crate) fn assemble_auth_manager(
     data_dir: &Option<PathBuf>,
 ) -> Arc<AuthManager> {
     auth_manager.unwrap_or_else(|| {
-        Arc::new(AuthManager::new(
+        // Fail-closed (Phase 43 F): a corrupt existing store is a startup
+        // error, never a silent empty DB. `try_new` surfaces the cause;
+        // expect aborts startup with that context.
+        let manager = AuthManager::try_new(
             data_dir.clone().unwrap_or_else(|| PathBuf::from("data")),
             3600,
             3,
             300,
-        ))
+        )
+        .expect("corrupt auth store: refusing to start with an empty database");
+        Arc::new(manager)
     })
 }
 

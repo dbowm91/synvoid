@@ -12,6 +12,8 @@ Canonical implementation lives in `crates/synvoid-auth` (there is no
 (HttpOnly cookie + CSRF, bearer-for-exchange-only) are governed by
 `architecture/admin_control_plane_authority.md` (see `admin_contract` skill).
 Full reference: `architecture/auth.md`, `architecture/auth_deep_dive.md`.
+Phase 43 hardened CPU isolation and persistence (see plan
+`plans/phase_43_auth_cpu_and_persistence_hardening.md`).
 
 ## When to Use
 
@@ -23,8 +25,10 @@ Full reference: `architecture/auth.md`, `architecture/auth_deep_dive.md`.
 
 | File | Purpose |
 |------|---------|
-| `crates/synvoid-auth/src/lib.rs` | `AuthManager`, `AuthStore`, `User`/`UserRole`, `Session`, brute-force lockout |
-| `crates/synvoid-auth/src/basic.rs` | HTTP Basic handling |
+| `crates/synvoid-auth/src/lib.rs` | `AuthManager` (`try_new` fail-closed), `AuthStore`, `User`/`UserRole`, `Session`, brute-force lockout, atomic persistence, `MAX_LOGIN_LOGS` |
+| `crates/synvoid-auth/src/crypto.rs` | `PasswordCrypto` bounded executor (semaphore + `spawn_blocking`, `Busy` overload) |
+| `crates/synvoid-auth/src/basic.rs` | Async HTTP Basic (`authenticate_request_async`, `BackendBusy` → 503) |
+| `crates/synvoid-admin/src/auth.rs` | Bounded admin token verify (`verify_admin_token_async`, `verify_dummy_admin_token_async`, single verify) |
 | `src/admin/handlers/auth.rs` | Admin login transport (facade over the crate + session-cookie issue) |
 
 ## Non-Negotiables
@@ -40,6 +44,19 @@ Full reference: `architecture/auth.md`, `architecture/auth_deep_dive.md`.
    `lockout_duration_secs`) stay enforced on every password path; do not add
    unauthenticated oracles (timing or message) distinguishing bad-user from
    bad-password.
+5. **Bounded password crypto (Phase 43)**: no bcrypt on a Tokio core thread,
+   no `RwLock<AuthStore>` held across bcrypt, no `block_in_place` in sync
+   wrappers. Snapshot state → release lock → bounded `spawn_blocking` →
+   reacquire + revalidate generation. Overload (`Busy`/`BackendBusy`) fails
+   closed and authenticates nobody.
+6. **Single-verify timing**: exactly one bounded bcrypt per login/admin/Basic
+   attempt (dummy hash for unknown users/missing tokens) + minimum-delay pad;
+   never a real verify followed by a second dummy verify.
+7. **Atomic auth persistence**: temp + fsync + rename with `0600`/`0700` from
+   creation; failures preserve the previous store. Corrupt/overly-permissive
+   stores fail closed via `try_new` — never silently become an empty DB.
+   Login audit bounded at insertion (`MAX_LOGIN_LOGS`); prune expired
+   sessions before snapshotting.
 
 ## Verification
 
