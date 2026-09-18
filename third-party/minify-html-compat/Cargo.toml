@@ -1,0 +1,55 @@
+# SynVoid temporary compatibility fork of `minify-html 0.18.1`.
+#
+# Upstream: https://github.com/wilsonzlin/minify-html (tag v0.18.1,
+# crates.io `minify-html 0.18.1`, checksum
+# `644c1511457e5f70dcbc03c932d4bd26351eceb8657b119c919dde2e65b6d120`).
+# Base source: exact released 0.18.1 crate content (see README.SYNVOID.md).
+#
+# Delta from upstream (manifest-only, no `src/` changes):
+#   oxc_allocator / oxc_codegen / oxc_minifier / oxc_parser / oxc_span:
+#   "0.95" -> "0.111".
+# Purpose: remove the `oxc_allocator 0.95 -> bumpalo =3.19.0` resolver pin so
+#   the workspace can resolve modern Wasmtime (bumpalo ^3.20) required by
+#   current YARA-X. Oxc 0.111 is the first line whose `oxc_allocator` carries
+#   no external `bumpalo` edge; upstream minify-html PR #270 selected the same
+#   0.111 target (closed unmerged). Public API used by SynVoid (`Cfg`,
+#   `minify(&[u8], &Cfg)`) is unchanged.
+#
+# Owner: security / static-files. Date added: 2026-09-18.
+# Re-audit: 2026-10-01 (with the dependency review).
+# Removal condition: remove this `[patch.crates-io]` fork as soon as an
+#   official minify-html release eliminates the Oxc 0.95 / external bumpalo
+#   3.19 path and passes `crates/synvoid-static-files/tests/minify_parity.rs`.
+#   This entry must not normalize other patches: it is the only allowed
+#   `[patch]` in the workspace (enforced by `minify_fork_is_temporary_guard`).
+#
+# Consumed via root `[patch.crates-io]` (path override, no git source, so
+# `deny.toml` keeps `unknown-git = "deny"` with zero allows).
+
+[package]
+name = "minify-html"
+version = "0.18.1"
+edition = "2018"
+description = "Extremely fast and smart HTML + JS + CSS minifier (SynVoid temporary Oxc 0.111 compat fork; see README.SYNVOID.md)"
+license = "MIT"
+homepage = "https://github.com/wilsonzlin/minify-html"
+repository = "https://github.com/wilsonzlin/minify-html.git"
+keywords = ["html", "compress", "minifier", "js", "css"]
+categories = ["compression", "development-tools::build-utils", "web-programming"]
+
+[lib]
+name = "minify_html"
+path = "src/lib.rs"
+
+[dependencies]
+ahash = "0.8"
+aho-corasick = "1.1"
+lightningcss = "1.0.0-alpha.68"
+memchr = "2"
+minify-html-common = "0.0.3"
+once_cell = "1.21"
+oxc_allocator = "0.111"
+oxc_codegen = "0.111"
+oxc_minifier = "0.111"
+oxc_parser = "0.111"
+oxc_span = "0.111"

@@ -1,6 +1,6 @@
 # Phase 39 Plan: Minify-HTML / Oxc Resolver Blocker Remediation
 
-Status: planned (2026-09-18).
+Status: implemented (2026-09-18). Closeout: `plans/phase_39_closeout_results.md`.
 
 Roadmap: `plans/runtime_dependency_blocker_followup_roadmap.md`.
 

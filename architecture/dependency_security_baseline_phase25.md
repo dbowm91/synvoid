@@ -1,8 +1,9 @@
-# Dependency Security Baseline — Phase 25 Evidence (current through Phase 38)
+# Dependency Security Baseline — Phase 25 Evidence (current through Phase 39)
 
 Status: binding evidence for Track 4 Phase 25 (`plans/phase_25_dependency_security_baseline_and_entitlement.md`).
-Owner: security / release. Reviewed: 2026-09-17 (Phase 38: runtime-security
-closeout; direct runtime on Wasmtime 36 LTS, YARA source-only trust).
+Owner: security / release. Reviewed: 2026-09-18 (Phase 39: minifier/Oxc
+blocker remediation via temporary vendored compat fork; YARA engine still
+1.15, Phase 40 owns the upgrade).
 Re-audit: 2026-10-01 (all advisory ignores; see §5).
 
 This file records version, features, and reachable capability **separately** for every
@@ -290,3 +291,89 @@ landed graph, not the planned one.
   the 36 LTS line approaches end of support (2027-08-20); any new advisory
   affecting a resolved package (cf. cryptoki 0286, fixed here by upgrade, not
   ignore).
+
+## 10. Phase 39 addendum (2026-09-18): minifier/Oxc blocker remediation
+
+Closeout evidence: `plans/phase_39_closeout_results.md` (plan:
+`plans/phase_39_minify_html_oxc_blocker_remediation.md`; roadmap:
+`plans/runtime_dependency_blocker_followup_roadmap.md`).
+
+Supersedes the §9 status line "`minify-html`/Oxc `bumpalo` constraint:
+unchanged": the minifier side of the conflict is now removed. YARA engine,
+Wasmtime versions, advisory ignores, and source policy below are otherwise
+unchanged from §9.
+
+- Landed graph: **yara-x 1.15.0**, transitive **wasmtime 40.0.4** (via
+  `synvoid-yara` only), direct **wasmtime 36.0.15 LTS** (via
+  `synvoid-plugin-runtime` + root bench dev-dep), **no `wasmtime-wasi` /
+  `wasi-filesystem`**, **no git source**, 16 advisory ignores unchanged
+  (Re-audit: 2026-10-01). `YARA_ENGINE_VERSION` stays `yara-x/1.15`;
+  Phase 40 owns the engine upgrade.
+- Compatibility fork (temporary): `third-party/minify-html-compat/` vendors
+  the exact released `minify-html 0.18.1` crate `src/` byte-for-byte
+  (verified by recursive diff against the registry source) with a
+  manifest-only delta: the five Oxc dependencies `0.95 -> 0.111`
+  (`oxc_allocator`, `oxc_codegen`, `oxc_minifier`, `oxc_parser`, `oxc_span`).
+  No `src/` change was needed: the sole Oxc consumer (`src/minify/js.rs`:
+  `Allocator::default`, `Parser::new(..).parse()`,
+  `Minifier::new(..).minify`, `Codegen::new().with_options(..).build(..)`,
+  `SourceType::mjs()/default()`, `CompressOptions::safest()`,
+  `MangleOptions::default()`) compiles unchanged against Oxc 0.111 (proven
+  in an isolated scratch crate before vendoring). Consumed via root
+  `[patch.crates-io]` path override (single-source; `synvoid-static-files`
+  is the only `minify-html` consumer). Upstream public API used by SynVoid
+  (`Cfg`, `minify(&[u8], &Cfg)`) is preserved and pinned by
+  `crates/synvoid-static-files/tests/minify_parity.rs::upstream_minify_api_shape_is_preserved`.
+- Why 0.111: first researched Oxc line whose `oxc_allocator` carries no
+  external `bumpalo` edge (proven from the crates.io dependency API:
+  0.111.0 deps are `allocator-api2`, `hashbrown`, `oxc_data_structures`,
+  `rustc-hash` + optionals; no `bumpalo`); upstream minify-html PR #270
+  independently selected the same 0.111 target (closed unmerged);
+  minimizes API distance (0.150+ adds risk with no resolver benefit);
+  `rust-version = 1.91.0` is below SynVoid's pinned 1.98.1. Latest release
+  and master remain `minify-html` 0.18.1 / Oxc 0.95 as of 2026-09-18, so no
+  official release could satisfy the removal condition yet.
+- Resolver proof (workspace, 2026-09-18):
+  `cargo tree -i minify-html` resolves to the vendored path;
+  `oxc_allocator` resolves to **0.111.0** (no 0.95 instance remains);
+  `cargo tree -i bumpalo` shows **no** `oxc_allocator`/`minify-html` edge —
+  the remaining `bumpalo 3.19.0` instance is consumed only by
+  `cranelift-codegen` (wasmtime 36/40), classified by consumer, not assumed.
+  `cargo tree -e features -i minify-html` confirms the fork's Oxc family.
+- YARA-X 1.20 probe (disposable copy, main lockfile untouched): stock
+  `cargo update -p yara-x --precise 1.20.0` on the pre-fork graph fails on
+  the `linkme` feature removal first (`synvoid-yara` requests `linkme`;
+  yara-x >=1.19 dropped that feature — Phase 40 manifest work), masking the
+  bumpalo diagnostic; the isolated scratch-crate reproduction
+  (`oxc_allocator =0.95.0` + `wasmtime =45.0.3` → `bumpalo =3.19.0` vs
+  `^3.20.0` unresolvable; with `oxc_allocator =0.111.0` → single
+  `bumpalo 3.20.3`) is the clean bumpalo evidence. Post-fork, with `linkme`
+  dropped in the disposable copy only, resolution gets past the old bumpalo
+  conflict (next failure is the unrelated `wasm-bindgen` float owned by the
+  admin-ui chain); after a full `cargo update` in that copy, yara-x 1.20.0
+  resolves with wasmtime 36.0.15 + 45.0.3, single `bumpalo 3.20.3`, and
+  `oxc_allocator` 0.111.0. Phase 40 therefore needs: `linkme` removal,
+  lock float (including the wasm-bindgen chain), and engine re-validation —
+  not another minifier change.
+- Behavior proof: `crates/synvoid-static-files/tests/minify_parity.rs`
+  (16 tests: whitespace/comments, `<pre>`/`<textarea>`, attributes/entities,
+  classic + module JS, modern JS features, inline CSS + style attrs,
+  JSON/LD+JSON/template data scripts, malformed/empty/fragment/UTF-8,
+  never-grows invariant) passes byte-identically before and after the fork
+  (all exact goldens unchanged; zero output differences to classify).
+  Throughput probe (same host, 2000 iters mixed HTML/JS/CSS page, release):
+  registry 0.18.1 ≈20,300 iters/s vs fork ≈23,300 iters/s (no regression;
+  total output bytes identical). Dep-shape delta is one added `oxc_str`
+  0.111.0 crate and the removed `oxc_allocator -> bumpalo` edge; no
+  material build/binary footprint change.
+- Source policy: still crates.io + workspace paths only. `deny.toml` keeps
+  `unknown-git = "deny"` with **zero** `allow-git` entries; `Cargo.lock`
+  contains no `git+` source. The temporary fork adds no source exception —
+  it avoids one by design (path patch, not git). Temporariness is enforced
+  by `minify_fork_is_temporary_guard` (`dependency_security.rs`): exactly
+  one `[patch.crates-io]`, only `minify-html`, path-only, with
+  owner + `Re-audit: 2026-10-01` + removal condition in both manifests.
+- Removal condition: delete the root `[patch.crates-io]` section and
+  `third-party/minify-html-compat/` as soon as an official minify-html
+  release eliminates the Oxc 0.95 / external bumpalo 3.19 path and passes
+  the parity corpus. Re-audit with the 2026-10-01 dependency review.

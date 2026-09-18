@@ -364,3 +364,20 @@ harness = false
 [[test]]
 name = "mesh_startup_rollback"
 required-features = ["mesh"]
+
+# Phase 39 (temporary): Oxc/bumpalo resolver unblock. `minify-html 0.18.1`
+# (crates.io) pins Oxc 0.95 -> `oxc_allocator 0.95 =bumpalo 3.19.0`, which
+# conflicts with modern Wasmtime (bumpalo ^3.20) required by current YARA-X.
+# This path patch redirects the single `minify-html` consumer
+# (`synvoid-static-files`) at workspace builds to the vendored manifest-only
+# compat fork in `third-party/minify-html-compat` (exact 0.18.1 `src/`, Oxc
+# 0.95 -> 0.111; Oxc 0.111 `oxc_allocator` has no external bumpalo edge).
+# No git source is introduced: `deny.toml` keeps `unknown-git = "deny"` with
+# zero allows. Owner: security / static-files. Added: 2026-09-18.
+# Re-audit: 2026-10-01. Removal condition: delete this section and
+# `third-party/minify-html-compat/` as soon as an official minify-html
+# release eliminates the Oxc 0.95 / external bumpalo 3.19 path and passes
+# `crates/synvoid-static-files/tests/minify_parity.rs`. This must remain the
+# only `[patch]` section in the workspace.
+[patch.crates-io]
+minify-html = { path = "third-party/minify-html-compat" }

@@ -52,8 +52,20 @@ Pinned tools: cargo-deny 0.20.2, cargo-audit 0.22.2
    per-advisory ignore is retained SOLELY for transitive 40.0.4, which arrives
    via `synvoid-yara` → `yara-x` 1.15 (YARA boundary only, not the WASM
    sandbox) and is closed by capability absence (`wasmtime-wasi` unreachable),
-   not a patch. The yara-x >=1.19 line (wasmtime >=43) upgrade is blocked by a
-   bumpalo conflict. Details in the baseline doc §4.
+   not a patch.
+   Phase 39 addendum: the `minify-html` side of the `bumpalo` conflict is
+   REMOVED via the temporary vendored compat fork
+   (`third-party/minify-html-compat/`, exact 0.18.1 `src/` + manifest-only
+   Oxc 0.95 -> 0.111, root `[patch.crates-io]` path override, no git source;
+   `minify_fork_is_temporary_guard` enforces single-patch + metadata +
+   removal condition). Post-fork: `oxc_allocator` 0.111.0, no
+   `minify-html -> bumpalo` edge; remaining `bumpalo` is cranelift/wasmtime
+   only. Parity corpus (`crates/synvoid-static-files/tests/minify_parity.rs`,
+   16 tests) is byte-identical before/after. The yara-x >=1.19 upgrade
+   (GHSA-2jx3-ff3v-j7jj fix) is now Phase 40 work (`linkme` feature removal
+   + lock float including the wasm-bindgen chain — NOT another minifier
+   change). Details in the baseline doc §10 (supersedes the §4 conflict
+   record for the minifier side).
    Phase 36 addendum: the yara-x >=1.19 upgrade (GHSA-2jx3-ff3v-j7jj fix) is
    blocked by the SAME conflict (wasmtime >=43 needs `bumpalo ^3.20.0`;
    `minify-html` 0.18.1 → `oxc_allocator` 0.95.0 pins `=3.19.0`; cargo cannot

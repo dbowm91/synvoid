@@ -322,7 +322,9 @@ paths recompile locally via `reload_with_rules`. A mesh version bump with no
 acceptable source retains the previous generation (fail-closed per upload
 policy). Wire compiled bytes are opaque metadata, never stored or
 deserialized (GHSA-2jx3-ff3v-j7jj has no remote path post-closure; the
-yara-x >=1.19 engine upgrade is bumpalo-blocked — see `SECURITY.md`).
+yara-x >=1.19 engine upgrade is Phase 40 work — the Phase 39 minifier/Oxc
+`bumpalo` blocker is removed, remaining items are the `linkme` feature
+removal + lock float — see `SECURITY.md`).
 
 ### Directory Loading Hardening
 

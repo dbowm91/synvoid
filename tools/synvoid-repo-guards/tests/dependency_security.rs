@@ -913,3 +913,129 @@ fn mesh_dns_test_imports_are_gated_or_declared() {
         violations.join("\n")
     );
 }
+
+// ---------------------------------------------------------------------------
+// minify_fork_is_temporary_guard (Phase 39 Part D)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn minify_fork_is_temporary_guard() {
+    // The vendored `minify-html` compat fork is a temporary Oxc/bumpalo
+    // resolver unblock, not a standing vendoring policy. This guard keeps it
+    // narrow: exactly one `[patch]`, only for `minify-html`, via a workspace
+    // path (no git source), with owner + re-audit + removal metadata in both
+    // the root manifest and the fork manifest, and byte-identical `src/` to
+    // upstream 0.18.1 except the manifest Oxc bump.
+    let root_manifest = read_repo("Cargo.toml");
+    let patch_sections = root_manifest
+        .lines()
+        .filter(|l| l.trim() == "[patch.crates-io]")
+        .count();
+    assert_eq!(
+        patch_sections, 1,
+        "workspace must carry exactly one [patch.crates-io] (the temporary minify-html fork); found {patch_sections}"
+    );
+    assert!(
+        root_manifest.contains("third-party/minify-html-compat"),
+        "root [patch.crates-io] must point at third-party/minify-html-compat"
+    );
+    // No git *dependency source* may appear: strip `#` comments first so prose
+    // like "`unknown-git = \"deny\"`" in the patch metadata cannot trip this.
+    let code_lines: Vec<String> = root_manifest
+        .lines()
+        .map(|l| l.split('#').next().unwrap_or("").to_string())
+        .collect();
+    let code = code_lines.join("\n");
+    assert!(
+        !code.contains("git ="),
+        "temporary minify-html fork must not introduce a git source (path patch only)"
+    );
+    for needle in [
+        "Phase 39",
+        "Re-audit: 2026-10-01",
+        "Removal condition",
+        "third-party/minify-html-compat",
+    ] {
+        assert!(
+            root_manifest.contains(needle),
+            "root manifest patch metadata must contain {needle:?}"
+        );
+    }
+
+    let fork_manifest = read_repo("third-party/minify-html-compat/Cargo.toml");
+    assert!(
+        fork_manifest.contains("name = \"minify-html\""),
+        "vendored fork must keep the upstream package name for [patch] override"
+    );
+    assert!(
+        fork_manifest.contains("version = \"0.18.1\""),
+        "vendored fork must keep version 0.18.1 to satisfy the \"0.18\" requirement"
+    );
+    for oxc in [
+        "oxc_allocator",
+        "oxc_codegen",
+        "oxc_minifier",
+        "oxc_parser",
+        "oxc_span",
+    ] {
+        assert!(
+            !fork_manifest.contains(&format!("{oxc} = \"0.95\""))
+                && !fork_manifest.contains(&format!("{oxc}=\"0.95\"")),
+            "vendored fork must not retain {oxc} 0.95"
+        );
+        assert!(
+            fork_manifest.contains(&format!("{oxc} = \"0.111\"")),
+            "vendored fork must pin {oxc} to 0.111"
+        );
+    }
+    for needle in [
+        "Owner:",
+        "Re-audit: 2026-10-01",
+        "Removal condition",
+        "wilsonzlin/minify-html",
+    ] {
+        assert!(
+            fork_manifest.contains(needle),
+            "fork manifest metadata must contain {needle:?}"
+        );
+    }
+
+    // No git source may appear anywhere for this fork (lock or manifests).
+    let lock = read_repo("Cargo.lock");
+    let mut in_minify = false;
+    for line in lock.lines() {
+        let t = line.trim();
+        if t == "[[package]]" {
+            in_minify = false;
+            continue;
+        }
+        if t == "name = \"minify-html\"" {
+            in_minify = true;
+            continue;
+        }
+        if t.starts_with("name = ") {
+            in_minify = false;
+            continue;
+        }
+        if in_minify && t.contains("git+") {
+            panic!("vendored minify-html lock entry must not have a git source: {t}");
+        }
+    }
+
+    // deny.toml source policy stays at zero git allows (check TOML code lines
+    // only: prose mentions of "allow-git" in comments must not trip this).
+    let deny = read_repo("deny.toml");
+    assert!(
+        deny.contains("unknown-git = \"deny\""),
+        "deny.toml must keep unknown-git = deny"
+    );
+    let deny_code: Vec<&str> = deny
+        .lines()
+        .filter(|l| !l.trim_start().starts_with('#'))
+        .collect();
+    let deny_code = deny_code.join("\n");
+    assert!(
+        !deny_code.contains("allow-git"),
+        "temporary path-patch fork must not add an allow-git exception"
+    );
+}
