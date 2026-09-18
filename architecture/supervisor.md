@@ -577,6 +577,14 @@ SharedConnectionTable::init_global(shm_path, max_workers, max_backends)
 SharedRateLimitTable::init_global(ratelimit_shm_path, IP_RATE_LIMIT_SLOTS)
 ```
 
+Phase 42 contract (`architecture/shared_memory_atomic_contract.md`):
+supervisor-owned creation truncates/sizes/header-writes (v1
+magic+version) and maps before workers spawn; files live under
+`PlatformPaths::runtime_dir` with fixed names (0700 dir, 0600 files,
+symlink/non-regular rejection). Workers never truncate — any future
+worker-side open uses validating `open_existing`. No worker opens these
+files today; unopened workers fall back to process-local counters.
+
 ## 7. gRPC Control API
 
 ### 7.1 Service Definition

@@ -303,17 +303,23 @@ constructor parameters, not named constants.
 
 ### SharedConnectionTable Layout (DOC-H19)
 
-The mmap-based `SharedConnectionTable` in `crates/synvoid-upstream/src/shared_state.rs` uses this layout:
+The mmap-based `SharedConnectionTable` in `crates/synvoid-upstream/src/shared_state.rs` uses this layout (Phase 42 v1 header; binding contract: `architecture/shared_memory_atomic_contract.md`):
 
 ```
-[0..8]:                              max_workers (u64)
-[8..16]:                             max_backends (u64)
-[16..16 + max_workers * 8]:          heartbeats (AtomicU64) [worker_id]
-[16 + max_workers * 8 ..]:           connections (AtomicUsize) [worker_id][backend_index]
+[0..4]:                              magic u32 ("SVCT")
+[4..8]:                              version u32 (1)
+[8..16]:                             max_workers (u64)
+[16..24]:                            max_backends (u64)
+[24..32]:                            reserved (u64, zero)
+[32..32 + max_workers * 8]:          heartbeats (AtomicU64) [worker_id]
+[32 + max_workers * 8 ..]:           connections (AtomicUsize) [worker_id][backend_index]
 ```
 
-The connections section starts at offset `16 + max_workers * 8`, NOT at `[N+1..]`.
+The connections section starts at offset `32 + max_workers * 8`, NOT at `[N+1..]`.
 Each worker has `max_backends` connection counters (one per backend).
+All offsets derive from the checked `ConnectionTableLayout` value type;
+rate-limit offsets likewise live in `RateLimitTableLayout` (no raw mmap
+exposure — typed counter slices only).
 
 ### CacheKey URI Hashing (DOC-H20)
 

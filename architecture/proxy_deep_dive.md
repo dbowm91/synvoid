@@ -145,9 +145,10 @@ Backend address management, load balancing algorithms, health checking, and dist
 - Supports HEAD, GET, and TCP health check methods
 - Configurable failure_threshold (3) and recovery_threshold (2)
 
-**`SharedConnectionTable`** (shared_state.rs:21-25)
+**`SharedConnectionTable`** (shared_state.rs; Phase 42 contract: `architecture/shared_memory_atomic_contract.md`)
 - mmap-based shared memory for cross-worker load balancing
-- Layout: [max_workers:u64][max_backends:u64][heartbeats:AtomicU64][connections:AtomicUsize]
+- Layout v1: [magic "SVCT":u32][version:u32][max_workers:u64][max_backends:u64][reserved:u64][heartbeats:AtomicU64][connections:AtomicUsize]
+- Checked `ConnectionTableLayout` / `RateLimitTableLayout` value types; typed counter slices, no raw mmap exposure
 - `record_heartbeat()` - Worker liveness signaling
 - `sum_active_connections()` - Aggregate connections across live workers (10s timeout)
 

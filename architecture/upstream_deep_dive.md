@@ -126,5 +126,6 @@ pub fn get_or_create_global_pool(backend_url: &str, algorithm: LoadBalanceAlgori
 | `Backend` | `crates/synvoid-upstream/src/pool.rs` | Individual backend |
 | `ConnectionGuard` | `crates/synvoid-upstream/src/pool.rs` | RAII connection guard |
 | `HealthChecker` | `crates/synvoid-upstream/src/health.rs` | Periodic health checks |
-| `SharedConnectionTable` | `crates/synvoid-upstream/src/shared_state.rs` | Cross-worker connection sharing |
+| `SharedConnectionTable` | `crates/synvoid-upstream/src/shared_state.rs` | Cross-worker connection sharing (Phase 42: checked `ConnectionTableLayout`, v1 headers, typed accessors; see `shared_memory_atomic_contract.md`) |
+| `SharedRateLimitTable` | `crates/synvoid-upstream/src/shared_state.rs` | Cross-worker rate-limit counters (typed slices, no raw mmap) |
 | `UpstreamAddress` | `crates/synvoid-upstream/src/address.rs` | Backend address |

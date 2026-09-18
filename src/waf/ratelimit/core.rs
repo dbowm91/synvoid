@@ -2,7 +2,6 @@ use crate::utils::ip_to_slot;
 use crate::RunningFlag;
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::sync::Arc;
 use std::time::Instant;
 use synvoid_rate_limit::{
     AtomicSlidingWindow, IpRateLimiter, RateLimitResult, RateLimitStats, RateLimitStatsProvider,
@@ -314,12 +313,26 @@ impl Default for IpRateLimitConfig {
 
 pub const IP_RATE_LIMIT_SLOTS: usize = 65536;
 
+/// Which counter region of a [`SharedRateLimitTable`] a [`CounterArray`] views.
+///
+/// Which counter region of a shared rate-limit table a [`CounterArray`] views.
+///
+/// Phase 42 (Workstream F): the root WAF composition no longer computes mmap
+/// offsets or holds raw mappings. Offsets live in the upstream crate's
+/// `RateLimitTableLayout`; this enum only selects the typed accessor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SharedCounterRegion {
+    Second,
+    Minute,
+    FiveMin,
+    Dirty,
+}
+
 pub enum CounterArray {
     Local(Box<[AtomicU32]>),
     Shared {
-        mmap: Arc<memmap2::MmapMut>,
-        offset: usize,
-        len: usize,
+        table: crate::upstream::shared_state::SharedRateLimitTable,
+        region: SharedCounterRegion,
     },
 }
 
@@ -327,28 +340,14 @@ impl CounterArray {
     pub fn get_slice(&self) -> &[AtomicU32] {
         match self {
             CounterArray::Local(b) => b,
-            CounterArray::Shared { mmap, offset, len } => {
-                let byte_len = match len.checked_mul(std::mem::size_of::<AtomicU32>()) {
-                    Some(v) => v,
-                    None => return &[],
-                };
-                let byte_end = match offset.checked_add(byte_len) {
-                    Some(v) => v,
-                    None => return &[],
-                };
-                if byte_end > mmap.len() {
-                    tracing::error!(
-                        "CounterArray::Shared out of bounds: offset={}, len={}, byte_end={}, mmap.len={}",
-                        offset,
-                        len,
-                        byte_end,
-                        mmap.len()
-                    );
-                    return &[];
-                }
-                let ptr = unsafe { mmap.as_ptr().add(*offset) } as *const AtomicU32;
-                unsafe { std::slice::from_raw_parts(ptr, *len) }
-            }
+            // No unsafe here: bounds/alignment are enforced inside the
+            // upstream crate's typed accessors.
+            CounterArray::Shared { table, region } => match region {
+                SharedCounterRegion::Second => table.second_counters(),
+                SharedCounterRegion::Minute => table.minute_counters(),
+                SharedCounterRegion::FiveMin => table.five_min_counters(),
+                SharedCounterRegion::Dirty => table.dirty_words(),
+            },
         }
     }
 }
@@ -402,28 +401,36 @@ impl SlottedIpRateLimiter {
         }
     }
 
-    /// Create a SlottedIpRateLimiter that uses shared memory buffers.
+    /// Create a SlottedIpRateLimiter backed by a shared-memory rate-limit table.
     ///
-    /// The buffers must have at least IP_RATE_LIMIT_SLOTS length (dirty_bits: IP_RATE_LIMIT_SLOTS / 32).
-    pub fn new_shared(config: IpRateLimitConfig, mmap: Arc<memmap2::MmapMut>) -> Self {
-        let num_slots = IP_RATE_LIMIT_SLOTS;
-        let c_size = num_slots * std::mem::size_of::<AtomicU32>();
-
+    /// Phase 42 (Workstream F): takes the typed [`SharedRateLimitTable`]
+    /// instead of a raw `MmapMut` so offset/layout invariants stay inside
+    /// `synvoid-upstream`. A slot-count mismatch fails closed to a
+    /// process-local limiter rather than misinterpreting the mapping.
+    pub fn from_shared_table(
+        config: IpRateLimitConfig,
+        table: crate::upstream::shared_state::SharedRateLimitTable,
+    ) -> Self {
+        if table.num_slots() != IP_RATE_LIMIT_SLOTS {
+            tracing::error!(
+                "SharedRateLimitTable slots {} != IP_RATE_LIMIT_SLOTS {}; using local counters",
+                table.num_slots(),
+                IP_RATE_LIMIT_SLOTS
+            );
+            return Self::new(config);
+        }
         Self {
             second_counters: CounterArray::Shared {
-                mmap: mmap.clone(),
-                offset: 0,
-                len: num_slots,
+                table: table.clone(),
+                region: SharedCounterRegion::Second,
             },
             minute_counters: CounterArray::Shared {
-                mmap: mmap.clone(),
-                offset: c_size,
-                len: num_slots,
+                table: table.clone(),
+                region: SharedCounterRegion::Minute,
             },
             five_min_counters: CounterArray::Shared {
-                mmap: mmap.clone(),
-                offset: c_size * 2,
-                len: num_slots,
+                table: table.clone(),
+                region: SharedCounterRegion::FiveMin,
             },
             config,
             current_second: AtomicU64::new(0),
@@ -431,9 +438,8 @@ impl SlottedIpRateLimiter {
             current_five_min: AtomicU64::new(0),
             start_instant: Instant::now(),
             dirty_bits: CounterArray::Shared {
-                mmap,
-                offset: c_size * 3,
-                len: num_slots / 32,
+                table,
+                region: SharedCounterRegion::Dirty,
             },
         }
     }

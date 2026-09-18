@@ -119,10 +119,16 @@ validate because they are callable without TOML:
 - `src/supervisor/process.rs`: `unified_server_workers.checked_add(10)`;
   overflow logs an error and skips table init instead of wrapping.
 - `synvoid-upstream` `SharedConnectionTable::new` /
-  `SharedRateLimitTable::new`: `checked_mul` / `checked_add` for
-  heartbeat/connection/counter sizes, `u64::try_from` before `set_len`,
-  explicit nonzero + upper bounds; offset getters use checked arithmetic
-  and return `None` on overflow.
+  `SharedRateLimitTable::new` (Phase 42: `ConnectionTableLayout` /
+  `RateLimitTableLayout`): `checked_mul` / `checked_add` (plus checked
+  ceil-division for dirty bits) for heartbeat/connection/counter sizes,
+  `u64::try_from` before `set_len`, explicit nonzero + upper bounds +
+  512 MiB mapping ceiling, release-mode alignment proofs; offset getters
+  reuse the layout object with checked arithmetic and return `None` on
+  overflow/misalignment. v1 magic+version headers; `open_existing`
+  validates without truncating; files are 0600 under a 0700 runtime dir
+  with symlink/non-regular rejection. Full contract:
+  `architecture/shared_memory_atomic_contract.md`.
 - `synvoid-ipc`: `worker_port_for_id(base, id)` (`checked_add`, u16
   range), `allocate_worker_id` saturates on overflow instead of wrapping,
   restart backoff uses `checked_mul`/`checked_pow` capped at

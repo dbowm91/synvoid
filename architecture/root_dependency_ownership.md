@@ -51,7 +51,7 @@ reference fails the guard until the row is reclassified with a reason.
 | dashmap | http_client, mesh | composition_runtime | default | Concurrent hash map for connection pools | keep | mesh, process, udp, waf, worker |
 | arc-swap | config, http_client | composition_runtime | default | Atomic Arc pointer swapping for hot config | keep | waf |
 | moka | — | remove_candidate | — | Phase 31: removed from root (0 src uses) | removed Phase 31 | — |
-| memmap2 | block_store | composition_runtime | default | Memory-mapped file I/O for block store | keep | waf |
+| memmap2 | — | remove_candidate | — | Phase 42: removed from root (0 src uses; mmap owned by synvoid-upstream) | removed Phase 42 | — |
 | metrics | metrics | composition_runtime | default | Metrics facade for observability | keep | admin, honeypot_port, http, icmp_filter, process, server, supervisor, tarpit, tcp, tls, udp, waf, worker |
 | metrics-exporter-prometheus | metrics | composition_runtime | default | Prometheus metrics endpoint | keep | admin |
 | http | http, http_client | composition_runtime | default | HTTP type definitions | keep | admin, honeypot_port, http, http_client, server, serverless, theme, tls, waf, worker |

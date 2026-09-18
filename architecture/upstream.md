@@ -115,21 +115,49 @@ ConnectionCounter
 
 ### 2.4 shared_state.rs - Cross-Process State Sharing
 
-Memory-mapped shared tables for multi-worker load balancing:
+Memory-mapped shared tables for multi-worker load balancing (Phase 42
+hardened unsafe boundary; binding contract:
+`architecture/shared_memory_atomic_contract.md`):
 
-**SharedConnectionTable layout**:
+**SharedConnectionTable layout (v1, magic "SVCT")**:
 ```
-[0..8]:                              max_workers (u64)
-[8..16]:                             max_backends (u64)
-[16..16 + max_workers * 8]:          heartbeats (AtomicU64) [worker_id]
-[16 + max_workers * 8 ..]:           connections (AtomicUsize) [worker_id][backend_index]
+[0..4]:                              magic u32 ("SVCT")
+[4..8]:                              version u32 (1)
+[8..16]:                             max_workers (u64)
+[16..24]:                            max_backends (u64)
+[24..32]:                            reserved (u64, zero)
+[32..32 + max_workers * 8]:          heartbeats (AtomicU64) [worker_id]
+[32 + max_workers * 8 ..]:           connections (AtomicUsize) [worker_id][backend_index]
 ```
 
-- Uses `memmap2::MmapMut` for persistent shared memory
+**SharedRateLimitTable layout (v1, magic "SVRL")**:
+```
+[0..4]:                              magic u32 ("SVRL")
+[4..8]:                              version u32 (1)
+[8..16]:                             num_slots (u64)
+[16..16 + N*4]:                      second counters (AtomicU32)
+[.. + N*4]:                          minute counters
+[.. + N*4]:                          five-minute counters
+[.. + ceil(N/32)*4]:                 dirty-bit words (AtomicU32)
+```
+
+- Uses `memmap2::MmapMut` (shared, writable) for cross-process tables
+- All size/offset math lives in checked `ConnectionTableLayout` /
+  `RateLimitTableLayout` value types (checked arithmetic, bounds, 512 MiB
+  ceiling, release-mode alignment proofs); invalid dimensions return
+  `InvalidInput`, never panic
+- Supervisor-owned creation (`new` truncates before workers spawn);
+  `open_existing` validates magic/version/dimensions/length without
+  truncating (no worker opens these files today — workers without an open
+  fall back to process-local counters)
+- Files live under `PlatformPaths::runtime_dir` with fixed names, parent
+  `SecureDir` (0700), symlink/non-regular rejection (`O_NOFOLLOW` on Unix),
+  mode `0600`
+- Raw `MmapMut` is not exposed: rate-limit consumers use typed
+  `second/minute/five_min_counters()` + `dirty_words()` slices; root WAF
+  `SlottedIpRateLimiter::from_shared_table` replaces `new_shared(mmap)`
 - Heartbeat timeout: 10 seconds (workers not updating heartbeat are considered dead)
 - `sum_active_connections()` filters by heartbeat liveness before summing
-
-**SharedRateLimitTable**: Cross-worker IP rate limiting (second/minute/5min counters)
 
 **Global initialization**:
 - `SharedConnectionTable::init_global(path, max_workers, max_backends)`

@@ -55,7 +55,7 @@ Crates must be published in this exact order. Each crate's path dependencies mus
 | 14 | `synvoid-plugin-runtime` | synvoid-utils |
 | 15 | `synvoid-integrity` | pqc |
 | 16 | `synvoid-geoip` | synvoid-config, synvoid-http-client |
-| 17 | `synvoid-upstream` | synvoid-utils, synvoid-config, synvoid-http-client |
+| 17 | `synvoid-upstream` | synvoid-utils, synvoid-config, synvoid-http-client, synvoid-platform (Phase 42 shm file hardening) |
 | 18 | `synvoid-proxy` | synvoid-core, synvoid-config, synvoid-http-client, synvoid-upstream, synvoid-proxy-cache, synvoid-waf, synvoid-utils, synvoid-static-files, synvoid-plugin-runtime, synvoid-platform, synvoid-metrics |
 | 19 | `synvoid-tunnel` | synvoid-config, synvoid-upstream, synvoid-utils |
 | 20 | `synvoid-mesh` | synvoid-core, synvoid-config, synvoid-utils, synvoid-integrity, synvoid-geoip, synvoid-tls, synvoid-tunnel, synvoid-proxy, synvoid-proxy-cache, synvoid-serverless, synvoid-mesh-protocol, synvoid-platform, synvoid-rate-limit, pqc |

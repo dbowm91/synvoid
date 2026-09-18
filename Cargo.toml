@@ -102,7 +102,7 @@ parking_lot = "0.12"
 dashmap = "7.0.0-rc2"
 arc-swap = "1"
 # moka: Phase 31 removed; 0 root src uses (canonical use in domain crates)
-memmap2 = "0.9"
+# memmap2: Phase 42 removed; 0 root src uses (mmap owned by synvoid-upstream)
 metrics = "0.22"
 metrics-exporter-prometheus = "0.18"
 http = "1"
