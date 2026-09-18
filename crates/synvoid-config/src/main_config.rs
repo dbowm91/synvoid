@@ -142,6 +142,79 @@ pub struct MainConfig {
     pub honeypot_port: HoneypotPortConfig,
 }
 
+/// Compile-time capability set for fail-closed config preflight (Phase 41).
+///
+/// Each flag records whether the current binary was built with the
+/// corresponding Cargo feature. The raw-TOML preflight rejects
+/// capability-bearing sections when the feature is absent, so operators
+/// cannot request a capability the binary silently ignores.
+#[derive(Debug, Clone, Copy)]
+pub struct CompiledCapabilities {
+    pub dns: bool,
+    pub mesh: bool,
+    pub icmp_filter: bool,
+}
+
+impl CompiledCapabilities {
+    pub fn current() -> Self {
+        Self {
+            dns: cfg!(feature = "dns"),
+            mesh: cfg!(feature = "mesh"),
+            icmp_filter: cfg!(feature = "icmp-filter"),
+        }
+    }
+}
+
+/// Feature-independent preflight over the raw TOML (Phase 41).
+///
+/// Inspects only capability-bearing keys whose silent omission is
+/// security/operationally meaningful:
+/// - top-level `[dns]`
+/// - top-level `[mesh]`
+/// - nested `[tunnel.mesh]`
+/// - top-level `[icmp_filter]`
+///
+/// Any presence (even an inert table with only `enabled = false`) is
+/// rejected when the corresponding feature is absent: the binary did not
+/// understand the section, and accepting it would let operators believe
+/// otherwise. Absent sections are always accepted. Comments are ignored by
+/// construction (they never appear in `toml::Value`).
+pub fn validate_config_capability_presence(
+    raw: &toml::Value,
+    compiled: CompiledCapabilities,
+) -> Result<(), ConfigValidationError> {
+    use super::validation::ConfigValidationError;
+
+    let has_top = |key: &str| raw.get(key).is_some();
+    let has_tunnel_mesh = raw.get("tunnel").and_then(|t| t.get("mesh")).is_some();
+
+    if has_top("dns") && !compiled.dns {
+        return Err(ConfigValidationError {
+            field: "dns".to_string(),
+            message: "dns: configuration is present but this binary was built without the 'dns' feature. Rebuild with `--features dns` or remove the [dns] section.".to_string(),
+        });
+    }
+    if has_top("mesh") && !compiled.mesh {
+        return Err(ConfigValidationError {
+            field: "mesh".to_string(),
+            message: "mesh: configuration is present but this binary was built without the 'mesh' feature. Rebuild with `--features mesh` or remove the [mesh] section.".to_string(),
+        });
+    }
+    if has_tunnel_mesh && !compiled.mesh {
+        return Err(ConfigValidationError {
+            field: "tunnel.mesh".to_string(),
+            message: "tunnel.mesh: configuration is present but this binary was built without the 'mesh' feature. Rebuild with `--features mesh` or remove the [tunnel.mesh] section.".to_string(),
+        });
+    }
+    if has_top("icmp_filter") && !compiled.icmp_filter {
+        return Err(ConfigValidationError {
+            field: "icmp_filter".to_string(),
+            message: "icmp_filter: configuration is present but this binary was built without the 'icmp-filter' feature. Rebuild with `--features icmp-filter` or remove the [icmp_filter] section.".to_string(),
+        });
+    }
+    Ok(())
+}
+
 impl MainConfig {
     /// Parse and validate a main config from a TOML string.
     ///
@@ -152,7 +225,12 @@ impl MainConfig {
     /// `SYNVOID_ADMIN_TOKEN` environment variable or generate an ephemeral
     /// token, exactly as file loads do). Operator side-effects that require
     /// the filesystem (mesh key/identity loading) live in `from_file` only.
+    ///
+    /// Order (Phase 41): raw TOML parse → capability preflight → typed
+    /// deserialization → typed validation.
     pub fn from_toml_str(input: &str) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        let raw: toml::Value = toml::from_str(input)?;
+        validate_config_capability_presence(&raw, CompiledCapabilities::current())?;
         let config: MainConfig = toml::from_str(input)?;
         config.validate()?;
         Ok(config)
@@ -203,26 +281,70 @@ impl MainConfig {
         self.admin.validate()?;
         self.defaults.validate()?;
         self.tunnel.validate()?;
+        // Phase 41: process/supervisor capacities are operator-reachable and
+        // feed derived runtime capacities. Validate before use.
+        self.process_manager.validate().map_err(|e| {
+            // Prefix with the owning section when the inner validator used a
+            // short field path (defense: keep exact config paths).
+            if e.field.starts_with("process_manager.") {
+                e
+            } else {
+                ConfigValidationError {
+                    field: format!("process_manager.{}", e.field),
+                    message: e.message,
+                }
+            }
+        })?;
+        self.supervisor.validate().map_err(|e| {
+            if e.field.starts_with("supervisor") {
+                e
+            } else {
+                ConfigValidationError {
+                    field: format!("supervisor.{}", e.field),
+                    message: e.message,
+                }
+            }
+        })?;
+        self.supervisor_compat.validate().map_err(|e| {
+            let suffix = e
+                .field
+                .strip_prefix("supervisor.")
+                .unwrap_or(e.field.as_str());
+            ConfigValidationError {
+                field: format!("supervisor_compat.{suffix}"),
+                message: e.message,
+            }
+        })?;
 
         #[cfg(feature = "dns")]
-        {
-            if self.dns.enabled && !cfg!(feature = "dns") {
-                return Err(ConfigValidationError {
-                    field: "dns.enabled".to_string(),
-                    message: "DNS server configured but binary built without `dns` feature. Rebuild with `--features dns`.".to_string(),
-                });
-            }
-            if self.dns.enabled {
-                self.dns.validate()?;
-            }
+        if self.dns.enabled {
+            self.dns.validate()?;
         }
 
+        #[cfg(feature = "icmp-filter")]
+        if self.icmp_filter.enabled {
+            self.icmp_filter
+                .validate()
+                .map_err(|message| ConfigValidationError {
+                    field: "icmp_filter".to_string(),
+                    message,
+                })?;
+        }
+
+        // Mesh supervision truthfulness (Phase 41): reject
+        // `restart_enabled = true` and non-default restart tuning before
+        // runtime composition. Both mesh locations are validated; the
+        // preflight above already rejected any mesh section when the feature
+        // is absent, so typed validation only runs when the feature exists.
         #[cfg(feature = "mesh")]
-        if self.mesh.is_some() && !cfg!(feature = "mesh") {
-            return Err(ConfigValidationError {
-                field: "mesh".to_string(),
-                message: "Mesh configured but binary built without `mesh` feature. Rebuild with `--features mesh`.".to_string(),
-            });
+        {
+            if let Some(ref mesh) = self.mesh {
+                mesh.validate().map_err(|e| ConfigValidationError {
+                    field: format!("mesh.{}", e.field.trim_start_matches("mesh.")),
+                    message: e.message,
+                })?;
+            }
+            // `tunnel.validate()` already validates `tunnel.mesh` supervision.
         }
 
         Ok(())
@@ -350,5 +472,146 @@ mod tests {
         let via_file = MainConfig::from_file(&path).expect("from_file must succeed");
         let via_str = MainConfig::from_toml_str(&text).expect("from_toml_str must succeed");
         assert_eq!(via_file.server.port, via_str.server.port);
+    }
+
+    // ---- Phase 41: fail-closed capability preflight ----
+
+    #[test]
+    #[cfg(not(feature = "dns"))]
+    fn minimal_binary_rejects_dns_section() {
+        let mut text = valid_toml();
+        text.push_str("\n[dns]\nenabled = true\n");
+        let err = MainConfig::from_toml_str(&text).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("dns"), "expected dns path, got: {msg}");
+        assert!(msg.contains("without the 'dns' feature"), "got: {msg}");
+    }
+
+    #[test]
+    #[cfg(not(feature = "mesh"))]
+    fn minimal_binary_rejects_top_level_mesh() {
+        let mut text = valid_toml();
+        text.push_str("\n[mesh]\nenabled = true\n");
+        let err = MainConfig::from_toml_str(&text).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("mesh"), "expected mesh path, got: {msg}");
+        assert!(msg.contains("without the 'mesh' feature"), "got: {msg}");
+    }
+
+    #[test]
+    #[cfg(not(feature = "mesh"))]
+    fn minimal_binary_rejects_tunnel_mesh() {
+        let mut text = valid_toml();
+        text.push_str("\n[tunnel.mesh]\nenabled = true\n");
+        let err = MainConfig::from_toml_str(&text).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("tunnel.mesh"),
+            "expected tunnel.mesh path, got: {msg}"
+        );
+    }
+
+    #[test]
+    #[cfg(not(feature = "icmp-filter"))]
+    fn minimal_binary_rejects_icmp_filter_section() {
+        let mut text = valid_toml();
+        text.push_str("\n[icmp_filter]\nenabled = true\n");
+        let err = MainConfig::from_toml_str(&text).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("icmp_filter"),
+            "expected icmp_filter path, got: {msg}"
+        );
+        assert!(
+            msg.contains("without the 'icmp-filter' feature"),
+            "got: {msg}"
+        );
+    }
+
+    #[test]
+    #[cfg(not(feature = "mesh"))]
+    fn minimal_binary_rejects_inert_disabled_mesh() {
+        // Even an inert table with only `enabled = false` is rejected: the
+        // binary did not understand the section.
+        let mut text = valid_toml();
+        text.push_str("\n[mesh]\nenabled = false\n");
+        assert!(MainConfig::from_toml_str(&text).is_err());
+    }
+
+    #[test]
+    fn unknown_keys_outside_capability_sections_remain_ignored() {
+        // This phase deliberately does not add global deny_unknown_fields.
+        // A top-level unknown key must stay ignored (not a duplicate table).
+        let mut text = valid_toml();
+        text.push_str("\ntypo_field_should_stay_ignored = 1\n");
+        let parsed = MainConfig::from_toml_str(&text).expect("unknown keys must stay ignored");
+        assert_eq!(parsed.server.port, 8080);
+    }
+
+    #[test]
+    #[cfg(feature = "dns")]
+    fn dns_build_accepts_valid_dns_config() {
+        let mut cfg = MainConfig::default_config();
+        cfg.admin.token = TEST_TOKEN.to_string();
+        cfg.admin.token_env_var = None;
+        cfg.dns.enabled = true;
+        let text = toml::to_string(&cfg).expect("must serialize");
+        let parsed = MainConfig::from_toml_str(&text).expect("valid DNS must parse");
+        assert!(parsed.dns.enabled);
+    }
+
+    #[test]
+    #[cfg(feature = "mesh")]
+    fn mesh_build_accepts_valid_mesh_and_rejects_restart() {
+        let mut cfg = MainConfig::default_config();
+        cfg.admin.token = TEST_TOKEN.to_string();
+        cfg.admin.token_env_var = None;
+        cfg.mesh = Some(crate::MeshConfig {
+            enabled: true,
+            ..Default::default()
+        });
+        let text = toml::to_string(&cfg).expect("must serialize");
+        let parsed = MainConfig::from_toml_str(&text).expect("valid mesh must parse");
+        assert!(parsed.mesh.as_ref().unwrap().enabled);
+
+        // restart_enabled = true must fail before runtime composition.
+        let mut bad = MainConfig::default_config();
+        bad.admin.token = TEST_TOKEN.to_string();
+        bad.admin.token_env_var = None;
+        let mut bad_mesh = crate::MeshConfig {
+            enabled: true,
+            ..Default::default()
+        };
+        bad_mesh.supervision.restart_enabled = true;
+        bad.mesh = Some(bad_mesh);
+        let bad_text = toml::to_string(&bad).expect("must serialize");
+        let err = MainConfig::from_toml_str(&bad_text).unwrap_err();
+        assert!(
+            err.to_string().contains("restart_enabled"),
+            "expected restart rejection, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn invalid_process_settings_fail_validation_without_panic() {
+        let mut cfg = MainConfig::default_config();
+        cfg.admin.token = TEST_TOKEN.to_string();
+        cfg.admin.token_env_var = None;
+        cfg.process_manager.min_workers = 10;
+        cfg.process_manager.max_workers = 2;
+        assert!(cfg.validate().is_err());
+
+        let mut overflow = MainConfig::default_config();
+        overflow.admin.token = TEST_TOKEN.to_string();
+        overflow.admin.token_env_var = None;
+        overflow.process_manager.unified_server_workers = usize::MAX;
+        assert!(overflow.validate().is_err());
+
+        let mut zero = MainConfig::default_config();
+        zero.admin.token = TEST_TOKEN.to_string();
+        zero.admin.token_env_var = None;
+        zero.process_manager.unified_server_workers = 0;
+        assert!(zero.validate().is_err());
     }
 }

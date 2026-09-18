@@ -46,7 +46,10 @@ Use this skill when:
    in the appropriate registry class.
 3. **Exit policy**: derive exit codes from `WorkerShutdownCause::exit_code()`; no other
    module may call `std::process::exit()`.
-4. **Mesh restart is disabled** in production policy (`restart_enabled = true` is rejected);
+4. **Mesh restart is disabled and rejected fail-closed** (Phase 41):
+   `restart_enabled = true` and non-default restart tuning are rejected by
+   `MeshSupervisionConfig::validate()` during `MainConfig::validate()`,
+   before task construction (`architecture/config_feature_contract.md`);
    map stray `RestartMesh` decisions to `MeshRestartExhausted`.
 5. Request dispatch must not import worker lifecycle modules or `UnifiedServerWorkerState`
    (guard: `tests/http_request_pipeline_boundary_guard.rs`).

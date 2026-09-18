@@ -41,6 +41,28 @@ impl SharedConnectionTable {
     }
 
     pub fn new(path: PathBuf, max_workers: usize, max_backends: usize) -> std::io::Result<Self> {
+        // Phase 41: checked derivations — constructors are callable without
+        // TOML, so config validation alone is insufficient. Fail closed on
+        // overflow instead of wrapping into a smaller mmap.
+        if max_workers == 0 || max_backends == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "SharedConnectionTable requires nonzero max_workers and max_backends",
+            ));
+        }
+        // Bound derived capacities even when constructed outside config
+        // parsing (process validation caps unified workers at 256, but this
+        // constructor must still fail closed on unbounded inputs).
+        const MAX_TABLE_WORKERS: usize = 4096;
+        const MAX_TABLE_BACKENDS: usize = 8192;
+        if max_workers > MAX_TABLE_WORKERS || max_backends > MAX_TABLE_BACKENDS {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "SharedConnectionTable capacities exceed bounds ({MAX_TABLE_WORKERS} workers, {MAX_TABLE_BACKENDS} backends)"
+                ),
+            ));
+        }
         let file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -48,12 +70,39 @@ impl SharedConnectionTable {
             .truncate(true)
             .open(&path)?;
 
-        let header_size = 16;
-        let heartbeats_size = max_workers * 8;
-        let connections_size = max_workers * max_backends * std::mem::size_of::<AtomicUsize>();
-        let total_size = header_size + heartbeats_size + connections_size;
+        let header_size: usize = 16;
+        let heartbeats_size = max_workers.checked_mul(8).ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "SharedConnectionTable heartbeats size overflow",
+            )
+        })?;
+        let connections_size = max_workers
+            .checked_mul(max_backends)
+            .and_then(|v| v.checked_mul(std::mem::size_of::<AtomicUsize>()))
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "SharedConnectionTable connections size overflow",
+                )
+            })?;
+        let total_size = header_size
+            .checked_add(heartbeats_size)
+            .and_then(|v| v.checked_add(connections_size))
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "SharedConnectionTable total size overflow",
+                )
+            })?;
+        let total_u64 = u64::try_from(total_size).map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "SharedConnectionTable total size exceeds u64",
+            )
+        })?;
 
-        file.set_len(total_size as u64)?;
+        file.set_len(total_u64)?;
 
         let mmap = unsafe { MmapOptions::new().map_mut(&file)? };
 
@@ -96,7 +145,7 @@ impl SharedConnectionTable {
         if worker_id >= self.max_workers {
             return None;
         }
-        let offset = 16 + worker_id * 8;
+        let offset = 16usize.checked_add(worker_id.checked_mul(8)?)?;
         debug_assert_eq!(offset % std::mem::align_of::<AtomicU64>(), 0);
         let ptr = unsafe { self.mmap.as_ptr().add(offset) } as *const AtomicU64;
         debug_assert!((ptr as usize).is_multiple_of(std::mem::align_of::<AtomicU64>()));
@@ -111,9 +160,17 @@ impl SharedConnectionTable {
         if worker_id >= self.max_workers || backend_index >= self.max_backends {
             return None;
         }
-        let offset = 16
-            + self.max_workers * 8
-            + (worker_id * self.max_backends + backend_index) * std::mem::size_of::<AtomicUsize>();
+        let offset = 16usize
+            .checked_add(self.max_workers.checked_mul(8)?)?
+            .checked_add(
+                worker_id
+                    .checked_mul(self.max_backends)?
+                    .checked_add(backend_index)?
+                    .checked_mul(std::mem::size_of::<AtomicUsize>())?,
+            )?;
+        if offset.checked_add(std::mem::size_of::<AtomicUsize>())? > self.mmap.len() {
+            return None;
+        }
         debug_assert_eq!(offset % std::mem::align_of::<AtomicUsize>(), 0);
         let ptr = unsafe { self.mmap.as_ptr().add(offset) } as *const AtomicUsize;
         debug_assert!((ptr as usize).is_multiple_of(std::mem::align_of::<AtomicUsize>()));
@@ -185,6 +242,20 @@ impl SharedRateLimitTable {
     }
 
     pub fn new(path: PathBuf, num_slots: usize) -> std::io::Result<Self> {
+        // Phase 41: checked derivations — fail closed on overflow.
+        if num_slots == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "SharedRateLimitTable requires nonzero num_slots",
+            ));
+        }
+        const MAX_SLOTS: usize = 1 << 24;
+        if num_slots > MAX_SLOTS {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("SharedRateLimitTable slots exceed bound {MAX_SLOTS}"),
+            ));
+        }
         let file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -192,11 +263,40 @@ impl SharedRateLimitTable {
             .truncate(true)
             .open(&path)?;
 
-        let counter_size = num_slots * std::mem::size_of::<AtomicU32>();
-        let dirty_bits_size = num_slots.div_ceil(32) * std::mem::size_of::<AtomicU32>();
-        let total_size = (counter_size * 3) + dirty_bits_size;
+        let counter_size = num_slots
+            .checked_mul(std::mem::size_of::<AtomicU32>())
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "SharedRateLimitTable counter size overflow",
+                )
+            })?;
+        let dirty_bits_size = num_slots
+            .div_ceil(32)
+            .checked_mul(std::mem::size_of::<AtomicU32>())
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "SharedRateLimitTable dirty-bits size overflow",
+                )
+            })?;
+        let total_size = counter_size
+            .checked_mul(3)
+            .and_then(|v| v.checked_add(dirty_bits_size))
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "SharedRateLimitTable total size overflow",
+                )
+            })?;
+        let total_u64 = u64::try_from(total_size).map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "SharedRateLimitTable total size exceeds u64",
+            )
+        })?;
 
-        file.set_len(total_size as u64)?;
+        file.set_len(total_u64)?;
 
         let mmap = unsafe { MmapOptions::new().map_mut(&file)? };
 

@@ -324,9 +324,14 @@ Provides abstraction over serialization with **postcard** as the primary backend
 
 4. **Tiered Buffer Pool**: Multi-level caching (TLS → Shard Arena → Fresh Allocation) with memory limits.
 
-### Validation Sequence (MainConfig::validate())
+### Validation Sequence (MainConfig::from_toml_str() + validate(), Phase 41)
 
-The `MainConfig::validate()` at `crates/synvoid-config/src/main_config.rs:181-214` calls validators in this specific order:
+`MainConfig::from_toml_str()` is the canonical seam: raw TOML parse →
+`validate_config_capability_presence()` preflight → typed deserialization →
+`MainConfig::validate()`. Binding contract:
+`architecture/config_feature_contract.md`.
+
+`MainConfig::validate()` calls validators in this order:
 
 1. **`server.validate()`** - Server bind address, trusted proxies
 2. **`http.validate()`** - HTTP protocol limits
@@ -336,11 +341,17 @@ The `MainConfig::validate()` at `crates/synvoid-config/src/main_config.rs:181-21
 6. **`logging.validate()`** - Log exporter settings
 7. **`admin.validate()`** - Admin API configuration (token, CORS, rate limits)
 8. **`defaults.validate()`** - Default behaviors (rate limits, bot, honeypot)
-9. **`tunnel.validate()`** - Tunnel configuration (WireGuard, QUIC)
-10. **`dns.validate()`** - DNS server config (if `dns` feature enabled and `dns.enabled=true`)
-11. **Feature gate check** - Fails if `mesh.is_some()` but `mesh` feature not compiled
+9. **`tunnel.validate()`** - Tunnel configuration (WireGuard, QUIC, plus `tunnel.mesh` supervision on mesh builds)
+10. **`process_manager.validate()`** - Worker capacities, restart/timeout bounds, controladdr, port range (Phase 41)
+11. **`supervisor.validate()` + `supervisor_compat.validate()`** - Scale thresholds, cooldowns, control addr (Phase 41)
+12. **`dns.validate()`** - DNS server config (only on `dns` builds and when `dns.enabled=true`)
+13. **`icmp_filter.validate()`** - ICMP config (only on `icmp-filter` builds and when enabled)
+14. **top-level `mesh` supervision** - `restart_enabled`/tuning rejection (only on `mesh` builds)
 
-**Note:** DNS validation only runs if both the `dns` feature is enabled AND `dns.enabled=true`. Mesh configuration fails validation if the `mesh` feature is not compiled (even if `mesh=None`).
+**Note:** Absent-feature rejection happens in the raw preflight before typed
+validation (any present `[dns]`/`[mesh]`/`[tunnel.mesh]`/`[icmp_filter]`
+with the feature absent is a hard error, even if `enabled = false`). Typed
+validation only runs when the feature exists.
 
 ### Hot Reload Examples
 

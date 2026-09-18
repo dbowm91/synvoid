@@ -560,6 +560,41 @@ ports = [3306]
 upstream_format = "127.0.0.1:{port}"
 ```
 
+## Process Management
+
+```toml
+[process_manager]
+min_workers = 2
+max_workers = 16
+unified_server_workers = 1
+```
+
+Bounds (fail-closed, Phase 41 — see `architecture/config_feature_contract.md`):
+
+- Legacy pool: `min_workers`/`max_workers` `1..=1024`, `min <= max`.
+- Data-plane pool: `unified_server_workers` `1..=256`, independent of
+  `max_workers` (separate `workers` vs `unified_server_workers` pools).
+- `pre_spawn_workers` / `warm_workers_target` must not exceed `max_workers`.
+- Timeouts: second-granularity `1..=86400`; `restart_backoff_max_secs >=
+  restart_cooldown_secs`; `control_api_addr` must parse as `host:port`.
+- `worker_port_base + max_workers` must stay in u16 port range.
+- Admin `PUT /config/process-manager` and `PUT /config/supervisor` validate
+  and return 400 on invalid settings (never silently persist).
+
+## Capability-gated sections (fail-closed)
+
+Reduced-feature binaries reject sections they were not built with, even when
+`enabled = false` (previously silently ignored):
+
+- `[dns]` requires `--features dns`
+- `[mesh]` and `[tunnel.mesh]` require `--features mesh`
+- `[icmp_filter]` requires `--features icmp-filter`
+
+Rebuild with the named feature or remove the unsupported section. Mesh
+`[mesh.supervision]` / `[tunnel.mesh.supervision]` additionally rejects
+`restart_enabled = true` and any non-default restart tuning (restart is not
+implemented).
+
 ## CPU Offload IPC Pool Environment Overrides
 
 These environment variables control bounded async IPC offload concurrency for CPU-task clients (`AsyncMinifierClient` and `ImageRightsClient`):

@@ -209,7 +209,7 @@ Root-owned orchestration code (see [`root_module_ledger.md`](./root_module_ledge
 
 | Component | Crate(s) | Purpose | Doc |
 |-----------|----------|---------|-----|
-| **Configuration** | `synvoid-config` | Strongly-typed TOML config (`main.toml` + `sites/`), validation, reload, theme/mesh/site/protection sections | [`config.md`](./config.md) · [`config_deep_dive.md`](./config_deep_dive.md) · [`dns_config_runtime_matrix.md`](./dns_config_runtime_matrix.md) |
+| **Configuration** | `synvoid-config` | Strongly-typed TOML config (`main.toml` + `sites/`), validation, reload, theme/mesh/site/protection sections | [`config.md`](./config.md) · [`config_deep_dive.md`](./config_deep_dive.md) · [`dns_config_runtime_matrix.md`](./dns_config_runtime_matrix.md) · [`config_feature_contract.md`](./config_feature_contract.md) |
 | **Core Types** | `synvoid-core` | Dependency-light shared types: admin mutation authority, provenance kinds, verdicts, time, URL utils | [`core_types.md`](./core_types.md) |
 | **Utils** | `synvoid-utils` | Sharded buffer pool, ArcStr, RunningFlag/DrainFlag, safe timestamps, ReDoS checks | [`utils.md`](./utils.md) |
 | **Common** | `src/common/` | Panic handler + shared runtime glue | [`common.md`](./common.md) |

@@ -260,3 +260,9 @@ name = "facade_disposition_guard"
 class = "static_policy"
 owners = []
 reason = "validates Phase 03 facade disposition (removed paths stay removed, pure facades stay thin, adapters stay documented)"
+
+[[test]]
+name = "config_capability_preflight_guard"
+class = "static_policy"
+owners = ["synvoid-config"]
+reason = "validates Phase 41 fail-closed config capability preflight (new feature-gated fields must join matrix/preflight, checked derivations, mesh restart truthfulness)"

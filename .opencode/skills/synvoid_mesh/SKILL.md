@@ -966,7 +966,14 @@ pub fn build_mesh_supervision_policy(
 ) -> Result<Option<MeshSupervisionPolicy>, String>
 ```
 
-Restart is disabled by default: `restart_enabled=false` → `restart_limit=0`. `MeshFailureAction::RestartMesh` is treated as `ShutdownWorker` when restart is not enabled.
+Restart is disabled and rejected fail-closed (Phase 41): `restart_enabled=true`
+is rejected by `MeshSupervisionConfig::validate()` during `MainConfig::validate()`,
+before task construction; `build_mesh_supervision_policy()` surfaces the same
+rejection as defense-in-depth. Non-default restart tuning while restart is disabled
+is likewise rejected (staged-future contract; see
+`architecture/config_feature_contract.md`). `restart_enabled=false` →
+`restart_limit=0`. `MeshFailureAction::RestartMesh` is treated as `ShutdownWorker`
+when restart is not enabled.
 
 ### Required vs Optional Startup (Iteration 84)
 

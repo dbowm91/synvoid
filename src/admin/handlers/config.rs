@@ -688,6 +688,23 @@ pub async fn update_process_manager_config(
     )
     .await?;
 
+    // Phase 41: fail closed before any dynamic mutation or file write.
+    // Validate the candidate section and the full config first so an
+    // invalid process update cannot persist or partially apply.
+    req.config.validate().map_err(|e| {
+        tracing::error!("Process manager config validation failed: {}", e);
+        StatusCode::BAD_REQUEST
+    })?;
+    {
+        let config = state.process.config.read().await;
+        let mut candidate = config.main.clone();
+        candidate.process_manager = req.config.clone();
+        candidate.validate().map_err(|e| {
+            tracing::error!("Config validation failed: {}", e);
+            StatusCode::BAD_REQUEST
+        })?;
+    }
+
     let needs_restart = if let Some(ref pm) = state.process.process_manager {
         match pm.update_config(req.config.clone()) {
             Ok(restart_needed) => {
@@ -696,7 +713,7 @@ pub async fn update_process_manager_config(
             }
             Err(e) => {
                 tracing::error!("Failed to update process manager config: {}", e);
-                return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                return Err(StatusCode::BAD_REQUEST);
             }
         }
     } else {

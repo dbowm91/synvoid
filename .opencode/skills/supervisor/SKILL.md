@@ -49,6 +49,12 @@ Use this skill when:
 3. **Config path**: `--config-path` takes the DIRECTORY containing `main.toml` + `sites/`.
 4. The legacy `BaseWorkerProcess` (`crates/synvoid-ipc/src/worker.rs`) is retained for non-HTTP
    legacy paths; HTTP serving happens exclusively in UnifiedServerWorker.
+5. **Phase 41 fail-closed process bounds**: `unified_server_workers` (`1..=256`)
+   is independent of legacy `min/max_workers` (`1..=1024`); warm/pre-spawn
+   `<= max_workers`; derived capacities use `checked_add`/`checked_mul`
+   (`worker_port_for_id`, `checked_restart_backoff`, shm constructors);
+   `MainConfig::validate()` + `ProcessManager::update_config()` reject
+   invalid process settings (admin mutation returns 400).
 
 ## Verification
 

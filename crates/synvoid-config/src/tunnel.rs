@@ -38,6 +38,13 @@ impl TunnelConfig {
         if self.quic.enabled {
             self.quic.validate()?;
         }
+        #[cfg(feature = "mesh")]
+        if let Some(ref mesh) = self.mesh {
+            mesh.validate().map_err(|e| ConfigValidationError {
+                field: format!("tunnel.mesh.{}", e.field.trim_start_matches("mesh.")),
+                message: e.message,
+            })?;
+        }
         Ok(())
     }
 }

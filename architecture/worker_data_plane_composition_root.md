@@ -164,7 +164,13 @@ The worker composition root (`src/worker/unified_server/mod.rs`) is the **sole o
 
 ### 2. Mesh Restart
 
-- Restart is **disabled** (`restart_enabled` is overridden to `false` at policy-build time with a warning — restart is not implemented).
+- Restart is **disabled and rejected fail-closed**: `restart_enabled = true`
+  is rejected by `MeshSupervisionConfig::validate()`
+  (`crates/synvoid-config/src/mesh.rs`) during `MainConfig::validate()`,
+  before task construction (Phase 41; previously rejected only at worker
+  composition time). Non-default restart tuning while restart is disabled
+  is likewise rejected (staged-future contract; see
+  `architecture/config_feature_contract.md`).
 - `MeshSupervisorDecision::RestartMesh` is unreachable in production policy. If it somehow arrives, the composition root maps it to `MeshRestartExhausted` and shuts down the worker.
 - Restart execution (`execute_mesh_restart`) is not implemented. No restart metrics increment in supported configurations.
 
@@ -194,9 +200,13 @@ No bare `tokio::spawn()` calls remain in `init_mesh.rs`. The `MeshInit` struct r
 
 `validate_mesh_runtime_inputs()` is called during mesh init to validate configuration before constructing transport/topology/DHT objects. On validation failure, a `MeshConfigurationInvariant(String)` cause is returned on `WorkerShutdownCause`. This catches configuration invariant violations early, before any runtime objects are created.
 
-### Mesh Restart (updated Iteration 86)
+### Mesh Restart (updated Iteration 86, Phase 41)
 
-- Restart is **disabled** (`restart_enabled = true` is now rejected with an error by `build_mesh_supervision_policy()`, not just overridden).
+- Restart is **disabled and rejected fail-closed**: `restart_enabled = true`
+  is rejected by `MeshSupervisionConfig::validate()` during
+  `MainConfig::validate()` (Phase 41 authoritative path);
+  `build_mesh_supervision_policy()` surfaces the same rejection as
+  defense-in-depth before task construction.
 - `MeshSupervisorDecision::RestartMesh` is unreachable in production policy. If it somehow arrives, the composition root maps it to `MeshRestartExhausted` and shuts down the worker.
 - Restart execution (`execute_mesh_restart`) is not implemented. No restart metrics increment in supported configurations.
 

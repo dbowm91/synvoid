@@ -65,6 +65,16 @@ cargo build --release --no-default-features --features mesh
 cargo build --release --no-default-features --features dns
 ```
 
+Fail-closed configuration (Phase 41): a reduced-feature binary rejects
+capability-bearing sections it was not built with (`[dns]`, `[mesh]`,
+`[tunnel.mesh]`, `[icmp_filter]` — even inert `enabled = false` tables)
+instead of silently ignoring them. Rebuild with the named feature or remove
+the unsupported section. Process/supervisor counts are validated
+(`unified_server_workers 1..=256`, legacy `min/max_workers 1..=1024`,
+warm/pre-spawn `<= max_workers`); mesh `restart_enabled = true` and
+non-default restart tuning are rejected before startup. See
+`architecture/config_feature_contract.md`.
+
 The default feature set stays full-featured (`socket-handoff, mesh, dns,
 erased_pool, swagger-ui`) for operator compatibility: changing defaults
 would silently remove mesh coordination, DNS serving, and the admin API

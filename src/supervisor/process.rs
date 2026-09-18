@@ -86,16 +86,28 @@ impl SupervisorProcess {
         let config = self.process_manager.get_config();
         let shm_path = paths.connections_shm_path();
 
-        // Max workers + some headroom, and 2048 possible backend slots
-        let max_workers = config.unified_server_workers + 10;
+        // Max workers + some headroom, and 2048 possible backend slots.
+        // Phase 41: checked derivation — config validation caps
+        // `unified_server_workers`, but this constructor must still fail
+        // closed when called outside TOML parsing.
+        let max_workers_opt = config.unified_server_workers.checked_add(10);
         let max_backends = 2048;
-
-        if let Err(e) = crate::upstream::shared_state::SharedConnectionTable::init_global(
-            shm_path,
-            max_workers,
-            max_backends,
-        ) {
-            tracing::warn!("Failed to initialize shared connection table: {}", e);
+        match max_workers_opt {
+            Some(max_workers) => {
+                if let Err(e) = crate::upstream::shared_state::SharedConnectionTable::init_global(
+                    shm_path,
+                    max_workers,
+                    max_backends,
+                ) {
+                    tracing::warn!("Failed to initialize shared connection table: {}", e);
+                }
+            }
+            None => {
+                tracing::error!(
+                    "Refusing to initialize shared connection table: unified_server_workers {} overflows derived capacity",
+                    config.unified_server_workers
+                );
+            }
         }
 
         // Initialize Shared Rate Limit Table

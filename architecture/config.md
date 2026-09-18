@@ -288,26 +288,23 @@ tunnel_config.is_global_node() -> bool
 Configuration validation is hierarchical and comprehensive:
 
 ```
-MainConfig.validate()
-├── server.validate()
-├── http.validate()
-├── tls.validate()
-│   └── acme.validate()
-├── threat_level.validate()
-├── fallback.validate()
-├── logging.validate()
-├── admin.validate()
-│   └── (admin.token resolved before validation)
-├── defaults.validate()
-│   ├── ratelimit.validate()
-│   ├── upload.validate()
-│   ├── worker_pool.validate()
-│   └── bot.validate()
-├── tunnel.validate()
-│   ├── vpn.validate()
-│   └── quic.validate()
-├── dns.validate()           [feature-gated]
-└── mesh.validate()          [feature-gated]
+MainConfig.from_toml_str()  (canonical seam; see config_feature_contract.md)
+├── raw TOML parse (toml::Value, no FS/network side effects)
+├── validate_config_capability_presence()  [fail-closed preflight]
+│   ├── [dns] vs `dns` feature
+│   ├── [mesh] + [tunnel.mesh] vs `mesh` feature
+│   └── [icmp_filter] vs `icmp-filter` feature
+├── typed MainConfig deserialization
+└── MainConfig.validate()
+    ├── server/http/tls/threat/fallback/logging/admin/defaults
+    ├── tunnel.validate()
+    │   ├── vpn/quic
+    │   └── tunnel.mesh supervision  [mesh builds]
+    ├── process_manager.validate()   [Phase 41]
+    ├── supervisor.validate() + supervisor_compat.validate()  [Phase 41]
+    ├── dns.validate() when dns.enabled  [dns builds]
+    ├── icmp_filter.validate() when enabled  [icmp-filter builds]
+    └── top-level mesh supervision  [mesh builds]
 ```
 
 ### Key Validation Rules
@@ -602,25 +599,22 @@ rkyv = []          # Rkyv serialization (optional)
 | `test-utils` | Test utilities | None | **Off** |
 | `fastcgi_streaming` | Streaming FastCGI responses | None | **Off** |
 
-### Feature-Gated Validation
+### Feature-Gated Validation (Phase 41)
+
+Capability absence is enforced by the feature-independent raw-TOML
+preflight in `MainConfig::from_toml_str()`, not by unreachable
+`!cfg!(feature)` branches inside typed validation (those branches could
+never observe an absent feature because the field is compiled out in
+exactly that build). See `architecture/config_feature_contract.md` for
+the binding matrix, preflight order, process/supervisor bounds, checked
+runtime derivations, and mesh-restart truthfulness.
 
 ```rust
-// In MainConfig::validate()
-#[cfg(feature = "dns")]
-if self.dns.enabled && !cfg!(feature = "dns") {
-    return Err(ConfigValidationError {
-        field: "dns.enabled".to_string(),
-        message: "DNS server configured but binary built without `dns` feature. Rebuild with `--features dns`.".to_string(),
-    });
-}
-
-#[cfg(feature = "mesh")]
-if self.mesh.is_some() && !cfg!(feature = "mesh") {
-    return Err(ConfigValidationError {
-        field: "mesh".to_string(),
-        message: "Mesh configured but binary built without `mesh` feature. Rebuild with `--features mesh`.".to_string(),
-    });
-}
+// Canonical seam:
+let raw: toml::Value = toml::from_str(input)?;
+validate_config_capability_presence(&raw, CompiledCapabilities::current())?;
+let config: MainConfig = toml::from_str(input)?;
+config.validate()?; // process/supervisor + dns/icmp/mesh supervision
 ```
 
 ### Build Profiles

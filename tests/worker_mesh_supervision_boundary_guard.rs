@@ -885,11 +885,18 @@ fn required_startup_path_transitions_status_directly() {
 
 #[test]
 fn restart_enabled_rejected_or_unreachable() {
-    let content = read_file("src/worker/mesh_supervision.rs");
-    // Iteration 86: build_mesh_supervision_policy returns Err when restart_enabled = true.
+    // Phase 41: authoritative rejection lives in
+    // `crates/synvoid-config/src/mesh.rs` (`MeshSupervisionConfig::validate`);
+    // the composition root surfaces it via `config.validate()`.
+    let config_content = read_file("crates/synvoid-config/src/mesh.rs");
     assert!(
-        content.contains("restart_enabled is not supported"),
-        "build_mesh_supervision_policy must reject restart_enabled with Err"
+        config_content.contains("restart_enabled") && config_content.contains("not supported"),
+        "MeshSupervisionConfig::validate must reject restart_enabled with Err"
+    );
+    let content = read_file("src/worker/mesh_supervision.rs");
+    assert!(
+        content.contains("config") && content.contains(".validate()"),
+        "build_mesh_supervision_policy must surface config validation"
     );
     assert!(
         content.contains("Result<Option<MeshSupervisionPolicy>, String>"),
@@ -1000,19 +1007,25 @@ fn status_transitions_have_singular_owner() {
 
 #[test]
 fn build_policy_restart_enabled_returns_error() {
-    // Iteration 86: build_mesh_supervision_policy returns Err when restart_enabled = true.
+    // Iteration 86 + Phase 41: authoritative rejection lives in
+    // `MeshSupervisionConfig::validate`; the policy builder surfaces it.
+    let config_content = read_file("crates/synvoid-config/src/mesh.rs");
+    assert!(
+        config_content.contains("if self.restart_enabled {"),
+        "MeshSupervisionConfig::validate must check restart_enabled"
+    );
+    assert!(
+        config_content.contains("return Err("),
+        "MeshSupervisionConfig::validate must return Err for restart_enabled"
+    );
+    assert!(
+        config_content.contains("restart_enabled") && config_content.contains("not supported"),
+        "error message must mention restart_enabled"
+    );
     let content = read_file("src/worker/mesh_supervision.rs");
     assert!(
-        content.contains("if config.restart_enabled {"),
-        "build_mesh_supervision_policy must check restart_enabled"
-    );
-    assert!(
-        content.contains("return Err("),
-        "build_mesh_supervision_policy must return Err for restart_enabled"
-    );
-    assert!(
-        content.contains("restart_enabled is not supported"),
-        "error message must mention restart_enabled"
+        content.contains("config") && content.contains(".validate()"),
+        "build_mesh_supervision_policy must surface config validation"
     );
 }
 

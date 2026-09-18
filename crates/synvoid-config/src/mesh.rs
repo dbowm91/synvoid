@@ -935,7 +935,7 @@ fn default_canonical_snapshot_stale_mode() -> String {
 }
 
 /// Worker-level mesh supervision configuration.
-#[derive(Debug, Clone, Deserialize, Serialize, Default, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct MeshSupervisionConfig {
     /// Whether mesh participation is required for this worker role.
     #[serde(default = "default_supervision_required")]
@@ -974,6 +974,92 @@ fn default_restart_backoff_initial_secs() -> u64 {
 }
 fn default_restart_backoff_max_secs() -> u64 {
     60
+}
+
+impl Default for MeshSupervisionConfig {
+    fn default() -> Self {
+        Self {
+            required: default_supervision_required(),
+            restart_enabled: false,
+            restart_limit: default_restart_limit(),
+            restart_window_secs: default_restart_window_secs(),
+            restart_backoff_initial_secs: default_restart_backoff_initial_secs(),
+            restart_backoff_max_secs: default_restart_backoff_max_secs(),
+            allow_degraded_readiness: false,
+        }
+    }
+}
+
+impl MeshSupervisionConfig {
+    /// Authoritative fail-closed validation (Phase 41).
+    ///
+    /// Mesh restart is not implemented. `restart_enabled = true` is rejected
+    /// here so startup fails before task construction (previously rejected
+    /// only at worker composition time). While restart is disabled, any
+    /// non-default restart tuning is also rejected: it would otherwise imply
+    /// a capability the binary does not execute.
+    pub fn validate(&self) -> Result<(), crate::validation::ConfigValidationError> {
+        use crate::validation::ConfigValidationError;
+        if self.restart_enabled {
+            return Err(ConfigValidationError {
+                field: "mesh.supervision.restart_enabled".to_string(),
+                message: "restart_enabled = true is not supported; mesh restart is not implemented. Set restart_enabled = false."
+                    .to_string(),
+            });
+        }
+        // Staged-future contract: restart fields exist for a future restart
+        // capability, but non-default tuning while restart is disabled is
+        // operator-misleading and therefore rejected.
+        if self.restart_limit != default_restart_limit() {
+            return Err(ConfigValidationError {
+                field: "mesh.supervision.restart_limit".to_string(),
+                message: format!(
+                    "restart_limit must be default ({}) while restart is disabled",
+                    default_restart_limit()
+                ),
+            });
+        }
+        if self.restart_window_secs != default_restart_window_secs() {
+            return Err(ConfigValidationError {
+                field: "mesh.supervision.restart_window_secs".to_string(),
+                message: format!(
+                    "restart_window_secs must be default ({}) while restart is disabled",
+                    default_restart_window_secs()
+                ),
+            });
+        }
+        if self.restart_backoff_initial_secs != default_restart_backoff_initial_secs() {
+            return Err(ConfigValidationError {
+                field: "mesh.supervision.restart_backoff_initial_secs".to_string(),
+                message: format!(
+                    "restart_backoff_initial_secs must be default ({}) while restart is disabled",
+                    default_restart_backoff_initial_secs()
+                ),
+            });
+        }
+        if self.restart_backoff_max_secs != default_restart_backoff_max_secs() {
+            return Err(ConfigValidationError {
+                field: "mesh.supervision.restart_backoff_max_secs".to_string(),
+                message: format!(
+                    "restart_backoff_max_secs must be default ({}) while restart is disabled",
+                    default_restart_backoff_max_secs()
+                ),
+            });
+        }
+        Ok(())
+    }
+}
+
+impl MeshConfig {
+    /// Validate mesh config when it reaches runtime (Phase 41).
+    ///
+    /// Currently validates supervision truthfulness. Disabled mesh
+    /// (`enabled = false`) still validates supervision so staged restart
+    /// tuning cannot hide behind a disabled flag.
+    pub fn validate(&self) -> Result<(), crate::validation::ConfigValidationError> {
+        self.supervision.validate()?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -1018,5 +1104,33 @@ mod tests {
         let config: MeshConfig =
             serde_json::from_str(r#"{"supervision": {"required": false}}"#).unwrap();
         assert!(!config.supervision.required);
+    }
+
+    #[test]
+    fn supervision_validate_rejects_restart_enabled() {
+        let mut cfg = MeshSupervisionConfig::default();
+        assert!(cfg.validate().is_ok());
+        cfg.restart_enabled = true;
+        let err = cfg.validate().unwrap_err();
+        assert!(err.field.contains("restart_enabled"));
+    }
+
+    #[test]
+    fn supervision_validate_rejects_nondefault_tuning_while_disabled() {
+        let mut cfg = MeshSupervisionConfig::default();
+        cfg.restart_limit = 5;
+        assert!(cfg.validate().is_err());
+
+        let mut cfg = MeshSupervisionConfig::default();
+        cfg.restart_window_secs = 600;
+        assert!(cfg.validate().is_err());
+
+        let mut cfg = MeshSupervisionConfig::default();
+        cfg.restart_backoff_initial_secs = 10;
+        assert!(cfg.validate().is_err());
+
+        let mut cfg = MeshSupervisionConfig::default();
+        cfg.restart_backoff_max_secs = 120;
+        assert!(cfg.validate().is_err());
     }
 }

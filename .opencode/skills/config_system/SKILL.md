@@ -48,3 +48,21 @@ subsystem rules in `src/config/AGENTS.override.md`.
    option is user-facing.
 4. Config parsing lives behind the composition boundary: request-path code
    consumes config snapshots, never the loader.
+
+## Phase 41 fail-closed contract (do not regress)
+
+- `MainConfig::from_toml_str()` is the canonical seam: raw TOML →
+  `validate_config_capability_presence()` → typed deserialize →
+  `MainConfig::validate()`. No FS/network side effects in this seam.
+- Capability-bearing sections (`[dns]`, `[mesh]`, `[tunnel.mesh]`,
+  `[icmp_filter]`) are reject-when-absent, even if `enabled = false`.
+  Do not add `deny_unknown_fields` globally.
+- New `#[cfg(feature = ...)]` config fields must join
+  `architecture/config_feature_contract.md` + the preflight, or
+  `tests/config_capability_preflight_guard.rs` fails.
+- Process/supervisor counts are validated (`1..=1024` legacy,
+  `1..=256` unified, warm/pre-spawn `<= max_workers`, timeouts
+  `1..=86400`s, control addr must parse as `SocketAddr`); runtime
+  constructors still use `checked_add`/`checked_mul`.
+- Mesh `restart_enabled = true` and non-default restart tuning are
+  rejected at config validation, before task construction.

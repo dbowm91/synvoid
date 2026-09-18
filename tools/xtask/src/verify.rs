@@ -177,6 +177,7 @@ fn verify_steps() -> Vec<(&'static str, &'static str)> {
              --test track3_invariant_closure \
              --test http_differential_closure \
              --test track3_concurrency_closure \
+             --test config_capability_preflight_guard \
              --features mesh",
         ),
         (
@@ -1522,6 +1523,7 @@ pub fn run_guards(dry_run: bool, json_output: bool, verbose: bool) -> Result<(),
              --test track3_invariant_closure \
              --test http_differential_closure \
              --test track3_concurrency_closure \
+             --test config_capability_preflight_guard \
              --features mesh",
         ),
         (

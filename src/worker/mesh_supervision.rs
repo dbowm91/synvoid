@@ -823,7 +823,14 @@ pub fn create_supervision_pipeline(
 /// Build a mesh supervision policy from authoritative configuration.
 ///
 /// Returns `None` when mesh is disabled (no transport exists).
-/// Returns `Err` when configuration is invalid (e.g. `restart_enabled = true`).
+/// Returns `Err` when configuration is invalid.
+///
+/// Authoritative validation lives in
+/// `MeshSupervisionConfig::validate()` (`crates/synvoid-config/src/mesh.rs`);
+/// this composition-root adapter surfaces the same rejection so startup
+/// fails before task construction even when called outside TOML parsing.
+/// Mesh restart is not implemented: `restart_enabled = true` and any
+/// non-default restart tuning while restart is disabled are rejected.
 pub fn build_mesh_supervision_policy(
     mesh_enabled: bool,
     config: &synvoid_config::MeshSupervisionConfig,
@@ -832,11 +839,9 @@ pub fn build_mesh_supervision_policy(
         return Ok(None);
     }
 
-    if config.restart_enabled {
-        return Err(
-            "restart_enabled is not supported; set restart_enabled = false in [tunnel.mesh.supervision]".to_string()
-        );
-    }
+    config
+        .validate()
+        .map_err(|e| format!("{}: {}", e.field, e.message))?;
 
     let startup_failure = if config.required {
         MeshFailureAction::ShutdownWorker

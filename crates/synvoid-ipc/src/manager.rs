@@ -17,6 +17,26 @@ fn checked_pid(pid: u32) -> Option<nix::unistd::Pid> {
     i32::try_from(pid).ok().map(nix::unistd::Pid::from_raw)
 }
 
+/// Checked worker-port derivation (Phase 41).
+///
+/// Legacy worker ports derive as `worker_port_base + worker_id`. Returns
+/// `None` on overflow or when the result exceeds the u16 port range, so
+/// callers fail closed instead of wrapping into a privileged port.
+#[inline]
+pub fn worker_port_for_id(worker_port_base: u16, worker_id: usize) -> Option<u16> {
+    let id_u16 = u16::try_from(worker_id).ok()?;
+    worker_port_base.checked_add(id_u16)
+}
+
+/// Checked restart backoff (Phase 41): `base * 2^restart_count` capped at
+/// `backoff_max`. Saturates instead of wrapping on overflow.
+#[inline]
+fn checked_restart_backoff(base_cooldown: u64, restart_count: u32, backoff_max: u64) -> u64 {
+    let shift = restart_count.min(8);
+    let multiplier = 2u64.saturating_pow(shift);
+    base_cooldown.saturating_mul(multiplier).min(backoff_max)
+}
+
 pub use super::worker::{
     BaseWorkerProcess, CpuWorkerProcess, UnifiedServerWorkerProcess, WorkerProcess,
     WorkerProcessBase,
@@ -383,6 +403,11 @@ impl ProcessManager {
         &self,
         new_config: synvoid_config::ProcessManagerConfig,
     ) -> Result<bool, String> {
+        // Phase 41: authoritative config validation first — the admin
+        // mutation path must not persist invalid process settings.
+        new_config
+            .validate()
+            .map_err(|e| format!("{}: {}", e.field, e.message))?;
         if new_config.min_workers > new_config.max_workers {
             return Err("min_workers cannot exceed max_workers".to_string());
         }
@@ -493,7 +518,10 @@ impl ProcessManager {
     fn allocate_worker_id(&self) -> WorkerId {
         let mut id = self.next_worker_id.write();
         let worker_id = WorkerId(*id);
-        *id += 1;
+        // Phase 41: checked worker-ID derivation. IDs are sequential process
+        // indices; on (practically unreachable) overflow, saturate instead of
+        // wrapping back to zero and colliding with live workers.
+        *id = id.checked_add(1).unwrap_or(usize::MAX);
         worker_id
     }
 
@@ -660,7 +688,17 @@ impl ProcessManager {
 
     pub fn spawn_worker(&self) -> std::io::Result<WorkerId> {
         let id = self.allocate_worker_id();
-        let port = self.config.worker_port_base + id.as_usize() as u16;
+        let port =
+            worker_port_for_id(self.config.worker_port_base, id.as_usize()).ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!(
+                        "worker port derivation overflow: base {} + id {}",
+                        self.config.worker_port_base,
+                        id.as_usize()
+                    ),
+                )
+            })?;
 
         self.spawn_worker_with_id(id, port)
     }
@@ -1628,10 +1666,19 @@ impl ProcessManager {
 
             let workers = self.workers.read();
             let worker = workers.get(&id);
-            let port = worker
+            let port_opt = worker
                 .map(|w| w.port)
-                .unwrap_or_else(|| self.config.worker_port_base + id as u16);
+                .or_else(|| worker_port_for_id(self.config.worker_port_base, id));
             drop(workers);
+            let Some(port) = port_opt else {
+                tracing::error!(
+                    "Skipping resize respawn for worker {}: port derivation overflow (base {} + id {})",
+                    id,
+                    self.config.worker_port_base,
+                    id
+                );
+                continue;
+            };
 
             tracing::info!(
                 "Respawning worker {} for threadpool resize on port {}",
@@ -1650,17 +1697,27 @@ impl ProcessManager {
         for (id, restart_count) in failure_restarts {
             let workers = self.workers.read();
             let worker = workers.get(&id);
-            let port = worker
+            let port_opt = worker
                 .map(|w| w.port)
-                .unwrap_or_else(|| self.config.worker_port_base + id as u16);
+                .or_else(|| worker_port_for_id(self.config.worker_port_base, id));
             let last_restart_at = worker.and_then(|w| w.last_restart_at);
             drop(workers);
+            let Some(port) = port_opt else {
+                tracing::error!(
+                    "Skipping failure respawn for worker {}: port derivation overflow (base {} + id {})",
+                    id,
+                    self.config.worker_port_base,
+                    id
+                );
+                continue;
+            };
 
             if restart_count < self.config.max_restart_attempts {
                 if let Some(last_restart) = last_restart_at {
                     let base_cooldown = self.config.restart_cooldown_secs;
-                    let backoff_secs = std::cmp::min(
-                        base_cooldown * 2_u64.pow(restart_count.min(8)),
+                    let backoff_secs = checked_restart_backoff(
+                        base_cooldown,
+                        restart_count,
                         self.config.restart_backoff_max_secs,
                     );
 

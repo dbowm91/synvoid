@@ -1224,10 +1224,16 @@ Secondary metrics (scores, failures, latency) are intentionally excluded from sn
 pub fn build_mesh_supervision_policy(
     mesh_enabled: bool,
     config: &MeshSupervisionConfig,
-) -> Option<MeshSupervisionPolicy>
+) -> Result<Option<MeshSupervisionPolicy>, String>
 ```
 
-Restart is disabled: `restart_enabled` is overridden to `false` at policy-build time regardless of config (restart not implemented). `MeshSupervisorDecision::RestartMesh` is unreachable in production policy. `MeshFailureCause` no longer implements `Debug`.
+Restart is disabled and rejected fail-closed (Phase 41): `restart_enabled = true`
+is rejected by `MeshSupervisionConfig::validate()` during `MainConfig::validate()`,
+before task construction; `build_mesh_supervision_policy()` surfaces the same
+rejection as defense-in-depth. Non-default restart tuning while restart is disabled
+is likewise rejected (staged-future contract; see
+`architecture/config_feature_contract.md`). `MeshSupervisorDecision::RestartMesh`
+is unreachable in production policy. `MeshFailureCause` no longer implements `Debug`.
 
 ### Disabled Mesh (Iteration 85)
 
