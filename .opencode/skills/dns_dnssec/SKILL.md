@@ -809,18 +809,20 @@ cargo test -p synvoid-dns --test dns_stress_resource_limits -- --test-threads=1
 
 ### Production Profiles
 
-8 production profiles with support classification:
+8 documented profiles with support classification. Phase 45 is binding for the
+configured-vs-runtime boundary: transfer profiles and other deferred settings
+are design references, not supported runtime capabilities.
 
 | Profile | Description | Support Level |
 |---------|-------------|---------------|
 | Authoritative-Only | Zone serving, DNSSEC signing | Full |
 | Local Recursive | Forwarding resolver for local networks | Full |
 | Internal Recursive | Internal recursive with ACL | Full |
-| Transfer Primary | AXFR/IXFR primary with TSIG | Full |
-| Transfer Secondary | AXFR/IXFR secondary with TSIG | Full |
+| Transfer Primary | AXFR/IXFR primary with TSIG | Deferred — not supported |
+| Transfer Secondary | AXFR/IXFR secondary with TSIG | Deferred — not supported |
 | DNSSEC-Signed | Zone signing with key rotation | Full |
-| Encrypted Transport | DoT/DoH/DoQ adapters | Full |
-| Full Mesh | All features combined | Full |
+| Encrypted Transport | DoT/DoH/DoQ adapters | Internal; DoQ not production-validated |
+| Full Mesh | Mesh-integrated DNS with deferred features disabled | Internal; constrained |
 
 ### Example Configs
 
@@ -829,7 +831,7 @@ cargo test -p synvoid-dns --test dns_stress_resource_limits -- --test-threads=1
 - `local_recursive.toml` — Forwarding resolver for local networks
 - `dnssec_signed.toml` — DNSSEC-signed zones with key rotation
 - `encrypted_transport.toml` — DoT/DoH/DoQ with TLS certificates
-- `full_mesh.toml` — Complete mesh-integrated DNS server
+- `full_mesh.toml` — Mesh-integrated DNS design reference; deferred settings remain rejected
 
 ### Release Gate
 
@@ -845,7 +847,9 @@ Results: 781 tests passing, 7 internal conformance suites + optional external in
 
 ### Security Review
 
-All areas reviewed safe for production. Bailiwick checks remain observability-only (log + metric counter, not enforced) — this is a known deferral, not a vulnerability.
+Implemented paths have internal coverage, but the deferred capabilities below are
+not production-supported. Bailiwick checks remain observability-only (log + metric
+counter, not enforced) — this is a known deferral, not a vulnerability.
 
 ### Deferred Items
 
@@ -855,4 +859,5 @@ All areas reviewed safe for production. Bailiwick checks remain observability-on
 | DoQ production validation | ALPN/quinn adapter tested in unit tests only |
 | RPZ (Response Policy Zones) | Documented but unsupported |
 | Prefetch | Documented but unsupported |
-| Anycast | Requires mesh feature gate |
+| Anycast | Deferred; activation rejected |
+| Trust anchors, transfer, UPDATE, NOTIFY, EDNS padding, QNAME privacy | Deferred; activation rejected |

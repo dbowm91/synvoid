@@ -5,7 +5,7 @@
 //! version claim cannot return to current-state docs.
 //!
 //! Scope is deliberately narrow:
-//! - status surfaces only (umbrella roadmap, Phase 41-47 plans,
+//! - status surfaces only (umbrella roadmap, Phase 41-48 plans,
 //!   `plans/roadmap.md`, closeout report + follow-up plan existence);
 //! - the known stale literal `eggfetch still 0.1.4` in current-state docs
 //!   only (`AGENTS.md`, `architecture/public_crate_release_readiness_phase47.md`,
@@ -68,6 +68,23 @@ fn phase_plans_are_closed() {
         violations.is_empty(),
         "runtime_truthfulness_closeout_guard:\n  {}",
         violations.join("\n  ")
+    );
+}
+
+#[test]
+fn phase_48_plan_is_closed() {
+    let body = read_repo("plans/phase_48_runtime_truthfulness_campaign_corrective_closeout.md");
+    assert!(
+        body.contains("Status: implemented and closed"),
+        "runtime_truthfulness_closeout_guard: Phase 48 plan must be marked implemented and closed"
+    );
+    assert!(
+        !body.contains("Status: detailed active corrective handoff plan"),
+        "runtime_truthfulness_closeout_guard: Phase 48 plan still claims active handoff"
+    );
+    assert!(
+        body.contains("architecture/runtime_truthfulness_security_publication_closeout.md"),
+        "runtime_truthfulness_closeout_guard: Phase 48 plan must point at the closeout report"
     );
 }
 

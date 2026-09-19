@@ -130,7 +130,7 @@ Many root `src/` paths are pure re-export facades. Rule: if a `crates/synvoid-*`
   - Threat-intel enforcement: `architecture/{threat_intel_consumer_actionability,manual_enforcement_ownership,enforcement_decision_contract}.md`
   - Mesh/distributed: `architecture/distributed_state_contract.md` (binding) + `mesh_{trust_domains,transport_lifecycle}.md`
   - Shared memory: `architecture/shared_memory_atomic_contract.md` (binding Phase 42 unsafe boundary: checked layouts, versioned headers, file hardening, typed counter slices)
-  - Public libraries (Phase 47): `architecture/public_crate_release_policy.md` (binding semver/MSRV/support bar) + `architecture/public_crate_release_readiness_phase47.md` (only `synvoid-rate-limit` 0.1.0 promoted to class 3, MSRV 1.81; mesh-protocol/proxy-cache/keystore/platform/yara/http-client/utils/core stay internal with reasons)
+  - Public libraries (Phase 47): `architecture/public_crate_release_policy.md` (binding semver/MSRV/support bar) + `architecture/public_crate_release_readiness_phase47.md` (only `synvoid-rate-limit` 0.1.0 promoted to class 3, MSRV 1.81; mesh-protocol/proxy-cache/keystore/platform/yara/http-client/utils/core stay internal with reasons) + `architecture/runtime_truthfulness_security_publication_closeout.md` (Phase 41–48 campaign closeout)
   - Supply chain: `architecture/dependency_security_baseline_phase25.md` (re-audit 2026-10-01)
   - Auth CPU + persistence (Phase 43): `architecture/auth.md` (+ `auth_deep_dive.md`)
   - Jail IPC: `architecture/sandbox_jail_protocol.md`; DNSSEC custody: `architecture/dnssec_keystore.md`
@@ -138,6 +138,8 @@ Many root `src/` paths are pure re-export facades. Rule: if a `crates/synvoid-*`
   - Knowledge maintenance: `architecture/agent_knowledge_maintenance.md` (last audit record + recurring checklist for future audits)
 
 ## Known Issues
+
+- Phase 48 (runtime truthfulness/security/publication corrective closeout, 2026-09-19) is complete. The Phase 41–47 implementation plans and umbrella roadmap are historical records; future DNS expansion, dependency-fork removal, public-crate promotion, or eggfetch consolidation must use a new focused plan with fresh evidence.
 
 - Phase 47 (public-crate release readiness, 2026-09-19): only `synvoid-rate-limit` 0.1.0 is externally supported (class 3, MSRV 1.81 with packaged-tarball evidence on that toolchain, `ip_to_slot` documented as implementation detail not a stable hash). `synvoid-mesh-protocol` (no wire-versioning/`non_exhaustive` policy), `synvoid-proxy-cache` (reverse-proxy object cache, NOT RFC 9111 — no ETag/304/Authorization subset defined), `synvoid-dnssec-keystore` (no public threat model/PKCS#11 CI; `rsa` carries RUSTSEC-2023-0071 unpatched), `synvoid-platform` (needs MSRV/semver/examples), `synvoid-yara` (temporary compat fork), `synvoid-http-client` (internal pending a fresh current-line eggfetch parity review; the Phase 47 0.1.4-era matrix is dated history, not current evidence — see `architecture/public_crate_release_readiness_phase47.md` + `plans/eggfetch_current_line_parity_review.md`), `synvoid-utils`/`synvoid-core` (permanently internal) all stay class 1/2 with no support promise; guard `public_crate_release_policy` pins the boundary. Binding docs: `architecture/public_crate_release_policy.md`, `architecture/public_crate_release_readiness_phase47.md`. `docs/releasing.md` §1a records the externally supported order (rate-limit only); root README has a Reusable libraries section.
 

@@ -210,6 +210,7 @@ Useful user/operator references include:
 - [`CHANGELOG.md`](CHANGELOG.md) — notable changes
 
 Internal architecture records and implementation plans remain in `architecture/` and `plans/`; they are development artifacts rather than the primary user documentation.
+The Phase 41–48 runtime-truthfulness, security, and publication campaign is closed; its evidence and intentional residuals are recorded in [`architecture/runtime_truthfulness_security_publication_closeout.md`](architecture/runtime_truthfulness_security_publication_closeout.md).
 
 ## Reusable libraries
 

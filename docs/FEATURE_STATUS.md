@@ -10,7 +10,7 @@ These features are included in the default build profile and are production-read
 |---------|------|-------------|-----------|
 | Socket Handoff | `socket-handoff` | Graceful connection migration via FD passing | Yes |
 | Mesh Networking | `mesh` | DHT-based service discovery, transport lifecycle, Raft consensus | Yes |
-| DNS Server | `dns` | Authoritative DNS with DNSSEC, TSIG, encrypted transports | Yes |
+| DNS Server | `dns` | Authoritative DNS with DNSSEC, TSIG, encrypted transports; deferred config capabilities reject activation | Yes |
 | Erased Pool | `erased_pool` | Type-erased HTTP/2 connection pooling | Yes |
 | Swagger UI | `swagger-ui` | API documentation UI (disable in production) | Yes |
 

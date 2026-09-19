@@ -1,8 +1,10 @@
 # Phase 48 Plan: Runtime Truthfulness / Security / Publication Campaign Corrective Closeout
 
-Status: detailed active corrective handoff plan.
+Status: implemented and closed; retained as historical corrective handoff detail.
 
 Roadmap: `plans/runtime_truthfulness_security_publication_roadmap.md`.
+
+Closeout: `architecture/runtime_truthfulness_security_publication_closeout.md`.
 
 Registered in: `plans/roadmap.md`.
 
