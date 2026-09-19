@@ -96,6 +96,10 @@ Pinned tools: cargo-deny 0.20.2, cargo-audit 0.22.2
    (`pip hash -r <package>`). TOML: `[app_server] require_hashes = true`.
 5. **Publication is manual** (`cargo publish` only, see `docs/releasing.md`);
    `cargo xtask verify-release` never publishes and fails on a dirty tree.
+   Only `synvoid-rate-limit` is externally supported (class 3, MSRV 1.81);
+   every other `synvoid-*` crate is class 1/2 with no support promise —
+   binding policy in `architecture/public_crate_release_policy.md`, pinned by
+   the `public_crate_release_policy` guard test.
 
 ## Verification
 

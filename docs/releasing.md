@@ -79,6 +79,28 @@ Crates must be published in this exact order. Each crate's path dependencies mus
 | 37 | `synvoid` | *(root — all workspace crates)* |
 | 38 | `synvoid-wasm-pow` | *(none)* |
 
+### 1a. Externally supported library order (Phase 47)
+
+The technical order above is a packaging dependency order, not a support
+promise. Only `synvoid-rate-limit` is externally supported (class 3, MSRV
+1.81, semver/support policy in
+`architecture/public_crate_release_policy.md`, readiness evidence in
+`architecture/public_crate_release_readiness_phase47.md`).
+
+Externally supported publication order:
+
+| # | Crate | Notes |
+|---|-------|-------|
+| 1 | `synvoid-rate-limit` 0.1.0 | only `synvoid-rate-limit` is class 3; no internal predecessors, publishes independently |
+
+Every other `synvoid-*` crate is class 1 (application-internal) or class 2
+(reusable workspace library with no external support promise). Do not infer
+support from technical publishability: `cargo package` succeeding only proves
+the tarball assembles, not that the API, MSRV, wire format, or maintenance
+burden qualifies for external use. Promotions require the full Phase 47
+acceptance bar (MSRV evidence, semver policy, consumer docs, package
+dry-run, justified burden).
+
 ## 2. Package Metadata Requirements
 
 Every publishable crate must have these Cargo.toml fields:

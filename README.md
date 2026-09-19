@@ -211,6 +211,10 @@ Useful user/operator references include:
 
 Internal architecture records and implementation plans remain in `architecture/` and `plans/`; they are development artifacts rather than the primary user documentation.
 
+## Reusable libraries
+
+One workspace crate is externally supported: **`synvoid-rate-limit`** (lock-free sliding-window rate-limit primitives, std-only, MSRV 1.81) — see its crate README and `architecture/public_crate_release_policy.md` for the semver/support contract. Every other `synvoid-*` crate is application-internal or a workspace-only reusable library with no external support promise, however publishable its tarball looks. Do not depend on non-promoted crates from outside this repository. Publication is manual (`cargo publish` only); see `docs/releasing.md` §1a for the externally supported order.
+
 ## License
 
 SynVoid is licensed under the MIT License. See [`LICENSE`](LICENSE).

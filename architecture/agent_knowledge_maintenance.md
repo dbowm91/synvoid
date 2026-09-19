@@ -2,7 +2,29 @@
 
 How `AGENTS.md`, `.opencode/skills/`, `docs/`, `README.md`, and `plans/`
 stay accurate. For agents, by an agent audit (2026-09-11, follow-up 2026-09-13,
-Phase 37 pass 2026-09-17, Phase 40 pass 2026-09-18).
+Phase 37 pass 2026-09-17, Phase 40 pass 2026-09-18, Phase 47 pass 2026-09-19).
+
+## What was audited (2026-09-19, Phase 47 public-crate release readiness)
+
+- Promoted `synvoid-rate-limit` 0.1.0 to class 3 (first externally supported
+  library; MSRV 1.81 with packaged-tarball evidence): new
+  `architecture/public_crate_release_policy.md` (binding semver/MSRV/support
+  bar) + `architecture/public_crate_release_readiness_phase47.md` (per-candidate
+  decisions), crate README/CHANGELOG/rustdoc quickstart/property tests,
+  `docs/releasing.md` §1a externally supported order (rate-limit only), root
+  `README.md` Reusable libraries section, `AGENTS.md` Known Issues + index,
+  new `public_crate_release_policy` repo-guard test, this file + new checklist
+  item 9.
+- Deferred with recorded reasons (no metadata implying support):
+  mesh-protocol (wire-versioning/`non_exhaustive` policy), proxy-cache (object
+  cache, NOT RFC 9111), dnssec-keystore (threat model/PKCS#11 CI/RSA advisory),
+  platform (MSRV/semver/examples), yara (compat fork), http-client (eggfetch
+  still 0.1.4, no 0.1.5+ matrix refresh), utils/core (permanently internal).
+- Skills: no stale publication claims found (only `supply_chain` mentions
+  `cargo publish`, correctly as manual-only) — no skill changes needed.
+- Historical records deliberately NOT rewritten: `plans/*` phase history,
+  `architecture/crate_boundary_reuse_closeout.md` (Phase 35 class-2 table
+  stays as the pre-promotion record; the Phase 47 doc records the delta).
 
 ## What was audited (2026-09-18, Phase 40 YARA-X 1.20 upgrade)
 
@@ -134,6 +156,12 @@ Phase 37 pass 2026-09-17, Phase 40 pass 2026-09-18).
    via the yara-x compat fork). Guard anchors in the baseline doc
    (`wasmtime-direct-version`, `wasmtime-transitive-version`,
    `wasmtime-wasi-absent-from-lock`) must match the lock.
+9. Public-crate boundary: `rg -ln 'rust-version' crates/*/Cargo.toml` must
+   list only class-3 crates (currently just `synvoid-rate-limit`); any
+   "externally supported"/"published"/"stable API" claim for another
+   `synvoid-*` crate in `architecture/`, `.opencode/skills/`, `docs/`, or
+   `README.md` is a bug unless `public_crate_release_readiness_phase47.md`
+   (or a successor promotion record) names it class 3.
 
 ## Index
 

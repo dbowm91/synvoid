@@ -2,6 +2,14 @@
 name = "synvoid-rate-limit"
 version = "0.1.0"
 edition = "2021"
+# Phase 47: lowest toolchain with package-build evidence (standalone
+# `cargo package` tarball builds + tests outside the workspace on 1.81.0).
+# The workspace pin (1.98.1) is newer; this is the public MSRV contract.
+rust-version = "1.81"
 license.workspace = true
 repository.workspace = true
 description = "Shared lock-free rate-limit mechanism primitives (sliding windows, keyed/IP contracts)"
+documentation = "https://docs.rs/synvoid-rate-limit"
+readme = "README.md"
+keywords = ["rate-limit", "sliding-window", "concurrency", "lock-free"]
+categories = ["concurrency", "algorithms"]

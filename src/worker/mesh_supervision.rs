@@ -1320,13 +1320,17 @@ mod tests {
 
     #[test]
     fn build_policy_optional_config() {
+        // Phase 41 contract: non-default restart tuning is rejected at
+        // validation while restart is disabled, so the fixture uses defaults
+        // (limit 3 / window 300 / backoff 5+60); the builder still forces
+        // restart_limit to 0 (restart impossible) and carries the durations.
         let config = synvoid_config::MeshSupervisionConfig {
             required: false,
             restart_enabled: false,
-            restart_limit: 5,
-            restart_window_secs: 600,
-            restart_backoff_initial_secs: 10,
-            restart_backoff_max_secs: 120,
+            restart_limit: 3,
+            restart_window_secs: 300,
+            restart_backoff_initial_secs: 5,
+            restart_backoff_max_secs: 60,
             allow_degraded_readiness: true,
         };
         let policy = build_mesh_supervision_policy(true, &config)
@@ -1335,9 +1339,9 @@ mod tests {
         assert!(!policy.required);
         assert_eq!(policy.startup_failure, MeshFailureAction::Degrade);
         assert_eq!(policy.restart_limit, 0);
-        assert_eq!(policy.restart_window, Duration::from_secs(600));
-        assert_eq!(policy.restart_backoff_initial, Duration::from_secs(10));
-        assert_eq!(policy.restart_backoff_max, Duration::from_secs(120));
+        assert_eq!(policy.restart_window, Duration::from_secs(300));
+        assert_eq!(policy.restart_backoff_initial, Duration::from_secs(5));
+        assert_eq!(policy.restart_backoff_max, Duration::from_secs(60));
         assert!(policy.allow_degraded_readiness);
     }
 
@@ -1389,10 +1393,13 @@ mod tests {
 
     #[test]
     fn policy_never_emits_restart_mesh() {
+        // Fixtures use default tuning: Phase 41 validation rejects non-default
+        // restart tuning while restart is disabled (rejection itself is covered
+        // in synvoid-config's supervision_validate_* tests).
         let required_config = synvoid_config::MeshSupervisionConfig {
             required: true,
             restart_enabled: false,
-            restart_limit: 10,
+            restart_limit: 3,
             ..Default::default()
         };
         let policy = build_mesh_supervision_policy(true, &required_config)
@@ -1405,7 +1412,7 @@ mod tests {
         let optional_config = synvoid_config::MeshSupervisionConfig {
             required: false,
             restart_enabled: false,
-            restart_limit: 10,
+            restart_limit: 3,
             ..Default::default()
         };
         let policy = build_mesh_supervision_policy(true, &optional_config)

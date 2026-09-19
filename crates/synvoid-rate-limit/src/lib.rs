@@ -51,6 +51,28 @@
 //! HTTP/Axum/Hyper stack, or `synvoid-metrics`. [`ip_to_slot`] is a small
 //! deliberate duplication of the canonical helper in `synvoid-utils` so this
 //! crate stays a leaf; `synvoid-utils` remains the general-purpose owner.
+//!
+//! # Quickstart
+//!
+//! ```rust
+//! use synvoid_rate_limit::{AtomicSlidingWindow, WindowClock};
+//!
+//! let clock = WindowClock::new();
+//! let window = AtomicSlidingWindow::new(60, 60);
+//! let limit = 100u64;
+//!
+//! window.increment_now(&clock);
+//! let stats = window.stats_at(clock.now_ms(), limit);
+//! assert!(stats.is_within_limit());
+//! ```
+//!
+//! # Stability and support
+//!
+//! MSRV is Rust 1.81 (`rust-version`). Within `0.x`, minor bumps may extend
+//! the API compatibly and patches are compatible fixes; the [`ip_to_slot`]
+//! mapping, internal bucket layout, and timing performance are not
+//! semver-guaranteed. See `README.md` and the repository
+//! `architecture/public_crate_release_policy.md` for the full contract.
 
 pub mod contracts;
 pub mod slot;

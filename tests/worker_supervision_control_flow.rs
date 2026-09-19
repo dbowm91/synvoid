@@ -2977,10 +2977,12 @@ mod mesh_supervision_behavioral {
 
     #[test]
     fn build_policy_required_config() {
+        // Phase 41 contract: restart tuning must be default while restart is
+        // disabled (limit 3 here); the builder forces the policy limit to 0.
         let config = synvoid_config::MeshSupervisionConfig {
             required: true,
             restart_enabled: false,
-            restart_limit: 0,
+            restart_limit: 3,
             restart_window_secs: 300,
             restart_backoff_initial_secs: 5,
             restart_backoff_max_secs: 60,
@@ -3024,10 +3026,12 @@ mod mesh_supervision_behavioral {
 
     #[test]
     fn build_policy_restart_disabled_overrides_limit() {
+        // Default tuning in (Phase 41 rejects non-default tuning while restart
+        // is disabled); the builder still forces the policy limit to 0.
         let config = synvoid_config::MeshSupervisionConfig {
             required: true,
             restart_enabled: false,
-            restart_limit: 5, // Should be overridden to 0
+            restart_limit: 3, // Overridden to 0 in the built policy
             ..Default::default()
         };
         let policy = build_mesh_supervision_policy(true, &config)
@@ -3041,10 +3045,12 @@ mod mesh_supervision_behavioral {
 
     #[test]
     fn build_policy_restart_enabled_preserves_limit() {
+        // restart_enabled stays false (restart not implemented) with default
+        // tuning in; the built policy limit is 0.
         let config = synvoid_config::MeshSupervisionConfig {
             required: false,
             restart_enabled: false,
-            restart_limit: 7,
+            restart_limit: 3,
             ..Default::default()
         };
         let policy = build_mesh_supervision_policy(true, &config)
