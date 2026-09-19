@@ -301,3 +301,20 @@ impl Default for TrustAnchorConfig {
         }
     }
 }
+
+impl TrustAnchorConfig {
+    /// Phase 45 fail-closed contract: no custom trust-anchor manager is wired
+    /// (the recursive resolver uses system defaults via HickoryRecursor), so
+    /// activation is rejected.
+    pub fn validate(&self) -> Result<(), DnsConfigError> {
+        if self.enabled {
+            return Err(super::unsupported(
+                "dns.trust_anchors.enabled",
+                "custom trust anchors have no runtime consumer. Keep disabled \
+                 until an RFC 5011-style lifecycle manager lands (future \
+                 trigger: validating-resolver product decision, Workstream F).",
+            ));
+        }
+        Ok(())
+    }
+}

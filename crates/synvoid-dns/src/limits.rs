@@ -3,6 +3,16 @@ use std::time::{Duration, Instant};
 
 use synvoid_utils::flags::{DrainFlag, RunningFlag};
 
+/// Phase 45 (Workstream D): bound on sequential queries served per
+/// DNS-over-TCP / DNS-over-TLS connection (RFC 7766 connection reuse).
+///
+/// A sequential persistent connection is a bounded improvement over
+/// one-query-per-connection: this cap prevents a single client from holding
+/// a connection (and its connection permit) indefinitely while still
+/// allowing generous reuse. Pipelining / multiplexed reordering is
+/// explicitly NOT supported — at most one outstanding query per connection.
+pub const MAX_TCP_QUERIES_PER_CONNECTION: usize = 1000;
+
 pub struct ConnectionLimits {
     max_tcp_connections: usize,
     max_concurrent_queries: usize,
@@ -122,6 +132,14 @@ impl ConnectionLimits {
 
     pub fn max_tcp_idle_time(&self) -> Duration {
         self.max_tcp_idle_time
+    }
+
+    pub fn max_tcp_query_time(&self) -> Duration {
+        self.max_tcp_query_time
+    }
+
+    pub fn max_query_size(&self) -> usize {
+        self.max_query_size
     }
 
     fn maybe_reject(&self) -> Result<(), ConnectionLimitError> {

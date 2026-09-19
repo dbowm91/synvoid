@@ -449,12 +449,13 @@ Dynamic UPDATE now re-validates post-mutation invariants. If a crafted UPDATE re
 
 ### Deferred / Known Limitations
 
-- DoQ is wired but not production-validated; ALPN/quinn adapter is tested in unit tests only.
-- Persistent DNS-over-TCP (pipelining) remains deferred.
+- DoQ bind is honored + validated (Phase 45) but not production-validated; ALPN/quinn adapter is tested in unit tests only.
+- Persistent DNS-over-TCP is sequential (Phase 45); pipelining/reordering deferred by design. Recursive TCP is still one-query-per-connection.
 - EDNS keepalive remains parsed-only.
 - Full NSEC3 closest-encloser proofs remain deferred.
 - External DNSSEC tooling (dig, ldns-verify-zone, named-checkzone) is not in CI.
 - Bailiwick checks are observability-only (not enforced).
+- Deferred features reject activation at validation (Phase 45 fail-closed contract): RPZ, prefetch, trust anchors, anycast, transfers, dynamic update, NOTIFY, padding, QNAME privacy, firewall default_action/max_rules/rebinding, recursive scope responses. Admin `PUT /config/dns` returns 400 for these.
 
 ## Known Limitations
 
@@ -462,8 +463,8 @@ Dynamic UPDATE now re-validates post-mutation invariants. If a crafted UPDATE re
 2. **TrustAnchorManager and hickory_proto::TrustAnchors are separate** - Synchronization between RFC 5011 manager and hickory's internal anchors
 3. **NSEC3 uses SHA-1** - RFC 9276 suggests SHA-1 is acceptable for NSEC3 hashing
 4. **NSEC3 Hash Length Encoding** - When creating NSEC3 records, the hash must be prefixed with its length as a single byte per RFC 5155 Section 3.2. The `create_nsec3_record()` function in `crates/synvoid-dns/src/dnssec_signing.rs` handles this correctly.
-5. **QNAME Privacy and DNS Padding are deferred** - `sanitize_qname()` (`dns_settings.rs:244`) and `DnsPadding` (`edns.rs:540`) exist but are not wired into the query path.
-6. **DoQ bind_address is partially implemented** - Config field exists but `startup.rs:580` hardcodes bind to `0.0.0.0:{port}`.
+5. **QNAME Privacy and DNS Padding are deferred (activation rejected)** - `sanitize_qname()` (`dns_settings.rs:244`) and `DnsPadding` (`edns.rs:540`) exist but are not wired into the query path; enabling fails validation (Phase 45).
+6. **DoQ bind_address is honored and validated (Phase 45)** - `DoqServer::doq_bind_addr()` consumes the config field (IPv6-safe); enabled transports require an explicit parseable bind + non-zero port.
 
 ## DNSSEC Known-Vector Testing (Tightening Follow-up)
 
@@ -562,8 +563,12 @@ This matches the pattern used in `tsig.rs:238` and `cookie.rs:86`.
 ### Bind Fail-Fast (`server/startup.rs`)
 `configured_bind_addr()` validates the bind address and port at startup, returning `Err` immediately on invalid input. No silent fallback.
 
-### TCP One-Query-Per-Connection (`server/query.rs`)
-RFC 7766 §4: read one length-prefixed DNS message, respond, close. AXFR/IXFR transfers send multiple messages but still close after completion. Persistent TCP (pipelining) is deferred.
+### TCP Persistent Sequential (`server/query.rs`, Phase 45)
+
+RFC 7766 §4 connection reuse: bounded loop over length-prefixed messages, one
+outstanding query at a time (no pipelining). Bounds: pre-allocation size cap,
+idle + per-query timeouts, `MAX_TCP_QUERIES_PER_CONNECTION` (1000), permit
+held, graceful drain. DoT shares the lifecycle after TLS handshake.
 
 ### UDP/EDNS Truncation (`server/response.rs`)
 When a response exceeds the EDNS UDP payload size (512 without EDNS, OPT CLASS field with EDNS, default 1232), the server emits TC=1 with the question section. Clients retry over TCP.
@@ -673,11 +678,12 @@ All 8 gate areas verified:
 
 ### Known Limitations
 
-- DoT/DoH/DoQ (28 fields) wired but untested
+- DoT/DoH/DoQ (28 fields) wired; Phase 45 adds bind validation + `dns_phase45_contract` tests
 - Rate limiter (9 fields) wired but untested
 - Firewall (3 security controls) wired but untested
-- DoQ `bind_address` partially implemented (hardcoded to 0.0.0.0)
+- DoQ `bind_address` honored + validated (Phase 45)
 - Full DNSSEC production validation deferred to later milestone
+- Deferred DNS features reject activation at validation (Phase 45 fail-closed contract)
 
 ## Milestone 4 Phase 1: Observability and Operations
 

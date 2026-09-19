@@ -274,9 +274,13 @@ pub fn Dns() -> Html {
                                 </div>
 
                                 <div>
-                                    <label class="flex items-center gap-2 cursor-pointer">
+                                    <label
+                                        class="flex items-center gap-2 cursor-not-allowed opacity-60"
+                                        title="Unsupported: the backend has no RPZ engine and rejects enabling RPZ (400)."
+                                    >
                                         <input
                                             type="checkbox"
+                                            disabled=true
                                             checked={edited_config_for_render.rpz_enabled.unwrap_or(false)}
                                             onchange={{
                                                 let edited_config = edited_config.clone();
@@ -289,8 +293,9 @@ pub fn Dns() -> Html {
                                             }}
                                             class="w-4 h-4 rounded border-default bg-tertiary accent-blue-600"
                                         />
-                                        <span class="text-primary">{ "Enable RPZ (Response Policy Zones)" }</span>
+                                        <span class="text-primary">{ "Enable RPZ (Response Policy Zones) — unsupported" }</span>
                                     </label>
+                                    <p class="text-xs text-secondary mt-1">{ "No RPZ engine exists yet; the backend rejects activation. Deferred (Phase 45)." }</p>
                                 </div>
                             </div>
                         </div>

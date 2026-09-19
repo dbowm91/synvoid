@@ -77,29 +77,35 @@ impl DnsServer {
     /// client.
     ///
     /// # AXFR/IXFR exception
+    /// Sequential persistent DNS-over-TCP (RFC 7766 §4 connection reuse).
     ///
-    /// AXFR/IXFR transfers send multiple length-prefixed messages over the same
-    /// connection, but the connection still closes after the transfer completes.
-    /// This is handled as a special case before the one-query return.
+    /// The connection serves multiple length-prefixed queries sequentially on
+    /// the same stream: at most one outstanding query at a time. Request
+    /// pipelining / multiplexed response reordering is explicitly NOT
+    /// supported — a client must wait for each response before sending the
+    /// next query. AXFR/IXFR transfers send multiple length-prefixed messages
+    /// over the same connection and then return to the query loop.
     ///
-    /// # Deferred: persistent TCP
+    /// Bounding policy (abuse resistance):
+    /// - maximum message size is enforced BEFORE allocation from
+    ///   `dns.limits.max_query_size` (capped at the 16-bit framing maximum);
+    /// - per-read idle timeout from `dns.limits.max_tcp_idle_time_secs`;
+    /// - per-query body timeout from `dns.limits.max_tcp_query_time_secs`;
+    /// - at most `MAX_TCP_QUERIES_PER_CONNECTION` queries per connection;
+    /// - the caller's TCP connection permit is held for the full connection
+    ///   lifetime (acquired in `startup.rs` before this call);
+    /// - graceful shutdown drains the loop at the next query boundary.
     ///
-    /// Persistent TCP connections (pipelining, multiplexing, connection reuse
-    /// across multiple queries) are **not implemented** in this milestone. They
-    /// require additional framing state, idle timeout management per query, and
-    /// connection pool accounting. This is deferred to a future milestone.
+    /// A clean client close (EOF) or idle timeout ends the loop normally
+    /// (`Ok`); framing violations and I/O errors end it with `Err`.
     pub(super) async fn handle_tcp_query(
         mut stream: tokio::net::TcpStream,
         ctx: QueryContext<'_>,
     ) -> Result<(), String> {
+        use crate::limits::MAX_TCP_QUERIES_PER_CONNECTION;
+        use std::io::ErrorKind;
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         use tokio::time::{timeout, Duration};
-
-        // ── One-query-per-connection ────────────────────────────────────
-        // This handler reads exactly ONE length-prefixed DNS message,
-        // processes it, writes the response, and returns. The TcpStream
-        // is dropped on return, closing the connection. We never loop
-        // to read a second query from the same stream.
 
         let client_ip = stream
             .peer_addr()
@@ -107,183 +113,262 @@ impl DnsServer {
             .unwrap_or_else(|_| IpAddr::from([0, 0, 0, 0]));
 
         let idle_timeout = ctx.max_idle_time.unwrap_or(Duration::from_secs(30));
+        let query_timeout = ctx
+            .connection_limits
+            .map(|l| l.max_tcp_query_time())
+            .unwrap_or(Duration::from_secs(30));
+        // Enforced BEFORE allocating the query buffer (fail-closed framing).
+        let max_frame = ctx
+            .connection_limits
+            .map(|l| l.max_query_size().min(u16::MAX as usize))
+            .unwrap_or(u16::MAX as usize);
 
-        let mut length_buf = [0u8; 2];
-        let read_result = timeout(idle_timeout, stream.read_exact(&mut length_buf)).await;
+        let mut queries_served = 0usize;
 
-        match read_result {
-            Ok(Ok(_)) => {}
-            Ok(Err(e)) => return Err(format!("TCP read error: {}", e)),
-            Err(_) => {
-                tracing::debug!("TCP connection idle timeout for {}", client_ip);
-                return Err("Connection idle timeout".to_string());
-            }
-        }
-
-        let len = u16::from_be_bytes([length_buf[0], length_buf[1]]) as usize;
-
-        let mut query = vec![0u8; len];
-
-        let read_result = timeout(idle_timeout, stream.read_exact(&mut query)).await;
-
-        match read_result {
-            Ok(Ok(_)) => {}
-            Ok(Err(e)) => return Err(format!("TCP read error: {}", e)),
-            Err(_) => {
-                tracing::debug!("TCP query read timeout for {}", client_ip);
-                return Err("Query read timeout".to_string());
-            }
-        }
-
-        // Validate query structure
-        if let Some(validator) = ctx.query_validator {
-            if let Err(resp) = validator.validate_query_with_response(&query) {
-                if let Some(response) = resp {
-                    let len = response.len() as u16;
-                    let mut response_buf = len.to_be_bytes().to_vec();
-                    response_buf.extend_from_slice(&response);
-                    if let Err(e) = stream.write_all(&response_buf).await {
-                        tracing::debug!("Failed to send error response: {}", e);
-                    }
-                }
+        loop {
+            if ctx
+                .connection_limits
+                .map(|l| l.is_in_graceful_shutdown())
+                .unwrap_or(false)
+            {
                 tracing::debug!(
-                    "Invalid DNS TCP query from {}: validation failed",
-                    client_ip
+                    transport = "tcp",
+                    client = %client_ip,
+                    "TCP connection draining for graceful shutdown"
                 );
-                return Err("Invalid query".to_string());
+                break;
             }
-        }
 
-        // Parse once — pass parsed state to firewall and downstream
-        let parsed_tcp = ParsedDnsQuery::parse(&query);
+            if queries_served >= MAX_TCP_QUERIES_PER_CONNECTION {
+                tracing::debug!(
+                    transport = "tcp",
+                    client = %client_ip,
+                    queries = queries_served,
+                    "TCP connection reached per-connection query bound; closing"
+                );
+                break;
+            }
 
-        // Firewall check — skip if parse fails (malformed query → FORMERR anyway)
-        if let (Some(fw), Ok(ref parsed_q)) = (ctx.firewall.as_ref(), &parsed_tcp) {
-            let fw_read = fw.read();
-            match fw_read.evaluate_query(parsed_q, client_ip, &parsed_q.qname) {
-                Ok(decision) => {
-                    if decision.action == crate::firewall::DnsFirewallAction::Block {
-                        tracing::warn!(
-                            "DNS TCP query blocked by firewall: rule={} client={} qname={}",
-                            decision.rule_id,
-                            client_ip,
-                            parsed_q.qname
-                        );
-                        return Err("Blocked by firewall".to_string());
+            let mut length_buf = [0u8; 2];
+            match timeout(idle_timeout, stream.read_exact(&mut length_buf)).await {
+                Ok(Ok(_)) => {}
+                Ok(Err(e)) if e.kind() == ErrorKind::UnexpectedEof => {
+                    tracing::debug!(
+                        transport = "tcp",
+                        client = %client_ip,
+                        "TCP connection closed by client"
+                    );
+                    break;
+                }
+                Ok(Err(e)) => return Err(format!("TCP read error: {}", e)),
+                Err(_) => {
+                    tracing::debug!("TCP connection idle timeout for {}", client_ip);
+                    break;
+                }
+            }
+
+            let len = u16::from_be_bytes([length_buf[0], length_buf[1]]) as usize;
+
+            if len == 0 || len > max_frame {
+                return Err(format!(
+                    "Invalid TCP query length {} (allowed 1..={})",
+                    len, max_frame
+                ));
+            }
+
+            let mut query = vec![0u8; len];
+
+            match timeout(query_timeout, stream.read_exact(&mut query)).await {
+                Ok(Ok(_)) => {}
+                Ok(Err(e)) if e.kind() == ErrorKind::UnexpectedEof => {
+                    tracing::debug!(
+                        transport = "tcp",
+                        client = %client_ip,
+                        "TCP connection closed mid-query by client"
+                    );
+                    break;
+                }
+                Ok(Err(e)) => return Err(format!("TCP read error: {}", e)),
+                Err(_) => {
+                    tracing::debug!("TCP query read timeout for {}", client_ip);
+                    break;
+                }
+            }
+
+            queries_served += 1;
+
+            // Validate query structure
+            if let Some(validator) = ctx.query_validator {
+                if let Err(resp) = validator.validate_query_with_response(&query) {
+                    if let Some(response) = resp {
+                        let len = response.len() as u16;
+                        let mut response_buf = len.to_be_bytes().to_vec();
+                        response_buf.extend_from_slice(&response);
+                        if let Err(e) = stream.write_all(&response_buf).await {
+                            tracing::debug!("Failed to send error response: {}", e);
+                        }
+                    }
+                    tracing::debug!(
+                        "Invalid DNS TCP query from {}: validation failed",
+                        client_ip
+                    );
+                    continue;
+                }
+            }
+
+            // Parse once — pass parsed state to firewall and downstream
+            let parsed_tcp = ParsedDnsQuery::parse(&query);
+
+            // Firewall check — skip if parse fails (malformed query → FORMERR anyway)
+            if let (Some(fw), Ok(ref parsed_q)) = (ctx.firewall.as_ref(), &parsed_tcp) {
+                let fw_read = fw.read();
+                match fw_read.evaluate_query(parsed_q, client_ip, &parsed_q.qname) {
+                    Ok(decision) => {
+                        if decision.action == crate::firewall::DnsFirewallAction::Block {
+                            tracing::warn!(
+                                "DNS TCP query blocked by firewall: rule={} client={} qname={}",
+                                decision.rule_id,
+                                client_ip,
+                                parsed_q.qname
+                            );
+                            continue;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("TCP Firewall evaluation error: {}", e);
                     }
                 }
-                Err(e) => {
-                    tracing::warn!("TCP Firewall evaluation error: {}", e);
-                }
             }
-        }
 
-        let skip_coalesce = parsed_tcp
-            .as_ref()
-            .map(|pq| crate::query_coalesce::should_skip_coalescing(pq.qtype, pq.flags.opcode))
-            .unwrap_or(false);
+            let skip_coalesce = parsed_tcp
+                .as_ref()
+                .map(|pq| crate::query_coalesce::should_skip_coalescing(pq.qtype, pq.flags.opcode))
+                .unwrap_or(false);
 
-        let response = if let Some(coalescer) = ctx.query_coalescer {
-            let query_key = if skip_coalesce {
-                None
-            } else if let Ok(ref parsed_q) = parsed_tcp {
-                crate::query_coalesce::QueryKey::from_parsed(
-                    parsed_q,
-                    Some(client_ip),
-                    &query,
-                    Some(TransportClass::Tcp),
-                )
-            } else {
-                crate::query_coalesce::QueryKey::from_query(
-                    &query,
-                    Some(client_ip),
-                    Some(TransportClass::Tcp),
-                )
-            };
+            let response = if let Some(coalescer) = ctx.query_coalescer {
+                let query_key = if skip_coalesce {
+                    None
+                } else if let Ok(ref parsed_q) = parsed_tcp {
+                    crate::query_coalesce::QueryKey::from_parsed(
+                        parsed_q,
+                        Some(client_ip),
+                        &query,
+                        Some(TransportClass::Tcp),
+                    )
+                } else {
+                    crate::query_coalesce::QueryKey::from_query(
+                        &query,
+                        Some(client_ip),
+                        Some(TransportClass::Tcp),
+                    )
+                };
 
-            if let Some(key) = query_key {
-                match coalescer.get_or_wait(key.clone()).await {
-                    Some(crate::query_coalesce::CoalesceResult::Response(resp)) => Some(resp),
-                    Some(crate::query_coalesce::CoalesceResult::NewQuery(_tx)) => {
-                        let resp = if let (Some(c), Ok(ref parsed_q)) = (ctx.cache, &parsed_tcp) {
-                            Self::handle_parsed_query_with_cache(
-                                &ctx,
-                                parsed_q,
-                                &query,
-                                c,
-                                TransportClass::Tcp,
-                                Some(client_ip),
-                            )
-                        } else if let Some(c) = ctx.cache {
-                            Self::handle_query_with_cache(
-                                &ctx,
-                                &query,
-                                c,
-                                TransportClass::Tcp,
-                                Some(client_ip),
-                            )
-                        } else if let Ok(ref parsed_q) = parsed_tcp {
-                            Self::handle_parsed_query(&ctx, parsed_q, &query, Some(client_ip))
-                        } else {
-                            Self::handle_query(&ctx, &query, Some(client_ip))
-                        };
+                if let Some(key) = query_key {
+                    match coalescer.get_or_wait(key.clone()).await {
+                        Some(crate::query_coalesce::CoalesceResult::Response(resp)) => Some(resp),
+                        Some(crate::query_coalesce::CoalesceResult::NewQuery(_tx)) => {
+                            let resp = if let (Some(c), Ok(ref parsed_q)) = (ctx.cache, &parsed_tcp)
+                            {
+                                Self::handle_parsed_query_with_cache(
+                                    &ctx,
+                                    parsed_q,
+                                    &query,
+                                    c,
+                                    TransportClass::Tcp,
+                                    Some(client_ip),
+                                )
+                            } else if let Some(c) = ctx.cache {
+                                Self::handle_query_with_cache(
+                                    &ctx,
+                                    &query,
+                                    c,
+                                    TransportClass::Tcp,
+                                    Some(client_ip),
+                                )
+                            } else if let Ok(ref parsed_q) = parsed_tcp {
+                                Self::handle_parsed_query(&ctx, parsed_q, &query, Some(client_ip))
+                            } else {
+                                Self::handle_query(&ctx, &query, Some(client_ip))
+                            };
 
-                        if let Some(ref r) = resp {
-                            coalescer.broadcast_response(key.clone(), r.clone());
-                        } else {
-                            coalescer.cancel_in_flight(&key);
+                            if let Some(ref r) = resp {
+                                coalescer.broadcast_response(key.clone(), r.clone());
+                            } else {
+                                coalescer.cancel_in_flight(&key);
+                            }
+
+                            resp
                         }
-
-                        resp
-                    }
-                    None => {
-                        if let (Some(c), Ok(ref parsed_q)) = (ctx.cache, &parsed_tcp) {
-                            Self::handle_parsed_query_with_cache(
-                                &ctx,
-                                parsed_q,
-                                &query,
-                                c,
-                                TransportClass::Tcp,
-                                Some(client_ip),
-                            )
-                        } else if let Some(c) = ctx.cache {
-                            Self::handle_query_with_cache(
-                                &ctx,
-                                &query,
-                                c,
-                                TransportClass::Tcp,
-                                Some(client_ip),
-                            )
-                        } else if let Ok(ref parsed_q) = parsed_tcp {
-                            Self::handle_parsed_query(&ctx, parsed_q, &query, Some(client_ip))
-                        } else {
-                            Self::handle_query(&ctx, &query, Some(client_ip))
+                        None => {
+                            if let (Some(c), Ok(ref parsed_q)) = (ctx.cache, &parsed_tcp) {
+                                Self::handle_parsed_query_with_cache(
+                                    &ctx,
+                                    parsed_q,
+                                    &query,
+                                    c,
+                                    TransportClass::Tcp,
+                                    Some(client_ip),
+                                )
+                            } else if let Some(c) = ctx.cache {
+                                Self::handle_query_with_cache(
+                                    &ctx,
+                                    &query,
+                                    c,
+                                    TransportClass::Tcp,
+                                    Some(client_ip),
+                                )
+                            } else if let Ok(ref parsed_q) = parsed_tcp {
+                                Self::handle_parsed_query(&ctx, parsed_q, &query, Some(client_ip))
+                            } else {
+                                Self::handle_query(&ctx, &query, Some(client_ip))
+                            }
+                        }
+                        _ => {
+                            if let (Some(c), Ok(ref parsed_q)) = (ctx.cache, &parsed_tcp) {
+                                Self::handle_parsed_query_with_cache(
+                                    &ctx,
+                                    parsed_q,
+                                    &query,
+                                    c,
+                                    TransportClass::Tcp,
+                                    Some(client_ip),
+                                )
+                            } else if let Some(c) = ctx.cache {
+                                Self::handle_query_with_cache(
+                                    &ctx,
+                                    &query,
+                                    c,
+                                    TransportClass::Tcp,
+                                    Some(client_ip),
+                                )
+                            } else if let Ok(ref parsed_q) = parsed_tcp {
+                                Self::handle_parsed_query(&ctx, parsed_q, &query, Some(client_ip))
+                            } else {
+                                Self::handle_query(&ctx, &query, Some(client_ip))
+                            }
                         }
                     }
-                    _ => {
-                        if let (Some(c), Ok(ref parsed_q)) = (ctx.cache, &parsed_tcp) {
-                            Self::handle_parsed_query_with_cache(
-                                &ctx,
-                                parsed_q,
-                                &query,
-                                c,
-                                TransportClass::Tcp,
-                                Some(client_ip),
-                            )
-                        } else if let Some(c) = ctx.cache {
-                            Self::handle_query_with_cache(
-                                &ctx,
-                                &query,
-                                c,
-                                TransportClass::Tcp,
-                                Some(client_ip),
-                            )
-                        } else if let Ok(ref parsed_q) = parsed_tcp {
-                            Self::handle_parsed_query(&ctx, parsed_q, &query, Some(client_ip))
-                        } else {
-                            Self::handle_query(&ctx, &query, Some(client_ip))
-                        }
-                    }
+                } else if let (Some(c), Ok(ref parsed_q)) = (ctx.cache, &parsed_tcp) {
+                    Self::handle_parsed_query_with_cache(
+                        &ctx,
+                        parsed_q,
+                        &query,
+                        c,
+                        TransportClass::Tcp,
+                        Some(client_ip),
+                    )
+                } else if let Some(c) = ctx.cache {
+                    Self::handle_query_with_cache(
+                        &ctx,
+                        &query,
+                        c,
+                        TransportClass::Tcp,
+                        Some(client_ip),
+                    )
+                } else if let Ok(ref parsed_q) = parsed_tcp {
+                    Self::handle_parsed_query(&ctx, parsed_q, &query, Some(client_ip))
+                } else {
+                    Self::handle_query(&ctx, &query, Some(client_ip))
                 }
             } else if let (Some(c), Ok(ref parsed_q)) = (ctx.cache, &parsed_tcp) {
                 Self::handle_parsed_query_with_cache(
@@ -300,200 +385,185 @@ impl DnsServer {
                 Self::handle_parsed_query(&ctx, parsed_q, &query, Some(client_ip))
             } else {
                 Self::handle_query(&ctx, &query, Some(client_ip))
-            }
-        } else if let (Some(c), Ok(ref parsed_q)) = (ctx.cache, &parsed_tcp) {
-            Self::handle_parsed_query_with_cache(
-                &ctx,
-                parsed_q,
-                &query,
-                c,
-                TransportClass::Tcp,
-                Some(client_ip),
-            )
-        } else if let Some(c) = ctx.cache {
-            Self::handle_query_with_cache(&ctx, &query, c, TransportClass::Tcp, Some(client_ip))
-        } else if let Ok(ref parsed_q) = parsed_tcp {
-            Self::handle_parsed_query(&ctx, parsed_q, &query, Some(client_ip))
-        } else {
-            Self::handle_query(&ctx, &query, Some(client_ip))
-        };
+            };
 
-        if let Some(resp) = response {
-            if let Some(zt) = ctx.zone_transfer {
-                if let Ok(ref parsed_zt) = parsed_tcp {
-                    if parsed_zt.is_axfr() {
-                        let tsig =
-                            crate::tsig::parse_tsig_from_query(&query, parsed_zt.question_end);
-                        match zt.handle_axfr_request_messages(
-                            &parsed_zt.qname,
-                            client_ip,
-                            tsig.as_ref(),
-                            parsed_zt.id,
-                            &query,
-                            true, // TCP path
-                        ) {
-                            Ok(messages) => {
-                                for msg in messages {
-                                    let len = msg.len() as u16;
-                                    let mut buf = len.to_be_bytes().to_vec();
-                                    buf.extend_from_slice(&msg);
-                                    stream.write_all(&buf).await.map_err(|e| e.to_string())?;
+            if let Some(resp) = response {
+                if let Some(zt) = ctx.zone_transfer {
+                    if let Ok(ref parsed_zt) = parsed_tcp {
+                        if parsed_zt.is_axfr() {
+                            let tsig =
+                                crate::tsig::parse_tsig_from_query(&query, parsed_zt.question_end);
+                            match zt.handle_axfr_request_messages(
+                                &parsed_zt.qname,
+                                client_ip,
+                                tsig.as_ref(),
+                                parsed_zt.id,
+                                &query,
+                                true, // TCP path
+                            ) {
+                                Ok(messages) => {
+                                    for msg in messages {
+                                        let len = msg.len() as u16;
+                                        let mut buf = len.to_be_bytes().to_vec();
+                                        buf.extend_from_slice(&msg);
+                                        stream.write_all(&buf).await.map_err(|e| e.to_string())?;
+                                    }
+                                    continue;
                                 }
-                                return Ok(());
-                            }
-                            Err(e) => {
-                                tracing::warn!("AXFR multi-message failed: {}", e);
-                                return Err(format!("AXFR failed: {}", e));
-                            }
-                        }
-                    }
-
-                    if parsed_zt.is_ixfr() {
-                        let serial = Self::extract_ixfr_serial(&query);
-                        let tsig =
-                            crate::tsig::parse_tsig_from_query(&query, parsed_zt.question_end);
-                        match zt.handle_ixfr_request_messages(
-                            &parsed_zt.qname,
-                            client_ip,
-                            serial,
-                            tsig.as_ref(),
-                            parsed_zt.id,
-                            &query,
-                        ) {
-                            Ok(messages) => {
-                                for msg in messages {
-                                    let len = msg.len() as u16;
-                                    let mut buf = len.to_be_bytes().to_vec();
-                                    buf.extend_from_slice(&msg);
-                                    stream.write_all(&buf).await.map_err(|e| e.to_string())?;
+                                Err(e) => {
+                                    tracing::warn!("AXFR multi-message failed: {}", e);
+                                    continue;
                                 }
-                                return Ok(());
                             }
-                            Err(e) => {
-                                tracing::warn!("IXFR multi-message failed: {}", e);
-                                return Err(format!("IXFR failed: {}", e));
+                        }
+
+                        if parsed_zt.is_ixfr() {
+                            let serial = Self::extract_ixfr_serial(&query);
+                            let tsig =
+                                crate::tsig::parse_tsig_from_query(&query, parsed_zt.question_end);
+                            match zt.handle_ixfr_request_messages(
+                                &parsed_zt.qname,
+                                client_ip,
+                                serial,
+                                tsig.as_ref(),
+                                parsed_zt.id,
+                                &query,
+                            ) {
+                                Ok(messages) => {
+                                    for msg in messages {
+                                        let len = msg.len() as u16;
+                                        let mut buf = len.to_be_bytes().to_vec();
+                                        buf.extend_from_slice(&msg);
+                                        stream.write_all(&buf).await.map_err(|e| e.to_string())?;
+                                    }
+                                    continue;
+                                }
+                                Err(e) => {
+                                    tracing::warn!("IXFR multi-message failed: {}", e);
+                                    continue;
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            // Apply RRL for TCP queries if enabled
-            if ctx.rrl_enabled {
-                if let Some(rl) = ctx.rate_limiter {
-                    if !rl.should_respond(client_ip) {
-                        tracing::debug!("RRL dropping TCP response to {}", client_ip);
-                        return Ok(());
-                    }
-                }
-            }
-
-            if let Some(limits) = ctx.connection_limits {
-                if let Err(e) = limits.validate_response_size(resp.len()) {
-                    tracing::warn!(
-                        transport = "tcp",
-                        client = %client_ip,
-                        response_size = resp.len(),
-                        "{}", e
-                    );
-
-                    // Build a SERVFAIL that echoes the original question section
-                    // when the query was successfully parsed (RFC 1035 §4.1.1).
-                    //
-                    // When parsing succeeds, we capture query ID, RD bit, and the
-                    // full question section (QNAME wire + QTYPE + QCLASS) from the
-                    // parsed query to construct a standards-compliant SERVFAIL.
-                    //
-                    // When parsing fails (malformed query), we extract what we can
-                    // from the raw header bytes and emit a minimal SERVFAIL with
-                    // no question section (QDCOUNT=0).
-                    let (query_id, rd, question_bytes) = if let Ok(ref parsed_q) = parsed_tcp {
-                        // Question section: QNAME (wire) + QTYPE (2) + QCLASS (2)
-                        let q = &query[12..parsed_q.question_end];
-                        (
-                            parsed_q.id,
-                            parsed_q.flags.recursion_desired,
-                            Some(q.to_vec()),
-                        )
-                    } else if query.len() >= 4 {
-                        let qid = u16::from_be_bytes([query[0], query[1]]);
-                        let flags = u16::from_be_bytes([query[2], query[3]]);
-                        let rd = (flags & 0x0100) != 0;
-                        (qid, rd, None)
-                    } else {
-                        (0u16, false, None)
-                    };
-
-                    // QR=1, AA=0, TC=0, RD=echoed, RA=0, AD=0, RCODE=2 (SERVFAIL)
-                    //
-                    // RA=0: We are returning SERVFAIL, not claiming recursion is
-                    // available. A SERVFAIL with RA=1 could mislead clients into
-                    // retrying via recursion when the real issue is response size.
-                    //
-                    // AD=0: We have not validated anything for this response, so
-                    // the Authentic Data bit must not be set.
-                    //
-                    // AA=0: We do not know whether this query is for an
-                    // authoritative zone at this point in the TCP handler, so we
-                    // omit the Authoritative Answer bit. A future enhancement
-                    // could check zone context and set AA=true for authoritative
-                    // SERVFAIL responses.
-                    let flags = crate::parsed_query::build_response_flags(
-                        false, false, rd, false, false, 2,
-                    );
-
-                    let qdcount: u16 = if question_bytes.is_some() { 1 } else { 0 };
-
-                    let mut servfail =
-                        Vec::with_capacity(12 + question_bytes.as_ref().map_or(0, |q| q.len()));
-                    servfail.extend_from_slice(&query_id.to_be_bytes());
-                    servfail.extend_from_slice(&flags.to_be_bytes());
-                    servfail.extend_from_slice(&qdcount.to_be_bytes());
-                    servfail.extend_from_slice(&0u16.to_be_bytes()); // ANCOUNT
-                    servfail.extend_from_slice(&0u16.to_be_bytes()); // NSCOUNT
-                    servfail.extend_from_slice(&0u16.to_be_bytes()); // ARCOUNT
-                    if let Some(q) = question_bytes {
-                        servfail.extend_from_slice(&q);
-                    }
-
-                    // Verify the SERVFAIL itself fits within the TCP hard limit.
-                    // The SERVFAIL is at most ~271 bytes (12 header + 259 max question),
-                    // so this should always pass for any reasonable limit, but we
-                    // enforce it defensively.
-                    if let Some(limits) = ctx.connection_limits {
-                        if let Err(e) = limits.validate_response_size(servfail.len()) {
-                            tracing::warn!(
-                                transport = "tcp",
-                                client = %client_ip,
-                                servfail_size = servfail.len(),
-                                "SERVFAIL itself exceeds hard limit: {}. Closing connection.",
-                                e
-                            );
-                            return Ok(());
+                // Apply RRL for TCP queries if enabled
+                if ctx.rrl_enabled {
+                    if let Some(rl) = ctx.rate_limiter {
+                        if !rl.should_respond(client_ip) {
+                            tracing::debug!("RRL dropping TCP response to {}", client_ip);
+                            continue;
                         }
                     }
-
-                    let len = servfail.len() as u16;
-                    let mut response_buf = len.to_be_bytes().to_vec();
-                    response_buf.extend_from_slice(&servfail);
-                    if let Err(e) = stream.write_all(&response_buf).await {
-                        tracing::warn!("Failed to send SERVFAIL response: {}", e);
-                    }
-                    return Ok(());
                 }
+
+                if let Some(limits) = ctx.connection_limits {
+                    if let Err(e) = limits.validate_response_size(resp.len()) {
+                        tracing::warn!(
+                            transport = "tcp",
+                            client = %client_ip,
+                            response_size = resp.len(),
+                            "{}", e
+                        );
+
+                        // Build a SERVFAIL that echoes the original question section
+                        // when the query was successfully parsed (RFC 1035 §4.1.1).
+                        //
+                        // When parsing succeeds, we capture query ID, RD bit, and the
+                        // full question section (QNAME wire + QTYPE + QCLASS) from the
+                        // parsed query to construct a standards-compliant SERVFAIL.
+                        //
+                        // When parsing fails (malformed query), we extract what we can
+                        // from the raw header bytes and emit a minimal SERVFAIL with
+                        // no question section (QDCOUNT=0).
+                        let (query_id, rd, question_bytes) = if let Ok(ref parsed_q) = parsed_tcp {
+                            // Question section: QNAME (wire) + QTYPE (2) + QCLASS (2)
+                            let q = &query[12..parsed_q.question_end];
+                            (
+                                parsed_q.id,
+                                parsed_q.flags.recursion_desired,
+                                Some(q.to_vec()),
+                            )
+                        } else if query.len() >= 4 {
+                            let qid = u16::from_be_bytes([query[0], query[1]]);
+                            let flags = u16::from_be_bytes([query[2], query[3]]);
+                            let rd = (flags & 0x0100) != 0;
+                            (qid, rd, None)
+                        } else {
+                            (0u16, false, None)
+                        };
+
+                        // QR=1, AA=0, TC=0, RD=echoed, RA=0, AD=0, RCODE=2 (SERVFAIL)
+                        //
+                        // RA=0: We are returning SERVFAIL, not claiming recursion is
+                        // available. A SERVFAIL with RA=1 could mislead clients into
+                        // retrying via recursion when the real issue is response size.
+                        //
+                        // AD=0: We have not validated anything for this response, so
+                        // the Authentic Data bit must not be set.
+                        //
+                        // AA=0: We do not know whether this query is for an
+                        // authoritative zone at this point in the TCP handler, so we
+                        // omit the Authoritative Answer bit. A future enhancement
+                        // could check zone context and set AA=true for authoritative
+                        // SERVFAIL responses.
+                        let flags = crate::parsed_query::build_response_flags(
+                            false, false, rd, false, false, 2,
+                        );
+
+                        let qdcount: u16 = if question_bytes.is_some() { 1 } else { 0 };
+
+                        let mut servfail =
+                            Vec::with_capacity(12 + question_bytes.as_ref().map_or(0, |q| q.len()));
+                        servfail.extend_from_slice(&query_id.to_be_bytes());
+                        servfail.extend_from_slice(&flags.to_be_bytes());
+                        servfail.extend_from_slice(&qdcount.to_be_bytes());
+                        servfail.extend_from_slice(&0u16.to_be_bytes()); // ANCOUNT
+                        servfail.extend_from_slice(&0u16.to_be_bytes()); // NSCOUNT
+                        servfail.extend_from_slice(&0u16.to_be_bytes()); // ARCOUNT
+                        if let Some(q) = question_bytes {
+                            servfail.extend_from_slice(&q);
+                        }
+
+                        // Verify the SERVFAIL itself fits within the TCP hard limit.
+                        // The SERVFAIL is at most ~271 bytes (12 header + 259 max question),
+                        // so this should always pass for any reasonable limit, but we
+                        // enforce it defensively.
+                        if let Some(limits) = ctx.connection_limits {
+                            if let Err(e) = limits.validate_response_size(servfail.len()) {
+                                tracing::warn!(
+                                    transport = "tcp",
+                                    client = %client_ip,
+                                    servfail_size = servfail.len(),
+                                    "SERVFAIL itself exceeds hard limit: {}. Closing connection.",
+                                    e
+                                );
+                                break;
+                            }
+                        }
+
+                        let len = servfail.len() as u16;
+                        let mut response_buf = len.to_be_bytes().to_vec();
+                        response_buf.extend_from_slice(&servfail);
+                        if let Err(e) = stream.write_all(&response_buf).await {
+                            tracing::warn!("Failed to send SERVFAIL response: {}", e);
+                            break;
+                        }
+                        continue;
+                    }
+                }
+                let len = resp.len() as u16;
+                let mut response_buf = len.to_be_bytes().to_vec();
+                response_buf.extend_from_slice(&resp);
+                stream
+                    .write_all(&response_buf)
+                    .await
+                    .map_err(|e| e.to_string())?;
             }
-            let len = resp.len() as u16;
-            let mut response_buf = len.to_be_bytes().to_vec();
-            response_buf.extend_from_slice(&resp);
-            stream
-                .write_all(&response_buf)
-                .await
-                .map_err(|e| e.to_string())?;
         }
 
         Ok(())
     }
-
     pub(crate) fn handle_query_with_cache(
         ctx: &QueryContext,
         query: &[u8],
@@ -2276,7 +2346,7 @@ mod servfail_response_tests {
     }
 }
 
-// ── TCP one-query-per-connection lifecycle tests ──────────────────────
+// ── TCP persistent-connection lifecycle tests (Phase 45) ──────────────
 
 #[cfg(test)]
 mod tcp_lifecycle_tests {
@@ -2429,8 +2499,11 @@ mod tcp_lifecycle_tests {
         addr
     }
 
+    /// Phase 45 (Workstream D): the connection stays open after one response
+    /// and serves a second sequential query on the same stream (RFC 7766
+    /// connection reuse; no pipelining — one outstanding query at a time).
     #[tokio::test]
-    async fn test_tcp_one_query_then_connection_closed() {
+    async fn test_tcp_connection_reused_for_second_query() {
         // Use a zone so we get a real response instead of REFUSED
         let zone = build_test_zone();
         let addr = start_test_server_with_zone(Some(zone), None).await;
@@ -2460,63 +2533,63 @@ mod tcp_lifecycle_tests {
             "RCODE=NOERROR (zone has the record)"
         );
 
-        // Connection should be closed by the server after one response.
-        // Attempting to read should return 0 bytes (EOF) or an error.
-        let read_result = stream.read(&mut [0u8; 1]).await;
-        match read_result {
-            Ok(0) => {} // EOF — connection closed by server
-            Ok(_) => {
-                panic!(
-                    "Expected connection closed (EOF), but got additional data. \
-                     The server is not enforcing one-query-per-connection."
-                );
-            }
-            Err(_) => {} // Connection reset — also acceptable
-        }
+        // Connection must still be open: a second query on the same stream
+        // gets a second response with its own ID.
+        let query2 = build_query(0x5678, "www.test.local", 1);
+        stream.write_all(&wrap_tcp(&query2)).await.unwrap();
+        stream.read_exact(&mut len_buf).await.unwrap();
+        let resp_len = u16::from_be_bytes(len_buf) as usize;
+        let mut resp_buf = vec![0u8; resp_len];
+        stream.read_exact(&mut resp_buf).await.unwrap();
+        assert_eq!(
+            u16::from_be_bytes([resp_buf[0], resp_buf[1]]),
+            0x5678,
+            "second response must echo the second query ID"
+        );
     }
 
+    /// Phase 45 (Workstream D): service continues after an error response —
+    /// a query for a missing name does not poison the connection.
     #[tokio::test]
-    async fn test_tcp_second_query_not_processed() {
+    async fn test_tcp_connection_survives_error_response() {
         let zone = build_test_zone();
         let addr = start_test_server_with_zone(Some(zone), None).await;
 
         let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
 
-        // Send first query
-        let query1 = build_query(0x1111, "www.test.local", 1);
+        // Send first query for a name that does not exist in the zone.
+        let query1 = build_query(0x1111, "missing.test.local", 1);
         stream.write_all(&wrap_tcp(&query1)).await.unwrap();
 
-        // Read first response
+        // Read first response (NXDOMAIN or similar — must still be framed).
         let mut len_buf = [0u8; 2];
         stream.read_exact(&mut len_buf).await.unwrap();
         let resp_len = u16::from_be_bytes(len_buf) as usize;
         let mut resp_buf = vec![0u8; resp_len];
         stream.read_exact(&mut resp_buf).await.unwrap();
         assert_eq!(
-            u16::from_be_bytes([resp_buf[2], resp_buf[3]]) & 0x000F,
-            0,
-            "First query returns NOERROR"
+            u16::from_be_bytes([resp_buf[0], resp_buf[1]]),
+            0x1111,
+            "error response must echo the query ID"
         );
 
-        // Server should have closed the connection. Verify by trying to send
-        // a second query — this should fail or produce no response.
+        // A second query on the same connection is still served.
         let query2 = build_query(0x2222, "www.test.local", 1);
-        let write_result = stream.write_all(&wrap_tcp(&query2)).await;
-
-        // Either the write fails (broken pipe) or we get EOF on read
-        if write_result.is_ok() {
-            let read_result = stream.read(&mut [0u8; 1]).await;
-            match read_result {
-                Ok(0) => {} // EOF — correct
-                Ok(_) => {
-                    panic!(
-                        "Server processed a second query on the same TCP connection. \
-                         One-query-per-connection policy is violated."
-                    );
-                }
-                Err(_) => {} // Connection reset — acceptable
-            }
-        }
+        stream.write_all(&wrap_tcp(&query2)).await.unwrap();
+        stream.read_exact(&mut len_buf).await.unwrap();
+        let resp_len = u16::from_be_bytes(len_buf) as usize;
+        let mut resp_buf = vec![0u8; resp_len];
+        stream.read_exact(&mut resp_buf).await.unwrap();
+        assert_eq!(
+            u16::from_be_bytes([resp_buf[0], resp_buf[1]]),
+            0x2222,
+            "connection must keep serving after an error response"
+        );
+        assert_eq!(
+            u16::from_be_bytes([resp_buf[2], resp_buf[3]]) & 0x000F,
+            0,
+            "second query returns NOERROR"
+        );
     }
 
     #[tokio::test]

@@ -595,6 +595,33 @@ Rebuild with the named feature or remove the unsupported section. Mesh
 `restart_enabled = true` and any non-default restart tuning (restart is not
 implemented).
 
+## DNS deferred features (fail-closed, Phase 45)
+
+Inside the `dns` section, deferred features reject *activation* with a typed
+`Unsupported { path }` error instead of being silently ignored. Defaults and
+disabled values stay parseable; the admin `PUT /config/dns` endpoint enforces
+the same validation (400):
+
+- `dns.rpz.enabled`, `dns.prefetch.enabled`, `dns.trust_anchors.enabled`,
+  `dns.anycast.enabled` must stay `false` (no runtime consumer / mesh wiring).
+- `dns.settings.allow_transfer` must stay empty; `dynamic_update.enabled`,
+  `notify.enabled`, `padding.enabled`, `qname_privacy.enabled` must stay
+  `false`; transfer-knob deviations (`allow_wildcard_transfer = true`,
+  `require_tsig = false`, `ixfr_enabled = false`, non-default
+  `ixfr_history_size` / `ixfr_fallback_to_axfr`) are rejected. Until the
+  zone-lifecycle design gate is satisfied, AXFR/IXFR/UPDATE/NOTIFY answer
+  NOTIMP unconditionally.
+- While `dns.firewall` (or `dns.recursive.firewall`) is enabled,
+  `default_action` must stay `allow`, `max_rules` at default, and
+  `rebinding_protection.enabled` must be explicitly `false` (unenforced).
+- `dns.recursive.ecs.include_scope_in_response` must stay `false`.
+- Enabled DoT/DoH/DoQ transports require an explicit parseable
+  `bind_address` and non-zero port (validated before listener startup).
+
+Full mapping: `architecture/dns_config_runtime_matrix.md` (Phase 45 section).
+Example profiles: `examples/dns/` (`transfer_primary.toml` is a deferred
+design reference — it parses but fails validation).
+
 ## CPU Offload IPC Pool Environment Overrides
 
 These environment variables control bounded async IPC offload concurrency for CPU-task clients (`AsyncMinifierClient` and `ImageRightsClient`):

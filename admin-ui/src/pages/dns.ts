@@ -400,12 +400,14 @@ pub fn Dns() -> Html {
                     </details>
 
                     <details class="bg-secondary rounded-lg border border-default">
-                        <summary class="p-4 cursor-pointer font-semibold">{ "RPZ (Response Policy Zones)" }</summary>
+                        <summary class="p-4 cursor-pointer font-semibold">{ "RPZ (Response Policy Zones) — unsupported" }</summary>
                         <div class="p-4 space-y-4">
+                            <p class="text-sm text-secondary">{ "No RPZ engine exists yet; the backend rejects activation (400). Deferred (Phase 45)." }</p>
                             <div class="flex items-center gap-2">
                                 <input
                                     type="checkbox"
                                     id="rpz_enabled"
+                                    disabled=true
                                     checked={get_bool(&cfg, "rpz_enabled", false)}
                                     onchange={{
                                         let edited_config = edited_config.clone();
@@ -547,11 +549,13 @@ pub fn Dns() -> Html {
                     </details>
 
                     <details class="bg-secondary rounded-lg border border-default">
-                        <summary class="p-4 cursor-pointer font-semibold">{ "Prefetch" }</summary>
+                        <summary class="p-4 cursor-pointer font-semibold">{ "Prefetch — unsupported" }</summary>
                         <div class="p-4 space-y-4">
+                            <p class="text-sm text-secondary">{ "No prefetch runtime consumer exists; the backend rejects activation (400). Deferred (Phase 45)." }</p>
                             <div class="flex items-center gap-2">
                                 <input
                                     type="checkbox"
+                                    disabled=true
                                     onchange={{
                                         let edited_config = edited_config.clone();
                                         Callback::from(move |e: Event| {
@@ -571,8 +575,9 @@ pub fn Dns() -> Html {
                     </details>
 
                     <details class="bg-secondary rounded-lg border border-default">
-                        <summary class="p-4 cursor-pointer font-semibold">{ "Trust Anchors" }</summary>
+                        <summary class="p-4 cursor-pointer font-semibold">{ "Trust Anchors — unsupported" }</summary>
                         <div class="p-4 space-y-4">
+                            <p class="text-sm text-secondary">{ "Custom trust anchors have no runtime consumer; the backend rejects activation (400). Deferred (Phase 45)." }</p>
                             <div>
                                 <label class="block text-sm text-secondary mb-1">{ "Trust Anchor Keys (JSON)" }</label>
                                 <textarea
@@ -596,11 +601,13 @@ pub fn Dns() -> Html {
                     </details>
 
                     <details class="bg-secondary rounded-lg border border-default">
-                        <summary class="p-4 cursor-pointer font-semibold">{ "Anycast" }</summary>
+                        <summary class="p-4 cursor-pointer font-semibold">{ "Anycast — unsupported" }</summary>
                         <div class="p-4 space-y-4">
+                            <p class="text-sm text-secondary">{ "Anycast requires mesh integration that is not wired; the backend rejects activation (400). Deferred (Phase 45)." }</p>
                             <div class="flex items-center gap-2">
                                 <input
                                     type="checkbox"
+                                    disabled=true
                                     onchange={{
                                         let edited_config = edited_config.clone();
                                         Callback::from(move |e: Event| {
@@ -668,7 +675,7 @@ pub fn Dns() -> Html {
                                         <label class="text-primary">{ "Enable DoT" }</label>
                                     </div>
                                     <div>
-                                        <label class="block text-sm text-secondary mb-1">{ "DoT Bind Address" }</label>
+                                        <label class="block text-sm text-secondary mb-1">{ "DoT Bind Address (required when enabled)" }</label>
                                         <input
                                             type="text"
                                             placeholder="0.0.0.0"
@@ -732,7 +739,7 @@ pub fn Dns() -> Html {
                                         <label class="text-primary">{ "Enable DoH" }</label>
                                     </div>
                                     <div>
-                                        <label class="block text-sm text-secondary mb-1">{ "DoH Bind Address" }</label>
+                                        <label class="block text-sm text-secondary mb-1">{ "DoH Bind Address (required when enabled)" }</label>
                                         <input
                                             type="text"
                                             placeholder="0.0.0.0"
@@ -775,8 +782,9 @@ pub fn Dns() -> Html {
                             </details>
 
                             <details class="bg-tertiary rounded-lg p-4">
-                                <summary class="cursor-pointer font-medium">{ "DoQ (DNS over QUIC)" }</summary>
+                                <summary class="cursor-pointer font-medium">{ "DoQ (DNS over QUIC) — experimental" }</summary>
                                 <div class="mt-4 space-y-4">
+                                    <p class="text-sm text-secondary">{ "DoQ binds honor dns.doq.bind_address; the backend rejects empty/invalid binds and zero ports (400). Not recommended for production." }</p>
                                     <div class="flex items-center gap-2">
                                         <input
                                             type="checkbox"
@@ -796,7 +804,7 @@ pub fn Dns() -> Html {
                                         <label class="text-primary">{ "Enable DoQ" }</label>
                                     </div>
                                     <div>
-                                        <label class="block text-sm text-secondary mb-1">{ "DoQ Bind Address" }</label>
+                                        <label class="block text-sm text-secondary mb-1">{ "DoQ Bind Address (required when enabled)" }</label>
                                         <input
                                             type="text"
                                             placeholder="0.0.0.0"

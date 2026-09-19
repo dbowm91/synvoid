@@ -2,6 +2,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use super::{unsupported, DnsConfigError};
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema, ToSchema)]
 #[serde(default)]
 pub struct DnsRpzConfig {
@@ -31,6 +33,22 @@ pub struct DnsRpzConfig {
 
     #[serde(default)]
     pub default_action: String,
+}
+
+impl DnsRpzConfig {
+    /// Phase 45 fail-closed contract: no RPZ rule engine exists, so the
+    /// section stays parseable but activation is rejected.
+    pub fn validate(&self) -> Result<(), DnsConfigError> {
+        if self.enabled {
+            return Err(unsupported(
+                "dns.rpz.enabled",
+                "Response Policy Zones have no runtime consumer. Keep disabled \
+                 until an RPZ engine lands (future trigger: DNS security-policy \
+                 product decision, Workstream F).",
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
@@ -96,5 +114,20 @@ impl Default for DnsPrefetchConfig {
             prefetch_ttl_threshold: default_prefetch_ttl_threshold(),
             max_prefetched_names: default_max_prefetch_names(),
         }
+    }
+}
+
+impl DnsPrefetchConfig {
+    /// Phase 45 fail-closed contract: no prefetch runtime consumer exists.
+    pub fn validate(&self) -> Result<(), DnsConfigError> {
+        if self.enabled {
+            return Err(unsupported(
+                "dns.prefetch.enabled",
+                "cache prefetch has no runtime consumer. Keep disabled; prefetch \
+                 is lowest priority, after correctness/security features \
+                 (Workstream F).",
+            ));
+        }
+        Ok(())
     }
 }

@@ -1283,7 +1283,10 @@ Phase 5 audited every DNS config field and ensured each is either fully implemen
 
 ### Deferred Features (Phase 7+)
 
-The following features have config fields but are NOT wired to runtime behavior:
+The following features have config fields but are NOT wired to runtime behavior.
+Since Phase 45, activating any of them fails `DnsConfig::validate()` with a
+typed `Unsupported { path, reason }` error instead of being silently ignored
+(see `architecture/dns_config_runtime_matrix.md`, Phase 45 section):
 
 - **RPZ** (`dns.rpz.*`): Requires rule database engine
 - **Dynamic Update** (`dns.settings.dynamic_update`): Handler exists but not wired; security-sensitive
@@ -1326,31 +1329,69 @@ pub(crate) fn configured_bind_addr(config: &DnsConfig) -> Result<SocketAddr, Str
 
 The error propagates through `start_standard_mode()` and surfaces as a startup failure. Tests in `startup.rs` (`configured_bind_addr_invalid_fails_fast`, `configured_bind_addr_port_zero_fails`) guard this invariant.
 
-### TCP Lifecycle Policy
+### TCP Lifecycle Policy (Phase 45: persistent sequential)
 
-TCP uses **one-query-per-connection** semantics per RFC 7766 §4 (`server/query.rs:65-91`). The handler reads exactly one length-prefixed DNS message, processes it, writes the response, and drops the `TcpStream` (closing the connection). The server never loops to read a second query from the same stream.
+TCP uses **persistent sequential** semantics per RFC 7766 §4 (`server/query.rs::handle_tcp_query`).
+The handler loops over length-prefixed DNS messages on the same stream: at most
+one outstanding query at a time. Request pipelining / multiplexed response
+reordering is explicitly NOT supported — a client must wait for each response
+before sending the next query.
 
-**Exception**: AXFR/IXFR transfers send multiple length-prefixed messages over the same connection, but the connection closes after the transfer completes.
+**Bounding policy** (abuse resistance):
 
-**Deferred**: Persistent TCP connections (pipelining, multiplexing, connection reuse across multiple queries) are not implemented. They require framing state, per-query idle timeout management, and connection pool accounting. This is deferred to a future milestone.
+- maximum message size enforced BEFORE allocation from
+  `dns.limits.max_query_size` (capped at the 16-bit framing maximum);
+  zero-length and oversize frames fail closed by closing the connection;
+- per-read idle timeout from `dns.limits.max_tcp_idle_time_secs` (default 300s);
+- per-query body timeout from `dns.limits.max_tcp_query_time_secs` (default 30s);
+- at most `MAX_TCP_QUERIES_PER_CONNECTION` (1000) queries per connection;
+- the TCP connection permit (acquired in `startup.rs`) is held for the full
+  connection lifetime;
+- graceful shutdown drains the loop at the next query boundary;
+- clean client close (EOF) or idle timeout ends the loop normally; framing
+  violations and I/O errors end it with an error.
 
-The TCP idle timeout defaults to the `max_tcp_idle_time_secs` config value (default 300s). The connection guard (`ConnectionGuard`) is held inside the `tokio::spawn` closure for the lifetime of the task, ensuring the connection count is properly decremented on drop.
+Firewall-blocked, invalid, RRL-dropped, and oversize (SERVFAIL) queries are
+answered-or-skipped without closing the connection (UDP-drop parity); only the
+pathological SERVFAIL-too-big case closes. AXFR/IXFR transfers send multiple
+length-prefixed messages over the same connection and then return to the query
+loop instead of closing.
+
+The connection guard (`ConnectionGuard`) is held inside the `tokio::spawn`
+closure for the lifetime of the task, ensuring the connection count is properly
+decremented on drop.
 
 ### EDNS Keepalive
 
 EDNS keepalive (RFC 7828, option code 11) is parsed in `edns.rs` and stored as `EdnsOptions.keepalive: Option<u16>`. The `build_keepalive_option(timeout_secs)` function constructs the EDNS option for responses.
 
-**Current state**: EDNS keepalive is parsed but not wired into connection management. Since the server uses one-query-per-connection semantics (TCP), keepalive negotiation is moot — the connection closes after each query response. Persistent TCP connections (pipelining/multiplexing) are deferred to a future milestone, at which point EDNS keepalive will be used to set per-connection idle timeouts.
+**Current state (Phase 45)**: EDNS keepalive is parsed but not wired into connection
+management. Now that sequential persistent TCP exists, keepalive negotiation
+remains deferred: there is no design yet for mapping the client's keepalive
+timeout onto the server's idle-timeout policy. Future trigger: an explicit
+keepalive negotiation design (cap bounds, interaction with the per-connection
+query bound). Recursive TCP (`recursive.rs::handle_tcp_connection`) is still
+one-query-per-connection; aligning it with the persistent lifecycle is a
+follow-up.
 
 ### Query Timeout
 
-Query timeout enforcement is wired at two levels:
+Query timeout enforcement is wired at three levels:
 
-1. **Initial read timeout** (`server/query.rs:109`): TCP connections use `tokio::time::timeout(idle_timeout, stream.read_exact(...))` with a default of 30 seconds (`max_idle_time`). This guards against slow-loris attacks on TCP connections.
+1. **TCP idle timeout** (`server/query.rs::handle_tcp_query`): each length-prefix
+   read uses `tokio::time::timeout(idle_timeout, ...)` from
+   `dns.limits.max_tcp_idle_time_secs` (default 300s). Idle expiry or client EOF
+   ends the persistent loop normally. This guards against slow-loris attacks.
 
-2. **Recursive query timeout** (`recursive.rs:133-167`): `query_timeout_secs` from `RecursiveDnsConfig` is passed to `HickoryResolver` constructors. This controls how long the recursive resolver waits for upstream responses before returning SERVFAIL.
+2. **TCP per-query timeout** (Phase 45): each query-body read uses
+   `tokio::time::timeout(query_timeout, ...)` from
+   `dns.limits.max_tcp_query_time_secs` (default 30s), which was previously
+   stored but never enforced on the authoritative path. Both zero values are
+   rejected by `DnsLimitsConfig::validate()`.
 
-**Note**: Query timeout is not enforced mid-processing — only on the initial read. Once a query is being processed (e.g., zone lookups, DNSSEC validation), there is no per-step timeout. This is standard DNS server behavior; the client-side query timeout handles the overall deadline.
+3. **Recursive query timeout** (`recursive.rs:133-167): `query_timeout_secs` from `RecursiveDnsConfig` is passed to `HickoryResolver` constructors. This controls how long the recursive resolver waits for upstream responses before returning SERVFAIL.
+
+**Note**: Query timeout is not enforced mid-processing — only on reads. Once a query is being processed (e.g., zone lookups, DNSSEC validation), there is no per-step timeout. This is standard DNS server behavior; the client-side query timeout handles the overall deadline.
 
 ### UDP/EDNS Truncation Behavior
 
@@ -1449,9 +1490,15 @@ SynVoid supports three encrypted DNS transport protocols, each implemented as a 
 
 - TCP connection with TLS 1.3 termination
 - Two-byte length-prefixed DNS framing (RFC 1035 §4.2.2, same as TCP)
-- One-query-per-connection policy (aligned with TCP policy from M2 Phase 1)
+- Phase 45: same bounded sequential lifecycle as plain TCP — connection permit
+  held for the full lifetime, per-read idle / per-query timeouts from
+  `dns.limits`, `MAX_TCP_QUERIES_PER_CONNECTION` bound, graceful-shutdown
+  drain. No pipelining/reordering.
 - Uses `TransportClass::Tcp` — DoT and TCP share the same cache namespace because the wire-format response is identical
 - Idle timeout and connection limits from `DnsLimitsConfig`
+- `dns.dot.bind_address` is honored (`SecureDnsServerBase::start_server`) and
+  validated (`DnsDotConfig::validate()` rejects empty/invalid binds, zero port
+  before startup); bind collisions surface as startup errors
 - TLS certificate and key loaded from `dns.dot.tls_cert_path` / `dns.dot.tls_key_path`
 - System cert store used by default (`use_system_cert_store = true`)
 
@@ -1464,6 +1511,8 @@ SynVoid supports three encrypted DNS transport protocols, each implemented as a 
 - Uses `TransportClass::Http` — separate cache namespace from TCP/DoT (HTTP framing differs)
 - Configurable path (`dns.doh.path`, default `/dns-query`) and optional JSON API path (`dns.doh.json_path`)
 - HTTP body size limits enforced; oversized bodies rejected
+- `dns.doh.bind_address` is honored and validated like DoT (explicit parseable
+  bind + non-zero port required when enabled)
 - Client identity from `X-Forwarded-For` only when trusted proxy is configured
 
 #### DoQ (DNS-over-QUIC)
@@ -1474,6 +1523,10 @@ SynVoid supports three encrypted DNS transport protocols, each implemented as a 
 - Per-stream message size limits and connection limits
 - Configurable max concurrent streams (`dns.doq.max_concurrent_streams`, default 100)
 - QUIC idle timeout (`dns.doq.idle_timeout_secs`, default 30s)
+- Phase 45: `dns.doq.bind_address` is honored via `DoqServer::doq_bind_addr()`
+  (previously hardcoded to `0.0.0.0`); IPv6 literals parse without bracket
+  notation. Enabled transports require an explicit parseable bind and non-zero
+  port at validation time (`DnsDoqConfig::validate()`).
 
 #### Shared Query Pipeline
 
@@ -1547,7 +1600,7 @@ Phase 2 closed the gap between the config-runtime matrix and actual runtime beha
 | `dns.settings.default_ttl` | unsupported | implemented | Consumed at `server/zone.rs:137` as zone record fallback TTL |
 | `dns.settings.negative_cache_ttl` | implemented (no tests) | implemented | Tests exist: `server/query.rs:1931`, `server/query.rs:1939` |
 | `dns.limits.enable_graceful_degradation` | implemented | implemented | Config field now wired to `ConnectionLimits` |
-| `dns.doq.bind_address` | implemented | partially implemented | Hardcoded to `0.0.0.0:{port}` at `startup.rs:580` |
+| `dns.doq.bind_address` | implemented | partially implemented | Hardcoded to `0.0.0.0:{port}` at `startup.rs:580` (stale: Phase 45 wires + validates it) |
 | `dns.settings.serve_stale.max_stale_count` | implemented | implemented | Now explicitly wired from config |
 | `dns.recursive.query_timeout_secs` | partially implemented | implemented | Passed to `HickoryResolver` via `create_resolver()` |
 
@@ -1575,8 +1628,12 @@ Phase 2 closed the gap between the config-runtime matrix and actual runtime beha
 | Serve-stale | Closed | `DnsCache::with_serve_stale()`, config-wired `max_stale_secs` / `max_stale_count`. |
 | Config-runtime fidelity | Closed | 48+ Phase 5+2 tests. All config fields classified as implemented/deferred/unsupported. |
 | Stale `src/dns/` references | Closed | All ~100 stale references updated to `crates/synvoid-dns/src/`. |
-| Bind fail-fast | Closed | `configured_bind_addr()` validates address/port at startup. Tests guard invalid/port-zero. |
-| TCP one-query-per-connection | Closed | RFC 7766 §4 semantics. AXFR/IXFR exception for multi-message transfers. |
+| Bind fail-fast | Closed | `configured_bind_addr()` validates address/port at startup. Tests guard invalid/port-zero. Phase 45 extends the same semantics to DoT/DoH/DoQ (`validate_encrypted_bind` + `doq_bind_addr`). |
+| Persistent sequential TCP | Closed (Phase 45) | RFC 7766 §4 connection reuse in `handle_tcp_query`: pre-allocation size cap, idle + per-query timeouts, 1000-query bound, permit held, graceful drain. No pipelining/reordering. |
+| Persistent DoT | Closed (Phase 45) | Same bounded lifecycle after TLS handshake: permit, timeouts, query bound, drain. |
+| Fail-closed DNS config | Closed (Phase 45) | `DnsConfig::validate()` rejects activating RPZ, prefetch, trust anchors, anycast, transfers, dynamic update, NOTIFY, padding, QNAME privacy, firewall default_action/max_rules/rebinding, recursive scope responses, and invalid encrypted binds — with typed `Unsupported { path }` errors. Admin `PUT /config/dns` enforces the same validation (400). |
+| TCP one-query-per-connection | Superseded (Phase 45) | Replaced by persistent sequential TCP above. Recursive TCP remains single-query (follow-up). |
+| DoQ bind address | Closed (Phase 45) | `dns.doq.bind_address` honored via `doq_bind_addr()`; IPv6 fixed; validated before startup. |
 | UDP/EDNS truncation | Closed | TC=1 response with question section; client retries over TCP. |
 | Shutdown idempotency | Closed | `shutdown_runtime()` safe to call multiple times. Fire-and-forget tasks cleaned via channels. |
 | Transport class propagation | Closed | `TransportClass` enum separates cache/coalescing keys by transport. 5 variants: Udp512, UdpEdns, Tcp, Http, Quic. |
@@ -1596,14 +1653,18 @@ Phase 2 closed the gap between the config-runtime matrix and actual runtime beha
 
 | Area | Status | Details |
 |------|--------|---------|
-| Persistent TCP (pipelining) | Deferred | Requires framing state, per-query idle management, connection pool. |
-| RPZ (Response Policy Zones) | Deferred | Config fields exist, no runtime consumer. |
-| Dynamic Update (RFC 2136) | Deferred | Handler stub exists, not wired; security-sensitive. Returns NOTIMP when disabled. |
-| Notify | Deferred | Handler stub exists, not wired. Returns NOTIMP when disabled. |
-| Zone Transfer (IXFR) | Deferred | Config fields exist, requires delta encoding. Returns NOTIMP when disabled. |
-| Trust Anchors (custom config) | Deferred | Uses system defaults via HickoryRecursor. |
-| Prefetch | Deferred | Config fields exist, no runtime consumer. |
-| Anycast | Deferred | Requires mesh feature gate. |
+| TCP pipelining / reordering | Deferred | Sequential reuse only; at most one outstanding query per connection. |
+| Recursive persistent TCP | Deferred | `handle_tcp_connection` still serves one query per connection; follow-up to align with the authoritative lifecycle. |
+| EDNS keepalive negotiation | Deferred | Parsed only; no mapping onto idle-timeout policy yet. |
+| RPZ (Response Policy Zones) | Deferred, activation rejected | No runtime consumer; `dns.rpz.enabled = true` fails validation. |
+| Dynamic Update (RFC 2136) | Deferred, activation rejected | Handler exists, not wired; security-sensitive. Returns NOTIMP when disabled. |
+| Notify | Deferred, activation rejected | Handler exists, not wired. Returns NOTIMP when disabled. |
+| Zone Transfer (AXFR/IXFR) | Deferred, activation rejected | `allow_transfer` non-empty and transfer-knob deviations fail validation. Returns NOTIMP when disabled. |
+| Trust Anchors (custom config) | Deferred, activation rejected | Uses system defaults via HickoryRecursor. |
+| Prefetch | Deferred, activation rejected | No runtime consumer. |
+| Anycast | Deferred, activation rejected | Requires mesh integration; rejected at validation (before startup). |
+| Firewall default_action / max_rules / rebinding | Deferred, activation rejected | `evaluate_query` defaults to Allow; `check_rebinding_protection` never called from query path. |
+| Recursive EDNS scope responses | Deferred, activation rejected | `include_scope_in_response = true` fails validation. |
 | External interoperability | Deferred | dig/drill/delv smoke tests require live server. |
 
 ---
@@ -1635,13 +1696,14 @@ Phase 5 is a verification-only phase. It confirms that transport/runtime, config
 
 | Item | Status | Notes |
 |------|--------|-------|
-| DoT/DoH/DoQ test coverage | Wired, tests added | `encrypted_transport` test suite + `dot`/`doh`/`doq` unit tests |
+| DoT/DoH/DoQ test coverage | Wired, tests added | `encrypted_transport` test suite + `dot`/`doh`/`doq` unit tests; Phase 45 adds `dns_phase45_contract` (persistent TCP, framing close, disabled transports) + `doq_bind_addr` + secure-server bind-collision tests |
 | Rate limiter test coverage | Wired, no tests | 9 fields implemented but untested |
 | Firewall test coverage | Wired, no tests | 3 security controls untested |
 | ECS client subnet | Partial | Full prefix routing not implemented |
-| DoQ bind address | Partial | Config field ignored, hardcoded to 0.0.0.0 |
+| DoQ bind address | Closed (Phase 45) | Honored via `doq_bind_addr()`, validated before startup |
+| Recursive persistent TCP | Deferred | `handle_tcp_connection` still one-query-per-connection |
 | Full DNSSEC production validation | Partial | NSEC3 closest-encloser fixed; key lifecycle hardened; 97 tests. Full RFC 5001/5155 compliance audit deferred. |
-| RPZ, Dynamic Update, Notify, IXFR, Trust Anchors, Prefetch, Anycast, Padding, QNAME Privacy | Deferred | Config fields exist, no runtime consumer |
+| RPZ, Dynamic Update, Notify, IXFR, Trust Anchors, Prefetch, Anycast, Padding, QNAME Privacy | Deferred, activation rejected | No runtime consumer; `DnsConfig::validate()` rejects enabling with typed paths |
 
 ### Verification Commands
 
@@ -2058,6 +2120,90 @@ Run: `./scripts/dns/conformance.sh`
 - **Milestone 4 Phase 4**: Production profiles (8 profiles with support classification), safe defaults audit (60+ fields verified), 5 example configs, release gate (781 tests), security review (all areas safe, bailiwick observability-only warning)
 - **Milestone 4 Verification Closure**: 9-workstream gap-fixes; CI expanded to 26 suites; `DnsHealthChecker` wired; 5 watchable metrics wired; all 5 example configs parse-tested (1101 tests)
 - **Milestone 4 Deferral Closeout**: 8-workstream closeout. 32 unwired DnsMetrics methods removed (metrics.rs 1128→504 lines). `cargo clippy -p synvoid-dns --all-targets -- -D warnings` clean (10 `#[allow(too_many_arguments)]` for genuine large-fn sites). Local benchmark baseline captured at `benchmarks/dns/results/2026-07-07-baseline.md` (i9-9900K, rustc 1.95.0, 53 criterion timings). External live-wire interop, external DNSSEC tooling, and remote CI status visibility are accepted as non-blocking deferrals. Production-Supported labels mean "verified by internal Rust test suite only; external client interop is operator-validated." See `architecture/dns_production_profiles.md` → Release Support Matrix and `plans/dns_milestone_4_deferred_items_closeout_complete.md`.
+
+## Phase 45: DNS Runtime Contract and Protocol Completeness
+
+Plan: `plans/phase_45_dns_runtime_contract_and_protocol_completeness.md`.
+
+### Workstream A — Matrix recomputed
+
+The matrix (`architecture/dns_config_runtime_matrix.md`) was regenerated against
+`crates/synvoid-config/src/dns/**`, `crates/synvoid-dns/src/**`, startup paths,
+and examples. Corrections found during recomputation:
+
+- `dns.doq.bind_address` was already honored (`doq.rs::start` uses the config
+  field); the "hardcoded to 0.0.0.0 at `startup.rs:580`" matrix entry was stale.
+  Phase 45 adds validation + tests instead of wiring.
+- DoT already looped over queries per connection but without timeouts, query
+  bound, or connection permit — hardened, not newly built.
+- `dns.settings.wildcard_transfer_requires_tsig` had a serde/default divergence:
+  plain `#[serde(default)]` parsed absent values as `false` while the documented
+  default is `true`. Fixed to `#[serde(default = "default_wildcard_transfer_requires_tsig")]`.
+- `dns.limits.max_tcp_query_time_secs` was stored but never enforced on the
+  authoritative path — now the per-query body timeout in the persistent loop.
+
+### Workstream B — Fail-closed validation
+
+`DnsConfig::validate()` (plus `DnsSettingsConfig`, `DnsFirewallConfig`,
+`DnsLimitsConfig`, `DnsDot/Doh/DoqConfig`, `RecursiveDnsConfig`,
+`TrustAnchorConfig`, `DnsRpzConfig`, `DnsPrefetchConfig`, `DnsAnycastConfig`)
+rejects activating deferred features with `DnsConfigError::Unsupported { path,
+reason }`, which maps to a typed `ConfigValidationError.field`. Default and
+disabled values stay parseable. The admin `PUT /config/dns` endpoint enforces
+the same validation (400). The admin UI marks RPZ / prefetch / trust-anchor /
+anycast toggles unsupported.
+
+### Workstream C — DoQ bind fidelity
+
+`DoqServer::doq_bind_addr()` honors `dns.doq.bind_address` with the same
+semantics as UDP/TCP/DoT/DoH, fixes IPv6 literals (no bracket notation
+required), and fails fast on empty/invalid binds and zero ports. Unit tests
+cover IPv4/IPv6/invalid/empty/zero-port; `SecureDnsServerBase::start_server`
+bind-collision surfacing is tested with an occupied port.
+
+### Workstream D — Persistent DNS-over-TCP and DoT
+
+Authoritative TCP and DoT now share the bounded sequential lifecycle described
+in "TCP Lifecycle Policy (Phase 45)" above. Tested by `tcp_lifecycle_tests`
+(reuse, survival after error responses, SERVFAIL shape) and
+`dns_phase45_contract` (two queries one connection, zero-length close,
+oversize close, disabled transports).
+
+### Workstream E — Authoritative mutation decision
+
+Dynamic UPDATE, NOTIFY, and AXFR/IXFR remain NOT-wired: `DnsServer::new()`
+hardcodes the handlers to `None`, the query path answers NOTIMP, and config
+activation is rejected. The Workstream E design gate (zone ownership, TSIG
+policy, allowlists, journal/serial durability, NOTIFY retry/backoff, IXFR
+history + fallback, mesh authority interaction, audit/provenance, restart
+persistence) is unsatisfied; a dedicated zone-lifecycle plan is required before
+any wiring. `examples/dns/transfer_primary.toml` is relabeled as a deferred
+design reference (parses, fails validation).
+
+### Workstream F — Recursive resolver roadmap decision
+
+Support tiers recorded in the matrix:
+
+1. Custom trust anchors / RFC 5011 lifecycle — deferred; trigger: validating-resolver product decision.
+2. RPZ — deferred; trigger: DNS security-policy product decision.
+3. QNAME privacy/minimization + padding — deferred; trigger: explicit privacy goal. (Note: recursive `qname_minimization` for upstream queries IS implemented; the deferred item is authoritative `qname_privacy` log/redaction plumbing.)
+4. Prefetch — deferred; lowest priority, after correctness/security features.
+
+### Workstream G — Interoperability
+
+`scripts/dns/conformance.sh` runs `dns_phase45_contract` and
+`example_configs_parse` internally, and documents live-wire checks for
+persistent TCP (`dig +tcp +keepopen`), persistent DoT (`kdig +tls +keepopen`),
+DoQ (`kdig +quic`), and malformed framing. External checks stay
+release/native-gated (tools not required in routine CI).
+
+### Workstream H — Docs and admin
+
+Reconciled: `architecture/dns.md` (this section + lifecycle/keepalive/DoQ
+updates), `architecture/dns_config_runtime_matrix.md` (Phase 45 section +
+status/test updates), `architecture/dns_production_profiles.md`
+(transfer-primary demoted), `docs/CONFIGURATION.md`, DNS examples, admin
+settings schema/UI (unsupported toggles marked, `PUT /config/dns` validates).
 
 ---
 

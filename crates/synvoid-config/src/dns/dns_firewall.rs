@@ -2,6 +2,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use super::{unsupported, DnsConfigError};
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
 #[serde(default)]
 pub struct DnsLimitsConfig {
@@ -106,6 +108,12 @@ impl DnsLimitsConfig {
         if self.max_concurrent_queries == 0 {
             return Err("max_concurrent_queries cannot be zero".to_string());
         }
+        if self.max_tcp_idle_time_secs == 0 {
+            return Err("max_tcp_idle_time_secs cannot be zero".to_string());
+        }
+        if self.max_tcp_query_time_secs == 0 {
+            return Err("max_tcp_query_time_secs cannot be zero".to_string());
+        }
         Ok(())
     }
 
@@ -152,6 +160,48 @@ use super::defaults::default_true;
 
 fn default_firewall_max_rules() -> usize {
     1000
+}
+
+impl DnsFirewallConfig {
+    /// Phase 45 fail-closed contract. The firewall wires `block_internal_ips`
+    /// and `block_zone_transfers` into `DnsFirewall` rules, but
+    /// `default_action`, `max_rules`, and `rebinding_protection` have no
+    /// runtime consumer (`evaluate_query` defaults to Allow when no rule
+    /// matches; `check_rebinding_protection` is never called from the query
+    /// path). Non-default values are rejected while the firewall is enabled;
+    /// when the firewall itself is disabled the whole section is inactive
+    /// and stays parseable.
+    pub fn validate(&self) -> Result<(), DnsConfigError> {
+        self.validate_at("dns.firewall")
+    }
+
+    pub fn validate_at(&self, base: &str) -> Result<(), DnsConfigError> {
+        if !self.enabled {
+            return Ok(());
+        }
+        if self.default_action != FirewallAction::Allow {
+            return Err(unsupported(
+                &format!("{}.default_action", base),
+                "only the default (allow) is enforced: unmatched queries are \
+                 always allowed. Configurable default-action is deferred.",
+            ));
+        }
+        if self.max_rules != default_firewall_max_rules() {
+            return Err(unsupported(
+                &format!("{}.max_rules", base),
+                "rule-count limits are not enforced. Restore the default.",
+            ));
+        }
+        if self.rebinding_protection.enabled {
+            return Err(unsupported(
+                &format!("{}.rebinding_protection.enabled", base),
+                "DNS rebinding protection is not enforced in the query path \
+                 (check_rebinding_protection is never called). Set explicitly \
+                 to false until response-path enforcement lands.",
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema, ToSchema)]

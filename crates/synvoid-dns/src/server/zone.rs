@@ -425,6 +425,13 @@ impl DnsServer {
         self.cache.clone()
     }
 
+    /// Clone the connection-limits handle so encrypted transports (DoT)
+    /// can hold a connection permit for the full connection lifetime and
+    /// apply the same idle/query timeouts as plain TCP (Phase 45).
+    pub fn connection_limits(&self) -> Arc<crate::limits::ConnectionLimits> {
+        self.connection_limits.clone()
+    }
+
     pub fn get_dnssec(&self) -> Option<Arc<RwLock<DnsSecKeyManager>>> {
         self.dnssec.clone()
     }

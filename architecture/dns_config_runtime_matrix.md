@@ -61,15 +61,15 @@ Source: `crates/synvoid-config/src/dns/mod.rs:75`
 | `dns.dnssec.nsec3_algorithm` | `1` | NSEC3 hash algorithm | implemented | dnssec tests | none |
 | `dns.dnssec.tsig_keys` | `[]` | TSIG authentication | implemented | tsig tests | none |
 | `dns.dnssec.hsm.enabled` | `false` | HSM integration | implemented | hsm tests | none |
-| `dns.dot.enabled` | `false` | `DotServer::new()` | implemented | verification_gate | add DoT tests |
-| `dns.dot.port` | `853` | `DotServer::new()` | implemented | verification_gate | add DoT tests |
-| `dns.dot.bind_address` | `""` | `DotServer::new()` | implemented | verification_gate | add DoT tests |
+| `dns.dot.enabled` | `false` | `DotServer::new()` | implemented | verification_gate, phase45 (bind validation) | none |
+| `dns.dot.port` | `853` | `DotServer::new()` + `DnsDotConfig::validate()` (non-zero required when enabled) | implemented | phase45_contract_tests | none |
+| `dns.dot.bind_address` | `""` | `DotServer::new()` via `SecureDnsServerBase::start_server()` + `DnsDotConfig::validate()` (explicit parseable bind required when enabled; same semantics as UDP/TCP) | implemented | phase45_contract_tests, secure_server bind-collision test | none |
 | `dns.dot.tls_cert_path` | `None` | `DotServer::new()` | implemented | verification_gate | add DoT tests |
 | `dns.dot.tls_key_path` | `None` | `DotServer::new()` | implemented | verification_gate | add DoT tests |
 | `dns.dot.use_system_cert_store` | `true` | TLS config | implemented | verification_gate | add DoT tests |
-| `dns.doh.enabled` | `false` | `DohServer::new()` | implemented | verification_gate | add DoH tests |
-| `dns.doh.port` | `443` | `DohServer::new()` | implemented | verification_gate | add DoH tests |
-| `dns.doh.bind_address` | `""` | `DohServer::new()` | implemented | verification_gate | add DoH tests |
+| `dns.doh.enabled` | `false` | `DohServer::new()` | implemented | verification_gate, phase45 (bind validation) | none |
+| `dns.doh.port` | `443` | `DohServer::new()` + `DnsDohConfig::validate()` (non-zero required when enabled) | implemented | phase45_contract_tests | none |
+| `dns.doh.bind_address` | `""` | `DohServer::new()` via `SecureDnsServerBase::start_server()` + `DnsDohConfig::validate()` (explicit parseable bind required when enabled) | implemented | phase45_contract_tests, secure_server bind-collision test | none |
 | `dns.doh.path` | `"/dns-query"` | `DohServer::new()` | implemented | verification_gate | add DoH tests |
 | `dns.doh.json_path` | `""` | `DohServer::new()` | implemented | verification_gate | add DoH tests |
 | `dns.doh.tls_cert_path` | `None` | TLS config | implemented | verification_gate | add DoH tests |
@@ -77,7 +77,7 @@ Source: `crates/synvoid-config/src/dns/mod.rs:75`
 | `dns.doh.use_system_cert_store` | `true` | TLS config | implemented | verification_gate | add DoH tests |
 | `dns.doq.enabled` | `false` | `DoqServer::new()` | implemented | verification_gate | add DoQ tests |
 | `dns.doq.port` | `853` | `DoqServer::new()` | implemented | verification_gate | add DoQ tests |
-| `dns.doq.bind_address` | `""` | hardcoded to `0.0.0.0` in `startup.rs:580`; config field not consumed | partially implemented | verification_gate | wire from config or document hardcoded |
+| `dns.doq.bind_address` | `""` | `DoqServer::doq_bind_addr()` (+ `DnsDoqConfig::validate()` requires explicit parseable bind when enabled) | implemented | doq unit tests (IPv4/IPv6/invalid/empty/zero-port) | none (Phase 45 closed; matrix entry was stale) |
 | `dns.doq.tls_cert_path` | `None` | TLS config | implemented | verification_gate | add DoQ tests |
 | `dns.doq.tls_key_path` | `None` | TLS config | implemented | verification_gate | add DoQ tests |
 | `dns.doq.use_system_cert_store` | `true` | TLS config | implemented | verification_gate | add DoQ tests |
@@ -138,7 +138,7 @@ Source: `crates/synvoid-config/src/dns/dns_settings.rs:9`
 | `dns.settings.cache_min_ttl` | `60` | `DnsCache::new()` | implemented | cache tests | none |
 | `dns.settings.negative_cache_ttl` | `300` | `DnsHandlerState.negative_cache_ttl` | implemented | `server/query.rs:1931` (`test_extract_ttl_nxdomain_with_soa`), `server/query.rs:1939` (`test_extract_ttl_nxdomain_no_soa_uses_negative_cache`) | none |
 | `dns.settings.allow_wildcard_transfer` | `false` | `ZoneTransfer::with_security_config()` accepts this; not wired from config | deferred | zone mutation tests (handler-level only) | wire from config or document deferred |
-| `dns.settings.wildcard_transfer_requires_tsig` | `true` | `ZoneTransfer::with_security_config()` accepts this; not wired from config | deferred | zone mutation tests (handler-level only) | wire from config or document deferred |
+| `dns.settings.wildcard_transfer_requires_tsig` | `true` | `ZoneTransfer::with_security_config()` accepts this; not wired from config (Phase 45: serde default fixed to match documented default; `= false` rejected) | deferred (activation rejected) | phase45_contract_tests | wire from config or document deferred |
 | `dns.settings.require_tsig` | `true` | `ZoneTransfer::with_security_config()` accepts this; not wired from config | deferred | zone mutation tests (handler-level only) | wire from config or document deferred |
 | `dns.settings.serve_stale.enabled` | `false` | `DnsCache::with_serve_stale()` | implemented | cache tests | none |
 | `dns.settings.serve_stale.max_stale_secs` | `86400` | stale expiry via `DnsCache` | implemented | cache tests | none |
@@ -198,8 +198,8 @@ Source: `crates/synvoid-config/src/dns/dns_firewall.rs:7`
 | `dns.limits.max_query_size` | `65535` | `DnsQueryValidator` | implemented | validator tests | none |
 | `dns.limits.max_response_size` | `65535` | `DnsQueryValidator` | implemented | validator tests | none |
 | `dns.limits.max_records_per_response` | `1000` | `DnsQueryValidator` | implemented | validator tests | none |
-| `dns.limits.max_tcp_idle_time_secs` | `300` | TCP idle timeout | implemented | verification_gate | add test |
-| `dns.limits.max_tcp_query_time_secs` | `30` | TCP query timeout | implemented | verification_gate | add test |
+| `dns.limits.max_tcp_idle_time_secs` | `300` | TCP idle timeout (persistent-loop read deadline; zero rejected by `DnsLimitsConfig::validate()`) | implemented | tcp_lifecycle_tests, dns_phase45_contract | none |
+| `dns.limits.max_tcp_query_time_secs` | `30` | TCP per-query body timeout (Phase 45: enforced in persistent loop; previously stored but unenforced on the authoritative path; zero rejected) | implemented | tcp_lifecycle_tests, dns_phase45_contract | none |
 | `dns.limits.udp_buffer_size` | `65535` | UDP recv buffer | implemented | startup tests | none |
 | `dns.limits.enable_graceful_degradation` | `false` | `ConnectionLimits::enable_graceful_degradation()` wired from config | implemented | verification_gate | add test |
 
@@ -310,8 +310,8 @@ All DoT/DoH/DoQ fields are covered in §1 root table. See `architecture/dns.md` 
 
 | Field | Status | Notes |
 |-------|--------|-------|
-| `dns.doq.bind_address` | partially implemented | Hardcoded to `0.0.0.0:{port}` at `startup.rs:580`; config field not consumed |
-| DoT/DoH/DoQ test coverage | wired, tests added | See `encrypted_transport` test suite and `dot`/`doh`/`doq` unit tests |
+| `dns.doq.bind_address` | implemented (Phase 45) | Honored via `DoqServer::doq_bind_addr()`; explicit bind required when enabled; IPv6 literals supported |
+| DoT/DoH/DoQ test coverage | wired, tests added | See `encrypted_transport` test suite, `dot`/`doh`/`doq` unit tests, `dns_phase45_contract`, secure-server bind-collision tests |
 
 ---
 
@@ -320,17 +320,24 @@ All DoT/DoH/DoQ fields are covered in §1 root table. See `architecture/dns.md` 
 | Category | Count |
 |----------|-------|
 | **Total config fields** | ~170 |
-| **Implemented** | ~101 |
-| **Partially implemented** | 3 |
+| **Implemented** | ~102 (Phase 45: `dns.doq.bind_address` honored; `max_tcp_query_time_secs` enforced) |
+| **Partially implemented** | 1 (`dns.settings.ixfr_enabled`: IXFR handler exists in `handle_parsed_query_with_cache` but the config toggle is not consumed; surrounding transfer activation is rejected) |
 | **Validation-only** | 11 |
-| **Deferred** | 17 |
-| **Unsupported / documentation-only** | ~40 |
+| **Deferred (no runtime consumer, activation rejected by Phase 45 validation)** | ~45 paths (see Phase 45 mapping) |
+| **Fail-closed rejections (Phase 45)** | 30+ activation paths across RPZ, prefetch, trust anchors, anycast, transfers, UPDATE/NOTIFY, padding, QNAME privacy, firewall knobs, scope responses, encrypted binds |
 
 Note: ~45 implemented fields lack dedicated test coverage (DoT/DoH/DoQ, rate limiter, firewall fields). These are wired and functional but not covered by unit/integration tests.
 
 ---
 
 ## Deferred Features (Phase 7+)
+
+Phase 45 fail-closed rule: **every feature in this table rejects activation at
+validation time** with `DnsConfigError::Unsupported { path, reason }` (typed
+config path, e.g. `dns.rpz.enabled`). There are no "enabled but ignored"
+settings left in supported profiles — defaults and disabled values stay
+parseable, activation fails. The mapping is tabulated in "Phase 45 Changes
+Applied" below. Future triggers per Workstream F follow each row.
 
 | Feature | Config fields | Notes |
 |---------|---------------|-------|
@@ -343,10 +350,12 @@ Note: ~45 implemented fields lack dedicated test coverage (DoT/DoH/DoQ, rate lim
 | Anycast | `dns.anycast.*` (11 fields) | Requires mesh integration |
 | Padding | `dns.settings.padding.*` (3 fields) | `DnsPadding` struct exists, not wired |
 | QNAME Privacy | `dns.settings.qname_privacy.*` (3 fields) | `sanitize_qname()` exists, not wired |
-| Persistent DNS-over-TCP (pipelining) | N/A | Requires framing state, per-query idle management, connection pool. One-query-per-connection per RFC 7766 §4. |
-| EDNS keepalive | Parsed only | `EdnsOptions.keepalive` parsed but not wired into connection management (moot without persistent TCP). |
+| Persistent DNS-over-TCP (sequential) | Implemented (Phase 45) | Bounded loop in `handle_tcp_query`: pre-allocation size cap, idle + per-query timeouts, 1000-query bound, permit held, graceful drain. Pipelining/reordering still deferred. Recursive TCP (`handle_tcp_connection`) still single-query — follow-up. |
+| Persistent DNS-over-TCP (pipelining) | Deferred | At most one outstanding query per connection by design. |
+| EDNS keepalive | Parsed only | `EdnsOptions.keepalive` parsed but not wired into connection management (no negotiated-timeout design yet). |
 | Full NSEC3 closest-encloser proofs | N/A | Phase 2 fixed next-closer emission; full closest-encloser proof coverage remains deferred. |
-| DoQ `bind_address` | `dns.doq.bind_address` | Partially implemented: `startup.rs:580` hardcodes bind to `0.0.0.0:{port}`; config field not consumed. DoQ is wired but not production-validated. |
+| DoQ `bind_address` | `dns.doq.bind_address` | Implemented (Phase 45): honored via `doq_bind_addr()`, validated before startup. |
+| Recursive persistent TCP | N/A | `RecursiveDnsServer::handle_tcp_connection` still serves one query per connection; aligning with the authoritative lifecycle is a follow-up. |
 | Recursive validation limitations | N/A | Bailiwick checks are observability-only (not enforced). CD/AD gating tested but full RFC 4035 compliance deferred. |
 | External DNSSEC tooling | N/A | dig, ldns-verify-zone, named-checkzone not in CI. External smoke tests require live server. |
 
@@ -818,3 +827,94 @@ All new metrics are emitted via the `metrics` crate and are available in Prometh
 | `dns_axfr_rejected` | counter | — | Rejected AXFR transfers |
 | `dns_ixfr_accepted` | counter | — | Accepted IXFR transfers |
 | `dns_ixfr_rejected` | counter | — | Rejected IXFR transfers |
+
+---
+
+## Phase 45 Changes Applied (Runtime Contract & Protocol Completeness)
+
+### Matrix recomputation corrections (Workstream A)
+
+1. **`dns.doq.bind_address`** — Changed from "partially implemented" to
+   "implemented". Re-investigation showed `DoqServer::start()` already consumes
+   the config field; the `startup.rs:580` hardcode reference was stale. Phase 45
+   added validation (`DnsDoqConfig::validate()`), an IPv6 parsing fix, and
+   bind-fidelity unit tests instead of wiring.
+2. **`dns.limits.max_tcp_query_time_secs`** — Was stored in `ConnectionLimits`
+   but never enforced on the authoritative TCP path. Now the per-query body
+   timeout in the persistent loop (`handle_tcp_query`); zero values rejected.
+3. **`dns.settings.wildcard_transfer_requires_tsig`** — Serde default fixed
+   (`#[serde(default)]` → `#[serde(default =
+   "default_wildcard_transfer_requires_tsig")]`) so parsed defaults match the
+   documented default (`true`).
+4. **DoT loop** — Was already persistent per connection but had no timeouts,
+   query bound, or connection permit. Hardened, not newly built.
+
+### Fail-closed validation mapping (Workstream B)
+
+Every path below fails `DnsConfig::validate()` with
+`DnsConfigError::Unsupported { path, reason }` when activated. Covered by
+`phase45_contract_tests` in `crates/synvoid-config/src/dns/mod.rs`:
+
+| Config path(s) | Reject when | Future trigger |
+|---|---|---|
+| `dns.rpz.enabled` | `true` | RPZ engine (security-policy product decision) |
+| `dns.prefetch.enabled` | `true` | Correctness/security features first |
+| `dns.trust_anchors.enabled` | `true` | RFC 5011 lifecycle manager (validating-resolver decision) |
+| `dns.anycast.enabled` | `true` | Mesh-based anycast sync |
+| `dns.settings.allow_transfer` | non-empty | Zone-transfer design gate (Workstream E) |
+| `dns.settings.allow_wildcard_transfer` | `true` | Zone-transfer design gate |
+| `dns.settings.wildcard_transfer_requires_tsig` | `false` | Zone-transfer design gate |
+| `dns.settings.require_tsig` | `false` | Zone-transfer design gate |
+| `dns.settings.ixfr_enabled` | `false` | Zone-transfer design gate |
+| `dns.settings.ixfr_history_size` | != default (200) | Zone-transfer design gate |
+| `dns.settings.ixfr_fallback_to_axfr` | `false` | Zone-transfer design gate |
+| `dns.settings.dynamic_update.enabled` | `true` | Mutation design gate (Workstream E) |
+| `dns.settings.notify.enabled` | `true` | Mutation design gate (Workstream E) |
+| `dns.settings.padding.enabled` | `true` | Response-padding support |
+| `dns.settings.qname_privacy.enabled` | `true` | Query-path privacy support |
+| `dns.firewall.default_action` / `max_rules` / `rebinding_protection.enabled` | non-default while firewall enabled | Response-path enforcement design |
+| `dns.recursive.firewall.*` (same three) | non-default while recursive firewall enabled | Same as above |
+| `dns.recursive.ecs.include_scope_in_response` | `true` | Scope-response support |
+| `dns.dot/doh/doq.bind_address` | empty/unparseable while enabled | — (implemented; validation is fail-fast) |
+| `dns.dot/doh/doq.port` | zero while enabled | — (implemented; validation is fail-fast) |
+| `dns.doq.max_concurrent_streams` / `idle_timeout_secs` | zero while enabled | — (implemented) |
+| `dns.recursive.bind_address` | unparseable while enabled | — (implemented; open-resolver guard retained) |
+| `dns.limits.max_tcp_idle_time_secs` / `max_tcp_query_time_secs` | zero | — (implemented) |
+
+Gating note: firewall-knob rejections apply only while the enclosing firewall
+is enabled; a disabled firewall keeps the whole section parseable. Defaults
+(`DnsConfig::default()` and empty-TOML parses) validate clean.
+
+### Protocol work (Workstreams C–D)
+
+5. **DoQ bind fidelity** (`doq.rs::doq_bind_addr`): honors config, IPv6-safe,
+   fail-fast. Unit tests: IPv4/IPv6/invalid/empty/zero-port.
+6. **Encrypted bind parity**: `DnsDot/Doh/DoqConfig::validate()` requires an
+   explicit parseable bind + non-zero port when enabled; `SecureDnsServerBase`
+   bind collisions surface as startup errors (tested with an occupied port).
+7. **Persistent sequential TCP** (`server/query.rs::handle_tcp_query`): bounded
+   loop (pre-allocation size cap, idle + per-query timeouts, 1000-query bound,
+   permit held, graceful drain). Unit tests rewritten from one-query to reuse
+   semantics; new `dns_phase45_contract` integration tests (two queries one
+   connection, zero-length close, oversize close, disabled transports).
+8. **DoT alignment** (`dot.rs`): permit held for full lifetime, idle/query
+   timeouts, per-connection query bound, graceful drain.
+
+### Decisions (Workstreams E–F)
+
+9. **Mutation stays rejected** (Workstream E): handlers hardcoded to `None`,
+   NOTIMP answers, activation rejected. `transfer_primary.toml` demoted to a
+   deferred design reference (parses, fails validation).
+10. **Recursive tiers** (Workstream F): trust anchors → validating-resolver
+    decision; RPZ → security-policy decision; QNAME privacy/padding → privacy
+    goal; prefetch → last. Recursive TCP stays single-query (follow-up).
+
+### Test suites added
+
+| Suite | Location | Count |
+|---|---|---|
+| `phase45_contract_tests` | `crates/synvoid-config/src/dns/mod.rs` | 17 validation tests |
+| `dns_phase45_contract` | `crates/synvoid-dns/tests/` | 4 integration tests |
+| `doq_bind_addr` tests | `crates/synvoid-dns/src/doq.rs` | 5 unit tests |
+| secure-server bind tests | `crates/synvoid-dns/src/secure_server.rs` | 2 tests |
+| example profile validation | `crates/synvoid-dns/tests/example_configs_parse.rs` | 2 tests |

@@ -7,6 +7,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_rustls::TlsAcceptor;
 
+use crate::limits::MAX_TCP_QUERIES_PER_CONNECTION;
 use crate::secure_server::{
     DnsServerConfig, SecureDnsServerBase, MAX_QUERY_SIZE, TLS_HANDSHAKE_TIMEOUT_SECS,
 };
@@ -78,18 +79,72 @@ impl DotServer {
         counter!("synvoid.dot.connections.total").increment(1);
         gauge!("synvoid.dot.connections").increment(1.0);
 
+        // Phase 45 (Workstream D): same bounded message lifecycle as plain
+        // TCP. Hold a connection permit for the full connection lifetime and
+        // enforce per-read idle / per-query timeouts plus a per-connection
+        // query bound. Sequential only — no pipelining/reordering.
+        let limits = {
+            let guard = dns_server.read();
+            guard.as_ref().map(|s| s.connection_limits())
+        };
+        let _connection_permit = match limits.as_ref() {
+            Some(limits) => match limits.try_acquire_connection() {
+                Ok(guard) => Some(guard),
+                Err(e) => {
+                    tracing::warn!(
+                        remote_addr = %client_addr,
+                        "DoT connection rejected by limits: {}", e
+                    );
+                    gauge!("synvoid.dot.connections").decrement(1.0);
+                    return Err(format!("Connection rejected by limits: {}", e));
+                }
+            },
+            None => None,
+        };
+        let idle_timeout = limits
+            .as_ref()
+            .map(|l| l.max_tcp_idle_time())
+            .unwrap_or(std::time::Duration::from_secs(300));
+        let query_timeout = limits
+            .as_ref()
+            .map(|l| l.max_tcp_query_time())
+            .unwrap_or(std::time::Duration::from_secs(30));
+
+        let mut queries_served = 0usize;
         let result: Result<(), String> = loop {
             let client_ip = client_addr.ip();
 
+            if limits
+                .as_ref()
+                .map(|l| l.is_in_graceful_shutdown())
+                .unwrap_or(false)
+            {
+                tracing::debug!(remote_addr = %client_addr, "DoT connection draining");
+                break Ok(());
+            }
+
+            if queries_served >= MAX_TCP_QUERIES_PER_CONNECTION {
+                tracing::debug!(
+                    remote_addr = %client_addr,
+                    queries = queries_served,
+                    "DoT connection reached per-connection query bound; closing"
+                );
+                break Ok(());
+            }
+
             let mut length_buf = [0u8; 2];
-            match tls_stream.read_exact(&mut length_buf).await {
-                Ok(_) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+            match tokio::time::timeout(idle_timeout, tls_stream.read_exact(&mut length_buf)).await {
+                Ok(Ok(_)) => {}
+                Ok(Err(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
                     tracing::debug!(remote_addr = %client_addr, "DoT connection closed by client");
                     break Ok(());
                 }
-                Err(e) => {
+                Ok(Err(e)) => {
                     break Err(format!("Failed to read length prefix: {}", e));
+                }
+                Err(_) => {
+                    tracing::debug!(remote_addr = %client_addr, "DoT connection idle timeout");
+                    break Ok(());
                 }
             };
 
@@ -100,10 +155,17 @@ impl DotServer {
             }
 
             let mut query_buf = vec![0u8; length];
-            if let Err(e) = tls_stream.read_exact(&mut query_buf).await {
-                break Err(format!("Failed to read query: {}", e));
+            match tokio::time::timeout(query_timeout, tls_stream.read_exact(&mut query_buf)).await {
+                Ok(Ok(_)) => {}
+                Ok(Err(e)) => {
+                    break Err(format!("Failed to read query: {}", e));
+                }
+                Err(_) => {
+                    break Err("DoT query read timeout".to_string());
+                }
             }
 
+            queries_served += 1;
             counter!("synvoid.dot.queries.total").increment(1);
 
             let query_start = std::time::Instant::now();

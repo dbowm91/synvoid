@@ -1,8 +1,19 @@
-# SynVoid DNS — Transfer-Enabled Primary Profile
+# SynVoid DNS — Transfer-Enabled Primary Profile (FUTURE SHAPE, NOT SUPPORTED)
 #
 # Primary DNS server that serves zone transfers to secondary servers.
 #
-# Support status: Production-Supported
+# Support status: DEFERRED — NOT supported (Phase 45 fail-closed contract).
+# The values below show the INTENDED future shape, but validation REJECTS
+# activation today: DnsServer answers AXFR/IXFR/UPDATE/NOTIFY with NOTIMP
+# unconditionally, and `DnsConfig::validate()` returns an error for
+#   - dns.settings.allow_transfer (non-empty)
+#   - dns.settings.notify.enabled = true
+#   - dns.settings.dynamic_update.enabled = true
+#   - non-default dns.settings.ixfr_* values
+# This file is retained as a design reference for the future zone-lifecycle
+# plan (Workstream E design gate: TSIG policy, allowlist, journal durability,
+# NOTIFY retry/backoff, IXFR history, audit). Do NOT copy these settings into
+# a production config — the server will refuse to start them.
 #
 # WARNING: Zone transfers expose complete zone data.
 # Always require TSIG authentication for transfers.

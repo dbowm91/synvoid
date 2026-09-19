@@ -22,6 +22,12 @@ enabled = true
 block_zone_transfers = true
 block_internal_ips = true
 
+# NOTE (Phase 45): DNS rebinding protection is NOT enforced in the query
+# path yet. Validation rejects enabled=true while the firewall is on, so
+# this must stay false until response-path enforcement lands.
+[dns.firewall.rebinding_protection]
+enabled = false
+
 [dns.dnssec]
 enabled = true
 # Domain to sign (must match zone origin)

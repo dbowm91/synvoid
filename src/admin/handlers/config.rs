@@ -1761,6 +1761,14 @@ pub async fn update_dns_config(
             tracing::error!("Failed to parse DNS config: {}", e);
             StatusCode::BAD_REQUEST
         })?;
+    // Phase 45 fail-closed contract: reject deferred/unsupported activation
+    // (RPZ, prefetch, transfers, dynamic update, ...) with 400 before
+    // persisting, so the admin surface cannot store a config the runtime
+    // would silently ignore.
+    if let Err(e) = dns_config.validate() {
+        tracing::warn!("Rejected invalid DNS config via admin API: {}", e);
+        return Err(StatusCode::BAD_REQUEST);
+    }
     let _guard = state.metrics.config_write_lock.write().await;
     {
         let mut config = state.process.config.write().await;

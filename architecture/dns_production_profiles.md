@@ -306,7 +306,16 @@ cargo test -p synvoid-dns -- configured_bind_addr
 
 ## 4. Transfer-Enabled Primary
 
-**Support Status**: Production-Supported
+**Support Status**: Deferred — NOT supported (Phase 45)
+
+> Phase 45 fail-closed contract: this profile's required settings
+> (`dns.settings.allow_transfer`, `notify.enabled`, transfer-knob deviations)
+> have no runtime consumer — `DnsServer` answers AXFR/IXFR/UPDATE/NOTIFY with
+> NOTIMP unconditionally and `DnsConfig::validate()` rejects activation.
+> The TOML below shows the INTENDED future shape, not a working config.
+> Future trigger: the zone-lifecycle design gate (TSIG policy, allowlists,
+> journal durability, NOTIFY retry/backoff, IXFR history, audit) plus a
+> dedicated mutation/zone-lifecycle plan (Workstream E).
 
 Primary DNS server that serves zone transfers to secondary servers via AXFR/IXFR. TSIG authentication required.
 
@@ -334,7 +343,9 @@ block_zone_transfers = false
 
 ### Safe Defaults (No Override Needed)
 
-> **Production-Supported Boundary**: This profile is verified by internal in-process Rust tests. External client interop (`dig`, `delv`, `kdig`) is NOT run in CI. See the [Production-Supported Boundary](#production-supported-boundary) section above.
+> **Deferred Boundary**: This profile is NOT verified end-to-end because the
+> transfer path is unwired. Handler-level tests (transfer/TSIG/authorization
+> suites below) verify the building blocks only.
 
 - `require_tsig = true` — transfers require TSIG authentication
 - Firewall blocks zone transfers by default (`block_zone_transfers = true`)
@@ -423,7 +434,7 @@ block_zone_transfers = true
 
 ### Safe Defaults (No Override Needed)
 
-> **Beta Boundary**: This profile relies on Transfer-Enabled Primary's TSIG implementation and the `cache_invalidation_axfr` test path. No separate passive-listener harness exists for the secondary role. See the [Production-Supported Boundary](#production-supported-boundary) section above.
+> **Beta Boundary**: This profile relies on Transfer-Enabled Primary's TSIG implementation and the `cache_invalidation_axfr` test path. No separate passive-listener harness exists for the secondary role. Phase 45 note: the primary side is Deferred (transfers unwired end-to-end), so this profile covers TSIG/key handling and cache invalidation on receipt only — not live primary→secondary sync. See the [Production-Supported Boundary](#production-supported-boundary) section above.
 
 - `require_tsig = true` — validates transfer responses
 - Firewall blocks outgoing transfers (secondary only receives)
@@ -703,7 +714,7 @@ cargo test --test composition_root_behavioral --features mesh,dns
 
 ## Deferred Features
 
-The following features exist in config schema but are **not implemented or not wired** at runtime. Do not rely on them.
+The following features exist in config schema but are **not implemented or not wired** at runtime. Do not rely on them. Since Phase 45, enabling any of them fails `DnsConfig::validate()` with a typed `Unsupported` error — defaults and disabled values stay parseable.
 
 | Feature | Config Status | Reason Deferred | Expected Phase |
 |---------|---------------|-----------------|----------------|
@@ -720,7 +731,7 @@ The following features exist in config schema but are **not implemented or not w
 | **IXFR Config Toggle** | Partially implemented | Handler exists, config toggle not consumed | Future |
 | **IXFR Fallback to AXFR** | Config field exists, not consumed | `ZoneTransfer` accepts it, not wired from config | Future |
 | **Serve-Stale (IXFR History)** | Config field exists, not consumed | Not wired from config | Future |
-| **Persistent TCP Pipelining** | Deferred | RFC 7766 §4 one-query-per-connection currently enforced | Future |
+| **Persistent TCP Pipelining** | Deferred | Sequential reuse implemented (Phase 45); at most one outstanding query per connection by design | — |
 | **EDNS Keepalive** | Parsed only | Not acted upon | Future |
 | **NSEC3 Closest-Encloser Proofs** | Deferred | Full proof generation not implemented | Future |
 | **External DNSSEC Tooling** | Not in CI | `dig`, `ldns-verify-zone`, `named-checkzone` not integrated | Future |
@@ -732,8 +743,8 @@ These config fields have runtime consumers but are experimental or limited:
 
 | Field | Status | Note |
 |-------|--------|------|
-| `dns.doq.bind_address` | Partially implemented | Hardcoded to `0.0.0.0` in `startup.rs:580`; config field not consumed |
-| `dns.settings.ixfr_enabled` | Partially implemented | Handler exists, config toggle not consumed |
+| `dns.doq.bind_address` | Implemented (Phase 45) | Honored via `doq_bind_addr()`; explicit bind required when enabled |
+| `dns.settings.ixfr_enabled` | Partially implemented | Handler exists, config toggle not consumed; surrounding transfer activation rejected |
 | `dns.dns64.enabled` | Implemented | Working but not tested at scale |
 | `dns.ecs_filtering.enabled` | Implemented | EDNS Client Subnet filtering working |
 
@@ -746,7 +757,7 @@ These config fields have runtime consumers but are experimental or limited:
 | Public authoritative DNS | Authoritative-Only Public (#1) | Production |
 | Local dev/test resolver | Local Recursive (#2) | Production |
 | Office/DC resolver | Internal Recursive (#3) | Production |
-| Primary for zone distribution | Transfer-Enabled Primary (#4) | Production |
+| Primary for zone distribution | Transfer-Enabled Primary (#4) | Deferred (design reference) |
 | Secondary for redundancy | Transfer-Enabled Secondary (#5) | Beta |
 | Signed authoritative | DNSSEC-Signed Authoritative (#6) | Production |
 | Encrypted DNS serving | Encrypted Transport (#7) | Beta |

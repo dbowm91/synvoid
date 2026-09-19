@@ -43,10 +43,34 @@ impl DoqServer {
         &self.config
     }
 
-    pub async fn start(&mut self) -> Result<(), String> {
-        let bind_addr: SocketAddr = format!("{}:{}", self.config.bind_address, self.config.port)
+    /// Resolve the DoQ socket address from config with the same validation
+    /// semantics as UDP/TCP/DoT/DoH (Phase 45 Workstream C): the address must
+    /// be explicit and parseable and the port non-zero, so misconfiguration
+    /// fails here — before QUIC endpoint creation — with a typed error.
+    /// `DnsConfig::validate()` rejects such configs even earlier at
+    /// config-load time; this is defense in depth for programmatic use.
+    pub(crate) fn doq_bind_addr(config: &DnsDoqConfig) -> Result<SocketAddr, String> {
+        if config.bind_address.is_empty() {
+            return Err(
+                "Invalid DoQ bind address: bind_address must be set explicitly \
+                 when DoQ is enabled (e.g. \"0.0.0.0\" or \"127.0.0.1\")"
+                    .to_string(),
+            );
+        }
+        if config.port == 0 {
+            return Err("Invalid DoQ bind address: port cannot be zero".to_string());
+        }
+        // Parse as IpAddr first so IPv6 literals (e.g. "::1") form a valid
+        // SocketAddr without requiring bracket notation from the operator.
+        let ip: IpAddr = config
+            .bind_address
             .parse()
-            .map_err(|e| format!("Invalid DoQ bind address: {}", e))?;
+            .map_err(|e| format!("Invalid DoQ bind address '{}': {}", config.bind_address, e))?;
+        Ok(SocketAddr::from((ip, config.port)))
+    }
+
+    pub async fn start(&mut self) -> Result<(), String> {
+        let bind_addr = Self::doq_bind_addr(&self.config)?;
 
         let tls_config = self.create_tls_config()?;
 
@@ -348,6 +372,57 @@ impl Clone for DoqServer {
 mod tests {
     use super::DoqServer;
     use synvoid_config::dns::DnsDoqConfig;
+
+    fn doq_config(bind: &str, port: u16) -> DnsDoqConfig {
+        DnsDoqConfig {
+            enabled: true,
+            port,
+            bind_address: bind.to_string(),
+            tls_cert_path: None,
+            tls_key_path: None,
+            use_system_cert_store: false,
+            max_concurrent_streams: 100,
+            idle_timeout_secs: 30,
+        }
+    }
+
+    /// Phase 45 Workstream C: explicit IPv4 loopback binds resolve.
+    #[test]
+    fn test_doq_bind_ipv4_loopback() {
+        let addr = DoqServer::doq_bind_addr(&doq_config("127.0.0.1", 7853)).unwrap();
+        assert_eq!(addr.ip().to_string(), "127.0.0.1");
+        assert_eq!(addr.port(), 7853);
+    }
+
+    /// Phase 45 Workstream C: explicit IPv6 binds resolve where supported.
+    #[test]
+    fn test_doq_bind_ipv6_loopback() {
+        let addr = DoqServer::doq_bind_addr(&doq_config("::1", 7853)).unwrap();
+        assert_eq!(addr.ip().to_string(), "::1");
+        assert_eq!(addr.port(), 7853);
+    }
+
+    /// Phase 45 Workstream C: invalid addresses fail before endpoint creation.
+    #[test]
+    fn test_doq_bind_invalid_fails_fast() {
+        let err = DoqServer::doq_bind_addr(&doq_config("not-an-ip", 7853)).unwrap_err();
+        assert!(err.contains("Invalid DoQ bind address"), "got: {}", err);
+    }
+
+    /// Phase 45 Workstream C: empty bind (the struct default) fails fast
+    /// instead of producing a confusing QUIC endpoint error.
+    #[test]
+    fn test_doq_bind_empty_fails_fast() {
+        let err = DoqServer::doq_bind_addr(&doq_config("", 7853)).unwrap_err();
+        assert!(err.contains("must be set explicitly"), "got: {}", err);
+    }
+
+    /// Phase 45 Workstream C: zero port fails fast.
+    #[test]
+    fn test_doq_bind_zero_port_fails_fast() {
+        let err = DoqServer::doq_bind_addr(&doq_config("127.0.0.1", 0)).unwrap_err();
+        assert!(err.contains("port cannot be zero"), "got: {}", err);
+    }
 
     #[test]
     fn test_doq_server_creation() {

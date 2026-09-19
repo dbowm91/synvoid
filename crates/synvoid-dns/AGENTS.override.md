@@ -11,10 +11,18 @@ M2 Phase 1 hardened the DNS transport lifecycle and protocol behavior. Key invar
 - Returns `Err` immediately on invalid address or port zero
 - No silent fallback to `0.0.0.0`
 
-### TCP One-Query-Per-Connection (`server/query.rs`)
-- RFC 7766 §4 semantics: read one length-prefixed message, respond, close
-- AXFR/IXFR is the exception (multi-message over same connection)
-- Persistent TCP (pipelining) is **deferred** to future milestone
+### TCP Persistent Sequential (`server/query.rs`)
+
+- Phase 45: RFC 7766 §4 connection reuse — bounded loop over length-prefixed
+  messages on one stream (one outstanding query at a time; NO pipelining).
+- Bounds: pre-allocation size cap (`max_query_size`), idle timeout
+  (`max_tcp_idle_time_secs`), per-query body timeout (`max_tcp_query_time_secs`),
+  `MAX_TCP_QUERIES_PER_CONNECTION` (1000, `limits.rs`), permit held full
+  lifetime, graceful drain at query boundary.
+- Zero-length / oversize frames fail closed (close). EOF/idle ends `Ok`.
+- DoT (`dot.rs`) shares the same bounded lifecycle after TLS handshake.
+- Recursive TCP (`recursive.rs::handle_tcp_connection`) is still
+  one-query-per-connection (follow-up).
 
 ### UDP/EDNS Truncation (`server/response.rs`)
 - `build_truncated_tc_response()`: TC=1, RCODE=0, question echoed
@@ -25,6 +33,18 @@ M2 Phase 1 hardened the DNS transport lifecycle and protocol behavior. Key invar
 - Response exceeds `max_response_size` → SERVFAIL with echoed question
 - RA=0, AD=0, RD echoed, RCODE=2
 - SERVFAIL itself validated to fit within hard limit
+
+### Phase 45 fail-closed DNS config
+
+- `DnsConfig::validate()` rejects activating deferred features with typed
+  `Unsupported { path }` errors: RPZ, prefetch, trust anchors, anycast,
+  transfers (`allow_transfer` non-empty + knob deviations), dynamic update,
+  NOTIFY, padding, QNAME privacy, firewall default_action/max_rules/rebinding
+  (while enabled), recursive scope responses, invalid encrypted binds.
+- Admin `PUT /config/dns` enforces the same validation (400).
+- `transfer_primary.toml` is a deferred design reference (parses, fails
+  validation). Supported profiles must pass validation (tested in
+  `example_configs_parse`).
 
 ### Shutdown (`server/startup.rs`)
 - `shutdown_runtime()` is idempotent — safe to call multiple times
@@ -260,12 +280,14 @@ The `max_wait_ms` parameter is now used. At `crates/synvoid-dns/src/query_coales
 
 ### Known Limitations
 
-- DoT/DoH/DoQ fields (28) wired but untested
+- DoT/DoH/DoQ fields (28) wired; Phase 45 adds bind validation, `doq_bind_addr`
+  and bind-collision tests plus `dns_phase45_contract` integration tests
 - Rate limiter fields (9) wired but untested
 - Firewall fields (3 security controls) wired but untested
-- DoQ `bind_address` partially implemented (hardcoded to 0.0.0.0)
+- DoQ `bind_address` implemented (Phase 45: honored + validated)
 - Full DNSSEC production validation deferred
 - RPZ, Trust Anchors, Prefetch, Anycast, Padding, QNAME Privacy deferred
+  (activation rejected by validation since Phase 45)
 
 ## Milestone 3 Phase 1: Zone Lifecycle & Hardening
 
@@ -482,8 +504,10 @@ The `dns-tests` job in `.github/workflows/ci.yml` now also runs:
 
 ### Deferred / Known Limitations
 
-- DoQ is wired but not production-validated; ALPN/quinn adapter is tested in unit tests only.
-- Persistent DNS-over-TCP (pipelining) remains deferred.
+- DoQ is wired (bind honored + validated since Phase 45) but not
+  production-validated; ALPN/quinn adapter is tested in unit tests only.
+- Persistent DNS-over-TCP is sequential (Phase 45); pipelining/reordering
+  remains deferred by design. Recursive TCP is still one-query-per-connection.
 - EDNS keepalive remains parsed-only.
 - Full NSEC3 closest-encloser proofs remain deferred.
 - External DNSSEC tooling (dig, ldns-verify-zone, named-checkzone) is not in CI.
@@ -640,15 +664,16 @@ cargo test -p synvoid-dns --release --no-fail-fast
 | Feature | Status | Reason |
 |---------|--------|--------|
 | NSEC3 closest-encloser proofs | Deferred | Requires NSEC3 chain walking; RFC 5155 compliance partial |
-| Persistent TCP pipelining | Deferred | RFC 7766 §4 compliance requires connection reuse |
+| Persistent TCP pipelining | Deferred by design | Sequential reuse implemented (Phase 45); at most one outstanding query per connection |
+| Recursive persistent TCP | Deferred | `handle_tcp_connection` still one-query-per-connection (follow-up) |
 | EDNS keepalive | Deferred | Parsed but not wired into connection management |
-| Trust anchors (RFC 5011) | Deferred | Config fields exist, not consumed at server construction |
+| Trust anchors (RFC 5011) | Deferred, activation rejected (Phase 45) | Config fields exist, not consumed at server construction |
 | External DNSSEC tooling | Deferred | dig/ldns-verify-zone not in CI pipeline |
 | Bailiwick enforcement | Deferred | Observability-only (log + metric), not enforced |
-| RPZ (Response Policy Zones) | Deferred | Documented but unsupported |
-| DNS Padding / QNAME Privacy | Deferred | Structures exist, not wired into query path |
-| DoQ production validation | Deferred | ALPN/quinn adapter tested in unit tests only |
-| Prefetch | Deferred | Documented but unsupported |
+| RPZ (Response Policy Zones) | Deferred, activation rejected (Phase 45) | Documented but unsupported |
+| DNS Padding / QNAME Privacy | Deferred, activation rejected (Phase 45) | Structures exist, not wired into query path |
+| DoQ production validation | Deferred | Bind honored + validated (Phase 45); ALPN/quinn adapter tested in unit tests only |
+| Prefetch | Deferred, activation rejected (Phase 45) | Documented but unsupported |
 | ECDSAP256SHA256 (algorithm 13) | Deferred | Only Ed25519 (15) and RSA-SHA256 (8) supported |
 
 ## M4 Phase 1: Observability and Operations
@@ -720,7 +745,7 @@ cargo test -p synvoid-dns --test dns_stress_resource_limits -- --test-threads=1
 
 ## Internal Conformance & External Interop
 
-7 internal conformance suites verify protocol-level interoperability across authoritative, recursive, DNSSEC, zone transfer, dynamic update, encrypted transport, and truncation/TCP fallback. These run in-process with no external tools and are part of CI. Optional external interop checks (via `dig`, `kdig`, `delv`, etc.) are available when tools are present.
+9 internal conformance suites verify protocol-level interoperability across authoritative, recursive, DNSSEC, zone transfer, dynamic update, encrypted transport, truncation/TCP fallback, persistent TCP/DoT contract, and example-profile validation. These run in-process with no external tools and are part of CI. Optional external interop checks (via `dig`, `kdig`, `delv`, etc.) are available when tools are present.
 
 ```bash
 # Run all interop tests
@@ -734,6 +759,8 @@ cargo test -p synvoid-dns --test dns_interop_transfers
 cargo test -p synvoid-dns --test dns_interop_update_notify
 cargo test -p synvoid-dns --test dns_interop_encrypted
 cargo test -p synvoid-dns --test dns_interop_recursive
+cargo test -p synvoid-dns --test dns_phase45_contract
+cargo test -p synvoid-dns --test example_configs_parse
 ```
 
 ## Milestone 4 Phase 4: Production Release Gate
@@ -745,8 +772,8 @@ cargo test -p synvoid-dns --test dns_interop_recursive
 | Authoritative-Only | Zone serving, DNSSEC signing | Full |
 | Local Recursive | Forwarding resolver for local networks | Full |
 | Internal Recursive | Internal recursive with ACL | Full |
-| Transfer Primary | AXFR/IXFR primary with TSIG | Full |
-| Transfer Secondary | AXFR/IXFR secondary with TSIG | Full |
+| Transfer Primary | AXFR/IXFR primary with TSIG | Deferred (Phase 45 design reference) |
+| Transfer Secondary | AXFR/IXFR secondary with TSIG | Beta (receipt-side only; primary deferred) |
 | DNSSEC-Signed | Zone signing with key rotation | Full |
 | Encrypted Transport | DoT/DoH/DoQ adapters | Full |
 | Full Mesh | All features combined | Full |

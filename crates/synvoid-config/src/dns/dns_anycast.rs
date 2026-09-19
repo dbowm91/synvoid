@@ -2,7 +2,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use super::DnsConfigError;
+use super::{unsupported, DnsConfigError};
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
 #[serde(default)]
@@ -81,24 +81,17 @@ impl DnsAnycastConfig {
             return Ok(());
         }
 
-        if self.bind_addresses.is_empty() {
-            return Err(DnsConfigError::InvalidAnycast(
-                "bind_addresses cannot be empty when anycast is enabled".to_string(),
-            ));
-        }
-
-        if self.health_check_interval_secs == 0 {
-            return Err(DnsConfigError::InvalidAnycast(
-                "health_check_interval_secs must be greater than zero".to_string(),
-            ));
-        }
-
-        if self.capacity == 0 {
-            return Err(DnsConfigError::InvalidAnycast(
-                "capacity must be greater than zero".to_string(),
-            ));
-        }
-
-        Ok(())
+        // Phase 45 fail-closed contract: anycast requires mesh integration
+        // that is not wired (DnsServer::start errors without the mesh
+        // feature). Reject activation at validation time so the failure
+        // surfaces with a typed config path instead of at listener startup.
+        // When mesh-based anycast sync lands, re-introduce the structural
+        // checks (non-empty bind_addresses, health_check_interval_secs > 0,
+        // capacity > 0) ahead of this rejection.
+        Err(unsupported(
+            "dns.anycast.enabled",
+            "anycast requires mesh integration that is not wired. Keep disabled \
+             until mesh-based anycast sync lands (Workstream F).",
+        ))
     }
 }

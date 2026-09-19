@@ -59,7 +59,8 @@ fn authoritative_public_parses() {
     assert!(cfg.firewall.enabled);
     assert!(cfg.firewall.block_internal_ips);
     assert!(cfg.firewall.block_zone_transfers);
-    assert!(cfg.firewall.rebinding_protection.enabled);
+    // Phase 45: rebinding is unwired, so supported profiles must disable it.
+    assert!(!cfg.firewall.rebinding_protection.enabled);
     assert_eq!(cfg.firewall.rebinding_protection.min_ttl_for_internal, 1800);
 
     // limits
@@ -234,4 +235,39 @@ fn transfer_primary_parses() {
     // zones
     assert_eq!(cfg.zones.items.len(), 1);
     assert_eq!(cfg.zones.items[0].zone, "example.com");
+}
+
+/// Phase 45 fail-closed contract: every example profile that claims a
+/// supported status must pass `DnsConfig::validate()`, while the deferred
+/// transfer-primary design reference must be rejected.
+#[test]
+fn supported_example_profiles_validate() {
+    for name in [
+        "authoritative_public.toml",
+        "dnssec_signed.toml",
+        "encrypted_dot_doh.toml",
+        "recursive_local.toml",
+    ] {
+        let cfg = load_and_parse(name);
+        assert!(
+            cfg.validate().is_ok(),
+            "supported profile {} must validate: {:?}",
+            name,
+            cfg.validate()
+        );
+    }
+}
+
+#[test]
+fn transfer_primary_design_reference_is_rejected() {
+    let cfg = load_and_parse("transfer_primary.toml");
+    let err = cfg
+        .validate()
+        .expect_err("transfer_primary activates unwired features and must fail validation");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("dns.settings.allow_transfer") || msg.contains("dns.settings.notify"),
+        "rejection must name a typed config path, got: {}",
+        msg
+    );
 }

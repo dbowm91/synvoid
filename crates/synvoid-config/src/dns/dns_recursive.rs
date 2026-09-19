@@ -4,7 +4,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use super::DnsConfigError;
+use super::{unsupported, DnsConfigError};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default, JsonSchema, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -362,6 +362,14 @@ impl RecursiveDnsConfig {
             ));
         }
 
+        // Phase 45: invalid addresses must fail here, before listener startup.
+        if self.bind_address.parse::<IpAddr>().is_err() {
+            return Err(DnsConfigError::InvalidRecursive(format!(
+                "dns.recursive.bind_address '{}' is not a parseable IP address.",
+                self.bind_address
+            )));
+        }
+
         if self.upstream_provider == RecursiveUpstreamProvider::Custom
             && self.upstream_servers.is_empty()
         {
@@ -433,6 +441,21 @@ impl RecursiveDnsConfig {
                 "circuit_breaker.success_threshold must be greater than zero".to_string(),
             ));
         }
+
+        // Phase 45 fail-closed contract: EDNS scope is parsed but never
+        // emitted in recursive responses, so requesting it would silently
+        // do nothing.
+        if self.ecs.include_scope_in_response {
+            return Err(unsupported(
+                "dns.recursive.ecs.include_scope_in_response",
+                "EDNS scope responses are not emitted by the recursive server. \
+                 Keep disabled until scope-response support lands.",
+            ));
+        }
+
+        // Nested firewall carries the same fail-closed contract as the
+        // authoritative one (default_action/max_rules/rebinding unwired).
+        self.firewall.validate_at("dns.recursive.firewall")?;
 
         Ok(())
     }

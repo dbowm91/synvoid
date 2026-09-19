@@ -2,7 +2,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use super::DnsConfigError;
+use super::{unsupported, DnsConfigError};
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
 #[serde(default)]
@@ -31,10 +31,13 @@ pub struct DnsSettingsConfig {
     #[serde(default = "default_negative_cache_ttl")]
     pub negative_cache_ttl: u32,
 
-    #[serde(default)]
+    #[serde(default = "default_allow_wildcard_transfer")]
     pub allow_wildcard_transfer: bool,
 
-    #[serde(default)]
+    // Phase 45: serde default must match the documented default (true).
+    // A plain `#[serde(default)]` would parse absent values as false,
+    // contradicting the matrix and weakening the fail-closed posture.
+    #[serde(default = "default_wildcard_transfer_requires_tsig")]
     pub wildcard_transfer_requires_tsig: bool,
 
     #[serde(default = "default_require_tsig")]
@@ -174,6 +177,95 @@ impl DnsSettingsConfig {
         if self.cache_size == 0 {
             return Err(DnsConfigError::InvalidSettings(
                 "cache_size must be greater than zero".to_string(),
+            ));
+        }
+
+        // Phase 45 fail-closed contract: the settings below have config
+        // surface but no runtime consumer in `DnsServer::new()` (the
+        // transfer/update/notify handlers are hardcoded to `None` and the
+        // padding/qname helpers are never called from the query path).
+        // Activation is rejected so operators cannot enable a feature that
+        // does nothing. Future trigger: the zone-lifecycle design gate in
+        // `architecture/dns_config_runtime_matrix.md` (Workstream E).
+        if !self.allow_transfer.is_empty() {
+            return Err(unsupported(
+                "dns.settings.allow_transfer",
+                "zone transfers are not wired from config: DnsServer refuses AXFR/IXFR \
+                 unconditionally (NOTIMP). Remove allow_transfer until the \
+                 zone-transfer design gate (TSIG policy, allowlist, journal \
+                 durability, audit) is satisfied and support lands.",
+            ));
+        }
+        if self.allow_wildcard_transfer {
+            return Err(unsupported(
+                "dns.settings.allow_wildcard_transfer",
+                "wildcard transfers have no runtime consumer. Keep disabled until \
+                 zone-transfer support lands.",
+            ));
+        }
+        if !self.wildcard_transfer_requires_tsig {
+            return Err(unsupported(
+                "dns.settings.wildcard_transfer_requires_tsig",
+                "non-default value has no runtime consumer while zone transfers \
+                 are unwired. Restore the default (true).",
+            ));
+        }
+        if !self.require_tsig {
+            return Err(unsupported(
+                "dns.settings.require_tsig",
+                "non-default value has no runtime consumer while zone transfers \
+                 are unwired. Restore the default (true).",
+            ));
+        }
+        if !self.ixfr_enabled {
+            return Err(unsupported(
+                "dns.settings.ixfr_enabled",
+                "the IXFR toggle is not consumed: IXFR is unconditionally refused \
+                 until zone-transfer support lands. Remove the explicit setting.",
+            ));
+        }
+        if self.ixfr_history_size != default_ixfr_history_size() {
+            return Err(unsupported(
+                "dns.settings.ixfr_history_size",
+                "IXFR history retention has no runtime consumer. Restore the default.",
+            ));
+        }
+        if !self.ixfr_fallback_to_axfr {
+            return Err(unsupported(
+                "dns.settings.ixfr_fallback_to_axfr",
+                "non-default value has no runtime consumer while zone transfers \
+                 are unwired. Restore the default (true).",
+            ));
+        }
+        if self.dynamic_update.enabled {
+            return Err(unsupported(
+                "dns.settings.dynamic_update.enabled",
+                "dynamic UPDATE has no runtime consumer: DnsServer hardcodes \
+                 update_handler to None and answers NOTIMP. Keep disabled until \
+                 the mutation design gate (zone ownership, TSIG policy, journal \
+                 durability, audit) is satisfied and support lands.",
+            ));
+        }
+        if self.notify.enabled {
+            return Err(unsupported(
+                "dns.settings.notify.enabled",
+                "NOTIFY has no runtime consumer: DnsServer hardcodes notify_handler \
+                 to None and answers NOTIMP. Keep disabled until the mutation \
+                 design gate is satisfied and support lands.",
+            ));
+        }
+        if self.padding.enabled {
+            return Err(unsupported(
+                "dns.settings.padding.enabled",
+                "EDNS padding (DnsPadding) is not wired into the query path. Keep \
+                 disabled until response-padding support lands.",
+            ));
+        }
+        if self.qname_privacy.enabled {
+            return Err(unsupported(
+                "dns.settings.qname_privacy.enabled",
+                "QNAME privacy (sanitize_qname) is not called from the query path. \
+                 Keep disabled until query-path privacy support lands.",
             ));
         }
 

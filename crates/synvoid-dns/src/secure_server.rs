@@ -168,3 +168,70 @@ impl<C: DnsServerConfig> Clone for SecureDnsServerBase<C> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Clone)]
+    struct TestConfig;
+
+    impl DnsServerConfig for TestConfig {
+        fn bind_address(&self) -> &str {
+            "127.0.0.1"
+        }
+
+        fn port(&self) -> u16 {
+            0
+        }
+
+        fn server_name(&self) -> &'static str {
+            "Test"
+        }
+    }
+
+    async fn dummy_handler(
+        _stream: tokio::net::TcpStream,
+        _addr: SocketAddr,
+        _dns: Arc<RwLock<Option<DnsServer>>>,
+        _acceptor: Arc<TlsAcceptor>,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    /// Phase 45 Workstream C: an occupied port must surface as a bind error
+    /// (not a hang or silent fallback), matching UDP/TCP fail-fast behavior.
+    /// Binding happens before TLS acceptor creation, so no certificates are
+    /// needed to exercise this path.
+    #[tokio::test]
+    async fn bind_collision_is_surfaced() {
+        let occupied = std::net::TcpListener::bind("127.0.0.1:0").expect("occupy port");
+        let port = occupied.local_addr().expect("local addr").port();
+
+        let mut base = SecureDnsServerBase::new(TestConfig, None);
+        let err = base
+            .start_server("127.0.0.1", port, "Test server", dummy_handler)
+            .await
+            .expect_err("bind collision must fail");
+        assert!(
+            err.contains("Failed to bind"),
+            "error must mention bind failure, got: {}",
+            err
+        );
+    }
+
+    /// Invalid bind addresses fail before any socket is created.
+    #[tokio::test]
+    async fn invalid_bind_address_fails_fast() {
+        let mut base = SecureDnsServerBase::new(TestConfig, None);
+        let err = base
+            .start_server("not-an-ip", 853, "Test server", dummy_handler)
+            .await
+            .expect_err("invalid bind must fail");
+        assert!(
+            err.contains("Invalid Test server bind address"),
+            "got: {}",
+            err
+        );
+    }
+}

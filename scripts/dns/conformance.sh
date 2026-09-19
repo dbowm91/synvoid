@@ -74,6 +74,10 @@ run_internal "dns_interop_transfers" "dns_interop_transfers"
 run_internal "dns_interop_update_notify" "dns_interop_update_notify"
 run_internal "dns_interop_encrypted" "dns_interop_encrypted"
 run_internal "dns_interop_recursive" "dns_interop_recursive"
+# Phase 45: persistent TCP/DoT contract, DoQ bind fidelity, example-profile
+# validation (fail-closed config contract).
+run_internal "dns_phase45_contract" "dns_phase45_contract"
+run_internal "example_configs_parse" "example_configs_parse"
 
 INTERNAL_TOTAL=$((INTERNAL_PASSED + INTERNAL_FAILED))
 
@@ -125,8 +129,16 @@ check_external() {
 
 check_external "Authoritative A/AAAA query" "dig" \
     "dig +short @127.0.0.1 -p <port> example.com A"
+check_external "Persistent TCP (multiple queries, one connection)" "dig" \
+    "dig +tcp +keepopen @127.0.0.1 -p <port> example.com A example.com AAAA (RFC 7766 reuse; no pipelining)"
 check_external "DoT transport query" "kdig" \
     "kdig @127.0.0.1 -p <port> example.com A"
+check_external "DoT persistent connection" "kdig" \
+    "kdig +tls +keepopen @127.0.0.1 -p <port> example.com A (sequential reuse)"
+check_external "DoQ bind behavior" "kdig" \
+    "kdig +quic @127.0.0.1 -p <port> example.com A (requires DoQ-enabled build)"
+check_external "Malformed TCP framing / idle close" "dig" \
+    "printf '\\x00\\x00' | timeout 8 nc 127.0.0.1 <port> (expect server-side close, no response)"
 check_external "DNSSEC validation" "delv" \
     "delv @127.0.0.1 -p <port> example.com A +rtrace"
 check_external "Zone file lint" "named-checkzone" \
