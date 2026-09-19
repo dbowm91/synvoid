@@ -1,6 +1,6 @@
 # Phase 45 Plan: DNS Runtime Contract and Protocol Completeness
 
-Status: detailed handoff plan.
+Status: implemented and closed; retained as historical handoff detail.
 
 Roadmap: `plans/runtime_truthfulness_security_publication_roadmap.md`.
 
@@ -183,3 +183,7 @@ cargo xtask verify
 - Transfer/update/notify remain rejected until their security/durability contract is actually satisfied.
 - Production-profile labels match current tests and runtime behavior.
 - The matrix contains no unexplained "unsupported but accepted" entries.
+
+## Closeout (Phase 48)
+
+Implemented in `69a47c68b1b1`. Binding: `architecture/dns.md` + `architecture/dns_config_runtime_matrix.md`. Campaign closeout: `architecture/runtime_truthfulness_security_publication_closeout.md`.

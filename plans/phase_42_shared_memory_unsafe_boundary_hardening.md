@@ -1,6 +1,6 @@
 # Phase 42 Plan: Shared-Memory Unsafe-Boundary Hardening
 
-Status: detailed handoff plan.
+Status: implemented and closed; retained as historical handoff detail.
 
 Roadmap: `plans/runtime_truthfulness_security_publication_roadmap.md`.
 
@@ -150,3 +150,7 @@ Run relevant target checks for every platform on which the shared-memory impleme
 - Cross-process atomic support is documented and behavior-tested on claimed targets.
 - Shared-state files inherit the runtime directory's secure ownership contract.
 - `synvoid-rate-limit` remains free of mmap/process-specific policy.
+
+## Closeout (Phase 48)
+
+Implemented in `0026e934e49b`. Binding: `architecture/shared_memory_atomic_contract.md`. Campaign closeout: `architecture/runtime_truthfulness_security_publication_closeout.md`.

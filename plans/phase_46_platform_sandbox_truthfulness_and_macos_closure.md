@@ -1,6 +1,6 @@
 # Phase 46 Plan: Platform Sandbox Truthfulness and macOS Closure
 
-Status: detailed handoff plan.
+Status: implemented and closed; retained as historical handoff detail.
 
 Roadmap: `plans/runtime_truthfulness_security_publication_roadmap.md`.
 
@@ -161,3 +161,7 @@ Plus native macOS enforcement tests on the release-validation host.
 - capability flags describe verified enforcement.
 - documentation states the deprecated API/support tier truthfully.
 - strict jail mode still fails closed when the requested backend is unavailable.
+
+## Closeout (Phase 48)
+
+Implemented in `f31e2cb07050` + `471b3b4d596c`. Binding: `docs/SANDBOXING.md` + `architecture/platform.md`. Campaign closeout: `architecture/runtime_truthfulness_security_publication_closeout.md`.

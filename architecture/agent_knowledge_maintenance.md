@@ -4,6 +4,31 @@ How `AGENTS.md`, `.opencode/skills/`, `docs/`, `README.md`, and `plans/`
 stay accurate. For agents, by an agent audit (2026-09-11, follow-up 2026-09-13,
 Phase 37 pass 2026-09-17, Phase 40 pass 2026-09-18, Phase 47 pass 2026-09-19).
 
+## What was audited (Phase 48 corrective closeout, 2026-09-19)
+
+- Closed the Phase 41–47 campaign as a historical unit: umbrella roadmap +
+  Phase 41–47 plans marked implemented/closed (intent preserved; closeout
+  footers point at `architecture/runtime_truthfulness_security_publication_closeout.md`,
+  the new canonical evidence record); `plans/roadmap.md` post-Phase-40 section
+  completed; `architecture/overview.md` index points at the closeout.
+- Re-audited all Phase 41–47 acceptance criteria against landed code/tests/
+  guards/binding docs: no concrete mismatch found, no runtime changes.
+  Recorded two accepted test/contract-granularity notes (DoT lifecycle covered
+  by the shared bounded loop, no DoT-specific integration; `BackendBusy`→503
+  is a typed library contract with no current HTTP consumer) — neither blocks
+  closeout.
+- Corrected stale time-sensitive claims without making a migration decision:
+  `architecture/public_crate_release_readiness_phase47.md` §http-client,
+  `AGENTS.md` Known Issues, and this file no longer say "eggfetch still
+  0.1.4 / no 0.1.5+" as present-tense fact; they record the Phase 47
+  0.1.4-era baseline as dated history and point at the open follow-up
+  `plans/eggfetch_current_line_parity_review.md`. Fixed `AGENTS.md`
+  `src/pqc.rs` → `crates/synvoid-wasm-pow/src/pqc.rs` and the stale
+  `dns.doq.bind_address` matrix row in `architecture/dns.md`.
+- Added narrow `runtime_truthfulness_closeout` repo-guard (status drift +
+  stale eggfetch literal in current-state surfaces); historical `plans/`
+  text explicitly out of scope. New checklist item 10.
+
 ## What was audited (2026-09-19, Phase 47 public-crate release readiness)
 
 - Promoted `synvoid-rate-limit` 0.1.0 to class 3 (first externally supported
@@ -18,8 +43,10 @@ Phase 37 pass 2026-09-17, Phase 40 pass 2026-09-18, Phase 47 pass 2026-09-19).
 - Deferred with recorded reasons (no metadata implying support):
   mesh-protocol (wire-versioning/`non_exhaustive` policy), proxy-cache (object
   cache, NOT RFC 9111), dnssec-keystore (threat model/PKCS#11 CI/RSA advisory),
-  platform (MSRV/semver/examples), yara (compat fork), http-client (eggfetch
-  still 0.1.4, no 0.1.5+ matrix refresh), utils/core (permanently internal).
+  platform (MSRV/semver/examples), yara (compat fork), http-client (internal
+  pending a fresh current-line eggfetch review; the 0.1.4-era matrix is dated
+  history — see `plans/eggfetch_current_line_parity_review.md`),
+  utils/core (permanently internal).
 - Skills: no stale publication claims found (only `supply_chain` mentions
   `cargo publish`, correctly as manual-only) — no skill changes needed.
 - Historical records deliberately NOT rewritten: `plans/*` phase history,
@@ -162,6 +189,14 @@ Phase 37 pass 2026-09-17, Phase 40 pass 2026-09-18, Phase 47 pass 2026-09-19).
    `synvoid-*` crate in `architecture/`, `.opencode/skills/`, `docs/`, or
    `README.md` is a bug unless `public_crate_release_readiness_phase47.md`
    (or a successor promotion record) names it class 3.
+10. Campaign-status truthfulness: the Phase 41–47 umbrella roadmap and
+    Phase 41–47 plans must read implemented/closed (not active handoff);
+    current-state surfaces (`AGENTS.md`,
+    `architecture/public_crate_release_readiness_phase47.md`,
+    `architecture/agent_knowledge_maintenance.md`) must not present the
+    0.1.4-era eggfetch version claim as current fact (historical `plans/`
+    and dated Phase 34/35 decision records may describe their own baseline).
+    Enforced by the `runtime_truthfulness_closeout` repo-guard test.
 
 ## Index
 

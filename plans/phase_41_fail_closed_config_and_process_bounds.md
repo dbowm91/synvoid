@@ -1,6 +1,6 @@
 # Phase 41 Plan: Fail-Closed Configuration and Process Bounds
 
-Status: detailed handoff plan.
+Status: implemented and closed; retained as historical handoff detail.
 
 Roadmap: `plans/runtime_truthfulness_security_publication_roadmap.md`.
 
@@ -182,3 +182,7 @@ Run the config fuzz target after the preflight lands.
 - Mesh restart settings are operator-truthful and fail before runtime composition.
 - Feature-profile tests prove absent-feature rejection with the actual feature absent.
 - Documentation and admin mutation behavior match the parser contract.
+
+## Closeout (Phase 48)
+
+Implemented in `a3e5ab27f8ce`. Binding: `architecture/config_feature_contract.md`. Campaign closeout: `architecture/runtime_truthfulness_security_publication_closeout.md`.

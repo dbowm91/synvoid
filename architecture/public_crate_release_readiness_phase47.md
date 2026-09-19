@@ -100,15 +100,22 @@ a downstream dependency exception must not become an external support burden.
 
 ### `synvoid-http-client` — stays class 2 (deferred)
 
-No refreshed eggfetch line to evaluate against: crates.io still shows
-`eggfetch-core` 0.1.4 (2026-09-13; ~93 downloads), no 0.1.5+. The Phase 34
-capability matrix stands — ring-only TLS without aws-lc-rs/PQ parity,
+Historical decision (2026-09-19, against the then-current baseline):
+crates.io showed `eggfetch-core` 0.1.4 (2026-09-13; ~93 downloads) with no
+0.1.5+ line, so there was no refreshed eggfetch line to evaluate. The
+Phase 34 capability matrix (ring-only TLS without aws-lc-rs/PQ parity,
 closed request body, no direct-UDS parity, coarse verification toggle, same
-transitive stack, pre-1.0 maturity — so the retain-`synvoid-http-client`
-decision (Branch 2, `architecture/egress_client_decision_phase34.md`) is
-unchanged. No second public generic HTTP client. Revisit only when an
-eggfetch 0.1.5+ (or successor) line exists and the full matrix is re-run
-with parity tests.
+transitive stack, pre-1.0 maturity) therefore stood as the then-current
+evidence for the retain-`synvoid-http-client` decision (Branch 2,
+`architecture/egress_client_decision_phase34.md`). No second public generic
+HTTP client.
+
+Current status (Phase 48 closeout): a newer eggfetch line now exists, so the
+0.1.4-era matrix above is dated decision history, not current evidence. It
+must not be cited to justify the present disposition. `synvoid-http-client`
+remains internal pending a fresh parity/consolidation review against the
+current eggfetch line — see `plans/eggfetch_current_line_parity_review.md`.
+Revisit only when that review re-runs the full matrix with parity tests.
 
 ### `synvoid-utils`, `synvoid-core` — remain internal (class 1)
 

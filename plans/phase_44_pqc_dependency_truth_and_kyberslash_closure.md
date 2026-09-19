@@ -1,6 +1,6 @@
 # Phase 44 Plan: PQC Dependency Truth and KyberSlash Closure
 
-Status: detailed handoff plan.
+Status: implemented and closed; retained as historical handoff detail.
 
 Roadmap: `plans/runtime_truthfulness_security_publication_roadmap.md`.
 
@@ -148,3 +148,7 @@ Run the actual frontend/WASM build used in release packaging.
 - security docs and dependency policy match the actual resolved package.
 - secret handling does not regress.
 - no stale advisory text claims both "no fix" and "fixed fork" without explaining which package/source is present.
+
+## Closeout (Phase 48)
+
+Implemented in `220dd5dea91d`. Binding: `architecture/pqc.md` + `architecture/wasm_pow.md` + `SECURITY.md`. Campaign closeout: `architecture/runtime_truthfulness_security_publication_closeout.md`.

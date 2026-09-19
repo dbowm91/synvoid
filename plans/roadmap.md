@@ -1,6 +1,6 @@
 # SynVoid Architecture Hardening Roadmap
 
-Status: Tracks 1-3 and their corrective closures remain complete. Phases 41-47 of the post-Phase-40 runtime-truthfulness/security/publication campaign are implemented; Phase 48 is the active corrective closeout.
+Status: Tracks 1-3 and their corrective closures remain complete. Phases 41-47 of the post-Phase-40 runtime-truthfulness/security/publication campaign are implemented and the Phase 48 corrective closeout is complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). No active handoff remains under this campaign.
 
 Scope: this roadmap covers architecture hardening, trust-boundary closure, verification, release readiness, post-hardening cleanup, and the architecture-convergence work required before another broad feature-expansion pass.
 
@@ -243,11 +243,13 @@ Track 3: Complete through Phase 24 (adversarial/performance/surface closure reco
 Post-Track-3 corrective closure: complete; see `plans/track3_post_closure_corrective.md` and `architecture/track3_post_closure_corrective_report.md`.
 
 
-## Post-Phase-40 Handoff: Runtime Truthfulness, Security Hardening, and Publication Readiness
+## Post-Phase-40 Campaign: Runtime Truthfulness, Security Hardening, and Publication Readiness — Complete
 
-Status: Phases 41-47 implemented; Phase 48 corrective closeout active.
+Status: Phases 41-47 implemented; Phase 48 corrective closeout complete.
 
-Roadmap: `plans/runtime_truthfulness_security_publication_roadmap.md`.
+Roadmap: `plans/runtime_truthfulness_security_publication_roadmap.md` (completed historical record).
+
+Closeout: `architecture/runtime_truthfulness_security_publication_closeout.md`.
 
 Baseline: `03cec2235fb250e64c33f29b66258eeb0607cdbc`.
 

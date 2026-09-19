@@ -1,6 +1,6 @@
 # Phase 47 Plan: Public Crate Release Readiness
 
-Status: detailed handoff plan.
+Status: implemented and closed; retained as historical handoff detail.
 
 Roadmap: `plans/runtime_truthfulness_security_publication_roadmap.md`.
 
@@ -246,3 +246,7 @@ A crate may be promoted from Phase 35 class 2 to class 3 only when:
 - registry/public maintenance burden is justified.
 
 It is valid for this phase to conclude that only `synvoid-rate-limit` is ready, or that no crate should be published yet.
+
+## Closeout (Phase 48)
+
+Implemented in `91732e228864`. Binding: `architecture/public_crate_release_policy.md` + `architecture/public_crate_release_readiness_phase47.md`. Campaign closeout: `architecture/runtime_truthfulness_security_publication_closeout.md`.

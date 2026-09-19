@@ -1600,7 +1600,7 @@ Phase 2 closed the gap between the config-runtime matrix and actual runtime beha
 | `dns.settings.default_ttl` | unsupported | implemented | Consumed at `server/zone.rs:137` as zone record fallback TTL |
 | `dns.settings.negative_cache_ttl` | implemented (no tests) | implemented | Tests exist: `server/query.rs:1931`, `server/query.rs:1939` |
 | `dns.limits.enable_graceful_degradation` | implemented | implemented | Config field now wired to `ConnectionLimits` |
-| `dns.doq.bind_address` | implemented | partially implemented | Hardcoded to `0.0.0.0:{port}` at `startup.rs:580` (stale: Phase 45 wires + validates it) |
+| `dns.doq.bind_address` | pre-Phase-45 hardcoded to `0.0.0.0:{port}` | implemented (Phase 45) | Honored via `doq_bind_addr()` (IPv6-safe) and validated before startup; see Closed rows below |
 | `dns.settings.serve_stale.max_stale_count` | implemented | implemented | Now explicitly wired from config |
 | `dns.recursive.query_timeout_secs` | partially implemented | implemented | Passed to `HickoryResolver` via `create_resolver()` |
 

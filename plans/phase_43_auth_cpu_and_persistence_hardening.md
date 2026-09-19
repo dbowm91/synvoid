@@ -1,6 +1,6 @@
 # Phase 43 Plan: Authentication CPU Isolation and Durable Persistence
 
-Status: detailed handoff plan.
+Status: implemented and closed; retained as historical handoff detail.
 
 Roadmap: `plans/runtime_truthfulness_security_publication_roadmap.md`.
 
@@ -191,3 +191,7 @@ Add a focused benchmark or concurrency test that demonstrates request executor p
 - A corrupt existing store does not silently become an empty auth database.
 - Login audit persistence is bounded.
 - Existing bcrypt hashes remain compatible.
+
+## Closeout (Phase 48)
+
+Implemented in `7b2aff0be715`. Binding: `architecture/auth.md` + `architecture/auth_deep_dive.md`. Campaign closeout: `architecture/runtime_truthfulness_security_publication_closeout.md`.

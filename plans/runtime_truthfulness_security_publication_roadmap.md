@@ -1,8 +1,36 @@
 # Runtime Truthfulness, Security Hardening, and Publication Readiness Roadmap
 
-Status: detailed active handoff roadmap.
+Status: complete — historical campaign record. Implementation closed through Phase 47; Phase 48 corrective closeout reconciles status/evidence. Do not extend this campaign; open a new focused plan for follow-up work.
 
 Baseline reviewed: `main` at `03cec2235fb250e64c33f29b66258eeb0607cdbc` (2026-09-18).
+Final implementation range: Phase 41 (`a3e5ab27f8ce`) through Phase 47 (`91732e228864`); closeout: Phase 48 (see `architecture/runtime_truthfulness_security_publication_closeout.md`).
+
+## Campaign outcome (Phase 41–47)
+
+| Phase | Commit | Result |
+|---|---|---|
+| 41 | `a3e5ab27f8ce` | fail-closed capability config preflight, process/supervisor validation, checked derived capacities |
+| 42 | `0026e934e49b` | checked mmap layouts, versioned headers, file hardening, narrowed shared-state API |
+| 43 | `7b2aff0be715` | bounded bcrypt executor, async auth boundaries, durable/fail-closed auth persistence |
+| 44 | `220dd5dea91d` | migration from `pqc_kyber_edit` to maintained final FIPS 203 `ml-kem` |
+| 45 | `69a47c68b1b1` | fail-closed DNS config truthfulness, DoQ bind fidelity, bounded persistent authoritative TCP/DoT |
+| 46 | `f31e2cb07050` + `471b3b4d596c` | platform sandbox truthfulness, macOS SBPL hardening/native tests, Linux clippy correction |
+| 47 | `91732e228864` | public-crate release policy; exactly `synvoid-rate-limit` 0.1.0 promoted to class 3 |
+
+Closeout evidence: `architecture/runtime_truthfulness_security_publication_closeout.md` (binding post-campaign record).
+
+## Intentional residuals (not campaign failures)
+
+- Deferred DNS capabilities stay truthfully rejected (not implemented): RPZ, prefetch, custom trust anchors, anycast, zone transfers, dynamic UPDATE, NOTIFY, EDNS padding, QNAME privacy, firewall default/max-rules/rebinding, recursive scope responses.
+- Recursive TCP stays single-query; authoritative TCP/DoT are persistent sequential (1000-query bound, permit held, graceful drain).
+- macOS Seatbelt stays experimental/deprecated (`sandbox_init`, not App Sandbox); Linux Landlock is the production strict-isolation target.
+- Only `synvoid-rate-limit` is class 3; all other candidates stay class 1/2 with recorded reasons.
+- YARA/minify compat forks retained under their own removal conditions; RUSTSEC-2023-0071 (`rsa`) and RUSTSEC-2026-0235 (`rkyv` 0.7) remain accepted low-exposure residuals with dated re-audit.
+- `synvoid-http-client` stays internal pending a fresh current-line eggfetch parity review (the Phase 47 0.1.4-era matrix is dated evidence, not a current comparison). See `plans/eggfetch_current_line_parity_review.md`.
+
+Future work must open a new plan with its own baseline and acceptance criteria rather than silently extending this campaign.
+
+## Original findings (historical rationale — preserved below)
 
 Primary goal: close the concrete runtime/security residuals found after the Phase 32-40 architecture and dependency-security work, then promote only genuinely reusable crates toward external support. This is not another crate-count reduction campaign. The current ownership graph is broadly sound; this roadmap focuses on configuration truthfulness, unsafe-boundary hardening, authentication durability/CPU isolation, cryptographic dependency provenance, DNS configured-vs-runtime closure, macOS sandbox truthfulness, and a controlled public-library support policy.
 
