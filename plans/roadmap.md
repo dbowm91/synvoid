@@ -1,6 +1,6 @@
 # SynVoid Architecture Hardening Roadmap
 
-Status: Tracks 1-3 and their corrective closures remain complete. A new post-Phase-40 runtime-truthfulness/security/publication handoff is active; see `plans/runtime_truthfulness_security_publication_roadmap.md`.
+Status: Tracks 1-3 and their corrective closures remain complete. Phases 41-47 of the post-Phase-40 runtime-truthfulness/security/publication campaign are implemented; Phase 48 is the active corrective closeout.
 
 Scope: this roadmap covers architecture hardening, trust-boundary closure, verification, release readiness, post-hardening cleanup, and the architecture-convergence work required before another broad feature-expansion pass.
 
@@ -243,9 +243,9 @@ Track 3: Complete through Phase 24 (adversarial/performance/surface closure reco
 Post-Track-3 corrective closure: complete; see `plans/track3_post_closure_corrective.md` and `architecture/track3_post_closure_corrective_report.md`.
 
 
-## Active Post-Phase-40 Handoff: Runtime Truthfulness, Security Hardening, and Publication Readiness
+## Post-Phase-40 Handoff: Runtime Truthfulness, Security Hardening, and Publication Readiness
 
-Status: active detailed handoff.
+Status: Phases 41-47 implemented; Phase 48 corrective closeout active.
 
 Roadmap: `plans/runtime_truthfulness_security_publication_roadmap.md`.
 
@@ -262,6 +262,7 @@ Execution order:
 5. Phase 45 — DNS runtime-contract and protocol-completeness closure.
 6. Phase 46 — platform sandbox truthfulness and macOS closure.
 7. Phase 47 — public-crate release readiness.
+8. Phase 48 — corrective campaign closeout and planning/status/evidence reconciliation.
 
 Detailed plans:
 
@@ -272,5 +273,6 @@ Detailed plans:
 - `plans/phase_45_dns_runtime_contract_and_protocol_completeness.md`
 - `plans/phase_46_platform_sandbox_truthfulness_and_macos_closure.md`
 - `plans/phase_47_public_crate_release_readiness.md`
+- `plans/phase_48_runtime_truthfulness_campaign_corrective_closeout.md`
 
-The current architecture remains the baseline: no broad crate split/merge campaign, no public `synvoid-utils`, no in-place mesh restart implementation in this line, and no independently supported public `synvoid-http-client` until the current eggfetch line is re-evaluated.
+The current architecture remains the baseline: no broad crate split/merge campaign, no public `synvoid-utils`, no in-place mesh restart implementation in this line, and no independently supported public `synvoid-http-client` until the current eggfetch line is re-evaluated. Phase 48 owns closeout/status reconciliation only; it must not turn that pending eggfetch comparison into an implicit migration.
