@@ -49,6 +49,10 @@ pub enum SandboxError {
 /// string inside double quotes — never interpolate `Path::display()`
 /// directly. A closing parenthesis inside the quoted literal cannot gain an
 /// extra SBPL expression once quoting is correct (covered by tests).
+///
+/// Compiled on macOS (production caller) and under `test` on all platforms
+/// (profile-structure unit tests); absent from non-test Linux builds.
+#[cfg(any(target_os = "macos", test))]
 pub(crate) fn escape_sbpl_string_literal(path: &Path) -> Result<String, SandboxError> {
     let s = path.to_str().ok_or_else(|| {
         SandboxError::InvalidPath(format!("non-UTF-8 path rejected: {}", path.display()))
@@ -83,6 +87,9 @@ pub(crate) fn escape_sbpl_string_literal(path: &Path) -> Result<String, SandboxE
 /// caller logs at debug level. This keeps jail startup order safe: the jail
 /// captures stdio handles first, then sandboxes, so a missing optional path
 /// must not abort profile generation.
+///
+/// Compiled on macOS (production caller) and under `test` on all platforms.
+#[cfg(any(target_os = "macos", test))]
 pub(crate) fn canonicalize_sbpl_path(path: &Path) -> std::path::PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
@@ -1146,10 +1153,12 @@ pub mod windows {
 
 /// SBPL profile builder shared by the macOS backend and unit tests.
 ///
-/// Always compiled (all platforms) so Linux CI can verify profile structure
-/// without a macOS host. The macOS backend (`darwin`, below) is the only
-/// production caller; native enforcement evidence comes from the macOS
-/// child-process tests, not from these string assertions alone.
+/// Compiled on macOS (production caller) and under `test` on all platforms
+/// so Linux CI can verify profile structure without a macOS host. The macOS
+/// backend (`darwin`, below) is the only production caller; native
+/// enforcement evidence comes from the macOS child-process tests, not from
+/// these string assertions alone.
+#[cfg(any(target_os = "macos", test))]
 pub(crate) fn compile_sbpl_profile(
     read_paths: &[&Path],
     write_paths: &[&Path],
