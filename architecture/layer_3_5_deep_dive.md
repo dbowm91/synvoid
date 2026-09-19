@@ -58,9 +58,12 @@ The ML-KEM key exchange includes proof-of-possession verification at `crates/syn
 
 This prevents a rogue server from successfully completing key exchange without the client being able to decapsulate. See `confirm_key()` at `crates/synvoid-mesh/src/mesh/ml_kem_key_exchange.rs:241`.
 
-### ML-KEM Timing Side-Channel Consideration (L35-6)
+### ML-KEM Timing Side-Channel Consideration (L35-6, Phase 44 update)
 
-RUSTSEC-2023-0079: `ring` (used via `aws-lc-rs`) ML-KEM implementation uses conditional operations that may leak timing information. For SynVoid's threat model:
+RUSTSEC-2023-0079 (KyberSlash) applied to draft `pqc_kyber`, which is absent
+from the graph since Phase 44 (wasm-pow uses maintained final ML-KEM via
+`ml-kem` 0.3; server uses final ML-KEM via `aws-lc-rs`). It never described
+`ring`/`aws-lc-rs` final ML-KEM. For SynVoid's threat model:
 
 - **Data Plane (Layer 3):** Acceptable risk - timing side-channels in TLS handshakes don't expose key material
 - **Control Plane (Layer 5):** The `libcrux-ml-dsa` crate is used for ML-DSA-44 signatures (not ML-KEM for signing)

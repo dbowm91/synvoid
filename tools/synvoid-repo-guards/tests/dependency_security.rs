@@ -1208,3 +1208,125 @@ fn yara_fork_is_temporary_guard() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// pqc_backend_is_maintained_ml_kem (Phase 44: KyberSlash closure)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn pqc_backend_is_maintained_ml_kem() {
+    // The WASM PoW ML-KEM path must rest on a maintained final-FIPS-203
+    // implementation, not on a renamed package escaping RUSTSEC-2023-0079.
+    // `pqc_kyber` (unpatched upstream) and its renamed fork `pqc_kyber_edit`
+    // must not resolve in Cargo.lock nor appear as a dependency in any
+    // manifest. Reintroducing either requires updating this guard plus
+    // SECURITY.md, architecture/wasm_pow.md, and the crypto skills with exact
+    // upstream base commit, mitigation diff, owner, review/re-audit dates, and
+    // removal condition — a bare version bump is not sufficient.
+    let lock = read_repo("Cargo.lock");
+    for banned in ["name = \"pqc_kyber\"", "name = \"pqc_kyber_edit\""] {
+        assert!(
+            !lock.contains(banned),
+            "Cargo.lock must not resolve {banned}: Phase 44 migrated \
+             synvoid-wasm-pow to maintained final ML-KEM (`ml-kem`); \
+             reintroducing draft-Kyber packages requires security-metadata review first"
+        );
+    }
+
+    // Scan every manifest's code lines (strip `#` comments so prose about the
+    // removed fork cannot trip this).
+    let workspace = synvoid_repo_guards::workspace_root();
+    let mut manifests = Vec::new();
+    let mut stack = vec![workspace.clone()];
+    while let Some(dir) = stack.pop() {
+        let entries = std::fs::read_dir(&dir).unwrap();
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if name == "target" || name == ".git" {
+                    continue;
+                }
+                stack.push(path);
+            } else if path.file_name().and_then(|n| n.to_str()) == Some("Cargo.toml") {
+                manifests.push(path);
+            }
+        }
+    }
+    assert!(!manifests.is_empty(), "no Cargo.toml files found");
+    for manifest in &manifests {
+        let content = std::fs::read_to_string(manifest).unwrap_or_default();
+        let code: Vec<String> = content
+            .lines()
+            .map(|l| l.split('#').next().unwrap_or("").to_string())
+            .collect();
+        let code = code.join("\n");
+        let rel = manifest
+            .strip_prefix(&workspace)
+            .unwrap_or(manifest)
+            .to_string_lossy()
+            .into_owned();
+        for banned in ["pqc_kyber_edit", "pqc_kyber\""] {
+            // `pqc_kyber"` with trailing quote avoids matching prose like
+            // "pqc_kyber_edit was removed" in comments (already stripped) while
+            // still catching `pqc_kyber =` dependency entries.
+            if banned == "pqc_kyber\"" {
+                if code.contains("pqc_kyber =") || code.contains("pqc_kyber\"") {
+                    // Allow the historical `pqc` crate name itself (`pqc = ...`)
+                    // which is the maintained aws-lc-rs wrapper, not draft Kyber.
+                    // Only fail on the `pqc_kyber` package (with underscore).
+                    if code.contains("pqc_kyber") && !code.contains("pqc_kyber_edit") {
+                        // Double-check it is a dependency entry, not prose.
+                        for line in code.lines() {
+                            let t = line.trim();
+                            if t.starts_with("pqc_kyber") || t.contains(" pqc_kyber") {
+                                panic!(
+                                    "{rel} must not depend on draft-Kyber pqc_kyber \
+                                     (Phase 44: use maintained `ml-kem`)"
+                                );
+                            }
+                        }
+                    }
+                }
+            } else if code.contains(banned) {
+                panic!(
+                    "{rel} must not depend on {banned} \
+                     (Phase 44: synvoid-wasm-pow uses maintained `ml-kem`)"
+                );
+            }
+        }
+    }
+
+    // The maintained backend must actually be present where the PoW crate needs it.
+    let pow_manifest = read_repo("crates/synvoid-wasm-pow/Cargo.toml");
+    assert!(
+        pow_manifest.contains("ml-kem"),
+        "crates/synvoid-wasm-pow/Cargo.toml must depend on maintained `ml-kem` (Phase 44)"
+    );
+    let pow_code: Vec<String> = pow_manifest
+        .lines()
+        .map(|l| l.split('#').next().unwrap_or("").to_string())
+        .collect();
+    let pow_code = pow_code.join("\n");
+    assert!(
+        !pow_code.contains("pqc_kyber"),
+        "crates/synvoid-wasm-pow/Cargo.toml must not reference pqc_kyber* (Phase 44)"
+    );
+    assert!(
+        read_repo("crates/synvoid-wasm-pow/src/pqc.rs").contains("ml-kem"),
+        "crates/synvoid-wasm-pow/src/pqc.rs must document the ml-kem backend"
+    );
+
+    // Security metadata must match the resolved graph (no stale "no fix" claim
+    // presented as current without explaining migration).
+    let wasm_doc = read_repo("architecture/wasm_pow.md");
+    assert!(
+        wasm_doc.contains("ml-kem"),
+        "architecture/wasm_pow.md must document the maintained ml-kem backend (Phase 44)"
+    );
+    assert!(
+        !wasm_doc.contains("pqc_kyber_edit") || wasm_doc.contains("Phase 44"),
+        "architecture/wasm_pow.md must not present pqc_kyber_edit as current \
+         without Phase 44 migration context"
+    );
+}

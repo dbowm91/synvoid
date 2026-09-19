@@ -24,13 +24,23 @@ wasm-bindgen-futures = "0.4"
 hex = "0.4"
 console_error_panic_hook = "0.1"
 x25519-dalek = { version = "2", features = ["static_secrets"] }
-rand = "0.8"
 base64 = "0.22"
 tracing = "0.1"
 tracing-wasm = "0.2"
 
-# Post-quantum cryptography - ML-KEM-768 for key exchange
-pqc_kyber_edit = { version = "0.7", features = ["kyber768", "zeroize"] }
+# Post-quantum cryptography - final FIPS 203 ML-KEM-768 (Phase 44).
+# RustCrypto `ml-kem` (pure Rust, no_std + alloc) replaces the draft-Kyber
+# `pqc_kyber_edit` fork: the fork's wire encoding is NOT byte-compatible with
+# final ML-KEM despite matching sizes (proven by cross-impl mismatch test),
+# and its KyberSlash provenance relied on a renamed package escaping audit.
+# Server side already speaks final ML-KEM via aws-lc-rs (`pqc` crate), so both
+# ends are now FIPS 203 final and interop was verified bidirectionally.
+# Features: alloc (default) for no_std compat; zeroize for key zeroization on
+# drop. No `getrandom` feature: randomness comes from getrandom 0.2 (js) via
+# a local rand_core 0.10 adapter, keeping the proven wasm JS entropy path.
+ml-kem = { version = "0.3", features = ["zeroize"] }
+rand_core = "0.10"
+zeroize = "1.8"
 
 [dependencies.web-sys]
 version = "0.3"

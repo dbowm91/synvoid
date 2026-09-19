@@ -179,21 +179,28 @@ return self.runtime
 
 ---
 
-### KyberSlash Vulnerability (P0.A)
+### KyberSlash Closure (P0.A — remediated Phase 44)
 
 **Location**: `crates/synvoid-wasm-pow/Cargo.toml`, `crates/synvoid-wasm-pow/src/pqc.rs`
 
-**Issue**: `pqc_kyber` 0.7.1 has timing side-channel in ML-KEM-768 division operations (CVSS 7.4).
+**Issue**: `pqc_kyber` had a timing side-channel in division operations
+(CVSS 7.4, RUSTSEC-2023-0079) with no patched upstream release. The interim
+renamed fork (`pqc_kyber_edit`) escaped scanner matching by package name and
+was wire-incompatible with final FIPS 203 ML-KEM despite matching sizes.
 
-**Fix**: Replace with fixed fork:
+**Fix (Phase 44)**: migrated to maintained final ML-KEM:
 ```toml
 # Cargo.toml
-pqc_kyber_edit = { version = "0.7", features = ["wasm", "kyber768", "zeroize"] }
+ml-kem = { version = "0.3", features = ["zeroize"] }
 ```
 ```rust
-// pqc.rs
-use pqc_kyber_edit::*;
+// pqc.rs — seed-based final ML-KEM-768 (64-byte seed, 1184-byte ek, 1088-byte ct)
+use ml_kem::{DecapsulationKey768, EncapsulationKey768};
 ```
+
+Do not reintroduce `pqc_kyber`/`pqc_kyber_edit` or silence the advisory with a
+deny ignore the scanner cannot associate with a renamed package. Guard:
+`pqc_backend_is_maintained_ml_kem`.
 
 ---
 

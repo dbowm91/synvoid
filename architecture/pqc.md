@@ -19,7 +19,10 @@ Key types: `SigningKey`/`VerifyingKey`, `PublicKey`/`SecretKey`/`SharedSecret`/`
 - **Mesh hybrid signatures**: `synvoid-mesh::HybridSignature` = Ed25519 (64 B) ‖ ML-DSA-44 (2420 B), both-must-verify semantics via `HybridSigner`/`MeshMlDsaSigner` (see [`mesh_deep_dive.md`](./mesh_deep_dive.md) and the `hybrid_post_quantum` skill).
 - **Integrity key exchange**: `synvoid-integrity` combines X25519 + ML-KEM-768 for origin-signed session keys (`origin_key_exchange` feature).
 - **TLS**: server-side PQ is handled by rustls `prefer-post-quantum` + `aws-lc-rs` (root feature `post-quantum` is a marker); this crate is *not* in the TLS path.
-- **Browser-side PoW crate**: `synvoid-wasm-pow` performs ML-KEM-768 encapsulation for edge key exchange (see [`wasm_pow.md`](./wasm_pow.md)).
+- **Browser-side PoW crate**: `synvoid-wasm-pow` performs final ML-KEM-768
+  encapsulation with RustCrypto `ml-kem` 0.3 (64-byte seed form, wasm-compatible
+  pure Rust), interoperable with this crate's `aws-lc-rs` server side
+  (see [`wasm_pow.md`](./wasm_pow.md); Phase 44 KyberSlash closure).
 
 ## 4. Boundaries
 

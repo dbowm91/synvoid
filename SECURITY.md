@@ -109,7 +109,7 @@ The following vulnerabilities exist in transitive dependencies and are documente
 
 | Vulnerability | Crate | ID | Status | Notes |
 |---------------|-------|-----|--------|-------|
-| KyberSlash | `pqc_kyber` | RUSTSEC-2023-0079 | No fix | Used by wasm-pow for PoW challenges |
+| ~~KyberSlash~~ | ~~`pqc_kyber` / `pqc_kyber_edit`~~ | ~~RUSTSEC-2023-0079~~ | **Remediated (Phase 44)** | Migrated wasm-pow to maintained final ML-KEM (`ml-kem` 0.3); draft-Kyber packages absent from lockfile (guard `pqc_backend_is_maintained_ml_kem`) |
 | ~~Denial of Service~~ | ~~`quinn-proto`~~ | ~~RUSTSEC-2026-0037~~ | **Patched** | Fixed via git patch to 0.11.14 |
 | ~~Winch compiler backend sandbox escape~~ | ~~`wasmtime` 40.0.4 (via yara-x)~~ | ~~RUSTSEC-2026-0095~~ | **Remediated (Phase 40)** | YARA line moved to wasmtime 47.0.4 (patched); ignore removed 2026-09-18 |
 | ~~Cranelift aarch64 sandbox escape~~ | ~~`wasmtime` 40.0.4 (via yara-x)~~ | ~~RUSTSEC-2026-0096~~ | **Remediated (Phase 40)** | YARA line moved to wasmtime 47.0.4 (patched); ignore removed 2026-09-18 |
@@ -148,7 +148,7 @@ transitive notices are accepted below rather than silenced with broader ignores
 | `aws-lc-rs` | 1.16.2 | C (compiled) | TLS 1.3, ML-KEM, ML-DSA |
 | `ring` | 0.17.14 | Rust | DNS/QUIC (transitive via hickory/quinn) |
 | `libcrux-ml-dsa` | 0.0.8 | Pure Rust | ML-DSA signatures |
-| `pqc_kyber` | 0.7.1 | Pure Rust | ML-KEM key exchange |
+| `ml-kem` | 0.3.2 | Pure Rust | Final ML-KEM-768 (wasm-pow client; Phase 44) |
 | `ed25519-dalek` | 2.1.0 | Pure Rust | Ed25519 signatures |
 | `x25519-dalek` | 2.0.0 | Pure Rust | X25519 key exchange |
 | `sha2`, `sha3` | 0.10 | Pure Rust | Hashing |
@@ -161,14 +161,14 @@ transitive notices are accepted below rather than silenced with broader ignores
 
 | Crate | Algorithm | Location | Vulnerability |
 |-------|-----------|----------|----------------|
-| `pqc_kyber` | ML-KEM-768 | src/wasm_pow | RUSTSEC-2023-0079 (no fix) |
+| `ml-kem` | ML-KEM-768 (FIPS 203 final) | crates/synvoid-wasm-pow | ✅ Secure (Phase 44 migration; KAT-verified, interop with aws-lc-rs) |
 | `libcrux-ml-dsa` | ML-DSA-65/87 | pqc/workspace | ✅ Secure |
 | `aws-lc-rs` | ML-KEM + ML-DSA | Cargo.toml | ✅ Secure |
 
 ### NASM Not Used
 
 - **Status**: Confirmed - NASM assembler is NOT used
-- pqc_kyber uses pure Rust implementation (no `nasm` feature)
+- `ml-kem` uses pure Rust implementation (no `nasm` feature; pre-Phase-44 `pqc_kyber_edit` also avoided it)
 - No C/asm additions at build time
 
 ---
@@ -325,7 +325,7 @@ in `.cargo/audit.toml` (cargo-audit does not read `deny.toml`).
 - **Upgrade status**: LANDED in Phase 40 (temporary manifest-only compat fork of official 1.20.0 with the PR #769 wasmtime-47.0.4 delta; `YARA_ENGINE_VERSION` is `yara-x/1.20`). No advisory ignore exists for this GHSA (nothing to ignore — unmapped; documented instead of silenced). Remove the fork (not this section) when an official fixed yara-x release replaces it.
 
 ### Post-Quantum Architecture
-- **Hybrid Key Exchange**: X25519 + pqc_kyber provides defense-in-depth
+- **Hybrid Key Exchange**: X25519 + final ML-KEM-768 provides defense-in-depth (wasm-pow client via `ml-kem` 0.3, server via `aws-lc-rs`; Phase 44)
 - **ML-DSA**: Uses libcrux-ml-dsa (pure Rust) in pqc workspace
 - **TLS Post-Quantum**: Via aws-lc-rs feature in rustls
 - **Reference**: See `skills/crypto_dependencies.md` for full documentation
@@ -392,7 +392,7 @@ The following security measures are enabled by default in production builds:
 - **Post-quantum features are experimental** — functional but limited real-world validation
 - **YARA compilation uses wasmtime** (47.0.4 via the temporary yara-x 1.20 compat fork, version-patched; direct runtime is 36.0.15 LTS, patched; `wasmtime-wasi` unreachable) with guard-enforced fork removal metadata (Reviewed: 2026-09-18; Re-audit: 2026-10-01; remove the fork when an official fixed yara-x release replaces it)
 - **External DNSSEC tooling deferred** — zone signing is internal but external key management tooling is not yet shipped
-- **`pqc_kyber` has no fix** for RUSTSEC-2023-0079; used only in wasm-pow for Proof-of-Work challenges (not in TLS path)
+- **KyberSlash closed (Phase 44)** — wasm-pow migrated from draft-Kyber `pqc_kyber_edit` to maintained final ML-KEM (`ml-kem` 0.3); RUSTSEC-2023-0079 no longer applies to the graph (guard `pqc_backend_is_maintained_ml_kem`)
 - **Archive inspection is ZIP-only and non-recursive** — TAR/GZIP/BZIP2/7z are detected by MIME but not opened; nested archives are counted but not recursively scanned
 
 ### Security Verification Commands

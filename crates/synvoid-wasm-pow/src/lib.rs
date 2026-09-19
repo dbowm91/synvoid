@@ -39,8 +39,17 @@ pub fn verify_pow(challenge: String, nonce: String, difficulty: u8) -> bool {
 }
 
 // =============================================================================
-// ML-KEM-768 Post-Quantum Key Exchange (Kyber-768)
+// ML-KEM-768 Post-Quantum Key Exchange (final FIPS 203, Phase 44)
+// Backend: RustCrypto `ml-kem` 0.3; server speaks the same final ML-KEM-768
+// via aws-lc-rs (`pqc` crate). Secrets are ephemeral per-session state only.
 // =============================================================================
+
+/// Backend identifier for audits (Phase 44: proves KyberSlash closure by
+/// migration, not by package rename).
+#[wasm_bindgen]
+pub fn ml_kem_backend() -> String {
+    pqc::BACKEND.to_string()
+}
 
 #[wasm_bindgen]
 pub fn generate_ml_kem_keypair() -> Result<JsValue, JsValue> {

@@ -12,7 +12,7 @@ This skill documents the cryptographic dependencies in SynVoid, security conside
 SynVoid uses a multi-layered approach to cryptography:
 - **TLS**: aws-lc-rs (C library, AWS-maintained)
 - **Signatures**: ed25519-dalek, libcrux-ml-dsa
-- **Key Exchange**: x25519-dalek (classical), pqc_kyber (post-quantum)
+- **Key Exchange**: x25519-dalek (classical), `ml-kem` / aws-lc-rs (post-quantum, final FIPS 203)
 - **Hashing**: sha2, sha3, hmac (pure Rust)
 
 ## Dependency Inventory
@@ -26,7 +26,7 @@ SynVoid uses a multi-layered approach to cryptography:
 | `h3` | 0.0.8 | Rust | HTTP/3 protocol |
 | `ring` | 0.17.14 | Rust + asm | DNS/QUIC crypto (transitive) |
 | `libcrux-ml-dsa` | 0.0.8 | Pure Rust | ML-DSA signatures |
-| `pqc_kyber` | 0.7.1 | Rust | ML-KEM key exchange |
+| `ml-kem` | 0.3.2 | Pure Rust | Final ML-KEM-768 (wasm-pow client; Phase 44) |
 | `ed25519-dalek` | 2.1.0 | Pure Rust | Ed25519 signatures |
 | `x25519-dalek` | 2.0.0 | Pure Rust | X25519 key exchange |
 | `sha2` | 0.10 | Pure Rust | SHA-256/512 |
@@ -42,9 +42,13 @@ SynVoid uses a multi-layered approach to cryptography:
 
 | Crate | Algorithm | Location | Status |
 |-------|-----------|----------|--------|
-| `pqc_kyber_edit` | ML-KEM-768 | crates/synvoid-wasm-pow | ⚠️ RUSTSEC-2023-0079 |
+| `ml-kem` | ML-KEM-768 (FIPS 203 final) | crates/synvoid-wasm-pow | ✅ Pure Rust, KAT-verified (Phase 44) |
 | `libcrux-ml-dsa` | ML-DSA-65/87 | pqc/workspace | ✅ Pure Rust |
-| `aws-lc-rs` | ML-KEM + ML-DSA | Cargo.toml | ✅ Via feature |
+| `aws-lc-rs` | ML-KEM + ML-DSA | Cargo.toml / pqc | ✅ Via feature (server ML-KEM) |
+
+Phase 44 removed `pqc_kyber` / `pqc_kyber_edit` (draft Kyber) from the
+lockfile. Guard `pqc_backend_is_maintained_ml_kem` fails if either package
+reappears without updated security metadata.
 
 ## Architecture
 
@@ -53,10 +57,12 @@ SynVoid uses a multi-layered approach to cryptography:
 SynVoid uses a hybrid approach for post-quantum key exchange in the WASM PoW module:
 
 ```
-X25519 (classical) + pqc_kyber (post-quantum)
+X25519 (classical) + final ML-KEM-768 (ml-kem client / aws-lc-rs server)
 ```
 
 This provides defense-in-depth: even if one algorithm is compromised, the other provides security.
+Both ends speak final FIPS 203 (verified interoperable); draft-Kyber encodings
+are NOT wire-compatible despite matching sizes.
 
 ### TLS Stack
 
@@ -85,16 +91,18 @@ aws-lc-rs provides:
 
 | CVE | Crate | Severity | Status | Mitigation |
 |-----|------|----------|--------|------------|
-| RUSTSEC-2023-0079 | pqc_kyber | High | No fix | Hybrid with X25519 |
+| ~~RUSTSEC-2023-0079~~ | ~~`pqc_kyber`~~ | ~~High~~ | **Remediated (Phase 44)** | Migrated to maintained `ml-kem`; packages absent from graph |
 | RUSTSEC-2023-0071 | rsa | Medium | No fix | Not actively used |
 
-### pqc_kyber (KyberSlash)
+### KyberSlash (RUSTSEC-2023-0079) — closed Phase 44
 
-- **Issue**: Division timing depends on secrets
-- **Severity**: High (CVSS 7.4)
-- **Mitigation**: Hybrid key exchange with X25519
-- **Usage**: WASM PoW challenges only
-- **Recommendation**: Acceptable risk with hybrid mode
+- **Issue**: Division timing depends on secrets (draft `pqc_kyber`; no patched upstream).
+- **Closure**: migrated wasm-pow to maintained final ML-KEM (`ml-kem` 0.3);
+  `pqc_kyber`/`pqc_kyber_edit` absent from `Cargo.lock` (guard-enforced).
+- **Evidence**: NIST FIPS 203 ML-KEM-768 KAT, round-trip + implicit-rejection
+  tests in `crates/synvoid-wasm-pow/src/pqc.rs`, wasm32 check, wasm-pack build.
+- **Do not** reintroduce draft-Kyber packages or add a deny ignore for an
+  advisory the scanner cannot associate with a renamed package and call that coverage.
 
 ### rsa (Marvin Attack)
 
@@ -143,8 +151,8 @@ These crates use C compilers at build time but don't add runtime C dependencies:
 # For TLS with post-quantum
 rustls = { version = "0.23", features = ["prefer-post-quantum", "aws-lc-rs"] }
 
-# For wasm-pow (ml-kem + x25519 hybrid)
-pqc_kyber_edit = { version = "0.7", features = ["kyber768", "zeroize"] }
+# For wasm-pow (final ML-KEM-768 + x25519 hybrid, Phase 44)
+ml-kem = { version = "0.3", features = ["zeroize"] }
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 ```
 
@@ -171,4 +179,4 @@ cargo tree --duplicates
 
 ---
 
-Last updated: 2026-04-19
+Last updated: 2026-09-19
