@@ -68,10 +68,10 @@ platform().supports_wireguard_kernel()   // Linux only
 | Linux (5.13+) | **Landlock** | Read/write path allowlists, filesystem restrictions |
 | FreeBSD | **Capsicum** | FD rights limiting, process limits |
 | OpenBSD | **Pledge + Unveil** | Promise-based syscall filtering, path permissions |
-| macOS | **Seatbelt** | Sandboxed profile compilation (not yet fully implemented) |
-| Windows | **Job Objects + DACL** | Process memory limits, file security descriptors; DEP (Data Execution Prevention) and ASLR (Address Space Layout Randomization) mitigation policies |
+| macOS | **Seatbelt** (experimental, deprecated `sandbox_init`) | SBPL Basic allow-default / Strict deny-default; feature + runtime probe; native child-process tests |
+| Windows | **Job Objects** (limited) | Process memory limits only; DACL touches are hardening not allowlists; DEP/ASLR mitigations |
 
-**Note:** Seatbelt sandboxing is not yet fully implemented on macOS — the `Platform` enum does not expose a `supports_seatbelt()` query. Other platforms use Landlock (Linux), Capsicum (FreeBSD), or Pledge+Unveil (OpenBSD).
+**Note:** Seatbelt is an opt-in experimental backend (deprecated `sandbox_init`, not App Sandbox entitlements). No `supports_seatbelt()` query — use per-backend `is_supported()` (feature + `dlsym` probe). `Platform::supports_sandbox()` is a coarse Linux/BSD gate only. Linux is the production recommendation for strict isolation.
 
 ---
 
@@ -408,9 +408,9 @@ SynVoid supports two deployment modes:
 - Supervisor MUST NOT accept HTTP/TCP/UDP/QUIC/WebSocket requests directly
 - Supervisor MUST NOT handle any external network traffic for proxying
 
-### macOS Seatbelt Sandboxing
+### macOS Seatbelt Sandboxing (Phase 46: experimental, deprecated API)
 
-macOS Seatbelt sandboxing is **implemented but disabled by default** - requires `macos-sandbox` Cargo feature (`crates/synvoid-platform/src/sandbox.rs (canonical; src/platform/sandbox.rs is a facade):1036-1044`). Other platforms use Landlock (Linux), Capsicum (FreeBSD), or Pledge+Unveil (OpenBSD).
+macOS Seatbelt is an opt-in experimental backend using deprecated `sandbox_init` (not App Sandbox entitlements) - requires `macos-sandbox` Cargo feature AND runtime symbol presence (`crates/synvoid-platform/src/sandbox.rs` canonical). Linux is the production recommendation for strict isolation. Native enforcement is verified by child-process tests (`sandbox_macos_enforcement`); Basic is allow-default (no network/child limits claimed), Strict is deny-default with explicit network deny and no job-creation allow. See `docs/SANDBOXING.md`.
 
 ---
 

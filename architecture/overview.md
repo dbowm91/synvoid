@@ -179,7 +179,7 @@ From the root `Cargo.toml`. All four compile profiles must build (`cargo check -
 | `tun-rs` | — | TUN interface backend for tunnels |
 | `icmp-filter` | — | ICMP flood filtering (`nftables`/eBPF/pf/WFP backends). Backend selection uses crate-level sub-features of `synvoid-icmp-filter` (not root flags): `icmp-ebpf` (Linux, `aya`), `icmp-pf` (macOS/FreeBSD), `icmp-winfw` / `icmp-wfp` (Windows) |
 | `flood-ebpf` | — | eBPF SYN-level flood dropping (Linux, `aya`) |
-| `macos-sandbox` | — | macOS Seatbelt sandbox enforcement |
+| `macos-sandbox` | — | macOS Seatbelt (experimental, deprecated `sandbox_init`; not App Sandbox) |
 | `unsafe-native-extensions` | — | Opt-in in-process native-extension loader (`synvoid-native-extension`; off by default + runtime gates: risk acknowledgement, path allowlist, hash pinning) |
 | `fastcgi_streaming` | — | Streaming FastCGI response handling |
 | `buffer` / `rkyv` / `audit` / `verify-pq` / `test-utils` | — | Buffer pool, zero-copy serialization, audit, PQ verify, test helpers |

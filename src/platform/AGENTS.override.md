@@ -151,7 +151,7 @@ This is intentional - Unix platforms use `CAP_NET_ADMIN` capability which doesn'
 
 ## Known Limitations
 
-- FreeBSD Capsicum: `is_capsicum_available()` checks `cap_getmode()` first - does not call `cap_enter()` unless sandbox is explicitly applied. Note: `limit_fd()` method was **removed** - it was dead code never called in `apply()`.
-- macOS Seatbelt: Implemented in `crates/synvoid-platform/src/sandbox.rs` but **disabled by default** - requires `macos-sandbox` Cargo feature to be enabled at compile time.
-- Windows sandbox: Filesystem restrictions NOT enforced (only process limits). DEP/ASLR mitigation via `SetProcessMitigationPolicy`.
+- FreeBSD Capsicum: `is_capsicum_available()` probes `cap_getmode` syscall presence (availability, not "already sandboxed"; the old `mode != 0` check was backwards) - does not call `cap_enter()` unless sandbox is explicitly applied. FD-based only: no path allowlists, Strict fails closed. Note: `limit_fd()` method was **removed** - it was dead code never called in `apply()`.
+- macOS Seatbelt (Phase 46 experimental, deprecated `sandbox_init`, not App Sandbox): implemented in `crates/synvoid-platform/src/sandbox.rs`; requires `macos-sandbox` feature AND runtime symbol, Basic allow-default / Strict deny-default with explicit network deny and no job-creation allow, SBPL paths escaped/canonicalized, FFI error buffer freed via `sandbox_free_error`. Native child-process tests in `tests/sandbox_macos_enforcement.rs`. Linux is the production recommendation for strict isolation.
+- Windows sandbox (limited): Filesystem/network/child allowlists NOT enforced (all path capabilities false; Strict fails closed). Only Job-Object numeric limits (256 MB proc / 512 MB job, kill-on-close). DACL touches are hardening, not allowlists. DEP/ASLR mitigation via `SetProcessMitigationPolicy`.
 - Non-Unix platforms: Socket FD passing not supported, returns `NotSupported`

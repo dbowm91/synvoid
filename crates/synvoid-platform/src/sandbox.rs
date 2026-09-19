@@ -1,12 +1,21 @@
 //! Sandbox primitives for process isolation.
 //!
-//! Canonical owner of OS-level sandbox backends (Phase 29): Landlock (Linux),
-//! Capsicum (FreeBSD), Pledge (OpenBSD), Job Objects (Windows), Seatbelt
-//! (macOS, behind the `macos-sandbox` feature). The root
-//! `src/platform/sandbox.rs` is a thin facade re-exporting this module so the
-//! jail runtime (`synvoid-jail-runtime`) can enforce isolation without
-//! importing root paths.
+//! Canonical owner of OS-level sandbox backends (Phase 29, Phase 46
+//! truthfulness): Landlock (Linux, supported), Capsicum (FreeBSD,
+//! experimental), Pledge/Unveil (OpenBSD, experimental), Job Objects
+//! (Windows, limited: process limits only), Seatbelt (macOS, experimental
+//! opt-in behind the `macos-sandbox` feature, deprecated `sandbox_init`).
+//! The root `src/platform/sandbox.rs` is a thin facade re-exporting this
+//! module so the jail runtime (`synvoid-jail-runtime`) can enforce isolation
+//! without importing root paths.
 //!
+//! Support-tier contract (Phase 46, binding details in
+//! `docs/SANDBOXING.md` and `architecture/platform.md` §6):
+//! Linux is the production recommendation for strict jail isolation.
+//! macOS Seatbelt is an opt-in experimental CLI-hardening backend using the
+//! deprecated `sandbox_init` API (not Apple App Sandbox entitlements).
+//! `SandboxCapabilities::process_limits` means numeric resource bounds
+//! (memory/process-count, Job-Objects style), not generic syscall filtering.
 use std::path::Path;
 use thiserror::Error;
 
@@ -15,7 +24,7 @@ pub enum SandboxError {
     #[error("Platform not supported: {0}")]
     NotSupported(String),
 
-    #[error("Landlock not available (kernel < 5.13)")]
+    #[error("Landlock not available (kernel < 5.13 or syscall unavailable)")]
     LandlockUnavailable,
 
     #[error("IO error: {0}")]
@@ -24,8 +33,58 @@ pub enum SandboxError {
     #[error("Syscall failed: {0}")]
     Syscall(String),
 
+    #[error("Invalid sandbox path: {0}")]
+    InvalidPath(String),
+
     #[error("Strict sandbox requested but backend cannot enforce it: {0}")]
     InsufficientCapabilities(String),
+}
+
+/// Escape a path as an SBPL double-quoted string literal (Phase 46,
+/// Workstream B).
+///
+/// Policy: backslash and double-quote are escaped (`\\`, `\"`); any ASCII
+/// control byte (`< 0x20`, `0x7F`), including newline/CR/NUL, rejects the
+/// path; non-UTF-8 paths are rejected. The caller must pass the returned
+/// string inside double quotes — never interpolate `Path::display()`
+/// directly. A closing parenthesis inside the quoted literal cannot gain an
+/// extra SBPL expression once quoting is correct (covered by tests).
+pub(crate) fn escape_sbpl_string_literal(path: &Path) -> Result<String, SandboxError> {
+    let s = path.to_str().ok_or_else(|| {
+        SandboxError::InvalidPath(format!("non-UTF-8 path rejected: {}", path.display()))
+    })?;
+    if s.is_empty() {
+        return Err(SandboxError::InvalidPath("empty path rejected".into()));
+    }
+    for c in s.chars() {
+        if c.is_control() {
+            return Err(SandboxError::InvalidPath(format!(
+                "control character rejected in sandbox path: {}",
+                path.display()
+            )));
+        }
+        if c == '\u{7f}' {
+            return Err(SandboxError::InvalidPath(format!(
+                "DEL character rejected in sandbox path: {}",
+                path.display()
+            )));
+        }
+    }
+    // Escape backslash first, then double-quote.
+    Ok(s.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+/// Canonicalize a sandbox path when possible (Phase 46, Workstream B).
+///
+/// Symlinks are resolved via `std::fs::canonicalize` so the SBPL `(subpath)`
+/// rule matches the real location. When canonicalization fails (missing
+/// path, permission error, non-existent jail-time path), the original path
+/// is kept and still passed through [`escape_sbpl_string_literal`]; the
+/// caller logs at debug level. This keeps jail startup order safe: the jail
+/// captures stdio handles first, then sandboxes, so a missing optional path
+/// must not abort profile generation.
+pub(crate) fn canonicalize_sbpl_path(path: &Path) -> std::path::PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -319,7 +378,7 @@ pub mod linux {
             Self { level }
         }
 
-        fn is_landlock_available() -> bool {
+        fn kernel_meets_minimum() -> bool {
             std::fs::read_to_string("/proc/sys/kernel/osrelease")
                 .ok()
                 .and_then(|v| {
@@ -334,6 +393,45 @@ pub mod linux {
                     None
                 })
                 .is_some()
+        }
+
+        /// Phase 46 (Workstream G): probe the Landlock ABI, not just the
+        /// kernel version text. A version-gated kernel may still lack the
+        /// LSM (disabled at build, blocked by seccomp); a syscall probe is
+        /// the truthful availability signal. Creating a ruleset fd is
+        /// side-effect free (no self-restriction) and the fd is closed.
+        fn probe_landlock_syscall() -> bool {
+            #[repr(C)]
+            struct LandlockRulesetAttr {
+                handled_access_fs: u64,
+            }
+            // SAFETY: landlock_create_ruleset with a minimal valid attr; no
+            // pointers escape, return value is a fresh fd or -1 with errno.
+            // ENOSYS/EOPNOTSUPP/ENODEV mean "no Landlock ABI"; any other
+            // result (fd, EINVAL for unknown bits, EFAULT never here) means
+            // the syscall exists.
+            unsafe {
+                let attr = LandlockRulesetAttr {
+                    handled_access_fs: LANDLOCK_ACCESS_FS_READ,
+                };
+                let ret = libc::syscall(
+                    libc::SYS_landlock_create_ruleset,
+                    &attr as *const _ as *mut libc::c_void,
+                    std::mem::size_of::<LandlockRulesetAttr>() as u64,
+                    0u64,
+                );
+                if ret >= 0 {
+                    libc::close(ret as i32);
+                    return true;
+                }
+                let errno = *libc::__errno_location();
+                // 38 ENOSYS, 95 EOPNOTSUPP, 19 ENODEV: ABI absent.
+                !(errno == 38 || errno == 95 || errno == 19)
+            }
+        }
+
+        fn is_landlock_available() -> bool {
+            Self::kernel_meets_minimum() && Self::probe_landlock_syscall()
         }
 
         fn create_landlock_ruleset(&self) -> Result<i32, SandboxError> {
@@ -510,13 +608,21 @@ pub mod capsicum {
             Self { level }
         }
 
+        /// Phase 46 (Workstream G): `cap_getmode` reports the *current*
+        /// capability mode, not availability. Availability means the syscall
+        /// exists (returns 0). Requiring `mode != 0` reported "unsupported"
+        /// on every host that was not already sandboxed — backwards.
         fn is_capsicum_available() -> bool {
             let mut mode: u32 = 0;
+            // SAFETY: cap_getmode writes a u32 through a valid out-pointer;
+            // no lifetime or ownership transfer.
             let result = unsafe { libc::cap_getmode(&mut mode) };
-            result == 0 && mode != 0
+            result == 0
         }
 
         fn enter_sandbox(&self) -> Result<(), SandboxError> {
+            // SAFETY: cap_enter takes no pointers and only confines the
+            // calling process (irreversible); errno inspected on failure.
             let result = unsafe { libc::cap_enter() };
             if result < 0 {
                 return Err(SandboxError::Syscall("cap_enter failed".into()));
@@ -567,11 +673,18 @@ pub mod capsicum {
         }
 
         fn capabilities(&self) -> SandboxCapabilities {
+            // Phase 46 truthfulness: Capsicum is FD-based capability mode —
+            // no path allowlists. `process_limits` is numeric resource bounds
+            // (Job-Objects style); capability-mode syscall confinement is not
+            // a numeric limit, so false. Network/child confinement follows
+            // from capability mode (no new global-namespace opens), so true.
+            // Strict (which requires a read allowlist) always fails closed
+            // on this backend by design.
             SandboxCapabilities {
                 read_path_allowlist: false,
                 write_path_allowlist: false,
                 deny_paths: false,
-                process_limits: true,
+                process_limits: false,
                 network_restrictions: true,
                 child_process_restrictions: true,
             }
@@ -684,11 +797,16 @@ pub mod pledge {
         }
 
         fn capabilities(&self) -> SandboxCapabilities {
+            // Phase 46 truthfulness: unveil provides path allowlists and
+            // explicit empty-perm denies; pledge("stdio") denies inet/proc/
+            // exec, hence network/child true. `process_limits` is numeric
+            // resource bounds only — pledge syscall filtering is not a
+            // memory/CPU limit, so false.
             SandboxCapabilities {
                 read_path_allowlist: true,
                 write_path_allowlist: true,
                 deny_paths: true,
-                process_limits: true,
+                process_limits: false,
                 network_restrictions: true,
                 child_process_restrictions: true,
             }
@@ -1004,10 +1122,20 @@ pub mod windows {
         }
 
         fn capabilities(&self) -> SandboxCapabilities {
+            // Phase 46 truthfulness (Workstream G): DACL manipulation on
+            // listed paths is per-file hardening, NOT a filesystem
+            // allowlist. There is no deny-by-default for the rest of the
+            // filesystem, no network restriction, and no child-process
+            // restriction from Job Objects as configured (active_process_limit
+            // is 0 = unlimited). Only numeric process/job memory limits plus
+            // kill-on-close are enforced, hence process_limits true and all
+            // path flags false. Consequence: Strict (which requires a read
+            // allowlist) fails closed on this backend by design; Basic gets
+            // Job-Object limits only. Matches docs/SANDBOXING.md.
             SandboxCapabilities {
-                read_path_allowlist: self.level == SandboxLevel::Strict,
-                write_path_allowlist: self.level == SandboxLevel::Strict,
-                deny_paths: self.level == SandboxLevel::Strict,
+                read_path_allowlist: false,
+                write_path_allowlist: false,
+                deny_paths: false,
                 process_limits: true,
                 network_restrictions: false,
                 child_process_restrictions: false,
@@ -1016,11 +1144,99 @@ pub mod windows {
     }
 }
 
+/// SBPL profile builder shared by the macOS backend and unit tests.
+///
+/// Always compiled (all platforms) so Linux CI can verify profile structure
+/// without a macOS host. The macOS backend (`darwin`, below) is the only
+/// production caller; native enforcement evidence comes from the macOS
+/// child-process tests, not from these string assertions alone.
+pub(crate) fn compile_sbpl_profile(
+    read_paths: &[&Path],
+    write_paths: &[&Path],
+    denied_paths: &[&Path],
+    level: SandboxLevel,
+) -> Result<String, SandboxError> {
+    let mut profile = String::new();
+    profile.push_str("(version 1)\n");
+
+    // Phase 46 (Workstream C): explicit, non-contradictory defaults.
+    //
+    // Basic = permissive: allow-by-default; only `denied_paths` are blocked.
+    // Read/write lists are emitted as explicit allows for documentation but
+    // do not restrict (allow default permits everything else). No network /
+    // child / resource limits are claimed in Basic.
+    //
+    // Strict = restrictive jail policy: deny-by-default; explicit file
+    // allows for the caller-provided allowlists; explicit denies for
+    // `denied_paths`; explicit `(deny network*)` so the network claim does
+    // not rest on an assumed `deny default` reading; NO `(allow
+    // job-creation)` so child-process creation stays denied by default
+    // (jail helpers must not spawn children). `(allow process*)` +
+    // `(allow signal)` are retained as the minimal lifecycle primitives for
+    // the WASM/YARA jail loop; narrowing them further requires native proof
+    // the jail still runs (documented experimental, see docs/SANDBOXING.md).
+    //
+    // Seatbelt `default` is a fallback: explicit file/network rules override
+    // it for matching operations. Explicit denies are emitted after allows
+    // so overlapping configuration reads as denied in the profile text;
+    // callers must keep allow/deny lists disjoint. Operation wildcards
+    // (`process*`, `file-read*`, `network*`) are required: bare `process`
+    // is an unbound variable (proven by native sandbox_init failure).
+    match level {
+        SandboxLevel::Basic => {
+            profile.push_str("(allow default)\n");
+        }
+        SandboxLevel::Strict => {
+            profile.push_str("(deny default)\n");
+            profile.push_str("(allow process*)\n");
+            profile.push_str("(allow signal)\n");
+            profile.push_str("(deny network*)\n");
+        }
+        SandboxLevel::Off => {
+            profile.push_str("(allow default)\n");
+            return Ok(profile);
+        }
+    }
+
+    for path in read_paths {
+        let canon = canonicalize_sbpl_path(path);
+        let lit = escape_sbpl_string_literal(&canon)?;
+        profile.push_str(&format!("(allow file-read* (subpath \"{lit}\"))\n"));
+    }
+
+    for path in write_paths {
+        let canon = canonicalize_sbpl_path(path);
+        let lit = escape_sbpl_string_literal(&canon)?;
+        profile.push_str(&format!("(allow file-read* (subpath \"{lit}\"))\n"));
+        profile.push_str(&format!("(allow file-write* (subpath \"{lit}\"))\n"));
+    }
+
+    for path in denied_paths {
+        let canon = canonicalize_sbpl_path(path);
+        let lit = escape_sbpl_string_literal(&canon)?;
+        profile.push_str(&format!("(deny file-read* (subpath \"{lit}\"))\n"));
+        profile.push_str(&format!("(deny file-write* (subpath \"{lit}\"))\n"));
+    }
+
+    Ok(profile)
+}
+
 #[cfg(target_os = "macos")]
 pub mod darwin {
-    use super::{SandboxBackend, SandboxCapabilities, SandboxError, SandboxLevel};
+    use super::{
+        compile_sbpl_profile, SandboxBackend, SandboxCapabilities, SandboxError, SandboxLevel,
+    };
     use std::path::Path;
 
+    /// macOS Seatbelt backend (Phase 46: experimental, deprecated API).
+    ///
+    /// Uses the deprecated `sandbox_init` CLI/jail interface, NOT Apple App
+    /// Sandbox entitlements. Requires the `macos-sandbox` Cargo feature at
+    /// compile time AND a runtime `sandbox_init` symbol (probed via `dlsym`).
+    /// "Compiled with feature" != "runtime backend available": `capabilities`
+    /// describes compiled-in enforcement potential; `is_supported` is the
+    /// runtime gate; `apply` fails closed when the runtime is absent.
+    /// Linux remains the production recommendation for strict isolation.
     pub struct SeatbeltSandbox {
         level: SandboxLevel,
     }
@@ -1035,6 +1251,9 @@ pub mod darwin {
             {
                 use libc::dlsym;
 
+                // SAFETY: dlsym with RTLD_DEFAULT and a static C-string
+                // literal; returns a possibly-null symbol address, no
+                // ownership transfer, no dereference.
                 let sym = unsafe { dlsym(libc::RTLD_DEFAULT, c"sandbox_init".as_ptr().cast()) };
                 !sym.is_null()
             }
@@ -1049,46 +1268,8 @@ pub mod darwin {
             write_paths: &[&Path],
             denied_paths: &[&Path],
             level: SandboxLevel,
-        ) -> String {
-            let mut profile = String::new();
-
-            profile.push_str("(version 1)\n");
-
-            match level {
-                SandboxLevel::Basic => {
-                    profile.push_str("(allow default)\n");
-                    profile.push_str("(deny default)\n");
-                }
-                SandboxLevel::Strict => {
-                    profile.push_str("(deny default)\n");
-                    profile.push_str("(allow process)\n");
-                    profile.push_str("(allow signal)\n");
-                    profile.push_str("(allow job-creation)\n");
-                }
-                SandboxLevel::Off => {
-                    profile.push_str("(allow default)\n");
-                    return profile;
-                }
-            }
-
-            for path in read_paths {
-                let path_str = path.display().to_string().replace('\\', "\\\\");
-                profile.push_str(&format!("(allow file-read* (subpath \"{}\"))\n", path_str));
-            }
-
-            for path in write_paths {
-                let path_str = path.display().to_string().replace('\\', "\\\\");
-                profile.push_str(&format!("(allow file-read* (subpath \"{}\"))\n", path_str));
-                profile.push_str(&format!("(allow file-write* (subpath \"{}\"))\n", path_str));
-            }
-
-            for path in denied_paths {
-                let path_str = path.display().to_string().replace('\\', "\\\\");
-                profile.push_str(&format!("(deny file-read* (subpath \"{}\"))\n", path_str));
-                profile.push_str(&format!("(deny file-write* (subpath \"{}\"))\n", path_str));
-            }
-
-            profile
+        ) -> Result<String, SandboxError> {
+            compile_sbpl_profile(read_paths, write_paths, denied_paths, level)
         }
 
         fn apply_sandbox_impl(&self, profile: &str) -> Result<(), SandboxError> {
@@ -1104,7 +1285,7 @@ pub mod darwin {
                     return Err(SandboxError::NotSupported("Seatbelt not available".into()));
                 }
 
-                let profile_with_nul = format!("{}\0", profile);
+                let profile_with_nul = format!("{profile}\0");
                 let profile_cstr = CStr::from_bytes_with_nul(profile_with_nul.as_bytes())
                     .map_err(|_| SandboxError::Syscall("Invalid sandbox profile".into()))?;
 
@@ -1115,16 +1296,39 @@ pub mod darwin {
                         flags: libc::c_int,
                         error: *mut *mut libc::c_char,
                     ) -> libc::c_int;
+                    fn sandbox_free_error(error: *mut libc::c_char);
                 }
 
-                let result =
-                    unsafe { sandbox_init(profile_cstr.as_ptr(), 0, std::ptr::null_mut()) };
+                // SAFETY: profile_cstr is a valid NUL-terminated string alive
+                // for the call; flags=0 requests no options; errorbuf points
+                // to a stack `*mut c_char` initialized to null. On failure the
+                // API writes a malloc'd message we must free with
+                // sandbox_free_error exactly once; on success the buffer is
+                // untouched. No other pointer is retained after return.
+                let mut errorbuf: *mut libc::c_char = std::ptr::null_mut();
+                let result = unsafe {
+                    sandbox_init(
+                        profile_cstr.as_ptr(),
+                        0,
+                        &mut errorbuf as *mut *mut libc::c_char,
+                    )
+                };
 
                 if result != 0 {
-                    let err_msg = std::io::Error::last_os_error().to_string();
+                    // SAFETY: errorbuf is either null (no API message — fall
+                    // back to errno) or a valid NUL-terminated malloc'd
+                    // string owned by us; convert then free exactly once.
+                    let err_msg = unsafe {
+                        if errorbuf.is_null() {
+                            std::io::Error::last_os_error().to_string()
+                        } else {
+                            let msg = CStr::from_ptr(errorbuf).to_string_lossy().into_owned();
+                            sandbox_free_error(errorbuf);
+                            msg
+                        }
+                    };
                     return Err(SandboxError::Syscall(format!(
-                        "sandbox_init failed: {}",
-                        err_msg
+                        "sandbox_init failed: {err_msg}"
                     )));
                 }
 
@@ -1160,7 +1364,7 @@ pub mod darwin {
             }
 
             let profile =
-                Self::compile_sandbox_profile(read_paths, write_paths, denied_paths, self.level);
+                Self::compile_sandbox_profile(read_paths, write_paths, denied_paths, self.level)?;
 
             self.apply_sandbox(&profile)?;
 
@@ -1190,13 +1394,36 @@ pub mod darwin {
         fn capabilities(&self) -> SandboxCapabilities {
             #[cfg(feature = "macos-sandbox")]
             {
-                SandboxCapabilities {
-                    read_path_allowlist: true,
-                    write_path_allowlist: true,
-                    deny_paths: true,
-                    process_limits: true,
-                    network_restrictions: true,
-                    child_process_restrictions: true,
+                // Phase 46 truthfulness (Workstream C/G): level-dependent.
+                // Basic is allow-default (no network/child limits claimed).
+                // Strict denies network explicitly and denies spawn by
+                // omitting job-creation. `process_limits` is numeric bounds
+                // only — SBPL sets none, so always false.
+                match self.level {
+                    SandboxLevel::Strict => SandboxCapabilities {
+                        read_path_allowlist: true,
+                        write_path_allowlist: true,
+                        deny_paths: true,
+                        process_limits: false,
+                        network_restrictions: true,
+                        child_process_restrictions: true,
+                    },
+                    SandboxLevel::Basic => SandboxCapabilities {
+                        read_path_allowlist: true,
+                        write_path_allowlist: true,
+                        deny_paths: true,
+                        process_limits: false,
+                        network_restrictions: false,
+                        child_process_restrictions: false,
+                    },
+                    SandboxLevel::Off => SandboxCapabilities {
+                        read_path_allowlist: false,
+                        write_path_allowlist: false,
+                        deny_paths: false,
+                        process_limits: false,
+                        network_restrictions: false,
+                        child_process_restrictions: false,
+                    },
                 }
             }
             #[cfg(not(feature = "macos-sandbox"))]
@@ -1217,6 +1444,7 @@ pub mod darwin {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     #[test]
     fn test_strict_sandbox_fails_on_stub_backend() {
@@ -1255,5 +1483,139 @@ mod tests {
         let sandbox = ProcessSandbox::with_stub(SandboxLevel::Basic);
         assert_eq!(sandbox.level(), SandboxLevel::Basic);
         assert!(!sandbox.capabilities().can_enforce_strict());
+    }
+
+    // Phase 46 (Workstream B): SBPL literal escaping. A path value must
+    // never gain an extra SBPL expression.
+    #[test]
+    fn test_sbpl_escape_plain_and_unicode() {
+        assert_eq!(
+            escape_sbpl_string_literal(Path::new("/usr/lib")).unwrap(),
+            "/usr/lib"
+        );
+        assert_eq!(
+            escape_sbpl_string_literal(Path::new("/tmp/ünicode-日本語")).unwrap(),
+            "/tmp/ünicode-日本語"
+        );
+    }
+
+    #[test]
+    fn test_sbpl_escape_quote_and_backslash() {
+        assert_eq!(
+            escape_sbpl_string_literal(Path::new("/tmp/a\"b")).unwrap(),
+            "/tmp/a\\\"b"
+        );
+        assert_eq!(
+            escape_sbpl_string_literal(Path::new("/tmp/a\\b")).unwrap(),
+            "/tmp/a\\\\b"
+        );
+    }
+
+    #[test]
+    fn test_sbpl_escape_closing_paren_stays_inside_literal() {
+        // A `)` inside a quoted literal must not terminate the expression:
+        // the escaped literal stays on one line with balanced quotes.
+        let lit = escape_sbpl_string_literal(Path::new("/tmp/a)b")).unwrap();
+        assert_eq!(lit, "/tmp/a)b");
+        let profile =
+            compile_sbpl_profile(&[Path::new("/tmp/a)b")], &[], &[], SandboxLevel::Strict);
+        // Canonicalization falls back to the original when the path does not
+        // exist; the literal must still appear quoted exactly once.
+        if let Ok(profile) = profile {
+            assert_eq!(profile.matches("(allow file-read*").count(), 1);
+            assert!(profile.contains("(subpath \"/tmp/a)b\")"));
+        }
+    }
+
+    #[test]
+    fn test_sbpl_rejects_newline_and_controls() {
+        assert!(escape_sbpl_string_literal(Path::new("/tmp/a\nb")).is_err());
+        assert!(escape_sbpl_string_literal(Path::new("/tmp/a\rb")).is_err());
+        assert!(escape_sbpl_string_literal(Path::new("/tmp/a\tb")).is_err());
+        assert!(escape_sbpl_string_literal(Path::new("/tmp/a\x7fb")).is_err());
+        assert!(escape_sbpl_string_literal(Path::new("")).is_err());
+    }
+
+    #[test]
+    fn test_sbpl_rejects_semicolon_paren_injection_shape() {
+        // Even though `)`/`;` inside quotes are inert, a profile built from
+        // an adversarial path must remain a fixed number of expressions:
+        // version + defaults + file rules, one rule per line, no extra lines
+        // smuggled via the path value.
+        let evil = "/tmp/evil\"))\n(allow file-write* (subpath \"/\"";
+        assert!(escape_sbpl_string_literal(Path::new(evil)).is_err());
+    }
+
+    #[test]
+    fn test_sbpl_canonicalizes_symlink() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let real = dir.path().join("real");
+        std::fs::create_dir(&real).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&real, dir.path().join("link")).unwrap();
+        #[cfg(unix)]
+        {
+            let canon = canonicalize_sbpl_path(&dir.path().join("link"));
+            assert!(canon.ends_with("real"));
+        }
+    }
+
+    // Phase 46 (Workstream C): Basic/Strict profile semantics.
+    #[test]
+    fn test_sbpl_basic_has_no_contradictory_default() {
+        let profile = compile_sbpl_profile(&[], &[], &[], SandboxLevel::Basic).unwrap();
+        assert!(profile.contains("(allow default)"));
+        assert!(
+            !profile.contains("(deny default)"),
+            "Basic must not emit contradictory deny default"
+        );
+    }
+
+    #[test]
+    fn test_sbpl_strict_denies_default_and_network_without_job_creation() {
+        let profile = compile_sbpl_profile(&[], &[], &[], SandboxLevel::Strict).unwrap();
+        assert!(profile.contains("(deny default)"));
+        assert!(!profile.contains("(allow default)"));
+        assert!(profile.contains("(deny network*)"));
+        assert!(
+            !profile.contains("job-creation"),
+            "Strict must not allow job-creation (child creation stays denied)"
+        );
+        assert!(profile.contains("(allow process*)"));
+        assert!(profile.contains("(allow signal)"));
+    }
+
+    #[test]
+    fn test_sbpl_strict_file_rules_use_subpath() {
+        let profile = compile_sbpl_profile(
+            &[Path::new("/usr/lib")],
+            &[Path::new("/tmp/work")],
+            &[Path::new("/etc/shadow")],
+            SandboxLevel::Strict,
+        )
+        .unwrap();
+        assert!(profile.contains("(allow file-read*"));
+        assert!(profile.contains("(allow file-write*"));
+        assert!(profile.contains("(deny file-read*"));
+        assert!(profile.contains("(deny file-write*"));
+        // Denies are emitted after allows (explicit deny is the final word
+        // on overlap; callers must keep lists disjoint).
+        let last_allow = profile.rfind("(allow file-").unwrap();
+        let first_deny = profile.find("(deny file-").unwrap();
+        assert!(last_allow < first_deny);
+    }
+
+    #[test]
+    fn test_sbpl_off_is_allow_default_only() {
+        let profile = compile_sbpl_profile(&[], &[], &[], SandboxLevel::Off).unwrap();
+        assert!(profile.contains("(allow default)"));
+        assert!(!profile.contains("(deny"));
+    }
+
+    #[test]
+    fn test_sbpl_invalid_path_propagates() {
+        let profile =
+            compile_sbpl_profile(&[Path::new("/tmp/a\nb")], &[], &[], SandboxLevel::Strict);
+        assert!(matches!(profile, Err(SandboxError::InvalidPath(_))));
     }
 }

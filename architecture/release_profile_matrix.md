@@ -36,7 +36,7 @@ The **CI profile** is used for routine correctness testing. It avoids expensive 
 | `tun-rs` | No | **Supported** | TUN device support |
 | `buffer` | No | **Supported** | Buffer pool |
 | `rkyv` | No | **Supported** | Rkyv serialization |
-| `macos-sandbox` | No | **Supported** | macOS sandbox enforcement |
+| `macos-sandbox` | No | **Experimental** | macOS Seatbelt via deprecated `sandbox_init` (opt-in; not App Sandbox) |
 | `test-utils` | No | **Supported** | Test utilities |
 | `fastcgi_streaming` | No | **Supported** | Streaming FastCGI |
 

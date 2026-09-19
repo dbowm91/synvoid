@@ -379,7 +379,7 @@ The following security measures are enabled by default in production builds:
 | `tun-rs` | Supported | TUN device support |
 | `buffer` | Supported | Sharded buffer pool with ABA-safe design |
 | `rkyv` | Supported | Zero-copy serialization for DNS/DHT types |
-| `macos-sandbox` | Supported | macOS sandbox enforcement |
+| `macos-sandbox` | Experimental | macOS Seatbelt via deprecated `sandbox_init` (opt-in; not App Sandbox; Linux is the production strict-isolation target) |
 | `test-utils` | Supported | Test utilities (not for production) |
 | `fastcgi_streaming` | Supported | Streaming FastCGI proxy |
 | `flood-ebpf` | Beta | Requires root, kernel BTF; eBPF XDP/TC ICMP filtering (Linux only) |

@@ -27,7 +27,6 @@ These features are supported but not in the default profile. Enable them via fea
 | TUN Device | `tun-rs` | TUN device support | Linux, macOS |
 | Buffer Pool | `buffer` | Sharded buffer pool with ABA-safe design | All |
 | rkyv Serialization | `rkyv` | Zero-copy serialization for DNS/DHT types | All |
-| macOS Sandbox | `macos-sandbox` | macOS sandbox enforcement | macOS only |
 | FastCGI Streaming | `fastcgi_streaming` | Streaming FastCGI response handling | All |
 
 ## Beta Features
@@ -39,6 +38,7 @@ These features compile cleanly but have limited real-world validation or hard ru
 | eBPF ICMP Filter | `icmp-ebpf` | Linux only | Requires kernel BTF, CAP_NET_ADMIN or root, precompiled eBPF object | Falls back to nftables when unavailable; integration tests require BTF-capable kernel |
 | Post-Quantum TLS | `post-quantum` | Any | Experimental TLS key exchange | Limited real-world validation |
 | Post-Quantum Verify | `verify-pq` | Any | Post-quantum signature verification | Limited real-world validation |
+| macOS Sandbox | `macos-sandbox` | macOS only | Seatbelt via deprecated `sandbox_init` (opt-in experimental; not App Sandbox; Linux is production strict-isolation target) | Native child-process tests on macOS host only; cross-compile is not enforcement evidence |
 
 ### Beta Feature Build Commands
 

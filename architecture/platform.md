@@ -322,16 +322,18 @@ impl SandboxPaths {
 }
 ```
 
-**Backend Implementations:**
+**Backend Implementations (Phase 46 truthfulness; binding details in `docs/SANDBOXING.md`):**
 
-| Platform | Backend | Features |
-|----------|---------|----------|
-| Linux (kernel 5.13+) | `LandlockSandbox` | Path allowlisting, read/write/fs |
-| FreeBSD | `CapsicumSandbox` | Process limits, network restrictions |
-| OpenBSD | `PledgeSandbox` | Promise-based restrictions, unveil for paths |
-| macOS | `SeatbeltSandbox` | Sandhook profiles, feature-gated |
-| Windows | `WindowsSandbox` | Job Objects, mitigation policies |
-| Unsupported | `StubSandbox` | Logs warning, no enforcement |
+| Platform | Backend | Tier | Features |
+|----------|---------|------|----------|
+| Linux (kernel 5.13+ + syscall probe) | `LandlockSandbox` | Supported (production recommendation for strict isolation) | Path allowlisting, read/write/fs; no network/process/child limits; deny paths logged not enforced |
+| FreeBSD 10+ | `CapsicumSandbox` | Experimental | Capability mode only (FD-based, no path allowlists); network/child confinement; no numeric process limits; Strict fails closed |
+| OpenBSD 5.9+ | `PledgeSandbox` | Experimental | Promise-based restrictions, unveil for paths; no numeric process limits |
+| macOS 10.10+ | `SeatbeltSandbox` | Experimental (opt-in `macos-sandbox`, deprecated `sandbox_init`; not App Sandbox) | SBPL profiles, feature + runtime-gated; Basic allow-default / Strict deny-default; no numeric process limits |
+| Windows Vista+ | `WindowsSandbox` | Limited (process limits only) | Job Objects (256 MB proc / 512 MB job, kill-on-close) + DEP/ASLR; DACL touches are hardening, not allowlists; Strict fails closed |
+| Unsupported | `StubSandbox` | Unavailable | Logs warning, no enforcement; Strict fails closed |
+
+`SandboxCapabilities::process_limits` means numeric resource bounds only. `Platform::supports_sandbox()` is a coarse Linux/BSD gate; macOS/Windows availability is per-backend `is_supported()`.
 
 **Landlock Constants (Linux):**
 ```
@@ -586,29 +588,41 @@ const LANDLOCK_ACCESS_FS_ALL: u64 = READ | WRITE | EXECUTE
 
 **Promises:** stdio, rpath, wpath, fattr, etc.
 
-### 6.4 Seatbelt (macOS)
+### 6.4 Seatbelt (macOS) — experimental, deprecated API
 
-**Feature-Gated:** Requires `macos-sandbox` Cargo feature
+**Feature + runtime gated:** Requires `macos-sandbox` Cargo feature AND a runtime `sandbox_init` symbol (`dlsym` probe). Uses deprecated `sandbox_init`, NOT Apple App Sandbox entitlements. Linux is the production recommendation for strict isolation.
 
-**Profile Compilation:**
+**Basic profile (permissive):**
+```
+(version 1)
+(allow default)
+(allow file-read* (subpath "/allowed"))
+(deny file-read* (subpath "/denied"))
+```
+
+**Strict profile (jail):**
 ```
 (version 1)
 (deny default)
-(allow process)
+(allow process*)
 (allow signal)
-(allow job-creation)
-(allow file-read* (subpath "/path"))
-(allow file-write* (subpath "/path"))
+(deny network*)
+(allow file-read* (subpath "/allowed"))
+(allow file-write* (subpath "/allowed"))
+(deny file-read* (subpath "/denied"))
+(deny file-write* (subpath "/denied"))
 ```
 
-**Sandbox Init:** Uses `sandbox_init()` C function via extern
+No `(allow job-creation)` (child creation stays denied). No contradictory `(allow default)` + `(deny default)` pair (the old Basic bug). Bare `(allow process)` was an unbound variable (native failure) — now `(allow process*)`. Paths are canonicalized + escaped (`escape_sbpl_string_literal`; controls/non-UTF-8 rejected).
 
-### 6.5 Windows Job Objects
+**Sandbox Init:** Uses `sandbox_init()` + `sandbox_free_error()` via extern with a real error buffer (errno fallback only when the API provides no message).
+
+### 6.5 Windows Job Objects — limited (process limits only)
 
 **Three-Layer Approach:**
 1. **Job Object** - Process group limit (256MB process, 512MB job memory)
-2. **Mitigation Policies** - DEP, ASLR enablement
-3. **Security Descriptors** - File DACL restrictions (Strict level only)
+2. **Mitigation Policies** - DEP, ASLR enablement (Strict path)
+3. **Security Descriptors** - Per-file DACL hardening on listed paths (NOT a filesystem allowlist; no deny-by-default, no network/child limits)
 
 **Configuration:**
 ```rust
@@ -679,7 +693,7 @@ JOBOBJECT_EXTENDED_LIMIT_INFORMATION {
 
 | Feature | Module | Description |
 |---------|--------|-------------|
-| `macos-sandbox` | `sandbox/darwin` | Enable Seatbelt sandbox on macOS |
+| `macos-sandbox` | `sandbox/darwin` | Opt-in experimental Seatbelt sandbox on macOS (deprecated `sandbox_init`; compile gate only — runtime `dlsym` probe still required) |
 
 ### 8.2 Target-Specific Compilation
 

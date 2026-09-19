@@ -223,18 +223,21 @@ fn test_sandbox_stub_is_fail_closed_for_strict() {
     let stub = ProcessSandbox::with_stub(SandboxLevel::Strict);
     assert!(!stub.capabilities().can_enforce_strict());
 
-    // with_paths(Strict) on a stub must fail closed rather than silently
-    // running unenforced.
-    let result = ProcessSandbox::with_paths(SandboxLevel::Strict, SandboxPaths::new());
-    if !ProcessSandbox::new(SandboxLevel::Strict)
-        .capabilities()
-        .can_enforce_strict()
-    {
-        assert!(
-            result.is_err(),
-            "strict sandbox without an enforcing backend must fail"
-        );
+    // with_paths(Strict) without enforcement must fail closed rather than
+    // silently running unenforced. Phase 46: when a real backend would
+    // actually enforce in-process (capable AND runtime present), applying
+    // here would sandbox the test runner itself (irreversible) and poison
+    // later tests — enforcement is verified in child processes
+    // (sandbox_macos_enforcement) instead, so skip the in-process apply.
+    let probe = ProcessSandbox::new(SandboxLevel::Strict);
+    if probe.capabilities().can_enforce_strict() && probe.is_supported() {
+        return;
     }
+    let result = ProcessSandbox::with_paths(SandboxLevel::Strict, SandboxPaths::new());
+    assert!(
+        result.is_err(),
+        "strict sandbox without an enforcing backend must fail"
+    );
 }
 
 #[test]

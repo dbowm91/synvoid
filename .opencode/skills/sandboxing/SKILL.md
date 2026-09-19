@@ -25,11 +25,19 @@ All sandbox implementations implement the `SandboxBackend` trait:
 
 ```rust
 pub trait SandboxBackend: Send + Sync {
-    fn apply(&self, allowed_paths: &[&Path], denied_paths: &[&Path]) -> Result<(), SandboxError>;
+    fn apply(&self, read_paths: &[&Path], write_paths: &[&Path], denied_paths: &[&Path]) -> Result<(), SandboxError>;
     fn is_supported(&self) -> bool;
     fn feature_name(&self) -> &'static str;
     fn level(&self) -> SandboxLevel;
+    fn capabilities(&self) -> SandboxCapabilities;
 }
+
+// Support tiers (Phase 46): Linux Landlock = Supported (production for strict
+// isolation); FreeBSD Capsicum / OpenBSD Pledge / macOS Seatbelt =
+// Experimental; Windows Job Objects = Limited (process limits only);
+// Stub = Unavailable (Strict fails closed). macOS Seatbelt uses deprecated
+// sandbox_init, not App Sandbox entitlements. process_limits = numeric bounds
+// only. See docs/SANDBOXING.md for the binding matrix.
 ```
 
 ### SandboxLevels
@@ -122,54 +130,22 @@ impl WindowsSandbox {
 
 ## macOS Seatbelt
 
-macOS uses the Sandbox framework with policy profiles.
+macOS uses the deprecated `sandbox_init` CLI/jail interface (NOT Apple App Sandbox entitlements). Experimental opt-in; Linux is the production recommendation for strict isolation.
 
 ### Implementation
 
 **Location**: `crates/synvoid-platform/src/sandbox.rs`
 
 ```rust
-pub struct SeatbeltSandbox {
-    level: SandboxLevel,
-}
-
-impl SeatbeltSandbox {
-    fn compile_sandbox_profile(
-        allowed_paths: &[&Path],
-        denied_paths: &[&Path],
-        level: SandboxLevel,
-    ) -> String {
-        let mut profile = String::new();
-        profile.push_str("(version 1)\n");
-
-        match level {
-            SandboxLevel::Basic => {
-                profile.push_str("(allow default)\n");
-                profile.push_str("(deny default)\n");
-            }
-            SandboxLevel::Strict => {
-                profile.push_str("(deny default)\n");
-                profile.push_str("(allow process)\n");
-                profile.push_str("(allow signal)\n");
-                profile.push_str("(allow job-creation)\n");
-            }
-            SandboxLevel::Off => {
-                profile.push_str("(allow default)\n");
-                return profile;
-            }
-        }
-
-        // Add path rules
-        for path in allowed_paths {
-            profile.push_str(&format!(
-                "(allow file-read* (subpath \"{}\"))\n",
-                path.display()
-            ));
-        }
-
-        profile
-    }
-}
+// Phase 46 truthful profile (see compile_sbpl_profile in sandbox.rs):
+// Basic = (allow default) only — the old (allow)+(deny) default pair was
+// contradictory and is removed.
+// Strict = (deny default) + (allow process*) + (allow signal) +
+// (deny network*), NO job-creation allow (children stay denied).
+// Bare (allow process) was an unbound variable (native failure).
+// Paths go through escape_sbpl_string_literal after
+// canonicalize_sbpl_path; never interpolate Path::display() directly.
+// FFI passes a real error buffer, converts via sandbox_free_error.
 ```
 
 ### Profile Syntax
@@ -201,7 +177,7 @@ extern "C" {
 }
 ```
 
-Enable with: `macos-sandbox = ["dep:synvoid/macos-sandbox"]`
+Enable with: `macos-sandbox` feature AND runtime `sandbox_init` symbol (probed via `dlsym`). Without both, Strict fails closed. Level-dependent capabilities: Basic claims no network/child limits; Strict claims network+child, never numeric process limits.
 
 ## Linux Landlock
 
@@ -211,10 +187,11 @@ Linux uses the Landlock LSM for filesystem restrictions.
 
 **Location**: `crates/synvoid-platform/src/sandbox.rs`
 
-Key steps:
+Key steps (Phase 46: availability = kernel ≥5.13 AND live `landlock_create_ruleset` probe, not version text alone):
 1. Create ruleset with `SYS_landlock_create_ruleset`
 2. Add path rules with `SYS_landlock_add_rule`
 3. Restrict self with `SYS_landlock_restrict_self`
+Deny paths are logged, not enforced. No network/process/child limits.
 
 ## FreeBSD Capsicum
 
@@ -224,9 +201,9 @@ Capsicum provides capability mode for FreeBSD.
 
 **Location**: `crates/synvoid-platform/src/sandbox.rs`
 
-Key operations:
-- `cap_enter()` - Enter capability mode
-- `cap_rights_limit()` - Restrict file descriptor rights
+Key operations (Phase 46: no path allowlists; Strict fails closed):
+- `cap_getmode()` presence probe = availability (not "already sandboxed")
+- `cap_enter()` - Enter capability mode (irreversible)
 
 ## OpenBSD Pledge
 

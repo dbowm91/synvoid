@@ -267,8 +267,10 @@ Child startup order:
 3. enter the framed request loop
 
 Sandbox backends are platform-selected (`crates/synvoid-platform/src/sandbox.rs`:
-Landlock on Linux, Seatbelt/sandbox-exec profile on macOS where available, stub
-elsewhere; root `src/platform/sandbox.rs` is a pure facade).
+Landlock on Linux (supported), Seatbelt SBPL profile on macOS where the
+`macos-sandbox` feature + runtime symbol are present (experimental, deprecated
+`sandbox_init`), stub elsewhere; root `src/platform/sandbox.rs` is a pure facade).
+Linux is the production strict-isolation target.
 On platforms without a strict backend, or when restriction fails, the child
 exits nonzero (fail closed) **unless** the test-only escape hatch
 `SYNVOID_JAIL_PERMIT_NO_SANDBOX=1` is set, in which case it logs an explicit
@@ -326,8 +328,8 @@ Platform coverage matrix (no OS matrix in CI per repo policy; CI runs Linux):
 | Check | Linux | macOS | Windows |
 |-------|-------|-------|---------|
 | framing/protocol/service logic | ✓ always | ✓ always | ✓ always |
-| live child round trip | ✓ (Landlock or fail-closed skip) | ✓ via hatch or Seatbelt | ✓ via hatch |
-| strict FS/network denial | ✓ when Landlock enforces | best-effort, documented | best-effort, documented |
+| live child round trip | ✓ (Landlock or fail-closed skip) | ✓ via Seatbelt (feature + runtime) or hatch | ✓ via hatch |
+| strict FS/network denial | ✓ when Landlock enforces | ✓ natively verified where Seatbelt enforces (child-process tests: allowed read/write succeed, denied read/write + network + spawn blocked) | best-effort, documented (Windows: process limits only) |
 
 Note on plan verification names: the Phase 22 plan lists
 `cargo test --test supervisor_spawn_guard` and `plugin_capability_guard`;

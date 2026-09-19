@@ -595,7 +595,7 @@ rkyv = []          # Rkyv serialization (optional)
 | `tun-rs` | TUN interface support | None | **Off** |
 | `buffer` | Buffer pool (via synvoid-utils) | `synvoid-utils/buffer` | **Off** |
 | `rkyv` | Rkyv serialization | None | **Off** |
-| `macos-sandbox` | macOS sandbox enforcement | None | **Off** |
+| `macos-sandbox` | macOS Seatbelt (experimental, deprecated `sandbox_init`) | None | **Off** |
 | `test-utils` | Test utilities | None | **Off** |
 | `fastcgi_streaming` | Streaming FastCGI responses | None | **Off** |
 
