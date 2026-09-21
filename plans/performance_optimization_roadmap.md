@@ -5,7 +5,7 @@ Status: complete and historical. Implemented 2026-09-21; closeout evidence in
 `architecture/performance_optimization_baseline.md`). Retained as a
 historical handoff record; do not reopen without a new focused plan.
 
-Corrective follow-up: `plans/phase_56_performance_campaign_corrective_runtime_and_evidence_closure.md` landed the writer-shutdown, maintenance-task, cache-reservation, and provenance corrections at `57ad3158754b2f4851e1ce408043d33104106974`. A post-implementation audit found one narrower real-runner lifecycle race plus incomplete immutable WAF-concurrency evidence; `plans/phase_57_performance_final_corrective_closeout.md` closed it (durable runner lifecycle ownership, direct `run()/stop()` tests, immutable concurrency 1/8/32/128 requalification; proof-bearing SHA in `architecture/performance_optimization_corrective_closeout.md` closure follow-up). Neither phase reopens Phases 49-55. No active performance-corrective handoff remains.
+Corrective follow-up: `plans/phase_56_performance_campaign_corrective_runtime_and_evidence_closure.md` landed the writer-shutdown, maintenance-task, cache-reservation, and provenance corrections at `57ad3158754b2f4851e1ce408043d33104106974`. A post-implementation audit found one narrower real-runner lifecycle race plus incomplete immutable WAF-concurrency evidence; `plans/phase_57_performance_final_corrective_closeout.md` closed it (durable runner lifecycle ownership, direct `run()/stop()` tests, immutable concurrency 1/8/32/128 requalification; proof-bearing SHA `5212c6862426ee17795994ef1bba590113c52fad`). Neither phase reopens Phases 49-55. No active performance-corrective handoff remains.
 
 Baseline reviewed: `main` at `70d2bb29de30d2e5f66fd9cb24d682f5e2054670` (2026-09-19).
 

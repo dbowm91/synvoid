@@ -1,6 +1,6 @@
 # Phase 57 Plan: Performance Campaign Final Corrective Closeout
 
-Status: implemented/closed. Proof-bearing implementation/qualification SHA recorded in `architecture/performance_optimization_corrective_closeout.md` closure follow-up. Retained as historical handoff detail.
+Status: implemented/closed. Proof-bearing implementation/qualification SHA: `5212c6862426ee17795994ef1bba590113c52fad`. Retained as historical handoff detail.
 
 Registered in: `plans/roadmap.md`.
 

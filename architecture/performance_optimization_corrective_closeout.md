@@ -1,15 +1,16 @@
 # Performance Optimization Corrective Closeout (Phases 56–57)
 
-> Phase 57 implementation/qualification is complete in this tree: durable
+> Phase 57 is implemented and closed. Durable
 > real-`PortHoneypotRunner::run()/stop()` lifecycle ownership, direct
 > public-method lifecycle tests, single-owned writer drain during runner
 > teardown, and immutable WAF-concurrency 1/8/32/128 requalification are
 > landed below. Phase 56 implementation landed at
 > `57ad3158754b2f4851e1ce408043d33104106974`, and its writer-shutdown,
 > maintenance-task, `TeeBody`, and provenance fixes remain valid and unchanged
-> in contract. The Phase 57 proof-bearing implementation/qualification SHA is
-> recorded in the closure metadata follow-up (see §1); this tree does not
-> self-reference its own hash.
+> in contract. Phase 57 proof-bearing implementation/qualification SHA:
+> `5212c6862426ee17795994ef1bba590113c52fad` (this closeout's §11 evidence,
+> focused/full verification, and benchmark numbers were qualified on that
+> tree; this metadata commit records it without self-reference).
 
 Status: corrective closure for the completed Phases 49-55 campaign.
 Plan: `plans/phase_56_performance_campaign_corrective_runtime_and_evidence_closure.md`.
@@ -40,11 +41,10 @@ headline evidence is reproducible from immutable revisions.
 - Phase 57 baseline for the final corrective pass: `main` at
   `57ad3158754b2f4851e1ce408043d33104106974` (2026-09-21), plus docs
   registrations (`b489f4f7`, `da60db81`, `8e8207ad`, `66005086`, `a7806d06`).
-- Phase 57 proof-bearing implementation/qualification SHA: the commit
-  containing the Workstream A–D runner lifecycle fix, the six real
-  `run()/stop()` lifecycle tests, and the §6 immutable concurrency
-  requalification below — recorded explicitly in the closure metadata
-  follow-up commit, not self-referenced here.
+- Phase 57 proof-bearing implementation/qualification SHA:
+  `5212c6862426ee17795994ef1bba590113c52fad` — the commit containing the
+  Workstream A–D runner lifecycle fix, the six real `run()/stop()`
+  lifecycle tests, and the §6 immutable concurrency requalification below.
 
 Do not call `015e790d` a commit containing the corrected benchmark harness;
 it does not. The harness (4 new benches + 2 repaired WAF benches + Cargo
@@ -532,8 +532,9 @@ Findings closed:
    from `015e790d` plus the recorded benchmark-only patch.
 5. Status/SHA disagreement. Reconciled: Phase 56 plan is historical with a
    Phase 57 pointer; Phase 57 plan is implemented/closed; both roadmaps are
-   historical/complete; this closeout records Phase 56 SHA `57ad3158...`
-   and the Phase 57 proof-bearing SHA in the closure metadata follow-up.
+   historical/complete; this closeout records Phase 56 SHA
+   `57ad3158754b2f4851e1ce408043d33104106974` and Phase 57 proof-bearing SHA
+   `5212c6862426ee17795994ef1bba590113c52fad`.
 
 Verification at the proof-bearing head: focused suites (§8), four feature-
 profile compiles, `cargo xtask verify`, `cargo xtask verify-full`,

@@ -1,6 +1,6 @@
 # SynVoid Architecture Hardening Roadmap
 
-Status: Tracks 1-3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (proof-bearing SHA recorded in `architecture/performance_optimization_corrective_closeout.md` closure follow-up). No active performance-corrective handoff remains.
+Status: Tracks 1-3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). No active performance-corrective handoff remains.
 
 Scope: this roadmap covers architecture hardening, trust-boundary closure, verification, release readiness, post-hardening cleanup, and the architecture-convergence work required before another broad feature-expansion pass.
 
@@ -343,7 +343,7 @@ or public-API redesign.
 
 ## Phase 57 Final Corrective Closeout: Runner Lifecycle and Evidence Truth — Implemented/Closed
 
-Status: implemented/closed. Proof-bearing implementation/qualification SHA recorded in `architecture/performance_optimization_corrective_closeout.md` closure follow-up.
+Status: implemented/closed. Proof-bearing implementation/qualification SHA: `5212c6862426ee17795994ef1bba590113c52fad`.
 
 Detailed plan:
 `plans/phase_57_performance_final_corrective_closeout.md`.
