@@ -1,8 +1,14 @@
 # Phase 56 Plan: Performance Campaign Corrective Runtime and Evidence Closure
 
-Status: implementation handoff plan.
+Status: implementation landed at `57ad3158754b2f4851e1ce408043d33104106974`; final closure follow-up active under `plans/phase_57_performance_final_corrective_closeout.md`. Retained as historical handoff detail.
 
 Registered in: `plans/roadmap.md`.
+
+Post-implementation note: the Phase 56 writer-shutdown, maintenance-task,
+`TeeBody`, and provenance corrections landed. A later audit found a narrower
+real-`PortHoneypotRunner::run()/stop()` lifecycle race plus incomplete
+immutable WAF-concurrency requalification. Those final closure items belong to
+Phase 57; do not reinterpret the landed Phase 56 fixes as reverted.
 
 Parent campaign: Phases 49-55 performance optimization, implemented at
 `892c2dd3ccf4c4d37bf4b0b90e7a61cc2bc5015b` and documented by
