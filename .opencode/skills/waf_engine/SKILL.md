@@ -50,6 +50,13 @@ code consumes narrow traits, never concrete infrastructure — see
    `distributed` mode; config validation rejects anything else.
 5. **Constant-time comparison** (`subtle::ConstantTimeEq`) for all
    secret/MAC/token compares, including PoW verification.
+6. **Inline execution model** (Phase 50): `AttackDetector::check_request`
+   evaluates detectors inline on borrowed inputs via `check_request_sync` —
+   no per-request `JoinSet` fanout, no `Arc` snapshots, no
+   `NormalizedInputs::into_owned()`. Do not reintroduce task-per-detector
+   fanout. Anomaly-enabled scoring/priority semantics and the
+   anomaly-disabled early-terminal path are pinned by
+   `crates/synvoid-waf/tests/execution_model_parity.rs`.
 
 ## Verification
 

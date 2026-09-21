@@ -253,6 +253,30 @@ impl AttackDetector {
         headers: &http::HeaderMap,
         body: Option<&[u8]>,
     ) -> (Option<AttackDetectionResult>, u32) {
+        // Phase 50: synchronous detectors evaluate inline on borrowed inputs.
+        // No per-request `JoinSet` fanout, no `Arc` snapshots, no
+        // `NormalizedInputs::into_owned()` for task ownership. The async
+        // signature is preserved for caller compatibility.
+        self.check_request_sync(client_ip, path, query_string, headers, body)
+    }
+
+    /// Borrowed synchronous evaluation core for `check_request`.
+    ///
+    /// Operates directly on borrowed path/query/headers/body. Detector
+    /// coverage, anomaly-scoring totals, `attack_priority` selection, strict
+    /// normalization, fast-path, and fail-closed behavior match the previous
+    /// task-fanout implementation exactly; only scheduling and ownership
+    /// changed. Evaluation order follows the previous spawn order
+    /// (smuggling, JWT, then detectors in config order) so the
+    /// anomaly-disabled early-terminal path stays outcome-first.
+    fn check_request_sync(
+        &self,
+        client_ip: std::net::IpAddr,
+        path: &str,
+        query_string: Option<&str>,
+        headers: &http::HeaderMap,
+        body: Option<&[u8]>,
+    ) -> (Option<AttackDetectionResult>, u32) {
         if !self.config.enabled {
             return (None, 0);
         }
@@ -316,66 +340,37 @@ impl AttackDetector {
             };
         }
 
-        let mut join_set = tokio::task::JoinSet::new();
-
-        // Share header/body clones between detectors via Arc to avoid 2× allocations.
-        let shared_headers: Option<Arc<http::HeaderMap>> =
-            if self.config.request_smuggling.enabled || self.config.jwt.enabled {
-                Some(Arc::new(headers.clone()))
-            } else {
-                None
-            };
-        let shared_body: Option<Arc<[u8]>> =
-            if self.config.request_smuggling.enabled || self.config.jwt.enabled {
-                body.map(|b| Arc::from(b.to_vec().into_boxed_slice()))
-            } else {
-                None
-            };
+        // Phase 50: evaluate smuggling + JWT inline on borrowed inputs.
+        // `Vec` collects at most two pending (result, score) pairs in spawn
+        // order; drained below with the same scoring/priority semantics the
+        // `JoinSet` drain previously applied.
+        let mut pending: Vec<(AttackDetectionResult, u32)> = Vec::new();
 
         if self.config.request_smuggling.enabled {
-            let detector = self.request_smuggling_detector.clone();
-            let headers = shared_headers.clone().unwrap();
-            let body = shared_body.clone();
-            join_set.spawn(async move {
-                detector
-                    .check_headers(&headers)
-                    .or_else(|| detector.check_http2_smuggling(&headers, &[], body.as_deref()))
-                    .or_else(|| body.as_deref().and_then(|b| detector.check_body(b)))
-                    .map(|r| (r, 50))
-            });
+            let smuggling_result = self
+                .request_smuggling_detector
+                .check_headers(headers)
+                .or_else(|| {
+                    self.request_smuggling_detector
+                        .check_http2_smuggling(headers, &[], body)
+                })
+                .or_else(|| body.and_then(|b| self.request_smuggling_detector.check_body(b)));
+            if let Some(result) = smuggling_result {
+                if !anomaly_enabled {
+                    return (Some(result), 0);
+                }
+                pending.push((result, 50));
+            }
         }
 
         if self.config.jwt.enabled {
-            let detector = self.jwt_detector.clone();
-            let normalizer = self.normalizer.clone();
-            let headers = shared_headers.clone().unwrap();
-            let query_string = query_string.map(|s| s.to_string());
-            let body = shared_body.clone();
-            join_set.spawn(async move {
-                if let Some(result) = detector.detect_in_headers(&headers) {
-                    return Some((result, 40));
+            let jwt_result = self.check_jwt_inline(headers, query_string, body);
+            if let Some((result, score)) = jwt_result {
+                if !anomaly_enabled {
+                    return (Some(result), 0);
                 }
-
-                if let Some(qs) = query_string {
-                    let normalized = normalizer.normalize(&qs);
-                    if let Some(result) =
-                        detector.detect(normalized.as_str(), InputLocation::QueryString)
-                    {
-                        return Some((result, 40));
-                    }
-                }
-
-                if let Some(b) = body {
-                    let s = String::from_utf8_lossy(&b);
-                    let normalized = normalizer.normalize(&s);
-                    if let Some(result) =
-                        detector.detect(normalized.as_str(), InputLocation::PostBody)
-                    {
-                        return Some((result, 40));
-                    }
-                }
-                None
-            });
+                pending.push((result, score));
+            }
         }
 
         let needs_normalized_inputs = self.config.sqli.enabled
@@ -391,29 +386,26 @@ impl AttackDetector {
             || self.config.open_redirect.enabled;
 
         if needs_normalized_inputs {
-            let inputs = Arc::new(
-                NormalizedInputs::normalize_all(
-                    &self.normalizer,
-                    Some(path),
-                    query_string,
-                    headers,
-                    body,
-                )
-                .into_owned(),
+            // Phase 50: borrowed normalization — no `into_owned()` for task
+            // ownership. `body_bytes` borrows the caller's slice.
+            let inputs = NormalizedInputs::normalize_all(
+                &self.normalizer,
+                Some(path),
+                query_string,
+                headers,
+                body,
             );
 
             if self.is_fast_path_safe(&inputs) {
                 tracing::debug!("Fast-path safe for request from {}", client_ip);
-                while let Some(join_result) = join_set.join_next().await {
-                    if let Ok(Some((result, score))) = join_result {
-                        if !anomaly_enabled {
-                            return (Some(result), 0);
-                        }
-                        if first_result.is_none() {
-                            first_result = Some(result);
-                        }
-                        total_score += score;
+                for (result, score) in pending {
+                    if !anomaly_enabled {
+                        return (Some(result), 0);
                     }
+                    if first_result.is_none() {
+                        first_result = Some(result);
+                    }
+                    total_score += score;
                 }
                 return (first_result, total_score);
             }
@@ -431,109 +423,99 @@ impl AttackDetector {
                 }
             }
 
+            // Phase 50: inline detector evaluation in previous spawn order.
+            // Each entry is (detection, score); anomaly-disabled mode returns
+            // the first hit (outcome-first, as before).
+            let mut inline_results: Vec<(AttackDetectionResult, u32)> = Vec::new();
+
             if self.config.sqli.enabled {
-                let detector = self.sqli_detector.clone();
-                let inputs = inputs.clone();
-                join_set.spawn(async move {
-                    Self::check_sqli_internal(&detector, &inputs).map(|r| {
-                        let score = match r.attack_type {
-                            AttackType::Sqli => 50,
-                            _ => 30,
-                        };
-                        (r, score)
-                    })
-                });
+                if let Some(r) = Self::check_sqli_internal(&self.sqli_detector, &inputs) {
+                    let score = match r.attack_type {
+                        AttackType::Sqli => 50,
+                        _ => 30,
+                    };
+                    inline_results.push((r, score));
+                }
             }
 
             if self.config.xss.enabled {
-                let detector = self.xss_detector.clone();
-                let inputs = inputs.clone();
-                join_set.spawn(async move {
-                    Self::check_xss_internal(&detector, &inputs).map(|r| {
-                        let score = match r.attack_type {
-                            AttackType::Xss => 50,
-                            _ => 30,
-                        };
-                        (r, score)
-                    })
-                });
+                if let Some(r) = Self::check_xss_internal(&self.xss_detector, &inputs) {
+                    let score = match r.attack_type {
+                        AttackType::Xss => 50,
+                        _ => 30,
+                    };
+                    inline_results.push((r, score));
+                }
             }
 
             if self.config.ssti.enabled {
-                let detector = self.ssti_detector.clone();
-                let inputs = inputs.clone();
-                join_set.spawn(async move {
-                    Self::check_ssti_internal(&detector, &inputs).map(|r| (r, 40))
-                });
+                if let Some(r) = Self::check_ssti_internal(&self.ssti_detector, &inputs) {
+                    inline_results.push((r, 40));
+                }
             }
 
             if self.config.cmd_injection.enabled {
-                let detector = self.cmd_injection_detector.clone();
-                let inputs = inputs.clone();
-                join_set.spawn(async move {
-                    Self::check_cmd_injection_internal(&detector, &inputs).map(|r| (r, 50))
-                });
+                if let Some(r) =
+                    Self::check_cmd_injection_internal(&self.cmd_injection_detector, &inputs)
+                {
+                    inline_results.push((r, 50));
+                }
             }
 
             if self.config.path_traversal.enabled {
-                let detector = self.path_traversal_detector.clone();
-                let inputs = inputs.clone();
-                join_set.spawn(async move {
-                    Self::check_path_traversal_internal(&detector, &inputs).map(|r| (r, 40))
-                });
+                if let Some(r) =
+                    Self::check_path_traversal_internal(&self.path_traversal_detector, &inputs)
+                {
+                    inline_results.push((r, 40));
+                }
             }
 
             if self.config.rfi.enabled {
-                let detector = self.rfi_detector.clone();
-                let inputs = inputs.clone();
-                join_set.spawn(async move {
-                    Self::check_rfi_internal(&detector, &inputs).map(|r| (r, 50))
-                });
+                if let Some(r) = Self::check_rfi_internal(&self.rfi_detector, &inputs) {
+                    inline_results.push((r, 50));
+                }
             }
 
             if self.config.ssrf.enabled {
-                let detector = self.ssrf_detector.clone();
-                let inputs = inputs.clone();
-                join_set.spawn(async move {
-                    Self::check_ssrf_internal(&detector, &inputs).map(|r| (r, 50))
-                });
+                if let Some(r) = Self::check_ssrf_internal(&self.ssrf_detector, &inputs) {
+                    inline_results.push((r, 50));
+                }
             }
 
             if self.config.xxe.enabled {
-                let detector = self.xxe_detector.clone();
-                let inputs = inputs.clone();
-                join_set.spawn(async move {
-                    Self::check_xxe_internal(&detector, &inputs).map(|r| (r, 50))
-                });
+                if let Some(r) = Self::check_xxe_internal(&self.xxe_detector, &inputs) {
+                    inline_results.push((r, 50));
+                }
             }
 
             if self.config.ldap_injection.enabled {
-                let detector = self.ldap_injection_detector.clone();
-                let inputs = inputs.clone();
-                join_set.spawn(async move {
-                    Self::check_ldap_injection_internal(&detector, &inputs).map(|r| (r, 40))
-                });
+                if let Some(r) =
+                    Self::check_ldap_injection_internal(&self.ldap_injection_detector, &inputs)
+                {
+                    inline_results.push((r, 40));
+                }
             }
 
             if self.config.xpath_injection.enabled {
-                let detector = self.xpath_injection_detector.clone();
-                let inputs = inputs.clone();
-                join_set.spawn(async move {
-                    Self::check_xpath_injection_internal(&detector, &inputs).map(|r| (r, 40))
-                });
+                if let Some(r) =
+                    Self::check_xpath_injection_internal(&self.xpath_injection_detector, &inputs)
+                {
+                    inline_results.push((r, 40));
+                }
             }
 
             if self.config.open_redirect.enabled {
-                let detector = self.open_redirect_detector.clone();
-                let inputs = inputs.clone();
-                join_set.spawn(async move {
-                    Self::check_open_redirect_internal(&detector, &inputs).map(|r| (r, 30))
-                });
+                if let Some(r) =
+                    Self::check_open_redirect_internal(&self.open_redirect_detector, &inputs)
+                {
+                    inline_results.push((r, 30));
+                }
             }
-        }
 
-        while let Some(res) = join_set.join_next().await {
-            if let Ok(Some((result, score))) = res {
+            // Drain in evaluation order with the same scoring/priority
+            // semantics the `JoinSet` drain previously applied: smuggling/JWT
+            // first (spawn order), then detectors.
+            for (result, score) in pending.into_iter().chain(inline_results) {
                 if !anomaly_enabled {
                     return (Some(result), 0);
                 }
@@ -553,9 +535,69 @@ impl AttackDetector {
                     }
                 }
             }
+
+            return (first_result, total_score);
+        }
+
+        // No normalized detector family enabled: only smuggling/JWT ran.
+        for (result, score) in pending {
+            if !anomaly_enabled {
+                return (Some(result), 0);
+            }
+
+            total_score += score;
+
+            let new_priority = Self::attack_priority(&result.attack_type);
+            match &first_result {
+                None => {
+                    first_result = Some(result);
+                }
+                Some(existing) => {
+                    let existing_priority = Self::attack_priority(&existing.attack_type);
+                    if new_priority < existing_priority {
+                        first_result = Some(result);
+                    }
+                }
+            }
         }
 
         (first_result, total_score)
+    }
+
+    /// Phase 50: borrowed JWT evaluation. Identical detection semantics to the
+    /// previous spawned task; operates on borrowed headers/query/body without
+    /// `HeaderMap`/`String`/body-vector clones.
+    fn check_jwt_inline(
+        &self,
+        headers: &http::HeaderMap,
+        query_string: Option<&str>,
+        body: Option<&[u8]>,
+    ) -> Option<(AttackDetectionResult, u32)> {
+        if let Some(result) = self.jwt_detector.detect_in_headers(headers) {
+            return Some((result, 40));
+        }
+
+        if let Some(qs) = query_string {
+            let normalized = self.normalizer.normalize(qs);
+            if let Some(result) = self
+                .jwt_detector
+                .detect(normalized.as_str(), InputLocation::QueryString)
+            {
+                return Some((result, 40));
+            }
+        }
+
+        if let Some(b) = body {
+            let s = String::from_utf8_lossy(b);
+            let normalized = self.normalizer.normalize(&s);
+            if let Some(result) = self
+                .jwt_detector
+                .detect(normalized.as_str(), InputLocation::PostBody)
+            {
+                return Some((result, 40));
+            }
+        }
+        None
     }
 
     fn attack_priority(attack_type: &AttackType) -> u8 {

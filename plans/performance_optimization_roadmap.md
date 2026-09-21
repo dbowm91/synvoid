@@ -1,6 +1,9 @@
 # Performance Optimization and Request-Path Efficiency Roadmap
 
-Status: active implementation roadmap.
+Status: complete and historical. Implemented 2026-09-21; closeout evidence in
+`architecture/performance_optimization_closeout.md` (baseline in
+`architecture/performance_optimization_baseline.md`). Retained as a
+historical handoff record; do not reopen without a new focused plan.
 
 Baseline reviewed: `main` at `70d2bb29de30d2e5f66fd9cb24d682f5e2054670` (2026-09-19).
 

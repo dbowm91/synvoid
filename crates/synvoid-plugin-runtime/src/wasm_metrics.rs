@@ -1,37 +1,96 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
 use parking_lot::Mutex;
 
-static WASM_PLUGIN_INVOCATIONS: LazyLock<Mutex<HashMap<String, AtomicU64>>> =
+// Phase 52: single consolidated per-plugin counter set. Steady-state recording
+// for a known plugin performs one borrowed map lookup and no `String`
+// allocation; an owned key is allocated only on first-use insertion.
+#[derive(Debug, Default)]
+struct WasmMetricCounters {
+    invocations: AtomicU64,
+    decisions_pass: AtomicU64,
+    decisions_block: AtomicU64,
+    decisions_challenge: AtomicU64,
+    errors: AtomicU64,
+    fuel_consumed: AtomicU64,
+    total_duration_ms: AtomicU64,
+    pool_hits: AtomicU64,
+    pool_misses: AtomicU64,
+    pool_dropped: AtomicU64,
+    fuel_exhausted_count: AtomicU64,
+    epoch_timeout_count: AtomicU64,
+    host_call_timeout_count: AtomicU64,
+    fresh_instance_count: AtomicU64,
+}
+
+static WASM_METRICS_REGISTRY: LazyLock<Mutex<HashMap<String, Arc<WasmMetricCounters>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
-static WASM_PLUGIN_DECISIONS_PASS: LazyLock<Mutex<HashMap<String, AtomicU64>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-static WASM_PLUGIN_DECISIONS_BLOCK: LazyLock<Mutex<HashMap<String, AtomicU64>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-static WASM_PLUGIN_DECISIONS_CHALLENGE: LazyLock<Mutex<HashMap<String, AtomicU64>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-static WASM_PLUGIN_ERRORS: LazyLock<Mutex<HashMap<String, AtomicU64>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-static WASM_PLUGIN_FUEL_CONSUMED: LazyLock<Mutex<HashMap<String, AtomicU64>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-static WASM_PLUGIN_DURATIONS_MS: LazyLock<Mutex<HashMap<String, AtomicU64>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-static WASM_PLUGIN_POOL_HITS: LazyLock<Mutex<HashMap<String, AtomicU64>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-static WASM_PLUGIN_POOL_MISSES: LazyLock<Mutex<HashMap<String, AtomicU64>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-static WASM_PLUGIN_POOL_DROPPED: LazyLock<Mutex<HashMap<String, AtomicU64>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-static WASM_PLUGIN_FUEL_EXHAUSTED: LazyLock<Mutex<HashMap<String, AtomicU64>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-static WASM_PLUGIN_EPOCH_TIMEOUTS: LazyLock<Mutex<HashMap<String, AtomicU64>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-static WASM_PLUGIN_HOST_CALL_TIMEOUTS: LazyLock<Mutex<HashMap<String, AtomicU64>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-static WASM_PLUGIN_FRESH_INSTANCES: LazyLock<Mutex<HashMap<String, AtomicU64>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Borrowed fast path: no allocation when the plugin is already registered.
+fn counters_for(plugin_name: &str) -> Arc<WasmMetricCounters> {
+    if let Some(counters) = WASM_METRICS_REGISTRY.lock().get(plugin_name) {
+        return Arc::clone(counters);
+    }
+    let mut registry = WASM_METRICS_REGISTRY.lock();
+    // Recheck under the lock; another thread may have inserted meanwhile.
+    if let Some(counters) = registry.get(plugin_name) {
+        return Arc::clone(counters);
+    }
+    let counters = Arc::new(WasmMetricCounters::default());
+    registry.insert(plugin_name.to_string(), Arc::clone(&counters));
+    counters
+}
+
+/// Snapshot helper: clone the handle under the lock, load atomics after
+/// release so readers never hold the registry lock during atomic loads.
+fn snapshot_for(plugin_name: &str) -> Option<WasmMetricCountersSnapshot> {
+    let counters = WASM_METRICS_REGISTRY
+        .lock()
+        .get(plugin_name)
+        .map(Arc::clone)?;
+    Some(counters.snapshot())
+}
+
+#[derive(Debug, Default)]
+struct WasmMetricCountersSnapshot {
+    invocations: u64,
+    decisions_pass: u64,
+    decisions_block: u64,
+    decisions_challenge: u64,
+    errors: u64,
+    fuel_consumed: u64,
+    total_duration_ms: u64,
+    pool_hits: u64,
+    pool_misses: u64,
+    pool_dropped: u64,
+    fuel_exhausted_count: u64,
+    epoch_timeout_count: u64,
+    host_call_timeout_count: u64,
+    fresh_instance_count: u64,
+}
+
+impl WasmMetricCounters {
+    fn snapshot(&self) -> WasmMetricCountersSnapshot {
+        WasmMetricCountersSnapshot {
+            invocations: self.invocations.load(Ordering::Relaxed),
+            decisions_pass: self.decisions_pass.load(Ordering::Relaxed),
+            decisions_block: self.decisions_block.load(Ordering::Relaxed),
+            decisions_challenge: self.decisions_challenge.load(Ordering::Relaxed),
+            errors: self.errors.load(Ordering::Relaxed),
+            fuel_consumed: self.fuel_consumed.load(Ordering::Relaxed),
+            total_duration_ms: self.total_duration_ms.load(Ordering::Relaxed),
+            pool_hits: self.pool_hits.load(Ordering::Relaxed),
+            pool_misses: self.pool_misses.load(Ordering::Relaxed),
+            pool_dropped: self.pool_dropped.load(Ordering::Relaxed),
+            fuel_exhausted_count: self.fuel_exhausted_count.load(Ordering::Relaxed),
+            epoch_timeout_count: self.epoch_timeout_count.load(Ordering::Relaxed),
+            host_call_timeout_count: self.host_call_timeout_count.load(Ordering::Relaxed),
+            fresh_instance_count: self.fresh_instance_count.load(Ordering::Relaxed),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct WasmPluginMetrics {
@@ -53,92 +112,23 @@ pub struct WasmPluginMetrics {
 
 impl WasmPluginMetrics {
     pub fn get(plugin_name: &str) -> Self {
-        let invocations = WASM_PLUGIN_INVOCATIONS
-            .lock()
-            .get(plugin_name)
-            .map(|c| c.load(Ordering::Relaxed))
-            .unwrap_or(0);
-        let decisions_pass = WASM_PLUGIN_DECISIONS_PASS
-            .lock()
-            .get(plugin_name)
-            .map(|c| c.load(Ordering::Relaxed))
-            .unwrap_or(0);
-        let decisions_block = WASM_PLUGIN_DECISIONS_BLOCK
-            .lock()
-            .get(plugin_name)
-            .map(|c| c.load(Ordering::Relaxed))
-            .unwrap_or(0);
-        let decisions_challenge = WASM_PLUGIN_DECISIONS_CHALLENGE
-            .lock()
-            .get(plugin_name)
-            .map(|c| c.load(Ordering::Relaxed))
-            .unwrap_or(0);
-        let errors = WASM_PLUGIN_ERRORS
-            .lock()
-            .get(plugin_name)
-            .map(|c| c.load(Ordering::Relaxed))
-            .unwrap_or(0);
-        let fuel_consumed = WASM_PLUGIN_FUEL_CONSUMED
-            .lock()
-            .get(plugin_name)
-            .map(|c| c.load(Ordering::Relaxed))
-            .unwrap_or(0);
-        let total_duration_ms = WASM_PLUGIN_DURATIONS_MS
-            .lock()
-            .get(plugin_name)
-            .map(|c| c.load(Ordering::Relaxed))
-            .unwrap_or(0);
-        let pool_hits = WASM_PLUGIN_POOL_HITS
-            .lock()
-            .get(plugin_name)
-            .map(|c| c.load(Ordering::Relaxed))
-            .unwrap_or(0);
-        let pool_misses = WASM_PLUGIN_POOL_MISSES
-            .lock()
-            .get(plugin_name)
-            .map(|c| c.load(Ordering::Relaxed))
-            .unwrap_or(0);
-        let pool_dropped = WASM_PLUGIN_POOL_DROPPED
-            .lock()
-            .get(plugin_name)
-            .map(|c| c.load(Ordering::Relaxed))
-            .unwrap_or(0);
-        let fuel_exhausted_count = WASM_PLUGIN_FUEL_EXHAUSTED
-            .lock()
-            .get(plugin_name)
-            .map(|c| c.load(Ordering::Relaxed))
-            .unwrap_or(0);
-        let epoch_timeout_count = WASM_PLUGIN_EPOCH_TIMEOUTS
-            .lock()
-            .get(plugin_name)
-            .map(|c| c.load(Ordering::Relaxed))
-            .unwrap_or(0);
-        let host_call_timeout_count = WASM_PLUGIN_HOST_CALL_TIMEOUTS
-            .lock()
-            .get(plugin_name)
-            .map(|c| c.load(Ordering::Relaxed))
-            .unwrap_or(0);
-        let fresh_instance_count = WASM_PLUGIN_FRESH_INSTANCES
-            .lock()
-            .get(plugin_name)
-            .map(|c| c.load(Ordering::Relaxed))
-            .unwrap_or(0);
+        let snapshot = snapshot_for(plugin_name).unwrap_or_default();
 
         Self {
-            invocations,
-            decisions_pass,
-            decisions_block,
-            decisions_challenge,
-            errors,
-            fuel_consumed,
-            total_duration_ms,
-            pool_hits,
-            pool_misses,
-            pool_dropped,
-            fuel_exhausted_count,
-            epoch_timeout_count,
-            host_call_timeout_count,
-            fresh_instance_count,
+            invocations: snapshot.invocations,
+            decisions_pass: snapshot.decisions_pass,
+            decisions_block: snapshot.decisions_block,
+            decisions_challenge: snapshot.decisions_challenge,
+            errors: snapshot.errors,
+            fuel_consumed: snapshot.fuel_consumed,
+            total_duration_ms: snapshot.total_duration_ms,
+            pool_hits: snapshot.pool_hits,
+            pool_misses: snapshot.pool_misses,
+            pool_dropped: snapshot.pool_dropped,
+            fuel_exhausted_count: snapshot.fuel_exhausted_count,
+            epoch_timeout_count: snapshot.epoch_timeout_count,
+            host_call_timeout_count: snapshot.host_call_timeout_count,
+            fresh_instance_count: snapshot.fresh_instance_count,
         }
     }
 
@@ -161,114 +151,86 @@ impl WasmPluginMetrics {
 }
 
 pub fn record_wasm_invocation(plugin_name: &str) {
-    WASM_PLUGIN_INVOCATIONS
-        .lock()
-        .entry(plugin_name.to_string())
-        .or_insert_with(|| AtomicU64::new(0))
+    counters_for(plugin_name)
+        .invocations
         .fetch_add(1, Ordering::Relaxed);
 }
 
 pub fn record_wasm_decision_pass(plugin_name: &str) {
-    WASM_PLUGIN_DECISIONS_PASS
-        .lock()
-        .entry(plugin_name.to_string())
-        .or_insert_with(|| AtomicU64::new(0))
+    counters_for(plugin_name)
+        .decisions_pass
         .fetch_add(1, Ordering::Relaxed);
 }
 
 pub fn record_wasm_decision_block(plugin_name: &str) {
-    WASM_PLUGIN_DECISIONS_BLOCK
-        .lock()
-        .entry(plugin_name.to_string())
-        .or_insert_with(|| AtomicU64::new(0))
+    counters_for(plugin_name)
+        .decisions_block
         .fetch_add(1, Ordering::Relaxed);
 }
 
 pub fn record_wasm_decision_challenge(plugin_name: &str) {
-    WASM_PLUGIN_DECISIONS_CHALLENGE
-        .lock()
-        .entry(plugin_name.to_string())
-        .or_insert_with(|| AtomicU64::new(0))
+    counters_for(plugin_name)
+        .decisions_challenge
         .fetch_add(1, Ordering::Relaxed);
 }
 
 pub fn record_wasm_error(plugin_name: &str) {
-    WASM_PLUGIN_ERRORS
-        .lock()
-        .entry(plugin_name.to_string())
-        .or_insert_with(|| AtomicU64::new(0))
+    counters_for(plugin_name)
+        .errors
         .fetch_add(1, Ordering::Relaxed);
 }
 
 pub fn record_wasm_fuel_consumed(plugin_name: &str, fuel: u64) {
-    WASM_PLUGIN_FUEL_CONSUMED
-        .lock()
-        .entry(plugin_name.to_string())
-        .or_insert_with(|| AtomicU64::new(0))
+    counters_for(plugin_name)
+        .fuel_consumed
         .fetch_add(fuel, Ordering::Relaxed);
 }
 
 pub fn record_wasm_duration(plugin_name: &str, duration_ms: u64) {
-    WASM_PLUGIN_DURATIONS_MS
-        .lock()
-        .entry(plugin_name.to_string())
-        .or_insert_with(|| AtomicU64::new(0))
+    counters_for(plugin_name)
+        .total_duration_ms
         .fetch_add(duration_ms, Ordering::Relaxed);
 }
 
 pub fn record_pool_hit(plugin_name: &str) {
-    WASM_PLUGIN_POOL_HITS
-        .lock()
-        .entry(plugin_name.to_string())
-        .or_insert_with(|| AtomicU64::new(0))
+    counters_for(plugin_name)
+        .pool_hits
         .fetch_add(1, Ordering::Relaxed);
 }
 
 pub fn record_pool_miss(plugin_name: &str) {
-    WASM_PLUGIN_POOL_MISSES
-        .lock()
-        .entry(plugin_name.to_string())
-        .or_insert_with(|| AtomicU64::new(0))
+    counters_for(plugin_name)
+        .pool_misses
         .fetch_add(1, Ordering::Relaxed);
 }
 
 pub fn record_pool_drop(plugin_name: &str) {
-    WASM_PLUGIN_POOL_DROPPED
-        .lock()
-        .entry(plugin_name.to_string())
-        .or_insert_with(|| AtomicU64::new(0))
+    counters_for(plugin_name)
+        .pool_dropped
         .fetch_add(1, Ordering::Relaxed);
 }
 
 pub fn record_fresh_instance(plugin_name: &str) {
-    WASM_PLUGIN_FRESH_INSTANCES
-        .lock()
-        .entry(plugin_name.to_string())
-        .or_insert_with(|| AtomicU64::new(0))
+    counters_for(plugin_name)
+        .fresh_instance_count
         .fetch_add(1, Ordering::Relaxed);
 }
 
 pub fn record_fuel_exhausted(plugin_name: &str) {
-    WASM_PLUGIN_FUEL_EXHAUSTED
-        .lock()
-        .entry(plugin_name.to_string())
-        .or_insert_with(|| AtomicU64::new(0))
+    counters_for(plugin_name)
+        .fuel_exhausted_count
         .fetch_add(1, Ordering::Relaxed);
 }
 
 pub fn record_epoch_timeout(plugin_name: &str) {
-    WASM_PLUGIN_EPOCH_TIMEOUTS
-        .lock()
-        .entry(plugin_name.to_string())
-        .or_insert_with(|| AtomicU64::new(0))
+    counters_for(plugin_name)
+        .epoch_timeout_count
         .fetch_add(1, Ordering::Relaxed);
 }
 
 pub fn record_host_call_timeout(plugin_name: &str) {
-    WASM_PLUGIN_HOST_CALL_TIMEOUTS
-        .lock()
-        .entry(plugin_name.to_string())
-        .or_insert_with(|| AtomicU64::new(0))
+    counters_for(plugin_name)
+        .host_call_timeout_count
         .fetch_add(1, Ordering::Relaxed);
 }
 
@@ -308,9 +270,39 @@ pub fn get_wasm_metrics(plugin_name: &str) -> WasmPluginMetrics {
 }
 
 pub fn get_all_wasm_metrics() -> HashMap<String, WasmPluginMetrics> {
-    let mut result = HashMap::new();
-    for name in WASM_PLUGIN_INVOCATIONS.lock().keys() {
-        result.insert(name.clone(), WasmPluginMetrics::get(name));
+    // Phase 52: snapshot (name, handle) pairs under the lock, release it,
+    // then load atomics outside the lock. The previous implementation called
+    // `WasmPluginMetrics::get` while holding the invocations lock, which
+    // self-deadlocks on the non-reentrant mutex.
+    let handles: Vec<(String, Arc<WasmMetricCounters>)> = {
+        let registry = WASM_METRICS_REGISTRY.lock();
+        registry
+            .iter()
+            .map(|(name, counters)| (name.clone(), Arc::clone(counters)))
+            .collect()
+    };
+    let mut result = HashMap::with_capacity(handles.len());
+    for (name, counters) in handles {
+        let snapshot = counters.snapshot();
+        result.insert(
+            name,
+            WasmPluginMetrics {
+                invocations: snapshot.invocations,
+                decisions_pass: snapshot.decisions_pass,
+                decisions_block: snapshot.decisions_block,
+                decisions_challenge: snapshot.decisions_challenge,
+                errors: snapshot.errors,
+                fuel_consumed: snapshot.fuel_consumed,
+                total_duration_ms: snapshot.total_duration_ms,
+                pool_hits: snapshot.pool_hits,
+                pool_misses: snapshot.pool_misses,
+                pool_dropped: snapshot.pool_dropped,
+                fuel_exhausted_count: snapshot.fuel_exhausted_count,
+                epoch_timeout_count: snapshot.epoch_timeout_count,
+                host_call_timeout_count: snapshot.host_call_timeout_count,
+                fresh_instance_count: snapshot.fresh_instance_count,
+            },
+        );
     }
     result
 }
@@ -475,5 +467,41 @@ mod tests {
     #[test]
     fn test_record_plugin_state_transition_emits_log() {
         record_plugin_state_transition("test_from", "test_to", "test_reason");
+    }
+
+    /// Phase 52: `get_all_wasm_metrics` must not self-deadlock when at least
+    /// one plugin is registered. Bounded timeout fails closed on regression.
+    #[test]
+    fn test_get_all_wasm_metrics_completes_with_registered_plugin() {
+        use std::time::Duration;
+        record_wasm_invocation("test_get_all_deadlock_plugin");
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            tx.send(get_all_wasm_metrics()).expect("send snapshot");
+        });
+        let snapshot = rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("get_all_wasm_metrics completed within 10s");
+        assert!(
+            snapshot.contains_key("test_get_all_deadlock_plugin"),
+            "snapshot contains the registered plugin"
+        );
+    }
+
+    /// Phase 52: repeated hot-key recording updates one coherent counter set.
+    #[test]
+    fn test_hot_key_recording_is_coherent() {
+        let name = "test_hot_key_coherent_plugin";
+        record_wasm_invocation(name);
+        record_wasm_decision_pass(name);
+        record_wasm_duration(name, 7);
+        let m = WasmPluginMetrics::get(name);
+        assert_eq!(m.invocations, 1);
+        assert_eq!(m.decisions_pass, 1);
+        assert_eq!(m.total_duration_ms, 7);
+        let all = get_all_wasm_metrics();
+        let m_all = all.get(name).expect("present in full snapshot");
+        assert_eq!(m_all.invocations, 1);
+        assert_eq!(m_all.decisions_pass, 1);
     }
 }

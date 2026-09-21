@@ -1,6 +1,6 @@
 # SynVoid Architecture Hardening Roadmap
 
-Status: Tracks 1-3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) is active.
+Status: Tracks 1-3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) is complete (see `architecture/performance_optimization_closeout.md`).
 
 Scope: this roadmap covers architecture hardening, trust-boundary closure, verification, release readiness, post-hardening cleanup, and the architecture-convergence work required before another broad feature-expansion pass.
 
@@ -279,11 +279,13 @@ Detailed plans:
 
 The current architecture remains the baseline: no broad crate split/merge campaign, no public `synvoid-utils`, no in-place mesh restart implementation in this line, and no independently supported public `synvoid-http-client` until the current eggfetch line is re-evaluated. Phase 48 owns closeout/status reconciliation only; it must not turn that pending eggfetch comparison into an implicit migration.
 
-## Post-Phase-48 Campaign: Performance Optimization and Request-Path Efficiency — Active
+## Post-Phase-48 Campaign: Performance Optimization and Request-Path Efficiency — Complete
 
-Status: active implementation campaign.
+Status: implemented and closed; retained as historical handoff detail.
 
-Roadmap: `plans/performance_optimization_roadmap.md`.
+Roadmap: `plans/performance_optimization_roadmap.md` (historical).
+
+Closeout: `architecture/performance_optimization_closeout.md` (before/after evidence, hypothesis dispositions, residuals).
 
 Baseline reviewed: `70d2bb29de30d2e5f66fd9cb24d682f5e2054670` (2026-09-19).
 

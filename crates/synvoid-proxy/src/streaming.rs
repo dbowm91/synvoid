@@ -49,7 +49,14 @@ where
                 && GlobalCacheGovernor::try_reserve(size_hint)
             {
                 reserved_bytes = size_hint;
-                Some(BufferPool::acquire(0))
+                // Phase 54: pre-size from the trustworthy bounded hint
+                // (already validated above and reserved from the governor),
+                // then reset logical length to zero so streaming appends do
+                // not reallocate. Never preallocates above the cache limit;
+                // the governor reservation is released exactly as before.
+                let mut buf = BufferPool::acquire(size_hint);
+                buf.resize(0);
+                Some(buf)
             } else {
                 None
             }

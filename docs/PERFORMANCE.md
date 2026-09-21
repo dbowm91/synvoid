@@ -91,6 +91,20 @@ Use tools like `wrk` or `oha` to benchmark. Expect improvements when tuning the 
 wrk -t4 -c100 -d30s http://localhost:80/
 ```
 
+## Campaign Evidence (Phases 49-55, 2026-09)
+
+The performance-optimization campaign is closed. Before/after evidence,
+methodology, and hypothesis dispositions live in
+`architecture/performance_optimization_closeout.md`; the measurement baseline
+in `architecture/performance_optimization_baseline.md`. Headline results on
+the campaign host: WAF small-request latency ~4-5× (borrowed inline detector
+evaluation replaced per-request task fanout), upstream selection 2-13×
+(allocation-free predicate selection), per-site metric accounting 1.7×,
+honeypot SQLite isolated off Tokio workers with drain-capable shutdown, and
+buffer-pool correctness hardening (zero-prefix, stale-reuse, accounting, and
+tiering invariants) with bounded retention. No public API, config, WAF
+coverage, metric, or protocol behavior changed.
+
 ## See Also
 
 - [ARCHITECTURE.md](./ARCHITECTURE.md) - System architecture overview

@@ -1,6 +1,6 @@
 # Phase 51 Plan: Request-Path Allocation and Upstream-Selection Optimization
 
-Status: implementation handoff plan.
+Status: implemented and closed; retained as historical handoff detail. Closeout: `architecture/performance_optimization_closeout.md`.
 
 Roadmap: `plans/performance_optimization_roadmap.md`.
 

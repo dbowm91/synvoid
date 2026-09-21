@@ -127,7 +127,9 @@ impl StreamingWafCore {
         let old_start = self.state.trailing_window.len() - take;
         let previous_content = self.state.trailing_window[old_start..].to_vec();
 
-        self.state.trailing_window.clear();
+        // Phase 54: `resize(0)` empties the window; `clear()` only zeroizes
+        // in place and would make the extends below accumulate unboundedly.
+        self.state.trailing_window.resize(0);
         self.state
             .trailing_window
             .extend_from_slice(&previous_content);
@@ -160,7 +162,11 @@ impl StreamingWafCore {
                         // Scan preamble bytes before first boundary (H06)
                         let preamble_len = pos.saturating_sub(current_pos);
                         if preamble_len > 0 {
+                            // Phase 54: `acquire(N)` yields N logical bytes;
+                            // empty before filling via `copy_from_fragments`
+                            // (which appends) to avoid a zero prefix.
                             let mut preamble = BufferPool::acquire(preamble_len);
+                            preamble.resize(0);
                             Self::copy_from_fragments(
                                 &mut preamble,
                                 &combined_view,
@@ -182,13 +188,15 @@ impl StreamingWafCore {
                             }
                         }
                         self.state.multipart_state = MultipartState::ReadingHeaders;
-                        self.state.multipart_header_buffer.clear();
+                        self.state.multipart_header_buffer.resize(0);
                         current_pos = pos + boundary.len();
                     } else {
                         // No boundary found — scan preamble as regular content (H06)
                         let preamble_len = total_len - current_pos;
                         if preamble_len > 0 {
+                            // Phase 54: empty before filling (see above).
                             let mut preamble = BufferPool::acquire(preamble_len);
+                            preamble.resize(0);
                             Self::copy_from_fragments(
                                 &mut preamble,
                                 &combined_view,
@@ -232,8 +240,9 @@ impl StreamingWafCore {
                             self.state.multipart_state = MultipartState::SkippingFile;
                         } else {
                             self.state.multipart_state = MultipartState::ReadingField;
-                            self.state.multipart_field_buffer.clear();
-                            self.state.field_trailing_window.clear();
+                            // Phase 54: empty (not zeroize) before reuse.
+                            self.state.multipart_field_buffer.resize(0);
+                            self.state.field_trailing_window.resize(0);
                         }
                     } else {
                         Self::copy_from_fragments(
@@ -250,7 +259,9 @@ impl StreamingWafCore {
                         Self::find_in_fragments(&combined_view, current_pos, boundary)
                     {
                         let field_len = pos - current_pos;
+                        // Phase 54: empty before filling (see above).
                         let mut field_fragment = BufferPool::acquire(field_len);
+                        field_fragment.resize(0);
                         Self::copy_from_fragments(
                             &mut field_fragment,
                             &combined_view,
@@ -273,12 +284,14 @@ impl StreamingWafCore {
                         }
 
                         self.state.multipart_state = MultipartState::ReadingHeaders;
-                        self.state.multipart_header_buffer.clear();
-                        self.state.field_trailing_window.clear();
+                        self.state.multipart_header_buffer.resize(0);
+                        self.state.field_trailing_window.resize(0);
                         current_pos = pos + boundary.len();
                     } else {
                         let fragment_len = total_len - current_pos;
+                        // Phase 54: empty before filling (see above).
                         let mut field_fragment = BufferPool::acquire(fragment_len);
+                        field_fragment.resize(0);
                         Self::copy_from_fragments(
                             &mut field_fragment,
                             &combined_view,
@@ -305,13 +318,17 @@ impl StreamingWafCore {
                             TRAILING_WINDOW_SIZE.saturating_sub(field_fragment.len());
                         let previous_start =
                             previous_window.len().saturating_sub(keep_from_previous);
+                        // Phase 54: the window holds only real trailing bytes —
+                        // empty before filling so no zero-filled prefix lands
+                        // in the scanned content.
                         let mut trailing_window = BufferPool::acquire(TRAILING_WINDOW_SIZE);
+                        trailing_window.resize(0);
                         trailing_window.extend_from_slice(&previous_window[previous_start..]);
                         trailing_window.extend_from_slice(field_fragment.as_slice());
                         if trailing_window.len() > TRAILING_WINDOW_SIZE {
                             let overflow = trailing_window.len() - TRAILING_WINDOW_SIZE;
                             let tail = trailing_window.as_slice()[overflow..].to_vec();
-                            trailing_window.clear();
+                            trailing_window.resize(0);
                             trailing_window.extend_from_slice(&tail);
                         }
                         self.state.field_trailing_window = trailing_window;
@@ -326,7 +343,9 @@ impl StreamingWafCore {
                         // Scan file content before next boundary (H01)
                         let file_len = pos.saturating_sub(current_pos);
                         if file_len > 0 {
+                            // Phase 54: empty before filling (see above).
                             let mut file_fragment = BufferPool::acquire(file_len);
+                            file_fragment.resize(0);
                             Self::copy_from_fragments(
                                 &mut file_fragment,
                                 &combined_view,
@@ -348,13 +367,15 @@ impl StreamingWafCore {
                             }
                         }
                         self.state.multipart_state = MultipartState::ReadingHeaders;
-                        self.state.multipart_header_buffer.clear();
+                        self.state.multipart_header_buffer.resize(0);
                         current_pos = pos + boundary.len();
                     } else {
                         // No boundary — scan file chunk incrementally (H01)
                         let file_len = total_len - current_pos;
                         if file_len > 0 {
+                            // Phase 54: empty before filling (see above).
                             let mut file_fragment = BufferPool::acquire(file_len);
+                            file_fragment.resize(0);
                             Self::copy_from_fragments(
                                 &mut file_fragment,
                                 &combined_view,
@@ -389,9 +410,11 @@ impl StreamingWafCore {
         let window_len = total_len - window_start;
 
         let mut temp_buf = BufferPool::acquire(window_len);
+        // Phase 54: empty before filling (see above).
+        temp_buf.resize(0);
         Self::copy_from_fragments(&mut temp_buf, &combined_view, window_start, window_len);
 
-        self.state.trailing_window.clear();
+        self.state.trailing_window.resize(0);
         self.state
             .trailing_window
             .extend_from_slice(temp_buf.as_slice());
@@ -485,10 +508,12 @@ impl StreamingWafCore {
         state.bytes_seen = 0;
         state.boundary = None;
         state.multipart_state = MultipartState::None;
-        state.trailing_window.clear();
-        state.multipart_header_buffer.clear();
-        state.multipart_field_buffer.clear();
-        state.field_trailing_window.clear();
+        // Phase 54: `reset` must empty the windows (`clear()` only zeroizes
+        // in place and keeps length).
+        state.trailing_window.resize(0);
+        state.multipart_header_buffer.resize(0);
+        state.multipart_field_buffer.resize(0);
+        state.field_trailing_window.resize(0);
     }
 }
 
@@ -580,5 +605,72 @@ mod tests {
         streaming.scan_chunk(b"<script>");
         let result = streaming.scan_chunk(b"alert(1)</script>");
         assert!(matches!(result, StreamingWafDecision::Block(..)));
+    }
+
+    /// Phase 54: adversarial split patterns — attacks fragmented at every
+    /// byte position across chunk boundaries must still be caught, and the
+    /// trailing window must contain only real trailing bytes (no zero
+    /// prefix, no unbounded growth).
+    #[test]
+    fn test_streaming_cross_chunk_split_patterns() {
+        use crate::attack_detection::AttackDetectionConfig;
+
+        let payloads: &[&[u8]] = &[
+            b"1' OR '1'='1",
+            b"<script>alert(1)</script>",
+            b"../../etc/passwd",
+            b"{{7*7}}",
+            b"1 UNION SELECT password FROM users",
+        ];
+        for payload in payloads {
+            // Split at every position, including 1-byte chunks. A prefix
+            // fragment may already match on its own (correct); what matters
+            // is that the complete payload is always caught regardless of
+            // where the split falls.
+            for split in 1..payload.len() {
+                let config = AttackDetectionConfig::default();
+                let detector = AttackDetector::new(config);
+                let mut streaming = StreamingWafCore::new(Arc::new(detector));
+                let first = streaming.scan_chunk(&payload[..split]);
+                if matches!(first, StreamingWafDecision::Block(..)) {
+                    continue;
+                }
+                let second = streaming.scan_chunk(&payload[split..]);
+                assert!(
+                    matches!(second, StreamingWafDecision::Block(..)),
+                    "split attack must be caught across chunks: {payload:?} @ {split}"
+                );
+            }
+        }
+    }
+
+    /// Phase 54: the trailing window stays bounded and prefix-free over many
+    /// benign chunks (the old clear-then-append pattern grew it unboundedly).
+    #[test]
+    fn test_streaming_window_stays_bounded() {
+        use crate::attack_detection::AttackDetectionConfig;
+
+        let config = AttackDetectionConfig::default();
+        let detector = AttackDetector::new(config);
+        let mut streaming = StreamingWafCore::new(Arc::new(detector));
+
+        let chunk = vec![b'a'; 512];
+        for _ in 0..32 {
+            let result = streaming.scan_chunk(&chunk);
+            assert!(matches!(result, StreamingWafDecision::Continue));
+        }
+        assert!(
+            streaming.state.trailing_window.len() <= super::TRAILING_WINDOW_SIZE,
+            "trailing window must stay bounded"
+        );
+        assert!(
+            streaming
+                .state
+                .trailing_window
+                .as_slice()
+                .iter()
+                .all(|b| *b == b'a'),
+            "trailing window must contain only real trailing bytes"
+        );
     }
 }

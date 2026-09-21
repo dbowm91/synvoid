@@ -72,14 +72,24 @@ self.state.trailing_window.extend_from_slice(&chunk[copy_start..]);
 - `finalize(&self) -> Option<AttackDetectionResult>` - Get final detection result
 - `reset(&self)` - Reset state for reuse
 
-**Important**: Use `.clear()` on `PooledBuf` instead of `BufferPool::acquire(0)` in `reset()`:
+**Important**: Use `.resize(0)` on `PooledBuf`, never `.clear()`, when you
+intend an empty buffer (Phase 54):
 ```rust
-// CORRECT - reuses buffer from pool
-state.trailing_window.clear();
+// CORRECT - empties the window for refill
+state.trailing_window.resize(0);
+state.trailing_window.extend_from_slice(&tail);
 
-// WRONG - unnecessary allocation
-state.trailing_window = BufferPool::acquire(0);
+// WRONG - clear() only zeroizes in place and KEEPS the length, so the
+// extends below append after stale content (unbounded window growth)
+state.trailing_window.clear();
+state.trailing_window.extend_from_slice(&tail);
 ```
+Same rule for `BufferPool::acquire(N)` + fill: `acquire(N)` yields N logical
+bytes, so empty with `resize(0)` before `extend_from_slice`/`copy_from_fragments`,
+or copy directly into `as_mut_slice()`. Appending to a nonzero acquire leaves
+a zero prefix in scanned content. Cross-chunk coverage is pinned by
+`test_streaming_cross_chunk_split_patterns` (every split position) — do not
+weaken it for performance.
 
 ### 3. StreamingWafDecision Enum
 ```rust

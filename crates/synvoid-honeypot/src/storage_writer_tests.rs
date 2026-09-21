@@ -393,4 +393,129 @@ mod tests {
         assert_eq!(records.len(), 2);
         assert_eq!(records[0].payload_hash, records[1].payload_hash);
     }
+
+    /// Phase 53: retention outputs identical across empty, small,
+    /// truncation-boundary, and large payloads. The in-place hash must equal
+    /// the digest of the original bytes (no clone involved).
+    #[tokio::test]
+    async fn test_retention_digests_match_original_bytes() {
+        use sha2::{Digest, Sha256};
+
+        let payloads: Vec<Vec<u8>> = vec![
+            Vec::new(),
+            b"tiny".to_vec(),
+            vec![0xABu8; 256],
+            (0u8..=255u8).cycle().take(64 * 1024).collect(),
+        ];
+        for mode in [
+            PayloadRetentionMode::None,
+            PayloadRetentionMode::HashOnly,
+            PayloadRetentionMode::Truncated,
+            PayloadRetentionMode::Full,
+        ] {
+            let storage = test_storage();
+            let writer = HoneypotWriter::new(
+                storage.clone(),
+                StorageWriterConfig {
+                    queue_capacity: 256,
+                    batch_size: 64,
+                    flush_interval_ms: 10,
+                    payload_retention_mode: mode,
+                    max_stored_payload_bytes: 256,
+                    max_stored_payload_hex_bytes: 512,
+                    ..Default::default()
+                },
+            );
+            for payload in &payloads {
+                let mut record = base_record();
+                record.payload = payload.clone();
+                record.payload_hex = hex::encode(payload);
+                writer.try_write_record(record).unwrap();
+            }
+            writer.shutdown().await;
+
+            let records = storage.get_records_since(0, 16).unwrap();
+            assert_eq!(records.len(), payloads.len());
+            // Storage returns newest-first; align by original length.
+            let mut stored = records;
+            stored.sort_by_key(|r| r.payload_length.unwrap_or(usize::MAX));
+            let mut expected_payloads = payloads.clone();
+            expected_payloads.sort_by_key(|p| p.len());
+            for (stored, original) in stored.iter().zip(expected_payloads.iter()) {
+                let mut hasher = Sha256::new();
+                hasher.update(original);
+                let expected = format!("{:x}", hasher.finalize());
+                assert_eq!(
+                    stored.payload_hash.as_deref(),
+                    Some(expected.as_str()),
+                    "retention digest must match original bytes"
+                );
+                assert_eq!(stored.payload_length, Some(original.len()));
+            }
+        }
+    }
+
+    /// Phase 53: `shutdown()` alone drains queued records — no sleep needed.
+    #[tokio::test]
+    async fn test_shutdown_drains_without_sleep() {
+        let storage = test_storage();
+        let writer = HoneypotWriter::new(
+            storage.clone(),
+            StorageWriterConfig {
+                queue_capacity: 256,
+                batch_size: 64,
+                flush_interval_ms: 60_000,
+                payload_retention_mode: PayloadRetentionMode::Full,
+                ..Default::default()
+            },
+        );
+
+        for _ in 0..7 {
+            writer.try_write_record(base_record()).unwrap();
+        }
+
+        writer.shutdown().await;
+
+        let records = storage.get_records_since(0, 16).unwrap();
+        assert_eq!(
+            records.len(),
+            7,
+            "shutdown must drain queued records and flush the final batch"
+        );
+    }
+
+    /// Phase 53: concurrent clones calling shutdown converge on one drain;
+    /// writes racing shutdown fail closed once intake is closed.
+    #[tokio::test]
+    async fn test_concurrent_shutdown_and_racing_write() {
+        let storage = test_storage();
+        let writer = HoneypotWriter::new(
+            storage.clone(),
+            StorageWriterConfig {
+                queue_capacity: 256,
+                batch_size: 64,
+                flush_interval_ms: 60_000,
+                payload_retention_mode: PayloadRetentionMode::Full,
+                ..Default::default()
+            },
+        );
+
+        for _ in 0..4 {
+            writer.try_write_record(base_record()).unwrap();
+        }
+
+        let w2 = writer.clone();
+        let w3 = writer.clone();
+        let (r1, r2, r3) = tokio::join!(writer.shutdown(), w2.shutdown(), w3.shutdown());
+        let _ = (r1, r2, r3);
+
+        // Intake is closed: racing writes fail closed.
+        assert!(
+            w3.try_write_record(base_record()).is_err(),
+            "writes racing shutdown must fail closed after drain"
+        );
+
+        let records = storage.get_records_since(0, 16).unwrap();
+        assert_eq!(records.len(), 4, "concurrent shutdown must still drain all");
+    }
 }

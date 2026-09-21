@@ -63,6 +63,77 @@ where
     BlockRenderFn: FnMut(u16, &str) -> String,
     TarpitRenderFn: FnMut(&str) -> String,
 {
+    maybe_handle_buffered_request_waf_core(
+        target,
+        skip_waf,
+        client_ip,
+        &method_str,
+        &path,
+        http_config,
+        alt_svc,
+        main_config,
+        check_request_full,
+        on_drop,
+        on_log,
+        on_blocked,
+        on_blocked_egress,
+        on_challenged,
+        elapsed_ms,
+        render_block_body,
+        generate_tarpit_html,
+    )
+    .await
+}
+
+/// Phase 51: internal decision core with only the data actually required.
+///
+/// The public wrapper above keeps its compatibility signature (owned
+/// query/header/body/user-agent snapshots) and delegates here. In-crate
+/// callers use this core directly so the request path never constructs the
+/// unused owned snapshots.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn maybe_handle_buffered_request_waf_core<
+    CheckFn,
+    CheckFut,
+    DropFn,
+    LogFn,
+    BlockedFn,
+    BlockedEgressFn,
+    ChallengedFn,
+    ElapsedFn,
+    BlockRenderFn,
+    TarpitRenderFn,
+>(
+    target: RouteTarget,
+    skip_waf: bool,
+    client_ip: std::net::IpAddr,
+    method_str: &str,
+    path: &str,
+    http_config: HttpConfig,
+    alt_svc: Option<String>,
+    main_config: Arc<MainConfig>,
+    check_request_full: CheckFn,
+    on_drop: DropFn,
+    on_log: LogFn,
+    on_blocked: BlockedFn,
+    on_blocked_egress: BlockedEgressFn,
+    on_challenged: ChallengedFn,
+    elapsed_ms: ElapsedFn,
+    render_block_body: BlockRenderFn,
+    generate_tarpit_html: TarpitRenderFn,
+) -> Option<Response<BoxBody<Bytes, Infallible>>>
+where
+    CheckFn: FnOnce() -> CheckFut,
+    CheckFut: Future<Output = WafDecision>,
+    DropFn: FnMut(),
+    LogFn: FnMut(u16, u64),
+    BlockedFn: FnMut(),
+    BlockedEgressFn: FnMut(u64),
+    ChallengedFn: FnMut(u64),
+    ElapsedFn: FnMut() -> u64,
+    BlockRenderFn: FnMut(u16, &str) -> String,
+    TarpitRenderFn: FnMut(&str) -> String,
+{
     let is_serverless_backend = matches!(target.backend_type, BackendType::Serverless);
     let serverless_waf_off = target
         .site_config

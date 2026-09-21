@@ -17,6 +17,15 @@ const JUMBO_POOL_CAP: usize = 32;
 const NUM_SHARDS: usize = 8;
 const TLS_CACHE_SIZE: usize = 16;
 
+/// Phase 54: buffers grown beyond this capacity are freed on drop instead of
+/// retained in thread pools (retained-memory bound).
+const MAX_RETAINED_CAPACITY: usize = JUMBO_BUF_SIZE * 4;
+
+/// Phase 54 contract for `GLOBAL_ALLOCATED_BYTES`: the sum of pool-managed
+/// capacities currently checked out through live `PooledBuf` handles. It is a
+/// soft backpressure indicator consumed by `try_acquire` — not total process
+/// RSS, and not free-list retained capacity (returned buffers are subtracted
+/// at drop/take time).
 static GLOBAL_ALLOCATED_BYTES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static GLOBAL_MEMORY_LIMIT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
@@ -26,6 +35,22 @@ enum BufferTier {
     Medium,
     Large,
     Jumbo,
+}
+
+impl BufferTier {
+    /// Phase 54: reclassify by actual capacity so a buffer grown beyond its
+    /// acquisition tier is never returned to a smaller-tier arena.
+    fn for_capacity(cap: usize) -> BufferTier {
+        if cap <= SMALL_BUF_SIZE {
+            BufferTier::Small
+        } else if cap <= MEDIUM_BUF_SIZE {
+            BufferTier::Medium
+        } else if cap <= LARGE_BUF_SIZE {
+            BufferTier::Large
+        } else {
+            BufferTier::Jumbo
+        }
+    }
 }
 
 struct PoolMetrics {
@@ -110,6 +135,8 @@ impl TierArena {
     fn acquire(&self, requested_size: usize) -> (BytesMut, BufferTier) {
         if let Some(buf) = self.pop() {
             let mut buf = buf;
+            // Phase 54: zero-fill the requested range (see TLS path above).
+            buf.clear();
             buf.resize(requested_size, 0);
             return (buf, self.tier());
         }
@@ -213,6 +240,10 @@ pub struct BufferPool {
     shards: Vec<Shard>,
     metrics: PoolMetrics,
     config: BufferPoolConfig,
+    /// Phase 54: the thread-local `POOL` instance is single-threaded by
+    /// construction and skips shard hashing/fanout (shard 0). The shared
+    /// `GLOBAL_POOL` keeps sharding.
+    local: bool,
 }
 
 impl BufferPool {
@@ -265,7 +296,13 @@ impl Default for BufferPoolConfig {
 }
 
 thread_local! {
-    pub static POOL: BufferPool = BufferPool::new();
+    pub static POOL: BufferPool = BufferPool::new_local();
+}
+
+thread_local! {
+    // Phase 54: per-thread cached shard index for the shared pool, so every
+    // global arena access does not re-hash the thread id.
+    static CACHED_SHARD_INDEX: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
 }
 
 pub static GLOBAL_POOL: std::sync::LazyLock<Arc<BufferPool>> =
@@ -278,11 +315,45 @@ impl BufferPool {
             shards,
             metrics: PoolMetrics::new(),
             config: BufferPoolConfig::default(),
+            local: false,
         }
+    }
+
+    fn new_local() -> Self {
+        let shards = (0..NUM_SHARDS).map(|_| Shard::new()).collect();
+        Self {
+            shards,
+            metrics: PoolMetrics::new(),
+            config: BufferPoolConfig::default(),
+            local: true,
+        }
+    }
+
+    /// Shard selection: thread-local pools always use shard 0 (single-thread
+    /// by construction); the shared pool caches the hashed index per thread.
+    fn shard_index(&self) -> usize {
+        if self.local {
+            return 0;
+        }
+        CACHED_SHARD_INDEX.with(|cached| {
+            if let Some(idx) = cached.get() {
+                return idx;
+            }
+            let idx = Self::get_shard_index();
+            cached.set(Some(idx));
+            idx
+        })
     }
 
     pub fn set_global_limit(limit_bytes: u64) {
         GLOBAL_MEMORY_LIMIT.store(limit_bytes, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Phase 54: current soft-accounted checkout capacity (live `PooledBuf`
+    /// capacities). Test/observability accessor for the documented
+    /// `GLOBAL_ALLOCATED_BYTES` contract.
+    pub fn allocated_bytes() -> u64 {
+        GLOBAL_ALLOCATED_BYTES.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     pub fn acquire(size: usize) -> PooledBuf {
@@ -343,27 +414,26 @@ impl BufferPool {
             BufferTier::Jumbo
         };
 
-        let allocated_size = match tier {
-            BufferTier::Small => self.config.small_buf_size,
-            BufferTier::Medium => self.config.medium_buf_size,
-            BufferTier::Large => self.config.large_buf_size,
-            BufferTier::Jumbo => size, // Jumbo buffers are sized exactly
-        };
-
-        GLOBAL_ALLOCATED_BYTES
-            .fetch_add(allocated_size as u64, std::sync::atomic::Ordering::Relaxed);
-
         let tls_result = TLS_CACHE.with(|cache| {
             if let Some(buf) = cache.pop(tier) {
                 let mut buf = buf;
+                // Phase 54: recycled buffers must be zero-filled for the
+                // requested range. `resize` alone only fills growth beyond
+                // the recycled length, so same-size (or shrinking) reuse
+                // would otherwise expose the previous contents.
+                buf.clear();
                 buf.resize(size, 0);
                 self.metrics.record_acquire(tier, true);
-                return Some(PooledBuf {
+                let mut pooled = PooledBuf {
                     buf: Some(buf),
                     tier,
                     requested_size: size,
-                    allocated_size,
-                });
+                    allocated_size: 0,
+                    global_origin: !self.local,
+                };
+                // Phase 54: track actual recycled capacity, not the tier size.
+                pooled.sync_capacity_accounting();
+                return Some(pooled);
             }
             None
         });
@@ -372,8 +442,7 @@ impl BufferPool {
             return buf;
         }
 
-        let shard_idx = Self::get_shard_index();
-        let shard = &self.shards[shard_idx];
+        let shard = &self.shards[self.shard_index()];
 
         let (buf, actual_tier) = match tier {
             BufferTier::Small => shard.small.acquire(size),
@@ -384,17 +453,19 @@ impl BufferPool {
 
         self.metrics.record_acquire(actual_tier, false);
 
-        PooledBuf {
+        let mut pooled = PooledBuf {
             buf: Some(buf),
             tier: actual_tier,
             requested_size: size,
-            allocated_size,
-        }
+            allocated_size: 0,
+            global_origin: !self.local,
+        };
+        pooled.sync_capacity_accounting();
+        pooled
     }
 
     fn release_to_global(&self, buf: BytesMut, tier: BufferTier) {
-        let shard_idx = Self::get_shard_index();
-        let shard = &self.shards[shard_idx];
+        let shard = &self.shards[self.shard_index()];
         match tier {
             BufferTier::Small => shard.small.release(buf),
             BufferTier::Medium => shard.medium.release(buf),
@@ -534,7 +605,44 @@ pub struct PooledBuf {
     buf: Option<BytesMut>,
     tier: BufferTier,
     requested_size: usize,
+    /// Phase 54: currently tracked checkout capacity for this handle (actual
+    /// `BytesMut` capacity, updated on growth). Subtracted exactly once at
+    /// drop or `take_bytes` time.
     allocated_size: usize,
+    /// Phase 54: which pool this handle was acquired from. Global
+    /// acquisitions spill back to the shared pool; thread-local acquisitions
+    /// reuse the TLS cache first.
+    global_origin: bool,
+}
+
+impl PooledBuf {
+    /// Phase 54: reconcile soft accounting with actual capacity after any
+    /// operation that can change it. Skipped (no atomic traffic) when
+    /// capacity did not actually change. Saturating arithmetic: the counter
+    /// can never underflow/overflow from pool bookkeeping.
+    fn sync_capacity_accounting(&mut self) {
+        if let Some(ref buf) = self.buf {
+            let cap = buf.capacity();
+            // Phase 54: keep the return tier in step with actual capacity so
+            // grown buffers never land in a smaller-tier arena.
+            self.tier = BufferTier::for_capacity(cap);
+            if cap == self.allocated_size {
+                return;
+            }
+            if cap > self.allocated_size {
+                GLOBAL_ALLOCATED_BYTES.fetch_add(
+                    (cap - self.allocated_size) as u64,
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+            } else {
+                GLOBAL_ALLOCATED_BYTES.fetch_sub(
+                    (self.allocated_size - cap) as u64,
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+            }
+            self.allocated_size = cap;
+        }
+    }
 }
 
 impl PooledBuf {
@@ -568,6 +676,8 @@ impl PooledBuf {
         if let Some(ref mut buf) = self.buf {
             buf.resize(new_len, 0);
             self.requested_size = new_len;
+            // Phase 54: growth across tiers updates soft accounting.
+            self.sync_capacity_accounting();
         }
     }
 
@@ -576,6 +686,7 @@ impl PooledBuf {
             let advance_amt = cnt.min(self.requested_size);
             buf.advance(advance_amt);
             self.requested_size = self.requested_size.saturating_sub(advance_amt);
+            self.sync_capacity_accounting();
         }
     }
 
@@ -583,6 +694,7 @@ impl PooledBuf {
         if let Some(ref mut buf) = self.buf {
             buf.truncate(new_len);
             self.requested_size = new_len.min(self.requested_size);
+            self.sync_capacity_accounting();
         }
     }
 
@@ -591,14 +703,30 @@ impl PooledBuf {
             let split_amt = at.min(self.requested_size);
             let result = buf.split_to(split_amt);
             self.requested_size = self.requested_size.saturating_sub(split_amt);
+            // Phase 54: the split-off prefix leaves pool management; the
+            // retained suffix keeps its own capacity accounting.
+            self.sync_capacity_accounting();
             result
         } else {
             BytesMut::new()
         }
     }
 
+    /// Phase 54: ownership leaves the pool wrapper — release soft accounting
+    /// exactly once here so `Drop` (which sees `None`) cannot subtract again.
     pub fn take_bytes(&mut self) -> BytesMut {
-        self.buf.take().unwrap_or_default()
+        match self.buf.take() {
+            Some(buf) => {
+                GLOBAL_ALLOCATED_BYTES.fetch_sub(
+                    self.allocated_size as u64,
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+                self.allocated_size = 0;
+                self.requested_size = 0;
+                buf
+            }
+            None => BytesMut::new(),
+        }
     }
 
     pub fn as_bytes_mut(&mut self) -> Option<&mut BytesMut> {
@@ -622,6 +750,8 @@ impl PooledBuf {
         if let Some(ref mut buf) = self.buf {
             buf.extend_from_slice(data);
             self.requested_size = buf.len();
+            // Phase 54: growth updates soft accounting.
+            self.sync_capacity_accounting();
         }
     }
 
@@ -629,6 +759,7 @@ impl PooledBuf {
         if let Some(ref mut buf) = self.buf {
             buf.put_slice(data);
             self.requested_size = buf.len();
+            self.sync_capacity_accounting();
         }
     }
 }
@@ -638,6 +769,7 @@ impl std::io::Write for PooledBuf {
         if let Some(ref mut buf) = self.buf {
             buf.extend_from_slice(data);
             self.requested_size = buf.len();
+            self.sync_capacity_accounting();
             Ok(data.len())
         } else {
             Ok(0)
@@ -656,13 +788,27 @@ impl Drop for PooledBuf {
                 self.allocated_size as u64,
                 std::sync::atomic::Ordering::Relaxed,
             );
-            TLS_CACHE.with(|cache| {
-                if cache.len(self.tier) < TLS_CACHE_SIZE {
-                    cache.push(buf, self.tier);
-                } else {
-                    POOL.with(|pool| pool.release_to_global(buf, self.tier));
-                }
-            });
+            self.allocated_size = 0;
+            let capacity = buf.capacity();
+            // Phase 54: pathological capacity is freed, never retained in
+            // thread pools (bounds retained memory against transient growth).
+            if capacity > MAX_RETAINED_CAPACITY {
+                return;
+            }
+            // Phase 54: reclassify by actual capacity so grown buffers never
+            // land in a smaller-tier arena.
+            let tier = self.tier;
+            if self.global_origin {
+                GLOBAL_POOL.release_to_global(buf, tier);
+            } else {
+                TLS_CACHE.with(|cache| {
+                    if cache.len(tier) < TLS_CACHE_SIZE {
+                        cache.push(buf, tier);
+                    } else {
+                        POOL.with(|pool| pool.release_to_global(buf, tier));
+                    }
+                });
+            }
         }
     }
 }
@@ -1178,6 +1324,123 @@ mod tests {
         }
 
         assert_eq!(live_count.load(AtomicOrdering::Relaxed), 0);
+    }
+
+    /// Phase 54: `acquire(N)` is a writable-length API, NOT capacity-only.
+    /// The first N bytes are zeroed logical bytes; appending after acquire
+    /// without `resize(0)` produces a zero prefix (see the corrected
+    /// acquire-then-append call sites).
+    #[test]
+    fn test_acquire_semantics_are_length_not_capacity() {
+        for size in [0usize, 1, 100, SMALL_BUF_SIZE, MEDIUM_BUF_SIZE + 7] {
+            let buf = BufferPool::acquire(size);
+            assert_eq!(buf.len(), size, "acquire({size}) logical length");
+            assert_eq!(buf.is_empty(), size == 0);
+            assert!(
+                buf.as_slice().iter().all(|b| *b == 0),
+                "acquire({size}) must be zero-initialized"
+            );
+            assert!(buf.capacity() >= size);
+        }
+    }
+
+    /// Phase 54: recycled buffers are zero-filled even when reacquired at
+    /// the same size (regression test — TLS reuse previously returned the
+    /// previous contents because `resize` only fills growth).
+    #[test]
+    fn test_recycled_buffer_is_zeroed_same_size() {
+        for size in [64usize, 1024, 32 * 1024] {
+            {
+                let mut buf = BufferPool::acquire(size);
+                for b in buf.as_mut_slice().iter_mut() {
+                    *b = 0xAB;
+                }
+            }
+            let buf = BufferPool::acquire(size);
+            assert_eq!(buf.len(), size);
+            assert!(
+                buf.as_slice().iter().all(|b| *b == 0),
+                "reacquired buffer of size {size} must be zero-initialized"
+            );
+        }
+    }
+
+    /// Phase 54: shrinking reuse is also zero-clean.
+    #[test]
+    fn test_recycled_buffer_is_zeroed_shrinking() {
+        {
+            let mut buf = BufferPool::acquire(2048);
+            for b in buf.as_mut_slice().iter_mut() {
+                *b = 0xCD;
+            }
+        }
+        let buf = BufferPool::acquire(512);
+        assert!(
+            buf.as_slice().iter().all(|b| *b == 0),
+            "shrinking reuse must be zero-initialized"
+        );
+    }
+
+    /// Phase 54: `resize(0)` empties the logical buffer while retaining
+    /// reusable capacity; `extend_from_slice` appends after the logical end.
+    #[test]
+    fn test_resize_zero_then_append_has_no_prefix() {
+        let mut buf = BufferPool::acquire(1024);
+        let cap = buf.capacity();
+        buf.resize(0);
+        assert_eq!(buf.len(), 0);
+        assert!(buf.is_empty());
+        assert_eq!(buf.capacity(), cap, "resize(0) retains capacity");
+        buf.extend_from_slice(b"hello");
+        assert_eq!(buf.as_slice(), b"hello");
+        assert_eq!(buf.len(), 5);
+    }
+
+    /// Phase 54: `clear()` zeroizes in place and RETAINS logical length
+    /// (pinned behavior — it is not an emptying operation). Callers that
+    /// intend an empty buffer must use `resize(0)`.
+    #[test]
+    fn test_clear_keeps_logical_length() {
+        let mut buf = BufferPool::acquire(4);
+        buf.as_mut_slice().copy_from_slice(b"abcd");
+        buf.clear();
+        assert_eq!(buf.len(), 4, "clear() retains logical length");
+        assert_eq!(buf.as_slice(), &[0, 0, 0, 0], "clear() zeroizes");
+    }
+
+    /// Phase 54: split/advance/truncate keep length accounting consistent.
+    #[test]
+    fn test_split_advance_truncate_consistency() {
+        let mut buf = BufferPool::acquire(10);
+        buf.as_mut_slice().copy_from_slice(b"0123456789");
+
+        let part = buf.split_to(4);
+        assert_eq!(&part[..], b"0123");
+        assert_eq!(buf.len(), 6);
+        assert_eq!(buf.as_slice(), b"456789");
+
+        buf.advance(2);
+        assert_eq!(buf.len(), 4);
+        assert_eq!(buf.as_slice(), b"6789");
+
+        buf.truncate(2);
+        assert_eq!(buf.len(), 2);
+        assert_eq!(buf.as_slice(), b"67");
+    }
+
+    /// Phase 54: a buffer grown beyond its acquisition tier must not be
+    /// returned to a smaller-tier arena.
+    #[test]
+    fn test_grown_buffer_not_returned_to_small_tier() {
+        let small_before = BufferPool::stats().small_available;
+        let mut buf = BufferPool::acquire(512);
+        buf.resize(100 * 1024);
+        drop(buf);
+        let small_after = BufferPool::stats().small_available;
+        assert!(
+            small_after <= small_before + 1,
+            "grown buffer must not land in the small tier"
+        );
     }
 
     #[test]

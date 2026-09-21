@@ -127,8 +127,11 @@ impl InputNormalizer {
                         let ni = self.normalize_internal(&input_str, &mut buffer, &mut chars);
                         let normalized_data = match ni.normalized {
                             NormalizedData::Borrowed(s) => {
+                                // Phase 54: `acquire(N)` yields N logical
+                                // bytes — copy into them instead of appending
+                                // (append would leave a zero prefix).
                                 let mut pooled = BufferPool::acquire(s.len());
-                                pooled.extend_from_slice(s.as_bytes());
+                                pooled.as_mut_slice().copy_from_slice(s.as_bytes());
                                 NormalizedData::pooled(pooled)
                             }
                             NormalizedData::Pooled { buf, lossy } => {
@@ -727,8 +730,11 @@ impl<'a> Clone for NormalizedData<'a> {
             Self::Borrowed(s) => Self::Borrowed(s),
             Self::Owned(s) => Self::Owned(s.clone()),
             Self::Pooled { buf, lossy } => {
+                // Phase 54: byte-identical clone with the same logical
+                // length — copy into the acquired bytes (append would leave
+                // a zero prefix).
                 let mut new_buf = BufferPool::acquire(buf.len());
-                new_buf.extend_from_slice(buf.as_slice());
+                new_buf.as_mut_slice().copy_from_slice(buf.as_slice());
                 let new_lossy = OnceLock::new();
                 if let Some(value) = lossy.get() {
                     let _ = new_lossy.set(value.clone());
@@ -918,9 +924,11 @@ impl<'a> NormalizedInputs<'a> {
             let ni = normalizer.normalize(s.as_ref());
             let normalized_data = match ni.normalized {
                 NormalizedData::Borrowed(s) => {
+                    // Phase 54: copy into the acquired logical bytes.
+                    // (`clear()` zeroizes in place and keeps length, so
+                    // clear-then-append would duplicate the content.)
                     let mut pooled = BufferPool::acquire(s.len());
-                    pooled.clear();
-                    pooled.extend_from_slice(s.as_bytes());
+                    pooled.as_mut_slice().copy_from_slice(s.as_bytes());
                     NormalizedData::pooled(pooled)
                 }
                 NormalizedData::Pooled { buf, lossy } => NormalizedData::Pooled { buf, lossy },
@@ -1094,5 +1102,61 @@ mod tests {
         let result = normalizer.normalize(input);
         // Should terminate and produce some decoded result
         assert!(!result.as_str().is_empty());
+    }
+
+    /// Phase 54: pooled clones are byte-identical with the same logical
+    /// length — no zero prefix — across NUL-adjacent, overlong, and lossy
+    /// UTF-8 representations.
+    #[test]
+    fn test_pooled_clone_is_byte_identical() {
+        let normalizer = InputNormalizer::new();
+        let inputs = [
+            "%3Cscript%3Ealert(1)",
+            "a%C0%AFb",
+            "%00abc",
+            "a%FFb",
+            "user%3Dadmin%26pass%3Dsecret",
+            "%C0%BCscript%C0%BE",
+        ];
+        for input in inputs {
+            let orig = normalizer.normalize(input);
+            let cloned_data = orig.normalized.clone();
+            // Re-wrap to compare through the same public surface.
+            let orig_str = orig.as_str().to_string();
+            let cloned_str = match &cloned_data {
+                NormalizedData::Borrowed(s) => s.to_string(),
+                NormalizedData::Owned(s) => s.clone(),
+                NormalizedData::Pooled { buf, .. } => {
+                    String::from_utf8_lossy(buf.as_slice()).into_owned()
+                }
+            };
+            assert_eq!(
+                cloned_str, orig_str,
+                "pooled clone must be byte-identical for {input:?}"
+            );
+            // No zero-prefix: first byte of a non-empty clone matches.
+            if !orig_str.is_empty() {
+                let first = match &cloned_data {
+                    NormalizedData::Borrowed(s) => s.as_bytes()[0],
+                    NormalizedData::Owned(s) => s.as_bytes()[0],
+                    NormalizedData::Pooled { buf, .. } => buf.as_slice()[0],
+                };
+                assert_eq!(
+                    first,
+                    orig_str.as_bytes()[0],
+                    "clone must not carry a zero prefix for {input:?}"
+                );
+            }
+        }
+    }
+
+    /// Phase 54: borrowed-to-pooled conversion contains exactly the intended
+    /// input (fragment path).
+    #[test]
+    fn test_fragment_conversion_has_no_prefix() {
+        let normalizer = InputNormalizer::new();
+        let ni = normalizer.normalize_fragments(&[b"<scr", b"ipt>alert(1)</scr", b"ipt>"]);
+        assert_eq!(ni.as_str(), "<script>alert(1)</script>");
+        assert!(!ni.as_str().starts_with('\0'));
     }
 }

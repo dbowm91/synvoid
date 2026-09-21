@@ -20,7 +20,7 @@ use synvoid_proxy::{BackendType, Router};
 use crate::backend_dispatch::{
     handle_pass_backend_dispatch, BackendDispatchContext, BackendDispatchMetrics,
 };
-use crate::buffered_request_waf_dispatch::maybe_handle_buffered_request_waf;
+use crate::buffered_request_waf_dispatch::maybe_handle_buffered_request_waf_core;
 use crate::http_request_flow::RequestLogFn;
 use crate::request_preparation::PreparedRequest;
 use crate::upload_validation_dispatch::UploadValidationWaf;
@@ -217,15 +217,16 @@ where
     let target_for_waf = target.clone();
     let parts_for_waf = parts.clone();
     let query_string = parts_for_waf.uri.query();
-    let headers_for_waf = parts_for_waf.headers.clone();
-    let headers_for_waf_for_check = headers_for_waf.clone();
+    // Phase 51: only the header snapshot consumed by the WAF check closure is
+    // built. The compatibility-only snapshots (second HeaderMap clone, body
+    // Bytes clone, query/user-agent Strings for the public dispatch wrapper)
+    // are gone: the canonical path calls the internal decision core directly.
+    let headers_for_waf_for_check = parts_for_waf.headers.clone();
     let site_bot_config_for_waf = target_for_waf.site_config.bot.clone();
-    let site_id_for_egress = site_id.clone();
     let site_id_for_log = site_id.clone();
     let method_str_for_log = method_str.clone();
     let path_for_log = path.clone();
     let user_agent_for_log = user_agent.clone();
-    let user_agent_for_waf_check = user_agent.clone();
 
     let req_metrics = metrics.as_ref().map(|m| RequestMetricsAdapter {
         site_id: site_id.clone(),
@@ -249,17 +250,15 @@ where
     let query_string_for_closure = query_string.map(|s| s.to_string());
     let ja4_for_closure = ja4_hash.clone();
     let waf_for_closure = Arc::clone(&waf);
-    if let Some(response) = maybe_handle_buffered_request_waf(
+    // Phase 51: call the internal decision core directly. `method_str`/`path`
+    // borrow (debug logging only); no owned query/header/body/user-agent
+    // snapshots are constructed for the compatibility wrapper.
+    if let Some(response) = maybe_handle_buffered_request_waf_core(
         target_for_waf,
         skip_waf,
-        site_id.clone(),
         client_ip,
-        method_str.clone(),
-        path.clone(),
-        query_string.map(|s| s.to_string()),
-        headers_for_waf,
-        body_slice.as_ref().map(|arc| arc.as_ref().clone()),
-        user_agent_for_waf_check,
+        &method_str,
+        &path,
         http_config.clone(),
         alt_svc.clone(),
         Arc::clone(&main_config),
@@ -327,22 +326,13 @@ where
             }
         },
         {
+            // Phase 52: single egress write per blocked response. The adapter
+            // already records global + per-site egress; the previous direct
+            // `bandwidth` writes below double-counted every blocked byte.
             let req_metrics = req_metrics.clone();
-            let metrics = metrics.clone();
-            let site_id_for_egress = site_id_for_egress.clone();
             move |body_len| {
                 if let Some(ref rm) = req_metrics {
                     rm.record_egress(body_len, EgressDirection::Blocked);
-                }
-                if let Some(metrics) = &metrics {
-                    metrics.bandwidth.record_egress(
-                        body_len,
-                        BandwidthProtocol::Http,
-                        EgressDirection::Blocked,
-                    );
-                    metrics
-                        .bandwidth
-                        .record_site_egress(&site_id_for_egress, body_len);
                 }
             }
         },

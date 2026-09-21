@@ -118,7 +118,10 @@ Comprehensive attack detection with 13 specialized detectors.
 **Architecture:**
 - **Fast-path pre-screening**: RegexSet with 50+ patterns for quick rejection
 - **Input normalization**: Multi-pass URL decoding, HTML entity decoding, Unicode normalization
-- **Parallel detection**: Heavy detectors run concurrently via `JoinSet`
+- **Inline detection** (Phase 50): synchronous detectors evaluate inline on
+  borrowed inputs via `check_request_sync` — no per-request `JoinSet` fanout,
+  no `Arc` snapshots. The unified worker already runs requests concurrently,
+  so intra-request task fanout was pure scheduler overhead.
 - **Anomaly scoring**: Optional cumulative scoring across detectors
 - **Streaming support**: `StreamingWafCore` for chunk-based body inspection
 
@@ -654,12 +657,12 @@ Worker admission (block-store check, before WAF)
        │
        ▼
 ┌──────────────────────────┐
-│  Parallel Attack Detection │
+│  Inline Attack Detection │
 │  ┌─────────────────────┐ │
 │  │ Fast-path RegexSet  │ │
 │  └─────────────────────┘ │
 │  ┌─────────────────────┐ │
-│  │ SQLi/XSS/PathTr...  │ │ (parallel via JoinSet)
+│  │ SQLi/XSS/PathTr...  │ │ (sequential, borrowed inputs — Phase 50)
 │  └─────────────────────┘ │
 │  ┌─────────────────────┐ │
 │  │ Header Validation   │ │
@@ -676,7 +679,10 @@ Worker admission (block-store check, before WAF)
 
 1. **Atomic-free hot path**: `RequestServices` threaded through context
 2. **Fast-path pre-screening**: 50+ regex patterns reject non-threatening requests quickly
-3. **Parallel detection**: Heavy detectors run concurrently via `JoinSet`
+3. **Inline detection** (Phase 50): borrowed synchronous evaluation replaced
+   per-request `JoinSet` fanout; small-request latency improved ~4-5× with
+   better concurrent tail behavior (see
+   `architecture/performance_optimization_closeout.md`)
 4. **Thread-local buffers**: Normalizer uses thread-local buffers to avoid allocation
 5. **Streaming body inspection**: Process body in chunks without full buffering
 

@@ -87,8 +87,15 @@ impl PortHoneypotRunner {
 
         let storage = self.storage.clone();
         tokio::spawn(async move {
-            storage.prune_old_records().ok();
-            storage.enforce_max_records().ok();
+            // Phase 53: synchronous SQLite maintenance runs on a blocking
+            // thread, never on a Tokio core worker.
+            let storage = storage.clone();
+            tokio::task::spawn_blocking(move || {
+                storage.prune_old_records().ok();
+                storage.enforce_max_records().ok();
+            })
+            .await
+            .ok();
         });
 
         let prune_storage = self.storage.clone();
@@ -96,11 +103,21 @@ impl PortHoneypotRunner {
             let mut interval = time::interval(Duration::from_secs(3600));
             loop {
                 interval.tick().await;
-                if let Err(e) = prune_storage.prune_old_records() {
-                    tracing::error!("Failed to prune honeypot records: {}", e);
-                }
-                if let Err(e) = prune_storage.enforce_max_records() {
-                    tracing::error!("Failed to enforce max records: {}", e);
+                // Phase 53: each maintenance cycle completes before the next
+                // is scheduled (single task, awaited blocking work) so cycles
+                // can never overlap.
+                let prune_storage = prune_storage.clone();
+                if let Err(join_err) = tokio::task::spawn_blocking(move || {
+                    if let Err(e) = prune_storage.prune_old_records() {
+                        tracing::error!("Failed to prune honeypot records: {}", e);
+                    }
+                    if let Err(e) = prune_storage.enforce_max_records() {
+                        tracing::error!("Failed to enforce max records: {}", e);
+                    }
+                })
+                .await
+                {
+                    tracing::error!("Honeypot maintenance task failed: {}", join_err);
                 }
             }
         });

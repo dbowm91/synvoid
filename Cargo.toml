@@ -358,6 +358,23 @@ harness = false
 name = "bench_attack_detection_wave10"
 harness = false
 
+# Phase 49: performance-campaign benchmark truth (not routine CI).
+[[bench]]
+name = "bench_upstream_selection"
+harness = false
+
+[[bench]]
+name = "bench_metrics_hotpath"
+harness = false
+
+[[bench]]
+name = "bench_buffer_pool"
+harness = false
+
+[[bench]]
+name = "bench_honeypot_persistence"
+harness = false
+
 # Phase 25: feature-specific integration targets. These tests import mesh-gated
 # items at top level and cannot build minimally; `required-features` keeps
 # `cargo test --no-default-features` honest instead of failing to compile.

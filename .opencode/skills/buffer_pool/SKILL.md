@@ -9,91 +9,77 @@ This skill documents the buffer pool implementation in the SynVoid codebase.
 
 ## Overview
 
-The buffer pool (`crates/synvoid-utils/src/buffer/pool.rs`) provides high-performance buffer allocation using sharded mutex backing instead of lock-free CAS (to eliminate ABA hazards).
+The buffer pool (`crates/synvoid-utils/src/buffer/pool.rs`) provides
+high-performance buffer allocation using a thread-local cache plus sharded
+mutex arenas (to eliminate ABA hazards of the old TreiberStack).
 
 ## Architecture
 
 ```
-BufferPool (8 shards)
-├── Shard[0-7] (parking_lot::Mutex<Vec<BytesMut>>)
-│
-├── TierArena (small: 4KB)     — capacity 512
-├── TierArena (medium: 64KB)  — capacity 256
-├── TierArena (large: 256KB)  — capacity 64
-└── TierArena (jumbo: 1MB)   — capacity 32
+thread TLS_CACHE (per tier, 16 entries, RefCell<Vec<BytesMut>>)
+thread-local POOL (BufferPool, single-shard fast path, Phase 54)
+shared GLOBAL_POOL (BufferPool, 8 hashed shards, cached index per thread)
+└── Shard (parking_lot::Mutex<Vec<BytesMut>> per tier)
+    ├── small: 4KB   — arena cap 512 total
+    ├── medium: 64KB — arena cap 256 total
+    ├── large: 256KB — arena cap 64 total
+    └── jumbo: 512KB — arena cap 32 total
 ```
 
-## Core API
+## Core API (unchanged by the performance campaign)
 
 ```rust
-pub struct BufferPool {
-    shards: Vec<ShardedArena>,  // 8 shards per tier
-}
-
 impl BufferPool {
-    /// Acquire from shard (uses round-robin to reduce contention)
-    pub fn acquire(&self, size: usize) -> PooledBuf;
-
-    /// Acquire specific tier directly
-    pub fn acquire_tier(&self, tier: BufferTier) -> PooledBuf;
+    pub fn acquire(size: usize) -> PooledBuf;         // thread-local path
+    pub fn acquire_global(size: usize) -> PooledBuf;  // shared path
+    pub fn allocated_bytes() -> u64;                  // soft-accounted checkout total (Phase 54)
 }
 
-/// RAII wrapper - returns buffer to pool on drop
-pub struct PooledBuf {
-    inner: BytesMut,
-}
-
-impl Drop for PooledBuf {
-    fn drop(&mut self) {
-        // Returns buffer to appropriate shard
-    }
-}
+pub struct PooledBuf { /* private fields */ }  // RAII: returns buffer to pool on drop
 ```
+
+## Non-Negotiables (Phase 54 contracts)
+
+1. **`acquire(N)` yields N logical zeroed bytes — it is NOT capacity-only.**
+   Never `acquire(n)` + `extend_from_slice(data)` to mean "empty with room
+   for n". Either copy into `as_mut_slice()`, or `resize(0)` first and then
+   append. Appending to a nonzero acquire leaves a zero prefix.
+2. **`clear()` zeroizes in place and KEEPS logical length.** It is not an
+   emptying operation. To empty a buffer for refill, use `resize(0)`.
+3. **Recycled buffers are zero-filled** (`test_recycled_buffer_is_zeroed_*`).
+   Do not "optimize" away the zero-fill on the TLS/arena pop paths.
+4. **Do not retain pathological capacity**: buffers grown past 2 MiB are
+   freed on drop, never pooled. Grown buffers re-tier by actual capacity.
+5. **`take_bytes` releases accounting exactly once**; `Drop` after `take`
+   must not subtract again. Growth (`resize`/`extend`/`put`/`Write`)
+   updates the soft counter; shrink paths reconcile it.
+6. **Origin rule**: thread-local acquisitions reuse TLS first; global
+   acquisitions spill back to the shared pool. Do not route global buffers
+   into thread-local retention.
+7. **Don't hold PooledBuf across await points** — the buffer may be returned
+   to the pool while you're suspended.
+8. **Don't use after drop** — buffers are immediately reusable once returned.
 
 ## Sharded Mutex Design
 
 **Why mutex sharding instead of lock-free?**
 
-The previous TreiberStack implementation had an ABA vulnerability:
-1. Thread A reads pointer P to node N
-2. Thread B pops N, frees it, pushes new node M at same address P
-3. Thread A's CAS succeeds incorrectly, assuming stack state unchanged
-
-By using `parking_lot::Mutex<Vec<BytesMut>>` per shard:
-- Eliminates ABA completely (no raw pointer manipulation)
-- Reduces contention (8 shards vs single global lock)
-- `parking_lot` is faster than `std::sync::Mutex` (no syscall in non-contended case)
-
-## ThreadLocalCache
-
-**Location**: `crates/synvoid-utils/src/buffer/pool.rs`
-
-Uses `RefCell<Vec<BytesMut>>` for interior mutability:
-- `thread_local!` guarantees single-threaded access
-- `RefCell` provides compile-time borrow checking (zero overhead in release)
-- 16 entry cache per thread per tier
+The previous TreiberStack implementation had an ABA vulnerability. By using
+`parking_lot::Mutex<Vec<BytesMut>>` per shard, the pool eliminates ABA
+(no raw pointer manipulation) and reduces contention. `parking_lot` is
+faster than `std::sync::Mutex` (no syscall in the non-contended case). The
+thread-local `POOL` additionally skips shard hashing (shard 0, single-thread
+by construction); the shared pool caches the hashed shard index per thread.
 
 ## Safety
 
 The module has `#[deny(unsafe_code)]` - no unsafe blocks remain.
 
-## Performance Characteristics
-
-| Operation | Complexity |
-|-----------|------------|
-| TLS cache hit | O(1) |
-| TLS cache miss → shard | O(1) lock acquisition |
-| Shard lock contention | Minimized by 8 shards |
-| Global pool empty | O(n) allocate (amortized O(1)) |
-| Release to TLS | O(1) |
-| TLS full → shard | O(1) lock acquisition |
-
-## Anti-Patterns to Avoid
-
-1. **Don't hold PooledBuf across await points** — the buffer may be returned to the pool while you're suspended
-2. **Don't use after drop** — buffers are immediately reusable once returned
-3. **Don't mix with other allocators** — the pool expects buffers it allocated
-
 ## Testing
 
-Run with: `cargo test --lib buffer`
+- Unit: `cargo test -p synvoid-utils --lib buffer` (contract tests pin
+  length/clear/resize/split/advance/truncate semantics).
+- Accounting isolation: `cargo test -p synvoid-utils --test pool_accounting`
+  (exact-counter tests live in their own binary because the counter is
+  process-global; they serialize on a static mutex).
+- Microbenchmarks (not routine CI): `cargo bench --bench bench_buffer_pool`.

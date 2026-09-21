@@ -71,6 +71,10 @@ Honeypot session → HoneypotIntelExtractor
 - **Sync `respond()` never calls `block_on`** — async only via `respond_async()`
 - **AI system prompts enforce containment** — `[SYSTEM — HONEYPOT SIMULATION]` header
 - **Circuit breaker**: 3 failures → 60s cooldown (prevents AI cost runaway)
+- **No blocking SQLite on Tokio workers** (Phase 53): batch flushes and
+  prune/maintenance run on bounded `spawn_blocking` (one flush in flight per
+  writer); `HoneypotWriter::shutdown()` drains queued records and waits for
+  the writer task; retention hashing never clones the payload
 
 ## Configuration Defaults
 ```toml

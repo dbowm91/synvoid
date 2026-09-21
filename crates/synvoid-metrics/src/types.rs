@@ -533,7 +533,21 @@ impl WorkerMetrics {
     const MAX_PER_SITE_ENTRIES: usize = 10000;
 
     pub fn record_site_request_start(&self, site_id: &str) -> u64 {
+        // Phase 52: borrowed fast path for the common existing-site hit. No
+        // owned-key allocation and no capacity/eviction work unless the site
+        // is actually absent.
+        {
+            let sites = self.per_site.lock();
+            if let Some(site) = sites.get(site_id) {
+                return site.record_request_start();
+            }
+        }
+        // Cold path: insertion pressure only. Eviction runs here, never on a
+        // hot hit, and an owned key is allocated only for the insert.
         let mut sites = self.per_site.lock();
+        if let Some(site) = sites.get(site_id) {
+            return site.record_request_start();
+        }
         if sites.len() >= Self::MAX_PER_SITE_ENTRIES {
             sites.retain(|_, v| v.current_concurrent.load(Ordering::Relaxed) > 0);
         }
@@ -729,5 +743,73 @@ impl CpuWorkerMetrics {
         } else {
             0.0
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Phase 52: repeated hot-key accounting must not allocate a new key and
+    /// must not run eviction that removes unrelated idle entries.
+    #[test]
+    fn existing_site_start_creates_no_key_and_evicts_nothing() {
+        let metrics = WorkerMetrics::new();
+        // Seed one hot site and one idle site.
+        metrics.record_site_request_start("hot-site");
+        metrics.record_site_request_start("idle-site");
+        metrics.record_site_request_end("idle-site", 1);
+        let len_before = metrics.per_site.lock().len();
+
+        for _ in 0..100 {
+            metrics.record_site_request_start("hot-site");
+        }
+
+        let sites = metrics.per_site.lock();
+        assert_eq!(
+            sites.len(),
+            len_before,
+            "hot-key accounting must not create keys"
+        );
+        assert!(
+            sites.contains_key("idle-site"),
+            "hot-key accounting must not evict unrelated idle entries"
+        );
+        assert!(
+            sites.contains_key("hot-site"),
+            "hot site must still be present"
+        );
+    }
+
+    /// Phase 52: one logical blocked-egress event increments each exported
+    /// egress counter exactly once. (The postlude previously wrote global +
+    /// per-site egress twice per blocked response: once via the adapter and
+    /// once directly. The adapter path below is the single retained write.)
+    #[test]
+    fn single_blocked_egress_event_counts_once() {
+        use crate::bandwidth::{BandwidthProtocol, EgressDirection};
+
+        let metrics = WorkerMetrics::new();
+        metrics.record_site_request_start("egress-site");
+
+        let bytes = 1024u64;
+        metrics
+            .bandwidth
+            .record_egress(bytes, BandwidthProtocol::Http, EgressDirection::Blocked);
+        metrics.bandwidth.record_site_egress("egress-site", bytes);
+
+        assert_eq!(
+            metrics.bandwidth.get_total_bytes_sent(),
+            bytes,
+            "global egress must count the event exactly once"
+        );
+        let per_site = metrics.bandwidth.get_per_site();
+        let site = per_site
+            .get("egress-site")
+            .expect("site egress must be recorded");
+        assert_eq!(
+            site.bytes_sent, bytes,
+            "per-site egress must count the event exactly once"
+        );
     }
 }
