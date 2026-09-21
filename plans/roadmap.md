@@ -1,6 +1,6 @@
 # SynVoid Architecture Hardening Roadmap
 
-Status: Tracks 1-3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) is complete (see `architecture/performance_optimization_closeout.md`).
+Status: Tracks 1-3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) is complete, with a narrow Phase 56 corrective runtime/evidence closure now active.
 
 Scope: this roadmap covers architecture hardening, trust-boundary closure, verification, release readiness, post-hardening cleanup, and the architecture-convergence work required before another broad feature-expansion pass.
 
@@ -313,3 +313,27 @@ Detailed plans:
 
 Campaign constraints: no detector/capability removal for benchmark wins; no public signature/type churn solely for optimization; no load-balancing policy changes; no metric-name/payload regressions; no unbounded blocking/offload queues; no buffer-pool public semantic break. Phase 49 evidence gates production refactors, and Phase 55 owns final same-host before/after evidence and planning closeout.
 
+## Phase 56 Corrective Follow-up: Performance Runtime and Evidence Closure — Active
+
+Status: active corrective handoff.
+
+Detailed plan:
+`plans/phase_56_performance_campaign_corrective_runtime_and_evidence_closure.md`.
+
+Baseline: `92f606b95ee9bb55c5d61115de04e70cebdfe288`.
+
+This is a narrow corrective pass after the completed Phase 49-55 performance
+campaign. It does not reopen the performance architecture. It owns:
+
+- race-free/stateful `HoneypotWriter::shutdown()` completion across clones;
+- runner-owned honeypot maintenance with no initial overlap or detached
+  periodic task after shutdown;
+- strict `TeeBody` enforcement of the bytes reserved from
+  `GlobalCacheGovernor`, with exact-once release on cache abandonment;
+- immutable benchmark/provenance requalification and host/target correction;
+- final corrective closeout evidence.
+
+The known isolated 10 KiB WAF latency tradeoff remains an explicit measured
+residual unless new event-loop evidence justifies a separate WAF scheduling
+plan. Phase 56 must not broaden into detector, buffer-pool, upstream-routing,
+or public-API redesign.
