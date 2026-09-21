@@ -73,8 +73,13 @@ Honeypot session → HoneypotIntelExtractor
 - **Circuit breaker**: 3 failures → 60s cooldown (prevents AI cost runaway)
 - **No blocking SQLite on Tokio workers** (Phase 53): batch flushes and
   prune/maintenance run on bounded `spawn_blocking` (one flush in flight per
-  writer); `HoneypotWriter::shutdown()` drains queued records and waits for
-  the writer task; retention hashing never clones the payload
+  writer); retention hashing never clones the payload
+- **Stateful shutdown + owned maintenance** (Phase 56): `HoneypotWriter::shutdown()`
+  completes via `watch<bool>` (no lost wakeup; late callers return immediately;
+  all clones converge after the same drain); runner owns exactly one maintenance
+  task (initial pass once, hourly `sleep` cadence, joined by `run()` — never
+  detached after shutdown). See
+  `architecture/performance_optimization_corrective_closeout.md` §3
 
 ## Configuration Defaults
 ```toml

@@ -2,6 +2,12 @@
 
 Status: Phase 49 evidence record. Campaign roadmap: `plans/performance_optimization_roadmap.md`.
 
+> Phase 56 addendum: this document's `015e790d` head does not contain the
+> harness described here (4 new benches + 2 repaired WAF benches landed in
+> `892c2dd3`). For immutable requalification, host/target separation, and
+> which rows are commit-reproducible vs historical, see
+> `architecture/performance_optimization_corrective_closeout.md`.
+
 Production code changed in this phase: exactly one correctness prerequisite
 (`crates/synvoid-plugin-runtime/src/wasm_metrics.rs` — consolidated WASM
 telemetry registry + `get_all_wasm_metrics` self-deadlock fix). The deadlock

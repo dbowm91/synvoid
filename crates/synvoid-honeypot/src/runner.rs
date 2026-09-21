@@ -73,6 +73,68 @@ impl PortHoneypotRunner {
         *self.running.read()
     }
 
+    /// Hourly SQLite maintenance interval for the runner-owned task.
+    pub const MAINTENANCE_INTERVAL: Duration = Duration::from_secs(3600);
+
+    /// Single bounded blocking maintenance operation. Synchronous SQLite
+    /// work runs on `spawn_blocking`, never on a Tokio core worker.
+    async fn run_storage_maintenance(storage: Arc<HoneypotStorage>) {
+        let result = tokio::task::spawn_blocking(move || {
+            if let Err(e) = storage.prune_old_records() {
+                tracing::error!("Failed to prune honeypot records: {}", e);
+            }
+            if let Err(e) = storage.enforce_max_records() {
+                tracing::error!("Failed to enforce max records: {}", e);
+            }
+        })
+        .await;
+        if let Err(join_err) = result {
+            tracing::error!("Honeypot maintenance task failed: {}", join_err);
+        }
+    }
+
+    /// Lifecycle-owned maintenance loop shared by production and tests.
+    ///
+    /// Phase 56: exactly one initial maintenance pass runs, then each cycle
+    /// awaits one bounded blocking operation before the next wait, so at most
+    /// one SQLite maintenance operation is ever in flight and cycles can
+    /// never overlap. The loop exits on the shutdown receiver without
+    /// starting a new cycle.
+    async fn maintenance_loop<F, Fut>(
+        mut shutdown_rx: broadcast::Receiver<()>,
+        interval: Duration,
+        mut operation: F,
+    ) where
+        F: FnMut() -> Fut,
+        Fut: std::future::Future<Output = ()>,
+    {
+        operation().await;
+        loop {
+            tokio::select! {
+                _ = time::sleep(interval) => {
+                    operation().await;
+                }
+                _ = shutdown_rx.recv() => {
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Production maintenance task: initial prune/max-record pass once, then
+    /// one hourly cycle. The `sleep`-based wait avoids the immediate second
+    /// tick of `interval()`.
+    async fn maintenance_task(
+        storage: Arc<HoneypotStorage>,
+        shutdown_rx: broadcast::Receiver<()>,
+        interval: Duration,
+    ) {
+        Self::maintenance_loop(shutdown_rx, interval, || async {
+            Self::run_storage_maintenance(storage.clone()).await;
+        })
+        .await;
+    }
+
     pub async fn run(self: &Arc<Self>) {
         {
             let mut running = self.running.write();
@@ -83,43 +145,17 @@ impl PortHoneypotRunner {
             *running = true;
         }
 
-        let _shutdown_rx = self.shutdown_tx.subscribe();
-
-        let storage = self.storage.clone();
-        tokio::spawn(async move {
-            // Phase 53: synchronous SQLite maintenance runs on a blocking
-            // thread, never on a Tokio core worker.
-            let storage = storage.clone();
-            tokio::task::spawn_blocking(move || {
-                storage.prune_old_records().ok();
-                storage.enforce_max_records().ok();
-            })
-            .await
-            .ok();
-        });
-
-        let prune_storage = self.storage.clone();
-        tokio::spawn(async move {
-            let mut interval = time::interval(Duration::from_secs(3600));
-            loop {
-                interval.tick().await;
-                // Phase 53: each maintenance cycle completes before the next
-                // is scheduled (single task, awaited blocking work) so cycles
-                // can never overlap.
-                let prune_storage = prune_storage.clone();
-                if let Err(join_err) = tokio::task::spawn_blocking(move || {
-                    if let Err(e) = prune_storage.prune_old_records() {
-                        tracing::error!("Failed to prune honeypot records: {}", e);
-                    }
-                    if let Err(e) = prune_storage.enforce_max_records() {
-                        tracing::error!("Failed to enforce max records: {}", e);
-                    }
-                })
-                .await
-                {
-                    tracing::error!("Honeypot maintenance task failed: {}", join_err);
-                }
-            }
+        // Phase 56: subscribe before spawning so the stop signal cannot be
+        // missed, then own exactly one maintenance lifecycle for this run.
+        let maintenance_shutdown_rx = self.shutdown_tx.subscribe();
+        let maintenance_storage = self.storage.clone();
+        let maintenance_handle = tokio::spawn(async move {
+            Self::maintenance_task(
+                maintenance_storage,
+                maintenance_shutdown_rx,
+                Self::MAINTENANCE_INTERVAL,
+            )
+            .await;
         });
 
         loop {
@@ -160,6 +196,18 @@ impl PortHoneypotRunner {
 
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
+
+        // Phase 56: the periodic maintenance task is owned by this run. The
+        // shutdown broadcast is already sent by `stop()`; awaiting here
+        // guarantees no maintenance task survives successful return from
+        // `run()` and no new cycle starts after shutdown. An in-progress
+        // blocking SQLite operation may finish during this await.
+        if let Err(join_err) = maintenance_handle.await {
+            tracing::error!("Honeypot maintenance task failed: {}", join_err);
+        }
+        // Converge on the same idempotent writer completion as `stop()` so a
+        // runner shutdown always drains queued records before returning.
+        self.writer.shutdown().await;
 
         {
             let mut running = self.running.write();
@@ -423,5 +471,155 @@ impl RateLimitedPortHoneypot {
 
     pub fn current_port(&self) -> u16 {
         self.runner.current_port()
+    }
+}
+
+#[cfg(test)]
+mod runner_maintenance_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    /// Phase 56: initial maintenance executes exactly once when shutdown
+    /// arrives before the first periodic interval elapses.
+    #[tokio::test]
+    async fn test_maintenance_initial_runs_once_not_twice() {
+        let (tx, rx) = broadcast::channel(1);
+        let count = Arc::new(AtomicUsize::new(0));
+        let count_clone = count.clone();
+        let handle = tokio::spawn(async move {
+            PortHoneypotRunner::maintenance_loop(rx, Duration::from_secs(3600), || async {
+                count_clone.fetch_add(1, Ordering::SeqCst);
+            })
+            .await;
+        });
+        // Let the initial pass run, then stop well before the hourly tick.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let _ = tx.send(());
+        tokio::time::timeout(Duration::from_secs(5), handle)
+            .await
+            .expect("maintenance task must exit on shutdown")
+            .expect("maintenance task must not panic");
+        assert_eq!(
+            count.load(Ordering::SeqCst),
+            1,
+            "initial maintenance must execute exactly once, not twice"
+        );
+    }
+
+    /// Phase 56: periodic maintenance never overlaps itself. The operation
+    /// asserts single-flight with an in-flight flag across several short
+    /// cycles.
+    #[tokio::test]
+    async fn test_maintenance_periodic_does_not_overlap() {
+        let (tx, rx) = broadcast::channel(1);
+        let count = Arc::new(AtomicUsize::new(0));
+        let in_flight = Arc::new(AtomicBool::new(false));
+        let overlapped = Arc::new(AtomicBool::new(false));
+        let count_clone = count.clone();
+        let in_flight_clone = in_flight.clone();
+        let overlapped_clone = overlapped.clone();
+        let handle = tokio::spawn(async move {
+            PortHoneypotRunner::maintenance_loop(rx, Duration::from_millis(20), || async {
+                if in_flight_clone.swap(true, Ordering::SeqCst) {
+                    overlapped_clone.store(true, Ordering::SeqCst);
+                }
+                count_clone.fetch_add(1, Ordering::SeqCst);
+                tokio::time::sleep(Duration::from_millis(35)).await;
+                in_flight_clone.store(false, Ordering::SeqCst);
+            })
+            .await;
+        });
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let _ = tx.send(());
+        tokio::time::timeout(Duration::from_secs(5), handle)
+            .await
+            .expect("maintenance task must exit")
+            .expect("no panic");
+        assert!(
+            !overlapped.load(Ordering::SeqCst),
+            "maintenance cycles must never overlap"
+        );
+        assert!(
+            count.load(Ordering::SeqCst) >= 2,
+            "periodic cycles should have run"
+        );
+    }
+
+    /// Phase 56: stop causes the maintenance task to exit promptly, and the
+    /// owning `run()` await pattern (join on the handle) completes.
+    #[tokio::test]
+    async fn test_maintenance_stop_exits_task() {
+        let (tx, rx) = broadcast::channel(1);
+        let handle = tokio::spawn(async move {
+            PortHoneypotRunner::maintenance_loop(rx, Duration::from_secs(3600), || async {
+                tokio::task::yield_now().await;
+            })
+            .await;
+        });
+        let _ = tx.send(());
+        tokio::time::timeout(Duration::from_secs(5), handle)
+            .await
+            .expect("maintenance task must exit after stop")
+            .expect("no panic");
+    }
+
+    /// Phase 56: `run()`-style ownership awaits the maintenance handle, so
+    /// return implies no live periodic task. A restart creates one new
+    /// lifecycle rather than accumulating tasks.
+    #[tokio::test]
+    async fn test_maintenance_restart_creates_single_lifecycle() {
+        for _ in 0..2 {
+            let (tx, rx) = broadcast::channel(1);
+            let count = Arc::new(AtomicUsize::new(0));
+            let count_clone = count.clone();
+            // Mimic one `run()` ownership: spawn, stop, await join.
+            let handle = tokio::spawn(async move {
+                PortHoneypotRunner::maintenance_loop(rx, Duration::from_millis(15), || async {
+                    count_clone.fetch_add(1, Ordering::SeqCst);
+                })
+                .await;
+            });
+            tokio::time::sleep(Duration::from_millis(60)).await;
+            let _ = tx.send(());
+            tokio::time::timeout(Duration::from_secs(5), handle)
+                .await
+                .expect("each lifecycle must be joinable on stop")
+                .expect("no panic");
+            assert!(
+                count.load(Ordering::SeqCst) >= 1,
+                "each restart must create one new maintenance lifecycle"
+            );
+        }
+    }
+
+    /// Phase 56: no new cycle starts after shutdown, even if the interval
+    /// elapses while an in-progress operation finishes.
+    #[tokio::test]
+    async fn test_maintenance_no_new_cycle_after_shutdown() {
+        let (tx, rx) = broadcast::channel(1);
+        let count = Arc::new(AtomicUsize::new(0));
+        let count_clone = count.clone();
+        let handle = tokio::spawn(async move {
+            PortHoneypotRunner::maintenance_loop(rx, Duration::from_millis(30), || async {
+                count_clone.fetch_add(1, Ordering::SeqCst);
+                // In-progress blocking work finishing during shutdown.
+                tokio::time::sleep(Duration::from_millis(60)).await;
+            })
+            .await;
+        });
+        // Initial pass starts immediately; stop while it is in flight.
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        let _ = tx.send(());
+        tokio::time::timeout(Duration::from_secs(5), handle)
+            .await
+            .expect("must exit")
+            .expect("no panic");
+        let after_stop = count.load(Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        assert_eq!(
+            count.load(Ordering::SeqCst),
+            after_stop,
+            "no new maintenance cycle may start after shutdown"
+        );
     }
 }

@@ -682,7 +682,11 @@ Worker admission (block-store check, before WAF)
 3. **Inline detection** (Phase 50): borrowed synchronous evaluation replaced
    per-request `JoinSet` fanout; small-request latency improved ~4-5× with
    better concurrent tail behavior (see
-   `architecture/performance_optimization_closeout.md`)
+   `architecture/performance_optimization_closeout.md`). Known cost retained
+   and requalified in Phase 56: isolated single 10 KiB-body latency regressed
+   (~102 µs → ~165-200 µs) while all concurrent batches improved; whole-stage
+   offload stays deferred pending event-loop evidence (see
+   `architecture/performance_optimization_corrective_closeout.md` §7)
 4. **Thread-local buffers**: Normalizer uses thread-local buffers to avoid allocation
 5. **Streaming body inspection**: Process body in chunks without full buffering
 

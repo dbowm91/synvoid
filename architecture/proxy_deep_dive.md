@@ -232,7 +232,9 @@ The erased pool is used for true streaming at 1M RPS scale to avoid per-request 
 
 ### Memory Management
 - `GlobalCacheGovernor` - Atomic-based global memory reservation for cache buffering
-- `TeeBody` reserves memory upfront, releases on drop
+- `TeeBody` reserves memory upfront, enforces `min(reserved, max_size)` on
+  every append with immediate exact-once release on abandonment (Phase 56),
+  releases on drop
 
 ### Streaming with Cache
 - `TeeBody` implements `http_body::Body` and streams while buffering

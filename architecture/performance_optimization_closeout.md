@@ -1,8 +1,15 @@
 # Performance Optimization Closeout (Phases 49-55)
 
 Status: campaign complete. Roadmap: `plans/performance_optimization_roadmap.md`
-(marked historical). Baseline record:
+(historical). Baseline record:
 `architecture/performance_optimization_baseline.md`.
+
+> Phase 56 addendum: corrective runtime fixes (stateful writer shutdown,
+> runner-owned maintenance, strict `TeeBody` reservation) and immutable
+> benchmark requalification live in
+> `architecture/performance_optimization_corrective_closeout.md`. That record
+> corrects `015e790d` provenance, separates host vs Rust target, and retains
+> the 10 KiB WAF tradeoff.
 
 ## 1. Baseline and final commits
 

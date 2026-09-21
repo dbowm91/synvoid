@@ -1,6 +1,6 @@
 # SynVoid Architecture Hardening Roadmap
 
-Status: Tracks 1-3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) is complete, with a narrow Phase 56 corrective runtime/evidence closure now active.
+Status: Tracks 1-3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) and its narrow Phase 56 corrective runtime/evidence closure are complete (see `architecture/performance_optimization_corrective_closeout.md`). No active performance-corrective handoff remains.
 
 Scope: this roadmap covers architecture hardening, trust-boundary closure, verification, release readiness, post-hardening cleanup, and the architecture-convergence work required before another broad feature-expansion pass.
 
@@ -313,9 +313,10 @@ Detailed plans:
 
 Campaign constraints: no detector/capability removal for benchmark wins; no public signature/type churn solely for optimization; no load-balancing policy changes; no metric-name/payload regressions; no unbounded blocking/offload queues; no buffer-pool public semantic break. Phase 49 evidence gates production refactors, and Phase 55 owns final same-host before/after evidence and planning closeout.
 
-## Phase 56 Corrective Follow-up: Performance Runtime and Evidence Closure — Active
+## Phase 56 Corrective Follow-up: Performance Runtime and Evidence Closure — Complete
 
-Status: active corrective handoff.
+Status: implemented and closed. Evidence:
+`architecture/performance_optimization_corrective_closeout.md`.
 
 Detailed plan:
 `plans/phase_56_performance_campaign_corrective_runtime_and_evidence_closure.md`.
@@ -335,5 +336,5 @@ campaign. It does not reopen the performance architecture. It owns:
 
 The known isolated 10 KiB WAF latency tradeoff remains an explicit measured
 residual unless new event-loop evidence justifies a separate WAF scheduling
-plan. Phase 56 must not broaden into detector, buffer-pool, upstream-routing,
+plan. Phase 56 did not broaden into detector, buffer-pool, upstream-routing,
 or public-API redesign.

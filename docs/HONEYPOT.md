@@ -423,7 +423,7 @@ Listener task → try_write_record() → [bounded channel] → writer_task → b
 
 ### Shutdown
 
-On shutdown, the writer drains any remaining records in the channel before closing the database connection.
+On shutdown, the writer drains any remaining records in the channel before closing the database connection. Shutdown completion is stateful across clones (no lost wakeup; late callers return immediately), and periodic prune/max-record maintenance is owned by the runner lifecycle (single task, joined on shutdown). See `architecture/performance_optimization_corrective_closeout.md` §3.
 
 ---
 

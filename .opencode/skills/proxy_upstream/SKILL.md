@@ -48,11 +48,16 @@ Use this skill when:
 4. **Known limitation**: `ErasedHttpClient::new(100)` hardcodes pool size in
    `ProxyServer` regardless of config.
 5. **Allocation-free selection** (Phase 51): `UpstreamPool` algorithms select
-   over the backend slice through predicates — no per-request candidate
-   vectors, no cloned weighted vector. Preserve exact
-   ordering/failover/weight/hash semantics; parity is pinned by
-   `crates/synvoid-upstream/tests/selection_parity.rs`. Do not change the
-   load-balancing policy while touching selection mechanics.
+    over the backend slice through predicates — no per-request candidate
+    vectors, no cloned weighted vector. Preserve exact
+    ordering/failover/weight/hash semantics; parity is pinned by
+    `crates/synvoid-upstream/tests/selection_parity.rs`. Do not change the
+    load-balancing policy while touching selection mechanics.
+6. **Strict tee reservation** (Phase 56): `TeeBody` never buffers beyond
+    `min(reserved_bytes, max_size)` (checked arithmetic); overshoot abandons
+    caching only via `abandon_cache_buffering()` with immediate exact-once
+    governor release — never truncate/stall/reject the response. Pinned by
+    `crates/synvoid-proxy/src/streaming.rs` `streaming_tests`.
 
 ## Verification
 

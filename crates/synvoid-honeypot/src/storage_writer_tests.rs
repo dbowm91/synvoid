@@ -518,4 +518,136 @@ mod tests {
         let records = storage.get_records_since(0, 16).unwrap();
         assert_eq!(records.len(), 4, "concurrent shutdown must still drain all");
     }
+
+    fn phase56_writer(storage: HoneypotStorage) -> HoneypotWriter {
+        HoneypotWriter::new(
+            storage,
+            StorageWriterConfig {
+                queue_capacity: 256,
+                batch_size: 64,
+                flush_interval_ms: 60_000,
+                payload_retention_mode: PayloadRetentionMode::Full,
+                ..Default::default()
+            },
+        )
+    }
+
+    /// Phase 56.1: one caller drains and completes under a bounded timeout.
+    #[tokio::test]
+    async fn test_phase56_shutdown_drains_bounded() {
+        let storage = test_storage();
+        let writer = phase56_writer(storage.clone());
+        for _ in 0..5 {
+            writer.try_write_record(base_record()).unwrap();
+        }
+        tokio::time::timeout(Duration::from_secs(5), writer.shutdown())
+            .await
+            .expect("single shutdown must complete under bounded timeout");
+        let records = storage.get_records_since(0, 16).unwrap();
+        assert_eq!(records.len(), 5, "drain must flush every queued record");
+    }
+
+    /// Phase 56.2: three or more clones calling shutdown concurrently all
+    /// complete under a bounded timeout.
+    #[tokio::test]
+    async fn test_phase56_concurrent_shutdown_bounded() {
+        let storage = test_storage();
+        let writer = phase56_writer(storage.clone());
+        for _ in 0..6 {
+            writer.try_write_record(base_record()).unwrap();
+        }
+        let w2 = writer.clone();
+        let w3 = writer.clone();
+        let w4 = writer.clone();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::join!(
+                writer.shutdown(),
+                w2.shutdown(),
+                w3.shutdown(),
+                w4.shutdown()
+            )
+        })
+        .await
+        .expect("concurrent shutdown callers must all complete");
+        let records = storage.get_records_since(0, 32).unwrap();
+        assert_eq!(records.len(), 6, "concurrent shutdown must drain all");
+    }
+
+    /// Phase 56.3: a caller arriving after completion returns immediately.
+    #[tokio::test]
+    async fn test_phase56_late_shutdown_returns_immediately() {
+        let storage = test_storage();
+        let writer = phase56_writer(storage.clone());
+        writer.try_write_record(base_record()).unwrap();
+        tokio::time::timeout(Duration::from_secs(5), writer.shutdown())
+            .await
+            .expect("first shutdown must complete");
+        let late = writer.clone();
+        tokio::time::timeout(Duration::from_millis(500), late.shutdown())
+            .await
+            .expect("late shutdown after completion must return immediately");
+        // Repeated late callers also return immediately (stateful completion).
+        tokio::time::timeout(Duration::from_millis(500), writer.shutdown())
+            .await
+            .expect("second late shutdown must return immediately");
+    }
+
+    /// Phase 56.4: callers racing writer completion repeatedly never hang.
+    /// Each iteration builds a fresh writer, queues one record, and races a
+    /// shutdown against completion with a tight timeout.
+    #[tokio::test]
+    async fn test_phase56_racing_shutdown_never_hangs() {
+        for _ in 0..25 {
+            let storage = test_storage();
+            let writer = phase56_writer(storage.clone());
+            writer.try_write_record(base_record()).unwrap();
+            let w2 = writer.clone();
+            tokio::time::timeout(Duration::from_secs(5), async {
+                tokio::join!(writer.shutdown(), w2.shutdown())
+            })
+            .await
+            .expect("racing shutdown must never hang");
+            let records = storage.get_records_since(0, 8).unwrap();
+            assert_eq!(records.len(), 1, "racing shutdown must still drain");
+        }
+    }
+
+    /// Phase 56.5: writes racing closed intake fail cleanly.
+    #[tokio::test]
+    async fn test_phase56_writes_after_shutdown_fail_cleanly() {
+        let storage = test_storage();
+        let writer = phase56_writer(storage.clone());
+        writer.try_write_record(base_record()).unwrap();
+        tokio::time::timeout(Duration::from_secs(5), writer.shutdown())
+            .await
+            .expect("shutdown must complete");
+        assert!(
+            writer.try_write_record(base_record()).is_err(),
+            "try_write after shutdown must fail closed"
+        );
+        assert!(
+            writer.write_record(base_record()).await.is_err(),
+            "async write after shutdown must fail closed"
+        );
+    }
+
+    /// Phase 56.6: the final queued partial batch is present immediately when
+    /// shutdown returns (no sleep after shutdown).
+    #[tokio::test]
+    async fn test_phase56_final_partial_batch_immediate() {
+        let storage = test_storage();
+        let writer = phase56_writer(storage.clone());
+        for _ in 0..7 {
+            writer.try_write_record(base_record()).unwrap();
+        }
+        tokio::time::timeout(Duration::from_secs(5), writer.shutdown())
+            .await
+            .expect("shutdown must complete");
+        let records = storage.get_records_since(0, 16).unwrap();
+        assert_eq!(
+            records.len(),
+            7,
+            "final partial batch must be visible immediately after shutdown"
+        );
+    }
 }

@@ -233,6 +233,13 @@ Migrations are idempotent and tolerate existing databases.
 
 Listener availability is prioritized over perfect storage retention.
 
+Phase 56: `HoneypotWriter::shutdown()` completion is stateful
+(`watch<bool>`, no lost wakeup across clones; late callers return
+immediately), and runner maintenance is a single lifecycle-owned task
+(initial pass once, hourly `sleep` cadence, joined by `run()` — no
+detached task survives shutdown). See
+`architecture/performance_optimization_corrective_closeout.md` §3.
+
 ### Batch Writes
 
 The writer accumulates up to `batch_size` records and flushes in a single SQLite transaction. Flushing occurs when batch size is reached or on the `flush_interval_ms` timer, whichever comes first.

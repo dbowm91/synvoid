@@ -5,7 +5,7 @@ Status: complete and historical. Implemented 2026-09-21; closeout evidence in
 `architecture/performance_optimization_baseline.md`). Retained as a
 historical handoff record; do not reopen without a new focused plan.
 
-Corrective follow-up: `plans/phase_56_performance_campaign_corrective_runtime_and_evidence_closure.md` is the focused post-closeout plan for lifecycle, cache-reservation, and evidence-provenance residuals found after Phase 55. It does not reopen Phases 49-55.
+Corrective follow-up: `plans/phase_56_performance_campaign_corrective_runtime_and_evidence_closure.md` was the focused post-closeout plan for lifecycle, cache-reservation, and evidence-provenance residuals found after Phase 55 (implemented and closed; evidence in `architecture/performance_optimization_corrective_closeout.md`). It did not reopen Phases 49-55.
 
 Baseline reviewed: `main` at `70d2bb29de30d2e5f66fd9cb24d682f5e2054670` (2026-09-19).
 

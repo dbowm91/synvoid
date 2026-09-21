@@ -1,21 +1,23 @@
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
-};
+use std::sync::Arc;
 
 use rusqlite::params;
 use sha2::{Digest, Sha256};
-use tokio::sync::{mpsc, Notify};
+use tokio::sync::{mpsc, watch, Notify};
 
 use crate::config::{PayloadRetentionMode, StorageWriterConfig};
 use crate::storage::{HoneypotRecord, HoneypotStorage};
 
 /// Shared writer-task lifecycle. `shutdown()` signals the task, closes intake
 /// so queued records still drain, and waits for the final flush to complete.
+///
+/// Completion is stateful (`watch<bool>`): the writer publishes `true` once
+/// after the final drain/flush, and every shutdown caller observes that
+/// durable state. This is immune to the check-to-wait lost-wakeup race of an
+/// edge-triggered `Notify`, because a late subscriber reads `true`
+/// immediately instead of waiting for a notification edge that already fired.
 struct WriterLifecycle {
     shutdown_notify: Notify,
-    done: AtomicBool,
-    done_notify: Notify,
+    done_tx: watch::Sender<bool>,
 }
 
 pub struct HoneypotWriter {
@@ -40,14 +42,14 @@ impl HoneypotWriter {
     pub fn new(storage: HoneypotStorage, config: StorageWriterConfig) -> Self {
         let (tx, rx) = mpsc::channel(config.queue_capacity);
         let storage = Arc::new(storage);
+        let (done_tx, _initial_rx) = watch::channel(false);
         let writer = Self {
             tx,
             storage: Arc::clone(&storage),
             config: config.clone(),
             lifecycle: Arc::new(WriterLifecycle {
                 shutdown_notify: Notify::new(),
-                done: AtomicBool::new(false),
-                done_notify: Notify::new(),
+                done_tx,
             }),
         };
 
@@ -88,14 +90,21 @@ impl HoneypotWriter {
     /// batch, and wait for the writer task to exit. Idempotent across clones:
     /// concurrent callers all wait for the same completion. Writes racing
     /// shutdown fail closed with a send error once intake is closed.
+    ///
+    /// Phase 56: completion waits on a stateful `watch` channel. A caller
+    /// arriving after the writer already published completion returns
+    /// immediately; a caller racing completion cannot miss the wakeup because
+    /// the completed state is durable, not an edge.
     pub async fn shutdown(&self) {
         self.lifecycle.shutdown_notify.notify_one();
-        loop {
-            if self.lifecycle.done.load(Ordering::SeqCst) {
-                break;
-            }
-            self.lifecycle.done_notify.notified().await;
+        let mut done_rx = self.lifecycle.done_tx.subscribe();
+        if *done_rx.borrow() {
+            return;
         }
+        // `wait_for` resolves immediately if the writer completes between the
+        // borrow above and waiter registration. If the writer task is gone
+        // without publishing (sender closed), return rather than hang.
+        let _ = done_rx.wait_for(|done| *done).await;
     }
 
     fn apply_retention(record: &mut HoneypotRecord, config: &StorageWriterConfig) {
@@ -172,8 +181,7 @@ impl HoneypotWriter {
             }
         }
 
-        self.lifecycle.done.store(true, Ordering::SeqCst);
-        self.lifecycle.done_notify.notify_waiters();
+        let _ = self.lifecycle.done_tx.send(true);
     }
 
     /// Batch flush isolated from Tokio core workers: at most one
