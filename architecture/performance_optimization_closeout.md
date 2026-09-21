@@ -8,8 +8,9 @@ Status: campaign complete. Roadmap: `plans/performance_optimization_roadmap.md`
 
 - Campaign planning baseline: `70d2bb29de30d2e5f66fd9cb24d682f5e2054670`.
 - Phase 49 implementation head: `015e790d`.
-- Final implementation head: this commit (all Phases 49-55 landed; see phase
-  status table). Qualification runs below were executed at this head.
+- Final implementation head: `892c2dd3` (all Phases 49-55 landed in one
+  campaign commit; see phase status table). Qualification runs below were
+  executed at this head.
 
 ## 2. Host / toolchain / configuration
 
