@@ -278,3 +278,36 @@ Detailed plans:
 - `plans/phase_48_runtime_truthfulness_campaign_corrective_closeout.md`
 
 The current architecture remains the baseline: no broad crate split/merge campaign, no public `synvoid-utils`, no in-place mesh restart implementation in this line, and no independently supported public `synvoid-http-client` until the current eggfetch line is re-evaluated. Phase 48 owns closeout/status reconciliation only; it must not turn that pending eggfetch comparison into an implicit migration.
+
+## Post-Phase-48 Campaign: Performance Optimization and Request-Path Efficiency — Active
+
+Status: active implementation campaign.
+
+Roadmap: `plans/performance_optimization_roadmap.md`.
+
+Baseline reviewed: `70d2bb29de30d2e5f66fd9cb24d682f5e2054670` (2026-09-19).
+
+This campaign is measurement-first and does not reopen the completed ownership/security campaigns. Its purpose is to improve measured throughput, tail latency, allocator pressure, event-loop fairness, and memory efficiency while preserving the existing public API/config/protocol/security/observability capability.
+
+Execution order:
+
+1. Phase 49 — performance measurement and benchmark truth.
+2. Phase 50 — WAF execution-model optimization.
+3. Phase 51 — request-path allocation and upstream-selection optimization.
+4. Phase 52 — metrics and plugin telemetry hot-path optimization.
+5. Phase 53 — blocking persistence and honeypot I/O isolation.
+6. Phase 54 — buffer-pool and streaming-memory efficiency.
+7. Phase 55 — performance qualification and closeout.
+
+Detailed plans:
+
+- `plans/phase_49_performance_measurement_and_benchmark_truth.md`
+- `plans/phase_50_waf_execution_model_optimization.md`
+- `plans/phase_51_request_path_allocation_and_upstream_selection.md`
+- `plans/phase_52_metrics_and_plugin_telemetry_hot_path.md`
+- `plans/phase_53_blocking_persistence_and_honeypot_io_isolation.md`
+- `plans/phase_54_buffer_pool_and_streaming_memory_efficiency.md`
+- `plans/phase_55_performance_qualification_and_closeout.md`
+
+Campaign constraints: no detector/capability removal for benchmark wins; no public signature/type churn solely for optimization; no load-balancing policy changes; no metric-name/payload regressions; no unbounded blocking/offload queues; no buffer-pool public semantic break. Phase 49 evidence gates production refactors, and Phase 55 owns final same-host before/after evidence and planning closeout.
+
