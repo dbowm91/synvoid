@@ -211,7 +211,7 @@ Useful user/operator references include:
 
 Internal architecture records and implementation plans remain in `architecture/` and `plans/`; they are development artifacts rather than the primary user documentation.
 The Phase 41–48 runtime-truthfulness, security, and publication campaign is closed; its evidence and intentional residuals are recorded in [`architecture/runtime_truthfulness_security_publication_closeout.md`](architecture/runtime_truthfulness_security_publication_closeout.md).
-The Phases 49–55 performance-optimization campaign and its Phase 56 corrective runtime/evidence closure are complete; see [`architecture/performance_optimization_closeout.md`](architecture/performance_optimization_closeout.md) and [`architecture/performance_optimization_corrective_closeout.md`](architecture/performance_optimization_corrective_closeout.md) (tuning guidance in [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md)).
+The Phases 49–55 performance-optimization campaign and its Phases 56–57 corrective runtime/evidence closure are complete; see [`architecture/performance_optimization_closeout.md`](architecture/performance_optimization_closeout.md) and [`architecture/performance_optimization_corrective_closeout.md`](architecture/performance_optimization_corrective_closeout.md) (tuning guidance in [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md)).
 
 ## Reusable libraries
 

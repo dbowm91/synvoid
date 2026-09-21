@@ -233,12 +233,16 @@ Migrations are idempotent and tolerate existing databases.
 
 Listener availability is prioritized over perfect storage retention.
 
-Phase 56: `HoneypotWriter::shutdown()` completion is stateful
+Phases 56–57: `HoneypotWriter::shutdown()` completion is stateful
 (`watch<bool>`, no lost wakeup across clones; late callers return
-immediately), and runner maintenance is a single lifecycle-owned task
+immediately), runner maintenance is a single lifecycle-owned task
 (initial pass once, hourly `sleep` cadence, joined by `run()` — no
-detached task survives shutdown). See
-`architecture/performance_optimization_corrective_closeout.md` §3.
+detached task survives shutdown), and the real
+`PortHoneypotRunner::run()/stop()` lifecycle is durable (`watch` shutdown,
+no lost early stop) with separated `Idle/Running/Stopping/Stopped`
+ownership — `is_running()` true only while serving, one instance is one
+lifecycle, `stop()` stays sync with single-owned teardown. See
+`architecture/performance_optimization_corrective_closeout.md` §3/§11.
 
 ### Batch Writes
 

@@ -4,9 +4,10 @@ Status: campaign complete. Roadmap: `plans/performance_optimization_roadmap.md`
 (historical). Baseline record:
 `architecture/performance_optimization_baseline.md`.
 
-> Phase 56 addendum: corrective runtime fixes (stateful writer shutdown,
-> runner-owned maintenance, strict `TeeBody` reservation) and immutable
-> benchmark requalification live in
+> Phases 56–57 addendum: corrective runtime fixes (stateful writer shutdown,
+> runner-owned maintenance, strict `TeeBody` reservation, durable runner
+> lifecycle with terminal one-instance ownership) and immutable benchmark
+> requalification (incl. WAF concurrency 1/8/32/128) live in
 > `architecture/performance_optimization_corrective_closeout.md`. That record
 > corrects `015e790d` provenance, separates host vs Rust target, and retains
 > the 10 KiB WAF tradeoff.

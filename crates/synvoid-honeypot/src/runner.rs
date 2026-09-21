@@ -1,8 +1,8 @@
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use rand::Rng;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::broadcast;
+use tokio::sync::watch;
 use tokio::time;
 
 use crate::config::PortHoneypotConfig;
@@ -17,13 +17,41 @@ use synvoid_mesh::protocol::ThreatType;
 #[cfg(feature = "mesh")]
 use synvoid_mesh::threat_intel::ThreatIntelligenceManager;
 
+/// Phase 57: private runner lifecycle ownership, separate from the
+/// user-visible `is_running()` status.
+///
+/// - `Idle`: never started; the only state from which `run()` may acquire
+///   ownership.
+/// - `Running`: one active `run()` lifecycle owns listener selection,
+///   maintenance, and writer drain. `is_running()` reports true only here.
+/// - `Stopping`: `stop()` has requested durable shutdown. `is_running()`
+///   already reports false, but lifecycle ownership is still held until
+///   teardown completes, so a second `run()` must be rejected.
+/// - `Stopped`: terminal. Teardown (listener exit, maintenance join, writer
+///   drain) has completed. Because `HoneypotWriter::shutdown()` is terminal,
+///   one runner instance is one lifecycle; a second `run()` after `Stopped`
+///   must not start a partial lifecycle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RunnerLifecycle {
+    Idle,
+    Running,
+    Stopping,
+    Stopped,
+}
+
 pub struct PortHoneypotRunner {
     config: Arc<PortHoneypotConfig>,
     storage: Arc<HoneypotStorage>,
     writer: Arc<HoneypotWriter>,
     listener: Arc<PortHoneypotListener>,
-    running: Arc<RwLock<bool>>,
-    shutdown_tx: broadcast::Sender<()>,
+    lifecycle: Arc<Mutex<RunnerLifecycle>>,
+    shutdown_tx: watch::Sender<bool>,
+    /// Phase 57 test-only teardown barrier. Production code never sets this;
+    /// lifecycle tests install a `Notify` gate to hold teardown in `Stopping`
+    /// deterministically while a second `run()` is attempted. Not an
+    /// operator-facing knob.
+    #[cfg(test)]
+    teardown_gate: Arc<Mutex<Option<Arc<tokio::sync::Notify>>>>,
 }
 
 impl PortHoneypotRunner {
@@ -41,15 +69,20 @@ impl PortHoneypotRunner {
         let config = Arc::new(config);
         let listener = PortHoneypotListener::new((*config).clone(), writer.clone(), ai_budget);
 
-        let (shutdown_tx, _) = broadcast::channel(1);
+        // Phase 57: stateful cancellation. `watch` retains `true` once `stop()`
+        // requests shutdown, so a receiver subscribing after the request still
+        // observes it. No edge-triggered loss window.
+        let (shutdown_tx, _) = watch::channel(false);
 
         Ok(Arc::new(Self {
             config,
             storage: Arc::new(storage),
             writer: Arc::new(writer),
             listener,
-            running: Arc::new(RwLock::new(false)),
+            lifecycle: Arc::new(Mutex::new(RunnerLifecycle::Idle)),
             shutdown_tx,
+            #[cfg(test)]
+            teardown_gate: Arc::new(Mutex::new(None)),
         }))
     }
 
@@ -70,7 +103,53 @@ impl PortHoneypotRunner {
     }
 
     pub fn is_running(&self) -> bool {
-        *self.running.read()
+        *self.lifecycle.lock() == RunnerLifecycle::Running
+    }
+
+    /// Phase 57 terminal contract: one runner instance is one lifecycle.
+    ///
+    /// `run()` may transition the instance from idle to active once. After
+    /// terminal shutdown begins/completes, the same instance must not start a
+    /// second overlapping or partially-functional lifecycle, because
+    /// `HoneypotWriter::shutdown()` is terminal (intake closes, queued
+    /// records drain, later writes fail). A future operational
+    /// "enable after disable" feature must construct a new runner/writer
+    /// instance unless a separate plan makes the writer restartable.
+    ///
+    /// `is_running()` retains its user-facing meaning: true only while
+    /// actively serving (`Running`). It reports false once `Stopping` begins,
+    /// but that visible status is no longer the guard permitting a second
+    /// lifecycle; the private `RunnerLifecycle` ownership guard blocks overlap
+    /// through `Stopping` until terminal `Stopped`.
+    #[cfg(test)]
+    pub(crate) fn test_lifecycle(&self) -> RunnerLifecycle {
+        *self.lifecycle.lock()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_lifecycle_name(&self) -> &'static str {
+        match self.test_lifecycle() {
+            RunnerLifecycle::Idle => "Idle",
+            RunnerLifecycle::Running => "Running",
+            RunnerLifecycle::Stopping => "Stopping",
+            RunnerLifecycle::Stopped => "Stopped",
+        }
+    }
+
+    /// Install a deterministic teardown hold for lifecycle tests. The active
+    /// `run()` awaits the returned gate after maintenance join and writer
+    /// drain, before marking terminal `Stopped`. Tests release with
+    /// `gate.notify_one()`. Production never installs a gate.
+    #[cfg(test)]
+    pub(crate) fn install_teardown_gate(&self) -> Arc<tokio::sync::Notify> {
+        let gate = Arc::new(tokio::sync::Notify::new());
+        *self.teardown_gate.lock() = Some(gate.clone());
+        gate
+    }
+
+    #[cfg(test)]
+    pub(crate) fn clear_teardown_gate(&self) {
+        *self.teardown_gate.lock() = None;
     }
 
     /// Hourly SQLite maintenance interval for the runner-owned task.
@@ -100,8 +179,29 @@ impl PortHoneypotRunner {
     /// one SQLite maintenance operation is ever in flight and cycles can
     /// never overlap. The loop exits on the shutdown receiver without
     /// starting a new cycle.
+    ///
+    /// Phase 57: the shutdown signal is a stateful `watch<bool>`. A receiver
+    /// subscribing after `stop()` already observes `true`, so an early stop
+    /// cannot be lost to a late subscription. No sleeps, repeated sends, or
+    /// polling.
+    /// Durable shutdown wait on a stateful `watch<bool>`: returns once the
+    /// value is `true` or the sender is gone. `borrow()` pre-checks make a
+    /// stop requested before the wait observable; `changed()` wakes on a
+    /// later request. The returned `()` is `Send`, unlike `wait_for`'s
+    /// lock-guarded `Ref`, so this can run inside spawned (`Send`) futures.
+    async fn shutdown_requested(rx: &mut watch::Receiver<bool>) {
+        loop {
+            if *rx.borrow() {
+                return;
+            }
+            if rx.changed().await.is_err() {
+                return;
+            }
+        }
+    }
+
     async fn maintenance_loop<F, Fut>(
-        mut shutdown_rx: broadcast::Receiver<()>,
+        shutdown_rx: watch::Receiver<bool>,
         interval: Duration,
         mut operation: F,
     ) where
@@ -109,13 +209,27 @@ impl PortHoneypotRunner {
         Fut: std::future::Future<Output = ()>,
     {
         operation().await;
+        if *shutdown_rx.borrow() {
+            return;
+        }
         loop {
+            // Clone for the wait branch so `borrow()` on the canonical
+            // receiver does not conflict with the mutable wait borrow inside
+            // the same `select!`.
+            let mut shutdown_wait = shutdown_rx.clone();
             tokio::select! {
-                _ = time::sleep(interval) => {
-                    operation().await;
-                }
-                _ = shutdown_rx.recv() => {
+                biased;
+                _ = Self::shutdown_requested(&mut shutdown_wait) => {
                     break;
+                }
+                _ = time::sleep(interval) => {
+                    if *shutdown_rx.borrow() {
+                        break;
+                    }
+                    operation().await;
+                    if *shutdown_rx.borrow() {
+                        break;
+                    }
                 }
             }
         }
@@ -126,7 +240,7 @@ impl PortHoneypotRunner {
     /// tick of `interval()`.
     async fn maintenance_task(
         storage: Arc<HoneypotStorage>,
-        shutdown_rx: broadcast::Receiver<()>,
+        shutdown_rx: watch::Receiver<bool>,
         interval: Duration,
     ) {
         Self::maintenance_loop(shutdown_rx, interval, || async {
@@ -136,18 +250,24 @@ impl PortHoneypotRunner {
     }
 
     pub async fn run(self: &Arc<Self>) {
+        // Phase 57: durable shutdown. Subscribe before acquiring lifecycle
+        // ownership so the receivers exist before the instance is externally
+        // visible as active. `watch` retains a requested stop, so even a
+        // `stop()` racing acquisition is observed via `borrow()`/`wait_for`.
+        let maintenance_shutdown_rx = self.shutdown_tx.subscribe();
+        let main_shutdown_rx = self.shutdown_tx.subscribe();
+
         {
-            let mut running = self.running.write();
-            if *running {
-                tracing::warn!("Port honeypot runner already running");
+            let mut guard = self.lifecycle.lock();
+            if *guard != RunnerLifecycle::Idle {
+                tracing::warn!("Port honeypot runner already running or terminal");
                 return;
             }
-            *running = true;
+            *guard = RunnerLifecycle::Running;
         }
 
-        // Phase 56: subscribe before spawning so the stop signal cannot be
-        // missed, then own exactly one maintenance lifecycle for this run.
-        let maintenance_shutdown_rx = self.shutdown_tx.subscribe();
+        // Phase 56 (retained): own exactly one maintenance lifecycle for this
+        // run. Phase 57 carries the same watch cancellation into it.
         let maintenance_storage = self.storage.clone();
         let maintenance_handle = tokio::spawn(async move {
             Self::maintenance_task(
@@ -159,6 +279,12 @@ impl PortHoneypotRunner {
         });
 
         loop {
+            // Durable pre-check: a stop requested before this iteration must
+            // not start new listener work. `biased` selection below additionally
+            // prioritizes shutdown when it races listener completion.
+            if *main_shutdown_rx.borrow() {
+                break;
+            }
             let port = self.select_random_port();
 
             tracing::info!("Starting port honeypot on port {}", port);
@@ -168,25 +294,41 @@ impl PortHoneypotRunner {
             let rotation_interval = self.rotation_interval();
             tracing::debug!("Next rotation in {} seconds", rotation_interval.as_secs());
 
-            let mut shutdown_rx2 = self.shutdown_tx.subscribe();
             let listener_for_shutdown = self.listener.clone();
+            let listener_for_rotation = self.listener.clone();
+            // Clone for the wait branch; `borrow()` on `main_shutdown_rx`
+            // must not overlap a mutable wait borrow in one `select!`.
+            let mut shutdown_wait = main_shutdown_rx.clone();
 
             let shutdown_received = tokio::select! {
-                _ = async {
-                    listener.start_on_port(port).await
-                } => {
-                    tracing::debug!("Listener finished, switching ports");
-                    false
-                }
-                _ = time::sleep(rotation_interval) => {
-                    listener_for_shutdown.shutdown();
-                    tracing::debug!("Rotation interval reached, switching ports");
-                    false
-                }
-                _ = shutdown_rx2.recv() => {
+                biased;
+                _ = Self::shutdown_requested(&mut shutdown_wait) => {
                     listener_for_shutdown.shutdown();
                     tracing::info!("Port honeypot shutting down");
                     true
+                }
+                _ = async {
+                    listener.start_on_port(port).await
+                } => {
+                    if *main_shutdown_rx.borrow() {
+                        listener_for_shutdown.shutdown();
+                        tracing::info!("Port honeypot shutting down");
+                        true
+                    } else {
+                        tracing::debug!("Listener finished, switching ports");
+                        false
+                    }
+                }
+                _ = time::sleep(rotation_interval) => {
+                    if *main_shutdown_rx.borrow() {
+                        listener_for_shutdown.shutdown();
+                        tracing::info!("Port honeypot shutting down");
+                        true
+                    } else {
+                        listener_for_rotation.shutdown();
+                        tracing::debug!("Rotation interval reached, switching ports");
+                        false
+                    }
                 }
             };
 
@@ -197,32 +339,71 @@ impl PortHoneypotRunner {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
 
-        // Phase 56: the periodic maintenance task is owned by this run. The
-        // shutdown broadcast is already sent by `stop()`; awaiting here
-        // guarantees no maintenance task survives successful return from
-        // `run()` and no new cycle starts after shutdown. An in-progress
-        // blocking SQLite operation may finish during this await.
+        // Phase 56 (retained): the periodic maintenance task is owned by this
+        // run. Awaiting here guarantees no maintenance task survives
+        // successful return from `run()` and no new cycle starts after
+        // shutdown. An in-progress blocking SQLite operation may finish during
+        // this await. Phase 57: `stop()` no longer spawns a concurrent writer
+        // shutdown for the active lifecycle; this path is the single owner of
+        // listener shutdown, maintenance join, and writer drain.
         if let Err(join_err) = maintenance_handle.await {
             tracing::error!("Honeypot maintenance task failed: {}", join_err);
         }
-        // Converge on the same idempotent writer completion as `stop()` so a
-        // runner shutdown always drains queued records before returning.
+        // `HoneypotWriter::shutdown()` is idempotent and stateful (Phase 56);
+        // `run()` does not return before queued records have drained.
         self.writer.shutdown().await;
 
+        // Phase 57 test-only deterministic barrier: hold terminal transition
+        // in `Stopping` while a test attempts a second `run()`. Production
+        // never installs a gate. The lock guard is dropped before the await
+        // so the future stays `Send` (`parking_lot` guards are `!Send`).
+        #[cfg(test)]
         {
-            let mut running = self.running.write();
-            *running = false;
+            let gate_opt = { self.teardown_gate.lock().clone() };
+            if let Some(gate) = gate_opt {
+                gate.notified().await;
+            }
+        }
+
+        {
+            let mut guard = self.lifecycle.lock();
+            *guard = RunnerLifecycle::Stopped;
         }
     }
 
     pub fn stop(&self) {
-        let _ = self.shutdown_tx.send(());
-        let mut running = self.running.write();
-        *running = false;
-        let writer = self.writer.clone();
-        tokio::spawn(async move {
-            writer.shutdown().await;
-        });
+        // Phase 57: durable synchronous cancellation request. `watch` retains
+        // `true` so a stop racing `run()` acquisition cannot be lost to a late
+        // subscription. Repeated calls are idempotent.
+        let _ = self.shutdown_tx.send(true);
+        let previous = {
+            let mut guard = self.lifecycle.lock();
+            let previous = *guard;
+            if previous == RunnerLifecycle::Running {
+                *guard = RunnerLifecycle::Stopping;
+            }
+            previous
+        };
+        // Phase 57 Workstream D single ownership: the active `run()` path owns
+        // listener shutdown, maintenance join, and writer drain, so `stop()`
+        // must not spawn a concurrent writer shutdown for the active
+        // lifecycle and must not release ownership early (`Stopping` still
+        // blocks a second `run()`; only the terminal transition after drain
+        // marks `Stopped`).
+        //
+        // If no run lifecycle was ever active (`Idle`), arrange writer closure
+        // separately so an never-started instance does not leak its writer
+        // task. A pending `run()` that later acquires `Idle` still observes
+        // the durable watch shutdown, skips listener work, drains (idempotent
+        // with this spawn), and marks terminal. Requires a Tokio runtime, as
+        // did the Phase 56 `stop()` spawn; outside a runtime the pending
+        // `run()` remains responsible for the drain.
+        if previous == RunnerLifecycle::Idle && tokio::runtime::Handle::try_current().is_ok() {
+            let writer = self.writer.clone();
+            tokio::spawn(async move {
+                writer.shutdown().await;
+            });
+        }
     }
 
     #[cfg(feature = "mesh")]
@@ -481,9 +662,10 @@ mod runner_maintenance_tests {
 
     /// Phase 56: initial maintenance executes exactly once when shutdown
     /// arrives before the first periodic interval elapses.
+    /// Phase 57: shutdown is stateful `watch<bool>`; retained here.
     #[tokio::test]
     async fn test_maintenance_initial_runs_once_not_twice() {
-        let (tx, rx) = broadcast::channel(1);
+        let (tx, rx) = watch::channel(false);
         let count = Arc::new(AtomicUsize::new(0));
         let count_clone = count.clone();
         let handle = tokio::spawn(async move {
@@ -494,7 +676,7 @@ mod runner_maintenance_tests {
         });
         // Let the initial pass run, then stop well before the hourly tick.
         tokio::time::sleep(Duration::from_millis(50)).await;
-        let _ = tx.send(());
+        let _ = tx.send(true);
         tokio::time::timeout(Duration::from_secs(5), handle)
             .await
             .expect("maintenance task must exit on shutdown")
@@ -511,7 +693,7 @@ mod runner_maintenance_tests {
     /// cycles.
     #[tokio::test]
     async fn test_maintenance_periodic_does_not_overlap() {
-        let (tx, rx) = broadcast::channel(1);
+        let (tx, rx) = watch::channel(false);
         let count = Arc::new(AtomicUsize::new(0));
         let in_flight = Arc::new(AtomicBool::new(false));
         let overlapped = Arc::new(AtomicBool::new(false));
@@ -530,7 +712,7 @@ mod runner_maintenance_tests {
             .await;
         });
         tokio::time::sleep(Duration::from_millis(200)).await;
-        let _ = tx.send(());
+        let _ = tx.send(true);
         tokio::time::timeout(Duration::from_secs(5), handle)
             .await
             .expect("maintenance task must exit")
@@ -549,14 +731,14 @@ mod runner_maintenance_tests {
     /// owning `run()` await pattern (join on the handle) completes.
     #[tokio::test]
     async fn test_maintenance_stop_exits_task() {
-        let (tx, rx) = broadcast::channel(1);
+        let (tx, rx) = watch::channel(false);
         let handle = tokio::spawn(async move {
             PortHoneypotRunner::maintenance_loop(rx, Duration::from_secs(3600), || async {
                 tokio::task::yield_now().await;
             })
             .await;
         });
-        let _ = tx.send(());
+        let _ = tx.send(true);
         tokio::time::timeout(Duration::from_secs(5), handle)
             .await
             .expect("maintenance task must exit after stop")
@@ -569,7 +751,7 @@ mod runner_maintenance_tests {
     #[tokio::test]
     async fn test_maintenance_restart_creates_single_lifecycle() {
         for _ in 0..2 {
-            let (tx, rx) = broadcast::channel(1);
+            let (tx, rx) = watch::channel(false);
             let count = Arc::new(AtomicUsize::new(0));
             let count_clone = count.clone();
             // Mimic one `run()` ownership: spawn, stop, await join.
@@ -580,7 +762,7 @@ mod runner_maintenance_tests {
                 .await;
             });
             tokio::time::sleep(Duration::from_millis(60)).await;
-            let _ = tx.send(());
+            let _ = tx.send(true);
             tokio::time::timeout(Duration::from_secs(5), handle)
                 .await
                 .expect("each lifecycle must be joinable on stop")
@@ -596,7 +778,7 @@ mod runner_maintenance_tests {
     /// elapses while an in-progress operation finishes.
     #[tokio::test]
     async fn test_maintenance_no_new_cycle_after_shutdown() {
-        let (tx, rx) = broadcast::channel(1);
+        let (tx, rx) = watch::channel(false);
         let count = Arc::new(AtomicUsize::new(0));
         let count_clone = count.clone();
         let handle = tokio::spawn(async move {
@@ -609,7 +791,7 @@ mod runner_maintenance_tests {
         });
         // Initial pass starts immediately; stop while it is in flight.
         tokio::time::sleep(Duration::from_millis(10)).await;
-        let _ = tx.send(());
+        let _ = tx.send(true);
         tokio::time::timeout(Duration::from_secs(5), handle)
             .await
             .expect("must exit")
@@ -621,5 +803,304 @@ mod runner_maintenance_tests {
             after_stop,
             "no new maintenance cycle may start after shutdown"
         );
+    }
+}
+
+#[cfg(test)]
+mod runner_lifecycle_tests {
+    use super::*;
+    use crate::config::{PortHoneypotConfig, StorageConfig};
+
+    /// Isolated loopback-safe runner: ephemeral port (0), 127.0.0.1 bind,
+    /// long rotation so tests exit via `stop()`, in-memory SQLite so no
+    /// filesystem state leaks between tests.
+    fn test_runner() -> Arc<PortHoneypotRunner> {
+        let mut config = PortHoneypotConfig::default();
+        config.enabled = true;
+        config.bind_address = std::net::IpAddr::from([127, 0, 0, 1]);
+        config.min_port = 0;
+        config.max_port = 0;
+        config.min_rotation_interval_secs = 3600;
+        config.max_rotation_interval_secs = 3600;
+        config.storage = StorageConfig {
+            database_path: ":memory:".to_string(),
+            ..Default::default()
+        };
+        PortHoneypotRunner::new(config).expect("test runner builds")
+    }
+
+    async fn wait_until_running(runner: &Arc<PortHoneypotRunner>) {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !runner.is_running() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("runner must become Running");
+    }
+
+    async fn wait_until_state(runner: &Arc<PortHoneypotRunner>, want: RunnerLifecycle) {
+        let want_name = match want {
+            RunnerLifecycle::Idle => "Idle",
+            RunnerLifecycle::Running => "Running",
+            RunnerLifecycle::Stopping => "Stopping",
+            RunnerLifecycle::Stopped => "Stopped",
+        };
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if runner.test_lifecycle() == want {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "runner must reach {want_name}, currently {}",
+                runner.test_lifecycle_name()
+            )
+        });
+    }
+
+    /// Phase 57.1: an early `stop()` cannot be lost. The real `run()` task
+    /// must exit within a bounded timeout even when `stop()` races lifecycle
+    /// acquisition. `watch` retains the request; there is no late-subscriber
+    /// window.
+    #[tokio::test]
+    async fn test_runner_early_stop_cannot_be_lost() {
+        let runner = test_runner();
+        assert!(!runner.is_running());
+        assert_eq!(runner.test_lifecycle(), RunnerLifecycle::Idle);
+
+        let handle = tokio::spawn({
+            let runner = runner.clone();
+            async move { runner.run().await }
+        });
+        wait_until_running(&runner).await;
+        // Issue stop as early as deterministically possible: synchronously
+        // after observing active state, without yielding to teardown first.
+        runner.stop();
+
+        tokio::time::timeout(Duration::from_secs(10), handle)
+            .await
+            .expect("real run() must return after early stop, not hang")
+            .expect("run() must not panic");
+        assert_eq!(runner.test_lifecycle(), RunnerLifecycle::Stopped);
+        assert!(!runner.is_running());
+    }
+
+    /// Phase 57.2: `stop()` does not release lifecycle ownership early. While
+    /// teardown is held at a deterministic test barrier (`Stopping`), a
+    /// second `run()` must return without starting listener/maintenance work.
+    #[tokio::test]
+    async fn test_runner_stop_does_not_release_ownership_early() {
+        let runner = test_runner();
+        let gate = runner.install_teardown_gate();
+
+        let mut first = tokio::spawn({
+            let runner = runner.clone();
+            async move { runner.run().await }
+        });
+        wait_until_running(&runner).await;
+        runner.stop();
+        // Visible status flips immediately, but ownership stays held.
+        assert!(
+            !runner.is_running(),
+            "is_running() must report false once Stopping begins"
+        );
+        wait_until_state(&runner, RunnerLifecycle::Stopping).await;
+
+        // Second lifecycle attempted while first teardown is gated: must be
+        // rejected promptly. The early return performs no await before the
+        // lifecycle check, so this is deterministic without yielding to the
+        // first task.
+        tokio::time::timeout(Duration::from_secs(2), runner.run())
+            .await
+            .expect("second run() while Stopping must return promptly, not hang");
+        assert_eq!(
+            runner.test_lifecycle(),
+            RunnerLifecycle::Stopping,
+            "second run() must not advance lifecycle out of Stopping"
+        );
+        assert!(
+            !runner.is_running(),
+            "no second serving lifecycle may become visible"
+        );
+        assert!(
+            !first.is_finished(),
+            "first run() must still own teardown while gated"
+        );
+
+        gate.notify_one();
+        tokio::time::timeout(Duration::from_secs(10), &mut first)
+            .await
+            .expect("first run() must complete after gate release")
+            .expect("no panic");
+        assert_eq!(runner.test_lifecycle(), RunnerLifecycle::Stopped);
+        runner.clear_teardown_gate();
+    }
+
+    /// Phase 57.3: real `run()` return owns maintenance. `run()` awaits the
+    /// maintenance handle, so return implies the periodic task observed
+    /// shutdown and exited. If maintenance ignored shutdown, this `run()`
+    /// would hang on the hourly sleep past the timeout.
+    #[tokio::test]
+    async fn test_runner_teardown_owns_maintenance() {
+        let runner = test_runner();
+        let handle = tokio::spawn({
+            let runner = runner.clone();
+            async move { runner.run().await }
+        });
+        wait_until_running(&runner).await;
+        runner.stop();
+        tokio::time::timeout(Duration::from_secs(10), handle)
+            .await
+            .expect("run() must return, implying maintenance joined after stop")
+            .expect("no panic");
+        assert_eq!(runner.test_lifecycle(), RunnerLifecycle::Stopped);
+        assert!(!runner.is_running());
+    }
+
+    /// Phase 57.4: repeated `stop()` is idempotent. Several sync callers
+    /// converge on one `run()` exit and one writer drain without hang/panic.
+    #[tokio::test]
+    async fn test_runner_repeated_stop_idempotent() {
+        let runner = test_runner();
+        let handle = tokio::spawn({
+            let runner = runner.clone();
+            async move { runner.run().await }
+        });
+        wait_until_running(&runner).await;
+
+        // Synchronous burst plus concurrent callers.
+        runner.stop();
+        runner.stop();
+        let r2 = runner.clone();
+        let r3 = runner.clone();
+        tokio::join!(
+            async move {
+                r2.stop();
+                r2.stop();
+            },
+            async move {
+                r3.stop();
+            }
+        );
+        runner.stop();
+
+        tokio::time::timeout(Duration::from_secs(10), handle)
+            .await
+            .expect("one real run() must exit after repeated stop()")
+            .expect("no panic");
+
+        // Writer drain completed exactly once; late shutdown returns promptly
+        // and intake stays closed.
+        tokio::time::timeout(Duration::from_secs(2), runner.writer().shutdown())
+            .await
+            .expect("late writer shutdown must return promptly");
+        assert!(
+            runner
+                .writer()
+                .try_write_record(crate::storage::HoneypotRecord {
+                    id: 0,
+                    timestamp: 1700000000,
+                    remote_ip: "127.0.0.1".to_string(),
+                    remote_port: 12345,
+                    local_port: 0,
+                    protocol: "http".to_string(),
+                    service: "http".to_string(),
+                    confidence: crate::protocol::Confidence::Low,
+                    payload: b"GET / HTTP/1.0\r\n\r\n".to_vec(),
+                    payload_hex: String::new(),
+                    detected_pattern: None,
+                    bytes_received: 0,
+                    bytes_sent: 0,
+                    duration_ms: 0,
+                    connection_info: "test".to_string(),
+                    payload_truncated: false,
+                    payload_hash: None,
+                    payload_length: None,
+                })
+                .is_err(),
+            "writes after terminal drain must fail closed"
+        );
+    }
+
+    /// Phase 57.5: terminal same-instance behavior. After the first real
+    /// `run()` fully returns, a second `run()` on the terminal instance must
+    /// not create a partial second lifecycle (writer intake is already
+    /// closed). Operational re-enable must construct a new runner/writer.
+    #[tokio::test]
+    async fn test_runner_terminal_same_instance_no_second_lifecycle() {
+        let runner = test_runner();
+        let handle = tokio::spawn({
+            let runner = runner.clone();
+            async move { runner.run().await }
+        });
+        wait_until_running(&runner).await;
+        runner.stop();
+        tokio::time::timeout(Duration::from_secs(10), handle)
+            .await
+            .expect("first run() must complete")
+            .expect("no panic");
+        assert_eq!(runner.test_lifecycle(), RunnerLifecycle::Stopped);
+
+        tokio::time::timeout(Duration::from_secs(2), runner.run())
+            .await
+            .expect("second run() on terminal instance must return promptly");
+        assert_eq!(
+            runner.test_lifecycle(),
+            RunnerLifecycle::Stopped,
+            "terminal instance must not leave Stopped"
+        );
+        assert!(
+            !runner.is_running(),
+            "terminal instance must never report serving again"
+        );
+    }
+
+    /// Phase 57.6: status truth. `is_running()` is true only in `Running`;
+    /// the internal guard still blocks overlap while `Stopping`, even though
+    /// the visible status is already false.
+    #[tokio::test]
+    async fn test_runner_status_truth_vs_ownership() {
+        let runner = test_runner();
+        assert!(!runner.is_running());
+        assert_eq!(runner.test_lifecycle(), RunnerLifecycle::Idle);
+
+        let gate = runner.install_teardown_gate();
+        let mut first = tokio::spawn({
+            let runner = runner.clone();
+            async move { runner.run().await }
+        });
+        wait_until_running(&runner).await;
+        assert_eq!(runner.test_lifecycle(), RunnerLifecycle::Running);
+        assert!(runner.is_running());
+
+        runner.stop();
+        assert!(
+            !runner.is_running(),
+            "visible status must flip at Stopping, before teardown completes"
+        );
+        wait_until_state(&runner, RunnerLifecycle::Stopping).await;
+        assert!(
+            !runner.is_running(),
+            "Stopping must stay visibly stopped while ownership is held"
+        );
+
+        tokio::time::timeout(Duration::from_secs(2), runner.run())
+            .await
+            .expect("overlapping run() during Stopping must be rejected promptly");
+        assert_eq!(runner.test_lifecycle(), RunnerLifecycle::Stopping);
+
+        gate.notify_one();
+        tokio::time::timeout(Duration::from_secs(10), &mut first)
+            .await
+            .expect("first run() must reach terminal")
+            .expect("no panic");
+        assert_eq!(runner.test_lifecycle(), RunnerLifecycle::Stopped);
+        assert!(!runner.is_running());
+        runner.clear_teardown_gate();
     }
 }

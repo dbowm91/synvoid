@@ -2,10 +2,11 @@
 
 Status: Phase 49 evidence record. Campaign roadmap: `plans/performance_optimization_roadmap.md`.
 
-> Phase 56 addendum: this document's `015e790d` head does not contain the
+> Phases 56–57 addendum: this document's `015e790d` head does not contain the
 > harness described here (4 new benches + 2 repaired WAF benches landed in
-> `892c2dd3`). For immutable requalification, host/target separation, and
-> which rows are commit-reproducible vs historical, see
+> `892c2dd3`). For immutable requalification (Phase 57 completes concurrency
+> 1/8/32/128), host/target separation, and which rows are commit-reproducible
+> vs historical, see
 > `architecture/performance_optimization_corrective_closeout.md`.
 
 Production code changed in this phase: exactly one correctness prerequisite

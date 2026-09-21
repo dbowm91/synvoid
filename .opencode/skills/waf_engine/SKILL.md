@@ -57,10 +57,11 @@ code consumes narrow traits, never concrete infrastructure — see
     fanout. Anomaly-enabled scoring/priority semantics and the
     anomaly-disabled early-terminal path are pinned by
     `crates/synvoid-waf/tests/execution_model_parity.rs`.
-    Known cost (Phase 56 requalified): isolated single 10 KiB-body latency
-    regressed while all concurrent batches improved; whole-stage offload stays
-    deferred pending event-loop evidence. See
-    `architecture/performance_optimization_corrective_closeout.md` §7.
+    Known cost (Phases 56–57 requalified, incl. immutable concurrency
+    1/8/32/128): isolated single 10 KiB-body latency regressed while all
+    concurrent batches improved; whole-stage offload stays deferred pending
+    event-loop evidence. See
+    `architecture/performance_optimization_corrective_closeout.md` §6/§7.
 
 ## Verification
 

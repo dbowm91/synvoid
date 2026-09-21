@@ -96,10 +96,11 @@ wrk -t4 -c100 -d30s http://localhost:80/
 The performance-optimization campaign is closed. Before/after evidence,
 methodology, and hypothesis dispositions live in
 `architecture/performance_optimization_closeout.md`; the measurement baseline
-in `architecture/performance_optimization_baseline.md`; the Phase 56
+in `architecture/performance_optimization_baseline.md`; the Phases 56–57
 corrective runtime/evidence record (stateful writer shutdown, runner-owned
-maintenance, strict `TeeBody` reservation, immutable requalification,
-host/target separation) in
+maintenance, strict `TeeBody` reservation, durable runner lifecycle with
+terminal one-instance ownership, immutable requalification incl. WAF
+concurrency 1/8/32/128, host/target separation) in
 `architecture/performance_optimization_corrective_closeout.md`. Headline results on
 the campaign host: WAF small-request latency ~4-5× (borrowed inline detector
 evaluation replaced per-request task fanout), upstream selection 2-13×

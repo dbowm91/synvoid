@@ -1,16 +1,19 @@
-# Performance Optimization Corrective Closeout (Phase 56)
+# Performance Optimization Corrective Closeout (Phases 56–57)
 
-> Post-closeout audit note (2026-09-21): Phase 56 implementation landed at
+> Phase 57 implementation/qualification is complete in this tree: durable
+> real-`PortHoneypotRunner::run()/stop()` lifecycle ownership, direct
+> public-method lifecycle tests, single-owned writer drain during runner
+> teardown, and immutable WAF-concurrency 1/8/32/128 requalification are
+> landed below. Phase 56 implementation landed at
 > `57ad3158754b2f4851e1ce408043d33104106974`, and its writer-shutdown,
-> maintenance-task, `TeeBody`, and provenance fixes remain valid. Final closure
-> is pending `plans/phase_57_performance_final_corrective_closeout.md`, which
-> owns a narrower real-`PortHoneypotRunner::run()/stop()` lifecycle race,
-> immutable WAF-concurrency requalification, and final status/SHA
-> reconciliation. Until Phase 57 closes, treat this document as Phase 56
-> implementation evidence rather than the terminal closeout record.
+> maintenance-task, `TeeBody`, and provenance fixes remain valid and unchanged
+> in contract. The Phase 57 proof-bearing implementation/qualification SHA is
+> recorded in the closure metadata follow-up (see §1); this tree does not
+> self-reference its own hash.
 
 Status: corrective closure for the completed Phases 49-55 campaign.
 Plan: `plans/phase_56_performance_campaign_corrective_runtime_and_evidence_closure.md`.
+Final corrective plan: `plans/phase_57_performance_final_corrective_closeout.md` (implemented/closed).
 Campaign roadmap: `plans/performance_optimization_roadmap.md` (historical).
 Baseline record: `architecture/performance_optimization_baseline.md`.
 Campaign closeout: `architecture/performance_optimization_closeout.md`.
@@ -32,10 +35,16 @@ headline evidence is reproducible from immutable revisions.
   `92f606b95ee9bb55c5d61115de04e70cebdfe288`.
 - Phase 56 baseline for this pass: `main` at `92f606b9` (2026-09-21), plus
   two plan-registration commits (`db149e21`, `1cc5e49c`).
-- Phase 56 implementation/qualification head: the commit containing this
-  file and the Workstream A-C fixes below (verify with
-  `git log --oneline --grep='phase56'`; the pushed head is recorded in
-  `plans/roadmap.md` at close).
+- Phase 56 implementation SHA (proof-bearing for Phase 56):
+  `57ad3158754b2f4851e1ce408043d33104106974`.
+- Phase 57 baseline for the final corrective pass: `main` at
+  `57ad3158754b2f4851e1ce408043d33104106974` (2026-09-21), plus docs
+  registrations (`b489f4f7`, `da60db81`, `8e8207ad`, `66005086`, `a7806d06`).
+- Phase 57 proof-bearing implementation/qualification SHA: the commit
+  containing the Workstream A–D runner lifecycle fix, the six real
+  `run()/stop()` lifecycle tests, and the §6 immutable concurrency
+  requalification below — recorded explicitly in the closure metadata
+  follow-up commit, not self-referenced here.
 
 Do not call `015e790d` a commit containing the corrected benchmark harness;
 it does not. The harness (4 new benches + 2 repaired WAF benches + Cargo
@@ -119,9 +128,29 @@ regression fails instead of hanging):
   survives successful `run()` return; in-progress blocking op may finish
   during shutdown; repeated run/stop creates one new lifecycle, no
   accumulation.
+- Phase 57 (this closeout, `runner.rs` only; public signatures unchanged):
+  edge-triggered `broadcast` shutdown replaced with stateful
+  `watch::Sender<bool>` (initial `false`); both `run()`-loop and maintenance
+  receivers subscribe before the lifecycle becomes externally visible as
+  active, and `borrow()` pre-checks plus a `Send`-safe
+  `shutdown_requested()` (`borrow()` + `changed()`) helper make an early
+  `stop()` durable with no sleep/retry/poll. Private `RunnerLifecycle`
+  (`Idle`/`Running`/`Stopping`/`Stopped`) separates user-visible
+  `is_running()` (true only in `Running`) from lifecycle ownership: `run()`
+  acquires `Idle -> Running` once; `stop()` moves `Running -> Stopping`
+  synchronously without releasing ownership; `run()` marks `Stopped` only
+  after listener exit, maintenance join, and writer drain. A second `run()`
+  while `Running`/`Stopping`/`Stopped` returns without starting work
+  (one instance is one lifecycle; re-enable constructs a new
+  runner/writer). `stop()` no longer spawns a concurrent writer shutdown
+  for the active lifecycle — `run()` single-owns listener shutdown,
+  maintenance join, and writer drain; an `Idle`-only `stop()` (no run ever
+  active) arranges writer closure separately without releasing lifecycle.
+  Test-only `teardown_gate` (`Notify`, `#[cfg(test)]`) holds teardown in
+  `Stopping` deterministically; never an operator knob.
 
 Tests (`runner::runner_maintenance_tests`, short intervals, production
-interval unchanged at 3600 s):
+interval unchanged at 3600 s; shutdown now stateful `watch`, same bounds):
 
 - initial runs exactly once, not twice;
 - periodic cycles never overlap (in-flight flag + 35 ms work on 20 ms
@@ -129,6 +158,23 @@ interval unchanged at 3600 s):
 - stop exits the task (5 s bound);
 - restart creates one joinable lifecycle per generation;
 - no new cycle starts after shutdown.
+
+Phase 57 direct public-method tests (`runner::runner_lifecycle_tests`,
+isolated `:memory:` storage, loopback `127.0.0.1:0`, all under
+`tokio::time::timeout` so regression fails instead of hanging):
+
+- early stop cannot be lost (spawn `run()`, synchronous `stop()`, bounded
+  10 s return, terminal `Stopped`);
+- stop does not release ownership early (gated teardown in `Stopping`,
+  second `run()` rejected within 2 s, first still pending, then released);
+- teardown owns maintenance (real `run()` return implies maintenance
+  joined; a shutdown-ignoring task would hang past the 10 s bound);
+- repeated stop idempotent (burst + concurrent sync callers, one exit,
+  late writer shutdown prompt, writes fail closed);
+- terminal same-instance behavior (second `run()` after full return stays
+  `Stopped`, never serving);
+- status truth (`is_running()` true only in `Running`; `Stopping` visibly
+  stopped while still blocking overlap).
 
 ### Workstream C — `TeeBody` reservation enforcement (`streaming.rs`)
 
@@ -257,10 +303,12 @@ ratio mixes architectures.
 
 Point estimates (`--quick` Criterion, same host/profile/target).
 "Before" = baseline `015e790d` + benchmark-only transplant (immutable);
-"after" = Phase 56 qualification head (Phase 55 production + Phase 56
-lifecycle/reservation fixes, which do not move these hot paths except as
-noted). Honeypot/metrics-WASM/buffer rows state their provenance
-explicitly.
+"after" = Phase 57 proof-bearing head (Phase 55 production + Phase 56
+lifecycle/reservation fixes + Phase 57 runner lifecycle ownership, none of
+which move these WAF hot paths except as noted; the Phase 57 runner change
+is lifecycle-only). Honeypot/metrics-WASM/buffer rows state their provenance
+explicitly. Phase 57 completes the immutable concurrency requalification
+that Phase 56 left historical (method recorded in §4; numbers below).
 
 ### WAF (`bench_normalization`, default config, anomaly on)
 
@@ -275,15 +323,26 @@ explicitly.
 
 ### WAF concurrency (`bench_attack_detection_wave10` batch completion)
 
-| Batch | Before (historical) | After (requalified) |
-|-------|--------------------|--------------------|
-| 1 | 14.8 µs | ~12.4 µs |
-| 8 | 28.8 µs | ~20.6 µs |
-| 32 | 86.9 µs | ~51.3 µs |
-| 128 | 295 µs | ~162.6 µs |
+Phase 57 immutable requalification (2026-09-21, same host/target/profile as
+§5, `cargo bench --bench bench_attack_detection_wave10 --
+attack_detection_concurrency --quick`): baseline worktree at `015e790d` plus
+a benchmark-only transplant of the repaired
+`benches/bench_attack_detection_wave10.rs` (1 file, 260 insertions, no
+production files; `[[bench]]` registration already present at baseline),
+versus the Phase 57 proof-bearing head. Criterion point estimates:
 
-All concurrent batches improve; only isolated single large-body regresses
-(§7).
+| Batch | Before (immutable, `015e790d` + bench-only patch) | After (Phase 57 head, requalified) |
+|-------|---------------------------------------------------|------------------------------------|
+| 1 | ~16.49 µs (16.333–17.105 µs) | ~11.34 µs (11.157–11.391 µs) |
+| 8 | ~32.41 µs (31.737–32.574 µs) | ~21.09 µs (20.676–21.191 µs) |
+| 32 | ~146.66 µs (146.55–147.08 µs) | ~48.46 µs (48.200–48.522 µs) |
+| 128 | ~380.53 µs (370.90–382.94 µs) | ~155.8 µs (155.38–157.43 µs) |
+
+All concurrent batches improve (~1.5× at batch 1, ~1.5× at batch 8, ~3.0×
+at batch 32, ~2.4× at batch 128); only isolated single large-body regresses
+(§7). These rows replace the Phase 56 "Before (historical)" labels
+(14.8/28.8/86.9/295 µs working-tree context, retained in git history, not
+rewritten). No WAF production code was altered to change these numbers.
 
 ### Upstream (`bench_upstream_selection`, representative)
 
@@ -360,7 +419,7 @@ and `AGENTS.md` Known Issues).
 
 ## 8. Full verification results
 
-Focused (required by the Phase 56 plan):
+Focused (required by the Phase 56 plan, retained for Phase 57):
 
 ```bash
 cargo fmt --all -- --check
@@ -371,16 +430,18 @@ cargo test -p synvoid-upstream --profile ci
 cargo xtask test guards
 ```
 
-- `synvoid-honeypot`: 198 lib tests green (incl. 6 new Phase 56 shutdown
-  + 5 new maintenance lifecycle tests).
-- `synvoid-proxy`: 66 lib tests green (incl. 7 new `TeeBody` reservation
-  tests).
-- `synvoid-waf`: 197 lib tests green (execution-model parity untouched).
-- `synvoid-upstream`: 58 lib tests green (selection parity untouched).
+- `synvoid-honeypot`: 204 lib tests green (Phase 56: 6 shutdown + 5
+  maintenance lifecycle tests, retained; Phase 57: 6 new real
+  `run()/stop()` lifecycle tests in `runner::runner_lifecycle_tests`).
+- `synvoid-proxy`: `TeeBody` reservation tests green (Phase 56 contract
+  unchanged by Phase 57).
+- `synvoid-waf`: execution-model parity untouched by Phase 57 (no
+  detector/scoring change).
+- `synvoid-upstream`: selection parity untouched by Phase 57.
 - `cargo xtask test guards`: green (recorded at qualification; rerun in
   `cargo xtask verify`).
 
-Repository gates (run at the corrective closeout head):
+Repository gates (run at the Phase 57 proof-bearing head):
 
 ```bash
 cargo check --no-default-features
@@ -395,25 +456,31 @@ cargo audit
 
 Focused benchmark requalification ran outside routine CI (above).
 
-| Gate | Result at Phase 56 head |
-|------|------------------------|
+| Gate | Result at Phase 57 proof-bearing head |
+|------|---------------------------------------|
 | fmt --check | green |
 | feature-profile compiles (4) | green (`--no-default-features`, `mesh`, `dns`, `mesh,dns`) |
-| `cargo xtask verify` | green, 10/10 steps, 293.1 s |
-| `cargo xtask verify-full` | green, 10/10 steps, 700.1 s |
+| `cargo xtask verify` | green, 10/10 steps, 211.0 s |
+| `cargo xtask verify-full` | green, 10/10 steps, 503.1 s |
 | `cargo deny check` | green (advisories/bans/licenses/sources ok) |
 | `cargo audit` | green, exit 0 with 6 allowed warnings only |
 
+Phase 56 gate history retained: `cargo xtask verify` green 10/10 steps
+293.1 s and `cargo xtask verify-full` green 10/10 steps 700.1 s at the Phase
+56 head; `cargo audit` exit 0 with 6 allowed warnings only.
+
 ## 9. Residual opportunities / non-goals (unchanged)
 
-Phase 56 did not: change the WAF detector set/scoring/API; reintroduce
+Phases 56–57 did not: change the WAF detector set/scoring/API; reintroduce
 per-detector `JoinSet`; add whole-stage offload; redesign `BufferPool`;
-change proxy-cache admission; change public shutdown/runner APIs;
-replace SQLite; rerun a broad audit; or rewrite historical Phase 49-55
-numbers. Residuals from closeout §10 remain: whole-stage offload only on
-event-loop evidence; JWT duplicate normalization (~150 ns, measure first);
-global HTTP sampler only on contended evidence; mesh-publish reads only if
-implicated; dedicated RSS harness only if pooling changes again.
+change proxy-cache admission; change public shutdown/runner APIs (signatures
+preserved; only private lifecycle/shutdown state changed); replace SQLite;
+rerun a broad audit; rewrite historical Phase 49-55 numbers; or implement a
+new admin "enable" lifecycle. Residuals from closeout §10 remain:
+whole-stage offload only on event-loop evidence; JWT duplicate normalization
+(~150 ns, measure first); global HTTP sampler only on contended evidence;
+mesh-publish reads only if implicated; dedicated RSS harness only if pooling
+changes again.
 
 ## 10. Final compatibility statement
 
@@ -422,8 +489,57 @@ coverage/scoring/precedence/fail-closed behavior, upstream algorithms and
 selection semantics, protocol capabilities, Prometheus metric names/labels,
 admin/status payloads, `BufferPool`/`PooledBuf` surfaces, honeypot
 persistence/retention semantics and backpressure, and all feature profiles
-are preserved. Behavioral deltas are limited to the three concrete
-correctness fixes: (a) stateful/no-lost-wakeup writer shutdown; (b) single
+are preserved. Behavioral deltas are limited to the concrete correctness
+fixes: (a) stateful/no-lost-wakeup writer shutdown (Phase 56); (b) single
 runner-owned maintenance lifecycle with no initial overlap and no detached
-task after shutdown; (c) strict `TeeBody` governor-reservation enforcement
-with exact-once release on abandonment (response bytes unchanged).
+task after shutdown (Phase 56); (c) strict `TeeBody` governor-reservation
+enforcement with exact-once release on abandonment (Phase 56, response bytes
+unchanged); (d) durable real-runner shutdown with separated lifecycle
+ownership and terminal one-instance-one-lifecycle contract (Phase 57, §11).
+Admin `disable` still calls sync `stop()`; `enable`/`pause`/`resume` remain
+no-ops; no same-instance restart is promised.
+
+## 11. Phase 57 final corrective closeout (this head)
+
+Scope owned (per
+`plans/phase_57_performance_final_corrective_closeout.md`): private
+`PortHoneypotRunner` lifecycle/shutdown state; direct tests of the real
+public `run()/stop()/is_running()` behavior; immutable WAF-concurrency
+requalification; Phase 56/57 planning and closeout reconciliation; focused
+and full verification. Explicitly not owned: WAF execution changes,
+detector coverage/scoring/precedence, `TeeBody`, persistence redesign,
+async `stop()`, admin enable lifecycle, buffer-pool redesign, or unrelated
+task-lifecycle cleanup.
+
+Findings closed:
+
+1. `stop()` exposed false-stopped status while `run()` was still alive
+   (`running = false` written immediately, second `run()` could overlap
+   teardown). Fixed by `RunnerLifecycle`: visible `is_running()` flips at
+   `Stopping`, ownership releases only at terminal `Stopped`.
+2. Edge-triggered `broadcast` shutdown subscribed after the lifecycle became
+   active could lose an early stop. Fixed by stateful `watch<bool>` with
+   receivers subscribed before `Idle -> Running` plus durable
+   `borrow()`/`changed()` waits; no sleeps, repeated sends, or polling.
+3. Same-instance restart was an invalid implicit contract over a terminal
+   writer. Made explicit and pinned: one instance is one lifecycle; a post-
+   terminal `run()` returns without starting work. No public signature
+   changed; no writer/listener reconstruction was required because no binding
+   documentation or tested production call site required same-instance
+   restart (admin `enable` is a no-op; workers construct a new runner per
+   process lifecycle).
+4. Immutable concurrency requalification incomplete. Completed in §6 above
+   from `015e790d` plus the recorded benchmark-only patch.
+5. Status/SHA disagreement. Reconciled: Phase 56 plan is historical with a
+   Phase 57 pointer; Phase 57 plan is implemented/closed; both roadmaps are
+   historical/complete; this closeout records Phase 56 SHA `57ad3158...`
+   and the Phase 57 proof-bearing SHA in the closure metadata follow-up.
+
+Verification at the proof-bearing head: focused suites (§8), four feature-
+profile compiles, `cargo xtask verify`, `cargo xtask verify-full`,
+`cargo deny check`, and `cargo audit` green (timings in the §8 table);
+benchmark requalification outside routine CI as recorded. Rejection checks
+hold: no helper-only test claims the runner race; no `running = false`
+sole-guard; no post-active broadcast subscription; no async `stop()`; no
+restart claim over a closed writer; no overlapping lifecycles; no WAF
+behavior change for numbers; no relabeled history; no self-referential SHA.

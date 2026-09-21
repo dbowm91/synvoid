@@ -74,12 +74,18 @@ Honeypot session → HoneypotIntelExtractor
 - **No blocking SQLite on Tokio workers** (Phase 53): batch flushes and
   prune/maintenance run on bounded `spawn_blocking` (one flush in flight per
   writer); retention hashing never clones the payload
-- **Stateful shutdown + owned maintenance** (Phase 56): `HoneypotWriter::shutdown()`
-  completes via `watch<bool>` (no lost wakeup; late callers return immediately;
-  all clones converge after the same drain); runner owns exactly one maintenance
-  task (initial pass once, hourly `sleep` cadence, joined by `run()` — never
-  detached after shutdown). See
-  `architecture/performance_optimization_corrective_closeout.md` §3
+- **Stateful shutdown + owned maintenance + durable runner lifecycle**
+  (Phases 56–57): `HoneypotWriter::shutdown()` completes via `watch<bool>`
+  (no lost wakeup; late callers return immediately; all clones converge after
+  the same drain); runner owns exactly one maintenance task (initial pass
+  once, hourly `sleep` cadence, joined by `run()` — never detached after
+  shutdown); real `PortHoneypotRunner::run()/stop()` uses durable `watch`
+  shutdown (early stop cannot be lost) with separated
+  `Idle/Running/Stopping/Stopped` ownership — `is_running()` true only while
+  serving, one instance is one lifecycle (post-terminal `run()` starts
+  nothing), `stop()` stays sync and the active `run()` single-owns
+  listener/maintenance/writer-drain teardown. See
+  `architecture/performance_optimization_corrective_closeout.md` §3/§11
 
 ## Configuration Defaults
 ```toml

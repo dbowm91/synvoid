@@ -1,6 +1,6 @@
 # SynVoid Architecture Hardening Roadmap
 
-Status: Tracks 1-3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phase 56 implementation landed, and Phase 57 is the active final corrective closeout for runner lifecycle and evidence-state residuals.
+Status: Tracks 1-3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (proof-bearing SHA recorded in `architecture/performance_optimization_corrective_closeout.md` closure follow-up). No active performance-corrective handoff remains.
 
 Scope: this roadmap covers architecture hardening, trust-boundary closure, verification, release readiness, post-hardening cleanup, and the architecture-convergence work required before another broad feature-expansion pass.
 
@@ -313,9 +313,9 @@ Detailed plans:
 
 Campaign constraints: no detector/capability removal for benchmark wins; no public signature/type churn solely for optimization; no load-balancing policy changes; no metric-name/payload regressions; no unbounded blocking/offload queues; no buffer-pool public semantic break. Phase 49 evidence gates production refactors, and Phase 55 owns final same-host before/after evidence and planning closeout.
 
-## Phase 56 Corrective Follow-up: Performance Runtime and Evidence Closure — Implementation Landed
+## Phase 56 Corrective Follow-up: Performance Runtime and Evidence Closure — Historical
 
-Status: implementation landed at `57ad3158754b2f4851e1ce408043d33104106974`; final closure is pending the narrow Phase 57 corrective closeout. Existing Phase 56 writer, maintenance, `TeeBody`, and evidence fixes remain valid.
+Status: implemented at `57ad3158754b2f4851e1ce408043d33104106974`; retained as historical handoff detail. Final closure was completed by Phase 57. Existing Phase 56 writer, maintenance, `TeeBody`, and evidence fixes remain valid and unchanged in contract.
 
 Evidence:
 `architecture/performance_optimization_corrective_closeout.md`.
@@ -341,9 +341,9 @@ residual unless new event-loop evidence justifies a separate WAF scheduling
 plan. Phase 56 did not broaden into detector, buffer-pool, upstream-routing,
 or public-API redesign.
 
-## Phase 57 Final Corrective Closeout: Runner Lifecycle and Evidence Truth — Active
+## Phase 57 Final Corrective Closeout: Runner Lifecycle and Evidence Truth — Implemented/Closed
 
-Status: active implementation handoff.
+Status: implemented/closed. Proof-bearing implementation/qualification SHA recorded in `architecture/performance_optimization_corrective_closeout.md` closure follow-up.
 
 Detailed plan:
 `plans/phase_57_performance_final_corrective_closeout.md`.
@@ -351,8 +351,8 @@ Detailed plan:
 Baseline:
 `57ad3158754b2f4851e1ce408043d33104106974`.
 
-This is the final narrow closeout pass for the Phase 49-56 performance line.
-It owns only:
+This was the final narrow closeout pass for the Phase 49-56 performance line.
+It owned only:
 
 - durable real-runner shutdown so an early `stop()` cannot be lost;
 - lifecycle-state separation so teardown cannot expose the instance for a
@@ -362,6 +362,6 @@ It owns only:
 - immutable WAF-concurrency 1/8/32/128 baseline requalification;
 - Phase 56/57 status and proof-bearing-SHA reconciliation.
 
-It does not reopen WAF design, `TeeBody`, buffer-pool, upstream-selection, or
+It did not reopen WAF design, `TeeBody`, buffer-pool, upstream-selection, or
 public API architecture. Phase 56's landed writer-shutdown and cache-governor
-fixes remain in force.
+fixes remain in force. No active performance-corrective handoff remains.
