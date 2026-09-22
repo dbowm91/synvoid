@@ -1,5 +1,7 @@
 # Eggfetch 0.2 Transport Closeout (Phase 61 — adopted branch)
 
+> **Reopened by Phase 62 (2026-09-22).** The production eggfetch migration remains adopted, but this Phase 61 closeout is not the final campaign authority. A post-closeout audit found an outer-registry policy-key collision, silent invalid-TLS-policy fallback, and incomplete performance/full-release evidence. Active corrective plan: `plans/phase_62_eggfetch_policy_keying_and_evidence_corrective_closeout.md`. Preserve the Phase 61 evidence below as historical context; final authority moves to the Phase 62 corrective closeout when that plan satisfies its gates.
+
 ## 1. Revisions and version
 
 - Pre-campaign baseline (`main`): `e3026667c23e6e0e92ee30d13c53baf2e68c5c77`.
