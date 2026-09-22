@@ -1,6 +1,6 @@
 # Phase 62 Plan: Eggfetch Policy-Keying and Evidence Corrective Closeout
 
-Status: complete. Proof-bearing implementation/qualification: `c3568ef4580a49edf222c5e4e6ce5d4dca904e81` (2026-09-22). Final record: `architecture/eggfetch_0_2_transport_corrective_closeout.md`.
+Status: runtime corrective complete. Proof-bearing runtime implementation/qualification: `c3568ef4580a49edf222c5e4e6ce5d4dca904e81` (2026-09-22). Policy-keying and fail-closed TLS fixes remain closed/in force. Performance-evidence closure is superseded by active Phase 63 (`plans/phase_63_eggfetch_transport_benchmark_requalification_and_final_evidence_closeout.md`).
 
 Registered in: `plans/roadmap.md`.
 
