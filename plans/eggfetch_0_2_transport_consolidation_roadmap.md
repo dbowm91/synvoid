@@ -1,6 +1,6 @@
 # Eggfetch 0.2 Transport Consolidation Roadmap
 
-Status: detailed implementation handoff plan (2026-09-22).
+Status: Phases 58-60 implementation landed at `7a6c617cf9dc16441f50da5dcff95778775b5041`; the Phase 61 closeout attempt at `f62bb285a2bdf6262efe9a7b859bc11bdcc35e15` is reopened by the active Phase 62 corrective (`plans/phase_62_eggfetch_policy_keying_and_evidence_corrective_closeout.md`). The adopted eggfetch production lane remains in place while corrective qualification runs.
 
 Registered in: `plans/roadmap.md`.
 
