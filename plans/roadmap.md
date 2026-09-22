@@ -367,7 +367,7 @@ public API architecture. Phase 56's landed writer-shutdown and cache-governor
 fixes remain in force. No active performance-corrective handoff remains.
 
 
-## Post-Phase-57 Campaign: Eggfetch 0.2 Transport Consolidation — Active
+## Post-Phase-57 Campaign: Eggfetch 0.2 Transport Consolidation — Phase 63 evidence requalification active
 
 Status: runtime implementation closed through Phase 62; Phase 61 closeout superseded; Phase 63 performance-evidence requalification active. Production remains on eggfetch (`c3568ef4`).
 

@@ -1425,7 +1425,7 @@ mod tests {
             ..synvoid_http_client::UpstreamTlsConfig::default()
         };
         let server = super::ProxyServer::new_with_pool_config(
-            "http://127.0.0.1:9/".to_string(),
+            "http://127.0.0.1:0/".to_string(), // Phase 63: construction-only URL (no I/O); port 0 is never dialable
             std::sync::Arc::new(AllowWaf),
             1024,
             None,
@@ -1522,7 +1522,7 @@ mod tests {
             ..synvoid_http_client::UpstreamTlsConfig::default()
         };
         let poisoned = super::ProxyServer::new_with_pool_config(
-            "http://127.0.0.1:9/".to_string(),
+            "http://127.0.0.1:0/".to_string(), // Phase 63: construction-only URL (no I/O); port 0 is never dialable
             std::sync::Arc::new(AllowWaf),
             1024,
             None,
@@ -1538,7 +1538,7 @@ mod tests {
         );
         assert!(poisoned.lane_init_error().is_some());
         let recovered = super::ProxyServer::new_with_pool_config(
-            "http://127.0.0.1:9/".to_string(),
+            "http://127.0.0.1:0/".to_string(), // Phase 63: construction-only URL (no I/O); port 0 is never dialable
             std::sync::Arc::new(AllowWaf),
             1024,
             None,

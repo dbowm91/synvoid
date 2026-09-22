@@ -140,6 +140,74 @@ mod tests {
         UpstreamTlsConfig::default()
     }
 
+    // Phase 63: hermetic loopback fixture. Binds port 0 (proving the port is
+    // ours for the duration of the test), counts accepted TCP connections,
+    // and serves one minimal HTTP/1.1 200 response per connection. The hit
+    // counter is the I/O proof: zero hits means the lane failed before any
+    // network I/O; one hit means the request passed the policy gate.
+    struct LoopbackFixture {
+        addr: std::net::SocketAddr,
+        hits: Arc<std::sync::atomic::AtomicUsize>,
+        _task: tokio::task::JoinHandle<()>,
+    }
+
+    async fn start_loopback_fixture() -> LoopbackFixture {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("fixture must bind loopback port 0");
+        let addr = listener.local_addr().expect("fixture must have an addr");
+        let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let hits_clone = Arc::clone(&hits);
+        let task = tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    break;
+                };
+                hits_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                tokio::spawn(async move {
+                    // Bounded header read so keep-alive clients never RST;
+                    // probe bodies are empty so no content-length drain needed.
+                    let mut buf = vec![0u8; 8192];
+                    let mut seen = 0usize;
+                    let _ = tokio::time::timeout(Duration::from_secs(2), async {
+                        loop {
+                            match sock.read(&mut buf[seen..]).await {
+                                Ok(0) => break,
+                                Ok(n) => {
+                                    seen += n;
+                                    if seen >= 4 && buf[..seen].windows(4).any(|w| w == b"\r\n\r\n")
+                                    {
+                                        break;
+                                    }
+                                    if seen == buf.len() {
+                                        break;
+                                    }
+                                }
+                                Err(_) => break,
+                            }
+                        }
+                    })
+                    .await;
+                    let _ = sock
+                        .write_all(
+                            b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok",
+                        )
+                        .await;
+                });
+            }
+        });
+        LoopbackFixture {
+            addr,
+            hits,
+            _task: task,
+        }
+    }
+
+    fn hit_count(fixture: &LoopbackFixture) -> usize {
+        fixture.hits.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
     #[test]
     fn buffered_first_streaming_second_do_not_collapse() {
         let registry = UpstreamClientRegistry::new();
@@ -155,16 +223,20 @@ mod tests {
             "same site with different plaintext policy must not collapse"
         );
         // Behavioral proof, not pointer inequality: the strict lane rejects
-        // plaintext before network I/O.
+        // plaintext before network I/O (zero fixture connections), while the
+        // buffered lane passes the gate (exactly one fixture connection and
+        // a 200 response from the fixture server).
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .unwrap();
         rt.block_on(async {
+            let fixture = start_loopback_fixture().await;
+            let url = format!("http://{}/plaintext", fixture.addr);
             let err = strict
                 .send_buffered(
                     http::Method::GET,
-                    "http://127.0.0.1:9/plaintext",
+                    &url,
                     None,
                     http::HeaderMap::new(),
                     None,
@@ -176,31 +248,26 @@ mod tests {
                 err.to_string().contains("plaintext"),
                 "unexpected strict-lane error: {err}"
             );
-        });
-        // The buffered lane carries the plaintext-capable policy; its gate
-        // must not reject the same scheme at the policy layer. (The request
-        // itself will fail at connect to the discard port, proving it passed
-        // the gate and attempted I/O.)
-        let rt2 = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        rt2.block_on(async {
-            let err = buffered
+            // Settle window: any stray connection attempt would land here.
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            assert_eq!(
+                hit_count(&fixture),
+                0,
+                "strict lane must open zero upstream connections"
+            );
+            let resp = buffered
                 .send_buffered(
                     http::Method::GET,
-                    "http://127.0.0.1:9/plaintext",
+                    &url,
                     None,
                     http::HeaderMap::new(),
-                    Some(Duration::from_millis(200)),
+                    Some(Duration::from_secs(5)),
                     None,
                 )
                 .await
-                .expect_err("unroutable discard port must fail at I/O, not at the gate");
-            assert!(
-                !err.to_string().contains("plaintext not permitted"),
-                "buffered lane must not apply the strict plaintext gate: {err}"
-            );
+                .expect("buffered lane must pass the gate and reach the fixture");
+            assert_eq!(resp.status_code(), 200);
+            assert_eq!(hit_count(&fixture), 1);
         });
     }
 
@@ -221,10 +288,12 @@ mod tests {
             .build()
             .unwrap();
         rt.block_on(async {
+            let fixture = start_loopback_fixture().await;
+            let url = format!("http://{}/x", fixture.addr);
             let err = strict
                 .send_buffered(
                     http::Method::GET,
-                    "http://127.0.0.1:9/x",
+                    &url,
                     None,
                     http::HeaderMap::new(),
                     None,
@@ -233,20 +302,28 @@ mod tests {
                 .await
                 .expect_err("strict lane must reject plaintext");
             assert!(err.to_string().contains("plaintext"));
-            let err = buffered
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            assert_eq!(
+                hit_count(&fixture),
+                0,
+                "strict lane must open zero upstream connections"
+            );
+            let resp = buffered
                 .send_buffered(
                     http::Method::GET,
-                    "http://127.0.0.1:9/x",
+                    &url,
                     None,
                     http::HeaderMap::new(),
-                    Some(Duration::from_millis(200)),
+                    Some(Duration::from_secs(5)),
                     None,
                 )
                 .await
-                .expect_err("buffered lane must attempt I/O");
-            assert!(
-                !err.to_string().contains("plaintext not permitted"),
-                "buffered lane must keep its legacy plaintext gate: {err}"
+                .expect("buffered lane must keep its legacy plaintext gate");
+            assert_eq!(resp.status_code(), 200);
+            assert_eq!(
+                hit_count(&fixture),
+                1,
+                "buffered lane must attempt exactly one fixture connection"
             );
         });
     }

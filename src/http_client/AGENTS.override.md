@@ -139,10 +139,6 @@ lib.rs reduced to facade; TLS moved to tls.rs; pooling to pool.rs. Public API un
   site context (no default substitution), and `invalidate(site)` drops all
   policy variants. `ProxyServer` preserves constructors and poisons on invalid
   policy (every request fails before I/O).
-
-- Production egress uses `synvoid_http_client::eggfetch_transport::EggfetchUpstreamClient`
-  (`execute` for streaming/generic bodies, `send_buffered` for buffered; `SyncBody` adapts
-  non-`Sync` native bodies). Crate consumers import it from the crate directly.
 - Root consumers (`src/admin`, `src/waf`) MUST go through this facade:
   `crate::http_client::operator_lane_client()` (+ `EggfetchUpstreamClient` re-export).
   The root dependency ledger entitles only `http, http_client, tls` to consume

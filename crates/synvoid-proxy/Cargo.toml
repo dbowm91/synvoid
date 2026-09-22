@@ -46,5 +46,5 @@ futures = "0.3"
 uuid = { version = "1", features = ["v4", "serde"] }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net", "io-util"] }
 synvoid-upstream = { path = "../synvoid-upstream" , version = "0.1" }
