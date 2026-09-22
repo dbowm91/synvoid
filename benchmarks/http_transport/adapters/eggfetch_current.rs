@@ -116,6 +116,35 @@ pub async fn stream_post(
     drain_body(resp.into_body()).await
 }
 
+/// Phased streaming POST (diagnostic): returns `(body_bytes, tth_us)` where
+/// the phase boundary — response headers received — is the same semantic
+/// point as the legacy phased variant.
+pub async fn stream_post_phased(
+    client: &EggfetchUpstreamClient,
+    url: &str,
+    body: FixtureBody,
+    timeout: Duration,
+) -> Result<(u64, u64)> {
+    use std::time::Instant;
+    let uri: http::Uri = url.parse().context("stream url")?;
+    let req = http::Request::builder()
+        .method(http::Method::POST)
+        .uri(uri)
+        .body(body)
+        .context("stream request build")?;
+    let t0 = Instant::now();
+    let resp = client
+        .execute(req, Some(timeout), None)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    if resp.status() != http::StatusCode::OK {
+        anyhow::bail!("unexpected status {}", resp.status());
+    }
+    let tth_us = t0.elapsed().as_micros() as u64;
+    let bytes = drain_body(resp.into_body()).await?;
+    Ok((bytes, tth_us))
+}
+
 /// Streaming request stopped at response headers; the caller drops the body
 /// (early-drop workload). The concrete response-body type stays inside this
 /// adapter; the caller only needs it to be droppable, so it is boxed.

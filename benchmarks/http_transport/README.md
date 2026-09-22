@@ -113,7 +113,9 @@ Full immutable comparison (5 reps × 10 workloads × 2 lanes, ABBA order):
 Useful flags: `--reps N`, `--profile ci|release`,
 `--legacy-rev SHA`, `--current-rev REV` (default `HEAD`),
 `--out DIR`, `--keep-worktrees`, `--smoke` (tiny pipeline test only —
-smoke numbers are never adjudication evidence).
+smoke numbers are never adjudication evidence), `--workloads "w1 w2"`
+(subset for focused follow-ups), `--extra-args "--concurrency 8"`
+(diagnostic overrides, recorded verbatim in `commands.log`).
 
 Single workload on one lane (uses in-tree harness build):
 

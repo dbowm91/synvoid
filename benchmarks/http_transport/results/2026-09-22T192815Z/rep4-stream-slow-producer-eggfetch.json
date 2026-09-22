@@ -1,0 +1,38 @@
+{
+  "lane": "eggfetch",
+  "workload": "stream-slow-producer",
+  "revision_sha": "99e3675a36681456e05e014a069f1df0326dbdea",
+  "harness_sha": "5034e9af41d714ee5167b9d8d5a73ffedb1171346d60434836a15f40a3bae7f5",
+  "adapter_file": "adapters/eggfetch_current.rs",
+  "adapter_sha": "fd275c0c51077a225ed072f64d29853a2f671b2f635d7642edc7687c215f059a",
+  "toolchain": "rustc 1.98.1 (48a229cea 2026-09-01)",
+  "host": "Darwin 25.6.0 x86_64 Apple M4 Pro",
+  "target": "aarch64-apple-darwin",
+  "profile": "ci",
+  "unix_secs": 1790105681,
+  "protocol": "h1",
+  "requests": 50,
+  "warmup": 5,
+  "concurrency": 1,
+  "payload_total_bytes": 65536,
+  "payload_frames": 16,
+  "payload_frame_bytes": 4096,
+  "producer_delay_ms": 1,
+  "response_bytes": 65536,
+  "stats": {
+    "n": 50,
+    "failures": 0,
+    "duration_ms": 1930.238083,
+    "rps": 25.903540314720857,
+    "p50_us": 37092,
+    "p95_us": 46485,
+    "p99_us": 47298,
+    "min_us": 34522,
+    "max_us": 47298,
+    "bytes_total": 3276800
+  },
+  "extra": {
+    "server_connections": 1,
+    "server_requests": 55
+  }
+}

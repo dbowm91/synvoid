@@ -20,6 +20,8 @@ PROFILE="ci"
 OUT=""
 KEEP=0
 SMOKE=0
+EXTRA_ARGS=""
+WORKLOADS="h1-sequential h1-concurrent h2-multiplexed stream-1k stream-64k stream-1m stream-concurrent stream-slow-producer early-drop cold-construct"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -28,6 +30,8 @@ while [ $# -gt 0 ]; do
     --reps) REPS="$2"; shift 2 ;;
     --profile) PROFILE="$2"; shift 2 ;;
     --out) OUT="$2"; shift 2 ;;
+    --workloads) WORKLOADS="$2"; shift 2 ;;
+    --extra-args) EXTRA_ARGS="$2"; shift 2 ;;
     --keep-worktrees) KEEP=1; shift ;;
     --smoke) SMOKE=1; shift ;;
     *) echo "unknown arg $1" >&2; exit 2 ;;
@@ -111,8 +115,6 @@ CURRENT_BIN="$WT_BASE/current/benchmarks/http_transport/target/$PROFILE/http-tra
 [ -x "$LEGACY_BIN" ] || LEGACY_BIN="$WT_BASE/legacy/benchmarks/http_transport/target/debug/http-transport-bench"
 [ -x "$CURRENT_BIN" ] || CURRENT_BIN="$WT_BASE/current/benchmarks/http_transport/target/debug/http-transport-bench"
 
-WORKLOADS="h1-sequential h1-concurrent h2-multiplexed stream-1k stream-64k stream-1m stream-concurrent stream-slow-producer early-drop cold-construct"
-
 # Portable per-run watchdog (macOS bash 3.2 has no `timeout` builtin).
 run_guarded() {
   local limit="$1"; shift
@@ -162,10 +164,10 @@ while [ "$rep" -le "$REPS" ]; do
       BENCH_ADAPTER_SHA="$ADSHA" BENCH_TOOLCHAIN="$TOOLCHAIN" \
       BENCH_HOST="$HOST" BENCH_PROFILE="$PROFILE" BENCH_TARGET="$TARGET" \
       run_guarded 1200 "$BIN" --lane "$lane" --workload "$w" \
-        --certs "$CERTS" --out "$out" $EXTRA
+        --certs "$CERTS" --out "$out" $EXTRA $EXTRA_ARGS
       rc=$?
       echo "rep=$rep workload=$w lane=$lane rev=$REV rc=$rc out=$out" | tee -a "$RUNLOG"
-      echo "  cmd: BENCH_REVISION_SHA=$REV ... $BIN --lane $lane --workload $w --certs $CERTS --out $out $EXTRA" >> "$RUNLOG"
+      echo "  cmd: BENCH_REVISION_SHA=$REV ... $BIN --lane $lane --workload $w --certs $CERTS --out $out $EXTRA $EXTRA_ARGS" >> "$RUNLOG"
       [ $rc -eq 0 ] || FAIL=1
     done
   done

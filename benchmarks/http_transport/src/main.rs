@@ -37,6 +37,7 @@ enum Workload {
     StreamSlowProducer,
     EarlyDrop,
     ColdConstruct,
+    Stream64KPhases,
 }
 
 impl Workload {
@@ -51,6 +52,7 @@ impl Workload {
             "stream-concurrent" => Self::StreamConcurrent,
             "stream-slow-producer" => Self::StreamSlowProducer,
             "early-drop" => Self::EarlyDrop,
+            "stream-64k-phases" => Self::Stream64KPhases,
             "cold-construct" => Self::ColdConstruct,
             _ => bail!("unknown workload {s}"),
         })
@@ -67,6 +69,7 @@ impl Workload {
             Self::StreamConcurrent => "stream-concurrent",
             Self::StreamSlowProducer => "stream-slow-producer",
             Self::EarlyDrop => "early-drop",
+            Self::Stream64KPhases => "stream-64k-phases",
             Self::ColdConstruct => "cold-construct",
         }
     }
@@ -86,6 +89,7 @@ impl Workload {
             Self::StreamConcurrent => (15_000, 4, 100),
             Self::StreamSlowProducer => (50, 1, 5),
             Self::EarlyDrop => (800, 1, 20),
+            Self::Stream64KPhases => (8_000, 1, 200),
             Self::ColdConstruct => (50, 1, 0),
         }
     }
@@ -429,6 +433,143 @@ async fn run_stream(
     ))
 }
 
+/// Diagnostic TTH-vs-drain split at fixed geometry (sequential only).
+/// The phase boundary (headers received) is identical on both lanes; the
+/// per-request drain time is `total - tth` on the same clock.
+async fn run_stream_phased(
+    cfg: &Config,
+    server: &H1Server,
+    total: usize,
+    frame: usize,
+) -> Result<RunEnvelope> {
+    if cfg.concurrency != 1 {
+        bail!("stream-64k-phases is sequential-only");
+    }
+    let url = format!("http://{}/stream", server.addr);
+    let (rev, harness, adapter, toolchain, host, profile) =
+        provenance(&cfg.lane, cfg.workload.name());
+    let mut totals: Vec<u64> = Vec::with_capacity(cfg.requests);
+    let mut tths: Vec<u64> = Vec::with_capacity(cfg.requests);
+    let mut failures = 0usize;
+    // Measured wall clock starts AFTER warmup (see run_h1_small).
+    let start = match cfg.lane.as_str() {
+        adapter_legacy::LANE => {
+            let client = adapter_legacy::stream_client();
+            for _ in 0..cfg.warmup {
+                let body = common::FixtureBody::new(total, frame, None);
+                let _ = adapter_legacy::stream_post_phased(
+                    &client,
+                    url.clone(),
+                    body,
+                    PER_REQUEST_TIMEOUT,
+                )
+                .await;
+            }
+            let measured = Instant::now();
+            for _ in 0..cfg.requests {
+                let s = Instant::now();
+                match tokio::time::timeout(
+                    REQUEST_TIMEOUT,
+                    adapter_legacy::stream_post_phased(
+                        &client,
+                        url.clone(),
+                        common::FixtureBody::new(total, frame, None),
+                        PER_REQUEST_TIMEOUT,
+                    ),
+                )
+                .await
+                {
+                    Ok(Ok((_, tth))) => {
+                        totals.push(s.elapsed().as_micros() as u64);
+                        tths.push(tth);
+                    }
+                    _ => failures += 1,
+                }
+            }
+            measured
+        }
+        #[cfg(feature = "eggfetch")]
+        adapter_eggfetch::LANE => {
+            let client = adapter_eggfetch::stream_client()?;
+            for _ in 0..cfg.warmup {
+                let body = common::FixtureBody::new(total, frame, None);
+                let _ =
+                    adapter_eggfetch::stream_post_phased(&client, &url, body, PER_REQUEST_TIMEOUT)
+                        .await;
+            }
+            let measured = Instant::now();
+            for _ in 0..cfg.requests {
+                let s = Instant::now();
+                match tokio::time::timeout(
+                    REQUEST_TIMEOUT,
+                    adapter_eggfetch::stream_post_phased(
+                        &client,
+                        &url,
+                        common::FixtureBody::new(total, frame, None),
+                        PER_REQUEST_TIMEOUT,
+                    ),
+                )
+                .await
+                {
+                    Ok(Ok((_, tth))) => {
+                        totals.push(s.elapsed().as_micros() as u64);
+                        tths.push(tth);
+                    }
+                    _ => failures += 1,
+                }
+            }
+            measured
+        }
+        other => bail!("lane {other} not built (eggfetch feature off?)"),
+    };
+    let wall = start.elapsed();
+    let samples: Vec<Sample> = totals
+        .iter()
+        .map(|t| Sample {
+            latency_us: Some(*t),
+            bytes: total as u64,
+        })
+        .collect();
+    let stats = summarize(&samples, wall);
+    let mut drains: Vec<u64> = totals
+        .iter()
+        .zip(tths.iter())
+        .map(|(t, h)| t.saturating_sub(*h))
+        .collect();
+    tths.sort_unstable();
+    drains.sort_unstable();
+    let pct = |v: &[u64], p: f64| -> u64 {
+        if v.is_empty() {
+            return 0;
+        }
+        let idx = ((p / 100.0) * v.len() as f64).ceil() as usize;
+        v[idx.saturating_sub(1).min(v.len() - 1)]
+    };
+    Ok(envelope(
+        cfg,
+        rev,
+        harness,
+        adapter,
+        toolchain,
+        host,
+        profile,
+        "h1",
+        total,
+        total,
+        total.div_ceil(frame),
+        frame,
+        None,
+        stats,
+        serde_json::json!({
+            "tth_p50_us": pct(&tths, 50.0),
+            "tth_p95_us": pct(&tths, 95.0),
+            "drain_p50_us": pct(&drains, 50.0),
+            "drain_p95_us": pct(&drains, 95.0),
+            "phased_failures": failures,
+        }),
+    ))
+}
+
 async fn run_early_drop(
     cfg: &Config,
     server: &H1Server,
@@ -734,6 +875,11 @@ async fn run_workload(cfg: &Config) -> Result<RunEnvelope> {
             let server: H1Server = common::start_h1_server(total).await?;
             run_early_drop(cfg, &server, total, frame).await
         }
+        Workload::Stream64KPhases => {
+            // Diagnostic split (TTH vs drain) at the stream-64k geometry.
+            let server: H1Server = common::start_h1_server(65_536).await?;
+            run_stream_phased(cfg, &server, 65_536, 4096).await
+        }
         Workload::ColdConstruct => Ok(run_cold(cfg)?),
     }
 }
@@ -816,6 +962,7 @@ fn run_summarize(raw: &[String]) -> Result<()> {
         "stream-slow-producer",
         "early-drop",
         "cold-construct",
+        "stream-64k-phases",
     ];
     let mut md = String::from("# Transport comparison summary (generated)\n\n");
     md.push_str("| workload | lane | reps | median rps | min–max rps | median p50 (us) | median p95 (us) | median p99 (us) | total failures |\n");
