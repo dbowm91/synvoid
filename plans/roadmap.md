@@ -1,6 +1,6 @@
 # SynVoid Architecture Hardening Roadmap
 
-Status: Tracks 1-3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). Eggfetch 0.2 transport consolidation is closed through Phase 62 (proof-bearing `c3568ef4...`; final record `architecture/eggfetch_0_2_transport_corrective_closeout.md`; Phase 61 closeout at `f62bb285...` superseded and preserved as history).
+Status: Tracks 1-3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). Eggfetch 0.2 runtime adoption is closed through Phase 62 (`c3568ef4...`), while final benchmark/reproducibility evidence is reopened under active Phase 63; production remains on eggfetch.
 
 Scope: this roadmap covers architecture hardening, trust-boundary closure, verification, release readiness, post-hardening cleanup, and the architecture-convergence work required before another broad feature-expansion pass.
 
@@ -369,7 +369,7 @@ fixes remain in force. No active performance-corrective handoff remains.
 
 ## Post-Phase-57 Campaign: Eggfetch 0.2 Transport Consolidation — Active
 
-Status: implementation closed through Phase 62; Phase 61 closeout superseded. Production is on eggfetch (proof-bearing `c3568ef4`).
+Status: runtime implementation closed through Phase 62; Phase 61 closeout superseded; Phase 63 performance-evidence requalification active. Production remains on eggfetch (`c3568ef4`).
 
 Roadmap: `plans/eggfetch_0_2_transport_consolidation_roadmap.md`.
 
@@ -387,7 +387,8 @@ Execution order:
 2. Phase 59 — introduce an eggfetch-backed native transport lane behind the existing neutral SynVoid policy model and run differential parity against the legacy lane.
 3. Phase 60 — migrate production consumers in bounded batches, then retire only redundant legacy transport machinery that is not required by the compatibility contract.
 4. Phase 61 — superseded initial security/profile/API closeout attempt (preserved as history).
-5. Phase 62 — closed policy-aware registry correction, invalid-TLS-policy fail-closed correction, immutable transport benchmark, full/release verification, and final status reconciliation.
+5. Phase 62 — closed policy-aware registry and fail-closed TLS correction; its initial benchmark conclusion is preserved but superseded for performance evidence.
+6. Phase 63 — active reproducible benchmark/true-streaming requalification, small-request regression adjudication, fixture hygiene, and final evidence closeout.
 
 Detailed plans:
 
@@ -396,6 +397,7 @@ Detailed plans:
 - `plans/phase_60_eggfetch_consumer_migration_and_legacy_transport_retirement.md`
 - `plans/phase_61_eggfetch_transport_qualification_and_closeout.md`
 - `plans/phase_62_eggfetch_policy_keying_and_evidence_corrective_closeout.md`
+- `plans/phase_63_eggfetch_transport_benchmark_requalification_and_final_evidence_closeout.md`
 
 Campaign constraints:
 
