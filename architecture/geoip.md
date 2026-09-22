@@ -74,7 +74,7 @@ pub struct AsnInfo {
 ### `lookup.rs` — MaxMind Reader Wrapper
 - Country, city, subdivision, ASN queries
 - Thread-safe read access
-- Mmap-based file reading
+- In-memory reader (`Reader<Vec<u8>>`); no mmap dependency verified in `crates/synvoid-geoip/`
 
 ### `updater.rs` — Database Update Manager
 - Download from MaxMind or presigned URLs
@@ -99,7 +99,7 @@ pub struct AsnInfo {
 
 ## 6. Key Implementation Details
 
-- **Mmap-based**: Memory-mapped file access for fast lookups
+- **Reader-backed**: in-memory MaxMind reader for fast lookups (mmap not verified; see `lookup.rs`)
 - **Multi-database**: Separate readers for country, city, and ASN data
 - **Automatic Updates**: Background task with configurable interval
 - **Stale Detection**: Alerts when database is older than threshold

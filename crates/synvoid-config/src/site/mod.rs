@@ -266,7 +266,8 @@ impl SiteConfig {
                 .map(|s| crate::app_server::GranianLogFormat::from(s.as_str()))
                 .unwrap_or(crate::app_server::GranianLogFormat::Text),
             log_verbose: site_config.log_verbose.unwrap_or(false),
-            require_hashes: site_config.require_hashes.unwrap_or(false),
+            // Fail-closed: pip installs require hashes unless explicitly opted out.
+            require_hashes: site_config.require_hashes.unwrap_or(true),
         }
     }
 }
@@ -320,5 +321,20 @@ default = "http://localhost:3000"
         let via_str =
             SiteConfig::from_toml_str(VALID_SITE_TOML).expect("from_toml_str must succeed");
         assert_eq!(via_file.site_id(), via_str.site_id());
+    }
+
+    #[test]
+    fn require_hashes_defaults_true_but_explicit_false_honored() {
+        // Missing [app_server] entirely -> fail-closed true.
+        let missing = SiteConfig::from_toml_str(VALID_SITE_TOML).expect("valid TOML must parse");
+        assert!(missing.app_server_config().require_hashes);
+        assert!(crate::app_server::AppServerConfig::default().require_hashes);
+
+        // Explicit opt-out still honored.
+        let explicit_false = format!(
+            "{VALID_SITE_TOML}\n[app_server]\nenabled = true\napp_path = \"main:app\"\nrequire_hashes = false\n"
+        );
+        let parsed = SiteConfig::from_toml_str(&explicit_false).expect("explicit false must parse");
+        assert!(!parsed.app_server_config().require_hashes);
     }
 }

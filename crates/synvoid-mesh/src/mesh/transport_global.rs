@@ -182,14 +182,14 @@ impl MeshTransport {
             match action {
                 crate::protocol::GlobalNodeAction::Add => {
                     let key = format!("global_node_key:{}", node_id);
-                    let value = serde_json::json!({
-                        "node_id": node_id,
-                        "public_key": public_key,
-                        "key_exchange_endpoint": key_exchange_endpoint,
-                        "announced_at": timestamp,
-                        "announced_by": from_peer,
-                    });
-                    if let Ok(bytes) = serde_json::to_vec(&value) {
+                    let record = crate::dht::GlobalNodeKeyEndpointRecord {
+                        node_id: Some(node_id.to_string()),
+                        public_key: Some(public_key.to_string()),
+                        key_exchange_endpoint: key_exchange_endpoint.map(str::to_string),
+                        announced_by: Some(from_peer.to_string()),
+                        timestamp,
+                    };
+                    if let Ok(bytes) = postcard::to_allocvec(&record) {
                         record_store.store_and_announce(key, bytes, 86400);
                         tracing::info!("Stored global node key for {} in DHT", node_id);
                     }
@@ -203,19 +203,19 @@ impl MeshTransport {
                     tracing::info!("Removed global node key for {} from DHT", node_id);
                 }
                 crate::protocol::GlobalNodeAction::UpdateKeyExchange => {
-                    // Update just the key exchange endpoint
+                    // Update just the key exchange endpoint. Typed
+                    // postcard-first decode tolerates every known publisher
+                    // shape (`timestamp` or legacy `announced_at`).
                     let key = format!("global_node_key:{}", node_id);
                     if let Some(existing) = record_store.get_record(&key) {
-                        if let Ok(mut value) =
-                            serde_json::from_slice::<serde_json::Value>(&existing.value)
+                        if let Some(mut record) = crate::dht::decode_dht_record::<
+                            crate::dht::GlobalNodeKeyEndpointRecord,
+                        >(&existing.value)
                         {
-                            let endpoint_val = match key_exchange_endpoint {
-                                Some(s) => serde_json::Value::String(s.to_string()),
-                                None => serde_json::Value::Null,
-                            };
-                            value["key_exchange_endpoint"] = endpoint_val;
-                            value["announced_at"] = serde_json::json!(timestamp);
-                            if let Ok(bytes) = serde_json::to_vec(&value) {
+                            record.key_exchange_endpoint =
+                                key_exchange_endpoint.map(str::to_string);
+                            record.timestamp = timestamp;
+                            if let Ok(bytes) = postcard::to_allocvec(&record) {
                                 record_store.store_and_announce(key, bytes, 86400);
                                 tracing::info!(
                                     "Updated key exchange endpoint for {} in DHT",
@@ -269,7 +269,7 @@ impl MeshTransport {
         let node_id = self.config.node_id();
         let heartbeat = crate::dht::GlobalNodeHeartbeat::new(node_id.clone());
 
-        if let Ok(value) = serde_json::to_vec(&heartbeat) {
+        if let Ok(value) = postcard::to_allocvec(&heartbeat) {
             let key = crate::dht::DhtKey::global_node_heartbeat(&node_id);
             let key_str = key.as_str();
 
@@ -351,13 +351,14 @@ impl MeshTransport {
         // Store in local DHT
         if let Some(ref record_store) = self.record_store {
             let key = format!("global_node_key:{}", target_node_id);
-            let value = serde_json::json!({
-                "node_id": target_node_id,
-                "public_key": target_public_key,
-                "announced_at": timestamp,
-                "announced_by": self.config.node_id(),
-            });
-            if let Ok(bytes) = serde_json::to_vec(&value) {
+            let record = crate::dht::GlobalNodeKeyEndpointRecord {
+                node_id: Some(target_node_id.to_string()),
+                public_key: Some(target_public_key.to_string()),
+                key_exchange_endpoint: None,
+                announced_by: Some(self.config.node_id().to_string()),
+                timestamp,
+            };
+            if let Ok(bytes) = postcard::to_allocvec(&record) {
                 record_store.store_and_announce(key, bytes, 86400);
             }
         }

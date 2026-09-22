@@ -2,7 +2,7 @@
 
 ## 1. Purpose and Responsibility
 
-The ICMP Filter module (`src/icmp_filter/`) provides **cross-platform ICMP packet filtering** with pluggable backends (nftables, eBPF, pf, Windows Firewall, WFP), privilege detection, and feature-gated compilation.
+The ICMP Filter module (canonical: `crates/synvoid-icmp-filter/`; `src/icmp_filter/mod.rs` is a facade-only re-export) provides **cross-platform ICMP packet filtering** with pluggable backends (nftables, eBPF, pf, Windows Firewall, WFP), privilege detection, and feature-gated compilation.
 
 **Core Responsibilities:**
 - ICMP flood protection

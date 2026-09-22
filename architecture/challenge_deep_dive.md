@@ -21,7 +21,7 @@ pub struct PowChallenge {
 fn verify_pow_solution(challenge: &str, nonce: &str, difficulty: u8) -> bool {
     let input = format!("{}{}", challenge, nonce);
     let hash = Sha256::digest(input.as_bytes());
-    has_leading_zeros(&hash, difficulty as usize)
+    has_leading_zeros_ct(&hash, difficulty as usize).into()
 }
 ```
 

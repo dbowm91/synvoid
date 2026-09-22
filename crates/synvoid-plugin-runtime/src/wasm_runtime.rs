@@ -720,7 +720,7 @@ impl WasmPluginManager {
     ///
     /// File-based loads read the WASM binary once and store the bytes to close
     /// TOCTOU races between policy enforcement and instantiation.
-    fn prepare_plugin_load(
+    pub(crate) fn prepare_plugin_load(
         &self,
         wasm_path: Option<&Path>,
         manifest: Option<&PluginManifest>,

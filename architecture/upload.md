@@ -357,6 +357,11 @@ struct YaraRuleManifest {
 
 Signing payload: `"{source_sha256}:{compiled_sha256}"`. Verification via `manifest.verify()` (key check) and `manifest.verify_content()` (content integrity).
 
+> `compiled_rules_sha256` is hash-only metadata for provenance/audit (see
+> `crates/synvoid-yara/src/engine.rs`); it is not an execution path — mesh,
+> upload, and jail paths recompile approved source locally and never
+> deserialize compiled bytes.
+
 ### Operator Inspection
 
 ```rust

@@ -407,7 +407,7 @@ cargo test -p synvoid-dns --test update_authorized_semantics
 
 ## 5. Transfer-Enabled Secondary
 
-**Support Status**: Beta
+**Support Status**: Deferred/Experimental (demoted from Beta — no passive-listener harness exists for the secondary role; see Beta Boundary below)
 
 Secondary DNS server that receives zone transfers from a primary. Zone synchronization is automatic.
 

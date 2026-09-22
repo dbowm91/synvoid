@@ -33,9 +33,9 @@ subsystem rules in `src/config/AGENTS.override.md`.
 
 - `--config-path` takes the **directory** containing `main.toml` + `sites/`,
   not the TOML file itself.
-- `--configtest` ignores `--config-path` and validates `./config/`
-  relative to CWD. Run it from the intended configuration root; a passing
-  test never covers another directory.
+- `--configtest` validates the `--config-path` directory (`<dir>/main.toml`
+  + `<dir>/sites/*.toml`), defaulting to `./config/` relative to CWD.
+  A passing test covers only the validated directory.
 
 ## When adding a config option
 

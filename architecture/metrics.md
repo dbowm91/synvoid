@@ -29,7 +29,7 @@ pub struct SiteMetrics {
     pub upstream_successes: AtomicU64,
     pub upstream_failures: AtomicU64,
     pub latency_samples: Mutex<Vec<u64>>,
-    pub blocked_by_type: Mutex<HashMap<AttackType, AtomicU64>>,
+    pub blocked_by_type: DashMap<AttackType, AtomicU64>,
 }
 
 pub struct BandwidthTracker {
@@ -81,11 +81,16 @@ pub struct WorkerMetrics {
     pub total_latency_ms: AtomicU64,
     pub request_count: AtomicU64,
     pub latency_samples: Mutex<Vec<u64>>,
-    pub blocked_by_type: Mutex<HashMap<AttackType, AtomicU64>>,
+    pub blocked_by_type: DashMap<AttackType, AtomicU64>,
     pub per_site: Mutex<HashMap<String, SiteMetrics>>,
     pub bandwidth: Arc<BandwidthTracker>,
     pub per_serverless: Mutex<HashMap<String, ServerlessMetrics>>,
 }
+
+// Verified in crates/synvoid-metrics/src/types.rs: both SiteMetrics and
+// WorkerMetrics use DashMap (not Mutex<HashMap>) for blocked_by_type; new
+// counter fields include request_queue_samples, inline_cpu_phase_samples
+// (WorkerMetrics), per_upstream/monthly/rate state (BandwidthTracker).
 
 // Global atomic counters (50+ LazyLock<AtomicU64> in crates/synvoid-metrics/src/collection.rs)
 pub(crate) static PROXY_CACHE_HITS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));

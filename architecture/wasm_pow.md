@@ -12,8 +12,8 @@
 | `verify_pow(challenge, nonce, difficulty)` | Reference verification (server logic mirrors `synvoid-challenge`) |
 | `init_key_exchange` | X25519 + ML-KEM-768 hybrid exchange in two steps (key-request → key-confirm) |
 | `ml_kem_backend()` | Returns backend identifier (`ml-kem/0.3 (FIPS 203 final, RustCrypto)`) for audits |
-| `sign_request` / `verify_response` | Session-key request/response signing |
-| `audit_edge_nodes` | HEAD-probe reachability audit of mesh edge nodes |
+| `sign_request` / `verify_response` | Session-key request/response signing via HMAC-SHA256 (`simple_sign` is HMAC, not plain SHA-256) |
+| `audit_edge_nodes` | HEAD-probe reachability audit of mesh edge nodes (latency measured after the fetch `await` completes) |
 
 Supporting types: `PqcKeyPair`, `PqcEncapsulationResult`, `KeyExchangeResult`, `MeshAuditResult`/`AuditResults`.
 

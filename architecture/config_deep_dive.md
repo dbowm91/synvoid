@@ -308,8 +308,8 @@ Provides abstraction over serialization with **postcard** as the primary backend
    ```rust
    // SiteAppServerConfig: Optional field
    pub require_hashes: Option<bool>,
-   // SiteConfig::app_server_config(): Resolved propagation
-   require_hashes: site_config.require_hashes.unwrap_or(false),
+   // SiteConfig::app_server_config(): Resolved propagation (fail-closed: missing key defaults true; explicit `false` opts out)
+   require_hashes: site_config.require_hashes.unwrap_or(true),
    ```
 
 2. **Feature-Gated Compilation**: Large subsystems (DNS, Mesh) compile only when features enabled, but core HTTP server always compiles.

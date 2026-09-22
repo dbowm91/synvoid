@@ -18,7 +18,7 @@ The Auth module (canonical: `crates/synvoid-auth/`; the former `src/auth/` compa
 
 ## 2. Key Submodules and Their Responsibilities
 
-### `crates/synvoid-auth/src/lib.rs` - Core Authentication (`crates/synvoid-auth/src/lib.rs` is a thin facade)
+### `crates/synvoid-auth/src/lib.rs` - Core Authentication (~1800 lines: manager, store, sessions, audit, persistence)
 
 The main module containing:
 
@@ -161,6 +161,8 @@ pub enum AuthError {
     AccountLocked(DateTime<Utc>),
     #[error("Password hashing error")]
     HashingError,
+    #[error("Authentication backend busy")]
+    AuthBackendBusy,
 }
 ```
 
@@ -455,7 +457,7 @@ However, the Challenge module supports optional sub-features:
 ### Constant-Time Operations
 
 ```rust
-// CSRF token validation (crates/synvoid-auth/src/lib.rs:772)
+// CSRF token validation (crates/synvoid-auth/src/lib.rs)
 if let Some(stored) = session.csrf_token.as_deref() {
     return bool::from(stored.as_bytes().ct_eq(csrf_token.as_bytes()));
 }

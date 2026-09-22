@@ -200,7 +200,7 @@ impl OneShotError {
 /// A typed outcome on success, or a typed error on failure.
 pub fn execute_one_shot_command(command: OneShotCommand) -> Result<OneShotOutcome, OneShotError> {
     match command {
-        OneShotCommand::ConfigTest => execute_config_test(),
+        OneShotCommand::ConfigTest { config_path } => execute_config_test(config_path),
         OneShotCommand::ExportOpenApi => execute_export_openapi(),
         OneShotCommand::ExportApiSpec => execute_export_api_spec(),
         OneShotCommand::Genesis => execute_genesis(),
@@ -212,10 +212,8 @@ pub fn execute_one_shot_command(command: OneShotCommand) -> Result<OneShotOutcom
     }
 }
 
-fn execute_config_test() -> Result<OneShotOutcome, OneShotError> {
-    let config_dir = std::env::current_dir()
-        .map_err(|e| OneShotError::Io(format!("Failed to get current directory: {}", e)))?
-        .join("config");
+fn execute_config_test(config_path: Option<PathBuf>) -> Result<OneShotOutcome, OneShotError> {
+    let config_dir = config_path.unwrap_or_else(|| PathBuf::from("config"));
     let main_config_path = config_dir.join("main.toml");
 
     if !main_config_path.exists() {
@@ -1056,5 +1054,53 @@ mod tests {
         let display = outcome.display().unwrap();
         assert!(display.contains("Node Information:"));
         assert!(display.contains("Mesh Role:"));
+    }
+
+    #[test]
+    fn config_test_honors_custom_config_dir() {
+        let missing = PathBuf::from("/definitely/missing/synvoid-configtest-dir");
+        let err = execute_config_test(Some(missing.clone())).unwrap_err();
+        match err {
+            OneShotError::ConfigInvalid(msg) => {
+                assert!(
+                    msg.contains("main.toml not found"),
+                    "expected missing main.toml error, got: {}",
+                    msg
+                );
+                assert!(
+                    msg.contains("definitely/missing/synvoid-configtest-dir"),
+                    "error must reference the custom dir, got: {}",
+                    msg
+                );
+            }
+            other => panic!("expected ConfigInvalid, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn config_test_defaults_to_cwd_config_dir() {
+        // Without a custom dir, validation targets ./config relative to CWD.
+        // Accept success (repo ships ./config) or a validation/Io error that
+        // references the default layout — the point is the default path was
+        // attempted, not a custom dir.
+        match execute_config_test(None) {
+            Ok(OneShotOutcome::ConfigValid) => {}
+            Err(OneShotError::ConfigInvalid(msg)) => {
+                assert!(
+                    msg.contains("main.toml not found") || msg.contains("main.toml:"),
+                    "expected config validation error, got: {}",
+                    msg
+                );
+                assert!(
+                    msg.contains("main.toml"),
+                    "default error must reference main.toml, got: {}",
+                    msg
+                );
+            }
+            Err(OneShotError::Io(msg)) => {
+                assert!(msg.contains("sites"), "unexpected Io error: {}", msg);
+            }
+            other => panic!("unexpected result for default config dir: {:?}", other),
+        }
     }
 }

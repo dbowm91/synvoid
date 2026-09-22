@@ -17,7 +17,7 @@ The Supervisor is the top-level process that manages worker lifecycle, upgrades,
   - **Drain Coordination:** Provides staged worker draining via `DrainManager` (`src/supervisor/drain_manager.rs`) during upgrades. The `drain_aware_shutdown()` method at `src/supervisor/process.rs:269-356` coordinates the full drain protocol.
   - **Control Plane Coordination:** Handles Raft consensus, DHT routing, and Mesh transport.
   - **Configuration:** Loads and validates configuration using the `synvoid-config` crate.
-  - **gRPC API:** Hosts the formal Control Plane API (`proto/control.proto`) for remote management.
+  - **gRPC API:** Hosts the formal Control Plane API (`proto/control.proto`) for remote management. (Mesh-gated: `src/supervisor/api.rs` is `#[cfg(feature = "mesh")]`; without `mesh` there is no control-plane listener.)
 - **Key Logic:** `src/supervisor/`.
 - **Entry Point:** `run_supervisor_mode()` (`src/supervisor/process.rs:460`).
 - **IPC Role:** Acts as the central hub for worker coordination.
@@ -59,7 +59,7 @@ Workers are request-handling engines managed by the Supervisor. SynVoid uses a u
 
 - **UnifiedServerWorker:** Primary worker handling HTTP/HTTPS/HTTP3 + WAF + proxy via a single Tokio async event loop. Handles all site routing and security enforcement.
 - **CPU Offload Worker (historically `StaticWorker`):** Dedicated worker for bounded heavy tasks like CSS/JS minification, compression, image transforms, YARA scans, and other expensive transforms. The legacy `StaticWorker` IPC names are retained for compatibility.
-- **Legacy Worker (BaseWorkerProcess):** Deprecated raw TCP/UDP proxy worker. Unused for HTTP traffic; requires further investigation to determine if it should be removed.
+- **Legacy Worker (BaseWorkerProcess):** Deprecated raw TCP/UDP proxy worker struct (`crates/synvoid-ipc/src/worker.rs`). Unused for HTTP traffic; the legacy `--worker` flag has no dispatch branch and falls through to Supervisor.
 
 - **Isolation:** Worker process boundaries isolate failure domains and lifecycle operations.
 - **Kernel Load Balancing:** `SO_REUSEPORT` can be used in advanced multi-unified-worker mode and upgrade overlap flows.
@@ -73,7 +73,7 @@ Workers are request-handling engines managed by the Supervisor. SynVoid uses a u
 
 SynVoid utilizes a tiered communication strategy:
 
-1.  **External Management (gRPC):** The CLI (`CommandClient`) and remote managers communicate with the Supervisor via gRPC (localhost only for local IPC).
+1.  **External Management (gRPC, mesh-gated):** The CLI (`CommandClient`) and remote managers communicate with the Supervisor via gRPC (localhost only for local IPC) when the `mesh` feature enables the control-plane listener.
 2.  **Internal Coordination (IPC):** The Supervisor communicates with Workers using a high-speed, binary IPC protocol over Unix domain sockets or Windows named pipes.
 3.  **Mesh Network:** Supervisors communicate with other Supervisors via the Mesh transport (QUIC) to maintain global state (Raft/DHT).
 
@@ -108,4 +108,4 @@ The Supervisor provides a unified view of the system health:
 
 - **Worker Monitoring:** The Supervisor monitors worker process exits and heartbeats.
 - **Self-Healing:** If a worker fails, the Supervisor immediately spawns a replacement and pins it to the correct core.
-- **gRPC Status:** The `CommandClient` queries the Supervisor via gRPC to retrieve detailed health and performance metrics.
+- **gRPC Status:** The `CommandClient` queries the Supervisor via gRPC (mesh-gated) to retrieve detailed health and performance metrics.

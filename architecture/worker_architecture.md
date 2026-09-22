@@ -10,7 +10,7 @@ The `worker_pool` configuration (`tcp.worker_pool_size`) controls the **number o
 |-----------|---------|---------------|
 | **UnifiedServerWorker** | Single process handling HTTP/HTTPS/HTTP3 + WAF + proxy via Tokio async runtime | `--unified-server-worker` flag |
 | **`tcp.worker_pool_size`** | Number of connection-accepting threads within the unified event loop | `tcp.worker_pool_size` config |
-| **`unified_server_workers`** | Number of unified worker processes (default 1; advanced isolation mode) | `server.unified_server_workers` config |
+| **`unified_server_workers`** | Number of unified worker processes (default 1; advanced isolation mode) | `defaults.worker_pool.workers` config (shipped `config/main.toml` sets 4; code default 1) |
 
 **Scaling Guidance:**
 - For HTTP scaling, tune `tcp.worker_pool_size` (connection accepting threads) or use async primitives within the existing event loop
@@ -67,13 +67,16 @@ The Unified Server is designed to handle multiple protocols and transport layers
 
 ### 2. WAF Pipeline
  Every request passing through the Unified Server is processed by the **WAF Pipeline**. This pipeline is modular and executes in stages (verified order in `WafCore::check_request_full`):
- 1.  **Block Store Check:** IP/CIDR block list lookup from threat intelligence.
- 2.  **Rate Limits:** IP-based rate limiting, CIDR filtering, and flood protection.
- 3.  **Endpoint Block:** Block specific endpoints/paths.
- 4.  **Honeypot Detection:** Hidden link matching and trap endpoints.
- 5.  **Bot Protection:** Challenges (JS/CAPTCHA), behavioral analysis, JA3/JA4 fingerprinting. Challenges are issued **inline** within bot protection via `challenge_manager.generate_challenge_page()` within `check_bot_protection()`, not as a separate pipeline stage.
-  6.  **Flood Protection:** TCP connection tracking and rate limiting (via `FloodProtector`).
-  7.  **Attack Detection:** Deep packet inspection for SQLi, XSS, SSRF, etc. (using `WafCore` and `AttackDetector`).
+ 1.  **Rate Limits:** IP-based rate limiting, CIDR filtering, and flood protection.
+ 2.  **Endpoint Block:** Block specific endpoints/paths.
+ 3.  **Honeypot Detection:** Hidden link matching and trap endpoints.
+ 4.  **Bot Protection:** Challenges (JS/CAPTCHA), behavioral analysis, JA3/JA4 fingerprinting. Challenges are issued **inline** within bot protection via `challenge_manager.generate_challenge_page()` within `check_bot_protection()`, not as a separate pipeline stage.
+  5.  **Flood Protection:** TCP connection tracking and rate limiting (via `FloodProtector`).
+  6.  **Attack Detection:** Deep packet inspection for SQLi, XSS, SSRF, etc. (using `WafCore` and `AttackDetector`).
+
+> Admission note: block-store/threat-intel admission runs at the worker
+> composition root before this pipeline; the WAF pipeline itself
+> queries/mutates no block/threat state.
 
 ### 3. Upstream Management
 - **Connection Pooling:** Maintains persistent connections to backend servers (PHP-FPM, Granian, etc.) to reduce latency.

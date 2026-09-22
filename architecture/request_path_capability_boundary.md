@@ -88,6 +88,39 @@ Some concrete types are threaded through request-path dispatch as pass-through d
 | `AsyncIpcStream` | IPC init | Request logging pass-through | Low — received, not constructed |
 | `WorkerId` | IPC init | Request logging pass-through | Low — received, not constructed |
 
+## Mesh-Gated Dispatch-Backend Exception (`synvoid-http` only)
+
+Mesh-gated concrete `synvoid-mesh` use is permitted ONLY in these
+`crates/synvoid-http/src/` dispatch-backend files, and every use must stay
+behind `#[cfg(feature = "mesh")]`:
+
+| File | Concrete use |
+|------|--------------|
+| `backend_dispatch.rs` | `MeshTransportManager` / `MeshBackendPool` context pass-through |
+| `http_request_flow.rs` | `MeshConfig` / `MeshTransportManager` param pass-through |
+| `http_request_postlude.rs` | `MeshTransportManager` / `MeshBackendPool` context pass-through |
+| `request_frontdoor.rs` | `MeshConfig` / `MeshTransportManager` context pass-through |
+| `special_request_paths.rs` | `MeshConfig`, `MeshTransportManager`, `passover_key_exchange` handlers (`KeyExchangeHttpState`, `key_request_origin_http`, `key_confirm_http`, `maybe_get_http01_challenge`) |
+| `mesh_backend_dispatch.rs` | `MeshBackendPool` (`select_backend`, `proxy_request`, `record_failure`) |
+| `upstream_proxy_dispatch.rs` | `MeshTransportManager` pass-through |
+| `upstream_buffered_dispatch.rs` | `MeshTransportManager` pass-through |
+| `upstream_response_transform.rs` | `MeshTransportManager` response-config getters (`get_minification/image_protection/image_rights_config/compression_for_site`) |
+| `serverless_backend_dispatch.rs` | `MeshTransportManager` (`get_record_store`, `proxy_serverless_request`) |
+| `response_transform.rs` | `MeshMinification/ImageProtection/CompressionConfig` `*Like` impls |
+
+Rationale: backend dispatch is composition-adjacent — it receives ready-made
+handles from the composition root and never constructs mesh infrastructure —
+and `synvoid-mesh-protocol` covers verification-only vocabulary (signer,
+replay, wire, threat taxonomy), not these runtime handles, config shapes, or
+key-exchange/DHT/proxy operations, so the protocol crate cannot satisfy them.
+
+Guardrails: this exception does not extend to any other crate or file
+(`synvoid-proxy`, `synvoid-http3`, `synvoid-http-client`, `synvoid-waf` stay
+fully clean). New request-path consumers must still prefer narrow traits
+(`BlockListStore`, `WafProcessor`, `*Lookup`, `Mesh*Like`) with
+composition-root adapters; any full-mesh use must stay behind the `mesh`
+feature and be added to the table above with justification.
+
 ## Composition Root Adapter Pattern
 
 When a concrete type must be exposed to request path, wrap it with an adapter at the composition boundary:

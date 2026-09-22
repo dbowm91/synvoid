@@ -651,7 +651,243 @@ pub struct YaraRuleContentRecord {
 #[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub struct GlobalNodeKeyRecord {
     pub public_key: String,
+    /// `announced_at` is the legacy wire name written by
+    /// `transport_global` (`{node_id, public_key, announced_at, ...}`) while
+    /// `record_store_crud::publish_global_node_public_key` writes `timestamp`.
+    /// Accept both; missing timestamps decode as 0 so callers treat the
+    /// record as stale (matches the old `Value::as_u64().unwrap_or(0)` path).
+    #[serde(default, alias = "announced_at")]
     pub timestamp: u64,
+}
+
+/// DHT `key_exchange_endpoint:<node_id>` payload written by
+/// `transports::manager::update_key_exchange_endpoint` as
+/// `{node_id, public_key, endpoint, timestamp}`.
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
+pub struct KeyExchangeEndpointRecord {
+    #[serde(default)]
+    pub node_id: Option<String>,
+    #[serde(default)]
+    pub public_key: Option<String>,
+    #[serde(default)]
+    pub endpoint: Option<String>,
+    #[serde(default, alias = "announced_at")]
+    pub timestamp: u64,
+}
+
+/// DHT `edge_key:<edge_id>` payload. Two writers exist:
+/// `transports::manager::announce_edge_key` writes `{edge_id, public_key,
+/// timestamp: u64}` while `transport::announce_edge_key` writes
+/// `{edge_id, public_key, announced_at: i64 (chrono)}`. Both are accepted;
+/// see [`EdgeKeyRecord::effective_timestamp`].
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
+pub struct EdgeKeyRecord {
+    #[serde(default)]
+    pub edge_id: Option<String>,
+    #[serde(default)]
+    pub public_key: Option<String>,
+    #[serde(default)]
+    pub timestamp: Option<u64>,
+    #[serde(default)]
+    pub announced_at: Option<i64>,
+}
+
+impl EdgeKeyRecord {
+    pub fn effective_timestamp(&self) -> u64 {
+        if let Some(ts) = self.timestamp {
+            return ts;
+        }
+        if let Some(announced) = self.announced_at {
+            return announced.max(0) as u64;
+        }
+        0
+    }
+}
+
+/// Tolerant bootstrap record for `global_node:*` DHT payloads read by
+/// `discovery::bootstrap_from_dht`. The only field used on that path is
+/// `address`; everything else is optional so minimal `{address}` payloads and
+/// full [`GlobalNodeEntry`] payloads both decode.
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
+pub struct GlobalNodeBootstrapRecord {
+    #[serde(default)]
+    pub node_id: Option<String>,
+    #[serde(default)]
+    pub address: Option<String>,
+    #[serde(default)]
+    pub port: Option<u16>,
+    #[serde(default)]
+    pub public_key: Option<String>,
+    #[serde(default, alias = "announced_at")]
+    pub timestamp: u64,
+}
+
+/// Decode a DHT record payload postcard-first; serde_json is a documented
+/// compat fallback for records written before the postcard migration.
+/// The postcard attempt requires full input consumption so long legacy JSON
+/// payloads cannot misdecode as postcard garbage (a JSON `{` byte looks like
+/// a 123-length string prefix to postcard).
+pub fn decode_dht_record<T>(bytes: &[u8]) -> Option<T>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    if let Ok((value, rest)) = postcard::take_from_bytes::<T>(bytes) {
+        if rest.is_empty() {
+            return Some(value);
+        }
+    }
+    serde_json::from_slice::<T>(bytes).ok()
+}
+
+/// Lenient `u64` deserializer for legacy JSON DHT payloads that encoded
+/// timestamps as strings (`"1700000000"`) instead of numbers. Only the
+/// `*LegacyRecord` structs below use it; postcard always carries integers.
+fn de_flex_u64<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::{self, Visitor};
+    struct FlexU64;
+    impl Visitor<'_> for FlexU64 {
+        type Value = u64;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("a u64 or a string holding a u64")
+        }
+        fn visit_u64<E: de::Error>(self, v: u64) -> Result<u64, E> {
+            Ok(v)
+        }
+        fn visit_i64<E: de::Error>(self, v: i64) -> Result<u64, E> {
+            u64::try_from(v).map_err(|_| E::custom("negative timestamp"))
+        }
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<u64, E> {
+            v.parse().map_err(|_| E::custom("invalid timestamp string"))
+        }
+        fn visit_string<E: de::Error>(self, v: String) -> Result<u64, E> {
+            self.visit_str(&v)
+        }
+    }
+    // `deserialize_any` is unsupported by postcard, so legacy structs using
+    // this helper always fall through to the JSON path of
+    // `decode_dht_record`; genuine postcard payloads are handled by the
+    // primary typed decode that runs first at each call site.
+    deserializer.deserialize_any(FlexU64)
+}
+
+/// Default `chunk_count` for legacy manifests that omit the field (matches
+/// the old `Value::as_u64().unwrap_or(1)` fallback).
+fn default_legacy_chunk_count() -> usize {
+    1
+}
+
+/// Lenient `usize` counterpart of [`de_flex_u64`] for legacy `chunk_count`
+/// fields (number or numeric string).
+fn de_flex_usize<'de, D>(deserializer: D) -> Result<usize, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    de_flex_u64(deserializer).map(|v| v as usize)
+}
+
+/// Mutable view of `global_node_key:<id>` payloads for the
+/// `UpdateKeyExchange` read-modify-write path in `transport_global`.
+/// Tolerates every known publisher shape (`timestamp` or legacy
+/// `announced_at`, with or without `key_exchange_endpoint`/`announced_by`)
+/// so the endpoint can be updated without dropping the public key.
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
+pub struct GlobalNodeKeyEndpointRecord {
+    #[serde(default)]
+    pub node_id: Option<String>,
+    #[serde(default)]
+    pub public_key: Option<String>,
+    #[serde(default)]
+    pub key_exchange_endpoint: Option<String>,
+    #[serde(default)]
+    pub announced_by: Option<String>,
+    #[serde(default, alias = "announced_at")]
+    pub timestamp: u64,
+}
+
+/// Tolerant `serverless_function:<name>` payload. Two JSON publishers exist
+/// (`transport::announce_serverless` omits `checksum`, the peer announce
+/// handler omits `node_id`); every field defaults so both shapes decode.
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
+pub struct ServerlessFunctionDhtRecord {
+    #[serde(default)]
+    pub function_name: String,
+    #[serde(default)]
+    pub node_id: Option<String>,
+    #[serde(default)]
+    pub version: u64,
+    #[serde(default)]
+    pub checksum: String,
+    #[serde(default)]
+    pub routes: Vec<String>,
+    #[serde(default)]
+    pub allowed_methods: Vec<String>,
+    #[serde(default)]
+    pub memory_mb: Option<usize>,
+    #[serde(default)]
+    pub timeout_seconds: Option<u64>,
+    #[serde(default)]
+    pub priority: i32,
+}
+
+/// Legacy JSON shape of `yara_rule_content:<hash>` payloads (timestamp as
+/// number-or-string). New publishers emit postcard [`YaraRuleContentRecord`];
+/// this struct only serves the compat fallback. `version`/`rules` stay
+/// optional so payloads missing them are rejected exactly like the old
+/// `Value`-based fallback did.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct YaraRuleContentLegacyRecord {
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub rules: Option<String>,
+    #[serde(default, deserialize_with = "de_flex_u64")]
+    pub timestamp: u64,
+}
+
+/// Legacy JSON shape of `yara_chunk:<hash>:<i>` payloads (base64
+/// `compressed_data`, string metadata). New publishers emit postcard
+/// [`YaraRuleChunkRecord`]; this struct only serves the compat fallback.
+/// `compressed_data`/`version` stay optional so incomplete chunks are
+/// rejected exactly like the old `Value`-based fallback did.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct YaraChunkLegacyRecord {
+    #[serde(default)]
+    pub compressed_data: Option<String>,
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default, deserialize_with = "de_flex_u64")]
+    pub timestamp: u64,
+    #[serde(default)]
+    pub signature: String,
+}
+
+/// Legacy JSON shape of `yara_rules_manifest:<node>` payloads (string
+/// timestamps). New publishers emit postcard [`YaraRulesManifest`]; this
+/// struct only serves the compat fallback.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct YaraManifestLegacyRecord {
+    #[serde(default)]
+    pub node_id: String,
+    #[serde(default)]
+    pub content_hash: String,
+    #[serde(default)]
+    pub version: String,
+    #[serde(default, deserialize_with = "de_flex_u64")]
+    pub timestamp: u64,
+    #[serde(default)]
+    pub is_chunked: bool,
+    #[serde(
+        default = "default_legacy_chunk_count",
+        deserialize_with = "de_flex_usize"
+    )]
+    pub chunk_count: usize,
+    #[serde(default)]
+    pub signature: String,
+    #[serde(default)]
+    pub signer_public_key: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
@@ -919,4 +1155,267 @@ impl TierKeyStore {
 
 fn now() -> u64 {
     synvoid_utils::safe_unix_timestamp()
+}
+
+#[cfg(test)]
+mod typed_record_decoding_tests {
+    use super::*;
+
+    #[test]
+    fn key_exchange_endpoint_json_and_postcard_roundtrip() {
+        let record = KeyExchangeEndpointRecord {
+            node_id: Some("node-1".to_string()),
+            public_key: Some("pk".to_string()),
+            endpoint: Some("https://10.0.0.1:443".to_string()),
+            timestamp: 1_700_000_000,
+        };
+        let json = serde_json::to_vec(&record).unwrap();
+        let decoded: Option<KeyExchangeEndpointRecord> = decode_dht_record(&json);
+        assert_eq!(
+            decoded.unwrap().endpoint.as_deref(),
+            Some("https://10.0.0.1:443")
+        );
+
+        let bytes = postcard::to_allocvec(&record).unwrap();
+        let decoded: Option<KeyExchangeEndpointRecord> = decode_dht_record(&bytes);
+        assert_eq!(decoded.unwrap().timestamp, 1_700_000_000);
+    }
+
+    #[test]
+    fn key_exchange_endpoint_malformed_is_none() {
+        assert!(decode_dht_record::<KeyExchangeEndpointRecord>(b"not json\xff").is_none());
+        // Valid JSON shape but no endpoint: decodes, caller falls through to fallback.
+        let decoded: Option<KeyExchangeEndpointRecord> =
+            decode_dht_record(br#"{"node_id":"n","timestamp":42}"#);
+        assert!(decoded.unwrap().endpoint.is_none());
+    }
+
+    #[test]
+    fn edge_key_accepts_timestamp_and_announced_at() {
+        let via_timestamp: Option<EdgeKeyRecord> =
+            decode_dht_record(br#"{"edge_id":"e","public_key":"pk","timestamp":100}"#);
+        let via_timestamp = via_timestamp.unwrap();
+        assert_eq!(via_timestamp.public_key.as_deref(), Some("pk"));
+        assert_eq!(via_timestamp.effective_timestamp(), 100);
+
+        // Legacy `transport::announce_edge_key` writes chrono i64 `announced_at`.
+        let via_announced: Option<EdgeKeyRecord> =
+            decode_dht_record(br#"{"edge_id":"e","public_key":"pk","announced_at":200}"#);
+        assert_eq!(via_announced.unwrap().effective_timestamp(), 200);
+    }
+
+    #[test]
+    fn edge_key_malformed_is_none() {
+        assert!(decode_dht_record::<EdgeKeyRecord>(b"\x00\x01\x02").is_none());
+        let missing_key: Option<EdgeKeyRecord> = decode_dht_record(br#"{"timestamp":1}"#);
+        let missing_key = missing_key.unwrap();
+        assert!(missing_key.public_key.is_none());
+        assert_eq!(missing_key.effective_timestamp(), 1);
+    }
+
+    #[test]
+    fn global_node_key_accepts_timestamp_and_announced_at() {
+        let via_timestamp: Option<GlobalNodeKeyRecord> =
+            decode_dht_record(br#"{"public_key":"pk","timestamp":7}"#);
+        assert_eq!(via_timestamp.unwrap().timestamp, 7);
+
+        // `transport_global` writes `announced_at` with extra unknown fields.
+        let via_announced: Option<GlobalNodeKeyRecord> = decode_dht_record(
+            br#"{"node_id":"n","public_key":"pk","announced_at":9,"announced_by":"x"}"#,
+        );
+        let decoded = via_announced.unwrap();
+        assert_eq!(decoded.public_key, "pk");
+        assert_eq!(decoded.timestamp, 9);
+    }
+
+    #[test]
+    fn global_node_key_malformed_is_none() {
+        assert!(decode_dht_record::<GlobalNodeKeyRecord>(b"garbage").is_none());
+        // Missing required public_key must not decode.
+        assert!(decode_dht_record::<GlobalNodeKeyRecord>(br#"{"timestamp":1}"#).is_none());
+    }
+
+    #[test]
+    fn bootstrap_record_minimal_and_full() {
+        let minimal: Option<GlobalNodeBootstrapRecord> =
+            decode_dht_record(br#"{"address":"10.0.0.2:8080"}"#);
+        assert_eq!(minimal.unwrap().address.as_deref(), Some("10.0.0.2:8080"));
+
+        let full: Option<GlobalNodeBootstrapRecord> = decode_dht_record(
+            br#"{"node_id":"n","address":"10.0.0.3:8080","port":8080,"public_key":"pk","timestamp":5}"#,
+        );
+        assert_eq!(full.unwrap().port, Some(8080));
+    }
+
+    #[test]
+    fn bootstrap_record_malformed_is_none() {
+        assert!(decode_dht_record::<GlobalNodeBootstrapRecord>(b"\xff\xfe").is_none());
+    }
+
+    #[test]
+    fn site_config_payloads_decode_typed() {
+        let image_protection: Option<crate::config::MeshImageProtectionConfig> =
+            decode_dht_record(br#"{"enabled":true,"min_size_bytes":1024}"#);
+        let image_protection = image_protection.unwrap();
+        assert_eq!(image_protection.enabled, Some(true));
+        assert_eq!(image_protection.min_size_bytes, Some(1024));
+
+        let compression: Option<crate::config::MeshCompressionConfig> =
+            decode_dht_record(br#"{"enabled":true,"gzip_level":6}"#);
+        assert_eq!(compression.unwrap().gzip_level, Some(6));
+
+        let minification: Option<crate::config::MeshMinificationConfig> =
+            decode_dht_record(br#"{"enabled":true,"enable_html":true}"#);
+        assert_eq!(minification.unwrap().enable_html, Some(true));
+
+        // Partial proxy-cache payloads must fill defaults (old Value path used unwrap_or).
+        let prefs: Option<crate::protocol::ProxyCachePreferences> =
+            decode_dht_record(br#"{"enable":true}"#);
+        let prefs = prefs.unwrap();
+        assert!(prefs.enable);
+        assert!(prefs.methods.is_empty());
+
+        assert!(decode_dht_record::<crate::protocol::ProxyCachePreferences>(b"nope").is_none());
+        assert!(decode_dht_record::<crate::config::MeshImageProtectionConfig>(b"nope").is_none());
+    }
+
+    #[test]
+    fn long_json_never_decodes_as_postcard_garbage() {
+        // Regression: a JSON payload longer than 123 bytes must not be
+        // misread as postcard (a `{` byte looks like a 123-length string
+        // prefix). The decoder must fall through to JSON and return exact
+        // field values.
+        let long_key = "k".repeat(64);
+        let json = format!(
+            r#"{{"node_id":"node-abc","public_key":"{long_key}","key_exchange_endpoint":"https://10.0.0.9:443","announced_at":1700000000,"announced_by":"node-abc"}}"#,
+        );
+        assert!(json.len() > 123);
+        let decoded: Option<GlobalNodeKeyRecord> = decode_dht_record(json.as_bytes());
+        let decoded = decoded.unwrap();
+        assert_eq!(decoded.public_key, long_key);
+        assert_eq!(decoded.timestamp, 1_700_000_000);
+    }
+
+    #[test]
+    fn endpoint_record_roundtrip_and_malformed() {
+        let record = GlobalNodeKeyEndpointRecord {
+            node_id: Some("n".to_string()),
+            public_key: Some("pk".to_string()),
+            key_exchange_endpoint: Some("https://10.0.0.1:443".to_string()),
+            announced_by: Some("peer".to_string()),
+            timestamp: 42,
+        };
+        let bytes = postcard::to_allocvec(&record).unwrap();
+        let decoded: Option<GlobalNodeKeyEndpointRecord> = decode_dht_record(&bytes);
+        let decoded = decoded.unwrap();
+        assert_eq!(decoded.public_key.as_deref(), Some("pk"));
+        assert_eq!(
+            decoded.key_exchange_endpoint.as_deref(),
+            Some("https://10.0.0.1:443")
+        );
+
+        // Legacy JSON with `announced_at` and no endpoint.
+        let legacy: Option<GlobalNodeKeyEndpointRecord> =
+            decode_dht_record(br#"{"node_id":"n","public_key":"pk","announced_at":7}"#);
+        let legacy = legacy.unwrap();
+        assert_eq!(legacy.timestamp, 7);
+        assert!(legacy.key_exchange_endpoint.is_none());
+
+        assert!(decode_dht_record::<GlobalNodeKeyEndpointRecord>(b"\xff\xfe\xfd").is_none());
+    }
+
+    #[test]
+    fn serverless_record_tolerates_both_publishers_and_malformed() {
+        // `transport::announce_serverless` omits `checksum`.
+        let without_checksum: Option<ServerlessFunctionDhtRecord> = decode_dht_record(
+            br#"{"function_name":"f","version":1,"node_id":"n","routes":[],"allowed_methods":[],"priority":100}"#,
+        );
+        let decoded = without_checksum.unwrap();
+        assert_eq!(decoded.function_name, "f");
+        assert!(decoded.checksum.is_empty());
+
+        // Peer announce handler omits `node_id` but carries `checksum`.
+        let without_node: Option<ServerlessFunctionDhtRecord> = decode_dht_record(
+            br#"{"function_name":"g","version":2,"checksum":"abc","routes":["/x"],"allowed_methods":["GET"]}"#,
+        );
+        let decoded = without_node.unwrap();
+        assert!(decoded.node_id.is_none());
+        assert_eq!(decoded.checksum, "abc");
+        assert_eq!(decoded.routes, vec!["/x".to_string()]);
+
+        // Postcard roundtrip.
+        let record = ServerlessFunctionDhtRecord {
+            function_name: "h".to_string(),
+            node_id: Some("n".to_string()),
+            version: 3,
+            checksum: "chk".to_string(),
+            routes: vec![],
+            allowed_methods: vec![],
+            memory_mb: Some(128),
+            timeout_seconds: Some(30),
+            priority: 100,
+        };
+        let bytes = postcard::to_allocvec(&record).unwrap();
+        let decoded: Option<ServerlessFunctionDhtRecord> = decode_dht_record(&bytes);
+        assert_eq!(decoded.unwrap().memory_mb, Some(128));
+
+        assert!(decode_dht_record::<ServerlessFunctionDhtRecord>(b"not-a-record").is_none());
+    }
+
+    #[test]
+    fn yara_legacy_records_decode_string_timestamps_and_malformed() {
+        // Rule content with numeric and string timestamps.
+        let numeric: Option<YaraRuleContentLegacyRecord> =
+            decode_dht_record(br#"{"version":"v1","rules":"rule x {}","timestamp":99}"#);
+        let numeric = numeric.unwrap();
+        assert_eq!(numeric.version.as_deref(), Some("v1"));
+        assert_eq!(numeric.timestamp, 99);
+        let textual: Option<YaraRuleContentLegacyRecord> =
+            decode_dht_record(br#"{"version":"v1","rules":"rule x {}","timestamp":"100"}"#);
+        assert_eq!(textual.unwrap().timestamp, 100);
+        // Missing rules/version must be rejected like the old fallback.
+        let incomplete: Option<YaraRuleContentLegacyRecord> =
+            decode_dht_record(br#"{"timestamp":1}"#);
+        let incomplete = incomplete.unwrap();
+        assert!(incomplete.version.is_none());
+        assert!(incomplete.rules.is_none());
+
+        // Chunk with base64 payload and string timestamp.
+        let chunk: Option<YaraChunkLegacyRecord> = decode_dht_record(
+            br#"{"compressed_data":"aGVsbG8=","version":"v1","timestamp":"7","signature":"c2ln"}"#,
+        );
+        let chunk = chunk.unwrap();
+        assert_eq!(chunk.compressed_data.as_deref(), Some("aGVsbG8="));
+        assert_eq!(chunk.timestamp, 7);
+
+        // Manifest with string timestamp and defaulted chunk_count.
+        let manifest: Option<YaraManifestLegacyRecord> = decode_dht_record(
+            br#"{"node_id":"n","content_hash":"h","version":"v2","timestamp":"55","is_chunked":true,"chunk_count":"3"}"#,
+        );
+        let manifest = manifest.unwrap();
+        assert_eq!(manifest.timestamp, 55);
+        assert_eq!(manifest.chunk_count, 3);
+
+        assert!(decode_dht_record::<YaraRuleContentLegacyRecord>(b"\x00\x01").is_none());
+        assert!(decode_dht_record::<YaraChunkLegacyRecord>(b"\x00\x01").is_none());
+        assert!(decode_dht_record::<YaraManifestLegacyRecord>(b"\x00\x01").is_none());
+    }
+
+    #[test]
+    fn heartbeat_and_verified_upstream_decode_and_malformed() {
+        let heartbeat = GlobalNodeHeartbeat::new("node-1".to_string());
+        let bytes = postcard::to_allocvec(&heartbeat).unwrap();
+        let decoded: Option<GlobalNodeHeartbeat> = decode_dht_record(&bytes);
+        assert_eq!(decoded.unwrap().node_id, "node-1");
+        // JSON compat.
+        let via_json: Option<GlobalNodeHeartbeat> =
+            decode_dht_record(br#"{"node_id":"node-2","timestamp":5,"version":"0.1.0"}"#);
+        assert_eq!(via_json.unwrap().node_id, "node-2");
+        assert!(decode_dht_record::<GlobalNodeHeartbeat>(b"nope").is_none());
+
+        let verified_json = br#"{"upstream_id":"site","origin_node_id":"o","upstream_url":"https://o","global_node_id":"g","global_node_signature":[],"origin_signature":[],"registered_at":1,"expires_at":2}"#;
+        let verified: Option<VerifiedUpstream> = decode_dht_record(verified_json);
+        assert_eq!(verified.unwrap().upstream_id, "site");
+        assert!(decode_dht_record::<VerifiedUpstream>(b"nope").is_none());
+    }
 }

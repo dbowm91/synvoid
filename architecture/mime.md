@@ -56,7 +56,7 @@ static MIME_REGISTRY: LazyLock<RwLock<MimeRegistry>> = LazyLock::new(|| {
 | `register(mime_type, extensions)` | Register new type |
 | `get_mime_for_extension(ext)` | Extension → MIME lookup |
 | `get_extensions_for_mime(mime)` | MIME → extensions lookup |
-| `get_category(mime) -> Option<FileCategory>` | Category lookup |
+| `get_category(mime) -> FileCategory` | Category lookup (Unknown fallback, never None) |
 | `get_info(mime) -> Option<MimeTypeInfo>` | Full info lookup |
 | `normalize_mime(mime) -> String` | Normalize MIME string |
 | `is_mime_allowed(mime, patterns)` | Check against allowlist |

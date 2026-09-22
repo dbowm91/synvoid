@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use tokio::time::timeout;
 use utoipa::ToSchema;
 
+#[cfg(feature = "fastcgi_streaming")]
 use crate::fastcgi::streaming::FastCgiResponseStream;
 use crate::fastcgi::{FastCgiClient, FastCgiError, FastCgiResponse};
 use synvoid_config::site::FastCgiConfig;
@@ -207,6 +208,7 @@ impl FastCgiPool {
         result
     }
 
+    #[cfg(feature = "fastcgi_streaming")]
     pub async fn execute_stream(
         &self,
         method: &Method,

@@ -140,7 +140,7 @@ The following endpoints were converted in the final Phase 12 pass:
 
 **Guard test update**: The `admin_mutation_response_guard` now also detects `StatusResponse::success` as a legacy pattern, in addition to `{"success": true}` and `StatusCode::NO_CONTENT`.
 
-All non-deferred mutating endpoints now return `AdminMutationResult` and emit `AdminAuditEvent`. The only remaining legacy patterns are the deferred config PUT endpoints (~50+) and site management endpoints (~6).
+All non-deferred mutating endpoints now return `AdminMutationResult` and emit `AdminAuditEvent`. The only remaining legacy patterns are the deferred site management endpoints.
 
 ### Block/Unblock Endpoints (Priority) — ALL CONVERTED
 
@@ -228,13 +228,13 @@ All non-deferred mutating endpoints now return `AdminMutationResult` and emit `A
 |----------|------|-----------|----------|
 | POST `/system/php-pools/reload` | php.rs | AdminManual | AdminMutationResult<String> |
 
-### Config Endpoints (Deferred)
+### Config Endpoints (Converted)
 
-All `PUT /config/*` endpoints still use `StatusResponse::success(...)`. These are local-only mutations without mesh propagation. Conversion is deferred to a future phase.
+All `PUT /config/*` endpoints now return typed `AdminMutationResult<String>` (see `src/admin/handlers/config.rs`: `config_mutation()` + per-endpoint `Json<AdminMutationResult<String>>`). These are local-only mutations (`PropagationStatus::NotApplicable`) without mesh propagation.
 
 ### Site Management Endpoints (Deferred)
 
-All `POST/PUT/DELETE /sites/*` endpoints use typed DTOs. Conversion is deferred to a future phase.
+All `POST/PUT/DELETE /sites/*` endpoints still use typed DTOs (`Json<SiteDetail>`, `Json<SiteInfo>`, etc. — see `src/admin/handlers/sites.rs`). Conversion is deferred to a future phase.
 
 ## Propagation Semantics
 

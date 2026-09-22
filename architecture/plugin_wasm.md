@@ -2,7 +2,7 @@
 
 ## 1. Purpose and Responsibility
 
-The Plugin/WASM module (`src/plugin/`) provides dynamic loading and secure sandboxed execution of WebAssembly (WASM) plugins for request filtering, response transformation, and extended functionality. It serves as the foundation for the Spin framework support (`src/spin/`) and serverless execution engine (`src/serverless/`).
+The Plugin/WASM module (canonical: `crates/synvoid-plugin-runtime/` — `plugin_manager`, `wasm_runtime`, `instance_pool`, `abi_frame`; `src/plugin/` is a facade keeping composition + mesh-aware byte resolution only) provides dynamic loading and secure sandboxed execution of WebAssembly (WASM) plugins for request filtering, response transformation, and extended functionality. It serves as the foundation for the Spin framework support (`crates/synvoid-plugin-runtime/src/spin/`) and serverless execution engine (`crates/synvoid-serverless/`).
 
 **Core responsibilities:**
 - Load and manage WASM plugin modules from files or memory (mesh distribution)
@@ -20,8 +20,8 @@ The Plugin/WASM module (`src/plugin/`) provides dynamic loading and secure sandb
 | File | Responsibility | Public API |
 |------|---------------|------------|
 | `mod.rs` | Public API entry point; `PluginManager` (WASM + Axum loading/unload), `PluginManagerLifecycle` (hot-reload, directory watching) | `PluginManager`, `PluginManagerLifecycle`, `WasmFilterResult`, `WasmPluginError` |
-| `wasm_runtime.rs` | Core WASM execution engine using `wasmtime`. Loads modules, links host functions, executes filter/transform/handle handlers | `WasmPluginManager`, `WasmRuntime`, `WasmResourceLimits`, `PluginInfo` |
-| `instance_pool.rs` | Per-runtime instance pooling with `WasmInstancePool` (reuses instantiated modules) | `WasmInstancePool` |
+| `wasm_runtime.rs` | Canonical `crates/synvoid-plugin-runtime/src/wasm_runtime.rs` | Core WASM execution engine using `wasmtime`. Loads modules, links host functions, executes filter/transform/handle handlers | `WasmPluginManager`, `WasmRuntime`, `WasmResourceLimits`, `PluginInfo` |
+| `instance_pool.rs` | Canonical `crates/synvoid-plugin-runtime/src/instance_pool.rs` | Per-runtime instance pooling with `WasmInstancePool` (reuses instantiated modules) | `WasmInstancePool` |
 | `pool.rs` | Generic `PooledInstance` trait and struct for pooled WASM instances | `PooledInstance`, `WasmPool` trait |
 | `unsafe_native_loader.rs` | Compatibility facade only (Phase 28): re-exports the canonical loader from `synvoid-native-extension` when the `unsafe-native-extensions` feature is on, otherwise exposes stubs reporting `Unsupported` | `load_plugin()`, `UnsafeNativeExtensionConfig` |
 | `global.rs` | Global singletons: `GlobalPluginManager` and `GlobalWasmMemoryBudget` | `GlobalPluginManager`, `GlobalWasmMemoryBudget`, `get_global_plugin_manager()` |

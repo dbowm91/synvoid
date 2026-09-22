@@ -86,15 +86,28 @@ impl PluginManager {
 
     /// Load a WASM plugin from pre-fetched bytes.
     /// The caller is responsible for mesh resolution (e.g. fetching from global_wasm_dist_manager).
+    ///
+    /// Manifest authority: enforces `prepare_plugin_load` policy and uses
+    /// `PreparedPluginLoad::effective_limits`, never raw default limits.
+    /// Memory bytes without a companion TOML resolve to a default
+    /// `LocalSandboxed` all-deny manifest; use
+    /// `load_plugin_from_memory_with_manifest` when a signed manifest is
+    /// available. The inner memory load re-validates the same bytes
+    /// (defense in depth); both prepares derive from the same manifest so
+    /// the caller-supplied limits below are already manifest-derived.
     pub fn load_wasm_plugin_from_bytes(
         &self,
         name: &str,
         bytes: Vec<u8>,
     ) -> Result<(), WasmPluginError> {
-        self.wasm_manager.load_plugin_from_memory(
+        let prepared = self
+            .wasm_manager
+            .prepare_plugin_load(None, None, Some(&bytes))?;
+        self.wasm_manager.load_plugin_from_memory_with_priority(
             name,
             &bytes,
-            self.wasm_manager.get_default_limits(),
+            prepared.effective_limits.clone(),
+            0,
         )?;
         Ok(())
     }

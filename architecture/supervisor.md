@@ -41,21 +41,27 @@ The Supervisor **consolidates** the legacy Overseer and Master hierarchy into a 
 
 | Entry Point | File | Purpose |
 |-------------|------|---------|
-| `run_supervisor_mode()` | `src/supervisor/process.rs:460` | Default entry point (no flags) |
-| `run_mesh_agent_mode()` | `src/supervisor/mesh.rs:27` | Standalone mesh agent (`--mesh-agent`) |
+| `run_supervisor_mode()` | `src/supervisor/process.rs` | Default entry point (no flags) |
+| `run_mesh_agent_mode()` | `src/supervisor/mesh.rs` | Standalone mesh agent (`--mesh-agent`) |
 
 ## 2. Key Submodules and Their Responsibilities
 
-### 2.1 `supervisor/mod.rs` - Module Root
+### 2.1 `supervisor/mod.rs` - Module Root (10 modules)
 
 Public API surface for the supervisor crate:
 
 ```rust
-pub mod api;       // gRPC control plane service
+#[cfg(feature = "mesh")]
+pub mod api;       // gRPC control plane service (mesh-gated)
+pub mod cli_commands; // operator CLI handlers
 pub mod commands;  // CLI command handlers
+pub mod drain_manager;
+pub mod ipc;       // worker IPC server
 pub mod mesh;      // Mesh agent mode
 pub mod process;   // SupervisorProcess and run_supervisor_mode
+pub mod shutdown;  // ShutdownCause + drain report
 pub mod state;     // SupervisorState and SupervisorStateTrackers
+pub mod task_registry;
 
 pub use mesh::run_mesh_agent_mode;
 pub use process::{run_supervisor_mode, SupervisorProcess};
@@ -202,7 +208,7 @@ Drain infrastructure for coordinated worker draining during upgrades.
 ### 3.1 Supervisor Process Structures
 
 ```rust
-// src/supervisor/process.rs:41-50
+// src/supervisor/process.rs
 pub struct SupervisorProcess {
     state: SupervisorState,
     process_manager: Arc<ProcessManager>,
@@ -341,7 +347,7 @@ message Stats {
 ### 4.1 Supervisor Initialization
 
 ```rust
-// src/supervisor/process.rs:40-64
+// src/supervisor/process.rs
 pub async fn new(
     state: SupervisorState,
     pm_config: ProcessManagerConfig,
@@ -357,7 +363,7 @@ Creates a new supervisor instance with:
 ### 4.2 Main Supervisor Run Loop
 
 ```rust
-// src/supervisor/process.rs:79-267
+// src/supervisor/process.rs
 pub async fn run(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
 ```
 
@@ -375,7 +381,7 @@ Main event loop that:
 ### 4.3 Drain-Aware Shutdown
 
 ```rust
-// src/supervisor/process.rs:186-260
+// src/supervisor/process.rs
 async fn drain_aware_shutdown(&self)
 ```
 
@@ -396,7 +402,7 @@ Graceful shutdown sequence:
 ### 4.4 IPC Connection Handling
 
 ```rust
-// src/supervisor/process.rs:262-299
+// src/supervisor/process.rs
 async fn handle_connection(
     mut ipc: IpcStream,
     pm: Arc<ProcessManager>,
@@ -412,7 +418,7 @@ Distinguishes between worker messages and admin commands:
 ### 4.5 gRPC Server Start
 
 ```rust
-// src/supervisor/api.rs:129-144
+// src/supervisor/api.rs
 pub async fn start_grpc_server(
     addr: std::net::SocketAddr,
     process_manager: Arc<ProcessManager>,
@@ -511,7 +517,7 @@ The IPC system uses typed messages over Unix domain sockets (Unix) or named pipe
 ### 6.1 DrainManager Architecture
 
 ```rust
-// src/supervisor/drain_manager.rs:20-25
+// src/supervisor/drain_manager.rs
 pub struct DrainManager {
     workers: Arc<RwLock<HashMap<WorkerId, WorkerDrainState>>>,
     current_drain_id: Arc<AtomicU64>,
@@ -528,7 +534,7 @@ Thread-safe drain state tracking using:
 ### 6.2 Drain Protocol Sequence
 
 ```rust
-// src/supervisor/drain_manager.rs:297-369
+// src/supervisor/drain_manager.rs
 pub async fn drain_worker_with_confirmation(
     &self,
     ipc: &mut IpcStream,
@@ -550,7 +556,7 @@ Full protocol:
 ### 6.3 Shutdown Timeout
 
 ```rust
-// src/supervisor/process.rs:25-27
+// src/supervisor/process.rs
 const DRAIN_POLL_INTERVAL_MS: u64 = 100;
 #[allow(dead_code)]
 const DEFAULT_DRAIN_TIMEOUT_SECS: u64 = 30;
@@ -569,7 +575,7 @@ Workers have the same timeout to complete their drain.
 ### 6.4 Shared Memory Tables (Initialized on Startup)
 
 ```rust
-// src/supervisor/process.rs:72-95
+// src/supervisor/process.rs
 // Shared Connection Table for distributed load balancing
 SharedConnectionTable::init_global(shm_path, max_workers, max_backends)
 
@@ -605,7 +611,7 @@ service ControlPlane {
 Returns comprehensive system status:
 
 ```rust
-// src/supervisor/api.rs:33-65
+// src/supervisor/api.rs
 async fn get_status(&self, _request: Request<StatusRequest>) 
     -> Result<Response<StatusResponse>, Status>
 ```
@@ -622,7 +628,7 @@ Response includes:
 Hot-reloads all configuration:
 
 ```rust
-// src/supervisor/api.rs:67-79
+// src/supervisor/api.rs
 async fn reload_config(&self, _request: Request<ReloadRequest>) 
     -> Result<Response<ReloadResponse>, Status>
 ```
@@ -638,7 +644,7 @@ config.reload_all();
 Initiates graceful shutdown:
 
 ```rust
-// src/supervisor/api.rs:81-92
+// src/supervisor/api.rs
 async fn stop(&self, request: Request<StopRequest>) 
     -> Result<Response<StopResponse>, Status>
 ```
@@ -650,7 +656,7 @@ Note: 100ms delay before sending shutdown signal to allow response to be sent.
 Runtime IP blocking (integrates with BlockStore):
 
 ```rust
-// src/supervisor/api.rs:94-126
+// src/supervisor/api.rs
 async fn block_ip(&self, request: Request<BlockRequest>) 
 async fn unblock_ip(&self, request: Request<UnblockRequest>)
 ```
@@ -757,14 +763,14 @@ NEW (supervisor consolidation):
 
 | Constant | Value | Location |
 |----------|-------|----------|
-| `DRAIN_POLL_INTERVAL_MS` | 100 | `process.rs:20` |
-| `DEFAULT_DRAIN_TIMEOUT_SECS` | 30 | `process.rs:21` |
+| `DRAIN_POLL_INTERVAL_MS` | 100 | `process.rs` |
+| `DEFAULT_DRAIN_TIMEOUT_SECS` | 30 | `process.rs` |
 | Default gRPC port | 50051 | `ProcessManagerConfig::default()` |
 
 ### 10.2 Runtime Directory
 
 ```rust
-// src/supervisor/process.rs:368-379
+// src/supervisor/process.rs
 let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR")
     .unwrap_or_else(|| PathBuf::from("/var/run"))
     .join("synvoid");
@@ -773,7 +779,7 @@ let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR")
 ### 10.3 Tokio Runtime Configuration
 
 ```rust
-// src/supervisor/process.rs:354-358
+// src/supervisor/process.rs
 let rt = tokio::runtime::Builder::new_multi_thread()
     .worker_threads(4)
     .enable_all()
@@ -799,7 +805,7 @@ Supervisor uses multi-threaded Tokio runtime with 4 worker threads (independent 
 ### 11.2 Panic Handling
 
 ```rust
-// src/supervisor/process.rs:312-316
+// src/supervisor/process.rs
 let supervisor_panic_log = format!(
     "{}/synvoid-supervisor-panic.log",
     std::env::temp_dir().display()

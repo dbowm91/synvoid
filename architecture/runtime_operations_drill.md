@@ -43,8 +43,8 @@ Config fixtures for drills are in `tests/fixtures/ops/`:
 ### Steps
 
 ```bash
-# Validate config
-cargo run -- --config tests/fixtures/ops/ops_minimal.toml --configtest
+# Validate config dir (<dir> holds main.toml + sites/; defaults to ./config when absent)
+cargo run -- --config-path <dir> --configtest
 
 # Start runtime (foreground, Ctrl-C to stop)
 cargo run -- --config tests/fixtures/ops/ops_minimal.toml --foreground

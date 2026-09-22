@@ -950,11 +950,17 @@ impl RecordStoreManager {
         let key = format!("global_node_key:{}", self.node_id);
         let now = synvoid_utils::safe_unix_timestamp();
 
-        let value = serde_json::json!({
-            "public_key": public_key,
-            "timestamp": now,
-        });
-        let value = match serde_json::to_vec(&value) {
+        // Canonical `global_node_key:<id>` layout (`GlobalNodeKeyEndpointRecord`,
+        // postcard-native). All in-repo readers decode postcard-first with a
+        // JSON compat fallback.
+        let record_value = crate::dht::GlobalNodeKeyEndpointRecord {
+            node_id: Some(self.node_id.clone()),
+            public_key: Some(public_key.to_string()),
+            key_exchange_endpoint: None,
+            announced_by: None,
+            timestamp: now,
+        };
+        let value = match postcard::to_allocvec(&record_value) {
             Ok(v) => v,
             Err(e) => {
                 tracing::error!("Failed to serialize global node public key: {}", e);

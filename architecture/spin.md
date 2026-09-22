@@ -700,12 +700,12 @@ WASM module files should have appropriate permissions (0o600 for private key fil
 ## 13. File Structure Summary
 
 ```
-src/spin/
-├── mod.rs          # Module declarations (handler, kv_store, manifest, runtime)
+crates/synvoid-plugin-runtime/src/spin/  (canonical; src/spin/ is a re-export facade)
+├── mod.rs          # Re-exports
 ├── handler.rs      # HTTP handler + SpinAppsManager (265 lines)
 ├── kv_store.rs     # Key-value store implementation (152 lines)
 ├── manifest.rs     # Manifest parsing (232 lines)
-└── runtime.rs      # Core runtime (383 lines)
+└── runtime.rs      # Core runtime (406 lines)
 ```
 
-**Total:** ~1,032 lines across 4 modules.
+**Total:** ~1,059 lines across 4 modules (canonical crate path).

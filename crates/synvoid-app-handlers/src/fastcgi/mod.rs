@@ -1,4 +1,5 @@
 pub mod pool;
+#[cfg(feature = "fastcgi_streaming")]
 pub mod streaming;
 
 use std::borrow::Cow;

@@ -375,3 +375,4 @@ health_check_timeout_secs = 5
 auto_install_granian = true    # Auto-install granian if not present
 auto_detect_venv = true       # Auto-detect venv in working_directory
 auto_detect_app = true        # Auto-detect app entry point
+require_hashes = true         # Fail-closed pip installs (--require-hashes); set false to opt out

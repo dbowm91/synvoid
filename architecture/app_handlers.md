@@ -71,10 +71,10 @@ Spin is **not** the same as the generic WASM edge functions described above. Key
 |--------|---------------------------|------|
 | **Runtime** | Wasmtime with custom resource limits | Custom Spin Runtime (`SpinRuntime`) |
 | **Routing** | Longest-prefix-match on configured routes | Spin manifest (`spin.toml`) with built-in trigger system |
-| **Manifest** | Configuration-driven routes | `spin.toml` parsed via `src/spin/manifest.rs` |
+| **Manifest** | Configuration-driven routes | `spin.toml` parsed via `crates/synvoid-plugin-runtime/src/spin/manifest.rs` |
 | **Registration** | Part of site configuration | Manual registration via Admin API |
 | **Components** | Single WASM module per route | Multiple named components in manifest |
-| **HTTP Dispatch** | `ServerlessRoute` (generic WASM) in server pipeline at `crates/synvoid-serverless/src/routing.rs:112` | `SpinHttpHandler` at `src/spin/handler.rs:117`, handler creation at `src/http/server.rs:2378` |
+| **HTTP Dispatch** | `ServerlessRoute` (generic WASM) in server pipeline at `crates/synvoid-serverless/src/routing.rs` | `SpinHttpHandler` at `crates/synvoid-plugin-runtime/src/spin/handler.rs`, dispatched via canonical `crates/synvoid-http/src/*dispatch.rs` |
 
 Spin applications are registered using `SpinAppsManager::register()` and handled via `SpinHttpHandler` which wraps the `SpinRuntime`. The Spin runtime parses its manifest at startup to determine component routes and trigger configurations.
 
@@ -82,21 +82,20 @@ Spin applications are registered using `SpinAppsManager::register()` and handled
 
 ## 6. BackendType Mapping (APP-5)
 
-The `BackendType` enum at `src/router.rs:66-78` defines all backend variants:
+The `BackendType` enum at `crates/synvoid-proxy/src/router.rs` defines all backend variants (Upstream, FastCgi, Php, Cgi, AxumDynamic, AppServer, Static, QuicTunnel, Serverless, Mesh, Spin). Dispatch lives in canonical `crates/synvoid-http/src/*dispatch.rs` (not `src/http/server.rs`):
 
-| BackendType | Handler Location | Purpose |
-|-------------|------------------|---------|
-| `Upstream` | `src/http/server.rs:1190` | HTTP proxy to external upstream |
-| `FastCgi` | `src/http/server.rs:2508` | FastCGI proxy (PHP, Python, etc.) |
-| `Php` | `src/http/server.rs:2513` | PHP-FPM via unix socket or TCP |
-| `Cgi` | `src/http/server.rs:2747` | Generic CGI execution |
-| `AxumDynamic` | `src/http/server.rs:2172` | Dynamic Axum routes |
-| `AppServer` | `src/http/server.rs:2821` | Granian Python ASGI/WSGI |
-| `Static` | `src/http/server.rs:2213` | Static file serving |
-| `QuicTunnel` | `crates/synvoid-upstream/src/address.rs:29` | QUIC tunnel proxy |
-| `Serverless` | `src/http/server.rs:1238` | WASM serverless functions (mesh-gated) |
-| `Mesh` | `src/http/server.rs:2872` | Mesh routing backend |
-| `Spin` | `src/http/server.rs:2421` | Spin framework WASM |
+| BackendType | Dispatch | Purpose |
+|-------------|----------|---------|
+| `Upstream` | `backend_dispatch.rs` / `upstream_proxy_dispatch.rs` | HTTP proxy to external upstream |
+| `FastCgi` / `Php` | `fastcgi_php_backend_dispatch.rs` | FastCGI proxy / PHP-FPM |
+| `Cgi` | `cgi_backend_dispatch.rs` | Generic CGI execution |
+| `AxumDynamic` | `axum_dynamic_dispatch.rs` | Dynamic Axum routes |
+| `AppServer` | `app_server_backend_dispatch.rs` | Granian Python ASGI/WSGI |
+| `Static` | `static_backend_dispatch.rs` | Static file serving |
+| `QuicTunnel` | tunnel dispatch | QUIC tunnel proxy |
+| `Serverless` | `backend_dispatch.rs` (+ mesh/serverless dispatch) | WASM serverless functions (mesh-gated) |
+| `Mesh` | `mesh_backend_dispatch.rs` | Mesh routing backend |
+| `Spin` | `spin_backend_dispatch.rs` | Spin framework WASM |
 
 ### Mesh Distribution for WASM (APP-6) ✅
 

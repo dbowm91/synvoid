@@ -88,11 +88,13 @@ Pinned tools: cargo-deny 0.20.2, cargo-audit 0.22.2
    moves without a baseline update.
 3. **Prefer pure-Rust deps over C bindings** for new dependencies
    (serialization/crypto standards in `AGENTS.md`).
-4. **pip installs honor `require_hashes`**: `AppServerConfig.require_hashes`
+4. **pip installs fail closed on `require_hashes`**: `AppServerConfig.require_hashes`
    flows `SiteAppServerConfig` → `AppServerConfig` → `GranianConfig`
    (`crates/synvoid-config/src/site/app_server.rs`,
    `crates/synvoid-app-server/src/granian.rs`), adding `--require-hashes`
-   to `pip install`. With it on, maintain a hashed `requirements.txt`
+   to `pip install`. Default is `true` (missing key / `None` resolves true);
+   opt out explicitly with `[app_server] require_hashes = false`.
+   With it on, maintain a hashed `requirements.txt`
    (`pip hash -r <package>`). TOML: `[app_server] require_hashes = true`.
 5. **Publication is manual** (`cargo publish` only, see `docs/releasing.md`);
    `cargo xtask verify-release` never publishes and fails on a dirty tree.

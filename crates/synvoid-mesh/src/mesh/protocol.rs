@@ -1312,13 +1312,21 @@ pub enum SignatureError {
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct ProxyCachePreferences {
+    #[serde(default)]
     pub enable: bool,
+    #[serde(default)]
     pub inactive: u64,
+    #[serde(default)]
     pub valid_status: Vec<u32>,
+    #[serde(default)]
     pub methods: Vec<String>,
+    #[serde(default)]
     pub use_stale: Vec<String>,
+    #[serde(default)]
     pub min_uses: u32,
+    #[serde(default)]
     pub stale_while_revalidate: u64,
+    #[serde(default)]
     pub stale_if_error: u64,
 }
 

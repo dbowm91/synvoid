@@ -42,7 +42,7 @@ impl std::error::Error for CommandPlanError {}
 #[derive(Debug, Clone)]
 pub enum OneShotCommand {
     /// Validate config files and exit.
-    ConfigTest,
+    ConfigTest { config_path: Option<PathBuf> },
     /// Export OpenAPI schema as JSON and exit.
     ExportOpenApi,
     /// Export API specification (OpenAPI 3.0) as JSON and exit.
@@ -174,7 +174,9 @@ pub fn plan_command(args: &Args) -> Result<CommandPlan, CommandPlanError> {
     }
 
     let plan = if args.configtest {
-        SynvoidCommandPlan::OneShot(OneShotCommand::ConfigTest)
+        SynvoidCommandPlan::OneShot(OneShotCommand::ConfigTest {
+            config_path: args.config_path.clone(),
+        })
     } else if args.export_openapi {
         SynvoidCommandPlan::OneShot(OneShotCommand::ExportOpenApi)
     } else if args.export_api_spec {
@@ -405,7 +407,7 @@ mod tests {
         let plan = plan_command(&args).unwrap();
         assert!(matches!(
             plan.plan,
-            SynvoidCommandPlan::OneShot(OneShotCommand::ConfigTest)
+            SynvoidCommandPlan::OneShot(OneShotCommand::ConfigTest { .. })
         ));
     }
 
@@ -625,7 +627,7 @@ mod tests {
         let plan = plan_command(&args).unwrap();
         assert!(matches!(
             plan.plan,
-            SynvoidCommandPlan::OneShot(OneShotCommand::ConfigTest)
+            SynvoidCommandPlan::OneShot(OneShotCommand::ConfigTest { .. })
         ));
     }
 
@@ -637,7 +639,7 @@ mod tests {
         let plan = plan_command(&args).unwrap();
         assert!(matches!(
             plan.plan,
-            SynvoidCommandPlan::OneShot(OneShotCommand::ConfigTest)
+            SynvoidCommandPlan::OneShot(OneShotCommand::ConfigTest { .. })
         ));
     }
 
@@ -884,7 +886,7 @@ mod tests {
         let plan = plan_command(&args).unwrap();
         assert!(matches!(
             plan.plan,
-            SynvoidCommandPlan::OneShot(OneShotCommand::ConfigTest)
+            SynvoidCommandPlan::OneShot(OneShotCommand::ConfigTest { .. })
         ));
         assert!(matches!(
             plan.pre_action,
@@ -937,6 +939,33 @@ mod tests {
                 assert!(pattern.contains("@"));
             }
             _ => panic!("expected CheckRegex one-shot"),
+        }
+    }
+
+    #[test]
+    fn configtest_threads_config_path() {
+        let mut args = default_args();
+        args.configtest = true;
+        args.config_path = Some(PathBuf::from("/custom/config"));
+        let plan = plan_command(&args).unwrap();
+        match plan.plan {
+            SynvoidCommandPlan::OneShot(OneShotCommand::ConfigTest { config_path }) => {
+                assert_eq!(config_path, Some(PathBuf::from("/custom/config")));
+            }
+            _ => panic!("expected ConfigTest one-shot"),
+        }
+    }
+
+    #[test]
+    fn configtest_defaults_to_no_config_path() {
+        let mut args = default_args();
+        args.configtest = true;
+        let plan = plan_command(&args).unwrap();
+        match plan.plan {
+            SynvoidCommandPlan::OneShot(OneShotCommand::ConfigTest { config_path }) => {
+                assert_eq!(config_path, None);
+            }
+            _ => panic!("expected ConfigTest one-shot"),
         }
     }
 }

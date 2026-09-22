@@ -645,17 +645,18 @@ impl MeshTransportManager {
         let node_id = self.config.node_id();
         let public_key = self.config.global_node_key.clone().unwrap_or_default();
 
-        // Store key exchange endpoint in DHT for edge node discovery
+        // Store key exchange endpoint in DHT for edge node discovery.
+        // Canonical `key_exchange_endpoint:<id>` layout (postcard-native).
         if let Some(ref record_store) = self.record_store {
             let dht_key = format!("{}{}", DHT_KEY_PREFIX_KEY_EXCHANGE_ENDPOINT, node_id);
             let endpoint_for_dht = key_exchange_endpoint.clone().unwrap_or_default();
-            let value = serde_json::json!({
-                "node_id": node_id,
-                "public_key": public_key,
-                "endpoint": endpoint_for_dht,
-                "timestamp": timestamp,
-            });
-            if let Ok(bytes) = serde_json::to_vec(&value) {
+            let record = crate::dht::KeyExchangeEndpointRecord {
+                node_id: Some(node_id.to_string()),
+                public_key: Some(public_key.clone()),
+                endpoint: Some(endpoint_for_dht),
+                timestamp,
+            };
+            if let Ok(bytes) = postcard::to_allocvec(&record) {
                 if record_store.store_and_announce(dht_key, bytes, DHT_TTL_KEY_EXCHANGE_ENDPOINT) {
                     tracing::debug!("Stored key exchange endpoint for {} in DHT", node_id);
                 } else {
@@ -704,10 +705,11 @@ impl MeshTransportManager {
         if let Some(ref record_store) = self.record_store {
             let key = format!("{}{}", DHT_KEY_PREFIX_KEY_EXCHANGE_ENDPOINT, node_id);
             if let Some(record) = record_store.get_record(&key) {
-                match serde_json::from_slice::<serde_json::Value>(&record.value) {
-                    Ok(value) => {
-                        let timestamp =
-                            value.get("timestamp").and_then(|v| v.as_u64()).unwrap_or(0);
+                match crate::dht::decode_dht_record::<crate::dht::KeyExchangeEndpointRecord>(
+                    &record.value,
+                ) {
+                    Some(decoded) => {
+                        let timestamp = decoded.timestamp;
 
                         let max_age_secs = DHT_TTL_KEY_EXCHANGE_ENDPOINT * 2;
                         let current_time = current_timestamp();
@@ -718,18 +720,14 @@ impl MeshTransportManager {
                                 node_id,
                                 current_time - timestamp
                             );
-                        } else {
-                            return value
-                                .get("endpoint")
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_string());
+                        } else if let Some(endpoint) = decoded.endpoint {
+                            return Some(endpoint);
                         }
                     }
-                    Err(e) => {
+                    None => {
                         tracing::warn!(
-                            "Failed to deserialize key exchange endpoint for {}: {}",
+                            "Failed to deserialize key exchange endpoint for {}",
                             node_id,
-                            e
                         );
                     }
                 }
@@ -752,12 +750,16 @@ impl MeshTransportManager {
         if let Some(ref record_store) = self.record_store {
             let key = format!("{}{}", DHT_KEY_PREFIX_EDGE_KEY, edge_id);
             let timestamp = current_timestamp();
-            let value = serde_json::json!({
-                "edge_id": edge_id,
-                "public_key": public_key,
-                "timestamp": timestamp,
-            });
-            if let Ok(bytes) = serde_json::to_vec(&value) {
+            // Canonical `edge_key:<id>` layout (`EdgeKeyRecord`,
+            // postcard-native). Readers accept the legacy `announced_at`
+            // JSON shape via compat fallback.
+            let record = crate::dht::EdgeKeyRecord {
+                edge_id: Some(edge_id.to_string()),
+                public_key: Some(public_key.to_string()),
+                timestamp: Some(timestamp),
+                announced_at: None,
+            };
+            if let Ok(bytes) = postcard::to_allocvec(&record) {
                 if record_store.store_and_announce(key, bytes, DHT_TTL_EDGE_KEY) {
                     tracing::debug!("Announced edge key for {} to DHT", edge_id);
                 } else {
@@ -775,10 +777,9 @@ impl MeshTransportManager {
         if let Some(ref record_store) = self.record_store {
             let key = format!("{}{}", DHT_KEY_PREFIX_EDGE_KEY, edge_id);
             if let Some(record) = record_store.get_record(&key) {
-                match serde_json::from_slice::<serde_json::Value>(&record.value) {
-                    Ok(value) => {
-                        let timestamp =
-                            value.get("timestamp").and_then(|v| v.as_u64()).unwrap_or(0);
+                match crate::dht::decode_dht_record::<crate::dht::EdgeKeyRecord>(&record.value) {
+                    Some(decoded) => {
+                        let timestamp = decoded.effective_timestamp();
 
                         let max_age_secs = DHT_TTL_EDGE_KEY * 2;
                         let current_time = current_timestamp();
@@ -789,15 +790,12 @@ impl MeshTransportManager {
                                 edge_id,
                                 current_time - timestamp
                             );
-                        } else {
-                            return value
-                                .get("public_key")
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_string());
+                        } else if let Some(public_key) = decoded.public_key {
+                            return Some(public_key);
                         }
                     }
-                    Err(e) => {
-                        tracing::warn!("Failed to deserialize edge key for {}: {}", edge_id, e);
+                    None => {
+                        tracing::warn!("Failed to deserialize edge key for {}", edge_id);
                     }
                 }
             }
@@ -817,10 +815,14 @@ impl MeshTransportManager {
         if let Some(ref record_store) = self.record_store {
             let key = format!("{}{}", DHT_KEY_PREFIX_GLOBAL_NODE_KEY, node_id);
             if let Some(record) = record_store.get_record(&key) {
-                match serde_json::from_slice::<serde_json::Value>(&record.value) {
-                    Ok(value) => {
-                        let timestamp =
-                            value.get("timestamp").and_then(|v| v.as_u64()).unwrap_or(0);
+                // Canonical `global_node_key:<id>` layout is
+                // `GlobalNodeKeyEndpointRecord` (postcard-native); the decode
+                // accepts legacy `announced_at` JSON via compat fallback.
+                match crate::dht::decode_dht_record::<crate::dht::GlobalNodeKeyEndpointRecord>(
+                    &record.value,
+                ) {
+                    Some(decoded) => {
+                        let timestamp = decoded.timestamp;
 
                         let max_age_secs = DHT_TTL_GLOBAL_NODE_KEY * 2;
                         let current_time = current_timestamp();
@@ -831,20 +833,12 @@ impl MeshTransportManager {
                                 node_id,
                                 current_time - timestamp
                             );
-                        } else {
-                            return value
-                                .get("public_key")
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_string());
+                        } else if let Some(public_key) = decoded.public_key {
+                            return Some(public_key);
                         }
                     }
-                    Err(e) => {
-                        tracing::warn!(
-                            "Failed to deserialize global node key for {}: {}",
-                            node_id,
-                            e
-                        );
-                        return Some(String::from_utf8_lossy(&record.value).to_string());
+                    None => {
+                        tracing::warn!("Failed to deserialize global node key for {}", node_id,);
                     }
                 }
             }
@@ -866,17 +860,19 @@ impl MeshTransportManager {
     }
 
     #[allow(clippy::too_many_arguments)]
-    async fn fetch_cached_config<T: Clone>(
+    async fn fetch_cached_config<T>(
         &self,
         upstream_id: &str,
         dht_key_prefix: &str,
-        parse_json: impl FnOnce(serde_json::Value) -> Option<T>,
         cache: &Arc<RwLock<LruCache<String, (T, Instant)>>>,
         inflight: &Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
         cache_hits: &AtomicU64,
         cache_misses: &AtomicU64,
         metric_prefix: &str,
-    ) -> Option<T> {
+    ) -> Option<T>
+    where
+        T: Clone + for<'de> serde::Deserialize<'de>,
+    {
         // Quick cache check
         {
             let mut c = cache.write();
@@ -943,35 +939,19 @@ impl MeshTransportManager {
             }
         };
 
-        let value = match String::from_utf8(record.value.clone()) {
-            Ok(v) => v,
-            Err(e) => {
-                counter!(
-                    "synvoid.mesh.{metric_prefix}_dht_errors",
-                    "type" => "utf8_error",
-                    "upstream" => upstream_id.to_string()
-                )
-                .increment(1);
-                tracing::warn!("Failed to parse {} config: {}", metric_prefix, e);
-                return None;
-            }
-        };
-
-        let parsed: serde_json::Value = match serde_json::from_str(&value) {
-            Ok(v) => v,
-            Err(e) => {
+        let config: T = match crate::dht::decode_dht_record(&record.value) {
+            Some(config) => config,
+            None => {
                 counter!(
                     "synvoid.mesh.{metric_prefix}_dht_errors",
                     "type" => "parse_error",
                     "upstream" => upstream_id.to_string()
                 )
                 .increment(1);
-                tracing::warn!("Failed to parse {} JSON: {}", metric_prefix, e);
+                tracing::warn!("Failed to parse {} payload", metric_prefix);
                 return None;
             }
         };
-
-        let config = parse_json(parsed)?;
 
         // Cache the result
         {
@@ -1003,23 +983,6 @@ impl MeshTransportManager {
         self.fetch_cached_config(
             upstream_id,
             "upstream_image_protection:",
-            |parsed| {
-                Some(crate::config::MeshImageProtectionConfig {
-                    enabled: parsed.get("enabled").and_then(|v| v.as_bool()),
-                    min_size_bytes: parsed
-                        .get("min_size_bytes")
-                        .and_then(|v| v.as_u64())
-                        .map(|v| v as usize),
-                    whitelist_patterns: parsed
-                        .get("whitelist_patterns")
-                        .and_then(|v| v.as_array())
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|v| v.as_str().map(String::from))
-                                .collect()
-                        }),
-                })
-            },
             &self.image_protection_cache,
             &self.image_protection_inflight,
             &self.image_protection_cache_hits,
@@ -1036,36 +999,6 @@ impl MeshTransportManager {
         self.fetch_cached_config(
             upstream_id,
             "site_image_rights_config:",
-            |parsed| {
-                Some(synvoid_config::site::SiteImageRightsConfig {
-                    enabled: parsed.get("enabled").and_then(|v| v.as_bool()),
-                    level: parsed
-                        .get("level")
-                        .and_then(|v| v.as_str().map(String::from)),
-                    intensity: parsed
-                        .get("intensity")
-                        .and_then(|v| v.as_f64())
-                        .map(|v| v as f32),
-                    seed: parsed.get("seed").and_then(|v| v.as_u64()),
-                    max_dimension: parsed
-                        .get("max_dimension")
-                        .and_then(|v| v.as_u64())
-                        .map(|v| v as u32),
-                    jpeg_quality: parsed
-                        .get("jpeg_quality")
-                        .and_then(|v| v.as_u64())
-                        .map(|v| v as u8),
-                    whitelist_patterns: parsed
-                        .get("whitelist_patterns")
-                        .and_then(|v| v.as_array())
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|v| v.as_str().map(String::from))
-                                .collect()
-                        }),
-                    edge_only: parsed.get("edge_only").and_then(|v| v.as_bool()),
-                })
-            },
             &self.image_rights_cache,
             &self.image_rights_inflight,
             &self.image_rights_cache_hits,
@@ -1082,33 +1015,6 @@ impl MeshTransportManager {
         self.fetch_cached_config(
             upstream_id,
             "upstream_compression:",
-            |parsed| {
-                Some(crate::config::MeshCompressionConfig {
-                    enabled: parsed.get("enabled").and_then(|v| v.as_bool()),
-                    gzip_on_the_fly: parsed.get("gzip_on_the_fly").and_then(|v| v.as_bool()),
-                    gzip_level: parsed
-                        .get("gzip_level")
-                        .and_then(|v| v.as_u64())
-                        .map(|v| v as u32),
-                    gzip_min_size: parsed
-                        .get("gzip_min_size")
-                        .and_then(|v| v.as_u64())
-                        .map(|v| v as usize),
-                    gzip_types: parsed
-                        .get("gzip_types")
-                        .and_then(|v| v.as_array())
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|v| v.as_str().map(String::from))
-                                .collect()
-                        }),
-                    enable_brotli: parsed.get("enable_brotli").and_then(|v| v.as_bool()),
-                    brotli_level: parsed
-                        .get("brotli_level")
-                        .and_then(|v| v.as_u64())
-                        .map(|v| v as u32),
-                })
-            },
             &self.compression_cache,
             &self.compression_inflight,
             &self.compression_cache_hits,
@@ -1125,14 +1031,6 @@ impl MeshTransportManager {
         self.fetch_cached_config(
             upstream_id,
             "upstream_minification:",
-            |parsed| {
-                Some(crate::config::MeshMinificationConfig {
-                    enabled: parsed.get("enabled").and_then(|v| v.as_bool()),
-                    enable_html: parsed.get("enable_html").and_then(|v| v.as_bool()),
-                    enable_css: parsed.get("enable_css").and_then(|v| v.as_bool()),
-                    enable_js: parsed.get("enable_js").and_then(|v| v.as_bool()),
-                })
-            },
             &self.minification_cache,
             &self.minification_inflight,
             &self.minification_cache_hits,
@@ -1149,52 +1047,6 @@ impl MeshTransportManager {
         self.fetch_cached_config(
             upstream_id,
             "upstream_proxy_cache_preferences:",
-            |parsed| {
-                Some(crate::protocol::ProxyCachePreferences {
-                    enable: parsed
-                        .get("enable")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false),
-                    inactive: parsed.get("inactive").and_then(|v| v.as_u64()).unwrap_or(0),
-                    valid_status: parsed
-                        .get("valid_status")
-                        .and_then(|v| v.as_array())
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|v| v.as_u64())
-                                .map(|v| v as u32)
-                                .collect()
-                        })
-                        .unwrap_or_default(),
-                    methods: parsed
-                        .get("methods")
-                        .and_then(|v| v.as_array())
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|v| v.as_str().map(String::from))
-                                .collect()
-                        })
-                        .unwrap_or_default(),
-                    use_stale: parsed
-                        .get("use_stale")
-                        .and_then(|v| v.as_array())
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|v| v.as_str().map(String::from))
-                                .collect()
-                        })
-                        .unwrap_or_default(),
-                    min_uses: parsed.get("min_uses").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
-                    stale_while_revalidate: parsed
-                        .get("stale_while_revalidate")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0),
-                    stale_if_error: parsed
-                        .get("stale_if_error")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0),
-                })
-            },
             &self.proxy_cache_preferences_cache,
             &self.proxy_cache_preferences_inflight,
             &self.proxy_cache_preferences_cache_hits,

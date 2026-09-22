@@ -1542,8 +1542,10 @@ impl MeshProxy {
         if let Some(ref record_store) = tm.get_record_store() {
             let prefs_key = crate::dht::keys::DhtKey::upstream_proxy_cache_preferences(upstream_id);
             if let Some(record) = record_store.get_record(&prefs_key.as_str()) {
-                if let Ok(prefs) =
-                    serde_json::from_slice::<crate::protocol::ProxyCachePreferences>(&record.value)
+                // Typed postcard-first decode with JSON compat fallback.
+                if let Some(prefs) = crate::dht::decode_dht_record::<
+                    crate::protocol::ProxyCachePreferences,
+                >(&record.value)
                 {
                     self.set_proxy_cache_preferences(&prefs);
                 }

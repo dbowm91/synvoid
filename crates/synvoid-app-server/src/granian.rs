@@ -8,7 +8,7 @@ const MAX_LOG_BUFFER_LINES: usize = 1000;
 use bytes::Bytes;
 use parking_lot::RwLock;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::{broadcast, RwLock as TokioRwLock};
 use tokio::time::interval;
@@ -243,6 +243,9 @@ impl GranianConfig {
     }
 
     fn detect_venv(&self) -> Option<PathBuf> {
+        // NOTE: working_directory is trusted operator config; relative entries
+        // below intentionally resolve against the process CWD. Do not pass
+        // untrusted input here.
         let working_dir = self.working_directory.as_ref()?;
 
         let candidates = vec![
@@ -332,6 +335,9 @@ impl GranianSupervisor {
     }
 
     fn resolve_app_path(&self) -> String {
+        // NOTE: working_directory is trusted operator config; a relative
+        // working_directory resolves against the process CWD. Probing
+        // behavior is intentionally unchanged.
         let config = self.config.as_ref();
         if !config.app_path.is_empty() {
             return config.app_path.clone();
@@ -795,41 +801,93 @@ impl GranianSupervisor {
         cmd
     }
 
-    async fn check_health(config: &GranianConfig) -> bool {
-        let socket_path = config.socket_path.as_ref();
+    async fn probe_stream<S>(stream: &mut S, request: &[u8]) -> bool
+    where
+        S: AsyncReadExt + AsyncWriteExt + Unpin,
+    {
+        if stream.write_all(request).await.is_err() {
+            return false;
+        }
+        let mut buf = [0u8; 1024];
+        let mut len = 0usize;
+        while len < buf.len() {
+            match stream.read(&mut buf[len..]).await {
+                Ok(0) => break,
+                Ok(n) => {
+                    len += n;
+                    if buf[..len].contains(&b'\n') {
+                        break;
+                    }
+                }
+                Err(_) => return false,
+            }
+        }
+        let line = core::str::from_utf8(&buf[..len])
+            .unwrap_or("")
+            .lines()
+            .next()
+            .unwrap_or("");
+        let code = line
+            .split_whitespace()
+            .nth(1)
+            .and_then(|c| c.get(0..3))
+            .and_then(|c| c.parse::<u16>().ok())
+            .unwrap_or(0);
+        (200..400).contains(&code)
+    }
 
-        #[cfg(unix)]
-        let is_healthy = if let Some(ref socket) = socket_path {
-            let timeout = Duration::from_secs(config.health_check_timeout_secs);
-            let connect_future = tokio::net::UnixStream::connect(socket);
-            match tokio::time::timeout(timeout, connect_future).await {
-                Ok(Ok(_)) => true,
-                Ok(Err(e)) => {
+    async fn check_health(config: &GranianConfig) -> bool {
+        let raw = config.health_check_path.as_str();
+        let path = if raw.is_empty() { "/" } else { raw };
+        if !path.starts_with('/') || path.bytes().any(|b| matches!(b, b'\r' | b'\n' | b' ')) {
+            tracing::warn!("Invalid health_check_path, marking unhealthy");
+            return false;
+        }
+        let request =
+            format!("GET {path} HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+        let timeout = Duration::from_secs(config.health_check_timeout_secs);
+        let probe = async {
+            #[cfg(unix)]
+            if let Some(ref socket) = config.socket_path {
+                return match tokio::net::UnixStream::connect(socket).await {
+                    Ok(mut s) => Self::probe_stream(&mut s, request.as_bytes()).await,
+                    Err(e) => {
+                        tracing::warn!(
+                            "Granian socket connection failed for site {} worker {}: {}",
+                            config.site_id,
+                            config.worker_id,
+                            e
+                        );
+                        false
+                    }
+                };
+            }
+            let host = config.host.as_deref().unwrap_or("127.0.0.1");
+            let port = config.port.unwrap_or(8000);
+            match tokio::net::TcpStream::connect((host, port)).await {
+                Ok(mut s) => Self::probe_stream(&mut s, request.as_bytes()).await,
+                Err(e) => {
                     tracing::warn!(
-                        "Granian socket connection failed for site {} worker {}: {}",
+                        "Granian TCP connection failed for site {} worker {}: {}",
                         config.site_id,
                         config.worker_id,
                         e
                     );
                     false
                 }
-                Err(_) => {
-                    tracing::warn!(
-                        "Granian socket connection timed out for site {} worker {}",
-                        config.site_id,
-                        config.worker_id
-                    );
-                    false
-                }
             }
-        } else {
-            true
         };
-
-        #[cfg(not(unix))]
-        let is_healthy = true;
-
-        is_healthy
+        match tokio::time::timeout(timeout, probe).await {
+            Ok(healthy) => healthy,
+            Err(_) => {
+                tracing::warn!(
+                    "Granian health probe timed out for site {} worker {}",
+                    config.site_id,
+                    config.worker_id
+                );
+                false
+            }
+        }
     }
 
     pub async fn restart(&self) -> Result<(), String> {

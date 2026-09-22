@@ -211,15 +211,22 @@ impl ServerlessRegistry {
 // crates/synvoid-plugin-runtime/src/wasm_runtime.rs
 
 // Resource limits for WASM execution sandbox
+// (canonical: crates/synvoid-plugin-runtime/src/wasm_runtime.rs)
 pub struct WasmResourceLimits {
     pub max_memory_mb: usize,           // Max memory in MB
     pub max_table_elements: Option<usize>,
     pub max_cpu_fuel: u64,              // CPU fuel budget (execution units)
-    pub timeout_seconds: u64,           // Wall-clock timeout
+    pub timeout: Duration,              // Wall-clock timeout
     pub max_instances: usize,           // Max concurrent instances
     pub memory_budget_mb: Option<usize>,
     pub wasi_enabled: bool,             // WASI support flag
     pub allowed_dht_prefixes: Vec<String>, // DHT key prefixes allowed from WASM
+    pub capabilities: Arc<PluginCapabilities>,
+    pub epoch_deadline_enabled: bool,
+    pub epoch_ticks_per_timeout: u64,
+    pub host_call_timeout: Duration,
+    pub host_call_budget: HostCallBudget,
+    pub state_model: PluginStateModel,
 }
 
 // Per-request context passed to WASM store
@@ -231,6 +238,9 @@ pub(crate) struct RequestContext {
     pub(crate) max_memory: usize,
     pub(crate) max_table_elements: usize,
     pub(crate) body_receiver: Option<tokio::sync::mpsc::Receiver<Result<Bytes, std::io::Error>>>,
+    pub(crate) capabilities: Arc<PluginCapabilities>,
+    pub(crate) capability_violation: Option<PluginCapability>,
+    pub(crate) host_call_budget: HostCallBudget,
 }
 
 // Resolved guest ABI function handles
@@ -920,17 +930,13 @@ WasmPluginManager    <-------->  WasmRuntime (shared)
 - Both share the same wasmtime engine and linker configuration
 - Serverless adds `handle_request` export support (plugins may not have it)
 
-### Known Limitation: Spin Instance Eviction
+### Known Limitation: Spin Instance Eviction (retired — verify before re-adding)
 
-The Spin module (`src/spin/`) has a known instance tracking gap:
-
-- `SpinRuntime.instances` is a `HashMap<String, SpinAppInstance>` keyed by random UUID
-- Every call to `instantiate_app()` inserts a new entry (runtime.rs:227-228)
-- Old entries are **never cleaned up** — only `remove_instance()` (explicit) or `shutdown()` (process exit) removes them
-- `SpinRuntime.cached_instances` (keyed by component_id) does have idle timeout eviction, but `instances` does not
-- Over time with many requests, the `instances` HashMap grows indefinitely, leaking memory
-
-This contrasts with `InstancePool` (serverless) and `WasmInstancePool` (plugin) which both enforce `max_size` bounds and have eviction logic.
+> Earlier revisions warned that `SpinRuntime.instances` grew without eviction.
+> `src/spin/` is now a 6-line re-export facade; the canonical Spin runtime lives
+> under `crates/synvoid-plugin-runtime/src/spin/` and serverless pooling under
+> `crates/synvoid-serverless/src/instance_pool.rs` (idle-timeout eviction).
+> Do not re-add the leak warning without re-verifying the canonical runtime.
 
 ## 12. Thread Safety
 

@@ -2942,7 +2942,7 @@ impl MeshTransport {
                                 registered_at: synvoid_utils::safe_unix_timestamp(),
                                 expires_at: synvoid_utils::safe_unix_timestamp() + 300,
                             };
-                            if let Ok(bytes) = serde_json::to_vec(&verified_upstream) {
+                            if let Ok(bytes) = postcard::to_allocvec(&verified_upstream) {
                                 let ttl = 300;
                                 record_store.store_and_announce(key_str.to_string(), bytes, ttl);
                                 tracing::debug!(
@@ -4789,19 +4789,21 @@ impl MeshTransport {
         let key = crate::dht::keys::DhtKey::serverless_function(&announce.function_name);
         let key_str = key.as_str();
 
-        let value = serde_json::json!({
-            "function_name": announce.function_name,
-            "version": announce.version,
-            "checksum": announce.checksum,
-            "routes": announce.routes,
-            "allowed_methods": announce.allowed_methods,
-            "memory_mb": announce.memory_mb,
-            "timeout_seconds": announce.timeout_seconds,
-            "priority": announce.priority,
-            "announced_at": chrono::Utc::now().timestamp(),
-        });
+        // Canonical `serverless_function:<name>` layout (postcard-native);
+        // `discover_serverless_functions` decodes postcard-first.
+        let record = crate::dht::ServerlessFunctionDhtRecord {
+            function_name: announce.function_name.clone(),
+            node_id: None,
+            version: announce.version,
+            checksum: announce.checksum.clone(),
+            routes: announce.routes.clone(),
+            allowed_methods: announce.allowed_methods.clone(),
+            memory_mb: announce.memory_mb,
+            timeout_seconds: announce.timeout_seconds,
+            priority: announce.priority,
+        };
 
-        if let Ok(bytes) = serde_json::to_vec(&value) {
+        if let Ok(bytes) = postcard::to_allocvec(&record) {
             let ttl = 3600;
             if record_store.store_and_announce(key_str.to_string(), bytes, ttl) {
                 tracing::debug!(
@@ -5876,15 +5878,13 @@ impl MeshTransport {
         }
 
         let minification_key = format!("upstream_minification:{}", upstream_id);
-        let min_config: Option<serde_json::Value> = record_store
+        // Typed postcard-first decode with JSON compat fallback (publishers
+        // still emit JSON; see `publish_upstream_transform_configs`).
+        let min_config: Option<crate::config::MeshMinificationConfig> = record_store
             .get_record(&minification_key)
-            .and_then(|r| serde_json::from_slice(&r.value).ok());
+            .and_then(|r| crate::dht::decode_dht_record(&r.value));
 
-        let min_enabled = min_config
-            .as_ref()
-            .and_then(|c| c.get("enabled"))
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
+        let min_enabled = min_config.as_ref().and_then(|c| c.enabled).unwrap_or(false);
 
         if !min_enabled {
             return Ok((response.to_vec(), false));
@@ -5892,18 +5892,15 @@ impl MeshTransport {
 
         let enable_html = min_config
             .as_ref()
-            .and_then(|c| c.get("enable_html"))
-            .and_then(|v| v.as_bool())
+            .and_then(|c| c.enable_html)
             .unwrap_or(true);
         let enable_css = min_config
             .as_ref()
-            .and_then(|c| c.get("enable_css"))
-            .and_then(|v| v.as_bool())
+            .and_then(|c| c.enable_css)
             .unwrap_or(true);
         let enable_js = min_config
             .as_ref()
-            .and_then(|c| c.get("enable_js"))
-            .and_then(|v| v.as_bool())
+            .and_then(|c| c.enable_js)
             .unwrap_or(true);
 
         let body = &response[body_start..];

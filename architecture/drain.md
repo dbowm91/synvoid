@@ -54,9 +54,10 @@ pub struct WorkerConnectionInfo {
 |--------|-------------|
 | `DrainStatus::new()` | Constructor |
 | `.with_drain_id(id)` | Set drain ID |
-| `.with_draining(active, idle)` | Set connection counts |
-| `.with_drain_start(start)` | Set drain start time |
-| `.with_complete(duration)` | Mark drain complete |
+| `.with_draining(bool)` | Set draining flag |
+| `.with_connections(active, idle)` | Set connection counts |
+| `.with_drain_start(Option<Instant>, timeout_secs)` | Set start + derive elapsed/remaining |
+| `.with_complete(bool)` | Mark drain complete |
 | `.with_worker_breakdown(workers)` | Add per-worker details |
 | `WorkerDrainState::new(worker_id, drain_id, active, idle)` | Per-worker state |
 
@@ -77,3 +78,5 @@ pub struct WorkerConnectionInfo {
 - **Time Tracking**: Elapsed/remaining time for drain deadlines
 - **Per-Worker Breakdown**: Individual worker drain progress
 - **Connection Classification**: Active vs idle connection tracking
+- **Request-path narrow trait**: `synvoid-core::drain::{DrainState, AlwaysAcceptDrainState}` (`is_draining()` / `should_accept_new_connection()`); request code consumes the trait, never `DrainStatus`.
+- **Cross-process sharing via IPC snapshots**: `DrainStatus` holds `Instant` (non-serializable), so it is never shared directly across processes — workers report counts and the supervisor aggregates snapshots over IPC.

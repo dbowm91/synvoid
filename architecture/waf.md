@@ -78,21 +78,21 @@ pub type AppWaf = WafCore;
 ```
 
 **Main Entry Point - `check_request_full()`:**
-The primary method for processing requests through the WAF pipeline:
-1. Check block store (pre-blocked IPs)
-2. Check rate limits
-3. Check endpoint blocking rules
-4. Check honeypot paths
-5. Check bot protection
-6. Check flood protection
-7. Run attack detection (parallel execution)
+The primary method for processing requests through the WAF pipeline
+(worker admission runs before this; no block-store stage inside WAF):
+1. Check rate limits
+2. Check endpoint blocking rules
+3. Check honeypot paths
+4. Check bot protection
+5. Check flood protection
+6. Run attack detection (inline, borrowed inputs)
 
 ### 2.2 `attack_detection/` - Attack Detection Engine
 
-Comprehensive attack detection with 13 specialized detectors.
+Comprehensive attack detection with 13 policy detectors (+ `HeaderValidator` and behavioral engine).
 
 **Key Files:**
-- `mod.rs` (64-86 lines) - `AttackDetector` orchestrates all sub-detectors
+- `mod.rs` (~1400 lines) - `AttackDetector` orchestrates all sub-detectors
 - `config.rs` - `AttackDetectionConfig` with 13 detector configurations
 - `normalizer.rs` - Input normalization with multi-pass decoding
 - `streaming.rs` - `StreamingWafCore` for chunk-based body inspection
@@ -190,7 +190,7 @@ pub enum RateLimitResult {
 
 ### 2.5 `traffic_shaper/` - Traffic Shaping and Connection Limiting
 
-**GlobalTrafficShaper** (`global.rs`):
+**GlobalTrafficShaper** (`crates/synvoid-waf/src/traffic_shaper/`, canonical since Phase 19; `ConnectionLimiter` in `limiter.rs`):
 - Token bucket-based bandwidth limiting
 - Ingress/egress rate limiting with burst allowance
 - Monthly cap enforcement

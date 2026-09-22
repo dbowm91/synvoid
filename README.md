@@ -179,7 +179,7 @@ Use `synvoid --help` for the complete current flag set, including internal worke
 
 ### Configuration-test path caveat
 
-The current `--configtest` implementation validates `./config/main.toml` and `./config/sites/*.toml` relative to the current working directory. It does **not** currently redirect that validation with `--config-path`. Run it from the intended configuration root/layout and do not assume a successful test covered another directory.
+`--configtest` validates `<dir>/main.toml` and `<dir>/sites/*.toml`, where `<dir>` is `--config-path` when given and `./config/` relative to CWD otherwise. A passing test covers only the validated directory.
 
 ## Security and deployment notes
 

@@ -746,9 +746,10 @@ impl YaraRulesManager {
             return None;
         };
 
-        if let Ok(record) = synvoid_utils::serialization::deserialize::<
-            crate::dht::YaraRuleContentRecord,
-        >(&rule_record.value)
+        // Typed postcard-first decode; the legacy struct only serves the
+        // JSON compat fallback (old string-timestamp payloads).
+        if let Some(record) =
+            crate::dht::decode_dht_record::<crate::dht::YaraRuleContentRecord>(&rule_record.value)
         {
             if record.is_chunked {
                 tracing::debug!(
@@ -761,20 +762,10 @@ impl YaraRulesManager {
         }
 
         // Fallback to legacy JSON if needed (though we just changed publishing)
-        if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&rule_record.value) {
-            let rules_str = value.get("rules").and_then(|v| v.as_str())?.to_string();
-            let version_str = value.get("version").and_then(|v| v.as_str())?.to_string();
-            let timestamp: u64 = value
-                .get("timestamp")
-                .and_then(|v| v.as_u64())
-                .or_else(|| {
-                    value
-                        .get("timestamp")
-                        .and_then(|v| v.as_str())
-                        .and_then(|s| s.parse().ok())
-                })
-                .unwrap_or(0);
-            return Some((version_str, rules_str, timestamp));
+        if let Some(legacy) = crate::dht::decode_dht_record::<crate::dht::YaraRuleContentLegacyRecord>(
+            &rule_record.value,
+        ) {
+            return Some((legacy.version?, legacy.rules?, legacy.timestamp));
         }
 
         None
@@ -786,6 +777,7 @@ impl YaraRulesManager {
         chunk_count: usize,
         record_store: &Arc<crate::dht::RecordStoreManager>,
         signer_pk: &str,
+        manifest_version: &str,
     ) -> Option<(String, String, u64)> {
         let mut chunks: Vec<Vec<u8>> = Vec::with_capacity(chunk_count);
         let mut version_str = None;
@@ -798,34 +790,43 @@ impl YaraRulesManager {
                 return None;
             };
 
-            let Ok(value) = serde_json::from_slice::<serde_json::Value>(&chunk_record.value) else {
+            // Typed postcard-first decode (current publisher emits postcard
+            // `YaraRuleChunkRecord`, which carries no per-chunk version
+            // string, so the manifest version applies); legacy JSON handled
+            // below.
+            if let Some(record) = crate::dht::decode_dht_record::<crate::dht::YaraRuleChunkRecord>(
+                &chunk_record.value,
+            ) {
+                if version_str.is_none() {
+                    version_str = Some(manifest_version.to_string());
+                }
+                if record.timestamp > timestamp {
+                    timestamp = record.timestamp;
+                }
+                chunks.push(record.compressed_data);
+                continue;
+            }
+
+            let Some(legacy) = crate::dht::decode_dht_record::<crate::dht::YaraChunkLegacyRecord>(
+                &chunk_record.value,
+            ) else {
                 tracing::warn!("YARA sync: failed to parse chunk record");
                 return None;
             };
 
-            let compressed_b64 = value.get("compressed_data").and_then(|v| v.as_str())?;
+            let compressed_b64 = legacy.compressed_data?;
             let compressed_data = URL_SAFE_NO_PAD.decode(compressed_b64).ok()?;
 
             if version_str.is_none() {
-                version_str = value
-                    .get("version")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string());
+                version_str = legacy.version;
             }
 
-            let ts_str = value
-                .get("timestamp")
-                .and_then(|v| v.as_str())
-                .unwrap_or("0");
-            let ts: u64 = ts_str.parse().unwrap_or(0);
+            let ts: u64 = legacy.timestamp;
             if ts > timestamp {
                 timestamp = ts;
             }
 
-            let chunk_signature = value
-                .get("signature")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let chunk_signature = legacy.signature;
             if !chunk_signature.is_empty() && !signer_pk.is_empty() {
                 let sig_bytes = match URL_SAFE_NO_PAD.decode(chunk_signature) {
                     Ok(s) => s,
@@ -922,8 +923,9 @@ impl YaraRulesManager {
         for record in &dht_records {
             if record.key.starts_with("yara_rules_manifest:") {
                 // Try to deserialize as typed manifest first
+                // (postcard-first with JSON compat fallback).
                 let manifest_opt: Option<crate::dht::YaraRulesManifest> =
-                    synvoid_utils::serialization::deserialize(&record.value).ok();
+                    crate::dht::decode_dht_record(&record.value);
 
                 let (
                     manifest_node_id,
@@ -947,47 +949,23 @@ impl YaraRulesManager {
                         m.signer_public_key.clone().unwrap_or_default(),
                         m.compiled_hash.clone(),
                     )
-                } else if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&record.value)
+                } else if let Some(legacy) = crate::dht::decode_dht_record::<
+                    crate::dht::YaraManifestLegacyRecord,
+                >(&record.value)
                 {
-                    let node_id = value
-                        .get("node_id")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let hash = value
-                        .get("content_hash")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let version = value
-                        .get("version")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let ts_str = value
-                        .get("timestamp")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("0");
-                    let ts: u64 = ts_str.parse().unwrap_or(0);
-                    let chunked = value
-                        .get("is_chunked")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false);
-                    let count = value
-                        .get("chunk_count")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(1) as usize;
-                    let sig = value
-                        .get("signature")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let pk = value
-                        .get("signer_public_key")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    (node_id, hash, version, ts, chunked, count, sig, pk, None)
+                    // Legacy JSON shape (string timestamps); postcard
+                    // payloads are handled by the typed decode above.
+                    (
+                        legacy.node_id,
+                        legacy.content_hash,
+                        legacy.version,
+                        legacy.timestamp,
+                        legacy.is_chunked,
+                        legacy.chunk_count,
+                        legacy.signature,
+                        legacy.signer_public_key,
+                        None,
+                    )
                 } else {
                     continue;
                 };
@@ -1113,6 +1091,7 @@ impl YaraRulesManager {
                         chunk_count,
                         &record_store,
                         &manifest_signer_pk,
+                        &manifest_version,
                     )
                 } else {
                     self.fetch_rules_from_dht(&peer_hash, &record_store)

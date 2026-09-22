@@ -63,6 +63,12 @@ pub fn resolve_mesh_plugin_bytes(name: &str) -> Option<Vec<u8>> {
 /// This replaces the former mesh-gated `PluginManager::load_wasm_plugin`
 /// inherent method that was removed with the root duplicate manager. The
 /// no-mesh build uses `PluginManager::load_wasm_plugin` directly.
+///
+/// Manifest authority is inherited from
+/// `PluginManager::load_wasm_plugin_from_bytes`, which enforces
+/// `prepare_plugin_load` policy and uses `PreparedPluginLoad::effective_limits`.
+/// Root owns only mesh byte resolution here; manifest/capability validation
+/// stays in `synvoid-plugin-runtime` and must not gain a second copy.
 #[cfg(feature = "mesh")]
 pub fn load_wasm_plugin_with_mesh_fallback(
     manager: &PluginManager,

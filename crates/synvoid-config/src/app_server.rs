@@ -60,7 +60,9 @@ impl Default for AppServerConfig {
             auto_detect_venv: true,
             auto_detect_app: true,
             auto_install_requirements: true,
-            require_hashes: false,
+            // Fail-closed: pip installs require hashes unless explicitly opted out
+            // (aligns with synvoid-app-server default).
+            require_hashes: true,
             log_level: GranianLogLevel::Info,
             log_format: GranianLogFormat::Text,
             log_verbose: false,

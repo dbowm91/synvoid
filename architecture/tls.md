@@ -26,8 +26,11 @@ The module sits at the edge of the request pipeline, handling the TLS handshake 
 
 ```
 src/tls/
-├── mod.rs           # Public re-exports and module declarations
-├── server.rs        # HttpsServer, connection handling, request pipeline
+├── mod.rs           # Transitional compat surface: local `server` + re-exports from synvoid-tls
+└── server.rs        # HttpsServer, connection handling, request pipeline (root-owned: depends on root HTTP infra)
+
+crates/synvoid-tls/src/  (canonical)
+├── lib.rs
 ├── cert_resolver.rs # SNI-based certificate resolution, key loading, file watching
 ├── config.rs        # InternalTlsConfig, InternalAcmeConfig, InternalClientAuthConfig
 ├── acme.rs          # AcmeManager, Let's Encrypt integration, certificate issuance

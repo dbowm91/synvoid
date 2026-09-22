@@ -44,7 +44,7 @@ rkyv = []
 macos-sandbox = ["synvoid-admin/macos-sandbox", "synvoid-platform/macos-sandbox"]  # Enable macOS sandbox enforcement
 test-utils = []
 swagger-ui = ["dep:utoipa-swagger-ui"]
-fastcgi_streaming = []  # Additive, opt-in: streaming FastCGI response handling (no default impact)
+fastcgi_streaming = ["synvoid-app-handlers/fastcgi_streaming"]  # Additive, opt-in: streaming FastCGI response handling (no default impact)
 # Phase 28: explicit opt-in for in-process unsafe native extensions. Off by
 # default so default builds carry no shared-library loader for plugins.
 # (Windows Wintun DLL loading lives in synvoid-platform, #[cfg(windows)];

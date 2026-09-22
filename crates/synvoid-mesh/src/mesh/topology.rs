@@ -26,6 +26,16 @@ use crate::dht::{RecordStoreManager, DEFAULT_GET_BY_PREFIX_LIMIT};
 use crate::lifecycle::StagedTopologySnapshot;
 use crate::protocol::{MeshPeerInfo, UpstreamInfo, UpstreamOwner};
 
+/// Typed decoder for `global_node_key:<id>` DHT payloads on the
+/// verified-upstream path. Postcard-first; serde_json is a documented compat
+/// fallback. The canonical layout is
+/// [`crate::dht::GlobalNodeKeyEndpointRecord`], which accepts both
+/// `timestamp` and legacy `announced_at` publisher shapes.
+fn decode_global_node_key_public_key(record_value: &[u8]) -> Option<String> {
+    crate::dht::decode_dht_record::<crate::dht::GlobalNodeKeyEndpointRecord>(record_value)
+        .and_then(|record| record.public_key)
+}
+
 pub struct MeshTopology {
     config: Arc<MeshConfig>,
     node_id: String,
@@ -889,8 +899,10 @@ impl MeshTopology {
                 let mut new_results: Vec<crate::dht::VerifiedUpstream> = Vec::new();
                 for record in records {
                     if record.key.starts_with("verified_upstream:") {
-                        if let Ok(verified) =
-                            serde_json::from_slice::<crate::dht::VerifiedUpstream>(&record.value)
+                        // Typed postcard-first decode with JSON compat fallback.
+                        if let Some(verified) = crate::dht::decode_dht_record::<
+                            crate::dht::VerifiedUpstream,
+                        >(&record.value)
                         {
                             if verified.upstream_id == site_clone
                                 && !verified.global_node_signature.is_empty()
@@ -905,43 +917,33 @@ impl MeshTopology {
 
                                 let key = format!("global_node_key:{}", verified.global_node_id);
                                 if let Some(key_record) = rs.get_record(&key) {
-                                    if let Ok(key_json) = serde_json::from_slice::<serde_json::Value>(
-                                        &key_record.value,
-                                    ) {
-                                        if let Some(pubkey_str) = key_json
-                                            .get("public_key")
-                                            .and_then(|v| v.as_str().map(|s| s.to_string()))
+                                    if let Some(pubkey_str) =
+                                        decode_global_node_key_public_key(&key_record.value)
+                                    {
+                                        use base64::{
+                                            engine::general_purpose::URL_SAFE_NO_PAD, Engine,
+                                        };
+                                        let sig_bytes = verified.global_node_signature.clone();
+                                        if let Ok(pubkey_bytes) = URL_SAFE_NO_PAD.decode(pubkey_str)
                                         {
-                                            use base64::{
-                                                engine::general_purpose::URL_SAFE_NO_PAD, Engine,
-                                            };
-                                            let sig_bytes = verified.global_node_signature.clone();
-                                            if let Ok(pubkey_bytes) =
-                                                URL_SAFE_NO_PAD.decode(pubkey_str)
-                                            {
-                                                if pubkey_bytes.len() == 32 && sig_bytes.len() == 64
-                                                {
-                                                    let mut pk_array = [0u8; 32];
-                                                    pk_array.copy_from_slice(&pubkey_bytes);
-                                                    let mut sig_array = [0u8; 64];
-                                                    sig_array.copy_from_slice(&sig_bytes);
+                                            if pubkey_bytes.len() == 32 && sig_bytes.len() == 64 {
+                                                let mut pk_array = [0u8; 32];
+                                                pk_array.copy_from_slice(&pubkey_bytes);
+                                                let mut sig_array = [0u8; 64];
+                                                sig_array.copy_from_slice(&sig_bytes);
 
-                                                    if let Ok(pk) =
-                                                        ed25519_dalek::VerifyingKey::from_bytes(
-                                                            &pk_array,
-                                                        )
+                                                if let Ok(pk) =
+                                                    ed25519_dalek::VerifyingKey::from_bytes(
+                                                        &pk_array,
+                                                    )
+                                                {
+                                                    let sig = ed25519_dalek::Signature::from_bytes(
+                                                        &sig_array,
+                                                    );
+                                                    if pk.verify(sign_data.as_bytes(), &sig).is_ok()
                                                     {
-                                                        let sig =
-                                                            ed25519_dalek::Signature::from_bytes(
-                                                                &sig_array,
-                                                            );
-                                                        if pk
-                                                            .verify(sign_data.as_bytes(), &sig)
-                                                            .is_ok()
-                                                        {
-                                                            new_results.push(verified);
-                                                            continue;
-                                                        }
+                                                        new_results.push(verified);
+                                                        continue;
                                                     }
                                                 }
                                             }
@@ -993,8 +995,9 @@ impl MeshTopology {
 
         for record in records {
             if record.key.starts_with("verified_upstream:") {
-                if let Ok(verified) =
-                    serde_json::from_slice::<crate::dht::VerifiedUpstream>(&record.value)
+                // Typed postcard-first decode with JSON compat fallback.
+                if let Some(verified) =
+                    crate::dht::decode_dht_record::<crate::dht::VerifiedUpstream>(&record.value)
                 {
                     if verified.upstream_id == site {
                         if !verified.global_node_signature.is_empty() {
@@ -1009,38 +1012,29 @@ impl MeshTopology {
                             let key = format!("global_node_key:{}", verified.global_node_id);
                             let guard = self.record_store.read();
                             if let Some(key_record) = guard.as_ref().unwrap().get_record(&key) {
-                                if let Ok(key_json) =
-                                    serde_json::from_slice::<serde_json::Value>(&key_record.value)
+                                if let Some(pubkey_str) =
+                                    decode_global_node_key_public_key(&key_record.value)
                                 {
-                                    if let Some(pubkey_str) = key_json
-                                        .get("public_key")
-                                        .and_then(|v| v.as_str().map(|s| s.to_string()))
-                                    {
-                                        use base64::{
-                                            engine::general_purpose::URL_SAFE_NO_PAD, Engine,
-                                        };
-                                        let sig_bytes = verified.global_node_signature.clone();
-                                        if let Ok(pubkey_bytes) = URL_SAFE_NO_PAD.decode(pubkey_str)
-                                        {
-                                            if pubkey_bytes.len() == 32 && sig_bytes.len() == 64 {
-                                                let mut pk_array = [0u8; 32];
-                                                pk_array.copy_from_slice(&pubkey_bytes);
-                                                let mut sig_array = [0u8; 64];
-                                                sig_array.copy_from_slice(&sig_bytes);
+                                    use base64::{
+                                        engine::general_purpose::URL_SAFE_NO_PAD, Engine,
+                                    };
+                                    let sig_bytes = verified.global_node_signature.clone();
+                                    if let Ok(pubkey_bytes) = URL_SAFE_NO_PAD.decode(pubkey_str) {
+                                        if pubkey_bytes.len() == 32 && sig_bytes.len() == 64 {
+                                            let mut pk_array = [0u8; 32];
+                                            pk_array.copy_from_slice(&pubkey_bytes);
+                                            let mut sig_array = [0u8; 64];
+                                            sig_array.copy_from_slice(&sig_bytes);
 
-                                                if let Ok(pk) =
-                                                    ed25519_dalek::VerifyingKey::from_bytes(
-                                                        &pk_array,
-                                                    )
-                                                {
-                                                    let sig = ed25519_dalek::Signature::from_bytes(
-                                                        &sig_array,
-                                                    );
-                                                    if pk.verify(sign_data.as_bytes(), &sig).is_ok()
-                                                    {
-                                                        results.push(verified);
-                                                        continue;
-                                                    }
+                                            if let Ok(pk) =
+                                                ed25519_dalek::VerifyingKey::from_bytes(&pk_array)
+                                            {
+                                                let sig = ed25519_dalek::Signature::from_bytes(
+                                                    &sig_array,
+                                                );
+                                                if pk.verify(sign_data.as_bytes(), &sig).is_ok() {
+                                                    results.push(verified);
+                                                    continue;
                                                 }
                                             }
                                         }
@@ -1894,8 +1888,9 @@ impl MeshTopology {
         let heartbeat_records =
             rs.get_by_prefix("global_node_heartbeat:", DEFAULT_GET_BY_PREFIX_LIMIT);
         for record in heartbeat_records {
-            if let Ok(heartbeat) =
-                serde_json::from_slice::<crate::dht::GlobalNodeHeartbeat>(&record.value)
+            // Typed postcard-first decode with JSON compat fallback.
+            if let Some(heartbeat) =
+                crate::dht::decode_dht_record::<crate::dht::GlobalNodeHeartbeat>(&record.value)
             {
                 let age = now.saturating_sub(heartbeat.timestamp);
                 if age <= heartbeat_ttl {

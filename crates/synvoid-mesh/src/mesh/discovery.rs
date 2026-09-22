@@ -199,10 +199,10 @@ impl MeshDiscovery {
         record_store: &Arc<crate::dht::RecordStoreManager>,
     ) -> Result<(), MeshDiscoveryError> {
         let all_records = record_store.get_all_records();
-        let mut global_node_records = all_records
+        let global_node_records = all_records
             .into_iter()
-            .filter(|(key, _)| key.starts_with("global_node:"))
-            .collect::<Vec<_>>();
+            .filter(|record| record.key.starts_with("global_node:"))
+            .collect::<Vec<_>>;
 
         if global_node_records.is_empty() {
             tracing::debug!("No global node records found in DHT for bootstrap");
@@ -215,11 +215,17 @@ impl MeshDiscovery {
         );
 
         let mut connected = false;
-        for (key, record) in global_node_records {
-            if let Ok(node_info) = serde_json::from_str::<serde_json::Value>(&record.value) {
-                if let Some(address) = node_info.get("address").and_then(|v| v.as_str()) {
+        for record in global_node_records {
+            // Typed decoder, postcard-first with serde_json as documented compat
+            // fallback. `GlobalNodeBootstrapRecord` tolerates both minimal
+            // `{address}` payloads and full `GlobalNodeEntry` payloads.
+            let address = crate::dht::decode_dht_record::<
+                crate::dht::GlobalNodeBootstrapRecord,
+            >(&record.value)
+            .and_then(|node_info| node_info.address);
+            if let Some(address) = address {
                     tracing::debug!("Attempting DHT bootstrap via discovered node: {}", address);
-                    match self.try_connect_peer(address).await {
+                    match self.try_connect_peer(&address).await {
                         Ok(_) => {
                             tracing::info!(
                                 "DHT bootstrap success: connected to discovered node {}",
@@ -232,7 +238,6 @@ impl MeshDiscovery {
                             tracing::warn!("DHT discovered node {} connection failed: {}", address, e);
                         }
                     }
-                }
             }
         }
 

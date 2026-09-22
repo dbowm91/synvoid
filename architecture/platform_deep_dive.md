@@ -6,27 +6,27 @@ This document covers the platform abstraction layer, IPC primitives, and process
 
 ---
 
-## 1. Platform Module (`src/platform/`)
+## 1. Platform Module (`crates/synvoid-platform/src/` canonical; `src/platform/mod.rs` is a pure alias facade)
 
 ### Purpose
 
 Cross-platform abstractions providing OS-level functionality for Unix and Windows systems, including IPC transport, sandboxing, process control, and socket management.
 
-### Key Files
+### Key Files (canonical crate layout)
 
 | File | Responsibility |
 |------|----------------|
-| `mod.rs` | Compatibility facade re-exporting from `synvoid-platform` crate; root-owned platform-specific code |
+| `lib.rs` | `Platform` enum + capability queries (`supports_*`) |
 | `ipc.rs` | Traits for IPC transport abstraction (`IpcTransport`, `IpcListener`, `IpcStream`) |
 | `sandbox.rs` | Multi-backend sandboxing (Landlock, Capsicum, Pledge, Seatbelt, Job Objects) |
-| `socket.rs` | Socket creation, FD passing, owned socket wrappers |
+| `socket.rs` / `socket_bind.rs` | Socket creation, FD passing, owned socket wrappers + bind backends |
 | `process.rs` | Process control traits, signal handling |
+| `fs.rs` | Filesystem paths (`PlatformPaths`, `SecureDir`) |
 | `unix.rs` | Unix-specific implementations (UnixDomain sockets, signals, daemonization) |
-| `windows_impl.rs` | Windows-specific IPC via named pipes |
+| `windows.rs` / `windows_impl.rs` / `windows/` | Windows-specific IPC (named pipes), firewall/interface/Wintun |
 | `service/` | Windows service integration (service control manager, installation, running as service) |
-| `windows/` | Windows-specific implementations (firewall, interface resolver, Wintun VPN) |
 
-> **Note:** The `Platform` enum and capability queries (`supports_*`) are defined in `crates/synvoid-platform/src/lib.rs` (the dedicated `synvoid-platform` crate). `src/platform/mod.rs` is a compatibility facade that re-exports them alongside root-owned composition code.
+> **Note:** `src/platform/mod.rs` (41 lines) is a pure alias facade — it contains no implementations, only re-exports `synvoid_platform::{fs,ipc,process,sandbox,service,socket,…}`. New code must import `synvoid_platform` directly.
 
 ### Platform Abstraction Pattern
 

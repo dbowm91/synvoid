@@ -8,7 +8,7 @@ The Mesh module (`crates/synvoid-mesh/src/mesh/`, re-exported via `src/mesh/mod.
 
 The Mesh module is responsible for:
 
-- **Peer-to-peer connectivity**: Establishing encrypted QUIC/WireGuard tunnels between SynVoid nodes across the internet, even behind NATs.
+- **Peer-to-peer connectivity**: Establishing encrypted QUIC tunnels between SynVoid nodes across the internet, even behind NATs. (WireGuard: mesh holds port plumbing only; real WireGuard client/server lives in `synvoid-tunnel` behind the root `wireguard` feature.)
 - **Service discovery via DHT**: Distributing signed or Raft-attested records (routing policies, provider info, DNS records) via a Kademlia-style distributed hash table. DHT records are advisory and TTL-bound; DHT does not decide trust, ownership, or global policy.
 - **Distributed consensus**: Global nodes participate in a Raft cluster to commit canonical authority records (OrgPublicKey, ThreatIntel, GlobalNodeRevocationList) with strong consistency guarantees. Raft is the only source of canonical global trust state.
 - **Organization management**: Managing multi-tenant isolation using tiered keys, member certificates, and capability attestations.
@@ -454,13 +454,16 @@ dns = ["synvoid-config/dns", "dep:hickory-proto", "dep:hickory-resolver", ...]
 # Post-quantum TLS verification (verifies PQ capability at startup)
 verify-pq = []
 
-# WireGuard tunnel support
+# WireGuard tunnel support (real impl in synvoid-tunnel; root: wireguard = ["synvoid-tunnel/wireguard", ...])
 wireguard = ["dep:defguard_boringtun"]
 
-# Post-quantum mesh message signatures (enables ML-DSA-44 for mesh messages)
-pqc-mesh = []
+# Note: no `pqc-mesh` feature exists in root or synvoid-mesh Cargo.toml
+# (verified); PQ mesh-signature wiring is described in networking_deep_dive.md
+# and the hybrid_post_quantum skill — do not add a pqc-mesh Cargo snippet
+# without implementing the feature.
 
-# Post-quantum TLS (enables rustls-post-quantum provider)
+# Post-quantum marker (root: post-quantum = ["synvoid-http-client/post-quantum", ...];
+# inbound TLS PQ is unconditional via rustls prefer-post-quantum)
 post-quantum = ["dep:rustls-post-quantum"]
 ```
 

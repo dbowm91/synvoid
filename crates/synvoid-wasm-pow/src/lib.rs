@@ -447,10 +447,9 @@ pub async fn audit_edge_nodes(node_urls_json: String) -> String {
 
         let fetch_promise = window.fetch_with_request(&request);
 
-        let latency_ms = js_sys::Date::now() - start_time;
-
         match JsFuture::from(fetch_promise).await {
             Ok(resp_value) => {
+                let latency_ms = js_sys::Date::now() - start_time;
                 let response: Response = resp_value.dyn_into().unwrap();
                 let success = response.ok();
 
@@ -467,6 +466,7 @@ pub async fn audit_edge_nodes(node_urls_json: String) -> String {
                 });
             }
             Err(e) => {
+                let latency_ms = js_sys::Date::now() - start_time;
                 results.push(MeshAuditResult {
                     node_url,
                     success: false,
@@ -629,11 +629,33 @@ fn generate_nonce() -> String {
     hex::encode(bytes)
 }
 
+fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
+    const BLOCK_SIZE: usize = 64;
+    let mut key_block = [0u8; BLOCK_SIZE];
+    if key.len() > BLOCK_SIZE {
+        let hashed = Sha256::digest(key);
+        key_block[..32].copy_from_slice(&hashed);
+    } else {
+        key_block[..key.len()].copy_from_slice(key);
+    }
+    let mut ipad = [0x36u8; BLOCK_SIZE];
+    let mut opad = [0x5cu8; BLOCK_SIZE];
+    for i in 0..BLOCK_SIZE {
+        ipad[i] ^= key_block[i];
+        opad[i] ^= key_block[i];
+    }
+    let mut inner = Sha256::new();
+    inner.update(ipad);
+    inner.update(message);
+    let inner_hash = inner.finalize();
+    let mut outer = Sha256::new();
+    outer.update(opad);
+    outer.update(inner_hash);
+    outer.finalize().into()
+}
+
 fn simple_sign(message: &str, key: &str) -> String {
-    let mut combined = message.to_string();
-    combined.push_str(key);
-    let hash = Sha256::digest(combined.as_bytes());
-    hex::encode(hash)
+    hex::encode(hmac_sha256(key.as_bytes(), message.as_bytes()))
 }
 
 struct X25519KeyPair {
@@ -691,6 +713,38 @@ mod tests {
             String::new(),
             "a".repeat(64),
             "key".to_string()
+        ));
+    }
+
+    #[test]
+    fn test_simple_sign_is_hmac_sha256_rfc4231_tc1() {
+        // RFC 4231 Test Case 1: key = 0x0b * 20, data = "Hi There".
+        // Expected tag cross-checked with Python `hmac` and `openssl dgst`.
+        let key = "\u{000b}".repeat(20);
+        assert_eq!(
+            simple_sign("Hi There", &key),
+            "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7"
+        );
+    }
+
+    #[test]
+    fn test_simple_sign_key_sensitivity_and_wire_change() {
+        // Different keys must produce different tags, and the HMAC wire
+        // format must differ from the legacy plain SHA-256(message+key).
+        let a = simple_sign("message", "key-a");
+        let b = simple_sign("message", "key-b");
+        assert_ne!(a, b);
+
+        let mut legacy = "message".to_string();
+        legacy.push_str("key-a");
+        let legacy_hash = Sha256::digest(legacy.as_bytes());
+        assert_ne!(a, hex::encode(legacy_hash));
+
+        // Tampered headers must not verify under the same session key.
+        assert!(!verify_response(
+            r#"{"x-test":"2"}"#.to_string(),
+            simple_sign(r#"{"x-test":"1"}"#, "session-secret"),
+            "session-secret".to_string(),
         ));
     }
 

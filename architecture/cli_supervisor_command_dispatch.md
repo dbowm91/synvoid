@@ -210,7 +210,7 @@ Complete mapping of all CLI flags to their plan categories and behavior.
 | `--force` | Required with --test | --test | none |
 | `--control-addr <addr>` | Supervisor control: target address | Supervisor control, --restart | none |
 | `--control-api-tls` | Supervisor control: use TLS | Supervisor control, --restart | none |
-| `--config-path <path>` | Config: custom config directory | All | none |
+| `--config-path <path>` | Config: custom config directory (honored by runtime launches, `--generatenewtoken`, and `--configtest` which validates `<path>/main.toml` + `<path>/sites/*.toml`, default `./config`; ignored by other one-shot / supervisor-control commands) | Runtime, `--generatenewtoken`, `--configtest` | none |
 | `--log-level <level>` | Runtime: log level override | Runtime commands | none |
 | `--sign-with <path>` | Export threat feed: signing key | --export-threat-feed | none |
 | `--site-id <id>` | Export threat feed: site filter | --export-threat-feed | none |

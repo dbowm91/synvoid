@@ -66,15 +66,15 @@ All long-lived spawned tasks are listed below, grouped by subsystem.
 | 5 | Shared connection heartbeat | `state.rs:190` | RestartableBackground | (unowned) | NONE | Dropped | runs forever, no shutdown | Per-connection heartbeat; no shutdown signal |
 | 6 | `spawn_port_honeypot` | `init_waf.rs:108` | RestartableBackground | (unowned) | `shutdown_tx` inside runner | Dropped | runs forever | Honeypot listener on configured ports |
 
-### UnifiedServer Server (`src/server/`)
+### UnifiedServer Server (`src/server/` — `src/server/mod.rs` is 720 lines; listeners/assembly moved to `listener_tasks.rs`/`service_assembly.rs`)
 
-| # | Task | File:Line | Class | Owner | Cancel Path | Join Path | Failure Policy | Notes |
-|---|------|-----------|-------|-------|-------------|-----------|----------------|-------|
-| 7 | Threat level auto-scale | `mod.rs:799` | RestartableBackground | (unowned) | NONE | Dropped | runs forever | Periodic threat-level recalculation |
-| 8 | HTTP/HTTPS/HTTP3 servers (6 listeners) | `mod.rs:919-1011` | CriticalService | UnifiedServer::run | `shutdown_rx` broadcast | Awaited directly | graceful shutdown | Multiple accept loops; all must drain |
-| 9 | TCP/UDP connection pools | `mod.rs:1015-1032` | CriticalService | UnifiedServer::run | internal shutdown | Awaited directly | graceful | Connection pool maintenance |
-| 10 | DNS server | `mod.rs:1037` | CriticalService | UnifiedServer::run | internal shutdown | Awaited directly | feature-gated | DNS listener; compiled out without `dns` feature |
-| 11 | ACME cert renewal | `mod.rs:538` | RestartableBackground | (unowned) | NONE | Dropped | runs forever | Periodic TLS certificate renewal |
+| # | Task | File | Class | Owner | Cancel Path | Join Path | Failure Policy | Notes |
+|---|------|------|-------|-------|-------------|-----------|----------------|-------|
+| 7 | Threat level auto-scale | `service_assembly.rs` (`spawn_threat_autoscale`) | RestartableBackground | (unowned) | NONE | Dropped | runs forever | Periodic threat-level recalculation |
+| 8 | HTTP/HTTPS/HTTP3 servers (listeners) | `listener_tasks.rs` (`spawn_http/https/http3_listeners`) | CriticalService | UnifiedServer::run | `shutdown_rx` broadcast | Awaited directly | graceful shutdown | Multiple accept loops; all must drain |
+| 9 | TCP/UDP connection pools | `listener_tasks.rs` (`spawn_aux_pools`) | CriticalService | UnifiedServer::run | internal shutdown | Awaited directly | graceful | Connection pool maintenance |
+| 10 | DNS server | `listener_tasks.rs` (`spawn_dns_service`) | CriticalService | UnifiedServer::run | internal shutdown | Awaited directly | feature-gated | DNS listener; compiled out without `dns` feature |
+| 11 | ACME cert renewal | `listener_tasks.rs` (`spawn_acme_service`) | RestartableBackground | (unowned) | NONE | Dropped | runs forever | Periodic TLS certificate renewal |
 
 ### Threat Intel (`src/waf/threat_intel/`)
 

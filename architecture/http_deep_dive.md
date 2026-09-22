@@ -86,24 +86,11 @@ pub async fn resolve_full_request_waf_decision<...>(
 
 ### Stage 5: Terminal Response (`internal_endpoint_dispatch.rs`)
 
-Handles health/ready/drain endpoints and mesh special paths.
+Handles health/ready/drain endpoints and mesh special paths (frontdoor only normalizes + resolves client IP; see stage table in `http_request_pipeline.md`).
 
 ### Stage 6: Backend Dispatch (`backend_dispatch.rs`)
 
-WebSocket upgrade is checked first (a separate path in `websocket_upgrade_dispatch.rs`, not a `BackendType` variant). Then the 11 `BackendType` variants are tried in order:
-
-1. Axum dynamic
-2. Static files
-3. AppServer (mesh-gated, `is_appserver` check)
-4. Serverless (mesh-gated)
-5. Spin
-6. FastCGI/PHP
-7. CGI
-8. AppServer (general)
-9. Mesh backend (mesh-gated)
-10. WASM filter
-11. Upload validation
-12. Upstream proxy (fallback via `upstream_proxy_dispatch.rs`)
+WebSocket upgrade is checked first (a separate path in `websocket_upgrade_dispatch.rs`, not a `BackendType` variant). Then the 11 `BackendType` variants (`crates/synvoid-proxy/src/router.rs`: Upstream, FastCgi, Php, Cgi, AxumDynamic, AppServer, Static, QuicTunnel, Serverless, Mesh, Spin) are dispatched; WASM-filter and upload-validation are dispatch phases inside `backend_dispatch.rs` (not variants), with upstream proxy as fallback.
 
 ### Stage 7: Accounting (`http_request_postlude.rs`)
 

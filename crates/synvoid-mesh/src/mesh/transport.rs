@@ -1191,12 +1191,13 @@ impl MeshTransport {
     pub fn announce_edge_key(&self, edge_id: &str, public_key: &str) {
         if let Some(ref record_store) = self.record_store {
             let key = format!("edge_key:{}", edge_id);
-            let value = serde_json::json!({
-                "edge_id": edge_id,
-                "public_key": public_key,
-                "announced_at": chrono::Utc::now().timestamp(),
-            });
-            if let Ok(bytes) = serde_json::to_vec(&value) {
+            let record = crate::dht::EdgeKeyRecord {
+                edge_id: Some(edge_id.to_string()),
+                public_key: Some(public_key.to_string()),
+                timestamp: None,
+                announced_at: Some(chrono::Utc::now().timestamp()),
+            };
+            if let Ok(bytes) = postcard::to_allocvec(&record) {
                 record_store.store_and_announce(key, bytes, 86400); // 24 hour TTL
                 tracing::debug!("Announced edge key for {} to DHT", edge_id);
             }
@@ -1239,57 +1240,23 @@ impl MeshTransport {
         let mut functions = Vec::new();
 
         for record in dht_records {
-            if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&record.value) {
-                let function_name = value
-                    .get("function_name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let node_id = value
-                    .get("node_id")
-                    .and_then(|v| v.as_str())
-                    .map(String::from);
-                let version = value.get("version").and_then(|v| v.as_u64()).unwrap_or(0);
-                let checksum = value
-                    .get("checksum")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let routes = value
-                    .get("routes")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str().map(String::from))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                let allowed_methods = value
-                    .get("allowed_methods")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str().map(String::from))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                let memory_mb = value
-                    .get("memory_mb")
-                    .and_then(|v| v.as_u64())
-                    .map(|v| v as usize);
-                let timeout_seconds = value.get("timeout_seconds").and_then(|v| v.as_u64());
-                let priority = value.get("priority").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-
+            // Typed postcard-first decode; tolerates both publisher shapes
+            // (`announce_serverless` omits `checksum`, the peer announce
+            // handler omits `node_id`).
+            if let Some(stored) = crate::dht::decode_dht_record::<
+                crate::dht::ServerlessFunctionDhtRecord,
+            >(&record.value)
+            {
                 functions.push(crate::protocol::ServerlessFunctionAnnounce {
-                    function_name,
-                    node_id,
-                    version,
-                    checksum,
-                    routes,
-                    allowed_methods,
-                    memory_mb,
-                    timeout_seconds,
-                    priority,
+                    function_name: stored.function_name,
+                    node_id: stored.node_id,
+                    version: stored.version,
+                    checksum: stored.checksum,
+                    routes: stored.routes,
+                    allowed_methods: stored.allowed_methods,
+                    memory_mb: stored.memory_mb,
+                    timeout_seconds: stored.timeout_seconds,
+                    priority: stored.priority,
                 });
             }
         }
@@ -1328,18 +1295,22 @@ impl MeshTransport {
 
         for (func_name, function) in functions {
             let key = crate::dht::keys::DhtKey::serverless_function(&func_name);
-            let value = serde_json::json!({
-                "function_name": func_name,
-                "version": 1,
-                "node_id": node_id,
-                "routes": function.definition.routes,
-                "allowed_methods": function.definition.allowed_methods,
-                "memory_mb": function.definition.memory_mb,
-                "timeout_seconds": function.definition.timeout_seconds,
-                "priority": 100,
-                "announced_at": chrono::Utc::now().timestamp(),
-            });
-            if let Ok(bytes) = serde_json::to_vec(&value) {
+            let record = crate::dht::ServerlessFunctionDhtRecord {
+                function_name: func_name.clone(),
+                node_id: Some(node_id.clone()),
+                version: 1,
+                checksum: String::new(),
+                routes: function.definition.routes.clone().unwrap_or_default(),
+                allowed_methods: function
+                    .definition
+                    .allowed_methods
+                    .clone()
+                    .unwrap_or_default(),
+                memory_mb: function.definition.memory_mb,
+                timeout_seconds: function.definition.timeout_seconds,
+                priority: 100,
+            };
+            if let Ok(bytes) = postcard::to_allocvec(&record) {
                 record_store.store_and_announce(key.as_str().to_string(), bytes, 3600);
                 tracing::debug!("Announced serverless function {} to DHT", func_name);
             }
@@ -1606,11 +1577,12 @@ impl MeshTransport {
         if let Some(ref record_store) = self.record_store {
             let key = format!("edge_key:{}", edge_id);
             if let Some(record) = record_store.get_record(&key) {
-                if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&record.value) {
-                    return value
-                        .get("public_key")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
+                // Typed postcard-first decode accepts both the `timestamp`
+                // (manager) and legacy `announced_at` (here) publisher shapes.
+                if let Some(decoded) =
+                    crate::dht::decode_dht_record::<crate::dht::EdgeKeyRecord>(&record.value)
+                {
+                    return decoded.public_key;
                 }
             }
         }
@@ -2111,13 +2083,14 @@ impl MeshTransport {
         // Update local DHT
         if let Some(ref record_store) = self.record_store {
             let key = format!("global_node_key:{}", self.config.node_id());
-            let value = serde_json::json!({
-                "node_id": self.config.node_id(),
-                "public_key": self.config.global_node_key.clone().unwrap_or_default(),
-                "key_exchange_endpoint": key_exchange_endpoint,
-                "announced_at": timestamp,
-            });
-            if let Ok(bytes) = serde_json::to_vec(&value) {
+            let record = crate::dht::GlobalNodeKeyEndpointRecord {
+                node_id: Some(self.config.node_id().to_string()),
+                public_key: self.config.global_node_key.clone(),
+                key_exchange_endpoint: key_exchange_endpoint.clone(),
+                announced_by: None,
+                timestamp,
+            };
+            if let Ok(bytes) = postcard::to_allocvec(&record) {
                 record_store.store_and_announce(key, bytes, 86400);
             }
         }

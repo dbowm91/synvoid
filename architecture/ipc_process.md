@@ -25,7 +25,7 @@ The IPC & Process module is responsible for:
 
 | Submodule | File | Responsibility |
 |-----------|------|----------------|
-| **mod.rs** | `src/process/mod.rs` | Module root; re-exports all public types; defines `CURRENT_WORKER_ID` global |
+| **mod.rs** | `src/process/mod.rs` | 6-line re-export facade (`pub use synvoid_ipc::*`); no `CURRENT_WORKER_ID` definition here |
 | **manager.rs** | `crates/synvoid-ipc/src/manager.rs` | `ProcessManager` for worker lifecycle, health monitoring, restart policies |
 | **ipc.rs** | `crates/synvoid-ipc/src/ipc.rs` | `Message` enum (all IPC message types), `IpcStream` (sync), `WorkerId` |
 | **ipc_transport.rs** | `crates/synvoid-ipc/src/ipc_transport.rs` | Async IPC transport via `tokio::net::UnixStream` |
@@ -37,8 +37,10 @@ The IPC & Process module is responsible for:
 | **worker.rs** | `crates/synvoid-ipc/src/worker.rs` | `BaseWorkerProcess`, `WorkerProcess`, `StaticWorkerProcess` / `CpuWorkerProcess`, `UnifiedServerWorkerProcess` |
 | **command.rs** | `crates/synvoid-ipc/src/command.rs` | `CommandClient` for sending commands to master via socket/signal/grpc |
 | **socket_path.rs** | `crates/synvoid-ipc/src/socket_path.rs` | Socket path resolution, generation tracking, permissions |
-| **socket_fd.rs** | `crates/synvoid-ipc/src/` | Unix socket creation and file descriptor passing |
+| **jail_binary.rs / jail_process.rs / jail_protocol.rs** | `crates/synvoid-ipc/src/jail_*` | Jail binary resolution (exe-dir only), jail process handle, versioned jail protocol (no `socket_fd.rs` — FD passing lives in `synvoid-platform::socket`) |
 | **pidfile.rs** | `crates/synvoid-ipc/src/pidfile.rs` | `PidFileManager`, `SupervisorLockFile` for process single-instance |
+
+> `CURRENT_WORKER_ID` owner is `synvoid-utils::worker_id` (`crates/synvoid-utils/src/worker_id.rs`, re-exported via `synvoid_ipc`). |
 
 ---
 

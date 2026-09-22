@@ -399,21 +399,8 @@ impl StreamingFastCgiClient {
         let mut encoded = Vec::new();
 
         let mut add_name_value = |name: &str, value: &str| {
-            let name_len = if name.len() < 128 {
-                encode_varint(name.len() as u64)
-            } else {
-                let mut encoded_len = encode_varint((name.len() as u64) | 0x80000000);
-                encoded_len.extend_from_slice(&name.len().to_be_bytes());
-                encoded_len
-            };
-
-            let value_len = if value.len() < 128 {
-                encode_varint(value.len() as u64)
-            } else {
-                let mut encoded_len = encode_varint((value.len() as u64) | 0x80000000);
-                encoded_len.extend_from_slice(&value.len().to_be_bytes());
-                encoded_len
-            };
+            let name_len = encode_fcgi_length(name.len());
+            let value_len = encode_fcgi_length(value.len());
 
             encoded.extend(name_len);
             encoded.extend(value_len);
@@ -429,11 +416,11 @@ impl StreamingFastCgiClient {
     }
 
     fn build_empty_params_record() -> Vec<u8> {
-        vec![0u8]
+        Vec::new()
     }
 
     fn build_empty_stdin_record() -> Vec<u8> {
-        vec![0u8]
+        Vec::new()
     }
 
     pub fn build_params_from_request(
@@ -509,20 +496,21 @@ impl StreamingFastCgiClient {
     }
 }
 
-fn encode_varint(mut value: u64) -> Vec<u8> {
-    let mut encoded = Vec::new();
-    loop {
-        let mut byte = (value & 0x7F) as u8;
-        value >>= 7;
-        if value != 0 {
-            byte |= 0x80;
-        }
-        encoded.push(byte);
-        if value == 0 {
-            break;
-        }
+/// FastCGI name-value length encoding (spec section 3.4):
+/// lengths < 128 encode as one byte; lengths >= 128 encode as four bytes
+/// big-endian with the high bit of the first byte set.
+fn encode_fcgi_length(len: usize) -> Vec<u8> {
+    if len < 128 {
+        vec![len as u8]
+    } else {
+        let l = len as u32;
+        vec![
+            ((l >> 24) as u8) | 0x80,
+            (l >> 16) as u8,
+            (l >> 8) as u8,
+            l as u8,
+        ]
     }
-    encoded
 }
 
 struct FastCgiRecordReader {
@@ -608,11 +596,42 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_encode_varint() {
-        assert_eq!(encode_varint(0), vec![0]);
-        assert_eq!(encode_varint(127), vec![127]);
-        assert_eq!(encode_varint(128), vec![0x80, 0x01]);
-        assert_eq!(encode_varint(16383), vec![0xFF, 0x7F]);
+    fn test_encode_fcgi_length() {
+        assert_eq!(encode_fcgi_length(0), vec![0]);
+        assert_eq!(encode_fcgi_length(127), vec![127]);
+        assert_eq!(encode_fcgi_length(128), vec![0x80, 0x00, 0x00, 0x80]);
+        assert_eq!(encode_fcgi_length(200), vec![0x80, 0x00, 0x00, 0xC8]);
+        assert_eq!(encode_fcgi_length(1000), vec![0x80, 0x00, 0x03, 0xE8]);
+    }
+
+    #[test]
+    fn test_empty_records_are_zero_length() {
+        assert!(StreamingFastCgiClient::build_empty_params_record().is_empty());
+        assert!(StreamingFastCgiClient::build_empty_stdin_record().is_empty());
+    }
+
+    #[test]
+    fn test_build_params_record_short_pair() {
+        let mut params = std::collections::HashMap::new();
+        params.insert("A".to_string(), "B".to_string());
+        assert_eq!(
+            StreamingFastCgiClient::build_params_record(&params),
+            vec![1, 1, b'A', b'B']
+        );
+    }
+
+    #[test]
+    fn test_build_params_record_long_name() {
+        let name = "N".repeat(200);
+        let mut params = std::collections::HashMap::new();
+        params.insert(name.clone(), "V".to_string());
+        let mut expected = vec![0x80, 0x00, 0x00, 0xC8, 1];
+        expected.extend_from_slice(name.as_bytes());
+        expected.extend_from_slice(b"V");
+        assert_eq!(
+            StreamingFastCgiClient::build_params_record(&params),
+            expected
+        );
     }
 
     #[test]

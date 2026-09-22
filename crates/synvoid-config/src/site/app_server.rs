@@ -49,7 +49,8 @@ pub struct SiteAppServerConfig {
     pub log_format: Option<String>,
     #[serde(default)]
     pub log_verbose: Option<bool>,
-    #[serde(default)]
+    // Fail-closed: missing key deserializes to Some(true); explicit `false` still opts out.
+    #[serde(default = "default_some_true")]
     pub require_hashes: Option<bool>,
 }
 

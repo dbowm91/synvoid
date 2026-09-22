@@ -65,7 +65,7 @@ SynVoid is at the forefront of post-quantum security:
 - Configuration: `global_node.ml_dsa_private_key_base64` in `GlobalNodeConfig`.
 
 **Feature Flags:**
-- `post-quantum` — Enables TLS hybrid key exchange (ML-KEM) for incoming HTTPS connections. Enables `X25519MLKEM768` in rustls for TLS 1.3 handshakes. Can be used independently for post-quantum key exchange without mesh signatures.
+- `post-quantum` — Marker feature wiring `synvoid-http-client/post-quantum` + `synvoid-admin/post-quantum` for http-client/admin egress (`crates/synvoid-http-client/src/tls.rs` gates PQ log/status on `cfg!(feature = "post-quantum")`). It does NOT gate inbound TLS: both `crates/synvoid-tls` and `crates/synvoid-http-client` unconditionally enable rustls `prefer-post-quantum` + `aws-lc-rs` (see both Cargo.tomls).
 - `pqc-mesh` — Enables post-quantum mesh message signatures (ML-DSA-44) for inter-node communication. When enabled, Global nodes sign DHT records and threat intel messages with hybrid Ed25519+ML-DSA signatures. Requires `post-quantum` to be enabled as well for full PQC protection.
 - `verify-pq` — Enables verification of post-quantum key exchange proofs during mesh connection establishment. Ensures that hybrid key exchange properly validates both the classical and post-quantum components. Typically used in production mesh deployments.
 
