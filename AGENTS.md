@@ -27,6 +27,8 @@ cargo xtask test package <name>    # e.g. cargo xtask test package synvoid-dns
 cargo xtask test guards            # all architectural guard tests
 ```
 
+Transport benchmarks are manual-only, never CI: `benchmarks/http_transport/` (committed harness + `scripts/run_comparison.sh` worktree overlay + dated `results/`; README explains invocation). Do not add routine CI gates for transport lanes; do not compare numbers across hosts.
+
 Focused runs:
 
 ```bash

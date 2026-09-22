@@ -1,0 +1,41 @@
+{
+  "lane": "eggfetch",
+  "workload": "stream-64k-phases",
+  "revision_sha": "99e3675a36681456e05e014a069f1df0326dbdea",
+  "harness_sha": "phased-diagnostic",
+  "adapter_file": "adapters/eggfetch_current.rs",
+  "adapter_sha": "phased-diagnostic",
+  "toolchain": "rustc 1.98.1 (48a229cea 2026-09-01)",
+  "host": "Darwin 25.6.0 x86_64",
+  "target": "aarch64-apple-darwin",
+  "profile": "ci",
+  "unix_secs": 1790107322,
+  "protocol": "h1",
+  "requests": 8000,
+  "warmup": 200,
+  "concurrency": 1,
+  "payload_total_bytes": 65536,
+  "payload_frames": 16,
+  "payload_frame_bytes": 4096,
+  "producer_delay_ms": 0,
+  "response_bytes": 65536,
+  "stats": {
+    "n": 8000,
+    "failures": 0,
+    "duration_ms": 1558.7391670000002,
+    "rps": 5132.353230975173,
+    "p50_us": 126,
+    "p95_us": 392,
+    "p99_us": 1361,
+    "min_us": 90,
+    "max_us": 16214,
+    "bytes_total": 524288000
+  },
+  "extra": {
+    "drain_p50_us": 65,
+    "drain_p95_us": 148,
+    "phased_failures": 0,
+    "tth_p50_us": 60,
+    "tth_p95_us": 254
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "lane": "legacy",
+  "workload": "stream-64k-phases",
+  "revision_sha": "99e3675a36681456e05e014a069f1df0326dbdea",
+  "harness_sha": "phased-diagnostic",
+  "adapter_file": "adapters/legacy_7083f339.rs",
+  "adapter_sha": "phased-diagnostic",
+  "toolchain": "rustc 1.98.1 (48a229cea 2026-09-01)",
+  "host": "Darwin 25.6.0 x86_64",
+  "target": "aarch64-apple-darwin",
+  "profile": "ci",
+  "unix_secs": 1790107333,
+  "protocol": "h1",
+  "requests": 8000,
+  "warmup": 200,
+  "concurrency": 1,
+  "payload_total_bytes": 65536,
+  "payload_frames": 16,
+  "payload_frame_bytes": 4096,
+  "producer_delay_ms": 0,
+  "response_bytes": 65536,
+  "stats": {
+    "n": 8000,
+    "failures": 0,
+    "duration_ms": 1619.972084,
+    "rps": 4938.35670318872,
+    "p50_us": 124,
+    "p95_us": 388,
+    "p99_us": 1628,
+    "min_us": 85,
+    "max_us": 8220,
+    "bytes_total": 524288000
+  },
+  "extra": {
+    "drain_p50_us": 64,
+    "drain_p95_us": 154,
+    "phased_failures": 0,
+    "tth_p50_us": 57,
+    "tth_p95_us": 236
+  }
+}

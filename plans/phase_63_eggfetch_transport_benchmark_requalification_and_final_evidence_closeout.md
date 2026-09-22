@@ -1,6 +1,6 @@
 # Phase 63 Plan: Eggfetch Transport Benchmark Requalification and Final Evidence Closeout
 
-Status: detailed implementation handoff plan (2026-09-22).
+Status: **complete/closed 2026-09-22.** Harness committed (`benchmarks/http_transport/`); fixture-controlled policy tests green; immutable sessions run (matrix ×2, persistence, conc2/conc8 scaling, phase-split); adjudication recorded in `architecture/eggfetch_0_2_transport_performance_requalification.md` (final authority) with one accepted, labeled tail residual. No production runtime change was required; `c3568ef4` remains the proof-bearing runtime SHA.
 
 Registered in: `plans/roadmap.md`.
 

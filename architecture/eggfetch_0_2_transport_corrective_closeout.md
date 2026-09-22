@@ -210,3 +210,14 @@ transport; the outer registry correctly separates site/policy lifecycles;
 invalid requested TLS policy fails before I/O; legacy transport remains
 frozen compatibility-only; missing Phase 61 evidence is completed; Phases
 58–62 are coherent closed history. Rollback is not triggered.
+
+## 10. Phase 63 closure pointer (2026-09-22)
+
+Final performance/reproducibility authority has moved to
+`architecture/eggfetch_0_2_transport_performance_requalification.md`
+(Phase 63, closed). This document stays authoritative for the runtime
+policy/TLS correction (§2–§5, §8); its §6/§9 benchmark conclusion is
+historical short-run evidence only and must not be cited as parity proof.
+Phase 63 outcome: parity adjudicated across 10 immutable session datasets
+with one accepted, labeled tail residual (`stream-concurrent` under
+synchronized concurrency ≥ 4); no production runtime change was required.

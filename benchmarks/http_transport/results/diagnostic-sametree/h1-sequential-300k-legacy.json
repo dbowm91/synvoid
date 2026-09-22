@@ -1,0 +1,38 @@
+{
+  "lane": "legacy",
+  "workload": "h1-sequential",
+  "revision_sha": "prof",
+  "harness_sha": "prof",
+  "adapter_file": "adapters/legacy_7083f339.rs",
+  "adapter_sha": "prof",
+  "toolchain": "x",
+  "host": "x",
+  "target": "x",
+  "profile": "ci",
+  "unix_secs": 1790107116,
+  "protocol": "h1",
+  "requests": 300000,
+  "warmup": 2000,
+  "concurrency": 1,
+  "payload_total_bytes": 0,
+  "payload_frames": 0,
+  "payload_frame_bytes": 0,
+  "producer_delay_ms": 0,
+  "response_bytes": 256,
+  "stats": {
+    "n": 300000,
+    "failures": 0,
+    "duration_ms": 23732.255917,
+    "rps": 12641.023299647743,
+    "p50_us": 43,
+    "p95_us": 130,
+    "p99_us": 800,
+    "min_us": 20,
+    "max_us": 11286,
+    "bytes_total": 76800000
+  },
+  "extra": {
+    "server_connections": 2,
+    "server_requests": 302000
+  }
+}

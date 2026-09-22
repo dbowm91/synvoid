@@ -74,5 +74,12 @@ Production egress runs on the eggfetch lane, not the legacy hyper pool:
 - Buffered parity rule: pass `max=None` to `send_buffered` and enforce size
   limits post-hoc (→502); the lane-internal limit maps oversize to
   200-empty, which changes legacy behavior.
-- Full record: `architecture/eggfetch_0_2_transport_corrective_closeout.md`
-  (final authority; Phase 61 closeout preserved as history).
+- Performance (Phase 63, closed): parity adjudicated on the committed
+  `benchmarks/http_transport/` harness; one accepted tail residual remains
+  under synchronized concurrent streaming (concurrency ≥ 4, equal p50,
+  worse p95/p99) — tracked upstream follow-up, no SynVoid workaround.
+  Do not "optimize" the lane on loopback anecdotes.
+- Records: `architecture/eggfetch_0_2_transport_corrective_closeout.md`
+  (runtime policy/TLS authority; Phase 61 preserved as history) and
+  `architecture/eggfetch_0_2_transport_performance_requalification.md`
+  (final performance/reproducibility authority).

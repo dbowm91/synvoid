@@ -1,6 +1,6 @@
 # Eggfetch 0.2 Transport Consolidation Roadmap
 
-Status: runtime adoption remains closed through Phase 62 (`c3568ef4580a49edf222c5e4e6ce5d4dca904e81`), but final performance/reproducibility evidence is reopened under active Phase 63. Production remains on eggfetch; Phase 63 does not reopen the registry/TLS correction.
+Status: **closed 2026-09-22 through Phase 63.** Runtime adoption closed through Phase 62 (`c3568ef4580a49edf222c5e4e6ce5d4dca904e81`); final performance/reproducibility evidence closed through Phase 63 with one accepted, labeled tail residual (`stream-concurrent` under synchronized concurrency ≥ 4; see `architecture/eggfetch_0_2_transport_performance_requalification.md`). Production remains on eggfetch.
 
 Registered in: `plans/roadmap.md`.
 
@@ -135,11 +135,11 @@ Plan: `plans/phase_62_eggfetch_policy_keying_and_evidence_corrective_closeout.md
 
 Corrected the site/policy registry identity and invalid requested TLS-policy behavior at proof-bearing `c3568ef4`. Those runtime fixes remain final. The Phase 62 performance evidence is preserved but superseded by Phase 63 because the streaming baseline was not apples-to-apples and the small-request regression needed stronger sampling.
 
-### Phase 63 — Transport benchmark requalification and final evidence closeout
+### Phase 63 — Transport benchmark requalification and final evidence closeout (closed)
 
 Plan: `plans/phase_63_eggfetch_transport_benchmark_requalification_and_final_evidence_closeout.md`.
 
-Commit a reproducible benchmark harness, compare true legacy streaming against eggfetch streaming with the same multi-frame body, remeasure H1/H2 small-request concurrency with repeated same-host runs, replace assumed-dead-port tests with controlled fixtures, and close the campaign only after the observed deltas are honestly adjudicated.
+Committed the reproducible benchmark harness (`benchmarks/http_transport/`), compared true legacy streaming against eggfetch streaming with the same multi-frame body, remeasured H1/H2 small-request concurrency with repeated same-host runs, replaced assumed-dead-port tests with controlled fixtures, and adjudicated honestly: parity across primary workloads with one accepted tail residual under synchronized concurrent streaming (conc ≥ 4). Final authority: `architecture/eggfetch_0_2_transport_performance_requalification.md`.
 
 ## Global invariants
 
@@ -218,7 +218,7 @@ Reject or stop the campaign if implementation requires any of the following:
 
 ## Campaign acceptance
 
-The runtime migration is closed through Phase 62. Final campaign performance/reproducibility closure is owned by Phase 63; Phase 61 and the Phase 62 benchmark conclusion remain historical evidence.
+The runtime migration closed through Phase 62; final campaign performance/reproducibility closure closed through Phase 63 with one accepted, labeled tail residual. Phase 61 and the Phase 62 benchmark conclusion remain historical evidence.
 
 **Adopted:** eggfetch owns the proven generic transport mechanisms, SynVoid production consumers use that path, redundant internal transport code is removed, any retained compatibility lane is narrow/frozen and justified, and all correctness/security/performance gates pass.
 

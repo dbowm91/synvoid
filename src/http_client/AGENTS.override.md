@@ -148,5 +148,10 @@ lib.rs reduced to facade; TLS moved to tls.rs; pooling to pool.rs. Public API un
   frozen compatibility-only: keep the re-exports compiling, never call them from production.
   Enforced by `tools/synvoid-repo-guards/tests/eggfetch_lane_freeze.rs`.
 - Buffered parity rule: `send_buffered(..., max=None)` + post-hoc size check (→502).
+- Performance residual (Phase 63, echoed from the skill): synchronized
+  concurrent streaming (conc ≥ 4) carries an accepted tail residual (equal
+  p50, worse p95/p99); tracked upstream, no local workaround.
 - Full record: `architecture/eggfetch_0_2_transport_corrective_closeout.md`
-  (final authority; Phase 61 closeout preserved as history).
+  (runtime policy/TLS authority; Phase 61 closeout preserved as history)
+  and `architecture/eggfetch_0_2_transport_performance_requalification.md`
+  (final performance/reproducibility authority).

@@ -1,0 +1,38 @@
+{
+  "lane": "eggfetch",
+  "workload": "h1-sequential",
+  "revision_sha": "prof",
+  "harness_sha": "prof",
+  "adapter_file": "adapters/eggfetch_current.rs",
+  "adapter_sha": "prof",
+  "toolchain": "x",
+  "host": "x",
+  "target": "x",
+  "profile": "ci",
+  "unix_secs": 1790107086,
+  "protocol": "h1",
+  "requests": 300000,
+  "warmup": 2000,
+  "concurrency": 1,
+  "payload_total_bytes": 0,
+  "payload_frames": 0,
+  "payload_frame_bytes": 0,
+  "producer_delay_ms": 0,
+  "response_bytes": 256,
+  "stats": {
+    "n": 300000,
+    "failures": 0,
+    "duration_ms": 24040.455625,
+    "rps": 12478.964819952325,
+    "p50_us": 44,
+    "p95_us": 142,
+    "p99_us": 678,
+    "min_us": 23,
+    "max_us": 29962,
+    "bytes_total": 76800000
+  },
+  "extra": {
+    "server_connections": 3,
+    "server_requests": 302000
+  }
+}
