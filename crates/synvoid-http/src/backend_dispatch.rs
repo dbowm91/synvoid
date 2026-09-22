@@ -447,7 +447,7 @@ where
         return Ok(response);
     }
 
-    let dispatch_plan = prepare_upstream_proxy_dispatch_plan(
+    let dispatch_plan = match prepare_upstream_proxy_dispatch_plan(
         &target,
         &path,
         &main_config,
@@ -456,7 +456,26 @@ where
         &parts,
         &upstream_client_registry,
         forwarded_protocol,
-    );
+    ) {
+        Ok(plan) => plan,
+        Err(e) => {
+            // Phase 62: invalid requested TLS policy fails before any network
+            // I/O with the existing upstream-failure response (502). No
+            // default-policy substitution, no panic on configuration input.
+            tracing::error!(
+                site_id = %target.site_id,
+                error = %e,
+                "eggfetch lane: upstream dispatch plan failed (invalid TLS policy?)"
+            );
+            return Ok(crate::response_builder::build_response_with_alt_svc(
+                502,
+                "Bad Gateway".to_string(),
+                "text/plain",
+                &alt_svc,
+                main_config.as_ref(),
+            ));
+        }
+    };
 
     handle_pass_upstream_proxy_phase(
         target,

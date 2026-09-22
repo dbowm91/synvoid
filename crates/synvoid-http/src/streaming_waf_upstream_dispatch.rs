@@ -63,15 +63,34 @@ pub async fn handle_streaming_waf_upstream_pass(
         .as_ref()
         .and_then(|u| u.tls.as_ref())
         .and_then(upstream_tls_from_site_config);
-    // Phase 60: eggfetch lane. Streaming keeps the verifying default when
-    // the site sets no TLS (legacy `create_upstream_streaming_client` with
-    // `UpstreamTlsConfig::default()`); site TLS always wins when present.
+    // Phase 62: eggfetch lane (fail-closed). Streaming keeps the verifying
+    // default when the site sets no TLS (legacy
+    // `create_upstream_streaming_client` with `UpstreamTlsConfig::default()`);
+    // site TLS always wins when present. An invalid requested policy renders
+    // the existing upstream-failure response (502) before any I/O — never a
+    // substituted default policy.
     // The WAF-scanning body streams through `execute` directly — the lane
     // only needs `Send`, strictly looser than the legacy `Sync` bound.
-    let lane_client = upstream_client_registry.get_or_create_lane(
+    let lane_client = match upstream_client_registry.get_or_create_lane(
         &target.site_id,
         tls_config.as_ref().unwrap_or(&UpstreamTlsConfig::default()),
-    );
+    ) {
+        Ok(lane) => lane,
+        Err(e) => {
+            tracing::error!(
+                site_id = %target.site_id,
+                error = %e,
+                "eggfetch lane: streaming WAF dispatch lane failed (invalid TLS policy?)"
+            );
+            return Ok(crate::response_builder::build_response_with_alt_svc(
+                502,
+                "Bad Gateway".to_string(),
+                "text/plain",
+                alt_svc,
+                main_config,
+            ));
+        }
+    };
     let stream_body = StreamingWafBody::new(body, streaming_waf, client_ip);
 
     let request_result: anyhow::Result<Response<EggfetchResponseBody>> = async {

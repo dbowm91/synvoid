@@ -156,13 +156,27 @@ where
         .as_ref()
         .and_then(|u| u.tls.as_ref())
         .and_then(upstream_tls_from_site_config);
-    // Phase 60: eggfetch lane. Streaming keeps the verifying default when
-    // the site sets no TLS (legacy `create_upstream_streaming_client` with
-    // `UpstreamTlsConfig::default()`); site TLS always wins when present.
-    let lane_client = upstream_client_registry.get_or_create_lane(
+    // Phase 62: eggfetch lane (fail-closed). Streaming keeps the verifying
+    // default when the site sets no TLS (legacy
+    // `create_upstream_streaming_client` with `UpstreamTlsConfig::default()`);
+    // site TLS always wins when present. An invalid requested policy fails
+    // before any I/O with a 502, never a substituted default.
+    let lane_client = match upstream_client_registry.get_or_create_lane(
         &route_target.site_id,
         tls_config.as_ref().unwrap_or(&UpstreamTlsConfig::default()),
-    );
+    ) {
+        Ok(lane) => lane,
+        Err(e) => {
+            tracing::error!(
+                site_id = %route_target.site_id,
+                error = %e,
+                "eggfetch lane: H3 streaming lane failed (invalid TLS policy?)"
+            );
+            let response = build_plain_error_response(StatusCode::BAD_GATEWAY, "text/plain");
+            send_response_with_body(request_stream, response, Bytes::from("Bad Gateway")).await?;
+            return Ok(());
+        }
+    };
 
     let (tx, rx) = mpsc::channel::<Result<Bytes, std::io::Error>>(16);
     let streaming_body = H3ChannelBody::new(rx);

@@ -82,15 +82,23 @@ where
     );
 
     let upstream_result: Result<Response<EggfetchResponseBody>, BoxError> = async {
-        // Phase 60: parity with the legacy ambient client, which carried no
+        // Phase 62: parity with the legacy ambient client, which carried no
         // site TLS: plaintext-allowed default. Resolving site TLS here would
         // be a behavior change (H3 buffered never enforced it); out of scope.
+        // Fail-closed: an invalid policy becomes the 502 path below, never a
+        // substituted default.
         let plaintext_default = UpstreamTlsConfig {
             allow_plaintext: true,
             ..UpstreamTlsConfig::default()
         };
-        let lane_client =
-            upstream_client_registry.get_or_create_lane(&route_target.site_id, &plaintext_default);
+        let lane_client = upstream_client_registry
+            .get_or_create_lane(&route_target.site_id, &plaintext_default)
+            .map_err(|e| {
+                Box::new(std::io::Error::other(format!(
+                    "eggfetch lane: site '{}' TLS policy failed to build: {e}",
+                    route_target.site_id,
+                ))) as BoxError
+            })?;
         let uri: http::Uri = upstream_target.url.parse().map_err(|e| {
             Box::new(std::io::Error::other(format!(
                 "eggfetch lane: invalid upstream URL {}: {}",

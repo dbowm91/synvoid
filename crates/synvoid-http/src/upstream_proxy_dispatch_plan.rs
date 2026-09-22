@@ -36,7 +36,7 @@ pub fn prepare_upstream_proxy_dispatch_plan(
     parts: &http::request::Parts,
     upstream_client_registry: &Arc<UpstreamClientRegistry>,
     forwarded_protocol: ForwardedProtocol,
-) -> UpstreamProxyDispatchPlan {
+) -> anyhow::Result<UpstreamProxyDispatchPlan> {
     let upstream_target =
         PreparedUpstreamTarget::new(&target.upstream, path, Some(&target.site_config.proxy));
 
@@ -66,11 +66,15 @@ pub fn prepare_upstream_proxy_dispatch_plan(
         .and_then(|u| u.tls.as_ref())
         .and_then(upstream_tls_from_site_config);
 
-    // Phase 60: eggfetch lane. The two branches keep their distinct
-    // legacy no-config defaults: buffered permits plaintext (legacy
-    // `https_or_http` ambient/registry clients); streaming enforces the
-    // verifying default (legacy `create_upstream_streaming_client` with
+    // Phase 62: eggfetch lane (fail-closed). The two branches keep their
+    // distinct legacy no-config defaults: buffered permits plaintext
+    // (legacy `https_or_http` ambient/registry clients); streaming enforces
+    // the verifying default (legacy `create_upstream_streaming_client` with
     // `UpstreamTlsConfig::default()`). Site TLS always wins when present.
+    // The policy-aware registry guarantees the two defaults cannot collapse
+    // to one lane for the same site. An invalid requested policy returns
+    // `Err` here (no default substitution); the caller renders the existing
+    // upstream/configuration failure response before any network I/O.
     let plaintext_default = UpstreamTlsConfig {
         allow_plaintext: true,
         ..UpstreamTlsConfig::default()
@@ -78,7 +82,7 @@ pub fn prepare_upstream_proxy_dispatch_plan(
     let forwarding_client = upstream_client_registry.get_or_create_lane(
         &target.site_id,
         site_tls_config.as_ref().unwrap_or(&plaintext_default),
-    );
+    )?;
 
     let streaming_threshold = target.site_config.proxy.streaming_threshold_bytes;
     let use_streaming = target
@@ -106,16 +110,16 @@ pub fn prepare_upstream_proxy_dispatch_plan(
                 site_tls_config
                     .as_ref()
                     .unwrap_or(&UpstreamTlsConfig::default()),
-            ),
+            )?,
         })
     } else {
         None
     };
 
-    UpstreamProxyDispatchPlan {
+    Ok(UpstreamProxyDispatchPlan {
         upstream_target,
         headers_to_filter,
         forwarding_client,
         streaming,
-    }
+    })
 }

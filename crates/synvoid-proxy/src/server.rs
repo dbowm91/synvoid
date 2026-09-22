@@ -66,8 +66,13 @@ pub trait QuicTunnelSender: Send + Sync + 'static {
 }
 
 pub struct ProxyServer<W: WafProcessor> {
-    lane_client: EggfetchUpstreamClient,
-    revalidation_lane: EggfetchUpstreamClient,
+    lane_client: Option<EggfetchUpstreamClient>,
+    revalidation_lane: Option<EggfetchUpstreamClient>,
+    /// Phase 62: terminal lane-construction failure (invalid requested TLS
+    /// policy, e.g. unreadable custom CA). Stored instead of substituting a
+    /// default policy so every request fails before network I/O with site
+    /// context. `None` means the lane built successfully.
+    lane_init_error: Option<String>,
     upstream_url: String,
     waf: Arc<W>,
     max_response_size: usize,
@@ -99,6 +104,13 @@ pub struct ProxyServer<W: WafProcessor> {
 }
 
 impl<W: WafProcessor> ProxyServer<W> {
+    /// Phase 62: terminal lane-construction error, if any. `Some` means the
+    /// requested TLS policy failed to build and every request fails before
+    /// network I/O with this context. No raw usable client is exposed.
+    pub fn lane_init_error(&self) -> Option<&str> {
+        self.lane_init_error.as_deref()
+    }
+
     fn fallback_error_response() -> ProxyResponse {
         let mut response = Response::new(
             Full::new(Bytes::from_static(b"Internal Server Error"))
@@ -186,44 +198,41 @@ impl<W: WafProcessor> ProxyServer<W> {
         tarpit_service: Option<Arc<dyn TarpitService>>,
         block_store: Option<Arc<dyn BlockListStore>>,
     ) -> Self {
-        // Phase 60: eggfetch lane. Parity with the legacy construction:
-        // explicit site TLS wins when present (skip_verify honored inside
-        // the policy); otherwise the plaintext-allowed default mirrors the
-        // ambient legacy client. Identical policies share one underlying
-        // pool via the lane's global cache, like the legacy policy-keyed
-        // client cache did — one handle here, cloned for revalidation.
+        // Phase 62: fail-closed lane construction. An invalid requested
+        // TLS policy (missing/malformed/empty custom CA, etc.) stores a
+        // terminal error instead of silently substituting the verifying
+        // default. Every send/execute path checks it before I/O (see
+        // `send_single_request`); no panic is used for ordinary
+        // configuration handling. Constructor signatures are preserved.
         let plaintext_default = UpstreamTlsConfig {
             allow_plaintext: true,
             ..UpstreamTlsConfig::default()
         };
         let tls = tls_config.unwrap_or(&plaintext_default);
-        let lane_client = EggfetchUpstreamClient::cached(
+        let (lane_client, revalidation_lane, lane_init_error) = match EggfetchUpstreamClient::cached(
             Duration::from_secs(5),
             pool_max_idle_per_host,
             pool_idle_timeout,
             tls,
-        )
-        .unwrap_or_else(|e| {
-            tracing::warn!(
-                site_id = %site_id,
-                error = %e,
-                "eggfetch lane: site TLS policy failed to build (bad custom CA?); \
-                 falling back to verifying default TLS (fail-closed)"
-            );
-            EggfetchUpstreamClient::build(
-                Duration::from_secs(5),
-                pool_max_idle_per_host,
-                pool_idle_timeout,
-                &UpstreamTlsConfig::default(),
-            )
-            .expect("eggfetch lane must build for default policy")
-        });
+        ) {
+            Ok(lane) => (Some(lane.clone()), Some(lane), None),
+            Err(e) => {
+                let msg = format!(
+                    "eggfetch lane: site '{site_id}' TLS policy failed to build \
+                         (bad custom CA path '{}'?): {e}",
+                    tls.ca_cert_path.as_deref().unwrap_or("<none>"),
+                );
+                tracing::error!(site_id = %site_id, error = %e, "{msg}");
+                (None, None, Some(msg))
+            }
+        };
 
         let skip_verify = tls_config.map(|t| t.skip_verify).unwrap_or(false);
 
         ProxyServer {
-            lane_client: lane_client.clone(),
-            revalidation_lane: lane_client,
+            lane_client,
+            revalidation_lane,
+            lane_init_error,
             upstream_url,
             waf,
             max_response_size,
@@ -643,60 +652,70 @@ impl<W: WafProcessor> ProxyServer<W> {
                             let is_swr = matches!(hit_status, Some(CacheHit::StaleWhileRevalidate));
 
                             if is_swr {
-                                let cache_clone = cache.clone();
-                                let key_clone = cache_key.clone();
-                                let path_owned = path.to_string();
-                                let method_clone = method.clone();
-                                let upstream_url_clone = self.upstream_url.clone();
-                                let reval_lane = self.revalidation_lane.clone();
+                                // Phase 62: poisoned lane never revalidates through a
+                                // substituted default policy. Serve the stale cached
+                                // entry without background I/O.
+                                if self.lane_init_error.is_some() {
+                                    tracing::error!(
+                                        site_id = %self.site_id,
+                                        error = self.lane_init_error.as_deref().unwrap_or("unknown"),
+                                        "skipping cache revalidation: lane policy failed to build"
+                                    );
+                                } else if let Some(reval_lane) = self.revalidation_lane.clone() {
+                                    let cache_clone = cache.clone();
+                                    let key_clone = cache_key.clone();
+                                    let path_owned = path.to_string();
+                                    let method_clone = method.clone();
+                                    let upstream_url_clone = self.upstream_url.clone();
 
-                                // Build headers for revalidation (standard forward headers)
-                                let reval_headers = build_forward_headers(
-                                    client_ip,
-                                    headers,
-                                    &ProxyHeadersConfig::default(),
-                                    ForwardedProtocol::Https,
-                                );
+                                    // Build headers for revalidation (standard forward headers)
+                                    let reval_headers = build_forward_headers(
+                                        client_ip,
+                                        headers,
+                                        &ProxyHeadersConfig::default(),
+                                        ForwardedProtocol::Https,
+                                    );
 
-                                if cache_clone.try_acquire_revalidation(&key_clone) {
-                                    tokio::spawn(async move {
-                                        cache_clone.record_revalidation_queued();
-                                        let semaphore = cache_clone.revalidation_semaphore();
-                                        let permit = match semaphore.acquire().await {
-                                            Ok(p) => p,
-                                            Err(_) => {
-                                                cache_clone.record_revalidation_end();
-                                                cache_clone.release_revalidation(&key_clone);
-                                                tracing::warn!("Revalidation semaphore closed");
-                                                return;
-                                            }
-                                        };
-                                        cache_clone.record_revalidation_start();
-                                        tracing::debug!(
-                                            "Triggering background revalidation for {}",
-                                            path_owned
-                                        );
-                                        if let Err(e) = Self::revalidate_cache_entry(
-                                            &reval_lane,
-                                            cache_clone.clone(),
-                                            key_clone.clone(),
-                                            method_clone,
-                                            path_owned.clone(),
-                                            upstream_url_clone,
-                                            reval_headers,
-                                        )
-                                        .await
-                                        {
-                                            tracing::warn!(
+                                    if cache_clone.try_acquire_revalidation(&key_clone) {
+                                        tokio::spawn(async move {
+                                            cache_clone.record_revalidation_queued();
+                                            let semaphore = cache_clone.revalidation_semaphore();
+                                            let permit = match semaphore.acquire().await {
+                                                Ok(p) => p,
+                                                Err(_) => {
+                                                    cache_clone.record_revalidation_end();
+                                                    cache_clone.release_revalidation(&key_clone);
+                                                    tracing::warn!("Revalidation semaphore closed");
+                                                    return;
+                                                }
+                                            };
+                                            cache_clone.record_revalidation_start();
+                                            tracing::debug!(
+                                                "Triggering background revalidation for {}",
+                                                path_owned
+                                            );
+                                            if let Err(e) = Self::revalidate_cache_entry(
+                                                &reval_lane,
+                                                cache_clone.clone(),
+                                                key_clone.clone(),
+                                                method_clone,
+                                                path_owned.clone(),
+                                                upstream_url_clone,
+                                                reval_headers,
+                                            )
+                                            .await
+                                            {
+                                                tracing::warn!(
                                                 "Background revalidation task failed for {}: {}",
                                                 path_owned,
                                                 e
                                             );
-                                        }
-                                        drop(permit);
-                                        cache_clone.record_revalidation_end();
-                                        cache_clone.release_revalidation(&key_clone);
-                                    });
+                                            }
+                                            drop(permit);
+                                            cache_clone.record_revalidation_end();
+                                            cache_clone.release_revalidation(&key_clone);
+                                        });
+                                    }
                                 }
 
                                 counter!("synvoid.proxy.cache.stale_while_revalidate").increment(1);
@@ -1130,6 +1149,21 @@ impl<W: WafProcessor> ProxyServer<W> {
     ) -> Result<ProxyResponse, Box<dyn std::error::Error + Send + Sync>> {
         use crate::headers::HOP_BY_HOP_HEADERS;
 
+        // Phase 62: poisoned lane fails before any network I/O with the
+        // stored site/policy context. No default-policy substitution.
+        if let Some(ref msg) = self.lane_init_error {
+            return Err(msg.clone().into());
+        }
+        let lane_client = self.lane_client.as_ref().ok_or_else(|| {
+            std::io::Error::other(format!(
+                "eggfetch lane unavailable for site '{}': {}",
+                self.site_id,
+                self.lane_init_error
+                    .as_deref()
+                    .unwrap_or("unknown init error"),
+            ))
+        })?;
+
         let hop_by_hop_headers = HOP_BY_HOP_HEADERS;
 
         if is_quictunnel_url(url) {
@@ -1189,8 +1223,7 @@ impl<W: WafProcessor> ProxyServer<W> {
             .body(Full::new(body.unwrap_or_default()))?;
         // Mirror the legacy helpers: caller headers replace, not append.
         *req.headers_mut() = forward_headers;
-        let response = self
-            .lane_client
+        let response = lane_client
             .execute(req, Some(std::time::Duration::from_secs(30)), None)
             .await?;
 
@@ -1362,5 +1395,163 @@ mod tests {
             query_string,
             Some("redirect=https://evil.com?bad=true".to_string())
         );
+    }
+
+    // Phase 62: poisoned-lane fail-closed proofs.
+    struct AllowWaf;
+    #[async_trait::async_trait]
+    impl synvoid_waf::traits::WafProcessor for AllowWaf {
+        type Error = std::io::Error;
+        async fn check_request(
+            &self,
+            _ctx: &synvoid_core::request::RequestContext,
+        ) -> Result<synvoid_waf::WafDecision, Self::Error> {
+            Ok(synvoid_waf::WafDecision::Pass)
+        }
+        async fn check_body_chunk(
+            &self,
+            _ctx: &synvoid_core::request::RequestContext,
+            _chunk: &[u8],
+            _phase: synvoid_core::request::BodyScanPhase,
+        ) -> Result<Option<synvoid_waf::WafDecision>, Self::Error> {
+            Ok(None)
+        }
+    }
+
+    #[test]
+    fn poisoned_lane_stores_error_and_exposes_no_client() {
+        let bad = synvoid_http_client::UpstreamTlsConfig {
+            ca_cert_path: Some("/nonexistent/poisoned-ca.pem".to_string()),
+            ..synvoid_http_client::UpstreamTlsConfig::default()
+        };
+        let server = super::ProxyServer::new_with_pool_config(
+            "http://127.0.0.1:9/".to_string(),
+            std::sync::Arc::new(AllowWaf),
+            1024,
+            None,
+            "poisoned-site".to_string(),
+            Some(&bad),
+            100,
+            std::time::Duration::from_secs(30),
+            false,
+            None,
+            None,
+            None,
+            None,
+        );
+        let msg = server
+            .lane_init_error()
+            .expect("invalid CA must poison the server");
+        assert!(
+            msg.contains("poisoned-site"),
+            "error must identify the site: {msg}"
+        );
+        assert!(
+            msg.contains("poisoned-ca.pem"),
+            "error must identify the bad policy: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn poisoned_lane_reaches_no_upstream() {
+        // Hermetic listener proves no TCP connection is attempted: the
+        // poisoned server must fail before I/O.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let hits_clone = std::sync::Arc::clone(&hits);
+        let accept_task = tokio::spawn(async move {
+            // Only wait briefly: any connection here is a violation.
+            let _ = tokio::time::timeout(std::time::Duration::from_millis(300), async {
+                loop {
+                    if listener.accept().await.is_ok() {
+                        hits_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    }
+                }
+            })
+            .await;
+        });
+        let bad = synvoid_http_client::UpstreamTlsConfig {
+            ca_cert_path: Some("/nonexistent/poisoned-ca.pem".to_string()),
+            ..synvoid_http_client::UpstreamTlsConfig::default()
+        };
+        let server = super::ProxyServer::new_with_pool_config(
+            format!("http://{addr}/"),
+            std::sync::Arc::new(AllowWaf),
+            1024,
+            None,
+            "poisoned-site".to_string(),
+            Some(&bad),
+            100,
+            std::time::Duration::from_secs(30),
+            false,
+            None,
+            None,
+            None,
+            None,
+        );
+        let resp = server
+            .handle_request(
+                std::net::IpAddr::from([127, 0, 0, 1]),
+                http::Method::GET,
+                "/".to_string(),
+                None,
+                None,
+                true,
+                &http::HeaderMap::new(),
+            )
+            .await
+            .expect("handle_request maps lane failure to a response");
+        // handle_request renders upstream failures as 502.
+        assert_eq!(resp.status(), http::StatusCode::BAD_GATEWAY);
+        accept_task.abort();
+        assert_eq!(
+            hits.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "poisoned lane must not open any upstream connection"
+        );
+    }
+
+    #[test]
+    fn valid_policy_recovers_after_corrected_config() {
+        // Recovery is explicit reconstruction with valid material (the
+        // registry analogue is invalidate + reacquire; both prove the
+        // failure leaves no sticky default-policy state).
+        let bad = synvoid_http_client::UpstreamTlsConfig {
+            ca_cert_path: Some("/nonexistent/poisoned-ca.pem".to_string()),
+            ..synvoid_http_client::UpstreamTlsConfig::default()
+        };
+        let poisoned = super::ProxyServer::new_with_pool_config(
+            "http://127.0.0.1:9/".to_string(),
+            std::sync::Arc::new(AllowWaf),
+            1024,
+            None,
+            "recover-site".to_string(),
+            Some(&bad),
+            100,
+            std::time::Duration::from_secs(30),
+            false,
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(poisoned.lane_init_error().is_some());
+        let recovered = super::ProxyServer::new_with_pool_config(
+            "http://127.0.0.1:9/".to_string(),
+            std::sync::Arc::new(AllowWaf),
+            1024,
+            None,
+            "recover-site".to_string(),
+            Some(&synvoid_http_client::UpstreamTlsConfig::default()),
+            100,
+            std::time::Duration::from_secs(30),
+            false,
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(recovered.lane_init_error().is_none());
     }
 }
