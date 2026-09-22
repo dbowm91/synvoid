@@ -1,6 +1,6 @@
 # Eggfetch 0.2 Transport Consolidation Roadmap
 
-Status: closed. Phases 58-60 implementation landed at `7a6c617cf9dc16441f50da5dcff95778775b5041`; the Phase 61 closeout attempt at `f62bb285a2bdf6262efe9a7b859bc11bdcc35e15` is superseded (preserved as history). Final authority is the Phase 62 corrective (`architecture/eggfetch_0_2_transport_corrective_closeout.md`, proof-bearing `c3568ef4580a49edf222c5e4e6ce5d4dca904e81`). The adopted eggfetch production lane is the closed terminal state.
+Status: runtime adoption remains closed through Phase 62 (`c3568ef4580a49edf222c5e4e6ce5d4dca904e81`), but final performance/reproducibility evidence is reopened under active Phase 63. Production remains on eggfetch; Phase 63 does not reopen the registry/TLS correction.
 
 Registered in: `plans/roadmap.md`.
 
@@ -129,11 +129,17 @@ Plan: `plans/phase_61_eggfetch_transport_qualification_and_closeout.md`.
 
 Closeout was attempted after the Phase 58-60 migration and superseded: the outer site registry could collapse distinct policies, invalid requested TLS policy could be replaced by a default policy, and the immutable transport benchmark/full-release evidence was incomplete. The Phase 61 record is preserved as the first closeout attempt; final authority is Phase 62.
 
-### Phase 62 — Policy-keying and evidence corrective closeout (closed)
+### Phase 62 — Policy-keying corrective closeout (runtime closed; performance evidence superseded)
 
 Plan: `plans/phase_62_eggfetch_policy_keying_and_evidence_corrective_closeout.md`.
 
-Corrected the site/policy registry identity, made invalid requested TLS policy fail before network I/O, completed the immutable before/after transport benchmark and full/release verification envelope, and reconciled Phases 58-62 to one truthful final state. Proof-bearing `c3568ef4`; final record `architecture/eggfetch_0_2_transport_corrective_closeout.md`.
+Corrected the site/policy registry identity and invalid requested TLS-policy behavior at proof-bearing `c3568ef4`. Those runtime fixes remain final. The Phase 62 performance evidence is preserved but superseded by Phase 63 because the streaming baseline was not apples-to-apples and the small-request regression needed stronger sampling.
+
+### Phase 63 — Transport benchmark requalification and final evidence closeout
+
+Plan: `plans/phase_63_eggfetch_transport_benchmark_requalification_and_final_evidence_closeout.md`.
+
+Commit a reproducible benchmark harness, compare true legacy streaming against eggfetch streaming with the same multi-frame body, remeasure H1/H2 small-request concurrency with repeated same-host runs, replace assumed-dead-port tests with controlled fixtures, and close the campaign only after the observed deltas are honestly adjudicated.
 
 ## Global invariants
 
@@ -212,7 +218,7 @@ Reject or stop the campaign if implementation requires any of the following:
 
 ## Campaign acceptance
 
-The campaign is closed after Phase 62. The Phase 61 closeout is historical evidence and must not be treated as final.
+The runtime migration is closed through Phase 62. Final campaign performance/reproducibility closure is owned by Phase 63; Phase 61 and the Phase 62 benchmark conclusion remain historical evidence.
 
 **Adopted:** eggfetch owns the proven generic transport mechanisms, SynVoid production consumers use that path, redundant internal transport code is removed, any retained compatibility lane is narrow/frozen and justified, and all correctness/security/performance gates pass.
 
