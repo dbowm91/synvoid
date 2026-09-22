@@ -6,7 +6,6 @@ struct HttpConnectionService {
     local_addr: Option<SocketAddr>,
     router: Arc<Router>,
     waf: Arc<WafCore>,
-    client: HttpClient,
     alt_svc: Option<String>,
     main_config: Arc<MainConfig>,
     drain_state: Option<Arc<WorkerDrainState>>,
@@ -25,7 +24,6 @@ struct HttpConnectionService {
     #[cfg(feature = "mesh")]
     mesh_backend_pool: Option<Arc<MeshBackendPool>>,
     upstream_client_registry: Arc<UpstreamClientRegistry>,
-    erased_http_client: ErasedHttpClient,
 }
 
 impl hyper::service::Service<hyper::Request<hyper::body::Incoming>> for HttpConnectionService {
@@ -40,7 +38,6 @@ impl hyper::service::Service<hyper::Request<hyper::body::Incoming>> for HttpConn
         let local_addr = self.local_addr;
         let router = self.router.clone();
         let waf = self.waf.clone();
-        let client = self.client.clone();
         let alt_svc = self.alt_svc.clone();
         let main_config = self.main_config.clone();
         let drain_state = self.drain_state.clone();
@@ -59,7 +56,6 @@ impl hyper::service::Service<hyper::Request<hyper::body::Incoming>> for HttpConn
         #[cfg(feature = "mesh")]
         let mesh_backend_pool = self.mesh_backend_pool.clone();
         let upstream_client_registry = self.upstream_client_registry.clone();
-        let erased_http_client = self.erased_http_client.clone();
 
         Box::pin(async move {
             #[cfg(feature = "mesh")]
@@ -70,7 +66,6 @@ impl hyper::service::Service<hyper::Request<hyper::body::Incoming>> for HttpConn
                     local_addr,
                     router,
                     waf,
-                    client,
                     alt_svc,
                     main_config,
                     drain_state,
@@ -86,7 +81,6 @@ impl hyper::service::Service<hyper::Request<hyper::body::Incoming>> for HttpConn
                     app_servers,
                     mesh_backend_pool,
                     upstream_client_registry,
-                    erased_http_client,
                 )
                 .await
             }
@@ -98,7 +92,6 @@ impl hyper::service::Service<hyper::Request<hyper::body::Incoming>> for HttpConn
                     local_addr,
                     router,
                     waf,
-                    client,
                     alt_svc,
                     main_config,
                     drain_state,
@@ -111,7 +104,6 @@ impl hyper::service::Service<hyper::Request<hyper::body::Incoming>> for HttpConn
                     connection_limit,
                     app_servers,
                     upstream_client_registry,
-                    erased_http_client,
                 )
                 .await
             }
@@ -165,7 +157,6 @@ pub(super) async fn run_accept_loop(
 
                         let router = runtime.router.clone();
                         let waf = runtime.waf.clone();
-                        let client = runtime.client.clone();
                         let alt_svc = runtime.alt_svc.clone();
                         let main_config = runtime.main_config.clone();
                         let drain_state = runtime.drain_state.clone();
@@ -183,7 +174,6 @@ pub(super) async fn run_accept_loop(
                         #[cfg(feature = "mesh")]
                         let mesh_backend_pool = runtime.mesh_backend_pool.clone();
                         let upstream_client_registry = runtime.upstream_client_registry.clone();
-                        let erased_http_client = runtime.erased_http_client.clone();
 
                         let (initial_bytes, stream_for_conn) = if http_config.strict_protocol_validation {
                             let mut peek_buf = [0u8; 16];
@@ -237,7 +227,6 @@ pub(super) async fn run_accept_loop(
                                 local_addr,
                                 router,
                                 waf,
-                                client,
                                 alt_svc,
                                 main_config,
                                 drain_state,
@@ -256,7 +245,6 @@ pub(super) async fn run_accept_loop(
                                 #[cfg(feature = "mesh")]
                                 mesh_backend_pool,
                                 upstream_client_registry,
-                                erased_http_client,
                             };
                             let conn = hyper::server::conn::http1::Builder::new()
                                 .header_read_timeout(header_read_timeout)

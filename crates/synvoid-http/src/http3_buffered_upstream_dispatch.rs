@@ -9,7 +9,8 @@ use http_body_util::Full;
 
 use synvoid_config::site::ProxyHeadersConfig;
 use synvoid_config::MainConfig;
-use synvoid_http_client::HttpClient;
+use synvoid_http_client::eggfetch_transport::EggfetchResponseBody;
+use synvoid_http_client::UpstreamTlsConfig;
 use synvoid_metrics::{
     bandwidth::{BandwidthProtocol, BandwidthTracker, EgressDirection},
     WorkerMetrics,
@@ -48,7 +49,7 @@ pub async fn handle_http3_buffered_upstream_pass<W>(
     request_stream: &mut W,
     body_bytes: Vec<u8>,
     main_config: &Arc<MainConfig>,
-    client: &HttpClient,
+    upstream_client_registry: &Arc<synvoid_proxy::client_registry::UpstreamClientRegistry>,
     bandwidth: Option<&Arc<BandwidthTracker>>,
     metrics: Option<&Arc<WorkerMetrics>>,
 ) -> Result<(), BoxError>
@@ -80,16 +81,40 @@ where
         ForwardedProtocol::Https,
     );
 
-    let upstream_result = synvoid_http_client::send_request_streaming(
-        client,
-        method.clone(),
-        &upstream_target.url,
-        Full::new(Bytes::from(body_bytes)),
-        forward_headers,
-        Some(upstream_target.timeout),
-    )
-    .await
-    .map_err(|e| Box::new(std::io::Error::other(e.to_string())) as BoxError);
+    let upstream_result: Result<Response<EggfetchResponseBody>, BoxError> = async {
+        // Phase 60: parity with the legacy ambient client, which carried no
+        // site TLS: plaintext-allowed default. Resolving site TLS here would
+        // be a behavior change (H3 buffered never enforced it); out of scope.
+        let plaintext_default = UpstreamTlsConfig {
+            allow_plaintext: true,
+            ..UpstreamTlsConfig::default()
+        };
+        let lane_client =
+            upstream_client_registry.get_or_create_lane(&route_target.site_id, &plaintext_default);
+        let uri: http::Uri = upstream_target.url.parse().map_err(|e| {
+            Box::new(std::io::Error::other(format!(
+                "eggfetch lane: invalid upstream URL {}: {}",
+                upstream_target.url, e
+            ))) as BoxError
+        })?;
+        let mut req = http::Request::builder()
+            .method(method.clone())
+            .uri(uri)
+            .body(Full::new(Bytes::from(body_bytes)))
+            .map_err(|e| {
+                Box::new(std::io::Error::other(format!(
+                    "eggfetch lane: failed to build request: {}",
+                    e
+                ))) as BoxError
+            })?;
+        // Mirror the legacy helpers: caller headers replace, not append.
+        *req.headers_mut() = forward_headers;
+        lane_client
+            .execute(req, Some(upstream_target.timeout), None)
+            .await
+            .map_err(|e| Box::new(std::io::Error::other(e.to_string())) as BoxError)
+    }
+    .await;
 
     match upstream_result {
         Ok(upstream_resp) => {

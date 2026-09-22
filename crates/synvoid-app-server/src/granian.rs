@@ -1068,22 +1068,31 @@ impl GranianSupervisor {
             format!("http://{}:{}{}", host, port, path)
         };
 
-        let client = synvoid_http_client::create_http_client_with_config(
+        // Phase 60: eggfetch lane. Mirrors `create_http_client_with_config`
+        // (30s connect, 10 idle/host, 60s idle, `https_or_http` default TLS —
+        // app-server helpers target plaintext loopback/UDS-adjacent URLs).
+        let lane = synvoid_http_client::eggfetch_transport::EggfetchUpstreamClient::build(
             std::time::Duration::from_secs(30),
             10,
             std::time::Duration::from_secs(60),
-        );
-
-        let response = synvoid_http_client::send_request_with_body_headers_and_timeout(
-            &client,
-            method,
-            &url,
-            Some(body),
-            headers,
-            Some(std::time::Duration::from_secs(30)),
+            &synvoid_http_client::UpstreamTlsConfig {
+                allow_plaintext: true,
+                ..synvoid_http_client::UpstreamTlsConfig::default()
+            },
         )
-        .await
-        .map_err(|e| format!("Granian request failed: {}", e))?;
+        .map_err(|e| format!("Granian request failed: {e}"))?;
+
+        let response = lane
+            .send_buffered(
+                method,
+                &url,
+                Some(body),
+                headers,
+                Some(std::time::Duration::from_secs(30)),
+                None,
+            )
+            .await
+            .map_err(|e| format!("Granian request failed: {}", e))?;
 
         let mut builder = http::Response::builder().status(response.status_code());
         for (name, value) in response.headers_iter() {

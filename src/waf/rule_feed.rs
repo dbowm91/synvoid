@@ -1,5 +1,5 @@
 use crate::config::RuleFeedConfig;
-use crate::http_client::{create_simple_http_client, get_with_timeout, HttpClient};
+use crate::http_client::{operator_lane_client, EggfetchUpstreamClient};
 use crate::utils::is_newer_version;
 use base64::Engine;
 use chrono::DateTime;
@@ -299,7 +299,7 @@ pub struct ParsedRules {
 
 pub struct RuleFeedManager {
     pub(crate) config: RuleFeedConfig,
-    client: HttpClient,
+    client: EggfetchUpstreamClient,
     current_version: Arc<RwLock<Option<String>>>,
     pub(crate) downloaded_rules: Arc<RwLock<Option<ParsedRules>>>,
     last_update: Arc<RwLock<u64>>,
@@ -329,7 +329,8 @@ impl RuleFeedManager {
 
         let manager = Arc::new(Self {
             config,
-            client: create_simple_http_client(Duration::from_secs(30)),
+            // Phase 60: operator-plane lane via the entitled facade.
+            client: operator_lane_client(),
             current_version: Arc::new(RwLock::new(None)),
             downloaded_rules: Arc::new(RwLock::new(None)),
             last_update: Arc::new(RwLock::new(0)),
@@ -505,7 +506,9 @@ impl RuleFeedManager {
     }
 
     async fn fetch_rules(&self, url: &str) -> Result<ParsedRules, String> {
-        let response = get_with_timeout(&self.client, url, Duration::from_secs(30))
+        let response = self
+            .client
+            .get_with_timeout(url, Duration::from_secs(30))
             .await
             .map_err(|e| format!("Request failed: {}", e))?;
 

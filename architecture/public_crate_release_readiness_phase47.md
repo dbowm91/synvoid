@@ -117,6 +117,14 @@ remains internal pending a fresh parity/consolidation review against the
 current eggfetch line — see `plans/eggfetch_current_line_parity_review.md`.
 Revisit only when that review re-runs the full matrix with parity tests.
 
+Phase 58 update (2026-09-22): the fresh review is now executable evidence in
+`architecture/eggfetch_0_2_compatibility_matrix.md` (eggfetch-core 0.2.0,
+33-test qualification suite, full public-export compatibility inventory,
+explicit Phase 59 GO). `synvoid-http-client` stays internal through Phases
+59-61; its preferred end state on the adopted branch is an internal
+SynVoid-specific compatibility/policy adapter with eggfetch as the reusable
+public generic client (see Phase 61 plan). No publication decision here.
+
 ### `synvoid-utils`, `synvoid-core` — remain internal (class 1)
 
 Workspace contract/implementation ownership; publication would freeze

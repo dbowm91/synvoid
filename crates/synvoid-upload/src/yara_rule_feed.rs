@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
 use synvoid_config::YaraRuleFeedConfig;
-use synvoid_http_client::{create_simple_http_client, get_with_timeout, HttpClient};
+use synvoid_http_client::eggfetch_transport::EggfetchUpstreamClient;
+use synvoid_http_client::UpstreamTlsConfig;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -88,7 +89,7 @@ pub enum YaraRuleSource {
 
 pub struct YaraRuleFeedManager {
     config: YaraRuleFeedConfig,
-    client: HttpClient,
+    client: EggfetchUpstreamClient,
     current_version: Arc<RwLock<Option<String>>>,
     current_rules: Arc<RwLock<Option<String>>>,
     downloaded_rules: Arc<RwLock<Option<ParsedYaraRules>>>,
@@ -109,7 +110,20 @@ impl YaraRuleFeedManager {
 
         Arc::new(Self {
             config,
-            client: create_simple_http_client(Duration::from_secs(30)),
+            // Phase 60: eggfetch lane. Mirrors `create_simple_http_client`
+            // (5s connect, 100 idle/host, 30s idle, `https_or_http`); the
+            // default policy cannot fail construction (no CA path), hence
+            // the expect on the infallible path.
+            client: EggfetchUpstreamClient::build(
+                Duration::from_secs(5),
+                100,
+                Duration::from_secs(30),
+                &UpstreamTlsConfig {
+                    allow_plaintext: true,
+                    ..UpstreamTlsConfig::default()
+                },
+            )
+            .expect("eggfetch lane must build for default feed policy"),
             current_version: Arc::new(RwLock::new(None)),
             current_rules: Arc::new(RwLock::new(None)),
             downloaded_rules: Arc::new(RwLock::new(None)),
@@ -198,9 +212,11 @@ impl YaraRuleFeedManager {
     }
 
     async fn fetch_rules(&self, url: &str) -> Result<ParsedYaraRules, YaraFeedError> {
-        let response = get_with_timeout(&self.client, url, Duration::from_secs(30))
+        let response = self
+            .client
+            .get_with_timeout(url, Duration::from_secs(30))
             .await
-            .map_err(|e| YaraFeedError::RequestFailed(e.to_string()))?;
+            .map_err(YaraFeedError::RequestFailed)?;
 
         if !response.status.is_success() {
             return Err(YaraFeedError::HttpError(response.status.as_u16()));

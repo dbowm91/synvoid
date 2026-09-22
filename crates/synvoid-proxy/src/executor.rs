@@ -8,9 +8,7 @@ use http::{HeaderMap, Method, Request, Response};
 
 use synvoid_config::site::SiteProxyConfig;
 use synvoid_config::SiteSecurityHeadersConfig;
-use synvoid_http_client::{
-    send_request_erased_streaming, ErasedBodyImpl, ErasedHttpClient, HttpClient,
-};
+use synvoid_http_client::eggfetch_transport::EggfetchUpstreamClient;
 use synvoid_proxy_cache::{CacheHit, CacheKey, CacheKeyBuilder, ProxyCache};
 use synvoid_utils;
 
@@ -102,9 +100,11 @@ pub struct ProxyExecutor {
     pub cache_key_builder: Option<CacheKeyBuilder>,
     pub site_id: String,
     pub upstream_url: String,
-    pub client: HttpClient,
-    pub erased_client: ErasedHttpClient,
-    pub revalidation_client: HttpClient,
+    pub lane_client: EggfetchUpstreamClient,
+    pub revalidation_lane: EggfetchUpstreamClient,
+    /// Retained for API compatibility. The legacy transport used this only
+    /// as a pool-lookup hint (never for protocol switching); the eggfetch
+    /// lane negotiates HTTP/1 vs HTTP/2 via ALPN instead, so this is ignored.
     pub is_http2: bool,
     pub proxy_headers_config: Option<Arc<synvoid_config::site::ProxyHeadersConfig>>,
 }
@@ -216,21 +216,24 @@ impl ProxyExecutor {
             build_forward_headers(client_ip, headers, headers_config, ForwardedProtocol::Https);
 
         let body = body.unwrap_or_default();
-        let erased_body = ErasedBodyImpl::from_full(http_body_util::Full::new(body));
 
-        match send_request_erased_streaming(
-            &self.erased_client,
-            method,
-            &url,
-            erased_body,
-            forward_headers,
-            Some(Duration::from_secs(30)),
-            self.is_http2,
-        )
-        .await
+        // Phase 60: eggfetch lane. `send_buffered` returns `HttpResponse`
+        // directly — the legacy `from_hyper` collect step disappears.
+        // No size cap here (legacy `from_hyper` with `None` collected
+        // unbounded); the cacheability/size policy applies downstream.
+        match self
+            .lane_client
+            .send_buffered(
+                method,
+                &url,
+                Some(body),
+                forward_headers,
+                Some(Duration::from_secs(30)),
+                None,
+            )
+            .await
         {
-            Ok(resp) => {
-                let hyper_resp = synvoid_http_client::HttpResponse::from_hyper(resp, None).await;
+            Ok(hyper_resp) => {
                 let mut builder = Response::builder().status(hyper_resp.status);
                 for (k, v) in hyper_resp.headers.iter() {
                     builder = builder.header(k, v);
@@ -289,10 +292,8 @@ impl ProxyExecutor {
             return;
         }
 
-        let _reval_client = self.revalidation_client.clone();
-        let erased_client = self.erased_client.clone();
+        let revalidation_lane = self.revalidation_lane.clone();
         let upstream_url = self.upstream_url.clone();
-        let is_http2 = self.is_http2;
         let default_headers = synvoid_config::site::ProxyHeadersConfig::default();
         let headers_config = self
             .proxy_headers_config
@@ -313,22 +314,18 @@ impl ProxyExecutor {
             tracing::debug!("Triggering background revalidation for {}", path);
             let url = join_upstream_url(&upstream_url, &path);
 
-            let erased_body = ErasedBodyImpl::from_full(http_body_util::Full::new(Bytes::new()));
-
-            match send_request_erased_streaming(
-                &erased_client,
-                method,
-                &url,
-                erased_body,
-                reval_headers,
-                Some(Duration::from_secs(5)),
-                is_http2,
-            )
-            .await
+            match revalidation_lane
+                .send_buffered(
+                    method,
+                    &url,
+                    None,
+                    reval_headers,
+                    Some(Duration::from_secs(5)),
+                    None,
+                )
+                .await
             {
-                Ok(resp) => {
-                    let hyper_resp =
-                        synvoid_http_client::HttpResponse::from_hyper(resp, None).await;
+                Ok(hyper_resp) => {
                     let settings = cache_clone.settings();
                     if cache_clone.is_status_cacheable(hyper_resp.status.as_u16())
                         && is_safe_for_shared_cache(&hyper_resp.headers, &settings.vary_by)

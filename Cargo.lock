@@ -2165,7 +2165,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e7c1832837b905bbfb5101e07cc24c8deddf52f93225eee6ead5f4d63d53ddcb"
 dependencies = [
  "const-oid 0.9.6",
- "pem-rfc7468",
+ "pem-rfc7468 0.7.0",
  "zeroize",
 ]
 
@@ -2423,6 +2423,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "eggfetch-core"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6cd254b82aa20d1becb6e3e90a5103e8bcc2d7057bb13532096326e43cd98904"
+dependencies = [
+ "bytes",
+ "futures-core",
+ "futures-util",
+ "h2",
+ "http 1.4.1",
+ "http-body",
+ "http-body-util",
+ "hyper",
+ "hyper-rustls",
+ "hyper-util",
+ "pem-rfc7468 0.1.1",
+ "pin-project-lite",
+ "rustls",
+ "rustls-native-certs",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-rustls",
+ "tower-service",
+ "webpki-roots 0.26.11",
+]
+
+[[package]]
 name = "either"
 version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2441,7 +2468,7 @@ dependencies = [
  "generic-array",
  "group",
  "hkdf",
- "pem-rfc7468",
+ "pem-rfc7468 0.7.0",
  "pkcs8 0.10.2",
  "rand_core 0.6.4",
  "sec1",
@@ -5983,6 +6010,15 @@ dependencies = [
 
 [[package]]
 name = "pem-rfc7468"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "801ef81ab8a21fdd738a9de457509b5c0aef72efa93ffdfc80f3329a1588405b"
+dependencies = [
+ "base64ct",
+]
+
+[[package]]
+name = "pem-rfc7468"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "88b39c9bfcfc231068454382784bb460aae594343fb030d46e9f50a645418412"
@@ -8502,6 +8538,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "bytes",
+ "eggfetch-core",
  "http 1.4.1",
  "http-body",
  "http-body-util",

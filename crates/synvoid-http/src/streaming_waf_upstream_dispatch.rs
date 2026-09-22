@@ -6,7 +6,8 @@ use http::Response;
 use http_body_util::combinators::BoxBody;
 
 use synvoid_config::MainConfig;
-use synvoid_http_client::{send_request_streaming_generic, ErasedBodyImpl};
+use synvoid_http_client::eggfetch_transport::{EggfetchResponseBody, SyncBody};
+use synvoid_http_client::UpstreamTlsConfig;
 use synvoid_proxy::client_registry::UpstreamClientRegistry;
 use synvoid_proxy::{
     build_forward_headers, build_headers_to_filter_for_site, filter_response_headers_buf,
@@ -62,90 +63,107 @@ pub async fn handle_streaming_waf_upstream_pass(
         .as_ref()
         .and_then(|u| u.tls.as_ref())
         .and_then(upstream_tls_from_site_config);
-    let streaming_client =
-        upstream_client_registry.get_or_create_streaming(&target.site_id, tls_config.as_ref());
+    // Phase 60: eggfetch lane. Streaming keeps the verifying default when
+    // the site sets no TLS (legacy `create_upstream_streaming_client` with
+    // `UpstreamTlsConfig::default()`); site TLS always wins when present.
+    // The WAF-scanning body streams through `execute` directly — the lane
+    // only needs `Send`, strictly looser than the legacy `Sync` bound.
+    let lane_client = upstream_client_registry.get_or_create_lane(
+        &target.site_id,
+        tls_config.as_ref().unwrap_or(&UpstreamTlsConfig::default()),
+    );
     let stream_body = StreamingWafBody::new(body, streaming_waf, client_ip);
-    let erased_body = ErasedBodyImpl::new(stream_body);
 
-    Ok(
-        match send_request_streaming_generic(
-            streaming_client.as_ref().clone(),
-            method.clone(),
-            upstream_target.url.clone(),
-            erased_body,
-            forward_header_map,
-            Some(upstream_target.timeout),
-        )
-        .await
-        {
-            Ok(upstream_resp) => {
-                let (resp_parts, upstream_body) = upstream_resp.into_parts();
-                let status = resp_parts.status.as_u16();
-                let body_len = resp_parts
-                    .headers
-                    .get("content-length")
-                    .and_then(|v| v.to_str().ok())
-                    .and_then(|v| v.parse::<u64>().ok())
-                    .unwrap_or(0);
+    let request_result: anyhow::Result<Response<EggfetchResponseBody>> = async {
+        let uri: http::Uri = upstream_target.url.parse().map_err(|e| {
+            anyhow::anyhow!(
+                "eggfetch lane: invalid upstream URL {}: {}",
+                upstream_target.url,
+                e
+            )
+        })?;
+        let mut req = http::Request::builder()
+            .method(method.clone())
+            .uri(uri)
+            .body(stream_body)
+            .map_err(|e| anyhow::anyhow!("eggfetch lane: failed to build request: {}", e))?;
+        // Mirror the legacy helpers: caller headers replace, not append.
+        *req.headers_mut() = forward_header_map;
+        lane_client
+            .execute(req, Some(upstream_target.timeout), None)
+            .await
+            .map_err(anyhow::Error::from)
+    }
+    .await;
 
-                let filtered_headers =
-                    filter_response_headers_buf(&resp_parts.headers, &headers_to_filter);
-                let mut builder = Response::builder().status(status);
-                for (key, value) in filtered_headers.iter() {
-                    if let Ok(v) = value.to_str() {
-                        builder = builder.header(key.as_str(), v);
-                    }
+    Ok(match request_result {
+        Ok(upstream_resp) => {
+            let (resp_parts, upstream_body) = upstream_resp.into_parts();
+            let status = resp_parts.status.as_u16();
+            let body_len = resp_parts
+                .headers
+                .get("content-length")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(0);
+
+            let filtered_headers =
+                filter_response_headers_buf(&resp_parts.headers, &headers_to_filter);
+            let mut builder = Response::builder().status(status);
+            for (key, value) in filtered_headers.iter() {
+                if let Ok(v) = value.to_str() {
+                    builder = builder.header(key.as_str(), v);
                 }
-                if let Some(alt_svc) = alt_svc {
-                    builder = builder.header("Alt-Svc", alt_svc.as_str());
-                }
-                builder = apply_security_headers(
-                    builder,
-                    &target.site_config.security_headers,
-                    main_config.security.global_security_headers,
-                );
-
-                if let Some(max_size) = upstream_target.max_response_size {
-                    if body_len > 0 && body_len > max_size as u64 {
-                        return Ok(build_response_with_alt_svc(
-                            502,
-                            "Bad Gateway".to_string(),
-                            "text/plain",
-                            alt_svc,
-                            main_config,
-                        ));
-                    }
-                }
-
-                builder
-                    .body(crate::response_helpers::swallow_incoming_body_errors(
-                        upstream_body,
-                    ))
-                    .unwrap_or_else(|_| {
-                        build_response_with_alt_svc(
-                            500,
-                            crate::reason_phrase(500).to_string(),
-                            "text/plain",
-                            alt_svc,
-                            main_config,
-                        )
-                    })
             }
-            Err(e) => {
-                if let Some(io_err) = e.downcast_ref::<std::io::Error>() {
-                    if io_err.kind() == std::io::ErrorKind::PermissionDenied {
-                        return Err(StreamingWafUpstreamError::PermissionDenied);
-                    }
-                }
-                tracing::error!("Upstream streaming request error: {}", e);
-                build_response_with_alt_svc(
-                    502,
-                    "Bad Gateway".to_string(),
-                    "text/plain",
-                    alt_svc,
-                    main_config,
-                )
+            if let Some(alt_svc) = alt_svc {
+                builder = builder.header("Alt-Svc", alt_svc.as_str());
             }
-        },
-    )
+            builder = apply_security_headers(
+                builder,
+                &target.site_config.security_headers,
+                main_config.security.global_security_headers,
+            );
+
+            if let Some(max_size) = upstream_target.max_response_size {
+                if body_len > 0 && body_len > max_size as u64 {
+                    return Ok(build_response_with_alt_svc(
+                        502,
+                        "Bad Gateway".to_string(),
+                        "text/plain",
+                        alt_svc,
+                        main_config,
+                    ));
+                }
+            }
+
+            builder
+                .body(crate::response_helpers::swallow_body_errors(SyncBody::new(
+                    upstream_body,
+                )))
+                .unwrap_or_else(|_| {
+                    build_response_with_alt_svc(
+                        500,
+                        crate::reason_phrase(500).to_string(),
+                        "text/plain",
+                        alt_svc,
+                        main_config,
+                    )
+                })
+        }
+        Err(e) => {
+            if let Some(io_err) = e.downcast_ref::<std::io::Error>() {
+                if io_err.kind() == std::io::ErrorKind::PermissionDenied {
+                    return Err(StreamingWafUpstreamError::PermissionDenied);
+                }
+            }
+            tracing::error!("Upstream streaming request error: {}", e);
+            build_response_with_alt_svc(
+                502,
+                "Bad Gateway".to_string(),
+                "text/plain",
+                alt_svc,
+                main_config,
+            )
+        }
+    })
 }

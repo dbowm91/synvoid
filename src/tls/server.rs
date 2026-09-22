@@ -27,7 +27,6 @@ use tokio_rustls::TlsAcceptor;
 
 use crate::config::HttpConfig;
 use crate::config::MainConfig;
-use crate::http_client::ErasedHttpClient;
 use crate::proxy::client_registry::UpstreamClientRegistry;
 use crate::proxy::ProxyServer;
 use crate::router::Router;
@@ -95,7 +94,6 @@ pub struct HttpsServer {
     // (which never used this map). Kept as a field so existing builders keep
     // compiling; will be removed once external callers stop constructing it.
     proxy_servers: Arc<tokio::sync::RwLock<std::collections::HashMap<String, Arc<ProxyServer>>>>,
-    client: synvoid_http_client::HttpClient,
     drain_state: Option<Arc<crate::worker::drain_state::WorkerDrainState>>,
     #[cfg(feature = "mesh")]
     mesh_config: Option<Arc<crate::mesh::config::MeshConfig>>,
@@ -116,7 +114,6 @@ pub struct HttpsServer {
         >,
     >,
     upstream_client_registry: Arc<UpstreamClientRegistry>,
-    erased_http_client: ErasedHttpClient,
 }
 
 impl HttpsServer {
@@ -130,11 +127,6 @@ impl HttpsServer {
         main_config: MainConfig,
         shutdown_rx: broadcast::Receiver<()>,
     ) -> Self {
-        let client = synvoid_http_client::create_http_client_with_config(
-            std::time::Duration::from_secs(5),
-            100,
-            std::time::Duration::from_secs(30),
-        );
         Self {
             addr,
             config,
@@ -147,7 +139,6 @@ impl HttpsServer {
             metrics: None,
             shutdown_rx,
             proxy_servers: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
-            client,
             drain_state: None,
             #[cfg(feature = "mesh")]
             mesh_config: None,
@@ -159,7 +150,6 @@ impl HttpsServer {
             connection_limit: Arc::new(tokio::sync::Semaphore::new(10000)),
             app_servers: None,
             upstream_client_registry: Arc::new(UpstreamClientRegistry::new()),
-            erased_http_client: ErasedHttpClient::new(100),
         }
     }
 
@@ -269,7 +259,6 @@ impl HttpsServer {
 
         let router = self.router.clone();
         let waf = self.waf.clone();
-        let client = self.client.clone();
         let http_config = self.http_config.clone();
         let main_config = self.main_config.clone();
         let flood_protector = self.flood_protector.clone();
@@ -324,7 +313,6 @@ impl HttpsServer {
                             let acceptor = acceptor.clone();
                             let router = router.clone();
                             let waf = waf.clone();
-                            let client = client.clone();
                             let http_config = http_config.clone();
                             let main_config = main_config.clone();
                             let metrics_h2 = metrics.clone();
@@ -406,7 +394,6 @@ impl HttpsServer {
                                             let conn = http2_server::Builder::new(TokioExecutor::new())
                                                 .max_header_list_size(max_headers as u32)
                                                 .serve_connection(io, hyper::service::service_fn({
-                                                    let client = client.clone();
                                                     let metrics = metrics_h2.clone();
                                                     let drain_state = drain_state_h2.clone();
                                                     #[cfg(feature = "mesh")]
@@ -421,7 +408,6 @@ impl HttpsServer {
                                                     move |req| {
                                                         let router = router.clone();
                                                         let waf = waf.clone();
-                                                        let client = client.clone();
                                                         let http_config = http_config.clone();
                                                         let main_config = main_config.clone();
                                                         let client_addr = client_addr;
@@ -442,11 +428,11 @@ impl HttpsServer {
                                                         async move {
                                                             #[cfg(feature = "mesh")]
                                                             {
-                                                                Self::handle_request_with_cache(req, client_addr, local_addr, router, waf, client, http_config, main_config, https_conn, metrics, drain_state, mesh_config, mesh_transport, ipc, worker_id, serverless_manager, connection_limit, app_servers, upstream_client_registry).await
+                                                                Self::handle_request_with_cache(req, client_addr, local_addr, router, waf, http_config, main_config, https_conn, metrics, drain_state, mesh_config, mesh_transport, ipc, worker_id, serverless_manager, connection_limit, app_servers, upstream_client_registry).await
                                                             }
                                                             #[cfg(not(feature = "mesh"))]
                                                             {
-                                                                Self::handle_request_with_cache(req, client_addr, local_addr, router, waf, client, http_config, main_config, https_conn, metrics, drain_state, ipc, worker_id, serverless_manager, connection_limit, app_servers, upstream_client_registry).await
+                                                                Self::handle_request_with_cache(req, client_addr, local_addr, router, waf, http_config, main_config, https_conn, metrics, drain_state, ipc, worker_id, serverless_manager, connection_limit, app_servers, upstream_client_registry).await
                                                             }
                                                         }
                                                     }
@@ -479,7 +465,6 @@ impl HttpsServer {
                                             let conn = http1_server::Builder::new()
                                                 .keep_alive(true)
                                                 .serve_connection(io, hyper::service::service_fn({
-                                                    let client = client.clone();
                                                     let metrics = metrics_h1.clone();
                                                     let drain_state = drain_state_h1.clone();
                                                     #[cfg(feature = "mesh")]
@@ -494,7 +479,6 @@ impl HttpsServer {
                                                     move |req| {
                                                         let router = router.clone();
                                                         let waf = waf.clone();
-                                                        let client = client.clone();
                                                         let http_config = http_config.clone();
                                                         let main_config = main_config.clone();
                                                         let client_addr = client_addr;
@@ -515,11 +499,11 @@ impl HttpsServer {
                                                         async move {
                                                             #[cfg(feature = "mesh")]
                                                             {
-                                                                Self::handle_request_with_cache(req, client_addr, local_addr, router, waf, client, http_config, main_config, https_conn, metrics, drain_state, mesh_config, mesh_transport, ipc, worker_id, serverless_manager, connection_limit, app_servers, upstream_client_registry).await
+                                                                Self::handle_request_with_cache(req, client_addr, local_addr, router, waf, http_config, main_config, https_conn, metrics, drain_state, mesh_config, mesh_transport, ipc, worker_id, serverless_manager, connection_limit, app_servers, upstream_client_registry).await
                                                             }
                                                             #[cfg(not(feature = "mesh"))]
                                                             {
-                                                                Self::handle_request_with_cache(req, client_addr, local_addr, router, waf, client, http_config, main_config, https_conn, metrics, drain_state, ipc, worker_id, serverless_manager, connection_limit, app_servers, upstream_client_registry).await
+                                                                Self::handle_request_with_cache(req, client_addr, local_addr, router, waf, http_config, main_config, https_conn, metrics, drain_state, ipc, worker_id, serverless_manager, connection_limit, app_servers, upstream_client_registry).await
                                                             }
                                                         }
                                                     }
@@ -585,7 +569,6 @@ impl HttpsServer {
         local_addr: Option<SocketAddr>,
         router: Arc<Router>,
         waf: Arc<WafCore>,
-        client: synvoid_http_client::HttpClient,
         http_config: HttpConfig,
         main_config: Arc<MainConfig>,
         http_conn: Arc<HttpsConnection>,
@@ -736,7 +719,6 @@ impl HttpsServer {
                 client_ip,
                 router: Arc::clone(&router),
                 waf: Arc::clone(&waf),
-                client: client.clone(),
                 alt_svc: alt_svc.clone(),
                 main_config: Arc::clone(&main_config),
                 http_config: http_config.clone(),

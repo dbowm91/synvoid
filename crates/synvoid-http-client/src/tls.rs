@@ -85,6 +85,7 @@ pub(crate) fn build_tls_config(
     use rustls::crypto::aws_lc_rs;
 
     let provider = Arc::new(aws_lc_rs::default_provider());
+    let provider_for_fallback = provider.clone();
 
     // Log crypto provider capabilities at first build
     static PROVIDER_LOGGED: std::sync::Once = std::sync::Once::new();
@@ -100,16 +101,28 @@ pub(crate) fn build_tls_config(
         );
     });
 
-    let builder = match rustls::ClientConfig::builder_with_provider(provider)
+    // Phase 59: explicit provider only. A version-negotiation failure here
+    // must fail closed (empty roots => every handshake fails) rather than
+    // falling back to `ClientConfig::builder()`, whose process-global
+    // provider selection becomes ambiguous once ring and aws-lc coexist in
+    // the unified feature graph (eggfetch `tls-rustls` enables
+    // `hyper-rustls/ring`).
+    let builder = match rustls::ClientConfig::builder_with_provider(provider.clone())
         .with_safe_default_protocol_versions()
     {
         Ok(b) => b,
         Err(e) => {
             tracing::error!(
                 error = %e,
-                "failed to set TLS protocol versions, falling back to default builder"
+                "failed to set TLS protocol versions with explicit aws-lc provider; \
+                 failing closed (no process-default fallback)"
             );
-            rustls::ClientConfig::builder()
+            // Empty version list + empty roots: no handshake can succeed.
+            return rustls::ClientConfig::builder_with_provider(provider_for_fallback)
+                .with_protocol_versions(&[])
+                .expect("empty version list must build")
+                .with_root_certificates(rustls::RootCertStore::empty())
+                .with_no_client_auth();
         }
     };
 
@@ -155,7 +168,14 @@ pub(crate) fn build_tls_config(
             }
         }
 
-        let inner = match WebPkiServerVerifier::builder(Arc::new(root_store)).build() {
+        // Phase 59: explicit provider (never the process default, which is
+        // ambiguous now that ring and aws-lc coexist in the unified graph).
+        let inner = match WebPkiServerVerifier::builder_with_provider(
+            Arc::new(root_store),
+            provider.clone(),
+        )
+        .build()
+        {
             Ok(v) => v,
             Err(e) => {
                 tracing::error!(
@@ -257,7 +277,15 @@ impl ServerCertVerifier for HostnameSkippingVerifier {
         ) {
             Ok(scv) => Ok(scv),
             Err(rustls::Error::InvalidCertificate(cert_error)) => {
-                if let rustls::CertificateError::NotValidForName = cert_error {
+                // Both name-mismatch variants mean exactly "chain OK, name
+                // wrong" (`NotValidForNameContext` carries the same meaning
+                // with expected/presented detail; see rustls `pki_error`
+                // mapping). Every other variant still fails.
+                if matches!(
+                    cert_error,
+                    rustls::CertificateError::NotValidForName
+                        | rustls::CertificateError::NotValidForNameContext { .. }
+                ) {
                     tracing::warn!(
                         reason = %self.skip_reason,
                         "Skipping hostname verification for upstream connection"

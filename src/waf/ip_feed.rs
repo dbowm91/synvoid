@@ -1,5 +1,5 @@
 use crate::config::IpFeedConfig;
-use crate::http_client::{create_simple_http_client, get_with_timeout, HttpClient};
+use crate::http_client::{operator_lane_client, EggfetchUpstreamClient};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -58,7 +58,7 @@ pub struct IpFeedManager {
     blocked_ips: Arc<RwLock<HashSet<IpAddr>>>,
     config: IpFeedConfig,
     last_update: Arc<RwLock<u64>>,
-    client: HttpClient,
+    client: EggfetchUpstreamClient,
 }
 
 impl IpFeedManager {
@@ -67,7 +67,8 @@ impl IpFeedManager {
     }
 
     pub fn with_url(config: IpFeedConfig, url: String) -> Arc<Self> {
-        let client = create_simple_http_client(Duration::from_secs(30));
+        // Phase 60: operator-plane lane via the entitled facade.
+        let client = operator_lane_client();
 
         Arc::new(Self {
             blocked_networks: Arc::new(RwLock::new(Vec::new())),
@@ -139,7 +140,9 @@ impl IpFeedManager {
     }
 
     async fn fetch_feed(&self, url: &str) -> Result<(Vec<BlockedNetwork>, Vec<IpAddr>), String> {
-        let response = get_with_timeout(&self.client, url, Duration::from_secs(30))
+        let response = self
+            .client
+            .get_with_timeout(url, Duration::from_secs(30))
             .await
             .map_err(|e| format!("Request failed: {}", e))?;
 

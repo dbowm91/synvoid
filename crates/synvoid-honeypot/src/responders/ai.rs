@@ -9,7 +9,8 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
-use synvoid_http_client::{create_http_client, post_json_with_timeout, HttpClient};
+use synvoid_http_client::eggfetch_transport::{native_to_httpresponse, EggfetchUpstreamClient};
+use synvoid_http_client::UpstreamTlsConfig;
 
 // ---------------------------------------------------------------------------
 // Provider configs
@@ -111,7 +112,7 @@ impl Clone for AiResponderBudget {
 // ---------------------------------------------------------------------------
 
 pub struct OllamaResponder {
-    client: HttpClient,
+    client: EggfetchUpstreamClient,
     config: OllamaConfig,
     system_prompt: Arc<RwLock<String>>,
     budget: Arc<AiResponderBudget>,
@@ -120,7 +121,19 @@ pub struct OllamaResponder {
 impl OllamaResponder {
     pub fn new(config: OllamaConfig, budget: Arc<AiResponderBudget>) -> Self {
         Self {
-            client: create_http_client(),
+            // Phase 60: eggfetch lane. Mirrors `create_http_client()` (5s
+            // connect, 1000 idle/host, 30s idle, plaintext-permitting
+            // default TLS — providers are frequently plaintext loopback).
+            client: EggfetchUpstreamClient::build(
+                Duration::from_secs(5),
+                1000,
+                Duration::from_secs(30),
+                &UpstreamTlsConfig {
+                    allow_plaintext: true,
+                    ..UpstreamTlsConfig::default()
+                },
+            )
+            .expect("eggfetch lane must build for default AI policy"),
             config,
             system_prompt: Arc::new(RwLock::new(default_ssh_system_prompt())),
             budget,
@@ -182,7 +195,7 @@ impl AiResponder for OllamaResponder {
 
         match tokio::time::timeout(
             timeout,
-            post_json_with_timeout(&self.client, &url, &payload, timeout),
+            self.client.post_json_with_timeout(&url, &payload, timeout),
         )
         .await
         {
@@ -229,7 +242,7 @@ impl AiResponder for OllamaResponder {
 // ---------------------------------------------------------------------------
 
 pub struct OpenAIResponder {
-    client: HttpClient,
+    client: EggfetchUpstreamClient,
     config: OpenAIConfig,
     system_prompt: Arc<RwLock<String>>,
     budget: Arc<AiResponderBudget>,
@@ -238,7 +251,19 @@ pub struct OpenAIResponder {
 impl OpenAIResponder {
     pub fn new(config: OpenAIConfig, budget: Arc<AiResponderBudget>) -> Self {
         Self {
-            client: create_http_client(),
+            // Phase 60: eggfetch lane. Mirrors `create_http_client()` (5s
+            // connect, 1000 idle/host, 30s idle, plaintext-permitting
+            // default TLS — providers are frequently plaintext loopback).
+            client: EggfetchUpstreamClient::build(
+                Duration::from_secs(5),
+                1000,
+                Duration::from_secs(30),
+                &UpstreamTlsConfig {
+                    allow_plaintext: true,
+                    ..UpstreamTlsConfig::default()
+                },
+            )
+            .expect("eggfetch lane must build for default AI policy"),
             config,
             system_prompt: Arc::new(RwLock::new(default_ssh_system_prompt())),
             budget,
@@ -343,19 +368,23 @@ impl AiResponder for OpenAIResponder {
                 .min(self.budget.config.max_generation_duration_secs),
         );
 
-        let response = match tokio::time::timeout(timeout, self.client.request(req)).await {
-            Ok(Ok(resp)) => resp,
-            Ok(Err(e)) => {
-                self.budget.circuit_breaker.record_failure();
-                return Err(e.to_string().into());
-            }
-            Err(_) => {
-                self.budget.circuit_breaker.record_failure();
-                return Err("request timed out".into());
-            }
-        };
+        // Phase 60: eggfetch lane. Outer deadline preserved exactly;
+        // inner execution is deadline-free (legacy parity: timeout bounds
+        // time-to-headers, body collection unbounded).
+        let response =
+            match tokio::time::timeout(timeout, self.client.execute(req, None, None)).await {
+                Ok(Ok(resp)) => resp,
+                Ok(Err(e)) => {
+                    self.budget.circuit_breaker.record_failure();
+                    return Err(e.to_string().into());
+                }
+                Err(_) => {
+                    self.budget.circuit_breaker.record_failure();
+                    return Err("request timed out".into());
+                }
+            };
 
-        let http_response = synvoid_http_client::HttpResponse::from_hyper(response, None).await;
+        let http_response = native_to_httpresponse(response, None).await;
         let result: OpenAIResponse = serde_json::from_slice(&http_response.body)?;
 
         if let Some(choice) = result.choices.first() {
@@ -385,7 +414,7 @@ impl AiResponder for OpenAIResponder {
 // ---------------------------------------------------------------------------
 
 pub struct AnthropicResponder {
-    client: HttpClient,
+    client: EggfetchUpstreamClient,
     config: AnthropicConfig,
     system_prompt: Arc<RwLock<String>>,
     budget: Arc<AiResponderBudget>,
@@ -394,7 +423,19 @@ pub struct AnthropicResponder {
 impl AnthropicResponder {
     pub fn new(config: AnthropicConfig, budget: Arc<AiResponderBudget>) -> Self {
         Self {
-            client: create_http_client(),
+            // Phase 60: eggfetch lane. Mirrors `create_http_client()` (5s
+            // connect, 1000 idle/host, 30s idle, plaintext-permitting
+            // default TLS — providers are frequently plaintext loopback).
+            client: EggfetchUpstreamClient::build(
+                Duration::from_secs(5),
+                1000,
+                Duration::from_secs(30),
+                &UpstreamTlsConfig {
+                    allow_plaintext: true,
+                    ..UpstreamTlsConfig::default()
+                },
+            )
+            .expect("eggfetch lane must build for default AI policy"),
             config,
             system_prompt: Arc::new(RwLock::new(default_ssh_system_prompt())),
             budget,
@@ -487,19 +528,23 @@ impl AiResponder for AnthropicResponder {
                 .min(self.budget.config.max_generation_duration_secs),
         );
 
-        let response = match tokio::time::timeout(timeout, self.client.request(req)).await {
-            Ok(Ok(resp)) => resp,
-            Ok(Err(e)) => {
-                self.budget.circuit_breaker.record_failure();
-                return Err(e.to_string().into());
-            }
-            Err(_) => {
-                self.budget.circuit_breaker.record_failure();
-                return Err("request timed out".into());
-            }
-        };
+        // Phase 60: eggfetch lane. Outer deadline preserved exactly;
+        // inner execution is deadline-free (legacy parity: timeout bounds
+        // time-to-headers, body collection unbounded).
+        let response =
+            match tokio::time::timeout(timeout, self.client.execute(req, None, None)).await {
+                Ok(Ok(resp)) => resp,
+                Ok(Err(e)) => {
+                    self.budget.circuit_breaker.record_failure();
+                    return Err(e.to_string().into());
+                }
+                Err(_) => {
+                    self.budget.circuit_breaker.record_failure();
+                    return Err("request timed out".into());
+                }
+            };
 
-        let http_response = synvoid_http_client::HttpResponse::from_hyper(response, None).await;
+        let http_response = native_to_httpresponse(response, None).await;
         let result: AnthropicResponse = serde_json::from_slice(&http_response.body)?;
 
         if let Some(content) = result.content.first() {

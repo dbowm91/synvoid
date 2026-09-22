@@ -87,7 +87,7 @@ pub struct ThreatFeedIndicator {
 pub struct ThreatFeedClient {
     config: Arc<ThreatFeedConfig>,
     threat_manager: Option<Arc<ThreatIntelligenceManager>>,
-    http_client: crate::http_client::HttpClient,
+    http_client: crate::http_client::EggfetchUpstreamClient,
     last_fetch: Arc<RwLock<u64>>,
     last_indicator_count: Arc<RwLock<usize>>,
     #[allow(clippy::type_complexity)]
@@ -102,7 +102,8 @@ impl ThreatFeedClient {
         config: ThreatFeedConfig,
         threat_manager: Option<Arc<ThreatIntelligenceManager>>,
     ) -> Arc<Self> {
-        let http_client = crate::http_client::create_simple_http_client(Duration::from_secs(30));
+        // Phase 60: operator-plane lane via the entitled facade.
+        let http_client = crate::http_client::operator_lane_client();
         let (shutdown_tx, _) = tokio::sync::watch::channel(false);
 
         Arc::new(Self {
@@ -323,13 +324,11 @@ impl ThreatFeedClient {
     }
 
     async fn fetch_feed(&self) -> Result<ThreatFeedPayload, String> {
-        let response = crate::http_client::get_with_timeout(
-            &self.http_client,
-            &self.config.feed_url,
-            Duration::from_secs(30),
-        )
-        .await
-        .map_err(|e| format!("Request failed: {}", e))?;
+        let response = self
+            .http_client
+            .get_with_timeout(&self.config.feed_url, Duration::from_secs(30))
+            .await
+            .map_err(|e| format!("Request failed: {}", e))?;
 
         if !response.status.is_success() {
             return Err(format!("HTTP error: {}", response.status));

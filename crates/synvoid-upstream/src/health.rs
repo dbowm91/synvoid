@@ -6,13 +6,14 @@ use tokio::time::interval;
 
 use crate::address::UpstreamAddress;
 use crate::pool::Backend;
-use synvoid_http_client::{create_http_client_with_config, send_request_with_timeout, HttpClient};
+use synvoid_http_client::eggfetch_transport::EggfetchUpstreamClient;
+use synvoid_http_client::UpstreamTlsConfig;
 
 pub struct HealthChecker {
     pools: Arc<tokio::sync::RwLock<Vec<Arc<crate::pool::UpstreamPool>>>>,
     config: HealthCheckConfig,
     shutdown_tx: tokio::sync::broadcast::Sender<()>,
-    client: HttpClient,
+    client: EggfetchUpstreamClient,
 }
 
 #[derive(Clone)]
@@ -50,11 +51,19 @@ impl Default for HealthCheckConfig {
 impl HealthChecker {
     pub fn new(config: HealthCheckConfig) -> Self {
         let (shutdown_tx, _) = tokio::sync::broadcast::channel(1);
-        let client = create_http_client_with_config(
+        // Phase 60: eggfetch lane. Mirrors `create_http_client_with_config`
+        // (connect = timeout_secs, 10 idle/host, 30s idle, `https_or_http`
+        // default TLS — health checks hit plaintext backends).
+        let client = EggfetchUpstreamClient::build(
             Duration::from_secs(config.timeout_secs),
             10,
             Duration::from_secs(30),
-        );
+            &UpstreamTlsConfig {
+                allow_plaintext: true,
+                ..UpstreamTlsConfig::default()
+            },
+        )
+        .expect("eggfetch lane must build for default health policy");
 
         Self {
             pools: Arc::new(tokio::sync::RwLock::new(Vec::new())),
@@ -99,7 +108,7 @@ impl HealthChecker {
     async fn check_all_pools(
         pools: &Arc<tokio::sync::RwLock<Vec<Arc<crate::pool::UpstreamPool>>>>,
         config: &HealthCheckConfig,
-        client: &HttpClient,
+        client: &EggfetchUpstreamClient,
     ) {
         let backends_to_check: Vec<Arc<Backend>> = {
             let pools_guard = pools.read().await;
@@ -174,7 +183,7 @@ impl HealthChecker {
     async fn check_backend(
         backend: &Backend,
         config: &HealthCheckConfig,
-        client: &HttpClient,
+        client: &EggfetchUpstreamClient,
     ) -> bool {
         match config.health_check_method {
             HealthCheckMethod::Head | HealthCheckMethod::Get => {
@@ -187,7 +196,7 @@ impl HealthChecker {
     async fn http_health_check(
         backend: &Backend,
         config: &HealthCheckConfig,
-        client: &HttpClient,
+        client: &EggfetchUpstreamClient,
     ) -> bool {
         let url = format!(
             "{}{}",
@@ -201,13 +210,19 @@ impl HealthChecker {
             _ => unreachable!(),
         };
 
-        match send_request_with_timeout(
-            client,
-            method,
-            &url,
-            Some(Duration::from_secs(config.timeout_secs)),
-        )
-        .await
+        // Phase 60: eggfetch lane. Same contract as the legacy helper:
+        // time-to-headers timeout, buffered body, anyhow errors; health
+        // classification (2xx–3xx) unchanged.
+        match client
+            .send_buffered(
+                method,
+                &url,
+                None,
+                http::HeaderMap::new(),
+                Some(Duration::from_secs(config.timeout_secs)),
+                None,
+            )
+            .await
         {
             Ok(resp) => {
                 let status = resp.status_code();

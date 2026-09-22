@@ -6,7 +6,6 @@ use bytes::Bytes;
 use http::Response;
 use http_body_util::combinators::BoxBody;
 use http_body_util::BodyExt;
-use hyper::body::Incoming;
 
 use synvoid_config::MainConfig;
 use synvoid_metrics::{
@@ -19,8 +18,8 @@ use crate::response_helpers::apply_security_headers;
 use crate::{reason_phrase, response_builder::build_response_with_alt_svc};
 
 #[allow(clippy::too_many_arguments)]
-pub async fn handle_streaming_upstream_response(
-    request_result: anyhow::Result<Response<Incoming>>,
+pub async fn handle_streaming_upstream_response<B>(
+    request_result: anyhow::Result<Response<B>>,
     target: RouteTarget,
     site_id: String,
     request_body_size: u64,
@@ -32,7 +31,11 @@ pub async fn handle_streaming_upstream_response(
     on_upstream_success: impl Fn(),
     on_upstream_failure: impl Fn(),
     on_error_egress: impl Fn(u64),
-) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error> {
+) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error>
+where
+    B: http_body::Body<Data = Bytes> + Send + Unpin + 'static,
+    B::Error: std::fmt::Debug + Send + Sync + 'static,
+{
     match request_result {
         Ok(upstream_resp) => {
             on_upstream_success();
@@ -99,8 +102,8 @@ pub async fn handle_streaming_upstream_response(
                 }
 
                 return Ok(builder
-                    .body(crate::response_helpers::swallow_incoming_body_errors(
-                        upstream_body,
+                    .body(crate::response_helpers::swallow_body_errors(
+                        synvoid_http_client::eggfetch_transport::SyncBody::new(upstream_body),
                     ))
                     .unwrap_or_else(|_| {
                         build_response_with_alt_svc(
@@ -149,7 +152,7 @@ pub async fn handle_streaming_upstream_response(
                         }))
                 }
                 Err(e) => {
-                    tracing::warn!("Failed to collect upstream body: {}", e);
+                    tracing::warn!("Failed to collect upstream body: {:?}", e);
                     Ok(builder
                         .body(http_body_util::Full::new(Bytes::new()).boxed())
                         .unwrap_or_else(|_| {

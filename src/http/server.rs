@@ -25,14 +25,11 @@ use crate::worker::drain_state::WorkerDrainState;
 use synvoid_config::http::HttpConfig;
 use synvoid_config::MainConfig;
 use synvoid_http::RequestPreparationOutcome;
-use synvoid_http_client::ErasedHttpClient;
 use synvoid_metrics::WorkerMetrics;
 use synvoid_proxy::Router;
 use synvoid_proxy::UpstreamClientRegistry;
 use synvoid_waf::{FloodDecision, FloodProtector};
 
-#[allow(unused_imports)]
-use synvoid_http_client::{create_http_client_with_config, HttpClient};
 #[cfg(feature = "mesh")]
 use synvoid_mesh::config::MeshConfig;
 #[cfg(feature = "mesh")]
@@ -86,7 +83,6 @@ pub(crate) struct HttpServerRuntime {
     pub router: Arc<Router>,
     pub waf: Arc<WafCore>,
     pub flood_protector: Option<Arc<FloodProtector>>,
-    pub client: HttpClient,
     pub http_config: HttpConfig,
     pub alt_svc: Option<String>,
     pub main_config: Arc<MainConfig>,
@@ -96,7 +92,6 @@ pub(crate) struct HttpServerRuntime {
     pub worker_id: Option<crate::process::ipc::WorkerId>,
     pub connection_limit: Arc<Semaphore>,
     pub upstream_client_registry: Arc<UpstreamClientRegistry>,
-    pub erased_http_client: ErasedHttpClient,
     pub backends: HttpAppBackends,
     #[cfg(feature = "mesh")]
     pub mesh_config: Option<Arc<MeshConfig>>,
@@ -122,19 +117,12 @@ impl HttpServer {
         shutdown_rx: broadcast::Receiver<()>,
         main_config: MainConfig,
     ) -> Self {
-        let client = create_http_client_with_config(
-            std::time::Duration::from_secs(5),
-            100,
-            std::time::Duration::from_secs(30),
-        );
-
         let max_connections = http_config.max_connections as usize;
 
         let runtime = HttpServerRuntime {
             router: Arc::new(router),
             waf,
             flood_protector: None,
-            client,
             http_config,
             alt_svc: None,
             main_config: Arc::new(main_config),
@@ -144,7 +132,6 @@ impl HttpServer {
             worker_id: None,
             connection_limit: Arc::new(Semaphore::new(max_connections)),
             upstream_client_registry: Arc::new(UpstreamClientRegistry::new()),
-            erased_http_client: ErasedHttpClient::new(100),
             backends: HttpAppBackends::default(),
             #[cfg(feature = "mesh")]
             mesh_config: None,
@@ -239,7 +226,6 @@ impl HttpServer {
         local_addr: Option<SocketAddr>,
         router: Arc<Router>,
         waf: Arc<WafCore>,
-        client: HttpClient,
         alt_svc: Option<String>,
         main_config: Arc<MainConfig>,
         drain_state: Option<Arc<WorkerDrainState>>,
@@ -257,7 +243,6 @@ impl HttpServer {
         >,
         #[cfg(feature = "mesh")] mesh_backend_pool: Option<Arc<MeshBackendPool>>,
         upstream_client_registry: Arc<UpstreamClientRegistry>,
-        _erased_http_client: ErasedHttpClient,
     ) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error> {
         let request_queue_started_at = Instant::now();
         let _permit = match connection_limit.clone().acquire_owned().await {
@@ -343,7 +328,6 @@ impl HttpServer {
                 client_ip,
                 router: Arc::clone(&router),
                 waf: Arc::clone(&waf),
-                client: client.clone(),
                 alt_svc: alt_svc.clone(),
                 main_config: Arc::clone(&main_config),
                 http_config: http_config.clone(),

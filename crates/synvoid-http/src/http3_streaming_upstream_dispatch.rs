@@ -13,7 +13,8 @@ use tokio::sync::mpsc;
 
 use synvoid_config::site::ProxyHeadersConfig;
 use synvoid_config::MainConfig;
-use synvoid_http_client::{send_request_streaming_generic, ErasedBodyImpl};
+use synvoid_http_client::eggfetch_transport::EggfetchResponseBody;
+use synvoid_http_client::UpstreamTlsConfig;
 use synvoid_metrics::{
     bandwidth::{BandwidthProtocol, BandwidthTracker, EgressDirection},
     WorkerMetrics,
@@ -155,31 +156,50 @@ where
         .as_ref()
         .and_then(|u| u.tls.as_ref())
         .and_then(upstream_tls_from_site_config);
-    let streaming_client = upstream_client_registry
-        .get_or_create_streaming(&route_target.site_id, tls_config.as_ref());
+    // Phase 60: eggfetch lane. Streaming keeps the verifying default when
+    // the site sets no TLS (legacy `create_upstream_streaming_client` with
+    // `UpstreamTlsConfig::default()`); site TLS always wins when present.
+    let lane_client = upstream_client_registry.get_or_create_lane(
+        &route_target.site_id,
+        tls_config.as_ref().unwrap_or(&UpstreamTlsConfig::default()),
+    );
 
     let (tx, rx) = mpsc::channel::<Result<Bytes, std::io::Error>>(16);
     let streaming_body = H3ChannelBody::new(rx);
     let waf_body = StreamingWafBody::new(streaming_body, streaming_waf, client_ip);
-    let erased_body = ErasedBodyImpl::new(waf_body);
 
     let upstream_url = upstream_target.url.clone();
     let upstream_timeout = Some(upstream_target.timeout);
     let max_response_size = upstream_target.max_response_size;
 
     let upstream_task = tokio::spawn({
-        let streaming_client = streaming_client.clone();
+        let lane_client = lane_client.clone();
         let method = method.clone();
         async move {
-            send_request_streaming_generic(
-                streaming_client.as_ref().clone(),
-                method,
-                upstream_url,
-                erased_body,
-                forward_header_map,
-                upstream_timeout,
-            )
-            .await
+            let result: anyhow::Result<Response<EggfetchResponseBody>> = async {
+                let uri: http::Uri = upstream_url.parse().map_err(|e| {
+                    anyhow::anyhow!(
+                        "eggfetch lane: invalid upstream URL {}: {}",
+                        upstream_url,
+                        e
+                    )
+                })?;
+                let mut req = http::Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .body(waf_body)
+                    .map_err(|e| {
+                        anyhow::anyhow!("eggfetch lane: failed to build request: {}", e)
+                    })?;
+                // Mirror the legacy helpers: caller headers replace, not append.
+                *req.headers_mut() = forward_header_map;
+                lane_client
+                    .execute(req, upstream_timeout, None)
+                    .await
+                    .map_err(anyhow::Error::from)
+            }
+            .await;
+            result
         }
     });
 

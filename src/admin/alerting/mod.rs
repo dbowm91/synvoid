@@ -418,7 +418,10 @@ impl AlertManager {
 }
 
 async fn send_webhook_internal(urls: &[String], event: &AlertEvent) -> WebhookDeliveryResult {
-    let client = crate::http_client::create_http_client();
+    // Phase 60: operator-plane lane via the entitled facade (the root
+    // dependency ledger entitles only http/http_client/tls to consume
+    // synvoid-http-client directly).
+    let lane = crate::http_client::operator_lane_client();
 
     let payload = serde_json::json!({
         "timestamp": event.timestamp,
@@ -434,7 +437,7 @@ async fn send_webhook_internal(urls: &[String], event: &AlertEvent) -> WebhookDe
     let mut failed = 0usize;
 
     for url in urls {
-        let result = deliver_webhook_single(&client, url, &payload).await;
+        let result = deliver_webhook_single(&lane, url, &payload).await;
         match &result {
             DestinationResult { success: true, .. } => succeeded += 1,
             _ => failed += 1,
@@ -464,7 +467,7 @@ async fn send_webhook_internal(urls: &[String], event: &AlertEvent) -> WebhookDe
 /// Validates the destination IP after DNS resolution. hyper does not follow
 /// redirects automatically, so redirect responses are treated as non-2xx failures.
 async fn deliver_webhook_single(
-    client: &crate::http_client::HttpClient,
+    lane: &crate::http_client::EggfetchUpstreamClient,
     url: &str,
     payload: &serde_json::Value,
 ) -> DestinationResult {
@@ -487,7 +490,8 @@ async fn deliver_webhook_single(
         };
     }
 
-    match crate::http_client::post_json_with_timeout(client, url, payload, WEBHOOK_REQUEST_TIMEOUT)
+    match lane
+        .post_json_with_timeout(url, payload, WEBHOOK_REQUEST_TIMEOUT)
         .await
     {
         Ok(resp) => {

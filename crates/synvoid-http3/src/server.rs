@@ -1,13 +1,12 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use tokio::sync::broadcast;
 
 use metrics::{counter, gauge};
 
 use synvoid_config::http::Http3Config;
 use synvoid_config::MainConfig;
-use synvoid_http_client::{create_http_client_with_config, HttpClient};
 use synvoid_metrics::bandwidth::get_global_bandwidth_tracker_or_log;
 use synvoid_metrics::WorkerMetrics;
 use synvoid_platform::socket_bind::bind_udp_reuse;
@@ -23,7 +22,6 @@ pub struct Http3Server {
     router: Arc<Router>,
     waf: Arc<dyn Http3WafBackend>,
     flood_protector: Option<Arc<FloodProtector>>,
-    client: HttpClient,
     upstream_client_registry: Arc<UpstreamClientRegistry>,
     metrics: Option<Arc<WorkerMetrics>>,
     shutdown_rx: broadcast::Receiver<()>,
@@ -40,9 +38,6 @@ impl Http3Server {
         main_config: MainConfig,
         shutdown_rx: broadcast::Receiver<()>,
     ) -> Self {
-        let client =
-            create_http_client_with_config(Duration::from_secs(5), 100, Duration::from_secs(30));
-
         let trusted_proxies = main_config.server.trusted_proxies.clone();
 
         Self {
@@ -51,7 +46,6 @@ impl Http3Server {
             router: Arc::new(router),
             waf,
             flood_protector: None,
-            client,
             upstream_client_registry: Arc::new(UpstreamClientRegistry::new()),
             metrics: None,
             shutdown_rx,
@@ -265,7 +259,6 @@ impl Http3Server {
             streaming_waf_for_upstream: self.waf.streaming(),
             connection_limiter: self.waf.connection_limiter(),
             main_config: self.main_config.clone(),
-            client: self.client.clone(),
             upstream_client_registry: self.upstream_client_registry.clone(),
             bandwidth,
             metrics: self.metrics.clone(),

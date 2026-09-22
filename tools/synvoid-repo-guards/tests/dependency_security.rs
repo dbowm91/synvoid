@@ -853,9 +853,8 @@ fn gated_use_ok(content: &str, use_pos: usize) -> bool {
             || t.starts_with("pub mod ")
             || t.contains(" fn ")
             || t.starts_with("fn ")
+            || (pending_cfg.is_some() && opens > 0)
         {
-            stack.push((depth, pending_cfg.take()));
-        } else if pending_cfg.is_some() && opens > 0 {
             stack.push((depth, pending_cfg.take()));
         } else {
             pending_cfg = None;

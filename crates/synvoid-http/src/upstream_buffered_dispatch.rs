@@ -10,6 +10,7 @@ use http_body_util::BodyExt;
 use http_body_util::Full;
 
 use synvoid_config::MainConfig;
+use synvoid_http_client::eggfetch_transport::EggfetchUpstreamClient;
 #[cfg(feature = "mesh")]
 use synvoid_mesh::mesh::transport::MeshTransportManager;
 use synvoid_metrics::bandwidth::{BandwidthProtocol, EgressDirection};
@@ -31,7 +32,7 @@ pub async fn handle_buffered_upstream_request<MarkImageRightsFn, MarkImageRights
     method: http::Method,
     parts: http::request::Parts,
     full_body_arc: Arc<Bytes>,
-    forwarding_client: Arc<synvoid_http_client::HttpClient>,
+    forwarding_client: Arc<EggfetchUpstreamClient>,
     upstream_url: String,
     upstream_timeout: std::time::Duration,
     upstream_max_response_size: Option<usize>,
@@ -91,15 +92,21 @@ where
         )
         .await
     } else {
-        synvoid_http_client::send_request_with_body_headers_and_timeout(
-            forwarding_client.as_ref(),
-            method.clone(),
-            &upstream_url,
-            Some(full_body_arc.as_ref().clone()),
-            forward_headers,
-            Some(upstream_timeout),
-        )
-        .await
+        // Phase 60: eggfetch lane. `max_response_size` stays enforced by the
+        // post-hoc `apply_response_size_limit` check below (→502), exactly
+        // like the legacy path which collected unbounded (`from_hyper`
+        // with `None`) and checked after: passing the limit into the lane
+        // would map oversize to 200-empty instead.
+        forwarding_client
+            .send_buffered(
+                method.clone(),
+                &upstream_url,
+                Some(full_body_arc.as_ref().clone()),
+                forward_headers,
+                Some(upstream_timeout),
+                None,
+            )
+            .await
     };
 
     match resp {

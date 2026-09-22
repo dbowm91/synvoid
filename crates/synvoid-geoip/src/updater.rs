@@ -7,7 +7,8 @@ use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
 use synvoid_config::geoip::GeoIpConfig;
-use synvoid_http_client::{get_with_auth, get_with_timeout, head_with_auth};
+use synvoid_http_client::eggfetch_transport::EggfetchUpstreamClient;
+use synvoid_http_client::UpstreamTlsConfig;
 
 const MAXMIND_DOWNLOAD_BASE: &str = "https://download.maxmind.com/geoip/databases";
 
@@ -184,7 +185,19 @@ impl GeoIpUpdater {
         edition: &DatabaseEdition,
     ) -> Result<Option<i64>, GeoIpUpdaterError> {
         let source = self.source.as_ref().ok_or(GeoIpUpdaterError::NoSource)?;
-        let client = synvoid_http_client::create_http_client();
+        // Phase 60: eggfetch lane. Plaintext-permitting default TLS mirrors
+        // the legacy `create_http_client()` (`https_or_http`) exactly.
+        let lane_tls = UpstreamTlsConfig {
+            allow_plaintext: true,
+            ..UpstreamTlsConfig::default()
+        };
+        let lane = EggfetchUpstreamClient::build(
+            Duration::from_secs(5),
+            1000,
+            Duration::from_secs(30),
+            &lane_tls,
+        )
+        .map_err(|e| GeoIpUpdaterError::NetworkError(e.to_string()))?;
         let timeout = Duration::from_secs(self.download_timeout_secs);
 
         let response = match source {
@@ -192,17 +205,11 @@ impl GeoIpUpdater {
                 account_id,
                 license_key,
             } => {
-                head_with_auth(
-                    &client,
-                    &edition.download_url,
-                    account_id,
-                    license_key,
-                    timeout,
-                )
-                .await
+                lane.head_with_basic_auth(&edition.download_url, account_id, license_key, timeout)
+                    .await
             }
             DownloadSource::PresignedUrl(_) => {
-                get_with_timeout(&client, &edition.download_url, timeout).await
+                lane.get_with_timeout(&edition.download_url, timeout).await
             }
         }
         .map_err(GeoIpUpdaterError::NetworkError)?;
@@ -256,7 +263,18 @@ impl GeoIpUpdater {
         edition: &DatabaseEdition,
     ) -> Result<DownloadResult, GeoIpUpdaterError> {
         let source = self.source.as_ref().ok_or(GeoIpUpdaterError::NoSource)?;
-        let client = synvoid_http_client::create_http_client();
+        // Phase 60: eggfetch lane (same policy mirror as `check_for_update`).
+        let lane_tls = UpstreamTlsConfig {
+            allow_plaintext: true,
+            ..UpstreamTlsConfig::default()
+        };
+        let lane = EggfetchUpstreamClient::build(
+            Duration::from_secs(5),
+            1000,
+            Duration::from_secs(30),
+            &lane_tls,
+        )
+        .map_err(|e| GeoIpUpdaterError::NetworkError(e.to_string()))?;
         let timeout = Duration::from_secs(self.download_timeout_secs);
 
         let response = match source {
@@ -264,17 +282,11 @@ impl GeoIpUpdater {
                 account_id,
                 license_key,
             } => {
-                get_with_auth(
-                    &client,
-                    &edition.download_url,
-                    account_id,
-                    license_key,
-                    timeout,
-                )
-                .await
+                lane.get_with_basic_auth(&edition.download_url, account_id, license_key, timeout)
+                    .await
             }
             DownloadSource::PresignedUrl(_) => {
-                get_with_timeout(&client, &edition.download_url, timeout).await
+                lane.get_with_timeout(&edition.download_url, timeout).await
             }
         }
         .map_err(GeoIpUpdaterError::NetworkError)?;

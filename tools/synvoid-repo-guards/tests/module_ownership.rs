@@ -540,7 +540,7 @@ fn root_dependencies_have_path_entitlement() {
             by_dep.contains_key(name),
             "entitlement exception for unknown dependency: {name}"
         );
-        deps.remove(&name.to_string());
+        deps.remove(*name);
     }
 
     let idents: Vec<String> = deps.iter().map(|d| d.replace('-', "_")).collect();

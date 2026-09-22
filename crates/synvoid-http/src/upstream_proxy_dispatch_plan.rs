@@ -5,7 +5,8 @@ use http::HeaderMap;
 
 use synvoid_config::site::ProxyHeadersConfig;
 use synvoid_config::MainConfig;
-use synvoid_http_client::{HttpClient, StreamingHttpClient};
+use synvoid_http_client::eggfetch_transport::EggfetchUpstreamClient;
+use synvoid_http_client::UpstreamTlsConfig;
 use synvoid_proxy::client_registry::UpstreamClientRegistry;
 use synvoid_proxy::{
     build_forward_headers, build_headers_to_filter, ForwardedProtocol, PreparedUpstreamTarget,
@@ -16,13 +17,13 @@ use synvoid_upstream::upstream_tls_from_site_config;
 pub struct UpstreamProxyDispatchPlan {
     pub upstream_target: PreparedUpstreamTarget,
     pub headers_to_filter: AHashSet<http::header::HeaderName>,
-    pub forwarding_client: Arc<HttpClient>,
+    pub forwarding_client: Arc<EggfetchUpstreamClient>,
     pub streaming: Option<StreamingUpstreamDispatchPlan>,
 }
 
 pub struct StreamingUpstreamDispatchPlan {
     pub forward_headers: HeaderMap,
-    pub client: Arc<StreamingHttpClient>,
+    pub client: Arc<EggfetchUpstreamClient>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -34,7 +35,6 @@ pub fn prepare_upstream_proxy_dispatch_plan(
     client_ip: std::net::IpAddr,
     parts: &http::request::Parts,
     upstream_client_registry: &Arc<UpstreamClientRegistry>,
-    client: &HttpClient,
     forwarded_protocol: ForwardedProtocol,
 ) -> UpstreamProxyDispatchPlan {
     let upstream_target =
@@ -66,11 +66,19 @@ pub fn prepare_upstream_proxy_dispatch_plan(
         .and_then(|u| u.tls.as_ref())
         .and_then(upstream_tls_from_site_config);
 
-    let forwarding_client = if site_tls_config.is_some() {
-        upstream_client_registry.get_or_create(&target.site_id, site_tls_config.as_ref())
-    } else {
-        Arc::new(client.clone())
+    // Phase 60: eggfetch lane. The two branches keep their distinct
+    // legacy no-config defaults: buffered permits plaintext (legacy
+    // `https_or_http` ambient/registry clients); streaming enforces the
+    // verifying default (legacy `create_upstream_streaming_client` with
+    // `UpstreamTlsConfig::default()`). Site TLS always wins when present.
+    let plaintext_default = UpstreamTlsConfig {
+        allow_plaintext: true,
+        ..UpstreamTlsConfig::default()
     };
+    let forwarding_client = upstream_client_registry.get_or_create_lane(
+        &target.site_id,
+        site_tls_config.as_ref().unwrap_or(&plaintext_default),
+    );
 
     let streaming_threshold = target.site_config.proxy.streaming_threshold_bytes;
     let use_streaming = target
@@ -93,8 +101,12 @@ pub fn prepare_upstream_proxy_dispatch_plan(
                     .unwrap_or(&ProxyHeadersConfig::default()),
                 forwarded_protocol,
             ),
-            client: upstream_client_registry
-                .get_or_create_streaming(&target.site_id, site_tls_config.as_ref()),
+            client: upstream_client_registry.get_or_create_lane(
+                &target.site_id,
+                site_tls_config
+                    .as_ref()
+                    .unwrap_or(&UpstreamTlsConfig::default()),
+            ),
         })
     } else {
         None

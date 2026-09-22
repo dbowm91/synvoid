@@ -20,7 +20,6 @@ use http::{HeaderMap, Method};
 use metrics::counter;
 
 use synvoid_config::{site::SiteBotConfig, MainConfig};
-use synvoid_http_client::HttpClient;
 use synvoid_metrics::bandwidth::{BandwidthProtocol, BandwidthTracker};
 use synvoid_metrics::WorkerMetrics;
 use synvoid_proxy::client_registry::UpstreamClientRegistry;
@@ -44,7 +43,6 @@ pub struct Http3DispatchDeps {
     pub streaming_waf_for_upstream: Option<Box<dyn crate::shared_handler::StreamingWafScanner>>,
     pub connection_limiter: Option<Arc<ConnectionLimiter>>,
     pub main_config: Arc<MainConfig>,
-    pub client: HttpClient,
     pub upstream_client_registry: Arc<UpstreamClientRegistry>,
     pub bandwidth: Option<Arc<BandwidthTracker>>,
     pub metrics: Option<Arc<WorkerMetrics>>,
@@ -159,7 +157,6 @@ where
         streaming_waf_for_upstream,
         connection_limiter,
         main_config,
-        client,
         upstream_client_registry,
         bandwidth,
         metrics,
@@ -279,7 +276,6 @@ where
             connection_guard,
             connection_limiter.as_ref(),
             &main_config,
-            &client,
             &upstream_client_registry,
             bandwidth.as_ref(),
             metrics.as_ref(),

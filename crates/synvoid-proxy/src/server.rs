@@ -20,11 +20,8 @@ use http_body_util::{BodyExt, Full};
 use subtle::ConstantTimeEq;
 
 use synvoid_config::site::{BufferingConfig, ProxyHeadersConfig, RetryConfig};
-use synvoid_http_client::{
-    create_http_client_with_config, create_upstream_client, is_quictunnel_url,
-    send_request_erased_streaming, send_request_with_body_headers_and_timeout, BoxErasedBody,
-    ErasedBodyImpl, ErasedHttpClient, HttpClient, UpstreamTlsConfig,
-};
+use synvoid_http_client::eggfetch_transport::{EggfetchUpstreamClient, SyncBody};
+use synvoid_http_client::{is_quictunnel_url, UpstreamTlsConfig};
 
 use crate::cache::{
     build_cached_response as build_cached_response_impl,
@@ -69,9 +66,8 @@ pub trait QuicTunnelSender: Send + Sync + 'static {
 }
 
 pub struct ProxyServer<W: WafProcessor> {
-    _client: HttpClient,
-    revalidation_client: HttpClient,
-    erased_client: ErasedHttpClient,
+    lane_client: EggfetchUpstreamClient,
+    revalidation_lane: EggfetchUpstreamClient,
     upstream_url: String,
     waf: Arc<W>,
     max_response_size: usize,
@@ -89,6 +85,9 @@ pub struct ProxyServer<W: WafProcessor> {
     pool_max_idle_per_host: usize,
     #[allow(dead_code)]
     pool_idle_timeout: Duration,
+    /// Retained for API compatibility (`with_http2` setter). The legacy
+    /// transport used this only as a pool-lookup hint (never for protocol
+    /// switching); the eggfetch lane negotiates via ALPN, so this is ignored.
     is_http2: bool,
     proxy_headers_config: Option<Arc<ProxyHeadersConfig>>,
     drop_blocked_requests: bool,
@@ -187,42 +186,44 @@ impl<W: WafProcessor> ProxyServer<W> {
         tarpit_service: Option<Arc<dyn TarpitService>>,
         block_store: Option<Arc<dyn BlockListStore>>,
     ) -> Self {
-        let (client, revalidation_client) = if let Some(tls) = tls_config {
-            (
-                create_upstream_client(
-                    Duration::from_secs(5),
-                    pool_max_idle_per_host,
-                    pool_idle_timeout,
-                    tls,
-                ),
-                create_upstream_client(
-                    Duration::from_secs(5),
-                    pool_max_idle_per_host,
-                    pool_idle_timeout,
-                    tls,
-                ),
-            )
-        } else {
-            (
-                create_http_client_with_config(
-                    Duration::from_secs(5),
-                    pool_max_idle_per_host,
-                    pool_idle_timeout,
-                ),
-                create_http_client_with_config(
-                    Duration::from_secs(5),
-                    pool_max_idle_per_host,
-                    pool_idle_timeout,
-                ),
-            )
+        // Phase 60: eggfetch lane. Parity with the legacy construction:
+        // explicit site TLS wins when present (skip_verify honored inside
+        // the policy); otherwise the plaintext-allowed default mirrors the
+        // ambient legacy client. Identical policies share one underlying
+        // pool via the lane's global cache, like the legacy policy-keyed
+        // client cache did — one handle here, cloned for revalidation.
+        let plaintext_default = UpstreamTlsConfig {
+            allow_plaintext: true,
+            ..UpstreamTlsConfig::default()
         };
+        let tls = tls_config.unwrap_or(&plaintext_default);
+        let lane_client = EggfetchUpstreamClient::cached(
+            Duration::from_secs(5),
+            pool_max_idle_per_host,
+            pool_idle_timeout,
+            tls,
+        )
+        .unwrap_or_else(|e| {
+            tracing::warn!(
+                site_id = %site_id,
+                error = %e,
+                "eggfetch lane: site TLS policy failed to build (bad custom CA?); \
+                 falling back to verifying default TLS (fail-closed)"
+            );
+            EggfetchUpstreamClient::build(
+                Duration::from_secs(5),
+                pool_max_idle_per_host,
+                pool_idle_timeout,
+                &UpstreamTlsConfig::default(),
+            )
+            .expect("eggfetch lane must build for default policy")
+        });
 
         let skip_verify = tls_config.map(|t| t.skip_verify).unwrap_or(false);
 
         ProxyServer {
-            erased_client: ErasedHttpClient::new(100),
-            _client: client,
-            revalidation_client,
+            lane_client: lane_client.clone(),
+            revalidation_lane: lane_client,
             upstream_url,
             waf,
             max_response_size,
@@ -292,7 +293,7 @@ impl<W: WafProcessor> ProxyServer<W> {
         method: http::Method,
         path: String,
         user_agent: Option<String>,
-        body: Option<BoxErasedBody>,
+        body: Option<Bytes>,
         skip_waf_check: bool,
         headers: &http::HeaderMap,
     ) -> Result<ProxyResponse, String> {
@@ -318,28 +319,22 @@ impl<W: WafProcessor> ProxyServer<W> {
             }
         }
 
-        let (full_body_bytes, body): (Option<bytes::Bytes>, Option<BoxErasedBody>) =
-            if !skip_waf_check {
-                const MAX_WAF_BODY_SIZE: usize = 1024 * 1024; // 1MB limit for WAF inspection
-                if let Some(b) = body {
-                    let collected = b
-                        .collect()
-                        .await
-                        .map_err(|e| format!("Body collection error: {}", e))?;
-                    let bytes = collected.to_bytes();
-                    let boxed_body: Option<BoxErasedBody> =
-                        Some(ErasedBodyImpl::new(Full::new(bytes.clone())));
-                    if bytes.len() <= MAX_WAF_BODY_SIZE {
-                        (Some(bytes), boxed_body)
-                    } else {
-                        (None, boxed_body)
-                    }
+        // Phase 60: the boundary takes plain `Bytes` now that the lane
+        // sends concrete bodies — no erase/collect/re-box round-trip.
+        let (full_body_bytes, body): (Option<bytes::Bytes>, Option<Bytes>) = if !skip_waf_check {
+            const MAX_WAF_BODY_SIZE: usize = 1024 * 1024; // 1MB limit for WAF inspection
+            if let Some(bytes) = body {
+                if bytes.len() <= MAX_WAF_BODY_SIZE {
+                    (Some(bytes.clone()), Some(bytes))
                 } else {
-                    (None, None)
+                    (None, Some(bytes))
                 }
             } else {
-                (None, body)
-            };
+                (None, None)
+            }
+        } else {
+            (None, body)
+        };
 
         if !skip_waf_check {
             let drop = self.drop_blocked_requests;
@@ -564,7 +559,7 @@ impl<W: WafProcessor> ProxyServer<W> {
         client_ip: std::net::IpAddr,
         method: http::Method,
         path: &str,
-        body: Option<BoxErasedBody>,
+        body: Option<Bytes>,
     ) -> Result<ProxyResponse, Box<dyn std::error::Error + Send + Sync>> {
         if self.skip_verify {
             tracing::warn!(
@@ -591,7 +586,7 @@ impl<W: WafProcessor> ProxyServer<W> {
         tunnel_url: &str,
         path: &str,
         headers: Option<&http::HeaderMap>,
-        body: Option<BoxErasedBody>,
+        body: Option<Bytes>,
     ) -> Result<ProxyResponse, Box<dyn std::error::Error + Send + Sync>> {
         let full_url = join_upstream_url(tunnel_url, path);
         self.send_single_request(method, &full_url, headers, body, None)
@@ -606,7 +601,7 @@ impl<W: WafProcessor> ProxyServer<W> {
         host: &str,
         headers: &http::HeaderMap,
         scheme: &str,
-        body: Option<BoxErasedBody>,
+        body: Option<Bytes>,
         client_ip: std::net::IpAddr,
     ) -> Result<ProxyResponse, String> {
         let purge_token = headers
@@ -653,7 +648,7 @@ impl<W: WafProcessor> ProxyServer<W> {
                                 let path_owned = path.to_string();
                                 let method_clone = method.clone();
                                 let upstream_url_clone = self.upstream_url.clone();
-                                let reval_client = self.revalidation_client.clone();
+                                let reval_lane = self.revalidation_lane.clone();
 
                                 // Build headers for revalidation (standard forward headers)
                                 let reval_headers = build_forward_headers(
@@ -682,7 +677,7 @@ impl<W: WafProcessor> ProxyServer<W> {
                                             path_owned
                                         );
                                         if let Err(e) = Self::revalidate_cache_entry(
-                                            &reval_client,
+                                            &reval_lane,
                                             cache_clone.clone(),
                                             key_clone.clone(),
                                             method_clone,
@@ -902,7 +897,7 @@ impl<W: WafProcessor> ProxyServer<W> {
     }
 
     async fn revalidate_cache_entry(
-        client: &HttpClient,
+        lane: &EggfetchUpstreamClient,
         cache: Arc<ProxyCache>,
         key: CacheKey,
         method: http::Method,
@@ -914,15 +909,19 @@ impl<W: WafProcessor> ProxyServer<W> {
 
         let url = join_upstream_url(&upstream_url, &path);
 
-        match send_request_with_body_headers_and_timeout(
-            client,
-            method,
-            &url,
-            None,
-            headers,
-            Some(Duration::from_secs(5)),
-        )
-        .await
+        // Phase 60: eggfetch lane. `send_buffered` returns `HttpResponse`
+        // directly (same type the legacy collect produced): status, headers,
+        // and body flow into the cache update unchanged.
+        match lane
+            .send_buffered(
+                method,
+                &url,
+                None,
+                headers,
+                Some(Duration::from_secs(5)),
+                None,
+            )
+            .await
         {
             Ok(response) => {
                 let status = response.status_code();
@@ -960,15 +959,15 @@ impl<W: WafProcessor> ProxyServer<W> {
         method: http::Method,
         path: &str,
         pool: &UpstreamPool,
-        mut body: Option<BoxErasedBody>,
+        mut body: Option<Bytes>,
     ) -> Result<ProxyResponse, Box<dyn std::error::Error + Send + Sync>> {
         let retry_config = self.retry_config.as_ref();
         let retry_enabled = retry_config.map(|c| c.enabled).unwrap_or(false);
         let max_retries = retry_config.map(|c| c.max_retries).unwrap_or(3);
-        // `ErasedBody` is a one-shot stream. Retrying after it has been
-        // consumed would silently send an empty body to the next backend.
-        // Restrict this loop to bodyless requests until a replayable body
-        // abstraction is available.
+        // `body` is `Bytes` (replayable), but the retry loop keeps the
+        // legacy one-shot take semantics: only bodyless requests retry, so
+        // a consumed body can never silently become empty on the next
+        // backend. Preserved deliberately, not re-tuned.
         let body_is_replayable = body.is_none();
         let should_retry_method = body_is_replayable
             && retry_config
@@ -1126,7 +1125,7 @@ impl<W: WafProcessor> ProxyServer<W> {
         method: http::Method,
         url: &str,
         headers: Option<&http::HeaderMap>,
-        body: Option<BoxErasedBody>,
+        body: Option<Bytes>,
         client_ip: Option<std::net::IpAddr>,
     ) -> Result<ProxyResponse, Box<dyn std::error::Error + Send + Sync>> {
         use crate::headers::HOP_BY_HOP_HEADERS;
@@ -1135,21 +1134,10 @@ impl<W: WafProcessor> ProxyServer<W> {
 
         if is_quictunnel_url(url) {
             if let Some(ref sender) = self.quic_tunnel_sender {
-                let bytes_body = if let Some(mut b) = body {
-                    let mut collected = bytes::BytesMut::new();
-                    let waker = futures::task::noop_waker();
-                    let mut cx = std::task::Context::from_waker(&waker);
-                    while let std::task::Poll::Ready(Some(Ok(frame))) = b.poll_frame(&mut cx) {
-                        if frame.is_data() {
-                            if let Ok(data) = frame.into_data() {
-                                collected.extend_from_slice(&data);
-                            }
-                        }
-                    }
-                    Some(collected.freeze())
-                } else {
-                    None
-                };
+                // Phase 60: the body arrives as `Bytes` — the legacy
+                // manual frame-pump drain disappears. A collection failure
+                // can no longer occur here (fail-closed by construction).
+                let bytes_body = body;
 
                 let (status, resp_headers, response_body) = sender
                     .send_via_quic_tunnel(
@@ -1192,20 +1180,21 @@ impl<W: WafProcessor> ProxyServer<W> {
             headers.cloned().unwrap_or_default()
         };
 
-        let response = send_request_erased_streaming(
-            &self.erased_client,
-            method,
-            url,
-            body.unwrap_or_else(|| {
-                ErasedBodyImpl::from_full(http_body_util::Full::new(bytes::Bytes::new()))
-            }),
-            forward_headers,
-            Some(std::time::Duration::from_secs(30)),
-            self.is_http2,
-        )
-        .await?;
+        // Phase 60: eggfetch lane. `execute` streams the response like the
+        // legacy erased path did; `SyncBody` adapts the non-`Sync` native
+        // body for the boxed response exactly as the canonical dispatch does.
+        let mut req = http::Request::builder()
+            .method(method)
+            .uri(url)
+            .body(Full::new(body.unwrap_or_default()))?;
+        // Mirror the legacy helpers: caller headers replace, not append.
+        *req.headers_mut() = forward_headers;
+        let response = self
+            .lane_client
+            .execute(req, Some(std::time::Duration::from_secs(30)), None)
+            .await?;
 
-        let (parts, incoming_body) = response.into_parts();
+        let (parts, lane_body) = response.into_parts();
 
         let mut builder = Response::builder().status(parts.status);
         for (k, v) in parts.headers.iter() {
@@ -1214,7 +1203,8 @@ impl<W: WafProcessor> ProxyServer<W> {
             }
         }
 
-        let streamed_body = incoming_body.map_err(|e| std::io::Error::other(format!("{:?}", e)));
+        let streamed_body =
+            SyncBody::new(lane_body).map_err(|e| std::io::Error::other(format!("{:?}", e)));
 
         Ok(builder.body(streamed_body.boxed())?)
     }

@@ -6,7 +6,6 @@ use http::{HeaderMap, Method};
 use metrics::counter;
 
 use synvoid_config::MainConfig;
-use synvoid_http_client::HttpClient;
 use synvoid_metrics::bandwidth::BandwidthTracker;
 use synvoid_metrics::WorkerMetrics;
 use synvoid_proxy::client_registry::UpstreamClientRegistry;
@@ -37,7 +36,6 @@ pub async fn handle_http3_found_route<W>(
     connection_guard: Option<&ConnectionTokenGuard>,
     connection_limiter: Option<&Arc<ConnectionLimiter>>,
     main_config: &Arc<MainConfig>,
-    client: &HttpClient,
     upstream_client_registry: &Arc<UpstreamClientRegistry>,
     bandwidth: Option<&Arc<BandwidthTracker>>,
     metrics: Option<&Arc<WorkerMetrics>>,
@@ -94,7 +92,7 @@ where
             request_stream,
             body_bytes,
             main_config,
-            client,
+            upstream_client_registry,
             bandwidth,
             metrics,
         )

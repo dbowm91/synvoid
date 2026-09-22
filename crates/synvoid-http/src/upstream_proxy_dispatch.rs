@@ -8,7 +8,7 @@ use http_body_util::combinators::BoxBody;
 use http_body_util::Full;
 
 use synvoid_config::MainConfig;
-use synvoid_http_client::{send_request_streaming_generic, ErasedBodyImpl};
+use synvoid_http_client::eggfetch_transport::EggfetchResponseBody;
 #[cfg(feature = "mesh")]
 use synvoid_mesh::mesh::transport::MeshTransportManager;
 use synvoid_metrics::WorkerMetrics;
@@ -59,15 +59,31 @@ where
     MarkImageRightsFut: std::future::Future<Output = Bytes>,
 {
     if let Some(streaming) = dispatch_plan.streaming {
-        let erased_body = ErasedBodyImpl::from_full(Full::new(full_body_arc.as_ref().clone()));
-        let request_result = send_request_streaming_generic(
-            streaming.client.as_ref().clone(),
-            method.clone(),
-            dispatch_plan.upstream_target.url.clone(),
-            erased_body,
-            streaming.forward_headers,
-            Some(dispatch_plan.upstream_target.timeout),
-        )
+        // Phase 60: eggfetch lane. The lane returns a streaming
+        // `Response<EggfetchResponseBody>`; `handle_streaming_upstream_response`
+        // stays generic over the body type. Request-build failures flow
+        // through the same `Err` branch (→502) the legacy transport used.
+        let request_result: anyhow::Result<Response<EggfetchResponseBody>> = async {
+            let uri: http::Uri = dispatch_plan.upstream_target.url.parse().map_err(|e| {
+                anyhow::anyhow!(
+                    "eggfetch lane: invalid upstream URL {}: {}",
+                    dispatch_plan.upstream_target.url,
+                    e
+                )
+            })?;
+            let mut req = http::Request::builder()
+                .method(method.clone())
+                .uri(uri)
+                .body(Full::new(full_body_arc.as_ref().clone()))
+                .map_err(|e| anyhow::anyhow!("eggfetch lane: failed to build request: {}", e))?;
+            // Mirror the legacy helpers: caller headers replace, not append.
+            *req.headers_mut() = streaming.forward_headers;
+            streaming
+                .client
+                .execute(req, Some(dispatch_plan.upstream_target.timeout), None)
+                .await
+                .map_err(anyhow::Error::from)
+        }
         .await;
 
         return handle_streaming_upstream_response(

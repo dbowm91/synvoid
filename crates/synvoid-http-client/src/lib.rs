@@ -18,6 +18,13 @@
 //! no tunnel state.
 
 mod client;
+#[cfg(test)]
+mod eggfetch_differential;
+mod eggfetch_policy;
+// Phase 60: crate-public internal lane for consumer migration. NOT
+// re-exported here and NOT part of the root surface (`src/http_client/`
+// uses explicit re-exports that exclude it); carries no stability promise.
+pub mod eggfetch_transport;
 mod erased_pool;
 mod pool;
 mod request;

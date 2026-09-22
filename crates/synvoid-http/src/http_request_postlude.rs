@@ -97,7 +97,6 @@ pub struct HttpRequestPostludeContext<W> {
     pub client_ip: IpAddr,
     pub router: Arc<Router>,
     pub waf: Arc<W>,
-    pub client: synvoid_http_client::HttpClient,
     pub alt_svc: Option<String>,
     pub main_config: Arc<MainConfig>,
     pub http_config: HttpConfig,
@@ -175,7 +174,6 @@ where
         client_ip,
         router,
         waf,
-        client,
         alt_svc,
         main_config,
         http_config,
@@ -418,7 +416,6 @@ where
         request_body_size,
         body_slice,
         upstream_client_registry,
-        client,
         forwarded_protocol,
         #[cfg(feature = "mesh")]
         serverless_manager,
