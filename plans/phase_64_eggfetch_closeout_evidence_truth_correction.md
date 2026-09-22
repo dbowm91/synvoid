@@ -18,8 +18,8 @@ Upstream follow-up now concretely registered in eggfetch:
 
 - repository: `eggstack/eggfetch`;
 - plan: `plans/native-concurrent-streaming-tail-investigation.md`;
-- upstream planning registration head:
-  `916521cb404d691cbb7370cfc2235a2a316abaa2`;
+- upstream planning head after registration/index reconciliation:
+  `b3c009df90f9ab09e91e8fa7464653dceb300dd8`;
 - upstream 0.2.0 planning baseline:
   `8959ca890ee34f4cf456aed648315322f1e83ef7`.
 
