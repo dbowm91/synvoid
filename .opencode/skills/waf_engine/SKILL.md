@@ -1,6 +1,6 @@
 ---
 name: waf_engine
-description: Core WAF engine — 16 attack detectors, normalizer, narrow request-path traits, enforcement verdicts. Use when adding detectors, touching normalization, or wiring WAF capabilities.
+description: Core WAF engine — 13 policy detectors (+HeaderValidator, behavioral engine), normalizer, narrow request-path traits, enforcement verdicts. Use when adding detectors, touching normalization, or wiring WAF capabilities.
 ---
 
 # Skill: WAF Engine

@@ -5,8 +5,6 @@ description: eBPF-based SYN-level traffic dropping and block store integration f
 
 # eBPF SYN-Level Dropping and Block Store Integration
 
-**Status**: ✅ COMPLETE (2026-05-06)
-
 ## Overview
 
 The eBPF SYN-level dropping feature allows blocking IPs at the network driver level before they consume any userspace memory. This is implemented via XDP (eXpress Data Path) in the `ebpf-flood` crate.
@@ -15,7 +13,10 @@ The eBPF SYN-level dropping feature allows blocking IPs at the network driver le
 
 - `ebpf-flood/src/maps.rs` - eBPF map definitions
 - `ebpf-flood/src/xdp.rs` - XDP program for SYN filtering and blocklist checking
-- `src/block_store.rs` - Userspace block store with eBPF hook integration
+- `crates/synvoid-block-store/src/lib.rs` - Canonical block store (`BlockStore`,
+  `block_ip_with_provenance`); `src/block_store.rs` is only a compat re-export facade
+- `crates/synvoid-icmp-filter/src/ebpf.rs` - eBPF backend for ICMP filtering
+  (see `icmp_filter` skill for the per-protocol backend)
 
 ## Architecture
 
@@ -42,41 +43,34 @@ filter_syn()
                               └── XDP_PASS (allow)
 ```
 
-### Block Store Hook
+### Block Store Hook (current status — read before copying old snippets)
 
-When an IP is blocked with "global" scope, the block store invokes a registered hook to insert the IP into eBPF maps:
+The `GlobalBlockHook` type alias (`Arc<dyn Fn(IpAddr) + Send + Sync>`) still
+exists at `crates/synvoid-block-store/src/lib.rs:33`, but **no setter, field, or
+call site references it anywhere in `crates/`, `src/`, or `tests/`** — the old
+`BlockStore::set_ebpf_block_hook()` / `ebpf_block_hook` wiring was removed
+during modularization. Do NOT add a `set_ebpf_block_hook` method or a
+`src/block_store.rs` inherent impl; `src/block_store.rs` is a pure re-export
+facade.
+
+Canonical write path for new code (see `block_store` skill):
 
 ```rust
-// src/block_store.rs
-pub type GlobalBlockHook = Arc<dyn Fn(IpAddr) + Send + Sync>;
+use synvoid_block_store::{BlockProvenance, BlockProvenanceKind};
 
-pub struct BlockStore {
-    ebpf_block_hook: Option<GlobalBlockHook>,
-    // ...
-}
-
-impl BlockStore {
-    pub fn set_ebpf_block_hook(&self, hook: GlobalBlockHook) {
-        self.ebpf_block_hook = Some(hook);
-    }
-
-    pub fn block_ip(&self, ip: IpAddr, reason: &str, ban_expire_seconds: u64, site_scope: &str) -> bool {
-        // ... existing block logic ...
-
-        // Invoke eBPF hook for global blocks
-        if site_scope == "global" {
-            if let Some(ref hook) = self.ebpf_block_hook {
-                hook(ip);
-            }
-        }
-
-        self.trigger_persist();
-        true
-    }
-}
+let provenance = BlockProvenance {
+    kind: BlockProvenanceKind::LocalWaf, // or the matching kind — never invent one
+    source: None,
+};
+store.block_ip_with_provenance(ip, reason, ttl_secs, site_scope, provenance);
 ```
 
-## Integration Pattern
+`BlockProvenanceKind::LegacyUnknown` is reserved for compat/tests/mocks only.
+Kernel-map synchronization for eBPF backends, if needed, must be built as an
+explicit subscriber of blocklist events (see `BlocklistEvent`), not as a hidden
+hook inside `BlockStore`.
+
+## Integration Pattern (reference — userspace eBPF map sync)
 
 The eBPF hook requires a separate userspace component that:
 1. Loads the eBPF program and maps using `aya`
@@ -116,10 +110,10 @@ fn setup_ebpf_blocking() {
 cargo build --package ebpf-flood
 
 # Check userspace compilation
-cargo check --lib
+cargo check --profile ci
 
-# Run tests
-cargo test --lib block_store
+# Run block-store tests
+cargo nextest run -p synvoid-block-store --cargo-profile ci --profile ci
 ```
 
 ## Performance Impact

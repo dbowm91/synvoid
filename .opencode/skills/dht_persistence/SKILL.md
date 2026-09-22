@@ -5,6 +5,12 @@ description: DHT neighborhood persistence for mesh warm-up acceleration and redu
 
 # Skill: DHT Neighborhood Persistence
 
+> **Scope**: this skill owns *neighborhood persistence* (warm-up acceleration)
+> only. Quorum proofs, Merkle sync, Raft/SQLite recovery, trust anchors, and
+> ingress validation discussed further down in this file belong to the
+> `raft_consensus` and `synvoid_mesh` skills — consult those first for
+> non-persistence questions.
+
 ## Context
 The codebase implements DHT neighborhood persistence to accelerate mesh warm-up and reduce bootstrap traffic.
 

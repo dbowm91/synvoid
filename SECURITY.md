@@ -1,5 +1,8 @@
 # Security Policy
 
+> Operator hardening guidance lives in `docs/SECURITY.md` — this file is the
+> vulnerability-reporting policy and supported-version statement.
+
 ## Supported Versions
 
 We release security patches for the latest released version. We recommend users to always use the latest release.

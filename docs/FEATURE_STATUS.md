@@ -28,6 +28,9 @@ These features are supported but not in the default profile. Enable them via fea
 | Buffer Pool | `buffer` | Sharded buffer pool with ABA-safe design | All |
 | rkyv Serialization | `rkyv` | Zero-copy serialization for DNS/DHT types | All |
 | FastCGI Streaming | `fastcgi_streaming` | Streaming FastCGI response handling | All |
+| Flood eBPF | `flood-ebpf` | XDP SYN-level dropping via `ebpf-flood` (needs Aya tooling + CAP_NET_ADMIN/root) | Linux |
+| DNS HSM | `dns-hsm` | Opt-in PKCS#11/HSM backing for DNSSEC via the keystore custody boundary (off by default: no `cryptoki` in graph) | All (with HSM) |
+| Unsafe Native Extensions | `unsafe-native-extensions` | Opt-in in-process native extensions (compile gate PLUS runtime gates: disabled by default, risk acknowledgement + path allowlist; NOT sandboxed) | All |
 
 ## Beta Features
 
@@ -52,8 +55,9 @@ cargo build --release --features post-quantum
 # Post-quantum verification (Beta)
 cargo build --release --features verify-pq
 
-# All features including Beta
-cargo build --release --all-features
+# NOTE: never treat --all-features as a build profile —
+# `cargo check --all-features` is a tracked exception (see docs/RELEASE.md §9:
+# synvoid-icmp-filter eBPF resolution). Enable Beta features individually.
 ```
 
 ### Beta Feature Runtime Requirements

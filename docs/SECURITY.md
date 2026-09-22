@@ -1,5 +1,8 @@
 # Security Hardening Guide
 
+> Vulnerability reporting and supported versions: root `SECURITY.md` — this
+> file is the operator hardening guide.
+
 This guide covers security best practices for deploying SynVoid in production.
 
 ## Network Security

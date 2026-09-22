@@ -12,10 +12,12 @@ cargo install cargo-nextest@0.9.140
 
 ### CI Installation
 
-Use `taiki-e/install-action` (installs the pinned latest stable by default):
+Pinned via `taiki-e/install-action` with explicit `tool@version` (see `.github/workflows/ci.yml`):
 
 ```yaml
-- uses: taiki-e/install-action@nextest
+- uses: taiki-e/install-action@9534c84618278caac52cb373bb164ed464dbd8af # v2
+  with:
+    tool: nextest@0.9.140,cargo-deny@0.20.2,cargo-audit@0.22.2
 ```
 
 ### Version Verification

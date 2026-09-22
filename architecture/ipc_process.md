@@ -1,14 +1,17 @@
 # IPC & Process Module Architecture
 
-**Module Path:** `src/process/`
+**Module Path:** `src/process/` (6-line re-export facade over `synvoid-ipc` — see §2)
 
-**Purpose:** Provides inter-process communication (IPC) infrastructure and process lifecycle management for the SynVoid multi-process architecture. This module handles all aspects of supervisor/worker process spawning, IPC message passing, signed authentication, rate limiting, and process supervision. Legacy `Master` and `StaticWorker` names remain in a few message and command types for compatibility.
+**Purpose:** Canonical IPC infrastructure and process lifecycle management live
+in `crates/synvoid-ipc/`. `src/process/mod.rs` only re-exports
+(`pub use synvoid_ipc::*`) so older root-crate paths keep compiling. New code
+imports `synvoid_ipc::{ipc_signed, ipc_transport, …}` directly. This module handles all aspects of supervisor/worker process spawning, IPC message passing, signed authentication, rate limiting, and process supervision. Legacy `Master` and `StaticWorker` names remain in a few message and command types for compatibility.
 
 ---
 
-## 1. Purpose and Responsibility
+## 1. Responsibilities (all implemented in `crates/synvoid-ipc/`, re-exported here)
 
-The IPC & Process module is responsible for:
+The IPC & Process stack is responsible for:
 
 1. **Process Lifecycle Management**: Spawning, supervising, health monitoring, and graceful shutdown of worker processes (base workers, unified server workers, and CPU offload workers; `StaticWorker` names remain as compatibility aliases)
 2. **IPC Transport**: Reliable message passing between supervisor and worker processes via Unix domain sockets (Unix) or named pipes (Windows)

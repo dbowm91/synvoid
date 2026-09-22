@@ -4,6 +4,10 @@
 > **Purpose**: Catalog every test that uses or mutates shared resources (ports, env vars, spawned processes, temp files, sleeps). Enables safe nextest parallelization, CI isolation, and targeted flake remediation.
 > **Generated**: 2026-07-15
 > **Scope**: All root integration tests (28 files) + per-crate test suites
+> **Addendum 2026-09-22**: root tests have grown to 44 files (see
+> `tests/OWNERSHIP.toml`); per-file rows below cover the 28 files present at
+> generation time. New files need inventory rows before relying on this doc
+> for parallelization decisions.
 
 ---
 
@@ -49,7 +53,7 @@
 
 | File | Spawn Type | Count | Awaited? | Cleanup | Risk |
 |---|---|---|---|---|---|
-| `fault_injection_test.rs:24,36,50,60` | `Command::new(binary_path)` + `pgrep` + `kill -9` | 4 OS processes | N/A | `overseer.kill()` + `wait()` (no panic guard) | **HIGH** |
+| `fault_injection_test.rs:24,36,50,60` | `Command::new(binary_path)` + `pgrep` + `kill -9` | 4 OS processes | N/A | `child.kill()` via guard struct + `wait()` (no panic guard; doc's old `overseer.kill()` name is stale) | **HIGH** |
 | `drain_e2e_test.rs` | `tokio::spawn` | 4 tasks | Yes (all `.await`) | RAII `TempDir` | LOW |
 | `e2e_process_test.rs` | `tokio::spawn` | 6 tasks | Yes (all `.await`) | RAII `TempDir` | LOW |
 | `integration_test.rs` | `tokio::spawn` | 12 tasks | Yes (all `.await`) | RAII `TempDir` | LOW |

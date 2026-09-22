@@ -552,7 +552,7 @@ cargo test -p synvoid-dns --profile ci
 | 2 | `verify` returns nonzero for a failed test late in the sequence | Inject `assert!(false)` in `root_test_ownership_guard.rs` (step 6, root-guards); run `cargo xtask verify` | Exit code 1 at step `root-guards`. Steps 1-5 passed, step 7-9 skipped. ✓ |
 | 3 | `verify-full` does not report success when an added full-only test fails | Inject `assert!(false)` in a DNS test file; run `cargo xtask verify-full` | Exit code 1 at step `nextest-all`. Subsequent steps skipped. ✓ |
 | 4 | Product guard command reports the specific violated invariant | Inject inverted assertion in `boundary_composition_guard.rs::simulated_violation_in_waf_is_detected`; run `cargo xtask test guards` | Exit code 1 at step `root-guards`. Test name and assertion failure printed. ✓ |
-| 5 | Deleting lane manifest does not affect `verify` | `testing/lanes.toml` deleted in Phase 3. `cargo xtask verify` does not reference it. | `verify` runs 9 steps without lane parsing. ✓ |
+| 5 | Deleting lane manifest does not affect `verify` | `testing/lanes.toml` deleted in Phase 3. `cargo xtask verify` does not reference it. | `verify` ran 9 steps without lane parsing at the time (10 since Phase 25 added `dependency-policy`). ✓ |
 | 6 | Deleting selector does not alter routine command selection | `scripts/ci/select-affected.py` deleted in Phase 3. No selector code remains. | `verify` runs fixed command set. No selection logic. ✓ |
 | 7 | Command wrapper outside repo root resolves root or fails precisely | Run `cargo xtask verify` from `/tmp` | Error: `reached filesystem root without finding workspace Cargo.toml`. Exit code 1. ✓ |
 
@@ -710,7 +710,8 @@ them intentionally in the same commit that updates the pins below.
 - Routine invocation count is 9 → 10 Cargo invocations (fmt + deny + 8);
   `verify-full` raw commands are 9 → 10 with `minimal-tests`.
 - Rust 1.98.1 satisfies the `rust-version` requirements of the landed direct
-  runtime (wasmtime 36.0.15 LTS) and the transitive yara-x 40.0.4 line; a
+  runtime (wasmtime 36.0.15 LTS) and the transitive yara-x 1.20 line (wasmtime
+  47.0.4 via the `third-party/yara-x-compat` fork); a
   future ≥46/48 move (re-attempted only after the `bumpalo` blocker clears —
   see the dependency-security baseline §4/§9; Re-audit: 2026-10-01) re-checks
   this toolchain bound at that time.

@@ -28,6 +28,12 @@ validation stays in-process in the supervisor composition root
 invoked ONLY from `submit_rule_for_approval` after edge-role + size/content gates.
 Remote ingress (submission receipt, announces, DHT sync) is size/signature-gated and
 never invokes the compiler; approval distributes text without compiling.
+
+> **Scope note**: transport-lifecycle iteration history in this file duplicates
+> `architecture/mesh_transport_lifecycle.md` — for lifecycle API consult the
+> architecture doc; this skill owns roles/DHT-keys/routing/attestation/PoW.
+> Consensus internals belong to `raft_consensus`, persistence warm-up to
+> `dht_persistence`, org keys to `org_key_trust_chain`.
 `synvoid-mesh` links no `yara-x`. Proof: `crates/synvoid-mesh/tests/yara_approval_boundary.rs`
 (counting-validator tests) + `architecture/mesh.md` §13. Do not move `yara-x` into
 mesh or add compiler calls on remote paths.

@@ -17,7 +17,7 @@ Use this skill when:
 
 ## Key Files
 - `src/admin/handlers/mesh_topology.rs` - Handler implementation
-- `src/admin/mod.rs` - Route registration (line ~626)
+- `src/admin/routes.rs` - Route registration (lines ~617-622)
 - `src/admin/handlers/mod.rs` - Module declaration
 - `crates/synvoid-mesh/src/mesh/topology.rs` - `MeshTopology::get_all_peers()`
 
@@ -91,10 +91,16 @@ pub struct GraphEdge {
 ```
 
 ### 5. Route Registration
-In `src/admin/mod.rs`:
+In `src/admin/routes.rs` (~lines 617-622):
 ```rust
-.route("/mesh/topology", get(handlers::mesh_topology::get_mesh_topology))
-.route("/mesh/topology/graph", get(handlers::mesh_topology::get_topology_graph))
+.route(
+    "/mesh/topology",
+    get(handlers::mesh_topology::get_mesh_topology),
+)
+.route(
+    "/mesh/topology/graph",
+    get(handlers::mesh_topology::get_topology_graph),
+)
 ```
 
 ### 6. Module Declaration

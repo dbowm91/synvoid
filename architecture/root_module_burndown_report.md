@@ -1,5 +1,9 @@
 # Root Module Burn-Down Report
 
+> **Status: historical (Phase 15)**. Superseded by `root_module_ledger.md`
+> (binding owner) + `facade_disposition_matrix.md` (Phase 03 delta). Do not
+> cite classifications here as current.
+
 ## Summary
 
 Phase 15 initial burn-down pass. Three modules reclassified from `split_required` to `keep_app_root`:

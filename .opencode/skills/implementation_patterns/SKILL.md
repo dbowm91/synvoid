@@ -1,30 +1,9 @@
 ---
 name: implementation_patterns
-description: Common implementation patterns including semaphores, debounce, atomic writes, and worktree workflows.
+description: Common implementation patterns including semaphores, debounce, atomic writes, and response-body helpers.
 ---
 
 # Implementation Patterns
-
-## Worktree Workflow for Parallel Tasks
-
-When implementing multiple independent fixes:
-
-1. **Create worktrees** for each task to avoid conflicts:
-   ```bash
-   git worktree add /path/to/worktrees/task-name HEAD
-   ```
-
-2. **Each agent works in its own worktree** — never modify the main working directory directly
-
-3. **Merge sequentially** after verification:
-   ```bash
-   git merge <commit-hash> --no-edit
-   ```
-
-4. **Clean up worktrees** after merge:
-   ```bash
-   git worktree remove --force /path/to/worktree
-   ```
 
 ## Semaphore Pattern (FastCGI)
 
@@ -33,7 +12,7 @@ When implementing multiple independent fixes:
 let _permit = timeout(self.config.connection_timeout, self.semaphore.acquire())
     .await
     .map_err(|_| FastCgiError::ConnectionFailed("Timeout acquiring permit".to_string()))?
-    .map_err(|_| FastGError::ConnectionFailed("Semaphore closed".to_string()))?;
+    .map_err(|_| FastCgiError::ConnectionFailed("Semaphore closed".to_string()))?;
 // Permit held until function returns
 ```
 
@@ -45,14 +24,15 @@ drop(permit); // BUG: concurrency limit bypassed
 
 ## SSRF Validation Pattern
 
-Always check both `http://` and `https://` URLs:
+Authoritative SSRF rules live in the `security_patterns` skill — follow them,
+not this sketch. Minimal shape (both schemes, then private-IP check on host):
 ```rust
 if url_lower.starts_with("http://") || url_lower.starts_with("https://") {
     let host = url
         .strip_prefix("http://")
         .or_else(|| url.strip_prefix("https://"))
         .unwrap_or(url);
-    // ... check host for private IPs
+    // ... check host for private IPs (see security_patterns)
 }
 ```
 

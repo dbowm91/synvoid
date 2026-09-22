@@ -28,7 +28,7 @@ no sources, not a workspace member, zero references) was removed.
 | `pqc` (1062 LOC) | Post-quantum crypto primitives (isolates `rand` 0.6/0.9 shim + aws-lc) | Keep (dependency isolation for crypto) |
 | `admin-ui` | Yew/WASM admin frontend (Trunk, not a Rust lib dep) | Keep (build isolation) |
 | `examples/*` (2) | Dynamic-plugin and embedded-app examples | Keep (not shipped) |
-| `fuzz` | cargo-fuzz harness (20 targets after Phase 24) | Keep (build isolation; excluded from publish) |
+| `fuzz` | cargo-fuzz harness (20 targets after Phase 24; 21 as of 2026-09 — this doc is a frozen Phase 35 record, see `architecture/overview.md` for current count) | Keep (build isolation; excluded from publish) |
 | `tools/xtask` (1999 LOC) | `cargo xtask verify*` CI orchestration | Keep (tooling isolation) |
 | `tools/synvoid-repo-guards` (226 LOC) | Static repo guards run by CI + `verify_architecture.sh` | Keep (tooling isolation) |
 

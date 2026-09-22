@@ -42,31 +42,39 @@ struct StreamingState {
 }
 ```
 
-### 2. Trailing Window Pattern (CRITICAL - Fixed 2026-05-23)
+### 2. Trailing Window Pattern (CRITICAL - Fixed 2026-05-23, Phase-54 rule)
 
-The trailing window MUST properly accumulate context across chunks:
+The trailing window MUST properly accumulate context across chunks. Canonical
+code is `process_regular_chunk` in
+`crates/synvoid-waf/src/attack_detection/streaming.rs:114-143`:
 
 ```rust
-// CORRECT - sliding window accumulates previous + current
-let previous_len = self.state.trailing_window.len().min(TRAILING_WINDOW_SIZE);
-let to_copy = TRAILING_WINDOW_SIZE.saturating_sub(chunk.len());
-let copy_start = chunk.len().saturating_sub(to_copy);
+// Scan previous window + current chunk together so patterns split across
+// chunk boundaries are still detected.
+if let Some(result) = self.inner.check_body_fragments(
+    &[self.state.trailing_window.as_slice(), chunk],
+) { /* ... Block ... */ }
 
-self.state.trailing_window.clear();
-if previous_len > 0 {
-    // Keep previous trailing bytes (up to limit)
-    let prev_start = self.state.trailing_window.len().saturating_sub(previous_len);
-    let prev_end = self.state.trailing_window.len();
-    let prev_data = self.state.trailing_window.slice(prev_start..prev_end);
-    self.state.trailing_window.extend_from_slice(&prev_data);
-}
-// Add current chunk bytes
-self.state.trailing_window.extend_from_slice(&chunk[copy_start..]);
+// Slide the window: keep up to TRAILING_WINDOW_SIZE (512) bytes of
+// previous + current. Snapshot BEFORE emptying (borrow discipline).
+let max_old = TRAILING_WINDOW_SIZE.saturating_sub(chunk.len());
+let take = self.state.trailing_window.len().min(max_old);
+let old_start = self.state.trailing_window.len() - take;
+let previous_content = self.state.trailing_window[old_start..].to_vec();
+
+// Phase 54: `resize(0)` empties the window; `clear()` only zeroizes
+// in place and would make the extends below accumulate unboundedly.
+self.state.trailing_window.resize(0);
+self.state.trailing_window.extend_from_slice(&previous_content);
+self.state.trailing_window.extend_from_slice(
+    &chunk[chunk.len().saturating_sub(
+        TRAILING_WINDOW_SIZE.saturating_sub(previous_content.len()))..],
+);
 ```
 
 **Common Bug**: Simply `extend_from_slice(&chunk[window_start..])` loses previous context. Attack patterns split across chunk boundaries won't be detected.
 
-### 2. Required Methods
+### 3. Required Methods
 - `scan_chunk(&self, chunk: &[u8]) -> StreamingWafDecision` - Main scanning entry
 - `scan_chunk_utf8(&self, chunk: &[u8]) -> StreamingWafDecision` - UTF-8 validated version
 - `finalize(&self) -> Option<AttackDetectionResult>` - Get final detection result
@@ -91,7 +99,7 @@ a zero prefix in scanned content. Cross-chunk coverage is pinned by
 `test_streaming_cross_chunk_split_patterns` (every split position) — do not
 weaken it for performance.
 
-### 3. StreamingWafDecision Enum
+### 4. StreamingWafDecision Enum
 ```rust
 pub enum StreamingWafDecision {
     Continue,           // Normal operation, continue
@@ -112,7 +120,7 @@ buffered body-policy failures via `BodyPolicyError::candidate()` in
 `crates/synvoid-http/src/body_policy.rs` (both variants terminal,
 fail-closed). See `architecture/enforcement_decision_contract.md`.
 
-### 4. AttackDetector Integration
+### 5. AttackDetector Integration
 Add `check_body_only_via_normalized()` to `AttackDetector`:
 ```rust
 pub fn check_body_only_via_normalized(&self, body_str: &str) -> Option<AttackDetectionResult> {
@@ -120,7 +128,7 @@ pub fn check_body_only_via_normalized(&self, body_str: &str) -> Option<AttackDet
 }
 ```
 
-### 5. Fail-Closed Buffer Overflow
+### 6. Fail-Closed Buffer Overflow
 Always check buffer limits:
 ```rust
 if state.pending_chunks.len() >= self.max_buffered_chunks {
@@ -131,7 +139,7 @@ if state.pending_chunks.len() >= self.max_buffered_chunks {
 }
 ```
 
-### 6. Export Pattern
+### 7. Export Pattern
 In `crates/synvoid-waf/src/attack_detection/mod.rs`:
 ```rust
 pub use streaming::{StreamingWafCore, StreamingWafDecision};
@@ -139,9 +147,9 @@ pub use streaming::{StreamingWafCore, StreamingWafDecision};
 
 ## Verification
 ```bash
-cargo test --lib streaming
-cargo fmt
-cargo clippy --lib -- -D warnings
+cargo nextest run -p synvoid-waf --cargo-profile ci --profile ci -E 'test(streaming)'
+cargo fmt --all -- --check
+cargo clippy --profile ci --all-targets -- -D warnings
 ```
 
 ## Common Issues

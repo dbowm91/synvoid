@@ -48,21 +48,24 @@ cargo build --release
 
 ### 2. Basic Configuration
 
-Create a minimal `config/main.toml`:
+Create a minimal `config/main.toml` (shape mirrors the shipped
+`config/main.toml`; validate with `synvoid --configtest`):
 
 ```toml
 [server]
 host = "0.0.0.0"
-port = 80
-worker_threads = 0
-unified_server_workers = 1
+port = 8080
+
+[tokio]
+worker_threads = "auto"
 
 [tcp]
 worker_pool_size = 4
 
 [admin]
 enabled = true
-grpc_port = 50051
+port = 8081
+bind_address = "127.0.0.1"
 token = "your-secure-token-here"
 
 [logging]
@@ -129,32 +132,32 @@ seeds = ["10.0.0.1:5001", "10.0.0.2:5001"]
 
 **Step 2: Start Supervisors**
 ```bash
-./synvoid
+./synvoid --config-path ./config
 ```
 
-**Step 3: Verify Status via gRPC**
+**Step 3: Verify Status**
 ```bash
-./synvoid status
+./synvoid --status
 ```
 
 ## Command Line Options
 
-### Operational Commands
-
-SynVoid uses a gRPC-based `CommandClient` for management.
+SynVoid uses flags rather than positional subcommands
+(see `README.md` Operational CLI for the full table).
 
 ```bash
 ./synvoid                  # Start Supervisor (default mode)
-./synvoid status           # Show status of running instance via gRPC
-./synvoid reload           # Gracefully reload configuration and rotate workers
-./synvoid stop             # Stop running instance
-./synvoid configtest       # Validate configuration files and exit
+./synvoid --status         # Show status of running instance
+./synvoid --rehash         # Reload configuration and propagate it to workers
+./synvoid --restart        # Stop the running instance, then launch again
+./synvoid --stop           # Stop running instance
+./synvoid --configtest     # Validate configuration files and exit
 ./synvoid --foreground     # Run in foreground (don't daemonize)
 ```
 
 ### Test Modes
 
-Disable specific protections for load testing:
+`--test` requires `--force` (refused without it):
 
 ```bash
 ./synvoid --test all-off --force
@@ -163,9 +166,9 @@ Disable specific protections for load testing:
 ### Other Options
 
 ```bash
-./synvoid --config /path/to/main.toml   # Custom config path
-./synvoid --version                      # Print version
-./synvoid --help                         # Print help
+./synvoid --config-path ./config   # DIRECTORY containing main.toml + sites/ (not the TOML file)
+./synvoid --version                # Print version
+./synvoid --help                   # Print help (complete flag set)
 ```
 
 ## Next Steps

@@ -430,12 +430,8 @@ cargo +nightly fuzz run fuzz_raft_types  # Run with corpus
 ## Verification Commands
 
 ```bash
-# Build and test
-cargo build
-cargo test --lib
-
-# Run integration tests
-cargo test --test integration_test
+# Build and test (matches CI: nextest + ci profile, never bare `cargo test`)
+cargo nextest run -p synvoid-mesh --cargo-profile ci --profile ci
 ```
 
 ## Key Files

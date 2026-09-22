@@ -119,7 +119,7 @@ Full details in [`docs/PLATFORM_SUPPORT.md`](PLATFORM_SUPPORT.md).
 | Platform | Support Level | Notes |
 |----------|--------------|-------|
 | Linux x86_64 (glibc) | Primary | CPU pinning, Landlock sandboxing. Routinely verified in CI. |
-| Linux x86_64 (musl/Alpine) | Primary | Full feature support. Routinely verified in CI. |
+| Linux x86_64 (musl/Alpine) | Primary | Full feature support. CI runs ubuntu-latest only — musl coverage is aspirational; verify locally before claiming. |
 | macOS x86_64/aarch64 | Best effort | Full socket support, SO_REUSEPORT. Manually verified. |
 | Windows x86_64 (10+) | Best effort | Named pipe IPC, Windows Service support. Manually verified. |
 | FreeBSD x86_64 | Best effort | SO_REUSEPORT_LB kernel distribution. Manually verified. |
@@ -153,12 +153,11 @@ Library and binary crates are published on [crates.io](https://crates.io/crates/
 
 ## 6. Release Process Checklist
 
-### Pre-release
+### Pre-release (all gates defer to `docs/testing/verification-contract.md`)
 
 - [ ] All five compilation profiles compile cleanly
-- [ ] `cargo fmt --all -- --check` passes
-- [ ] `cargo clippy --all-targets --all-features -- -D warnings` passes
-- [ ] `cargo test --release --no-fail-fast` passes (all tests, zero failures)
+- [ ] `cargo xtask verify` passes (fmt → clippy `--profile ci --all-targets -D warnings` → deny → guards → security regression → admin contract → failure injection)
+- [ ] `cargo xtask verify-release` passes (release qualification + package inspection; fails on dirty tree; NEVER publishes)
 - [ ] `cargo deny check` passes (license and dependency audit; pinned cargo-deny 0.20.2, also a routine `verify` step)
 - [ ] `cargo audit` passes (security advisory check; pinned cargo-audit 0.22.2, mirrored ignores in `.cargo/audit.toml`)
 - [ ] Guard suite passes (all architecture invariant tests)

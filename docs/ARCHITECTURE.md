@@ -4,7 +4,10 @@ A production-ready WAF and reverse proxy built for high-performance, high-availa
 
 ## Overview
 
-SynVoid combines a nginx-inspired reverse proxy concurrency model with a sophisticated WAF (Web Application Firewall) system. The default deployment model is **one latency-sensitive unified worker plus bounded CPU offload workers**.
+SynVoid combines a unified-worker data plane (HTTP + WAF + proxy in ONE Tokio
+event loop, plus bounded CPU offload workers) with a sophisticated WAF (Web
+Application Firewall) system. The default deployment model is **one
+latency-sensitive unified worker plus bounded CPU offload workers**.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -257,11 +260,14 @@ Multiple Supervisor nodes participating in a Raft consensus cluster.
 
 ## Quick Start
 
+See `README.md` (quick start) and `docs/GETTING_STARTED.md` (full guide) —
+the short version:
+
 ```bash
 # Start SynVoid (Supervisor + Workers)
-./synvoid
+./synvoid --config-path ./config
 
-# Reload configuration via gRPC (propagates to workers)
+# Reload configuration (propagates to workers)
 ./synvoid --rehash
 ```
 

@@ -9,6 +9,15 @@ description: Security patterns including constant-time comparison, path traversa
 
 This skill documents the security patterns implemented for the SynVoid codebase.
 
+> **How to read this file**: sections titled "…Fixes (Wave N)" / "(P0.x)" /
+> "(M1/M2/W2/W8/W16)" are a **historical fix log** — each entry records a bug
+> that was found and fixed, with the pre-fix location and the applied fix.
+> They are evidence for *why* a pattern exists, not current TODOs. Line numbers
+> in those entries drift as code moves — always locate by symbol name. For
+> reusable rules (constant-time comparison, 0600+rename, RNG `Result`, bounded
+> caches), skip to "Constant-Time Comparison for Sensitive Data" and later
+> pattern sections.
+
 ## Critical Security Fixes (Wave 4)
 
 ### Trusted Signer Default Deny (P0.3)
@@ -93,9 +102,11 @@ for (key, value) in rs.records.iter() {
 
 ---
 
-### YARA Trusted Signer Bypass (P0.12)
+### YARA Trusted Signer Bypass (P0.12 — fixed; historical record)
 
-**Location**: `crates/synvoid-mesh/src/mesh/yara_rules.rs:942-954,1818-1824`
+**Location**: `crates/synvoid-mesh/src/mesh/yara_rules.rs`
+(current trust checks: `check_trusted_signer` ~line 1191, DHT-sync gate ~lines 1047-1070;
+historical line refs 942-954/1818-1824 predate refactors — locate by symbol, not line)
 
 **Issue**: Two problems:
 1. DHT sync path: `if !self.config.trusted_signers.is_empty()` with no `is_global()` check

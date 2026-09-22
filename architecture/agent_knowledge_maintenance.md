@@ -2,7 +2,43 @@
 
 How `AGENTS.md`, `.opencode/skills/`, `docs/`, `README.md`, and `plans/`
 stay accurate. For agents, by an agent audit (2026-09-11, follow-up 2026-09-13,
-Phase 37 pass 2026-09-17, Phase 40 pass 2026-09-18, Phase 47 pass 2026-09-19).
+Phase 37 pass 2026-09-17, Phase 40 pass 2026-09-18, Phase 47 pass 2026-09-19,
+skills/architecture/docs refresh 2026-09-22).
+
+## What was audited (skills/architecture/docs refresh, 2026-09-22)
+
+- Skills 42 → 48: fixed stale pointers in `ipc_hardening` (`crate::process::`
+  paths → `synvoid_ipc::`, `sign()` returns `[u8; HMAC_SIZE]`, `from_secret()`
+  is `#[cfg(test)]`), `topology_visualizer` (routes live in
+  `src/admin/routes.rs:617-622`), `ebpf_blocking` (removed `set_ebpf_block_hook`
+  wiring — `GlobalBlockHook` type exists but is unwired; canonical write is
+  `block_ip_with_provenance`), `streaming_waf` (resolved `.clear()` vs
+  `.resize(0)` contradiction against `streaming.rs:114-143`), `h3_proxy`
+  (`synvoid_http_client::send_request_streaming`), `rule_feed_persistence`
+  (top-level `[rule_feed]`, Supervisor terminology), `crypto_dependencies`
+  (aws-lc-rs 1.18.1, quinn 0.11.9, ML-DSA-44 variant authority), plus scope
+  banners on `security_patterns` (fix-log-is-history), `dht_persistence`,
+  `dns_dnssec`, `serverless_wasm`, `synvoid_mesh`, and typo/verification-command
+  fixes in `raft_consensus`, `implementation_patterns` (worktree section removed).
+  The `crates/synvoid-mesh/src/mesh/yara_rules.rs` "missing file" report was
+  verified false (file exists, 2490 lines) — only line numbers had drifted.
+- New skills (previously uncovered subsystems): `upload_security`,
+  `yara_scanning`, `metrics_observability`, `http_client`, `challenge_pow`,
+  `icmp_filter`. `AGENTS.md` skills count + facade table updated.
+- `architecture/overview.md`: WAF detector count reconciled to canonical
+  **13 `AttackType` policy detectors + HeaderValidator + behavioral engine**
+  (`waf.md` was already correct; `waf_engine` skill fixed from 16); DNS
+  capabilities line no longer lists RPZ/dynamic updates as live (Phase 45
+  fail-closed `Unsupported`); Documentation Map Historical row now indexes all
+  closeout/phase/track reports with supersession notes; Boundaries row gains the
+  ledger→facade-matrix→dependency-ownership hierarchy + perf closeouts.
+- `docs/`: `GETTING_STARTED.md` CLI section aligned to flag-based CLI;
+  `FEATURE_STATUS.md` `--all-features` line removed + missing operator flags
+  noted; `RELEASE.md` pre-release gate aligned to the verification contract;
+  `nextest-policy.md` install snippet pinned; `ARCHITECTURE.md` stale
+  quick-start/nginx-model lines fixed; `UPGRADE.md` gains 1.0→1.1; security-doc
+  cross-pointers added; `plans/release_handoff_note.md` marked historical.
+- New checklist item 11 (perf-campaign semantics + skill-count truthfulness).
 
 ## What was audited (Phase 48 corrective closeout, 2026-09-19)
 
@@ -129,8 +165,6 @@ Phase 37 pass 2026-09-17, Phase 40 pass 2026-09-18, Phase 47 pass 2026-09-19).
 
 ## What was audited (2026-09-11)
 
-## What was audited (2026-09-11)
-
 - All 35 skills in `.opencode/skills/*/SKILL.md` checked against the
   codebase. Result: no fully stale skills; 5 fixed stale paths and 2 new
   skills added (`config_system`, `admin_contract`) — 37 total.
@@ -196,7 +230,16 @@ Phase 37 pass 2026-09-17, Phase 40 pass 2026-09-18, Phase 47 pass 2026-09-19).
     `architecture/agent_knowledge_maintenance.md`) must not present the
     0.1.4-era eggfetch version claim as current fact (historical `plans/`
     and dated Phase 34/35 decision records may describe their own baseline).
-    Enforced by the `runtime_truthfulness_closeout` repo-guard test.
+     Enforced by the `runtime_truthfulness_closeout` repo-guard test.
+11. Perf-campaign + skill-count truthfulness: `AGENTS.md` Known Issues,
+     `architecture/overview.md`, and skills must preserve the Phase 49–57
+     non-default semantics (`check_request_sync` inline, `BufferPool::acquire`
+     length-not-capacity, `resize(0)`-not-`clear()`, TeeBody exact-once
+     governor release, one honeypot-runner per lifecycle) and the current
+     skill count (48 as of 2026-09-22) wherever a count is stated. New
+     subsystem coverage without a skill is a gap — re-run the missing-skill
+     scan from the 2026-09-22 entry (remaining uncovered: geoip, integrity,
+     vpn-client, app-server/theme, cli-dispatch).
 
 ## Index
 

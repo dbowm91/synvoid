@@ -29,7 +29,9 @@ The `Http3Server` manages the QUIC endpoint and H3 connection lifecycle.
 4. **WAF Scanning**: full request body collection (up to `max_request_size`) and scanning via `WafCore::check_request_full`. Dispatch of the resulting `WafDecision` is exhaustive per the enforcement decision contract (`architecture/enforcement_decision_contract.md`); HTTP/3 renders via `maybe_handle_http3_waf_decision` in `crates/synvoid-http/src/http3_waf_dispatch.rs`.
 5. **Routing**: Host and path-based routing via `Router`.
 6. **Connection Limiting**: Per-site and per-IP connection limits enforced.
-7. **Proxying**: Actual forwarding using `crate::http_client::send_request_streaming`.
+7. **Proxying**: Actual forwarding using `synvoid_http_client::send_request_streaming`
+   (generic transport crate since Phase 34; `send_request_streaming_generic` for
+   type-erased bodies — never a `crate::http_client::` root path).
 8. **Body Streaming**: Asynchronous piping of upstream response body back to the H3 stream.
 
 ## Implementation Details

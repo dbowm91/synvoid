@@ -21,20 +21,20 @@ SynVoid uses a multi-layered approach to cryptography:
 
 | Crate | Version | Language | Purpose |
 |-------|---------|----------|---------|
-| `aws-lc-rs` | 1.16.2 | C (compiled) | TLS 1.3, ML-KEM, ML-DSA |
-| `quinn` | 0.11 | Rust | QUIC transport, HTTP/3 |
+| `aws-lc-rs` | 1.18.1 | C (compiled) | TLS 1.3, ML-KEM, ML-DSA |
+| `quinn` | 0.11.9 | Rust | QUIC transport, HTTP/3 |
 | `h3` | 0.0.8 | Rust | HTTP/3 protocol |
 | `ring` | 0.17.14 | Rust + asm | DNS/QUIC crypto (transitive) |
-| `libcrux-ml-dsa` | 0.0.8 | Pure Rust | ML-DSA signatures |
+| `libcrux-ml-dsa` | 0.0.10 | Pure Rust | ML-DSA signatures |
 | `ml-kem` | 0.3.2 | Pure Rust | Final ML-KEM-768 (wasm-pow client; Phase 44) |
-| `ed25519-dalek` | 2.1.0 | Pure Rust | Ed25519 signatures |
+| `ed25519-dalek` | 2.2.0 | Pure Rust | Ed25519 signatures |
 | `x25519-dalek` | 2.0.0 | Pure Rust | X25519 key exchange |
 | `sha2` | 0.10 | Pure Rust | SHA-256/512 |
 | `sha3` | 0.10 | Pure Rust | SHA3 |
 | `hmac` | 0.12 | Pure Rust | HMAC |
 | `aes-gcm` | 0.10 | Pure Rust | AES-GCM |
-| `zeroize` | 1.8 | Pure Rust | Secret destruction |
-| `subtle` | 2.12 | Pure Rust | Constant-time ops |
+| `zeroize` | 1.9.0 | Pure Rust | Secret destruction |
+| `subtle` | 2.6.1 | Pure Rust | Constant-time ops |
 | `hkdf` | 0.12 | Pure Rust | Key derivation |
 | `pbkdf2` | 0.12 | Pure Rust | Password KDF |
 
@@ -43,7 +43,7 @@ SynVoid uses a multi-layered approach to cryptography:
 | Crate | Algorithm | Location | Status |
 |-------|-----------|----------|--------|
 | `ml-kem` | ML-KEM-768 (FIPS 203 final) | crates/synvoid-wasm-pow | ✅ Pure Rust, KAT-verified (Phase 44) |
-| `libcrux-ml-dsa` | ML-DSA-65/87 | pqc/workspace | ✅ Pure Rust |
+| `libcrux-ml-dsa` | ML-DSA-44 (FIPS 204; `pqc::MlDsa44`) | pqc/ + mesh signing | ✅ Pure Rust (mesh hybrid signatures use **ML-DSA-44** — see `hybrid_post_quantum` skill; do not write ML-DSA-65/87 here) |
 | `aws-lc-rs` | ML-KEM + ML-DSA | Cargo.toml / pqc | ✅ Via feature (server ML-KEM) |
 
 Phase 44 removed `pqc_kyber` / `pqc_kyber_edit` (draft Kyber) from the

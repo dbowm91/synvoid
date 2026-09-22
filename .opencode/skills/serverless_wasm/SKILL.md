@@ -5,6 +5,10 @@ description: Serverless WASM runtime with instance pooling, mesh serverless inte
 
 # Serverless & WASM Runtime Skill
 
+> **Scope**: serverless manager/scheduler/mesh integration. Plugin sandboxing,
+> hot-reload lifecycle, and ABI frame serialization covered in this file are
+> `plugin_runtime` domain — the `plugin_runtime` skill is authoritative there.
+
 ## Overview
 
 This skill documents the serverless function architecture in SynVoid, including the WASM runtime, instance pooling, and mesh serverless integration.

@@ -1,5 +1,10 @@
 # Release Handoff Note — 1.1.0 Release Candidate
 
+> **Status: historical (2026-07-12)**. Retained as a phase-handoff record —
+> do NOT follow its imperative steps ("Confirm version… Tag… Build…").
+> Release mechanics live in `docs/releasing.md`; gates in
+> `docs/testing/verification-contract.md`.
+
 **Date:** 2026-07-12
 **Classification:** State B — release-ready for all supported profiles
 

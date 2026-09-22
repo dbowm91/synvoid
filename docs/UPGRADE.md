@@ -2,6 +2,26 @@
 
 This document tracks breaking changes between versions and provides guidance for upgrading SynVoid.
 
+## Version 1.1.0
+
+Operator-behavior changes since 1.0.0 (phases noted for the design record):
+
+- **Fail-closed reduced-feature config (Phase 41)**: reduced-feature binaries
+  now reject capability-bearing sections (`[dns]`, `[mesh]`, `[tunnel.mesh]`,
+  `[icmp_filter]` — even inert `enabled = false`). If you run a minimal build,
+  strip those sections from `main.toml` instead of disabling them.
+- **Auth store fail-closed (Phase 43)**: corrupt or overly-permissive auth
+  stores abort startup via `AuthManager::try_new` (never a silent empty DB);
+  ensure the store file is mode `0600` (dirs `0700`) and owned by the service user.
+- **Deferred DNS features (Phase 45)**: RPZ, prefetch, zone transfers,
+  dynamic UPDATE/NOTIFY, EDNS padding, and QNAME privacy fail
+  `DnsConfig::validate()` with typed `Unsupported`. Remove those keys until
+  the corresponding design gates land.
+- **Jail binaries ship atomically (Phase 29)**: `--wasm-jail`/`--yara-jail`
+  binaries are part of the release package — `verify-release` checks this.
+- **Basic Auth overload signal**: `BackendBusy` → 503 (distinct from 401);
+  retry/queue on 503 rather than re-prompting credentials.
+
 ## Version 1.0.0 (Initial Release)
 
 As this is the initial release, there are no breaking changes from previous versions.

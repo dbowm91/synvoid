@@ -25,25 +25,27 @@ SynVoid uses signed IPC for privileged operations with HMAC-SHA3-256 verificatio
 
 ### IpcSigner
 
-**Location**: `crates/synvoid-ipc/src/ipc_signed.rs:108`
+**Location**: `crates/synvoid-ipc/src/ipc_signed.rs:162` (`synvoid_ipc::ipc_signed`;
+`src/process/` is only a 6-line facade — never import `crate::process::ipc_*` paths)
 
 ```rust
 pub struct IpcSigner {
+    signer_id: u64,
     key: [u8; 32],
 }
 
 impl IpcSigner {
-    /// Sign data with HMAC-SHA3-256
-    pub fn sign(&self, data: &[u8]) -> Vec<u8>;
+    /// Sign data with HMAC-SHA3-256 (fixed-size output, not Vec)
+    pub fn sign(&self, data: &[u8]) -> [u8; HMAC_SIZE];
 
     /// Sign multiple parts without concatenation (zero-copy)
-    pub fn sign_parts(&self, parts: &[&[u8]]) -> Vec<u8>;
+    pub fn sign_parts(&self, parts: &[&[u8]]) -> [u8; HMAC_SIZE];
 
     /// Verify HMAC (uses subtle::ConstantTimeEq)
-    pub fn verify(&self, data: &[u8], expected: &[u8]) -> bool;
+    pub fn verify(&self, data: &[u8], expected_hmac: &[u8; HMAC_SIZE]) -> bool;
 
     /// Verify multiple parts
-    pub fn verify_parts(&self, parts: &[&[u8]], expected: &[u8]) -> bool;
+    pub fn verify_parts(&self, parts: &[&[u8]], expected_hmac: &[u8; HMAC_SIZE]) -> bool;
 }
 ```
 
@@ -52,36 +54,42 @@ impl IpcSigner {
 Keys can be loaded from:
 1. **File** (`SYNVOID_IPC_KEY_FILE`): 64 hex chars, deleted after reading
 2. **Env** (`SYNVOID_IPC_KEY`): 64 hex chars directly
-3. **Secret** (`IpcSigner::from_secret()`): SHA-256 of string — **TEST/DEV ONLY**
+3. **Secret** (`IpcSigner::from_secret()`): SHA-256 of string — **`#[cfg(test)]` ONLY,
+   not compiled into production binaries at all**
 
 Unix key file uses `O_EXCL | O_NOFOLLOW` to prevent symlink attacks.
 
 ### Replay Protection
 
-**Location**: `crates/synvoid-ipc/src/ipc_signed.rs:45-106`
+**Location**: `crates/synvoid-ipc/src/ipc_signed.rs:66-133`
 
 ```rust
 const MAX_NONCE_CACHE_SIZE: usize = 10_000;
 const REPLAY_WINDOW_SECS: u64 = 60;
 ```
 
-- Nonce cache uses `DashMap` for sharded concurrent access (reduced contention)
+- Nonce cache is a `DashMap<(signer_id, nonce), timestamp>` (`ShardedNonceCache`)
+  for sharded concurrent access (reduced contention)
 - Cache key is `(signer_id, nonce)` tuple to prevent cross-channel conflicts
-- Eviction happens BEFORE insert when size limit reached
+- Duplicate check + insert is atomic via DashMap's entry API; capacity guard
+  (`NONCE_CACHE_CAPACITY_LOCK`) serializes eviction: time-based `retain()` first,
+  then single-entry eviction if still full
 - Timestamp must be within 60 seconds of current time
 
 ### Message Size Limits
 
 **Centralized constant**: `MAX_IPC_MESSAGE_SIZE = 1024 * 1024` (1 MiB)
+(`crates/synvoid-ipc/src/ipc_signed.rs:51`; re-exported for framing as
+`synvoid_ipc::ipc_framing::MAX_MESSAGE_SIZE`)
 
-Use `crate::process::ipc_signed::MAX_IPC_MESSAGE_SIZE` for all size checks.
+Use `synvoid_ipc::ipc_signed::MAX_IPC_MESSAGE_SIZE` for all size checks.
 
 ## Usage Patterns
 
 ### Creating a Signed Connection
 
 ```rust
-use crate::process::ipc_transport::{IpcStream, IpcSigner};
+use synvoid_ipc::ipc_transport::{IpcStream, IpcSigner};
 
 let signer = IpcSigner::try_from_env()?;
 let stream = IpcStream::connect_with_signer(endpoint, signer).await?;
@@ -111,7 +119,7 @@ Unsigned IPC is allowed for read-only operations (Status, HealthCheck) but:
 1. **Constant-time comparison**: Always use `subtle::ConstantTimeEq` for HMAC verification
 2. **Bounded cache**: Nonce cache is bounded to 10,000 entries, keyed by `(signer_id, nonce)`
 3. **Key file security**: Files must be owned by current user, mode 0600, not symlinks, not in world-writable directories
-4. **No hardcoded secrets**: `from_secret()` is documented as TEST ONLY with SHA-256 KDF
+4. **No hardcoded secrets**: `from_secret()` is `#[cfg(test)]` — unavailable in production builds
 5. **Windows Security**: `SecurityDescriptor::new_user_only()` creates DACLs granting `FILE_ALL_ACCESS` only to current user
 6. **Signing enforced by default**: `enforce_signing=true` is default for `IpcStream` with explicit signer constructors
 

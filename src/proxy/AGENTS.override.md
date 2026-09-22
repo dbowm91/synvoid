@@ -41,10 +41,11 @@ Default behavior forwards all end-to-end headers:
 
 ### BackendType
 
-The actual `BackendType` enum is at `src/router.rs:65-78` with 11 variants:
-`Upstream`, `FastCgi`, `Php`, `Cgi`, `AxumDynamic`, `AppServer`, `Static`, `QuicTunnel`, `Serverless`, `Mesh`, `Spin`
-
-**Note**: `architecture/proxy.md` documents this incorrectly — always verify against source.
+The canonical `BackendType` enum is at `crates/synvoid-proxy/src/router.rs:66`
+with 11 variants:
+`Upstream`, `FastCgi`, `Php`, `Cgi`, `AxumDynamic`, `AppServer`, `Static`, `QuicTunnel`, `Serverless`, `Mesh`, `Spin`.
+`src/router.rs` is only a 6-line compat facade (`pub use synvoid_proxy::router::*`)
+— import from `synvoid_proxy`, never the root path.
 
 ### Security: Constant-Time Comparison
 

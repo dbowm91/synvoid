@@ -21,11 +21,14 @@ pub fn create_upstream_client(...) -> HttpClient  // Per-site TLS configuration
 ```
 
 ### 2. StreamingWafBody (canonical: `crates/synvoid-http/src/streaming_waf_body.rs` since Phase 34)
-Wraps any `hyper::body::Body` and performs WAF scanning on chunks as they pass through:
+Wraps any `hyper::body::Body` and performs WAF scanning on chunks as they pass through.
+The scanner is generic (`streaming_waf: Option<S>` over
+`synvoid_core::streaming_waf::StreamingWafScanner`, shared by `synvoid-waf`
+without cycles) — never a `crate::waf::…` root path:
 ```rust
-pub struct StreamingWafBody<B> {
+pub struct StreamingWafBody<B, S> {
     inner: B,
-    streaming_waf: Option<Arc<crate::waf::attack_detection::StreamingWafCore>>,
+    streaming_waf: Option<S>,  // S: StreamingWafScanner
     client_ip: IpAddr,
     blocked: bool,
     error_sent: bool,

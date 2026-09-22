@@ -2,7 +2,15 @@
 
 ## Purpose and Responsibility
 
-The HTTP Client module (`src/http_client/`) provides **upstream proxy connections** for SynVoid's reverse proxy architecture. It handles:
+> **Ownership (Phase 34)**: `src/http_client/` is a thin composition facade
+> (`mod.rs` re-export shim + `quic_tunnel_dispatch.rs` + `streaming_waf_body.rs`
+> shim pointing at `synvoid-http`). The generic transport core lives in
+> `crates/synvoid-http-client/`; site→TLS adaptation in
+> `crates/synvoid-upstream/src/tls_adapter.rs`; WAF-scanning bodies in
+> `crates/synvoid-http/src/streaming_waf_body.rs`. Never add transport
+> implementation to `src/http_client/`.
+
+The HTTP client stack provides **upstream proxy connections** for SynVoid's reverse proxy architecture. It handles:
 
 1. **HTTP/1.1 and HTTP/2 clients** with TLS support using `hyper` and `hyper-rustls`
 2. **Connection pooling** with per-host idle limits and timeouts

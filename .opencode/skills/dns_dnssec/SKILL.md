@@ -5,6 +5,11 @@ description: DNS server, DNSSEC validation, TSIG authentication, and dual-mode D
 
 # SynVoid DNS & DNSSEC Architecture Skill
 
+> **Scope**: architecture, key custody, config, and testing. Milestone history,
+> benchmark narratives, and deferral closeouts recorded in this file are
+> changelog, not guidance — for current behavior trust the module structure
+> below and `architecture/dns.md` + `architecture/dnssec_keystore.md`.
+
 ## Overview
 
 SynVoid implements a dual-mode DNS system:

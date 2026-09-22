@@ -1,7 +1,8 @@
 # TLS Module Architecture
 
-**Module:** `src/tls/`
-**Last Updated:** 2026-05-27
+**Module:** `src/tls/` (root composition: `HttpsServer`) + `crates/synvoid-tls/`
+(canonical: cert resolver, ACME, SNI peeking, JA4)
+**Last Updated:** 2026-09-22 (ownership split clarified; see `tls_deep_dive.md` for crate internals)
 
 ---
 

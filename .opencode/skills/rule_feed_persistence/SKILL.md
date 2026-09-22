@@ -23,9 +23,10 @@ The `RuleFeedManager` handles the lifecycle of signed rules:
 
 ### Cross-Process Synchronization
 
-1. **Master Process**: Runs the `RuleFeedManager` in background mode.
+1. **Supervisor**: Runs the `RuleFeedManager` in background mode ("Master Process"
+   in older docs = the Supervisor under the current process model).
 2. **Apply Callback**: When new rules are verified, the manager triggers a callback.
-3. **IPC Broadcast**: The master process sends a `RulePatternUpdate` message to all active workers.
+3. **IPC Broadcast**: The supervisor sends a `RulePatternUpdate` message to all active workers.
 4. **Worker Update**: Workers receive the message and reload their `AttackDetector` instances with the new patterns.
 
 ## Implementation Details
@@ -54,13 +55,19 @@ The `get_merged_patterns` function combines three sources of rules:
 
 ## Configuration
 
+Top-level `[rule_feed]` section in `main.toml`
+(`RuleFeedConfig` in `crates/synvoid-config/src/protection.rs`, wired as
+`main_config.rule_feed` — NOT `[waf.rule_feed]`):
+
 | Option | Location | Default |
 |--------|----------|---------|
-| `waf.rule_feed.enabled` | TOML | `false` |
-| `waf.rule_feed.url` | TOML | `https://rules.example.com/...` |
-| `waf.rule_feed.public_key` | TOML | (Must be configured) |
-| `waf.rule_feed.storage_dir` | TOML | `None` (Persistence disabled) |
-| `waf.rule_feed.auto_apply` | TOML | `true` |
+| `rule_feed.enabled` | main.toml | `false` |
+| `rule_feed.url` | main.toml | `https://rules.example.com/...` |
+| `rule_feed.public_key` | main.toml | `None` → falls back to compiled-in key (placeholder by default) |
+| `rule_feed.storage_dir` | main.toml | `None` (Persistence disabled) |
+| `rule_feed.auto_apply` | main.toml | `true` |
+| `rule_feed.update_interval_hours` | main.toml | `24` |
+| `rule_feed.allow_downgrade` | main.toml | `false` |
 
 ## Security Considerations
 

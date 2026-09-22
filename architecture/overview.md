@@ -3,13 +3,13 @@
 SynVoid is a high-performance, multi-process Web Application Firewall (WAF) and reverse proxy written in Rust. It provides Layer 7 request filtering, attack detection, load balancing, TLS termination, and optional mesh networking — designed for 1M+ RPS with millions of tenants.
 
 **Key Capabilities:**
-- Layer 7 WAF with **14 policy detectors + behavioral engine + fast-path prefilter**, normalization (incl. overlong UTF-8), bot detection, rate limiting, anomaly scoring, traffic shaping
+- Layer 7 WAF with **13 policy detectors + HeaderValidator + behavioral engine + fast-path prefilter**, normalization (incl. overlong UTF-8), bot detection, rate limiting, anomaly scoring, traffic shaping
 - Reverse proxy with **6 load-balancing algorithms** (RoundRobin, Random, LeastConnections, PeakEwma, WeightedRoundRobin, IpHash), retries/backoff, circuit breaking, response caching
 - TLS termination with ACME (HTTP-01/DNS-01), SNI peeking, JA4 fingerprinting, post-quantum-preferred rustls
 - HTTP/1.1, HTTP/2, HTTP/3 (QUIC); WebSocket; WebDAV; FastCGI/CGI/PHP; Granian (Python ASGI/RSGI/WSGI); static files
 - WASM plugin/serverless runtime (wasmtime-based) with trust tiers, capabilities, ABI frames, instance pooling
 - Mesh networking with DHT, Raft consensus, trust domains, hybrid Ed25519+ML-DSA-44 signatures, ML-KEM-768 KEM
-- Authoritative + recursive DNS with DNSSEC signing/validation, DoT/DoH/DoQ, TSIG, RPZ, dynamic updates
+- Authoritative + recursive DNS with DNSSEC signing/validation, DoT/DoH/DoQ, TSIG (deferred: RPZ, prefetch, zone transfers, dynamic updates, NOTIFY, EDNS padding, QNAME privacy — enabling them fails `DnsConfig::validate()` with typed `Unsupported`, Phase 45)
 - Multi-platform OS abstraction and process sandboxing (Linux, macOS, BSDs, Windows)
 
 This document is the **birds-eye view** of how everything fits together and the **index** for focused review: every discrete module/component below links to its deep-dive document in this directory.
@@ -48,7 +48,7 @@ synvoid/
 ├── rules/                  # YARA rules (default.yar)
 ├── benches/ benchmarks/    # Criterion hot-path benches (16 files) + historical results
 ├── architecture/           # This documentation tree (~150 docs)
-├── .opencode/skills/       # Per-subsystem skill guides (42)
+├── .opencode/skills/       # Per-subsystem skill guides (48)
 ├── docs/                   # User/operator docs, testing contracts, releasing
 ├── plans/                  # Implementation tracking artifacts
 └── scripts/                # CI/build/dns helper scripts
@@ -229,7 +229,7 @@ Root-owned orchestration code (see [`root_module_ledger.md`](./root_module_ledge
 
 | Component | Crate(s) | Purpose | Doc |
 |-----------|----------|---------|-----|
-| **WAF Engine** | `synvoid-waf` + `src/waf/` | 14 policy detectors + behavioral engine + fast-path prefilter, normalizer (overlong UTF-8, homoglyphs…), bot detection, narrow traits (`WafProcessor`, `BlockListStore`), rate limiting, threat level, rule feeds | [`waf.md`](./waf.md) · [`waf_deep_dive.md`](./waf_deep_dive.md) · [`waf_ownership_convergence.md`](./waf_ownership_convergence.md) |
+| **WAF Engine** | `synvoid-waf` + `src/waf/` | 13 policy detectors + HeaderValidator + behavioral engine + fast-path prefilter, normalizer (overlong UTF-8, homoglyphs…), bot detection, narrow traits (`WafProcessor`, `BlockListStore`), rate limiting, threat level, rule feeds | [`waf.md`](./waf.md) · [`waf_deep_dive.md`](./waf_deep_dive.md) · [`waf_ownership_convergence.md`](./waf_ownership_convergence.md) |
 | **Enforcement decisions** | `synvoid-waf` + `synvoid-core` | Pass/Drop/Stall/Block/Challenge/Tarpit verdict contract | [`enforcement_decision_contract.md`](./enforcement_decision_contract.md) |
 | **Auth** | `synvoid-auth` | Users, bcrypt sessions, brute-force lockout, CSRF, HTTP Basic | [`auth.md`](./auth.md) · [`auth_deep_dive.md`](./auth_deep_dive.md) |
 | **Challenge** | `synvoid-challenge` | SHA-256 PoW (constant-time verify), CSS fingerprinting, adaptive difficulty, honeypot fields | [`challenge.md`](./challenge.md) · [`challenge_deep_dive.md`](./challenge_deep_dive.md) |
@@ -384,12 +384,12 @@ Start here, then descend into a discrete review track. For the review workflow i
 | Topic | Docs |
 |-------|------|
 | Request path end-to-end | [`http_request_pipeline.md`](./http_request_pipeline.md) → [`http_deep_dive.md`](./http_deep_dive.md) → [`proxy_deep_dive.md`](./proxy_deep_dive.md) |
-| Boundaries (must-know) | [`root_module_ledger.md`](./root_module_ledger.md) · [`worker_data_plane_composition_root.md`](./worker_data_plane_composition_root.md) · [`request_path_capability_boundary.md`](./request_path_capability_boundary.md) · [`root_dependency_ownership.md`](./root_dependency_ownership.md) · [`egress_client_decision_phase34.md`](./egress_client_decision_phase34.md) · [`crate_boundary_reuse_closeout.md`](./crate_boundary_reuse_closeout.md) (Phase 35 closeout) · [`public_crate_release_policy.md`](./public_crate_release_policy.md) (binding; only `synvoid-rate-limit` is class 3) · [`runtime_truthfulness_security_publication_closeout.md`](./runtime_truthfulness_security_publication_closeout.md) (Phase 41–48 campaign closeout) |
+| Boundaries (must-know) | [`root_module_ledger.md`](./root_module_ledger.md) (owner) → [`facade_disposition_matrix.md`](./facade_disposition_matrix.md) (Phase 03 delta) → [`root_dependency_ownership.md`](./root_dependency_ownership.md) (dependency entitlement) · [`worker_data_plane_composition_root.md`](./worker_data_plane_composition_root.md) · [`request_path_capability_boundary.md`](./request_path_capability_boundary.md) · [`egress_client_decision_phase34.md`](./egress_client_decision_phase34.md) · [`crate_boundary_reuse_closeout.md`](./crate_boundary_reuse_closeout.md) (Phase 35 closeout; supersedes `crate_granularity_audit.md`) · [`public_crate_release_policy.md`](./public_crate_release_policy.md) (binding; only `synvoid-rate-limit` is class 3) · [`runtime_truthfulness_security_publication_closeout.md`](./runtime_truthfulness_security_publication_closeout.md) (Phase 41–48 campaign closeout) · perf campaign: [`performance_optimization_closeout.md`](./performance_optimization_closeout.md) + [`performance_optimization_corrective_closeout.md`](./performance_optimization_corrective_closeout.md) (Phases 49–57) |
 | Admin & authority | [`admin_control_plane_authority.md`](./admin_control_plane_authority.md) → [`admin_deep_dive.md`](./admin_deep_dive.md) → [`admin_ui.md`](./admin_ui.md) |
 | Threat intel enforcement | [`threat_intel_consumer_actionability.md`](./threat_intel_consumer_actionability.md) · [`block_store_deep_dive.md`](./block_store_deep_dive.md) · [`manual_enforcement_ownership.md`](./manual_enforcement_ownership.md) |
 | Mesh internals | [`mesh_trust_domains.md`](./mesh_trust_domains.md) → [`mesh_transport_lifecycle.md`](./mesh_transport_lifecycle.md) → [`mesh_deep_dive.md`](./mesh_deep_dive.md) |
 | Lifecycle & ops | [`process_lifecycle.md`](./process_lifecycle.md) · [`supervisor_lifecycle.md`](./supervisor_lifecycle.md) · [`worker_task_lifecycle.md`](./worker_task_lifecycle.md) · [`drain.md`](./drain.md) · [`runtime_operations_drill.md`](./runtime_operations_drill.md) |
 | Verification | `docs/testing/verification-contract.md` · [`developer_tooling.md`](./developer_tooling.md) · [`ci_fuzz_failure_injection.md`](./ci_fuzz_failure_injection.md) · [`release_profile_matrix.md`](./release_profile_matrix.md) |
-| Historical / closure reports | [`phase_1_5_verification_report.md`](./phase_1_5_verification_report.md) · [`phase_8_verification_report.md`](./phase_8_verification_report.md) · [`phase_9_observability_report.md`](./phase_9_observability_report.md) · [`track3_performance_report.md`](./track3_performance_report.md) · [`crate_granularity_audit.md`](./crate_granularity_audit.md) · [`root_module_burndown_report.md`](./root_module_burndown_report.md) · [`crate_boundary_reuse_closeout.md`](./crate_boundary_reuse_closeout.md) |
+| Historical / closure reports (never cite as current behavior) | [`phase_1_5_verification_report.md`](./phase_1_5_verification_report.md) · [`phase_8_verification_report.md`](./phase_8_verification_report.md) · [`phase_9_observability_report.md`](./phase_9_observability_report.md) · [`phase_11_ci_verification_report.md`](./phase_11_ci_verification_report.md) · [`phase_14_fuzz_execution_report.md`](./phase_14_fuzz_execution_report.md) · [`track3_performance_report.md`](./track3_performance_report.md) + [`track3_post_closure_corrective_report.md`](./track3_post_closure_corrective_report.md) (superseded by perf closeouts) · [`track4_dependency_security_closeout.md`](./track4_dependency_security_closeout.md) + [`track4_post_closure_corrective_report.md`](./track4_post_closure_corrective_report.md) · [`crate_granularity_audit.md`](./crate_granularity_audit.md) (superseded by `crate_boundary_reuse_closeout.md`; fuzz count 20→21 stale) · [`root_module_burndown_report.md`](./root_module_burndown_report.md) (superseded by ledger) · [`crate_boundary_reuse_closeout.md`](./crate_boundary_reuse_closeout.md) · [`release_hardening_report.md`](./release_hardening_report.md) · [`final_verification_cleanup_report.md`](./final_verification_cleanup_report.md) · [`runtime_operations_drill_report.md`](./runtime_operations_drill_report.md) (run log for `runtime_operations_drill.md`) · [`unified_server_lifecycle_closure_report.md`](./unified_server_lifecycle_closure_report.md) |
 
-External: [`AGENTS.md`](../AGENTS.md) (agent guide) · [`.opencode/skills/`](../.opencode/skills/) (42 subsystem guides) · [`docs/releasing.md`](../docs/releasing.md) · [`SECURITY.md`](../SECURITY.md)
+External: [`AGENTS.md`](../AGENTS.md) (agent guide) · [`.opencode/skills/`](../.opencode/skills/) (48 subsystem guides) · [`docs/releasing.md`](../docs/releasing.md) · [`SECURITY.md`](../SECURITY.md)

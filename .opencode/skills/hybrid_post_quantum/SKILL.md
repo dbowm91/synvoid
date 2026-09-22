@@ -11,6 +11,11 @@ This skill provides guidance for implementing and using hybrid Ed25519 + ML-DSA-
 
 Hybrid signatures combine classical Ed25519 with post-quantum ML-DSA-44 to provide security against both classical and quantum adversaries. This is critical for mesh orchestration messages that establish trust chains and share threat intelligence.
 
+> **Variant authority**: mesh signing uses **ML-DSA-44** (`pqc::MlDsa44` over
+> libcrux, FIPS 204) — not ML-DSA-65/87. Dependency-level policy (versions,
+> C-vs-pure-Rust rules) lives in the `crypto_dependencies` skill; this skill
+> owns mesh-signing usage only.
+
 ## Key Files
 
 - `crates/synvoid-mesh-protocol/src/hybrid.rs` - Canonical `HybridSignature` envelope value type (Phase 27; low-capability, no PQ runtime)
