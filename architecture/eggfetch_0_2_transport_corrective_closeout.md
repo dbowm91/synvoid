@@ -1,10 +1,6 @@
-# Eggfetch 0.2 Transport Corrective Closeout (Phase 62 — adopted/closed)
+# Eggfetch 0.2 Transport Corrective Closeout (Phase 62 — runtime corrective closed; performance evidence superseded)
 
-Status: final campaign authority. Supersedes the Phase 61 closeout attempt
-(`architecture/eggfetch_0_2_transport_closeout.md`, preserved as historical
-evidence) for registry policy isolation, invalid-policy failure semantics,
-and performance/full-release evidence. Phases 58–62 are coherent closed
-history after this record.
+> **Performance evidence reopened by Phase 63 (2026-09-22).** The Phase 62 runtime corrections remain adopted and authoritative for registry policy isolation and fail-closed TLS behavior. A later audit found that the recorded streaming benchmark compared eggfetch streaming against a buffered legacy baseline, the concurrent-small regression was not sampled deeply enough to dismiss as noise, and the harness source was not committed. Final performance/reproducibility authority moves to `plans/phase_63_eggfetch_transport_benchmark_requalification_and_final_evidence_closeout.md`. Preserve the Phase 62 measurements below as historical evidence; do not use §6/§9 as final performance-parity proof until Phase 63 closes.
 
 ## 1. Revisions
 
