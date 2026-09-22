@@ -1,6 +1,6 @@
 # Phase 61 Plan: Eggfetch Transport Qualification and Closeout
 
-Status: detailed implementation handoff plan (2026-09-22).
+Status: closeout attempted at `f62bb285a2bdf6262efe9a7b859bc11bdcc35e15`, then reopened. Phase 62 is the active corrective because the site registry can collapse distinct TLS/plaintext policies, invalid requested TLS policy can fall back to a different default policy, and the required immutable performance plus full/release verification evidence was incomplete.
 
 Roadmap: `plans/eggfetch_0_2_transport_consolidation_roadmap.md`.
 
