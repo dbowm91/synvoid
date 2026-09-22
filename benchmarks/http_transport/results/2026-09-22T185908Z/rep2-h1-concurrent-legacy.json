@@ -1,0 +1,38 @@
+{
+  "lane": "legacy",
+  "workload": "h1-concurrent",
+  "revision_sha": "7083f339a43dd13d6c8f65e7acc9d03ee555b6ef",
+  "harness_sha": "4306cec58c3bed536392bdf6cd43ff506bb5c79d7dbd2b575877cd6bc83686e7",
+  "adapter_file": "adapters/legacy_7083f339.rs",
+  "adapter_sha": "c845fb74722da8aa4c9d187b50046a513d1f766094128081fd330e19bccda52f",
+  "toolchain": "rustc 1.98.1 (48a229cea 2026-09-01)",
+  "host": "Darwin 25.6.0 x86_64 Apple M4 Pro",
+  "target": "aarch64-apple-darwin",
+  "profile": "ci",
+  "unix_secs": 1790103750,
+  "protocol": "h1",
+  "requests": 200000,
+  "warmup": 10000,
+  "concurrency": 8,
+  "payload_total_bytes": 0,
+  "payload_frames": 0,
+  "payload_frame_bytes": 0,
+  "producer_delay_ms": 0,
+  "response_bytes": 256,
+  "stats": {
+    "n": 200000,
+    "failures": 0,
+    "duration_ms": 3923.0292919999997,
+    "rps": 50981.01113031404,
+    "p50_us": 109,
+    "p95_us": 296,
+    "p99_us": 1036,
+    "min_us": 22,
+    "max_us": 16496,
+    "bytes_total": 51200000
+  },
+  "extra": {
+    "server_connections": 12,
+    "server_requests": 210000
+  }
+}

@@ -72,17 +72,20 @@ impl Workload {
     }
 
     fn defaults(&self) -> (usize, usize, usize) {
-        // (requests, concurrency, warmup)
+        // (requests, concurrency, warmup). Streaming counts are sized so a
+        // repetition is second-scale, never single-digit-millisecond: tail
+        // stalls in a millisecond window dominate the aggregate and cannot
+        // adjudicate a >5% rule (Phase 63 run-1 lesson).
         match self {
             Self::H1Sequential => (40_000, 1, 2_000),
             Self::H1Concurrent => (200_000, 8, 10_000),
-            Self::H2Multiplexed => (100_000, 16, 5_000),
-            Self::Stream1K => (2_000, 1, 200),
-            Self::Stream64K => (500, 1, 50),
-            Self::Stream1M => (100, 1, 10),
-            Self::StreamConcurrent => (200, 4, 20),
+            Self::H2Multiplexed => (150_000, 16, 5_000),
+            Self::Stream1K => (12_000, 1, 500),
+            Self::Stream64K => (8_000, 1, 200),
+            Self::Stream1M => (800, 1, 20),
+            Self::StreamConcurrent => (15_000, 4, 100),
             Self::StreamSlowProducer => (50, 1, 5),
-            Self::EarlyDrop => (50, 1, 5),
+            Self::EarlyDrop => (800, 1, 20),
             Self::ColdConstruct => (50, 1, 0),
         }
     }
