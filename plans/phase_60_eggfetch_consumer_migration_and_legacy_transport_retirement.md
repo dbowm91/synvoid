@@ -1,6 +1,6 @@
 # Phase 60 Plan: Eggfetch Consumer Migration and Legacy Transport Retirement
 
-Status: detailed implementation handoff plan (2026-09-22).
+Status: implementation landed at `7a6c617cf9dc16441f50da5dcff95778775b5041`; production remains on the eggfetch lane. Final closure is pending Phase 62 because the outer registry policy keying and invalid-policy failure semantics require correction.
 
 Roadmap: `plans/eggfetch_0_2_transport_consolidation_roadmap.md`.
 
