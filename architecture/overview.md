@@ -32,8 +32,10 @@ synvoid/
 │   ├── platform/ sandbox/  # Platform composition, jail supervision
 │   ├── tls/                # HttpsServer (cert resolver use lives in synvoid-tls)
 │   ├── honeypot_port/      # Honeypot responders / controller (wiring)
+│   ├── app_server/ metrics/ theme/ tunnel/ vpn_client/  # App-service, counters, theming, tunnels, VPN wiring
+│   ├── bin/                  # `synvoid-vpn`, `server` binaries
 │   └── {proxy,dns,mesh,…}/ # Thin re-export facades over crates/synvoid-*
-├── crates/                 # 42 dedicated synvoid-* library crates (canonical logic)
+├── crates/                 # 43 dedicated synvoid-* library crates (canonical logic)
 ├── pqc/                    # Post-quantum crypto (ML-KEM-768/1024, ML-DSA-44)
 ├── admin-ui/               # Yew/WASM admin frontend (Trunk build → dist/, ~22 pages)
 ├── tools/                  # xtask runner + repo-guard helpers
@@ -44,15 +46,15 @@ synvoid/
 ├── examples/               # dynamic-plugin, embedded-app, dns configs
 ├── config/                 # Default configuration (main.toml + sites/)
 ├── rules/                  # YARA rules (default.yar)
-├── benches/ benchmarks/    # Criterion hot-path benches (11 files) + historical results
-├── architecture/           # This documentation tree (~140 docs)
+├── benches/ benchmarks/    # Criterion hot-path benches (16 files) + historical results
+├── architecture/           # This documentation tree (~150 docs)
 ├── .opencode/skills/       # Per-subsystem skill guides (42)
 ├── docs/                   # User/operator docs, testing contracts, releasing
 ├── plans/                  # Implementation tracking artifacts
 └── scripts/                # CI/build/dns helper scripts
 ```
 
-**Workspace**: 51 members — root app, 43 `synvoid-*` crates under `crates/` (incl. `synvoid-wasm-pow` and `synvoid-rate-limit`), `pqc`, `admin-ui`, 2 examples, `fuzz`, `tools/{xtask,synvoid-repo-guards}`.
+**Workspace**: 51 members — root app, 43 `synvoid-*` crates under `crates/`, `pqc`, `admin-ui`, 2 examples, `fuzz`, `tools/{xtask,synvoid-repo-guards}`.
 
 ### Binaries
 
@@ -219,6 +221,7 @@ Root-owned orchestration code (see [`root_module_ledger.md`](./root_module_ledge
 | **CLI parsing** | `synvoid-cli` | Clap `Args` extraction (mode flags: supervisor/worker/cpu/mesh-agent/jails) | [`cli_supervisor_command_dispatch.md`](./cli_supervisor_command_dispatch.md) |
 | **Drain** | `src/drain/` + `synvoid-core::drain` | Graceful-drain state shared across processes | [`drain.md`](./drain.md) |
 | **Filter primitives** | `synvoid-filter` | Generic allowlist/denylist protocol filter core (used by ICMP filter, TCP/UDP listeners) | [`filter.md`](./filter.md) |
+| **Rate limiting** | `synvoid-rate-limit` | Shared sliding-window mechanism (`AtomicSlidingWindow`, neutral `RateLimitResult`/`IpRateLimiter`/`KeyedRateLimiter`, `ip_to_slot`); only class-3 public crate (0.1.0, MSRV 1.81) — WAF/policy decisions stay root-owned | [`public_crate_release_readiness_phase47.md`](./public_crate_release_readiness_phase47.md) |
 | **Metrics core** | `synvoid-metrics` | Atomic per-site counters, bandwidth EMA tracker, scheduler-delay health monitor | [`metrics.md`](./metrics.md) |
 | **Logging** | `src/log_controller.rs`, `src/common/` | Dynamic log levels, syslog integration, panic handler | [`log_controller.md`](./log_controller.md) · [`common.md`](./common.md) |
 
@@ -313,7 +316,7 @@ These are discrete review surfaces in their own right — build/verify tooling, 
 | **Integrity browser client** | `clients/integrity-client.js` | X25519+ML-KEM key exchange, Ed25519 signing, PoW solving for frontends | [`integrity_deep_dive.md`](./integrity_deep_dive.md) |
 | **Shipped config** | `config/` | `main.toml` + `sites/`, error pages, `mime.types`, honeypot paths | [`config.md`](./config.md) |
 | **YARA rules** | `rules/default.yar` | 14 upload/content rules (executables, macros, webshells, bombs) | [`upload_deep_dive.md`](./upload_deep_dive.md) |
-| **Benches** | `benches/` + `benchmarks/` | Criterion hot-path benches (15 files: attack detection, normalization, proxy cache/headers, ratelimit, routing, DNS, WASM, broadcast, upstream selection, metrics hot-path, buffer pool, honeypot persistence) + historical result tracking | [`track3_performance_report.md`](./track3_performance_report.md) · [`performance_optimization_baseline.md`](./performance_optimization_baseline.md) · [`performance_optimization_closeout.md`](./performance_optimization_closeout.md) · [`performance_optimization_corrective_closeout.md`](./performance_optimization_corrective_closeout.md) |
+| **Benches** | `benches/` + `benchmarks/` | Criterion hot-path benches (16 files: attack detection ×2, normalization, proxy cache ×2, proxy headers, ratelimit, routing, broadcast, DNS, WASM, upstream selection, metrics hot-path, buffer pool, honeypot persistence + `run_benchmarks.rs` runner; 12 registered `[[bench]]` targets) + historical result tracking | [`track3_performance_report.md`](./track3_performance_report.md) · [`performance_optimization_baseline.md`](./performance_optimization_baseline.md) · [`performance_optimization_closeout.md`](./performance_optimization_closeout.md) · [`performance_optimization_corrective_closeout.md`](./performance_optimization_corrective_closeout.md) |
 | **Examples** | `examples/` | Embedded-app, dynamic-plugin, DNS profile configs | [`plugin_wasm.md`](./plugin_wasm.md) · [`dns_production_profiles.md`](./dns_production_profiles.md) |
 | **Scripts** | `scripts/` | `verify_architecture.sh`, DNS conformance/stress/bench, import checks | [`developer_tooling.md`](./developer_tooling.md) |
 
@@ -374,7 +377,7 @@ These are discrete review surfaces in their own right — build/verify tooling, 
 
 ## Documentation Map
 
-Start here, then descend into a discrete review track:
+Start here, then descend into a discrete review track. For the review workflow itself see [`review_plan.md`](./review_plan.md) (module-by-module review procedure, completed 2026-05-28 with findings consolidated in `plans/plan.md`) and [`deep_dive_review.md`](./deep_dive_review.md) (layer 1/2/3/7 findings):
 
 | Topic | Docs |
 |-------|------|
