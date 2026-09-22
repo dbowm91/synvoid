@@ -46,3 +46,26 @@ Policy adapters live one layer up — import from there, never reimplement here:
 ```bash
 cargo nextest run -p synvoid-http-client --cargo-profile ci --profile ci
 ```
+
+## Phase 60/61: eggfetch lane is canonical (binding)
+
+Production egress runs on the eggfetch lane, not the legacy hyper pool:
+
+- Lane owner: `crates/synvoid-http-client/src/eggfetch_transport.rs`
+  (`EggfetchUpstreamClient`: `build`/`cached`/`build_uds`/`execute`/
+  `send_buffered`/`send_uds_buffered`; `SyncBody`; `native_to_httpresponse`).
+- Policy translation: `eggfetch_policy.rs` (`UpstreamTlsConfig` stays
+  canonical; `allow_plaintext` is a routing gate, never a TLS toggle).
+- Site selection: `UpstreamClientRegistry::get_or_create_lane` (single
+  site-keyed map; policy-keyed pool sharing underneath).
+- Root operator plane (`src/admin`, `src/waf`) uses the entitled facade
+  `crate::http_client::operator_lane_client()` — never `synvoid_http_client`
+  directly (root dependency ledger).
+- The legacy surface (`HttpClient`, `create_*`, `send_*`, erased pool/body
+  types) is FROZEN compatibility-only: keep compiling + tested, never use
+  in new production code. Enforced by
+  `tools/synvoid-repo-guards/tests/eggfetch_lane_freeze.rs`.
+- Buffered parity rule: pass `max=None` to `send_buffered` and enforce size
+  limits post-hoc (→502); the lane-internal limit maps oversize to
+  200-empty, which changes legacy behavior.
+- Full record: `architecture/eggfetch_0_2_transport_closeout.md`.

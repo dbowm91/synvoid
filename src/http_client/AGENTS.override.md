@@ -127,3 +127,19 @@ lib.rs reduced to facade; TLS moved to tls.rs; pooling to pool.rs. Public API un
 - `hyper_util::client::legacy::Client` - HTTP/1.1 and HTTP/2 client
 - `hyper_rustls::HttpsConnector` - TLS support
 - `moka::sync::Cache` - Connection pooling cache
+
+## Phase 60/61 — eggfetch lane canonical, legacy frozen (binding)
+
+- Production egress uses `synvoid_http_client::eggfetch_transport::EggfetchUpstreamClient`
+  (`execute` for streaming/generic bodies, `send_buffered` for buffered; `SyncBody` adapts
+  non-`Sync` native bodies). Crate consumers import it from the crate directly.
+- Root consumers (`src/admin`, `src/waf`) MUST go through this facade:
+  `crate::http_client::operator_lane_client()` (+ `EggfetchUpstreamClient` re-export).
+  The root dependency ledger entitles only `http, http_client, tls` to consume
+  `synvoid-http-client` — direct `synvoid_http_client::` use in other root modules fails
+  `root_dependencies_have_path_entitlement`.
+- Legacy surface in this facade (`create_*`, `send_*`, `HttpClient`, erased types) is
+  frozen compatibility-only: keep the re-exports compiling, never call them from production.
+  Enforced by `tools/synvoid-repo-guards/tests/eggfetch_lane_freeze.rs`.
+- Buffered parity rule: `send_buffered(..., max=None)` + post-hoc size check (→502).
+- Full record: `architecture/eggfetch_0_2_transport_closeout.md`.
