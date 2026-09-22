@@ -1,6 +1,6 @@
 # SynVoid Architecture Hardening Roadmap
 
-Status: Tracks 1-3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). No active performance-corrective handoff remains.
+Status: Tracks 1-3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). A new focused eggfetch 0.2 transport-consolidation handoff is active under Phases 58-61; Phase 58 is the mandatory qualification/API-compatibility gate before production migration.
 
 Scope: this roadmap covers architecture hardening, trust-boundary closure, verification, release readiness, post-hardening cleanup, and the architecture-convergence work required before another broad feature-expansion pass.
 
@@ -365,3 +365,44 @@ It owned only:
 It did not reopen WAF design, `TeeBody`, buffer-pool, upstream-selection, or
 public API architecture. Phase 56's landed writer-shutdown and cache-governor
 fixes remain in force. No active performance-corrective handoff remains.
+
+
+## Post-Phase-57 Campaign: Eggfetch 0.2 Transport Consolidation — Active
+
+Status: planned implementation campaign. Phase 58 is the current entry gate; no production migration is implied by planning alone.
+
+Roadmap: `plans/eggfetch_0_2_transport_consolidation_roadmap.md`.
+
+Research handoff: `plans/eggfetch_current_line_parity_review.md`.
+
+Baseline reviewed: `e3026667c23e6e0e92ee30d13c53baf2e68c5c77` (2026-09-22).
+
+Target upstream: `eggfetch-core 0.2.0` / `v0.2.0`.
+
+The Phase 34 retain-`synvoid-http-client` decision remains valid historical evidence for eggfetch 0.1.4, but it is no longer a current capability comparison. Eggfetch 0.2.0 now exposes generic native `http_body::Body` execution, explicit Rustls provider injection, chain-preserving hostname-skip control, direct UDS/advanced routing, and resolved-target reuse. The remaining adoption risk is therefore exact SynVoid compatibility/security/performance behavior rather than obvious missing transport primitives.
+
+Execution order:
+
+1. Phase 58 — pin/qualify eggfetch 0.2.0, re-run the capability matrix, prove aws-lc/PQ/TLS/body/UDS/pool semantics, and classify every existing public `synvoid-http-client` export.
+2. Phase 59 — introduce an eggfetch-backed native transport lane behind the existing neutral SynVoid policy model and run differential parity against the legacy lane.
+3. Phase 60 — migrate production consumers in bounded batches, then retire only redundant legacy transport machinery that is not required by the compatibility contract.
+4. Phase 61 — final security/profile/performance/API qualification, dependency/maintenance accounting, documentation reconciliation, and adopted-or-retained closeout.
+
+Detailed plans:
+
+- `plans/phase_58_eggfetch_0_2_qualification_and_compatibility.md`
+- `plans/phase_59_eggfetch_native_transport_adapter.md`
+- `plans/phase_60_eggfetch_consumer_migration_and_legacy_transport_retirement.md`
+- `plans/phase_61_eggfetch_transport_qualification_and_closeout.md`
+
+Campaign constraints:
+
+- no weakening aws-lc/PQ, CA, hostname, SNI, or fail-closed TLS behavior;
+- no buffering of true streaming WAF/H3 request bodies;
+- no migration of retry/upstream/WAF/cache policy into eggfetch;
+- no outbound H3 requirement introduced by this work;
+- no public concrete type/signature change disguised as an implementation swap;
+- no permanent dual active generic transport ownership;
+- `synvoid-http-client` remains internal unless a future separate publication decision says otherwise.
+
+The campaign may terminate after Phase 58 on a retained branch if executable evidence shows a security, dependency, or API-compatibility blocker. That is a valid closeout; do not force adoption merely because the upstream feature list is broader.
