@@ -127,7 +127,13 @@ Migrate production consumers in bounded groups, beginning with leaf/update clien
 
 Plan: `plans/phase_61_eggfetch_transport_qualification_and_closeout.md`.
 
-Run the full parity/security/profile/performance envelope, compare dependency and maintenance surface before/after, adjudicate any compatibility lane that remains, update architecture/current-state docs, and close or roll back the campaign truthfully.
+Initial closeout was attempted after the Phase 58-60 migration. A post-closeout audit found that the outer site registry could collapse distinct policies, invalid requested TLS policy could be replaced by a default policy, and the required immutable transport benchmark/full-release evidence was incomplete. Preserve the Phase 61 record as the first closeout attempt; final authority moves to Phase 62.
+
+### Phase 62 — Policy-keying and evidence corrective closeout
+
+Plan: `plans/phase_62_eggfetch_policy_keying_and_evidence_corrective_closeout.md`.
+
+Correct the site/policy registry identity, make invalid requested TLS policy fail before network I/O, complete the immutable before/after transport benchmark and full/release verification envelope, then reconcile Phases 58-62 to one truthful final state. The expected branch remains adopted; rollback is reserved for a blocker that cannot be corrected without violating security/API/capability invariants.
 
 ## Global invariants
 
@@ -206,7 +212,7 @@ Reject or stop the campaign if implementation requires any of the following:
 
 ## Campaign acceptance
 
-The campaign is complete only when Phase 61 records one of two truthful outcomes.
+The campaign is complete only when Phase 62 records one of two truthful outcomes. The Phase 61 closeout is historical evidence and must not be treated as final while Phase 62 is active.
 
 **Adopted:** eggfetch owns the proven generic transport mechanisms, SynVoid production consumers use that path, redundant internal transport code is removed, any retained compatibility lane is narrow/frozen and justified, and all correctness/security/performance gates pass.
 
