@@ -360,4 +360,5 @@ Retirement (Workstreams H/I/J/K/L):
   `synvoid-http-client` cannot use legacy tokens or the root facade except
   tunnel dispatch / the operator-lane adapter.
 
-Full evidence: `architecture/eggfetch_0_2_transport_closeout.md` (Phase 61).
+Full evidence: `architecture/eggfetch_0_2_transport_corrective_closeout.md`
+(Phase 62 final authority; Phase 61 closeout preserved as history).

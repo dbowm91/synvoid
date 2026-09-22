@@ -80,9 +80,9 @@ edges. Full decision record: `architecture/egress_client_decision_phase34.md`.
 
 ### `erased_pool.rs` — Type-Erased Connection Pool (Phase 9)
 
-> **Supersession pointer (Phase 61):** the erased pool is no longer the
+> **Supersession pointer (Phase 62 final):** the erased pool is no longer the
 > production path. Production egress runs on the eggfetch lane
-> (`architecture/eggfetch_0_2_transport_closeout.md`); the erased pool,
+> (`architecture/eggfetch_0_2_transport_corrective_closeout.md`); the erased pool,
 > erased clients, and erased sends remain only as a frozen compatibility
 > surface (compiling + tested, guarded against production use by
 > `eggfetch_lane_freeze_guard`). The design history below is preserved as

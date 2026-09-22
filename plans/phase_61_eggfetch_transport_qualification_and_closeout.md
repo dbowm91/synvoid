@@ -1,6 +1,6 @@
 # Phase 61 Plan: Eggfetch Transport Qualification and Closeout
 
-Status: closeout attempted at `f62bb285a2bdf6262efe9a7b859bc11bdcc35e15`, then reopened. Phase 62 is the active corrective because the site registry can collapse distinct TLS/plaintext policies, invalid requested TLS policy can fall back to a different default policy, and the required immutable performance plus full/release verification evidence was incomplete.
+Status: superseded closeout attempt at `f62bb285a2bdf6262efe9a7b859bc11bdcc35e15` (preserved as history). Final campaign authority: Phase 62 proof-bearing `c3568ef4580a49edf222c5e4e6ce5d4dca904e81` (see `architecture/eggfetch_0_2_transport_corrective_closeout.md`).
 
 Roadmap: `plans/eggfetch_0_2_transport_consolidation_roadmap.md`.
 

@@ -128,7 +128,17 @@ lib.rs reduced to facade; TLS moved to tls.rs; pooling to pool.rs. Public API un
 - `hyper_rustls::HttpsConnector` - TLS support
 - `moka::sync::Cache` - Connection pooling cache
 
-## Phase 60/61 — eggfetch lane canonical, legacy frozen (binding)
+## Phase 60/62 — eggfetch lane canonical, legacy frozen (binding)
+
+- Production egress uses `synvoid_http_client::eggfetch_transport::EggfetchUpstreamClient`
+  (`execute` for streaming/generic bodies, `send_buffered` for buffered; `SyncBody` adapts
+  non-`Sync` native bodies). Crate consumers import it from the crate directly.
+- Site selection is policy-aware: `UpstreamClientRegistry::get_or_create_lane`
+  keys `(site_id, UpstreamTlsConfig)` (buffered plaintext-allowed vs streaming
+  verifying defaults never collapse), returns `Err` on invalid policy with
+  site context (no default substitution), and `invalidate(site)` drops all
+  policy variants. `ProxyServer` preserves constructors and poisons on invalid
+  policy (every request fails before I/O).
 
 - Production egress uses `synvoid_http_client::eggfetch_transport::EggfetchUpstreamClient`
   (`execute` for streaming/generic bodies, `send_buffered` for buffered; `SyncBody` adapts
@@ -142,4 +152,5 @@ lib.rs reduced to facade; TLS moved to tls.rs; pooling to pool.rs. Public API un
   frozen compatibility-only: keep the re-exports compiling, never call them from production.
   Enforced by `tools/synvoid-repo-guards/tests/eggfetch_lane_freeze.rs`.
 - Buffered parity rule: `send_buffered(..., max=None)` + post-hoc size check (→502).
-- Full record: `architecture/eggfetch_0_2_transport_closeout.md`.
+- Full record: `architecture/eggfetch_0_2_transport_corrective_closeout.md`
+  (final authority; Phase 61 closeout preserved as history).

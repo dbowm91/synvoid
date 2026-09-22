@@ -47,7 +47,7 @@ Policy adapters live one layer up — import from there, never reimplement here:
 cargo nextest run -p synvoid-http-client --cargo-profile ci --profile ci
 ```
 
-## Phase 60/61: eggfetch lane is canonical (binding)
+## Phase 60/62: eggfetch lane is canonical (binding)
 
 Production egress runs on the eggfetch lane, not the legacy hyper pool:
 
@@ -56,8 +56,14 @@ Production egress runs on the eggfetch lane, not the legacy hyper pool:
   `send_buffered`/`send_uds_buffered`; `SyncBody`; `native_to_httpresponse`).
 - Policy translation: `eggfetch_policy.rs` (`UpstreamTlsConfig` stays
   canonical; `allow_plaintext` is a routing gate, never a TLS toggle).
-- Site selection: `UpstreamClientRegistry::get_or_create_lane` (single
-  site-keyed map; policy-keyed pool sharing underneath).
+- Site selection: `UpstreamClientRegistry::get_or_create_lane` (Phase 62:
+  policy-aware `(site_id, UpstreamTlsConfig)` key — buffered
+  `allow_plaintext:true` and streaming default never collapse; fallible with
+  site/policy context, never a default-policy substitution; `invalidate(site)`
+  removes all policy variants).
+- `ProxyServer` keeps constructor signatures and stores a terminal lane error
+  instead of substituting default TLS; every request fails before I/O when
+  poisoned.
 - Root operator plane (`src/admin`, `src/waf`) uses the entitled facade
   `crate::http_client::operator_lane_client()` — never `synvoid_http_client`
   directly (root dependency ledger).
@@ -68,4 +74,5 @@ Production egress runs on the eggfetch lane, not the legacy hyper pool:
 - Buffered parity rule: pass `max=None` to `send_buffered` and enforce size
   limits post-hoc (→502); the lane-internal limit maps oversize to
   200-empty, which changes legacy behavior.
-- Full record: `architecture/eggfetch_0_2_transport_closeout.md`.
+- Full record: `architecture/eggfetch_0_2_transport_corrective_closeout.md`
+  (final authority; Phase 61 closeout preserved as history).

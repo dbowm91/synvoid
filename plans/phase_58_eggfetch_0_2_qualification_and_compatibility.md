@@ -1,6 +1,6 @@
 # Phase 58 Plan: Eggfetch 0.2 Qualification and Compatibility Contract
 
-Status: implemented at `7a6c617cf9dc16441f50da5dcff95778775b5041`; qualification result remains valid, with final campaign closure pending the Phase 62 policy/evidence corrective.
+Status: closed. Implemented at `7a6c617cf9dc16441f50da5dcff95778775b5041`; qualification result remains valid. Final campaign closure: Phase 62 proof-bearing `c3568ef4580a49edf222c5e4e6ce5d4dca904e81` (see `architecture/eggfetch_0_2_transport_corrective_closeout.md`).
 
 Roadmap: `plans/eggfetch_0_2_transport_consolidation_roadmap.md`.
 

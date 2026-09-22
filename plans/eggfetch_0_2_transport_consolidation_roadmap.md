@@ -1,6 +1,6 @@
 # Eggfetch 0.2 Transport Consolidation Roadmap
 
-Status: Phases 58-60 implementation landed at `7a6c617cf9dc16441f50da5dcff95778775b5041`; the Phase 61 closeout attempt at `f62bb285a2bdf6262efe9a7b859bc11bdcc35e15` is reopened by the active Phase 62 corrective (`plans/phase_62_eggfetch_policy_keying_and_evidence_corrective_closeout.md`). The adopted eggfetch production lane remains in place while corrective qualification runs.
+Status: closed. Phases 58-60 implementation landed at `7a6c617cf9dc16441f50da5dcff95778775b5041`; the Phase 61 closeout attempt at `f62bb285a2bdf6262efe9a7b859bc11bdcc35e15` is superseded (preserved as history). Final authority is the Phase 62 corrective (`architecture/eggfetch_0_2_transport_corrective_closeout.md`, proof-bearing `c3568ef4580a49edf222c5e4e6ce5d4dca904e81`). The adopted eggfetch production lane is the closed terminal state.
 
 Registered in: `plans/roadmap.md`.
 
@@ -127,13 +127,13 @@ Migrate production consumers in bounded groups, beginning with leaf/update clien
 
 Plan: `plans/phase_61_eggfetch_transport_qualification_and_closeout.md`.
 
-Initial closeout was attempted after the Phase 58-60 migration. A post-closeout audit found that the outer site registry could collapse distinct policies, invalid requested TLS policy could be replaced by a default policy, and the required immutable transport benchmark/full-release evidence was incomplete. Preserve the Phase 61 record as the first closeout attempt; final authority moves to Phase 62.
+Closeout was attempted after the Phase 58-60 migration and superseded: the outer site registry could collapse distinct policies, invalid requested TLS policy could be replaced by a default policy, and the immutable transport benchmark/full-release evidence was incomplete. The Phase 61 record is preserved as the first closeout attempt; final authority is Phase 62.
 
-### Phase 62 — Policy-keying and evidence corrective closeout
+### Phase 62 — Policy-keying and evidence corrective closeout (closed)
 
 Plan: `plans/phase_62_eggfetch_policy_keying_and_evidence_corrective_closeout.md`.
 
-Correct the site/policy registry identity, make invalid requested TLS policy fail before network I/O, complete the immutable before/after transport benchmark and full/release verification envelope, then reconcile Phases 58-62 to one truthful final state. The expected branch remains adopted; rollback is reserved for a blocker that cannot be corrected without violating security/API/capability invariants.
+Corrected the site/policy registry identity, made invalid requested TLS policy fail before network I/O, completed the immutable before/after transport benchmark and full/release verification envelope, and reconciled Phases 58-62 to one truthful final state. Proof-bearing `c3568ef4`; final record `architecture/eggfetch_0_2_transport_corrective_closeout.md`.
 
 ## Global invariants
 
@@ -212,7 +212,7 @@ Reject or stop the campaign if implementation requires any of the following:
 
 ## Campaign acceptance
 
-The campaign is complete only when Phase 62 records one of two truthful outcomes. The Phase 61 closeout is historical evidence and must not be treated as final while Phase 62 is active.
+The campaign is closed after Phase 62. The Phase 61 closeout is historical evidence and must not be treated as final.
 
 **Adopted:** eggfetch owns the proven generic transport mechanisms, SynVoid production consumers use that path, redundant internal transport code is removed, any retained compatibility lane is narrow/frozen and justified, and all correctness/security/performance gates pass.
 

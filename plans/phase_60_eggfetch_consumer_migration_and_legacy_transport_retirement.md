@@ -1,6 +1,6 @@
 # Phase 60 Plan: Eggfetch Consumer Migration and Legacy Transport Retirement
 
-Status: implementation landed at `7a6c617cf9dc16441f50da5dcff95778775b5041`; production remains on the eggfetch lane. Final closure is pending Phase 62 because the outer registry policy keying and invalid-policy failure semantics require correction.
+Status: closed. Implementation landed at `7a6c617cf9dc16441f50da5dcff95778775b5041`; production remains on the eggfetch lane. Final closure: Phase 62 proof-bearing `c3568ef4580a49edf222c5e4e6ce5d4dca904e81` (policy-aware registry + fail-closed lane; see `architecture/eggfetch_0_2_transport_corrective_closeout.md`).
 
 Roadmap: `plans/eggfetch_0_2_transport_consolidation_roadmap.md`.
 
