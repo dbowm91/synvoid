@@ -69,6 +69,13 @@ no registry/TLS/policy change was made, and none was needed.
 | phases | `stream-64k-phases` TTH-vs-drain, immutable | 10, 0 failures | `.../2026-09-22T204937Z/` |
 | diagnostic | same-tree 300k H1 runs + superseded pilot (labeled, non-authoritative) | 12 files | `.../results/diagnostic-sametree/` (see its `NOTE.md`) |
 
+Phase 63 committed six authoritative immutable comparison sessions
+(two full matrices, concurrent-streaming persistence, concurrency-2,
+concurrency-8, and the 64 KiB phase-split), plus separately labeled
+same-tree diagnostics that are non-authoritative for before/after parity.
+The phase-split session holds ten lane/result runs but is one immutable
+comparison session; run counts are not session counts.
+
 Run-order protocol: detached worktrees per revision, independent builds
 (legacy `--no-default-features`), ABBA lane alternation per workload per
 rep, ≥5 measured reps per revision/workload in matrix sessions,
@@ -157,10 +164,16 @@ tail effect.
   is unaffected everywhere; the H2-multiplexed path — the high-concurrency
   production pattern — is at parity/+4.9%; synchronized N-way 64 KiB
   streaming bursts are not SynVoid's paced upstream pattern. The
-  single-transport maintenance/security benefit outweighs this bounded
-  tail effect. Tracked follow-up: upstream eggfetch concurrent-streaming
-  admission/tail investigation (no SynVoid fork; no local workaround that
-  would duplicate transport ownership).
+   single-transport maintenance/security benefit outweighs this bounded
+   tail effect. SynVoid accepts this residual for its 0.2 adoption.
+   Active investigation plan: `eggstack/eggfetch:
+   plans/native-concurrent-streaming-tail-investigation.md` (upstream
+   planning baseline `8959ca890ee34f4cf456aed648315322f1e83ef7`;
+   registration/index reconciliation
+   `b3c009df90f9ab09e91e8fa7464653dceb300dd8`). The mechanism is not yet
+   proven and no correction has shipped; no SynVoid fork or local
+   workaround is planned unless future evidence materially changes the
+   tradeoff (a local workaround would duplicate transport ownership).
 - The Phase 62 H1-concurrent ≈20% short-run delta is **not reproduced**
   under the stronger protocol (−4.2%/−3.1%, equal p50s); the Phase 62
   numbers stand as historical short-run evidence only.

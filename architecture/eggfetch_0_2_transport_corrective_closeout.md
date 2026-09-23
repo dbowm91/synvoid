@@ -218,6 +218,9 @@ Final performance/reproducibility authority has moved to
 (Phase 63, closed). This document stays authoritative for the runtime
 policy/TLS correction (§2–§5, §8); its §6/§9 benchmark conclusion is
 historical short-run evidence only and must not be cited as parity proof.
-Phase 63 outcome: parity adjudicated across 10 immutable session datasets
-with one accepted, labeled tail residual (`stream-concurrent` under
+Phase 63 outcome: parity adjudicated across six authoritative immutable
+comparison sessions (two full matrices, concurrent-streaming persistence,
+concurrency-2, concurrency-8, and the 64 KiB phase-split), plus separately
+labeled same-tree diagnostics that are non-authoritative for before/after
+parity, with one accepted, labeled tail residual (`stream-concurrent` under
 synchronized concurrency ≥ 4); no production runtime change was required.

@@ -75,9 +75,13 @@ Production egress runs on the eggfetch lane, not the legacy hyper pool:
   limits post-hoc (→502); the lane-internal limit maps oversize to
   200-empty, which changes legacy behavior.
 - Performance (Phase 63, closed): parity adjudicated on the committed
-  `benchmarks/http_transport/` harness; one accepted tail residual remains
-  under synchronized concurrent streaming (concurrency ≥ 4, equal p50,
-  worse p95/p99) — tracked upstream follow-up, no SynVoid workaround.
+  `benchmarks/http_transport/` harness across six authoritative immutable
+  comparison sessions (same-tree diagnostics non-authoritative); one
+  accepted tail residual remains under synchronized concurrent streaming
+  (concurrency ≥ 4, equal p50, worse p95/p99) — accepted for SynVoid's 0.2
+  adoption with active investigation plan `eggstack/eggfetch:
+  plans/native-concurrent-streaming-tail-investigation.md` (mechanism not
+  yet proven, no correction shipped), no SynVoid workaround.
   Do not "optimize" the lane on loopback anecdotes.
 - Records: `architecture/eggfetch_0_2_transport_corrective_closeout.md`
   (runtime policy/TLS authority; Phase 61 preserved as history) and

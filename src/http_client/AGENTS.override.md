@@ -150,7 +150,10 @@ lib.rs reduced to facade; TLS moved to tls.rs; pooling to pool.rs. Public API un
 - Buffered parity rule: `send_buffered(..., max=None)` + post-hoc size check (→502).
 - Performance residual (Phase 63, echoed from the skill): synchronized
   concurrent streaming (conc ≥ 4) carries an accepted tail residual (equal
-  p50, worse p95/p99); tracked upstream, no local workaround.
+  p50, worse p95/p99); accepted for SynVoid's 0.2 adoption with active
+  investigation plan `eggstack/eggfetch:
+  plans/native-concurrent-streaming-tail-investigation.md` (mechanism not
+  yet proven, no correction shipped), no local workaround.
 - Full record: `architecture/eggfetch_0_2_transport_corrective_closeout.md`
   (runtime policy/TLS authority; Phase 61 closeout preserved as history)
   and `architecture/eggfetch_0_2_transport_performance_requalification.md`

@@ -1,6 +1,13 @@
 # Phase 64 Plan: Eggfetch Closeout Evidence Truth Correction
 
-Status: detailed documentation/evidence corrective handoff plan (2026-09-22).
+Status: **complete/closed 2026-09-23.** Six-session count and concrete
+upstream-plan reference corrected across current authority/guidance;
+raw benchmark evidence, Phase 62 runtime authority, and Phase 63
+performance adjudication unchanged. Proof-bearing runtime SHA remains
+`c3568ef4580a49edf222c5e4e6ce5d4dca904e81`. Validation on the docs-only
+tree: `cargo fmt --all -- --check` green, `cargo xtask test guards` 3/3
+green, `cargo xtask verify` 10/10 green; diff is Markdown-only (no
+production/test/benchmark source). No benchmarks rerun.
 
 Registered in: `plans/roadmap.md`.
 
@@ -209,18 +216,18 @@ the Phase 64 docs-only commit unless those commands are actually rerun.
 
 Phase 64 is complete only when:
 
-- [ ] no current authority claims "10 immutable session datasets";
-- [ ] the authoritative count is six immutable comparison sessions;
-- [ ] same-tree diagnostics remain explicitly non-authoritative;
-- [ ] "tracked upstream" references name the concrete eggfetch plan;
-- [ ] SynVoid does not claim the upstream mechanism is already proven;
-- [ ] the accepted concurrent-streaming residual remains quantified/labeled;
-- [ ] no production, test, or benchmark source changed;
-- [ ] Phase 62 runtime authority and Phase 63 performance authority remain
+- [x] no current authority claims "10 immutable session datasets";
+- [x] the authoritative count is six immutable comparison sessions;
+- [x] same-tree diagnostics remain explicitly non-authoritative;
+- [x] "tracked upstream" references name the concrete eggfetch plan;
+- [x] SynVoid does not claim the upstream mechanism is already proven;
+- [x] the accepted concurrent-streaming residual remains quantified/labeled;
+- [x] no production, test, or benchmark source changed;
+- [x] Phase 62 runtime authority and Phase 63 performance authority remain
       intact;
-- [ ] `plans/roadmap.md` and the eggfetch campaign roadmap show Phase 64 as
+- [x] `plans/roadmap.md` and the eggfetch campaign roadmap show Phase 64 as
       the final docs/evidence correction;
-- [ ] the final docs-only SHA and validation result are recorded.
+- [x] the final docs-only SHA and validation result are recorded.
 
 ## Rejection criteria
 

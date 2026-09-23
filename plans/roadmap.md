@@ -1,6 +1,6 @@
 # SynVoid Architecture Hardening Roadmap
 
-Status: Tracks 1-3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). Eggfetch 0.2 runtime adoption is closed through Phase 62 (`c3568ef4...`) and performance/reproducibility adjudication is closed through Phase 63 (one accepted tail residual); Phase 64 is an active docs/evidence-truth correction only. Production remains on eggfetch.
+Status: Tracks 1-3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). Eggfetch 0.2 runtime adoption is closed through Phase 62 (`c3568ef4...`) and performance/reproducibility adjudication is closed through Phase 63 (one accepted tail residual); Phase 64 docs/evidence-truth correction is complete/closed. Production remains on eggfetch.
 
 Scope: this roadmap covers architecture hardening, trust-boundary closure, verification, release readiness, post-hardening cleanup, and the architecture-convergence work required before another broad feature-expansion pass.
 
@@ -369,7 +369,7 @@ fixes remain in force. No active performance-corrective handoff remains.
 
 ## Post-Phase-57 Campaign: Eggfetch 0.2 Transport Consolidation — Runtime/Performance Closed; Phase 64 Docs Correction Active
 
-Status: runtime implementation closed through Phase 62; Phase 61 closeout superseded; Phase 63 performance-evidence requalification closed 2026-09-22 with one accepted, labeled tail residual (`stream-concurrent` under synchronized concurrency ≥ 4). Phase 64 is an active documentation/evidence correction for the immutable-session count and concrete upstream-plan reference; it does not reopen runtime or performance adjudication. Production remains on eggfetch. Final measured authority remains `architecture/eggfetch_0_2_transport_performance_requalification.md`.
+Status: runtime implementation closed through Phase 62; Phase 61 closeout superseded; Phase 63 performance-evidence requalification closed 2026-09-22 with one accepted, labeled tail residual (`stream-concurrent` under synchronized concurrency ≥ 4). Phase 64 documentation/evidence correction (immutable-session count and concrete upstream-plan reference) is complete/closed; it did not reopen runtime or performance adjudication. Production remains on eggfetch. Final measured authority remains `architecture/eggfetch_0_2_transport_performance_requalification.md`.
 
 Roadmap: `plans/eggfetch_0_2_transport_consolidation_roadmap.md`.
 
@@ -389,7 +389,7 @@ Execution order:
 4. Phase 61 — superseded initial security/profile/API closeout attempt (preserved as history).
 5. Phase 62 — closed policy-aware registry and fail-closed TLS correction; its initial benchmark conclusion is preserved but superseded for performance evidence.
 6. Phase 63 — closed reproducible benchmark/true-streaming requalification, small-request regression adjudication, fixture hygiene, and final evidence closeout (one accepted tail residual under synchronized concurrent streaming).
-7. Phase 64 — active docs/evidence-truth correction: fix the authoritative immutable-session count, replace vague upstream-tracking language with the concrete eggfetch investigation plan, and preserve the Phase 62/63 authority split.
+7. Phase 64 — complete/closed docs/evidence-truth correction: authoritative immutable-session count fixed, vague upstream-tracking language replaced with the concrete eggfetch investigation plan, Phase 62/63 authority split preserved.
 
 Detailed plans:
 
