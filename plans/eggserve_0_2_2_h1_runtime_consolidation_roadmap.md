@@ -1,6 +1,6 @@
 # EggServe 0.2.2-Line H1 Runtime Consolidation Roadmap
 
-Status: implementation handoff plan.
+Status: campaign closed at Phase 65 as **RETAINED** on 2026-09-24. Production remains on Hyper H1; Phases 66–69 were not started because EggServe's required finite handler/body/write deadlines and upper bounds do not preserve current SynVoid semantics. Evidence: `architecture/eggserve_0_2_2_h1_compatibility_matrix.md`.
 
 Registered in: `plans/roadmap.md`.
 
@@ -94,6 +94,8 @@ Every EggServe control must be classified against an existing SynVoid policy bef
 Do not invent a new operator policy silently.
 
 ## Execution order
+
+The initial qualification was executed on baseline `79379d555ca4a8b6359760af2052a6e8228c3cfd`. It selected `RETAIN_CURRENT_H1`; the remaining phases below are gated and are not active work until the upstream contract changes and Phase 65 is repeated.
 
 ### Phase 65 — Runtime qualification and boundary contract
 

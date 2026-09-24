@@ -414,9 +414,9 @@ Campaign constraints:
 The campaign may terminate after Phase 58 on a retained branch if executable evidence shows a security, dependency, or API-compatibility blocker. That is a valid closeout; do not force adoption merely because the upstream feature list is broader.
 
 
-## Post-Phase-64 Campaign: EggServe 0.2.2-Line Inbound H1 Runtime Consolidation — Implementation Handoff
+## Post-Phase-64 Campaign: EggServe 0.2.2-Line Inbound H1 Runtime Consolidation — Retained at Phase 65
 
-Status: planned/implementation-ready. No EggServe production route has landed merely by registering these plans.
+Status: Phase 65 executed and closed RETAINED on 2026-09-24. Production remains on Hyper H1; Phases 66–69 are not started. EggServe's mandatory finite handler/body/write deadlines and upper-bound controls cannot be projected without narrowing current SynVoid behavior. Evidence: `architecture/eggserve_0_2_2_h1_compatibility_matrix.md`.
 
 Roadmap: `plans/eggserve_0_2_2_h1_runtime_consolidation_roadmap.md`.
 

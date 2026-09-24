@@ -1,6 +1,6 @@
 # Phase 67 Plan: EggServe Plaintext HTTP/1 Runtime Adoption
 
-Status: implementation handoff plan; execute only after Phase 66 closes cleanly.
+Status: not started; gated by Phase 65 `RETAIN_CURRENT_H1`. See `architecture/eggserve_0_2_2_h1_compatibility_matrix.md`.
 
 Registered in: `plans/roadmap.md`.
 

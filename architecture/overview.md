@@ -159,7 +159,7 @@ Every request flows through `synvoid-http`'s staged pipeline ([`http_request_pip
 
 HTTP/3 reuses these stages behind an `Http3WafBackend` trait boundary (see [`http3_request_waf_boundary.md`](./http3_request_waf_boundary.md)).
 
-Related: [`http_deep_dive.md`](./http_deep_dive.md) · [`http_server.md`](./http_server.md) · [`http_shared.md`](./http_shared.md) · [`http_ownership_convergence.md`](./http_ownership_convergence.md) · [`streaming.md`](./streaming.md) · [`networking_deep_dive.md`](./networking_deep_dive.md)
+Related: [`http_deep_dive.md`](./http_deep_dive.md) · [`http_server.md`](./http_server.md) · [`http_shared.md`](./http_shared.md) · [`http_ownership_convergence.md`](./http_ownership_convergence.md) · [`EggServe H1 qualification (retained at Phase 65)`](./eggserve_0_2_2_h1_compatibility_matrix.md) · [`streaming.md`](./streaming.md) · [`networking_deep_dive.md`](./networking_deep_dive.md)
 
 ---
 

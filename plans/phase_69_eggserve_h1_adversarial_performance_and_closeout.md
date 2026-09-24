@@ -1,6 +1,6 @@
 # Phase 69 Plan: EggServe H1 Adversarial, Performance, and Closeout Qualification
 
-Status: implementation handoff plan; final campaign gate.
+Status: not started; gated by Phase 65 `RETAIN_CURRENT_H1`. No EggServe production runtime exists to compare or close out. See `architecture/eggserve_0_2_2_h1_compatibility_matrix.md`.
 
 Registered in: `plans/roadmap.md`.
 

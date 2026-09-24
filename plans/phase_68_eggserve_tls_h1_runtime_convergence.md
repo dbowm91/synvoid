@@ -1,6 +1,6 @@
 # Phase 68 Plan: EggServe TLS HTTP/1 Runtime Convergence
 
-Status: implementation handoff plan; execute only after Phase 67 plaintext adoption is stable.
+Status: not started; gated by Phase 65 `RETAIN_CURRENT_H1`. See `architecture/eggserve_0_2_2_h1_compatibility_matrix.md`.
 
 Registered in: `plans/roadmap.md`.
 

@@ -143,6 +143,17 @@ cargo check
 cargo clippy --lib -- -D warnings
 ```
 
+## EggServe H1 runtime qualification
+
+The 2026-09 EggServe 0.2.2-line campaign was retained at Phase 65. Production
+plaintext and TLS-H1 remain on Hyper. The direct `eggserve-server 0.2.1`
+runtime requires nonzero handler, body-read, and response-write deadlines and
+finite parser/body ceilings that do not map to all current SynVoid semantics.
+Do not start the gated Phase 66–69 migration or add EggServe as a production
+dependency until a new Phase 65 qualification proves those controls can be
+projected without narrowing behavior. Evidence and exact registry checksums:
+[`architecture/eggserve_0_2_2_h1_compatibility_matrix.md`](../../../architecture/eggserve_0_2_2_h1_compatibility_matrix.md).
+
 ## Migration Progress (Phase 01 complete)
 
 | Step | Status |

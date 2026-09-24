@@ -1,6 +1,6 @@
 # Phase 66 Plan: Transport-Neutral HTTP Request, Body, and Tunnel Boundary
 
-Status: implementation handoff plan; execute only after Phase 65 records a go decision.
+Status: not started; Phase 65 recorded `RETAIN_CURRENT_H1` because EggServe's mandatory finite handler/body/write deadlines and bounded controls cannot be projected without changing SynVoid behavior. See `architecture/eggserve_0_2_2_h1_compatibility_matrix.md`. Requalify after the upstream runtime contract changes.
 
 Registered in: `plans/roadmap.md`.
 
