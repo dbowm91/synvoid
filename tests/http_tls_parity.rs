@@ -195,9 +195,9 @@ fn forwarded_headers_agree_except_scheme() {
 
 #[test]
 fn method_and_version_vocabulary_shared() {
-    // Both transports serve HTTP/1.1 + HTTP/2 after their respective
-    // handshakes (TLS via ALPN, plaintext directly); the request-policy
-    // layer sees the same `hyper` request shape either way.
+    // Plaintext serves HTTP/1.1 only (Phase 70); TLS serves HTTP/1.1 and
+    // HTTP/2 via ALPN. The request-policy layer sees the same `hyper`
+    // request shape on the H1 paths either way.
     let _ = Method::GET;
     let _ = Version::HTTP_11;
     let _ = Version::HTTP_2;

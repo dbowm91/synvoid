@@ -243,8 +243,8 @@ pub const FIELDS: &[(&str, &str, ConfigFieldDoc)] = &[
     }),
     ("http", "keep_alive_timeout_secs", ConfigFieldDoc {
         label: "Keep-Alive Timeout",
-        description: "Seconds to keep idle connections open before closing.",
-        impact: Some("Higher values reduce connection overhead but consume more resources."),
+        description: "Compatibility key, currently not enforced: idle connections are not timed out from this setting. Keep-alive stays enabled on H1.",
+        impact: Some("Has no runtime effect; a true idle timeout needs connection-activity instrumentation (future work)."),
         default: "60",
     }),
     ("http", "max_headers", ConfigFieldDoc {
@@ -255,32 +255,32 @@ pub const FIELDS: &[(&str, &str, ConfigFieldDoc)] = &[
     }),
     ("http", "max_request_line_size", ConfigFieldDoc {
         label: "Max Request Line Size",
-        description: "Maximum size in bytes for the HTTP request line (method, URI, version).",
-        impact: Some("Too low may block requests with long URLs."),
+        description: "Compatibility key, currently not enforced: no runtime consumer reads this setting.",
+        impact: Some("Has no runtime effect; changing it does not change request handling."),
         default: "8192",
     }),
     ("http", "max_header_size_ingress", ConfigFieldDoc {
         label: "Max Ingress Header Size",
-        description: "Maximum total size of all request headers from clients.",
+        description: "Maximum aggregate parsed request-header bytes (name + value bytes). Requests over the bound are rejected with 431 on H1/H2 paths.",
         impact: Some("Lower values protect against header-based attacks."),
         default: "4096",
     }),
     ("http", "max_header_size_egress", ConfigFieldDoc {
         label: "Max Egress Header Size",
-        description: "Maximum total size of response headers sent to clients.",
-        impact: Some("May truncate large Set-Cookie headers from backends."),
+        description: "Compatibility key, currently not enforced: responses are never truncated to this bound.",
+        impact: Some("Has no runtime effect."),
         default: "16384",
     }),
     ("http", "max_request_size", ConfigFieldDoc {
         label: "Max Request Body Size",
-        description: "Maximum size of the request body in bytes.",
-        impact: Some("Lower values protect against large payload attacks but limit uploads."),
+        description: "H1 parser-buffer ceiling in bytes (not a request-body limit). Minimum 8192, enforced by config validation.",
+        impact: Some("Lower values reduce parser memory but may reject requests with large headers/targets."),
         default: "1048576 (1MB)",
     }),
     ("http", "pipeline_limit", ConfigFieldDoc {
         label: "Pipeline Limit",
-        description: "Maximum number of pipelined requests per connection.",
-        impact: Some("Lower values reduce memory but may slow down pipelined clients."),
+        description: "Compatibility key, currently not enforced: no pipeline-depth control consumes this setting.",
+        impact: Some("Has no runtime effect."),
         default: "32",
     }),
 

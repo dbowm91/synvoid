@@ -4,7 +4,7 @@
 
 The HTTP Server module (`src/http/`) is the core request handling component of SynVoid. It provides:
 
-- **HTTP/1.1 + HTTP/2 server** using Hyper with protocol validation
+- **HTTP/1.1 server (plaintext) + HTTP/1.1/HTTP/2 server (TLS via ALPN)** using Hyper with protocol validation
 - **Request routing** to backends (Static, Upstream, Serverless, FastCGI, PHP, CGI, AppServer, Mesh, AxumDynamic plugins)
 - **WAF integration** with early and full request/body scanning
 - **WebSocket proxy** with bidirectional tunnel and WAF inspection
@@ -290,7 +290,7 @@ adversarial image perturbation.
 | `mesh` + `dns` | HTTP-01 ACME challenge serving via `mesh_transport.get_http01_challenge()` |
 
 ### Non-Feature-Gated Functionality
-- HTTP/1.1 + HTTP/2 server
+- HTTP/1.1 server (plaintext; H1-only, no cleartext H2/h2c) and HTTP/1.1 + HTTP/2 over TLS (ALPN)
 - WAF early/full checks with body scanning
 - WebSocket proxying
 - Static file serving
@@ -314,6 +314,19 @@ struct ProtocolValidatingStream<S> {
 }
 ```
 Wraps a stream with initial bytes buffer for protocol validation on first read.
+
+### H1 Parser Policy (Phase 70)
+
+Plaintext H1 (`src/http/server/accept_loop.rs`) and TLS-H1
+(`src/tls/server.rs`) share one root-local mapping,
+`src/http/h1_policy.rs::configure_h1_builder`, from `HttpConfig` to the
+Hyper H1 builder: `header_read_timeout_secs` (with an explicit
+`hyper_util::rt::TokioTimer`, which Hyper requires for the timeout to be
+active rather than panic), `max_headers`, and `max_request_size` as the
+parser-buffer ceiling (not a body limit). TLS H2 keeps its separate
+`max_header_list_size(max_headers)` behavior. Parity tests:
+`tests/http_h1_parser_parity.rs`. Full evidence:
+`architecture/http_h1_runtime_truthfulness_phase70.md`.
 
 ### TLS Detection
 Canonical in `synvoid_http::framing::is_tls_client_hello` (Phase 20; both
@@ -423,6 +436,14 @@ Wildcard origin rejected unless `allow_wildcard_cors = true`.
 
 ### ConnectionTokenGuard
 Automatic release on drop with acquire semantics for per-site upgrades.
+
+### Request-Admission Semaphore (Phase 71)
+
+`http.max_connections` sizes a semaphore acquired **per request** in
+`HttpServer::handle_request` / `HttpsServer::handle_request_with_cache` and
+held for request lifetime: it bounds concurrent HTTP request admission, not
+accepted TCP connections. Full semantics:
+`architecture/http_config_runtime_semantics_matrix.md`.
 
 ---
 

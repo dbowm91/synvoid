@@ -111,6 +111,22 @@ enabled = true
 custom_patterns = ["/etc/passwd", "boot.ini"]
 ```
 
+### 431 Request Header Fields Too Large
+
+**Symptom**: Legitimate requests rejected with `431`
+
+**Cause**: Aggregate parsed request-header bytes (header-name + header-value
+bytes) exceed `http.max_header_size_ingress` (default 4096). Common with
+large cookies or many headers.
+
+**Solutions**:
+- Raise the bound if the traffic is legitimate:
+```toml
+[http]
+max_header_size_ingress = 8192
+```
+- Reduce header volume (cookie size/count) sent by clients.
+
 ## Performance Issues
 
 ### High Memory Usage

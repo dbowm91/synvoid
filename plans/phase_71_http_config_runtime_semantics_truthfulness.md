@@ -1,6 +1,6 @@
 # Phase 71 Plan: HTTP Configuration Runtime-Semantics Truthfulness Closure
 
-Status: implementation handoff plan; execute after Phase 70 or in parallel only for evidence inventory. Runtime changes should land after Phase 70 settles the H1 builder baseline.
+Status: implemented/closed. Evidence: `architecture/http_config_runtime_semantics_matrix.md`; enforcement + guard tests `tests/http_config_runtime_semantics.rs` (6/6), helper unit tests in `crates/synvoid-http`, validation unit tests in `crates/synvoid-config`; routine verification recorded in the closeout commit.
 
 Registered in: `plans/roadmap.md`.
 

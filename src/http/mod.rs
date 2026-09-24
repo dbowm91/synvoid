@@ -9,6 +9,7 @@ pub mod early_parse;
 pub mod fastcgi_php_backend_dispatch;
 pub mod file_manager;
 pub mod file_manager_ui;
+pub mod h1_policy;
 pub mod headers;
 pub mod image_poisoning;
 pub mod image_rights;

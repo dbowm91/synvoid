@@ -50,9 +50,16 @@ fn file_name(path: &Path) -> &str {
 /// - `directory_viewer` / `file_manager*` / `webdav`: application handlers
 /// - `image_rights`: facade over `synvoid-static-files`, not `synvoid-http`
 /// - `image_poisoning`: deprecated alias over `image_rights`
+/// - `h1_policy.rs`: Phase 70 root-local Hyper H1 builder composition
+///   (timer + header/timeout/buffer mapping shared by the plaintext and TLS
+///   accept paths). Deliberately root-local per the Phase 70 plan (no new
+///   crate/generic server abstraction); it configures Hyper's parser, it
+///   does not implement parsing/normalization policy (still pinned by
+///   `root_http_has_no_second_parser` above).
 const NON_DELEGATING_MODULES: &[&str] = &[
     "mod.rs",
     "server.rs",
+    "h1_policy.rs",
     "directory_viewer.rs",
     "file_manager.rs",
     "file_manager_ui.rs",

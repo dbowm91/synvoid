@@ -119,14 +119,14 @@ pub(super) async fn run_accept_loop(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let std_listener = synvoid_platform::socket_bind::bind_tcp_reuse(addr)?;
     let listener = TcpListener::from_std(std_listener)?;
+    // Phase 70: the plaintext driver below constructs only
+    // `hyper::server::conn::http1::Builder` (no cleartext H2/h2c). Advertise
+    // exactly what is served; the TLS listener keeps its own H1+H2 claim
+    // because ALPN routing actually serves both.
     tracing::info!(
-        "HTTP server listening on {} (HTTP/1.1 + HTTP/2) [SO_REUSEPORT]",
-        addr
+        "{}",
+        crate::http::h1_policy::plaintext_startup_message(&addr)
     );
-
-    let header_read_timeout = Duration::from_secs(runtime.http_config.header_read_timeout_secs);
-    let max_headers = runtime.http_config.max_headers;
-    let max_buf_size = runtime.http_config.max_request_size;
 
     loop {
         tokio::select! {
@@ -220,6 +220,7 @@ pub(super) async fn run_accept_loop(
                         };
 
                         let http_conn_for_task = http_conn.clone();
+                        let h1_config = http_config.clone();
                         tokio::spawn(async move {
                             let http_conn_for_service = http_conn_for_task.clone();
                             let service = HttpConnectionService {
@@ -246,12 +247,21 @@ pub(super) async fn run_accept_loop(
                                 mesh_backend_pool,
                                 upstream_client_registry,
                             };
-                            let conn = hyper::server::conn::http1::Builder::new()
-                                .header_read_timeout(header_read_timeout)
-                                .max_headers(max_headers)
-                                .max_buf_size(max_buf_size)
-                                .serve_connection(io, service)
-                                .with_upgrades();
+                            let conn = {
+                                let mut builder =
+                                    hyper::server::conn::http1::Builder::new();
+                                // Phase 70: single H1 policy owner; sets the
+                                // Tokio timer (required for the header timeout
+                                // to be active), header count, and
+                                // parser-buffer ceiling.
+                                crate::http::h1_policy::configure_h1_builder(
+                                    &mut builder,
+                                    &h1_config,
+                                );
+                                builder
+                                    .serve_connection(io, service)
+                                    .with_upgrades()
+                            };
 
                             if let Err(e) = conn.await {
                                 tracing::debug!("HTTP connection error: {}", e);

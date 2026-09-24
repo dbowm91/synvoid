@@ -113,10 +113,34 @@ impl HttpConfig {
                 message: "max_headers must be greater than 0".to_string(),
             });
         }
-        if self.max_request_size == 0 {
+        // Phase 71: the TLS H2 path projects `max_headers` into
+        // `max_header_list_size(u32)`. A value above `u32::MAX` would
+        // truncate silently through the `as u32` cast, so fail closed here.
+        if self.max_headers > u32::MAX as usize {
+            return Err(ConfigValidationError {
+                field: "http.max_headers".to_string(),
+                message: "max_headers must fit in a u32 (H2 header-list limit)".to_string(),
+            });
+        }
+        // Phase 71: `max_request_size` is the Hyper H1 parser-buffer ceiling
+        // (`max_buf_size`), not a body limit. Hyper panics for values below
+        // its minimum (8192), so fail closed with a named error instead of a
+        // runtime panic. See `src/http/h1_policy.rs`.
+        if self.max_request_size < MIN_H1_PARSER_BUFFER_SIZE {
             return Err(ConfigValidationError {
                 field: "http.max_request_size".to_string(),
-                message: "max_request_size must be greater than 0".to_string(),
+                message: format!(
+                    "max_request_size must be at least {MIN_H1_PARSER_BUFFER_SIZE} (Hyper H1 parser-buffer minimum)"
+                ),
+            });
+        }
+        // Phase 71: `max_header_size_ingress` is enforced as an aggregate
+        // post-parse request-header bound (431). Zero would reject every
+        // request; fail closed at load time with a named error.
+        if self.max_header_size_ingress == 0 {
+            return Err(ConfigValidationError {
+                field: "http.max_header_size_ingress".to_string(),
+                message: "max_header_size_ingress must be greater than 0".to_string(),
             });
         }
         if self.max_connections == 0 {
@@ -128,6 +152,12 @@ impl HttpConfig {
         Ok(())
     }
 }
+
+/// Minimum value Hyper accepts for the H1 parser buffer (`max_buf_size`).
+/// Mirrors `hyper::proto::h1::MINIMUM_MAX_BUFFER_SIZE`; kept as a literal so
+/// `synvoid-config` does not gain a Hyper dependency for one bound. If Hyper
+/// changes its minimum, `src/http/h1_policy.rs` documents the coupling.
+pub const MIN_H1_PARSER_BUFFER_SIZE: usize = 8192;
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema, ToSchema)]
 pub struct Http3Config {
@@ -211,5 +241,44 @@ impl Default for TokioConfig {
                 .map(|p| p.get())
                 .unwrap_or(4),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn defaults_validate() {
+        HttpConfig::default().validate().unwrap();
+    }
+
+    #[test]
+    fn parser_buffer_minimum_matches_hyper_floor() {
+        assert_eq!(MIN_H1_PARSER_BUFFER_SIZE, 8192);
+        let mut config = HttpConfig::default();
+        config.max_request_size = MIN_H1_PARSER_BUFFER_SIZE - 1;
+        let err = config.validate().unwrap_err();
+        assert_eq!(err.field, "http.max_request_size");
+        config.max_request_size = MIN_H1_PARSER_BUFFER_SIZE;
+        config.validate().unwrap();
+    }
+
+    #[test]
+    fn max_headers_u32_overflow_fails_closed() {
+        let mut config = HttpConfig::default();
+        config.max_headers = u32::MAX as usize + 1;
+        let err = config.validate().unwrap_err();
+        assert_eq!(err.field, "http.max_headers");
+        config.max_headers = u32::MAX as usize;
+        config.validate().unwrap();
+    }
+
+    #[test]
+    fn zero_ingress_bound_fails_closed() {
+        let mut config = HttpConfig::default();
+        config.max_header_size_ingress = 0;
+        let err = config.validate().unwrap_err();
+        assert_eq!(err.field, "http.max_header_size_ingress");
     }
 }

@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
 use tokio::sync::Semaphore;

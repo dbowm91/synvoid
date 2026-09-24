@@ -175,6 +175,7 @@ where
         waf_for_preflight,
         alt_svc_for_preflight,
         main_config_for_preflight_fn,
+        &http_config,
         move |status, site_id, bypassed, method, path, user_agent| {
             request_log(
                 ipc_for_preflight.clone(),

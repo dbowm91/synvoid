@@ -147,14 +147,15 @@ pipeline_limit = 32
 ```
 
 **Why these defaults:**
-- `header_read_timeout_secs = 10` prevents slow-client attacks while allowing legitimate slow connections
-- `keep_alive_timeout_secs = 60` balances connection reuse (reduces handshakes) with socket resource usage
-- `max_headers = 128` accommodates most applications; very complex apps may need more but risk memory pressure
-- `max_request_line_size = 8192` handles long URLs (especially with many query params) without blocking legitimate requests
-- `max_header_size_ingress = 4096` limits header storage in bytes—ingress headers are typically smaller than egress
-- `max_header_size_egress = 16384` allows larger response headers (set-cookies, tokens, etc.)
-- `max_request_size = 1048576` (1MB) suits most web applications; file uploads should use dedicated upload handlers
-- `pipeline_limit = 32` limits concurrent pipelined requests per connection to prevent resource exhaustion
+- `header_read_timeout_secs = 10` prevents slow-client attacks while allowing legitimate slow connections (enforced on plaintext H1 and TLS-H1)
+- `keep_alive_timeout_secs = 60` is currently not enforced: the H1 servers enable keep-alive but implement no idle-connection timeout from this key. It remains a parseable compatibility key. Do not rely on it to bound idle sockets.
+- `max_headers = 128` accommodates most applications; very complex apps may need more but risk memory pressure (enforced on plaintext H1, TLS-H1, and as the TLS-H2 header-list limit)
+- `max_request_line_size = 8192` is currently not enforced: no runtime consumer reads this key (the H1 wire request line is not visible to policy code after parsing). It remains a parseable compatibility key.
+- `max_header_size_ingress = 4096` limits aggregate parsed request-header bytes (header-name + header-value bytes; framing overhead and the request line are not counted). Requests over the bound are rejected with `431` before routing/WAF/backend work on H1/H2 paths.
+- `max_header_size_egress = 16384` is currently not enforced: responses are never truncated to this bound. It remains a parseable compatibility key.
+- `max_request_size = 1048576` (1MB) is the H1 parser-buffer ceiling (`max_buf_size`), not a request-body limit: it bounds how much header/request-target bytes the H1 parser will buffer (minimum 8192, enforced by config validation). Body limits live in `max_streaming_body_size` and per-route upload policy.
+- `pipeline_limit = 32` is currently not enforced: no H1 pipeline-depth control consumes this key. It remains a parseable compatibility key.
+- `max_connections = 10000` bounds concurrent HTTP request admission (per-request semaphore held for request lifetime), not accepted TCP connections.
 
 ### Fallback Mode
 

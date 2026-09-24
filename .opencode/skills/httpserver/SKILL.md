@@ -143,6 +143,31 @@ cargo check
 cargo clippy --lib -- -D warnings
 ```
 
+## H1 Parser Policy (Phase 70)
+
+Plaintext H1 and TLS-H1 share one root-local mapping,
+`src/http/h1_policy.rs::configure_h1_builder`: header-read timeout (with
+explicit `hyper_util::rt::TokioTimer` — Hyper panics if a timeout is
+configured without a timer), max headers, and parser-buffer ceiling from
+`http.max_request_size` (a parser control, not a body limit). Do not add a
+second H1 mapping; extend the helper. TLS H2 keeps its separate
+`max_header_list_size`. Plaintext serves H1 only (startup log says
+`HTTP/1.1`); TLS serves H1+H2 via ALPN. Parity tests:
+`tests/http_h1_parser_parity.rs`.
+
+## HTTP Config Runtime Semantics (Phase 71)
+
+Every `HttpConfig` field has a disposition in
+`architecture/http_config_runtime_semantics_matrix.md`: `ACTIVE_EXACT`,
+`ACTIVE_NARROWER_THAN_DOCS`, or `DEPRECATED_COMPAT` (parseable but not
+enforced: `keep_alive_timeout_secs`, `max_request_line_size`,
+`max_header_size_egress`, `pipeline_limit`). Notably `max_request_size` is
+the H1 parser buffer (not a body limit) and `max_connections` is per-request
+admission (not TCP connections). `max_header_size_ingress` is an enforced
+aggregate post-parse header bound (431; H1/H2). Guard:
+`tests/http_config_runtime_semantics.rs` fails if a field is added without a
+matrix disposition.
+
 ## EggServe H1 runtime qualification
 
 The 2026-09 EggServe 0.2.2-line campaign was retained at Phase 65. Production

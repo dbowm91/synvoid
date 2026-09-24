@@ -262,6 +262,18 @@ owners = []
 reason = "validates Phase 03 facade disposition (removed paths stay removed, pure facades stay thin, adapters stay documented)"
 
 [[test]]
+name = "http_h1_parser_parity"
+class = "composition"
+owners = ["synvoid-http", "synvoid-proxy"]
+reason = "validates Phase 70 plaintext/TLS-H1 parser-control parity (header timeout, header count, parser buffer, upgrades) through the shared H1 policy helper"
+
+[[test]]
+name = "http_config_runtime_semantics"
+class = "composition"
+owners = ["synvoid-config", "synvoid-http"]
+reason = "validates Phase 71 HttpConfig runtime-semantics truthfulness (ingress aggregate enforcement, field-disposition guard)"
+
+[[test]]
 name = "config_capability_preflight_guard"
 class = "static_policy"
 owners = ["synvoid-config"]

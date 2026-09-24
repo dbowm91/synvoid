@@ -326,8 +326,9 @@ MainConfig.from_toml_str()  (canonical seam; see config_feature_contract.md)
 
 #### HTTP Configuration
 - header_read_timeout_secs > 0
-- max_headers > 0
-- max_request_size > 0
+- max_headers > 0 and <= u32::MAX (H2 header-list cast; Phase 71)
+- max_request_size >= 8192 (Hyper H1 parser-buffer floor; Phase 71)
+- max_header_size_ingress > 0 (zero would 431 all traffic; Phase 71)
 - max_connections > 0
 
 #### TLS Configuration

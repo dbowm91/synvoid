@@ -1,6 +1,6 @@
 # Phase 70 Plan: HTTP/1 Runtime Truthfulness Corrective
 
-Status: implementation handoff plan.
+Status: implemented/closed. Evidence: `architecture/http_h1_runtime_truthfulness_phase70.md`; parity tests `tests/http_h1_parser_parity.rs` (10/10); routine verification recorded in the closeout commit.
 
 Registered in: `plans/roadmap.md`.
 

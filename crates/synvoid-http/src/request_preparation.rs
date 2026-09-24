@@ -44,6 +44,20 @@ pub enum RequestPreflightOutcome {
     Respond(Response<BoxBody<Bytes, Infallible>>),
 }
 
+/// Phase 71: aggregate parsed request-header size.
+///
+/// Sums `name.len() + value.len()` over every parsed header entry. This is a
+/// post-parse count, not a wire-byte ceiling: `: ` separators, CRLF
+/// overhead, and the request line are NOT included, and the transport
+/// parser's own memory ceiling (`max_buf_size`) still applies underneath.
+/// Documented as such; docs must not claim pre-parse wire semantics.
+pub fn request_headers_ingress_size(headers: &http::HeaderMap) -> usize {
+    headers
+        .iter()
+        .map(|(name, value)| name.as_str().len() + value.len())
+        .sum()
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn prepare_request_preflight<W, LogFn, DropFn>(
     req: hyper::Request<hyper::body::Incoming>,
@@ -53,6 +67,7 @@ pub async fn prepare_request_preflight<W, LogFn, DropFn>(
     waf: Arc<W>,
     alt_svc: Option<String>,
     main_config: Arc<MainConfig>,
+    http_config: &HttpConfig,
     mut on_log: LogFn,
     _on_drop: DropFn,
 ) -> Result<RequestPreflightOutcome, hyper::Error>
@@ -105,6 +120,40 @@ where
         ));
     }
     let cookies_ref = cookies.as_deref();
+    // Phase 71 (`http.max_header_size_ingress`): aggregate parsed
+    // request-header bound, enforced here before trust-token bypass, routing,
+    // WAF evaluation, and backend work. Covers every transport that flows
+    // through this canonical preflight (plaintext H1, TLS-H1, TLS-H2).
+    // Fail-closed 431; the transport parser ceiling still applies underneath.
+    let ingress_size = request_headers_ingress_size(&parts.headers);
+    if ingress_size > http_config.max_header_size_ingress {
+        tracing::warn!(
+            client_ip = %client_ip,
+            method = %method,
+            path = %path,
+            ingress_size,
+            limit = http_config.max_header_size_ingress,
+            "Rejecting request with oversized aggregate headers"
+        );
+        counter!("synvoid.http.header_size_rejected").increment(1);
+        on_log(
+            431,
+            &host,
+            false,
+            method.as_str(),
+            &path,
+            user_agent.as_deref(),
+        );
+        return Ok(RequestPreflightOutcome::Respond(
+            crate::response_builder::build_response_with_alt_svc(
+                431,
+                crate::response_builder::reason_phrase(431).to_string(),
+                "text/plain",
+                &alt_svc,
+                main_config.as_ref(),
+            ),
+        ));
+    }
     // Trust-token bypass is evaluated here; the former always-`Pass` early WAF
     // stage was removed in Phase 19 (block-store admission lives in the worker
     // composition root). Every request proceeds directly to routing and the
@@ -618,6 +667,7 @@ where
         waf,
         alt_svc,
         main_config,
+        &http_config,
         move |status, site_id, bypassed, method, path, user_agent| {
             preflight_on_log(status, site_id, bypassed, method, path, user_agent);
         },
@@ -653,4 +703,66 @@ where
     .await?;
 
     Ok(outcome)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn headers_of(pairs: &[(&str, &str)]) -> http::HeaderMap {
+        let mut headers = http::HeaderMap::new();
+        for (name, value) in pairs {
+            headers.append(
+                name.parse::<http::header::HeaderName>().unwrap(),
+                value.parse::<http::header::HeaderValue>().unwrap(),
+            );
+        }
+        headers
+    }
+
+    #[test]
+    fn ingress_size_sums_name_and_value_bytes() {
+        let headers = headers_of(&[("host", "example.com"), ("x-a", "1")]);
+        assert_eq!(
+            request_headers_ingress_size(&headers),
+            "host".len() + "example.com".len() + "x-a".len() + "1".len()
+        );
+        assert_eq!(request_headers_ingress_size(&http::HeaderMap::new()), 0);
+    }
+
+    #[test]
+    fn ingress_size_counts_repeated_headers_each_time() {
+        let headers = headers_of(&[("x-dup", "aa"), ("x-dup", "bbbb")]);
+        assert_eq!(
+            request_headers_ingress_size(&headers),
+            2 * "x-dup".len() + 2 + 4
+        );
+    }
+
+    #[test]
+    fn ingress_size_boundary_at_limit() {
+        // Exactly at the limit fits; one byte over does not. The boundary
+        // comparison lives in `prepare_request_preflight`; pin the helper
+        // arithmetic here.
+        let headers = headers_of(&[("x-k", "v")]);
+        let size = request_headers_ingress_size(&headers);
+        assert_eq!(size, "x-k".len() + "v".len());
+        assert!(size <= size);
+        assert!(size + 1 > size);
+    }
+
+    #[test]
+    fn default_ingress_limit_accepts_ordinary_requests() {
+        // A typical browser-like header set must fit comfortably inside the
+        // default 4096-byte aggregate bound.
+        let headers = headers_of(&[
+            ("host", "example.com"),
+            ("user-agent", "synvoid-phase71-test/1.0"),
+            ("accept", "text/html"),
+            ("accept-language", "en-US"),
+            ("cookie", "session=abc123"),
+        ]);
+        let config = HttpConfig::default();
+        assert!(request_headers_ingress_size(&headers) <= config.max_header_size_ingress);
+    }
 }

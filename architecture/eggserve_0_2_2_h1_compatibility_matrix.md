@@ -70,6 +70,13 @@ The blocker is EggServe runtime contract/configuration, not missing listener/TLS
 
 The known plaintext startup log still says HTTP/1.1 + HTTP/2 although the shown driver is H1-only; it remains a pre-existing truthfulness issue and was not changed because no runtime migration landed. TLS H1 parser settings also remain as before. README behavior/dependency claims remain accurate and need no update.
 
+> Phase 70 update: the two residuals above are now closed in the Hyper
+> runtime (H1-only startup log; TLS-H1 consumes the same header
+> timeout/header-count/parser-buffer controls as plaintext H1 through
+> `src/http/h1_policy.rs`). Evidence:
+> `architecture/http_h1_runtime_truthfulness_phase70.md`. This matrix
+> otherwise remains the historical Phase 65 retained-decision record.
+
 ## Qualification commands and evidence scope
 
 Executed `cargo info` for each pinned registry artifact; inspected the direct-leaf `RuntimeConfig`, validation kernel, connection driver, request conversion, tunnel API, and caller-owned TCP example. Compared isolated feature trees for direct leaf versus core with defaults disabled. Registry checksums above are SHA-256 of the downloaded `.crate` archives.

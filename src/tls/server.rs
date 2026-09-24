@@ -20,7 +20,7 @@ use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::os::fd::AsRawFd;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
 use tokio_rustls::TlsAcceptor;
@@ -275,9 +275,9 @@ impl HttpsServer {
         let app_servers = self.app_servers.clone();
         let upstream_client_registry = self.upstream_client_registry.clone();
 
-        let _header_read_timeout = Duration::from_secs(self.http_config.header_read_timeout_secs);
         let max_headers = self.http_config.max_headers;
-        let _max_buf_size = self.http_config.max_request_size;
+        // Phase 70: TLS-H1 parser controls are applied per-connection through
+        // the shared root-local H1 policy helper
 
         loop {
             tokio::select! {
@@ -462,9 +462,20 @@ impl HttpsServer {
                                                 }
                                             };
 
-                                            let conn = http1_server::Builder::new()
-                                                .keep_alive(true)
-                                                .serve_connection(io, hyper::service::service_fn({
+                                            let conn = {
+                                                let mut builder =
+                                                    http1_server::Builder::new();
+                                                // Phase 70: same H1 policy as
+                                                // plaintext (timeout, header
+                                                // count, parser buffer, Tokio
+                                                // timer). Keep-alive stays
+                                                // enabled as before.
+                                                crate::http::h1_policy::configure_h1_builder(
+                                                    &mut builder,
+                                                    &http_config,
+                                                );
+                                                builder.keep_alive(true);
+                                                builder.serve_connection(io, hyper::service::service_fn({
                                                     let metrics = metrics_h1.clone();
                                                     let drain_state = drain_state_h1.clone();
                                                     #[cfg(feature = "mesh")]
@@ -508,7 +519,8 @@ impl HttpsServer {
                                                         }
                                                     }
                                                 }))
-                                                .with_upgrades();
+                                                .with_upgrades()
+                                            };
 
                                             tokio::spawn(async move {
                                                 if let Err(e) = conn.await {
