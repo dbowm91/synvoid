@@ -1,6 +1,6 @@
 # SynVoid Architecture Hardening Roadmap
 
-Status: Tracks 1-3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). Eggfetch 0.2 runtime adoption is closed through Phase 62 (`c3568ef4...`) and performance/reproducibility adjudication is closed through Phase 63 (one accepted tail residual); Phase 64 docs/evidence-truth correction is complete/closed. Production remains on eggfetch. The EggServe 0.2.2-line inbound H1 campaign closed RETAINED at Phase 65; Phases 66–69 are gated/not started and production remains on Hyper H1. Phases 70–71 (HTTP/1 runtime and `HttpConfig` truthfulness corrective) are implemented/closed.
+Status: Tracks 1-3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). Eggfetch 0.2 runtime adoption is closed through Phase 62 (`c3568ef4...`) and performance/reproducibility adjudication is closed through Phase 63 (one accepted tail residual); Phase 64 docs/evidence-truth correction is complete/closed. Production remains on eggfetch. The EggServe 0.2.2-line inbound H1 campaign closed RETAINED at Phase 65; Phases 66–69 are gated/not started and production remains on Hyper H1. Phases 70–71 (HTTP/1 runtime and `HttpConfig` truthfulness corrective) are implemented/closed. Phase 72 is the active evidence-reconciliation closeout for the HTTP truthfulness line.
 
 Scope: this roadmap covers architecture hardening, trust-boundary closure, verification, release readiness, post-hardening cleanup, and the architecture-convergence work required before another broad feature-expansion pass.
 
@@ -506,3 +506,22 @@ Constraints:
 - docs/admin UI must not describe a field as active when runtime evidence says otherwise.
 
 If exact enforcement of a field requires a new parser, TCP-admission subsystem, invasive idle-connection instrumentation, or incompatible config rename/removal, Phase 71 must classify the residual truthfully and register a separate focused follow-up rather than broadening itself.
+
+### Phase 72 — HTTP truthfulness corrective closeout and evidence reconciliation — Active
+
+Plan: `plans/phase_72_http_truthfulness_corrective_closeout.md`.
+
+Baseline: `92ddc25d62e5b28e345ba660bf0a2504a6fa32f2` (Phases 70–71 implementation/closeout head).
+
+Purpose:
+
+- reconcile the Phase 70/71 architecture evidence files with their already-closed roadmap/plan state;
+- replace misleading "closeout pending routine verification" wording with final proof-bearing status;
+- add a real Rustls/Tokio-Rustls TLS handshake + ALPN `http/1.1` integration fixture so TLS-H1 parser/timeout/header/upgrade evidence is executable over an actual TLS stream rather than a second plain-TCP helper run;
+- correct the Phase 71 residual language: the five deferred items are catalogued future plan candidates unless separate concrete plan files are actually registered;
+- record remote CI status truthfully (green/failing/pending/no observed run), never infer it from local verification.
+
+This phase is evidence/closeout work, not a feature campaign. It must not implement the H3 ingress residual, idle keep-alive instrumentation, TCP connection caps, egress-header policy, request-line parsing/rename, EggServe adoption, or Phases 66–69.
+
+Terminal state: Phases 70–72 closed with evidence aligned to runtime; any later HTTP feature work starts under a new focused plan and baseline.
+
