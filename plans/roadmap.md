@@ -1,6 +1,6 @@
 # SynVoid Architecture Hardening Roadmap
 
-Status: Tracks 1-3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). Eggfetch 0.2 runtime adoption is closed through Phase 62 (`c3568ef4...`) and performance/reproducibility adjudication is closed through Phase 63 (one accepted tail residual); Phase 64 docs/evidence-truth correction is complete/closed. Production remains on eggfetch. EggServe 0.2.2-line inbound H1 runtime consolidation is registered as Phases 65–69 and is implementation-ready; production remains on the existing Hyper H1 runtime until the Phase 67 adoption gate is actually implemented and qualified.
+Status: Tracks 1-3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). Eggfetch 0.2 runtime adoption is closed through Phase 62 (`c3568ef4...`) and performance/reproducibility adjudication is closed through Phase 63 (one accepted tail residual); Phase 64 docs/evidence-truth correction is complete/closed. Production remains on eggfetch. The EggServe 0.2.2-line inbound H1 campaign closed RETAINED at Phase 65; Phases 66–69 are gated/not started and production remains on Hyper H1. Phases 70–71 are the active corrective handoff for HTTP/1 runtime and `HttpConfig` truthfulness.
 
 Scope: this roadmap covers architecture hardening, trust-boundary closure, verification, release readiness, post-hardening cleanup, and the architecture-convergence work required before another broad feature-expansion pass.
 
@@ -459,3 +459,41 @@ Campaign constraints:
 - no claim of lower footprint/faster runtime without measured evidence.
 
 The campaign may stop at Phase 65 or later and retain Hyper if executable evidence identifies a correctness, security, configuration, dependency, or performance blocker. Phase 66's transport-neutral boundary may remain only if independently justified.
+
+
+## Post-Phase-65 Corrective: HTTP Runtime and Configuration Truthfulness — Active Handoff
+
+Status: planned/implementation-ready. This corrective does not reopen EggServe adoption.
+
+Baseline reviewed: `beff97a8c5e53e0b9c64cea691bc76f0bee8fd2c` (Phase 65 retained closeout).
+
+The retained EggServe qualification exposed independent current-runtime truthfulness residuals in the existing Hyper server. These are now owned by Phases 70–71 rather than by the gated Phases 66–69.
+
+Execution order:
+
+1. **Phase 70 — HTTP/1 runtime truthfulness corrective**
+   - correct the plaintext protocol startup claim;
+   - make TLS-H1 consume the same configured header timeout, header-count, and parser-buffer controls as plaintext H1;
+   - prove the Hyper header timeout is genuinely active on both H1 transports;
+   - preserve WebSocket upgrades and TLS H2.
+   - Plan: `plans/phase_70_http_h1_runtime_truthfulness_corrective.md`.
+
+2. **Phase 71 — HTTP configuration runtime-semantics truthfulness closure**
+   - classify every `HttpConfig` field against a real runtime consumer;
+   - implement straightforward exact controls where safe;
+   - reconcile or deprecate inert/mis-scoped fields instead of leaving no-op operator knobs;
+   - add a guard requiring every current/future HTTP config field to have an explicit runtime-semantics disposition.
+   - Plan: `plans/phase_71_http_config_runtime_semantics_truthfulness.md`.
+
+Known starting evidence for Phase 71 includes active consumers for WAF stall controls, strict protocol validation, streaming-body limits, and the HTTP request semaphore; repository search did not demonstrate canonical runtime consumers for several documented fields including `keep_alive_timeout_secs`, `pipeline_limit`, `max_request_line_size`, and `max_header_size_egress`, while `max_connections` appears to be request-admission rather than literal TCP-connection scope. Phase 71 must verify these facts against its implementation head before changing behavior or docs.
+
+Constraints:
+
+- no EggServe dependency or Phase 66–69 implementation unless a future upstream requalification independently changes the retained decision;
+- no h2c implementation solely to preserve a stale log;
+- no raw/custom H1 parser hidden inside this corrective;
+- no arbitrary new timeouts/limits;
+- public config compatibility is preserved unless a separate explicit compatibility decision authorizes removal;
+- docs/admin UI must not describe a field as active when runtime evidence says otherwise.
+
+If exact enforcement of a field requires a new parser, TCP-admission subsystem, invasive idle-connection instrumentation, or incompatible config rename/removal, Phase 71 must classify the residual truthfully and register a separate focused follow-up rather than broadening itself.
