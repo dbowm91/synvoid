@@ -11,9 +11,12 @@ Phase 70 implementation head. Re-verified against the implementation head:
 every consumer cited below was confirmed by executable search/test, not copied
 from the planning review.
 
-Verification cited below is locally recorded verification. No remote GitHub
-Actions run/status for the proof-bearing SHA was observed through the
-available repository interface, so no remote CI outcome is claimed here.
+Verification cited below is locally recorded verification. Remote CI
+observed for the proof-bearing SHA: the push workflow run for that SHA
+(`36029889970`) completed cancelled (superseded by a follow-up push), so
+no green remote CI outcome is claimed for it. Remote green was observed
+for the Phase 72 reconciliation instead — see
+`architecture/http_truthfulness_phase72_closeout.md`.
 
 Plan: `plans/phase_71_http_config_runtime_semantics_truthfulness.md`.
 Evidence reconciliation: `plans/phase_72_http_truthfulness_corrective_closeout.md`

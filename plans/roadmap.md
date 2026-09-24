@@ -516,6 +516,10 @@ Baseline: `92ddc25d62e5b28e345ba660bf0a2504a6fa32f2` (Phases 70–71 implementat
 
 Closeout: `architecture/http_truthfulness_phase72_closeout.md`.
 
+Proof-bearing SHA: `1c215fa8d6df94cba3c7bed2d462221b8cf0ad18`. Remote CI
+observed green for that SHA: GitHub Actions run `36035559122` (`ci` +
+`dependency-security` jobs, both success).
+
 Result:
 
 - Phase 70/71 evidence files reconciled to closed status with the

@@ -7,11 +7,16 @@ Roadmap: `plans/roadmap.md` ("Phase 72" section).
 
 Baseline: `92ddc25d62e5b28e345ba660bf0a2504a6fa32f2` (Phases 70–71
 implementation/closeout head; treated as the runtime baseline throughout).
-Proof-bearing Phase 72 closeout SHA: recorded in the follow-up SHA-record
-commit (repo convention: closeout lands first, docs name its hash second).
+Proof-bearing Phase 72 closeout SHA:
+`1c215fa8d6df94cba3c7bed2d462221b8cf0ad18` (recorded in the follow-up
+SHA-record commit, per repo convention).
 
-Remote CI status for the proof-bearing SHA: recorded in the SHA-record
-follow-up after the push; never inferred from local verification.
+Remote CI status for the proof-bearing SHA: observed green. GitHub Actions
+run `36035559122` on `main` for `1c215fa8` completed `success`: job `ci`
+(`cargo xtask verify`, 26m28s) and job `dependency-security`
+(`cargo deny check` + `cargo audit`, 42s) both green. Only annotation is a
+generic Node.js 20 deprecation notice on `actions/checkout`, unrelated to
+this change.
 
 ## Why Phase 72 existed
 
