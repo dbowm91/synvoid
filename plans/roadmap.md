@@ -1,6 +1,6 @@
 # SynVoid Architecture Hardening Roadmap
 
-Status: Tracks 1-3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). Eggfetch 0.2 runtime adoption is closed through Phase 62 (`c3568ef4...`) and performance/reproducibility adjudication is closed through Phase 63 (one accepted tail residual); Phase 64 docs/evidence-truth correction is complete/closed. Production remains on eggfetch. The EggServe 0.2.2-line inbound H1 campaign closed RETAINED at Phase 65; Phases 66–69 are gated/not started and production remains on Hyper H1. Phases 70–71 (HTTP/1 runtime and `HttpConfig` truthfulness corrective) are implemented/closed. Phase 72 is the active evidence-reconciliation closeout for the HTTP truthfulness line.
+Status: Tracks 1-3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). Eggfetch 0.2 runtime adoption is closed through Phase 62 (`c3568ef4...`) and performance/reproducibility adjudication is closed through Phase 63 (one accepted tail residual); Phase 64 docs/evidence-truth correction is complete/closed. Production remains on eggfetch. The EggServe 0.2.2-line inbound H1 campaign closed RETAINED at Phase 65; Phases 66–69 are gated/not started and production remains on Hyper H1. Phases 70–71 (HTTP/1 runtime and `HttpConfig` truthfulness corrective) are implemented/closed. Phase 72 (HTTP truthfulness evidence-reconciliation closeout) is implemented/closed; Phases 70–72 are historical/closed with evidence aligned to runtime.
 
 Scope: this roadmap covers architecture hardening, trust-boundary closure, verification, release readiness, post-hardening cleanup, and the architecture-convergence work required before another broad feature-expansion pass.
 
@@ -489,10 +489,11 @@ Execution order:
       docs/admin-UI reconciled; guard `tests/http_config_runtime_semantics.rs`
       pins future fields to the matrix.
     - Plan: `plans/phase_71_http_config_runtime_semantics_truthfulness.md`.
-    - Residual follow-ups (registered in the matrix, not blocking): H3
-      ingress threading, true idle keep-alive instrumentation, TCP-connection
-      cap vs request admission, egress commit design, request-line wire
-      limit/rename.
+     - Residual follow-ups (catalogued in the matrix as future plan
+       candidates — no numbered plans registered, not blocking): H3
+       ingress threading, true idle keep-alive instrumentation, TCP-connection
+       cap vs request admission, egress commit design, request-line wire
+       limit/rename.
 
 Known starting evidence for Phase 71 includes active consumers for WAF stall controls, strict protocol validation, streaming-body limits, and the HTTP request semaphore; repository search did not demonstrate canonical runtime consumers for several documented fields including `keep_alive_timeout_secs`, `pipeline_limit`, `max_request_line_size`, and `max_header_size_egress`, while `max_connections` appears to be request-admission rather than literal TCP-connection scope. Phase 71 must verify these facts against its implementation head before changing behavior or docs.
 
@@ -507,21 +508,33 @@ Constraints:
 
 If exact enforcement of a field requires a new parser, TCP-admission subsystem, invasive idle-connection instrumentation, or incompatible config rename/removal, Phase 71 must classify the residual truthfully and register a separate focused follow-up rather than broadening itself.
 
-### Phase 72 — HTTP truthfulness corrective closeout and evidence reconciliation — Active
+### Phase 72 — HTTP truthfulness corrective closeout and evidence reconciliation — Implemented/Closed
 
 Plan: `plans/phase_72_http_truthfulness_corrective_closeout.md`.
 
 Baseline: `92ddc25d62e5b28e345ba660bf0a2504a6fa32f2` (Phases 70–71 implementation/closeout head).
 
-Purpose:
+Closeout: `architecture/http_truthfulness_phase72_closeout.md`.
 
-- reconcile the Phase 70/71 architecture evidence files with their already-closed roadmap/plan state;
-- replace misleading "closeout pending routine verification" wording with final proof-bearing status;
-- add a real Rustls/Tokio-Rustls TLS handshake + ALPN `http/1.1` integration fixture so TLS-H1 parser/timeout/header/upgrade evidence is executable over an actual TLS stream rather than a second plain-TCP helper run;
-- correct the Phase 71 residual language: the five deferred items are catalogued future plan candidates unless separate concrete plan files are actually registered;
-- record remote CI status truthfully (green/failing/pending/no observed run), never infer it from local verification.
+Result:
 
-This phase is evidence/closeout work, not a feature campaign. It must not implement the H3 ingress residual, idle keep-alive instrumentation, TCP connection caps, egress-header policy, request-line parsing/rename, EggServe adoption, or Phases 66–69.
+- Phase 70/71 evidence files reconciled to closed status with the
+  proof-bearing closeout SHA recorded and local-vs-remote verification
+  distinguished (no remote CI outcome claimed without an observed run);
+- real Rustls/Tokio-Rustls TLS handshake + ALPN `http/1.1` fixture added
+  (`tests/http_h1_tls_transport.rs`, 5/5) exercising the production H1
+  policy helper over the server `TlsStream` (timeout, header-count,
+  parser-buffer, WebSocket upgrade);
+- misleading `tls_h1_*` plain-TCP test names corrected to
+  `shared_policy_repeat`;
+- the five Phase 71 residuals recorded as catalogued future plan
+  candidates (no numbered plans registered, none active);
+- focused tests, feature-profile checks, and `cargo xtask verify` green.
 
 Terminal state: Phases 70–72 closed with evidence aligned to runtime; any later HTTP feature work starts under a new focused plan and baseline.
+
+Closed scope (historical): this phase was evidence/closeout work, not a
+feature campaign. It implemented no H3 ingress residual, idle keep-alive
+instrumentation, TCP connection caps, egress-header policy,
+request-line parsing/rename, EggServe adoption, or Phases 66–69.
 

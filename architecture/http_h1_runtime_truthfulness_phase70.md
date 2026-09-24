@@ -1,11 +1,22 @@
 # HTTP/1 Runtime Truthfulness Corrective (Phase 70)
 
-Status: **implemented**; closeout pending routine verification.
+Status: **closed**. Phases 70–71 implementation/closeout head:
+`92ddc25d62e5b28e345ba660bf0a2504a6fa32f2`; Phase 72 evidence
+reconciliation lands on top with no runtime change.
 
-Baseline reviewed: `main` at `beff97a8c5e53e0b9c64cea691bc76f0bee8fd2c` (2026-09-24).
-Implementation head: recorded at closeout commit.
+Baseline reviewed: `main` at `beff97a8c5e53e0b9c64cea691bc76f0bee8fd2c`
+(2026-09-24) — preserved as the pre-fix baseline.
+Proof-bearing Phase 70/71 closeout head:
+`92ddc25d62e5b28e345ba660bf0a2504a6fa32f2` (implementation plus the routine
+verification recorded in that closeout commit).
+
+Verification cited below is locally recorded verification. No remote GitHub
+Actions run/status for the proof-bearing SHA was observed through the
+available repository interface, so no remote CI outcome is claimed here.
 
 Plan: `plans/phase_70_http_h1_runtime_truthfulness_corrective.md`.
+Evidence reconciliation: `plans/phase_72_http_truthfulness_corrective_closeout.md`
+(Phase 72 closeout: `architecture/http_truthfulness_phase72_closeout.md`).
 
 ## Builder behavior before
 
@@ -61,27 +72,47 @@ was needed, so no `cargo deny`/`cargo audit` delta.
 
 ## Tests
 
-New `tests/http_h1_parser_parity.rs` (ownership: composition;
-`tests/OWNERSHIP.toml` entry added) drives loopback H1 servers built by the
-production helper with identical values for both labels:
+`tests/http_h1_parser_parity.rs` (ownership: composition;
+`tests/OWNERSHIP.toml` entry) drives a plaintext loopback H1 server built by
+the production helper, plus an identical-values repeat run proving the shared
+mapping is repeatable (plain TCP in both runs — the repeat run is NOT a TLS
+handshake), plus source guards:
 
-| Case | Plaintext | TLS-H1 (post-handshake equivalent) |
+| Case | Plaintext | Shared-policy repeat (plain TCP) |
 | --- | --- | --- |
 | max headers (8; 4 ok / 20 rejected) | ✅ | ✅ |
 | parser buffer (8192; small ok / 16 KiB header rejected) | ✅ | ✅ |
 | slow headers (1s timeout; partial held → terminated ≤15s; fast control 200) | ✅ | ✅ |
 | WebSocket upgrade → 101 reaches dispatch | ✅ | ✅ |
 
-Source guards in the same file pin: plaintext log has no `HTTP/2` claim;
-both H1 paths call `configure_h1_builder`; both retain `.with_upgrades()`;
-no `_header_read_timeout`/`_max_buf_size` dead locals remain; the H2
-`max_header_list_size(max_headers as u32)` line is unchanged. A unit test in
-`h1_policy.rs` proves building a connection with a configured timeout no
-longer panics.
+Real TLS-H1 transport evidence (Phase 72):
+`tests/http_h1_tls_transport.rs` (ownership: composition;
+`tests/OWNERSHIP.toml` entry) performs a real Rustls handshake — `rcgen`
+self-signed leaf for `localhost`, client trusts only that certificate, ALPN
+`http/1.1` asserted on both client and server ends — then serves Hyper H1
+over the server `TlsStream` through the production `configure_h1_builder`
+mapping with `.with_upgrades()` retained. No builder settings are copied
+into the test. Cases: control 200, max-headers fit/reject, parser-buffer
+fit/reject, 1s header-read timeout with a post-handshake stall terminated
+within 15s, WebSocket upgrade reaching 101.
+
+Scope truth: the TLS fixture tests the post-handshake `TlsStream` seam, not
+the full `HttpsServer` (no WAF/router/backend construction). The source
+guard below links that seam to the production `src/tls/server.rs` H1 call
+site; together they prove the intended transport mapping.
+
+Source guards in `tests/http_h1_parser_parity.rs` pin: plaintext log has no
+`HTTP/2` claim; both H1 paths call `configure_h1_builder`; both retain
+`.with_upgrades()`; no `_header_read_timeout`/`_max_buf_size` dead locals
+remain; the H2 `max_header_list_size(max_headers as u32)` line is unchanged.
+A unit test in `h1_policy.rs` proves building a connection with a configured
+timeout no longer panics.
 
 No private Hyper error strings are asserted (status classes only).
 
-## Commands/results (recorded at closeout)
+## Commands/results (locally recorded)
+
+At Phase 70/71 closeout (`92ddc25d`):
 
 - `cargo test --test http_h1_parser_parity --profile ci` — 10/10 pass.
 - `cargo fmt --all -- --check` — green.
@@ -89,6 +120,25 @@ No private Hyper error strings are asserted (status classes only).
 - `cargo xtask test guards` — green.
 - Feature-profile `cargo check` matrix — green.
 - `cargo xtask verify` — recorded in the closeout commit message.
+
+After Phase 72 evidence reconciliation (no runtime change; repeat-run
+labels renamed, `tests/http_h1_tls_transport.rs` added):
+
+- `cargo test --test http_h1_parser_parity --profile ci` — 10/10 pass.
+- `cargo test --test http_h1_tls_transport --profile ci` — 5/5 pass.
+- `cargo test --test http_tls_parity --profile ci` — pass.
+- `cargo test --test http_config_runtime_semantics --profile ci` — pass.
+- `cargo nextest run -p synvoid-http --cargo-profile ci --profile ci` — green.
+- `cargo nextest run -p synvoid-config --cargo-profile ci --profile ci` — green.
+- `cargo xtask test guards` — green.
+- Feature-profile `cargo check` matrix — green.
+- `cargo xtask verify` — green (recorded in the Phase 72 closeout commit).
+
+No dependency manifest/feature changed in Phase 72 beyond test-only
+`[dev-dependencies]` (`rustls`, `rustls-pki-types`, `rcgen` reusing locked
+versions), so no new `cargo deny`/`cargo audit` delta is manufactured here;
+the Phase 70 statement (no dependency/feature/lockfile change, hence no
+deny/audit delta) stands for the runtime baseline.
 
 ## Residual delegated to Phase 71
 

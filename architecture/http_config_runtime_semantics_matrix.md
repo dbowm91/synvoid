@@ -1,13 +1,23 @@
 # HTTP Configuration Runtime-Semantics Matrix (Phase 71)
 
-Status: **implemented**; closeout pending routine verification.
+Status: **closed**. Proof-bearing Phase 70/71 closeout baseline:
+`92ddc25d62e5b28e345ba660bf0a2504a6fa32f2` (implementation plus the routine
+verification recorded in that closeout commit; head before the Phase 72
+evidence corrections, which change no field disposition or runtime
+behavior).
 
 Baseline reviewed: `main` at `beff97a8c5e53e0b9c64cea691bc76f0bee8fd2c` plus the
 Phase 70 implementation head. Re-verified against the implementation head:
 every consumer cited below was confirmed by executable search/test, not copied
 from the planning review.
 
+Verification cited below is locally recorded verification. No remote GitHub
+Actions run/status for the proof-bearing SHA was observed through the
+available repository interface, so no remote CI outcome is claimed here.
+
 Plan: `plans/phase_71_http_config_runtime_semantics_truthfulness.md`.
+Evidence reconciliation: `plans/phase_72_http_truthfulness_corrective_closeout.md`
+(Phase 72 closeout: `architecture/http_truthfulness_phase72_closeout.md`).
 
 Disposition vocabulary: `ACTIVE_EXACT` (runtime matches docs),
 `ACTIVE_NARROWER_THAN_DOCS` (real consumer, narrower scope than described),
@@ -30,7 +40,10 @@ pre-parse wire-byte ceiling; the transport parser's own memory ceiling
   (`header_read_timeout` + explicit `TokioTimer`; Hyper panics without one).
 - Scope: plaintext H1 / TLS-H1. Enforcement phase: parser. Failure: idle
   header connection terminated.
-- Proof: `tests/http_h1_parser_parity.rs` slow-header cases on both paths.
+- Proof: `tests/http_h1_parser_parity.rs` slow-header cases (plaintext plus
+  shared-policy repeat) and `tests/http_h1_tls_transport.rs`
+  `tls_h1_real_header_read_timeout` (real Rustls handshake, ALPN
+  `http/1.1`, stall after handshake terminated within bound).
 
 ### `keep_alive_timeout_secs` — DEPRECATED_COMPAT
 
@@ -42,8 +55,9 @@ pre-parse wire-byte ceiling; the transport parser's own memory ceiling
   `serve_connection` in `tokio::time::timeout` would impose a wrong
   total-connection lifetime (kills active long requests/bodies/responses,
   races WebSocket upgrades). A true activity-aware idle timeout needs
-  connection-activity instrumentation — registered as a separate follow-up,
-  not smuggled into this phase.
+  connection-activity instrumentation — catalogued as a future plan
+  candidate (not registered; no numbered plan active), not smuggled into
+  this phase.
 - Action: docs/admin-UI mark "not enforced"; key remains parseable.
 
 ### `max_headers` — ACTIVE_EXACT
@@ -54,8 +68,10 @@ pre-parse wire-byte ceiling; the transport parser's own memory ceiling
 - Consumers: plaintext H1 + TLS-H1 (shared helper) + TLS H2 header-list size.
 - Scope: plaintext H1 / TLS-H1 / H2. Enforcement phase: parser. Failure: H1
   transport rejection; H2 stream error.
-- Proof: `tests/http_h1_parser_parity.rs` max-headers cases on both H1 paths;
-  H2 line pinned unchanged by the same file's source guard.
+- Proof: `tests/http_h1_parser_parity.rs` max-headers cases (plaintext
+  plus shared-policy repeat) and `tests/http_h1_tls_transport.rs`
+  `tls_h1_real_max_headers` (real TLS stream); H2 line pinned unchanged by
+  the parity file's source guard.
 
 ### `max_request_line_size` — DEPRECATED_COMPAT
 
@@ -199,7 +215,12 @@ justification (EggServe is not the production runtime).
   not-enforced markers;
 - requires narrower-scope wording for `max_request_size`/`max_connections`.
 
-## Residuals / follow-ups (registered, not blocking)
+## Residuals / follow-ups (catalogued future plan candidates — no numbered plans registered, not blocking)
+
+The five items below are explicitly NOT registered implementation plans:
+no focused plan files exist for them in `plans/`, and none is active. They
+are recorded here so a future pass can promote any of them into a numbered
+plan with its own baseline and acceptance criteria.
 
 1. H3 ingress enforcement: thread the limit through the QUIC dispatch chain
    with a 431 terminal mapping. Blocker: H3 prelude/dispatch signatures and

@@ -153,7 +153,12 @@ configured without a timer), max headers, and parser-buffer ceiling from
 second H1 mapping; extend the helper. TLS H2 keeps its separate
 `max_header_list_size`. Plaintext serves H1 only (startup log says
 `HTTP/1.1`); TLS serves H1+H2 via ALPN. Parity tests:
-`tests/http_h1_parser_parity.rs`.
+`tests/http_h1_parser_parity.rs` (plaintext + shared-policy repeat runs +
+TLS-H1/H2 call-site source guards) and `tests/http_h1_tls_transport.rs`
+(Phase 72: real Rustls handshake, ALPN `http/1.1`, H1 over the server
+`TlsStream` through the same helper). Full evidence:
+`architecture/http_h1_runtime_truthfulness_phase70.md`,
+`architecture/http_truthfulness_phase72_closeout.md`.
 
 ## HTTP Config Runtime Semantics (Phase 71)
 

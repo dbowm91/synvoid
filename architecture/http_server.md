@@ -325,7 +325,9 @@ Hyper H1 builder: `header_read_timeout_secs` (with an explicit
 active rather than panic), `max_headers`, and `max_request_size` as the
 parser-buffer ceiling (not a body limit). TLS H2 keeps its separate
 `max_header_list_size(max_headers)` behavior. Parity tests:
-`tests/http_h1_parser_parity.rs`. Full evidence:
+`tests/http_h1_parser_parity.rs` (plaintext + shared-policy repeat +
+call-site guards) and `tests/http_h1_tls_transport.rs` (Phase 72 real-TLS
+seam). Full evidence:
 `architecture/http_h1_runtime_truthfulness_phase70.md`.
 
 ### TLS Detection

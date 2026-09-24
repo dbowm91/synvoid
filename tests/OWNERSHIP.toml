@@ -265,7 +265,13 @@ reason = "validates Phase 03 facade disposition (removed paths stay removed, pur
 name = "http_h1_parser_parity"
 class = "composition"
 owners = ["synvoid-http", "synvoid-proxy"]
-reason = "validates Phase 70 plaintext/TLS-H1 parser-control parity (header timeout, header count, parser buffer, upgrades) through the shared H1 policy helper"
+reason = "validates Phase 70 plaintext H1 parser-control parity (header timeout, header count, parser buffer, upgrades) through the shared H1 policy helper plus TLS-H1/H2 call-site source guards; real TLS-stream evidence lives in http_h1_tls_transport"
+
+[[test]]
+name = "http_h1_tls_transport"
+class = "composition"
+owners = ["synvoid-http", "synvoid-proxy"]
+reason = "validates Phase 72 real TLS-H1 transport evidence (rustls handshake, ALPN http/1.1, parser controls, upgrades) over a server TlsStream through the shared H1 policy helper"
 
 [[test]]
 name = "http_config_runtime_semantics"

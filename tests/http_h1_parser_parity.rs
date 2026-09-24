@@ -1,17 +1,19 @@
 //! Root-test ownership: COMPOSITION
-//! Rationale: Phase 70 H1 parser-control parity. Proves the plaintext H1 and
-//! TLS-H1 transports apply the same configured header-read timeout,
-//! header-count, and parser-buffer ceiling through the single root-local
-//! policy helper (`synvoid::http::h1_policy::configure_h1_builder`), and that
-//! the header timeout is genuinely active (explicit Tokio timer) rather than
-//! merely configured.
+//! Rationale: Phase 70 H1 parser-control parity. Proves the plaintext H1
+//! transport applies the configured header-read timeout, header-count, and
+//! parser-buffer ceiling through the single root-local policy helper
+//! (`synvoid::http::h1_policy::configure_h1_builder`), and that the header
+//! timeout is genuinely active (explicit Tokio timer) rather than merely
+//! configured.
 //!
-//! TLS-H1 is exercised post-handshake: after the TLS accept/handshake/ALPN
-//! layer, the H1 connection serves Hyper H1 over the decrypted stream, so the
-//! parser behavior under test is exactly the shared helper mapping. A
-//! source-level guard below pins that `src/tls/server.rs` routes its H1 path
-//! through the helper, retains `.with_upgrades()`, and leaves the H2
-//! `max_header_list_size` path unchanged.
+//! The `shared_policy_repeat` cases re-run the same helper with identical
+//! values to prove the mapping is repeatable; they are plain-TCP loopback
+//! runs, NOT TLS handshakes. Real TLS-H1 transport evidence (actual Rustls
+//! handshake, ALPN `http/1.1`, H1 over the server `TlsStream`) lives in
+//! `tests/http_h1_tls_transport.rs` (Phase 72). A source-level guard below
+//! pins that `src/tls/server.rs` routes its H1 path through the helper,
+//! retains `.with_upgrades()`, and leaves the H2 `max_header_list_size` path
+//! unchanged.
 
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
@@ -118,9 +120,10 @@ async fn max_headers_plaintext_h1() {
 }
 
 #[tokio::test]
-async fn max_headers_tls_h1_post_handshake() {
-    // Same helper, same values: post-handshake TLS-H1 parsing is identical.
-    max_headers_case("tls-h1").await;
+async fn max_headers_shared_policy_repeat() {
+    // Same helper, same values: proves the shared mapping is repeatable.
+    // Real TLS-stream evidence lives in `tests/http_h1_tls_transport.rs`.
+    max_headers_case("shared-policy-repeat").await;
 }
 
 // ─── parser buffer ceiling ───────────────────────────────────────────────────
@@ -153,8 +156,8 @@ async fn parser_buffer_plaintext_h1() {
 }
 
 #[tokio::test]
-async fn parser_buffer_tls_h1_post_handshake() {
-    parser_buffer_case("tls-h1").await;
+async fn parser_buffer_shared_policy_repeat() {
+    parser_buffer_case("shared-policy-repeat").await;
 }
 
 // ─── slow header timeout is active on both paths ─────────────────────────────
@@ -206,8 +209,8 @@ async fn slow_header_timeout_plaintext_h1() {
 }
 
 #[tokio::test]
-async fn slow_header_timeout_tls_h1_post_handshake() {
-    slow_header_case("tls-h1").await;
+async fn slow_header_timeout_shared_policy_repeat() {
+    slow_header_case("shared-policy-repeat").await;
 }
 
 // ─── WebSocket upgrade still reaches dispatch ────────────────────────────────
@@ -236,8 +239,8 @@ async fn websocket_upgrade_plaintext_h1() {
 }
 
 #[tokio::test]
-async fn websocket_upgrade_tls_h1_post_handshake() {
-    websocket_case("tls-h1").await;
+async fn websocket_upgrade_shared_policy_repeat() {
+    websocket_case("shared-policy-repeat").await;
 }
 
 // ─── Source guards: wiring truth ────────────────────────────────────────────
