@@ -1,6 +1,6 @@
 # SynVoid Architecture Hardening Roadmap
 
-Status: Tracks 1-3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). Eggfetch 0.2 runtime adoption is closed through Phase 62 (`c3568ef4...`) and performance/reproducibility adjudication is closed through Phase 63 (one accepted tail residual); Phase 64 docs/evidence-truth correction is complete/closed. Production remains on eggfetch.
+Status: Tracks 1-3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). Eggfetch 0.2 runtime adoption is closed through Phase 62 (`c3568ef4...`) and performance/reproducibility adjudication is closed through Phase 63 (one accepted tail residual); Phase 64 docs/evidence-truth correction is complete/closed. Production remains on eggfetch. EggServe 0.2.2-line inbound H1 runtime consolidation is registered as Phases 65–69 and is implementation-ready; production remains on the existing Hyper H1 runtime until the Phase 67 adoption gate is actually implemented and qualified.
 
 Scope: this roadmap covers architecture hardening, trust-boundary closure, verification, release readiness, post-hardening cleanup, and the architecture-convergence work required before another broad feature-expansion pass.
 
@@ -412,3 +412,50 @@ Campaign constraints:
 - `synvoid-http-client` remains internal unless a future separate publication decision says otherwise.
 
 The campaign may terminate after Phase 58 on a retained branch if executable evidence shows a security, dependency, or API-compatibility blocker. That is a valid closeout; do not force adoption merely because the upstream feature list is broader.
+
+
+## Post-Phase-64 Campaign: EggServe 0.2.2-Line Inbound H1 Runtime Consolidation — Implementation Handoff
+
+Status: planned/implementation-ready. No EggServe production route has landed merely by registering these plans.
+
+Roadmap: `plans/eggserve_0_2_2_h1_runtime_consolidation_roadmap.md`.
+
+Baseline reviewed: `11a1fb2844cd648418eefd72801f1aee2090d140` (2026-09-24 integration review).
+
+Upstream publication truth:
+
+- `eggserve-core 0.2.2` is published and registry-qualified;
+- the direct reusable H1 runtime is currently `eggserve-server 0.2.1`;
+- the preferred production target is the narrow caller-owned H1 runtime, not EggServe listener/TLS/H2/H3/static ownership;
+- `eggserve-core 0.2.2` may be used for qualification/interop only if Phase 65 proves it is materially required.
+
+Primary objective: consolidate generic plaintext and TLS-HTTP/1 connection/runtime mechanics behind EggServe without moving SynVoid's socket, flood, TLS/ALPN/PQ/JA4, H2/H3, WAF, routing, backend, or application-policy authority.
+
+Execution order:
+
+1. Phase 65 — qualify the exact published runtime/feature graph, configuration semantics, body/response adaptation, and WebSocket/tunnel boundary; production routing unchanged.
+2. Phase 66 — remove `hyper::body::Incoming` and `hyper::upgrade::OnUpgrade` from the canonical `synvoid-http` policy boundary while retaining the existing Hyper transports.
+3. Phase 67 — adopt the direct EggServe runtime for plaintext H1 only, retaining SynVoid listener/flood/protocol-sniff ownership and a test-only differential lane.
+4. Phase 68 — route ALPN-selected TLS-H1 through the same caller-owned EggServe runtime while leaving SynVoid TLS termination and H2/H3 untouched.
+5. Phase 69 — run adversarial/wire/performance/full-release qualification, reconcile shutdown ownership, delete superseded production H1 Hyper machinery, and close as ADOPTED or RETAINED.
+
+Detailed plans:
+
+- `plans/phase_65_eggserve_runtime_qualification_and_boundary_contract.md`
+- `plans/phase_66_http_transport_neutral_request_and_tunnel_boundary.md`
+- `plans/phase_67_eggserve_plaintext_h1_runtime_adoption.md`
+- `plans/phase_68_eggserve_tls_h1_runtime_convergence.md`
+- `plans/phase_69_eggserve_h1_adversarial_performance_and_closeout.md`
+
+Campaign constraints:
+
+- no default EggServe `RuntimeConfig` in production; every bound must map to existing SynVoid semantics or be explicitly adjudicated;
+- no invented `eggserve-server 0.2.2` dependency;
+- no loss of WebSocket capability;
+- no forced request/response buffering;
+- no listener/TLS/H2/H3/static-policy migration;
+- no silent double admission/timeout/shutdown authorities;
+- no permanent dual production H1 runtime;
+- no claim of lower footprint/faster runtime without measured evidence.
+
+The campaign may stop at Phase 65 or later and retain Hyper if executable evidence identifies a correctness, security, configuration, dependency, or performance blocker. Phase 66's transport-neutral boundary may remain only if independently justified.
