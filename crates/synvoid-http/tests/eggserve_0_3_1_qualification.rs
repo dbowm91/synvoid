@@ -1,5 +1,8 @@
 //! Phase 73 re-run prototypes against the exact published artifacts
-//! `eggserve-server =0.3.1` / `eggserve-primitives =0.2.1`.
+//! `eggserve-server =0.3.1` / `eggserve-primitives =0.2.1`, re-pinned to
+//! `0.4.0` / `0.2.2` by Phase 79 Finding B (0.3.1 cannot render an H1
+//! terminal trailer block). The file name records the qualification that
+//! introduced these prototypes.
 //!
 //! Test-only fixture: no production route changes, no production EggServe
 //! dependency. Workstreams E (body), F (tunnel), G (drop/shutdown),

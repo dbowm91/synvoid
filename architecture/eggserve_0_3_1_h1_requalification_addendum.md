@@ -157,3 +157,12 @@ compile profiles are green. `Cargo.lock` pins the exact checksums above.
 Phase 74 is unblocked by this decision but is **not** started here (per
 the Phase 73 non-goals). Production remains on Hyper H1 until the
 adoption sequence completes.
+
+## Supersession note (Phase 79)
+
+The exact-version identity stated here was superseded on 2026-09-25 by
+`architecture/eggserve_0_4_0_trailer_head_addendum.md`: production is now
+exact-pinned to `eggserve-server = "=0.4.0"` / `eggserve-primitives = "=0.2.2"`
+because 0.3.1 cannot render an H1 terminal trailer block. Every cleared
+workstream above (range compatibility, per-site response metadata, ownership
+profile, dependency surface) was re-checked against 0.4.0 and still holds.

@@ -61,7 +61,9 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 # Phase 74 H2-parity loopback needs the hyper client connector (test-only;
 # feature-unified, no production use).
 hyper = { version = "1", features = ["client"] }
-# Phase 73 re-run: exact-artifact EggServe 0.3.1 qualification prototypes only.
+# Phase 73 re-run: exact-artifact EggServe qualification prototypes only.
 # Test-only placement; never a production dependency until a GO decision.
-eggserve-server = { version = "=0.3.1", default-features = false }
-eggserve-primitives = { version = "=0.2.1", default-features = false }
+# Phase 79 Finding B: bumped with the root pin so the qualification
+# prototypes exercise the runtime-owned `Trailer` synthesis release.
+eggserve-server = { version = "=0.4.0", default-features = false }
+eggserve-primitives = { version = "=0.2.2", default-features = false }

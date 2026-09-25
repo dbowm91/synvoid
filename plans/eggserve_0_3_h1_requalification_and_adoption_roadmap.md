@@ -6,7 +6,7 @@ Status: corrective follow-up active.
 - A 2026-09-25 re-run against exact-pinned `eggserve-server = "=0.3.1"` / `eggserve-primitives = "=0.2.1"` reached `GO_DIRECT_0_3`.
 - Phases 74–78 implementation landed at `2242e1911d2083448371f707392fdb07f83f1bce`; production plaintext and TLS-ALPN H1 are EggServe-driven, while H2/H3 remain unchanged.
 - Post-adoption review found runtime/evidence defects. Phase 78's terminal `ADOPTED` closure is therefore superseded pending Phases 79–80.
-- Phase 79 owns runtime correctness: shutdown-driver lifetime, exact-body trailers, real AppServer tunnel coverage, and local-endpoint provenance.
+- Phase 79 runtime correctness is implemented and locally verified: shutdown-driver lifetime, exact-body trailers, real AppServer tunnel coverage, and local-endpoint provenance are all directly tested. Finding B required the separately justified upstream bump to `eggserve-server = "=0.4.0"` / `eggserve-primitives = "=0.2.2"` (`architecture/eggserve_0_4_0_trailer_head_addendum.md`).
 - Phase 80 owns corrected requalification, hosted proof, planning/evidence reconciliation, and the next terminal disposition.
 
 Historical 0.3.0 evidence:
@@ -14,6 +14,9 @@ Historical 0.3.0 evidence:
 
 0.3.1 requalification evidence:
 `architecture/eggserve_0_3_1_h1_requalification_addendum.md`.
+
+0.4.0 trailer-head pin-change evidence:
+`architecture/eggserve_0_4_0_trailer_head_addendum.md`.
 
 Adoption implementation/initial closeout evidence:
 `architecture/eggserve_0_3_h1_adoption_closeout.md`.

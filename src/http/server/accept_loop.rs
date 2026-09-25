@@ -159,34 +159,36 @@ pub(super) async fn run_accept_loop(
                         let policy = eggserve_policy.clone();
                         let state = eggserve_state.clone();
                         let context =
-                            eggserve_server::ConnectionContext::for_tcp(
-                                local_addr.unwrap_or(client_addr),
+                            crate::http::eggserve_h1::h1_connection_context(
+                                local_addr,
                                 client_addr,
                                 None,
                             );
-                        let mut worker_shutdown = shutdown_rx.resubscribe();
+                        let worker_shutdown = shutdown_rx.resubscribe();
                         let http_conn_for_task = http_conn.clone();
                         tokio::spawn(async move {
-                            // The service bridges WAF request-drop to
-                            // `conn_shutdown`; worker shutdown arrives here.
-                            tokio::select! {
-                                outcome = eggserve_server::serve_http1_connection_with_policy(
+                            // Phase 79: signal-then-drain. Worker shutdown
+                            // signals `conn_shutdown` and the SAME EggServe
+                            // driver future is polled to its normal bounded
+                            // completion; exiting early would drop the
+                            // driver and truncate an active response/tunnel.
+                            let conn_future =
+                                eggserve_server::serve_http1_connection_with_policy(
                                     io,
                                     service,
                                     policy,
                                     context,
                                     state,
                                     &conn_shutdown,
-                                ) => {
-                                    tracing::debug!("HTTP connection outcome: {:?}", outcome);
-                                }
-                                _ = worker_shutdown.recv() => {
-                                    // Worker/server shutdown closes the
-                                    // connection; in-flight responses drain
-                                    // per the bounded post-shutdown budget.
-                                    conn_shutdown.shutdown();
-                                }
-                            }
+                                );
+                            let outcome =
+                                crate::http::eggserve_h1::drive_h1_connection(
+                                    conn_future,
+                                    &conn_shutdown,
+                                    worker_shutdown,
+                                )
+                                .await;
+                            tracing::debug!("HTTP connection outcome: {:?}", outcome);
                             if http_conn_for_task.should_drop() {
                                 if let Some(stream) = http_conn_for_task.take_stream() {
                                     drop(stream);

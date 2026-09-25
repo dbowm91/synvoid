@@ -532,8 +532,8 @@ impl HttpsServer {
                                             let policy = eggserve_policy_conn;
                                             let state = eggserve_state_conn;
                                             let context =
-                                                eggserve_server::ConnectionContext::for_tcp(
-                                                    local_addr.unwrap_or(client_addr),
+                                                crate::http::eggserve_h1::h1_connection_context(
+                                                    local_addr,
                                                     client_addr,
                                                     Some(eggserve_primitives::TlsInfo {
                                                         protocol_version: None,
@@ -544,25 +544,33 @@ impl HttpsServer {
                                                         peer_certificate_chain: None,
                                                     }),
                                                 );
-                                            let mut worker_shutdown =
+                                            let worker_shutdown =
                                                 shutdown_rx_h1.resubscribe();
                                             let https_conn_for_task = https_conn.clone();
                                             tokio::spawn(async move {
-                                                tokio::select! {
-                                                    outcome = eggserve_server::serve_http1_connection_with_policy(
-                                                        io,
-                                                        service,
-                                                        policy,
-                                                        context,
-                                                        state,
-                                                        &conn_shutdown,
-                                                    ) => {
-                                                        tracing::debug!("HTTPS-H1 connection outcome: {:?}", outcome);
-                                                    }
-                                                    _ = worker_shutdown.recv() => {
-                                                        conn_shutdown.shutdown();
-                                                    }
-                                                }
+                                                // Phase 79: signal-then-drain
+                                                // (same contract as the
+                                                // plaintext lane): worker
+                                                // shutdown signals
+                                                // `conn_shutdown` and the
+                                                // SAME EggServe driver
+                                                // future is polled to its
+                                                // normal bounded completion.
+                                                let conn_future = eggserve_server::serve_http1_connection_with_policy(
+                                                    io,
+                                                    service,
+                                                    policy,
+                                                    context,
+                                                    state,
+                                                    &conn_shutdown,
+                                                );
+                                                let outcome = crate::http::eggserve_h1::drive_h1_connection(
+                                                    conn_future,
+                                                    &conn_shutdown,
+                                                    worker_shutdown,
+                                                )
+                                                .await;
+                                                tracing::debug!("HTTPS-H1 connection outcome: {:?}", outcome);
                                                 if https_conn_for_task.should_drop() {
                                                     if let Some(stream) =
                                                         https_conn_for_task.take_stream()

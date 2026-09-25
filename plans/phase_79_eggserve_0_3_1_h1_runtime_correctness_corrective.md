@@ -1,10 +1,17 @@
 # Phase 79 Plan: EggServe 0.3.1 H1 Runtime Correctness Corrective
 
-Status: planned. Corrective follow-up to the Phase 73–78 adoption landed at `2242e1911d2083448371f707392fdb07f83f1bce`.
+Status: implemented 2026-09-25; local verification matrix green (fmt, clippy, dependency policy, core compile, repo guards, security regression, root guards, core admin tests, admin contract, failure injection — `cargo xtask verify` 10/10). Implementation SHA recorded with the Phase 80 handoff. Corrective follow-up to the Phase 73–78 adoption landed at `2242e1911d2083448371f707392fdb07f83f1bce`.
 
 Registered in: `plans/roadmap.md` and `plans/eggserve_0_3_h1_requalification_and_adoption_roadmap.md`.
 
 Depends on: the Phase 73–78 EggServe 0.3.1 adoption implementation. This plan supersedes only the Phase 78 terminal-closure claim; it does not discard the transport-neutral boundary, the exact EggServe pins, or the plaintext/TLS-H1 production architecture unless the corrective work exposes a rollback-class defect.
+
+Dependency-pin note (Finding B): the pins moved to
+`eggserve-server = "=0.4.0"` / `eggserve-primitives = "=0.2.2"` under the
+"separately justified upstream release" clause below. 0.3.1 cannot satisfy
+the Finding B wire requirement at all, so the bump is required, not
+optional. Evidence and justification are recorded in
+`architecture/eggserve_0_4_0_trailer_head_addendum.md`.
 
 ## Purpose
 
@@ -12,7 +19,7 @@ Correct concrete runtime and qualification defects found during post-adoption re
 
 The current production architecture is directionally correct:
 
-- `eggserve-server = "=0.3.1"` / `eggserve-primitives = "=0.2.1"` are exact-pinned;
+- `eggserve-server` / `eggserve-primitives` are exact-pinned (`=0.3.1` / `=0.2.1` at plan time; bumped to `=0.4.0` / `=0.2.2` by Finding B — see the dependency-pin note);
 - SynVoid retains bind/accept/flood/TLS/ALPN/PQ/JA4/H2/H3/WAF/routing/backend/policy ownership;
 - plaintext H1 and post-Rustls TLS-H1 use the direct EggServe driver;
 - H2 remains on Hyper;
@@ -124,11 +131,26 @@ If obtaining the local socket address fails, substituting the remote peer addres
 
 Add a narrow helper/unit test that pins this behavior so a future fallback cannot silently reintroduce peer-as-local provenance.
 
+## Implementation notes (recorded during execution)
+
+- **Finding A fixture.** The default proxy body-buffering policy collects an
+  upstream response before any byte is written, so a proxy-backed response
+  cannot be in flight when shutdown lands. The in-flight tests therefore use
+  a streaming-policy site (`body_buffering_policy = streaming`) whose WAF
+  tarpit decision is served as a live SynVoid-generated stream
+  (`STREAM_PATH`/`STREAM_CHUNKS` in `tests/eggserve_h1_runtime_corrective.rs`).
+  First DATA frame → `shutdown()` twice → drain to EOF, asserting every
+  chunk arrives. `eggserve_h1::tests::old_select_drop_pattern_cancels_driver_on_shutdown`
+  pins that the pre-corrective `select!` drop pattern fails the same drive.
+- **Finding B fixture.** A self-contained EggServe service (not the proxy
+  path) builds the exact/unknown-length trailer representations directly, so
+  the wire assertion is about the adapter + runtime, not upstream routing.
+
 ## Non-regression constraints
 
 - No EggServe listener/TLS/H2/H3/static/core adoption.
 - No new operator-visible EggServe configuration.
-- No change to the exact dependency pins unless a separately justified upstream release is required.
+- No change to the exact dependency pins unless a separately justified upstream release is required. **Invoked for Finding B**: 0.3.1 has no code path that can emit an H1 terminal trailer block (see the dependency-pin note).
 - No narrowing of SynVoid's valid H1 parser/header configuration range.
 - No loss of per-site Date/Server policy.
 - No duplicate request-admission or timeout authority.
@@ -157,16 +179,16 @@ Do not mark Phase 79 closed merely because local verification is green. Record t
 
 ## Acceptance criteria
 
-- [ ] worker/server shutdown signals `ConnectionShutdown` without dropping the active EggServe driver future;
-- [ ] active response and tunnel shutdown behavior is directly proven on plaintext and TLS-H1;
-- [ ] exact/known-length small responses preserve terminal trailers;
-- [ ] ordinary no-trailer exact bodies retain the buffered fast path;
-- [ ] real AppServer WebSocket/tunnel dispatch is proven without requiring Python/Granian in CI;
-- [ ] local endpoint provenance never substitutes the remote peer address;
-- [ ] H2/H3 behavior remains unchanged;
-- [ ] exact EggServe dependency/ownership model remains intact;
-- [ ] focused and full local verification is green;
-- [ ] implementation SHA is recorded for Phase 80 qualification.
+- [x] worker/server shutdown signals `ConnectionShutdown` without dropping the active EggServe driver future (`drive_h1_connection` in both production paths; `old_select_drop_pattern_cancels_driver_on_shutdown` pins the pre-corrective failure);
+- [x] active response and tunnel shutdown behavior is directly proven on plaintext and TLS-H1 (`plaintext`/`tls_h1` `inflight_stream_drains_without_truncation`, `websocket_shutdown_terminates_tunnel`, `idle_shutdown_drains_connection_task`);
+- [x] exact/known-length small responses preserve terminal trailers (adapter unit tests plus `plaintext_exact_trailer_wire_block` / `tls_h1_exact_trailer_wire_block`);
+- [x] ordinary no-trailer exact bodies retain the buffered fast path (`exact_body_without_trailers_keeps_bytes_fast_path`, `exact_empty_without_trailers_stays_empty`);
+- [x] real AppServer WebSocket/tunnel dispatch is proven without requiring Python/Granian in CI (`plaintext_appserver_tunnel_loopback`, `tls_h1_appserver_tunnel_loopback`);
+- [x] local endpoint provenance never substitutes the remote peer address (`connection_context_never_substitutes_peer_for_local`, `connection_context_preserves_truthful_local`);
+- [x] H2/H3 behavior remains unchanged (`tls_h2_stays_hyper_with_header_limit`, H2 branch untouched);
+- [x] exact EggServe dependency/ownership model remains intact (ownership profile unchanged; pins moved only under the separately justified upstream-release clause — `architecture/eggserve_0_4_0_trailer_head_addendum.md`);
+- [x] focused and full local verification is green (`cargo xtask verify` 10/10, plus feature profiles, `cargo deny check`, `cargo audit`);
+- [ ] implementation SHA is recorded for Phase 80 qualification (filled in by the Phase 79 handoff commit).
 
 ## Terminal state
 

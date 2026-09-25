@@ -1,6 +1,6 @@
 # SynVoid Architecture Hardening Roadmap
 
-Status: Tracks 1-3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). Eggfetch 0.2 runtime adoption is closed through Phase 62 (`c3568ef4...`) and performance/reproducibility adjudication is closed through Phase 63; Phase 64 docs/evidence-truth correction is closed. Production remains on eggfetch. The EggServe 0.2.2-line inbound H1 campaign remains historical/retained at Phase 65; Phases 66–69 were never started. EggServe 0.3.1 direct-H1 adoption implementation landed at `2242e1911d2083448371f707392fdb07f83f1bce`: plaintext and TLS-ALPN H1 now use the direct EggServe runtime while H2/H3 remain on their existing paths. Post-adoption review found runtime/evidence defects, so the Phase 78 terminal closure is superseded pending corrective Phases 79–80. Phase 79 runtime correctness and Phase 80 requalification/evidence closure are planned/active handoff work. Phases 70–72 remain historical/closed with evidence aligned to their then-current Hyper H1 runtime.
+Status: Tracks 1-3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). Eggfetch 0.2 runtime adoption is closed through Phase 62 (`c3568ef4...`) and performance/reproducibility adjudication is closed through Phase 63; Phase 64 docs/evidence-truth correction is closed. Production remains on eggfetch. The EggServe 0.2.2-line inbound H1 campaign remains historical/retained at Phase 65; Phases 66–69 were never started. EggServe 0.3.1 direct-H1 adoption implementation landed at `2242e1911d2083448371f707392fdb07f83f1bce`: plaintext and TLS-ALPN H1 now use the direct EggServe runtime while H2/H3 remain on their existing paths. Post-adoption review found runtime/evidence defects, so the Phase 78 terminal closure is superseded pending corrective Phases 79–80. Phase 79 runtime correctness is implemented and locally verified; the exact pins moved to `eggserve-server = "=0.4.0"` / `eggserve-primitives = "=0.2.2"` under Finding B (`architecture/eggserve_0_4_0_trailer_head_addendum.md`). Phase 80 requalification/evidence closure remains active handoff work. Phases 70–72 remain historical/closed with evidence aligned to their then-current Hyper H1 runtime.
 
 Scope: this roadmap covers architecture hardening, trust-boundary closure, verification, release readiness, post-hardening cleanup, and the architecture-convergence work required before another broad feature-expansion pass.
 
@@ -551,7 +551,7 @@ Current status:
 - Phase 73 first closed `RETAIN_PENDING_UPSTREAM` against exact EggServe 0.3.0.
 - EggServe 0.3.1 then resolved the parser-range and per-site response-metadata blockers; the Phase 73 re-run reached `GO_DIRECT_0_3`.
 - Phases 74–78 were implemented together at `2242e1911d2083448371f707392fdb07f83f1bce`.
-- Production plaintext H1 and TLS-ALPN H1 currently use exact-pinned `eggserve-server = "=0.3.1"` / `eggserve-primitives = "=0.2.1"`; H2 remains Hyper and H3 remains unchanged.
+- Production plaintext H1 and TLS-ALPN H1 use exact-pinned EggServe (0.3.1/0.2.1 at adoption; moved to `eggserve-server = "=0.4.0"` / `eggserve-primitives = "=0.2.2"` by Phase 79 Finding B — 0.3.1 cannot render an H1 terminal trailer block); H2 remains Hyper and H3 remains unchanged.
 - Post-adoption review found two concrete runtime defects plus missing acceptance/evidence: worker shutdown can cancel the EggServe driver future before graceful drain; the exact-size buffered response adapter can discard terminal trailers; the required real AppServer tunnel loopback was not run; and local endpoint fallback can fabricate the remote peer as the local address.
 - Therefore the Phase 78 terminal `ADOPTED` closure claim is superseded. The adoption implementation remains the production baseline while Phases 79–80 correct and requalify it; rollback is reserved for a corrective failure that cannot preserve the required contracts.
 
@@ -577,11 +577,15 @@ Execution order:
 6. **Phase 78 — adversarial/performance closeout**
    - implementation/evidence landed, but its terminal closure claim is superseded by post-adoption review.
 7. **Phase 79 — EggServe 0.3.1 H1 runtime correctness corrective**
-   - fix shutdown-driver lifetime;
-   - preserve exact-body trailers;
+   - implemented; fix shutdown-driver lifetime;
+   - preserve exact-body trailers (required the separately justified
+     upstream bump to EggServe 0.4.0 / primitives 0.2.2);
    - prove the real AppServer WebSocket/tunnel path without external Granian/Python;
    - remove peer-as-local endpoint fabrication;
-   - retain the existing adoption architecture unless a rollback-class defect is proven.
+   - retain the existing adoption architecture (no rollback-class defect found);
+   - evidence: `tests/eggserve_h1_runtime_corrective.rs` (10/10) plus the
+     adoption/differential/TLS suites; implementation SHA recorded with the
+     Phase 80 handoff.
 8. **Phase 80 — corrective requalification and evidence closure**
    - rerun the focused correctness matrices and bounded performance smoke;
    - run current canonical full/security/profile verification;

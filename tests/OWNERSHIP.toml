@@ -256,6 +256,12 @@ owners = ["synvoid-http"]
 reason = "manual-only Phase 78 Track G same-host performance comparison (all tests ignored; never a CI gate)"
 
 [[test]]
+name = "eggserve_h1_runtime_corrective"
+class = "qualification"
+owners = ["synvoid-http"]
+reason = "validates Phase 79 EggServe 0.3.1 H1 runtime corrective (shutdown drain, exact-body trailers, AppServer tunnel loopback, endpoint provenance on plaintext + TLS-H1)"
+
+[[test]]
 name = "http_tls_parity"
 class = "composition"
 owners = ["synvoid-http", "synvoid-proxy"]

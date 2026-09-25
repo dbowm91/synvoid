@@ -176,8 +176,14 @@ subtle = "2"
 # request-path crates. No eggserve-core. `http-interop` on primitives is a
 # dependency-free cfg gate exposing the canonical trailer accessors the
 # request adapter needs; the server stays default-features.)
-eggserve-server = { version = "=0.3.1", default-features = false }
-eggserve-primitives = { version = "=0.2.1", default-features = false, features = ["http-interop"] }
+# Phase 79 Finding B: 0.3.1 cannot put a terminal trailer block on the H1
+# wire (Hyper only renders one when the response head carries `Trailer`,
+# which 0.3.1 canonical normalization strips as hop-by-hop and never
+# re-adds). 0.4.0/0.2.2 adds runtime-owned `Trailer` synthesis gated on
+# `TE: trailers` + a head-time declaration — the separately justified
+# upstream release the plan's pin constraint allows.
+eggserve-server = { version = "=0.4.0", default-features = false }
+eggserve-primitives = { version = "=0.2.2", default-features = false, features = ["http-interop"] }
 
 # HSM / PKCS#11 support (Phase 30): owned by `synvoid-dnssec-keystore`
 # behind its opt-in `pkcs11`/`hsm` features (root `dns-hsm`). There is no

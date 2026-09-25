@@ -246,16 +246,42 @@ pub async fn handle_websocket_to_appserver(
         .with_max_message_size(ws_config.max_message_size.unwrap_or(16 * 1024 * 1024))
         .with_mask_required(ws_config.mask_required.unwrap_or(false));
 
-    let socket_url = format!("http://unix:{}:{}", socket_path.display(), path);
-
-    tracing::debug!(url = %socket_url, "Connecting to AppServer WebSocket");
-
-    let (upstream_ws, _) = match connect_async(&socket_url).await {
-        Ok(ws) => ws,
-        Err(e) => {
-            tracing::error!("Failed to connect to AppServer WebSocket: {}", e);
-            counter!("synvoid.websocket.upstream_failed").increment(1);
-            return;
+    // Phase 79: the AppServer peer listens on a Unix socket (Granian
+    // `socket_path`). `connect_async` only dials TCP, so the Unix stream is
+    // connected explicitly and the WS client handshake runs over it. The
+    // authority is loopback-local; the request path selects the app route.
+    #[cfg(unix)]
+    let upstream_ws = {
+        let stream = match tokio::net::UnixStream::connect(&socket_path).await {
+            Ok(stream) => stream,
+            Err(e) => {
+                tracing::error!("Failed to connect to AppServer socket: {}", e);
+                counter!("synvoid.websocket.upstream_failed").increment(1);
+                return;
+            }
+        };
+        let url = format!("ws://localhost{path}");
+        tracing::debug!(url = %url, socket = %socket_path.display(), "Connecting to AppServer WebSocket");
+        match tokio_tungstenite::client_async(url.as_str(), stream).await {
+            Ok((ws, _)) => ws,
+            Err(e) => {
+                tracing::error!("Failed to handshake AppServer WebSocket: {}", e);
+                counter!("synvoid.websocket.upstream_failed").increment(1);
+                return;
+            }
+        }
+    };
+    #[cfg(not(unix))]
+    let (upstream_ws, _) = {
+        let socket_url = format!("http://unix:{}:{}", socket_path.display(), path);
+        tracing::debug!(url = %socket_url, "Connecting to AppServer WebSocket");
+        match connect_async(&socket_url).await {
+            Ok(ws) => ws,
+            Err(e) => {
+                tracing::error!("Failed to connect to AppServer WebSocket: {}", e);
+                counter!("synvoid.websocket.upstream_failed").increment(1);
+                return;
+            }
         }
     };
 

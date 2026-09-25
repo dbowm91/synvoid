@@ -22,7 +22,7 @@ use eggserve_primitives::{
     HeaderBlock as EggserveHeaderBlock, HeaderName as EggserveHeaderName,
     HeaderValue as EggserveHeaderValue, Request as EggserveRequest,
     RequestBody as EggserveRequestBody, RequestBodyError as EggserveRequestBodyError,
-    Trailers as EggserveTrailers,
+    TrailerDeclaration as EggserveTrailerDeclaration, Trailers as EggserveTrailers,
 };
 use eggserve_server::{
     AdmissionOwner, AdmissionOwnership, ConnectionShutdown, H1ConnectionPolicy, H1PolicyOwnership,
@@ -110,6 +110,73 @@ pub fn project_eggserve_h1(
         policy,
         state,
     })
+}
+
+// ---------------------------------------------------------------------------
+// Phase 79 Finding D — truthful local-endpoint provenance
+// ---------------------------------------------------------------------------
+
+/// Build a truthful H1 connection context from observed socket endpoints.
+///
+/// The local endpoint is recorded only when actually observed. A missing
+/// local address is carried as `None`; it is NEVER replaced with the remote
+/// peer address (that substitution would fabricate transport provenance).
+/// Routing behavior is unchanged when a truthful local address is
+/// available; when it is absent the request pipeline observes `None`
+/// rather than an invented endpoint.
+pub fn h1_connection_context(
+    local_addr: Option<SocketAddr>,
+    remote_addr: SocketAddr,
+    tls: Option<eggserve_primitives::TlsInfo>,
+) -> eggserve_server::ConnectionContext {
+    let scheme = if tls.is_some() {
+        eggserve_primitives::connection_info::Scheme::Https
+    } else {
+        eggserve_primitives::connection_info::Scheme::Http
+    };
+    eggserve_server::ConnectionContext::new(local_addr, Some(remote_addr), scheme, tls)
+}
+
+// ---------------------------------------------------------------------------
+// Phase 79 Finding A — signal-then-drain connection driving
+// ---------------------------------------------------------------------------
+
+/// Drive a constructed EggServe H1 connection future to its normal bounded
+/// completion.
+///
+/// Worker/server shutdown signals the per-connection [`ConnectionShutdown`]
+/// token exactly once (idempotent, level-triggered) and the SAME connection
+/// future keeps being polled to completion. Returning early from the
+/// shutdown branch would drop the still-running driver future and truncate
+/// an active response or tunnel instead of letting the driver execute its
+/// shutdown/drain path.
+///
+/// There is no second idle/total/shutdown authority here and no new timeout
+/// constant: completion is bounded by the driver's own graceful-close path
+/// (the shared projector disables the total lifetime and keeps every
+/// deadline/admission authority SynVoid-owned/External). WAF `Drop`
+/// continues to signal the same connection token; it never creates a
+/// competing close path.
+pub async fn drive_h1_connection<F>(
+    conn_future: F,
+    conn_shutdown: &ConnectionShutdown,
+    mut worker_shutdown: tokio::sync::broadcast::Receiver<()>,
+) -> eggserve_server::ConnectionOutcome
+where
+    F: core::future::Future<Output = eggserve_server::ConnectionOutcome>,
+{
+    tokio::pin!(conn_future);
+    tokio::select! {
+        outcome = &mut conn_future => outcome,
+        r = worker_shutdown.recv() => {
+            // Signal-then-drain: the token is level-triggered, so a second
+            // shutdown edge (or a concurrent WAF Drop on the same token)
+            // needs no further action from this task.
+            let _ = r;
+            conn_shutdown.shutdown();
+            conn_future.await
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -282,12 +349,15 @@ fn convert_request(
         .into_parts()
         .0;
 
-    let endpoints = connection.socket_endpoints();
-    let client_ip = endpoints
-        .as_ref()
-        .map(|e| e.remote.ip())
-        .ok_or_else(|| ServiceError::internal("missing peer address"))?;
-    let local_addr = endpoints.as_ref().map(|e| e.local);
+    // Phase 79 Finding D: the peer address is read directly from the
+    // recorded remote endpoint. A missing local endpoint (truthful `None`
+    // from `h1_connection_context`) must not fail peer resolution and must
+    // never be back-filled with the peer address.
+    let client_ip = connection
+        .remote_addr
+        .ok_or_else(|| ServiceError::internal("missing peer address"))?
+        .ip();
+    let local_addr = connection.local_addr;
 
     let inbound = synvoid_http::inbound::InboundBody::from_frame_stream(EggserveInboundBody {
         body: std::sync::Mutex::new(body),
@@ -341,6 +411,78 @@ impl synvoid_http::inbound::UpgradeCapability for EggserveUpgradeCapability {
 // Response conversion (Track F)
 // ---------------------------------------------------------------------------
 
+/// Responses that must not carry a body or trailers on the wire.
+fn is_body_forbidden_status(status: http::StatusCode) -> bool {
+    status.is_informational()
+        || status == http::StatusCode::NO_CONTENT
+        || status == http::StatusCode::NOT_MODIFIED
+}
+
+/// Map an HTTP trailer section into the canonical EggServe trailer block.
+///
+/// Duplicate legal fields survive; undecodable names/values are skipped
+/// (same policy as the streaming bridge); a block that fails canonical
+/// validation (forbidden framing fields, over limits) yields `None` so the
+/// caller keeps the trailer-free representation rather than emitting a
+/// half-validated block.
+fn eggserve_trailers_from_map(map: &http::HeaderMap) -> Option<EggserveTrailers> {
+    let mut block = EggserveHeaderBlock::new();
+    for (name, value) in map.iter() {
+        let Ok(n) = EggserveHeaderName::new(name.as_str()) else {
+            continue;
+        };
+        let Ok(v) = EggserveHeaderValue::from_bytes(value.as_bytes()) else {
+            continue;
+        };
+        block.push(n, v);
+    }
+    if block.is_empty() {
+        return None;
+    }
+    EggserveTrailers::new(block).ok()
+}
+
+/// Head-time trailer declaration built from an already-collected trailer
+/// block (exact/buffered bodies).
+///
+/// EggServe only serializes an H1 terminal trailer block when the response
+/// head declares the field names before commitment; a declaration that fails
+/// canonical validation yields `None` so the caller keeps the undeclared
+/// (H1-suppressed, H2/H3-emitted) representation instead of a half-declared
+/// head.
+fn trailer_declaration_from_map(map: &http::HeaderMap) -> Option<EggserveTrailerDeclaration> {
+    let names = map
+        .keys()
+        .filter_map(|name| EggserveHeaderName::new(name.as_str()).ok())
+        .collect::<Vec<_>>();
+    EggserveTrailerDeclaration::new(names).ok()
+}
+
+/// Head-time trailer declaration taken from the application's own `Trailer`
+/// response header (streaming bodies, whose trailer fields are unknown until
+/// the producer finishes). Invalid tokens are skipped; an empty or wholly
+/// invalid declaration yields `None`.
+fn trailer_declaration_from_headers(
+    headers: &http::HeaderMap,
+) -> Option<EggserveTrailerDeclaration> {
+    let mut names = Vec::new();
+    for value in headers.get_all(http::header::TRAILER) {
+        let Ok(text) = value.to_str() else {
+            continue;
+        };
+        for token in text.split(',') {
+            let token = token.trim();
+            if token.is_empty() {
+                continue;
+            }
+            if let Ok(name) = EggserveHeaderName::new(token) {
+                names.push(name);
+            }
+        }
+    }
+    EggserveTrailerDeclaration::new(names).ok()
+}
+
 /// Bodies at or below this exact size convert buffered; larger or
 /// unknown-length bodies stream without buffering.
 const BUFFERED_RESPONSE_THRESHOLD: u64 = 8 * 1024 * 1024;
@@ -381,42 +523,113 @@ async fn convert_response(
         use http_body::Body as _;
         body.size_hint().exact()
     };
-    // Buffered fast path: exact small bodies only. Empty stays Empty (no
-    // invented framing).
-    if let Some(len) = exact {
-        if len == 0 {
-            if let Some(equivalent) = head_length_hint {
-                return builder
-                    .body(EggserveResponseBody::EmptyWithLength(equivalent))
-                    .map_err(|e| ServiceError::internal(e.to_string()));
-            }
+    // Phase 79 Finding B: HEAD and body-forbidden responses never carry a
+    // body or trailers. Suppress WITHOUT polling the application body:
+    // EggServe drops such streams unpolled, so dropping here is equivalent
+    // and discovers no impossible/irrelevant trailers.
+    if is_head || is_body_forbidden_status(parts.status) {
+        if let Some(equivalent) = head_length_hint {
             return builder
-                .body(EggserveResponseBody::Empty)
+                .body(EggserveResponseBody::EmptyWithLength(equivalent))
                 .map_err(|e| ServiceError::internal(e.to_string()));
         }
+        return builder
+            .body(EggserveResponseBody::Empty)
+            .map_err(|e| ServiceError::internal(e.to_string()));
+    }
+    // Buffered fast path: exact small bodies only. Empty stays Empty (no
+    // invented framing). Terminal trailers retained by the collection are
+    // preserved: `size_hint().exact()` never proves trailer absence, so
+    // the collected trailer map is inspected before consuming DATA bytes.
+    if let Some(len) = exact {
         if len <= BUFFERED_RESPONSE_THRESHOLD {
             use http_body_util::BodyExt as _;
-            let bytes = match body.collect().await {
-                Ok(c) => c.to_bytes(),
+            let collected = match body.collect().await {
+                Ok(c) => c,
                 Err(never) => match never {},
             };
-            return builder
-                .body(EggserveResponseBody::Bytes(bytes.to_vec()))
-                .map_err(|e| ServiceError::internal(e.to_string()));
+            let declared_trailers = collected
+                .trailers()
+                .filter(|map| !map.is_empty())
+                .and_then(trailer_declaration_from_map);
+            let trailers = collected
+                .trailers()
+                .filter(|map| !map.is_empty())
+                .and_then(eggserve_trailers_from_map);
+            let data = collected.to_bytes();
+            match trailers {
+                Some(trailers) => {
+                    // Known DATA length plus trailers: a one-shot
+                    // known-length canonical stream plus trailer future
+                    // rather than degrading to `ResponseBody::Bytes`
+                    // (which cannot carry trailers). Duplicate legal
+                    // trailer fields survive via the canonical block; the
+                    // head-time declaration is what lets EggServe render
+                    // the terminal block on H1.
+                    let data_stream = futures::stream::once(async move {
+                        Ok::<Bytes, EggserveResponseStreamError>(data)
+                    });
+                    let trailer_future = Box::pin(async move {
+                        Ok::<Option<EggserveTrailers>, EggserveResponseStreamError>(Some(trailers))
+                    }) as EggserveTrailersFuture;
+                    let stream = match declared_trailers {
+                        Some(declaration) => {
+                            EggserveResponseStream::with_known_length_and_declared_trailers(
+                                data_stream,
+                                len,
+                                declaration,
+                                trailer_future,
+                            )
+                        }
+                        None => EggserveResponseStream::with_known_length_and_trailers(
+                            data_stream,
+                            len,
+                            trailer_future,
+                        ),
+                    };
+                    return builder
+                        .body(EggserveResponseBody::Stream(stream))
+                        .map_err(|e| ServiceError::internal(e.to_string()));
+                }
+                None => {
+                    if len == 0 {
+                        return builder
+                            .body(EggserveResponseBody::Empty)
+                            .map_err(|e| ServiceError::internal(e.to_string()));
+                    }
+                    return builder
+                        .body(EggserveResponseBody::Bytes(data.to_vec()))
+                        .map_err(|e| ServiceError::internal(e.to_string()));
+                }
+            }
         }
     }
     // Streaming path: lazy bridge for DATA; terminal trailers captured
     // into the canonical trailer slot and attached via the trailer future
     // (known and unknown lengths both have trailer-capable constructors).
+    // The producer's trailer fields are unknown here, so the only head-time
+    // declaration available is the application's `Trailer` header.
+    let declared_trailers = trailer_declaration_from_headers(&parts.headers);
     let bridge = ResponseBridge::wrap(body);
     let slot = bridge.trailers();
     let trailer_future =
         Box::pin(async move { Ok(slot.lock().unwrap().take()) }) as EggserveTrailersFuture;
-    let stream = match exact {
-        Some(len) => {
+    let stream = match (exact, declared_trailers) {
+        (Some(len), Some(declaration)) => {
+            EggserveResponseStream::with_known_length_and_declared_trailers(
+                bridge,
+                len,
+                declaration,
+                trailer_future,
+            )
+        }
+        (Some(len), None) => {
             EggserveResponseStream::with_known_length_and_trailers(bridge, len, trailer_future)
         }
-        None => EggserveResponseStream::with_trailers(bridge, trailer_future),
+        (None, Some(declaration)) => {
+            EggserveResponseStream::with_declared_trailers(bridge, declaration, trailer_future)
+        }
+        (None, None) => EggserveResponseStream::with_trailers(bridge, trailer_future),
     };
     builder
         .body(EggserveResponseBody::Stream(stream))
@@ -870,5 +1083,393 @@ mod tests {
             converted.body(),
             Some(EggserveResponseBody::EmptyWithLength(14))
         ));
+    }
+
+    // --- Phase 79 Finding A: signal-then-drain ---
+
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    struct CancelProbe {
+        completed: Arc<AtomicBool>,
+        dropped_before_complete: Arc<AtomicBool>,
+    }
+
+    impl Drop for CancelProbe {
+        fn drop(&mut self) {
+            if !self.completed.load(Ordering::SeqCst) {
+                self.dropped_before_complete.store(true, Ordering::SeqCst);
+            }
+        }
+    }
+
+    fn cancellable_driver(
+        shutdown: &eggserve_server::ConnectionShutdown,
+    ) -> (
+        impl core::future::Future<Output = eggserve_server::ConnectionOutcome> + '_,
+        Arc<AtomicBool>,
+        Arc<AtomicBool>,
+    ) {
+        let completed = Arc::new(AtomicBool::new(false));
+        let dropped_before_complete = Arc::new(AtomicBool::new(false));
+        let probe = CancelProbe {
+            completed: completed.clone(),
+            dropped_before_complete: dropped_before_complete.clone(),
+        };
+        let completed_inner = completed.clone();
+        let fut = async move {
+            let _probe = probe;
+            shutdown.cancelled().await;
+            completed_inner.store(true, Ordering::SeqCst);
+            eggserve_server::ConnectionOutcome::Shutdown
+        };
+        (fut, completed, dropped_before_complete)
+    }
+
+    #[tokio::test]
+    async fn drive_helper_completes_same_future_after_shutdown() {
+        let shutdown = eggserve_server::ConnectionShutdown::new();
+        let (tx, rx) = tokio::sync::broadcast::channel(1);
+        let (fut, completed, dropped_before_complete) = cancellable_driver(&shutdown);
+        tx.send(()).unwrap();
+        let outcome = drive_h1_connection(fut, &shutdown, rx).await;
+        assert!(matches!(
+            outcome,
+            eggserve_server::ConnectionOutcome::Shutdown
+        ));
+        assert!(
+            completed.load(Ordering::SeqCst),
+            "driver future must run to completion after shutdown"
+        );
+        assert!(
+            !dropped_before_complete.load(Ordering::SeqCst),
+            "driver future must not be cancelled by the shutdown branch"
+        );
+        assert!(shutdown.is_shutdown());
+    }
+
+    #[tokio::test]
+    async fn drive_helper_repeated_shutdown_is_idempotent() {
+        let shutdown = eggserve_server::ConnectionShutdown::new();
+        let (tx, rx) = tokio::sync::broadcast::channel(2);
+        let (fut, completed, _) = cancellable_driver(&shutdown);
+        tx.send(()).unwrap();
+        tx.send(()).unwrap();
+        let outcome = drive_h1_connection(fut, &shutdown, rx).await;
+        assert!(matches!(
+            outcome,
+            eggserve_server::ConnectionOutcome::Shutdown
+        ));
+        assert!(completed.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn old_select_drop_pattern_cancels_driver_on_shutdown() {
+        // Negative control pinning the `2242e191` defect shape: racing the
+        // driver against shutdown and exiting the `select!` on the shutdown
+        // branch drops the still-running driver future.
+        let shutdown = eggserve_server::ConnectionShutdown::new();
+        let (tx, mut rx) = tokio::sync::broadcast::channel(1);
+        let (fut, completed, dropped_before_complete) = cancellable_driver(&shutdown);
+        // Box the driver so `drop` below destroys the future itself (a
+        // `tokio::pin!` shadow would only drop the pin wrapper, not the
+        // future, hiding the cancellation being pinned here).
+        let mut fut = Box::pin(fut);
+        tx.send(()).unwrap();
+        tokio::select! {
+            _ = &mut fut => {}
+            _ = rx.recv() => {
+                shutdown.shutdown();
+            }
+        }
+        drop(fut);
+        assert!(
+            !completed.load(Ordering::SeqCst),
+            "old pattern must not complete the driver after shutdown wins"
+        );
+        assert!(
+            dropped_before_complete.load(Ordering::SeqCst),
+            "old pattern must cancel the driver future on shutdown"
+        );
+    }
+
+    // --- Phase 79 Finding B: exact-body trailer preservation ---
+
+    struct TrailerBody {
+        data: Option<Bytes>,
+        trailers: Option<http::HeaderMap>,
+        exact: Option<u64>,
+    }
+
+    impl http_body::Body for TrailerBody {
+        type Data = Bytes;
+        type Error = std::convert::Infallible;
+
+        fn poll_frame(
+            self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+        ) -> Poll<Option<Result<http_body::Frame<Bytes>, Self::Error>>> {
+            let _ = cx;
+            let this = self.get_mut();
+            if let Some(data) = this.data.take() {
+                return Poll::Ready(Some(Ok(http_body::Frame::data(data))));
+            }
+            if let Some(trailers) = this.trailers.take() {
+                return Poll::Ready(Some(Ok(http_body::Frame::trailers(trailers))));
+            }
+            Poll::Ready(None)
+        }
+
+        fn size_hint(&self) -> http_body::SizeHint {
+            match self.exact {
+                Some(len) => http_body::SizeHint::with_exact(len),
+                None => http_body::SizeHint::new(),
+            }
+        }
+    }
+
+    fn trailer_map_with_dups() -> http::HeaderMap {
+        let mut map = http::HeaderMap::new();
+        map.insert("x-checksum", "a1".parse().unwrap());
+        map.append("x-checksum", "a2".parse().unwrap());
+        map.insert("x-final", "yes".parse().unwrap());
+        map
+    }
+
+    #[tokio::test]
+    async fn exact_small_body_with_trailers_keeps_length_and_trailers() {
+        use futures::StreamExt as _;
+        let body = TrailerBody {
+            data: Some(Bytes::from_static(b"hello")),
+            trailers: Some(trailer_map_with_dups()),
+            exact: Some(5),
+        };
+        let resp = http::Response::builder()
+            .status(200)
+            .body(http_body_util::BodyExt::boxed(body))
+            .unwrap();
+        let mut converted = convert_response(resp, false).await.unwrap();
+        let Some(EggserveResponseBody::Stream(stream)) = converted.take_body() else {
+            panic!("exact body with trailers must use the trailer-capable stream");
+        };
+        assert_eq!(stream.known_length(), Some(5));
+        assert!(stream.has_trailers());
+        let (mut bytes, trailer_future) = stream.into_parts();
+        let mut collected = Vec::new();
+        while let Some(chunk) = bytes.next().await {
+            collected.extend_from_slice(&chunk.unwrap());
+        }
+        assert_eq!(collected, b"hello");
+        let trailers = trailer_future
+            .unwrap()
+            .await
+            .unwrap()
+            .expect("trailer block must survive");
+        let dups: Vec<_> = trailers
+            .as_block()
+            .iter()
+            .filter(|f| f.name.as_str() == "x-checksum")
+            .collect();
+        assert_eq!(dups.len(), 2, "duplicate legal trailer fields survive");
+    }
+
+    #[tokio::test]
+    async fn exact_zero_data_with_trailers_uses_known_zero_stream() {
+        let body = TrailerBody {
+            data: None,
+            trailers: Some(trailer_map_with_dups()),
+            exact: Some(0),
+        };
+        let resp = http::Response::builder()
+            .status(200)
+            .body(http_body_util::BodyExt::boxed(body))
+            .unwrap();
+        let mut converted = convert_response(resp, false).await.unwrap();
+        let Some(EggserveResponseBody::Stream(stream)) = converted.take_body() else {
+            panic!("zero-DATA body with trailers must not degrade to Empty");
+        };
+        assert_eq!(stream.known_length(), Some(0));
+        assert!(stream.has_trailers());
+    }
+
+    #[tokio::test]
+    async fn exact_body_without_trailers_keeps_bytes_fast_path() {
+        let body = TrailerBody {
+            data: Some(Bytes::from_static(b"plain")),
+            trailers: None,
+            exact: Some(5),
+        };
+        let resp = http::Response::builder()
+            .status(200)
+            .body(http_body_util::BodyExt::boxed(body))
+            .unwrap();
+        let converted = convert_response(resp, false).await.unwrap();
+        assert!(
+            matches!(converted.body(), Some(EggserveResponseBody::Bytes(_))),
+            "trailer-free exact bodies retain the buffered fast path"
+        );
+    }
+
+    #[tokio::test]
+    async fn exact_empty_without_trailers_stays_empty() {
+        let body = TrailerBody {
+            data: None,
+            trailers: None,
+            exact: Some(0),
+        };
+        let resp = http::Response::builder()
+            .status(200)
+            .body(http_body_util::BodyExt::boxed(body))
+            .unwrap();
+        let converted = convert_response(resp, false).await.unwrap();
+        assert!(matches!(
+            converted.body(),
+            Some(EggserveResponseBody::Empty)
+        ));
+    }
+
+    #[tokio::test]
+    async fn unknown_length_trailers_stay_on_streaming_path() {
+        let body = TrailerBody {
+            data: Some(Bytes::from_static(b"chunk")),
+            trailers: Some(trailer_map_with_dups()),
+            exact: None,
+        };
+        let resp = http::Response::builder()
+            .status(200)
+            .body(http_body_util::BodyExt::boxed(body))
+            .unwrap();
+        let mut converted = convert_response(resp, false).await.unwrap();
+        let Some(EggserveResponseBody::Stream(stream)) = converted.take_body() else {
+            panic!("unknown-length bodies must stream");
+        };
+        assert_eq!(stream.known_length(), None);
+        assert!(stream.has_trailers());
+    }
+
+    struct PollCountingBody {
+        polls: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl http_body::Body for PollCountingBody {
+        type Data = Bytes;
+        type Error = std::convert::Infallible;
+
+        fn poll_frame(
+            self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+        ) -> Poll<Option<Result<http_body::Frame<Bytes>, Self::Error>>> {
+            self.polls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            cx.waker().wake_by_ref();
+            Poll::Pending
+        }
+    }
+
+    #[tokio::test]
+    async fn head_never_polls_application_body() {
+        let polls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let resp = http::Response::builder()
+            .status(200)
+            .header("content-length", "9")
+            .body(http_body_util::BodyExt::boxed(PollCountingBody {
+                polls: polls.clone(),
+            }))
+            .unwrap();
+        let converted = convert_response(resp, true).await.unwrap();
+        assert!(matches!(
+            converted.body(),
+            Some(EggserveResponseBody::EmptyWithLength(9))
+        ));
+        assert_eq!(
+            polls.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "HEAD must not poll the application body to discover trailers"
+        );
+    }
+
+    #[tokio::test]
+    async fn body_forbidden_status_never_polls_or_emits() {
+        for status in [204u16, 304] {
+            let polls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let resp = http::Response::builder()
+                .status(status)
+                .body(http_body_util::BodyExt::boxed(PollCountingBody {
+                    polls: polls.clone(),
+                }))
+                .unwrap();
+            let converted = convert_response(resp, false).await.unwrap();
+            assert!(
+                matches!(converted.body(), Some(EggserveResponseBody::Empty)),
+                "status {status} must not emit a body"
+            );
+            assert_eq!(
+                polls.load(std::sync::atomic::Ordering::SeqCst),
+                0,
+                "status {status} must not poll the application body"
+            );
+        }
+    }
+
+    // --- Phase 79 Finding D: provenance ---
+
+    #[test]
+    fn connection_context_never_substitutes_peer_for_local() {
+        let peer: SocketAddr = "127.0.0.1:12345".parse().unwrap();
+        let ctx = h1_connection_context(None, peer, None);
+        assert_eq!(ctx.local_addr, None);
+        assert_eq!(ctx.remote_addr, Some(peer));
+    }
+
+    #[test]
+    fn connection_context_preserves_truthful_local() {
+        let local: SocketAddr = "127.0.0.1:80".parse().unwrap();
+        let peer: SocketAddr = "127.0.0.1:12345".parse().unwrap();
+        let ctx = h1_connection_context(Some(local), peer, None);
+        assert_eq!(ctx.local_addr, Some(local));
+        assert_eq!(ctx.remote_addr, Some(peer));
+    }
+
+    #[test]
+    fn connection_context_tls_selects_https_scheme() {
+        use eggserve_primitives::connection_info::Scheme;
+        let peer: SocketAddr = "127.0.0.1:12345".parse().unwrap();
+        let plain = h1_connection_context(Some(peer), peer, None);
+        assert_eq!(plain.scheme, Scheme::Http);
+        let tls = h1_connection_context(
+            None,
+            peer,
+            Some(eggserve_primitives::TlsInfo {
+                protocol_version: None,
+                server_name: None,
+                alpn: Some("http/1.1".to_string()),
+                client_authenticated: false,
+                peer_certificates_present: false,
+                peer_certificate_chain: None,
+            }),
+        );
+        assert_eq!(tls.scheme, Scheme::Https);
+        assert_eq!(tls.local_addr, None);
+        assert_eq!(tls.remote_addr, Some(peer));
+    }
+
+    #[test]
+    fn request_conversion_resolves_peer_without_local() {
+        use eggserve_primitives::connection_info::{ConnectionInfo, Scheme};
+        let mut headers = EggserveHeaderBlock::new();
+        headers.push_str("host", "localhost").unwrap();
+        let head = eggserve_primitives::request_head::RequestHead::new(
+            eggserve_primitives::method::Method::new("GET").unwrap(),
+            eggserve_primitives::request_target::RequestTarget::parse("/").unwrap(),
+            eggserve_primitives::version::HttpVersion::Http11,
+            headers,
+        );
+        let peer: SocketAddr = "127.0.0.1:12345".parse().unwrap();
+        let request = EggserveRequest::new(
+            head,
+            EggserveRequestBody::from_bytes(Vec::new(), u64::MAX),
+            ConnectionInfo::new(None, Some(peer), Scheme::Http, None),
+        );
+        let (_parts, _inbound, client_ip, local_addr) = convert_request(request).unwrap();
+        assert_eq!(client_ip, peer.ip());
+        assert_eq!(local_addr, None);
     }
 }
