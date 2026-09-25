@@ -1,6 +1,6 @@
 # SynVoid Architecture Hardening Roadmap
 
-Status: Tracks 1-3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). Eggfetch 0.2 runtime adoption is closed through Phase 62 (`c3568ef4...`) and performance/reproducibility adjudication is closed through Phase 63 (one accepted tail residual); Phase 64 docs/evidence-truth correction is complete/closed. Production remains on eggfetch. The EggServe 0.2.2-line inbound H1 campaign closed RETAINED at Phase 65; Phases 66–69 are gated/not started and production remains on Hyper H1. Phases 70–71 (HTTP/1 runtime and `HttpConfig` truthfulness corrective) are implemented/closed. Phase 72 (HTTP truthfulness evidence-reconciliation closeout) is implemented/closed; Phases 70–72 are historical/closed with evidence aligned to runtime.
+Status: Tracks 1-3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). Eggfetch 0.2 runtime adoption is closed through Phase 62 (`c3568ef4...`) and performance/reproducibility adjudication is closed through Phase 63 (one accepted tail residual); Phase 64 docs/evidence-truth correction is complete/closed. Production remains on eggfetch. The EggServe 0.2.2-line inbound H1 campaign remains a historical RETAINED decision at Phase 65; Phases 66–69 were never started. A new EggServe 0.3 direct-H1 requalification/adoption program is registered at Phases 73–78: Phase 73 is qualification-ready and Phases 74–78 are gated on an explicit GO; production remains on Hyper H1. Phases 70–71 (HTTP/1 runtime and `HttpConfig` truthfulness corrective) are implemented/closed. Phase 72 (HTTP truthfulness evidence-reconciliation closeout) is implemented/closed; Phases 70–72 are historical/closed with evidence aligned to runtime.
 
 Scope: this roadmap covers architecture hardening, trust-boundary closure, verification, release readiness, post-hardening cleanup, and the architecture-convergence work required before another broad feature-expansion pass.
 
@@ -542,3 +542,120 @@ feature campaign. It implemented no H3 ingress residual, idle keep-alive
 instrumentation, TCP connection caps, egress-header policy,
 request-line parsing/rename, EggServe adoption, or Phases 66–69.
 
+
+
+## Post-Phase-72 Campaign: EggServe 0.3 Direct H1 Requalification and Adoption — Phase 73 Qualification Ready
+
+Status: planned. Production remains on Hyper H1. Phase 73 is the only
+qualification-ready handoff; Phases 74–78 are blocked on a Phase 73
+`GO_DIRECT_0_3` decision.
+
+Roadmap:
+`plans/eggserve_0_3_h1_requalification_and_adoption_roadmap.md`.
+
+Planning baseline:
+`dd1ff0fcfe4ce11da0036adbf39c2d595e9a2246`.
+
+This is a new campaign, not a reopening of historical Phases 66–69. The old
+0.2.2-line Phase 65 RETAIN decision remains valid for that exact upstream
+contract.
+
+Upstream EggServe subsequently published materially different reusable
+artifacts:
+
+- `eggserve-primitives 0.2.1`, checksum
+  `ba5372af39cb279fab9cc672608fe83c3ac5ca16d8f8ce058c2400626ef3a101`;
+- `eggserve-server 0.3.0`, checksum
+  `b26bcaeb357dfafeb780649c789765c7b6545d85388ecdbb446a47ff78aac082`.
+
+Upstream proof-bearing source:
+`c62faf59b19913eb49b97d371435122c5a8fb6ac` (CI run
+`36067050590`, success). Published-artifact closeout:
+`15a9f4b2d98152c9dcfb630a8fd57e9357610e3e` (CI run
+`36071193286`, success).
+
+EggServe 0.3 resolves the principal Phase 65 deadline/admission blockers by
+adding explicit External policy ownership, External service/tunnel admission,
+a narrow H1 connection policy, caller-owned TLS-stream support, typed runtime
+rejection presentation, and a direct opaque H1 tunnel transport.
+
+Current SynVoid research still identifies two hard exact-artifact blockers:
+
+1. EggServe 0.3.0 final response policy removes service-provided `Date` and
+   `Server` and applies one runtime-level policy. SynVoid has per-site
+   `date_header`, `date_jitter_seconds`, and `server_token`, so the
+   current artifact cannot preserve that contract without upstream generic
+   response-metadata ownership/preservation or a separate explicit SynVoid
+   compatibility change.
+2. EggServe 0.3.0 mandatory validation caps H1 parser/header values
+   (`max_buf_size <= 4 MiB`, `max_headers <= 10_000`,
+   `max_header_bytes <= 1 MiB`) below portions of SynVoid's currently valid
+   config space. Default values overlap, but adoption may not silently clamp
+   or reject valid larger configurations.
+
+A required SynVoid-side refactor also remains: canonical `synvoid-http`
+request/body/WebSocket APIs still carry `hyper::body::Incoming` and
+`hyper::upgrade::OnUpgrade`. EggServe canonical body/tunnel values cannot be
+converted back into those concrete Hyper types. The canonical inbound boundary
+must become transport-neutral before a driver swap.
+
+Execution order:
+
+1. **Phase 73 — EggServe 0.3 runtime requalification and contract gate**
+   - exact crates.io versions/checksums and dependency graph;
+   - re-evaluate every Phase 65 control;
+   - prove full valid-config-range compatibility;
+   - prove per-site Date/Server response policy;
+   - prototype body/response/tunnel/drop adapters;
+   - close `GO_DIRECT_0_3`, `RETAIN_PENDING_UPSTREAM`, or
+     `RETAIN_CURRENT_H1`;
+   - no production route change.
+2. **Phase 74 — transport-neutral inbound body/request/upgrade boundary**
+   - blocked on Phase 73 GO;
+   - remove `Incoming`/`OnUpgrade` from canonical `synvoid-http` APIs;
+   - keep current Hyper plaintext/TLS/H2 production drivers.
+3. **Phase 75 — EggServe service/config/response/tunnel adapter**
+   - one root-owned adapter and one config projector;
+   - External EggServe deadline/body/admission ownership;
+   - streaming request/response and neutral tunnel conversion;
+   - full Hyper-vs-EggServe differential corpus;
+   - production remains Hyper.
+4. **Phase 76 — plaintext H1 production adoption**
+   - keep SynVoid bind/accept/flood/sniff/request admission;
+   - replace only plaintext Hyper H1 connection driving;
+   - retain a test-only legacy differential lane.
+5. **Phase 77 — TLS-H1 convergence**
+   - completed Rustls stream + ALPN H1 -> same EggServe driver;
+   - TLS/SNI/PQ/JA4 remain SynVoid-owned;
+   - ALPN h2 remains existing Hyper H2.
+6. **Phase 78 — adversarial/performance/closeout**
+   - parser/framing/config/response/WebSocket/body/shutdown matrices;
+   - same-host before/after performance/resource evidence;
+   - remove only superseded H1 production/test machinery after proof;
+   - close ADOPTED or RETAINED_ROLLBACK.
+
+Detailed plans:
+
+- `plans/phase_73_eggserve_0_3_runtime_requalification_and_contract_gate.md`
+- `plans/phase_74_http_transport_neutral_inbound_and_upgrade_boundary.md`
+- `plans/phase_75_eggserve_0_3_adapter_and_differential_qualification.md`
+- `plans/phase_76_eggserve_plaintext_h1_production_adoption.md`
+- `plans/phase_77_eggserve_tls_h1_runtime_convergence.md`
+- `plans/phase_78_eggserve_h1_adversarial_performance_closeout.md`
+
+Campaign constraints:
+
+- no valid SynVoid config narrowing/clamping hidden in an implementation swap;
+- no loss of per-site Date/server-token behavior;
+- no default EggServe timeout/body/admission authority layered over SynVoid;
+- no request/response buffering solely for adaptation;
+- no loss of WebSocket/app-server tunnel capability;
+- no listener/TLS/H2/H3/static-policy migration;
+- no permanent dual production H1 runtime;
+- no EggServe types in the canonical `synvoid-http` domain API;
+- no footprint/performance claim without measured evidence.
+
+Phase 73 is expected to close `RETAIN_PENDING_UPSTREAM` against the currently
+published 0.3.0 artifact if the two hard blockers above remain. That is a valid
+terminal state. Do not begin Phase 74 merely because the historical Phase 65
+deadline/admission blockers were fixed.
