@@ -1,7 +1,9 @@
 # EggServe 0.3 Direct H1 Requalification and Adoption Roadmap
 
-Status: planned. Phase 73 is qualification-ready. Phases 74–78 are gated on an
-explicit Phase 73 GO decision against an exact published EggServe artifact.
+Status: Phase 73 closed `RETAIN_PENDING_UPSTREAM` on 2026-09-25. Phases 74–78
+remain unopened under the stop rule. See
+`architecture/eggserve_0_3_h1_compatibility_matrix.md` for exact-artifact
+evidence and the conditions for rerunning Phase 73.
 
 Planning baseline: `dd1ff0fcfe4ce11da0036adbf39c2d595e9a2246`
 (Phase 72 HTTP truthfulness closeout metadata head).

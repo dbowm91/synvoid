@@ -546,9 +546,11 @@ request-line parsing/rename, EggServe adoption, or Phases 66–69.
 
 ## Post-Phase-72 Campaign: EggServe 0.3 Direct H1 Requalification and Adoption — Phase 73 Qualification Ready
 
-Status: planned. Production remains on Hyper H1. Phase 73 is the only
-qualification-ready handoff; Phases 74–78 are blocked on a Phase 73
-`GO_DIRECT_0_3` decision.
+Status: Phase 73 closed `RETAIN_PENDING_UPSTREAM` on 2026-09-25. Production
+remains on Hyper H1. Phases 74–78 were not started because the exact published
+EggServe 0.3.0 candidate fails the mandatory parser-range and per-site
+response-metadata gates. Re-run Phase 73 only after an exact published
+artifact resolves both contracts.
 
 Roadmap:
 `plans/eggserve_0_3_h1_requalification_and_adoption_roadmap.md`.

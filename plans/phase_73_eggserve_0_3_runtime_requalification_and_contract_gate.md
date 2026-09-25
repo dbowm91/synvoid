@@ -1,6 +1,8 @@
 # Phase 73 Plan: EggServe 0.3 Runtime Requalification and Contract Gate
 
-Status: planned; qualification-only. Production remains on Hyper H1.
+Status: **closed — `RETAIN_PENDING_UPSTREAM`**. Production remains on Hyper H1.
+Evidence: `architecture/eggserve_0_3_h1_compatibility_matrix.md`. Phases
+74–78 remain gated and were not started.
 
 Registered in: `plans/roadmap.md`.
 
