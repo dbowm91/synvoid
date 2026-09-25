@@ -1,27 +1,30 @@
 # EggServe 0.3 Direct H1 Requalification and Adoption Roadmap
 
-Status: Phase 73 closed `RETAIN_PENDING_UPSTREAM` on 2026-09-25 for 0.3.0;
-re-run the same day reached `GO_DIRECT_0_3` against pinned
-`eggserve-server = "=0.3.1"` / `eggserve-primitives = "=0.2.1"`, which
-unblocks (but does not start) Phase 74. Historical 0.3.0 evidence:
-`architecture/eggserve_0_3_h1_compatibility_matrix.md`. 0.3.1
-requalification evidence:
-`architecture/eggserve_0_3_1_h1_requalification_addendum.md`. Phases
-74–78 are gated on that GO decision; none has started.
+Status: corrective follow-up active.
 
-Campaign closeout 2026-09-25: ALL PHASES CLOSED, disposition ADOPTED.
-Phase 74 neutral boundary → Phase 75 adapter + 7/7 differential →
-Phase 76 plaintext production → Phase 77 TLS-H1 convergence →
-Phase 78 closeout (`architecture/eggserve_0_3_h1_adoption_closeout.md`).
-Production H1 (plaintext + TLS-ALPN) is EggServe 0.3.1-driven; Hyper
-retained for H2/egress/test lanes. Follow-ups (separate plans):
-app-server tunneled-traffic loopback, H2 header-list byte-unit review,
-Set-Cookie collapse and body-limit relabeling, hosted CI for the final
-tree.
+- Phase 73 first closed `RETAIN_PENDING_UPSTREAM` against exact EggServe 0.3.0.
+- A 2026-09-25 re-run against exact-pinned `eggserve-server = "=0.3.1"` / `eggserve-primitives = "=0.2.1"` reached `GO_DIRECT_0_3`.
+- Phases 74–78 implementation landed at `2242e1911d2083448371f707392fdb07f83f1bce`; production plaintext and TLS-ALPN H1 are EggServe-driven, while H2/H3 remain unchanged.
+- Post-adoption review found runtime/evidence defects. Phase 78's terminal `ADOPTED` closure is therefore superseded pending Phases 79–80.
+- Phase 79 owns runtime correctness: shutdown-driver lifetime, exact-body trailers, real AppServer tunnel coverage, and local-endpoint provenance.
+- Phase 80 owns corrected requalification, hosted proof, planning/evidence reconciliation, and the next terminal disposition.
 
-Planning baseline: `dd1ff0fcfe4ce11da0036adbf39c2d595e9a2246`
-(Phase 72 HTTP truthfulness closeout metadata head).
+Historical 0.3.0 evidence:
+`architecture/eggserve_0_3_h1_compatibility_matrix.md`.
 
+0.3.1 requalification evidence:
+`architecture/eggserve_0_3_1_h1_requalification_addendum.md`.
+
+Adoption implementation/initial closeout evidence:
+`architecture/eggserve_0_3_h1_adoption_closeout.md`.
+
+Corrective baseline:
+`2242e1911d2083448371f707392fdb07f83f1bce`.
+
+Corrective plans:
+
+- `plans/phase_79_eggserve_0_3_1_h1_runtime_correctness_corrective.md`
+- `plans/phase_80_eggserve_0_3_1_corrective_requalification_and_evidence_closure.md`
 Historical context:
 
 - the EggServe 0.2.2-line campaign closed `RETAIN_CURRENT_H1` at Phase 65;
@@ -178,7 +181,7 @@ ownership enters SynVoid.
 ```text
 73  exact EggServe 0.3.x requalification + remaining-contract gate
  |
- | GO only
+ | GO on 0.3.1
  v
 74  transport-neutral SynVoid inbound body/request/upgrade boundary
  |
@@ -188,7 +191,13 @@ ownership enters SynVoid.
  |
 77  TLS-ALPN H1 convergence (H2 unchanged)
  |
-78  adversarial/performance/release closeout + legacy H1 retirement
+78  initial adversarial/performance closeout
+ |
+ | post-adoption review superseded terminal closure
+ v
+79  runtime correctness corrective
+ |
+80  corrected requalification + hosted/evidence closure
 ```
 
 Detailed plans:
@@ -199,7 +208,8 @@ Detailed plans:
 - `plans/phase_76_eggserve_plaintext_h1_production_adoption.md`
 - `plans/phase_77_eggserve_tls_h1_runtime_convergence.md`
 - `plans/phase_78_eggserve_h1_adversarial_performance_closeout.md`
-
+- `plans/phase_79_eggserve_0_3_1_h1_runtime_correctness_corrective.md`
+- `plans/phase_80_eggserve_0_3_1_corrective_requalification_and_evidence_closure.md`
 ## Program invariants
 
 - no valid SynVoid config is silently clamped or rejected because of an
@@ -217,15 +227,18 @@ Detailed plans:
   production H1 moves;
 - performance/footprint claims require measured evidence.
 
-## Stop rule
+## Corrective stop rule
 
-Phase 73 may close `RETAIN_PENDING_UPSTREAM` or `RETAIN_CURRENT_H1`. That is
-a valid result.
+The historical Phase 73 stop rule was satisfied by the published 0.3.1 artifact and the adoption sequence ran. Current closure now depends on Phases 79–80.
 
-Phases 74–78 must not begin merely because most Phase 65 blockers disappeared.
-They require an exact published artifact that preserves SynVoid response-policy
-and valid-config semantics, or a separately approved SynVoid compatibility
-change with its own plan.
+Phase 79 must preserve the existing adoption architecture unless executable evidence shows that graceful shutdown, response trailers, AppServer tunneling, or truthful connection provenance cannot be made correct without violating another required SynVoid contract.
 
-If a later EggServe release supplies the missing generic contracts, rerun Phase
-73 against that exact registry artifact and only then open Phase 74.
+Phase 80 may close `ADOPTED` only after:
+
+- the Phase 79 runtime corrections are directly tested;
+- current canonical local verification is green;
+- a hosted CI run is observed successful on a SHA containing those runtime corrections;
+- the AppServer tunnel requirement is actually exercised;
+- Phase 73–78 status/closeout documents are reconciled to the corrected evidence.
+
+If a required contract still fails after the bounded corrective, close `RETAINED_ROLLBACK` and restore the qualified Hyper production H1 point rather than shipping a knowingly partial runtime split.
