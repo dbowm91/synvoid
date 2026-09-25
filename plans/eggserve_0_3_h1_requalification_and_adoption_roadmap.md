@@ -25,6 +25,7 @@ Corrective plans:
 
 - `plans/phase_79_eggserve_0_3_1_h1_runtime_correctness_corrective.md`
 - `plans/phase_80_eggserve_0_3_1_corrective_requalification_and_evidence_closure.md`
+
 Historical context:
 
 - the EggServe 0.2.2-line campaign closed `RETAIN_CURRENT_H1` at Phase 65;
