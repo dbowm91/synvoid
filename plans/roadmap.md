@@ -584,8 +584,8 @@ Execution order:
    - remove peer-as-local endpoint fabrication;
    - retain the existing adoption architecture (no rollback-class defect found);
    - evidence: `tests/eggserve_h1_runtime_corrective.rs` (10/10) plus the
-     adoption/differential/TLS suites; implementation SHA recorded with the
-     Phase 80 handoff.
+     adoption/differential/TLS suites; implementation SHA
+     `171dd1e47f965b04b34465fc72c87adf4d9a9cab` handed to Phase 80.
 8. **Phase 80 — corrective requalification and evidence closure**
    - rerun the focused correctness matrices and bounded performance smoke;
    - run current canonical full/security/profile verification;

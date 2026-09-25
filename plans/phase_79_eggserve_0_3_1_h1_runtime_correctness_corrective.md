@@ -1,6 +1,6 @@
 # Phase 79 Plan: EggServe 0.3.1 H1 Runtime Correctness Corrective
 
-Status: implemented 2026-09-25; local verification matrix green (fmt, clippy, dependency policy, core compile, repo guards, security regression, root guards, core admin tests, admin contract, failure injection — `cargo xtask verify` 10/10). Implementation SHA recorded with the Phase 80 handoff. Corrective follow-up to the Phase 73–78 adoption landed at `2242e1911d2083448371f707392fdb07f83f1bce`.
+Status: implemented and closed 2026-09-25; implementation SHA `171dd1e47f965b04b34465fc72c87adf4d9a9cab`. Local verification matrix green (fmt, clippy, dependency policy, core compile, repo guards, security regression, root guards, core admin tests, admin contract, failure injection — `cargo xtask verify` 10/10). Corrective follow-up to the Phase 73–78 adoption landed at `2242e1911d2083448371f707392fdb07f83f1bce`.
 
 Registered in: `plans/roadmap.md` and `plans/eggserve_0_3_h1_requalification_and_adoption_roadmap.md`.
 
@@ -188,7 +188,7 @@ Do not mark Phase 79 closed merely because local verification is green. Record t
 - [x] H2/H3 behavior remains unchanged (`tls_h2_stays_hyper_with_header_limit`, H2 branch untouched);
 - [x] exact EggServe dependency/ownership model remains intact (ownership profile unchanged; pins moved only under the separately justified upstream-release clause — `architecture/eggserve_0_4_0_trailer_head_addendum.md`);
 - [x] focused and full local verification is green (`cargo xtask verify` 10/10, plus feature profiles, `cargo deny check`, `cargo audit`);
-- [ ] implementation SHA is recorded for Phase 80 qualification (filled in by the Phase 79 handoff commit).
+- [x] implementation SHA is recorded for Phase 80 qualification: `171dd1e47f965b04b34465fc72c87adf4d9a9cab` (parent `196bad63`, adoption baseline `2242e191`).
 
 ## Terminal state
 
