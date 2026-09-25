@@ -1,8 +1,8 @@
 //! Root-test ownership: COMPOSITION
-//! Rationale: Phase 70 H1 parser-control parity. Proves the plaintext H1
-//! transport applies the configured header-read timeout, header-count, and
-//! parser-buffer ceiling through the single root-local policy helper
-//! (`synvoid::http::h1_policy::configure_h1_builder`), and that the header
+//! Rationale: Phase 70 H1 parser-control parity. The behavioral cases apply
+//! the configured header-read timeout, header-count, and parser-buffer
+//! ceiling through `synvoid::http::h1_policy::configure_h1_builder` (the
+//! exact production mapping for the Hyper H1 lane) and prove the header
 //! timeout is genuinely active (explicit Tokio timer) rather than merely
 //! configured.
 //!
@@ -10,10 +10,14 @@
 //! values to prove the mapping is repeatable; they are plain-TCP loopback
 //! runs, NOT TLS handshakes. Real TLS-H1 transport evidence (actual Rustls
 //! handshake, ALPN `http/1.1`, H1 over the server `TlsStream`) lives in
-//! `tests/http_h1_tls_transport.rs` (Phase 72). A source-level guard below
-//! pins that `src/tls/server.rs` routes its H1 path through the helper,
-//! retains `.with_upgrades()`, and leaves the H2 `max_header_list_size` path
-//! unchanged.
+//! `tests/http_h1_tls_transport.rs` (Phase 72).
+//!
+//! Production H1 moved to the direct EggServe runtime at Phase 73–78
+//! (`2242e191`), so the source-level guard below pins the *current* wiring
+//! truth: both H1 lanes project one shared policy authority and share the
+//! connection-context/drive helpers, while the H2 `max_header_list_size`
+//! path stays on Hyper unchanged. It was updated at Phase 80 after the
+//! adoption left it asserting the retired Hyper-only wiring.
 
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
@@ -269,29 +273,40 @@ fn plaintext_startup_claim_is_h1_only() {
 #[test]
 fn tls_h1_uses_shared_policy_and_keeps_upgrades_and_h2() {
     let tls = repo_file("src/tls/server.rs");
-    assert!(
-        tls.contains("configure_h1_builder"),
-        "TLS-H1 must be built through the shared H1 policy helper"
-    );
+    let accept_loop = repo_file("src/http/server/accept_loop.rs");
+    // One policy authority: both H1 lanes project the same EggServe H1
+    // runtime configuration instead of each carrying a private mapping.
+    for (label, src) in [("tls", &tls), ("plaintext", &accept_loop)] {
+        assert!(
+            src.contains("project_eggserve_h1"),
+            "{label} H1 must be built through the shared EggServe H1 projector"
+        );
+        assert!(
+            src.contains("h1_connection_context") && src.contains("drive_h1_connection"),
+            "{label} H1 must use the shared connection-context and drive helpers"
+        );
+        assert!(
+            src.contains("EggserveH1Service::new"),
+            "{label} H1 must serve through the shared neutral upgrade-capable service"
+        );
+    }
     assert!(
         !tls.contains("_header_read_timeout") && !tls.contains("_max_buf_size"),
         "TLS-H1 must consume (not underscore-ignore) the parser controls"
     );
     assert!(
-        tls.contains(".with_upgrades()"),
-        "TLS-H1 must retain WebSocket upgrade support"
-    );
-    assert!(
         tls.contains("max_header_list_size(max_headers as u32)"),
         "TLS H2 header-list behavior must remain unchanged"
     );
-    let accept_loop = repo_file("src/http/server/accept_loop.rs");
+    // The Hyper H1 builder mapping itself stays production-shared through
+    // the root helper used by both the Hyper comparison lanes and the
+    // parser-parity harness.
     assert!(
-        accept_loop.contains("configure_h1_builder"),
-        "plaintext H1 must use the shared policy helper"
+        h1_policy_source().contains("pub fn configure_h1_builder"),
+        "the shared Hyper H1 policy helper must remain the single mapping authority"
     );
-    assert!(
-        accept_loop.contains(".with_upgrades()"),
-        "plaintext H1 must retain WebSocket upgrade support"
-    );
+}
+
+fn h1_policy_source() -> String {
+    repo_file("src/http/h1_policy.rs")
 }

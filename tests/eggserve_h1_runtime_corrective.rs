@@ -369,7 +369,6 @@ async fn spawn_upstream_echo() -> SocketAddr {
                     http_body_util::combinators::BoxBody<Bytes, std::convert::Infallible>;
                 let svc = hyper::service::service_fn(
                     |req: hyper::Request<hyper::body::Incoming>| async move {
-                        let path = req.uri().path().to_string();
                         let (parts, body) = req.into_parts();
                         let bytes = body.collect().await.unwrap().to_bytes();
                         let text = format!(
