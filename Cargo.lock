@@ -2450,6 +2450,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "eggserve-primitives"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba5372af39cb279fab9cc672608fe83c3ac5ca16d8f8ce058c2400626ef3a101"
+dependencies = [
+ "bytes",
+ "futures-util",
+]
+
+[[package]]
+name = "eggserve-server"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "987b5873f0273b4d02f81f8e19613c93825803c224e972c86e9e9888098f3de8"
+dependencies = [
+ "bytes",
+ "eggserve-primitives",
+ "futures-util",
+ "http-body",
+ "http-body-util",
+ "httpdate",
+ "hyper",
+ "hyper-util",
+ "tokio",
+]
+
+[[package]]
 name = "either"
 version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8052,13 +8079,17 @@ dependencies = [
  "daemonize2",
  "dashmap 7.0.0-rc2",
  "ed25519-dalek",
+ "eggserve-primitives",
+ "eggserve-server",
  "flate2",
  "futures",
  "hex",
  "hkdf",
  "hmac",
  "http 1.4.1",
+ "http-body",
  "http-body-util",
+ "httpdate",
  "hyper",
  "hyper-util",
  "indexmap",
@@ -8134,6 +8165,7 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tokio-rustls",
+ "tokio-tungstenite 0.28.0",
  "toml 0.8.23",
  "tonic",
  "tonic-prost",
@@ -8497,6 +8529,8 @@ dependencies = [
  "bytes",
  "chrono",
  "dashmap 7.0.0-rc2",
+ "eggserve-primitives",
+ "eggserve-server",
  "futures",
  "h3",
  "http 1.4.1",

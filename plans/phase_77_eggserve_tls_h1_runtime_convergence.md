@@ -1,6 +1,14 @@
 # Phase 77 Plan: EggServe TLS-H1 Runtime Convergence
 
-Status: planned; blocked on Phase 76 closure and green hosted CI.
+Status: closed 2026-09-25. ALPN H1 routes completed Rustls streams to the
+shared EggServe driver (same projector; JA4/threading, shutdown, and
+drop bridging per connection; H2 untouched). Evidence:
+`tests/eggserve_tls_h1_convergence.rs` (5/5 over real TLS) + transport
+guards; `cargo xtask verify` 10/10.
+Follow-up flagged (pre-existing, explicitly NOT changed per Track C):
+production H2 `max_header_list_size(max_headers)` (default 128) is a
+byte budget, so ordinary H2 requests exceed it — needs a separate
+compatibility plan.
 
 Registered in: `plans/roadmap.md`.
 

@@ -89,7 +89,78 @@ pub async fn handle_pass_backend_dispatch<
     MarkImageRightsFn,
     MarkImageRightsFut,
 >(
-    on_upgrade: Option<hyper::upgrade::OnUpgrade>,
+    on_upgrade: Option<Box<dyn crate::inbound::UpgradeCapability>>,
+    dispatch_ctx: BackendDispatchContext<W>,
+    on_request_log: OnLogFn,
+    quictunnel_request: QuicTunnelFn,
+    mark_image_rights: MarkImageRightsFn,
+) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error>
+where
+    W: synvoid_proxy::protocol::trait_def::WafCoreBackend
+        + UploadValidationWaf
+        + WafErrorPageRenderer
+        + Send
+        + Sync
+        + 'static,
+    OnLogFn: Fn(
+            Option<Arc<Mutex<synvoid_ipc::AsyncIpcStream>>>,
+            Option<synvoid_ipc::WorkerId>,
+            &Arc<MainConfig>,
+            IpAddr,
+            &str,
+            &str,
+            u16,
+            u64,
+            &str,
+            Option<&str>,
+            bool,
+        ) + Clone
+        + Send
+        + Sync
+        + 'static,
+    QuicTunnelFn: Fn(
+            http::Method,
+            &str,
+            Option<http::HeaderMap>,
+            Option<Bytes>,
+            Option<std::time::Duration>,
+        )
+            -> futures::future::BoxFuture<'static, anyhow::Result<synvoid_http_client::HttpResponse>>
+        + Send
+        + 'static,
+    MarkImageRightsFn: Fn(
+            Bytes,
+            String,
+            Option<String>,
+            Option<synvoid_config::site::SiteImageRightsConfig>,
+        ) -> MarkImageRightsFut
+        + Clone
+        + Send
+        + 'static,
+    MarkImageRightsFut: Future<Output = Bytes> + Send + 'static,
+{
+    let response = handle_pass_backend_dispatch_inner(
+        on_upgrade,
+        dispatch_ctx,
+        on_request_log,
+        quictunnel_request,
+        mark_image_rights,
+    )
+    .await?;
+    // Single date/server invariant (Phase 75): relayed upstream values plus
+    // site-generated ones collapse to the site-authoritative last value.
+    Ok(crate::response_helpers::dedupe_single_value_response_headers(response))
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn handle_pass_backend_dispatch_inner<
+    W,
+    OnLogFn,
+    QuicTunnelFn,
+    MarkImageRightsFn,
+    MarkImageRightsFut,
+>(
+    on_upgrade: Option<Box<dyn crate::inbound::UpgradeCapability>>,
     dispatch_ctx: BackendDispatchContext<W>,
     on_request_log: OnLogFn,
     quictunnel_request: QuicTunnelFn,
@@ -192,10 +263,10 @@ where
         client_ip,
         parts.headers.clone(),
         target.site_config.websocket.clone(),
-        |upgraded, socket_path, target, path, waf, client_ip, ws_config| async move {
+        |io, socket_path, target, path, waf, client_ip, ws_config| async move {
             let waf: Arc<dyn synvoid_proxy::protocol::trait_def::WafCoreBackend> = waf;
             crate::handle_websocket_to_appserver(
-                upgraded,
+                io,
                 socket_path,
                 target,
                 path,
@@ -205,9 +276,9 @@ where
             )
             .await
         },
-        |upgraded, target, path, waf, client_ip, ws_config| async move {
+        |io, target, path, waf, client_ip, ws_config| async move {
             let waf: Arc<dyn synvoid_proxy::protocol::trait_def::WafCoreBackend> = waf;
-            crate::handle_websocket_tunnel(upgraded, target, path, waf, client_ip, ws_config).await
+            crate::handle_websocket_tunnel(io, target, path, waf, client_ip, ws_config).await
         },
     )
     .await

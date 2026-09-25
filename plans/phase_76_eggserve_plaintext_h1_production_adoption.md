@@ -1,6 +1,13 @@
 # Phase 76 Plan: EggServe Plaintext H1 Production Adoption
 
-Status: planned; blocked on Phase 75 GO for plaintext migration.
+Status: closed 2026-09-25. Plaintext H1 production is EggServe-driven
+(`src/http/server/accept_loop.rs` → `serve_http1_connection_with_policy`
++ `EggserveH1Service`; shared policy/state per listener; per-connection
+shutdown tokens bridged to WAF-drop and worker shutdown). Accept
+ownership (bind/flood/sniff/replay) verbatim. Evidence:
+`tests/eggserve_plaintext_adoption.rs` (6/6) + differential 7/7;
+`cargo xtask verify` 10/10. Residuals for 77/78: app-server tunneled
+traffic loopback, TLS-H1 migration, same-host performance.
 
 Registered in: `plans/roadmap.md`.
 

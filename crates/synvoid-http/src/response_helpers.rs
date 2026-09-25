@@ -14,6 +14,23 @@ use crate::headers::{
 
 pub type BoxBodyResponse = Response<BoxBody<Bytes, Infallible>>;
 
+/// Enforce the single-value invariant for `date`/`server` on Canonical H1
+/// responses (Phase 75): a relayed upstream value plus a site-generated one
+/// must not both reach the wire (duplicate `Date` is a spec violation and
+/// the direct-H1 final boundary fail-closes it to 500). The LAST occurrence
+/// wins so explicit site policy stays authoritative over relayed values.
+/// Single values pass through untouched.
+pub fn dedupe_single_value_response_headers(resp: BoxBodyResponse) -> BoxBodyResponse {
+    let (mut parts, body) = resp.into_parts();
+    for name in ["date", "server"] {
+        if let Some(last) = parts.headers.get_all(name).iter().next_back().cloned() {
+            parts.headers.remove(name);
+            parts.headers.insert(name, last);
+        }
+    }
+    Response::from_parts(parts, body)
+}
+
 /// Convert a body to an infallible body without panicking when the upstream
 /// connection fails after the response has started.
 pub fn swallow_body_errors<B>(body: B) -> BoxBody<Bytes, Infallible>
@@ -32,10 +49,6 @@ where
         }
     });
     http_body_util::BodyExt::boxed(http_body_util::StreamBody::new(stream))
-}
-
-pub fn swallow_incoming_body_errors(body: hyper::body::Incoming) -> BoxBody<Bytes, Infallible> {
-    swallow_body_errors(body)
 }
 
 pub fn apply_security_headers(
@@ -156,5 +169,46 @@ mod tests {
         assert!(cookie.contains("sid=abc"));
         assert!(cookie.contains("Secure"));
         assert!(cookie.contains("HttpOnly"));
+    }
+
+    #[test]
+    fn test_dedupe_keeps_last_date_and_server() {
+        use http_body_util::BodyExt as _;
+        let resp = http::Response::builder()
+            .status(200)
+            .header("date", "Sun, 06 Nov 1994 08:49:37 GMT")
+            .header("server", "upstream")
+            .body(http_body_util::Empty::<Bytes>::new().boxed())
+            .unwrap();
+        let mut resp = resp;
+        resp.headers_mut()
+            .append("date", "Mon, 07 Nov 1994 08:49:37 GMT".parse().unwrap());
+        resp.headers_mut().append("server", "site".parse().unwrap());
+        resp.headers_mut().append("x-keep", "1".parse().unwrap());
+        resp.headers_mut().append("x-keep", "2".parse().unwrap());
+        let deduped = dedupe_single_value_response_headers(resp);
+        let date: Vec<_> = deduped.headers().get_all("date").iter().collect();
+        assert_eq!(date.len(), 1);
+        assert_eq!(date[0], "Mon, 07 Nov 1994 08:49:37 GMT");
+        let server: Vec<_> = deduped.headers().get_all("server").iter().collect();
+        assert_eq!(server.len(), 1);
+        assert_eq!(server[0], "site");
+        // Unrelated duplicates are untouched.
+        assert_eq!(deduped.headers().get_all("x-keep").iter().count(), 2);
+    }
+
+    #[test]
+    fn test_dedupe_leaves_single_values_alone() {
+        use http_body_util::BodyExt as _;
+        let resp = http::Response::builder()
+            .status(200)
+            .header("date", "Sun, 06 Nov 1994 08:49:37 GMT")
+            .header("x-keep", "1")
+            .body(http_body_util::Empty::<Bytes>::new().boxed())
+            .unwrap();
+        let deduped = dedupe_single_value_response_headers(resp);
+        assert_eq!(deduped.status(), 200);
+        assert_eq!(deduped.headers().get_all("date").iter().count(), 1);
+        assert_eq!(deduped.headers().get("x-keep").unwrap(), "1");
     }
 }

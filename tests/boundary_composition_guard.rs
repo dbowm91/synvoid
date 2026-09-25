@@ -431,16 +431,9 @@ const BOUNDARY_EXCEPTIONS: &[BoundaryException] = &[
         token: "MeshBackendPool",
         reason: "Pass-through: received from composition root for backend routing, not owned",
     },
-    BoundaryException {
-        path_suffix: "src/http/server/",
-        token: "MeshTransportManager",
-        reason: "Pass-through: received from composition root for serverless routing, not owned",
-    },
-    BoundaryException {
-        path_suffix: "src/http/server/",
-        token: "MeshBackendPool",
-        reason: "Pass-through: received from composition root for backend routing, not owned",
-    },
+    // Phase 76: `src/http/server/` no longer names these tokens (the
+    // EggServe-driven accept loop threads untyped handles into the shared
+    // neutral context); entries removed as stale by liveness.
     // Phase 27: feed verification uses `synvoid-mesh-protocol` signer, not full
     // mesh `MeshMessageSigner`. No exception needed for the signer anymore.
     // ThreatIntelligenceManager in WAF feed_client is used for feed management, not request-path
@@ -1206,20 +1199,23 @@ const CAPABILITY_BOUNDARY_EXCEPTIONS: &[CapabilityBoundaryException] = &[
         token: "MeshTransportManager",
         reason: "Pass-through: received from composition root for upstream routing",
     },
-    CapabilityBoundaryException {
-        path_suffix: "src/http/server/",
-        token: "MeshTransportManager",
-        reason: "Pass-through: received from composition root for upstream routing",
-    },
+    // Phase 76: `src/http/server/` no longer names these tokens (the
+    // EggServe-driven accept loop threads untyped handles); entries removed
+    // as stale by liveness.
     CapabilityBoundaryException {
         path_suffix: "src/http/server.rs",
         token: "MeshBackendPool",
         reason: "Pass-through: received from composition root for backend pool",
     },
     CapabilityBoundaryException {
-        path_suffix: "src/http/server/",
+        path_suffix: "src/http/service_core.rs",
+        token: "MeshTransportManager",
+        reason: "Pass-through: received from composition root for upstream routing (shared neutral pipeline context)",
+    },
+    CapabilityBoundaryException {
+        path_suffix: "src/http/service_core.rs",
         token: "MeshBackendPool",
-        reason: "Pass-through: received from composition root for backend pool",
+        reason: "Pass-through: received from composition root for backend pool (shared neutral pipeline context)",
     },
     CapabilityBoundaryException {
         path_suffix: "src/http/",

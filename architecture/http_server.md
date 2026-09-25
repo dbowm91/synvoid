@@ -4,7 +4,10 @@
 
 The HTTP Server module (`src/http/`) is the core request handling component of SynVoid. It provides:
 
-- **HTTP/1.1 server (plaintext) + HTTP/1.1/HTTP/2 server (TLS via ALPN)** using Hyper with protocol validation
+- **HTTP/1.1 server (plaintext)** driven by the qualified EggServe direct
+  runtime with protocol validation (Phase 76; policy/admission stay
+  SynVoid-owned) **+ HTTP/1.1/HTTP/2 server (TLS via ALPN)** using Hyper
+  until Phase 77
 - **Request routing** to backends (Static, Upstream, Serverless, FastCGI, PHP, CGI, AppServer, Mesh, AxumDynamic plugins)
 - **WAF integration** with early and full request/body scanning
 - **WebSocket proxy** with bidirectional tunnel and WAF inspection
@@ -172,18 +175,17 @@ pub async fn serve(mut self) -> Result<(), Box<dyn std::error::Error + Send + Sy
 ```
 Main server loop. Only available with `mesh` feature enabled.
 
-### Core Request Handler
-```rust
-async fn handle_request(
-    req: hyper::Request<hyper::body::Incoming>,
-    client_addr: SocketAddr,
-    local_addr: Option<SocketAddr>,
-    router: Arc<Router>,
-    waf: Arc<WafCore>,
-    // ... 20+ other parameters
-) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error>
-```
-The central request processing function (~4700 lines of processing logic).
+### Core Request Handler (Phase 75+)
+
+Both H1 lanes convert ingress to the neutral
+`synvoid_http::inbound::InboundRequest` and invoke the single shared
+`src/http/service_core.rs::handle_neutral_request` (flow + postlude over
+a `NeutralServiceContext`); Hyper plaintext adapters live in
+`synvoid-http/src/hyper_adapter.rs`, the EggServe service in
+`src/http/eggserve_h1.rs`. The old 20-parameter
+`HttpServer::handle_request` was removed in Phase 76 after the
+extraction; TLS-H1/H2 still enter the same canonical flow directly until
+Phase 77.
 
 ---
 
@@ -315,19 +317,22 @@ struct ProtocolValidatingStream<S> {
 ```
 Wraps a stream with initial bytes buffer for protocol validation on first read.
 
-### H1 Parser Policy (Phase 70)
+### H1 Parser Policy (Phase 70, projected to EggServe in Phase 75/76)
 
-Plaintext H1 (`src/http/server/accept_loop.rs`) and TLS-H1
-(`src/tls/server.rs`) share one root-local mapping,
-`src/http/h1_policy.rs::configure_h1_builder`, from `HttpConfig` to the
-Hyper H1 builder: `header_read_timeout_secs` (with an explicit
-`hyper_util::rt::TokioTimer`, which Hyper requires for the timeout to be
-active rather than panic), `max_headers`, and `max_request_size` as the
-parser-buffer ceiling (not a body limit). TLS H2 keeps its separate
-`max_header_list_size(max_headers)` behavior. Parity tests:
+Plaintext H1 policy is projected from `HttpConfig` by
+`src/http/eggserve_h1.rs::project_eggserve_h1` onto the EggServe runtime
+(same mapping: `header_read_timeout_secs`, `max_headers`,
+`max_request_size` as the parser-buffer ceiling, origin-only targets,
+all deadline/admission ceilings externally owned by SynVoid).
+TLS-H1 (`src/tls/server.rs`) still uses the root-local mapping,
+`src/http/h1_policy.rs::configure_h1_builder`, to the Hyper H1 builder
+until Phase 77 (including the explicit `hyper_util::rt::TokioTimer`,
+which Hyper requires for the timeout to be active rather than panic).
+TLS H2 keeps its separate `max_header_list_size(max_headers)` behavior. Parity tests:
 `tests/http_h1_parser_parity.rs` (plaintext + shared-policy repeat +
 call-site guards) and `tests/http_h1_tls_transport.rs` (Phase 72 real-TLS
-seam). Full evidence:
+seam), plus the Phase 75/76 Hyper-vs-EggServe differential and adoption
+suites. Full evidence:
 `architecture/http_h1_runtime_truthfulness_phase70.md`.
 
 ### TLS Detection

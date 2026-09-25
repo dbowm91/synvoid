@@ -1,6 +1,12 @@
 # Phase 74 Plan: HTTP Transport-Neutral Inbound and Upgrade Boundary
 
-Status: planned; blocked on Phase 73 `GO_DIRECT_0_3`.
+Status: closed 2026-09-25. Canonical pipeline consumes neutral
+`InboundRequest`/`InboundBody`/`UpgradeCapability`
+(`crates/synvoid-http/src/inbound.rs`); Hyper capture lives only in
+`hyper_adapter.rs` (guard: `tests/http_transport_neutrality_guard.rs`);
+H1/H2/TLS production paths convert at the two root entries and pass the
+existing suite unchanged. `cargo xtask verify` 10/10. Production remains
+Hyper H1/H2.
 
 Registered in: `plans/roadmap.md`.
 

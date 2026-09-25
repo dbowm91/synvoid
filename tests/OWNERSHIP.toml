@@ -226,6 +226,36 @@ owners = ["synvoid-http"]
 reason = "validates Phase 20 HTTP normalization ownership convergence (canonical framing/parser vs root composition) plus Phase 01 TLS request-flow convergence"
 
 [[test]]
+name = "http_transport_neutrality_guard"
+class = "static_policy"
+owners = ["synvoid-http"]
+reason = "validates Phase 74 transport-neutral inbound boundary (no Hyper ingress types in canonical policy modules, no EggServe in synvoid-http)"
+
+[[test]]
+name = "eggserve_h1_differential"
+class = "qualification"
+owners = ["synvoid-http"]
+reason = "validates Phase 75 Hyper H1 vs EggServe direct H1 differential parity through the shared neutral pipeline (status/headers/body/close, per-site metadata, WebSocket handshake)"
+
+[[test]]
+name = "eggserve_plaintext_adoption"
+class = "qualification"
+owners = ["synvoid-http"]
+reason = "validates Phase 76 plaintext adoption loopback (timeout/parser parity, streamed upstream, disconnect/shutdown resilience, tunneled WebSocket echo on both lanes)"
+
+[[test]]
+name = "eggserve_tls_h1_convergence"
+class = "qualification"
+owners = ["synvoid-http"]
+reason = "validates Phase 77 TLS-H1 convergence over real Rustls (ALPN split, encrypted corpus, H2 Hyper regression, WAF drop/shutdown)"
+
+[[test]]
+name = "eggserve_h1_perf"
+class = "qualification"
+owners = ["synvoid-http"]
+reason = "manual-only Phase 78 Track G same-host performance comparison (all tests ignored; never a CI gate)"
+
+[[test]]
 name = "http_tls_parity"
 class = "composition"
 owners = ["synvoid-http", "synvoid-proxy"]

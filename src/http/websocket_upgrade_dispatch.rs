@@ -12,7 +12,7 @@ use synvoid_http::maybe_handle_websocket_upgrade as maybe_handle_websocket_upgra
 
 #[allow(clippy::type_complexity)] // reason: nested Arc<RwLock<HashMap<...>>> composition root type
 pub async fn maybe_handle_websocket_upgrade<AppServerFn, AppServerFut, TunnelFn, TunnelFut>(
-    on_upgrade: Option<hyper::upgrade::OnUpgrade>,
+    upgrade: Option<Box<dyn synvoid_http::inbound::UpgradeCapability>>,
     app_servers: &Option<Arc<RwLock<HashMap<String, Arc<crate::app_server::GranianSupervisor>>>>>,
     site_id: &str,
     target: &RouteTarget,
@@ -25,7 +25,7 @@ pub async fn maybe_handle_websocket_upgrade<AppServerFn, AppServerFut, TunnelFn,
 ) -> Option<Result<synvoid_http::BoxBodyResponse, hyper::Error>>
 where
     AppServerFn: FnOnce(
-            hyper::upgrade::OnUpgrade,
+            synvoid_http::inbound::BoxTunnelIo,
             std::path::PathBuf,
             RouteTarget,
             String,
@@ -37,7 +37,7 @@ where
         + 'static,
     AppServerFut: Future<Output = ()> + Send + 'static,
     TunnelFn: FnOnce(
-            hyper::upgrade::OnUpgrade,
+            synvoid_http::inbound::BoxTunnelIo,
             RouteTarget,
             String,
             Arc<WafCore>,
@@ -63,7 +63,7 @@ where
     };
 
     maybe_handle_websocket_upgrade_impl(
-        on_upgrade,
+        upgrade,
         is_appserver,
         appserver_socket_path,
         target.clone(),

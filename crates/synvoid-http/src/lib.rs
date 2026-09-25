@@ -25,6 +25,8 @@ pub mod http3_terminal;
 pub mod http3_waf_dispatch;
 pub mod http_request_flow;
 pub mod http_request_postlude;
+pub mod hyper_adapter;
+pub mod inbound;
 pub mod internal_endpoint_dispatch;
 pub mod internal_handlers;
 pub mod listener;

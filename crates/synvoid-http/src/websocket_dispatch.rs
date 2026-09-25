@@ -4,7 +4,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use futures::{SinkExt, StreamExt};
-use hyper_util::rt::TokioIo;
 use metrics::counter;
 use tokio_tungstenite::tungstenite::protocol::Role;
 use tokio_tungstenite::{connect_async, WebSocketStream};
@@ -17,27 +16,19 @@ use synvoid_proxy::protocol::websocket::WebSocketHandler;
 use synvoid_proxy::RouteTarget;
 use synvoid_utils::RunningFlag;
 
+use crate::inbound::BoxTunnelIo;
+
 pub async fn handle_websocket_tunnel(
-    upgraded: hyper::upgrade::OnUpgrade,
+    io: BoxTunnelIo,
     target: RouteTarget,
     path: String,
     waf: Arc<dyn WafCoreBackend>,
     client_ip: IpAddr,
     ws_config: SiteWebSocketConfig,
 ) {
-    let upgraded = match upgraded.await {
-        Ok(up) => up,
-        Err(e) => {
-            tracing::error!("WebSocket upgrade failed: {}", e);
-            counter!("synvoid.websocket.upgrade_failed").increment(1);
-            return;
-        }
-    };
-
     counter!("synvoid.websocket.connections").increment(1);
 
-    let ws_stream =
-        WebSocketStream::from_raw_socket(TokioIo::new(upgraded), Role::Server, None).await;
+    let ws_stream = WebSocketStream::from_raw_socket(io, Role::Server, None).await;
 
     let (mut client_tx, mut client_rx) = ws_stream.split();
 
@@ -237,7 +228,7 @@ pub async fn handle_websocket_tunnel(
 }
 
 pub async fn handle_websocket_to_appserver(
-    upgraded: hyper::upgrade::OnUpgrade,
+    io: BoxTunnelIo,
     socket_path: PathBuf,
     _target: RouteTarget,
     path: String,
@@ -245,19 +236,9 @@ pub async fn handle_websocket_to_appserver(
     client_ip: IpAddr,
     ws_config: SiteWebSocketConfig,
 ) {
-    let upgraded = match upgraded.await {
-        Ok(up) => up,
-        Err(e) => {
-            tracing::error!("WebSocket upgrade to AppServer failed: {}", e);
-            counter!("synvoid.websocket.upgrade_failed").increment(1);
-            return;
-        }
-    };
-
     counter!("synvoid.websocket.connections").increment(1);
 
-    let ws_stream =
-        WebSocketStream::from_raw_socket(TokioIo::new(upgraded), Role::Server, None).await;
+    let ws_stream = WebSocketStream::from_raw_socket(io, Role::Server, None).await;
 
     let (mut client_tx, mut client_rx) = ws_stream.split();
 

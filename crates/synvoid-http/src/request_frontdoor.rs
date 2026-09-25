@@ -8,6 +8,7 @@ use std::convert::Infallible;
 
 use synvoid_config::MainConfig;
 
+use crate::inbound::InboundRequest;
 use crate::internal_endpoint_dispatch::{dispatch_internal_endpoint, InternalEndpointDispatch};
 use crate::request_parse::sanitize_and_resolve_client_ip;
 #[cfg(feature = "mesh")]
@@ -20,7 +21,7 @@ use synvoid_mesh::transports::MeshTransportManager;
 use synvoid_mesh::MeshConfig;
 
 pub struct FrontdoorRequest {
-    pub req: hyper::Request<hyper::body::Incoming>,
+    pub req: InboundRequest,
     pub client_ip: IpAddr,
     pub path: String,
 }
@@ -31,7 +32,7 @@ pub enum RequestFrontdoorOutcome {
 }
 
 pub struct RequestFrontdoorContext<D> {
-    pub req: hyper::Request<hyper::body::Incoming>,
+    pub req: InboundRequest,
     pub client_ip: IpAddr,
     pub drain_state: Option<Arc<D>>,
     pub alt_svc: Option<String>,
@@ -58,12 +59,13 @@ pub async fn prepare_request_frontdoor<D: HttpDrainControl>(
     } = ctx;
 
     let client_ip = sanitize_and_resolve_client_ip(
-        req.headers_mut(),
+        &mut req.parts.headers,
         &main_config.server.trusted_proxies,
         client_ip,
     );
     let path = req
-        .uri()
+        .parts
+        .uri
         .path_and_query()
         .map(|pq| pq.path())
         .unwrap_or("/")

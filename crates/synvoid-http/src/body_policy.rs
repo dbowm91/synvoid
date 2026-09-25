@@ -3,6 +3,7 @@ use http_body_util::BodyExt;
 use metrics::counter;
 use std::net::IpAddr;
 
+use crate::inbound::InboundBody;
 use crate::shared_handler::{collect_body_with_chunk_waf, BodyCollectionProtocol};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,7 +47,7 @@ const CHUNK_WAF_SCAN_SIZE: usize = 64 * 1024;
 const CHUNK_WAF_THRESHOLD: usize = 256 * 1024;
 
 pub async fn collect_and_scan_request_body<W>(
-    body: hyper::body::Incoming,
+    body: InboundBody,
     waf: &W,
     client_ip: IpAddr,
     content_length: Option<usize>,

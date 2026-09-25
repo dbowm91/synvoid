@@ -198,7 +198,7 @@ where
     } = ctx;
 
     let PreparedRequest {
-        on_upgrade,
+        upgrade,
         target,
         parts,
         method,
@@ -426,7 +426,7 @@ where
     };
 
     let response = handle_pass_backend_dispatch(
-        on_upgrade,
+        upgrade,
         backend_ctx,
         request_log,
         quic_tunnel_request,

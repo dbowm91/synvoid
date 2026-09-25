@@ -36,12 +36,12 @@ use crate::request_parse::parse_http01_challenge_token;
 #[cfg(feature = "mesh")]
 pub enum SpecialRequestDispatch {
     Handled(Response<BoxBody<Bytes, Infallible>>),
-    NotHandled(hyper::Request<hyper::body::Incoming>),
+    NotHandled(crate::inbound::InboundRequest),
 }
 
 #[cfg(feature = "mesh")]
 pub async fn maybe_handle_special_request_paths(
-    req: hyper::Request<hyper::body::Incoming>,
+    req: crate::inbound::InboundRequest,
     path: &str,
     client_ip: IpAddr,
     alt_svc: Option<String>,
@@ -55,7 +55,7 @@ pub async fn maybe_handle_special_request_paths(
                 && mesh_cfg.global_node.key_exchange_enabled
                 && mesh_cfg.origin_signing_key.is_some()
             {
-                let (parts, body) = req.into_parts();
+                let crate::inbound::InboundRequest { parts, body, .. } = req;
                 let path = parts.uri.path();
                 let method = parts.method.clone();
 

@@ -54,7 +54,7 @@ pub struct HttpRequestFlowOutcome {
 
 #[allow(clippy::too_many_arguments)]
 pub async fn prepare_http_request_flow<W, D>(
-    req: hyper::Request<hyper::body::Incoming>,
+    req: crate::inbound::InboundRequest,
     client_ip: IpAddr,
     local_addr: Option<SocketAddr>,
     drain_state: Option<Arc<D>>,
@@ -215,7 +215,7 @@ where
     };
 
     let RequestPreflight {
-        on_upgrade,
+        upgrade,
         target,
         parts,
         body,
@@ -243,7 +243,7 @@ where
     let main_config_for_after_final = Arc::clone(&main_config_for_after);
     let outcome = prepare_request_after_preflight(
         RequestPreflight {
-            on_upgrade,
+            upgrade,
             target,
             parts,
             body,

@@ -100,6 +100,14 @@ impl HttpConnection {
     ) -> Option<TokioIo<ProtocolValidatingStream<tokio::net::TcpStream>>> {
         self.io.lock().take()
     }
+
+    /// Take the raw caller-owned stream (with replayed peek bytes) for the
+    /// EggServe direct driver, which owns its Hyper adapter internally.
+    pub(super) fn take_inner_stream(
+        &self,
+    ) -> Option<ProtocolValidatingStream<tokio::net::TcpStream>> {
+        self.io.lock().take().map(|io| io.into_inner())
+    }
 }
 
 pub(crate) struct DrainGuard {

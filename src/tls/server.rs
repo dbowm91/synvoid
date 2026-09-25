@@ -8,7 +8,6 @@
 use bytes::Bytes;
 use http::Response;
 use http_body_util::combinators::BoxBody;
-use hyper::server::conn::http1 as http1_server;
 use hyper::server::conn::http2 as http2_server;
 use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::TokioIo;
@@ -66,10 +65,16 @@ impl HttpsConnection {
         !self.drop_requested.is_running()
     }
 
-    fn take_stream(
+    pub fn take_stream(
         &self,
     ) -> Option<TokioIo<tokio_rustls::server::TlsStream<tokio::net::TcpStream>>> {
         self.io.lock().take()
+    }
+
+    /// Take the raw caller-owned TLS stream (JA4 already extracted at
+    /// construction) for the EggServe direct driver.
+    fn take_inner_stream(&self) -> Option<tokio_rustls::server::TlsStream<tokio::net::TcpStream>> {
+        self.io.lock().take().map(|io| io.into_inner())
     }
 
     pub(crate) fn get_ja4(&self) -> Option<String> {
@@ -278,6 +283,17 @@ impl HttpsServer {
         let max_headers = self.http_config.max_headers;
         // Phase 70: TLS-H1 parser controls are applied per-connection through
         // the shared root-local H1 policy helper
+        // Phase 77: ALPN-selected TLS-H1 uses the same qualified EggServe
+        // projector as plaintext (constructed once per listener); H2 keeps
+        // the Hyper path below untouched.
+        let eggserve =
+            crate::http::eggserve_h1::project_eggserve_h1(&self.http_config).map_err(|e| {
+                Box::new(std::io::Error::other(format!(
+                    "eggserve H1 projection failed: {e}"
+                ))) as Box<dyn std::error::Error + Send + Sync>
+            })?;
+        let eggserve_policy = eggserve.policy;
+        let eggserve_state = eggserve.state;
 
         loop {
             tokio::select! {
@@ -335,6 +351,7 @@ impl HttpsServer {
                             let serverless_manager_h1 = serverless_manager.clone();
                             let connection_limit_h2 = connection_limit.clone();
                             let connection_limit_h1 = connection_limit.clone();
+                            let shutdown_rx_h1 = self.shutdown_rx.resubscribe();
                             let app_servers_h2 = app_servers.clone();
                             let app_servers_h1 = app_servers.clone();
                             let upstream_client_registry = upstream_client_registry.clone();
@@ -344,6 +361,10 @@ impl HttpsServer {
                             // as `local_addr`, breaking IP-based vhost
                             // selection on the HTTPS path.
                             let local_addr = stream.local_addr().ok();
+                            // Clone-once per accepted connection: the async
+                            // task below moves these into the H1 branch.
+                            let eggserve_policy_conn = eggserve_policy.clone();
+                            let eggserve_state_conn = eggserve_state.clone();
 
                             if http_config.strict_protocol_validation {
                                 let raw_fd = stream.as_raw_fd();
@@ -451,83 +472,101 @@ impl HttpsServer {
                                         } else {
                                             counter!("synvoid.tls.alpn", "protocol" => "http1.1").increment(1);
 
-                                            let https_conn = Arc::new(HttpsConnection::new(tls_stream));
-                                            let https_conn_clone = https_conn.clone();
-
-                                            let io = match https_conn.io.lock().take() {
+                                            // Phase 77: completed Rustls
+                                            // TlsStream goes directly to the
+                                            // EggServe direct H1 driver (no
+                                            // TokioIo wrap; EggServe owns its
+                                            // Hyper adapter internally). JA4
+                                            // is computed before transport
+                                            // ownership moves; H2 above is
+                                            // unchanged.
+                                            let https_conn =
+                                                Arc::new(HttpsConnection::new(tls_stream));
+                                            let ja4_hash = https_conn.get_ja4();
+                                            let io = match https_conn.take_inner_stream() {
                                                 Some(io) => io,
                                                 None => {
-                                                    tracing::error!("Failed to take IO from HTTPS connection");
+                                                    tracing::error!(
+                                                        "Failed to take IO from HTTPS connection"
+                                                    );
                                                     return;
                                                 }
                                             };
 
-                                            let conn = {
-                                                let mut builder =
-                                                    http1_server::Builder::new();
-                                                // Phase 70: same H1 policy as
-                                                // plaintext (timeout, header
-                                                // count, parser buffer, Tokio
-                                                // timer). Keep-alive stays
-                                                // enabled as before.
-                                                crate::http::h1_policy::configure_h1_builder(
-                                                    &mut builder,
-                                                    &http_config,
-                                                );
-                                                builder.keep_alive(true);
-                                                builder.serve_connection(io, hyper::service::service_fn({
-                                                    let metrics = metrics_h1.clone();
-                                                    let drain_state = drain_state_h1.clone();
-                                                    #[cfg(feature = "mesh")]
-                                                    let mesh_config = mesh_config_h1.clone();
-                                                    #[cfg(feature = "mesh")]
-                                                    let mesh_transport = mesh_transport_h1.clone();
-                                                    let ipc = ipc_h1.clone();
-                                                    let serverless_manager = serverless_manager_h1.clone();
-                                                    let connection_limit = connection_limit_h1.clone();
-                                                    let app_servers = app_servers_h1.clone();
-                                                    let upstream_client_registry = upstream_client_registry.clone();
-                                                    move |req| {
-                                                        let router = router.clone();
-                                                        let waf = waf.clone();
-                                                        let http_config = http_config.clone();
-                                                        let main_config = main_config.clone();
-                                                        let client_addr = client_addr;
-                                                        let local_addr = local_addr;
-                                                        let https_conn = https_conn_clone.clone();
-                                                        let metrics = metrics.clone();
-                                                        let drain_state = drain_state.clone();
-                                                        #[cfg(feature = "mesh")]
-                                                        let mesh_config = mesh_config.clone();
-                                                        #[cfg(feature = "mesh")]
-                                                        let mesh_transport = mesh_transport.clone();
-                                                        let ipc = ipc.clone();
-                                                        let worker_id = worker_id_h1;
-                                                        let serverless_manager = serverless_manager.clone();
-                                                        let connection_limit = connection_limit.clone();
-                                                        let app_servers = app_servers.clone();
-                                                        let upstream_client_registry = upstream_client_registry.clone();
-                                                        async move {
-                                                            #[cfg(feature = "mesh")]
-                                                            {
-                                                                Self::handle_request_with_cache(req, client_addr, local_addr, router, waf, http_config, main_config, https_conn, metrics, drain_state, mesh_config, mesh_transport, ipc, worker_id, serverless_manager, connection_limit, app_servers, upstream_client_registry).await
-                                                            }
-                                                            #[cfg(not(feature = "mesh"))]
-                                                            {
-                                                                Self::handle_request_with_cache(req, client_addr, local_addr, router, waf, http_config, main_config, https_conn, metrics, drain_state, ipc, worker_id, serverless_manager, connection_limit, app_servers, upstream_client_registry).await
-                                                            }
-                                                        }
-                                                    }
-                                                }))
-                                                .with_upgrades()
+                                            let conn_shutdown =
+                                                eggserve_server::ConnectionShutdown::new();
+                                            let service_ctx = crate::http::service_core::NeutralServiceContext {
+                                                router: router.clone(),
+                                                waf: waf.clone(),
+                                                // Alt-Svc stays an
+                                                // HTTP-plane concern (None
+                                                // here, as before).
+                                                alt_svc: None,
+                                                main_config: main_config.clone(),
+                                                http_config: http_config.clone(),
+                                                metrics: metrics_h1.clone(),
+                                                ipc: ipc_h1.clone(),
+                                                worker_id: worker_id_h1,
+                                                drain_state: drain_state_h1.clone(),
+                                                upstream_client_registry: upstream_client_registry.clone(),
+                                                connection_limit: connection_limit_h1.clone(),
+                                                app_servers: app_servers_h1.clone(),
+                                                #[cfg(feature = "mesh")]
+                                                mesh_config: mesh_config_h1.clone(),
+                                                #[cfg(feature = "mesh")]
+                                                mesh_transport: mesh_transport_h1.clone(),
+                                                // The TLS path never wired
+                                                // a mesh backend pool.
+                                                #[cfg(feature = "mesh")]
+                                                mesh_backend_pool: None,
+                                                serverless_manager: serverless_manager_h1.clone(),
                                             };
-
+                                            let service = crate::http::eggserve_h1::EggserveH1Service::new(
+                                                service_ctx,
+                                                conn_shutdown.clone(),
+                                                ja4_hash,
+                                                crate::proxy::ForwardedProtocol::Https,
+                                                local_addr,
+                                                drain_state_h1.clone(),
+                                            );
+                                            let policy = eggserve_policy_conn;
+                                            let state = eggserve_state_conn;
+                                            let context =
+                                                eggserve_server::ConnectionContext::for_tcp(
+                                                    local_addr.unwrap_or(client_addr),
+                                                    client_addr,
+                                                    Some(eggserve_primitives::TlsInfo {
+                                                        protocol_version: None,
+                                                        server_name: None,
+                                                        alpn: Some("http/1.1".to_string()),
+                                                        client_authenticated: false,
+                                                        peer_certificates_present: false,
+                                                        peer_certificate_chain: None,
+                                                    }),
+                                                );
+                                            let mut worker_shutdown =
+                                                shutdown_rx_h1.resubscribe();
+                                            let https_conn_for_task = https_conn.clone();
                                             tokio::spawn(async move {
-                                                if let Err(e) = conn.await {
-                                                    tracing::debug!("HTTPS connection error: {}", e);
+                                                tokio::select! {
+                                                    outcome = eggserve_server::serve_http1_connection_with_policy(
+                                                        io,
+                                                        service,
+                                                        policy,
+                                                        context,
+                                                        state,
+                                                        &conn_shutdown,
+                                                    ) => {
+                                                        tracing::debug!("HTTPS-H1 connection outcome: {:?}", outcome);
+                                                    }
+                                                    _ = worker_shutdown.recv() => {
+                                                        conn_shutdown.shutdown();
+                                                    }
                                                 }
-                                                if https_conn.should_drop() {
-                                                    if let Some(stream) = https_conn.take_stream() {
+                                                if https_conn_for_task.should_drop() {
+                                                    if let Some(stream) =
+                                                        https_conn_for_task.take_stream()
+                                                    {
                                                         drop(stream);
                                                     }
                                                 }
@@ -672,7 +711,7 @@ impl HttpsServer {
             Arc::new(move || http_conn.request_drop())
         };
         let flow = synvoid_http::prepare_http_request_flow(
-            req,
+            synvoid_http::hyper_adapter::adapt_hyper_request(req),
             client_addr.ip(),
             local_addr,
             drain_state.clone(),

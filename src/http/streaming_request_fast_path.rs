@@ -28,7 +28,7 @@ pub async fn maybe_handle_streaming_request_fast_path<DecisionFn, DecisionFut, L
     query_string: Option<&str>,
     parts: &http::request::Parts,
     user_agent: Option<&str>,
-    body: hyper::body::Incoming,
+    body: synvoid_http::inbound::InboundBody,
     _alt_svc: &Option<String>,
     _main_config: &Arc<MainConfig>,
     _upstream_client_registry: &Arc<UpstreamClientRegistry>,

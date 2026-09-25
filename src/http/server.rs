@@ -7,15 +7,10 @@
     clippy::collapsible_if
 )]
 
-use bytes::Bytes;
-use http::Response;
-use http_body_util::combinators::BoxBody;
 use metrics::counter;
 use std::collections::HashMap;
-use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Instant;
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
 use tokio::sync::Semaphore;
@@ -24,7 +19,6 @@ use crate::waf::WafCore;
 use crate::worker::drain_state::WorkerDrainState;
 use synvoid_config::http::HttpConfig;
 use synvoid_config::MainConfig;
-use synvoid_http::RequestPreparationOutcome;
 use synvoid_metrics::WorkerMetrics;
 use synvoid_proxy::Router;
 use synvoid_proxy::UpstreamClientRegistry;
@@ -217,161 +211,6 @@ impl HttpServer {
     #[cfg(feature = "mesh")]
     pub async fn serve(self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         accept_loop::run_accept_loop(self.addr, self.shutdown_rx, self.runtime).await
-    }
-
-    #[allow(unused_assignments, unused_variables, dead_code)]
-    async fn handle_request(
-        req: hyper::Request<hyper::body::Incoming>,
-        client_addr: SocketAddr,
-        local_addr: Option<SocketAddr>,
-        router: Arc<Router>,
-        waf: Arc<WafCore>,
-        alt_svc: Option<String>,
-        main_config: Arc<MainConfig>,
-        drain_state: Option<Arc<WorkerDrainState>>,
-        http_config: HttpConfig,
-        #[cfg(feature = "mesh")] mesh_config: Option<Arc<MeshConfig>>,
-        #[cfg(feature = "mesh")] mesh_transport: Option<Arc<MeshTransportManager>>,
-        metrics: Option<Arc<WorkerMetrics>>,
-        http_conn: Arc<HttpConnection>,
-        ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
-        worker_id: Option<crate::process::ipc::WorkerId>,
-        serverless_manager: Option<Arc<crate::serverless::manager::ServerlessManager>>,
-        connection_limit: Arc<Semaphore>,
-        app_servers: Option<
-            Arc<RwLock<HashMap<String, Arc<crate::app_server::GranianSupervisor>>>>,
-        >,
-        #[cfg(feature = "mesh")] mesh_backend_pool: Option<Arc<MeshBackendPool>>,
-        upstream_client_registry: Arc<UpstreamClientRegistry>,
-    ) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error> {
-        let request_queue_started_at = Instant::now();
-        let _permit = match connection_limit.clone().acquire_owned().await {
-            Ok(p) => p,
-            Err(_) => {
-                tracing::error!("Connection limit semaphore closed");
-                return Ok(synvoid_http::response_builder::build_response_with_alt_svc(
-                    503,
-                    "Service Unavailable".to_string(),
-                    "text/plain",
-                    &alt_svc,
-                    &main_config,
-                ));
-            }
-        };
-        let request_queue_time_ms = request_queue_started_at.elapsed().as_millis() as u64;
-        if let Some(metrics) = &metrics {
-            metrics.record_request_queue_time_ms(request_queue_time_ms);
-        }
-
-        let start = std::time::Instant::now();
-        let request_drop: Arc<dyn Fn() + Send + Sync> = {
-            let http_conn = http_conn.clone();
-            Arc::new(move || http_conn.request_drop())
-        };
-        let flow = synvoid_http::prepare_http_request_flow(
-            req,
-            client_addr.ip(),
-            local_addr,
-            drain_state.clone(),
-            Arc::clone(&router),
-            Arc::clone(&waf),
-            alt_svc.clone(),
-            Arc::clone(&main_config),
-            http_config.clone(),
-            metrics.clone(),
-            ipc.clone(),
-            worker_id,
-            start,
-            Arc::clone(&request_drop),
-            send_request_log_if_enabled,
-            #[cfg(feature = "mesh")]
-            mesh_config.clone(),
-            #[cfg(feature = "mesh")]
-            mesh_transport.clone(),
-            #[cfg(feature = "mesh")]
-            serverless_manager.clone(),
-            Arc::clone(&upstream_client_registry),
-            None,
-        )
-        .await?;
-
-        let client_ip = flow.client_ip;
-        let prepared = match flow.outcome {
-            RequestPreparationOutcome::Continue(prepared) => *prepared,
-            RequestPreparationOutcome::Respond(response) => {
-                return Ok(response);
-            }
-        };
-
-        let _drain_guard = DrainGuard::new(drain_state);
-        let plugin_backend_arc: Option<Arc<dyn synvoid_http::WasmFilterBackend + Send + Sync>> =
-            router
-                .plugin_manager()
-                .and_then(|pm| {
-                    let arc_any: Arc<dyn std::any::Any + Send + Sync> = Arc::clone(pm);
-                    arc_any.downcast::<crate::plugin::PluginManager>().ok()
-                })
-                .map(|arc| arc as Arc<dyn synvoid_http::WasmFilterBackend + Send + Sync>);
-        let axum_router_lookup_arc: Option<
-            Arc<dyn synvoid_http::AxumDynamicRouterLookup + Send + Sync>,
-        > = router
-            .plugin_manager()
-            .and_then(|pm| {
-                let arc_any: Arc<dyn std::any::Any + Send + Sync> = Arc::clone(pm);
-                arc_any.downcast::<crate::plugin::PluginManager>().ok()
-            })
-            .map(|arc| arc as Arc<dyn synvoid_http::AxumDynamicRouterLookup + Send + Sync>);
-
-        synvoid_http::handle_http_request_postlude(
-            synvoid_http::HttpRequestPostludeContext {
-                prepared,
-                client_ip,
-                router: Arc::clone(&router),
-                waf: Arc::clone(&waf),
-                alt_svc: alt_svc.clone(),
-                main_config: Arc::clone(&main_config),
-                http_config: http_config.clone(),
-                metrics: metrics.clone(),
-                ipc: ipc.clone(),
-                worker_id,
-                start,
-                app_servers: app_servers.clone(),
-                axum_router_lookup: axum_router_lookup_arc,
-                plugin_backend: plugin_backend_arc,
-                upstream_client_registry: Arc::clone(&upstream_client_registry),
-                request_drop: Arc::clone(&request_drop),
-                request_log: send_request_log_if_enabled,
-                ja4_hash: None,
-                forwarded_protocol: synvoid_proxy::ForwardedProtocol::Http,
-                #[cfg(feature = "mesh")]
-                serverless_manager: serverless_manager.clone(),
-                #[cfg(feature = "mesh")]
-                mesh_transport: mesh_transport.clone(),
-                #[cfg(feature = "mesh")]
-                mesh_backend_pool: mesh_backend_pool.clone(),
-            },
-            |method, url, headers, body, timeout| {
-                let url = url.to_string();
-                let headers = headers;
-                Box::pin(async move {
-                    crate::http_client::send_request_via_quic_tunnel(
-                        method, &url, headers, body, timeout,
-                    )
-                    .await
-                })
-            },
-            |body, site_id, last_modified, rights_config| async move {
-                synvoid_static_files::image_rights::apply_image_rights_marking(
-                    body,
-                    site_id,
-                    last_modified,
-                    rights_config,
-                )
-                .await
-            },
-            synvoid_metrics::record_http_request_latency,
-        )
-        .await
     }
 }
 

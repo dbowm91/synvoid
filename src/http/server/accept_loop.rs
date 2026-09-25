@@ -1,117 +1,6 @@
 use super::*;
 
 #[allow(dead_code)]
-struct HttpConnectionService {
-    client_addr: SocketAddr,
-    local_addr: Option<SocketAddr>,
-    router: Arc<Router>,
-    waf: Arc<WafCore>,
-    alt_svc: Option<String>,
-    main_config: Arc<MainConfig>,
-    drain_state: Option<Arc<WorkerDrainState>>,
-    http_config: HttpConfig,
-    #[cfg(feature = "mesh")]
-    mesh_config: Option<Arc<MeshConfig>>,
-    #[cfg(feature = "mesh")]
-    mesh_transport: Option<Arc<MeshTransportManager>>,
-    metrics: Option<Arc<WorkerMetrics>>,
-    http_conn: Arc<HttpConnection>,
-    ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
-    worker_id: Option<crate::process::ipc::WorkerId>,
-    serverless_manager: Option<Arc<crate::serverless::manager::ServerlessManager>>,
-    connection_limit: Arc<Semaphore>,
-    app_servers: Option<Arc<RwLock<HashMap<String, Arc<crate::app_server::GranianSupervisor>>>>>,
-    #[cfg(feature = "mesh")]
-    mesh_backend_pool: Option<Arc<MeshBackendPool>>,
-    upstream_client_registry: Arc<UpstreamClientRegistry>,
-}
-
-impl hyper::service::Service<hyper::Request<hyper::body::Incoming>> for HttpConnectionService {
-    type Response = Response<BoxBody<Bytes, Infallible>>;
-    type Error = hyper::Error;
-    type Future = std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<Self::Response, Self::Error>> + Send>,
-    >;
-
-    fn call(&self, req: hyper::Request<hyper::body::Incoming>) -> Self::Future {
-        let client_addr = self.client_addr;
-        let local_addr = self.local_addr;
-        let router = self.router.clone();
-        let waf = self.waf.clone();
-        let alt_svc = self.alt_svc.clone();
-        let main_config = self.main_config.clone();
-        let drain_state = self.drain_state.clone();
-        let http_config = self.http_config.clone();
-        #[cfg(feature = "mesh")]
-        let mesh_config = self.mesh_config.clone();
-        #[cfg(feature = "mesh")]
-        let mesh_transport = self.mesh_transport.clone();
-        let metrics = self.metrics.clone();
-        let http_conn = self.http_conn.clone();
-        let ipc = self.ipc.clone();
-        let worker_id = self.worker_id;
-        let serverless_manager = self.serverless_manager.clone();
-        let connection_limit = self.connection_limit.clone();
-        let app_servers = self.app_servers.clone();
-        #[cfg(feature = "mesh")]
-        let mesh_backend_pool = self.mesh_backend_pool.clone();
-        let upstream_client_registry = self.upstream_client_registry.clone();
-
-        Box::pin(async move {
-            #[cfg(feature = "mesh")]
-            {
-                super::HttpServer::handle_request(
-                    req,
-                    client_addr,
-                    local_addr,
-                    router,
-                    waf,
-                    alt_svc,
-                    main_config,
-                    drain_state,
-                    http_config,
-                    mesh_config,
-                    mesh_transport,
-                    metrics,
-                    http_conn,
-                    ipc,
-                    worker_id,
-                    serverless_manager,
-                    connection_limit,
-                    app_servers,
-                    mesh_backend_pool,
-                    upstream_client_registry,
-                )
-                .await
-            }
-            #[cfg(not(feature = "mesh"))]
-            {
-                super::HttpServer::handle_request(
-                    req,
-                    client_addr,
-                    local_addr,
-                    router,
-                    waf,
-                    alt_svc,
-                    main_config,
-                    drain_state,
-                    http_config,
-                    metrics,
-                    http_conn,
-                    ipc,
-                    worker_id,
-                    serverless_manager,
-                    connection_limit,
-                    app_servers,
-                    upstream_client_registry,
-                )
-                .await
-            }
-        })
-    }
-}
-
-#[allow(dead_code)]
 pub(super) async fn run_accept_loop(
     addr: SocketAddr,
     mut shutdown_rx: broadcast::Receiver<()>,
@@ -119,14 +8,25 @@ pub(super) async fn run_accept_loop(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let std_listener = synvoid_platform::socket_bind::bind_tcp_reuse(addr)?;
     let listener = TcpListener::from_std(std_listener)?;
-    // Phase 70: the plaintext driver below constructs only
-    // `hyper::server::conn::http1::Builder` (no cleartext H2/h2c). Advertise
-    // exactly what is served; the TLS listener keeps its own H1+H2 claim
+    // Phase 76: plaintext H1 is driven by the qualified direct runtime
+    // (no cleartext HTTP/2). The TLS listener keeps its own H1+H2 claim
     // because ALPN routing actually serves both.
     tracing::info!(
         "{}",
         crate::http::h1_policy::plaintext_startup_message(&addr)
     );
+
+    // Phase 76: one shared EggServe policy/state for all plaintext H1
+    // connections on this listener. Projection failure fails the listener
+    // fast instead of failing per connection.
+    let eggserve =
+        crate::http::eggserve_h1::project_eggserve_h1(&runtime.http_config).map_err(|e| {
+            Box::new(std::io::Error::other(format!(
+                "eggserve H1 projection failed: {e}"
+            ))) as Box<dyn std::error::Error + Send + Sync>
+        })?;
+    let eggserve_policy = eggserve.policy;
+    let eggserve_state = eggserve.state;
 
     loop {
         tokio::select! {
@@ -211,7 +111,12 @@ pub(super) async fn run_accept_loop(
 
                         let http_conn = Arc::new(HttpConnection::new(stream_for_conn, initial_bytes));
 
-                        let io = match http_conn.take_stream() {
+                        // Phase 76: hand the caller-owned stream (with
+                        // replayed peek bytes) to the EggServe direct H1
+                        // driver. EggServe owns its Hyper adapter
+                        // internally; SynVoid keeps socket/flood/sniff/
+                        // admission/policy ownership around it.
+                        let io = match http_conn.take_inner_stream() {
                             Some(io) => io,
                             None => {
                                 tracing::error!("Failed to take IO from HTTP connection");
@@ -219,52 +124,68 @@ pub(super) async fn run_accept_loop(
                             }
                         };
 
-                        let http_conn_for_task = http_conn.clone();
-                        let h1_config = http_config.clone();
-                        tokio::spawn(async move {
-                            let http_conn_for_service = http_conn_for_task.clone();
-                            let service = HttpConnectionService {
-                                client_addr,
-                                local_addr,
-                                router,
-                                waf,
-                                alt_svc,
-                                main_config,
-                                drain_state,
-                                http_config,
-                                #[cfg(feature = "mesh")]
-                                mesh_config,
-                                #[cfg(feature = "mesh")]
-                                mesh_transport,
-                                metrics,
-                                http_conn: http_conn_for_service,
-                                ipc,
-                                worker_id,
-                                serverless_manager,
-                                connection_limit,
-                                app_servers,
-                                #[cfg(feature = "mesh")]
-                                mesh_backend_pool,
-                                upstream_client_registry,
-                            };
-                            let conn = {
-                                let mut builder =
-                                    hyper::server::conn::http1::Builder::new();
-                                // Phase 70: single H1 policy owner; sets the
-                                // Tokio timer (required for the header timeout
-                                // to be active), header count, and
-                                // parser-buffer ceiling.
-                                crate::http::h1_policy::configure_h1_builder(
-                                    &mut builder,
-                                    &h1_config,
-                                );
-                                builder
-                                    .serve_connection(io, service)
-                                    .with_upgrades()
-                            };
+                        let conn_shutdown =
+                            eggserve_server::ConnectionShutdown::new();
 
-                            if let Err(e) = conn.await {
-                                tracing::debug!("HTTP connection error: {}", e);
+                        let service_ctx = crate::http::service_core::NeutralServiceContext {
+                            router,
+                            waf,
+                            alt_svc,
+                            main_config,
+                            http_config,
+                            metrics,
+                            ipc,
+                            worker_id,
+                            drain_state: drain_state.clone(),
+                            upstream_client_registry,
+                            connection_limit,
+                            app_servers,
+                            #[cfg(feature = "mesh")]
+                            mesh_config,
+                            #[cfg(feature = "mesh")]
+                            mesh_transport,
+                            #[cfg(feature = "mesh")]
+                            mesh_backend_pool,
+                            serverless_manager,
+                        };
+                        let service = crate::http::eggserve_h1::EggserveH1Service::new(
+                            service_ctx,
+                            conn_shutdown.clone(),
+                            None,
+                            synvoid_proxy::ForwardedProtocol::Http,
+                            local_addr,
+                            drain_state.clone(),
+                        );
+                        let policy = eggserve_policy.clone();
+                        let state = eggserve_state.clone();
+                        let context =
+                            eggserve_server::ConnectionContext::for_tcp(
+                                local_addr.unwrap_or(client_addr),
+                                client_addr,
+                                None,
+                            );
+                        let mut worker_shutdown = shutdown_rx.resubscribe();
+                        let http_conn_for_task = http_conn.clone();
+                        tokio::spawn(async move {
+                            // The service bridges WAF request-drop to
+                            // `conn_shutdown`; worker shutdown arrives here.
+                            tokio::select! {
+                                outcome = eggserve_server::serve_http1_connection_with_policy(
+                                    io,
+                                    service,
+                                    policy,
+                                    context,
+                                    state,
+                                    &conn_shutdown,
+                                ) => {
+                                    tracing::debug!("HTTP connection outcome: {:?}", outcome);
+                                }
+                                _ = worker_shutdown.recv() => {
+                                    // Worker/server shutdown closes the
+                                    // connection; in-flight responses drain
+                                    // per the bounded post-shutdown budget.
+                                    conn_shutdown.shutdown();
+                                }
                             }
                             if http_conn_for_task.should_drop() {
                                 if let Some(stream) = http_conn_for_task.take_stream() {

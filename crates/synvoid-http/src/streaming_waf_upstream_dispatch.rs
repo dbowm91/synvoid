@@ -15,6 +15,7 @@ use synvoid_proxy::{
 };
 use synvoid_upstream::upstream_tls_from_site_config;
 
+use crate::inbound::InboundBody;
 use crate::response_builder::build_response_with_alt_svc;
 use crate::response_helpers::apply_security_headers;
 use crate::shared_handler::StreamingWafScanner;
@@ -31,7 +32,7 @@ pub async fn handle_streaming_waf_upstream_pass(
     path: &str,
     method: &http::Method,
     parts: &http::request::Parts,
-    body: hyper::body::Incoming,
+    body: InboundBody,
     client_ip: std::net::IpAddr,
     streaming_waf: Option<Box<dyn StreamingWafScanner>>,
     alt_svc: &Option<String>,

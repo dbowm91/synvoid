@@ -82,6 +82,9 @@ axum = { version = "0.8", features = ["ws", "macros", "json"] }
 # axum-extra: Phase 31 removed; 0 root src uses (canonical use in domain crates)
 # http-body: Phase 31 removed; 0 root src uses (http-body-util retained for BoxBody adapters)
 http-body-util = "0.1"
+# http-body: reintroduced narrowly for the Phase 75 EggServe adapter
+# (frame polling/mapping in src/http/eggserve_h1.rs only)
+http-body = "1"
 # tokio-util: removed; owned by synvoid-static-files (see plans/root_dependency_ownership.md)
 bytes = "1"
 serde = { version = "1", features = ["derive"] }
@@ -167,6 +170,14 @@ tokio-rustls = "0.26"
 
 # Cryptography utilities
 subtle = "2"
+
+# EggServe direct H1 runtime (Phase 75: exact GO-artifact pins, no semver
+# range; consumed only by src/http/eggserve_h1.rs + its tests — never by
+# request-path crates. No eggserve-core. `http-interop` on primitives is a
+# dependency-free cfg gate exposing the canonical trailer accessors the
+# request adapter needs; the server stays default-features.)
+eggserve-server = { version = "=0.3.1", default-features = false }
+eggserve-primitives = { version = "=0.2.1", default-features = false, features = ["http-interop"] }
 
 # HSM / PKCS#11 support (Phase 30): owned by `synvoid-dnssec-keystore`
 # behind its opt-in `pkcs11`/`hsm` features (root `dns-hsm`). There is no
@@ -332,6 +343,17 @@ flate2 = "1"
 rustls = "0.23"
 rustls-pki-types = "1"
 rcgen = "0.13"
+# Phase 75: differential-harness stub surface (`tests/eggserve_h1_differential.rs`
+# implements the request-path capability traits). Already in Cargo.lock via the
+# workspace graph; no new supply-chain surface.
+synvoid-proxy = { path = "crates/synvoid-proxy", version = "0.1" }
+synvoid-waf = { path = "crates/synvoid-waf", version = "0.1" }
+# Phase 76: tunneled WebSocket echo upstream in the adoption loopback.
+# Already in Cargo.lock via synvoid-http; no new supply-chain surface.
+tokio-tungstenite = "0.28"
+# Phase 75: Date-validity assertions in the differential harness. Already in
+# Cargo.lock via eggserve; no new supply-chain surface.
+httpdate = "1"
 
 [[bench]]
 name = "bench_attack_detection"

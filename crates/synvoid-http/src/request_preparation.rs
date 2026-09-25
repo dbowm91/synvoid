@@ -18,6 +18,7 @@ use crate::body_policy::RequestBodyWaf;
 use crate::body_policy::{collect_and_scan_request_body, BodyPolicyError};
 use crate::challenge_paths::maybe_handle_challenge_paths;
 use crate::challenge_paths::ChallengePathWaf;
+use crate::inbound::{InboundBody, InboundRequest, UpgradeCapability};
 use crate::request_parse::{extract_request_metadata, should_skip_waf_from_trust_cookie};
 use crate::response_builder::build_response_with_alt_svc;
 use crate::streaming_request_fast_path::{
@@ -25,13 +26,12 @@ use crate::streaming_request_fast_path::{
 };
 use crate::streaming_waf_decision::{maybe_handle_streaming_waf_decision, TarpitStream};
 use crate::traffic_control::ConnectionTokenGuard;
-use crate::validation_helpers::validate_websocket_upgrade;
 
 pub struct RequestPreflight {
-    pub on_upgrade: Option<hyper::upgrade::OnUpgrade>,
+    pub upgrade: Option<Box<dyn UpgradeCapability>>,
     pub target: RouteTarget,
     pub parts: http::request::Parts,
-    pub body: hyper::body::Incoming,
+    pub body: InboundBody,
     pub method: http::Method,
     pub path: String,
     pub host: String,
@@ -60,7 +60,7 @@ pub fn request_headers_ingress_size(headers: &http::HeaderMap) -> usize {
 
 #[allow(clippy::too_many_arguments)]
 pub async fn prepare_request_preflight<W, LogFn, DropFn>(
-    req: hyper::Request<hyper::body::Incoming>,
+    req: InboundRequest,
     client_ip: IpAddr,
     local_addr: Option<SocketAddr>,
     router: Arc<Router>,
@@ -76,15 +76,13 @@ where
     LogFn: FnMut(u16, &str, bool, &str, &str, Option<&str>) + Send + 'static,
     DropFn: FnMut() + Send + 'static,
 {
-    let mut req = req;
-    let is_ws_upgrade = validate_websocket_upgrade(req.headers());
-    let on_upgrade = if is_ws_upgrade {
-        Some(hyper::upgrade::on(&mut req))
-    } else {
-        None
-    };
-
-    let (parts, body) = req.into_parts();
+    // The transport adapter already classified upgrade eligibility and
+    // captured the handoff; preflight consumes the neutral request as-is.
+    let InboundRequest {
+        parts,
+        body,
+        upgrade,
+    } = req;
     let (method, path, host, user_agent, cookies) = extract_request_metadata(&parts);
     // Canonical framing policy (Phase 20): transfer-framing ambiguity and
     // host/authority conflicts fail closed here, before routing and WAF
@@ -213,7 +211,7 @@ where
 
     Ok(RequestPreflightOutcome::Continue(Box::new(
         RequestPreflight {
-            on_upgrade,
+            upgrade,
             target,
             parts,
             body,
@@ -227,7 +225,7 @@ where
 }
 
 pub struct PreparedRequest {
-    pub on_upgrade: Option<hyper::upgrade::OnUpgrade>,
+    pub upgrade: Option<Box<dyn UpgradeCapability>>,
     pub target: RouteTarget,
     pub parts: http::request::Parts,
     pub method: http::Method,
@@ -301,14 +299,14 @@ pub trait BufferedRequestWaf:
 
 #[allow(clippy::too_many_arguments)]
 pub async fn finalize_request_preparation<W, LogFn>(
-    on_upgrade: Option<hyper::upgrade::OnUpgrade>,
+    upgrade: Option<Box<dyn UpgradeCapability>>,
     target: RouteTarget,
     parts: http::request::Parts,
     method: http::Method,
     path: String,
     user_agent: Option<String>,
     skip_waf: bool,
-    body: hyper::body::Incoming,
+    body: InboundBody,
     client_ip: IpAddr,
     host: String,
     waf: Arc<W>,
@@ -409,7 +407,7 @@ where
 
     Ok(RequestPreparationOutcome::Continue(Box::new(
         PreparedRequest {
-            on_upgrade,
+            upgrade,
             target,
             parts,
             method,
@@ -445,13 +443,13 @@ where
     W: BufferedRequestWaf + Send + Sync + 'static,
     OnLimitLogFn: FnMut(u16, u64, &str, &str, &str, Option<&str>, bool) + Send + 'static,
     FinalLogFn: FnMut(u16, bool) + Send + 'static,
-    PassFn: FnOnce(hyper::body::Incoming) -> PassFut + Send + 'static,
+    PassFn: FnOnce(InboundBody) -> PassFut + Send + 'static,
     PassFut:
         Future<Output = Result<StreamingRequestFastPathOutcome, hyper::Error>> + Send + 'static,
     DropFn: FnOnce() + Send + 'static,
 {
     let RequestPreflight {
-        on_upgrade,
+        upgrade,
         target,
         parts,
         body,
@@ -592,7 +590,7 @@ where
     };
 
     finalize_request_preparation(
-        on_upgrade,
+        upgrade,
         target,
         parts,
         method,
@@ -624,7 +622,7 @@ pub async fn prepare_request_before_buffered_waf<
     PassFut,
     DropFn,
 >(
-    req: hyper::Request<hyper::body::Incoming>,
+    req: InboundRequest,
     client_ip: IpAddr,
     local_addr: Option<SocketAddr>,
     router: Arc<Router>,
@@ -649,7 +647,7 @@ where
     PreflightDropFn: FnMut() + Send + 'static,
     OnLimitLogFn: FnMut(u16, u64, &str, &str, &str, Option<&str>, bool) + Send + 'static,
     FinalLogFn: FnMut(u16, bool) + Send + 'static,
-    PassFn: FnOnce(hyper::body::Incoming) -> PassFut + Send + 'static,
+    PassFn: FnOnce(InboundBody) -> PassFut + Send + 'static,
     PassFut:
         Future<Output = Result<StreamingRequestFastPathOutcome, hyper::Error>> + Send + 'static,
     DropFn: FnOnce() + Send + 'static,

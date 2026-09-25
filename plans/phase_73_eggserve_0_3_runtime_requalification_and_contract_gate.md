@@ -1,6 +1,11 @@
 # Phase 73 Plan: EggServe 0.3 Runtime Requalification and Contract Gate
 
-Status: **closed — `RETAIN_PENDING_UPSTREAM`**. Production remains on Hyper H1.
+Status: **closed — `RETAIN_PENDING_UPSTREAM` on 0.3.0; re-run 2026-09-25
+reached `GO_DIRECT_0_3` against the pinned `eggserve-server = "=0.3.1"` /
+`eggserve-primitives = "=0.2.1"` artifacts** (evidence:
+`architecture/eggserve_0_3_1_h1_requalification_addendum.md`,
+`crates/synvoid-http/tests/eggserve_0_3_1_qualification.rs`). Production
+remains on Hyper H1 pending the adoption sequence.
 Evidence: `architecture/eggserve_0_3_h1_compatibility_matrix.md`. Phases
 74–78 remain gated and were not started.
 

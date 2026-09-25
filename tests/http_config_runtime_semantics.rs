@@ -180,7 +180,7 @@ async fn spawn_preflight_server(http_config: HttpConfig) -> std::net::SocketAddr
                                 theme: ThemeConfig::default(),
                             });
                             let outcome = prepare_request_preflight(
-                                req,
+                                synvoid_http::hyper_adapter::adapt_hyper_request(req),
                                 IpAddr::V4(Ipv4Addr::LOCALHOST),
                                 None,
                                 router,

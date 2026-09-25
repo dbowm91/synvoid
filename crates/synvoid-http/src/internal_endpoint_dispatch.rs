@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use synvoid_config::MainConfig;
 
+use crate::inbound::InboundRequest;
 use crate::internal_handlers::{
     handle_drain_request, handle_drain_status_request, handle_health_request, handle_ready_request,
     HttpDrainControl,
@@ -15,11 +16,11 @@ use crate::request_parse::{classify_internal_endpoint, InternalEndpointAction};
 
 pub enum InternalEndpointDispatch {
     Handled(Response<BoxBody<Bytes, Infallible>>),
-    NotHandled(hyper::Request<hyper::body::Incoming>),
+    NotHandled(InboundRequest),
 }
 
 pub async fn dispatch_internal_endpoint<D: HttpDrainControl>(
-    req: hyper::Request<hyper::body::Incoming>,
+    req: InboundRequest,
     path: &str,
     client_ip: IpAddr,
     drain_state: Option<Arc<D>>,

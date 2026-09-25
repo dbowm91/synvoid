@@ -122,3 +122,6 @@ Local repository verification after recording this decision:
 
 No README, runtime, config contract, or subsystem skill was changed because
 production ownership and operator-visible behavior remain unchanged.
+
+Follow-up: `eggserve-server 0.3.1` was requalified on 2026-09-25; see
+`architecture/eggserve_0_3_1_h1_requalification_addendum.md`.

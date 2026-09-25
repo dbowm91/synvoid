@@ -10,7 +10,7 @@ use synvoid_http::{
 };
 
 pub async fn handle_websocket_tunnel(
-    upgraded: hyper::upgrade::OnUpgrade,
+    io: synvoid_http::inbound::BoxTunnelIo,
     target: RouteTarget,
     path: String,
     waf: Arc<WafCore>,
@@ -18,11 +18,11 @@ pub async fn handle_websocket_tunnel(
     ws_config: SiteWebSocketConfig,
 ) {
     let waf: Arc<dyn synvoid_proxy::protocol::trait_def::WafCoreBackend> = waf;
-    handle_websocket_tunnel_impl(upgraded, target, path, waf, client_ip, ws_config).await
+    handle_websocket_tunnel_impl(io, target, path, waf, client_ip, ws_config).await
 }
 
 pub async fn handle_websocket_to_appserver(
-    upgraded: hyper::upgrade::OnUpgrade,
+    io: synvoid_http::inbound::BoxTunnelIo,
     socket_path: std::path::PathBuf,
     target: RouteTarget,
     path: String,
@@ -31,14 +31,6 @@ pub async fn handle_websocket_to_appserver(
     ws_config: SiteWebSocketConfig,
 ) {
     let waf: Arc<dyn synvoid_proxy::protocol::trait_def::WafCoreBackend> = waf;
-    handle_websocket_to_appserver_impl(
-        upgraded,
-        socket_path,
-        target,
-        path,
-        waf,
-        client_ip,
-        ws_config,
-    )
-    .await
+    handle_websocket_to_appserver_impl(io, socket_path, target, path, waf, client_ip, ws_config)
+        .await
 }

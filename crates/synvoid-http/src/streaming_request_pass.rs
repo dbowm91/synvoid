@@ -29,7 +29,7 @@ pub async fn handle_streaming_request_pass<ServerlessStatusFn, PermissionDeniedF
     path: String,
     method: http::Method,
     parts: http::request::Parts,
-    body: hyper::body::Incoming,
+    body: crate::inbound::InboundBody,
     client_ip: std::net::IpAddr,
     streaming_waf: Option<Box<dyn StreamingWafScanner>>,
     alt_svc: Option<String>,

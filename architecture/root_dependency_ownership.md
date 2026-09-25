@@ -27,12 +27,14 @@ reference fails the guard until the row is reclassified with a reason.
 | tokio | server, supervisor, worker, startup, commands | composition_runtime | default | async runtime and task orchestration | keep | admin, bin, commands, honeypot_port, http, http_client, process, sandbox, server, serverless, startup, supervisor, tarpit, tcp, test_utils, tls, udp, waf, worker |
 | hyper | http, http_client | composition_runtime | default | HTTP/1 and HTTP/2 server and client | keep | http, tls |
 | hyper-util | http, http_client | composition_runtime | default | HTTP connection pooling and utilities | keep | http, tls |
+| eggserve-server | http, tls | composition_runtime | default | Phase 75–77: exact-pinned (`=0.3.1`) direct H1 runtime for the EggServe adapter (`src/http/eggserve_h1.rs`) and the TLS-H1 convergence (`src/tls/server.rs` ALPN branch); no eggserve-core | keep | http, tls |
+| eggserve-primitives | http, tls | composition_runtime | default | Phase 75–77: exact-pinned (`=0.2.1`, `http-interop` cfg gate for trailer accessors) canonical request/response values for the EggServe adapter and TLS `TlsInfo` context | keep | http, tls |
 | hyper-rustls | — | remove_candidate | — | Phase 31: removed from root (0 src uses; egress TLS owned by synvoid-http-client) | removed Phase 31 | — |
 | tower | tests | remove_candidate | — | Phase 31: moved from [dependencies] to [dev-dependencies] (test-only: tower::ServiceExt::oneshot) | moved to dev-deps Phase 31 | — |
 | tower-http | http, admin | composition_runtime | default | HTTP middleware (filesystem, CORS) | keep | admin |
 | axum | admin, http | composition_runtime | default | REST API framework for admin endpoints | keep | admin, bin, http |
 | axum-extra | — | remove_candidate | — | Phase 31: removed from root (0 src uses; canonical use in domain crates) | removed Phase 31 | — |
-| http-body | — | remove_candidate | — | Phase 31: removed from root (0 `http_body::` uses; BoxBody adapters use http-body-util) | removed Phase 31 | — |
+| http-body | http | composition_runtime | default | Phase 75: frame polling/mapping in the EggServe direct-H1 adapter (`src/http/eggserve_h1.rs` only) | keep | http |
 | http-body-util | http, http_client | composition_runtime | default | HTTP body adapter utilities | keep | honeypot_port, http, server, tls |
 | bytes | utils, buffer | composition_runtime | default | Efficient byte buffer management | keep | honeypot_port, http, http_client, mesh, server, serverless, tarpit, tls, waf, worker |
 | serde | config, throughout | composition_runtime | default | Serialization framework | keep | admin, bin, honeypot_port, http, icmp_filter, mesh, platform, process, waf, worker |

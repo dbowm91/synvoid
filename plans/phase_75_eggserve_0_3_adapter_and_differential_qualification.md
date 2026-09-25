@@ -1,6 +1,12 @@
 # Phase 75 Plan: EggServe 0.3 Adapter and Differential Qualification
 
-Status: planned; blocked on Phase 74 completion and Phase 73 GO.
+Status: closed 2026-09-25 with GO for plaintext production migration.
+Adapter: `src/http/eggserve_h1.rs` (projector, Service, converters,
+presenter) over the shared `src/http/service_core.rs` pipeline.
+Evidence: `architecture/eggserve_0_3_h1_adapter_qualification.md`;
+differential `tests/eggserve_h1_differential.rs` 7/7;
+`cargo xtask verify` 10/10. Found and fixed one canonical duplicate-Date
+issue required for adoption. Production remains Hyper.
 
 Registered in: `plans/roadmap.md`.
 

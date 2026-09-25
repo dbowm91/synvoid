@@ -37,7 +37,7 @@ pub trait HttpDrainControl: Send + Sync + 'static {
 }
 
 pub async fn handle_drain_request<D: HttpDrainControl>(
-    _req: hyper::Request<hyper::body::Incoming>,
+    _req: crate::inbound::InboundRequest,
     drain_state: Arc<D>,
     alt_svc: Option<String>,
     main_config: Arc<MainConfig>,
@@ -61,7 +61,7 @@ pub async fn handle_drain_request<D: HttpDrainControl>(
 }
 
 pub async fn handle_drain_status_request<D: HttpDrainControl>(
-    _req: hyper::Request<hyper::body::Incoming>,
+    _req: crate::inbound::InboundRequest,
     drain_state: Arc<D>,
     alt_svc: Option<String>,
     main_config: Arc<MainConfig>,

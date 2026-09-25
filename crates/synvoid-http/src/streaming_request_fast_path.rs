@@ -11,10 +11,11 @@ use synvoid_http_client::is_quictunnel_url;
 use synvoid_proxy::{BackendType, RouteTarget, Router};
 use synvoid_waf::WafDecision;
 
+use crate::inbound::InboundBody;
 use crate::waf_decision::full_request_waf_decision;
 
 pub enum StreamingRequestFastPathOutcome {
-    Continue(hyper::body::Incoming),
+    Continue(InboundBody),
     Respond(Response<BoxBody<Bytes, Infallible>>),
 }
 
@@ -31,7 +32,7 @@ pub async fn maybe_handle_streaming_request_fast_path<
     router: &Arc<Router>,
     skip_waf: bool,
     parts: &http::request::Parts,
-    body: hyper::body::Incoming,
+    body: InboundBody,
     check_request_full: CheckFn,
     handle_pass: PassFn,
     handle_non_pass_decision: DecisionFn,
@@ -39,7 +40,7 @@ pub async fn maybe_handle_streaming_request_fast_path<
 where
     CheckFn: FnOnce() -> CheckFut + Send + 'static,
     CheckFut: Future<Output = WafDecision> + Send + 'static,
-    PassFn: FnOnce(hyper::body::Incoming) -> PassFut + Send + 'static,
+    PassFn: FnOnce(InboundBody) -> PassFut + Send + 'static,
     PassFut:
         Future<Output = Result<StreamingRequestFastPathOutcome, hyper::Error>> + Send + 'static,
     DecisionFn: FnOnce(WafDecision) -> DecisionFut + Send + 'static,

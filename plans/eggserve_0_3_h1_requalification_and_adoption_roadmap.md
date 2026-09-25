@@ -1,9 +1,23 @@
 # EggServe 0.3 Direct H1 Requalification and Adoption Roadmap
 
-Status: Phase 73 closed `RETAIN_PENDING_UPSTREAM` on 2026-09-25. Phases 74–78
-remain unopened under the stop rule. See
-`architecture/eggserve_0_3_h1_compatibility_matrix.md` for exact-artifact
-evidence and the conditions for rerunning Phase 73.
+Status: Phase 73 closed `RETAIN_PENDING_UPSTREAM` on 2026-09-25 for 0.3.0;
+re-run the same day reached `GO_DIRECT_0_3` against pinned
+`eggserve-server = "=0.3.1"` / `eggserve-primitives = "=0.2.1"`, which
+unblocks (but does not start) Phase 74. Historical 0.3.0 evidence:
+`architecture/eggserve_0_3_h1_compatibility_matrix.md`. 0.3.1
+requalification evidence:
+`architecture/eggserve_0_3_1_h1_requalification_addendum.md`. Phases
+74–78 are gated on that GO decision; none has started.
+
+Campaign closeout 2026-09-25: ALL PHASES CLOSED, disposition ADOPTED.
+Phase 74 neutral boundary → Phase 75 adapter + 7/7 differential →
+Phase 76 plaintext production → Phase 77 TLS-H1 convergence →
+Phase 78 closeout (`architecture/eggserve_0_3_h1_adoption_closeout.md`).
+Production H1 (plaintext + TLS-ALPN) is EggServe 0.3.1-driven; Hyper
+retained for H2/egress/test lanes. Follow-ups (separate plans):
+app-server tunneled-traffic loopback, H2 header-list byte-unit review,
+Set-Cookie collapse and body-limit relabeling, hosted CI for the final
+tree.
 
 Planning baseline: `dd1ff0fcfe4ce11da0036adbf39c2d595e9a2246`
 (Phase 72 HTTP truthfulness closeout metadata head).

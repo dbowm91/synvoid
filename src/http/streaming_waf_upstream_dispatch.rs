@@ -17,7 +17,7 @@ pub async fn handle_streaming_waf_upstream_pass(
     path: &str,
     method: &http::Method,
     parts: &http::request::Parts,
-    body: hyper::body::Incoming,
+    body: synvoid_http::inbound::InboundBody,
     client_ip: std::net::IpAddr,
     waf: &Arc<WafCore>,
     alt_svc: &Option<String>,
