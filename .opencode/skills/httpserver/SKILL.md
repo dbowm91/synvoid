@@ -143,20 +143,26 @@ cargo check
 cargo clippy --lib -- -D warnings
 ```
 
-## H1 Parser Policy (Phase 70)
+## H1 Parser Policy (Phase 70, projected to EggServe in Phases 75–77)
 
-Plaintext H1 and TLS-H1 share one root-local mapping,
-`src/http/h1_policy.rs::configure_h1_builder`: header-read timeout (with
-explicit `hyper_util::rt::TokioTimer` — Hyper panics if a timeout is
-configured without a timer), max headers, and parser-buffer ceiling from
-`http.max_request_size` (a parser control, not a body limit). Do not add a
-second H1 mapping; extend the helper. TLS H2 keeps its separate
-`max_header_list_size`. Plaintext serves H1 only (startup log says
-`HTTP/1.1`); TLS serves H1+H2 via ALPN. Parity tests:
+Production H1 (plaintext and TLS-H1) is the direct EggServe runtime, so
+`src/http/eggserve_h1.rs::project_eggserve_h1` is the one mapping
+authority, applied once per server from `HttpConfig`: header-read timeout,
+max headers, and parser-buffer ceiling from `http.max_request_size` (a
+parser control, not a body limit), origin-only request targets, and every
+deadline/admission/ceiling marked External (SynVoid-owned). Do not add a
+second H1 mapping; extend the projector.
+
+`src/http/h1_policy.rs::configure_h1_builder` is the equivalent mapping
+for a **Hyper H1** builder and remains the single authority for the
+test-only comparison lanes and the parser-parity harness (it sets the
+explicit `hyper_util::rt::TokioTimer`, which Hyper panics without). TLS H2
+keeps its separate `max_header_list_size`. Plaintext serves H1 only
+(startup log says `HTTP/1.1`); TLS serves H1+H2 via ALPN. Parity tests:
 `tests/http_h1_parser_parity.rs` (plaintext + shared-policy repeat runs +
-TLS-H1/H2 call-site source guards) and `tests/http_h1_tls_transport.rs`
-(Phase 72: real Rustls handshake, ALPN `http/1.1`, H1 over the server
-`TlsStream` through the same helper). Full evidence:
+call-site source guards, rebased on the adopted wiring at Phase 80) and
+`tests/http_h1_tls_transport.rs` (Phase 72: real Rustls handshake, ALPN
+`http/1.1`, H1 over the server `TlsStream`). Full evidence:
 `architecture/http_h1_runtime_truthfulness_phase70.md`,
 `architecture/http_truthfulness_phase72_closeout.md`.
 
@@ -173,16 +179,30 @@ aggregate post-parse header bound (431; H1/H2). Guard:
 `tests/http_config_runtime_semantics.rs` fails if a field is added without a
 matrix disposition.
 
-## EggServe H1 runtime qualification
+## EggServe direct H1 runtime (Phases 65–80)
 
-The 2026-09 EggServe 0.2.2-line campaign was retained at Phase 65. Production
-plaintext and TLS-H1 remain on Hyper. The direct `eggserve-server 0.2.1`
-runtime requires nonzero handler, body-read, and response-write deadlines and
-finite parser/body ceilings that do not map to all current SynVoid semantics.
-Do not start the gated Phase 66–69 migration or add EggServe as a production
-dependency until a new Phase 65 qualification proves those controls can be
-projected without narrowing behavior. Evidence and exact registry checksums:
-[`architecture/eggserve_0_2_2_h1_compatibility_matrix.md`](../../../architecture/eggserve_0_2_2_h1_compatibility_matrix.md).
+Production plaintext H1 and post-Rustls TLS-H1 run the exact-pinned
+`eggserve-server` / `eggserve-primitives` direct runtime (adoption landed
+at `2242e191`, Phases 76–77). Current exact pins are
+`eggserve-server = "=0.4.0"` / `eggserve-primitives = "=0.2.2"` after the
+Phase 79 Finding B bump — 0.3.1 has no path that can render an H1 terminal
+trailer block. H2 (Hyper) and H3 are unchanged.
+
+Ownership: SynVoid keeps bind/accept/flood/TLS/ALPN/PQ/JA4/H2/H3/WAF/
+routing/backends/per-site response metadata/admission; EggServe owns H1
+parser/framing, body and tunnel mechanics, driver and graceful close.
+Composition, drive, and provenance helpers live in
+`src/http/eggserve_h1.rs` (`project_eggserve_h1`, `h1_connection_context`,
+`drive_h1_connection`) and are shared by both lanes.
+
+Evidence:
+[`architecture/eggserve_0_4_0_trailer_head_addendum.md`](../../../architecture/eggserve_0_4_0_trailer_head_addendum.md),
+[`architecture/eggserve_0_3_h1_adoption_closeout.md`](../../../architecture/eggserve_0_3_h1_adoption_closeout.md),
+[`architecture/eggserve_0_3_1_h1_requalification_addendum.md`](../../../architecture/eggserve_0_3_1_h1_requalification_addendum.md).
+Historical only: the 0.2.2-line campaign retained at Phase 65
+([`architecture/eggserve_0_2_2_h1_compatibility_matrix.md`](../../../architecture/eggserve_0_2_2_h1_compatibility_matrix.md));
+Phases 66–69 were never started and are superseded by the 0.3-line
+program.
 
 ## Migration Progress (Phase 01 complete)
 

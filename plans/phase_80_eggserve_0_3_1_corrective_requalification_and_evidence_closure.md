@@ -1,6 +1,10 @@
 # Phase 80 Plan: EggServe 0.3.1 Corrective Requalification and Evidence Closure
 
-Status: planned; blocked on Phase 79 runtime-correctness implementation.
+Status: closed 2026-09-26 as **ADOPTED**. The corrected runtime was
+requalified locally and hosted CI passed on proof-bearing SHA
+`174fdbcd6f133b35099ed4492f5ed8d3fcaa7d4c` (run `36201213413`). Final
+documentation/evidence commit is recorded separately; it does not alter
+executable code. See `architecture/eggserve_0_3_h1_adoption_closeout.md`.
 
 Registered in: `plans/roadmap.md` and `plans/eggserve_0_3_h1_requalification_and_adoption_roadmap.md`.
 
@@ -132,19 +136,41 @@ Preferred terminal disposition when all gates pass: `ADOPTED` with Phase 78 clos
 
 ## Acceptance criteria
 
-- [ ] Phase 79 implementation is complete and its SHA recorded;
-- [ ] all four post-review defects are directly regression-tested;
-- [ ] AppServer tunnel coverage satisfies the original Phase 78 requirement;
-- [ ] corrected shutdown path proves active driver futures are not cancelled by the outer worker select;
-- [ ] exact-body trailers survive the EggServe boundary;
-- [ ] per-site metadata/config-range/WAF/tunnel contracts remain green;
-- [ ] H2/H3 remain unchanged;
-- [ ] same-host performance/resource recheck shows no new rollback trigger;
-- [ ] current canonical local verification is green;
-- [ ] hosted CI is observed green on a SHA containing the Phase 79 corrections;
-- [ ] roadmap/campaign/closeout documents are internally consistent and date/SHA truthful;
-- [ ] Phase 78's premature closure claim is explicitly superseded;
-- [ ] final disposition is `ADOPTED` or `RETAINED_ROLLBACK` with evidence.
+- [x] Phase 79 implementation is complete and its SHA recorded: `171dd1e47f965b04b34465fc72c87adf4d9a9cab`;
+- [x] all four post-review defects are directly regression-tested;
+- [x] AppServer tunnel coverage satisfies the original Phase 78 requirement;
+- [x] corrected shutdown path proves active driver futures are not cancelled by the outer worker select;
+- [x] exact-body trailers survive the EggServe boundary;
+- [x] per-site metadata/config-range/WAF/tunnel contracts remain green;
+- [x] H2/H3 remain unchanged;
+- [x] same-host performance/resource recheck shows no new rollback trigger (recorded in the corrective closeout);
+- [x] current canonical local verification is green: `cargo xtask verify` 10/10;
+- [x] hosted CI is observed green on a SHA containing the Phase 79 corrections: run `36201213413`, CI + dependency-security, SHA `174fdbcd6f133b35099ed4492f5ed8d3fcaa7d4c`, observed 2026-09-26;
+- [x] roadmap/campaign/closeout documents are internally consistent and date/SHA truthful;
+- [x] Phase 78's premature closure claim is explicitly superseded;
+- [x] final disposition is `ADOPTED` with evidence.
+
+## Terminal state and downstream planning
+
+Phase 80 closes the corrective sequence. The Phase 79 implementation and
+Phase 80 proof gates are satisfied; production remains on EggServe H1
+(server 0.4.0 / primitives 0.2.2), with Hyper H2 and unchanged H3. The
+Phase 78 ADOPTED closure claim is superseded by this corrected proof.
+
+The optional `cargo xtask verify-full` handoff was attempted and reached
+8/9 steps; its workspace nextest compile exhausted host disk while writing
+`synvoid-mesh` / `synvoid-dns` artifacts. A direct retry could not proceed
+while concurrent Cargo work held the shared host resources, so the full
+workspace suite and doctests remain unverified here. The required
+`cargo xtask verify` 10/10, focused HTTP/config/guard suites, five specified
+feature checks, dependency policy/audit, and hosted CI proof all passed.
+
+No registered future plan was found blocked on Phase 80. The related
+EggServe campaign roadmap and top-level roadmap are updated to closed;
+the separately identified H2 header-list unit, duplicate `Set-Cookie`,
+body-limit status, and test-only Hyper lane questions remain independent
+follow-up candidates and are not implicitly authorized or unblocked as
+implementation work by this closure.
 
 ## Non-goals
 

@@ -4,10 +4,14 @@ Status: **closed — `RETAIN_PENDING_UPSTREAM` on 0.3.0; re-run 2026-09-25
 reached `GO_DIRECT_0_3` against the pinned `eggserve-server = "=0.3.1"` /
 `eggserve-primitives = "=0.2.1"` artifacts** (evidence:
 `architecture/eggserve_0_3_1_h1_requalification_addendum.md`,
-`crates/synvoid-http/tests/eggserve_0_3_1_qualification.rs`). Production
-remains on Hyper H1 pending the adoption sequence.
-Evidence: `architecture/eggserve_0_3_h1_compatibility_matrix.md`. Phases
-74–78 remain gated and were not started.
+`crates/synvoid-http/tests/eggserve_0_3_1_qualification.rs`). The production
+status recorded at Phase 73 was accurate only at that decision point.
+Phases 74–78 subsequently implemented adoption at
+`2242e1911d2083448371f707392fdb07f83f1bce`, and
+corrective Phases 79–80 closed the current production disposition as
+`ADOPTED` on EggServe 0.4.0 / primitives 0.2.2. The 0.3.0 compatibility
+result remains historical and unchanged. Evidence:
+`architecture/eggserve_0_3_h1_compatibility_matrix.md`.
 
 Registered in: `plans/roadmap.md`.
 

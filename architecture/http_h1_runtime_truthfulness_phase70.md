@@ -111,6 +111,19 @@ remain; the H2 `max_header_list_size(max_headers as u32)` line is unchanged.
 A unit test in `h1_policy.rs` proves building a connection with a configured
 timeout no longer panics.
 
+Reconciled 2026-09-25 (Phase 80): the "both H1 paths call
+`configure_h1_builder`" and "both retain `.with_upgrades()`" clauses
+described the Phase 70 Hyper-only wiring. The Phase 73–78 adoption
+(`2242e191`) replaced both production H1 paths with the EggServe runtime
+while `h1_policy::configure_h1_builder` stayed as the Hyper mapping for the
+test lanes — so those two clauses went red at the adoption but this file
+kept reporting 10/10. The guard now asserts the current wiring truth
+(shared `project_eggserve_h1`, shared `h1_connection_context` /
+`drive_h1_connection` / `EggserveH1Service`, parser controls still consumed,
+H2 `max_header_list_size` unchanged, and `configure_h1_builder` remaining
+the single Hyper mapping authority) and is green again. The behavioral
+cases in this document are unchanged.
+
 No private Hyper error strings are asserted (status classes only).
 
 ## Commands/results (locally recorded)
@@ -130,6 +143,12 @@ labels renamed, `tests/http_h1_tls_transport.rs` added):
 - `cargo test --test http_h1_parser_parity --profile ci` — 10/10 pass.
 - `cargo test --test http_h1_tls_transport --profile ci` — 5/5 pass.
 - `cargo test --test http_tls_parity --profile ci` — pass.
+
+After Phase 79/80 (EggServe 0.4.0 pins, source-guard rebasing; no
+behavioral change to the parser controls):
+
+- `cargo test --test http_h1_parser_parity --profile ci` — 10/10 pass.
+- `cargo test --test http_h1_tls_transport --profile ci` — 5/5 pass.
 - `cargo test --test http_config_runtime_semantics --profile ci` — pass.
 - `cargo nextest run -p synvoid-http --cargo-profile ci --profile ci` — green.
 - `cargo nextest run -p synvoid-config --cargo-profile ci --profile ci` — green.

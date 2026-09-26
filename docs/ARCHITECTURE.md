@@ -58,12 +58,16 @@ latency-sensitive unified worker plus bounded CPU offload workers**.
 
 ## Core Components
 
-### 1. Reverse Proxy (Tokio + Hyper)
+### 1. Reverse Proxy (Tokio + Hyper + EggServe H1)
 
 The reverse proxy layer is heavily inspired by nginx's event-driven architecture, made possible by:
 
 - **Tokio** - Asynchronous runtime for efficient I/O handling
-- **Hyper** - HTTP/1.1 and HTTP/2 protocol implementation
+- **EggServe** - direct HTTP/1.1 server runtime for inbound plaintext and
+  TLS-ALPN H1 (exact-pinned; parser/framing, driver and graceful close).
+  See `architecture/eggserve_0_3_h1_adoption_closeout.md`.
+- **Hyper** - HTTP/1.1 and HTTP/2 protocol implementation (inbound H2,
+  egress/upstream client, and test-only H1 comparison lanes)
 - **Quinn** - QUIC/HTTP3 support
 
 This combination provides:

@@ -1,8 +1,10 @@
 # Phase 78 Plan: EggServe H1 Adversarial, Performance, and Closeout Qualification
 
-Status: closed 2026-09-25 as ADOPTED. Evidence:
-`architecture/eggserve_0_3_h1_adoption_closeout.md`. Adversarial matrix
-23/23 differential (+11 adoption, +5 TLS convergence); performance
+Status: phase-local evidence closed 2026-09-25; its terminal ADOPTED claim
+was superseded by corrective Phases 79–80. Current campaign disposition:
+ADOPTED on corrected proof, recorded in
+`architecture/eggserve_0_3_h1_adoption_closeout.md`. Phase 78's adversarial
+matrix 23/23 differential (+11 adoption, +5 TLS convergence); performance
 measured same-host (release: small-request parity-or-better, streaming
 +~20% accepted tradeoff); footprint +0.6%; no dead production H1
 machinery remains; test lanes retained deliberately with rationale.

@@ -4,10 +4,9 @@
 
 The HTTP Server module (`src/http/`) is the core request handling component of SynVoid. It provides:
 
-- **HTTP/1.1 server (plaintext)** driven by the qualified EggServe direct
-  runtime with protocol validation (Phase 76; policy/admission stay
-  SynVoid-owned) **+ HTTP/1.1/HTTP/2 server (TLS via ALPN)** using Hyper
-  until Phase 77
+- **HTTP/1.1 server (plaintext and post-Rustls TLS via ALPN)** driven by
+  the qualified EggServe direct runtime (Phases 76–77; policy/admission
+  stay SynVoid-owned) **+ HTTP/2 server (TLS via ALPN)** on Hyper
 - **Request routing** to backends (Static, Upstream, Serverless, FastCGI, PHP, CGI, AppServer, Mesh, AxumDynamic plugins)
 - **WAF integration** with early and full request/body scanning
 - **WebSocket proxy** with bidirectional tunnel and WAF inspection
@@ -180,12 +179,13 @@ Main server loop. Only available with `mesh` feature enabled.
 Both H1 lanes convert ingress to the neutral
 `synvoid_http::inbound::InboundRequest` and invoke the single shared
 `src/http/service_core.rs::handle_neutral_request` (flow + postlude over
-a `NeutralServiceContext`); Hyper plaintext adapters live in
-`synvoid-http/src/hyper_adapter.rs`, the EggServe service in
+a `NeutralServiceContext`); the Hyper adapter lives in
+`synvoid-http/src/hyper_adapter.rs` (H2 and the test-only comparison
+lanes), the production H1 EggServe service in
 `src/http/eggserve_h1.rs`. The old 20-parameter
 `HttpServer::handle_request` was removed in Phase 76 after the
-extraction; TLS-H1/H2 still enter the same canonical flow directly until
-Phase 77.
+extraction; TLS-H1 enters the same canonical flow through
+`EggserveH1Service` (Phase 77).
 
 ---
 
@@ -324,16 +324,20 @@ Plaintext H1 policy is projected from `HttpConfig` by
 (same mapping: `header_read_timeout_secs`, `max_headers`,
 `max_request_size` as the parser-buffer ceiling, origin-only targets,
 all deadline/admission ceilings externally owned by SynVoid).
-TLS-H1 (`src/tls/server.rs`) still uses the root-local mapping,
-`src/http/h1_policy.rs::configure_h1_builder`, to the Hyper H1 builder
-until Phase 77 (including the explicit `hyper_util::rt::TokioTimer`,
-which Hyper requires for the timeout to be active rather than panic).
-TLS H2 keeps its separate `max_header_list_size(max_headers)` behavior. Parity tests:
+TLS-H1 (`src/tls/server.rs`) uses the same projector,
+`project_eggserve_h1`, since Phase 77 (one shared H1 policy authority for
+both lanes; the per-connection projection is made once at server startup).
+`src/http/h1_policy.rs::configure_h1_builder` remains the single mapping
+authority for the Hyper H1 builder used by the test-only comparison lanes
+and the parser-parity harness (including the explicit
+`hyper_util::rt::TokioTimer`, which Hyper requires for the timeout to be
+active rather than panic). TLS H2 keeps its separate
+`max_header_list_size(max_headers)` behavior. Parity tests:
 `tests/http_h1_parser_parity.rs` (plaintext + shared-policy repeat +
-call-site guards) and `tests/http_h1_tls_transport.rs` (Phase 72 real-TLS
-seam), plus the Phase 75/76 Hyper-vs-EggServe differential and adoption
-suites. Full evidence:
-`architecture/http_h1_runtime_truthfulness_phase70.md`.
+call-site guards, source guards rebased on the adopted wiring at Phase 80)
+and `tests/http_h1_tls_transport.rs` (Phase 72 real-TLS seam), plus the
+Phase 75/76 Hyper-vs-EggServe differential and adoption suites. Full
+evidence: `architecture/http_h1_runtime_truthfulness_phase70.md`.
 
 ### TLS Detection
 Canonical in `synvoid_http::framing::is_tls_client_hello` (Phase 20; both

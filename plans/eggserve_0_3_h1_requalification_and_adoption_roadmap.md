@@ -1,13 +1,19 @@
 # EggServe 0.3 Direct H1 Requalification and Adoption Roadmap
 
-Status: corrective follow-up active.
+Status: corrective campaign closed 2026-09-26 as **ADOPTED**. Phase 78's
+terminal claim is superseded by the corrected runtime and proof in Phases
+79–80; the adoption architecture remains in production.
 
 - Phase 73 first closed `RETAIN_PENDING_UPSTREAM` against exact EggServe 0.3.0.
 - A 2026-09-25 re-run against exact-pinned `eggserve-server = "=0.3.1"` / `eggserve-primitives = "=0.2.1"` reached `GO_DIRECT_0_3`.
 - Phases 74–78 implementation landed at `2242e1911d2083448371f707392fdb07f83f1bce`; production plaintext and TLS-ALPN H1 are EggServe-driven, while H2/H3 remain unchanged.
 - Post-adoption review found runtime/evidence defects. Phase 78's terminal `ADOPTED` closure is therefore superseded pending Phases 79–80.
 - Phase 79 runtime correctness is implemented and locally verified: shutdown-driver lifetime, exact-body trailers, real AppServer tunnel coverage, and local-endpoint provenance are all directly tested. Finding B required the separately justified upstream bump to `eggserve-server = "=0.4.0"` / `eggserve-primitives = "=0.2.2"` (`architecture/eggserve_0_4_0_trailer_head_addendum.md`).
-- Phase 80 owns corrected requalification, hosted proof, planning/evidence reconciliation, and the next terminal disposition.
+- Phase 80 completed corrected requalification and planning/evidence
+  reconciliation. Hosted CI run `36201213413` passed on proof-bearing SHA
+  `174fdbcd6f133b35099ed4492f5ed8d3fcaa7d4c` (2026-09-26 observation).
+  Current production disposition is `ADOPTED` on EggServe 0.4.0 / primitives
+  0.2.2; see `architecture/eggserve_0_3_h1_adoption_closeout.md`.
 
 Historical 0.3.0 evidence:
 `architecture/eggserve_0_3_h1_compatibility_matrix.md`.
@@ -237,12 +243,17 @@ The historical Phase 73 stop rule was satisfied by the published 0.3.1 artifact 
 
 Phase 79 must preserve the existing adoption architecture unless executable evidence shows that graceful shutdown, response trailers, AppServer tunneling, or truthful connection provenance cannot be made correct without violating another required SynVoid contract.
 
-Phase 80 may close `ADOPTED` only after:
+Phase 80 closed `ADOPTED` after satisfying these gates:
 
 - the Phase 79 runtime corrections are directly tested;
 - current canonical local verification is green;
 - a hosted CI run is observed successful on a SHA containing those runtime corrections;
 - the AppServer tunnel requirement is actually exercised;
 - Phase 73–78 status/closeout documents are reconciled to the corrected evidence.
+
+No registered downstream plan depended on Phase 80. The H2 header-list
+byte-unit review, duplicate `Set-Cookie` behavior, body-limit status
+relabeling, and test-only Hyper differential lane decision remain separate
+follow-up candidates, with no current plan blocked by this campaign.
 
 If a required contract still fails after the bounded corrective, close `RETAINED_ROLLBACK` and restore the qualified Hyper production H1 point rather than shipping a knowingly partial runtime split.
