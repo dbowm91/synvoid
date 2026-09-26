@@ -145,6 +145,33 @@ fn child_main() -> i32 {
                 2 // wrong errno (still denied, but not the contract)
             }
         }
+        "seccomp-unix-sockets-allowed" => {
+            let _entered =
+                match enter_guarantee(synvoid_platform::sandbox::Guarantee::NetworkDenied) {
+                    Ok(entered) => entered,
+                    Err(_) => return 1,
+                };
+            // Runtime signal drivers use local socketpairs after jail entry.
+            // NetworkDenied must retain this local mechanism while blocking
+            // AF_INET/AF_INET6 socket creation.
+            let fd = unsafe { libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0) };
+            if fd < 0 {
+                return 2;
+            }
+            unsafe { libc::close(fd) };
+
+            let mut pair = [-1; 2];
+            let result =
+                unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, pair.as_mut_ptr()) };
+            if result != 0 {
+                return 2;
+            }
+            unsafe {
+                libc::close(pair[0]);
+                libc::close(pair[1]);
+            }
+            0
+        }
         "legacy-socket-allowed" => {
             if apply_allowlist(&allowed, &write_dir).is_err() {
                 return 1;
@@ -397,6 +424,21 @@ fn linux_seccomp_denies_new_sockets_with_contracted_errno() {
     let (_tmp, allowed, denied, write) = fixture_dirs();
     assert_eq!(
         run_probe("seccomp-socket-denied", &allowed, &denied, &write),
+        0
+    );
+}
+
+#[test]
+fn linux_seccomp_preserves_local_unix_sockets() {
+    if std::env::var(PROBE_ENV).is_ok() {
+        return;
+    }
+    if !requires_seccomp() {
+        return;
+    }
+    let (_tmp, allowed, denied, write) = fixture_dirs();
+    assert_eq!(
+        run_probe("seccomp-unix-sockets-allowed", &allowed, &denied, &write),
         0
     );
 }

@@ -78,7 +78,9 @@ does not enter Landlock; filesystem-only requests do not install seccomp.
 Final claims require successful mechanism entry. The legacy
 `ProcessSandbox::with_paths` adapter remains filesystem-only and its tests do
 not qualify seccomp behavior.
-`NetworkDenied` → `socket`/`socketpair`/`connect` denial;
+`NetworkDenied` → non-`AF_UNIX` `socket`/`socketpair` denial and all
+`connect` calls denied (local Unix sockets remain available to runtime
+facilities such as Tokio's signal driver);
 `ChildCreationDenied` → non-thread `clone` (+`fork`/`vfork` on x86_64) +
 `clone3` (ENOSYS for transparent glibc fallback); `ExecDenied` →
 `execve`/`execveat` (EPERM), via TSYNC/all-threads installed after startup

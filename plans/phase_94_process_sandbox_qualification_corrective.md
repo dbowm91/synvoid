@@ -1,6 +1,6 @@
 # Phase 94 Plan: Process Sandbox Phase 89 Qualification Corrective
 
-Status: implementation complete; exact-SHA hosted and Linux native qualification pending (2026-09-26).
+Status: corrective update in progress; exact-SHA hosted and Linux native qualification pending (2026-09-26).
 
 Registered in: `plans/roadmap.md`.
 
@@ -378,6 +378,19 @@ native Landlock/seccomp evidence. The exact hosted and opt-in Linux runner
 results remain required before terminal closure.
 
 Local green verification is necessary but not sufficient.
+
+### First hosted native attempt (2026-09-26)
+
+Opt-in run `36263988737` checked out implementation SHA
+`64dbc9c8c1fce0c3190f1e0d3384cfbd3df8e2b7` on Ubuntu 24.04.5 / Linux and
+passed the native platform enforcement probes, but the jail workload step
+failed: Tokio could not create its Unix signal socket after seccomp entry
+(`socketpair(AF_UNIX, ...)` returned EPERM), causing two packaged jail tests
+to exhaust their restart budget. This was a real compatibility defect, not
+an unsupported host. The corrective keeps `AF_UNIX` socket/socketpair
+available while denying non-`AF_UNIX` socket creation and all `connect`
+calls. The new child-process probe checks both permitted local socket
+operations; a fresh exact-SHA hosted/native run is required before closure.
 
 ## Acceptance criteria
 

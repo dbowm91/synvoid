@@ -657,7 +657,7 @@ pub mod linux {
         /// Phase 89 Finding B: guarantee-selected syscall-filter categories.
         ///
         /// Each category maps to exactly one portable guarantee family:
-        /// - network => `NetworkDenied` (socket/socketpair/connect);
+        /// - network => `NetworkDenied` (non-AF_UNIX socket/socketpair + connect);
         /// - child => `ChildCreationDenied` (fork/vfork + non-thread clone
         ///   + clone3 ENOSYS-fallback);
         /// - exec => `ExecDenied` (execve/execveat).
@@ -749,10 +749,28 @@ pub mod linux {
             // exist on x86_64; elsewhere clone/clone3 (filtered below) are
             // the sole process-creation primitives.
             if network {
-                for name in ["socket", "socketpair", "connect"] {
+                // Preserve local AF_UNIX socket creation for runtime
+                // facilities such as Tokio's signal driver. Network socket
+                // families remain denied, while connect is denied
+                // categorically so an inherited network socket cannot be
+                // used after entry.
+                for name in ["socket", "socketpair"] {
                     let nr = syscall_nr(name)?;
-                    rules.insert(nr, vec![]);
+                    let family_not_unix = SeccompCondition::new(
+                        0,
+                        SeccompCmpArgLen::Dword,
+                        SeccompCmpOp::Ne,
+                        libc::AF_UNIX as u64,
+                    )
+                    .map_err(|e| {
+                        SandboxError::InvalidPolicy(format!("seccomp socket family cond: {e:?}"))
+                    })?;
+                    let rule = SeccompRule::new(vec![family_not_unix]).map_err(|e| {
+                        SandboxError::InvalidPolicy(format!("seccomp socket family rule: {e:?}"))
+                    })?;
+                    rules.insert(nr, vec![rule]);
                 }
+                rules.insert(syscall_nr("connect")?, vec![]);
             }
             if child {
                 #[cfg(target_arch = "x86_64")]

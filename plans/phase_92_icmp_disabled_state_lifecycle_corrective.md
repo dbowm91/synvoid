@@ -333,8 +333,8 @@ verification diagnostic. The fake replacement backend removes owned state
 when disabled.
 
 Verification recorded: `cargo fmt --all`; `cargo test -p
-synvoid-icmp-filter --profile ci` — PASS (97 tests across 7 suites before the
-final disabled-live regression; rerun is pending due shared build contention).
+synvoid-icmp-filter --profile ci` — PASS (98 tests across 7 suites, including
+the final disabled-live regression).
 The manager now returns the optional receipt outcome to the admin handler, so
 verified disabled absence persists the DTO without presenting a historical
 install receipt as the mutation result. Admin route execution is included in
