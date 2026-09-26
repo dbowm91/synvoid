@@ -53,3 +53,13 @@ native run, or evidence artifact was produced. This is a workflow handoff
 failure, not a native qualification result. The workflow now calls Cargo by
 absolute path and explicitly carries the runner Cargo/Rustup environment; a
 new exact-SHA attempt is required.
+
+Run `36277087104` at SHA
+`7bd3ae59d8f0122e0ff4321238923383de0fe689` proved the runner passed the
+native preflight (`platform: linux`, opt-in present, `euid=0
+cap_net_admin=true`, and `ip`/`nft`/`ping` present). It then failed before
+the dry-run because the privileged Cargo check had created a root-owned
+`target/debug/.cargo-build-lock`; no native matrix ran. The workflow was
+reordered so the runner-user dry-run builds first, then privileged steps call
+the compiled xtask binary directly, avoiding Cargo lock ownership. This
+attempt is not native qualification evidence.

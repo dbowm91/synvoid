@@ -172,11 +172,10 @@ jobs:
             echo 'Refusing native qualification: stale synvoid-q namespace exists.' >&2
             exit 1
           fi
-          sudo -E env \
-            PATH="$PATH" CARGO_HOME="$CARGO_HOME" RUSTUP_HOME="$HOME/.rustup" \
-            SYNVOID_ICMP_QUALIFY_NATIVE=1 \
-            "$CARGO_HOME/bin/cargo" xtask icmp-qualify --check --json
           cargo xtask icmp-qualify --dry-run --json
+          sudo -E env \
+            PATH="$PATH" SYNVOID_ICMP_QUALIFY_NATIVE=1 \
+            "$GITHUB_WORKSPACE/target/debug/cargo-xtask" icmp-qualify --check --json
 
       - name: Run two isolated native qualification passes
         shell: bash
@@ -185,17 +184,17 @@ jobs:
           run_native() {
             local run_id="$1"
             sudo -E env \
-              PATH="$PATH" CARGO_HOME="$CARGO_HOME" RUSTUP_HOME="$HOME/.rustup" \
+              PATH="$PATH" \
               SYNVOID_ICMP_QUALIFY_NATIVE=1 \
               SYNVOID_ICMP_QUALIFY_RUN="$run_id" \
-              "$CARGO_HOME/bin/cargo" xtask icmp-qualify --native --json --timeout-secs 900 \
+              "$GITHUB_WORKSPACE/target/debug/cargo-xtask" icmp-qualify --native --json --timeout-secs 900 \
                 --out "target/icmp-qualify-${run_id}.json"
           }
           run_cleanup() {
             sudo -E env \
-              PATH="$PATH" CARGO_HOME="$CARGO_HOME" RUSTUP_HOME="$HOME/.rustup" \
+              PATH="$PATH" \
               SYNVOID_ICMP_QUALIFY_RUN="$1" \
-              "$CARGO_HOME/bin/cargo" xtask icmp-qualify --cleanup --json
+              "$GITHUB_WORKSPACE/target/debug/cargo-xtask" icmp-qualify --cleanup --json
             if sudo ip netns list | awk '($1 ~ /^synvoid-q-[a-z0-9-]+$/) { found = 1; print } END { exit !found }'; then
               echo 'Harness namespace remains after cleanup.' >&2
               exit 1

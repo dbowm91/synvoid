@@ -294,3 +294,13 @@ The workflow was corrected to invoke the runner Cargo binary by absolute path
 while explicitly preserving its Cargo/Rustup environment. The corrected
 workflow requires a fresh exact-SHA attempt; the failed attempt is not host
 qualification evidence.
+
+The next attempt, `36277087104` at SHA
+`7bd3ae59d8f0122e0ff4321238923383de0fe689`, passed Linux/tool/privilege
+preflight (`cap_net_admin=true`) but failed before native execution: the
+root-run Cargo check created a root-owned target build lock, and the following
+runner-user dry-run could not open it. No native namespace matrix ran. The
+workflow now performs the dry-run as the runner first, then invokes the
+already-built xtask binary directly for privileged checks, native passes, and
+cleanup. This is a workflow ordering/ownership defect; repeat on a new
+proof-bearing SHA.
