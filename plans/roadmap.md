@@ -1,6 +1,6 @@
 # SynVoid Architecture Hardening Roadmap
 
-Status: Tracks 1–3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). Eggfetch 0.2 runtime adoption is closed through Phase 62 (`c3568ef4...`) and performance/reproducibility adjudication is closed through Phase 63; Phase 64 docs/evidence-truth correction is closed. Production remains on eggfetch. The EggServe 0.2.2-line inbound H1 campaign remains historical/retained at Phase 65; Phases 66–69 were never started. EggServe 0.3 H1 adoption and corrective requalification are closed as `ADOPTED` through Phase 80 on exact pins `eggserve-server = "=0.4.0"` / `eggserve-primitives = "=0.2.2"`; the Phase 78 terminal claim is superseded by Phase 80 proof-bearing SHA `174fdbcd6f133b35099ed4492f5ed8d3fcaa7d4c` (hosted run `36201213413`). Phase 79 implementation SHA: `171dd1e47f965b04b34465fc72c87adf4d9a9cab`. See `architecture/eggserve_0_3_h1_adoption_closeout.md`. Phases 70–72 remain historical/closed with evidence aligned to their then-current Hyper H1 runtime. No registered future plan remains blocked on this corrective sequence. The process-sandbox correctness and extraction-readiness campaign (Phases 81-84) is closed DEFER (see the Post-Phase-80 section below), with a bounded post-closeout semantics corrective registered as Phase 89. The independent ICMP policy/enforcement extraction-preparation campaign (Phases 85-88) is closed RETAIN (see the Post-Phase-80 section below), with an executable post-RETAIN operator-truth/native-qualification-preparation follow-up registered as Phases 90-91.
+Status: Tracks 1–3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). Eggfetch 0.2 runtime adoption is closed through Phase 62 (`c3568ef4...`) and performance/reproducibility adjudication is closed through Phase 63; Phase 64 docs/evidence-truth correction is closed. Production remains on eggfetch. The EggServe 0.2.2-line inbound H1 campaign remains historical/retained at Phase 65; Phases 66–69 were never started. EggServe 0.3 H1 adoption and corrective requalification are closed as `ADOPTED` through Phase 80 on exact pins `eggserve-server = "=0.4.0"` / `eggserve-primitives = "=0.2.2"`; the Phase 78 terminal claim is superseded by Phase 80 proof-bearing SHA `174fdbcd6f133b35099ed4492f5ed8d3fcaa7d4c` (hosted run `36201213413`). Phase 79 implementation SHA: `171dd1e47f965b04b34465fc72c87adf4d9a9cab`. See `architecture/eggserve_0_3_h1_adoption_closeout.md`. Phases 70–72 remain historical/closed with evidence aligned to their then-current Hyper H1 runtime. No registered future plan remains blocked on this corrective sequence. The process-sandbox correctness and extraction-readiness campaign (Phases 81-84) is closed DEFER (see the Post-Phase-80 section below), with a bounded post-closeout semantics corrective registered as Phase 89. The independent ICMP policy/enforcement extraction-preparation campaign (Phases 85-88) is closed RETAIN (see the Post-Phase-80 section below), with an executable post-RETAIN operator-truth/native-qualification-preparation follow-up registered as Phases 90-91. An independent cross-repo Eggbench security-qualification asset plan is also registered at `plans/eggbench_security_qualification_asset_contract.md`; it does not consume or reserve the ICMP Phase 92 re-evaluation slot.
 
 Scope: this roadmap covers architecture hardening, trust-boundary closure, verification, release readiness, post-hardening cleanup, and the architecture-convergence work required before another broad feature-expansion pass.
 
@@ -882,3 +882,43 @@ Constraints:
 
 Phase 90 is the next executable ICMP plan. Phase 89 remains independently
 executable for the process-sandbox corrective.
+
+
+## Independent Cross-Repo Handoff: Eggbench Security Qualification Assets — Planned
+
+Status: **planned** 2026-09-26.
+
+Plan:
+`plans/eggbench_security_qualification_asset_contract.md`.
+
+Baseline:
+`49b4624b696b4c3aa0172b0326a04ae9e275ca3f`.
+
+Consumer:
+`eggstack/eggbench` Security Qualification M002.
+
+This is not part of the ICMP Phase 90-91/possible future Phase 92 sequence and
+does not reopen any closed SynVoid architecture campaign.
+
+The handoff exists because Eggbench now has a generic fixed-corpus correctness
+and qualification-suite substrate, while SynVoid remains the owner of its WAF
+fixture semantics. The plan adds a SynVoid-owned export/materialization
+contract for a bounded live-proxy-compatible subset of the authoritative WAF
+corpus plus a loopback-only minimal qualification config and provenance
+manifest.
+
+Key constraints:
+
+- SynVoid translates its own source `detect/pass` semantics into externally
+  observable status expectations under a fixed qualification policy;
+- unsupported smuggling/hop-by-hop/binary/internal-only fixtures are explicitly
+  excluded rather than weakened;
+- generated runtime config binds loopback only and targets a controlled
+  loopback origin;
+- `--no-default-features` remains the qualification runtime profile;
+- no Eggbench Rust dependency enters SynVoid;
+- no production WAF behavior is changed merely to satisfy the harness;
+- no new SynVoid load generator is added.
+
+This plan is the next cross-repo prerequisite for Eggbench Security
+Qualification M002a. It may execute independently of Phases 89-91.
