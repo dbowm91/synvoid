@@ -1,20 +1,25 @@
 //! Child-side sandbox entry sequencing (Phase 29 canonical owner, Phase 82
-//! guarantee migration).
+//! guarantee migration, Phase 89 single-entry corrective).
 //!
 //! Preserves the Phase 22 startup order exactly:
 //!
 //! 1. parent opens pipes and spawns child;
 //! 2. child initializes only resources that must exist before sandbox
 //!    (captures inherited stdio handles; no I/O yet);
-//! 3. child applies OS isolation via the portable guarantee contract
-//!    (legacy `SandboxLevel::Strict` adapter pinned; jail requirements come
-//!    from `jail_guarantee_request()` — actual workload needs, not the old
-//!    word "Strict");
+//! 3. child applies OS isolation via the portable guarantee contract in
+//!    exactly one irreversible transition (`prepare_sandbox(request)?.enter()`;
+//!    jail requirements come from `jail_guarantee_request()` — actual workload
+//!    needs, not the old word "Strict");
 //! 4. child enters the framed request loop with the `EnteredSandbox`
 //!    witness retained;
 //! 5. engine operations execute only after isolation when `Required`;
 //! 6. any isolation setup failure terminates/fails closed before workload
 //!    handling.
+//!
+//! Phase 89 Finding A: production startup performs exactly one sandbox entry.
+//! No legacy `ProcessSandbox::with_paths(Strict, ..)` compatibility probe
+//! enters a sandbox as a side effect; legacy compatibility is a pure
+//! projection/test-only concern, never a second irreversible transition.
 //!
 //! Linux remains the primary verified target (Landlock). macOS/Windows
 //! behavior is classified in `architecture/sandbox_jail_protocol.md` §8:
@@ -25,10 +30,7 @@
 use std::io::{Read, Write};
 
 use synvoid_ipc::{serve_jail_connection, JailHandler, JailKind, ServeOutcome};
-use synvoid_platform::{
-    jail_guarantee_request, prepare_sandbox, EnteredSandbox, ProcessSandbox, SandboxLevel,
-    SandboxPaths,
-};
+use synvoid_platform::{jail_guarantee_request, prepare_sandbox, EnteredSandbox};
 
 /// Test-only escape hatch permitting jail execution without OS sandbox
 /// enforcement (hermetic tests on platforms without a strict backend).
@@ -136,12 +138,13 @@ fn serve(
 ///
 /// - `run_jail_main` (this file): jail guarantee request (ambient-FS deny,
 ///   read allowlist `/usr/lib`+`/lib`, inherited-IPC usable, descendants
-///   confined) prepared then entered; `EnteredSandbox` witness RETAINED
-///   through the framed serve loop (`_sandbox_guard`); failure fails closed
-///   before any workload (returns exit 1) unless the test-only
-///   `SYNVOID_JAIL_PERMIT_NO_SANDBOX=1` hatch is set (production spawn paths
-///   never set it — pinned by `tests/jail_isolation_guard.rs`). Runs after
-///   stdio capture, before threads/resources for workloads.
+///   confined, plus Phase 89 no-network/no-child/no-exec) prepared then
+///   entered in exactly one irreversible transition; `EnteredSandbox`
+///   witness RETAINED through the framed serve loop (`_sandbox_guard`);
+///   failure fails closed before any workload (returns exit 1) unless the
+///   test-only `SYNVOID_JAIL_PERMIT_NO_SANDBOX=1` hatch is set (production
+///   spawn paths never set it — pinned by `tests/jail_isolation_guard.rs`).
+///   Runs after stdio capture, before threads/resources for workloads.
 /// - `synvoid-upload::SandboxConfig::apply_platform_sandbox`:
 ///   caller-chosen level (default `Off`); guard DROPPED after apply by
 ///   design (directory-isolation helper, fail-open to basic isolation with
@@ -174,23 +177,20 @@ fn apply_jail_sandbox(kind: JailKind) -> Result<Option<EnteredSandbox>, i32> {
     }
     // Minimal read-only system library paths for the dynamic loader. The jail
     // needs no other filesystem access: modules and rules arrive over IPC.
-    // Requirements come from actual workload needs (Phase 82 Workstream I),
-    // not the old word "Strict". Desired-but-unavailable guarantees
-    // (no-network/no-child/no-exec until Phase 83 qualifies the
-    // syscall-filter layer) stay explicit unsupported findings — they are
-    // NOT silently demanded here to force Phase 83 early, nor silently
-    // claimed as enforced.
+    // Requirements come from actual workload needs (Phase 82 Workstream I +
+    // Phase 89 Finding D: the no-network/no-child/no-exec boundary is now
+    // authoritative in `jail_guarantee_request()` and installed via the
+    // guarantee-selected seccomp categories on Linux).
+    //
+    // Phase 89 Finding A: exactly one irreversible sandbox entry. There is
+    // no legacy `ProcessSandbox::with_paths(Strict, ..)` probe here: on
+    // enforcing platforms that call would irreversibly enter a second
+    // sandbox (stacked Landlock domains / double seccomp on Linux,
+    // unveil-lock/pledge ordering hazards on OpenBSD) and falsify the
+    // Phase 82 "single irreversible transition" lifecycle.
     let request = jail_guarantee_request()
         .read_path("/usr/lib")
         .read_path("/lib");
-
-    // Legacy adapter pin: the old Strict path must keep working until an
-    // explicit config migration. The guarantee path is authoritative for
-    // new code; both must agree on fail-closed here.
-    let legacy_paths = SandboxPaths::new()
-        .add_read_path("/usr/lib")
-        .add_read_path("/lib");
-    let legacy_ok = ProcessSandbox::with_paths(SandboxLevel::Strict, legacy_paths).is_ok();
 
     let prepared = prepare_sandbox(request).map_err(|e| {
         tracing::error!(
@@ -203,13 +203,12 @@ fn apply_jail_sandbox(kind: JailKind) -> Result<Option<EnteredSandbox>, i32> {
     match prepared.enter() {
         Ok(guard) => {
             tracing::info!(
-                "Jail sandbox applied (kind: {}, backend: {}, abi: {}, scope: {:?}, runtime: {}, legacy_strict_ok: {})",
+                "Jail sandbox applied (kind: {}, backend: {}, abi: {}, scope: {:?}, runtime: {})",
                 kind.as_str(),
                 guard.report().backend,
                 guard.report().abi,
                 guard.report().scope,
                 JAIL_RUNTIME_VERSION,
-                legacy_ok,
             );
             Ok(Some(guard))
         }
@@ -241,6 +240,7 @@ fn apply_jail_sandbox(kind: JailKind) -> Result<Option<EnteredSandbox>, i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use synvoid_platform::{ProcessSandbox, SandboxLevel, SandboxPaths};
 
     /// Phase 81 Workstream A: a failed sandbox installation must never
     /// reach the request loop. The guard-returning signature makes this
@@ -271,9 +271,10 @@ mod tests {
         // guard (Some(retained) / None(hatch-explicit) / Err(fail-closed)).
     }
 
-    /// Phase 82 Workstream I: the jail guarantee request carries the
-    /// minimum boundary (ambient-FS deny, read allowlist, inherited IPC,
-    /// descendants confined) and validates cleanly.
+    /// Phase 82 Workstream I + Phase 89 Finding D: the jail guarantee
+    /// request carries the full boundary (ambient-FS deny, read allowlist,
+    /// inherited IPC, descendants confined, plus authoritative
+    /// no-network/no-child/no-exec) and validates cleanly.
     #[test]
     fn jail_guarantee_request_is_minimal_and_valid() {
         let req = jail_guarantee_request()
@@ -292,13 +293,66 @@ mod tests {
         assert!(req
             .required
             .contains(&synvoid_platform::Guarantee::DescendantsConfined));
-        // Desired-but-unqualified guarantees (network/child/exec) are NOT
-        // silently required here: they stay Phase 83 findings.
-        assert!(!req
+        // Phase 89 Finding D: the no-network/no-child/no-exec boundary is
+        // now authoritative in the request itself (Linux installs the
+        // corresponding seccomp categories; other backends satisfy or fail
+        // closed per the backend matrix).
+        assert!(req
             .required
             .contains(&synvoid_platform::Guarantee::NetworkDenied));
-        assert!(!req
+        assert!(req
             .required
             .contains(&synvoid_platform::Guarantee::ChildCreationDenied));
+        assert!(req
+            .required
+            .contains(&synvoid_platform::Guarantee::ExecDenied));
+    }
+
+    /// Phase 89 Finding A regression: production jail startup must contain
+    /// exactly one irreversible sandbox-entry path. The legacy
+    /// `ProcessSandbox::with_paths(SandboxLevel::Strict, ..)` probe must
+    /// never return to this file's production path (it would enter a second
+    /// irreversible sandbox on enforcing platforms).
+    #[test]
+    fn jail_entry_has_single_irreversible_transition() {
+        let source = include_str!("sandbox_entry.rs");
+        let production = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production section");
+        // Strip doc/line comments: mentions in prose must not trip the
+        // guard; only executable calls matter.
+        let code: String = production
+            .lines()
+            .filter(|l| {
+                let t = l.trim_start();
+                !(t.starts_with("//")
+                    || t.starts_with("//!")
+                    || t.starts_with("///")
+                    || t.starts_with('*'))
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            !code.contains("with_paths"),
+            "production jail entry must not call ProcessSandbox::with_paths (single guarantee entry only)"
+        );
+        assert!(
+            !code.contains("SandboxLevel::Strict"),
+            "production jail entry must not reference legacy Strict entry"
+        );
+        assert!(
+            production.contains("prepare_sandbox(request)"),
+            "production jail entry must prepare the guarantee request"
+        );
+        assert!(
+            production.contains("prepared.enter()"),
+            "production jail entry must enter exactly via PreparedSandbox::enter()"
+        );
+        assert_eq!(
+            production.matches("prepared.enter()").count(),
+            1,
+            "exactly one irreversible enter transition per jail startup"
+        );
     }
 }

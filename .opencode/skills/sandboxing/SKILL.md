@@ -162,14 +162,24 @@ for the jail's no-network/no-child/no-exec needs.
   rejects `PartiallyEnforced`/`NotEnforced` plus unverified `no_new_privs`
   (proven with `PR_GET_NO_NEW_PRIVS` in child tests). Rule fds are RAII-owned.
 - Explicit deny paths are typed `Unsupported` (fail closed).
-- Seccomp deny-list (default Allow, never a giant allowlist): new network
-  authority, non-thread `clone` (+`fork`/`vfork` on x86_64), `clone3`
-  (ENOSYS for glibc fallback), `execve`/`execveat` — EPERM, TSYNC,
-  installed after startup resources exist and before untrusted work.
-  Thread creation keeps working (proven). Denied set is hardcoded.
+- Seccomp deny-list (default Allow, never a giant allowlist), Phase 89
+  guarantee-selected (never installed unconditionally with Landlock):
+  `NetworkDenied` → new network authority; `ChildCreationDenied` →
+  non-thread `clone` (+`fork`/`vfork` on x86_64), `clone3` (ENOSYS for
+  glibc fallback); `ExecDenied` → `execve`/`execveat` — EPERM, TSYNC,
+  installed after startup resources exist and before untrusted work, exactly
+  once via `PreparedSandbox::enter()` from the internal `MechanismPlan`.
+  One category never acquires unrelated restrictions; `NetworkTcpRestricted`
+  / `NetworkUdpRestricted` alone are unsupported on Linux. Thread creation
+  keeps working (proven). Denied set is hardcoded. Final reports are
+  receipt-backed, never compile-probe claims.
 - Portable callers use the guarantee contract (`SandboxRequest` →
   `prepare_sandbox` → `enter` → `EnteredSandbox`); the jail requirement is
-  `jail_guarantee_request()`. Never gate new code on `can_enforce_strict()`.
+  `jail_guarantee_request()` (ambient-FS deny, read allowlist, inherited IPC,
+  descendants confined, plus authoritative no-network/no-child/no-exec) with
+  exactly one irreversible entry (no legacy `with_paths(Strict)` probe).
+  `SandboxRequest::intersect()` was removed (Phase 89: unsafe algebra).
+  Never gate new code on `can_enforce_strict()`.
 
 ## FreeBSD Capsicum
 

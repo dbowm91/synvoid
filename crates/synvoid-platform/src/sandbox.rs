@@ -550,23 +550,20 @@ pub mod linux {
                 )));
             }
 
+            // Phase 89 Finding B: filesystem confinement only. Syscall-filter
+            // confinement (no-network / no-child / no-exec) is selected by
+            // the guarantee-driven prepared plan (`PreparedSandbox::enter`),
+            // never by every Landlock invocation. Legacy
+            // `ProcessSandbox::with_paths` callers receive documented
+            // filesystem semantics; jail-specific seccomp comes only through
+            // an explicit guarantee request.
             let status = self.build_and_enforce(read_paths, write_paths)?;
 
-            // Phase 83 Workstream B: categorical syscall-filter denial for
-            // the jail's no-network/no-child/no-exec needs (deny-list, not
-            // an allowlist). Installed after all startup resources exist
-            // (fds for Landlock rules are already consumed) and before any
-            // untrusted work. Failure fails closed: the backend documents
-            // these guarantees, so a filter that cannot install must not
-            // report them as enforced.
-            seccomp::apply_jail_filter()?;
-
             tracing::info!(
-                "Applied landlock sandbox (level: {:?}, abi: {}, no_new_privs: {}, seccomp: {}) with {} read paths, {} write paths",
+                "Applied landlock sandbox (level: {:?}, abi: {}, no_new_privs: {}) with {} read paths, {} write paths (filesystem only; seccomp via guarantee plan)",
                 self.level,
                 Self::backend_abi_description(),
                 status.no_new_privs,
-                seccomp::JAIL_FILTER_DESCRIPTION,
                 read_paths.len(),
                 write_paths.len()
             );
@@ -657,10 +654,66 @@ pub mod linux {
         #[cfg(not(target_arch = "x86_64"))]
         const DENY_EPERM: &[&str] = &["socket", "socketpair", "connect", "execve", "execveat"];
 
-        /// Pure availability check: the filter compiles for this arch.
+        /// Phase 89 Finding B: guarantee-selected syscall-filter categories.
+        ///
+        /// Each category maps to exactly one portable guarantee family:
+        /// - network => `NetworkDenied` (socket/socketpair/connect);
+        /// - child => `ChildCreationDenied` (fork/vfork + non-thread clone
+        ///   + clone3 ENOSYS-fallback);
+        /// - exec => `ExecDenied` (execve/execveat).
+        ///
+        /// A request for only one category never acquires unrelated
+        /// restrictions. `NetworkTcpRestricted` / `NetworkUdpRestricted`
+        /// alone never select the network category: the installed filter
+        /// cannot distinguish TCP from UDP without broader denial, so the
+        /// narrower guarantees report unsupported rather than silently
+        /// overrestricting a generic caller.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+        pub struct SeccompCategories {
+            pub network: bool,
+            pub child: bool,
+            pub exec: bool,
+        }
+
+        impl SeccompCategories {
+            pub fn none() -> Self {
+                Self::default()
+            }
+
+            pub fn is_empty(&self) -> bool {
+                !(self.network || self.child || self.exec)
+            }
+        }
+
+        /// Installation receipt: which categories actually installed.
+        /// The final `EnforcementReport` is derived from this receipt, never
+        /// from a compile probe alone (Phase 89 Finding E).
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+        pub struct SeccompReceipt {
+            pub network_installed: bool,
+            pub child_installed: bool,
+            pub exec_installed: bool,
+        }
+
+        /// Pure availability check: the full filter compiles for this arch.
         /// Used by the guarantee projection (no side effects, no install).
         pub fn filter_compiles() -> bool {
-            build_main_filter().is_ok() && build_clone3_filter().is_ok()
+            build_main_filter(true, true, true).is_ok() && build_clone3_filter().is_ok()
+        }
+
+        /// Per-category compile probe (side-effect free). A category that
+        /// cannot compile is reported unsupported, never installed.
+        pub fn categories_compile(categories: SeccompCategories) -> bool {
+            if categories.is_empty() {
+                return true;
+            }
+            if build_main_filter(categories.network, categories.child, categories.exec).is_err() {
+                return false;
+            }
+            if categories.child && build_clone3_filter().is_err() {
+                return false;
+            }
+            true
         }
 
         /// Portable hook for the guarantee projection: true on Linux where
@@ -669,13 +722,22 @@ pub mod linux {
             filter_compiles()
         }
 
+        /// Per-category projection hook for installation-backed reporting.
+        pub fn projected_for_categories(categories: SeccompCategories) -> bool {
+            categories_compile(categories)
+        }
+
         fn target_arch() -> Result<seccompiler::TargetArch, SandboxError> {
             std::env::consts::ARCH
                 .try_into()
                 .map_err(|_| SandboxError::Unsupported("seccomp arch unsupported".into()))
         }
 
-        fn build_main_filter() -> Result<seccompiler::BpfProgram, SandboxError> {
+        fn build_main_filter(
+            network: bool,
+            child: bool,
+            exec: bool,
+        ) -> Result<seccompiler::BpfProgram, SandboxError> {
             use seccompiler::{
                 SeccompAction, SeccompCmpArgLen, SeccompCmpOp, SeccompCondition, SeccompFilter,
                 SeccompRule,
@@ -683,42 +745,49 @@ pub mod linux {
             use std::collections::BTreeMap;
             let arch = target_arch()?;
             let mut rules = BTreeMap::new();
-            // Unconditional categorical denies. fork/vfork only exist on
-            // x86_64; elsewhere clone/clone3 (filtered below) are the sole
-            // process-creation primitives.
-            #[cfg(target_arch = "x86_64")]
-            let unconditional = [
-                "socket",
-                "socketpair",
-                "connect",
-                "fork",
-                "vfork",
-                "execve",
-                "execveat",
-            ];
-            #[cfg(not(target_arch = "x86_64"))]
-            let unconditional = ["socket", "socketpair", "connect", "execve", "execveat"];
-            for name in unconditional {
-                let nr = syscall_nr(name)?;
-                rules.insert(nr, vec![]);
+            // Guarantee-selected categorical denies only. fork/vfork only
+            // exist on x86_64; elsewhere clone/clone3 (filtered below) are
+            // the sole process-creation primitives.
+            if network {
+                for name in ["socket", "socketpair", "connect"] {
+                    let nr = syscall_nr(name)?;
+                    rules.insert(nr, vec![]);
+                }
+            }
+            if child {
+                #[cfg(target_arch = "x86_64")]
+                for name in ["fork", "vfork"] {
+                    let nr = syscall_nr(name)?;
+                    rules.insert(nr, vec![]);
+                }
+            }
+            if exec {
+                for name in ["execve", "execveat"] {
+                    let nr = syscall_nr(name)?;
+                    rules.insert(nr, vec![]);
+                }
             }
             // clone without CLONE_THREAD (0x00010000) = process creation
             // (fork-like, vfork-like incl. CLONE_VM-without-THREAD). Thread
             // creation (CLONE_THREAD set) must keep working for the
             // Wasmtime/YARA runtimes after entry. MaskedEq(mask) matches
             // when (flags & mask) == (value & mask); value 0 denies exactly
-            // the no-THREAD case.
-            const CLONE_THREAD: u64 = 0x0001_0000;
-            let clone_cond = SeccompCondition::new(
-                0,
-                SeccompCmpArgLen::Qword,
-                SeccompCmpOp::MaskedEq(CLONE_THREAD),
-                0,
-            )
-            .map_err(|e| SandboxError::InvalidPolicy(format!("seccomp clone cond: {e:?}")))?;
-            let clone_rule = SeccompRule::new(vec![clone_cond])
-                .map_err(|e| SandboxError::InvalidPolicy(format!("seccomp clone rule: {e:?}")))?;
-            rules.insert(libc::SYS_clone, vec![clone_rule]);
+            // the no-THREAD case. Only installed when the child category is
+            // requested.
+            if child {
+                const CLONE_THREAD: u64 = 0x0001_0000;
+                let clone_cond = SeccompCondition::new(
+                    0,
+                    SeccompCmpArgLen::Qword,
+                    SeccompCmpOp::MaskedEq(CLONE_THREAD),
+                    0,
+                )
+                .map_err(|e| SandboxError::InvalidPolicy(format!("seccomp clone cond: {e:?}")))?;
+                let clone_rule = SeccompRule::new(vec![clone_cond]).map_err(|e| {
+                    SandboxError::InvalidPolicy(format!("seccomp clone rule: {e:?}"))
+                })?;
+                rules.insert(libc::SYS_clone, vec![clone_rule]);
+            }
             let filter = SeccompFilter::new(
                 rules,
                 SeccompAction::Allow,
@@ -773,21 +842,54 @@ pub mod linux {
             })
         }
 
-        /// Install the categorical jail filter (irreversible). Uses
-        /// TSYNC/all-threads: succeeds on the single-threaded jail entry
-        /// and covers future (runtime/worker) threads. Any install failure
-        /// fails closed (never silent).
-        pub fn apply_jail_filter() -> Result<(), SandboxError> {
-            let main = build_main_filter()?;
-            let clone3 = build_clone3_filter()?;
+        /// Install exactly the requested guarantee categories (irreversible).
+        /// Uses TSYNC/all-threads: succeeds on the single-threaded jail
+        /// entry and covers future (runtime/worker) threads. Any install
+        /// failure fails closed (never silent). When no category is
+        /// requested, no filter is installed and an empty receipt is
+        /// returned. The caller builds the final report from the returned
+        /// receipt, never from a compile probe alone.
+        pub fn apply_selected_filter(
+            categories: SeccompCategories,
+        ) -> Result<SeccompReceipt, SandboxError> {
+            if categories.is_empty() {
+                return Ok(SeccompReceipt::default());
+            }
+            let main = build_main_filter(categories.network, categories.child, categories.exec)?;
             seccompiler::apply_filter_all_threads(&main).map_err(|e| {
                 SandboxError::EntryFailed(format!("seccomp main install (tsync): {e:?}"))
             })?;
-            seccompiler::apply_filter_all_threads(&clone3).map_err(|e| {
-                SandboxError::EntryFailed(format!("seccomp clone3 install (tsync): {e:?}"))
-            })?;
-            tracing::info!("Applied {}", JAIL_FILTER_DESCRIPTION);
-            Ok(())
+            if categories.child {
+                let clone3 = build_clone3_filter()?;
+                seccompiler::apply_filter_all_threads(&clone3).map_err(|e| {
+                    SandboxError::EntryFailed(format!("seccomp clone3 install (tsync): {e:?}"))
+                })?;
+            }
+            tracing::info!(
+                "Applied {} (network={}, child={}, exec={})",
+                JAIL_FILTER_DESCRIPTION,
+                categories.network,
+                categories.child,
+                categories.exec
+            );
+            Ok(SeccompReceipt {
+                network_installed: categories.network,
+                child_installed: categories.child,
+                exec_installed: categories.exec,
+            })
+        }
+
+        /// Install the categorical jail filter (irreversible). Full
+        /// network+child+exec bundle used only by the guarantee-driven jail
+        /// plan. Legacy `LandlockSandbox::apply()` no longer calls this;
+        /// use `apply_selected_filter` for guarantee-selected installs.
+        pub fn apply_jail_filter() -> Result<(), SandboxError> {
+            apply_selected_filter(SeccompCategories {
+                network: true,
+                child: true,
+                exec: true,
+            })
+            .map(|_| ())
         }
 
         /// Denied-syscall inventory for tests/docs (fixed, deterministic).
@@ -1818,30 +1920,67 @@ impl SandboxRequest {
         Ok(())
     }
 
-    /// Guarantee sets only narrow when composed/intersected.
-    pub fn intersect(&self, other: &SandboxRequest) -> SandboxRequest {
-        let required = self
-            .required
-            .iter()
-            .filter(|g| other.required.contains(g))
-            .copied()
-            .collect();
-        let optional = self
-            .optional
-            .iter()
-            .chain(other.optional.iter())
-            .filter(|g| !self.required.contains(g) && !other.required.contains(g))
-            .copied()
-            .collect::<Vec<_>>();
-        SandboxRequest {
-            required,
-            optional,
-            read_paths: self.read_paths.clone(),
-            write_paths: self.write_paths.clone(),
-            denied_paths: self.denied_paths.clone(),
-            scope: self.scope,
-            resources: self.resources.clone(),
-        }
+    // Phase 89 Finding C: `intersect()` removed. The previous method dropped
+    // disjoint required guarantees and copied path/resource authority from
+    // only one operand, so it was unsafe policy algebra masquerading as
+    // tightening. No production caller required composition; request
+    // construction stays explicit at call sites. Do not reintroduce generic
+    // composition without a fallible monotonic `tighten_with` proving
+    // union-of-required, deny-growth, allow-shrinkage, and typed errors on
+    // ambiguous scopes/paths.
+}
+
+/// Phase 89 Finding B/E: internal mechanism plan (not portable policy).
+///
+/// Maps an explicit guarantee request to the concrete mechanisms that
+/// `PreparedSandbox::enter()` must install exactly once. This type carries
+/// Linux mechanism detail deliberately: it is an internal install plan, not
+/// part of the portable `Guarantee`/`SandboxRequest` policy surface. Other
+/// backends ignore the seccomp fields (their `apply` owns the full policy).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct MechanismPlan {
+    /// Filesystem/ambient-resource confinement requested (Landlock ruleset).
+    pub filesystem_requested: bool,
+    /// `NetworkDenied` requested (Linux seccomp network-denial rules).
+    pub network_seccomp_requested: bool,
+    /// `ChildCreationDenied` requested (Linux seccomp process-creation rules).
+    pub child_seccomp_requested: bool,
+    /// `ExecDenied` requested (Linux seccomp exec-denial rules).
+    pub exec_seccomp_requested: bool,
+}
+
+impl MechanismPlan {
+    pub fn seccomp_requested(&self) -> bool {
+        self.network_seccomp_requested
+            || self.child_seccomp_requested
+            || self.exec_seccomp_requested
+    }
+}
+
+/// Pure mechanism selection from an explicit guarantee request (no side
+/// effects; testable on every platform).
+///
+/// - `NetworkDenied` (required or optional) selects the network category;
+/// - `ChildCreationDenied` selects the child-creation category;
+/// - `ExecDenied` selects the exec category;
+/// - `NetworkTcpRestricted` / `NetworkUdpRestricted` alone select nothing:
+///   the installed filter cannot distinguish TCP from UDP without broader
+///   denial, so those narrower guarantees report unsupported on Linux rather
+///   than silently overrestricting a generic caller;
+/// - no syscall guarantee => no seccomp filter installed.
+pub fn mechanism_plan_for_request(request: &SandboxRequest) -> MechanismPlan {
+    let wants = |g: Guarantee| request.required.contains(&g) || request.optional.contains(&g);
+    let filesystem_requested = wants(Guarantee::AmbientFilesystemDenied)
+        || wants(Guarantee::FilesystemReadAllowlist)
+        || wants(Guarantee::FilesystemWriteAllowlist)
+        || wants(Guarantee::InheritedResourcesOnly)
+        || wants(Guarantee::InheritedIpcUsable)
+        || wants(Guarantee::DescendantsConfined);
+    MechanismPlan {
+        filesystem_requested,
+        network_seccomp_requested: wants(Guarantee::NetworkDenied),
+        child_seccomp_requested: wants(Guarantee::ChildCreationDenied),
+        exec_seccomp_requested: wants(Guarantee::ExecDenied),
     }
 }
 
@@ -1854,6 +1993,7 @@ pub struct PreparedSandbox {
     pub backend: &'static str,
     pub projection: EnforcementReport,
     request: SandboxRequest,
+    plan: MechanismPlan,
 }
 
 impl PreparedSandbox {
@@ -1865,15 +2005,19 @@ impl PreparedSandbox {
         &self.request
     }
 
-    /// Irreversible entry: applies the backend mechanism for the requested
-    /// paths, re-checks the final report, and returns the owned witness.
-    /// Required-guarantee failures abort before untrusted work.
+    /// Internal mechanism plan selected at preparation (no side effects).
+    /// Tested deterministically without entering a real sandbox.
+    pub fn mechanism_plan(&self) -> MechanismPlan {
+        self.plan
+    }
+
+    /// Irreversible entry: applies each selected mechanism exactly once,
+    /// builds the final report from installation receipts, and returns the
+    /// owned witness. Required-guarantee failures abort before untrusted
+    /// work. This is the single irreversible transition (Phase 89 Finding A).
     pub fn enter(self) -> Result<EnteredSandbox, SandboxError> {
         // Re-verify the projection fail-closed before touching the backend.
         self.projection.require_all(&self.request.required)?;
-        // Legacy adapter path: the calibrated backend `apply` for this
-        // platform. (Long-lived jails retain the returned witness through
-        // the serve loop; see sandbox_entry.rs.)
         let read_refs: Vec<&Path> = self
             .request
             .read_paths
@@ -1895,13 +2039,148 @@ impl PreparedSandbox {
         // Level is advisory here; the guarantee report is authoritative.
         // Use Basic to avoid re-triggering the legacy Strict gate inside
         // apply (the required-guarantee check above already enforced it).
+        // Filesystem/ambient mechanism: exactly one backend apply.
         let sandbox = ProcessSandbox::new(SandboxLevel::Basic);
         sandbox
             .backend
             .apply(&read_refs, &write_refs, &denied_refs)?;
-        // Post-entry: required guarantees must still hold (a backend that
-        // reports partial after entry fails closed here).
-        let final_report = project_report_for_current_backend(&self.request, self.request.scope);
+        // Syscall-filter mechanism (Linux only): install exactly the
+        // requested categories, once. No requested category => no install.
+        #[cfg(target_os = "linux")]
+        let seccomp_receipt = {
+            let categories = linux::seccomp::SeccompCategories {
+                network: self.plan.network_seccomp_requested,
+                child: self.plan.child_seccomp_requested,
+                exec: self.plan.exec_seccomp_requested,
+            };
+            if categories.is_empty() {
+                None
+            } else {
+                if !linux::seccomp::projected_for_categories(categories) {
+                    return Err(SandboxError::Unsupported(
+                        "seccomp category filter does not compile for this host".into(),
+                    ));
+                }
+                Some(linux::seccomp::apply_selected_filter(categories)?)
+            }
+        };
+        // Post-entry: the final report reflects what actually installed
+        // (receipt-backed), never a compile probe alone. A required
+        // guarantee whose install failed or is unverified errors here and
+        // never appears as Enforced in a live witness.
+        let final_report = finalize_report_from_receipt(
+            &self.request,
+            self.request.scope,
+            #[cfg(target_os = "linux")]
+            seccomp_receipt,
+        );
+        final_report.require_all(&self.request.required)?;
+        Ok(EnteredSandbox {
+            report: final_report,
+            _sandbox: sandbox,
+        })
+    }
+
+    /// Deterministic test-only entry with a caller-supplied backend and a
+    /// counting seccomp stub. Proves one prepared request produces exactly
+    /// one filesystem backend entry plus at most one seccomp install,
+    /// without touching irreversible host mechanisms.
+    #[cfg(test)]
+    pub(crate) fn enter_with_test_backend(
+        self,
+        backend: Box<dyn SandboxBackend>,
+        seccomp_calls: &std::sync::Mutex<Vec<(bool, bool, bool)>>,
+        seccomp_fail: bool,
+    ) -> Result<EnteredSandbox, SandboxError> {
+        // Injected test path: the caller supplies a fake backend, so host
+        // projection must not gate mechanics. The fake backend `apply` above
+        // is the filesystem entry (exactly once); the ledger below is the
+        // seccomp selection (at most once). The returned witness carries a
+        // fake receipt-backed report where every requested guarantee is
+        // Enforced by the test fake — this evidences single-entry mechanics
+        // only, never host enforcement.
+        let read_refs: Vec<&Path> = self
+            .request
+            .read_paths
+            .iter()
+            .map(|p| p.as_path())
+            .collect();
+        let write_refs: Vec<&Path> = self
+            .request
+            .write_paths
+            .iter()
+            .map(|p| p.as_path())
+            .collect();
+        let denied_refs: Vec<&Path> = self
+            .request
+            .denied_paths
+            .iter()
+            .map(|p| p.as_path())
+            .collect();
+        let sandbox = ProcessSandbox::with_backend(backend);
+        sandbox
+            .backend
+            .apply(&read_refs, &write_refs, &denied_refs)?;
+        // Record the seccomp selection without installing host filters.
+        let categories = (
+            self.plan.network_seccomp_requested,
+            self.plan.child_seccomp_requested,
+            self.plan.exec_seccomp_requested,
+        );
+        if categories != (false, false, false) {
+            seccomp_calls
+                .lock()
+                .expect("seccomp call ledger")
+                .push(categories);
+            if seccomp_fail {
+                return Err(SandboxError::EntryFailed(
+                    "injected seccomp install failure (test)".into(),
+                ));
+            }
+        }
+        // Fake receipt-backed report: requested => Enforced by the test
+        // fake; unrequested => NotRequested. A required guarantee is never
+        // silently dropped (union preserved).
+        let all = [
+            Guarantee::AmbientFilesystemDenied,
+            Guarantee::FilesystemReadAllowlist,
+            Guarantee::FilesystemWriteAllowlist,
+            Guarantee::ExplicitDenyPath,
+            Guarantee::InheritedResourcesOnly,
+            Guarantee::NetworkDenied,
+            Guarantee::NetworkTcpRestricted,
+            Guarantee::NetworkUdpRestricted,
+            Guarantee::InheritedIpcUsable,
+            Guarantee::ChildCreationDenied,
+            Guarantee::ExecDenied,
+            Guarantee::DescendantsConfined,
+            Guarantee::ProcessMemoryBound,
+            Guarantee::JobMemoryBound,
+            Guarantee::TerminatesWithOwner,
+        ];
+        let decisions = all
+            .into_iter()
+            .map(|g| {
+                let requested =
+                    self.request.required.contains(&g) || self.request.optional.contains(&g);
+                GuaranteeDecision {
+                    guarantee: g,
+                    status: if requested {
+                        GuaranteeStatus::Enforced
+                    } else {
+                        GuaranteeStatus::NotRequested
+                    },
+                    mechanism: "test-counting-backend",
+                    detail: "injected test receipt (mechanics only)".to_string(),
+                }
+            })
+            .collect();
+        let final_report = EnforcementReport {
+            backend: "test-counting",
+            abi: "test".to_string(),
+            scope: self.request.scope,
+            decisions,
+        };
         final_report.require_all(&self.request.required)?;
         Ok(EnteredSandbox {
             report: final_report,
@@ -1967,15 +2246,106 @@ impl EnteredSandbox {
 pub fn prepare_sandbox(request: SandboxRequest) -> Result<PreparedSandbox, SandboxError> {
     request.validate()?;
     let backend = current_backend_name();
+    let plan = mechanism_plan_for_request(&request);
     let projection = project_report_for_current_backend(&request, request.scope);
     // Backend selection produces a typed unsupported/degraded reason via
     // the projection + require_all at enter; preparation itself never
     // silently lowers a required guarantee (it only projects honestly).
+    // The selected mechanism plan travels into `enter` so installation is
+    // request-driven and single-shot.
     Ok(PreparedSandbox {
         backend,
         projection,
         request,
+        plan,
     })
+}
+
+/// Build the post-entry report from installation receipts (Phase 89
+/// Finding E). `seccomp_receipt` is `Some` only on Linux when at least one
+/// seccomp category was requested; `None` means no seccomp install was
+/// attempted (no category requested) on the test/injected path. The base
+/// projection supplies mechanism identifiers and non-seccomp decisions;
+/// seccomp-related decisions are overridden to reflect what actually
+/// installed: a requested category without a successful install is
+/// `Unsupported` (fail-closed via `require_all`), never `Enforced` from a
+/// compile probe.
+fn finalize_report_from_receipt(
+    request: &SandboxRequest,
+    scope: ThreadScope,
+    #[cfg(target_os = "linux")] seccomp_receipt: Option<linux::seccomp::SeccompReceipt>,
+) -> EnforcementReport {
+    #[allow(unused_mut)]
+    let mut report = project_report_for_current_backend(request, scope);
+    #[cfg(target_os = "linux")]
+    {
+        let plan = mechanism_plan_for_request(request);
+        // Only reinterpret seccomp decisions when a seccomp install was in
+        // scope. When no category was requested the projection already
+        // marks those guarantees NotRequested; leave it untouched.
+        if plan.seccomp_requested() {
+            let receipt = seccomp_receipt.unwrap_or_default();
+            for decision in report.decisions.iter_mut() {
+                match decision.guarantee {
+                    Guarantee::NetworkDenied => {
+                        if request.required.contains(&Guarantee::NetworkDenied)
+                            || request.optional.contains(&Guarantee::NetworkDenied)
+                        {
+                            if receipt.network_installed {
+                                decision.status = GuaranteeStatus::Enforced;
+                                decision.mechanism = "seccomp-errno";
+                                decision.detail = "network-denial rules installed (socket/socketpair/connect EPERM, tsync)".to_string();
+                            } else {
+                                decision.status = GuaranteeStatus::Unsupported;
+                                decision.mechanism = "seccomp-errno";
+                                decision.detail =
+                                    "network-denial requested but no successful install receipt"
+                                        .to_string();
+                            }
+                        }
+                    }
+                    Guarantee::ChildCreationDenied => {
+                        if request.required.contains(&Guarantee::ChildCreationDenied)
+                            || request.optional.contains(&Guarantee::ChildCreationDenied)
+                        {
+                            if receipt.child_installed {
+                                decision.status = GuaranteeStatus::Enforced;
+                                decision.mechanism = "seccomp-errno";
+                                decision.detail = "child-creation-denial rules installed (fork/vfork/non-thread-clone/clone3, tsync)".to_string();
+                            } else {
+                                decision.status = GuaranteeStatus::Unsupported;
+                                decision.mechanism = "seccomp-errno";
+                                decision.detail =
+                                    "child-creation-denial requested but no successful install receipt"
+                                        .to_string();
+                            }
+                        }
+                    }
+                    Guarantee::ExecDenied => {
+                        if request.required.contains(&Guarantee::ExecDenied)
+                            || request.optional.contains(&Guarantee::ExecDenied)
+                        {
+                            if receipt.exec_installed {
+                                decision.status = GuaranteeStatus::Enforced;
+                                decision.mechanism = "seccomp-errno";
+                                decision.detail =
+                                    "exec-denial rules installed (execve/execveat EPERM, tsync)"
+                                        .to_string();
+                            } else {
+                                decision.status = GuaranteeStatus::Unsupported;
+                                decision.mechanism = "seccomp-errno";
+                                decision.detail =
+                                    "exec-denial requested but no successful install receipt"
+                                        .to_string();
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    report
 }
 
 fn current_backend_name() -> &'static str {
@@ -2107,18 +2477,18 @@ fn project_report_for_backend(
                 "domain inherited by descendants; scope per ThreadScope".to_string(),
             ),
             ("landlock", NetworkDenied)
-            | ("landlock", NetworkTcpRestricted)
-            | ("landlock", NetworkUdpRestricted)
             | ("landlock", ChildCreationDenied)
             | ("landlock", ExecDenied) => {
-                // Phase 83: supplied by the categorical seccomp layer where
-                // it compiles/installs (verified post-entry by fail-closed
-                // install in apply); otherwise honestly unsupported.
+                // Phase 89: supplied by the guarantee-selected seccomp
+                // category where it compiles; post-entry report is
+                // receipt-backed (see finalize_report_from_receipt), never
+                // enforced from this probe alone. Otherwise honestly
+                // unsupported.
                 if syscall_filter_projected() {
                     (
                         GuaranteeStatus::Enforced,
                         "seccomp-errno",
-                        "categorical deny (socket/connect, non-thread clone, exec); EPERM/ENOSYS-clone3, tsync"
+                        "guarantee-selected category (network: socket/connect; child: non-thread clone; exec: execve/at); EPERM/ENOSYS-clone3, tsync"
                             .to_string(),
                     )
                 } else {
@@ -2130,6 +2500,12 @@ fn project_report_for_backend(
                     )
                 }
             }
+            ("landlock", NetworkTcpRestricted) | ("landlock", NetworkUdpRestricted) => (
+                GuaranteeStatus::Unsupported,
+                "seccomp-errno",
+                "protocol-restricted network guarantees unsupported on Linux: the categorical filter cannot distinguish TCP from UDP without broader denial; request NetworkDenied instead"
+                    .to_string(),
+            ),
             ("landlock", ProcessMemoryBound)
             | ("landlock", JobMemoryBound)
             | ("landlock", TerminatesWithOwner) => (
@@ -2322,19 +2698,25 @@ fn project_report_for_backend(
     }
 }
 
-/// Jail guarantee policy (Phase 82 Workstream I): requirements derived
-/// from actual workload needs (inherited stdio IPC; modules/rules arrive
-/// over IPC; no new network authority; no child programs), not from the
-/// old word "Strict". Missing desired guarantees stay explicit
-/// unsupported findings (Phase 83 work); if the current backend cannot
-/// supply the minimum security boundary, required jail routing stays
-/// fail-closed until Phase 83 supplies it.
+/// Jail guarantee policy (Phase 82 Workstream I, Phase 89 Finding D):
+/// requirements derived from actual workload needs (inherited stdio IPC;
+/// modules/rules arrive over IPC; no new network authority; no child
+/// processes; no new exec), not from the old word "Strict". The
+/// no-network / no-child / no-exec boundary is now authoritative: Linux
+/// installs the corresponding guarantee-selected seccomp categories,
+/// OpenBSD satisfies them via pledge/unveil, macOS fails `Required` for
+/// exec denial (unproven `process*` retention), and Windows fails closed
+/// for access-control guarantees. Do not weaken this set to preserve a
+/// platform support label.
 pub fn jail_guarantee_request() -> SandboxRequest {
     SandboxRequest::new()
         .require(Guarantee::AmbientFilesystemDenied)
         .require(Guarantee::FilesystemReadAllowlist)
         .require(Guarantee::InheritedIpcUsable)
         .require(Guarantee::DescendantsConfined)
+        .require(Guarantee::NetworkDenied)
+        .require(Guarantee::ChildCreationDenied)
+        .require(Guarantee::ExecDenied)
         .scope(ThreadScope::CurrentThreadPlusDescendants)
         .resource(PreopenedResource::new("stdin-ipc", ResourceIntent::Ipc))
         .resource(PreopenedResource::new("stdout-ipc", ResourceIntent::Ipc))
@@ -2852,5 +3234,133 @@ mod tests {
         let profile =
             compile_sbpl_profile(&[Path::new("/tmp/a\nb")], &[], &[], SandboxLevel::Strict);
         assert!(matches!(profile, Err(SandboxError::InvalidPath(_))));
+    }
+
+    // Phase 89: single-entry + mechanism-selection + receipt-backed reporting.
+    struct CountingBackend {
+        calls: std::sync::Mutex<usize>,
+        fail: bool,
+    }
+
+    impl SandboxBackend for CountingBackend {
+        fn apply(
+            &self,
+            _read_paths: &[&Path],
+            _write_paths: &[&Path],
+            _denied_paths: &[&Path],
+        ) -> Result<(), SandboxError> {
+            *self.calls.lock().expect("ledger") += 1;
+            if self.fail {
+                return Err(SandboxError::EntryFailed("injected backend failure".into()));
+            }
+            Ok(())
+        }
+
+        fn is_supported(&self) -> bool {
+            true
+        }
+
+        fn feature_name(&self) -> &'static str {
+            "test-counting"
+        }
+
+        fn level(&self) -> SandboxLevel {
+            SandboxLevel::Basic
+        }
+
+        fn capabilities(&self) -> SandboxCapabilities {
+            SandboxCapabilities {
+                read_path_allowlist: true,
+                write_path_allowlist: true,
+                deny_paths: false,
+                process_limits: false,
+                network_restrictions: false,
+                child_process_restrictions: false,
+            }
+        }
+    }
+
+    #[test]
+    fn one_prepared_request_produces_one_backend_entry() {
+        use super::{jail_guarantee_request, mechanism_plan_for_request, prepare_sandbox};
+        let req = jail_guarantee_request();
+        let plan = mechanism_plan_for_request(&req);
+        assert!(plan.network_seccomp_requested);
+        assert!(plan.child_seccomp_requested);
+        assert!(plan.exec_seccomp_requested);
+        let prepared = prepare_sandbox(req).expect("prepare");
+        let backend = Box::new(CountingBackend {
+            calls: std::sync::Mutex::new(0),
+            fail: false,
+        });
+        let ledger = std::sync::Mutex::new(Vec::new());
+        let _witness = prepared
+            .enter_with_test_backend(backend, &ledger, false)
+            .expect("injected entry succeeds");
+        // Exactly one seccomp selection recorded (combined jail request),
+        // never one install per category and never zero.
+        let calls = ledger.lock().expect("ledger");
+        assert_eq!(
+            calls.len(),
+            1,
+            "one prepared request => one seccomp install"
+        );
+        assert_eq!(calls[0], (true, true, true));
+    }
+
+    #[test]
+    fn filesystem_only_request_installs_no_seccomp() {
+        use super::prepare_sandbox;
+        let req = super::SandboxRequest::new().require(super::Guarantee::FilesystemReadAllowlist);
+        let prepared = prepare_sandbox(req).expect("prepare");
+        assert!(!prepared.mechanism_plan().seccomp_requested());
+        let backend = Box::new(CountingBackend {
+            calls: std::sync::Mutex::new(0),
+            fail: false,
+        });
+        let ledger = std::sync::Mutex::new(Vec::new());
+        prepared
+            .enter_with_test_backend(backend, &ledger, false)
+            .expect("entry succeeds");
+        assert!(
+            ledger.lock().expect("ledger").is_empty(),
+            "no syscall guarantee => no seccomp install"
+        );
+    }
+
+    #[test]
+    fn injected_seccomp_failure_fails_closed_with_no_witness() {
+        use super::{prepare_sandbox, Guarantee};
+        let req = super::SandboxRequest::new()
+            .require(Guarantee::FilesystemReadAllowlist)
+            .require(Guarantee::NetworkDenied);
+        let prepared = prepare_sandbox(req).expect("prepare");
+        let backend = Box::new(CountingBackend {
+            calls: std::sync::Mutex::new(0),
+            fail: false,
+        });
+        let ledger = std::sync::Mutex::new(Vec::new());
+        let result = prepared.enter_with_test_backend(backend, &ledger, true);
+        assert!(result.is_err(), "injected seccomp failure must fail closed");
+        assert!(
+            matches!(result, Err(SandboxError::EntryFailed(_))),
+            "seccomp failure => EntryFailed, no EnteredSandbox"
+        );
+        assert_eq!(ledger.lock().expect("ledger").len(), 1);
+    }
+
+    #[test]
+    fn injected_backend_failure_fails_closed() {
+        use super::{prepare_sandbox, Guarantee};
+        let req = super::SandboxRequest::new().require(Guarantee::FilesystemReadAllowlist);
+        let prepared = prepare_sandbox(req).expect("prepare");
+        let backend = Box::new(CountingBackend {
+            calls: std::sync::Mutex::new(0),
+            fail: true,
+        });
+        let ledger = std::sync::Mutex::new(Vec::new());
+        assert!(prepared
+            .enter_with_test_backend(backend, &ledger, false)
+            .is_err());
     }
 }

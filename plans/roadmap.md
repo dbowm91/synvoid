@@ -746,9 +746,9 @@ Campaign acceptance is governed by the detailed roadmap. A successful Phase
 84 GO means only that a separate extraction/publication campaign is justified;
 it does not itself create a class-3 support promise.
 
-## Post-Phase-88 Corrective: Process Sandbox Entry and Policy Semantics — Phase 89 Planned
+## Post-Phase-88 Corrective: Process Sandbox Entry and Policy Semantics — Phase 89 Closed
 
-Status: **planned** 2026-09-26.
+Status: **closed** 2026-09-26 (DEFER extraction disposition unchanged; addendum `architecture/process_sandbox_corrective_closeout.md` §11).
 
 Plan:
 `plans/phase_89_process_sandbox_entry_and_policy_semantics_corrective.md`.
@@ -800,7 +800,8 @@ Constraints:
   bounded restart behavior, and retained `EnteredSandbox` ownership remain
   intact.
 
-Phase 89 is the next executable process-sandbox plan.
+Phase 89 is closed. No process-sandbox plan remains executable; extraction
+stays DEFER under the Phase 84 triggers.
 
 
 
@@ -837,37 +838,38 @@ Current-head review found two actionable residuals plus one stale consumer:
 Execution order:
 
 1. **Phase 90 — ICMP Operator Enforcement Truth and Admin Contract
-   Reconciliation**
-   - make enable/disable/config replacement share one verified lifecycle;
-   - make the admin status endpoint expose Applied/Absent/Drifted/Unknown and
-     the actual selected backend;
-   - remove fabricated packet-stat measurements;
-   - expose backend probe/availability reasons;
-   - reconcile OpenAPI/audit semantics;
-   - rewrite the ICMP admin UI against filtering/enforcement semantics and the
-     actual server response shape.
+    Reconciliation — closed 2026-09-26**
+    - enable/disable/config replacement share one verified lifecycle;
+    - admin status exposes Applied/Absent/Drifted/Unknown and the actual
+      selected backend;
+    - fabricated packet-stat measurements removed (stats null);
+    - backend probe/availability reasons exposed;
+    - OpenAPI/audit semantics reconciled;
+    - ICMP admin UI rewritten against filtering/enforcement semantics and the
+      actual server response shape.
 
-   Plan:
-   `plans/phase_90_icmp_operator_enforcement_truth_and_admin_contract.md`.
+    Plan:
+    `plans/phase_90_icmp_operator_enforcement_truth_and_admin_contract.md`.
 
-2. **Phase 91 — ICMP Privileged Native Qualification Harness Preparation**
-   - add an explicit opt-in Linux nftables qualification harness;
-   - isolate firewall/network changes inside disposable network namespaces with
-     a veth IPv4/IPv6 topology;
-   - prepare packet-level cases for type/code, exemptions, global rate limit,
-     update/readback/drift/disable/rollback;
-   - add deterministic cleanup and a bounded machine-readable evidence
-     artifact;
-   - keep routine CI non-privileged via preflight/dry-run/unit tests.
+2. **Phase 91 — ICMP Privileged Native Qualification Harness Preparation
+    — closed 2026-09-26 (harness/preparation; no privileged host available)**
+    - explicit opt-in Linux nftables qualification harness exists;
+    - firewall/network changes isolated inside disposable network namespaces
+      with a veth IPv4/IPv6 topology (`setns`-isolated enforcement);
+    - packet-level cases prepared for type/code, exemptions, global rate
+      limit, update/readback/drift/disable/rollback;
+    - deterministic cleanup and bounded machine-readable evidence artifact;
+    - routine CI non-privileged via preflight/dry-run/unit tests.
 
-   Plan:
-   `plans/phase_91_icmp_privileged_native_qualification_harness.md`.
+    Plan:
+    `plans/phase_91_icmp_privileged_native_qualification_harness.md`.
 
-Phase 91 is a harness/preparation phase. Its closeout must not claim native
-kernel qualification merely because the harness exists or a privileged test
-was skipped. No Phase 92 qualification/extraction re-evaluation is registered
-until a suitable privileged host is actually available and the Phase 88
-re-evaluation trigger can be exercised.
+Phase 91 closed as a harness/preparation phase. Its closeout does not claim
+native kernel qualification: no privileged host was available, so Linux
+nftables remains unqualified (not passed). No Phase 92
+qualification/extraction re-evaluation is registered until a suitable
+privileged host is actually available and the Phase 88 re-evaluation trigger
+can be exercised with real evidence.
 
 Constraints:
 
@@ -880,8 +882,12 @@ Constraints:
 - privileged execution requires explicit opt-in and deterministic cleanup;
 - routine CI remains non-privileged and proportionate.
 
-Phase 90 is the next executable ICMP plan. Phase 89 remains independently
-executable for the process-sandbox corrective.
+Phases 89–91 are closed. No plan in the process-sandbox or ICMP
+post-RETAIN lines remains executable: extraction stays DEFER (sandbox) and
+RETAIN (ICMP) under their recorded re-evaluation triggers. The only planned
+follow-up is the independent cross-repo Eggbench handoff
+(`plans/eggbench_security_qualification_asset_contract.md`), which was never
+blocked on Phases 89–91.
 
 
 ## Independent Cross-Repo Handoff: Eggbench Security Qualification Assets — Planned

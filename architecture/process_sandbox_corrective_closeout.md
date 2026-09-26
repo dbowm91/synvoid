@@ -231,3 +231,79 @@ now state what was proven by THIS campaign; a supersession note points
 readers away from treating old Linux/Windows backend evidence as current
 terminal proof. No old "Strict == read allowlist" claim remains as the
 authoritative security model.
+
+## 11. Phase 89 post-closeout corrective addendum (entry + policy semantics)
+
+Status: closed (post-closeout corrective; Phases 81–84 remain historically
+closed; extraction disposition remains **DEFER** — no standalone crate or
+repository created, no re-evaluation trigger fired).
+
+Trigger: post-closeout review found four bounded semantic defects that did
+not invalidate the corrective architecture or its DEFER verdict:
+
+1. the jail performed the legacy Strict entry to compute `legacy_ok`, then
+   entered the guarantee-driven sandbox a second time;
+2. Linux `LandlockSandbox::apply()` unconditionally installed the
+   jail-specific seccomp filter, so generic/legacy Basic semantics were
+   stronger than documented;
+3. `SandboxRequest::intersect()` dropped disjoint required guarantees and
+   copied path/resource authority from only one operand;
+4. the jail request omitted the no-network/no-child/no-exec guarantees that
+   Phase 83 has a Linux mechanism to enforce.
+
+Corrections (all landed, all regression-tested):
+
+- Jail startup performs exactly one irreversible transition
+  (`prepare_sandbox(jail_guarantee_request())?.enter()`, witness retained
+  through the serve loop). The production
+  `ProcessSandbox::with_paths(Strict, ..)` probe was deleted; a unit source
+  guard (`jail_entry_has_single_irreversible_transition`) pins one
+  `prepared.enter()` and no production `with_paths`/`Strict` reference.
+- Landlock filesystem confinement is decoupled from syscall-filter
+  confinement. `LandlockSandbox::apply()` enforces filesystem only (source
+  guard `landlock_apply_does_not_install_jail_seccomp`); an internal
+  `MechanismPlan` maps explicit guarantees to seccomp categories
+  (`NetworkDenied` → network rules, `ChildCreationDenied` → process-creation
+  rules, `ExecDenied` → exec rules; `NetworkTcpRestricted`/`UdpRestricted`
+  alone select nothing and report unsupported on Linux rather than
+  overrestricting). Empty selection installs no filter. Unit + conformance
+  tests pin per-category selection, empty-selection no-install, and combined
+  jail selection.
+- `SandboxRequest::intersect()` was removed (no production caller existed).
+  The conformance test that blessed dropping requirements was replaced with
+  explicit-union composition plus mechanism-plan, jail-boundary, and
+  prepared-plan tests. Deterministic fake-backend tests
+  (`one_prepared_request_produces_one_backend_entry`,
+  `filesystem_only_request_installs_no_seccomp`,
+  `injected_seccomp_failure_fails_closed_with_no_witness`,
+  `injected_backend_failure_fails_closed`) prove one prepared request yields
+  one backend entry plus at most one seccomp install, with fail-closed
+  behavior on either failure — without stacking irreversible host sandboxes.
+- The jail request now authoritatively requires `NetworkDenied`,
+  `ChildCreationDenied`, and `ExecDenied` (in addition to ambient-FS deny,
+  read allowlist, inherited IPC, descendants confined). Linux installs the
+  corresponding seccomp clauses; OpenBSD satisfies via pledge/unveil; macOS
+  fails `Required` for exec denial (unproven); Windows fails closed for
+  access-control guarantees. No support label was preserved by weakening a
+  requirement.
+- Preparation stays side-effect free; the selected `MechanismPlan` travels
+  into `enter`; the final `EnforcementReport` is built by
+  `finalize_report_from_receipt` from installation receipts (a requested
+  category without a successful install is `Unsupported`, never `Enforced`
+  from a compile probe). Required-install failure returns an error with no
+  `EnteredSandbox`.
+
+Verification: `cargo test -p synvoid-platform --profile ci` green
+(incl. conformance 18/18, no-downgrade 12/12, new unit mechanism tests),
+`cargo test -p synvoid-jail-runtime --profile ci` green (incl. updated jail
+boundary + single-entry guard), `cargo test --test jail_isolation_guard
+--profile ci` green, Linux
+`--target x86_64-unknown-linux-gnu` check clean, `cargo xtask test guards`
+green. Native Linux/Windows/BSD enforcement lanes remain qualification-host
+gated (unchanged tiering); cross-compilation is not enforcement evidence.
+
+Supersessions: the §1 call-site inventory jail row (legacy Strict pin +
+desired-but-unqualified network/child/exec), §4 jail minimum boundary
+sentence, and any reading of §2/§5 that implies double entry or
+Landlock-always-seccomp are superseded by this addendum. The DEFER verdict,
+triggers (§8), residuals (§9), and campaign constraints are unchanged.

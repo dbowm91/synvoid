@@ -1,6 +1,6 @@
 # Phase 90 Plan: ICMP Operator Enforcement Truth and Admin Contract Reconciliation
 
-Status: planned (2026-09-26).
+Status: closed (2026-09-26).
 
 Registered in: `plans/roadmap.md` and
 `plans/icmp_post_retain_operator_truth_and_native_qualification_roadmap.md`.
@@ -338,3 +338,37 @@ Reject implementation that:
 - treats HTTP 200 from enable/disable as proof of enforcement without
   re-reading authoritative status;
 - expands into publication/extraction work.
+
+## Closure record (2026-09-26)
+
+- Lifecycle: `drive_enable`/`drive_disable` added beside `drive_update`
+  over one `DriverState` (explicit `desired_enabled`); manager
+  enable/disable/config share the state machine; `EnforcementReport` carries
+  `desired_enabled`; fake-backend tests cover enable advance, disable
+  Absent, failed-enable no-receipt (install/verify/compile stages), failed
+  disable never-Absent, and shared generation.
+- Status: `GET /icmp/status` consumes `report()` + bounded read-only
+  `verify_live()` under a short write lock (released before serialization);
+  exposes configured/desired/enforcement/selected-backend/generation/hex
+  fingerprint/receipt/verify-error; compat `enabled`/`status`/`backend`
+  documented as desired/verified aliases; stats always `null`.
+- Backends: `probe_backend_inventory()` exposes compiled/usable/reason per
+  relevant backend; `current_backend` from the report; `available` kept as a
+  compat alias.
+- UI: `admin-ui/src/pages/icmp.rs` rewritten around filtering (typed
+  status/backends structs, enforcement badge, generation/receipt/drift
+  display, backend usability table, re-fetch after every mutation,
+  object-shaped backends parsing).
+- Mutations: `Applied` only on verified success with backend/generation in
+  audit resulting-state and message; drift/unknown/verification failures are
+  `Failed` with diagnostics; config persistence gated on driver success
+  (rollback discipline preserved).
+- Contract: `utoipa` schemas updated (`IcmpApplyReceipt` registered);
+  serde DTO tests pin applied/absent/drifted/unknown/selected-backend/
+  null-stats/object-backends shapes; source guards pin report authority and
+  UI domain; crate inventory tests pin probe truth.
+- Verification: `cargo test -p synvoid-icmp-filter --profile ci` green
+  (48 lib + 12 transactional + 5 truthfulness + 12 policy + 3 inventory),
+  admin contract/composition/smoke with `--features icmp-filter` green,
+  `cargo check -p admin-ui` green, `cargo xtask test guards` green.
+- RETAIN extraction disposition unchanged.

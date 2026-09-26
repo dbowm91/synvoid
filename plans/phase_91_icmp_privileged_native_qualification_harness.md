@@ -1,6 +1,6 @@
 # Phase 91 Plan: ICMP Privileged Native Qualification Harness Preparation
 
-Status: planned (2026-09-26).
+Status: closed (2026-09-26) as harness/preparation (no privileged run available; Linux nftables remains unqualified).
 
 Registered in: `plans/roadmap.md` and
 `plans/icmp_post_retain_operator_truth_and_native_qualification_roadmap.md`.
@@ -298,3 +298,35 @@ Reject implementation that:
 - flushes broad nftables state;
 - mixes eBPF/PF/WFP qualification into this phase;
 - changes publication/extraction status.
+
+## Closure record (2026-09-26, harness/preparation)
+
+- Harness exists: ignored native matrix
+  (`crates/synvoid-icmp-filter/tests/nft_native_qualification.rs`) with
+  disposable two-namespace/veth IPv4+IPv6 topology, `setns`-isolated crate
+  enforcement (host/default namespace never touched after entry; pinned
+  host fd for return), isolation proof before/after `setns`, executable
+  cases for install/readback, type/code, exemptions, global rate limit,
+  atomic update, drift, disable, and rollback, ledgered idempotent cleanup
+  (explicit finally + `Drop` + rerunnable helper), and a bounded
+  machine-readable evidence artifact (SHA, kernel, nft version, arch,
+  euid/cap/preflight, ids, cases, fingerprints/generations, cleanup,
+  disposition; no secrets).
+- Operator front-end: `cargo xtask icmp-qualify --check` (read-only
+  preflight), `--dry-run` (print-only, zero mutation), `--native`
+  (dual-gated privileged dispatch with timeout + evidence disposition),
+  `--cleanup` (prefix-scoped idempotent), `--json`/`--timeout-secs`/`--out`.
+- Routine CI without privilege: 11 non-ignored harness unit tests
+  (opt-in/platform/privilege/tool refusals, name validation, argv
+  construction, ledger ordering/idempotence, evidence round-trip, dry-run
+  zero mutation, run-id hygiene) + 4 xtask unit tests; Linux
+  `--target x86_64-unknown-linux-gnu --tests` check clean for the native
+  module.
+- Privileged run: NOT available at closure (macOS host). Recorded as
+  unqualified, not passed. Phase 88 RETAIN remains in force; no Phase 92
+  registered.
+- Verification: `cargo test -p synvoid-icmp-filter --profile ci` green
+  (incl. 11 harness support + crate suites), `cargo test -p xtask`
+  green (incl. 4 harness front-end), `cargo xtask icmp-qualify --check`
+  refuses truthfully on this host, `--dry-run` prints with zero mutation,
+  `--native` without opt-in refuses, `cargo xtask test guards` green.

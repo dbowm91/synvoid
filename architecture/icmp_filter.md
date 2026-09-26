@@ -88,11 +88,12 @@ Runtime facts live in `platform::BackendProbe { compiled, mechanism_present, pri
 | `select_backend_for_host(requested)` | Observable selection with reason |
 | `check_policy_compatibility(backend, policy)` | Exact-fit check, typed mismatches |
 | `probe_nftables()` / `probe_ebpf_load()` / `probe_ebpf_attach()` | Operation-specific probes |
-| `enable()` / `disable()` | Lifecycle (idempotence hardens in Phase 87) |
-| `is_enabled()` / `is_enforcing()` | Local state (verified state arrives in Phase 87) |
-| `status() -> FilterStatus` | Desired-state status (verified state arrives in Phase 87) |
+| `enable() -> Result<ApplyReceipt>` / `disable() -> Result<()>` | Verified lifecycle (Phase 90: `drive_enable`/`drive_disable` share `DriverState` with replacement; enable succeeds only on install+verify, disable only on verified Absent; failures carry Unknown/Drifted dispositions, never claim Applied/Absent) |
+| `is_enabled()` / `is_enforcing()` | Backend-local flags (operator truth comes from `report()`, never these) |
+| `status() -> FilterStatus` | Compatibility desired-state view (operator truth is `report()`) |
 | `is_available() -> bool` | Any usable backend on this host |
-| `available_backends()` | Usable backends on this host |
+| `available_backends()` | Usable backends on this host (compat; prefer `probe_backend_inventory()`) |
+| `probe_backend_inventory()` | Phase 90: per-backend `{ backend, compiled, usable, reason }` even when unusable |
 | `has_privilege_for(operation)` | Probe-backed privilege predicate |
 
 ---
@@ -114,10 +115,16 @@ Runtime facts live in `platform::BackendProbe { compiled, mechanism_present, pri
   and advances `ApplyReceipt { backend, fingerprint, generation,
   applied_at_secs, ownership_tag }` only on `Verified`. `Drifted`,
   `Unknown`, and unexpected `Absent` are errors, never hidden success.
-- `EnforcementReport { backend, desired_fingerprint, desired_generation,
-  last_receipt, live: Applied/Absent/Drifted/Unknown, last_verify_error }`
-  separates desired/applied/verified; `verify_live()` re-probes without
-  changing generations. `FilterStatus` remains a compat desired-state view.
+- `EnforcementReport { backend, desired_enabled, desired_fingerprint,
+  desired_generation, last_receipt, live: Applied/Absent/Drifted/Unknown,
+  last_verify_error }` separates desired/applied/verified; `verify_live()`
+  re-probes without changing generations. `FilterStatus` remains a compat
+  desired-state view. Phase 90: enable/disable/config replacement share one
+  `DriverState` (desired power state explicit); the admin status endpoint
+  consumes `report()` + bounded read-only `verify_live()` and exposes
+  selected backend, hex fingerprints (no raw `u64`), receipts, and
+  verification detail; packet stats are `null` (no backend supplies
+  counters); the backend inventory exposes probe truth per backend.
 - Ownership: nft marker chain `gen_<fp>` in the owned table (single-batch
   flush+create); PF table-scoped anchors (single-load replace, legacy
   sweep); WFP stable provider/sublayer GUIDs per table in one transaction;
@@ -136,9 +143,65 @@ Runtime facts live in `platform::BackendProbe { compiled, mechanism_present, pri
   with the session (no sweep needed); winfw COM rules persist (tracked +
   legacy sweep on disable); eBPF attachments may linger (documented).
 
-## 9. Phase 88 handoff (not yet built)
+## 9. Phase 88 handoff (closed RETAIN) + Phase 90 operator truth (closed)
 
-- Native privileged qualification per tier table above is Phase 88
-  evidence; tiers must be lowered wherever proof is absent.
-- The admin status endpoint still returns the compat desired-state view;
-  `report()`/`verify_live()` are available for operator surfacing.
+- Native privileged qualification per tier table above was Phase 88
+  evidence (closed RETAIN in
+  `architecture/icmp_policy_enforcement_extraction_readiness.md`); tiers
+  were lowered wherever proof was absent.
+- Phase 90 closed the operator-truth residual: the admin status endpoint now
+  serves verified enforcement truth (`report()` + `verify_live()`), the
+  backend inventory serves probe truth, mutations return `Applied` only on
+  verified lifecycle success, and the admin UI models filtering (not ping
+  health). Compat `enabled`/`status`/`backend`/`available` fields remain as
+  documented aliases. See `plans/phase_90_icmp_operator_enforcement_truth_and_admin_contract.md`
+  and the Phase 90 closeout note in
+  `architecture/icmp_policy_enforcement_extraction_readiness.md`.
+
+## 10. Privileged native qualification harness (Phase 91, preparation only)
+
+The harness prepares — but does not itself constitute — the privileged
+evidence the Phase 88 re-evaluation trigger requires. Its existence changes
+no tier, no extraction verdict, and no support claim.
+
+- **Shape**: ignored specialist integration target
+  (`crates/synvoid-icmp-filter/tests/nft_native_qualification.rs`, native
+  matrix + rerunnable cleanup helper) driven by the operator front-end
+  `cargo xtask icmp-qualify`. Ordinary `cargo test` never invokes privileged
+  operations; pure support logic (naming, argv construction, cleanup ledger,
+  evidence serde, preflight, dry-run plan) has non-ignored unit tests that
+  run everywhere without privilege or mutation.
+- **Prerequisites**: disposable or controlled Linux host, root or
+  `CAP_NET_ADMIN`, `ip` + `nft` + `ping` present, this repository checked out
+  at a known SHA. Prefer a disposable VM even though namespaces isolate
+  firewall state.
+- **Warning**: privileged mode manipulates network-namespace and nftables
+  state. It never touches the host/default namespace (the harness process
+  `setns` into the disposable target before any crate `nft` invocation and
+  returns to the pinned host namespace for cleanup), uses
+  collision-resistant `synvoid-q*` identifiers, and cleans up on success and
+  failure. A second explicit opt-in is required beyond privilege.
+- **Commands**:
+  - `cargo xtask icmp-qualify --check` — read-only preflight (safe
+    everywhere; non-zero exit with named gates when not qualified).
+  - `cargo xtask icmp-qualify --dry-run` — print-only plan: topology,
+    exact setup commands, case list, cleanup (zero mutation by
+    construction).
+  - `SYNVOID_ICMP_QUALIFY_NATIVE=1 cargo xtask icmp-qualify --native
+    [--timeout-secs N] [--out PATH] [--json]` — privileged matrix
+    (install/readback, type/code, exemptions, global rate limit,
+    update, drift, disable, rollback) with a bounded evidence artifact.
+  - `cargo xtask icmp-qualify --cleanup` — rerunnable idempotent removal
+    of leftover harness namespaces after interruption.
+- **Artifact**: JSON with git SHA, timestamp, kernel release, nft version,
+  architecture, euid/capability/preflight summary, namespace/run ids,
+  per-case pass/fail, backend, fingerprints/generations, cleanup result,
+  and overall disposition (default
+  `target/icmp-qualify-<run-id>.json`, override with `--out` /
+  `SYNVOID_ICMP_QUALIFY_OUT`). No secrets or environment dumps.
+- **No leftovers**: after a run, `ip netns list | grep synvoid-q` must be
+  empty; re-run `--cleanup` if not.
+- **Evidence feeds the trigger**: attach the artifact to a future focused
+  qualification/re-evaluation plan. A skipped or refused run is "not
+  qualified", never proof. No Phase 92 is registered until a suitable host
+  produces real evidence.

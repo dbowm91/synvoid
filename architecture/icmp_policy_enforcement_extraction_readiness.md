@@ -133,10 +133,44 @@ part of the RETAIN rationale.
 
 ## 7. Residual blockers / future work (not registered plans)
 
-- Privileged native qualification for all lanes (needs hosts).
+- Privileged native qualification for all lanes (needs hosts; Phase 91
+  prepares the harness without claiming proof).
 - PF exact-semantic readback (currently cardinality) and eBPF map-content
   verification (currently attachment liveness).
-- Admin status endpoint still serves the compat desired-state view;
-  operator surfacing of `report()`/`verify_live()`.
 - `cargo publish --dry-run` never executed (no promotion intent);
   `cargo publish` remains manual per `docs/releasing.md` in all cases.
+
+## 8. Post-RETAIN operator-truth note (Phase 90, closed)
+
+
+Phase 90 closed the third residual above without touching the RETAIN
+verdict: enable/disable/config replacement now share one verified
+lifecycle (`drive_enable`/`drive_disable`/`drive_update` over one
+`DriverState` with explicit desired power state); `GET /icmp/status`
+serves `EnforcementReport` truth plus bounded read-only `verify_live()`
+(selected backend, Applied/Absent/Drifted/Unknown, hex fingerprints,
+receipts, verification detail; stats `null`, never fabricated zeros);
+`/icmp/backends` serves probe truth (`probe_backend_inventory()` with
+compiled/usable/reason per backend, selected backend from the report);
+mutations return `Applied` only on verified success with backend and
+enforcement detail in audit/result; the admin UI models filtering (typed
+status/backends structs, re-fetch after mutation, object-shaped backends
+response). Compat `enabled`/`status`/`backend`/`available` fields remain as
+documented aliases. No extraction/publication status changed. Plan:
+`plans/phase_90_icmp_operator_enforcement_truth_and_admin_contract.md`.
+
+## 9. Post-RETAIN harness note (Phase 91, preparation only)
+
+Phase 91 built the safe opt-in Linux nftables qualification harness the
+Phase 88 trigger needs (ignored native matrix with disposable
+network-namespace/veth topology, `setns`-isolated crate enforcement,
+packet-level cases for install/type-code/exemption/rate-limit/update/
+drift/disable/rollback, ledgered idempotent cleanup, bounded evidence
+artifact; non-privileged unit/preflight/dry-run coverage in routine CI;
+operator front-end `cargo xtask icmp-qualify`). Harness, safety gates,
+fixtures, and docs are implemented and tested; no privileged run was
+available at closure (this host is macOS), so Linux nftables remains at
+its current evidence tier — unqualified, not passed. RETAIN remains in
+force. No Phase 92 qualification/extraction re-evaluation is registered
+until a suitable privileged host produces real evidence. Plan:
+`plans/phase_91_icmp_privileged_native_qualification_harness.md`.

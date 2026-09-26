@@ -1,6 +1,6 @@
 # Phase 89 Plan: Process Sandbox Entry and Policy Semantics Corrective
 
-Status: planned (2026-09-26).
+Status: closed (2026-09-26).
 
 Registered in: `plans/roadmap.md`.
 
@@ -396,14 +396,24 @@ Reject implementation that:
 
 This is one bounded corrective phase.
 
-If all acceptance criteria pass, mark Phase 89 closed with:
+Closure record (2026-09-26):
 
-- implementation SHA;
-- native/focused verification evidence;
-- a short addendum to
-  `architecture/process_sandbox_corrective_closeout.md` documenting the
-  superseded double-entry/seccomp-coupling/composition semantics;
-- the Phases 81–84 **DEFER** extraction decision still in force.
+- Implementation: single-entry jail startup (legacy probe deleted + source
+  guard), Landlock/seccomp decoupling with guarantee-selected categories and
+  receipt-backed reports, `intersect()` removal with explicit-composition
+  tests, authoritative jail network/child/exec requirements, docs
+  reconciliation (`docs/SANDBOXING.md`, `architecture/platform.md`,
+  `architecture/sandbox_jail_protocol.md`, sandboxing skill, this plan).
+- Verification: `cargo test -p synvoid-platform --profile ci` green
+  (conformance 18/18, no-downgrade 12/12, lib 19/19 incl. 4 new mechanism
+  tests), `cargo test -p synvoid-jail-runtime --profile ci` green (4/4 incl.
+  single-entry guard + updated jail boundary),
+  `cargo test --test jail_isolation_guard --profile ci` green, Linux
+  target check clean, `cargo xtask test guards` green.
+- Addendum: `architecture/process_sandbox_corrective_closeout.md` §11
+  documents the superseded double-entry/seccomp-coupling/composition
+  semantics.
+- Phases 81–84 **DEFER** extraction decision still in force.
 
 A new extraction plan must not be registered merely because Phase 89 closes.
 Only the re-evaluation triggers already recorded by Phase 84 can reopen that

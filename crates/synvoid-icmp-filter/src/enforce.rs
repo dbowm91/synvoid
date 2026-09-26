@@ -228,6 +228,11 @@ pub struct ApplyReceipt {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnforcementReport {
     pub backend: FilterBackend,
+    /// Desired enabled/disabled state (`None` before any lifecycle operation).
+    /// Phase 90: enable/disable/config replacement share one lifecycle, so
+    /// the desired power state is explicit rather than inferred from a
+    /// backend-local boolean.
+    pub desired_enabled: Option<bool>,
     pub desired_fingerprint: Option<u64>,
     pub desired_generation: u64,
     pub last_receipt: Option<ApplyReceipt>,
@@ -240,6 +245,11 @@ pub struct EnforcementReport {
 #[derive(Debug, Clone, Default)]
 pub struct DriverState {
     pub generation: u64,
+    /// Desired enabled/disabled state. Set by enable (`Some(true)`),
+    /// disable (`Some(false)`), and config replacement
+    /// (`Some(config.enabled)`). Read by operator status; never inferred
+    /// from kernel state.
+    pub desired_enabled: Option<bool>,
     pub desired_fingerprint: Option<u64>,
     pub last_receipt: Option<ApplyReceipt>,
     pub live: Option<EnforcementState>,

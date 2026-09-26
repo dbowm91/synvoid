@@ -1,4 +1,4 @@
-# Sandboxing Guide (Phases 46, 81–84 corrective truthfulness)
+# Sandboxing Guide (Phases 46, 81–84 corrective truthfulness; Phase 89 entry/policy semantics corrective)
 
 SynVoid uses OS-level sandboxing to limit the damage potential of a compromised process. The sandbox restricts what resources (files, network, process creation) a compromised worker/jail process can access.
 
@@ -36,7 +36,7 @@ same `EnforcementReport` meanings as the code).
 |-------|-------------|
 | `Off` | No sandboxing applied |
 | `Basic` | Minimal restrictions (see per-backend semantics below) |
-| `Strict` | Full restrictions via read-path allowlist; requires a backend with `read_path_allowlist`. Otherwise `ProcessSandbox::with_paths` returns `InsufficientCapabilities` (fail closed). Jail children always use `Strict`. |
+| `Strict` | Full restrictions via read-path allowlist; requires a backend with `read_path_allowlist`. Otherwise `ProcessSandbox::with_paths` returns `InsufficientCapabilities` (fail closed). Jail children use the guarantee contract (`jail_guarantee_request()` → `prepare_sandbox` → `enter`, exactly one irreversible transition), not the legacy `Strict` word. |
 
 ### Basic semantics (Phase 46)
 
@@ -46,9 +46,9 @@ same `EnforcementReport` meanings as the code).
 - **Seatbelt**: `(allow default)` permissive policy with explicit denies for `no_access_paths`; read/write lists emitted as explicit allows for documentation. Claims **no** network/child/process limits in Basic (level-dependent capabilities).
 - **Windows**: Job-Object memory limits (256 MB process / 512 MB job, kill-on-close) only; no filesystem/network/child allowlists.
 
-### Strict semantics (Phase 46, jail policy)
+### Strict semantics (Phase 46, legacy adapter; Phase 89: filesystem-only)
 
-- **Landlock**: read/write allowlists enforced; `denied_paths` are logged, not enforced (`deny_paths: false`); no network/process/child limits.
+- **Landlock**: read/write allowlists enforced; `denied_paths` are typed `Unsupported` (fail closed); no network/process/child limits. The legacy `ProcessSandbox`/Landlock path never installs the jail seccomp filter — syscall-filter confinement comes only through an explicit guarantee request (`NetworkDenied` / `ChildCreationDenied` / `ExecDenied` → `PreparedSandbox::enter`).
 - **Pledge**: unveil `r` / `rwc` allowlists + empty-perm denies + `pledge("stdio")` (denies inet/proc/exec).
 - **Seatbelt**: `(deny default)` + `(allow process*)` + `(allow signal)` + explicit file allows + explicit denies + explicit `(deny network*)`; **no** `(allow job-creation)` so child creation stays denied. No numeric resource limits (`process_limits: false`). `(allow process*)` is retained as the minimal lifecycle primitive pending native minimization — do not narrow further without proving the jail still runs. The old Basic profile's contradictory `(allow default)` + `(deny default)` pair is removed; the old `(allow process)` (bare, no wildcard) was an unbound variable caught by native `sandbox_init` failure and is now `(allow process*)`.
 - **Capsicum / Windows**: cannot enforce Strict (no read allowlist) — Strict fails closed by design. Capsicum Basic gives capability mode; Windows Basic gives Job-Object limits.
@@ -66,23 +66,40 @@ post-entry (`PR_GET_NO_NEW_PRIVS` in child tests). Rule fds are RAII-owned.
 Explicit deny paths are typed `Unsupported` (fail closed — Landlock cannot
 represent deny under an allowed ancestor).
 
-A categorical seccomp layer (`seccompiler`, pure Rust, no system lib)
-denies new network authority (`socket`/`socketpair`/`connect`),
-non-thread `clone` (+`fork`/`vfork` on x86_64), `clone3` (ENOSYS for
-transparent glibc fallback), and `execve`/`execveat` (EPERM), via
-TSYNC/all-threads installed after startup resources exist and before
-untrusted work. Thread creation (`CLONE_THREAD`) keeps working for the
-Wasmtime/YARA runtimes (proven by child test + jail round trips under the
-real filter). The denied set is hardcoded (never from untrusted input);
-failure fails closed.
+A categorical seccomp layer (`seccompiler`, pure Rust, no system lib) is
+selected per guarantee, never installed unconditionally with Landlock
+(Phase 89 Finding B):
+`NetworkDenied` → `socket`/`socketpair`/`connect` denial;
+`ChildCreationDenied` → non-thread `clone` (+`fork`/`vfork` on x86_64) +
+`clone3` (ENOSYS for transparent glibc fallback); `ExecDenied` →
+`execve`/`execveat` (EPERM), via TSYNC/all-threads installed after startup
+resources exist and before untrusted work. A request for only one category
+never acquires unrelated restrictions. Thread creation (`CLONE_THREAD`)
+keeps working for the Wasmtime/YARA runtimes (proven by child test + jail
+round trips under the real filter). The denied set is hardcoded (never from
+untrusted input); failure fails closed. `NetworkTcpRestricted` /
+`NetworkUdpRestricted` alone are `Unsupported` on Linux (the filter cannot
+distinguish TCP from UDP without broader denial; request `NetworkDenied`).
+The final guarantee report is derived from installation receipts, never from
+a compile probe alone.
 
 **Capabilities (guarantee report):**
 - Read path allowlist: Yes (read rules for read roots)
 - Write path allowlist: Yes (read+write rules for write roots)
 - Deny paths: No (typed unsupported, fail closed)
 - Process limits: No
-- Network restrictions: Yes **iff** the seccomp filter installs, else honestly unsupported
-- Child process restrictions: Yes **iff** seccomp installs (creation denied; descendants inherit the domain), else unsupported
+- Network restrictions: Yes **iff** `NetworkDenied` was requested and its seccomp category installed, else honestly unsupported
+- Child process restrictions: Yes **iff** `ChildCreationDenied` was requested and its seccomp category installed (creation denied; descendants inherit the domain), else unsupported
+- Exec denial: Yes **iff** `ExecDenied` was requested and its category installed
+
+Jail lifecycle (Phase 89 Finding A): exactly one irreversible transition per
+workload (`prepare_sandbox(jail_guarantee_request())?.enter()`, witness
+retained through the serve loop). No legacy compatibility probe enters a
+second sandbox. The jail request explicitly requires ambient-FS deny, read
+allowlist, inherited-IPC usable, descendants confined, plus
+no-network/no-child/no-exec. There is no `SandboxRequest::intersect()`
+composition API (removed Phase 89 as unsafe policy algebra); request
+construction is explicit at call sites.
 
 ### FreeBSD (Capsicum)
 

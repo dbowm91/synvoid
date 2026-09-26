@@ -1,4 +1,5 @@
-//! Portable guarantee-contract conformance suite (Phase 82 Workstream J).
+//! Portable guarantee-contract conformance suite (Phase 82 Workstream J,
+//! Phase 89 corrective).
 //!
 //! Table-driven policy/guarantee semantics independent of any one OS.
 //! Uses fake (manually built) reports for deterministic semantic tests;
@@ -9,7 +10,8 @@
 //! - required degraded => error;
 //! - optional unsupported => success + report;
 //! - report cannot say enforced when backend returns partial;
-//! - guarantee sets only narrow when composed/intersected;
+//! - policy composition is explicit (Phase 89: unsafe `intersect()` removed;
+//!   required guarantees are never silently dropped by composition);
 //! - no legacy adapter can turn a failed required guarantee into Basic/off;
 //! - entered token lifetime is retained (structural: no Clone, move keeps
 //!   the report; dropping an irreversible witness removes nothing silently);
@@ -18,9 +20,9 @@
 //! - child-denied vs descendants-confined are distinct guarantees.
 
 use synvoid_platform::sandbox::{
-    legacy_strict_satisfied_by, prepare_sandbox, EnforcementReport, EnteredSandbox, Guarantee,
-    GuaranteeDecision, GuaranteeStatus, PreopenedResource, ResourceIntent, SandboxRequest,
-    ThreadScope,
+    jail_guarantee_request, legacy_strict_satisfied_by, mechanism_plan_for_request,
+    prepare_sandbox, EnforcementReport, EnteredSandbox, Guarantee, GuaranteeDecision,
+    GuaranteeStatus, PreopenedResource, ResourceIntent, SandboxRequest, ThreadScope,
 };
 
 fn fake_report(
@@ -142,7 +144,14 @@ fn enforced_report_cannot_hide_partial_backend_result() {
 }
 
 #[test]
-fn guarantee_sets_only_narrow_on_intersection() {
+fn policy_composition_is_explicit_no_silent_narrowing() {
+    // Phase 89 Finding C: the unsafe `SandboxRequest::intersect()` API was
+    // removed. It intersected required sets (silently dropping disjoint
+    // requirements) while copying path/resource authority from only one
+    // operand — neither a security intersection nor a guaranteed tightening.
+    // Request construction stays explicit: combining two policies means
+    // stating the union of required guarantees at the call site, never
+    // calling a helper that can make a required guarantee disappear.
     let a = SandboxRequest::new()
         .require(Guarantee::FilesystemReadAllowlist)
         .require(Guarantee::NetworkDenied)
@@ -150,16 +159,130 @@ fn guarantee_sets_only_narrow_on_intersection() {
     let b = SandboxRequest::new()
         .require(Guarantee::FilesystemReadAllowlist)
         .require(Guarantee::ChildCreationDenied);
-    let i = a.intersect(&b);
-    assert_eq!(i.required, vec![Guarantee::FilesystemReadAllowlist]);
+    // Explicit union preserves every requirement from both sides.
+    let mut combined = a.clone();
+    for g in b.required.iter().copied() {
+        if !combined.required.contains(&g) {
+            combined.required.push(g);
+        }
+    }
+    assert!(combined.required.contains(&Guarantee::NetworkDenied));
+    assert!(combined.required.contains(&Guarantee::ChildCreationDenied));
+    assert!(combined
+        .required
+        .contains(&Guarantee::FilesystemReadAllowlist));
+    // A helper that dropped either disjoint requirement would be a
+    // silent-broadening bug, not a narrowing optimization.
+}
+
+#[test]
+fn mechanism_plan_selects_only_requested_seccomp_categories() {
+    // Phase 89 Finding B: seccomp categories are guarantee-selected.
+    let empty = SandboxRequest::new().require(Guarantee::FilesystemReadAllowlist);
+    let plan = mechanism_plan_for_request(&empty);
     assert!(
-        !i.required.contains(&Guarantee::NetworkDenied),
-        "intersection must not broaden required sets"
+        !plan.seccomp_requested(),
+        "filesystem-only request must install no seccomp filter"
     );
+
+    let net = SandboxRequest::new().require(Guarantee::NetworkDenied);
+    let plan = mechanism_plan_for_request(&net);
+    assert!(plan.network_seccomp_requested);
+    assert!(!plan.child_seccomp_requested);
+    assert!(!plan.exec_seccomp_requested);
+
+    let child = SandboxRequest::new().require(Guarantee::ChildCreationDenied);
+    let plan = mechanism_plan_for_request(&child);
+    assert!(!plan.network_seccomp_requested);
+    assert!(plan.child_seccomp_requested);
+    assert!(!plan.exec_seccomp_requested);
+
+    let exec = SandboxRequest::new().require(Guarantee::ExecDenied);
+    let plan = mechanism_plan_for_request(&exec);
+    assert!(!plan.network_seccomp_requested);
+    assert!(!plan.child_seccomp_requested);
+    assert!(plan.exec_seccomp_requested);
+
+    // Protocol-restricted network guarantees alone select nothing: the
+    // categorical filter cannot distinguish TCP from UDP.
+    let tcp_only = SandboxRequest::new().require(Guarantee::NetworkTcpRestricted);
     assert!(
-        !i.required.contains(&Guarantee::ChildCreationDenied),
-        "intersection must not broaden required sets"
+        !mechanism_plan_for_request(&tcp_only).seccomp_requested(),
+        "TcpRestricted alone must not select full network denial"
     );
+    let udp_only = SandboxRequest::new().require(Guarantee::NetworkUdpRestricted);
+    assert!(
+        !mechanism_plan_for_request(&udp_only).seccomp_requested(),
+        "UdpRestricted alone must not select full network denial"
+    );
+
+    // Combined jail request selects all required clauses.
+    let jail = jail_guarantee_request();
+    let plan = mechanism_plan_for_request(&jail);
+    assert!(plan.network_seccomp_requested);
+    assert!(plan.child_seccomp_requested);
+    assert!(plan.exec_seccomp_requested);
+}
+
+#[test]
+fn jail_request_contains_network_child_exec_boundary() {
+    // Phase 89 Finding D: the jail request is authoritative for its
+    // no-network / no-child / no-exec boundary.
+    let jail = jail_guarantee_request();
+    for g in [
+        Guarantee::AmbientFilesystemDenied,
+        Guarantee::FilesystemReadAllowlist,
+        Guarantee::InheritedIpcUsable,
+        Guarantee::DescendantsConfined,
+        Guarantee::NetworkDenied,
+        Guarantee::ChildCreationDenied,
+        Guarantee::ExecDenied,
+    ] {
+        assert!(
+            jail.required.contains(&g),
+            "jail request must require {g:?}"
+        );
+    }
+}
+
+#[test]
+fn prepared_plan_carries_mechanism_selection() {
+    // Phase 89 Finding E: preparation is side-effect free and carries the
+    // selected mechanism plan into `enter`.
+    let req = SandboxRequest::new()
+        .require(Guarantee::FilesystemReadAllowlist)
+        .require(Guarantee::NetworkDenied);
+    let prepared = prepare_sandbox(req).expect("prepare is side-effect free");
+    let plan = prepared.mechanism_plan();
+    assert!(plan.filesystem_requested);
+    assert!(plan.network_seccomp_requested);
+    assert!(!plan.child_seccomp_requested);
+    assert!(!plan.exec_seccomp_requested);
+}
+
+#[test]
+fn landlock_apply_does_not_install_jail_seccomp() {
+    // Phase 89 Finding B regression: the generic Landlock filesystem backend
+    // must not install the jail-specific seccomp filter. Syscall-filter
+    // confinement comes only through the guarantee-selected plan in
+    // `PreparedSandbox::enter`. Scoped to the Landlock `apply` block so
+    // guarantee-path seccomp calls elsewhere do not trip the guard.
+    let source = include_str!("../src/sandbox.rs");
+    let marker = "impl SandboxBackend for LandlockSandbox";
+    let start = source.find(marker).expect("landlock backend impl");
+    let tail = &source[start..];
+    // The Landlock impl block ends at the seccomp module doc that follows
+    // it (`/// Phase 83 Workstream B` introduces `pub mod seccomp`).
+    let end = tail
+        .find("pub mod seccomp")
+        .expect("seccomp module boundary");
+    let block = &tail[..end];
+    for forbidden in ["apply_jail_filter", "apply_selected_filter"] {
+        assert!(
+            !block.contains(forbidden),
+            "LandlockSandbox::apply must not install seccomp ({forbidden} found)"
+        );
+    }
 }
 
 #[test]

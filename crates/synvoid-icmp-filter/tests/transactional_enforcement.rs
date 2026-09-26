@@ -7,7 +7,7 @@
 use std::collections::HashSet;
 use synvoid_icmp_filter::{
     config::{FilterType, IcmpAction, IcmpFilterConfig, IcmpTypeRule},
-    drive_update,
+    drive_disable, drive_enable, drive_update,
     enforce::{policy_fingerprint, EnforcementPlan, VerificationOutcome},
     traits::{FilterBackend, FilterStatus, IcmpFilter},
     DriverState, EnforcementState,
@@ -22,6 +22,7 @@ enum Fault {
     VerifyDrift,
     VerifyUnknown,
     Cleanup,
+    Enable,
 }
 
 #[derive(Debug)]
@@ -62,6 +63,11 @@ impl IcmpFilter for FakeFilter {
     fn enable(&mut self) -> Result<(), synvoid_icmp_filter::IcmpFilterError> {
         if self.enabled {
             return Err(synvoid_icmp_filter::IcmpFilterError::AlreadyEnabled);
+        }
+        if self.faults.contains(&Fault::Enable) {
+            return Err(synvoid_icmp_filter::IcmpFilterError::Nftables(
+                "injected enable failure".to_string(),
+            ));
         }
         self.enabled = true;
         self.installed = Some(Self::fingerprint_of(&self.config));
@@ -300,4 +306,145 @@ fn receipt_matches_installed_generation() {
     assert_eq!(receipt2.generation, 2);
     assert_eq!(receipt2.fingerprint, filter.installed.unwrap());
     assert_ne!(receipt.fingerprint, receipt2.fingerprint);
+}
+
+// ── Phase 90 Finding A: enable/disable share the verified lifecycle ──────
+
+// 8. Enable advances verified lifecycle state (desired + receipt + Applied).
+#[test]
+fn enable_advances_verified_lifecycle() {
+    let mut filter = FakeFilter::new();
+    let mut driver = DriverState::default();
+    let receipt = drive_enable(&mut filter, &mut driver).unwrap();
+    assert_eq!(driver.desired_enabled, Some(true));
+    assert_eq!(driver.live, Some(EnforcementState::Applied));
+    assert!(driver.last_verify_error.is_none());
+    assert_eq!(
+        driver.last_receipt.clone().unwrap().generation,
+        receipt.generation
+    );
+    assert!(filter.is_enabled());
+}
+
+// 9. Disable reaches verified Absent while retaining the receipt history.
+#[test]
+fn disable_reaches_verified_absent() {
+    let mut filter = FakeFilter::new();
+    let mut driver = DriverState::default();
+    let receipt = drive_enable(&mut filter, &mut driver).unwrap();
+    drive_disable(&mut filter, &mut driver).unwrap();
+    assert_eq!(driver.desired_enabled, Some(false));
+    assert_eq!(driver.live, Some(EnforcementState::Absent));
+    assert!(driver.last_verify_error.is_none());
+    // Previous receipt retained as historical information.
+    assert_eq!(driver.last_receipt.unwrap().generation, receipt.generation);
+    assert!(!filter.is_enabled());
+}
+
+// 10. Failed enable creates no apply receipt.
+#[test]
+fn failed_enable_creates_no_receipt() {
+    // Install-stage failure.
+    {
+        let mut filter = FakeFilter::new().with_fault(Fault::Enable);
+        let mut driver = DriverState::default();
+        let err = drive_enable(&mut filter, &mut driver).unwrap_err();
+        assert!(format!("{err:?}").contains("injected enable failure"));
+        assert!(
+            driver.last_receipt.is_none(),
+            "failed enable must not create a receipt"
+        );
+        assert_ne!(driver.live, Some(EnforcementState::Applied));
+    }
+    // Verify-stage failures.
+    for fault in [Fault::VerifyDrift, Fault::VerifyUnknown] {
+        let mut filter = FakeFilter::new();
+        filter.faults.insert(fault);
+        let mut driver = DriverState::default();
+        let err = drive_enable(&mut filter, &mut driver).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                synvoid_icmp_filter::IcmpFilterError::BackendUnavailable(_)
+            ),
+            "failed enable must be BackendUnavailable, got {err:?}"
+        );
+        assert!(
+            driver.last_receipt.is_none(),
+            "failed enable must not create a receipt"
+        );
+        assert_ne!(driver.live, Some(EnforcementState::Applied));
+    }
+    // Compile rejection (inexpressible policy) also creates no receipt.
+    let mut filter = FakeFilter::new();
+    filter.config.table_name = "bad table!".to_string();
+    let mut driver = DriverState::default();
+    let err = drive_enable(&mut filter, &mut driver).unwrap_err();
+    assert!(
+        driver.last_receipt.is_none(),
+        "compile failure => no receipt"
+    );
+    let _ = err;
+}
+
+// 11. Failed disable never claims Absent.
+#[test]
+fn failed_disable_never_claims_absent() {
+    // Cleanup failure: backend stays enabled, driver must not report Absent.
+    let mut filter = FakeFilter::new().with_fault(Fault::Cleanup);
+    filter.enabled = true;
+    filter.installed = Some(FakeFilter::fingerprint_of(&filter.config));
+    let mut driver = DriverState::default();
+    driver.desired_enabled = Some(true);
+    driver.live = Some(EnforcementState::Applied);
+    let err = drive_disable(&mut filter, &mut driver).unwrap_err();
+    let _ = err;
+    assert_ne!(
+        driver.live,
+        Some(EnforcementState::Absent),
+        "failed disable must never claim Absent"
+    );
+    assert!(filter.is_enabled(), "failed cleanup leaves enabled set");
+
+    // Unverifiable absence: verify returns Unknown after disable.
+    let mut filter = FakeFilter::new();
+    filter.enabled = true;
+    filter.installed = Some(FakeFilter::fingerprint_of(&filter.config));
+    filter.faults.insert(Fault::VerifyUnknown);
+    let mut driver = DriverState::default();
+    // Disable path: FakeFilter::disable clears installed, then verify hits
+    // the injected Unknown fault.
+    let err = drive_disable(&mut filter, &mut driver).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            synvoid_icmp_filter::IcmpFilterError::BackendUnavailable(_)
+        ),
+        "unverifiable disable => BackendUnavailable, got {err:?}"
+    );
+    assert_eq!(driver.live, Some(EnforcementState::Unknown));
+}
+
+// 12. Enable/disable/config share one driver (generation advances jointly).
+#[test]
+fn lifecycle_shares_one_driver_generation() {
+    let mut filter = FakeFilter::new();
+    let mut driver = DriverState::default();
+    let r1 = drive_enable(&mut filter, &mut driver).unwrap();
+    assert_eq!(r1.generation, 1);
+    assert_eq!(driver.desired_enabled, Some(true));
+    // Config replacement while enabled advances the same counter.
+    let r2 = drive_update(
+        &mut filter,
+        v4_block_config(0).with_enabled(true),
+        &mut driver,
+    )
+    .unwrap();
+    assert_eq!(r2.generation, 2);
+    assert_eq!(driver.desired_enabled, Some(true));
+    // Disable advances desired/live state without touching the receipt.
+    drive_disable(&mut filter, &mut driver).unwrap();
+    assert_eq!(driver.desired_enabled, Some(false));
+    assert_eq!(driver.live, Some(EnforcementState::Absent));
+    assert_eq!(driver.last_receipt.unwrap().generation, 2);
 }

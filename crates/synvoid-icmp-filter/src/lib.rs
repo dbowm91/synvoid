@@ -457,7 +457,11 @@ impl IcmpFilterManager {
         }
     }
 
-    pub fn enable(&mut self) -> Result<()> {
+    /// Enable current policy through the verified lifecycle (Phase 90
+    /// Finding A). Kernel state never changes without `DriverState`
+    /// advancing: enable succeeds only when installation plus live
+    /// verification succeeds. No receipt is created on failure.
+    pub fn enable(&mut self) -> Result<ApplyReceipt> {
         #[cfg(any(
             target_os = "linux",
             all(target_os = "macos", feature = "icmp-pf"),
@@ -468,7 +472,7 @@ impl IcmpFilterManager {
             )
         ))]
         {
-            self.filter.enable()
+            drive_enable(&mut *self.filter, &mut self.driver)
         }
         #[cfg(not(any(
             target_os = "linux",
@@ -484,6 +488,12 @@ impl IcmpFilterManager {
         }
     }
 
+    /// Disable enforcement through the verified lifecycle (Phase 90
+    /// Finding A). Succeeds only when owned enforcement is verified absent.
+    /// Returns an explicit Unknown/Drifted error disposition when absence
+    /// cannot be proven. The previous apply receipt is retained as
+    /// historical information; the report makes clear live desired state is
+    /// disabled/Absent.
     pub fn disable(&mut self) -> Result<()> {
         #[cfg(any(
             target_os = "linux",
@@ -495,7 +505,7 @@ impl IcmpFilterManager {
             )
         ))]
         {
-            self.filter.disable()
+            drive_disable(&mut *self.filter, &mut self.driver)
         }
         #[cfg(not(any(
             target_os = "linux",
@@ -625,6 +635,7 @@ impl IcmpFilterManager {
 
     /// Desired vs applied vs verified report. `last_receipt` advances only
     /// on verified installs; `live` is never inferred from `enabled`.
+    /// Authoritative for operator enforcement state (Phase 90).
     pub fn report(&self) -> Option<EnforcementReport> {
         #[cfg(any(
             target_os = "linux",
@@ -638,6 +649,7 @@ impl IcmpFilterManager {
         {
             Some(EnforcementReport {
                 backend: self.filter.backend(),
+                desired_enabled: self.driver.desired_enabled,
                 desired_fingerprint: self.driver.desired_fingerprint,
                 desired_generation: self.driver.generation,
                 last_receipt: self.driver.last_receipt.clone(),
@@ -753,15 +765,8 @@ impl IcmpFilterManager {
 /// Rebuild a verify-capable plan from live config. Returns a plan whose
 /// fingerprint is `0` with an `uncompilable` tag when adaptation fails, so
 /// readback degrades to `Unknown`/`Absent` instead of panicking.
-#[cfg(any(
-    target_os = "linux",
-    all(target_os = "macos", feature = "icmp-pf"),
-    all(any(target_os = "freebsd", target_os = "openbsd"), feature = "icmp-pf"),
-    all(
-        target_os = "windows",
-        any(feature = "icmp-winfw", feature = "icmp-wfp")
-    )
-))]
+/// Available on all platforms so the verified disable path (Phase 90) can
+/// prove absence without kernel access in tests.
 fn rebuild_verify_plan(backend: FilterBackend, config: &IcmpFilterConfig) -> EnforcementPlan {
     match adapt_config_to_policy(config) {
         Ok((policy, backend_options)) => match compile_policy(backend, &policy, &backend_options) {
@@ -817,6 +822,7 @@ pub fn drive_update(
         }
     };
     driver.desired_fingerprint = Some(plan.fingerprint);
+    driver.desired_enabled = Some(config.enabled);
     if let Err(e) = filter.update_config(config) {
         crate::metrics::icmp_apply_finished(backend_label(backend), "install_failed");
         driver.last_verify_error =
@@ -866,6 +872,305 @@ pub fn drive_update(
             )))
         }
     }
+}
+
+/// Phase 90 Finding A: verified enable lifecycle.
+///
+/// Shares the manager-owned `DriverState` with replacement/disable: the
+/// desired enabled state, generation/fingerprint, receipt, selected backend,
+/// live state, and last verification error advance together. Enable succeeds
+/// only when installation plus live verification succeeds; a failed enable
+/// creates no apply receipt.
+pub fn drive_enable(filter: &mut dyn IcmpFilter, driver: &mut DriverState) -> Result<ApplyReceipt> {
+    driver.desired_enabled = Some(true);
+    let backend = filter.backend();
+    // Compile the current policy first (pure): an inexpressible policy
+    // installs nothing and advances no receipt.
+    let (policy, backend_options) =
+        adapt_config_to_policy(filter.config()).map_err(IcmpFilterError::from)?;
+    let plan = match compile_policy(backend, &policy, &backend_options) {
+        PolicyCompileResult::Exact(plan) => plan,
+        PolicyCompileResult::Unsupported { reasons, .. } => {
+            crate::metrics::icmp_apply_finished(backend_label(backend), "compile_rejected");
+            driver.last_verify_error = Some(format!(
+                "enable policy inexpressible on {backend:?}: {}",
+                reasons.join("; ")
+            ));
+            return Err(IcmpFilterError::Unsupported(format!(
+                "enable policy inexpressible on {backend:?}: {}",
+                reasons.join("; ")
+            )));
+        }
+    };
+    driver.desired_fingerprint = Some(plan.fingerprint);
+    match filter.enable() {
+        Ok(()) => {}
+        Err(IcmpFilterError::AlreadyEnabled) => {
+            // Idempotent path: already enabled — fall through to live
+            // verification of the current install rather than failing.
+        }
+        Err(e) => {
+            crate::metrics::icmp_apply_finished(backend_label(backend), "install_failed");
+            driver.last_verify_error = Some(format!("enable failed, no state change claimed: {e}"));
+            return Err(e);
+        }
+    }
+    match filter.verify_ownership(&plan) {
+        VerificationOutcome::Verified => {
+            driver.generation += 1;
+            let receipt = ApplyReceipt {
+                backend,
+                fingerprint: plan.fingerprint,
+                generation: driver.generation,
+                applied_at_secs: now_secs(),
+                ownership_tag: plan.ownership_tag.clone(),
+            };
+            driver.last_receipt = Some(receipt.clone());
+            driver.live = Some(EnforcementState::Applied);
+            driver.last_verify_error = None;
+            crate::metrics::icmp_apply_finished(backend_label(backend), "applied");
+            crate::metrics::icmp_verification_observed(backend_label(backend), "applied");
+            Ok(receipt)
+        }
+        VerificationOutcome::Absent => {
+            driver.live = Some(EnforcementState::Absent);
+            driver.last_verify_error =
+                Some("enable succeeded but owned objects are absent live".to_string());
+            crate::metrics::icmp_apply_finished(backend_label(backend), "drifted");
+            Err(IcmpFilterError::BackendUnavailable(
+                "enable succeeded but owned objects are absent live".to_string(),
+            ))
+        }
+        VerificationOutcome::Drifted { detail } => {
+            driver.live = Some(EnforcementState::Drifted);
+            driver.last_verify_error = Some(detail.clone());
+            crate::metrics::icmp_apply_finished(backend_label(backend), "drifted");
+            crate::metrics::icmp_drift_detected(backend_label(backend));
+            Err(IcmpFilterError::BackendUnavailable(format!(
+                "enable succeeded but live state drifted: {detail}"
+            )))
+        }
+        VerificationOutcome::Unknown { detail } => {
+            driver.live = Some(EnforcementState::Unknown);
+            driver.last_verify_error = Some(detail.clone());
+            crate::metrics::icmp_apply_finished(backend_label(backend), "unknown");
+            Err(IcmpFilterError::BackendUnavailable(format!(
+                "enable succeeded but live state is unverifiable: {detail}"
+            )))
+        }
+    }
+}
+
+/// Phase 90 Finding A: verified disable lifecycle.
+///
+/// Succeeds only when owned enforcement is verified absent. Returns an
+/// explicit Unknown/Drifted error disposition when absence cannot be proven.
+/// The previous apply receipt is retained as historical information; the
+/// report's desired/live state makes clear enforcement is disabled/Absent.
+/// A failed disable never claims Absent.
+pub fn drive_disable(filter: &mut dyn IcmpFilter, driver: &mut DriverState) -> Result<()> {
+    driver.desired_enabled = Some(false);
+    let backend = filter.backend();
+    // Already-disabled fast path: prove absence rather than assuming it.
+    if !filter.is_enabled() {
+        let plan = rebuild_verify_plan(backend, filter.config());
+        match filter.verify_ownership(&plan) {
+            VerificationOutcome::Absent => {
+                driver.live = Some(EnforcementState::Absent);
+                driver.last_verify_error = None;
+                return Ok(());
+            }
+            VerificationOutcome::Verified => {
+                driver.live = Some(EnforcementState::Drifted);
+                driver.last_verify_error = Some(
+                    "filter reports disabled but owned objects are live (drifted)".to_string(),
+                );
+                crate::metrics::icmp_drift_detected(backend_label(backend));
+                return Err(IcmpFilterError::BackendUnavailable(
+                    "filter reports disabled but owned objects are live".to_string(),
+                ));
+            }
+            VerificationOutcome::Drifted { detail } => {
+                driver.live = Some(EnforcementState::Drifted);
+                driver.last_verify_error = Some(detail.clone());
+                return Err(IcmpFilterError::BackendUnavailable(format!(
+                    "disable state drifted: {detail}"
+                )));
+            }
+            VerificationOutcome::Unknown { detail } => {
+                driver.live = Some(EnforcementState::Unknown);
+                driver.last_verify_error = Some(detail.clone());
+                return Err(IcmpFilterError::BackendUnavailable(format!(
+                    "disable state unverifiable: {detail}"
+                )));
+            }
+        }
+    }
+    match filter.disable() {
+        Ok(()) => {}
+        Err(IcmpFilterError::AlreadyDisabled) => {
+            // Lost a race with a concurrent disable: verify absence below.
+        }
+        Err(e) => {
+            driver.last_verify_error = Some(format!("disable failed: {e}"));
+            return Err(e);
+        }
+    }
+    let plan = rebuild_verify_plan(backend, filter.config());
+    match filter.verify_ownership(&plan) {
+        VerificationOutcome::Absent => {
+            driver.live = Some(EnforcementState::Absent);
+            driver.last_verify_error = None;
+            crate::metrics::icmp_apply_finished(backend_label(backend), "disabled");
+            Ok(())
+        }
+        VerificationOutcome::Verified => {
+            driver.live = Some(EnforcementState::Drifted);
+            driver.last_verify_error =
+                Some("disable removed the enabled flag but owned objects remain live".to_string());
+            crate::metrics::icmp_drift_detected(backend_label(backend));
+            Err(IcmpFilterError::BackendUnavailable(
+                "disable removed the enabled flag but owned objects remain live".to_string(),
+            ))
+        }
+        VerificationOutcome::Drifted { detail } => {
+            driver.live = Some(EnforcementState::Drifted);
+            driver.last_verify_error = Some(detail.clone());
+            Err(IcmpFilterError::BackendUnavailable(format!(
+                "disable left drifted state: {detail}"
+            )))
+        }
+        VerificationOutcome::Unknown { detail } => {
+            driver.live = Some(EnforcementState::Unknown);
+            driver.last_verify_error = Some(detail.clone());
+            Err(IcmpFilterError::BackendUnavailable(format!(
+                "disable state unverifiable (absence unproven): {detail}"
+            )))
+        }
+    }
+}
+
+/// Phase 90 Finding D: backend inventory entry projecting the Phase 86
+/// probe/selection model. Distinguishes compiled, mechanism-present,
+/// privileged/usable, and selected: an empty list is never the only way to
+/// express "compiled but insufficient privilege".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BackendInventoryEntry {
+    pub backend: FilterBackend,
+    /// Compiled into this build.
+    pub compiled: bool,
+    /// Usable on this host (`compiled && mechanism_present && privilege`).
+    pub usable: bool,
+    /// Human reason when unusable; "usable" when usable.
+    pub reason: String,
+}
+
+/// Project the Phase 86 probe model into an inventory describing relevant
+/// backends even when unusable. `current_backend` (selected) comes from the
+/// manager report, never from this list.
+pub fn probe_backend_inventory() -> Vec<BackendInventoryEntry> {
+    let mut out = Vec::new();
+    #[cfg(target_os = "linux")]
+    {
+        let probe = crate::platform::probe_nftables();
+        out.push(BackendInventoryEntry {
+            backend: FilterBackend::Nftables,
+            compiled: true,
+            usable: probe.usable,
+            reason: probe.reason.clone(),
+        });
+        #[cfg(feature = "icmp-ebpf")]
+        {
+            let probe = crate::platform::probe_ebpf_load();
+            out.push(BackendInventoryEntry {
+                backend: FilterBackend::Ebpf,
+                compiled: true,
+                usable: probe.usable,
+                reason: probe.reason.clone(),
+            });
+        }
+        #[cfg(not(feature = "icmp-ebpf"))]
+        {
+            out.push(BackendInventoryEntry {
+                backend: FilterBackend::Ebpf,
+                compiled: false,
+                usable: false,
+                reason: "eBPF backend requires Linux + icmp-ebpf feature".to_string(),
+            });
+        }
+    }
+    #[cfg(all(target_os = "macos", feature = "icmp-pf"))]
+    {
+        let usable = PfFilter::is_available();
+        out.push(BackendInventoryEntry {
+            backend: FilterBackend::Pf,
+            compiled: true,
+            usable,
+            reason: if usable {
+                "usable".to_string()
+            } else {
+                "pfctl unavailable or insufficient privilege".to_string()
+            },
+        });
+    }
+    #[cfg(all(target_os = "macos", not(feature = "icmp-pf")))]
+    {
+        out.push(BackendInventoryEntry {
+            backend: FilterBackend::Pf,
+            compiled: false,
+            usable: false,
+            reason: "pf backend requires macos + icmp-pf feature".to_string(),
+        });
+    }
+    #[cfg(all(any(target_os = "freebsd", target_os = "openbsd"), feature = "icmp-pf"))]
+    {
+        let usable = PfBsdFilter::is_available();
+        out.push(BackendInventoryEntry {
+            backend: FilterBackend::Pf,
+            compiled: true,
+            usable,
+            reason: if usable {
+                "usable".to_string()
+            } else {
+                "pfctl unavailable or insufficient privilege".to_string()
+            },
+        });
+    }
+    #[cfg(all(
+        target_os = "windows",
+        any(feature = "icmp-winfw", feature = "icmp-wfp")
+    ))]
+    {
+        #[cfg(feature = "icmp-wfp")]
+        {
+            let usable = WfpFilter::is_available();
+            out.push(BackendInventoryEntry {
+                backend: FilterBackend::Wfp,
+                compiled: true,
+                usable,
+                reason: if usable {
+                    "usable".to_string()
+                } else {
+                    "WFP engine unavailable or insufficient privilege".to_string()
+                },
+            });
+        }
+        #[cfg(feature = "icmp-winfw")]
+        {
+            let usable = WinFwFilter::is_available();
+            out.push(BackendInventoryEntry {
+                backend: FilterBackend::WindowsFirewall,
+                compiled: true,
+                usable,
+                reason: if usable {
+                    "usable".to_string()
+                } else {
+                    "Windows Firewall COM engine unavailable".to_string()
+                },
+            });
+        }
+    }
+    out
 }
 
 fn backend_label(backend: FilterBackend) -> &'static str {

@@ -59,8 +59,13 @@ even when inert (`enabled = false`) — Phase 41 fail-closed config.
   resolution); winfw fallback (no transactions/rate limit/readback).
 - **NetBSD**: explicitly unsupported (NPF future); never route through PF.
 - **Verify before claiming**: receipts advance only on `Verified`;
-  `Drifted`/`Unknown` are errors via `drive_update`; `report()` is truth,
-  `status()` is compat. Never report `enabled` as kernel proof.
+  `Drifted`/`Unknown` are errors via `drive_update`/`drive_enable`/
+  `drive_disable` (Phase 90: one shared `DriverState` with explicit desired
+  power state); `report()` is truth, `status()` is compat. Never report
+  `enabled` as kernel proof. Admin status consumes `report()` + bounded
+  read-only `verify_live()`; stats are `null` (never fabricated zeros);
+  backend inventory is `probe_backend_inventory()` (compiled/usable/reason);
+  the UI models filtering with re-fetch after mutation.
 - **No `--all-features`**: per audit, `--all-features` is not a deployment
   profile (eBPF resolution conflicts); test backends via their explicit feature.
 - **XDP vs userspace**: for SYN-level dropping performance notes (XDP ~50-100ns

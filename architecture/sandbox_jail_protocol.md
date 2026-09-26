@@ -264,7 +264,7 @@ Child startup order (Phase 82 guarantee migration; Phase 22 order preserved):
 
 1. capture stdin/stdout handles (already inherited; no I/O yet)
 2. audit inherited fds (Unix: warn on unexpected ≥3; Windows: explicit stdio inheritance at spawn)
-3. prepare the jail guarantee request (`jail_guarantee_request()` + `/usr/lib`+`/lib` reads; legacy Strict pin checked) then `enter` irreversibly
+3. prepare the jail guarantee request (`jail_guarantee_request()` + `/usr/lib`+`/lib` reads; Phase 89: exactly one irreversible entry, no legacy Strict probe) then `enter` irreversibly
 4. retain the `EnteredSandbox` witness through the framed request loop (`Some` = enforced+retained, `None` = hatch-explicit test-only, `Err` = fail closed before any workload)
 5. enter the framed request loop
 

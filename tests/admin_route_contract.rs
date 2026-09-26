@@ -757,6 +757,92 @@ async fn admin_route_contract_wrong_method_is_405_not_404() {
     );
 }
 
+/// Phase 90 Finding B guard: the ICMP status handler must derive operator
+/// state from the verified enforcement report, never from the compatibility
+/// `FilterStatus` view. Regression: `get_status` must consume `report()` +
+/// `verify_live()` (bounded read-only verification) and must not call
+/// `filter.status()` as its authority or fabricate packet counters.
+#[test]
+fn icmp_status_handler_uses_verified_report_authority() {
+    let source = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/admin/handlers/icmp.rs"),
+    )
+    .expect("read icmp handler");
+    let marker = "pub async fn get_status";
+    let start = source.find(marker).expect("get_status handler");
+    let tail = &source[start..];
+    // Bound the block at the next handler (get_config).
+    let end = tail["pub async fn get_status".len()..]
+        .find("pub async fn ")
+        .map(|i| i + "pub async fn get_status".len())
+        .unwrap_or(tail.len());
+    let block = &tail[..end];
+    assert!(
+        block.contains("verify_live()"),
+        "get_status must refresh live state via verify_live()"
+    );
+    assert!(
+        block.contains(".report()"),
+        "get_status must consume the authoritative enforcement report"
+    );
+    assert!(
+        !block.contains("filter.status()"),
+        "get_status must not return to compatibility FilterStatus authority"
+    );
+    assert!(
+        !block.contains("FilterStatus"),
+        "get_status must not reference compatibility FilterStatus"
+    );
+    assert!(
+        !block.contains("packets_blocked_v4: 0"),
+        "get_status must not fabricate zero packet counters"
+    );
+}
+
+/// Phase 90 Finding E guard: the ICMP admin UI models filtering/enforcement
+/// semantics, never ping-health probe concepts, and consumes the
+/// object-shaped backends response.
+#[test]
+fn icmp_admin_ui_models_filtering_domain() {
+    let source = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("admin-ui/src/pages/icmp.rs"),
+    )
+    .expect("read icmp ui page");
+    for forbidden in [
+        "last_ping",
+        "backends_count",
+        "node_id",
+        "latency_ms",
+        "last_seen",
+        "healthy",
+        "interval_secs",
+        "packet_size",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "ICMP UI must not model ping/probe concepts ({forbidden} found)"
+        );
+    }
+    for required in [
+        "enforcement",
+        "desired_enabled",
+        "selected_backend",
+        "current_backend",
+        "fetch_status_and_backends",
+    ] {
+        assert!(
+            source.contains(required),
+            "ICMP UI must model filtering truth ({required} missing)"
+        );
+    }
+    // No optimistic Active state after mutation: every mutation path
+    // re-fetches authoritative status.
+    assert!(
+        source.matches("fetch_status_and_backends").count() >= 3,
+        "mutations must re-fetch authoritative status (initial + enable + disable)"
+    );
+}
+
 /// Negative test: the contract check fails when given fabricated/wrong paths.
 /// Proves the test infrastructure detects drift (acceptance criteria requirement).
 #[tokio::test]

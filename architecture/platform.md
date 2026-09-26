@@ -328,20 +328,25 @@ binding details in `docs/SANDBOXING.md` and
 
 | Platform | Backend | Tier | Features |
 |----------|---------|------|----------|
-| Linux (Landlock ABI probe + supported arch) | `LandlockSandbox` (`landlock` crate 0.4.x, ABI-v1 vetted, `HardRequirement`, `FullyEnforced` + `no_new_privs` verified) + `seccomp` categorical filter (`seccompiler`, EPERM + ENOSYS-clone3, TSYNC) | Supported (production recommendation for strict isolation) | Path allowlisting, read/write/fs; explicit deny typed unsupported (fail closed); network/child/exec via seccomp where it installs, else honestly unsupported; no numeric process limits |
+| Linux (Landlock ABI probe + supported arch) | `LandlockSandbox` (`landlock` crate 0.4.x, ABI-v1 vetted, `HardRequirement`, `FullyEnforced` + `no_new_privs` verified; filesystem-only — Phase 89) + guarantee-selected `seccomp` categories (`seccompiler`, EPERM + ENOSYS-clone3, TSYNC; installed only via `PreparedSandbox::enter` per explicit `NetworkDenied`/`ChildCreationDenied`/`ExecDenied`) | Supported (production recommendation for strict isolation) | Path allowlisting, read/write/fs; explicit deny typed unsupported (fail closed); network/child/exec via requested seccomp categories with receipt-backed reports, else honestly unsupported; `NetworkTcpRestricted`/`UdpRestricted` alone unsupported; no numeric process limits |
 | FreeBSD 10+ | `CapsicumSandbox` (stdio rights-limited, `closefrom(3)`, `cap_getmode`-verified) | Experimental | Capability mode only (FD-based); path vectors unsupported (preopen required); descendants confined (never child-denial); no numeric process limits; Strict fails closed |
 | OpenBSD 5.9+ | `PledgeSandbox` (native path bytes, interior-NUL rejection, unveil locked, minimal `stdio`) | Experimental | Promise-based restrictions, unveil for paths; no numeric process limits; no casual `prot_exec` |
 | macOS 10.10+ | `SeatbeltSandbox` | Experimental (opt-in `macos-sandbox`, deprecated `sandbox_init`; not App Sandbox) | SBPL profiles, feature + runtime-gated; Basic allow-default / Strict deny-default; exec-denial explicitly unsupported; no numeric process limits |
 | Windows Vista+ | `WindowsSandbox` (generated ABI, class 9, query-verified 256 MB proc / 512 MB job / kill-on-close, owned handle, no DACL mutation) | Limited (process limits only) | Job Objects + DEP/ASLR structures; access-control guarantees unsupported; Strict fails closed |
 | Unsupported | `StubSandbox` | Unavailable | Logs warning, no enforcement; Strict fails closed |
 
-Portable guarantee contract (Phase 82): `Guarantee` (required/optional),
-`ThreadScope`, `EnforcementReport` (`require_all` fail-closed),
-prepare/enter staging, non-cloneable `EnteredSandbox` witness retained
+Portable guarantee contract (Phase 82, Phase 89 corrective): `Guarantee`
+(required/optional), `ThreadScope`, `EnforcementReport` (`require_all`
+fail-closed), prepare/enter staging with an internal `MechanismPlan`
+(filesystem + per-guarantee seccomp categories; receipt-backed final report,
+never a compile probe alone), non-cloneable `EnteredSandbox` witness retained
 through workloads, `PreopenedResource` descriptors. Legacy
 `SandboxLevel`/`SandboxPaths` remain a pinned adapter; new code must not
-gate on `can_enforce_strict()`. The jail consumes `jail_guarantee_request()`.
-Extraction: DEFERRED (closeout §8).
+gate on `can_enforce_strict()`. The jail consumes `jail_guarantee_request()`
+(ambient-FS deny, read allowlist, inherited IPC, descendants confined, plus
+authoritative no-network/no-child/no-exec) in exactly one irreversible entry.
+`SandboxRequest::intersect()` was removed (Phase 89: unsafe policy algebra);
+composition is explicit. Extraction: DEFERRED (closeout §8 + Phase 89 addendum).
 
 `SandboxCapabilities::process_limits` means numeric resource bounds only. `Platform::supports_sandbox()` is a coarse Linux/BSD gate; macOS/Windows availability is per-backend `is_supported()`.
 

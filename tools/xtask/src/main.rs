@@ -1,3 +1,4 @@
+mod icmp_qualify;
 mod report;
 mod verify;
 
@@ -24,6 +25,7 @@ fn main() {
             verify::run_verify_release(dry_run, json_output, verbose, allow_dirty)
         }
         Some("test") => dispatch_test(&positional[1..], dry_run, json_output, verbose),
+        Some("icmp-qualify") => icmp_qualify::run_icmp_qualify(&args, json_output),
         Some("help") | Some("--help") | Some("-h") => {
             print_usage();
             Ok(())
@@ -77,6 +79,7 @@ USAGE:
     cargo xtask verify-release      Run release verification (production artifacts)
     cargo xtask test package <name> Test a specific package
     cargo xtask test guards         Run all architectural guard tests
+    cargo xtask icmp-qualify (--check | --dry-run | --native | --cleanup) [--json] [--timeout-secs N] [--out PATH]
 
 VERIFY (routine):
     Runs the single canonical routine verification contract (formatting, linting,
@@ -94,6 +97,13 @@ VERIFY-RELEASE (manual):
     Assembled, PackagedSourceVerified, DeferredOnInternalPredecessors,
     NotPrepublishable, or Failed. Deferred crates name their exact predecessors.
     Fails on dirty tree by default. Does NOT publish.
+
+ICMP-QUALIFY (manual, Phase 91):
+    Opt-in Linux nftables native qualification front-end. --check and
+    --dry-run are read-only/print-only (safe everywhere). --native requires
+    Linux + root/CAP_NET_ADMIN + SYNVOID_ICMP_QUALIFY_NATIVE=1 and shells
+    the ignored crate matrix; --cleanup removes harness namespaces.
+    Anything unmet is \"not qualified\", never success.
 
 OPTIONS:
     --dry-run       Print commands without executing

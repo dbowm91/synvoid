@@ -1,6 +1,6 @@
 # ICMP Post-RETAIN Operator Truth and Native Qualification Roadmap (Phases 90–91)
 
-Status: planned and registered 2026-09-26.
+Status: closed 2026-09-26 (Phase 90 operator truth closed; Phase 91 harness/preparation closed with no privileged run available; RETAIN unchanged, no Phase 92 registered).
 
 Registered in: `plans/roadmap.md`.
 
