@@ -688,10 +688,11 @@ Phases 81-84 are closed (DEFER); no plan in this campaign remains executable.
 
 ## Post-Phase-80 Campaign: ICMP Policy/Enforcement Extraction Preparation — Planned (Phases 85–88)
 
-Status: Phases 85 is closed (canonical policy/adaptation landed
-`20dfc148`, closeout
-`architecture/icmp_phase85_policy_canonicalization_closeout.md`); Phases
-86–88 are planned and registered. This campaign prepares the
+Status: Phases 85–86 are closed (canonical policy/adaptation landed
+`20dfc148`; backend/privilege truthfulness landed `f1be64d6`; closeouts
+`architecture/icmp_phase85_policy_canonicalization_closeout.md`,
+`architecture/icmp_phase86_backend_truthfulness_closeout.md`); Phases
+87–88 are planned and registered. This campaign prepares the
 existing `synvoid-icmp-filter` boundary for a later extraction decision; it
 does **not** publish, rename, or move the crate to an external repository.
 

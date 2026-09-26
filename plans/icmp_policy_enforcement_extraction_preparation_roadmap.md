@@ -1,8 +1,9 @@
 # ICMP Policy/Enforcement Extraction Preparation Roadmap (Phases 85–88)
 
-Status: Phase 85 closed 2026-09-26 (`20dfc148`; closeout
-`architecture/icmp_phase85_policy_canonicalization_closeout.md`); Phases
-86–88 remain planned and registered 2026-09-26.
+Status: Phases 85–86 closed 2026-09-26 (`20dfc148`, `f1be64d6`;
+closeouts `architecture/icmp_phase85_policy_canonicalization_closeout.md`,
+`architecture/icmp_phase86_backend_truthfulness_closeout.md`); Phases
+87–88 remain planned and registered 2026-09-26.
 
 Registered in: `plans/roadmap.md`.
 

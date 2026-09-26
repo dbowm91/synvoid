@@ -1,6 +1,11 @@
 # Phase 86 Plan: ICMP Backend, Platform, and Privilege Truthfulness
 
-Status: planned.
+Status: closed 2026-09-26 (Outcome A: WFP primary, winfw compatibility
+fallback). Implementation SHA:
+`f1be64d6e873fcaf0ff6a61a1eb18caaf29c9d87`. Closeout:
+`architecture/icmp_phase86_backend_truthfulness_closeout.md`.
+Phase 87 is unblocked (capability/probe/selection truth landed; state
+verification still desired-state-biased by design).
 
 Registered in: `plans/roadmap.md` and
 `plans/icmp_policy_enforcement_extraction_preparation_roadmap.md`.
