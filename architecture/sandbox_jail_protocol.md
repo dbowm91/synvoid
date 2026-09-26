@@ -260,16 +260,25 @@ deterministic fixtures (in-process vs jail output equality is asserted in
 
 ## 8. Platform support and sandbox ordering
 
-Child startup order:
+Child startup order (Phase 82 guarantee migration; Phase 22 order preserved):
 
 1. capture stdin/stdout handles (already inherited; no I/O yet)
-2. apply `ProcessSandbox::with_paths(SandboxLevel::Strict, …)`
-3. enter the framed request loop
+2. audit inherited fds (Unix: warn on unexpected ≥3; Windows: explicit stdio inheritance at spawn)
+3. prepare the jail guarantee request (`jail_guarantee_request()` + `/usr/lib`+`/lib` reads; legacy Strict pin checked) then `enter` irreversibly
+4. retain the `EnteredSandbox` witness through the framed request loop (`Some` = enforced+retained, `None` = hatch-explicit test-only, `Err` = fail closed before any workload)
+5. enter the framed request loop
 
 Sandbox backends are platform-selected (`crates/synvoid-platform/src/sandbox.rs`:
-Landlock on Linux (supported), Seatbelt SBPL profile on macOS where the
+Landlock + seccomp on Linux (supported), Seatbelt SBPL profile on macOS where the
 `macos-sandbox` feature + runtime symbol are present (experimental, deprecated
-`sandbox_init`), stub elsewhere; root `src/platform/sandbox.rs` is a pure facade).
+`sandbox_init`), Capsicum/pledge on BSDs (experimental; Capsicum path vectors
+fail closed), Job Objects on Windows (limited: resource/lifecycle only); root
+`src/platform/sandbox.rs` is a pure facade).
+Linux is the production strict-isolation target. Guarantee matrix (code and
+docs share `EnforcementReport` meanings exactly):
+`architecture/process_sandbox_corrective_closeout.md` §4. Historical Phase
+46/48 backend evidence is superseded by the Phases 81–84 corrective where
+applicable.
 Linux is the production strict-isolation target.
 On platforms without a strict backend, or when restriction fails, the child
 exits nonzero (fail closed) **unless** the test-only escape hatch

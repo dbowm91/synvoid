@@ -322,16 +322,26 @@ impl SandboxPaths {
 }
 ```
 
-**Backend Implementations (Phase 46 truthfulness; binding details in `docs/SANDBOXING.md`):**
+**Backend Implementations (Phase 46 truthfulness + Phases 81–84 corrective;
+binding details in `docs/SANDBOXING.md` and
+`architecture/process_sandbox_corrective_closeout.md`):**
 
 | Platform | Backend | Tier | Features |
 |----------|---------|------|----------|
-| Linux (kernel 5.13+ + syscall probe) | `LandlockSandbox` | Supported (production recommendation for strict isolation) | Path allowlisting, read/write/fs; no network/process/child limits; deny paths logged not enforced |
-| FreeBSD 10+ | `CapsicumSandbox` | Experimental | Capability mode only (FD-based, no path allowlists); network/child confinement; no numeric process limits; Strict fails closed |
-| OpenBSD 5.9+ | `PledgeSandbox` | Experimental | Promise-based restrictions, unveil for paths; no numeric process limits |
-| macOS 10.10+ | `SeatbeltSandbox` | Experimental (opt-in `macos-sandbox`, deprecated `sandbox_init`; not App Sandbox) | SBPL profiles, feature + runtime-gated; Basic allow-default / Strict deny-default; no numeric process limits |
-| Windows Vista+ | `WindowsSandbox` | Limited (process limits only) | Job Objects (256 MB proc / 512 MB job, kill-on-close) + DEP/ASLR; DACL touches are hardening, not allowlists; Strict fails closed |
+| Linux (Landlock ABI probe + supported arch) | `LandlockSandbox` (`landlock` crate 0.4.x, ABI-v1 vetted, `HardRequirement`, `FullyEnforced` + `no_new_privs` verified) + `seccomp` categorical filter (`seccompiler`, EPERM + ENOSYS-clone3, TSYNC) | Supported (production recommendation for strict isolation) | Path allowlisting, read/write/fs; explicit deny typed unsupported (fail closed); network/child/exec via seccomp where it installs, else honestly unsupported; no numeric process limits |
+| FreeBSD 10+ | `CapsicumSandbox` (stdio rights-limited, `closefrom(3)`, `cap_getmode`-verified) | Experimental | Capability mode only (FD-based); path vectors unsupported (preopen required); descendants confined (never child-denial); no numeric process limits; Strict fails closed |
+| OpenBSD 5.9+ | `PledgeSandbox` (native path bytes, interior-NUL rejection, unveil locked, minimal `stdio`) | Experimental | Promise-based restrictions, unveil for paths; no numeric process limits; no casual `prot_exec` |
+| macOS 10.10+ | `SeatbeltSandbox` | Experimental (opt-in `macos-sandbox`, deprecated `sandbox_init`; not App Sandbox) | SBPL profiles, feature + runtime-gated; Basic allow-default / Strict deny-default; exec-denial explicitly unsupported; no numeric process limits |
+| Windows Vista+ | `WindowsSandbox` (generated ABI, class 9, query-verified 256 MB proc / 512 MB job / kill-on-close, owned handle, no DACL mutation) | Limited (process limits only) | Job Objects + DEP/ASLR structures; access-control guarantees unsupported; Strict fails closed |
 | Unsupported | `StubSandbox` | Unavailable | Logs warning, no enforcement; Strict fails closed |
+
+Portable guarantee contract (Phase 82): `Guarantee` (required/optional),
+`ThreadScope`, `EnforcementReport` (`require_all` fail-closed),
+prepare/enter staging, non-cloneable `EnteredSandbox` witness retained
+through workloads, `PreopenedResource` descriptors. Legacy
+`SandboxLevel`/`SandboxPaths` remain a pinned adapter; new code must not
+gate on `can_enforce_strict()`. The jail consumes `jail_guarantee_request()`.
+Extraction: DEFERRED (closeout §8).
 
 `SandboxCapabilities::process_limits` means numeric resource bounds only. `Platform::supports_sandbox()` is a coarse Linux/BSD gate; macOS/Windows availability is per-backend `is_supported()`.
 
@@ -548,13 +558,19 @@ if Platform::current().supports_sandbox() {
 
 ### 6.1 Landlock (Linux)
 
-**Kernel Requirement:** 5.13+
+**Mechanism:** maintained `landlock` crate 0.4.x (ABI-9 surface; vetted ABI
+V1 allowlist) + categorical `seccompiler` filter (Phase 83). No handwritten
+UAPI structures remain.
 
-**Implementation Details:**
-- Uses `libc::syscall()` directly (not exposed in standard libc bindings)
-- `LANDLOCK_CREATE_RULESET` - Creates ruleset with filesystem access mask
-- `LANDLOCK_ADD_RULE` - Adds path beneath rules with allowed access
-- `LANDLOCK_RESTRICT_SELF` - Applies ruleset to current process
+**Availability:** live ABI probe (real ruleset creation with
+`HardRequirement`) — never kernel-release text.
+
+**Enforcement:** `CompatLevel::HardRequirement` for required guarantees;
+`RestrictionStatus` must read `FullyEnforced` + `no_new_privs` verified
+(`PR_GET_NO_NEW_PRIVS` in child tests). Explicit deny ⇒ typed
+`Unsupported` (fail closed). Seccomp (EPERM + ENOSYS-clone3, TSYNC)
+installed after startup resources, before untrusted work; failure fails
+closed. Default-Allow deny-list (no giant allowlist); denied set hardcoded.
 
 **Access Flags:**
 ```rust
@@ -619,10 +635,21 @@ No `(allow job-creation)` (child creation stays denied). No contradictory `(allo
 
 ### 6.5 Windows Job Objects — limited (process limits only)
 
-**Three-Layer Approach:**
-1. **Job Object** - Process group limit (256MB process, 512MB job memory)
-2. **Mitigation Policies** - DEP, ASLR enablement (Strict path)
-3. **Security Descriptors** - Per-file DACL hardening on listed paths (NOT a filesystem allowlist; no deny-by-default, no network/child limits)
+**Corrective implementation (Phase 81, generated ABI):**
+1. **Job Object** — `Win32_System_JobObjects` generated types, class 9
+   extended-limit information, correct flags (0x100/0x200/0x2000), 256 MB
+   process / 512 MB job, kill-on-close; query-back verification;
+   nested-job conflict ⇒ typed `BackendConflict`; owned handle retained
+   for the confinement lifetime (drop closes once at teardown).
+2. **Mitigation Policies** — real `PROCESS_MITIGATION_DEP_POLICY` /
+   `PROCESS_MITIGATION_ASLR_POLICY` structures (Strict path);
+   already-enforced reported honestly.
+3. **No DACL mutation** — host-global ACL changes removed from sandbox
+   semantics (Strict stays fail-closed for filesystem isolation).
+
+Job Objects are resource/process-tree containment, not an access-control
+sandbox (AppContainer gate explicitly retained as future work; see the
+corrective closeout).
 
 **Configuration:**
 ```rust

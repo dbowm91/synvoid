@@ -1,18 +1,31 @@
-# Sandboxing Guide (Phase 46 truthfulness)
+# Sandboxing Guide (Phases 46, 81–84 corrective truthfulness)
 
 SynVoid uses OS-level sandboxing to limit the damage potential of a compromised process. The sandbox restricts what resources (files, network, process creation) a compromised worker/jail process can access.
 
 **Linux is the production recommendation for strict jail isolation.** Other backends are experimental/limited (see support tiers). `SandboxCapabilities::process_limits` means numeric resource bounds (memory/process-count, Job-Objects style), not generic syscall filtering.
 
+**Portable guarantee contract (Phase 82):** new production code requests
+explicit guarantees (`Guarantee`: filesystem allowlists, explicit deny,
+network/child/exec denial, descendant confinement, memory bounds,
+owner-termination) as required (fail closed when unsupported/degraded) or
+optional (honestly reported), with thread-scope truth (`ThreadScope`) and a
+machine-readable `EnforcementReport`. Irreversible entry returns a
+non-cloneable `EnteredSandbox` witness retained through the workload.
+`SandboxLevel::Strict` remains only as a pinned legacy adapter (Strict =
+read-allowlist gate; no global reinterpretation). Never gate new code on
+`can_enforce_strict()` alone. Full vocabulary and backend matrix:
+`architecture/process_sandbox_corrective_closeout.md` §4 (generated from the
+same `EnforcementReport` meanings as the code).
+
 ## Support tiers
 
 | Platform | Backend | Min requirement | Tier | Native evidence |
 |----------|---------|-----------------|------|-----------------|
-| Linux | Landlock | Kernel 5.13+ **and** Landlock syscall ABI (probed, not version-text only) | **Supported** | Linux CI (`cargo test -p synvoid-platform`) |
-| FreeBSD | Capsicum (capability mode) | FreeBSD 10+ with capsicum(4) | **Experimental** | No OS matrix in CI; `is_supported` probes `cap_getmode` syscall presence |
-| OpenBSD | Pledge + Unveil | OpenBSD 5.9+ | **Experimental** | No OS matrix in CI |
-| macOS | Seatbelt via deprecated `sandbox_init` | macOS 10.10+, `macos-sandbox` feature **and** runtime `sandbox_init` symbol | **Experimental** (opt-in) | Native child-process tests on macOS host (`sandbox_macos_enforcement`, requires `--features macos-sandbox`); cross-compile alone is not evidence |
-| Windows | Job Objects + DEP/ASLR | Windows Vista+ | **Limited** (process limits only) | No OS matrix in CI |
+| Linux | Landlock (`landlock` crate 0.4.x, ABI-v1 vetted, `HardRequirement`) + seccomp categorical filter (`seccompiler`, EPERM + ENOSYS-clone3, TSYNC) | Landlock ABI (probed via real ruleset creation, never version text) + supported arch (x86_64/aarch64/riscv64) | **Supported** | Linux child enforcement tests (`sandbox_linux_enforcement`: allowed/denied reads+writes, `PR_GET_NO_NEW_PRIVS`, impossible-requirement refusal, socket/exec denial, thread-clone preserved) + jail round trips under the real filter |
+| FreeBSD | Capsicum (capability mode, stdio rights-limited, `closefrom(3)`, `cap_getmode`-verified) | FreeBSD 10+ with capsicum(4) | **Experimental** | FreeBSD child tests (`sandbox_bsd_enforcement`); path-vector policy reports unsupported (fail closed) until descriptor preopen lands; no support claim from cross-compilation |
+| OpenBSD | Pledge + Unveil (native path bytes, interior-NUL rejection, unveil locked, minimal `stdio` promises) | OpenBSD 5.9+ | **Experimental** | OpenBSD child tests (allowed/denied, unveil lock, NUL rejection) |
+| macOS | Seatbelt via deprecated `sandbox_init` | macOS 10.10+, `macos-sandbox` feature **and** runtime `sandbox_init` symbol | **Experimental** (opt-in) | Native child-process tests on macOS host (`sandbox_macos_enforcement`, requires `--features macos-sandbox`); cross-compile alone is not evidence; exec-denial explicitly unsupported (`process*` retained) |
+| Windows | Job Objects (generated ABI, class 9, query-verified 256 MiB proc / 512 MiB job / kill-on-close) + DEP/ASLR structures | Windows Vista+ | **Limited** (process limits only) | Windows child tests (`sandbox_windows_enforcement`); access-control guarantees unsupported (`Required` fails closed); no host ACL mutation (removed) |
 | Other | Stub | — | **Unavailable** | Strict fails closed |
 
 `Platform::supports_sandbox()` is a coarse gate reporting only Linux/musl + FreeBSD + OpenBSD. macOS/Windows availability is per-backend `is_supported()` (Seatbelt: feature + `dlsym` probe; Windows Job Objects: always on Windows). "Compiled with feature" is not "runtime backend available": Strict fails closed when the runtime is absent.
@@ -42,35 +55,52 @@ SynVoid uses OS-level sandboxing to limit the damage potential of a compromised 
 
 ## Backend capabilities (truthful)
 
-### Linux (Landlock)
+### Linux (Landlock + seccomp)
 
-Landlock provides filesystem path sandboxing by creating a ruleset of allowed file access patterns. Availability = kernel ≥5.13 **and** a live `landlock_create_ruleset` probe (a version-gated kernel may still lack the LSM).
+Landlock provides filesystem path sandboxing via the maintained `landlock`
+crate (0.4.7, ABI-9 surface; vetted ABI V1 allowlist). Availability = a live
+Landlock ABI probe (real ruleset creation with `HardRequirement`), never
+kernel-release text. Required restrictions use `HardRequirement`;
+`RestrictionStatus` must read `FullyEnforced` + `no_new_privs`, verified
+post-entry (`PR_GET_NO_NEW_PRIVS` in child tests). Rule fds are RAII-owned.
+Explicit deny paths are typed `Unsupported` (fail closed — Landlock cannot
+represent deny under an allowed ancestor).
 
-**Capabilities:**
-- Read path allowlist: Yes
-- Write path allowlist: Yes
-- Deny paths: No (no-access paths are logged, not enforced)
+A categorical seccomp layer (`seccompiler`, pure Rust, no system lib)
+denies new network authority (`socket`/`socketpair`/`connect`),
+non-thread `clone` (+`fork`/`vfork` on x86_64), `clone3` (ENOSYS for
+transparent glibc fallback), and `execve`/`execveat` (EPERM), via
+TSYNC/all-threads installed after startup resources exist and before
+untrusted work. Thread creation (`CLONE_THREAD`) keeps working for the
+Wasmtime/YARA runtimes (proven by child test + jail round trips under the
+real filter). The denied set is hardcoded (never from untrusted input);
+failure fails closed.
+
+**Capabilities (guarantee report):**
+- Read path allowlist: Yes (read rules for read roots)
+- Write path allowlist: Yes (read+write rules for write roots)
+- Deny paths: No (typed unsupported, fail closed)
 - Process limits: No
-- Network restrictions: No
-- Child process restrictions: No
+- Network restrictions: Yes **iff** the seccomp filter installs, else honestly unsupported
+- Child process restrictions: Yes **iff** seccomp installs (creation denied; descendants inherit the domain), else unsupported
 
 ### FreeBSD (Capsicum)
 
-Capsicum provides capability-mode sandboxing at the syscall level. FD-based: no path allowlists. `is_supported` probes `cap_getmode` syscall presence (not "already in capability mode" — the old `mode != 0` check was backwards). `cap_enter()` permanently enters capability mode.
+Capsicum provides capability-mode sandboxing at the syscall level. FD-based: no path allowlists. `is_supported` probes `cap_getmode` syscall presence (not "already in capability mode" — the old `mode != 0` check was backwards). Before `cap_enter`, stdio rights are narrowed with `cap_rights_limit` (stdin read, stdout/stderr write), accidental descriptors ≥3 are closed (`closefrom`), and `cap_getmode` verifies entry. **A raw pathname vector is not a Capsicum allowlist:** path-policy requests report unsupported (fail closed) until preopened directory capabilities land. Descendant confinement is reported as such — never as child-creation denial.
 
 **Capabilities:**
-- Read path allowlist: No (capsicum is FD-based)
+- Read path allowlist: No (preopen required; path vectors unsupported)
 - Write path allowlist: No
 - Deny paths: No
 - Process limits: No (capability confinement is not a numeric memory/CPU limit)
 - Network restrictions: Yes (capability-mode global-namespace restriction)
-- Child process restrictions: Yes (children inherit capability mode)
+- Child process restrictions: Descendants confined yes; creation denial no
 
 Strict requires a read allowlist, so Strict on Capsicum always fails closed.
 
 ### OpenBSD (Pledge/Unveil)
 
-OpenBSD uses `pledge(2)` for syscall restrictions and `unveil(2)` for filesystem path restrictions (`r` / `rwc` / empty-perm deny).
+OpenBSD uses `pledge(2)` for syscall restrictions and `unveil(2)` for filesystem path restrictions (`r` / `rwc` / empty-perm deny). Paths cross the boundary as OS-native bytes (never lossy `display()`; interior NUL rejected, empty rejected); unveil is locked (`unveil(NULL,NULL)`, fail-closed) before the minimal `stdio` pledge, which omits `inet`/`proc`/`exec` (network, child creation, and exec denied rather than inherited). `prot_exec` is never added casually (Wasmtime/JIT needs on OpenBSD stay a backend-specific requirement proven by native workload tests).
 
 **Capabilities:**
 - Read path allowlist: Yes
@@ -104,7 +134,9 @@ Basic: read/write/deny Yes; process/network/child No (allow-default permissive).
 
 ### Windows (Job Objects) — limited
 
-Windows "sandboxing" is process-level resource limiting via Job Objects (256 MB process / 512 MB job, kill-on-close) plus DEP/ASLR mitigations in Strict. Per-file DACL manipulation on listed paths is hardening, **not** a filesystem allowlist: there is no deny-by-default for the rest of the filesystem, no network restriction, and no child-process restriction (active-process limit is 0 = unlimited).
+Windows "sandboxing" is process-level resource limiting via Job Objects (256 MB process / 512 MB job, kill-on-close — generated ABI, class 9 extended limits, query-verified) plus DEP/ASLR mitigations via the documented structures (Strict path; already-enforced reported honestly, never as newly applied). Nested-job assignment failure is a typed conflict, never "limits installed". The Job handle is owned for the confinement lifetime (retained via the sandbox guard; dropping is loud by design). **Host-global DACL mutation was removed from sandbox semantics** (it changes filesystem objects for all processes — never a process-local allowlist; a future filesystem-hardening API would own it separately).
+
+Job Objects constrain a process tree; they are **not** an access-control sandbox (no AppContainer in this campaign — explicit gate decision, see the closeout). There is no deny-by-default for the rest of the filesystem, no network restriction, and no child-process restriction.
 
 **Capabilities (all levels):**
 - Read path allowlist: No
@@ -129,20 +161,39 @@ sandbox_no_access_paths = ["/etc/passwd", "/etc/shadow"]
 ## Usage Example
 
 ```rust
-use synvoid_platform::sandbox::{ProcessSandbox, SandboxLevel, SandboxPaths};
+use synvoid_platform::sandbox::{
+    EnteredSandbox, Guarantee, SandboxRequest, ThreadScope, prepare_sandbox,
+};
 
-let paths = SandboxPaths::new()
-    .add_read_path("/var/lib/synvoid")
-    .add_write_path("/var/log/synvoid");
+// New production code: explicit guarantees, not adjectives.
+let request = SandboxRequest::new()
+    .require(Guarantee::AmbientFilesystemDenied)
+    .require(Guarantee::FilesystemReadAllowlist)
+    .require(Guarantee::InheritedIpcUsable)
+    .scope(ThreadScope::CurrentThreadPlusDescendants)
+    .read_path("/var/lib/synvoid");
+let prepared = prepare_sandbox(request)?; // validate + probe, no side effects
+let entered: EnteredSandbox = prepared.enter()?; // irreversible; retain through work
+```
+
+Legacy adapter (pinned compat only — do not use for new decisions):
+
+```rust
+use synvoid_platform::sandbox::{ProcessSandbox, SandboxLevel, SandboxPaths};
 
 let sandbox = ProcessSandbox::with_paths(SandboxLevel::Strict, paths)?;
 ```
 
 ## Security Notes
 
-- A strict sandbox requires a backend with `read_path_allowlist` capability
+- New production code requests explicit guarantees; a required guarantee that
+  is unsupported/degraded aborts before untrusted work (`EnforcementReport::require_all`)
+- A strict sandbox requires a backend with `read_path_allowlist` capability (legacy adapter)
 - If the backend cannot enforce strict mode, `ProcessSandbox::with_paths()` returns `SandboxError::InsufficientCapabilities`
 - Path allowlists use directory inheritance (subpath access is granted if parent is allowed)
-- On Linux, denied paths are logged but cannot be fully blocked with Landlock
+- On Linux, explicit deny paths are typed `Unsupported` (fail closed — Landlock cannot represent them)
+- Child-creation denial and descendant confinement are distinct guarantees (never conflated)
+- Resource limits are distinct from access-control isolation
 - On macOS, canonicalize temp paths (`/var` → `/private/var`) before comparing allowlists in tests; the backend canonicalizes automatically
 - Never claim Apple App Sandbox equivalence for the `sandbox_init` backend
+- Historical Phase 46/48 backend evidence is superseded by the Phases 81–84 corrective (`architecture/process_sandbox_corrective_closeout.md`); extraction is DEFERRED (no standalone crate)

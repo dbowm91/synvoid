@@ -1,6 +1,12 @@
 # Phase 81 Plan: Process Sandbox Native Backend Correctness Corrective
 
-Status: planned (2026-09-26).
+Status: closed 2026-09-26 as **CORRECTED**. Implementation SHA recorded
+below; executable proof is the implementation commit, docs/evidence in the
+follow-up commit (same convention as Phase 80). See
+`architecture/process_sandbox_corrective_closeout.md` (§2 defect table,
+§5 native evidence).
+
+Implementation SHA: `96bc53e119ed079e121db2ed6497dfd2c3b2b011`.
 
 Roadmap: `plans/process_sandbox_corrective_extraction_readiness_roadmap.md`.
 

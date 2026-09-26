@@ -1,6 +1,17 @@
 # Phase 84 Plan: Process Sandbox Requalification and Extraction-Readiness Closeout
 
-Status: planned (2026-09-26).
+Status: closed 2026-09-26 as **DEFER** (retain internal; re-evaluation
+triggers recorded; no extraction authorized). Implementation SHA:
+`96bc53e119ed079e121db2ed6497dfd2c3b2b011` (same commit as Phase 81); docs/evidence commit
+separate (no executable change). See
+`architecture/process_sandbox_corrective_closeout.md` (§8 decision, §9
+residuals, §10 preservation).
+
+Terminal state: Phases 81–84 closed. No registered future plan is blocked
+on this campaign: the independent ICMP policy/enforcement campaign
+(Phases 85–88) proceeds on its own baseline and shares no sandbox
+extraction dependency (its backend work is nftables/eBPF/PF, unaffected by
+the DEFER verdict here).
 
 Roadmap: `plans/process_sandbox_corrective_extraction_readiness_roadmap.md`.
 

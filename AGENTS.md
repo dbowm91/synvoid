@@ -137,7 +137,7 @@ Root `src/` paths are NOT all shims. `keep_app_root` modules (`admin`, `http`, `
   - Supply chain: `architecture/dependency_security_baseline_phase25.md` (re-audit 2026-10-01)
   - Auth CPU + persistence (Phase 43): `architecture/auth.md` (+ `auth_deep_dive.md`)
   - Jail IPC: `architecture/sandbox_jail_protocol.md`; DNSSEC custody: `architecture/dnssec_keystore.md`
-  - Sandbox truthfulness (Phase 46): `docs/SANDBOXING.md` (binding support tiers) + `architecture/platform.md` §2.6/§6; Linux Landlock is the production strict-isolation target, macOS Seatbelt is experimental deprecated `sandbox_init` (not App Sandbox), Windows is process-limits-only, Capsicum/Pledge have no numeric process limits; SBPL paths escaped/canonicalized, Strict fails closed
+  - Sandbox truthfulness (Phases 46, 81–84 corrective): `docs/SANDBOXING.md` (binding support tiers) + `architecture/platform.md` §2.6/§6 + `architecture/process_sandbox_corrective_closeout.md` (matrix, evidence, DEFER extraction verdict); Linux Landlock (`landlock` crate + seccomp categorical filter) is the production strict-isolation target, macOS Seatbelt is experimental deprecated `sandbox_init` (not App Sandbox), Windows is process-limits-only (no DACL mutation, no AppContainer), Capsicum path vectors fail closed, unveil locked; new code uses the guarantee contract (`SandboxRequest`→`prepare_sandbox`→`enter`→`EnteredSandbox`), never `can_enforce_strict()`; SBPL paths escaped/canonicalized, Strict fails closed
   - Knowledge maintenance: `architecture/agent_knowledge_maintenance.md` (last audit record + recurring checklist for future audits)
 
 ## Known Issues

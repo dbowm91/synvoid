@@ -1,6 +1,10 @@
 # Phase 83 Plan: Process Sandbox Native Capability Hardening
 
-Status: planned (2026-09-26).
+Status: closed 2026-09-26 as **HARDENED** (seccomp adopted + qualified by
+construction and child tests; Capsicum/OpenBSD hardened; Seatbelt mapped;
+Windows launch gate explicitly retained as future work, never weakened).
+Implementation SHA: `96bc53e119ed079e121db2ed6497dfd2c3b2b011` (same commit as Phase 81).
+See `architecture/process_sandbox_corrective_closeout.md` (§5, §7).
 
 Roadmap: `plans/process_sandbox_corrective_extraction_readiness_roadmap.md`.
 

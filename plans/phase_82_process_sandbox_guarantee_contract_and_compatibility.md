@@ -1,6 +1,10 @@
 # Phase 82 Plan: Process Sandbox Guarantee Contract and Compatibility Migration
 
-Status: planned (2026-09-26).
+Status: closed 2026-09-26 as **ADOPTED** (guarantee contract is the
+authoritative new-code surface; legacy adapter pinned; jail migrated).
+Implementation SHA: `96bc53e119ed079e121db2ed6497dfd2c3b2b011` (same commit as Phase 81).
+See `architecture/process_sandbox_corrective_closeout.md` (§1 inventory,
+§4 matrix) and `sandbox_guarantee_conformance` (14/14 green).
 
 Roadmap: `plans/process_sandbox_corrective_extraction_readiness_roadmap.md`.
 

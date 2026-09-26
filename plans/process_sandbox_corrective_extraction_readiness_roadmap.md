@@ -1,6 +1,8 @@
 # Process Sandbox Corrective and Extraction-Readiness Roadmap
 
-Status: planned (2026-09-26).
+Status: closed 2026-09-26 as **DEFER** (Phases 81–84 implemented; no
+extraction authorized). Retained as the historical handoff record.
+Closeout: `architecture/process_sandbox_corrective_closeout.md`.
 
 Baseline: `81638c251592913579bd9bbce51d013c44d67910`.
 

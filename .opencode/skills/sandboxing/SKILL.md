@@ -52,66 +52,31 @@ pub enum SandboxLevel {
 
 ## Windows Job Objects
 
-Windows uses Job Objects for process containment with memory limits and automatic cleanup.
+Windows uses Job Objects for process containment with memory limits and automatic cleanup. Canonical implementation: generated `windows-sys` `JobObjects`/`SystemServices` types (never handwritten ABI copies).
 
-### Implementation
+### Implementation (Phases 81–84 corrective)
 
-**Location**: `crates/synvoid-platform/src/sandbox.rs`
+**Location**: `crates/synvoid-platform/src/sandbox.rs` (`windows::WindowsSandbox`)
 
-```rust
-pub struct WindowsSandbox {
-    level: SandboxLevel,
-    applied: AtomicBool,
-}
-
-impl WindowsSandbox {
-    fn apply_job_object(&self) -> Result<(), SandboxError> {
-        // Create Job Object with memory limits
-        let job = unsafe {
-            windows_sys::Win32::System::Threading::CreateJobObjectW(
-                Some(std::ptr::null_mut()),
-                Some(std::ptr::null_mut()),
-            )
-        };
-
-        // Configure limits: 256MB process, 512MB job, kill on close
-        let mut limit_info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION {
-            basic_limit_information: JOBOBJECT_BASIC_LIMIT_INFORMATION_T {
-                limits_flags: JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-                    | JOB_OBJECT_LIMIT_PROCESS_MEMORY
-                    | JOB_OBJECT_LIMIT_JOB_MEMORY,
-                process_memory_limit: 256 * 1024 * 1024,
-                job_memory_limit: 512 * 1024 * 1024,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
-        // Apply limits to job
-        windows_sys::Win32::System::Threading::SetInformationJobObject(
-            job,
-            JOBOBJECT_BASIC_LIMIT_INFORMATION,
-            &mut limit_info,
-            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-        );
-
-        // Assign current process to job
-        let current_process = windows_sys::Win32::System::Threading::GetCurrentProcess();
-        windows_sys::Win32::System::Threading::AssignProcessToJobObject(job, current_process);
-
-        Ok(())
-    }
-
-    fn apply_mitigation_policies(&self) -> Result<(), SandboxError> {
-        // Enable DEP and ASLR in Strict mode
-        if self.level == SandboxLevel::Strict {
-            SetProcessDEPPolicy(...);
-            SetProcessASLRPolicy(...);
-        }
-        Ok(())
-    }
-}
-```
+- Extended-limit information class **9** (`JobObjectExtendedLimitInformation`,
+  not 2) with limit flags `JOB_OBJECT_LIMIT_PROCESS_MEMORY` (0x100) |
+  `JOB_OBJECT_LIMIT_JOB_MEMORY` (0x200) | `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`
+  (0x2000); configured limits 256 MB process / 512 MB job (unchanged defaults).
+- After `SetInformationJobObject`, query back with
+  `QueryInformationJobObject` and verify effective flags/limits
+  (`PartialEnforcement` on mismatch).
+- `AssignProcessToJobObject` failure (e.g. incompatible outer job) returns
+  typed `SandboxError::BackendConflict`, never "limits installed".
+- Mitigations use the real `PROCESS_MITIGATION_DEP_POLICY` (Flags=1) /
+  `PROCESS_MITIGATION_ASLR_POLICY` (Flags=0b111) structures (never
+  creation-policy scalars); query-back distinguishes newly-applied from
+  already-enforced.
+- **No host-global DACL mutation** (removed — never a process-local allowlist).
+- The Job handle is owned (`Mutex<Option<isize>>`, closed once on drop);
+  retain the sandbox guard through the workload (dropping is loud by design
+  under kill-on-close).
+- Job Objects are resource/lifecycle containment, not access-control
+  sandboxing (no AppContainer; `Required` fails closed for access guarantees).
 
 ### Windows API Features Used
 
@@ -181,43 +146,67 @@ Enable with: `macos-sandbox` feature AND runtime `sandbox_init` symbol (probed v
 
 ## Linux Landlock
 
-Linux uses the Landlock LSM for filesystem restrictions.
+Linux uses the Landlock LSM for filesystem restrictions via the maintained
+`landlock` crate (0.4.x), plus a categorical seccomp layer (`seccompiler`)
+for the jail's no-network/no-child/no-exec needs.
 
-### Implementation
+### Implementation (Phases 81–84 corrective)
 
 **Location**: `crates/synvoid-platform/src/sandbox.rs`
+(`linux::LandlockSandbox`, `linux::seccomp`)
 
-Key steps (Phase 46: availability = kernel ≥5.13 AND live `landlock_create_ruleset` probe, not version text alone):
-1. Create ruleset with `SYS_landlock_create_ruleset`
-2. Add path rules with `SYS_landlock_add_rule`
-3. Restrict self with `SYS_landlock_restrict_self`
-Deny paths are logged, not enforced. No network/process/child limits.
+- Availability = live Landlock ABI probe (real ruleset creation with
+  `HardRequirement`), never kernel-release text.
+- Required filesystem restrictions use `CompatLevel::HardRequirement`
+  (vetted ABI V1 allowlist); production inspects `RestrictionStatus` and
+  rejects `PartiallyEnforced`/`NotEnforced` plus unverified `no_new_privs`
+  (proven with `PR_GET_NO_NEW_PRIVS` in child tests). Rule fds are RAII-owned.
+- Explicit deny paths are typed `Unsupported` (fail closed).
+- Seccomp deny-list (default Allow, never a giant allowlist): new network
+  authority, non-thread `clone` (+`fork`/`vfork` on x86_64), `clone3`
+  (ENOSYS for glibc fallback), `execve`/`execveat` — EPERM, TSYNC,
+  installed after startup resources exist and before untrusted work.
+  Thread creation keeps working (proven). Denied set is hardcoded.
+- Portable callers use the guarantee contract (`SandboxRequest` →
+  `prepare_sandbox` → `enter` → `EnteredSandbox`); the jail requirement is
+  `jail_guarantee_request()`. Never gate new code on `can_enforce_strict()`.
 
 ## FreeBSD Capsicum
 
-Capsicum provides capability mode for FreeBSD.
+Capsicum provides capability mode for FreeBSD. Descriptor-capability based:
+stdio rights are narrowed with `cap_rights_limit` before `cap_enter`,
+accidental descriptors ≥3 are closed (`closefrom`), and `cap_getmode`
+verifies entry.
 
-### Implementation
+### Implementation (Phase 83 corrective)
 
 **Location**: `crates/synvoid-platform/src/sandbox.rs`
 
-Key operations (Phase 46: no path allowlists; Strict fails closed):
+Key operations (Phase 46 + 83: no path allowlists; Strict fails closed):
 - `cap_getmode()` presence probe = availability (not "already sandboxed")
-- `cap_enter()` - Enter capability mode (irreversible)
+- `cap_rights_limit()` on stdio + `closefrom(3)` hygiene
+- `cap_enter()` - Enter capability mode (irreversible), verified with `cap_getmode()`
+- Raw pathname vectors report unsupported (fail closed) until preopened
+  directory capabilities land; descendant confinement is never reported as
+  child-creation denial.
 
 ## OpenBSD Pledge
 
-Pledge provides system call filtering on OpenBSD.
+Pledge provides system call filtering on OpenBSD, with unveil locked and
+minimal promises.
 
-### Implementation
+### Implementation (Phases 81–84 corrective)
 
 **Location**: `crates/synvoid-platform/src/sandbox.rs`
 
 Key operations:
-- `pledge()` - Promise minimal syscall access
-- `unveil()` - Restrict filesystem visibility
+- `unveil()` with OS-native path bytes (never lossy `display()`;
+  interior NUL and empty paths rejected) — `r` / `rwc` / empty-perm deny
+- `unveil(NULL, NULL)` lock after policy construction (fail-closed)
+- `pledge("stdio")` — omits `inet`/`proc`/`exec` (network, child creation,
+  and exec denied); no casual `prot_exec`
 
-## SandboxPaths Builder
+## SandboxPaths Builder (legacy adapter — pinned compat, not for new decisions)
 
 Use `SandboxPaths` to configure allowed/denied paths:
 
@@ -233,18 +222,31 @@ let sandbox = ProcessSandbox::with_paths(
 )?;
 ```
 
-## Error Handling
+New production code must use the guarantee contract instead
+(`SandboxRequest` → `prepare_sandbox` → `enter` → `EnteredSandbox`; jail:
+`jail_guarantee_request()`). Never add a new `can_enforce_strict()` gate.
+
+## Error Handling (Phases 81–84: typed fail-closed vocabulary)
 
 ```rust
 pub enum SandboxError {
     #[error("Platform not supported: {0}")]
     NotSupported(String),
-    #[error("Landlock not available (kernel < 5.13)")]
+    #[error("Landlock not available (kernel < 5.13 or syscall unavailable)")]
     LandlockUnavailable,
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
     #[error("Syscall failed: {0}")]
     Syscall(String),
+    #[error("Invalid sandbox path: {0}")]
+    InvalidPath(String),
+    #[error("Strict sandbox requested but backend cannot enforce it: {0}")]
+    InsufficientCapabilities(String),
+    // Phase 81–82 additions (all fail closed on required paths):
+    // Unsupported (incl. Landlock explicit-deny, Capsicum path vectors),
+    // BackendConflict (outer-job assignment), PartialEnforcement (Landlock
+    // status, seccomp/query mismatch, cap-mode verify), InvalidPolicy
+    // (validation incl. allow/deny conflict), EntryFailed (post-prepare).
 }
 ```
 

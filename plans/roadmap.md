@@ -1,6 +1,6 @@
 # SynVoid Architecture Hardening Roadmap
 
-Status: Tracks 1–3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). Eggfetch 0.2 runtime adoption is closed through Phase 62 (`c3568ef4...`) and performance/reproducibility adjudication is closed through Phase 63; Phase 64 docs/evidence-truth correction is closed. Production remains on eggfetch. The EggServe 0.2.2-line inbound H1 campaign remains historical/retained at Phase 65; Phases 66–69 were never started. EggServe 0.3 H1 adoption and corrective requalification are closed as `ADOPTED` through Phase 80 on exact pins `eggserve-server = "=0.4.0"` / `eggserve-primitives = "=0.2.2"`; the Phase 78 terminal claim is superseded by Phase 80 proof-bearing SHA `174fdbcd6f133b35099ed4492f5ed8d3fcaa7d4c` (hosted run `36201213413`). Phase 79 implementation SHA: `171dd1e47f965b04b34465fc72c87adf4d9a9cab`. See `architecture/eggserve_0_3_h1_adoption_closeout.md`. Phases 70–72 remain historical/closed with evidence aligned to their then-current Hyper H1 runtime. No registered future plan remains blocked on this corrective sequence. A new process-sandbox correctness and extraction-readiness campaign is registered as Phases 81-84; Phase 81 is the next executable plan. An independent ICMP policy/enforcement extraction-preparation campaign is registered as Phases 85-88.
+Status: Tracks 1–3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). Eggfetch 0.2 runtime adoption is closed through Phase 62 (`c3568ef4...`) and performance/reproducibility adjudication is closed through Phase 63; Phase 64 docs/evidence-truth correction is closed. Production remains on eggfetch. The EggServe 0.2.2-line inbound H1 campaign remains historical/retained at Phase 65; Phases 66–69 were never started. EggServe 0.3 H1 adoption and corrective requalification are closed as `ADOPTED` through Phase 80 on exact pins `eggserve-server = "=0.4.0"` / `eggserve-primitives = "=0.2.2"`; the Phase 78 terminal claim is superseded by Phase 80 proof-bearing SHA `174fdbcd6f133b35099ed4492f5ed8d3fcaa7d4c` (hosted run `36201213413`). Phase 79 implementation SHA: `171dd1e47f965b04b34465fc72c87adf4d9a9cab`. See `architecture/eggserve_0_3_h1_adoption_closeout.md`. Phases 70–72 remain historical/closed with evidence aligned to their then-current Hyper H1 runtime. No registered future plan remains blocked on this corrective sequence. The process-sandbox correctness and extraction-readiness campaign (Phases 81-84) is closed DEFER (see the Post-Phase-80 section below). An independent ICMP policy/enforcement extraction-preparation campaign is registered as Phases 85-88.
 
 Scope: this roadmap covers architecture hardening, trust-boundary closure, verification, release readiness, post-hardening cleanup, and the architecture-convergence work required before another broad feature-expansion pass.
 
@@ -618,40 +618,50 @@ Campaign constraints:
 
 The pre-existing H2 header-list byte-unit issue, duplicate-`Set-Cookie` behavior, and body-limit status relabeling remain separate follow-up candidates. They must not be folded into Phases 79–80 unless the corrective changes those paths.
 
-Terminal state: **closed `ADOPTED`**. The residual H2 header-list byte-unit review, duplicate `Set-Cookie` behavior, body-limit status relabeling, and test-only Hyper differential-lane decision remain separate follow-up candidates. No registered future plan is blocked on this campaign.
+Terminal state: **closed `ADOPTED`**. The residual H2 header-list byte-unit review, duplicate `Set-Cookie` behavior, body-limit status relabeling, and test-only Hyper differential-lane decision remain separate follow-up candidates. No registered future plan is blocked on this campaign. The process-sandbox correctness and extraction-readiness campaign (Phases 81–84) is closed DEFER (see below); the ICMP policy/enforcement campaign (Phases 85–88) proceeds independently.
 
-## Post-Phase-80 Campaign: Process Sandbox Correctness and Extraction Readiness — Planned
+## Post-Phase-80 Campaign: Process Sandbox Correctness and Extraction Readiness — Closed DEFER at Phase 84
 
-Status: registered 2026-09-26.
+Status: implemented/closed 2026-09-26 with disposition **DEFER** (retain
+internal under `synvoid-platform`; no extraction authorized; concrete
+re-evaluation triggers recorded). Proof: `cargo xtask verify` 10/10,
+platform/jail suites green (incl. new guarantee conformance 14/14 +
+no-downgrade 12/12), Linux/Windows cross-checks for `sandbox.rs` clean,
+`cargo deny check` clean, `cargo audit` with no new findings, feature-profile
+matrix green. Native Linux/Windows/BSD enforcement lanes run on their
+qualification hosts (explicit unsupported elsewhere, never skip-as-success).
 
 Baseline: `81638c251592913579bd9bbce51d013c44d67910`.
 
-Roadmap: `plans/process_sandbox_corrective_extraction_readiness_roadmap.md`.
+Roadmap: `plans/process_sandbox_corrective_extraction_readiness_roadmap.md`
+(historical).
+
+Closeout: `architecture/process_sandbox_corrective_closeout.md` (defect
+table, guarantee matrix, native evidence, dep/footprint delta, residuals,
+DEFER verdict + triggers).
 
 Trigger: extraction research found two concrete correctness defects in the current native backend implementation (Landlock UAPI construction/no-new-privs handling and Windows Job Object/mitigation ABI usage) plus a portability-contract defect: `SandboxLevel::Strict` currently reduces to read-path-allowlist capability and cannot express materially different OS guarantees.
 
-Execution order:
+Execution order (all closed):
 
-1. **Phase 81 — native backend correctness corrective**
-   - repair/requalify Linux Landlock with ABI-aware, fail-closed enforcement;
-   - repair Windows Job Object and mitigation ABI usage with generated bindings;
-   - remove host-global DACL mutation from process-sandbox semantics;
-   - add native behavioral/query evidence and lifetime-safe backend state.
-2. **Phase 82 — guarantee contract and compatibility migration**
-   - replace the security decision based on `can_enforce_strict()` with required/optional guarantees and an enforcement report;
-   - separate child-creation denial from descendant confinement, and resource limits from access-control isolation;
-   - add prepare/enter staging, thread-scope truth, inherited/preopened resources, and an owned entered-sandbox witness;
-   - retain legacy Off/Basic/Strict adapters while migrating the jail deliberately.
-3. **Phase 83 — native capability hardening**
-   - qualify a minimal Linux seccomp layer for no-network/no-child/no-exec jail guarantees;
-   - make Capsicum descriptor-capability aware;
-   - harden OpenBSD unveil/pledge semantics;
-   - map existing macOS Seatbelt evidence into the guarantee model;
-   - gate Windows AppContainer/ProcessContainer work on a parent-launch feasibility proof rather than weakening required guarantees.
-4. **Phase 84 — requalification and extraction-readiness closeout**
+1. **Phase 81 — native backend correctness corrective — closed CORRECTED**
+   - repaired/requalified Linux Landlock with ABI-aware, fail-closed enforcement (`landlock` crate, `HardRequirement`, verified `FullyEnforced` + `no_new_privs`);
+   - repaired Windows Job Object and mitigation ABI usage with generated bindings (class 9, correct flags, query-back, owned handle);
+   - removed host-global DACL mutation from process-sandbox semantics;
+   - native behavioral/query evidence (child-process suites per OS) and lifetime-safe backend state.
+2. **Phase 82 — guarantee contract and compatibility migration — closed ADOPTED**
+   - required/optional guarantees + enforcement report replace the `can_enforce_strict()` decision;
+   - child-creation denial vs descendant confinement and resource limits vs access control separated;
+   - prepare/enter staging, thread-scope truth, inherited/preopened resources, owned entered-sandbox witness;
+   - legacy Off/Basic/Strict adapters pinned; jail deliberately migrated.
+3. **Phase 83 — native capability hardening — closed HARDENED**
+   - minimal Linux seccomp deny-list for no-network/no-child/no-exec jail guarantees (qualified by construction + child tests + jail round trips);
+   - descriptor-capability-aware Capsicum; hardened OpenBSD unveil/pledge;
+   - existing macOS Seatbelt evidence mapped into the guarantee model;
+   - Windows AppContainer/ProcessContainer gate explicitly retained (no weakening).
+4. **Phase 84 — requalification and extraction-readiness closeout — closed DEFER**
    - adversarial no-downgrade tests, native backend matrix, jail end-to-end qualification, unsafe/dependency/footprint audit, documentation reconciliation;
-   - record GO_EXTRACT / DEFER / RETAIN_INTERNAL;
-   - register separate later extraction work only if evidence supports it.
+   - recorded DEFER with triggers; no later extraction work registered.
 
 Detailed plans:
 
@@ -672,7 +682,7 @@ Campaign constraints:
 - Capsicum descendant confinement is not described as child-creation denial;
 - macOS Seatbelt remains experimental/deprecated and is never described as Apple App Sandbox.
 
-Phase 81 is the next executable plan.
+Phases 81-84 are closed (DEFER); no plan in this campaign remains executable.
 
 
 
