@@ -18,7 +18,7 @@ SynVoid (unchanged ownership)
   per-site response metadata / worker drain
         | caller-owned H1 stream (plaintext TCP / completed Rustls)
         v
-EggServe direct H1 0.3.1 (parser/framing, body/tunnel mechanics,
+EggServe direct H1 0.4.0 (parser/framing, body/tunnel mechanics,
 driver + graceful close, response framing)
         v
 SynVoidEggserveService (src/http/eggserve_h1.rs: neutral request/body/
