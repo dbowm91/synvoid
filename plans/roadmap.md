@@ -1,6 +1,6 @@
 # SynVoid Architecture Hardening Roadmap
 
-Status: Tracks 1–3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). Eggfetch 0.2 runtime adoption is closed through Phase 62 (`c3568ef4...`) and performance/reproducibility adjudication is closed through Phase 63; Phase 64 docs/evidence-truth correction is closed. Production remains on eggfetch. The EggServe 0.2.2-line inbound H1 campaign remains historical/retained at Phase 65; Phases 66–69 were never started. EggServe 0.3 H1 adoption and corrective requalification are closed as `ADOPTED` through Phase 80 on exact pins `eggserve-server = "=0.4.0"` / `eggserve-primitives = "=0.2.2"`; the Phase 78 terminal claim is superseded by Phase 80 proof-bearing SHA `174fdbcd6f133b35099ed4492f5ed8d3fcaa7d4c` (hosted run `36201213413`). Phase 79 implementation SHA: `171dd1e47f965b04b34465fc72c87adf4d9a9cab`. See `architecture/eggserve_0_3_h1_adoption_closeout.md`. Phases 70–72 remain historical/closed with evidence aligned to their then-current Hyper H1 runtime. No registered future plan remains blocked on this corrective sequence. A new process-sandbox correctness and extraction-readiness campaign is registered as Phases 81-84; Phase 81 is the next executable plan.
+Status: Tracks 1–3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). Eggfetch 0.2 runtime adoption is closed through Phase 62 (`c3568ef4...`) and performance/reproducibility adjudication is closed through Phase 63; Phase 64 docs/evidence-truth correction is closed. Production remains on eggfetch. The EggServe 0.2.2-line inbound H1 campaign remains historical/retained at Phase 65; Phases 66–69 were never started. EggServe 0.3 H1 adoption and corrective requalification are closed as `ADOPTED` through Phase 80 on exact pins `eggserve-server = "=0.4.0"` / `eggserve-primitives = "=0.2.2"`; the Phase 78 terminal claim is superseded by Phase 80 proof-bearing SHA `174fdbcd6f133b35099ed4492f5ed8d3fcaa7d4c` (hosted run `36201213413`). Phase 79 implementation SHA: `171dd1e47f965b04b34465fc72c87adf4d9a9cab`. See `architecture/eggserve_0_3_h1_adoption_closeout.md`. Phases 70–72 remain historical/closed with evidence aligned to their then-current Hyper H1 runtime. No registered future plan remains blocked on this corrective sequence. A new process-sandbox correctness and extraction-readiness campaign is registered as Phases 81-84; Phase 81 is the next executable plan. An independent ICMP policy/enforcement extraction-preparation campaign is registered as Phases 85-88.
 
 Scope: this roadmap covers architecture hardening, trust-boundary closure, verification, release readiness, post-hardening cleanup, and the architecture-convergence work required before another broad feature-expansion pass.
 
@@ -676,9 +676,9 @@ Phase 81 is the next executable plan.
 
 
 
-## Post-Phase-80 Campaign: ICMP Policy/Enforcement Extraction Preparation — Planned
+## Post-Phase-80 Campaign: ICMP Policy/Enforcement Extraction Preparation — Planned (Phases 85–88)
 
-Status: Phases 81–84 are planned and registered. This campaign prepares the
+Status: Phases 85–88 are planned and registered. This campaign prepares the
 existing `synvoid-icmp-filter` boundary for a later extraction decision; it
 does **not** publish, rename, or move the crate to an external repository.
 
@@ -692,29 +692,29 @@ Research/current-head review found four prerequisite classes of work:
 
 1. The application config and enforcement crate independently define divergent
    ICMP config/policy types, and the admin persistence path bridges them through
-   JSON value conversion. Phase 81 establishes one semantic policy owner,
+   JSON value conversion. Phase 85 establishes one semantic policy owner,
    explicit typed config adaptation, family-aware ICMP policy, RFC-aware
    ICMPv6 safety validation, and explicit rate-limit semantics.
 2. Backend/platform truth is inconsistent: Linux privilege probing mixes BPF
    state into nftables availability; Windows backend source references
    undeclared dependencies and contains interface-resolution defects; NetBSD is
-   incorrectly grouped into the PF lane. Phase 82 closes feature/dependency,
+   incorrectly grouped into the PF lane. Phase 86 closes feature/dependency,
    backend-selection, privilege, Windows, and BSD truthfulness gaps.
-3. Current config replacement and status are desired-state-biased. Phase 83
+3. Current config replacement and status are desired-state-biased. Phase 87
    adds compile-before-mutate enforcement, backend-scoped ownership,
    transaction/staging/rollback semantics, apply receipts, live readback, and
    drift/unknown state.
-4. Phase 84 requalifies the cleaned boundary against current Rust firewall
+4. Phase 88 requalifies the cleaned boundary against current Rust firewall
    libraries and native platforms, adjudicates subprocess-vs-native backend
    mechanisms, evaluates the binding Phase 47 public-crate bar, and records a
    GO/RETAIN extraction-readiness decision without publishing.
 
 Detailed plans:
 
-- `plans/phase_81_icmp_policy_model_and_config_canonicalization.md`
-- `plans/phase_82_icmp_backend_platform_and_privilege_truthfulness.md`
-- `plans/phase_83_icmp_transactional_enforcement_and_state_verification.md`
-- `plans/phase_84_icmp_extraction_readiness_and_platform_qualification.md`
+- `plans/phase_85_icmp_policy_model_and_config_canonicalization.md`
+- `plans/phase_86_icmp_backend_platform_and_privilege_truthfulness.md`
+- `plans/phase_87_icmp_transactional_enforcement_and_state_verification.md`
+- `plans/phase_88_icmp_extraction_readiness_and_platform_qualification.md`
 
 Execution order is 81 → 82 → 83 → 84. Linux nftables remains the required
 baseline; eBPF remains optional. Explicit backend requests become strict while
