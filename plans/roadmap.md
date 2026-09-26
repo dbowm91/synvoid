@@ -716,7 +716,7 @@ Detailed plans:
 - `plans/phase_87_icmp_transactional_enforcement_and_state_verification.md`
 - `plans/phase_88_icmp_extraction_readiness_and_platform_qualification.md`
 
-Execution order is 81 → 82 → 83 → 84. Linux nftables remains the required
+Execution order is 85 → 86 → 87 → 88. Linux nftables remains the required
 baseline; eBPF remains optional. Explicit backend requests become strict while
 only `Auto` may fall back. NetBSD PF support is removed from the claim; NPF is
 a future separately scoped backend decision. Routine CI remains the current
