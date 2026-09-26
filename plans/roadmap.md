@@ -1,6 +1,6 @@
 # SynVoid Architecture Hardening Roadmap
 
-Status: Tracks 1–3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). Eggfetch 0.2 runtime adoption is closed through Phase 62 (`c3568ef4...`) and performance/reproducibility adjudication is closed through Phase 63; Phase 64 docs/evidence-truth correction is closed. Production remains on eggfetch. The EggServe 0.2.2-line inbound H1 campaign remains historical/retained at Phase 65; Phases 66–69 were never started. EggServe 0.3 H1 adoption and corrective requalification are closed as `ADOPTED` through Phase 80 on exact pins `eggserve-server = "=0.4.0"` / `eggserve-primitives = "=0.2.2"`; the Phase 78 terminal claim is superseded by Phase 80 proof-bearing SHA `174fdbcd6f133b35099ed4492f5ed8d3fcaa7d4c` (hosted run `36201213413`). Phase 79 implementation SHA: `171dd1e47f965b04b34465fc72c87adf4d9a9cab`. See `architecture/eggserve_0_3_h1_adoption_closeout.md`. Phases 70–72 remain historical/closed with evidence aligned to their then-current Hyper H1 runtime. No registered future plan remains blocked on this corrective sequence. The process-sandbox correctness and extraction-readiness campaign (Phases 81-84) is closed DEFER (see the Post-Phase-80 section below). The independent ICMP policy/enforcement extraction-preparation campaign (Phases 85-88) is closed RETAIN (see the Post-Phase-80 section below).
+Status: Tracks 1–3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). Eggfetch 0.2 runtime adoption is closed through Phase 62 (`c3568ef4...`) and performance/reproducibility adjudication is closed through Phase 63; Phase 64 docs/evidence-truth correction is closed. Production remains on eggfetch. The EggServe 0.2.2-line inbound H1 campaign remains historical/retained at Phase 65; Phases 66–69 were never started. EggServe 0.3 H1 adoption and corrective requalification are closed as `ADOPTED` through Phase 80 on exact pins `eggserve-server = "=0.4.0"` / `eggserve-primitives = "=0.2.2"`; the Phase 78 terminal claim is superseded by Phase 80 proof-bearing SHA `174fdbcd6f133b35099ed4492f5ed8d3fcaa7d4c` (hosted run `36201213413`). Phase 79 implementation SHA: `171dd1e47f965b04b34465fc72c87adf4d9a9cab`. See `architecture/eggserve_0_3_h1_adoption_closeout.md`. Phases 70–72 remain historical/closed with evidence aligned to their then-current Hyper H1 runtime. No registered future plan remains blocked on this corrective sequence. The process-sandbox correctness and extraction-readiness campaign (Phases 81-84) is closed DEFER (see the Post-Phase-80 section below), with a bounded post-closeout semantics corrective registered as Phase 89. The independent ICMP policy/enforcement extraction-preparation campaign (Phases 85-88) is closed RETAIN (see the Post-Phase-80 section below).
 
 Scope: this roadmap covers architecture hardening, trust-boundary closure, verification, release readiness, post-hardening cleanup, and the architecture-convergence work required before another broad feature-expansion pass.
 
@@ -745,3 +745,60 @@ recorded separately rather than recreating a broad permanent OS matrix.
 Campaign acceptance is governed by the detailed roadmap. A successful Phase
 84 GO means only that a separate extraction/publication campaign is justified;
 it does not itself create a class-3 support promise.
+
+## Post-Phase-88 Corrective: Process Sandbox Entry and Policy Semantics — Phase 89 Planned
+
+Status: **planned** 2026-09-26.
+
+Plan:
+`plans/phase_89_process_sandbox_entry_and_policy_semantics_corrective.md`.
+
+Baseline: `7462bb9f36983aaffa8c8d9ec14595240557c3c7`.
+
+Trigger: post-closeout review of the Phases 81–84 implementation found four
+bounded semantic defects that do not invalidate the overall corrective
+architecture or its DEFER extraction verdict:
+
+1. the jail performs the legacy Strict entry to compute `legacy_ok`, then
+   enters the guarantee-driven sandbox a second time;
+2. Linux `LandlockSandbox::apply()` unconditionally installs the
+   jail-specific seccomp filter, so generic/legacy Basic semantics are
+   stronger than documented and mechanism selection is not actually
+   guarantee-driven;
+3. `SandboxRequest::intersect()` drops disjoint required guarantees and
+   copies path/resource authority from only one operand, so it is not safe
+   tightening policy algebra;
+4. the jail request still omits the no-network/no-child/no-exec guarantees
+   that Phase 83 now has a Linux mechanism to enforce.
+
+Phase 89 corrective scope:
+
+- enforce exactly one irreversible jail-entry transition;
+- make legacy compatibility checks pure/test-only;
+- separate generic Landlock filesystem confinement from explicit
+  guarantee-selected seccomp categories;
+- build post-entry enforcement reports from mechanisms actually installed;
+- remove the unused unsafe `SandboxRequest::intersect()` API unless a real
+  production caller justifies a formally monotonic `tighten_with`
+  replacement;
+- make the jail's required guarantee set match its real security boundary;
+- reconcile legacy capability/docs truth and add focused/native regression
+  evidence.
+
+Constraints:
+
+- Phases 81–84 remain historically closed; Phase 89 is a post-closeout
+  corrective, not a rewrite;
+- extraction disposition remains **DEFER**;
+- no standalone sandbox crate/repository is created;
+- no global reinterpretation of legacy `sandbox_level` config;
+- no generic process-runner API;
+- no system `libseccomp` dependency;
+- no platform support label is preserved by silently weakening a required
+  jail guarantee;
+- parent-created stdio IPC, fail-closed `IsolationPolicy::Required`,
+  bounded restart behavior, and retained `EnteredSandbox` ownership remain
+  intact.
+
+Phase 89 is the next executable process-sandbox plan.
+
