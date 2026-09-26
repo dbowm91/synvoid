@@ -32,6 +32,12 @@ pub enum IcmpFilterError {
     #[error("Configuration error: {0}")]
     Config(String),
 
+    #[error("Policy adaptation error: {0}")]
+    Adapt(String),
+
+    #[error("Unsupported policy semantics: {0}")]
+    Unsupported(String),
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 

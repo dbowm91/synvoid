@@ -1,0 +1,22 @@
+{
+  "direction": "both",
+  "interfaces": null,
+  "rules": [
+    {
+      "match": { "family": "v4", "type": "echo_request" },
+      "verdict": "block",
+      "description": "Block ping (ICMP echo request)"
+    },
+    {
+      "match": { "family": "v6", "type": "packet_too_big" },
+      "verdict": "block"
+    }
+  ],
+  "exempt_ips": ["127.0.0.1"],
+  "rate_limit": {
+    "packets_per_second": 10,
+    "burst": 20,
+    "scope": "global",
+    "strict": true
+  }
+}

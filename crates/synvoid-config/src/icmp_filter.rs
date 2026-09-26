@@ -9,16 +9,34 @@ pub fn is_valid_identifier(s: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
+/// Canonical operational interface-name rule shared with the enforcement
+/// crate adapter: 1-15 chars, alphanumeric plus `_`, `.`, `-`.
+/// Table names keep the wider 64-char identifier rule; interfaces do not.
+pub fn is_valid_interface_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 15
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-')
+}
+
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema, ToSchema,
 )]
 pub enum FilterType {
     #[default]
+    #[serde(alias = "auto")]
     Auto,
+    #[serde(alias = "nftables")]
     Nftables,
+    #[serde(alias = "ebpf")]
     Ebpf,
+    #[serde(alias = "pf")]
     Pf,
+    #[serde(alias = "windowsfirewall")]
+    #[serde(alias = "windows_firewall")]
     WindowsFirewall,
+    #[serde(alias = "wfp")]
     Wfp,
 }
 
@@ -27,7 +45,9 @@ pub enum FilterType {
 )]
 pub enum IcmpAction {
     #[default]
+    #[serde(alias = "block")]
     Block,
+    #[serde(alias = "allow")]
     Allow,
 }
 
@@ -73,8 +93,11 @@ impl IcmpTypeRule {
 )]
 pub enum Direction {
     #[default]
+    #[serde(alias = "both")]
     Both,
+    #[serde(alias = "inbound")]
     Inbound,
+    #[serde(alias = "outbound")]
     Outbound,
 }
 
@@ -105,6 +128,23 @@ pub struct RateLimitConfig {
     pub enabled: bool,
     pub packets_per_second: u32,
     pub burst: u32,
+    /// Explicit scope. The first contract supports only `global` (the
+    /// semantics current backends truthfully implement). Unknown scopes are
+    /// rejected by the typed adapter, never emulated.
+    #[serde(default)]
+    pub scope: RateLimitScope,
+}
+
+/// Rate-limit scope DTO. Single-variant today; the adapter treats any other
+/// deserialized spelling as invalid rather than defaulting silently.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema, ToSchema,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum RateLimitScope {
+    #[default]
+    #[serde(alias = "Global")]
+    Global,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
@@ -137,7 +177,16 @@ pub struct IcmpFilterConfig {
     #[serde(default)]
     pub icmp_type_rules: Vec<IcmpTypeRule>,
 
+    /// ICMPv6 rule list. Absent in legacy persisted configs (deserializes to
+    /// empty); legacy v4 rules are never reinterpreted as v6 — the adapter
+    /// maps each list under its documented family.
     #[serde(default)]
+    pub icmpv6_type_rules: Vec<IcmpTypeRule>,
+
+    /// Preferred application spelling is `custom_ebpf_bytecode_path`.
+    /// The enforcement-crate spelling `ebpf_bytecode_path` is accepted on
+    /// read via alias; the typed adapter canonicalizes to one internal value.
+    #[serde(default, alias = "ebpf_bytecode_path")]
     pub custom_ebpf_bytecode_path: Option<String>,
 }
 
@@ -156,6 +205,7 @@ impl Default for IcmpFilterConfig {
             exempt_ips: Vec::new(),
             rate_limit: RateLimitConfig::default(),
             icmp_type_rules: Vec::new(),
+            icmpv6_type_rules: Vec::new(),
             custom_ebpf_bytecode_path: None,
         }
     }
@@ -183,7 +233,7 @@ impl IcmpFilterConfig {
 
         if let InterfaceSpec::Specific(ifaces) = &self.interfaces {
             for iface in ifaces {
-                if !is_valid_identifier(iface) {
+                if !is_valid_interface_name(iface) {
                     return Err(format!("Invalid interface name: {}", iface));
                 }
             }
@@ -193,6 +243,10 @@ impl IcmpFilterConfig {
             if ip.parse::<std::net::IpAddr>().is_err() {
                 return Err(format!("Invalid IP address in exempt_ips: {}", ip));
             }
+        }
+
+        if self.rate_limit.enabled && self.rate_limit.packets_per_second == 0 {
+            return Err("Rate limit enabled but packets_per_second is 0".to_string());
         }
 
         Ok(())
@@ -275,5 +329,53 @@ mod tests {
         let mut invalid_ip = IcmpFilterConfig::new();
         invalid_ip.exempt_ips.push("not-an-ip".to_string());
         assert!(invalid_ip.validate().is_err());
+    }
+
+    #[test]
+    fn test_v6_list_defaults_empty_legacy_compat() {
+        // Legacy persisted configs omit the v6 list; it defaults to empty and
+        // legacy v4 rules are never reinterpreted as v6.
+        let json = r#"{"enabled":false,"icmp_type_rules":[]}"#;
+        let cfg: IcmpFilterConfig = serde_json::from_str(json).unwrap();
+        assert!(cfg.icmpv6_type_rules.is_empty());
+        assert!(cfg.icmp_type_rules.is_empty());
+    }
+
+    #[test]
+    fn test_lowercase_enum_aliases_accepted() {
+        let json = r#"{"enabled":false,"filter_type":"nftables","direction":"inbound"}"#;
+        let cfg: IcmpFilterConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.filter_type, FilterType::Nftables);
+        assert_eq!(cfg.direction, Direction::Inbound);
+    }
+
+    #[test]
+    fn test_ebpf_path_alias_accepted() {
+        // Enforcement-crate spelling reads into the application field.
+        let toml_str = "ebpf_bytecode_path = \"/tmp/bpf.o\"\n";
+        let cfg: IcmpFilterConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(
+            cfg.custom_ebpf_bytecode_path,
+            Some("/tmp/bpf.o".to_string())
+        );
+    }
+
+    #[test]
+    fn test_interface_validation_operational_rule() {
+        assert!(is_valid_interface_name("eth0"));
+        assert!(is_valid_interface_name("enp0s3.100"));
+        assert!(!is_valid_interface_name("bad name!"));
+        assert!(!is_valid_interface_name(&"a".repeat(16)));
+        let mut cfg = IcmpFilterConfig::new();
+        cfg.interfaces = InterfaceSpec::Specific(vec!["bad name!".to_string()]);
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn test_rate_limit_scope_defaults_global() {
+        let cfg = IcmpFilterConfig::new();
+        assert_eq!(cfg.rate_limit.scope, RateLimitScope::Global);
+        let json = serde_json::to_string(&cfg.rate_limit).unwrap();
+        assert!(json.contains("global"));
     }
 }

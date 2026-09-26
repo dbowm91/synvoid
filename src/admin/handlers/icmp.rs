@@ -177,7 +177,10 @@ pub async fn update_config(
 ) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     #[cfg(feature = "icmp-filter")]
     {
-        let new_config: crate::icmp_filter::IcmpFilterConfig =
+        // Admin wire shape is the application config DTO. Parse it directly;
+        // model-to-model conversion below is exhaustive and typed (Phase 85:
+        // no serde_json::Value bridge between the two IcmpFilterConfig types).
+        let app_config: synvoid_config::icmp_filter::IcmpFilterConfig =
             match serde_json::from_value(req.config) {
                 Ok(c) => c,
                 Err(e) => {
@@ -193,7 +196,7 @@ pub async fn update_config(
                 }
             };
 
-        if let Err(e) = new_config.validate() {
+        if let Err(e) = app_config.validate() {
             return Ok(Json(AdminMutationResult {
                 status: AdminMutationStatus::InvalidRejected,
                 target: "icmp_config".to_string(),
@@ -202,6 +205,114 @@ pub async fn update_config(
                 event_id: None,
                 audit_id: None,
                 message: format!("Config validation error: {}", e),
+            }));
+        }
+
+        // Exhaustive typed adaptation: validates exempt IPs, interfaces,
+        // family mapping, rate-limit scope, and backend options. Rejects
+        // inexpressible policy with a typed error instead of defaulting.
+        let (policy, backend) =
+            match crate::icmp_filter::adapt::adapt_app_config_to_policy(&app_config) {
+                Ok(v) => v,
+                Err(e) => {
+                    return Ok(Json(AdminMutationResult {
+                        status: AdminMutationStatus::InvalidRejected,
+                        target: "icmp_config".to_string(),
+                        local_store_mutated: false,
+                        propagation: PropagationStatus::NotApplicable,
+                        event_id: None,
+                        audit_id: None,
+                        message: format!("Policy adaptation error: {}", e),
+                    }));
+                }
+            };
+
+        // Surface RFC-aware diagnostics without rewriting user rules.
+        // Non-strict preserves existing behavior while making hazards visible.
+        {
+            let findings = crate::icmp_filter::validate_policy(
+                &policy,
+                crate::icmp_filter::ValidationRole::Host,
+                false,
+                crate::icmp_filter::ValidationOverride::default(),
+            );
+            for f in &findings {
+                tracing::warn!("ICMP policy finding [{}]: {}", f.code, f.message);
+            }
+            let _ = backend;
+        }
+
+        // Build the enforcement DTO explicitly field-by-field (no JSON).
+        let enforcement_config = {
+            use crate::icmp_filter as icmp;
+            let exempt_ips = policy.exempt_ips.clone();
+            let map_rule =
+                |r: &synvoid_config::icmp_filter::IcmpTypeRule| icmp::config::IcmpTypeRule {
+                    icmp_type: r.icmp_type,
+                    icmp_code: r.icmp_code,
+                    action: match r.action {
+                        synvoid_config::icmp_filter::IcmpAction::Block => {
+                            icmp::config::IcmpAction::Block
+                        }
+                        synvoid_config::icmp_filter::IcmpAction::Allow => {
+                            icmp::config::IcmpAction::Allow
+                        }
+                    },
+                    description: r.description.clone(),
+                };
+            icmp::config::IcmpFilterConfig {
+                enabled: app_config.enabled,
+                filter_type: match app_config.filter_type {
+                    synvoid_config::icmp_filter::FilterType::Auto => icmp::config::FilterType::Auto,
+                    synvoid_config::icmp_filter::FilterType::Nftables => {
+                        icmp::config::FilterType::Nftables
+                    }
+                    synvoid_config::icmp_filter::FilterType::Ebpf => icmp::config::FilterType::Ebpf,
+                    synvoid_config::icmp_filter::FilterType::Pf => icmp::config::FilterType::Pf,
+                    synvoid_config::icmp_filter::FilterType::WindowsFirewall => {
+                        icmp::config::FilterType::WindowsFirewall
+                    }
+                    synvoid_config::icmp_filter::FilterType::Wfp => icmp::config::FilterType::Wfp,
+                },
+                direction: match app_config.direction {
+                    synvoid_config::icmp_filter::Direction::Both => icmp::config::Direction::Both,
+                    synvoid_config::icmp_filter::Direction::Inbound => {
+                        icmp::config::Direction::Inbound
+                    }
+                    synvoid_config::icmp_filter::Direction::Outbound => {
+                        icmp::config::Direction::Outbound
+                    }
+                },
+                interfaces: match &app_config.interfaces {
+                    synvoid_config::icmp_filter::InterfaceSpec::All => {
+                        icmp::config::InterfaceSpec::All
+                    }
+                    synvoid_config::icmp_filter::InterfaceSpec::Specific(ifaces) => {
+                        icmp::config::InterfaceSpec::Specific(ifaces.clone())
+                    }
+                },
+                rate_limit: policy.rate_limit.map(|rl| icmp::config::RateLimitConfig {
+                    enabled: true,
+                    packets_per_second: rl.packets_per_second,
+                    burst: rl.burst,
+                }),
+                exempt_ips,
+                table_name: backend.table_name.clone(),
+                icmp_type_rules: app_config.icmp_type_rules.iter().map(map_rule).collect(),
+                icmpv6_type_rules: app_config.icmpv6_type_rules.iter().map(map_rule).collect(),
+                ebpf_bytecode_path: backend.ebpf_bytecode_path.clone(),
+            }
+        };
+
+        if let Err(e) = enforcement_config.validate() {
+            return Ok(Json(AdminMutationResult {
+                status: AdminMutationStatus::InvalidRejected,
+                target: "icmp_config".to_string(),
+                local_store_mutated: false,
+                propagation: PropagationStatus::NotApplicable,
+                event_id: None,
+                audit_id: None,
+                message: format!("Enforcement config validation error: {}", e),
             }));
         }
 
@@ -219,7 +330,7 @@ pub async fn update_config(
 
         {
             let mut filter = icmp_filter.write().await;
-            if let Err(e) = filter.update_config(new_config) {
+            if let Err(e) = filter.update_config(enforcement_config) {
                 return Ok(Json(AdminMutationResult {
                     status: AdminMutationStatus::Failed,
                     target: "icmp_config".to_string(),
@@ -233,28 +344,11 @@ pub async fn update_config(
         }
 
         {
+            // Persist the validated application DTO directly. The enforcement
+            // DTO was already derived from it field-by-field above; no
+            // model-to-model JSON conversion remains (Phase 85).
             let mut config = state.process.config.write().await;
-            let icmp_cfg = icmp_filter.read().await;
-            if let Some(cfg) = icmp_cfg.config() {
-                // Convert between the two IcmpFilterConfig types via JSON
-                // synvoid_icmp_filter::IcmpFilterConfig -> synvoid_config::IcmpFilterConfig
-                match serde_json::to_value(cfg) {
-                    Ok(val) => match serde_json::from_value::<
-                        synvoid_config::icmp_filter::IcmpFilterConfig,
-                    >(val)
-                    {
-                        Ok(converted) => {
-                            config.main.icmp_filter = converted;
-                        }
-                        Err(e) => {
-                            tracing::warn!("Failed to convert ICMP filter config: {}", e);
-                        }
-                    },
-                    Err(e) => {
-                        tracing::warn!("Failed to serialize ICMP filter config: {}", e);
-                    }
-                }
-            }
+            config.main.icmp_filter = app_config;
         }
 
         #[allow(clippy::needless_return)]

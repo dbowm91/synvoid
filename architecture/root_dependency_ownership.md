@@ -72,7 +72,7 @@ reference fails the guard until the row is reclassified with a reason.
 | libinjectionrs | — | remove_candidate | — | Phase 31: removed from root (0 src uses; canonical WAF use in synvoid-waf) | removed Phase 31 | — |
 | serde_bytes | — | remove_candidate | — | Phase 31: removed from root (0 src uses; canonical use in synvoid-ipc) | removed Phase 31 | — |
 | synvoid-cli | commands | composition_runtime | default | CLI argument parsing definitions | keep | commands, main |
-| synvoid-config | config | composition_runtime | default | Configuration types and ConfigManager | keep | admin, commands, config, http, static_files, supervisor, waf, worker |
+| synvoid-config | config | composition_runtime | default | Configuration types and ConfigManager | keep | admin, commands, config, http, icmp_filter, static_files, supervisor, waf, worker |
 | synvoid-dns | dns | composition_runtime | dns | DNS server with DNSSEC validation | keep | dns |
 | synvoid-icmp-filter | icmp_filter | composition_runtime | icmp-filter | ICMP filtering | keep | icmp_filter |
 | synvoid-honeypot | honeypot_port | composition_runtime | default | Honeypot port detection | keep | honeypot_port |

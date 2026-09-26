@@ -1,8 +1,11 @@
+pub mod compat;
 pub mod config;
 pub mod error;
 pub mod metrics;
 pub mod platform;
+pub mod policy;
 pub mod traits;
+pub mod validation;
 
 #[cfg(target_os = "linux")]
 pub mod nftables;
@@ -25,12 +28,22 @@ pub mod winfw;
 #[cfg(all(target_os = "windows", feature = "icmp-wfp"))]
 pub mod wfp;
 
+pub use compat::{adapt_config_to_policy, validate_interface_name, AdaptError};
 pub use config::{Direction, FilterType, IcmpFilterConfig, InterfaceSpec, RateLimitConfig};
 pub use error::{IcmpFilterError, Result};
 pub use platform::{
     has_privilege_for, required_privilege_for_operation, FilterOperation, PrivilegeLevel,
 };
+pub use policy::{
+    BackendOptions, IcmpFamily, IcmpPolicy, IcmpRule, IcmpSelector, IcmpV4Type, IcmpV6Type,
+    IcmpVerdict, InterfaceSelector, PolicyDirection, PolicyRequirements, RateLimitPolicy,
+    RateLimitScope, RequestedBackend, CANONICAL_TABLE_NAME, LEGACY_TABLE_NAME_UNDERSCORE,
+};
 pub use traits::{BackendCapabilities, FilterBackend, FilterStatus, IcmpFilter};
+pub use validation::{
+    blocks_packet_too_big, validate_policy, FindingSeverity, PolicyFinding, ValidationOverride,
+    ValidationRole,
+};
 
 #[cfg(target_os = "linux")]
 use nftables::NftablesFilter;

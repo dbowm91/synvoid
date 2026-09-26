@@ -16,15 +16,29 @@ pub fn is_valid_interface_name(name: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-')
 }
 
+/// Enforcement-crate serialization DTO (backwards-compatible).
+///
+/// This struct is NOT the semantic policy owner. The canonical owner is
+/// `crate::policy::IcmpPolicy`; this DTO converts to it via
+/// `crate::compat::adapt_config_to_policy` with typed errors. Field names
+/// and defaults here are frozen for persisted-config compatibility; the
+/// canonical internal table spelling is `synvoid-icmp` (see
+/// `crate::policy::CANONICAL_TABLE_NAME`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum FilterType {
     #[default]
+    #[serde(alias = "Auto")]
     Auto,
+    #[serde(alias = "Nftables")]
     Nftables,
+    #[serde(alias = "Ebpf")]
     Ebpf,
+    #[serde(alias = "Pf")]
     Pf,
+    #[serde(alias = "WindowsFirewall")]
     WindowsFirewall,
+    #[serde(alias = "Wfp")]
     Wfp,
 }
 
@@ -32,7 +46,9 @@ pub enum FilterType {
 #[serde(rename_all = "lowercase")]
 pub enum IcmpAction {
     #[default]
+    #[serde(alias = "Block")]
     Block,
+    #[serde(alias = "Allow")]
     Allow,
 }
 
@@ -133,8 +149,11 @@ pub mod icmp_types {
 #[serde(rename_all = "lowercase")]
 pub enum Direction {
     #[default]
+    #[serde(alias = "Both")]
     Both,
+    #[serde(alias = "Inbound")]
     Inbound,
+    #[serde(alias = "Outbound")]
     Outbound,
 }
 
@@ -178,7 +197,9 @@ pub struct IcmpFilterConfig {
     #[serde(default)]
     pub direction: Direction,
 
-    #[serde(default)]
+    // `All` serializes as null under the untagged representation, which TOML
+    // cannot represent. Omitting the default preserves the round-trip.
+    #[serde(default, skip_serializing_if = "InterfaceSpec::is_all")]
     pub interfaces: InterfaceSpec,
 
     #[serde(default)]
@@ -196,7 +217,9 @@ pub struct IcmpFilterConfig {
     #[serde(default)]
     pub icmpv6_type_rules: Vec<IcmpTypeRule>,
 
-    #[serde(default)]
+    /// Preferred spelling. The legacy SynVoid-config spelling
+    /// `custom_ebpf_bytecode_path` is accepted on read via alias.
+    #[serde(default, alias = "custom_ebpf_bytecode_path")]
     pub ebpf_bytecode_path: Option<String>,
 }
 

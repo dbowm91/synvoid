@@ -1,0 +1,16 @@
+# Golden fixture: legacy/default application config shape (Phase 85).
+# - PascalCase enums (pre-canonicalization spelling; lowercase aliases accepted)
+# - hyphen table default `synvoid-icmp`
+# - no icmpv6 list (legacy configs omit it; adapter maps to zero v6 rules)
+# - rate_limit present but disabled
+enabled = false
+filter_type = "Auto"
+direction = "Both"
+table_name = "synvoid-icmp"
+exempt_ips = []
+
+[rate_limit]
+enabled = false
+packets_per_second = 0
+burst = 0
+scope = "global"
