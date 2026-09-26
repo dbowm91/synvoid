@@ -1,6 +1,14 @@
 # Phase 89 Plan: Process Sandbox Entry and Policy Semantics Corrective
 
-Status: closed (2026-09-26).
+Status: implementation landed; terminal qualification superseded by Phase 94 (2026-09-26).
+
+Qualification supersession: hosted GitHub Actions run `36257121876` on the
+Phase 89 closeout head failed the routine Clippy gate. Follow-up review also
+found that Linux `PreparedSandbox::enter()` computes but does not honor
+`filesystem_requested`, while native seccomp tests still exercise the legacy
+Landlock adapter. The proof-bearing corrective is registered as
+`plans/phase_94_process_sandbox_qualification_corrective.md`. Extraction
+remains **DEFER**.
 
 Registered in: `plans/roadmap.md`.
 
