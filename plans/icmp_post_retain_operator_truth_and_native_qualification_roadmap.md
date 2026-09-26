@@ -83,9 +83,19 @@ run reproducibly on a suitable privileged Linux host. Phase 91 closes when the
 harness, safety gates, fixtures, and non-privileged behavior are implemented
 and tested; actual privileged evidence is recorded when a host is available.
 
-No Phase 92 native-qualification decision is registered now. Register it only
-after there is an available host/environment capable of producing the required
-evidence.
+Post-closeout review found lifecycle edge cases that must be corrected before
+the harness is used as qualification evidence. The successor gate is now
+registered as:
+
+- Phase 92 — disabled-state/lifecycle commit semantics corrective;
+- Phase 93 — Linux nftables native qualification, blocked on Phase 92 and a
+  suitable privileged Linux host.
+
+Successor roadmap:
+`plans/icmp_linux_native_qualification_gate_roadmap.md`.
+
+This does not change the closed status of Phases 90–91 or the Phase 88 RETAIN
+disposition.
 
 ## Campaign acceptance criteria
 
@@ -107,3 +117,18 @@ evidence.
 - the privileged matrix remains an explicit future evidence trigger rather
   than being falsely marked passed;
 - no extraction/publication status changes in this campaign.
+
+
+## Successor corrective/qualification gate
+
+Post-closure review identified that disabled config replacement is currently
+misclassified when live readback correctly returns `Absent`, that
+`verify_live()` records expected disabled absence as an error, that committed
+desired driver fields can be changed before failed operations are known to
+succeed, and that repeated enable can advance generation/receipt without a new
+install.
+
+These are handled by
+`plans/icmp_linux_native_qualification_gate_roadmap.md` (Phases 92–93).
+The findings supersede only the over-broad Phase 90 lifecycle-closeout claim;
+the operator API/UI and Phase 91 harness work remain landed.
