@@ -1,7 +1,9 @@
 # ICMP Linux nftables Native Qualification
 
-Status: **BLOCKED / UNQUALIFIED** (2026-09-26). This record documents the
-Phase 93 host preflight only; no privileged qualification run occurred.
+Status: **NATIVE ATTEMPT PENDING / UNQUALIFIED** (2026-09-26). The original
+macOS preflight was blocked; an opt-in workflow-dispatch lane now attempts
+the complete two-run matrix on a disposable GitHub-hosted Linux VM. No native
+proof exists until that exact-SHA run completes successfully.
 
 Plan: `plans/phase_93_icmp_linux_nftables_native_qualification.md`.
 Gate roadmap: `plans/icmp_linux_native_qualification_gate_roadmap.md`.
@@ -27,11 +29,15 @@ Phase 92 lifecycle prerequisite: **CORRECTED**.
 
 ## Disposition
 
-Phase 93 is **BLOCKED**, not passed. Linux nftables retains its prior
-unqualified evidence tier. eBPF, PF, WFP, Windows Firewall and other platform
-tiers are unchanged. Phase 88 extraction disposition remains **RETAIN**.
+The macOS preflight is **BLOCKED**, not passed. The manual workflow attempt
+is pending; Linux nftables retains its prior unqualified evidence tier until
+the full matrix and artifact review pass. eBPF, PF, WFP, Windows Firewall and
+other platform tiers are unchanged. Phase 88 extraction disposition remains
+**RETAIN**.
 
-Resume on a suitable disposable Linux host. Run both complete native passes
-with distinct run IDs, prove packet behavior and owned-state readback, verify
-cleanup after each, and attach both bounded artifacts here before changing
-the support tier.
+The manual workflow is `icmp-native-qualification` in `.github/workflows/ci.yml`
+and is dispatched with `icmp_native_qualification=true`. It runs two complete
+native passes with distinct run IDs, proves packet behavior and owned-state
+readback, verifies cleanup after each, and uploads bounded JSON artifacts.
+Record the exact run and artifact details here before changing the support
+tier.

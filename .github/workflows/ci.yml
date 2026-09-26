@@ -15,6 +15,11 @@ on:
         type: boolean
         required: false
         default: false
+      icmp_native_qualification:
+        description: Run the Phase 93 disposable Linux nftables qualification matrix twice
+        type: boolean
+        required: false
+        default: false
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -126,3 +131,80 @@ jobs:
         run: |
           cargo test -p synvoid-jail-runtime --profile ci
           cargo test --test jail_isolation_guard --profile ci
+
+  icmp-native-qualification:
+    name: icmp-native-qualification
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.icmp_native_qualification }}
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: 1
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable as of 2026-09-12
+
+      - name: Install native qualification tools
+        run: sudo apt-get update && sudo apt-get install -y iproute2 nftables iputils-ping protobuf-compiler
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Record proof host
+        run: |
+          {
+            echo '## Phase 93 Linux nftables native qualification'
+            echo "- Proof SHA: $GITHUB_SHA"
+            echo "- Runner: $RUNNER_OS / $RUNNER_ARCH"
+            echo "- Kernel: $(uname -a)"
+            echo "- Rust: $(rustc -Vv | tr '\n' ' ')"
+            echo "- nftables: $(nft --version)"
+            echo "- iproute2: $(ip -Version)"
+            echo "- Privilege mode: root inside the disposable GitHub-hosted VM"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Preflight and review zero-mutation topology
+        shell: bash
+        run: |
+          set -euo pipefail
+          if sudo ip netns list | awk '($1 ~ /^synvoid-q-[a-z0-9-]+$/) { found = 1; print } END { exit !found }'; then
+            echo 'Refusing native qualification: stale synvoid-q namespace exists.' >&2
+            exit 1
+          fi
+          sudo -E env SYNVOID_ICMP_QUALIFY_NATIVE=1 cargo xtask icmp-qualify --check --json
+          cargo xtask icmp-qualify --dry-run --json
+
+      - name: Run two isolated native qualification passes
+        shell: bash
+        run: |
+          set -euo pipefail
+          run_native() {
+            local run_id="$1"
+            sudo -E env \
+              SYNVOID_ICMP_QUALIFY_NATIVE=1 \
+              SYNVOID_ICMP_QUALIFY_RUN="$run_id" \
+              cargo xtask icmp-qualify --native --json --timeout-secs 900 \
+                --out "target/icmp-qualify-${run_id}.json"
+          }
+          run_cleanup() {
+            sudo -E env SYNVOID_ICMP_QUALIFY_RUN="$1" \
+              cargo xtask icmp-qualify --cleanup --json
+            if sudo ip netns list | awk '($1 ~ /^synvoid-q-[a-z0-9-]+$/) { found = 1; print } END { exit !found }'; then
+              echo 'Harness namespace remains after cleanup.' >&2
+              exit 1
+            fi
+          }
+          run_native "${GITHUB_RUN_ID}-a"
+          run_cleanup "${GITHUB_RUN_ID}-cleanup-a"
+          run_native "${GITHUB_RUN_ID}-b"
+          run_cleanup "${GITHUB_RUN_ID}-cleanup-b"
+
+      - name: Upload bounded native evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: icmp-native-qualification-${{ github.run_id }}
+          path: target/icmp-qualify-*.json
+          if-no-files-found: warn
+          retention-days: 30

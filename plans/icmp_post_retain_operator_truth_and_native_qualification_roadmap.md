@@ -1,6 +1,6 @@
 # ICMP Post-RETAIN Operator Truth and Native Qualification Roadmap (Phases 90–91)
 
-Status: closed 2026-09-26 (Phase 90 operator truth closed; Phase 91 harness/preparation closed with no privileged run available; RETAIN unchanged, no Phase 92 registered).
+Status: closed 2026-09-26 (Phase 90 operator truth closed; Phase 91 harness/preparation closed with no privileged run available; successor Phases 92–93 are tracked separately; RETAIN unchanged).
 
 Registered in: `plans/roadmap.md`.
 
@@ -135,8 +135,9 @@ the operator API/UI and Phase 91 harness work remain landed.
 
 ## Corrective successor update (2026-09-26)
 
-The lifecycle findings are now corrected and verified by Phase 92
+The lifecycle findings are corrected and verified by Phase 92
 (`plans/phase_92_icmp_disabled_state_lifecycle_corrective.md`). Phase 93
-remains a separate native qualification gate and is **BLOCKED** on a suitable
-Linux host; see `architecture/icmp_linux_nftables_native_qualification.md`.
+remains a separate native qualification gate; its manual opt-in Linux runner
+attempt and terminal disposition are recorded by the Phase 93 plan and
+`architecture/icmp_linux_nftables_native_qualification.md`.
 These successors do not change the Phase 88 RETAIN decision.

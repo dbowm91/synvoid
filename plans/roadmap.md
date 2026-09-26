@@ -1,6 +1,6 @@
 # SynVoid Architecture Hardening Roadmap
 
-Status: Tracks 1–3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). Eggfetch 0.2 runtime adoption is closed through Phase 62 (`c3568ef4...`) and performance/reproducibility adjudication is closed through Phase 63; Phase 64 docs/evidence-truth correction is closed. Production remains on eggfetch. The EggServe 0.2.2-line inbound H1 campaign remains historical/retained at Phase 65; Phases 66–69 were never started. EggServe 0.3 H1 adoption and corrective requalification are closed as `ADOPTED` through Phase 80 on exact pins `eggserve-server = "=0.4.0"` / `eggserve-primitives = "=0.2.2"`; the Phase 78 terminal claim is superseded by Phase 80 proof-bearing SHA `174fdbcd6f133b35099ed4492f5ed8d3fcaa7d4c` (hosted run `36201213413`). Phase 79 implementation SHA: `171dd1e47f965b04b34465fc72c87adf4d9a9cab`. See `architecture/eggserve_0_3_h1_adoption_closeout.md`. Phases 70–72 remain historical/closed with evidence aligned to their then-current Hyper H1 runtime. No registered future plan remains blocked on this corrective sequence. The process-sandbox correctness and extraction-readiness campaign (Phases 81-84) remains closed DEFER; Phase 89 implementation landed, but its terminal qualification claim is superseded by the planned Phase 94 corrective after hosted CI failed and follow-up review found a remaining Linux mechanism-selection/native-evidence gap. The independent ICMP policy/enforcement extraction-preparation campaign (Phases 85-88) is closed RETAIN (see the Post-Phase-80 section below); the post-RETAIN operator-truth/native-harness follow-up (Phases 90-91) is closed, and the qualification gate is registered as Phase 92 corrective followed by Phase 93 Linux nftables native qualification. An independent cross-repo Eggbench security-qualification asset plan is also registered at `plans/eggbench_security_qualification_asset_contract.md`; it does not consume or reserve the ICMP Phase 92 re-evaluation slot.
+Status: Tracks 1–3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). Eggfetch 0.2 runtime adoption is closed through Phase 62 (`c3568ef4...`) and performance/reproducibility adjudication is closed through Phase 63; Phase 64 docs/evidence-truth correction is closed. Production remains on eggfetch. The EggServe 0.2.2-line inbound H1 campaign remains historical/retained at Phase 65; Phases 66–69 were never started. EggServe 0.3 H1 adoption and corrective requalification are closed as `ADOPTED` through Phase 80 on exact pins `eggserve-server = "=0.4.0"` / `eggserve-primitives = "=0.2.2"`; the Phase 78 terminal claim is superseded by Phase 80 proof-bearing SHA `174fdbcd6f133b35099ed4492f5ed8d3fcaa7d4c` (hosted run `36201213413`). Phase 79 implementation SHA: `171dd1e47f965b04b34465fc72c87adf4d9a9cab`. See `architecture/eggserve_0_3_h1_adoption_closeout.md`. Phases 70–72 remain historical/closed with evidence aligned to their then-current Hyper H1 runtime. The process-sandbox correctness and extraction-readiness campaign (Phases 81-84) remains closed DEFER; Phase 94 corrected and qualified Phase 89's Linux mechanism-selection and native-evidence gaps on exact SHA `e86fb35372b1b66bb59c8a6336bf32e55ff5c93e` (hosted/native run `36271417398`). The independent ICMP policy/enforcement extraction-preparation campaign (Phases 85-88) remains closed RETAIN (see the Post-Phase-80 section below); Phases 90–91 are closed, Phase 92 is CLOSED CORRECTED, and Phase 93's native qualification is attempted through the manual opt-in Linux lane. No extraction or support-tier changes occur without its complete two-run evidence. An independent cross-repo Eggbench security-qualification asset plan is also registered at `plans/eggbench_security_qualification_asset_contract.md` and is independent of these corrective phases.
 
 Scope: this roadmap covers architecture hardening, trust-boundary closure, verification, release readiness, post-hardening cleanup, and the architecture-convergence work required before another broad feature-expansion pass.
 
@@ -800,11 +800,10 @@ Constraints:
   bounded restart behavior, and retained `EnteredSandbox` ownership remain
   intact.
 
-Phase 89 implementation is landed, but its terminal qualification claim is
-**superseded by Phase 94**. Hosted run `36257121876` failed the routine
-Clippy gate; Linux guarantee entry still ignores the
-`filesystem_requested` mechanism-plan bit; and the native seccomp probes
-still exercise the legacy Landlock adapter. Extraction remains DEFER. See
+Phase 89 implementation is landed, but its terminal qualification claim was
+**superseded and corrected by Phase 94**. Exact-SHA run `36271417398` passed
+hosted routine verification, dependency security, and Linux native
+qualification. Extraction remains DEFER. See
 `plans/phase_94_process_sandbox_qualification_corrective.md`.
 
 
@@ -886,10 +885,9 @@ Constraints:
 - privileged execution requires explicit opt-in and deterministic cleanup;
 - routine CI remains non-privileged and proportionate.
 
-Phases 90–91 are closed. Phase 89 implementation is landed but its terminal
-sandbox qualification is superseded by Phase 94 (implementation complete;
-hosted/native proof pending). ICMP Phases 92–93
-are registered separately below. Extraction stays DEFER (sandbox) and RETAIN
+Phases 90–91 are closed. Phase 89 implementation is landed and its terminal
+sandbox qualification is closed by Phase 94. ICMP Phases 92–93 are tracked
+separately below. Extraction stays DEFER (sandbox) and RETAIN
 (ICMP) under their recorded re-evaluation triggers. The independent cross-repo
 Eggbench handoff remains planned and is not blocked on Phase 94.
 
@@ -936,7 +934,7 @@ Qualification M002a. It may execute independently of Phases 89-91.
 
 ## Post-Phase-91 ICMP Gate: Disabled-State Corrective and Linux nftables Native Qualification — Phases 92–93
 
-Status: **Phase 92 CORRECTED; Phase 93 BLOCKED** (2026-09-26). Phase 92 lifecycle work is complete. Phase 93 preflight refuses this macOS host; no native qualification claim is made.
+Status: **Phase 92 CORRECTED; Phase 93 NATIVE ATTEMPT PENDING** (2026-09-26). Phase 92 lifecycle work is complete. The macOS preflight was blocked; a manual, opt-in Linux runner lane is being used to attempt Phase 93's native matrix.
 
 Roadmap:
 `plans/icmp_linux_native_qualification_gate_roadmap.md`.
@@ -979,7 +977,7 @@ Execution order:
    Plan:
    `plans/phase_92_icmp_disabled_state_lifecycle_corrective.md`.
 
-2. **Phase 93 — ICMP Linux nftables Native Qualification — BLOCKED (2026-09-26)**
+2. **Phase 93 — ICMP Linux nftables Native Qualification — NATIVE ATTEMPT PENDING (2026-09-26)**
    - execute the dual-gated Phase 91 netns/veth harness on a suitable
      privileged Linux host;
    - require install/readback, v4/v6 type/code, exemption, global rate-limit,
@@ -1004,13 +1002,13 @@ Constraints:
 - Linux proof cannot upgrade eBPF/PF/WFP/Windows evidence tiers;
 - qualification must remain isolated from the host/default firewall namespace.
 
-Phase 92 is the next executable ICMP plan. Phase 93 becomes executable only
-after Phase 92 closes CORRECTED and a suitable privileged Linux host is
-available.
+Phase 92 is CLOSED CORRECTED. Phase 93's manual Linux runner qualification
+lane is now available; its status depends on the two-run result and evidence
+artifact from the exact-SHA dispatch.
 
-## Post-Phase-93 Corrective: Process Sandbox Qualification Closure — Phase 94 Planned
+## Post-Phase-93 Corrective: Process Sandbox Qualification Closure — Phase 94 Closed
 
-Status: **planned** 2026-09-26.
+Status: **CLOSED — QUALIFIED** 2026-09-26.
 
 Plan:
 `plans/phase_94_process_sandbox_qualification_corrective.md`.
@@ -1054,4 +1052,8 @@ Constraints:
 - no closure without green `ci` + `dependency-security` on the exact
   proof-bearing SHA.
 
-Phase 94 is the next executable process-sandbox corrective.
+Phase 94 closed at proof-bearing SHA
+`e86fb35372b1b66bb59c8a6336bf32e55ff5c93e`. Run `36271417398` passed
+`ci`, `dependency-security`, and the opt-in Linux native qualification lane.
+Phases 81–84 remain historically closed DEFER; no extraction phase is
+registered by this closeout.

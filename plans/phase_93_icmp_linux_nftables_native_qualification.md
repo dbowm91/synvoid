@@ -1,6 +1,6 @@
 # Phase 93 Plan: ICMP Linux nftables Native Qualification
 
-Status: **BLOCKED** (2026-09-26); Phase 92 is CORRECTED, but no suitable privileged Linux host is available in this execution environment.
+Status: **NATIVE ATTEMPT PENDING** (2026-09-26); Phase 92 is CORRECTED and a manual, opt-in Linux runner lane is being added to test whether its disposable namespace environment satisfies the native prerequisites.
 
 Registered in: `plans/roadmap.md` and
 `plans/icmp_linux_native_qualification_gate_roadmap.md`.
@@ -275,11 +275,12 @@ only the expected prefix-scoped `synvoid-q-*` disposable namespaces/veth and
 owned nft table, with no resources spawned. No stale Linux qualification
 namespace could exist on this host, and no native run was attempted.
 
-Disposition: **BLOCKED**, unqualified; no Linux support-tier upgrade, no
-product defect inferred, and Phase 88 RETAIN remains unchanged. Resume only
-on a suitable disposable Linux VM/host and perform the complete two-run
-matrix and repository verification from this plan. The harness evidence
-record is `architecture/icmp_linux_nftables_native_qualification.md`.
-The Phase 92 prerequisite implementation SHA is
-`94d50efacb4146cfeafc608ac37d3c357c1247ee`; no Phase 93 native proof was
-produced at that SHA.
+The macOS preflight remains **BLOCKED**, unqualified; it produced no native
+proof and no Linux support-tier upgrade. The manual workflow-dispatch attempt
+is a separate disposable Linux VM candidate and must pass the full preflight
+and two-run matrix before Phase 93 can qualify. Phase 88 RETAIN remains
+unchanged. The harness evidence record is
+`architecture/icmp_linux_nftables_native_qualification.md`. Phase 92's
+implementation SHA is `94d50efacb4146cfeafc608ac37d3c357c1247ee`; the
+authenticated route regression and routine hosted proof are on
+`e86fb35372b1b66bb59c8a6336bf32e55ff5c93e`.

@@ -308,7 +308,7 @@ sentence, and any reading of §2/§5 that implies double entry or
 Landlock-always-seccomp are superseded by this addendum. The DEFER verdict,
 triggers (§8), residuals (§9), and campaign constraints are unchanged.
 
-## 12. Phase 94 qualification corrective (implementation; hosted proof pending)
+## 12. Phase 94 qualification corrective (closed qualified)
 
 Phase 89's terminal proof claim is superseded by
 `plans/phase_94_process_sandbox_qualification_corrective.md`. The Linux
@@ -322,9 +322,16 @@ now enter via `prepare_sandbox(...).enter()` and check EPERM for socket, exec,
 and process creation while retaining the witness. Legacy Landlock probes
 remain filesystem-only, including a raw socket allowance check.
 
-The Phase 94 Clippy correction is structural. Exact implementation SHA,
-local full verification, Landlock-capable native results, and hosted CI plus
-dependency-security run ID are recorded by the Phase 94 plan after the exact
-commit's hosted run completes. Until then, this section is an implementation
-update and not terminal qualification evidence. Phases 81–84 remain
-historically closed; extraction remains **DEFER**.
+The Phase 94 Clippy correction is structural. Proof-bearing SHA
+`e86fb35372b1b66bb59c8a6336bf32e55ff5c93e` passed routine hosted verification
+and dependency security in run `36270228787`. Combined run `36271417398` passed
+those same jobs plus the opt-in Linux native qualification job on that exact
+SHA. The hosted Linux x86_64 job passed the guarantee-driven Landlock/seccomp
+probes, all three packaged jail round trips, and all 30 isolation guards. The
+run summary records the Linux runner kernel and Rust details; the job log
+records the passing native probes. The plan records the prior failed native
+attempts and the successful corrective requalification.
+
+Phase 94 is **CLOSED — QUALIFIED**. Phase 89 remains historical implementation
+evidence with its terminal claim superseded. Phases 81–84 remain historically
+closed; extraction remains **DEFER**.

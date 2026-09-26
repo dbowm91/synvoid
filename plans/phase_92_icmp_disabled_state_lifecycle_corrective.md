@@ -335,13 +335,20 @@ when disabled.
 Verification recorded: `cargo fmt --all`; `cargo test -p
 synvoid-icmp-filter --profile ci` — PASS (98 tests across 7 suites, including
 the final disabled-live regression).
-The manager now returns the optional receipt outcome to the admin handler, so
+The manager returns the optional receipt outcome to the admin handler, so
 verified disabled absence persists the DTO without presenting a historical
-install receipt as the mutation result. Admin route execution is included in
-the pending full repository verification. Phase 88 remains RETAIN.
+install receipt as the mutation result. An authenticated route regression now
+drives `PUT /api/icmp/config` and `GET /api/icmp/status` through the real admin
+router with a deterministic backend fake; it verifies applied status,
+persisted disabled config, verified absence, and a cleared verification
+diagnostic. The route regression passed in exact-SHA hosted run
+`36270228787` and the combined hosted/native run `36271417398` on Linux.
+Phase 88 remains RETAIN.
 
 Implementation SHA: `94d50efacb4146cfeafc608ac37d3c357c1247ee`.
-Phase 93 is executable
-but terminally **BLOCKED** on this host: it is macOS and lacks Linux network
-namespaces, `ip`, `nft`, and required privileges. See
+Proof-bearing route-regression SHA:
+`e86fb35372b1b66bb59c8a6336bf32e55ff5c93e`. Hosted routine verification and
+dependency security passed at that SHA (run `36270228787`, repeated in run
+`36271417398`). The ICMP native harness still has no suitable Linux nftables
+qualification result; see the Phase 93 disposition and
 `architecture/icmp_linux_nftables_native_qualification.md`.

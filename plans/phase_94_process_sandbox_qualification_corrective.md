@@ -1,6 +1,6 @@
 # Phase 94 Plan: Process Sandbox Phase 89 Qualification Corrective
 
-Status: corrective update in progress; exact-SHA hosted and Linux native qualification pending (2026-09-26).
+Status: **CLOSED — QUALIFIED** (2026-09-26).
 
 Registered in: `plans/roadmap.md`.
 
@@ -375,7 +375,7 @@ targeted all-target Clippy for both changed crates **PASS**; and Linux
 `cargo check -p synvoid-platform --target x86_64-unknown-linux-gnu --profile
 ci --tests` **PASS** (cross-compilation only). The macOS host cannot provide
 native Landlock/seccomp evidence. The exact hosted and opt-in Linux runner
-results remain required before terminal closure.
+results are recorded below.
 
 Local green verification is necessary but not sufficient.
 
@@ -459,3 +459,30 @@ If all acceptance criteria pass:
 
 If native Linux enforcement cannot be obtained, implementation may land but
 Phase 94 must remain qualification-open with the missing evidence recorded.
+
+## Phase 94 closeout (2026-09-26)
+
+Phase 94 is **CLOSED — QUALIFIED** on proof-bearing SHA
+`e86fb35372b1b66bb59c8a6336bf32e55ff5c93e`.
+
+- Hosted routine verification and dependency security passed in run
+  `36270228787` on the exact SHA.
+- Combined exact-SHA hosted run `36271417398` passed `ci`,
+  `dependency-security`, and `sandbox-native-qualification`.
+- The native job ran on a GitHub-hosted Linux x86_64 runner. Its guarantee-
+  driven Landlock/seccomp probes passed, including NetworkDenied socket
+  denial with the contracted errno, ExecDenied, ChildCreationDenied,
+  thread creation, local Unix socket preservation, legacy filesystem-only
+  behavior, and actual Landlock status.
+- `synvoid-jail-runtime` passed, including all three packaged WASM/YARA jail
+  round trips. `jail_isolation_guard` passed 30/30; the corrected silent
+  handshake test completed within its bound.
+- Exact-SHA `cargo xtask verify` and dependency security completed
+  successfully in the combined run. The focused local guard test passed
+  after changing its fixture to launch `/bin/sleep` directly.
+- No unsupported Landlock/seccomp disposition was reported. Phase 89's
+  terminal claim is superseded; Phases 81–84 remain historically closed with
+  extraction **DEFER**.
+
+The run summary records the runner kernel, Rust toolchain, and host details;
+the native job log records the exact SHA and probe results.

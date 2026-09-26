@@ -1,6 +1,6 @@
 # ICMP Linux Native Qualification Gate Roadmap (Phases 92–93)
 
-Status: Phase 92 **CORRECTED**; Phase 93 **BLOCKED** on 2026-09-26.
+Status: Phase 92 **CORRECTED**; Phase 93 **NATIVE ATTEMPT PENDING** on 2026-09-26.
 
 Registered in: `plans/roadmap.md`.
 
@@ -111,7 +111,8 @@ Phase 93 preflight ran on Darwin/macOS and refused as designed because the
 host is not Linux, `ip` and `nft` are absent, and root/CAP_NET_ADMIN access
 for the required network namespace run is unavailable. The zero-mutation
 dry-run passed and listed only prefix-scoped `synvoid-q-*` namespace and
-veth resources. No native run or evidence artifact was produced. Phase 93 is
-therefore **BLOCKED**, and Linux nftables remains unqualified at its existing
-evidence tier. See
+veth resources. No native run or evidence artifact was produced on macOS.
+The manual workflow-dispatch lane is now the pending disposable Linux-host
+attempt; until it completes, Phase 93 remains unqualified and Linux nftables
+retains its current evidence tier. See
 `architecture/icmp_linux_nftables_native_qualification.md`.
