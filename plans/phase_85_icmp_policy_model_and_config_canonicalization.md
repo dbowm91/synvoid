@@ -1,6 +1,10 @@
 # Phase 85 Plan: ICMP Policy Model and Config Canonicalization
 
-Status: planned.
+Status: closed 2026-09-26. Implementation SHA:
+`20dfc148df6ac522db6b3439cf5102a6015257b5`. Closeout:
+`architecture/icmp_phase85_policy_canonicalization_closeout.md`.
+Phase 86 is unblocked (capability now evaluable against
+`PolicyRequirements`).
 
 Registered in: `plans/roadmap.md` and
 `plans/icmp_policy_enforcement_extraction_preparation_roadmap.md`.
