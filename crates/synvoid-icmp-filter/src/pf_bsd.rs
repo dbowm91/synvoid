@@ -7,13 +7,18 @@ use std::process::Command;
 
 const ANCHOR_NAME: &str = "synvoid.icmp";
 
+/// BSD PF backend: FreeBSD and OpenBSD only, qualified separately.
+///
+/// NetBSD is explicitly unsupported for ICMP enforcement: its native packet
+/// filter is NPF (https://man.netbsd.org/npf.7), not PF. NetBSD compiles to
+/// `UnsupportedPlatform`; NPF is a separately scoped future backend, not a
+/// Phase 86 deliverable.
 #[derive(Debug)]
 pub struct PfBsdFilter {
     config: IcmpFilterConfig,
     enabled: bool,
     is_freebsd: bool,
     is_openbsd: bool,
-    is_netbsd: bool,
 }
 
 impl PfBsdFilter {
@@ -21,36 +26,30 @@ impl PfBsdFilter {
         config.validate().map_err(IcmpFilterError::Config)?;
         Self::check_pf_available()?;
 
-        let (is_freebsd, is_openbsd, is_netbsd) = Self::detect_bsd_variant();
+        let (is_freebsd, is_openbsd) = Self::detect_bsd_variant();
 
         Ok(Self {
             config,
             enabled: false,
             is_freebsd,
             is_openbsd,
-            is_netbsd,
         })
     }
 
-    fn detect_bsd_variant() -> (bool, bool, bool) {
+    fn detect_bsd_variant() -> (bool, bool) {
         #[cfg(target_os = "freebsd")]
         {
-            (true, false, false)
+            (true, false)
         }
 
         #[cfg(target_os = "openbsd")]
         {
-            (false, true, false)
+            (false, true)
         }
 
-        #[cfg(target_os = "netbsd")]
+        #[cfg(not(any(target_os = "freebsd", target_os = "openbsd")))]
         {
-            (false, false, true)
-        }
-
-        #[cfg(not(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
-        {
-            (false, false, false)
+            (false, false)
         }
     }
 
@@ -201,7 +200,7 @@ impl PfBsdFilter {
     }
 
     fn add_anchor(&self) -> Result<()> {
-        let anchor_path = if self.is_freebsd || self.is_netbsd {
+        let anchor_path = if self.is_freebsd {
             format!("{}.icmp", self.config.table_name)
         } else {
             ANCHOR_NAME.to_string()
@@ -241,7 +240,7 @@ impl PfBsdFilter {
     }
 
     fn remove_anchor(&self) -> Result<()> {
-        let anchor_path = if self.is_freebsd || self.is_netbsd {
+        let anchor_path = if self.is_freebsd {
             format!("{}.icmp", self.config.table_name)
         } else {
             ANCHOR_NAME.to_string()
@@ -291,8 +290,6 @@ impl IcmpFilter for PfBsdFilter {
             "FreeBSD"
         } else if self.is_openbsd {
             "OpenBSD"
-        } else if self.is_netbsd {
-            "NetBSD"
         } else {
             "BSD"
         };

@@ -21,7 +21,7 @@ These features are supported but not in the default profile. Enable them via fea
 | Feature | Flag | Description | Platform |
 |---------|------|-------------|----------|
 | WireGuard | `wireguard` | WireGuard VPN tunnel for mesh transport | Linux, macOS, FreeBSD |
-| ICMP Filter | `icmp-filter` | ICMP flood filtering (nftables/pf/winfw) | Linux, macOS, FreeBSD, Windows |
+| ICMP Filter | `icmp-filter` | ICMP flood filtering (nftables baseline; PF/WFP lanes per-crate) | Linux, macOS, FreeBSD, OpenBSD, Windows (NetBSD explicitly unsupported: native filter is NPF, a future backend) |
 | Origin Key Exchange | `origin_key_exchange` | Signed HTTP integrity verification | All |
 | Audit Logging | `audit` | Audit logging for admin mutations | All |
 | TUN Device | `tun-rs` | TUN device support | Linux, macOS |

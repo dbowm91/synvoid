@@ -1,31 +1,39 @@
-/*
- * Windows Filtering Platform (WFP) ICMP Backend
- *
- * Capabilities:
- *   - Block/allow ICMP by direction (inbound/outbound/both)
- *   - Per-IP exemption (IPv4 and IPv6)
- *   - ICMP type/code matching via WFP conditions
- *   - Interface filtering by numeric index
- *   - No built-in rate limiting (WFP has no native rate-limit primitives)
- *
- * Required privilege: Administrator (checked via platform::is_admin)
- *
- * When is_enforcing() == false: the filter was created without admin rights or
- * the icmp-wfp feature is not enabled; no kernel-level enforcement occurs.
- */
+//! Windows Filtering Platform (WFP) ICMP backend — primary Windows lane.
+//!
+//! Outcome A (Phase 86): WFP is the supported Windows enforcement lane
+//! (typed protocol/ICMP conditions + engine transactions). The Windows
+//! Firewall COM lane (`winfw`) remains only as a documented compatibility
+//! fallback.
+//!
+//! Capabilities:
+//! - Block/allow ICMP by direction (inbound/outbound/both)
+//! - Per-IP exemption as `/32` and `/128` permit filters at higher weight
+//!   (exemptions precede blocks by explicit weight ordering)
+//! - ICMPv4 and ICMPv6 type/code matching via typed WFP conditions
+//! - Interface filtering via LUID conditions: numeric indices resolve with
+//!   `ConvertInterfaceIndexToLuid`, adapter names with
+//!   `ConvertInterfaceAliasToLuid`; unresolvable names are a hard error
+//! - No rate limiting: WFP exposes no rate-limit primitive, and the
+//!   constructor rejects rate-limited policy instead of claiming it
+//!
+//! Required privilege: Administrator (checked via `platform::is_admin`).
+//!
+//! Cross-compilation (`--target x86_64-pc-windows-*`) is compile evidence
+//! only. Native apply/remove proof belongs to Phase 88.
 
 use crate::{
     config::{Direction, IcmpFilterConfig, IcmpTypeRule},
     error::{IcmpFilterError, Result},
     platform::is_admin,
-    traits::{FilterBackend, FilterStatus, IcmpFilter},
+    traits::{check_policy_compatibility, FilterBackend, FilterStatus, IcmpFilter},
 };
 use std::net::IpAddr;
 
-const SUBLAYER_NAME: &str = "synvoid_ICMP_Sublayer";
-
-const IPPROTO_ICMP: u8 = 1;
-const IPPROTO_ICMPV6: u8 = 58;
+// Explicit WFP arbitration weights: higher weight is evaluated first, so
+// exemptions precede type rules, which precede the base protocol block.
+const WEIGHT_EXEMPT: u64 = u64::MAX - 10;
+const WEIGHT_TYPE_RULE: u64 = u64::MAX / 2;
+const WEIGHT_BASE_BLOCK: u64 = 1;
 
 #[derive(Debug)]
 pub struct WfpFilter {
@@ -38,18 +46,27 @@ pub struct WfpFilter {
 impl WfpFilter {
     pub fn new(config: IcmpFilterConfig) -> Result<Self> {
         config.validate().map_err(IcmpFilterError::Config)?;
+        // Admit only policy this lane expresses exactly: WFP has no rate
+        // limiting, so a rate-limited request fails here, never installs a
+        // weaker rule set.
+        let (policy, _) =
+            crate::compat::adapt_config_to_policy(&config).map_err(IcmpFilterError::from)?;
+        if let Err(mismatches) = check_policy_compatibility(FilterBackend::Wfp, &policy) {
+            let detail = mismatches
+                .iter()
+                .map(|m| format!("{}: {}", m.requirement, m.detail))
+                .collect::<Vec<_>>()
+                .join("; ");
+            return Err(IcmpFilterError::Unsupported(format!(
+                "WFP cannot express requested policy: {detail}"
+            )));
+        }
         let has_admin = is_admin();
 
         if !has_admin {
             tracing::warn!(
                 "WFP ICMP filtering requires administrator privileges. \
                  Filter will be created in disabled state."
-            );
-        }
-
-        if config.has_type_rules() {
-            tracing::info!(
-                "ICMP type/code rules configured. Note: WFP crate limitations may apply."
             );
         }
 
@@ -61,6 +78,16 @@ impl WfpFilter {
         })
     }
 
+    /// Build one LUID interface condition per configured interface.
+    /// Numeric strings resolve as indices; anything else resolves as an
+    /// adapter alias. Failures are hard errors.
+    fn configured_interface_names(&self) -> Vec<String> {
+        match &self.config.interfaces {
+            crate::config::InterfaceSpec::All => Vec::new(),
+            crate::config::InterfaceSpec::Specific(ifaces) => ifaces.clone(),
+        }
+    }
+
     fn add_icmp_filters(&mut self) -> Result<()> {
         if !self.has_admin {
             tracing::warn!("Cannot create WFP filters without administrator privileges");
@@ -70,8 +97,9 @@ impl WfpFilter {
         #[cfg(feature = "icmp-wfp")]
         {
             use wfp::{
-                ActionType, Condition, ConditionField, FilterBuilder, FilterEngineBuilder, Layer,
-                MatchType, ProtocolConditionBuilder, Transaction,
+                ActionType, FilterBuilder, FilterEngineBuilder, FilterWeight,
+                InterfaceConditionBuilder, IpAddressConditionBuilder, Layer,
+                ProtocolConditionBuilder, Transaction,
             };
 
             let mut engine = FilterEngineBuilder::default()
@@ -88,123 +116,126 @@ impl WfpFilter {
 
             self.filter_ids.clear();
 
-            // Handle interface-specific filtering
-            let interface_indices = if !self.config.interfaces.is_all() {
-                let mut indices = Vec::new();
-                for iface in self.config.interfaces.names() {
-                    // Try to parse as index first
-                    if let Ok(idx) = iface.parse::<u32>() {
-                        indices.push(idx);
-                    } else {
-                        // In a real implementation, we would resolve name to index here
-                        // For now we log a warning if it's not a numeric index
-                        tracing::warn!(
-                            "WFP interface filtering currently requires numeric indices: {}",
-                            iface
-                        );
-                    }
+            // Resolve every configured interface to a LUID condition now so
+            // an unresolvable name aborts before any filter is installed.
+            let mut iface_conditions = Vec::new();
+            for name in self.configured_interface_names() {
+                let luid = crate::platform::resolve_interface_luid(&name).map_err(|e| {
+                    IcmpFilterError::Wfp(format!(
+                        "Cannot resolve interface '{name}' to a LUID: {e}"
+                    ))
+                })?;
+                iface_conditions.push(InterfaceConditionBuilder::local().luid(luid).build());
+            }
+
+            // Helper: attach collected interface conditions to a builder.
+            let with_ifaces = |mut builder: wfp::FilterBuilder<
+                wfp::FilterBuilderHasName,
+                wfp::FilterBuilderHasAction,
+            >,
+                               ifaces: &[wfp::Condition]|
+             -> wfp::FilterBuilder<
+                wfp::FilterBuilderHasName,
+                wfp::FilterBuilderHasAction,
+            > {
+                for cond in ifaces {
+                    builder = builder.condition(cond.clone());
                 }
-                Some(indices)
-            } else {
-                None
+                builder
             };
 
-            if !self.config.exempt_ips.is_empty() {
-                for ip in &self.config.exempt_ips {
-                    if block_in {
-                        self.add_exempt_filter(
-                            ip,
-                            Layer::InboundTransportV4,
-                            Layer::InboundTransportV6,
-                            &transaction,
-                        )?;
-                    }
-                    if block_out {
-                        self.add_exempt_filter(
-                            ip,
-                            Layer::OutboundTransportV4,
-                            Layer::OutboundTransportV6,
-                            &transaction,
-                        )?;
-                    }
+            for ip in &self.config.exempt_ips {
+                let layers: &[(Layer, Layer)] = if block_in && block_out {
+                    &[
+                        (Layer::InboundTransportV4, Layer::InboundTransportV6),
+                        (Layer::OutboundTransportV4, Layer::OutboundTransportV6),
+                    ]
+                } else if block_in {
+                    &[(Layer::InboundTransportV4, Layer::InboundTransportV6)]
+                } else if block_out {
+                    &[(Layer::OutboundTransportV4, Layer::OutboundTransportV6)]
+                } else {
+                    &[]
+                };
+                for (v4_layer, v6_layer) in layers {
+                    let (layer, condition) = match ip {
+                        IpAddr::V4(addr) => (
+                            *v4_layer,
+                            IpAddressConditionBuilder::remote()
+                                .subnet_v4(*addr, 32)
+                                .build(),
+                        ),
+                        IpAddr::V6(addr) => (
+                            *v6_layer,
+                            IpAddressConditionBuilder::remote()
+                                .subnet_v6(*addr, 128)
+                                .build(),
+                        ),
+                    };
+                    let builder = with_ifaces(
+                        FilterBuilder::default()
+                            .name(&format!("synvoid_ICMP_Exempt_{ip}"))
+                            .description("Synvoid ICMP exempt filter")
+                            .action(ActionType::Permit)
+                            .layer(layer)
+                            .weight(FilterWeight::Exact(WEIGHT_EXEMPT))
+                            .condition(condition),
+                        &iface_conditions,
+                    );
+                    let id = builder.add(&transaction).map_err(|e| {
+                        IcmpFilterError::Wfp(format!("Failed to add exempt filter: {}", e))
+                    })?;
+                    self.filter_ids.push(id);
                 }
             }
 
-            if self.config.has_type_rules() {
-                self.add_type_rule_filters(
-                    block_in,
-                    block_out,
-                    &self.config.icmp_type_rules,
-                    &self.config.icmpv6_type_rules,
-                    &transaction,
-                )?;
-            }
+            self.add_type_rule_filters(block_in, block_out, &iface_conditions, &transaction)?;
 
-            let mut add_icmp_block =
-                |name: &str, layer: Layer, protocol: u8, tx: &Transaction| -> Result<u64> {
-                    let mut builder = FilterBuilder::default()
+            let add_icmp_block = |name: &str, layer: Layer, v6: bool| -> Result<u64> {
+                let proto_condition = if v6 {
+                    ProtocolConditionBuilder::icmpv6().build()
+                } else {
+                    ProtocolConditionBuilder::icmp().build()
+                };
+                let builder = with_ifaces(
+                    FilterBuilder::default()
                         .name(name)
                         .description("Synvoid ICMP block filter")
                         .action(ActionType::Block)
-                        .layer(layer);
-
-                    builder = builder.condition(
-                        ProtocolConditionBuilder::new()
-                            .field(ConditionField::Protocol)
-                            .equal(protocol)
-                            .build(),
-                    );
-
-                    if let Some(ref indices) = interface_indices {
-                        for &idx in indices {
-                            // WFP condition for interface index
-                            let iface_cond =
-                                Condition::new(ConditionField::InterfaceIndex, MatchType::Equal)
-                                    .value(idx);
-                            builder = builder.condition(iface_cond);
-                        }
-                    }
-
-                    let filter_id = builder.add(tx).map_err(|e| {
-                        IcmpFilterError::Wfp(format!("Failed to add filter '{}': {}", name, e))
-                    })?;
-                    Ok(filter_id)
-                };
+                        .layer(layer)
+                        .weight(FilterWeight::Exact(WEIGHT_BASE_BLOCK))
+                        .condition(proto_condition),
+                    &iface_conditions,
+                );
+                builder.add(&transaction).map_err(|e| {
+                    IcmpFilterError::Wfp(format!("Failed to add filter '{}': {}", name, e))
+                })
+            };
 
             if block_in {
-                let id = add_icmp_block(
+                self.filter_ids.push(add_icmp_block(
                     "synvoid_ICMP_Block_In_V4",
                     Layer::InboundTransportV4,
-                    IPPROTO_ICMP,
-                    &transaction,
-                )?;
-                self.filter_ids.push(id);
-
-                let id = add_icmp_block(
+                    false,
+                )?);
+                self.filter_ids.push(add_icmp_block(
                     "synvoid_ICMP_Block_In_V6",
                     Layer::InboundTransportV6,
-                    IPPROTO_ICMPV6,
-                    &transaction,
-                )?;
-                self.filter_ids.push(id);
+                    true,
+                )?);
             }
 
             if block_out {
-                let id = add_icmp_block(
+                self.filter_ids.push(add_icmp_block(
                     "synvoid_ICMP_Block_Out_V4",
                     Layer::OutboundTransportV4,
-                    IPPROTO_ICMP,
-                    &transaction,
-                )?;
-                self.filter_ids.push(id);
-
-                let id = add_icmp_block(
+                    false,
+                )?);
+                self.filter_ids.push(add_icmp_block(
                     "synvoid_ICMP_Block_Out_V6",
                     Layer::OutboundTransportV6,
-                    IPPROTO_ICMPV6,
-                    &transaction,
-                )?;
-                self.filter_ids.push(id);
+                    true,
+                )?);
             }
 
             transaction.commit().map_err(|e| {
@@ -229,182 +260,61 @@ impl WfpFilter {
     }
 
     #[cfg(feature = "icmp-wfp")]
-    fn add_exempt_filter(
-        &mut self,
-        ip: &IpAddr,
-        v4_layer: wfp::Layer,
-        v6_layer: wfp::Layer,
-        transaction: &wfp::Transaction,
-    ) -> Result<()> {
-        use wfp::{ActionType, Condition, ConditionField, FilterBuilder, MatchType};
-
-        match ip {
-            IpAddr::V4(addr) => {
-                let bytes = u32::from(*addr).to_be_bytes();
-                let condition = Condition::new(ConditionField::RemoteAddress, MatchType::Equal)
-                    .value_bytes(&bytes);
-
-                let filter_id = FilterBuilder::default()
-                    .name(&format!("synvoid_ICMP_Exempt_{}", addr))
-                    .description("Synvoid ICMP exempt filter")
-                    .action(ActionType::Permit)
-                    .layer(v4_layer)
-                    .condition(condition)
-                    .add(transaction)
-                    .map_err(|e| {
-                        IcmpFilterError::Wfp(format!("Failed to add exempt filter: {}", e))
-                    })?;
-                self.filter_ids.push(filter_id);
-            }
-            IpAddr::V6(addr) => {
-                let condition = Condition::new(ConditionField::RemoteAddress, MatchType::Equal)
-                    .value_bytes(&addr.octets());
-
-                let filter_id = FilterBuilder::default()
-                    .name(&format!("synvoid_ICMPv6_Exempt_{}", ip))
-                    .description("Synvoid ICMPv6 exempt filter")
-                    .action(ActionType::Permit)
-                    .layer(v6_layer)
-                    .condition(condition)
-                    .add(transaction)
-                    .map_err(|e| {
-                        IcmpFilterError::Wfp(format!("Failed to add exempt filter: {}", e))
-                    })?;
-                self.filter_ids.push(filter_id);
-            }
-        }
-
-        Ok(())
-    }
-
-    #[cfg(feature = "icmp-wfp")]
     fn add_type_rule_filters(
         &mut self,
         block_in: bool,
         block_out: bool,
-        icmp_rules: &[IcmpTypeRule],
-        icmpv6_rules: &[IcmpTypeRule],
-        transaction: &wfp::Transaction,
+        iface_conditions: &[wfp::Condition],
+        transaction: &wfp::Transaction<'_>,
     ) -> Result<()> {
-        use wfp::{ActionType, Condition, ConditionField, FilterBuilder, MatchType};
+        use wfp::{ActionType, FilterBuilder, FilterWeight, IcmpConditionBuilder, Layer};
 
-        for rule in icmp_rules {
+        let mut add_rule = |rule: &IcmpTypeRule,
+                            layer: Layer,
+                            suffix: &str,
+                            ifaces: &[wfp::Condition]|
+         -> Result<()> {
             let action = if rule.is_block() {
                 ActionType::Block
             } else {
                 ActionType::Permit
             };
-
-            let protocol_condition =
-                Condition::new(ConditionField::Protocol, MatchType::Equal).value(IPPROTO_ICMP);
-
-            let type_condition =
-                Condition::new(ConditionField::IcmpType, MatchType::Equal).value(rule.icmp_type);
-
-            let code_condition = if let Some(code) = rule.icmp_code {
-                Some(Condition::new(ConditionField::IcmpCode, MatchType::Equal).value(code))
-            } else {
-                None
-            };
-
-            if block_in {
-                let name = format!("synvoid_ICMP_Type_{}_In", rule.icmp_type);
-                let mut builder = FilterBuilder::default()
-                    .name(&name)
-                    .description(rule.description.as_deref().unwrap_or("ICMP type filter"))
-                    .action(action)
-                    .layer(wfp::Layer::InboundTransportV4)
-                    .condition(protocol_condition.clone())
-                    .condition(type_condition.clone());
-
-                if let Some(ref code_cond) = code_condition {
-                    builder = builder.condition(code_cond.clone());
-                }
-
-                let filter_id = builder.add(transaction).map_err(|e| {
-                    IcmpFilterError::Wfp(format!("Failed to add ICMP type filter: {}", e))
-                })?;
-                self.filter_ids.push(filter_id);
+            let name = format!("synvoid_ICMP_Type_{}_{suffix}", rule.icmp_type);
+            let mut builder = FilterBuilder::default()
+                .name(&name)
+                .description(rule.description.as_deref().unwrap_or("ICMP type filter"))
+                .action(action)
+                .layer(layer)
+                .weight(FilterWeight::Exact(WEIGHT_TYPE_RULE))
+                .condition(IcmpConditionBuilder::r#type().equal(rule.icmp_type).build());
+            if let Some(code) = rule.icmp_code {
+                builder = builder.condition(IcmpConditionBuilder::code().equal(code).build());
             }
+            for cond in ifaces {
+                builder = builder.condition(cond.clone());
+            }
+            let id = builder.add(transaction).map_err(|e| {
+                IcmpFilterError::Wfp(format!("Failed to add ICMP type filter: {}", e))
+            })?;
+            self.filter_ids.push(id);
+            Ok(())
+        };
 
+        for rule in &self.config.icmp_type_rules {
+            if block_in {
+                add_rule(rule, Layer::InboundTransportV4, "In", iface_conditions)?;
+            }
             if block_out {
-                let name = format!("synvoid_ICMP_Type_{}_Out", rule.icmp_type);
-                let mut builder = FilterBuilder::default()
-                    .name(&name)
-                    .description(rule.description.as_deref().unwrap_or("ICMP type filter"))
-                    .action(action)
-                    .layer(wfp::Layer::OutboundTransportV4)
-                    .condition(protocol_condition.clone())
-                    .condition(type_condition.clone());
-
-                if let Some(ref code_cond) = code_condition {
-                    builder = builder.condition(code_cond.clone());
-                }
-
-                let filter_id = builder.add(transaction).map_err(|e| {
-                    IcmpFilterError::Wfp(format!("Failed to add ICMP type filter: {}", e))
-                })?;
-                self.filter_ids.push(filter_id);
+                add_rule(rule, Layer::OutboundTransportV4, "Out", iface_conditions)?;
             }
         }
 
-        for rule in icmpv6_rules {
-            let action = if rule.is_block() {
-                ActionType::Block
-            } else {
-                ActionType::Permit
-            };
-
-            let protocol_condition =
-                Condition::new(ConditionField::Protocol, MatchType::Equal).value(IPPROTO_ICMPV6);
-
-            let type_condition =
-                Condition::new(ConditionField::IcmpType, MatchType::Equal).value(rule.icmp_type);
-
-            let code_condition = if let Some(code) = rule.icmp_code {
-                Some(Condition::new(ConditionField::IcmpCode, MatchType::Equal).value(code))
-            } else {
-                None
-            };
-
+        for rule in &self.config.icmpv6_type_rules {
             if block_in {
-                let name = format!("synvoid_ICMPv6_Type_{}_In", rule.icmp_type);
-                let mut builder = FilterBuilder::default()
-                    .name(&name)
-                    .description(rule.description.as_deref().unwrap_or("ICMPv6 type filter"))
-                    .action(action)
-                    .layer(wfp::Layer::InboundTransportV6)
-                    .condition(protocol_condition.clone())
-                    .condition(type_condition.clone());
-
-                if let Some(ref code_cond) = code_condition {
-                    builder = builder.condition(code_cond.clone());
-                }
-
-                let filter_id = builder.add(transaction).map_err(|e| {
-                    IcmpFilterError::Wfp(format!("Failed to add ICMPv6 type filter: {}", e))
-                })?;
-                self.filter_ids.push(filter_id);
+                add_rule(rule, Layer::InboundTransportV6, "In", iface_conditions)?;
             }
-
             if block_out {
-                let name = format!("synvoid_ICMPv6_Type_{}_Out", rule.icmp_type);
-                let mut builder = FilterBuilder::default()
-                    .name(&name)
-                    .description(rule.description.as_deref().unwrap_or("ICMPv6 type filter"))
-                    .action(action)
-                    .layer(wfp::Layer::OutboundTransportV6)
-                    .condition(protocol_condition.clone())
-                    .condition(type_condition.clone());
-
-                if let Some(ref code_cond) = code_condition {
-                    builder = builder.condition(code_cond.clone());
-                }
-
-                let filter_id = builder.add(transaction).map_err(|e| {
-                    IcmpFilterError::Wfp(format!("Failed to add ICMPv6 type filter: {}", e))
-                })?;
-                self.filter_ids.push(filter_id);
+                add_rule(rule, Layer::OutboundTransportV6, "Out", iface_conditions)?;
             }
         }
 

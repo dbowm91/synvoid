@@ -16,10 +16,7 @@ pub mod ebpf;
 #[cfg(all(target_os = "macos", feature = "icmp-pf"))]
 pub mod pf;
 
-#[cfg(all(
-    any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"),
-    feature = "icmp-pf"
-))]
+#[cfg(all(any(target_os = "freebsd", target_os = "openbsd"), feature = "icmp-pf"))]
 pub mod pf_bsd;
 
 #[cfg(all(target_os = "windows", feature = "icmp-winfw"))]
@@ -54,10 +51,7 @@ use ebpf::EbpfFilter;
 #[cfg(all(target_os = "macos", feature = "icmp-pf"))]
 use pf::PfFilter;
 
-#[cfg(all(
-    any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"),
-    feature = "icmp-pf"
-))]
+#[cfg(all(any(target_os = "freebsd", target_os = "openbsd"), feature = "icmp-pf"))]
 use pf_bsd::PfBsdFilter;
 
 #[cfg(all(target_os = "windows", feature = "icmp-winfw"))]
@@ -66,15 +60,248 @@ use winfw::WinFwFilter;
 #[cfg(all(target_os = "windows", feature = "icmp-wfp"))]
 use wfp::WfpFilter;
 
+/// Why a backend was selected. Returned to callers on every selection so
+/// `Auto` fallback is observable and explicit requests are auditable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelectionReport {
+    pub backend: FilterBackend,
+    pub requested: FilterType,
+    pub reason: String,
+}
+
+/// Strict backend selection (Phase 86, Workstream E).
+///
+/// - `Auto`: may probe and select a fallback in documented priority order
+///   (Linux: eBPF when compiled and usable, else the nftables baseline;
+///   Windows: WFP primary, else the winfw compatibility lane).
+/// - Explicit (`Nftables`, `Ebpf`, `Pf`, `Wfp`, `WindowsFirewall`): fails
+///   with `BackendUnavailable` (carrying the probe detail) when that exact
+///   backend is unavailable. Never warns-and-switches.
+pub fn select_backend_for_host(requested: FilterType) -> Result<SelectionReport> {
+    #[cfg(target_os = "linux")]
+    {
+        #[cfg(feature = "icmp-ebpf")]
+        use crate::platform::probe_ebpf_load;
+        use crate::platform::probe_nftables;
+        match requested {
+            FilterType::Ebpf => {
+                #[cfg(feature = "icmp-ebpf")]
+                {
+                    let probe = probe_ebpf_load();
+                    if probe.usable {
+                        return Ok(SelectionReport {
+                            backend: FilterBackend::Ebpf,
+                            requested,
+                            reason: "explicit eBPF request satisfied".to_string(),
+                        });
+                    }
+                    return Err(IcmpFilterError::BackendUnavailable(format!(
+                        "explicit eBPF request cannot be satisfied: {}",
+                        probe.reason
+                    )));
+                }
+                #[cfg(not(feature = "icmp-ebpf"))]
+                {
+                    return Err(IcmpFilterError::FeatureNotEnabled(
+                        "icmp-ebpf feature not enabled".to_string(),
+                    ));
+                }
+            }
+            FilterType::Nftables => {
+                let probe = probe_nftables();
+                if probe.usable {
+                    return Ok(SelectionReport {
+                        backend: FilterBackend::Nftables,
+                        requested,
+                        reason: "explicit nftables request satisfied".to_string(),
+                    });
+                }
+                return Err(IcmpFilterError::BackendUnavailable(format!(
+                    "explicit nftables request cannot be satisfied: {}",
+                    probe.reason
+                )));
+            }
+            FilterType::Auto => {
+                #[cfg(feature = "icmp-ebpf")]
+                {
+                    if probe_ebpf_load().usable {
+                        return Ok(SelectionReport {
+                            backend: FilterBackend::Ebpf,
+                            requested,
+                            reason: "auto: eBPF usable, preferred over nftables baseline"
+                                .to_string(),
+                        });
+                    }
+                }
+                let probe = probe_nftables();
+                if probe.usable {
+                    return Ok(SelectionReport {
+                        backend: FilterBackend::Nftables,
+                        requested,
+                        reason: "auto: nftables baseline selected".to_string(),
+                    });
+                }
+                return Err(IcmpFilterError::BackendUnavailable(format!(
+                    "auto selection found no usable Linux backend: {}",
+                    probe.reason
+                )));
+            }
+            other => {
+                return Err(IcmpFilterError::Config(format!(
+                    "{other:?} is not available on Linux"
+                )));
+            }
+        }
+    }
+    #[cfg(all(
+        target_os = "windows",
+        any(feature = "icmp-winfw", feature = "icmp-wfp")
+    ))]
+    {
+        match requested {
+            FilterType::Wfp => {
+                #[cfg(feature = "icmp-wfp")]
+                {
+                    if WfpFilter::is_available() {
+                        return Ok(SelectionReport {
+                            backend: FilterBackend::Wfp,
+                            requested,
+                            reason: "explicit WFP request satisfied".to_string(),
+                        });
+                    }
+                    return Err(IcmpFilterError::BackendUnavailable(
+                        "explicit WFP request cannot be satisfied: WFP engine unavailable"
+                            .to_string(),
+                    ));
+                }
+                #[cfg(not(feature = "icmp-wfp"))]
+                {
+                    return Err(IcmpFilterError::FeatureNotEnabled(
+                        "icmp-wfp feature not enabled".to_string(),
+                    ));
+                }
+            }
+            FilterType::WindowsFirewall => {
+                #[cfg(feature = "icmp-winfw")]
+                {
+                    if WinFwFilter::is_available() {
+                        return Ok(SelectionReport {
+                            backend: FilterBackend::WindowsFirewall,
+                            requested,
+                            reason: "explicit Windows Firewall request satisfied".to_string(),
+                        });
+                    }
+                    return Err(IcmpFilterError::BackendUnavailable(
+                        "explicit Windows Firewall request cannot be satisfied".to_string(),
+                    ));
+                }
+                #[cfg(not(feature = "icmp-winfw"))]
+                {
+                    return Err(IcmpFilterError::FeatureNotEnabled(
+                        "icmp-winfw feature not enabled".to_string(),
+                    ));
+                }
+            }
+            FilterType::Auto => {
+                // Documented priority: WFP primary, winfw compatibility.
+                #[cfg(feature = "icmp-wfp")]
+                {
+                    if WfpFilter::is_available() {
+                        return Ok(SelectionReport {
+                            backend: FilterBackend::Wfp,
+                            requested,
+                            reason: "auto: WFP primary selected".to_string(),
+                        });
+                    }
+                }
+                #[cfg(feature = "icmp-winfw")]
+                {
+                    if WinFwFilter::is_available() {
+                        return Ok(SelectionReport {
+                            backend: FilterBackend::WindowsFirewall,
+                            requested,
+                            reason: "auto: WFP unavailable, winfw compatibility lane".to_string(),
+                        });
+                    }
+                }
+                return Err(IcmpFilterError::BackendUnavailable(
+                    "auto selection found no usable Windows backend".to_string(),
+                ));
+            }
+            other => {
+                return Err(IcmpFilterError::Config(format!(
+                    "{other:?} is not available on Windows"
+                )));
+            }
+        }
+    }
+    #[cfg(all(target_os = "macos", feature = "icmp-pf"))]
+    {
+        match requested {
+            FilterType::Pf | FilterType::Auto => {
+                if pf::PfFilter::is_available() {
+                    return Ok(SelectionReport {
+                        backend: FilterBackend::Pf,
+                        requested,
+                        reason: "macOS PF selected (single PF lane)".to_string(),
+                    });
+                }
+                return Err(IcmpFilterError::BackendUnavailable(
+                    "explicit PF request cannot be satisfied: pfctl unavailable".to_string(),
+                ));
+            }
+            other => {
+                return Err(IcmpFilterError::Config(format!(
+                    "{other:?} is not available on macOS"
+                )));
+            }
+        }
+    }
+    #[cfg(all(any(target_os = "freebsd", target_os = "openbsd"), feature = "icmp-pf"))]
+    {
+        match requested {
+            FilterType::Pf | FilterType::Auto => {
+                if pf_bsd::PfBsdFilter::is_available() {
+                    return Ok(SelectionReport {
+                        backend: FilterBackend::Pf,
+                        requested,
+                        reason: "BSD PF selected (single PF lane)".to_string(),
+                    });
+                }
+                return Err(IcmpFilterError::BackendUnavailable(
+                    "explicit PF request cannot be satisfied: pfctl unavailable".to_string(),
+                ));
+            }
+            other => {
+                return Err(IcmpFilterError::Config(format!(
+                    "{other:?} is not available on this BSD"
+                )));
+            }
+        }
+    }
+    #[cfg(not(any(
+        target_os = "linux",
+        all(
+            target_os = "windows",
+            any(feature = "icmp-winfw", feature = "icmp-wfp")
+        ),
+        all(target_os = "macos", feature = "icmp-pf"),
+        all(any(target_os = "freebsd", target_os = "openbsd"), feature = "icmp-pf")
+    )))]
+    {
+        // NetBSD and all other targets compile to an explicit unsupported
+        // result (NPF is the NetBSD future trigger, not PF).
+        let _ = requested;
+        Err(IcmpFilterError::UnsupportedPlatform)
+    }
+}
+
 #[derive(Debug)]
 pub struct IcmpFilterManager {
     #[cfg(any(
         target_os = "linux",
         all(target_os = "macos", feature = "icmp-pf"),
-        all(
-            any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"),
-            feature = "icmp-pf"
-        ),
+        all(any(target_os = "freebsd", target_os = "openbsd"), feature = "icmp-pf"),
         all(
             target_os = "windows",
             any(feature = "icmp-winfw", feature = "icmp-wfp")
@@ -84,10 +311,7 @@ pub struct IcmpFilterManager {
     #[cfg(not(any(
         target_os = "linux",
         all(target_os = "macos", feature = "icmp-pf"),
-        all(
-            any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"),
-            feature = "icmp-pf"
-        ),
+        all(any(target_os = "freebsd", target_os = "openbsd"), feature = "icmp-pf"),
         all(
             target_os = "windows",
             any(feature = "icmp-winfw", feature = "icmp-wfp")
@@ -100,10 +324,7 @@ impl IcmpFilterManager {
     #[cfg(any(
         target_os = "linux",
         all(target_os = "macos", feature = "icmp-pf"),
-        all(
-            any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"),
-            feature = "icmp-pf"
-        ),
+        all(any(target_os = "freebsd", target_os = "openbsd"), feature = "icmp-pf"),
         all(
             target_os = "windows",
             any(feature = "icmp-winfw", feature = "icmp-wfp")
@@ -117,10 +338,7 @@ impl IcmpFilterManager {
     #[cfg(not(any(
         target_os = "linux",
         all(target_os = "macos", feature = "icmp-pf"),
-        all(
-            any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"),
-            feature = "icmp-pf"
-        ),
+        all(any(target_os = "freebsd", target_os = "openbsd"), feature = "icmp-pf"),
         all(
             target_os = "windows",
             any(feature = "icmp-winfw", feature = "icmp-wfp")
@@ -132,15 +350,13 @@ impl IcmpFilterManager {
 
     #[cfg(target_os = "linux")]
     fn create_filter(config: IcmpFilterConfig) -> Result<Box<dyn IcmpFilter>> {
-        match config.filter_type {
-            FilterType::Ebpf => {
+        let report = select_backend_for_host(config.filter_type)?;
+        tracing::info!("ICMP backend selected: {}", report.reason);
+        match report.backend {
+            FilterBackend::Ebpf => {
                 #[cfg(feature = "icmp-ebpf")]
                 {
-                    if EbpfFilter::is_available() {
-                        return Ok(Box::new(EbpfFilter::new(config)?));
-                    }
-                    tracing::warn!("eBPF requested but not available, falling back to nftables");
-                    Ok(Box::new(NftablesFilter::new(config)?))
+                    Ok(Box::new(EbpfFilter::new(config)?))
                 }
                 #[cfg(not(feature = "icmp-ebpf"))]
                 {
@@ -149,66 +365,34 @@ impl IcmpFilterManager {
                     ))
                 }
             }
-            FilterType::Nftables => Ok(Box::new(NftablesFilter::new(config)?)),
-            FilterType::Auto => {
-                #[cfg(feature = "icmp-ebpf")]
-                {
-                    if EbpfFilter::is_available() {
-                        return Ok(Box::new(EbpfFilter::new(config)?));
-                    }
-                }
-                Ok(Box::new(NftablesFilter::new(config)?))
-            }
-            FilterType::Pf => Err(IcmpFilterError::Config(
-                "PF is not available on Linux".to_string(),
-            )),
-            FilterType::WindowsFirewall => Err(IcmpFilterError::Config(
-                "Windows Firewall is not available on Linux".to_string(),
-            )),
-            FilterType::Wfp => Err(IcmpFilterError::Config(
-                "WFP is not available on Linux".to_string(),
-            )),
+            FilterBackend::Nftables => Ok(Box::new(NftablesFilter::new(config)?)),
+            other => Err(IcmpFilterError::Config(format!(
+                "{other:?} is not available on Linux"
+            ))),
         }
     }
 
     #[cfg(all(target_os = "macos", feature = "icmp-pf"))]
     fn create_filter(config: IcmpFilterConfig) -> Result<Box<dyn IcmpFilter>> {
-        match config.filter_type {
-            FilterType::Pf | FilterType::Auto => Ok(Box::new(PfFilter::new(config)?)),
-            FilterType::Nftables => Err(IcmpFilterError::Config(
-                "nftables is not available on macOS".to_string(),
-            )),
-            FilterType::Ebpf => Err(IcmpFilterError::Config(
-                "eBPF is not available on macOS".to_string(),
-            )),
-            FilterType::WindowsFirewall => Err(IcmpFilterError::Config(
-                "Windows Firewall is not available on macOS".to_string(),
-            )),
-            FilterType::Wfp => Err(IcmpFilterError::Config(
-                "WFP is not available on macOS".to_string(),
-            )),
+        let report = select_backend_for_host(config.filter_type)?;
+        tracing::info!("ICMP backend selected: {}", report.reason);
+        match report.backend {
+            FilterBackend::Pf => Ok(Box::new(PfFilter::new(config)?)),
+            other => Err(IcmpFilterError::Config(format!(
+                "{other:?} is not available on macOS"
+            ))),
         }
     }
 
-    #[cfg(all(
-        any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"),
-        feature = "icmp-pf"
-    ))]
+    #[cfg(all(any(target_os = "freebsd", target_os = "openbsd"), feature = "icmp-pf"))]
     fn create_filter(config: IcmpFilterConfig) -> Result<Box<dyn IcmpFilter>> {
-        match config.filter_type {
-            FilterType::Pf | FilterType::Auto => Ok(Box::new(PfBsdFilter::new(config)?)),
-            FilterType::Nftables => Err(IcmpFilterError::Config(
-                "nftables is not available on BSD".to_string(),
-            )),
-            FilterType::Ebpf => Err(IcmpFilterError::Config(
-                "eBPF is not available on BSD".to_string(),
-            )),
-            FilterType::WindowsFirewall => Err(IcmpFilterError::Config(
-                "Windows Firewall is not available on BSD".to_string(),
-            )),
-            FilterType::Wfp => Err(IcmpFilterError::Config(
-                "WFP is not available on BSD".to_string(),
-            )),
+        let report = select_backend_for_host(config.filter_type)?;
+        tracing::info!("ICMP backend selected: {}", report.reason);
+        match report.backend {
+            FilterBackend::Pf => Ok(Box::new(PfBsdFilter::new(config)?)),
+            other => Err(IcmpFilterError::Config(format!(
+                "{other:?} is not available on this BSD"
+            ))),
         }
     }
 
@@ -217,23 +401,23 @@ impl IcmpFilterManager {
         any(feature = "icmp-winfw", feature = "icmp-wfp")
     ))]
     fn create_filter(config: IcmpFilterConfig) -> Result<Box<dyn IcmpFilter>> {
-        match config.filter_type {
-            FilterType::Wfp => {
+        // Explicit requests are strict: no silent WFP->winfw fallback.
+        let report = select_backend_for_host(config.filter_type)?;
+        tracing::info!("ICMP backend selected: {}", report.reason);
+        match report.backend {
+            FilterBackend::Wfp => {
                 #[cfg(feature = "icmp-wfp")]
                 {
-                    if WfpFilter::is_available() {
-                        return Ok(Box::new(WfpFilter::new(config)?));
-                    }
-                    tracing::warn!(
-                        "WFP requested but not available, falling back to Windows Firewall"
-                    );
+                    Ok(Box::new(WfpFilter::new(config)?))
                 }
                 #[cfg(not(feature = "icmp-wfp"))]
                 {
-                    return Err(IcmpFilterError::FeatureNotEnabled(
+                    Err(IcmpFilterError::FeatureNotEnabled(
                         "icmp-wfp feature not enabled".to_string(),
-                    ));
+                    ))
                 }
+            }
+            FilterBackend::WindowsFirewall => {
                 #[cfg(feature = "icmp-winfw")]
                 {
                     Ok(Box::new(WinFwFilter::new(config)?))
@@ -245,34 +429,9 @@ impl IcmpFilterManager {
                     ))
                 }
             }
-            FilterType::WindowsFirewall | FilterType::Auto => {
-                #[cfg(feature = "icmp-winfw")]
-                {
-                    Ok(Box::new(WinFwFilter::new(config)?))
-                }
-                #[cfg(not(feature = "icmp-winfw"))]
-                {
-                    #[cfg(feature = "icmp-wfp")]
-                    {
-                        Ok(Box::new(WfpFilter::new(config)?))
-                    }
-                    #[cfg(not(feature = "icmp-wfp"))]
-                    {
-                        Err(IcmpFilterError::FeatureNotEnabled(
-                            "No Windows ICMP filter feature enabled".to_string(),
-                        ))
-                    }
-                }
-            }
-            FilterType::Nftables => Err(IcmpFilterError::Config(
-                "nftables is not available on Windows".to_string(),
-            )),
-            FilterType::Ebpf => Err(IcmpFilterError::Config(
-                "eBPF is not available on Windows".to_string(),
-            )),
-            FilterType::Pf => Err(IcmpFilterError::Config(
-                "PF is not available on Windows".to_string(),
-            )),
+            other => Err(IcmpFilterError::Config(format!(
+                "{other:?} is not available on Windows"
+            ))),
         }
     }
 
@@ -280,10 +439,7 @@ impl IcmpFilterManager {
         #[cfg(any(
             target_os = "linux",
             all(target_os = "macos", feature = "icmp-pf"),
-            all(
-                any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"),
-                feature = "icmp-pf"
-            ),
+            all(any(target_os = "freebsd", target_os = "openbsd"), feature = "icmp-pf"),
             all(
                 target_os = "windows",
                 any(feature = "icmp-winfw", feature = "icmp-wfp")
@@ -295,10 +451,7 @@ impl IcmpFilterManager {
         #[cfg(not(any(
             target_os = "linux",
             all(target_os = "macos", feature = "icmp-pf"),
-            all(
-                any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"),
-                feature = "icmp-pf"
-            ),
+            all(any(target_os = "freebsd", target_os = "openbsd"), feature = "icmp-pf"),
             all(
                 target_os = "windows",
                 any(feature = "icmp-winfw", feature = "icmp-wfp")
@@ -313,10 +466,7 @@ impl IcmpFilterManager {
         #[cfg(any(
             target_os = "linux",
             all(target_os = "macos", feature = "icmp-pf"),
-            all(
-                any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"),
-                feature = "icmp-pf"
-            ),
+            all(any(target_os = "freebsd", target_os = "openbsd"), feature = "icmp-pf"),
             all(
                 target_os = "windows",
                 any(feature = "icmp-winfw", feature = "icmp-wfp")
@@ -328,10 +478,7 @@ impl IcmpFilterManager {
         #[cfg(not(any(
             target_os = "linux",
             all(target_os = "macos", feature = "icmp-pf"),
-            all(
-                any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"),
-                feature = "icmp-pf"
-            ),
+            all(any(target_os = "freebsd", target_os = "openbsd"), feature = "icmp-pf"),
             all(
                 target_os = "windows",
                 any(feature = "icmp-winfw", feature = "icmp-wfp")
@@ -346,10 +493,7 @@ impl IcmpFilterManager {
         #[cfg(any(
             target_os = "linux",
             all(target_os = "macos", feature = "icmp-pf"),
-            all(
-                any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"),
-                feature = "icmp-pf"
-            ),
+            all(any(target_os = "freebsd", target_os = "openbsd"), feature = "icmp-pf"),
             all(
                 target_os = "windows",
                 any(feature = "icmp-winfw", feature = "icmp-wfp")
@@ -361,10 +505,7 @@ impl IcmpFilterManager {
         #[cfg(not(any(
             target_os = "linux",
             all(target_os = "macos", feature = "icmp-pf"),
-            all(
-                any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"),
-                feature = "icmp-pf"
-            ),
+            all(any(target_os = "freebsd", target_os = "openbsd"), feature = "icmp-pf"),
             all(
                 target_os = "windows",
                 any(feature = "icmp-winfw", feature = "icmp-wfp")
@@ -379,10 +520,7 @@ impl IcmpFilterManager {
         #[cfg(any(
             target_os = "linux",
             all(target_os = "macos", feature = "icmp-pf"),
-            all(
-                any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"),
-                feature = "icmp-pf"
-            ),
+            all(any(target_os = "freebsd", target_os = "openbsd"), feature = "icmp-pf"),
             all(
                 target_os = "windows",
                 any(feature = "icmp-winfw", feature = "icmp-wfp")
@@ -394,10 +532,7 @@ impl IcmpFilterManager {
         #[cfg(not(any(
             target_os = "linux",
             all(target_os = "macos", feature = "icmp-pf"),
-            all(
-                any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"),
-                feature = "icmp-pf"
-            ),
+            all(any(target_os = "freebsd", target_os = "openbsd"), feature = "icmp-pf"),
             all(
                 target_os = "windows",
                 any(feature = "icmp-winfw", feature = "icmp-wfp")
@@ -413,10 +548,7 @@ impl IcmpFilterManager {
         #[cfg(any(
             target_os = "linux",
             all(target_os = "macos", feature = "icmp-pf"),
-            all(
-                any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"),
-                feature = "icmp-pf"
-            ),
+            all(any(target_os = "freebsd", target_os = "openbsd"), feature = "icmp-pf"),
             all(
                 target_os = "windows",
                 any(feature = "icmp-winfw", feature = "icmp-wfp")
@@ -428,10 +560,7 @@ impl IcmpFilterManager {
         #[cfg(not(any(
             target_os = "linux",
             all(target_os = "macos", feature = "icmp-pf"),
-            all(
-                any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"),
-                feature = "icmp-pf"
-            ),
+            all(any(target_os = "freebsd", target_os = "openbsd"), feature = "icmp-pf"),
             all(
                 target_os = "windows",
                 any(feature = "icmp-winfw", feature = "icmp-wfp")
@@ -446,10 +575,7 @@ impl IcmpFilterManager {
         #[cfg(any(
             target_os = "linux",
             all(target_os = "macos", feature = "icmp-pf"),
-            all(
-                any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"),
-                feature = "icmp-pf"
-            ),
+            all(any(target_os = "freebsd", target_os = "openbsd"), feature = "icmp-pf"),
             all(
                 target_os = "windows",
                 any(feature = "icmp-winfw", feature = "icmp-wfp")
@@ -461,10 +587,7 @@ impl IcmpFilterManager {
         #[cfg(not(any(
             target_os = "linux",
             all(target_os = "macos", feature = "icmp-pf"),
-            all(
-                any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"),
-                feature = "icmp-pf"
-            ),
+            all(any(target_os = "freebsd", target_os = "openbsd"), feature = "icmp-pf"),
             all(
                 target_os = "windows",
                 any(feature = "icmp-winfw", feature = "icmp-wfp")
@@ -480,10 +603,7 @@ impl IcmpFilterManager {
         #[cfg(any(
             target_os = "linux",
             all(target_os = "macos", feature = "icmp-pf"),
-            all(
-                any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"),
-                feature = "icmp-pf"
-            ),
+            all(any(target_os = "freebsd", target_os = "openbsd"), feature = "icmp-pf"),
             all(
                 target_os = "windows",
                 any(feature = "icmp-winfw", feature = "icmp-wfp")
@@ -495,10 +615,7 @@ impl IcmpFilterManager {
         #[cfg(not(any(
             target_os = "linux",
             all(target_os = "macos", feature = "icmp-pf"),
-            all(
-                any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"),
-                feature = "icmp-pf"
-            ),
+            all(any(target_os = "freebsd", target_os = "openbsd"), feature = "icmp-pf"),
             all(
                 target_os = "windows",
                 any(feature = "icmp-winfw", feature = "icmp-wfp")
@@ -530,15 +647,12 @@ pub fn is_available() -> bool {
     {
         false
     }
-    #[cfg(all(
-        any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"),
-        feature = "icmp-pf"
-    ))]
+    #[cfg(all(any(target_os = "freebsd", target_os = "openbsd"), feature = "icmp-pf"))]
     {
         PfBsdFilter::is_available()
     }
     #[cfg(all(
-        any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"),
+        any(target_os = "freebsd", target_os = "openbsd"),
         not(feature = "icmp-pf")
     ))]
     {
@@ -570,7 +684,6 @@ pub fn is_available() -> bool {
         target_os = "macos",
         target_os = "freebsd",
         target_os = "openbsd",
-        target_os = "netbsd",
         target_os = "windows"
     )))]
     {
@@ -582,10 +695,7 @@ pub fn available_backends() -> Vec<FilterBackend> {
     #[cfg(any(
         target_os = "linux",
         all(target_os = "macos", feature = "icmp-pf"),
-        all(
-            any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"),
-            feature = "icmp-pf"
-        ),
+        all(any(target_os = "freebsd", target_os = "openbsd"), feature = "icmp-pf"),
         all(
             target_os = "windows",
             any(feature = "icmp-winfw", feature = "icmp-wfp")
@@ -595,10 +705,7 @@ pub fn available_backends() -> Vec<FilterBackend> {
     #[cfg(not(any(
         target_os = "linux",
         all(target_os = "macos", feature = "icmp-pf"),
-        all(
-            any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"),
-            feature = "icmp-pf"
-        ),
+        all(any(target_os = "freebsd", target_os = "openbsd"), feature = "icmp-pf"),
         all(
             target_os = "windows",
             any(feature = "icmp-winfw", feature = "icmp-wfp")
@@ -627,10 +734,7 @@ pub fn available_backends() -> Vec<FilterBackend> {
         }
     }
 
-    #[cfg(all(
-        any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"),
-        feature = "icmp-pf"
-    ))]
+    #[cfg(all(any(target_os = "freebsd", target_os = "openbsd"), feature = "icmp-pf"))]
     {
         if PfBsdFilter::is_available() {
             backends.push(FilterBackend::Pf);

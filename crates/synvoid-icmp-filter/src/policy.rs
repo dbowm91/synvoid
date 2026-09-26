@@ -39,9 +39,10 @@ pub enum IcmpVerdict {
 }
 
 /// Packet direction the policy applies to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum PolicyDirection {
+    #[default]
     Both,
     Inbound,
     Outbound,
@@ -50,17 +51,12 @@ pub enum PolicyDirection {
 /// Interface selection. Names are validated by adapters (1-15 chars,
 /// alphanumeric plus `_`, `.`, `-`); resolution to indices happens in
 /// backends, never here.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(untagged)]
 pub enum InterfaceSelector {
+    #[default]
     All,
     Specific(Vec<String>),
-}
-
-impl Default for InterfaceSelector {
-    fn default() -> Self {
-        Self::All
-    }
 }
 
 impl InterfaceSelector {
@@ -326,16 +322,11 @@ impl IcmpRule {
 /// Explicit rate-limit scope. The initial contract supports only the
 /// semantics current backends truthfully implement (`Global`). Richer scopes
 /// must be capability-gated by later phases, never emulated silently.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum RateLimitScope {
+    #[default]
     Global,
-}
-
-impl Default for RateLimitScope {
-    fn default() -> Self {
-        Self::Global
-    }
 }
 
 /// Rate-limit policy with defined scope.
@@ -393,12 +384,6 @@ impl Default for IcmpPolicy {
     }
 }
 
-impl Default for PolicyDirection {
-    fn default() -> Self {
-        Self::Both
-    }
-}
-
 impl IcmpPolicy {
     pub fn new() -> Self {
         Self::default()
@@ -436,21 +421,16 @@ pub struct PolicyRequirements {
 
 /// Requested backend. `Auto` may probe and fall back in a documented order;
 /// every other variant is strict (Phase 86 enforces no silent fallback).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum RequestedBackend {
+    #[default]
     Auto,
     Nftables,
     Ebpf,
     Pf,
     Wfp,
     WindowsFirewall,
-}
-
-impl Default for RequestedBackend {
-    fn default() -> Self {
-        Self::Auto
-    }
 }
 
 /// Backend-specific knobs. Deliberately outside the protocol policy value.

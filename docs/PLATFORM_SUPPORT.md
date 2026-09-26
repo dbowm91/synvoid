@@ -82,6 +82,22 @@ Across all platforms, SynVoid achieves zero-downtime upgrades via:
 - Use Windows Server 2019 or later for optimal socket performance.
 - Named pipe latency is slightly higher than Unix sockets; adjust IPC timeouts if needed.
 
+### ICMP Enforcement Lanes (Phase 86 truthfulness tiers)
+
+Root `icmp-filter` forwards no backend sub-features; enable lanes per-crate explicitly.
+
+| Lane | Platform | Crate feature | Tier | Notes |
+|------|----------|---------------|------|-------|
+| nftables | Linux | `icmp-filter` | experimental | Baseline; transactional batch; global rate limit |
+| eBPF (XDP/TC) | Linux | `icmp-ebpf` | experimental | Needs BTF + `CAP_BPF`/root (load) + `CAP_NET_ADMIN`/root (attach) |
+| PF | macOS | `icmp-pf` | experimental | Staged anchor reload, not transactional |
+| PF | FreeBSD / OpenBSD | `icmp-pf` | experimental | Qualified separately per variant |
+| WFP (primary) | Windows | `icmp-wfp` | compile-only | Typed ICMP conditions + transactions; no rate limiting |
+| Windows Firewall COM (fallback) | Windows | `icmp-winfw` | compile-only | No transactions/rate limit/readback |
+| NetBSD | NetBSD | — | unsupported | Native filter is NPF (future backend), not PF |
+
+Tiers: `supported` (native privileged proof) / `experimental` (compiles, best-effort) / `compile-only` (cross-target check only) / `unsupported` (explicit error). Cross-compilation is never runtime qualification. Native proof matrix belongs to Phase 88.
+
 ## Testing
 
 Verification is split between routine CI and manual local checks:

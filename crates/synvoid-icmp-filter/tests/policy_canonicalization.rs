@@ -6,8 +6,8 @@ use synvoid_icmp_filter::{
     adapt_config_to_policy,
     config::{Direction, FilterType, IcmpAction, IcmpFilterConfig, IcmpTypeRule, InterfaceSpec},
     policy::{
-        BackendOptions, IcmpFamily, IcmpPolicy, IcmpRule, IcmpSelector, IcmpV6Type, IcmpVerdict,
-        PolicyDirection, RateLimitPolicy,
+        IcmpFamily, IcmpPolicy, IcmpRule, IcmpSelector, IcmpV6Type, IcmpVerdict, PolicyDirection,
+        RateLimitPolicy,
     },
     validation::{validate_policy, FindingSeverity, ValidationOverride, ValidationRole},
 };

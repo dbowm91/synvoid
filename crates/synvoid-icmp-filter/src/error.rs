@@ -41,8 +41,11 @@ pub enum IcmpFilterError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
-    #[error("Unsupported platform: ICMP filtering only available on Linux, macOS, and Windows")]
+    #[error("Unsupported platform: ICMP filtering available on Linux (nftables/eBPF), macOS/FreeBSD/OpenBSD (PF), and Windows (WFP primary, Windows Firewall fallback). NetBSD packet filtering is NPF, not PF: explicitly unsupported, NPF is a separately scoped future backend")]
     UnsupportedPlatform,
+
+    #[error("Backend unavailable: {0}")]
+    BackendUnavailable(String),
 
     #[error("Feature not enabled: {0}")]
     FeatureNotEnabled(String),

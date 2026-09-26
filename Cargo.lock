@@ -2922,6 +2922,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "getset"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6cf442baaabe4213ce7d1239afc26c039180b6456da2cededa316ae2c8a77a77"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
 name = "ghash"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8677,6 +8688,9 @@ dependencies = [
  "thiserror 2.0.20",
  "toml 0.8.23",
  "tracing",
+ "wfp",
+ "windows-sys 0.59.0",
+ "windows_firewall",
 ]
 
 [[package]]
@@ -10000,6 +10014,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "typed-builder"
+version = "0.23.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "31aa81521b70f94402501d848ccc0ecaa8f93c8eb6999eb9747e72287757ffda"
+dependencies = [
+ "typed-builder-macro",
+]
+
+[[package]]
+name = "typed-builder-macro"
+version = "0.23.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "076a02dc54dd46795c2e9c8282ed40bcfb1e22747e955de9389a1de28190fb26"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
 name = "typed-path"
 version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11196,6 +11230,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "wfp"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f0382780f5db1e7101e69eb4f9b5950463e75c115967e805bef66968786c97c"
+dependencies = [
+ "log",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "widestring"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11520,6 +11564,21 @@ name = "windows_aarch64_msvc"
 version = "0.53.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9d782e804c2f632e395708e99a94275910eb9100b2114651e04744e9b125006"
+
+[[package]]
+name = "windows_firewall"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "594c1cd7391c19ffd849c7a824bb7af453796a9a8c82457ebca4f835e395dd1c"
+dependencies = [
+ "getset",
+ "ipnet",
+ "scopeguard",
+ "thiserror 2.0.20",
+ "tracing",
+ "typed-builder",
+ "windows 0.62.2",
+]
 
 [[package]]
 name = "windows_i686_gnu"

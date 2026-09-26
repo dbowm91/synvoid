@@ -1,33 +1,27 @@
-/*
- * Windows Firewall (netsh/API) ICMP Backend
- *
- * Capabilities:
- *   - Block/allow ICMP by direction (inbound/outbound/both)
- *   - Per-IP exemption (IPv4 and IPv6)
- *   - ICMP type/code matching
- *   - Interface filtering
- *   - No built-in rate limiting (Windows Firewall API has no rate-limit primitives)
- *
- * Required privilege: Administrator (checked via platform::is_admin)
- *
- * INJECTION WARNING: The windows_firewall crate abstracts the netsh/PowerShell calls.
- * If this backend is modified to shell out to netsh or PowerShell directly, all arguments
- * (rule names, IPs, interface names) MUST be validated against injection. The config
- * validation in IcmpFilterConfig::validate() restricts table names to alphanumeric plus
- * underscore/hyphen, and interface names to alphanumeric plus underscore/dot/hyphen, which
- * mitigates shell injection when these values are interpolated into command arguments.
- *
- * When is_enforcing() == false: the filter was created without admin rights;
- * no Windows Firewall rules are actually created.
- */
+//! Windows Firewall (COM) ICMP backend — documented compatibility fallback.
+//!
+//! Outcome A (Phase 86): WFP (`wfp.rs`) is the primary Windows lane. This
+//! COM lane is retained because its rules are visible to the Windows
+//! Defender Firewall UI/GPO tooling (distinct operational value), with
+//! reduced guarantees stated honestly:
+//! - no engine transactions (rules are added/removed one by one);
+//! - no rate limiting (the COM API has no rate-limit primitive; the
+//!   constructor rejects rate-limited policy);
+//! - no live readback (Phase 87 records this lane as `Unknown`-capped).
+//!
+//! Interface filtering takes adapter friendly names directly (no LUID
+//! resolution needed — the lane's remaining convenience).
+//!
+//! Required privilege: Administrator (checked via `platform::is_admin`).
+//!
+//! Cross-compilation is compile evidence only; native proof is Phase 88.
 
 use crate::{
     config::{Direction, IcmpFilterConfig, IcmpTypeRule, InterfaceSpec},
     error::{IcmpFilterError, Result},
     platform::is_admin,
-    traits::{FilterBackend, FilterStatus, IcmpFilter},
+    traits::{check_policy_compatibility, FilterBackend, FilterStatus, IcmpFilter},
 };
-use std::net::IpAddr;
 
 const RULE_PREFIX: &str = "synvoid_ICMP";
 
@@ -42,6 +36,20 @@ pub struct WinFwFilter {
 impl WinFwFilter {
     pub fn new(config: IcmpFilterConfig) -> Result<Self> {
         config.validate().map_err(IcmpFilterError::Config)?;
+        // Admit only policy this lane expresses exactly (no rate limit).
+        let (policy, _) =
+            crate::compat::adapt_config_to_policy(&config).map_err(IcmpFilterError::from)?;
+        if let Err(mismatches) = check_policy_compatibility(FilterBackend::WindowsFirewall, &policy)
+        {
+            let detail = mismatches
+                .iter()
+                .map(|m| format!("{}: {}", m.requirement, m.detail))
+                .collect::<Vec<_>>()
+                .join("; ");
+            return Err(IcmpFilterError::Unsupported(format!(
+                "Windows Firewall cannot express requested policy: {detail}"
+            )));
+        }
         let has_admin = is_admin();
 
         if !has_admin {
@@ -68,11 +76,8 @@ impl WinFwFilter {
         #[cfg(feature = "icmp-winfw")]
         {
             use windows_firewall::{
-                ActionFirewallWindows, DirectionFirewallWindows, ProfileFirewallWindows,
-                ProtocolFirewallWindows, WindowsFirewallRule,
+                Action, Direction as FwDirection, FirewallRule, Profile, Protocol,
             };
-
-            let profiles = ProfileFirewallWindows::all();
 
             let block_in = matches!(self.config.direction, Direction::Inbound | Direction::Both);
             let block_out = matches!(self.config.direction, Direction::Outbound | Direction::Both);
@@ -88,22 +93,20 @@ impl WinFwFilter {
                 for ip in &self.config.exempt_ips {
                     if block_in {
                         let rule_name = format!("{}_Exempt_{}_In", RULE_PREFIX, ip);
-                        self.create_exempt_rule(
+                        Self::add_exempt_rule(
                             ip,
-                            DirectionFirewallWindows::In,
+                            FwDirection::In,
                             interfaces.as_deref(),
-                            profiles,
                             &rule_name,
                         )?;
                         self.rule_names.push(rule_name);
                     }
                     if block_out {
                         let rule_name = format!("{}_Exempt_{}_Out", RULE_PREFIX, ip);
-                        self.create_exempt_rule(
+                        Self::add_exempt_rule(
                             ip,
-                            DirectionFirewallWindows::Out,
+                            FwDirection::Out,
                             interfaces.as_deref(),
-                            profiles,
                             &rule_name,
                         )?;
                         self.rule_names.push(rule_name);
@@ -112,36 +115,42 @@ impl WinFwFilter {
             }
 
             if self.config.has_type_rules() {
+                // Clone under the immutable borrow so the `&mut self` call
+                // below does not alias config (never compiled before Phase 86,
+                // when the missing crate deps hid this borrow error).
+                let v4_rules = self.config.icmp_type_rules.clone();
+                let v6_rules = self.config.icmpv6_type_rules.clone();
                 self.create_type_rules(
                     block_in,
                     block_out,
                     interfaces.as_deref(),
-                    profiles,
-                    &self.config.icmp_type_rules,
-                    &self.config.icmpv6_type_rules,
+                    &v4_rules,
+                    &v6_rules,
                 )?;
             }
 
             let add_icmp_block = |name: String,
-                                  direction: DirectionFirewallWindows,
-                                  protocol: ProtocolFirewallWindows,
-                                  ifaces: Option<&[String]>,
-                                  profiles: ProfileFirewallWindows|
+                                  direction: FwDirection,
+                                  protocol: Protocol,
+                                  ifaces: Option<&[String]>|
              -> Result<()> {
-                let mut builder = WindowsFirewallRule::builder()
-                    .name(&name)
-                    .action(ActionFirewallWindows::Block)
+                // Optional COM properties are set post-build via getset
+                // setters: TypedBuilder changes type-state per optional
+                // setter, so conditional chaining cannot reassign one
+                // variable.
+                let mut rule = FirewallRule::builder()
+                    .name(name.clone())
+                    .action(Action::Block)
                     .direction(direction)
                     .enabled(true)
                     .protocol(protocol)
                     .description("Synvoid ICMP blocking rule")
-                    .profiles(profiles);
+                    .profiles(Profile::All)
+                    .build();
 
                 if let Some(iface_list) = ifaces {
-                    builder = builder.interfaces(iface_list.iter().cloned().collect());
+                    rule.set_interfaces(Some(iface_list.iter().cloned().collect()));
                 }
-
-                let rule = builder.build();
 
                 rule.add().map_err(|e| {
                     IcmpFilterError::WindowsFirewall(format!(
@@ -157,20 +166,18 @@ impl WinFwFilter {
                 let rule_name = format!("{}_Block_In", RULE_PREFIX);
                 add_icmp_block(
                     rule_name.clone(),
-                    DirectionFirewallWindows::In,
-                    ProtocolFirewallWindows::Icmpv4,
+                    FwDirection::In,
+                    Protocol::Icmpv4,
                     interfaces.as_deref(),
-                    profiles,
                 )?;
                 self.rule_names.push(rule_name);
 
                 let rule_name = format!("{}_Blockv6_In", RULE_PREFIX);
                 add_icmp_block(
                     rule_name.clone(),
-                    DirectionFirewallWindows::In,
-                    ProtocolFirewallWindows::Icmpv6,
+                    FwDirection::In,
+                    Protocol::Icmpv6,
                     interfaces.as_deref(),
-                    profiles,
                 )?;
                 self.rule_names.push(rule_name);
             }
@@ -179,20 +186,18 @@ impl WinFwFilter {
                 let rule_name = format!("{}_Block_Out", RULE_PREFIX);
                 add_icmp_block(
                     rule_name.clone(),
-                    DirectionFirewallWindows::Out,
-                    ProtocolFirewallWindows::Icmpv4,
+                    FwDirection::Out,
+                    Protocol::Icmpv4,
                     interfaces.as_deref(),
-                    profiles,
                 )?;
                 self.rule_names.push(rule_name);
 
                 let rule_name = format!("{}_Blockv6_Out", RULE_PREFIX);
                 add_icmp_block(
                     rule_name.clone(),
-                    DirectionFirewallWindows::Out,
-                    ProtocolFirewallWindows::Icmpv6,
+                    FwDirection::Out,
+                    Protocol::Icmpv6,
                     interfaces.as_deref(),
-                    profiles,
                 )?;
                 self.rule_names.push(rule_name);
             }
@@ -215,38 +220,33 @@ impl WinFwFilter {
     }
 
     #[cfg(feature = "icmp-winfw")]
-    fn create_exempt_rule(
-        &self,
-        ip: &IpAddr,
-        direction: DirectionFirewallWindows,
+    fn add_exempt_rule(
+        ip: &std::net::IpAddr,
+        direction: windows_firewall::Direction,
         interfaces: Option<&[String]>,
-        profiles: ProfileFirewallWindows,
         rule_name: &str,
     ) -> Result<()> {
-        use windows_firewall::{
-            ActionFirewallWindows, ProtocolFirewallWindows, WindowsFirewallRule,
-        };
+        use windows_firewall::{Action, Address, FirewallRule, Profile, Protocol};
 
         let protocol = match ip {
-            IpAddr::V4(_) => ProtocolFirewallWindows::Icmpv4,
-            IpAddr::V6(_) => ProtocolFirewallWindows::Icmpv6,
+            std::net::IpAddr::V4(_) => Protocol::Icmpv4,
+            std::net::IpAddr::V6(_) => Protocol::Icmpv6,
         };
 
-        let mut builder = WindowsFirewallRule::builder()
+        let mut rule = FirewallRule::builder()
             .name(rule_name)
-            .action(ActionFirewallWindows::Allow)
+            .action(Action::Allow)
             .direction(direction)
             .enabled(true)
             .protocol(protocol)
-            .remote_addresses([*ip].into_iter().collect())
             .description("Synvoid ICMP exempt rule")
-            .profiles(profiles);
+            .profiles(Profile::All)
+            .build();
+        rule.set_remote_addresses(Some(vec![Address::Ip(*ip)].into_iter().collect()));
 
         if let Some(iface_list) = interfaces {
-            builder = builder.interfaces(iface_list.iter().cloned().collect());
+            rule.set_interfaces(Some(iface_list.iter().cloned().collect()));
         }
-
-        let rule = builder.build();
 
         rule.add().map_err(|e| {
             IcmpFilterError::WindowsFirewall(format!(
@@ -264,20 +264,21 @@ impl WinFwFilter {
         block_in: bool,
         block_out: bool,
         interfaces: Option<&[String]>,
-        profiles: ProfileFirewallWindows,
         icmp_rules: &[IcmpTypeRule],
         icmpv6_rules: &[IcmpTypeRule],
     ) -> Result<()> {
-        use windows_firewall::{
-            ActionFirewallWindows, DirectionFirewallWindows, ProtocolFirewallWindows,
-            WindowsFirewallRule,
-        };
+        use windows_firewall::{Action, Direction as FwDirection, FirewallRule, Profile, Protocol};
 
-        for rule in icmp_rules {
+        let mut add_typed = |rule: &IcmpTypeRule,
+                             protocol: Protocol,
+                             direction: FwDirection,
+                             rule_name: String,
+                             ifaces: Option<&[String]>|
+         -> Result<()> {
             let action = if rule.is_block() {
-                ActionFirewallWindows::Block
+                Action::Block
             } else {
-                ActionFirewallWindows::Allow
+                Action::Allow
             };
 
             let icmp_type_str = if let Some(code) = rule.icmp_code {
@@ -286,135 +287,81 @@ impl WinFwFilter {
                 rule.icmp_type.to_string()
             };
 
-            if block_in {
-                let rule_name = format!("{}_Type{}_In", RULE_PREFIX, rule.icmp_type);
-                let mut builder = WindowsFirewallRule::builder()
-                    .name(&rule_name)
-                    .action(action)
-                    .direction(DirectionFirewallWindows::In)
-                    .enabled(true)
-                    .protocol(ProtocolFirewallWindows::Icmpv4)
-                    .icmp_types_and_codes(icmp_type_str.clone())
-                    .description(
-                        rule.description
-                            .as_deref()
-                            .unwrap_or("Synvoid ICMP type filter"),
-                    )
-                    .profiles(profiles);
+            let mut rule = FirewallRule::builder()
+                .name(rule_name.clone())
+                .action(action)
+                .direction(direction)
+                .enabled(true)
+                .protocol(protocol)
+                .description(
+                    rule.description
+                        .as_deref()
+                        .unwrap_or("Synvoid ICMP type filter"),
+                )
+                .profiles(Profile::All)
+                .build();
+            rule.set_icmp_types_and_codes(Some(icmp_type_str));
 
-                if let Some(iface_list) = interfaces {
-                    builder = builder.interfaces(iface_list.iter().cloned().collect());
-                }
-
-                builder.build().add().map_err(|e| {
-                    IcmpFilterError::WindowsFirewall(format!("Failed to add ICMP type rule: {}", e))
-                })?;
-                self.rule_names.push(rule_name);
+            if let Some(iface_list) = ifaces {
+                rule.set_interfaces(Some(iface_list.iter().cloned().collect()));
             }
 
+            rule.add().map_err(|e| {
+                IcmpFilterError::WindowsFirewall(format!(
+                    "Failed to add ICMP type rule '{}': {}",
+                    rule_name, e
+                ))
+            })?;
+            self.rule_names.push(rule_name);
+            Ok(())
+        };
+
+        for rule in icmp_rules {
+            if block_in {
+                add_typed(
+                    rule,
+                    Protocol::Icmpv4,
+                    FwDirection::In,
+                    format!("{}_Type{}_In", RULE_PREFIX, rule.icmp_type),
+                    interfaces,
+                )?;
+            }
             if block_out {
-                let rule_name = format!("{}_Type{}_Out", RULE_PREFIX, rule.icmp_type);
-                let mut builder = WindowsFirewallRule::builder()
-                    .name(&rule_name)
-                    .action(action)
-                    .direction(DirectionFirewallWindows::Out)
-                    .enabled(true)
-                    .protocol(ProtocolFirewallWindows::Icmpv4)
-                    .icmp_types_and_codes(icmp_type_str.clone())
-                    .description(
-                        rule.description
-                            .as_deref()
-                            .unwrap_or("Synvoid ICMP type filter"),
-                    )
-                    .profiles(profiles);
-
-                if let Some(iface_list) = interfaces {
-                    builder = builder.interfaces(iface_list.iter().cloned().collect());
-                }
-
-                builder.build().add().map_err(|e| {
-                    IcmpFilterError::WindowsFirewall(format!("Failed to add ICMP type rule: {}", e))
-                })?;
-                self.rule_names.push(rule_name);
+                add_typed(
+                    rule,
+                    Protocol::Icmpv4,
+                    FwDirection::Out,
+                    format!("{}_Type{}_Out", RULE_PREFIX, rule.icmp_type),
+                    interfaces,
+                )?;
             }
         }
 
         for rule in icmpv6_rules {
-            let action = if rule.is_block() {
-                ActionFirewallWindows::Block
-            } else {
-                ActionFirewallWindows::Allow
-            };
-
-            let icmp_type_str = if let Some(code) = rule.icmp_code {
-                format!("{}:{}", rule.icmp_type, code)
-            } else {
-                rule.icmp_type.to_string()
-            };
-
             if block_in {
-                let rule_name = format!("{}_Typev6_{}_In", RULE_PREFIX, rule.icmp_type);
-                let mut builder = WindowsFirewallRule::builder()
-                    .name(&rule_name)
-                    .action(action)
-                    .direction(DirectionFirewallWindows::In)
-                    .enabled(true)
-                    .protocol(ProtocolFirewallWindows::Icmpv6)
-                    .icmp_types_and_codes(icmp_type_str.clone())
-                    .description(
-                        rule.description
-                            .as_deref()
-                            .unwrap_or("Synvoid ICMPv6 type filter"),
-                    )
-                    .profiles(profiles);
-
-                if let Some(iface_list) = interfaces {
-                    builder = builder.interfaces(iface_list.iter().cloned().collect());
-                }
-
-                builder.build().add().map_err(|e| {
-                    IcmpFilterError::WindowsFirewall(format!(
-                        "Failed to add ICMPv6 type rule: {}",
-                        e
-                    ))
-                })?;
-                self.rule_names.push(rule_name);
+                add_typed(
+                    rule,
+                    Protocol::Icmpv6,
+                    FwDirection::In,
+                    format!("{}_Typev6_{}_In", RULE_PREFIX, rule.icmp_type),
+                    interfaces,
+                )?;
             }
-
             if block_out {
-                let rule_name = format!("{}_Typev6_{}_Out", RULE_PREFIX, rule.icmp_type);
-                let mut builder = WindowsFirewallRule::builder()
-                    .name(&rule_name)
-                    .action(action)
-                    .direction(DirectionFirewallWindows::Out)
-                    .enabled(true)
-                    .protocol(ProtocolFirewallWindows::Icmpv6)
-                    .icmp_types_and_codes(icmp_type_str.clone())
-                    .description(
-                        rule.description
-                            .as_deref()
-                            .unwrap_or("Synvoid ICMPv6 type filter"),
-                    )
-                    .profiles(profiles);
-
-                if let Some(iface_list) = interfaces {
-                    builder = builder.interfaces(iface_list.iter().cloned().collect());
-                }
-
-                builder.build().add().map_err(|e| {
-                    IcmpFilterError::WindowsFirewall(format!(
-                        "Failed to add ICMPv6 type rule: {}",
-                        e
-                    ))
-                })?;
-                self.rule_names.push(rule_name);
+                add_typed(
+                    rule,
+                    Protocol::Icmpv6,
+                    FwDirection::Out,
+                    format!("{}_Typev6_{}_Out", RULE_PREFIX, rule.icmp_type),
+                    interfaces,
+                )?;
             }
         }
 
         Ok(())
     }
 
-    fn remove_block_rules(&self) -> Result<()> {
+    fn remove_block_rules(&mut self) -> Result<()> {
         if !self.has_admin {
             tracing::warn!(
                 "Windows Firewall backend inactive: skipping rule removal (no admin privileges). \
@@ -429,9 +376,9 @@ impl WinFwFilter {
             use windows_firewall::remove_rule;
 
             let mut errors = Vec::new();
-            for rule_name in &self.rule_names {
-                if let Err(e) = remove_rule(rule_name) {
-                    errors.push((rule_name.clone(), e));
+            for rule_name in self.rule_names.drain(..) {
+                if let Err(e) = remove_rule(&rule_name) {
+                    errors.push((rule_name, e));
                 }
             }
 
