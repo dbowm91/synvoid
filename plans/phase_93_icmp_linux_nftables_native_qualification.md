@@ -284,3 +284,13 @@ unchanged. The harness evidence record is
 implementation SHA is `94d50efacb4146cfeafc608ac37d3c357c1247ee`; the
 authenticated route regression and routine hosted proof are on
 `e86fb35372b1b66bb59c8a6336bf32e55ff5c93e`.
+
+Initial workflow attempt `36275026606` at SHA
+`c9861c2f4e7f1c25f6e8c9313af9be716bb8907f` reached Ubuntu 24.04 x86_64 and
+installed nftables/iproute2, but failed before preflight because `sudo`
+discarded the runner's Cargo `PATH` (`env: 'cargo': No such file or
+directory`). It created no harness namespace and produced no native artifact.
+The workflow was corrected to invoke the runner Cargo binary by absolute path
+while explicitly preserving its Cargo/Rustup environment. The corrected
+workflow requires a fresh exact-SHA attempt; the failed attempt is not host
+qualification evidence.

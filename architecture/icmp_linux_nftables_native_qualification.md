@@ -41,3 +41,15 @@ native passes with distinct run IDs, proves packet behavior and owned-state
 readback, verifies cleanup after each, and uploads bounded JSON artifacts.
 Record the exact run and artifact details here before changing the support
 tier.
+
+## Workflow attempt history
+
+Run `36275026606` at SHA
+`c9861c2f4e7f1c25f6e8c9313af9be716bb8907f` used an Ubuntu 24.04 x86_64
+GitHub-hosted runner. Tool installation and host recording succeeded, but
+preflight stopped at the root command with `env: 'cargo': No such file or
+directory`: `sudo` reset the runner's Cargo path. No topology preflight,
+native run, or evidence artifact was produced. This is a workflow handoff
+failure, not a native qualification result. The workflow now calls Cargo by
+absolute path and explicitly carries the runner Cargo/Rustup environment; a
+new exact-SHA attempt is required.
