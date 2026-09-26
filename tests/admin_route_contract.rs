@@ -67,6 +67,32 @@ async fn build_test_router() -> Router {
     .expect("spawn_blocking should not panic")
 }
 
+#[cfg(all(feature = "icmp-filter", target_os = "linux"))]
+async fn build_icmp_lifecycle_test_router(
+    config: std::sync::Arc<tokio::sync::RwLock<ConfigManager>>,
+    icmp_filter: std::sync::Arc<tokio::sync::RwLock<synvoid::icmp_filter::IcmpFilterManager>>,
+) -> Router {
+    tokio::task::spawn_blocking(move || {
+        create_admin_router(
+            config,
+            CONTRACT_BEARER.to_string(),
+            default_cors(),
+            disabled_rate_limit(),
+            vec![],
+            None,
+            None,
+            None,
+            None,
+            None,
+            #[cfg(feature = "mesh")]
+            None,
+            Some(icmp_filter),
+        )
+    })
+    .await
+    .expect("spawn_blocking should not panic")
+}
+
 /// Helper: assert route exists (not 404).
 fn assert_route_exists(response: axum::response::Response, description: &str) {
     assert_ne!(
@@ -122,6 +148,77 @@ async fn assert_all_registered(router: &Router, cases: &[(&str, &str)]) {
     for (method, uri) in cases {
         assert_registered(router, method, uri).await;
     }
+}
+
+#[cfg(all(feature = "icmp-filter", target_os = "linux"))]
+#[tokio::test]
+async fn disabled_icmp_config_route_persists_only_verified_absence() {
+    use axum::body::to_bytes;
+    use axum::http::header::{AUTHORIZATION, CONTENT_TYPE};
+
+    let config = std::sync::Arc::new(tokio::sync::RwLock::new(ConfigManager::new(
+        std::env::temp_dir(),
+    )));
+    let enforcement_config = synvoid::icmp_filter::IcmpFilterConfig {
+        filter_type: synvoid::icmp_filter::FilterType::Nftables,
+        ..Default::default()
+    };
+    let manager = synvoid::icmp_filter::IcmpFilterManager::new(enforcement_config)
+        .expect("disabled nftables manager should initialize without host mutation");
+    let manager = std::sync::Arc::new(tokio::sync::RwLock::new(manager));
+    let router = build_icmp_lifecycle_test_router(config.clone(), manager).await;
+
+    let app_config = serde_json::to_value(config.read().await.main.icmp_filter.clone())
+        .expect("serialize application ICMP config");
+    assert_eq!(app_config["enabled"], false);
+    let mut put = Request::builder()
+        .method("PUT")
+        .uri("/api/icmp/config")
+        .header(CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            serde_json::json!({ "config": app_config }).to_string(),
+        ))
+        .unwrap();
+    put.headers_mut().insert(
+        AUTHORIZATION,
+        axum::http::HeaderValue::from_static(
+            "Bearer test_admin_token_that_is_at_least_32_chars_long",
+        ),
+    );
+    put.extensions_mut().insert(axum::extract::ConnectInfo(
+        "127.0.0.1:4311".parse().unwrap(),
+    ));
+    let put_response = router.clone().oneshot(put).await.unwrap();
+    assert_eq!(put_response.status(), StatusCode::OK);
+    let put_body = to_bytes(put_response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mutation: serde_json::Value = serde_json::from_slice(&put_body).unwrap();
+    assert_eq!(mutation["status"], "applied");
+    assert_eq!(mutation["local_store_mutated"], true);
+
+    assert_eq!(
+        serde_json::to_value(config.read().await.main.icmp_filter.clone()).unwrap()["enabled"],
+        false,
+        "application config is persisted after verified absence"
+    );
+
+    let mut get = probe_request("GET", "/api/icmp/status", false);
+    get.headers_mut().insert(
+        AUTHORIZATION,
+        axum::http::HeaderValue::from_static(
+            "Bearer test_admin_token_that_is_at_least_32_chars_long",
+        ),
+    );
+    let get_response = router.oneshot(get).await.unwrap();
+    assert_eq!(get_response.status(), StatusCode::OK);
+    let get_body = to_bytes(get_response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let status: serde_json::Value = serde_json::from_slice(&get_body).unwrap();
+    assert_eq!(status["desired_enabled"], false);
+    assert_eq!(status["enforcement"], "absent");
+    assert!(status["last_verify_error"].is_null());
 }
 
 /// Always-available frontend-consumed surface: auth session lifecycle.

@@ -1205,8 +1205,12 @@ fn silent_child_handshake_times_out_without_hang() {
     let start = Instant::now();
     let err = JailHandle::spawn(
         JailSpawnSpec {
-            program: PathBuf::from("/bin/sh"),
-            args: vec!["-c".to_string(), "sleep 30".to_string()],
+            // Use a direct child process. A shell wrapper would leave its
+            // `sleep` grandchild holding inherited stdout open after the
+            // shell is killed, which tests descendant process cleanup rather
+            // than the jail handshake deadline.
+            program: PathBuf::from("/bin/sleep"),
+            args: vec!["30".to_string()],
             env: Vec::new(),
             kind: JailKind::Wasm,
         },

@@ -379,7 +379,7 @@ results remain required before terminal closure.
 
 Local green verification is necessary but not sufficient.
 
-### First hosted native attempt (2026-09-26)
+### Hosted native attempts (2026-09-26)
 
 Opt-in run `36263988737` checked out implementation SHA
 `64dbc9c8c1fce0c3190f1e0d3384cfbd3df8e2b7` on Ubuntu 24.04.5 / Linux and
@@ -391,6 +391,16 @@ an unsupported host. The corrective keeps `AF_UNIX` socket/socketpair
 available while denying non-`AF_UNIX` socket creation and all `connect`
 calls. The new child-process probe checks both permitted local socket
 operations; a fresh exact-SHA hosted/native run is required before closure.
+
+The follow-up run `36265636370` checked out
+`d20ef6cb9f14c780b680fffeabd33ed23c6c7315`. The native platform probes and
+all three packaged jail integration tests passed, but the isolation-guard
+suite reported 29/30: `silent_child_handshake_times_out_without_hang` exceeded
+its 15-second bound because it spawned `/bin/sh -c "sleep 30"`; killing the
+shell left its grandchild holding the captured stdout pipe open until the
+sleep ended. The guard now starts `/bin/sleep` directly, so it exercises the
+handshake deadline without testing descendant cleanup. Rerun the focused
+guard locally and the exact-SHA hosted/native gate before closure.
 
 ## Acceptance criteria
 
