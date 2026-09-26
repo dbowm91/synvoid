@@ -136,8 +136,9 @@ the operator API/UI and Phase 91 harness work remain landed.
 ## Corrective successor update (2026-09-26)
 
 The lifecycle findings are corrected and verified by Phase 92
-(`plans/phase_92_icmp_disabled_state_lifecycle_corrective.md`). Phase 93
-remains a separate native qualification gate; its manual opt-in Linux runner
-attempt and terminal disposition are recorded by the Phase 93 plan and
-`architecture/icmp_linux_nftables_native_qualification.md`.
-These successors do not change the Phase 88 RETAIN decision.
+(`plans/phase_92_icmp_disabled_state_lifecycle_corrective.md`). Phase 93's
+manual Linux native attempt failed on nftables batch syntax; its terminal
+disposition is recorded in the Phase 93 plan and
+`architecture/icmp_linux_nftables_native_qualification.md`. Phase 95 is
+registered to correct that backend and repeat native qualification. These
+successors do not change the Phase 88 RETAIN decision.

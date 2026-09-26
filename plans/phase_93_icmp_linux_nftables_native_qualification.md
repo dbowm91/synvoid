@@ -1,6 +1,6 @@
 # Phase 93 Plan: ICMP Linux nftables Native Qualification
 
-Status: **NATIVE ATTEMPT PENDING** (2026-09-26); Phase 92 is CORRECTED and a manual, opt-in Linux runner lane is being added to test whether its disposable namespace environment satisfies the native prerequisites.
+Status: **FAILED — BACKEND DEFECT FOUND** (2026-09-26); the suitable Linux host passed preflight, but all eight native cases failed in nftables ruleset parsing. Linux nftables remains unqualified; Phase 95 is registered for the focused corrective.
 
 Registered in: `plans/roadmap.md` and
 `plans/icmp_linux_native_qualification_gate_roadmap.md`.
@@ -304,3 +304,31 @@ workflow now performs the dry-run as the runner first, then invokes the
 already-built xtask binary directly for privileged checks, native passes, and
 cleanup. This is a workflow ordering/ownership defect; repeat on a new
 proof-bearing SHA.
+
+## Phase 93 disposition (2026-09-26)
+
+The exact-SHA manual run `36279326809` at
+`947e4f707cc5aefa9aca78a15b19d6ecfc8c04d4` reached native execution on
+Ubuntu 24.04.5 x86_64, kernel `6.17.0-1022-azure`, Rust `1.98.1`, nftables
+`1.0.9`, and iproute2 `6.1.0`. The runner was root with
+`cap_net_admin=true`; Linux/tool/privilege preflight and the zero-mutation
+topology dry-run both passed.
+
+The first native matrix returned **0/8**: install/readback, ICMP type/code,
+exemptions, global rate-limit, replacement, drift, disable cleanup, and
+rollback. The nft parser rejected the generated replacement ruleset with
+syntax errors at the table/chain declarations. The active backend composes a
+`flush table inet ...` command with a declarative `table inet ... { ... }`
+ruleset in `crates/synvoid-icmp-filter/src/nftables.rs`; Phase 95 will
+correct and independently qualify that batch semantics. No Phase 93 evidence
+artifact was uploaded because the workflow passed a relative output path to a
+test process whose working directory differs from the workspace root; the
+workflow now uses an absolute workspace path and runs prefix-scoped cleanup
+after failed as well as successful passes. The hosted log for run
+`36279326809` is the current bounded failure evidence; the corrected
+workflow will preserve JSON evidence on the next attempt.
+
+Disposition: **FAILED**, not qualified. Linux nftables stays at its existing
+unqualified evidence tier; no platform support-tier upgrade, extraction, or
+publication is authorized. Phase 88 remains **RETAIN**. Focused follow-up:
+`plans/phase_95_icmp_nftables_batch_corrective.md`.

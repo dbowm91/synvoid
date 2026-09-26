@@ -183,12 +183,13 @@ jobs:
           set -euo pipefail
           run_native() {
             local run_id="$1"
+            local evidence_path="$GITHUB_WORKSPACE/target/icmp-qualify-${run_id}.json"
             sudo -E env \
               PATH="$PATH" \
               SYNVOID_ICMP_QUALIFY_NATIVE=1 \
               SYNVOID_ICMP_QUALIFY_RUN="$run_id" \
               "$GITHUB_WORKSPACE/target/debug/cargo-xtask" icmp-qualify --native --json --timeout-secs 900 \
-                --out "target/icmp-qualify-${run_id}.json"
+                --out "$evidence_path"
           }
           run_cleanup() {
             sudo -E env \
@@ -200,10 +201,18 @@ jobs:
               exit 1
             fi
           }
-          run_native "${GITHUB_RUN_ID}-a"
-          run_cleanup "${GITHUB_RUN_ID}-cleanup-a"
-          run_native "${GITHUB_RUN_ID}-b"
-          run_cleanup "${GITHUB_RUN_ID}-cleanup-b"
+          native_status=0
+          run_native "${GITHUB_RUN_ID}-a" || native_status=$?
+          run_cleanup "${GITHUB_RUN_ID}-a"
+          if (( native_status != 0 )); then
+            exit "$native_status"
+          fi
+          native_status=0
+          run_native "${GITHUB_RUN_ID}-b" || native_status=$?
+          run_cleanup "${GITHUB_RUN_ID}-b"
+          if (( native_status != 0 )); then
+            exit "$native_status"
+          fi
 
       - name: Upload bounded native evidence
         if: ${{ always() }}

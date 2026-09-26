@@ -1,9 +1,8 @@
 # ICMP Linux nftables Native Qualification
 
-Status: **NATIVE ATTEMPT PENDING / UNQUALIFIED** (2026-09-26). The original
-macOS preflight was blocked; an opt-in workflow-dispatch lane now attempts
-the complete two-run matrix on a disposable GitHub-hosted Linux VM. No native
-proof exists until that exact-SHA run completes successfully.
+Status: **FAILED / UNQUALIFIED** (2026-09-26). The manual native matrix ran
+on a suitable privileged Linux VM and found an nftables backend batch syntax
+defect; no support-tier upgrade is supported by this evidence.
 
 Plan: `plans/phase_93_icmp_linux_nftables_native_qualification.md`.
 Gate roadmap: `plans/icmp_linux_native_qualification_gate_roadmap.md`.
@@ -63,3 +62,21 @@ the dry-run because the privileged Cargo check had created a root-owned
 reordered so the runner-user dry-run builds first, then privileged steps call
 the compiled xtask binary directly, avoiding Cargo lock ownership. This
 attempt is not native qualification evidence.
+
+Run `36279326809` at SHA
+`947e4f707cc5aefa9aca78a15b19d6ecfc8c04d4` passed the native preflight and
+zero-mutation dry-run on Ubuntu 24.04.5 x86_64, kernel `6.17.0-1022-azure`,
+Rust `1.98.1`, nftables `1.0.9`, iproute2 `6.1.0`, as root with
+`cap_net_admin=true`. The native matrix failed **0/8** cases; nft reported
+syntax errors parsing the generated ruleset batch. The backend currently
+combines `flush table inet ...` and declarative `table inet ... { ... }`
+syntax in `crates/synvoid-icmp-filter/src/nftables.rs`. No JSON artifact was
+uploaded because the relative output path resolved under the test crate's
+working directory. The workflow is corrected to use an absolute workspace
+path and to run prefix-scoped cleanup after a failed pass. The hosted job log
+is the current failure evidence; repeat the full two-run matrix after
+`plans/phase_95_icmp_nftables_batch_corrective.md` closes.
+
+Disposition: **FAILED / UNQUALIFIED**. Linux nftables retains its existing
+evidence tier. eBPF, PF, WFP, Windows Firewall and other platform tiers are
+unchanged; Phase 88 remains **RETAIN**.

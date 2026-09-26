@@ -1,6 +1,6 @@
 # ICMP Linux Native Qualification Gate Roadmap (Phases 92–93)
 
-Status: Phase 92 **CORRECTED**; Phase 93 **NATIVE ATTEMPT PENDING** on 2026-09-26.
+Status: Phase 92 **CORRECTED**; Phase 93 **FAILED — BACKEND DEFECT FOUND** on 2026-09-26. Phase 95 is registered for correction and requalification.
 
 Registered in: `plans/roadmap.md`.
 
@@ -112,7 +112,17 @@ host is not Linux, `ip` and `nft` are absent, and root/CAP_NET_ADMIN access
 for the required network namespace run is unavailable. The zero-mutation
 dry-run passed and listed only prefix-scoped `synvoid-q-*` namespace and
 veth resources. No native run or evidence artifact was produced on macOS.
-The manual workflow-dispatch lane is now the pending disposable Linux-host
-attempt; until it completes, Phase 93 remains unqualified and Linux nftables
-retains its current evidence tier. See
+Manual run `36279326809` at SHA
+`947e4f707cc5aefa9aca78a15b19d6ecfc8c04d4` passed Linux, tools,
+root/CAP_NET_ADMIN preflight and the dry-run, then failed all eight cases in
+nftables batch parsing. Phase 93 is **FAILED**, not qualified; Linux
+nftables remains unqualified and Phase 88 stays RETAIN. The missing JSON
+artifact was traced to a relative output path and the workflow now preserves
+absolute-path evidence and cleanup on failure. The focused corrective is
+`plans/phase_95_icmp_nftables_batch_corrective.md`; the binding evidence is
 `architecture/icmp_linux_nftables_native_qualification.md`.
+
+Phase 95 is the next ICMP gate action. It corrects the nftables replacement
+batch and then repeats this roadmap's exact two-run criteria. Until it closes,
+Phase 93 remains **FAILED / UNQUALIFIED**, and Linux nftables retains its
+existing evidence tier.

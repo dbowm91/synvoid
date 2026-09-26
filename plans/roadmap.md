@@ -1,6 +1,6 @@
 # SynVoid Architecture Hardening Roadmap
 
-Status: Tracks 1–3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). Eggfetch 0.2 runtime adoption is closed through Phase 62 (`c3568ef4...`) and performance/reproducibility adjudication is closed through Phase 63; Phase 64 docs/evidence-truth correction is closed. Production remains on eggfetch. The EggServe 0.2.2-line inbound H1 campaign remains historical/retained at Phase 65; Phases 66–69 were never started. EggServe 0.3 H1 adoption and corrective requalification are closed as `ADOPTED` through Phase 80 on exact pins `eggserve-server = "=0.4.0"` / `eggserve-primitives = "=0.2.2"`; the Phase 78 terminal claim is superseded by Phase 80 proof-bearing SHA `174fdbcd6f133b35099ed4492f5ed8d3fcaa7d4c` (hosted run `36201213413`). Phase 79 implementation SHA: `171dd1e47f965b04b34465fc72c87adf4d9a9cab`. See `architecture/eggserve_0_3_h1_adoption_closeout.md`. Phases 70–72 remain historical/closed with evidence aligned to their then-current Hyper H1 runtime. The process-sandbox correctness and extraction-readiness campaign (Phases 81-84) remains closed DEFER; Phase 94 corrected and qualified Phase 89's Linux mechanism-selection and native-evidence gaps on exact SHA `e86fb35372b1b66bb59c8a6336bf32e55ff5c93e` (hosted/native run `36271417398`). The independent ICMP policy/enforcement extraction-preparation campaign (Phases 85-88) remains closed RETAIN (see the Post-Phase-80 section below); Phases 90–91 are closed, Phase 92 is CLOSED CORRECTED, and Phase 93's native qualification is attempted through the manual opt-in Linux lane. No extraction or support-tier changes occur without its complete two-run evidence. An independent cross-repo Eggbench security-qualification asset plan is also registered at `plans/eggbench_security_qualification_asset_contract.md` and is independent of these corrective phases.
+Status: Tracks 1–3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). Eggfetch 0.2 runtime adoption is closed through Phase 62 (`c3568ef4...`) and performance/reproducibility adjudication is closed through Phase 63; Phase 64 docs/evidence-truth correction is closed. Production remains on eggfetch. The EggServe 0.2.2-line inbound H1 campaign remains historical/retained at Phase 65; Phases 66–69 were never started. EggServe 0.3 H1 adoption and corrective requalification are closed as `ADOPTED` through Phase 80 on exact pins `eggserve-server = "=0.4.0"` / `eggserve-primitives = "=0.2.2"`; the Phase 78 terminal claim is superseded by Phase 80 proof-bearing SHA `174fdbcd6f133b35099ed4492f5ed8d3fcaa7d4c` (hosted run `36201213413`). Phase 79 implementation SHA: `171dd1e47f965b04b34465fc72c87adf4d9a9cab`. See `architecture/eggserve_0_3_h1_adoption_closeout.md`. Phases 70–72 remain historical/closed with evidence aligned to their then-current Hyper H1 runtime. The process-sandbox correctness and extraction-readiness campaign (Phases 81-84) remains closed DEFER; Phase 94 corrected and qualified Phase 89's Linux mechanism-selection and native-evidence gaps on exact SHA `e86fb35372b1b66bb59c8a6336bf32e55ff5c93e` (hosted/native run `36271417398`). The independent ICMP policy/enforcement extraction-preparation campaign (Phases 85-88) remains closed RETAIN (see the Post-Phase-80 section below); Phases 90–91 are closed, Phase 92 is CLOSED CORRECTED, Phase 93 FAILED native nftables ruleset parsing at `0/8` on exact attempt `36279326809`, and Phase 95 is registered for correction and requalification. No extraction or support-tier changes occur without complete two-run evidence. The independent cross-repo Eggbench security-qualification asset plan remains separately registered and independent.
 
 Scope: this roadmap covers architecture hardening, trust-boundary closure, verification, release readiness, post-hardening cleanup, and the architecture-convergence work required before another broad feature-expansion pass.
 
@@ -934,7 +934,7 @@ Qualification M002a. It may execute independently of Phases 89-91.
 
 ## Post-Phase-91 ICMP Gate: Disabled-State Corrective and Linux nftables Native Qualification — Phases 92–93
 
-Status: **Phase 92 CORRECTED; Phase 93 NATIVE ATTEMPT PENDING** (2026-09-26). Phase 92 lifecycle work is complete. The macOS preflight was blocked; a manual, opt-in Linux runner lane is being used to attempt Phase 93's native matrix.
+Status: **Phase 92 CORRECTED; Phase 93 FAILED — BACKEND DEFECT FOUND** (2026-09-26). The suitable Linux host passed preflight, but the native matrix found nftables batch parsing failures in 0/8 cases. Phase 95 is registered as the focused correction and requalification.
 
 Roadmap:
 `plans/icmp_linux_native_qualification_gate_roadmap.md`.
@@ -977,7 +977,7 @@ Execution order:
    Plan:
    `plans/phase_92_icmp_disabled_state_lifecycle_corrective.md`.
 
-2. **Phase 93 — ICMP Linux nftables Native Qualification — NATIVE ATTEMPT PENDING (2026-09-26)**
+2. **Phase 93 — ICMP Linux nftables Native Qualification — FAILED (2026-09-26)**
    - execute the dual-gated Phase 91 netns/veth harness on a suitable
      privileged Linux host;
    - require install/readback, v4/v6 type/code, exemption, global rate-limit,
@@ -989,6 +989,13 @@ Execution order:
 
    Plan:
    `plans/phase_93_icmp_linux_nftables_native_qualification.md`.
+
+Phase 93 run `36279326809` at SHA
+`947e4f707cc5aefa9aca78a15b19d6ecfc8c04d4` passed Linux/tool/root
+preflight and zero-mutation dry-run, then failed the native matrix 0/8 on
+nftables batch syntax. Linux remains unqualified and Phase 88 RETAIN remains
+authoritative. The focused corrective and renewed qualification are tracked
+in `plans/phase_95_icmp_nftables_batch_corrective.md`.
 
 Terminal outcomes for Phase 93 are **QUALIFIED**, **FAILED**, or **BLOCKED**.
 Skipped/refused/unavailable privileged execution is BLOCKED, never pass.
@@ -1002,9 +1009,11 @@ Constraints:
 - Linux proof cannot upgrade eBPF/PF/WFP/Windows evidence tiers;
 - qualification must remain isolated from the host/default firewall namespace.
 
-Phase 92 is CLOSED CORRECTED. Phase 93's manual Linux runner qualification
-lane is now available; its status depends on the two-run result and evidence
-artifact from the exact-SHA dispatch.
+Phase 92 is CLOSED CORRECTED. Phase 93 FAILED after suitable Linux preflight
+and an actual native run exposed nftables batch parsing failures in 0/8
+cases. Its binding record is
+`architecture/icmp_linux_nftables_native_qualification.md`; Phase 95 is the
+registered backend correction and renewed qualification gate.
 
 ## Post-Phase-93 Corrective: Process Sandbox Qualification Closure — Phase 94 Closed
 
@@ -1057,3 +1066,20 @@ Phase 94 closed at proof-bearing SHA
 `ci`, `dependency-security`, and the opt-in Linux native qualification lane.
 Phases 81–84 remain historically closed DEFER; no extraction phase is
 registered by this closeout.
+
+## Post-Phase-94 Corrective: ICMP nftables Batch Semantics — Phase 95 Planned
+
+Status: **PLANNED** (2026-09-26), triggered by Phase 93 native failure.
+
+Plan:
+`plans/phase_95_icmp_nftables_batch_corrective.md`.
+
+Phase 93 run `36279326809` passed Linux/root/CAP_NET_ADMIN preflight and its
+zero-mutation dry-run on Ubuntu 24.04.5, then the nftables native matrix
+failed 0/8 with parser syntax errors. The backend builds a replacement batch
+by prefixing `flush table inet ...` to a declarative table block. Phase 95
+will correct that transaction grammar, add direct batch-render/parse coverage,
+and rerun the full two-pass Phase 93 qualification with durable JSON artifacts
+and cleanup after both successful and failed attempts. Linux remains
+unqualified, Phase 88 remains RETAIN, and no extraction/publication is
+authorized by this registration.
