@@ -355,6 +355,52 @@ impl IcmpFilterManager {
             .ok()
             .map(|(policy, _)| policy_fingerprint(&policy));
         let filter = Self::create_filter(config)?;
+        Self::from_filter_state(filter, desired_enabled, desired_fingerprint)
+    }
+
+    /// Construct a manager around an already selected backend implementation.
+    ///
+    /// This is primarily useful to composition roots that own backend
+    /// selection and to deterministic route tests. Callers remain responsible
+    /// for supplying a backend appropriate for `config`.
+    #[doc(hidden)]
+    #[cfg(any(
+        target_os = "linux",
+        all(target_os = "macos", feature = "icmp-pf"),
+        all(any(target_os = "freebsd", target_os = "openbsd"), feature = "icmp-pf"),
+        all(
+            target_os = "windows",
+            any(feature = "icmp-winfw", feature = "icmp-wfp")
+        )
+    ))]
+    pub fn with_filter(config: IcmpFilterConfig, filter: Box<dyn IcmpFilter>) -> Result<Self> {
+        config.validate().map_err(IcmpFilterError::Config)?;
+        let desired_enabled = config.enabled;
+        let desired_fingerprint = adapt_config_to_policy(&config)
+            .ok()
+            .map(|(policy, _)| policy_fingerprint(&policy));
+        if filter.config().enabled != config.enabled {
+            return Err(IcmpFilterError::Config(
+                "injected backend config does not match manager config".to_string(),
+            ));
+        }
+        Self::from_filter_state(filter, desired_enabled, desired_fingerprint)
+    }
+
+    #[cfg(any(
+        target_os = "linux",
+        all(target_os = "macos", feature = "icmp-pf"),
+        all(any(target_os = "freebsd", target_os = "openbsd"), feature = "icmp-pf"),
+        all(
+            target_os = "windows",
+            any(feature = "icmp-winfw", feature = "icmp-wfp")
+        )
+    ))]
+    fn from_filter_state(
+        filter: Box<dyn IcmpFilter>,
+        desired_enabled: bool,
+        desired_fingerprint: Option<u64>,
+    ) -> Result<Self> {
         Ok(Self {
             filter,
             driver: DriverState {

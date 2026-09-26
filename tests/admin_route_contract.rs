@@ -151,6 +151,70 @@ async fn assert_all_registered(router: &Router, cases: &[(&str, &str)]) {
 }
 
 #[cfg(all(feature = "icmp-filter", target_os = "linux"))]
+#[derive(Debug)]
+struct DisabledIcmpFilter {
+    config: synvoid::icmp_filter::IcmpFilterConfig,
+}
+
+#[cfg(all(feature = "icmp-filter", target_os = "linux"))]
+impl synvoid::icmp_filter::traits::IcmpFilter for DisabledIcmpFilter {
+    fn enable(&mut self) -> Result<(), synvoid::icmp_filter::IcmpFilterError> {
+        self.config.enabled = true;
+        Ok(())
+    }
+
+    fn disable(&mut self) -> Result<(), synvoid::icmp_filter::IcmpFilterError> {
+        self.config.enabled = false;
+        Ok(())
+    }
+
+    fn is_enabled(&self) -> bool {
+        self.config.enabled
+    }
+
+    fn is_enforcing(&self) -> bool {
+        self.config.enabled
+    }
+
+    fn backend(&self) -> synvoid::icmp_filter::FilterBackend {
+        synvoid::icmp_filter::FilterBackend::Nftables
+    }
+
+    fn status(&self) -> synvoid::icmp_filter::FilterStatus {
+        synvoid::icmp_filter::FilterStatus {
+            enabled: self.config.enabled,
+            backend: self.backend(),
+            config: self.config.clone(),
+        }
+    }
+
+    fn update_config(
+        &mut self,
+        config: synvoid::icmp_filter::IcmpFilterConfig,
+    ) -> Result<(), synvoid::icmp_filter::IcmpFilterError> {
+        self.config = config;
+        Ok(())
+    }
+
+    fn config(&self) -> &synvoid::icmp_filter::IcmpFilterConfig {
+        &self.config
+    }
+
+    fn verify_ownership(
+        &self,
+        _plan: &synvoid::icmp_filter::enforce::EnforcementPlan,
+    ) -> synvoid::icmp_filter::enforce::VerificationOutcome {
+        if self.config.enabled {
+            synvoid::icmp_filter::enforce::VerificationOutcome::Unknown {
+                detail: "test fake has no installed enabled policy".to_string(),
+            }
+        } else {
+            synvoid::icmp_filter::enforce::VerificationOutcome::Absent
+        }
+    }
+}
+
+#[cfg(all(feature = "icmp-filter", target_os = "linux"))]
 #[tokio::test]
 async fn disabled_icmp_config_route_persists_only_verified_absence() {
     use axum::body::to_bytes;
@@ -163,8 +227,12 @@ async fn disabled_icmp_config_route_persists_only_verified_absence() {
         filter_type: synvoid::icmp_filter::FilterType::Nftables,
         ..Default::default()
     };
-    let manager = synvoid::icmp_filter::IcmpFilterManager::new(enforcement_config)
-        .expect("disabled nftables manager should initialize without host mutation");
+    let filter = DisabledIcmpFilter {
+        config: enforcement_config.clone(),
+    };
+    let manager =
+        synvoid::icmp_filter::IcmpFilterManager::with_filter(enforcement_config, Box::new(filter))
+            .expect("disabled fake backend should initialize without host mutation");
     let manager = std::sync::Arc::new(tokio::sync::RwLock::new(manager));
     let router = build_icmp_lifecycle_test_router(config.clone(), manager).await;
 
