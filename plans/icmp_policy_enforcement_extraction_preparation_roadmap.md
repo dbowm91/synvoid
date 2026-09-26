@@ -1,4 +1,4 @@
-# ICMP Policy/Enforcement Extraction Preparation Roadmap (Phases 81–84)
+# ICMP Policy/Enforcement Extraction Preparation Roadmap (Phases 85–88)
 
 Status: planned and registered 2026-09-26.
 
@@ -103,7 +103,7 @@ dependencies:
 1. Preserve existing SynVoid `[icmp_filter]` TOML/admin compatibility unless a
    current behavior is demonstrably broken. Any necessary schema change needs
    explicit aliases/migration tests.
-2. Do not publish or create an external repository in Phases 81–84.
+2. Do not publish or create an external repository in Phases 85–88.
 3. Do not expand this into a general firewall framework.
 4. Linux nftables remains the required baseline Linux enforcement lane.
    eBPF remains optional and must not define the base API.
@@ -124,25 +124,25 @@ dependencies:
 
 ## Execution order
 
-1. Phase 81 — canonical policy model, explicit config adaptation, typed ICMP
+1. Phase 85 — canonical policy model, explicit config adaptation, typed ICMP
    semantics, and protocol/rate-limit validation.
-2. Phase 82 — backend/platform/privilege truthfulness and feature qualification.
-3. Phase 83 — compile-before-mutate enforcement, transactional replacement,
+2. Phase 86 — backend/platform/privilege truthfulness and feature qualification.
+3. Phase 87 — compile-before-mutate enforcement, transactional replacement,
    receipts, readback, and drift state.
-4. Phase 84 — extraction-readiness audit, native-platform qualification,
+4. Phase 88 — extraction-readiness audit, native-platform qualification,
    subprocess/native-backend adjudication, and final go/no-go evidence.
 
-Phase 82 depends on Phase 81 because backend capability must be evaluated
-against one policy vocabulary. Phase 83 depends on both. Phase 84 is a
+Phase 86 depends on Phase 85 because backend capability must be evaluated
+against one policy vocabulary. Phase 87 depends on both. Phase 88 is a
 qualification/decision phase and must not paper over residual implementation
 gaps.
 
 ## Detailed plans
 
-- `plans/phase_81_icmp_policy_model_and_config_canonicalization.md`
-- `plans/phase_82_icmp_backend_platform_and_privilege_truthfulness.md`
-- `plans/phase_83_icmp_transactional_enforcement_and_state_verification.md`
-- `plans/phase_84_icmp_extraction_readiness_and_platform_qualification.md`
+- `plans/phase_85_icmp_policy_model_and_config_canonicalization.md`
+- `plans/phase_86_icmp_backend_platform_and_privilege_truthfulness.md`
+- `plans/phase_87_icmp_transactional_enforcement_and_state_verification.md`
+- `plans/phase_88_icmp_extraction_readiness_and_platform_qualification.md`
 
 ## Campaign acceptance criteria
 
