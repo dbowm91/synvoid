@@ -674,3 +674,55 @@ Campaign constraints:
 
 Phase 81 is the next executable plan.
 
+
+
+## Post-Phase-80 Campaign: ICMP Policy/Enforcement Extraction Preparation — Planned
+
+Status: Phases 81–84 are planned and registered. This campaign prepares the
+existing `synvoid-icmp-filter` boundary for a later extraction decision; it
+does **not** publish, rename, or move the crate to an external repository.
+
+Roadmap:
+`plans/icmp_policy_enforcement_extraction_preparation_roadmap.md`.
+
+Baseline at planning start:
+`81638c251592913579bd9bbce51d013c44d67910`.
+
+Research/current-head review found four prerequisite classes of work:
+
+1. The application config and enforcement crate independently define divergent
+   ICMP config/policy types, and the admin persistence path bridges them through
+   JSON value conversion. Phase 81 establishes one semantic policy owner,
+   explicit typed config adaptation, family-aware ICMP policy, RFC-aware
+   ICMPv6 safety validation, and explicit rate-limit semantics.
+2. Backend/platform truth is inconsistent: Linux privilege probing mixes BPF
+   state into nftables availability; Windows backend source references
+   undeclared dependencies and contains interface-resolution defects; NetBSD is
+   incorrectly grouped into the PF lane. Phase 82 closes feature/dependency,
+   backend-selection, privilege, Windows, and BSD truthfulness gaps.
+3. Current config replacement and status are desired-state-biased. Phase 83
+   adds compile-before-mutate enforcement, backend-scoped ownership,
+   transaction/staging/rollback semantics, apply receipts, live readback, and
+   drift/unknown state.
+4. Phase 84 requalifies the cleaned boundary against current Rust firewall
+   libraries and native platforms, adjudicates subprocess-vs-native backend
+   mechanisms, evaluates the binding Phase 47 public-crate bar, and records a
+   GO/RETAIN extraction-readiness decision without publishing.
+
+Detailed plans:
+
+- `plans/phase_81_icmp_policy_model_and_config_canonicalization.md`
+- `plans/phase_82_icmp_backend_platform_and_privilege_truthfulness.md`
+- `plans/phase_83_icmp_transactional_enforcement_and_state_verification.md`
+- `plans/phase_84_icmp_extraction_readiness_and_platform_qualification.md`
+
+Execution order is 81 → 82 → 83 → 84. Linux nftables remains the required
+baseline; eBPF remains optional. Explicit backend requests become strict while
+only `Auto` may fall back. NetBSD PF support is removed from the claim; NPF is
+a future separately scoped backend decision. Routine CI remains the current
+proportionate Linux verification lane; native privileged platform proof is
+recorded separately rather than recreating a broad permanent OS matrix.
+
+Campaign acceptance is governed by the detailed roadmap. A successful Phase
+84 GO means only that a separate extraction/publication campaign is justified;
+it does not itself create a class-3 support promise.
