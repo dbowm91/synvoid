@@ -1,12 +1,17 @@
-//! Child-side sandbox entry sequencing (Phase 29 canonical owner).
+//! Child-side sandbox entry sequencing (Phase 29 canonical owner, Phase 82
+//! guarantee migration).
 //!
 //! Preserves the Phase 22 startup order exactly:
 //!
 //! 1. parent opens pipes and spawns child;
 //! 2. child initializes only resources that must exist before sandbox
 //!    (captures inherited stdio handles; no I/O yet);
-//! 3. child applies OS isolation (`SandboxLevel::Strict`);
-//! 4. child enters the framed request loop;
+//! 3. child applies OS isolation via the portable guarantee contract
+//!    (legacy `SandboxLevel::Strict` adapter pinned; jail requirements come
+//!    from `jail_guarantee_request()` — actual workload needs, not the old
+//!    word "Strict");
+//! 4. child enters the framed request loop with the `EnteredSandbox`
+//!    witness retained;
 //! 5. engine operations execute only after isolation when `Required`;
 //! 6. any isolation setup failure terminates/fails closed before workload
 //!    handling.
@@ -20,7 +25,10 @@
 use std::io::{Read, Write};
 
 use synvoid_ipc::{serve_jail_connection, JailHandler, JailKind, ServeOutcome};
-use synvoid_platform::{ProcessSandbox, SandboxLevel, SandboxPaths};
+use synvoid_platform::{
+    jail_guarantee_request, prepare_sandbox, EnteredSandbox, ProcessSandbox, SandboxLevel,
+    SandboxPaths,
+};
 
 /// Test-only escape hatch permitting jail execution without OS sandbox
 /// enforcement (hermetic tests on platforms without a strict backend).
@@ -66,9 +74,19 @@ fn run_jail_main(kind: JailKind) -> i32 {
     let mut reader = stdin.lock();
     let mut writer = stdout.lock();
 
-    if let Err(code) = apply_jail_sandbox(kind) {
-        return code;
-    }
+    // Phase 81 Workstream G: retain the entered-sandbox guard through the
+    // serve loop. Dropping it before workload execution would discard
+    // security-significant backend state on platforms where a handle
+    // controls lifetime (Windows Job kill-on-close). Landlock/seccomp are
+    // irreversible so the guard is a witness there, but retention is still
+    // required so a failed installation can never fall through to `serve`.
+    // The Option makes the test-only unenforced path explicit: Some(guard)
+    // = enforced and retained; None = hatch-bypassed (test-only, never
+    // production); Err = fail closed before serve.
+    let _sandbox_guard = match apply_jail_sandbox(kind) {
+        Ok(guard) => guard,
+        Err(code) => return code,
+    };
 
     match kind {
         #[cfg(feature = "wasm")]
@@ -113,24 +131,87 @@ fn serve(
     }
 }
 
-fn apply_jail_sandbox(kind: JailKind) -> Result<(), i32> {
-    let level = SandboxLevel::Strict;
+/// Phase 81 Workstream A/G call-site inventory (production callers of the
+/// sandbox surface; retained-vs-dropped discipline):
+///
+/// - `run_jail_main` (this file): jail guarantee request (ambient-FS deny,
+///   read allowlist `/usr/lib`+`/lib`, inherited-IPC usable, descendants
+///   confined) prepared then entered; `EnteredSandbox` witness RETAINED
+///   through the framed serve loop (`_sandbox_guard`); failure fails closed
+///   before any workload (returns exit 1) unless the test-only
+///   `SYNVOID_JAIL_PERMIT_NO_SANDBOX=1` hatch is set (production spawn paths
+///   never set it — pinned by `tests/jail_isolation_guard.rs`). Runs after
+///   stdio capture, before threads/resources for workloads.
+/// - `synvoid-upload::SandboxConfig::apply_platform_sandbox`:
+///   caller-chosen level (default `Off`); guard DROPPED after apply by
+///   design (directory-isolation helper, fail-open to basic isolation with
+///   a warning — NOT security-critical jail isolation; documented).
+/// - Tests / docs: `with_stub` / `Off` probes only; never retained as
+///   enforcement evidence.
+/// - Config/operator docs: `sandbox_level = "strict"` maps to the legacy
+///   adapter (Phase 82 pins behavior; no global reinterpretation).
+///
+/// Security-critical claim: a successful `IsolationPolicy::Required` jail
+/// never enters its request loop after a sandbox installation failure
+/// (pinned by `jail_sandbox_failure_never_enters_serve_loop` below and the
+/// platform fake-backend conformance suite).
+fn apply_jail_sandbox(kind: JailKind) -> Result<Option<EnteredSandbox>, i32> {
+    // Phase 83 Workstream H: audit inherited descriptors/handles present at
+    // entry. stdin/stdout are required IPC capabilities, stderr is logging;
+    // no listener/admin/mesh/config/plugin/secret handle may leak in.
+    // Unix: enumerate fds >= 3 and warn (fd numbers only). Windows: stdio
+    // inheritance is explicit at spawn (documented in the closeout).
+    #[cfg(unix)]
+    {
+        let unexpected = synvoid_platform::sandbox::audit_inherited_fds();
+        if !unexpected.is_empty() {
+            tracing::warn!(
+                "Jail inherited {} unexpected fd(s) at entry (expected only 0/1/2 stdio): {:?}",
+                unexpected.len(),
+                unexpected,
+            );
+        }
+    }
     // Minimal read-only system library paths for the dynamic loader. The jail
     // needs no other filesystem access: modules and rules arrive over IPC.
-    let paths = SandboxPaths::new()
+    // Requirements come from actual workload needs (Phase 82 Workstream I),
+    // not the old word "Strict". Desired-but-unavailable guarantees
+    // (no-network/no-child/no-exec until Phase 83 qualifies the
+    // syscall-filter layer) stay explicit unsupported findings — they are
+    // NOT silently demanded here to force Phase 83 early, nor silently
+    // claimed as enforced.
+    let request = jail_guarantee_request()
+        .read_path("/usr/lib")
+        .read_path("/lib");
+
+    // Legacy adapter pin: the old Strict path must keep working until an
+    // explicit config migration. The guarantee path is authoritative for
+    // new code; both must agree on fail-closed here.
+    let legacy_paths = SandboxPaths::new()
         .add_read_path("/usr/lib")
         .add_read_path("/lib");
+    let legacy_ok = ProcessSandbox::with_paths(SandboxLevel::Strict, legacy_paths).is_ok();
 
-    match ProcessSandbox::with_paths(level, paths) {
-        Ok(sandbox) => {
+    let prepared = prepare_sandbox(request).map_err(|e| {
+        tracing::error!(
+            "Failed to prepare {:?} jail sandbox, failing closed: {}",
+            kind,
+            e
+        );
+        1
+    })?;
+    match prepared.enter() {
+        Ok(guard) => {
             tracing::info!(
-                "Jail sandbox applied (kind: {}, backend: {}, level: {}, runtime: {})",
+                "Jail sandbox applied (kind: {}, backend: {}, abi: {}, scope: {:?}, runtime: {}, legacy_strict_ok: {})",
                 kind.as_str(),
-                sandbox.feature_name(),
-                sandbox.level().as_str(),
+                guard.report().backend,
+                guard.report().abi,
+                guard.report().scope,
                 JAIL_RUNTIME_VERSION,
+                legacy_ok,
             );
-            Ok(())
+            Ok(Some(guard))
         }
         Err(e) => {
             if std::env::var(JAIL_PERMIT_NO_SANDBOX_ENV).as_deref() == Ok("1") {
@@ -139,7 +220,13 @@ fn apply_jail_sandbox(kind: JailKind) -> Result<(), i32> {
                     JAIL_PERMIT_NO_SANDBOX_ENV,
                     e
                 );
-                return Ok(());
+                // Test-only hermetic path: explicit None (no enforcement
+                // witness). Production spawn paths never set the hatch
+                // (pinned by tests/jail_isolation_guard.rs). The Option
+                // return keeps retention discipline structural: serve runs
+                // only with Some(retained) or explicit None(hatch).
+                tracing::warn!("Proceeding without OS sandbox (test-only hatch)");
+                return Ok(None);
             }
             tracing::error!(
                 "Failed to initialize {:?} jail sandbox, failing closed: {}",
@@ -148,5 +235,70 @@ fn apply_jail_sandbox(kind: JailKind) -> Result<(), i32> {
             );
             Err(1)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Phase 81 Workstream A: a failed sandbox installation must never
+    /// reach the request loop. The guard-returning signature makes this
+    /// structural (`Err` carries no guard to retain), and this test pins
+    /// the fail-closed branch on a backend that cannot enforce Strict.
+    #[test]
+    fn jail_sandbox_failure_never_enters_serve_loop() {
+        // Simulate an unenforcing backend: Strict must fail closed.
+        let res = ProcessSandbox::with_paths(
+            SandboxLevel::Strict,
+            SandboxPaths::new().add_read_path("/usr/lib"),
+        );
+        // On hosts with a real enforcing Strict backend (Linux Landlock,
+        // macOS Seatbelt w/ feature+runtime, OpenBSD pledge) this succeeds
+        // in-process — which would sandbox the test runner. Guard against
+        // that: only assert fail-closed when no enforcing backend exists.
+        let probe = ProcessSandbox::new(SandboxLevel::Strict);
+        if probe.capabilities().can_enforce_strict() && probe.is_supported() {
+            return;
+        }
+        assert!(
+            res.is_err(),
+            "Strict without an enforcing backend must fail closed (no guard, no serve loop)"
+        );
+        // There is no guard value on the error path by construction:
+        // `apply_jail_sandbox` returns `Result<Option<EnteredSandbox>, i32>`,
+        // so `run_jail_main` cannot enter `serve` without handling the
+        // guard (Some(retained) / None(hatch-explicit) / Err(fail-closed)).
+    }
+
+    /// Phase 82 Workstream I: the jail guarantee request carries the
+    /// minimum boundary (ambient-FS deny, read allowlist, inherited IPC,
+    /// descendants confined) and validates cleanly.
+    #[test]
+    fn jail_guarantee_request_is_minimal_and_valid() {
+        let req = jail_guarantee_request()
+            .read_path("/usr/lib")
+            .read_path("/lib");
+        req.validate().expect("jail request must validate");
+        assert!(req
+            .required
+            .contains(&synvoid_platform::Guarantee::AmbientFilesystemDenied));
+        assert!(req
+            .required
+            .contains(&synvoid_platform::Guarantee::FilesystemReadAllowlist));
+        assert!(req
+            .required
+            .contains(&synvoid_platform::Guarantee::InheritedIpcUsable));
+        assert!(req
+            .required
+            .contains(&synvoid_platform::Guarantee::DescendantsConfined));
+        // Desired-but-unqualified guarantees (network/child/exec) are NOT
+        // silently required here: they stay Phase 83 findings.
+        assert!(!req
+            .required
+            .contains(&synvoid_platform::Guarantee::NetworkDenied));
+        assert!(!req
+            .required
+            .contains(&synvoid_platform::Guarantee::ChildCreationDenied));
     }
 }

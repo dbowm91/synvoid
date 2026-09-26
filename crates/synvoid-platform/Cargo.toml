@@ -19,6 +19,13 @@ socket2 = { version = "0.6", features = ["all"] }
 # on synvoid-platform, so this edge is acyclic (Phase 32).
 synvoid-utils = { path = "../synvoid-utils", version = "0.1" }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# Phase 81/83: maintained Landlock ABI-aware enforcement (preferred over raw
+# UAPI duplication) + pure-Rust syscall-filter layer for jail categorical
+# denial. Both are Linux-only; other targets compile without them.
+landlock = "0.4"
+seccompiler = { version = "0.5", default-features = false }
+
 [target.'cfg(unix)'.dependencies]
 # OS syscall wrappers are the natural owner for these target-scoped deps
 # (Phase 32, Part C): signals/sockets (nix), daemonization (daemonize2).
@@ -31,7 +38,7 @@ daemonize2 = "0.6"
 tokio = { version = "1", features = ["rt", "signal"] }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading", "Win32_System_Console", "Win32_System_Pipes", "Win32_System_Memory", "Win32_Networking_WinSock"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading", "Win32_System_Console", "Win32_System_Pipes", "Win32_System_Memory", "Win32_Networking_WinSock", "Win32_System_JobObjects", "Win32_System_SystemServices"] }
 # Wintun DLL loading only (never plugin loading; see root Cargo.toml libloading edge note).
 libloading = "0.8"
 zip = "2"

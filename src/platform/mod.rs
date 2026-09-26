@@ -18,8 +18,10 @@ pub use synvoid_platform::process;
 pub use synvoid_platform::process::{ProcessControl, SignalHandler};
 pub use synvoid_platform::sandbox;
 pub use synvoid_platform::sandbox::{
-    ProcessSandbox, SandboxBackend, SandboxCapabilities, SandboxError, SandboxLevel, SandboxPaths,
-    StubSandbox,
+    jail_guarantee_request, legacy_strict_satisfied_by, prepare_sandbox, EnforcementReport,
+    EnteredSandbox, Guarantee, GuaranteeDecision, GuaranteeStatus, PreopenedResource,
+    PreparedSandbox, ProcessSandbox, ResourceIntent, SandboxBackend, SandboxCapabilities,
+    SandboxError, SandboxLevel, SandboxPaths, SandboxRequest, StubSandbox, ThreadScope,
 };
 pub use synvoid_platform::service;
 pub use synvoid_platform::service::{ServiceConfig, ServiceControl, ServiceState};

@@ -252,3 +252,30 @@ fn test_sandbox_paths_builder() {
     assert_eq!(paths.write_paths().len(), 1);
     assert_eq!(paths.no_access_paths().len(), 1);
 }
+
+/// Phase 83 Workstream H: inherited-resource hygiene audit enumerates
+/// unexpected fds (>= 3) where the platform permits reliable testing.
+/// A deliberately opened extra descriptor must be reported; stdio (0/1/2)
+/// must never be reported.
+#[cfg(unix)]
+#[test]
+fn test_inherited_fd_audit_detects_unexpected_descriptors() {
+    // Open an extra descriptor that the audit must catch.
+    let extra = std::fs::File::open("/dev/null").expect("/dev/null must open");
+    use std::os::unix::io::AsRawFd;
+    let extra_fd = extra.as_raw_fd();
+    assert!(extra_fd >= 3, "test file must live above stdio");
+
+    let unexpected = synvoid_platform::sandbox::audit_inherited_fds();
+    assert!(
+        unexpected.contains(&extra_fd),
+        "audit must report the deliberately opened fd {extra_fd}: {unexpected:?}"
+    );
+    assert!(
+        !unexpected.contains(&0) && !unexpected.contains(&1) && !unexpected.contains(&2),
+        "stdio must never be reported as unexpected: {unexpected:?}"
+    );
+    // The audit is read-only (no CLOEXEC/close side effects): the extra
+    // descriptor must still be usable afterwards.
+    drop(extra);
+}

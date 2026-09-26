@@ -36,8 +36,10 @@ pub mod windows;
 
 pub use fs::{PlatformPaths, SecureDir};
 pub use sandbox::{
-    ProcessSandbox, SandboxBackend, SandboxCapabilities, SandboxError, SandboxLevel, SandboxPaths,
-    StubSandbox,
+    jail_guarantee_request, legacy_strict_satisfied_by, prepare_sandbox, EnforcementReport,
+    EnteredSandbox, Guarantee, GuaranteeDecision, GuaranteeStatus, PreopenedResource,
+    PreparedSandbox, ProcessSandbox, ResourceIntent, SandboxBackend, SandboxCapabilities,
+    SandboxError, SandboxLevel, SandboxPaths, SandboxRequest, StubSandbox, ThreadScope,
 };
 pub use socket_bind::{bind_tcp_reuse, bind_udp_reuse, is_reuse_port_available};
 
