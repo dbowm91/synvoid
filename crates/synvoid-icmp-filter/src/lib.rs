@@ -1,5 +1,6 @@
 pub mod compat;
 pub mod config;
+pub mod enforce;
 pub mod error;
 pub mod metrics;
 pub mod platform;
@@ -27,6 +28,12 @@ pub mod wfp;
 
 pub use compat::{adapt_config_to_policy, validate_interface_name, AdaptError};
 pub use config::{Direction, FilterType, IcmpFilterConfig, InterfaceSpec, RateLimitConfig};
+pub use enforce::{
+    compile_policy, fingerprint_hex, ownership_tag_for, pf_anchor_for, policy_fingerprint,
+    wfp_provider_name, winfw_rule_prefix, ApplyReceipt, DriverState, EnforcementPlan,
+    EnforcementReport, EnforcementState, InstallStage, PolicyCompileResult, VerificationOutcome,
+    WINFW_LEGACY_PREFIX,
+};
 pub use error::{IcmpFilterError, Result};
 pub use platform::{
     has_privilege_for, required_privilege_for_operation, FilterOperation, PrivilegeLevel,
@@ -308,6 +315,18 @@ pub struct IcmpFilterManager {
         )
     ))]
     filter: Box<dyn IcmpFilter>,
+    /// Replacement driver state: desired vs applied vs verified.
+    /// `status()` stays a compat desired-state view; `report()` is truth.
+    #[cfg(any(
+        target_os = "linux",
+        all(target_os = "macos", feature = "icmp-pf"),
+        all(any(target_os = "freebsd", target_os = "openbsd"), feature = "icmp-pf"),
+        all(
+            target_os = "windows",
+            any(feature = "icmp-winfw", feature = "icmp-wfp")
+        )
+    ))]
+    driver: DriverState,
     #[cfg(not(any(
         target_os = "linux",
         all(target_os = "macos", feature = "icmp-pf"),
@@ -332,7 +351,10 @@ impl IcmpFilterManager {
     ))]
     pub fn new(config: IcmpFilterConfig) -> Result<Self> {
         let filter = Self::create_filter(config)?;
-        Ok(Self { filter })
+        Ok(Self {
+            filter,
+            driver: DriverState::default(),
+        })
     }
 
     #[cfg(not(any(
@@ -582,7 +604,9 @@ impl IcmpFilterManager {
             )
         ))]
         {
-            self.filter.update_config(config)
+            // Workstream C/F: compile-before-mutate with verified receipts
+            // through the shared driver (same flow the fake tests prove).
+            drive_update(&mut *self.filter, config, &mut self.driver).map(|_| ())
         }
         #[cfg(not(any(
             target_os = "linux",
@@ -596,6 +620,105 @@ impl IcmpFilterManager {
         {
             let _ = config;
             Err(IcmpFilterError::UnsupportedPlatform)
+        }
+    }
+
+    /// Desired vs applied vs verified report. `last_receipt` advances only
+    /// on verified installs; `live` is never inferred from `enabled`.
+    pub fn report(&self) -> Option<EnforcementReport> {
+        #[cfg(any(
+            target_os = "linux",
+            all(target_os = "macos", feature = "icmp-pf"),
+            all(any(target_os = "freebsd", target_os = "openbsd"), feature = "icmp-pf"),
+            all(
+                target_os = "windows",
+                any(feature = "icmp-winfw", feature = "icmp-wfp")
+            )
+        ))]
+        {
+            Some(EnforcementReport {
+                backend: self.filter.backend(),
+                desired_fingerprint: self.driver.desired_fingerprint,
+                desired_generation: self.driver.generation,
+                last_receipt: self.driver.last_receipt.clone(),
+                live: self.driver.live.unwrap_or(EnforcementState::Unknown),
+                last_verify_error: self.driver.last_verify_error.clone(),
+            })
+        }
+        #[cfg(not(any(
+            target_os = "linux",
+            all(target_os = "macos", feature = "icmp-pf"),
+            all(any(target_os = "freebsd", target_os = "openbsd"), feature = "icmp-pf"),
+            all(
+                target_os = "windows",
+                any(feature = "icmp-winfw", feature = "icmp-wfp")
+            )
+        )))]
+        {
+            None
+        }
+    }
+
+    /// Re-probe live state without changing desired/applied generations.
+    /// Surfaces drift that happened outside this process.
+    pub fn verify_live(&mut self) -> VerificationOutcome {
+        #[cfg(any(
+            target_os = "linux",
+            all(target_os = "macos", feature = "icmp-pf"),
+            all(any(target_os = "freebsd", target_os = "openbsd"), feature = "icmp-pf"),
+            all(
+                target_os = "windows",
+                any(feature = "icmp-winfw", feature = "icmp-wfp")
+            )
+        ))]
+        {
+            // Rebuild the compile plan from live config so backends with
+            // cardinality readback (PF) verify exact counts.
+            let plan = rebuild_verify_plan(self.filter.backend(), self.filter.config());
+            let outcome = self.filter.verify_ownership(&plan);
+            match &outcome {
+                VerificationOutcome::Verified => {
+                    self.driver.live = Some(EnforcementState::Applied);
+                    self.driver.last_verify_error = None;
+                }
+                VerificationOutcome::Absent => {
+                    self.driver.live = Some(EnforcementState::Absent);
+                    self.driver.last_verify_error = Some("owned objects absent".to_string());
+                }
+                VerificationOutcome::Drifted { detail } => {
+                    self.driver.live = Some(EnforcementState::Drifted);
+                    self.driver.last_verify_error = Some(detail.clone());
+                    crate::metrics::icmp_drift_detected(backend_label(self.filter.backend()));
+                }
+                VerificationOutcome::Unknown { detail } => {
+                    self.driver.live = Some(EnforcementState::Unknown);
+                    self.driver.last_verify_error = Some(detail.clone());
+                }
+            }
+            crate::metrics::icmp_verification_observed(
+                backend_label(self.filter.backend()),
+                match outcome {
+                    VerificationOutcome::Verified => "applied",
+                    VerificationOutcome::Absent => "absent",
+                    VerificationOutcome::Drifted { .. } => "drifted",
+                    VerificationOutcome::Unknown { .. } => "unknown",
+                },
+            );
+            return outcome;
+        }
+        #[cfg(not(any(
+            target_os = "linux",
+            all(target_os = "macos", feature = "icmp-pf"),
+            all(any(target_os = "freebsd", target_os = "openbsd"), feature = "icmp-pf"),
+            all(
+                target_os = "windows",
+                any(feature = "icmp-winfw", feature = "icmp-wfp")
+            )
+        )))]
+        {
+            VerificationOutcome::Unknown {
+                detail: "no backend compiled for this host".to_string(),
+            }
         }
     }
 
@@ -625,6 +748,141 @@ impl IcmpFilterManager {
             None
         }
     }
+}
+
+/// Rebuild a verify-capable plan from live config. Returns a plan whose
+/// fingerprint is `0` with an `uncompilable` tag when adaptation fails, so
+/// readback degrades to `Unknown`/`Absent` instead of panicking.
+#[cfg(any(
+    target_os = "linux",
+    all(target_os = "macos", feature = "icmp-pf"),
+    all(any(target_os = "freebsd", target_os = "openbsd"), feature = "icmp-pf"),
+    all(
+        target_os = "windows",
+        any(feature = "icmp-winfw", feature = "icmp-wfp")
+    )
+))]
+fn rebuild_verify_plan(backend: FilterBackend, config: &IcmpFilterConfig) -> EnforcementPlan {
+    match adapt_config_to_policy(config) {
+        Ok((policy, backend_options)) => match compile_policy(backend, &policy, &backend_options) {
+            PolicyCompileResult::Exact(plan) => plan,
+            PolicyCompileResult::Unsupported { .. } => EnforcementPlan {
+                backend,
+                fingerprint: 0,
+                ownership_tag: "uncompilable".to_string(),
+                operations_summary: String::new(),
+                expected_rule_count: None,
+                warnings: Vec::new(),
+            },
+        },
+        Err(_) => EnforcementPlan {
+            backend,
+            fingerprint: 0,
+            ownership_tag: "uncompilable".to_string(),
+            operations_summary: String::new(),
+            expected_rule_count: None,
+            warnings: Vec::new(),
+        },
+    }
+}
+
+/// Phase 87 replacement driver: compile-before-mutate with verified
+/// receipts. Operates on any `IcmpFilter` (real backends and test fakes
+/// share this exact flow):
+/// 1. adapt + compile the replacement (pure; zero mutation on failure);
+/// 2. install through the backend's atomic/staged replacement;
+/// 3. verify live owned state;
+/// 4. advance the receipt/generation only on `Verified`.
+///
+/// Returns the new receipt on success. Any other outcome leaves applied
+/// state un-advanced and records `live` + `last_verify_error` on `driver`.
+/// Verification failure (`Drifted`/`Unknown`/unexpected `Absent`) is an
+/// error, never hidden behind success.
+pub fn drive_update(
+    filter: &mut dyn IcmpFilter,
+    config: IcmpFilterConfig,
+    driver: &mut DriverState,
+) -> Result<ApplyReceipt> {
+    let (policy, backend_options) =
+        adapt_config_to_policy(&config).map_err(IcmpFilterError::from)?;
+    let backend = filter.backend();
+    let plan = match compile_policy(backend, &policy, &backend_options) {
+        PolicyCompileResult::Exact(plan) => plan,
+        PolicyCompileResult::Unsupported { reasons, .. } => {
+            crate::metrics::icmp_apply_finished(backend_label(backend), "compile_rejected");
+            return Err(IcmpFilterError::Unsupported(format!(
+                "replacement policy inexpressible on {backend:?}: {}",
+                reasons.join("; ")
+            )));
+        }
+    };
+    driver.desired_fingerprint = Some(plan.fingerprint);
+    if let Err(e) = filter.update_config(config) {
+        crate::metrics::icmp_apply_finished(backend_label(backend), "install_failed");
+        driver.last_verify_error =
+            Some(format!("install failed, previous generation retained: {e}"));
+        return Err(e);
+    }
+    match filter.verify_ownership(&plan) {
+        VerificationOutcome::Verified => {
+            driver.generation += 1;
+            let receipt = ApplyReceipt {
+                backend,
+                fingerprint: plan.fingerprint,
+                generation: driver.generation,
+                applied_at_secs: now_secs(),
+                ownership_tag: plan.ownership_tag.clone(),
+            };
+            driver.last_receipt = Some(receipt.clone());
+            driver.live = Some(EnforcementState::Applied);
+            driver.last_verify_error = None;
+            crate::metrics::icmp_apply_finished(backend_label(backend), "applied");
+            crate::metrics::icmp_verification_observed(backend_label(backend), "applied");
+            Ok(receipt)
+        }
+        VerificationOutcome::Absent => {
+            driver.live = Some(EnforcementState::Absent);
+            driver.last_verify_error = Some("owned objects absent after install".to_string());
+            crate::metrics::icmp_apply_finished(backend_label(backend), "drifted");
+            Err(IcmpFilterError::BackendUnavailable(
+                "install succeeded but owned objects are absent live (drifted)".to_string(),
+            ))
+        }
+        VerificationOutcome::Drifted { detail } => {
+            driver.live = Some(EnforcementState::Drifted);
+            driver.last_verify_error = Some(detail.clone());
+            crate::metrics::icmp_apply_finished(backend_label(backend), "drifted");
+            crate::metrics::icmp_drift_detected(backend_label(backend));
+            Err(IcmpFilterError::BackendUnavailable(format!(
+                "install succeeded but live state drifted: {detail}"
+            )))
+        }
+        VerificationOutcome::Unknown { detail } => {
+            driver.live = Some(EnforcementState::Unknown);
+            driver.last_verify_error = Some(detail.clone());
+            crate::metrics::icmp_apply_finished(backend_label(backend), "unknown");
+            Err(IcmpFilterError::BackendUnavailable(format!(
+                "install succeeded but live state is unverifiable: {detail}"
+            )))
+        }
+    }
+}
+
+fn backend_label(backend: FilterBackend) -> &'static str {
+    match backend {
+        FilterBackend::Nftables => "nftables",
+        FilterBackend::Ebpf => "ebpf",
+        FilterBackend::Pf => "pf",
+        FilterBackend::WindowsFirewall => "winfw",
+        FilterBackend::Wfp => "wfp",
+    }
+}
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 pub fn is_available() -> bool {

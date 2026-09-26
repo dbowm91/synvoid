@@ -13,10 +13,17 @@
 //! - `compile-only`: cross-target `cargo check` evidence only.
 //! - `unsupported`: no backend (NetBSD: NPF is the future trigger).
 
-use crate::{config::IcmpFilterConfig, error::Result, policy::IcmpPolicy};
+use crate::{
+    config::IcmpFilterConfig,
+    enforce::{EnforcementPlan, VerificationOutcome},
+    error::Result,
+    policy::IcmpPolicy,
+};
+use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum FilterBackend {
     #[default]
     Nftables,
@@ -209,6 +216,33 @@ pub trait IcmpFilter: Debug + Send + Sync {
     fn status(&self) -> FilterStatus;
     fn update_config(&mut self, config: IcmpFilterConfig) -> Result<()>;
     fn config(&self) -> &IcmpFilterConfig;
+
+    /// Idempotent ensure-present. Default: enable unless already enabled.
+    /// Backends with atomic replace override for single-shot semantics.
+    fn ensure_enabled(&mut self) -> Result<()> {
+        if self.is_enabled() {
+            return Ok(());
+        }
+        self.enable()
+    }
+
+    /// Idempotent ensure-absent. Default: disable unless already disabled,
+    /// so benign double-disable is not an error for reconciliation.
+    fn ensure_disabled(&mut self) -> Result<()> {
+        if !self.is_enabled() {
+            return Ok(());
+        }
+        self.disable()
+    }
+
+    /// Live readback of owned objects for a plan. The default is honest
+    /// `Unknown`: backends without readback must not claim verification.
+    fn verify_ownership(&self, plan: &EnforcementPlan) -> VerificationOutcome {
+        let _ = plan;
+        VerificationOutcome::Unknown {
+            detail: "backend implements no live readback".to_string(),
+        }
+    }
 }
 
 pub trait IcmpFilterFactory: Debug + Send + Sync {

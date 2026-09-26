@@ -1,29 +1,30 @@
 //! Windows Firewall (COM) ICMP backend — documented compatibility fallback.
 //!
-//! Outcome A (Phase 86): WFP (`wfp.rs`) is the primary Windows lane. This
-//! COM lane is retained because its rules are visible to the Windows
-//! Defender Firewall UI/GPO tooling (distinct operational value), with
-//! reduced guarantees stated honestly:
-//! - no engine transactions (rules are added/removed one by one);
-//! - no rate limiting (the COM API has no rate-limit primitive; the
-//!   constructor rejects rate-limited policy);
-//! - no live readback (Phase 87 records this lane as `Unknown`-capped).
+//! Outcome A (Phase 86): WFP is the primary lane. This COM lane is retained
+//! for Defender/GPO-visible rules with honestly reduced guarantees:
+//! - no engine transactions: replacement is staged (upsert new generation,
+//!   verify, remove stale) with best-effort rollback; unprovable rollback
+//!   surfaces `Unknown`, never a false `Applied`;
+//! - no rate limiting (constructor rejects it);
+//! - readback is per-rule existence (`rule_exists`), not semantic proof.
 //!
-//! Interface filtering takes adapter friendly names directly (no LUID
-//! resolution needed — the lane's remaining convenience).
-//!
-//! Required privilege: Administrator (checked via `platform::is_admin`).
+//! Ownership is table-scoped (`winfw_rule_prefix(table)`); one table has one
+//! owner. COM rules persist across process exit, so disable sweeps tracked
+//! names plus the legacy unscoped prefix best-effort.
 //!
 //! Cross-compilation is compile evidence only; native proof is Phase 88.
 
 use crate::{
+    compat::adapt_config_to_policy,
     config::{Direction, IcmpFilterConfig, IcmpTypeRule, InterfaceSpec},
+    enforce::{
+        policy_fingerprint, winfw_rule_prefix, EnforcementPlan, VerificationOutcome,
+        WINFW_LEGACY_PREFIX,
+    },
     error::{IcmpFilterError, Result},
     platform::is_admin,
     traits::{check_policy_compatibility, FilterBackend, FilterStatus, IcmpFilter},
 };
-
-const RULE_PREFIX: &str = "synvoid_ICMP";
 
 #[derive(Debug)]
 pub struct WinFwFilter {
@@ -36,9 +37,7 @@ pub struct WinFwFilter {
 impl WinFwFilter {
     pub fn new(config: IcmpFilterConfig) -> Result<Self> {
         config.validate().map_err(IcmpFilterError::Config)?;
-        // Admit only policy this lane expresses exactly (no rate limit).
-        let (policy, _) =
-            crate::compat::adapt_config_to_policy(&config).map_err(IcmpFilterError::from)?;
+        let (policy, _) = adapt_config_to_policy(&config).map_err(IcmpFilterError::from)?;
         if let Err(mismatches) = check_policy_compatibility(FilterBackend::WindowsFirewall, &policy)
         {
             let detail = mismatches
@@ -67,8 +66,15 @@ impl WinFwFilter {
         })
     }
 
-    fn create_block_rules(&mut self) -> Result<()> {
-        if !self.has_admin {
+    fn planned_fingerprint_for(config: &IcmpFilterConfig) -> Result<u64> {
+        let (policy, _) = adapt_config_to_policy(config).map_err(IcmpFilterError::from)?;
+        Ok(policy_fingerprint(&policy))
+    }
+
+    /// Install one generation, returning owned rule names. Upserts are
+    /// idempotent (`add_rule_or_update`); names adopt only on success.
+    fn install_rules(config: &IcmpFilterConfig, has_admin: bool) -> Result<Vec<String>> {
+        if !has_admin {
             tracing::warn!("Cannot create firewall rules without administrator privileges");
             return Err(IcmpFilterError::PermissionDenied);
         }
@@ -79,65 +85,53 @@ impl WinFwFilter {
                 Action, Direction as FwDirection, FirewallRule, Profile, Protocol,
             };
 
-            let block_in = matches!(self.config.direction, Direction::Inbound | Direction::Both);
-            let block_out = matches!(self.config.direction, Direction::Outbound | Direction::Both);
+            let prefix = winfw_rule_prefix(&config.table_name);
+            let block_in = matches!(config.direction, Direction::Inbound | Direction::Both);
+            let block_out = matches!(config.direction, Direction::Outbound | Direction::Both);
 
-            self.rule_names.clear();
-
-            let interfaces: Option<Vec<String>> = match &self.config.interfaces {
+            let mut names = Vec::new();
+            let interfaces: Option<Vec<String>> = match &config.interfaces {
                 InterfaceSpec::All => None,
                 InterfaceSpec::Specific(ifaces) => Some(ifaces.clone()),
             };
 
-            if !self.config.exempt_ips.is_empty() {
-                for ip in &self.config.exempt_ips {
-                    if block_in {
-                        let rule_name = format!("{}_Exempt_{}_In", RULE_PREFIX, ip);
-                        Self::add_exempt_rule(
-                            ip,
-                            FwDirection::In,
-                            interfaces.as_deref(),
-                            &rule_name,
-                        )?;
-                        self.rule_names.push(rule_name);
-                    }
-                    if block_out {
-                        let rule_name = format!("{}_Exempt_{}_Out", RULE_PREFIX, ip);
-                        Self::add_exempt_rule(
-                            ip,
-                            FwDirection::Out,
-                            interfaces.as_deref(),
-                            &rule_name,
-                        )?;
-                        self.rule_names.push(rule_name);
-                    }
+            for ip in &config.exempt_ips {
+                if block_in {
+                    let rule_name = format!("{prefix}_Exempt_{ip}_In");
+                    Self::upsert_exempt_rule(
+                        ip,
+                        FwDirection::In,
+                        interfaces.as_deref(),
+                        &rule_name,
+                    )?;
+                    names.push(rule_name);
+                }
+                if block_out {
+                    let rule_name = format!("{prefix}_Exempt_{ip}_Out");
+                    Self::upsert_exempt_rule(
+                        ip,
+                        FwDirection::Out,
+                        interfaces.as_deref(),
+                        &rule_name,
+                    )?;
+                    names.push(rule_name);
                 }
             }
 
-            if self.config.has_type_rules() {
-                // Clone under the immutable borrow so the `&mut self` call
-                // below does not alias config (never compiled before Phase 86,
-                // when the missing crate deps hid this borrow error).
-                let v4_rules = self.config.icmp_type_rules.clone();
-                let v6_rules = self.config.icmpv6_type_rules.clone();
-                self.create_type_rules(
-                    block_in,
-                    block_out,
-                    interfaces.as_deref(),
-                    &v4_rules,
-                    &v6_rules,
-                )?;
-            }
+            names.extend(Self::upsert_type_rules(
+                block_in,
+                block_out,
+                interfaces.as_deref(),
+                &prefix,
+                &config.icmp_type_rules,
+                &config.icmpv6_type_rules,
+            )?);
 
-            let add_icmp_block = |name: String,
-                                  direction: FwDirection,
-                                  protocol: Protocol,
-                                  ifaces: Option<&[String]>|
+            let upsert_block = |name: String,
+                                direction: FwDirection,
+                                protocol: Protocol,
+                                ifaces: Option<&[String]>|
              -> Result<()> {
-                // Optional COM properties are set post-build via getset
-                // setters: TypedBuilder changes type-state per optional
-                // setter, so conditional chaining cannot reassign one
-                // variable.
                 let mut rule = FirewallRule::builder()
                     .name(name.clone())
                     .action(Action::Block)
@@ -152,75 +146,64 @@ impl WinFwFilter {
                     rule.set_interfaces(Some(iface_list.iter().cloned().collect()));
                 }
 
-                rule.add().map_err(|e| {
-                    IcmpFilterError::WindowsFirewall(format!(
-                        "Failed to add rule '{}': {}",
-                        name, e
-                    ))
+                upsert(&rule).map_err(|e| {
+                    IcmpFilterError::WindowsFirewall(format!("Failed to upsert rule '{name}': {e}"))
                 })?;
 
                 Ok(())
             };
 
             if block_in {
-                let rule_name = format!("{}_Block_In", RULE_PREFIX);
-                add_icmp_block(
-                    rule_name.clone(),
-                    FwDirection::In,
-                    Protocol::Icmpv4,
-                    interfaces.as_deref(),
-                )?;
-                self.rule_names.push(rule_name);
-
-                let rule_name = format!("{}_Blockv6_In", RULE_PREFIX);
-                add_icmp_block(
-                    rule_name.clone(),
-                    FwDirection::In,
-                    Protocol::Icmpv6,
-                    interfaces.as_deref(),
-                )?;
-                self.rule_names.push(rule_name);
+                for (suffix, protocol) in [
+                    ("Block_In", Protocol::Icmpv4),
+                    ("Blockv6_In", Protocol::Icmpv6),
+                ] {
+                    let rule_name = format!("{prefix}_{suffix}");
+                    upsert_block(
+                        rule_name.clone(),
+                        FwDirection::In,
+                        protocol,
+                        interfaces.as_deref(),
+                    )?;
+                    names.push(rule_name);
+                }
             }
 
             if block_out {
-                let rule_name = format!("{}_Block_Out", RULE_PREFIX);
-                add_icmp_block(
-                    rule_name.clone(),
-                    FwDirection::Out,
-                    Protocol::Icmpv4,
-                    interfaces.as_deref(),
-                )?;
-                self.rule_names.push(rule_name);
-
-                let rule_name = format!("{}_Blockv6_Out", RULE_PREFIX);
-                add_icmp_block(
-                    rule_name.clone(),
-                    FwDirection::Out,
-                    Protocol::Icmpv6,
-                    interfaces.as_deref(),
-                )?;
-                self.rule_names.push(rule_name);
+                for (suffix, protocol) in [
+                    ("Block_Out", Protocol::Icmpv4),
+                    ("Blockv6_Out", Protocol::Icmpv6),
+                ] {
+                    let rule_name = format!("{prefix}_{suffix}");
+                    upsert_block(
+                        rule_name.clone(),
+                        FwDirection::Out,
+                        protocol,
+                        interfaces.as_deref(),
+                    )?;
+                    names.push(rule_name);
+                }
             }
 
             tracing::info!(
-                "Windows Firewall ICMP blocking rules created ({} rules, {} exempt IPs)",
-                self.rule_names.len(),
-                self.config.exempt_ips.len()
+                "Windows Firewall ICMP generation installed ({} rules, {} exempt IPs)",
+                names.len(),
+                config.exempt_ips.len()
             );
+            return Ok(names);
         }
 
         #[cfg(not(feature = "icmp-winfw"))]
         {
+            let _ = (config, has_admin);
             return Err(IcmpFilterError::FeatureNotEnabled(
                 "icmp-winfw feature not enabled".to_string(),
             ));
         }
-
-        Ok(())
     }
 
     #[cfg(feature = "icmp-winfw")]
-    fn add_exempt_rule(
+    fn upsert_exempt_rule(
         ip: &std::net::IpAddr,
         direction: windows_firewall::Direction,
         interfaces: Option<&[String]>,
@@ -248,10 +231,9 @@ impl WinFwFilter {
             rule.set_interfaces(Some(iface_list.iter().cloned().collect()));
         }
 
-        rule.add().map_err(|e| {
+        upsert(&rule).map_err(|e| {
             IcmpFilterError::WindowsFirewall(format!(
-                "Failed to add exempt rule '{}': {}",
-                rule_name, e
+                "Failed to upsert exempt rule '{rule_name}': {e}"
             ))
         })?;
 
@@ -259,21 +241,22 @@ impl WinFwFilter {
     }
 
     #[cfg(feature = "icmp-winfw")]
-    fn create_type_rules(
-        &mut self,
+    fn upsert_type_rules(
         block_in: bool,
         block_out: bool,
         interfaces: Option<&[String]>,
+        prefix: &str,
         icmp_rules: &[IcmpTypeRule],
         icmpv6_rules: &[IcmpTypeRule],
-    ) -> Result<()> {
+    ) -> Result<Vec<String>> {
         use windows_firewall::{Action, Direction as FwDirection, FirewallRule, Profile, Protocol};
 
-        let mut add_typed = |rule: &IcmpTypeRule,
-                             protocol: Protocol,
-                             direction: FwDirection,
-                             rule_name: String,
-                             ifaces: Option<&[String]>|
+        let mut names = Vec::new();
+        let mut upsert_typed = |rule: &IcmpTypeRule,
+                                protocol: Protocol,
+                                direction: FwDirection,
+                                rule_name: String,
+                                ifaces: Option<&[String]>|
          -> Result<()> {
             let action = if rule.is_block() {
                 Action::Block
@@ -287,7 +270,7 @@ impl WinFwFilter {
                 rule.icmp_type.to_string()
             };
 
-            let mut rule = FirewallRule::builder()
+            let mut built = FirewallRule::builder()
                 .name(rule_name.clone())
                 .action(action)
                 .direction(direction)
@@ -300,38 +283,37 @@ impl WinFwFilter {
                 )
                 .profiles(Profile::All)
                 .build();
-            rule.set_icmp_types_and_codes(Some(icmp_type_str));
+            built.set_icmp_types_and_codes(Some(icmp_type_str));
 
             if let Some(iface_list) = ifaces {
-                rule.set_interfaces(Some(iface_list.iter().cloned().collect()));
+                built.set_interfaces(Some(iface_list.iter().cloned().collect()));
             }
 
-            rule.add().map_err(|e| {
+            upsert(&built).map_err(|e| {
                 IcmpFilterError::WindowsFirewall(format!(
-                    "Failed to add ICMP type rule '{}': {}",
-                    rule_name, e
+                    "Failed to upsert ICMP type rule '{rule_name}': {e}"
                 ))
             })?;
-            self.rule_names.push(rule_name);
+            names.push(rule_name);
             Ok(())
         };
 
         for rule in icmp_rules {
             if block_in {
-                add_typed(
+                upsert_typed(
                     rule,
                     Protocol::Icmpv4,
                     FwDirection::In,
-                    format!("{}_Type{}_In", RULE_PREFIX, rule.icmp_type),
+                    format!("{prefix}_Type{}_In", rule.icmp_type),
                     interfaces,
                 )?;
             }
             if block_out {
-                add_typed(
+                upsert_typed(
                     rule,
                     Protocol::Icmpv4,
                     FwDirection::Out,
-                    format!("{}_Type{}_Out", RULE_PREFIX, rule.icmp_type),
+                    format!("{prefix}_Type{}_Out", rule.icmp_type),
                     interfaces,
                 )?;
             }
@@ -339,29 +321,43 @@ impl WinFwFilter {
 
         for rule in icmpv6_rules {
             if block_in {
-                add_typed(
+                upsert_typed(
                     rule,
                     Protocol::Icmpv6,
                     FwDirection::In,
-                    format!("{}_Typev6_{}_In", RULE_PREFIX, rule.icmp_type),
+                    format!("{prefix}_Typev6_{}_In", rule.icmp_type),
                     interfaces,
                 )?;
             }
             if block_out {
-                add_typed(
+                upsert_typed(
                     rule,
                     Protocol::Icmpv6,
                     FwDirection::Out,
-                    format!("{}_Typev6_{}_Out", RULE_PREFIX, rule.icmp_type),
+                    format!("{prefix}_Typev6_{}_Out", rule.icmp_type),
                     interfaces,
                 )?;
             }
         }
 
-        Ok(())
+        Ok(names)
     }
 
-    fn remove_block_rules(&mut self) -> Result<()> {
+    /// Remove exactly the named rules; returns the failures instead of
+    /// dropping them so callers report partial cleanup visibly.
+    #[cfg(feature = "icmp-winfw")]
+    fn remove_names(names: &[String]) -> Vec<(String, String)> {
+        use windows_firewall::remove_rule;
+        let mut errors = Vec::new();
+        for rule_name in names {
+            if let Err(e) = remove_rule(rule_name) {
+                errors.push((rule_name.clone(), e.to_string()));
+            }
+        }
+        errors
+    }
+
+    fn remove_generation(&mut self) -> Result<()> {
         if !self.has_admin {
             tracing::warn!(
                 "Windows Firewall backend inactive: skipping rule removal (no admin privileges). \
@@ -373,26 +369,39 @@ impl WinFwFilter {
 
         #[cfg(feature = "icmp-winfw")]
         {
-            use windows_firewall::remove_rule;
-
-            let mut errors = Vec::new();
-            for rule_name in self.rule_names.drain(..) {
-                if let Err(e) = remove_rule(&rule_name) {
-                    errors.push((rule_name, e));
+            let scoped = winfw_rule_prefix(&self.config.table_name);
+            let mut errors = Self::remove_names(&self.rule_names);
+            self.rule_names.clear();
+            // Best-effort sweep of stale rules: legacy unscoped names from
+            // pre-Phase-87 installs. Only names under the legacy prefix that
+            // are NOT under our scoped prefix are touched (single owner per
+            // table); sweep failures are reported, never fatal to tracked
+            // cleanup.
+            match windows_firewall::list_rules() {
+                Ok(rules) => {
+                    let stale: Vec<String> = rules
+                        .iter()
+                        .map(|r| r.name().clone())
+                        .filter(|n| n.starts_with(WINFW_LEGACY_PREFIX) && !n.starts_with(&scoped))
+                        .collect();
+                    errors.extend(Self::remove_names(&stale));
+                }
+                Err(e) => {
+                    tracing::debug!("winfw stale sweep: list_rules failed: {e}");
                 }
             }
 
             if !errors.is_empty() {
-                tracing::warn!(
+                return Err(IcmpFilterError::WindowsFirewall(format!(
                     "Failed to remove some Windows Firewall rules: {:?}",
                     errors
                         .iter()
-                        .map(|(name, e)| format!("{}: {}", name, e))
+                        .map(|(name, e)| format!("{name}: {e}"))
                         .collect::<Vec<_>>()
-                );
+                )));
             }
 
-            tracing::info!("Windows Firewall ICMP blocking rules removed");
+            tracing::info!("Windows Firewall ICMP generation removed");
         }
 
         Ok(())
@@ -410,6 +419,14 @@ impl WinFwFilter {
     }
 }
 
+/// Idempotent upsert (add-or-update by name).
+#[cfg(feature = "icmp-winfw")]
+fn upsert(rule: &windows_firewall::FirewallRule) -> Result<()> {
+    windows_firewall::add_rule_or_update(rule)
+        .map(|_| ())
+        .map_err(|e| IcmpFilterError::WindowsFirewall(e.to_string()))
+}
+
 impl IcmpFilter for WinFwFilter {
     fn enable(&mut self) -> Result<()> {
         if self.enabled {
@@ -420,7 +437,9 @@ impl IcmpFilter for WinFwFilter {
             return Err(IcmpFilterError::PermissionDenied);
         }
 
-        self.create_block_rules()?;
+        let _fingerprint = Self::planned_fingerprint_for(&self.config)?;
+        let names = Self::install_rules(&self.config, self.has_admin)?;
+        self.rule_names = names;
         self.enabled = true;
         tracing::info!("ICMP filter enabled via Windows Firewall");
         Ok(())
@@ -431,9 +450,15 @@ impl IcmpFilter for WinFwFilter {
             return Err(IcmpFilterError::AlreadyDisabled);
         }
 
-        self.remove_block_rules()?;
+        self.remove_generation()?;
         self.enabled = false;
         tracing::info!("ICMP filter disabled via Windows Firewall");
+        Ok(())
+    }
+
+    fn ensure_disabled(&mut self) -> Result<()> {
+        self.remove_generation()?;
+        self.enabled = false;
         Ok(())
     }
 
@@ -459,16 +484,64 @@ impl IcmpFilter for WinFwFilter {
 
     fn update_config(&mut self, config: IcmpFilterConfig) -> Result<()> {
         config.validate().map_err(IcmpFilterError::Config)?;
+        // Compile the replacement before any mutation.
+        let _fingerprint = Self::planned_fingerprint_for(&config)?;
+        let old = std::mem::replace(&mut self.config, config);
         let was_enabled = self.enabled;
+        let want_enabled = self.config.enabled;
 
-        if was_enabled {
-            self.remove_block_rules()?;
-        }
-
-        self.config = config;
-
-        if was_enabled && self.config.enabled {
-            self.create_block_rules()?;
+        if was_enabled && want_enabled {
+            // Bounded staged replacement: upsert the new generation, verify
+            // it, then retire stale names. No transaction exists here, so a
+            // mid-install failure triggers best-effort rollback of the old
+            // generation and an Unknown verdict, never a false Applied.
+            let old_names = std::mem::take(&mut self.rule_names);
+            match Self::install_rules(&self.config, self.has_admin) {
+                Ok(new_names) => {
+                    if let Err(e) = self.verify_names(&new_names) {
+                        let _ = Self::install_rules(&old, self.has_admin);
+                        self.rule_names = old_names;
+                        self.config = old;
+                        return Err(e);
+                    }
+                    let stale: Vec<String> = old_names
+                        .iter()
+                        .filter(|n| !new_names.contains(n))
+                        .cloned()
+                        .collect();
+                    #[cfg(feature = "icmp-winfw")]
+                    {
+                        let errors = Self::remove_names(&stale);
+                        if !errors.is_empty() {
+                            // New generation is live but cleanup lagged:
+                            // keep tracking the union so a later disable
+                            // still converges, and report visibly.
+                            self.rule_names =
+                                new_names.iter().chain(stale.iter()).cloned().collect();
+                            return Err(IcmpFilterError::WindowsFirewall(format!(
+                                "Replacement live; stale cleanup failed: {errors:?}"
+                            )));
+                        }
+                    }
+                    #[cfg(not(feature = "icmp-winfw"))]
+                    {
+                        let _ = stale;
+                    }
+                    self.rule_names = new_names;
+                }
+                Err(e) => {
+                    let _ = Self::install_rules(&old, self.has_admin);
+                    self.rule_names = old_names;
+                    self.config = old;
+                    return Err(e);
+                }
+            }
+        } else if was_enabled {
+            if let Err(e) = self.remove_generation() {
+                self.config = old;
+                return Err(e);
+            }
+            self.enabled = false;
         }
 
         if !self.has_admin {
@@ -481,15 +554,68 @@ impl IcmpFilter for WinFwFilter {
         Ok(())
     }
 
+    fn verify_ownership(&self, plan: &EnforcementPlan) -> VerificationOutcome {
+        if !self.enabled {
+            return VerificationOutcome::Absent;
+        }
+        match self.verify_names(&self.rule_names) {
+            Ok(()) => {
+                let _ = plan.fingerprint;
+                VerificationOutcome::Verified
+            }
+            Err(e) => match e {
+                IcmpFilterError::WindowsFirewall(detail) if detail.starts_with("absent:") => {
+                    VerificationOutcome::Drifted { detail }
+                }
+                _ => VerificationOutcome::Unknown {
+                    detail: e.to_string(),
+                },
+            },
+        }
+    }
+
     fn config(&self) -> &IcmpFilterConfig {
         &self.config
+    }
+}
+
+impl WinFwFilter {
+    /// Existence readback over tracked names. `Ok` = every name exists;
+    /// `WindowsFirewall("absent: ...")` = drift; any other error = Unknown.
+    fn verify_names(&self, names: &[String]) -> Result<()> {
+        #[cfg(feature = "icmp-winfw")]
+        {
+            for name in names {
+                match windows_firewall::rule_exists(name) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        return Err(IcmpFilterError::WindowsFirewall(format!(
+                            "absent: tracked rule '{name}' missing live"
+                        )));
+                    }
+                    Err(e) => {
+                        return Err(IcmpFilterError::WindowsFirewall(format!(
+                            "readback unavailable for '{name}': {e}"
+                        )));
+                    }
+                }
+            }
+            return Ok(());
+        }
+        #[cfg(not(feature = "icmp-winfw"))]
+        {
+            let _ = names;
+            return Err(IcmpFilterError::FeatureNotEnabled(
+                "icmp-winfw feature not enabled".to_string(),
+            ));
+        }
     }
 }
 
 impl Drop for WinFwFilter {
     fn drop(&mut self) {
         if self.enabled {
-            if let Err(e) = self.remove_block_rules() {
+            if let Err(e) = self.remove_generation() {
                 tracing::warn!("Failed to remove Windows Firewall rules on drop: {}", e);
             }
         }

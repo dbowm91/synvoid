@@ -104,8 +104,40 @@ Runtime facts live in `platform::BackendProbe { compiled, mechanism_present, pri
 
 ---
 
-## 8. Phase 87/88 handoff (not yet built)
+## 8. Transactional enforcement and verification (Phase 87, built)
 
-- No compile-before-mutate receipts, no apply receipts, no live readback/drift state yet: `FilterStatus { enabled, backend, config }` is still desired-state-biased by design.
-- `is_enforcing() == enabled` locally is not kernel proof; packet counters in `metrics.rs` are not backend evidence (Phase 87 rewires or renames).
-- Native privileged qualification per tier table above is Phase 88 evidence; tiers must be lowered wherever proof is absent.
+- `enforce::compile_policy` compiles `IcmpPolicy` + capabilities + backend
+  options to `Exact(EnforcementPlan)` / `Unsupported` with zero mutation.
+- `drive_update` (shared by the manager and the fake tests) installs
+  through backend atomic/staged replacement, verifies live owned state,
+  and advances `ApplyReceipt { backend, fingerprint, generation,
+  applied_at_secs, ownership_tag }` only on `Verified`. `Drifted`,
+  `Unknown`, and unexpected `Absent` are errors, never hidden success.
+- `EnforcementReport { backend, desired_fingerprint, desired_generation,
+  last_receipt, live: Applied/Absent/Drifted/Unknown, last_verify_error }`
+  separates desired/applied/verified; `verify_live()` re-probes without
+  changing generations. `FilterStatus` remains a compat desired-state view.
+- Ownership: nft marker chain `gen_<fp>` in the owned table (single-batch
+  flush+create); PF table-scoped anchors (single-load replace, legacy
+  sweep); WFP stable provider/sublayer GUIDs per table in one transaction;
+  winfw table-scoped prefixes with upsert-verify-retire + legacy sweep;
+  eBPF prepare-offline then attach with retained-handle rollback attempt.
+- Readback per lane: nft JSON table+chains+marker (exact); PF
+  presence-plus-cardinality (documented); WFP provider-GUID enumeration;
+  winfw per-rule existence; eBPF attachment liveness (map content
+  explicitly unverified). Unrelated operator state is tolerated everywhere.
+- Metrics are lifecycle-only (`apply_finished_total{backend,result}`,
+  `drift_detected_total`, `verification_observed_total{backend,state}`,
+  enabled/status gauges). Packet-outcome counters were removed (zero
+  backend evidence); per-packet truth lives in backend APIs
+  (`EbpfFilter::get_stats`), not core metrics.
+- Crash recovery: nft/PF re-install idempotently; WFP dynamic filters die
+  with the session (no sweep needed); winfw COM rules persist (tracked +
+  legacy sweep on disable); eBPF attachments may linger (documented).
+
+## 9. Phase 88 handoff (not yet built)
+
+- Native privileged qualification per tier table above is Phase 88
+  evidence; tiers must be lowered wherever proof is absent.
+- The admin status endpoint still returns the compat desired-state view;
+  `report()`/`verify_live()` are available for operator surfacing.

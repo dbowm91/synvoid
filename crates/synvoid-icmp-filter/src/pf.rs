@@ -1,11 +1,16 @@
 use crate::{
+    compat::adapt_config_to_policy,
     config::{Direction, IcmpFilterConfig, IcmpTypeRule, InterfaceSpec},
+    enforce::{pf_anchor_for, policy_fingerprint, EnforcementPlan, VerificationOutcome},
     error::{IcmpFilterError, Result},
     traits::{FilterBackend, FilterStatus, IcmpFilter},
 };
 use std::process::Command;
 
-const ANCHOR_NAME: &str = "synvoid.icmp";
+/// Legacy unscoped anchor (pre-Phase-87). Disable sweeps it best-effort so
+/// one upgrade cycle cannot orphan enforcement; new installs use the
+/// table-scoped anchor from `enforce::pf_anchor_for`.
+const LEGACY_ANCHOR_NAME: &str = "synvoid.icmp";
 
 #[derive(Debug)]
 pub struct PfFilter {
@@ -36,6 +41,26 @@ impl PfFilter {
         }
 
         Ok(())
+    }
+
+    fn anchor(&self) -> String {
+        pf_anchor_for(&self.config.table_name)
+    }
+
+    /// Cardinality the anchor load installs (exempt passes + per-rule lines
+    /// + two base blocks). Mirrors `enforce::expected_rule_count_for` for
+    /// the PF lane; readback compares against it.
+    fn planned_rule_count(&self) -> usize {
+        self.config.exempt_ips.len()
+            + self.config.icmp_type_rules.len()
+            + self.config.icmpv6_type_rules.len()
+            + 2
+    }
+
+    /// Compile a config (pure; zero mutation).
+    fn planned_fingerprint_for(config: &IcmpFilterConfig) -> Result<u64> {
+        let (policy, _) = adapt_config_to_policy(config).map_err(IcmpFilterError::from)?;
+        Ok(policy_fingerprint(&policy))
     }
 
     fn build_rules(&self) -> String {
@@ -151,8 +176,15 @@ impl PfFilter {
     }
 
     fn add_anchor(&self) -> Result<()> {
+        // Single anchor load atomically replaces the owned anchor content:
+        // no remove-then-add gap. Stale state from a crashed process is
+        // overwritten by the load itself.
+        Self::load_anchor(&self.anchor(), &self.build_rules())
+    }
+
+    fn load_anchor(anchor: &str, rules: &str) -> Result<()> {
         let output = Command::new("pfctl")
-            .args(["-a", ANCHOR_NAME, "-f", "-"])
+            .args(["-a", anchor, "-f", "-"])
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -163,7 +195,6 @@ impl PfFilter {
 
         if let Some(mut stdin) = child.stdin.take() {
             use std::io::Write;
-            let rules = self.build_rules();
             stdin.write_all(rules.as_bytes()).map_err(|e| {
                 IcmpFilterError::Pf(format!("Failed to write rules to pfctl: {}", e))
             })?;
@@ -186,8 +217,17 @@ impl PfFilter {
     }
 
     fn remove_anchor(&self) -> Result<()> {
+        // Remove the scoped anchor; then best-effort sweep the legacy
+        // unscoped anchor so upgrades cannot orphan enforcement. A missing
+        // anchor is idempotent success; other failures are visible errors.
+        Self::flush_anchor(&self.anchor())?;
+        Self::flush_anchor(LEGACY_ANCHOR_NAME)?;
+        Ok(())
+    }
+
+    fn flush_anchor(anchor: &str) -> Result<()> {
         let output = Command::new("pfctl")
-            .args(["-a", ANCHOR_NAME, "-F", "all"])
+            .args(["-a", anchor, "-F", "all"])
             .output()
             .map_err(|e| IcmpFilterError::Pf(format!("Failed to remove anchor: {}", e)))?;
 
@@ -212,6 +252,8 @@ impl IcmpFilter for PfFilter {
             return Err(IcmpFilterError::AlreadyEnabled);
         }
 
+        // Compile first: nothing is installed for an inexpressible policy.
+        let _fingerprint = Self::planned_fingerprint_for(&self.config)?;
         self.enable_pf()?;
         self.add_anchor()?;
         self.enabled = true;
@@ -252,20 +294,72 @@ impl IcmpFilter for PfFilter {
 
     fn update_config(&mut self, config: IcmpFilterConfig) -> Result<()> {
         config.validate().map_err(IcmpFilterError::Config)?;
+        // Compile the replacement before mutating anchor state.
+        let _fingerprint = Self::planned_fingerprint_for(&config)?;
+        let old = std::mem::replace(&mut self.config, config);
         let was_enabled = self.enabled;
+        let want_enabled = self.config.enabled;
 
-        if was_enabled {
-            self.remove_anchor()?;
-        }
-
-        self.config = config;
-
-        if was_enabled && self.config.enabled {
-            self.enable_pf()?;
-            self.add_anchor()?;
+        if was_enabled && want_enabled {
+            // Single load replaces the anchor atomically; the previous
+            // generation survives install failure.
+            if let Err(e) = self.add_anchor() {
+                self.config = old;
+                return Err(e);
+            }
+        } else if was_enabled {
+            if let Err(e) = self.remove_anchor() {
+                self.config = old;
+                return Err(e);
+            }
+            self.enabled = false;
         }
 
         Ok(())
+    }
+
+    fn verify_ownership(&self, plan: &EnforcementPlan) -> VerificationOutcome {
+        if !self.enabled {
+            return VerificationOutcome::Absent;
+        }
+        // Presence-plus-cardinality: the anchor must load and hold exactly
+        // the planned rule count. This does not prove semantic equivalence
+        // (documented reduced guarantee); anything else is Drifted, and an
+        // unreadable pfctl is Unknown rather than a false Applied.
+        let output = match Command::new("pfctl")
+            .args(["-a", &self.anchor(), "-s", "rules"])
+            .output()
+        {
+            Ok(o) => o,
+            Err(e) => {
+                return VerificationOutcome::Unknown {
+                    detail: format!("pfctl readback unavailable: {e}"),
+                };
+            }
+        };
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if stderr.contains("nonexistent") || output.stdout.is_empty() {
+                return VerificationOutcome::Absent;
+            }
+            return VerificationOutcome::Unknown {
+                detail: format!("pfctl anchor read failed: {stderr}"),
+            };
+        }
+        let count = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .count();
+        let expected = plan
+            .expected_rule_count
+            .unwrap_or_else(|| self.planned_rule_count());
+        if count == expected {
+            VerificationOutcome::Verified
+        } else {
+            VerificationOutcome::Drifted {
+                detail: format!("anchor holds {count} rules, planned {expected}"),
+            }
+        }
     }
 
     fn config(&self) -> &IcmpFilterConfig {

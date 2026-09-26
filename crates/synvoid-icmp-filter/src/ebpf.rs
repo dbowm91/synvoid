@@ -1,5 +1,7 @@
 use crate::{
+    compat::adapt_config_to_policy,
     config::{Direction, IcmpFilterConfig},
+    enforce::{policy_fingerprint, EnforcementPlan, VerificationOutcome},
     error::{IcmpFilterError, Result},
     traits::{FilterBackend, FilterStatus, IcmpFilter},
 };
@@ -120,8 +122,17 @@ impl EbpfFilter {
         Ok(())
     }
 
+    fn planned_fingerprint_for(config: &IcmpFilterConfig) -> Result<u64> {
+        let (policy, _) = adapt_config_to_policy(config).map_err(IcmpFilterError::from)?;
+        Ok(policy_fingerprint(&policy))
+    }
+
     fn get_interfaces(&self) -> Vec<String> {
-        match &self.config.interfaces {
+        Self::interfaces_for(&self.config)
+    }
+
+    fn interfaces_for(config: &IcmpFilterConfig) -> Vec<String> {
+        match &config.interfaces {
             crate::config::InterfaceSpec::All => {
                 let mut interfaces = Vec::new();
                 if let Ok(entries) = std::fs::read_dir("/sys/class/net") {
@@ -166,15 +177,19 @@ impl EbpfFilter {
     }
 
     fn load_ebpf_program(&mut self) -> Result<()> {
-        let bytecode = Self::load_ebpf_bytecode(self.config.ebpf_bytecode_path.as_deref())?;
-
-        let ebpf = Ebpf::load(&bytecode)
-            .map_err(|e| IcmpFilterError::Ebpf(format!("Failed to load eBPF program: {}", e)))?;
-
+        let (ebpf, _) = Self::prepare_offline(&self.config)?;
         self.ebpf = Some(ebpf);
-        self.update_bpf_maps()?;
-
         Ok(())
+    }
+
+    /// Prepare stage: load bytecode and populate maps for `config` without
+    /// touching live attachments. Fails with zero mutation of enforcement.
+    fn prepare_offline(config: &IcmpFilterConfig) -> Result<(Ebpf, Vec<String>)> {
+        let bytecode = Self::load_ebpf_bytecode(config.ebpf_bytecode_path.as_deref())?;
+        let mut ebpf = Ebpf::load(&bytecode)
+            .map_err(|e| IcmpFilterError::Ebpf(format!("Failed to load eBPF program: {}", e)))?;
+        Self::update_maps_for(config, &mut ebpf)?;
+        Ok((ebpf, Self::interfaces_for(config)))
     }
 
     fn update_bpf_maps(&mut self) -> Result<()> {
@@ -182,54 +197,50 @@ impl EbpfFilter {
             .ebpf
             .as_mut()
             .ok_or_else(|| IcmpFilterError::Ebpf("eBPF program not loaded".to_string()))?;
+        Self::update_maps_for(&self.config.clone(), ebpf)
+    }
 
+    fn update_maps_for(config: &IcmpFilterConfig, ebpf: &mut Ebpf) -> Result<()> {
         let mut config_map: Array<MapData, maps::Config> = ebpf
             .take_map("CONFIG_MAP")
             .ok_or_else(|| IcmpFilterError::Ebpf("CONFIG_MAP not found".to_string()))?
             .try_into()
             .map_err(|e| IcmpFilterError::Ebpf(format!("Failed to access CONFIG_MAP: {}", e)))?;
 
-        let has_type_rules = self.config.has_type_rules();
-        let config = maps::Config {
+        let has_type_rules = config.has_type_rules();
+        let map_config = maps::Config {
             enabled: 1,
-            filter_inbound: if self.config.direction == Direction::Both
-                || self.config.direction == Direction::Inbound
+            filter_inbound: if config.direction == Direction::Both
+                || config.direction == Direction::Inbound
             {
                 1
             } else {
                 0
             },
-            filter_outbound: if self.config.direction == Direction::Both
-                || self.config.direction == Direction::Outbound
+            filter_outbound: if config.direction == Direction::Both
+                || config.direction == Direction::Outbound
             {
                 1
             } else {
                 0
             },
-            rate_limit_enabled: self
-                .config
+            rate_limit_enabled: config
                 .rate_limit
                 .as_ref()
                 .map(|r| r.enabled as u8)
                 .unwrap_or(0),
-            packets_per_second: self
-                .config
+            packets_per_second: config
                 .rate_limit
                 .as_ref()
                 .map(|r| r.packets_per_second)
                 .unwrap_or(0),
-            burst: self
-                .config
-                .rate_limit
-                .as_ref()
-                .map(|r| r.burst)
-                .unwrap_or(0),
+            burst: config.rate_limit.as_ref().map(|r| r.burst).unwrap_or(0),
             block_all_icmp: if has_type_rules { 0 } else { 1 },
             _pad: [0; 3],
         };
 
         config_map
-            .set(maps::CONFIG_KEY, config, 0)
+            .set(maps::CONFIG_KEY, map_config, 0)
             .map_err(|e| IcmpFilterError::Ebpf(format!("Failed to set config: {}", e)))?;
 
         let mut exempt_ipv4: HashMap<MapData, maps::Ipv4Key, u8> = ebpf
@@ -244,7 +255,7 @@ impl EbpfFilter {
             .try_into()
             .map_err(|e| IcmpFilterError::Ebpf(format!("Failed to access EXEMPT_IPV6: {}", e)))?;
 
-        for ip in &self.config.exempt_ips {
+        for ip in &config.exempt_ips {
             match ip {
                 IpAddr::V4(addr) => {
                     let key = maps::Ipv4Key {
@@ -265,7 +276,7 @@ impl EbpfFilter {
             }
         }
 
-        Self::update_icmp_type_rules(&self.config, ebpf)?;
+        Self::update_icmp_type_rules(&config, ebpf)?;
 
         Ok(())
     }
@@ -339,23 +350,30 @@ impl EbpfFilter {
     }
 
     fn load_and_attach_program(&mut self) -> Result<()> {
-        let interfaces = self.get_interfaces();
-
+        // Compile first (pure w.r.t. live state): bytecode + maps for the
+        // new config are fully prepared before any attach/detach.
+        let _fingerprint = Self::planned_fingerprint_for(&self.config)?;
+        let (ebpf, interfaces) = Self::prepare_offline(&self.config)?;
         if interfaces.is_empty() {
             return Err(IcmpFilterError::Config(
                 "No interfaces to attach to".to_string(),
             ));
         }
+        self.ebpf = Some(ebpf);
+        self.attach_prepared(&interfaces)?;
+        Ok(())
+    }
 
-        self.load_ebpf_program()?;
-
+    /// Attach an already-prepared program. Split from preparation so
+    /// replacement can stage maps before switching attachments.
+    fn attach_prepared(&mut self, interfaces: &[String]) -> Result<()> {
         let filter_inbound =
             self.config.direction == Direction::Both || self.config.direction == Direction::Inbound;
         let filter_outbound = self.config.direction == Direction::Both
             || self.config.direction == Direction::Outbound;
 
         if filter_outbound {
-            for iface in &interfaces {
+            for iface in interfaces {
                 self.setup_tc_qdisc(iface)?;
             }
         }
@@ -378,7 +396,7 @@ impl EbpfFilter {
                 .load()
                 .map_err(|e| IcmpFilterError::Ebpf(format!("Failed to load XDP program: {}", e)))?;
 
-            for iface in &interfaces {
+            for iface in interfaces {
                 xdp_program
                     .attach(iface, aya::programs::xdp::XdpFlags::default())
                     .map_err(|e| {
@@ -403,7 +421,7 @@ impl EbpfFilter {
                 .load()
                 .map_err(|e| IcmpFilterError::Ebpf(format!("Failed to load TC program: {}", e)))?;
 
-            for iface in &interfaces {
+            for iface in interfaces {
                 tc_program
                     .attach(iface, TcAttachType::Egress)
                     .map_err(|e| {
@@ -445,22 +463,24 @@ impl EbpfFilter {
     fn detach_program(&mut self) -> Result<()> {
         for iface in self.attached_interfaces.drain() {
             tracing::info!("Detaching programs from interface: {}", iface);
-
-            let output = std::process::Command::new("tc")
-                .args(["filter", "del", "dev", &iface, "egress"])
-                .output()
-                .ok();
-
-            if let Some(output) = output {
-                if output.status.success() {
-                    tracing::debug!("Removed TC filter from {}", iface);
-                }
-            }
+            Self::delete_tc_filter(&iface);
         }
 
         self.ebpf = None;
 
         Ok(())
+    }
+
+    fn delete_tc_filter(iface: &str) {
+        let output = std::process::Command::new("tc")
+            .args(["filter", "del", "dev", iface, "egress"])
+            .output()
+            .ok();
+        if let Some(output) = output {
+            if output.status.success() {
+                tracing::debug!("Removed TC filter from {}", iface);
+            }
+        }
     }
 
     pub fn is_available() -> bool {
@@ -541,19 +561,78 @@ impl IcmpFilter for EbpfFilter {
 
     fn update_config(&mut self, config: IcmpFilterConfig) -> Result<()> {
         config.validate().map_err(IcmpFilterError::Config)?;
+        // Compile + prepare the replacement (bytecode + maps) before
+        // detaching the live generation.
+        let _fingerprint = Self::planned_fingerprint_for(&config)?;
         let was_enabled = self.enabled;
+        let want_enabled = config.enabled;
 
-        if was_enabled {
-            self.detach_program()?;
-        }
-
-        self.config = config;
-
-        if was_enabled && self.config.enabled {
-            self.load_and_attach_program()?;
+        if was_enabled && want_enabled {
+            let (new_ebpf, interfaces) = Self::prepare_offline(&config)?;
+            if interfaces.is_empty() {
+                return Err(IcmpFilterError::Config(
+                    "No interfaces to attach to".to_string(),
+                ));
+            }
+            // Retain the live generation until the replacement attaches.
+            let old_ebpf = self.ebpf.take();
+            let old_ifaces: HashSet<String> = std::mem::take(&mut self.attached_interfaces);
+            // Detach old links first (XDP replace would orphan TC state).
+            let _ = old_ebpf;
+            for iface in &old_ifaces {
+                Self::delete_tc_filter(iface);
+            }
+            let old_config = std::mem::replace(&mut self.config, config);
+            self.ebpf = Some(new_ebpf);
+            if let Err(e) = self.attach_prepared(&interfaces) {
+                // Best-effort rollback: restore previous config; live
+                // re-attachment of the old program is attempted by the
+                // caller via enable path, but provability ends here, so
+                // the manager must record Unknown, not Applied.
+                self.ebpf = None;
+                self.config = old_config;
+                return Err(e);
+            }
+        } else if was_enabled {
+            if let Err(e) = self.detach_program() {
+                self.config = config;
+                return Err(e);
+            }
+            self.config = config;
+            self.enabled = false;
+        } else {
+            self.config = config;
         }
 
         Ok(())
+    }
+
+    /// Attachment-liveness readback: program handle present and every
+    /// attached interface still exists. Map-content equivalence is NOT
+    /// verified here (documented reduced guarantee for the eBPF lane).
+    fn verify_ownership(&self, plan: &EnforcementPlan) -> VerificationOutcome {
+        let _ = plan.fingerprint;
+        if !self.enabled {
+            return VerificationOutcome::Absent;
+        }
+        if self.ebpf.is_none() {
+            return VerificationOutcome::Drifted {
+                detail: "eBPF program handle absent while enabled".to_string(),
+            };
+        }
+        let missing: Vec<_> = self
+            .attached_interfaces
+            .iter()
+            .filter(|iface| !std::path::Path::new(&format!("/sys/class/net/{iface}")).exists())
+            .cloned()
+            .collect();
+        if missing.is_empty() {
+            VerificationOutcome::Verified
+        } else {
+            VerificationOutcome::Drifted {
+                detail: format!("attached interfaces vanished: {}", missing.join(",")),
+            }
+        }
     }
 
     fn config(&self) -> &IcmpFilterConfig {

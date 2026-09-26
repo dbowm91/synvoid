@@ -32,6 +32,10 @@ even when inert (`enabled = false`) — Phase 41 fail-closed config.
   (`icmp-wfp`); `winfw.rs` is the COM compatibility fallback (`icmp-winfw`)
 - `crates/synvoid-icmp-filter/src/platform.rs` - operation-specific
   `BackendProbe`s, capability parsing, Windows LUID resolution
+- `crates/synvoid-icmp-filter/src/enforce.rs` - compile-before-mutate
+  (`compile_policy`), `drive_update`, receipts/reports, ownership tags
+- `crates/synvoid-icmp-filter/src/metrics.rs` - lifecycle-only metrics
+  (packet counters removed: zero backend evidence)
 - `crates/synvoid-icmp-filter/src/error.rs` - `IcmpFilterError`
   (incl. `BackendUnavailable`)
 - `src/icmp_filter/adapt.rs` - app-config typed adapter (composition
@@ -54,6 +58,9 @@ even when inert (`enabled = false`) — Phase 41 fail-closed config.
 - **Windows lanes**: WFP primary (transactions, typed ICMP conditions, LUID
   resolution); winfw fallback (no transactions/rate limit/readback).
 - **NetBSD**: explicitly unsupported (NPF future); never route through PF.
+- **Verify before claiming**: receipts advance only on `Verified`;
+  `Drifted`/`Unknown` are errors via `drive_update`; `report()` is truth,
+  `status()` is compat. Never report `enabled` as kernel proof.
 - **No `--all-features`**: per audit, `--all-features` is not a deployment
   profile (eBPF resolution conflicts); test backends via their explicit feature.
 - **XDP vs userspace**: for SYN-level dropping performance notes (XDP ~50-100ns

@@ -1,11 +1,15 @@
 use crate::{
+    compat::adapt_config_to_policy,
     config::{Direction, IcmpFilterConfig, IcmpTypeRule, InterfaceSpec},
+    enforce::{pf_anchor_for, policy_fingerprint, EnforcementPlan, VerificationOutcome},
     error::{IcmpFilterError, Result},
     traits::{FilterBackend, FilterStatus, IcmpFilter},
 };
 use std::process::Command;
 
-const ANCHOR_NAME: &str = "synvoid.icmp";
+/// Legacy unscoped OpenBSD anchor (pre-Phase-87). Disable sweeps it
+/// best-effort; new installs use the table-scoped anchor.
+const LEGACY_ANCHOR_NAME: &str = "synvoid.icmp";
 
 /// BSD PF backend: FreeBSD and OpenBSD only, qualified separately.
 ///
@@ -51,6 +55,22 @@ impl PfBsdFilter {
         {
             (false, false)
         }
+    }
+
+    fn anchor(&self) -> String {
+        pf_anchor_for(&self.config.table_name)
+    }
+
+    fn planned_rule_count(&self) -> usize {
+        self.config.exempt_ips.len()
+            + self.config.icmp_type_rules.len()
+            + self.config.icmpv6_type_rules.len()
+            + 2
+    }
+
+    fn planned_fingerprint_for(config: &IcmpFilterConfig) -> Result<u64> {
+        let (policy, _) = adapt_config_to_policy(config).map_err(IcmpFilterError::from)?;
+        Ok(policy_fingerprint(&policy))
     }
 
     fn check_pf_available() -> Result<()> {
@@ -200,12 +220,8 @@ impl PfBsdFilter {
     }
 
     fn add_anchor(&self) -> Result<()> {
-        let anchor_path = if self.is_freebsd {
-            format!("{}.icmp", self.config.table_name)
-        } else {
-            ANCHOR_NAME.to_string()
-        };
-
+        // Single anchor load replaces owned content atomically.
+        let anchor_path = self.anchor();
         let output = Command::new("pfctl")
             .args(["-a", &anchor_path, "-f", "-"])
             .stdin(std::process::Stdio::piped())
@@ -239,15 +255,9 @@ impl PfBsdFilter {
         Ok(())
     }
 
-    fn remove_anchor(&self) -> Result<()> {
-        let anchor_path = if self.is_freebsd {
-            format!("{}.icmp", self.config.table_name)
-        } else {
-            ANCHOR_NAME.to_string()
-        };
-
+    fn flush_anchor(anchor: &str) -> Result<()> {
         let output = Command::new("pfctl")
-            .args(["-a", &anchor_path, "-F", "all"])
+            .args(["-a", anchor, "-F", "all"])
             .output()
             .map_err(|e| IcmpFilterError::Pf(format!("Failed to remove anchor: {}", e)))?;
 
@@ -256,6 +266,15 @@ impl PfBsdFilter {
             if !stderr.contains("nonexistent") && !stderr.contains("No such file") {
                 tracing::warn!("pfctl anchor removal stderr: {}", stderr);
             }
+        }
+        Ok(())
+    }
+
+    fn remove_anchor(&self) -> Result<()> {
+        Self::flush_anchor(&self.anchor())?;
+        if !self.is_freebsd {
+            // Best-effort sweep of the legacy unscoped OpenBSD anchor.
+            Self::flush_anchor(LEGACY_ANCHOR_NAME)?;
         }
 
         let table_output = Command::new("pfctl")
@@ -282,6 +301,7 @@ impl IcmpFilter for PfBsdFilter {
             return Err(IcmpFilterError::AlreadyEnabled);
         }
 
+        let _fingerprint = Self::planned_fingerprint_for(&self.config)?;
         self.enable_pf()?;
         self.add_anchor()?;
         self.enabled = true;
@@ -331,20 +351,66 @@ impl IcmpFilter for PfBsdFilter {
 
     fn update_config(&mut self, config: IcmpFilterConfig) -> Result<()> {
         config.validate().map_err(IcmpFilterError::Config)?;
+        let _fingerprint = Self::planned_fingerprint_for(&config)?;
+        let old = std::mem::replace(&mut self.config, config);
         let was_enabled = self.enabled;
+        let want_enabled = self.config.enabled;
 
-        if was_enabled {
-            self.remove_anchor()?;
-        }
-
-        self.config = config;
-
-        if was_enabled && self.config.enabled {
-            self.enable_pf()?;
-            self.add_anchor()?;
+        if was_enabled && want_enabled {
+            // Single load replaces the anchor atomically.
+            if let Err(e) = self.add_anchor() {
+                self.config = old;
+                return Err(e);
+            }
+        } else if was_enabled {
+            if let Err(e) = self.remove_anchor() {
+                self.config = old;
+                return Err(e);
+            }
+            self.enabled = false;
         }
 
         Ok(())
+    }
+
+    fn verify_ownership(&self, plan: &EnforcementPlan) -> VerificationOutcome {
+        if !self.enabled {
+            return VerificationOutcome::Absent;
+        }
+        let output = match Command::new("pfctl")
+            .args(["-a", &self.anchor(), "-s", "rules"])
+            .output()
+        {
+            Ok(o) => o,
+            Err(e) => {
+                return VerificationOutcome::Unknown {
+                    detail: format!("pfctl readback unavailable: {e}"),
+                };
+            }
+        };
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if stderr.contains("nonexistent") || stderr.contains("No such file") {
+                return VerificationOutcome::Absent;
+            }
+            return VerificationOutcome::Unknown {
+                detail: format!("pfctl anchor read failed: {stderr}"),
+            };
+        }
+        let count = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .count();
+        let expected = plan
+            .expected_rule_count
+            .unwrap_or_else(|| self.planned_rule_count());
+        if count == expected {
+            VerificationOutcome::Verified
+        } else {
+            VerificationOutcome::Drifted {
+                detail: format!("anchor holds {count} rules, planned {expected}"),
+            }
+        }
     }
 
     fn config(&self) -> &IcmpFilterConfig {
