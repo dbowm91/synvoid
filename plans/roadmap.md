@@ -1,6 +1,6 @@
 # SynVoid Architecture Hardening Roadmap
 
-Status: Tracks 1–3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). Eggfetch 0.2 runtime adoption is closed through Phase 62 (`c3568ef4...`) and performance/reproducibility adjudication is closed through Phase 63; Phase 64 docs/evidence-truth correction is closed. Production remains on eggfetch. The EggServe 0.2.2-line inbound H1 campaign remains historical/retained at Phase 65; Phases 66–69 were never started. EggServe 0.3 H1 adoption and corrective requalification are closed as `ADOPTED` through Phase 80 on exact pins `eggserve-server = "=0.4.0"` / `eggserve-primitives = "=0.2.2"`; the Phase 78 terminal claim is superseded by Phase 80 proof-bearing SHA `174fdbcd6f133b35099ed4492f5ed8d3fcaa7d4c` (hosted run `36201213413`). Phase 79 implementation SHA: `171dd1e47f965b04b34465fc72c87adf4d9a9cab`. See `architecture/eggserve_0_3_h1_adoption_closeout.md`. Phases 70–72 remain historical/closed with evidence aligned to their then-current Hyper H1 runtime. No registered future plan remains blocked on this corrective sequence. The process-sandbox correctness and extraction-readiness campaign (Phases 81-84) is closed DEFER (see the Post-Phase-80 section below), with a bounded post-closeout semantics corrective registered as Phase 89. The independent ICMP policy/enforcement extraction-preparation campaign (Phases 85-88) is closed RETAIN (see the Post-Phase-80 section below).
+Status: Tracks 1–3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). Eggfetch 0.2 runtime adoption is closed through Phase 62 (`c3568ef4...`) and performance/reproducibility adjudication is closed through Phase 63; Phase 64 docs/evidence-truth correction is closed. Production remains on eggfetch. The EggServe 0.2.2-line inbound H1 campaign remains historical/retained at Phase 65; Phases 66–69 were never started. EggServe 0.3 H1 adoption and corrective requalification are closed as `ADOPTED` through Phase 80 on exact pins `eggserve-server = "=0.4.0"` / `eggserve-primitives = "=0.2.2"`; the Phase 78 terminal claim is superseded by Phase 80 proof-bearing SHA `174fdbcd6f133b35099ed4492f5ed8d3fcaa7d4c` (hosted run `36201213413`). Phase 79 implementation SHA: `171dd1e47f965b04b34465fc72c87adf4d9a9cab`. See `architecture/eggserve_0_3_h1_adoption_closeout.md`. Phases 70–72 remain historical/closed with evidence aligned to their then-current Hyper H1 runtime. No registered future plan remains blocked on this corrective sequence. The process-sandbox correctness and extraction-readiness campaign (Phases 81-84) is closed DEFER (see the Post-Phase-80 section below), with a bounded post-closeout semantics corrective registered as Phase 89. The independent ICMP policy/enforcement extraction-preparation campaign (Phases 85-88) is closed RETAIN (see the Post-Phase-80 section below), with an executable post-RETAIN operator-truth/native-qualification-preparation follow-up registered as Phases 90-91.
 
 Scope: this roadmap covers architecture hardening, trust-boundary closure, verification, release readiness, post-hardening cleanup, and the architecture-convergence work required before another broad feature-expansion pass.
 
@@ -802,3 +802,83 @@ Constraints:
 
 Phase 89 is the next executable process-sandbox plan.
 
+
+
+## Post-Phase-88 ICMP Follow-up: Operator Truth and Native Qualification Preparation — Phases 90–91 Planned
+
+Status: **planned** 2026-09-26.
+
+Roadmap:
+`plans/icmp_post_retain_operator_truth_and_native_qualification_roadmap.md`.
+
+Baseline:
+`0c8d3cac2fb214932c22dc360057acdad3c44c98`.
+
+Predecessor disposition: Phases 85–88 remain closed **RETAIN**. This follow-up
+does not reopen extraction/publication.
+
+Current-head review found two actionable residuals plus one stale consumer:
+
+1. **Operator enforcement truth is not wired through.** The Phase 87 manager
+   exposes `report()` / `verify_live()`, but `GET /icmp/status` still uses
+   `is_enabled()`, compatibility `FilterStatus`, and requested
+   `filter_type`. Manager `enable()` / `disable()` also bypass
+   `DriverState`, so lifecycle state can change without the report advancing.
+2. **Backend/status observability is misleading.** The status route fabricates
+   an all-zero packet-stat object when counters are unavailable; the backend
+   inventory hardcodes returned entries as available and reports the requested
+   backend rather than necessarily the selected backend.
+3. **The admin UI is on a different domain contract.** Its ICMP page models
+   ping/probe concepts (`active`, `backends_count`, `last_ping`,
+   node/address/latency/health), while the server implements firewall
+   enforcement and returns `IcmpBackendsResponse { backends,
+   current_backend }`.
+
+Execution order:
+
+1. **Phase 90 — ICMP Operator Enforcement Truth and Admin Contract
+   Reconciliation**
+   - make enable/disable/config replacement share one verified lifecycle;
+   - make the admin status endpoint expose Applied/Absent/Drifted/Unknown and
+     the actual selected backend;
+   - remove fabricated packet-stat measurements;
+   - expose backend probe/availability reasons;
+   - reconcile OpenAPI/audit semantics;
+   - rewrite the ICMP admin UI against filtering/enforcement semantics and the
+     actual server response shape.
+
+   Plan:
+   `plans/phase_90_icmp_operator_enforcement_truth_and_admin_contract.md`.
+
+2. **Phase 91 — ICMP Privileged Native Qualification Harness Preparation**
+   - add an explicit opt-in Linux nftables qualification harness;
+   - isolate firewall/network changes inside disposable network namespaces with
+     a veth IPv4/IPv6 topology;
+   - prepare packet-level cases for type/code, exemptions, global rate limit,
+     update/readback/drift/disable/rollback;
+   - add deterministic cleanup and a bounded machine-readable evidence
+     artifact;
+   - keep routine CI non-privileged via preflight/dry-run/unit tests.
+
+   Plan:
+   `plans/phase_91_icmp_privileged_native_qualification_harness.md`.
+
+Phase 91 is a harness/preparation phase. Its closeout must not claim native
+kernel qualification merely because the harness exists or a privileged test
+was skipped. No Phase 92 qualification/extraction re-evaluation is registered
+until a suitable privileged host is actually available and the Phase 88
+re-evaluation trigger can be exercised.
+
+Constraints:
+
+- Phase 88 RETAIN remains authoritative;
+- no public crate/repository is created;
+- GET/status may perform bounded readback but never firewall mutation;
+- unsupported packet counters are absent/unknown, not zero;
+- backend requested/selected/usable facts remain distinct;
+- native qualification must not modify the host/default network namespace;
+- privileged execution requires explicit opt-in and deterministic cleanup;
+- routine CI remains non-privileged and proportionate.
+
+Phase 90 is the next executable ICMP plan. Phase 89 remains independently
+executable for the process-sandbox corrective.
