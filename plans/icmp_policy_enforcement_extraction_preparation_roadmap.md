@@ -1,9 +1,13 @@
 # ICMP Policy/Enforcement Extraction Preparation Roadmap (Phases 85–88)
 
-Status: Phases 85–87 closed 2026-09-26 (`20dfc148`, `f1be64d6`,
-`8ecd81fe`; closeouts `architecture/icmp_phase85_*`,
-`architecture/icmp_phase86_*`, `architecture/icmp_phase87_*`); Phase 88
-remains planned and registered 2026-09-26.
+Status: **closed RETAIN 2026-09-26**. All four phases implemented and
+closed (`20dfc148`, `f1be64d6`, `8ecd81fe`, `f85b7871`; closeouts
+`architecture/icmp_phase85_*`, `architecture/icmp_phase86_*`,
+`architecture/icmp_phase87_*`, `architecture/icmp_phase88_*`; decision
+record `architecture/icmp_policy_enforcement_extraction_readiness.md`).
+No plan in this campaign remains executable. No registered future plan
+is blocked on this campaign: the RETAIN verdict registers
+re-evaluation triggers, not ordered work.
 
 Registered in: `plans/roadmap.md`.
 

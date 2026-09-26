@@ -1,6 +1,10 @@
 # Phase 88 Plan: ICMP Extraction Readiness and Platform Qualification
 
-Status: planned.
+Status: closed 2026-09-26 with disposition **RETAIN** (no extraction,
+no promotion, no publication). Implementation SHA:
+`f85b7871dcd0323bc45bc1009852d501904bd2c6`. Decision record:
+`architecture/icmp_policy_enforcement_extraction_readiness.md`. Closeout:
+`architecture/icmp_phase88_extraction_readiness_closeout.md`.
 
 Registered in: `plans/roadmap.md` and
 `plans/icmp_policy_enforcement_extraction_preparation_roadmap.md`.

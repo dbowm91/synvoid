@@ -1,6 +1,6 @@
 # SynVoid Architecture Hardening Roadmap
 
-Status: Tracks 1–3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). Eggfetch 0.2 runtime adoption is closed through Phase 62 (`c3568ef4...`) and performance/reproducibility adjudication is closed through Phase 63; Phase 64 docs/evidence-truth correction is closed. Production remains on eggfetch. The EggServe 0.2.2-line inbound H1 campaign remains historical/retained at Phase 65; Phases 66–69 were never started. EggServe 0.3 H1 adoption and corrective requalification are closed as `ADOPTED` through Phase 80 on exact pins `eggserve-server = "=0.4.0"` / `eggserve-primitives = "=0.2.2"`; the Phase 78 terminal claim is superseded by Phase 80 proof-bearing SHA `174fdbcd6f133b35099ed4492f5ed8d3fcaa7d4c` (hosted run `36201213413`). Phase 79 implementation SHA: `171dd1e47f965b04b34465fc72c87adf4d9a9cab`. See `architecture/eggserve_0_3_h1_adoption_closeout.md`. Phases 70–72 remain historical/closed with evidence aligned to their then-current Hyper H1 runtime. No registered future plan remains blocked on this corrective sequence. The process-sandbox correctness and extraction-readiness campaign (Phases 81-84) is closed DEFER (see the Post-Phase-80 section below). An independent ICMP policy/enforcement extraction-preparation campaign is registered as Phases 85-88.
+Status: Tracks 1–3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). Eggfetch 0.2 runtime adoption is closed through Phase 62 (`c3568ef4...`) and performance/reproducibility adjudication is closed through Phase 63; Phase 64 docs/evidence-truth correction is closed. Production remains on eggfetch. The EggServe 0.2.2-line inbound H1 campaign remains historical/retained at Phase 65; Phases 66–69 were never started. EggServe 0.3 H1 adoption and corrective requalification are closed as `ADOPTED` through Phase 80 on exact pins `eggserve-server = "=0.4.0"` / `eggserve-primitives = "=0.2.2"`; the Phase 78 terminal claim is superseded by Phase 80 proof-bearing SHA `174fdbcd6f133b35099ed4492f5ed8d3fcaa7d4c` (hosted run `36201213413`). Phase 79 implementation SHA: `171dd1e47f965b04b34465fc72c87adf4d9a9cab`. See `architecture/eggserve_0_3_h1_adoption_closeout.md`. Phases 70–72 remain historical/closed with evidence aligned to their then-current Hyper H1 runtime. No registered future plan remains blocked on this corrective sequence. The process-sandbox correctness and extraction-readiness campaign (Phases 81-84) is closed DEFER (see the Post-Phase-80 section below). The independent ICMP policy/enforcement extraction-preparation campaign (Phases 85-88) is closed RETAIN (see the Post-Phase-80 section below).
 
 Scope: this roadmap covers architecture hardening, trust-boundary closure, verification, release readiness, post-hardening cleanup, and the architecture-convergence work required before another broad feature-expansion pass.
 
@@ -618,7 +618,7 @@ Campaign constraints:
 
 The pre-existing H2 header-list byte-unit issue, duplicate-`Set-Cookie` behavior, and body-limit status relabeling remain separate follow-up candidates. They must not be folded into Phases 79–80 unless the corrective changes those paths.
 
-Terminal state: **closed `ADOPTED`**. The residual H2 header-list byte-unit review, duplicate `Set-Cookie` behavior, body-limit status relabeling, and test-only Hyper differential-lane decision remain separate follow-up candidates. No registered future plan is blocked on this campaign. The process-sandbox correctness and extraction-readiness campaign (Phases 81–84) is closed DEFER (see below); the ICMP policy/enforcement campaign (Phases 85–88) proceeds independently.
+Terminal state: **closed `ADOPTED`**. The residual H2 header-list byte-unit review, duplicate `Set-Cookie` behavior, body-limit status relabeling, and test-only Hyper differential-lane decision remain separate follow-up candidates. No registered future plan is blocked on this campaign. The process-sandbox correctness and extraction-readiness campaign (Phases 81–84) is closed DEFER (see below); the ICMP policy/enforcement campaign (Phases 85–88) is closed RETAIN (see below).
 
 ## Post-Phase-80 Campaign: Process Sandbox Correctness and Extraction Readiness — Closed DEFER at Phase 84
 
@@ -686,14 +686,18 @@ Phases 81-84 are closed (DEFER); no plan in this campaign remains executable.
 
 
 
-## Post-Phase-80 Campaign: ICMP Policy/Enforcement Extraction Preparation — Planned (Phases 85–88)
+## Post-Phase-80 Campaign: ICMP Policy/Enforcement Extraction Preparation — Closed RETAIN (Phases 85–88)
 
-Status: Phases 85–87 are closed (canonical policy/adaptation landed
-`20dfc148`; backend/privilege truthfulness landed `f1be64d6`;
-transactional enforcement landed `8ecd81fe`; closeouts
-`architecture/icmp_phase85_*`, `architecture/icmp_phase86_*`,
-`architecture/icmp_phase87_*`); Phase 88 is planned and registered.
-This campaign prepares the
+Status: Phases 85–88 are closed RETAIN 2026-09-26 (canonical
+policy/adaptation `20dfc148`; backend/privilege truthfulness `f1be64d6`;
+transactional enforcement `8ecd81fe`; readiness/qualification `f85b7871`;
+closeouts `architecture/icmp_phase85_*`, `architecture/icmp_phase86_*`,
+`architecture/icmp_phase87_*`, `architecture/icmp_phase88_*`; decision
+record `architecture/icmp_policy_enforcement_extraction_readiness.md`).
+No plan in this campaign remains executable and no registered future
+plan is blocked on it; the RETAIN verdict registers re-evaluation
+triggers, not ordered work.
+This campaign prepared the
 existing `synvoid-icmp-filter` boundary for a later extraction decision; it
 does **not** publish, rename, or move the crate to an external repository.
 
