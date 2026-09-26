@@ -439,16 +439,14 @@ pub async fn update_config(
             }));
         };
 
-        // Transactional driver: install + verify before anything is called
-        // applied. On rejection the previous generation is retained and
-        // nothing is persisted as applied (Phase 87 rollback discipline,
-        // Phase 90 Finding F).
+        // Transactional driver: install + verify before persistence. A
+        // disabled/Absent success returns no apply receipt; the previous
+        // receipt remains historical in status and is not presented as the
+        // outcome of this mutation (Phase 92).
         let verified: Option<IcmpApplyReceipt> = {
             let mut filter = icmp_filter.write().await;
             match filter.update_config(enforcement_config) {
-                Ok(()) => filter
-                    .report()
-                    .and_then(|r| r.last_receipt.map(|rc| IcmpApplyReceipt::from(&rc))),
+                Ok(receipt) => receipt.as_ref().map(IcmpApplyReceipt::from),
                 Err(e) => {
                     let detail = filter
                         .report()

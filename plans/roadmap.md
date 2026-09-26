@@ -935,7 +935,7 @@ Qualification M002a. It may execute independently of Phases 89-91.
 
 ## Post-Phase-91 ICMP Gate: Disabled-State Corrective and Linux nftables Native Qualification — Phases 92–93
 
-Status: **Phase 92 planned; Phase 93 planned/blocked on Phase 92 and a suitable privileged Linux host** (2026-09-26).
+Status: **Phase 92 CORRECTED; Phase 93 BLOCKED** (2026-09-26). Phase 92 lifecycle work is complete. Phase 93 preflight refuses this macOS host; no native qualification claim is made.
 
 Roadmap:
 `plans/icmp_linux_native_qualification_gate_roadmap.md`.
@@ -964,10 +964,9 @@ proof-bearing native qualification:
 
 Execution order:
 
-1. **Phase 92 — ICMP Disabled-State and Lifecycle Commit Semantics Corrective**
+1. **Phase 92 — ICMP Disabled-State and Lifecycle Commit Semantics Corrective — CLOSED CORRECTED (2026-09-26)**
    - make update success depend on desired enabled/disabled state;
-   - use a typed lifecycle outcome so verified absence/no-op never fabricates
-     an apply receipt;
+   - return no apply receipt for verified disabled absence;
    - stage/commit desired driver state transactionally;
    - make live verification desired-state-aware;
    - seed constructor desired truth without claiming live enforcement;
@@ -979,7 +978,7 @@ Execution order:
    Plan:
    `plans/phase_92_icmp_disabled_state_lifecycle_corrective.md`.
 
-2. **Phase 93 — ICMP Linux nftables Native Qualification**
+2. **Phase 93 — ICMP Linux nftables Native Qualification — BLOCKED (2026-09-26)**
    - execute the dual-gated Phase 91 netns/veth harness on a suitable
      privileged Linux host;
    - require install/readback, v4/v6 type/code, exemption, global rate-limit,
@@ -1055,4 +1054,3 @@ Constraints:
   proof-bearing SHA.
 
 Phase 94 is the next executable process-sandbox corrective.
-

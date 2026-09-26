@@ -228,7 +228,7 @@ pub struct ApplyReceipt {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnforcementReport {
     pub backend: FilterBackend,
-    /// Desired enabled/disabled state (`None` before any lifecycle operation).
+    /// Desired enabled/disabled state (`None` only before initialization).
     /// Phase 90: enable/disable/config replacement share one lifecycle, so
     /// the desired power state is explicit rather than inferred from a
     /// backend-local boolean.

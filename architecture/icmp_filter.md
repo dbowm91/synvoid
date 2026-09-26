@@ -203,5 +203,6 @@ no tier, no extraction verdict, and no support claim.
   empty; re-run `--cleanup` if not.
 - **Evidence feeds the trigger**: attach the artifact to a future focused
   qualification/re-evaluation plan. A skipped or refused run is "not
-  qualified", never proof. No Phase 92 is registered until a suitable host
-  produces real evidence.
+  qualified", never proof. Phase 92 was registered to correct lifecycle
+  semantics before native qualification; Phase 93 remains blocked until a
+  suitable Linux host produces real evidence.

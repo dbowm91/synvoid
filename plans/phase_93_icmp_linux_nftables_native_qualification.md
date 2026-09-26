@@ -1,6 +1,6 @@
 # Phase 93 Plan: ICMP Linux nftables Native Qualification
 
-Status: planned; blocked on Phase 92 and a suitable privileged Linux host.
+Status: **BLOCKED** (2026-09-26); Phase 92 is CORRECTED, but no suitable privileged Linux host is available in this execution environment.
 
 Registered in: `plans/roadmap.md` and
 `plans/icmp_linux_native_qualification_gate_roadmap.md`.
@@ -263,3 +263,20 @@ Reject qualification that:
 - changes a mandatory case merely to obtain green;
 - upgrades eBPF/PF/WFP/Windows support from Linux evidence;
 - treats Linux qualification as publication approval.
+
+## Phase 93 disposition (2026-09-26)
+
+Phase 92 is closed CORRECTED. Preflight was run with
+`cargo xtask icmp-qualify --check` on Darwin/macOS. It refused because this
+host is not Linux, lacks `ip` and `nft`, and does not have the required
+root/CAP_NET_ADMIN qualification environment. The command exited nonzero as
+required for refusal. `cargo xtask icmp-qualify --dry-run` passed and showed
+only the expected prefix-scoped `synvoid-q-*` disposable namespaces/veth and
+owned nft table, with no resources spawned. No stale Linux qualification
+namespace could exist on this host, and no native run was attempted.
+
+Disposition: **BLOCKED**, unqualified; no Linux support-tier upgrade, no
+product defect inferred, and Phase 88 RETAIN remains unchanged. Resume only
+on a suitable disposable Linux VM/host and perform the complete two-run
+matrix and repository verification from this plan. The harness evidence
+record is `architecture/icmp_linux_nftables_native_qualification.md`.

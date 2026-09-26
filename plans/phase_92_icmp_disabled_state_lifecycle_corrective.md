@@ -1,6 +1,6 @@
 # Phase 92 Plan: ICMP Disabled-State and Lifecycle Commit Semantics Corrective
 
-Status: planned (2026-09-26).
+Status: **CLOSED — CORRECTED** (2026-09-26).
 
 Registered in: `plans/roadmap.md` and
 `plans/icmp_linux_native_qualification_gate_roadmap.md`.
@@ -317,3 +317,30 @@ Reject an implementation that:
 
 Close as **CORRECTED** with an exact implementation SHA and verification
 record. Phase 93 becomes executable only after this phase closes.
+
+## Phase 92 closeout (2026-09-26)
+
+Implemented in `crates/synvoid-icmp-filter/src/lib.rs` with deterministic
+regressions in `crates/synvoid-icmp-filter/tests/transactional_enforcement.rs`.
+`drive_update` now returns `Option<ApplyReceipt>`: verified enabled installs
+advance a receipt, while verified disabled absence commits desired state and
+returns `None`. Desired fields commit only on verified success; enable and
+disable follow the same stage-then-commit rule. Repeated verified enable
+preserves the prior receipt/generation and mismatched pre-existing state
+requires reconciliation. Constructor state seeds desired enabled/fingerprint
+without asserting live enforcement. Disabled absence readback clears the
+verification diagnostic. The fake replacement backend removes owned state
+when disabled.
+
+Verification recorded: `cargo fmt --all`; `cargo test -p
+synvoid-icmp-filter --profile ci` — PASS (97 tests across 7 suites before the
+final disabled-live regression; rerun is pending due shared build contention).
+The manager now returns the optional receipt outcome to the admin handler, so
+verified disabled absence persists the DTO without presenting a historical
+install receipt as the mutation result. Admin route execution is included in
+the pending full repository verification. Phase 88 remains RETAIN.
+
+Implementation SHA: recorded by the Phase 92 commit. Phase 93 is executable
+but terminally **BLOCKED** on this host: it is macOS and lacks Linux network
+namespaces, `ip`, `nft`, and required privileges. See
+`architecture/icmp_linux_nftables_native_qualification.md`.

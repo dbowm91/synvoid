@@ -21,6 +21,7 @@ enum Fault {
     ApplyMutating,
     VerifyDrift,
     VerifyUnknown,
+    VerifyApplied,
     Cleanup,
     Enable,
 }
@@ -120,7 +121,11 @@ impl IcmpFilter for FakeFilter {
         // Swap-back discipline mirrors the real backends.
         let old = std::mem::replace(&mut self.config, config);
         if self.faults.contains(&Fault::ApplyMutating) {
-            self.installed = Some(Self::fingerprint_of(&self.config));
+            self.enabled = self.config.enabled;
+            self.installed = self
+                .config
+                .enabled
+                .then(|| Self::fingerprint_of(&self.config));
             self.config = old;
             return Err(synvoid_icmp_filter::IcmpFilterError::Nftables(
                 "injected mutating apply failure".to_string(),
@@ -132,7 +137,11 @@ impl IcmpFilter for FakeFilter {
                 "injected apply failure".to_string(),
             ));
         }
-        self.installed = Some(Self::fingerprint_of(&self.config));
+        self.enabled = self.config.enabled;
+        self.installed = self
+            .config
+            .enabled
+            .then(|| Self::fingerprint_of(&self.config));
         Ok(())
     }
 
@@ -141,6 +150,9 @@ impl IcmpFilter for FakeFilter {
     }
 
     fn verify_ownership(&self, plan: &EnforcementPlan) -> VerificationOutcome {
+        if self.faults.contains(&Fault::VerifyApplied) {
+            return VerificationOutcome::Verified;
+        }
         if self.faults.contains(&Fault::VerifyDrift) {
             return VerificationOutcome::Drifted {
                 detail: "injected drift".to_string(),
@@ -163,6 +175,7 @@ impl IcmpFilter for FakeFilter {
 
 fn v4_block_config(icmp_type: u8) -> IcmpFilterConfig {
     IcmpFilterConfig::new()
+        .with_enabled(true)
         .with_filter_type(FilterType::Nftables)
         .with_icmp_type_rules(vec![IcmpTypeRule::new(icmp_type, IcmpAction::Block)])
 }
@@ -200,7 +213,9 @@ fn apply_failure_keeps_previous_state() {
     let mut filter = FakeFilter::new();
     let mut driver = DriverState::default();
     let first = v4_block_config(8);
-    let receipt = drive_update(&mut filter, first, &mut driver).unwrap();
+    let receipt = drive_update(&mut filter, first, &mut driver)
+        .unwrap()
+        .unwrap();
     assert_eq!(driver.live, Some(EnforcementState::Applied));
 
     // Replacement fails at apply: old config retained, receipt un-advanced.
@@ -229,6 +244,7 @@ fn mutating_commit_failure_never_claims_replacement() {
     );
     // The driver still reports the previous verified generation...
     assert_eq!(driver.last_receipt.unwrap().fingerprint, applied_fp);
+    assert_eq!(driver.live, Some(EnforcementState::Drifted));
     // ...and a fresh readback exposes the kernel truth (drift), not Applied.
     let (policy, options) = synvoid_icmp_filter::adapt_config_to_policy(&filter.config).unwrap();
     let plan = match synvoid_icmp_filter::compile_policy(FilterBackend::Nftables, &policy, &options)
@@ -297,15 +313,78 @@ fn receipt_matches_installed_generation() {
     let mut filter = FakeFilter::new();
     let mut driver = DriverState::default();
     let cfg = v4_block_config(8);
-    let receipt = drive_update(&mut filter, cfg, &mut driver).unwrap();
+    let receipt = drive_update(&mut filter, cfg, &mut driver)
+        .unwrap()
+        .unwrap();
     assert_eq!(receipt.generation, 1);
     assert_eq!(receipt.fingerprint, filter.installed.unwrap());
     assert_eq!(receipt.backend, FilterBackend::Nftables);
     let cfg2 = v4_block_config(0);
-    let receipt2 = drive_update(&mut filter, cfg2, &mut driver).unwrap();
+    let receipt2 = drive_update(&mut filter, cfg2, &mut driver)
+        .unwrap()
+        .unwrap();
     assert_eq!(receipt2.generation, 2);
     assert_eq!(receipt2.fingerprint, filter.installed.unwrap());
     assert_ne!(receipt.fingerprint, receipt2.fingerprint);
+}
+
+#[test]
+fn disabled_replacement_commits_only_verified_absence_without_receipt() {
+    let mut filter = FakeFilter::new();
+    let mut driver = DriverState::default();
+    drive_update(&mut filter, v4_block_config(8), &mut driver).unwrap();
+    let previous = driver.last_receipt.clone().unwrap();
+    let disabled = v4_block_config(8).with_enabled(false);
+    assert!(drive_update(&mut filter, disabled, &mut driver)
+        .unwrap()
+        .is_none());
+    assert_eq!(driver.desired_enabled, Some(false));
+    assert_eq!(driver.live, Some(EnforcementState::Absent));
+    assert!(!filter.is_enabled());
+    assert!(driver.last_verify_error.is_none());
+    assert_eq!(driver.last_receipt, Some(previous));
+    assert_eq!(driver.generation, 1);
+}
+
+#[test]
+fn failed_update_does_not_commit_candidate_desired_fields() {
+    let mut filter = FakeFilter::new();
+    let mut driver = DriverState::default();
+    drive_update(&mut filter, v4_block_config(8), &mut driver).unwrap();
+    let prior_fingerprint = driver.desired_fingerprint;
+    filter.faults.insert(Fault::Apply);
+    assert!(drive_update(&mut filter, v4_block_config(0), &mut driver).is_err());
+    assert_eq!(driver.desired_enabled, Some(true));
+    assert_eq!(driver.desired_fingerprint, prior_fingerprint);
+}
+
+#[test]
+fn disabled_replacement_rejects_verified_live_rules() {
+    let mut filter = FakeFilter::new();
+    let mut driver = DriverState::default();
+    drive_update(&mut filter, v4_block_config(8), &mut driver).unwrap();
+    let previous = driver.last_receipt.clone();
+    filter.faults.insert(Fault::VerifyApplied);
+    assert!(drive_update(
+        &mut filter,
+        v4_block_config(8).with_enabled(false),
+        &mut driver
+    )
+    .is_err());
+    assert_eq!(driver.desired_enabled, Some(true));
+    assert_eq!(driver.last_receipt, previous);
+    assert_eq!(driver.live, Some(EnforcementState::Drifted));
+}
+
+#[test]
+fn repeated_enable_preserves_generation_and_receipt() {
+    let mut filter = FakeFilter::new();
+    let mut driver = DriverState::default();
+    let first = drive_enable(&mut filter, &mut driver).unwrap();
+    let second = drive_enable(&mut filter, &mut driver).unwrap();
+    assert_eq!(first, second);
+    assert_eq!(driver.generation, 1);
+    assert_eq!(driver.last_receipt, Some(first));
 }
 
 // ── Phase 90 Finding A: enable/disable share the verified lifecycle ──────
@@ -354,6 +433,10 @@ fn failed_enable_creates_no_receipt() {
             driver.last_receipt.is_none(),
             "failed enable must not create a receipt"
         );
+        assert_eq!(
+            driver.desired_enabled, None,
+            "failed enable must not commit intent"
+        );
         assert_ne!(driver.live, Some(EnforcementState::Applied));
     }
     // Verify-stage failures.
@@ -394,9 +477,11 @@ fn failed_disable_never_claims_absent() {
     let mut filter = FakeFilter::new().with_fault(Fault::Cleanup);
     filter.enabled = true;
     filter.installed = Some(FakeFilter::fingerprint_of(&filter.config));
-    let mut driver = DriverState::default();
-    driver.desired_enabled = Some(true);
-    driver.live = Some(EnforcementState::Applied);
+    let mut driver = DriverState {
+        desired_enabled: Some(true),
+        live: Some(EnforcementState::Applied),
+        ..DriverState::default()
+    };
     let err = drive_disable(&mut filter, &mut driver).unwrap_err();
     let _ = err;
     assert_ne!(
@@ -423,6 +508,10 @@ fn failed_disable_never_claims_absent() {
         "unverifiable disable => BackendUnavailable, got {err:?}"
     );
     assert_eq!(driver.live, Some(EnforcementState::Unknown));
+    assert_eq!(
+        driver.desired_enabled, None,
+        "failed disable must preserve committed desire"
+    );
 }
 
 // 12. Enable/disable/config share one driver (generation advances jointly).
@@ -440,7 +529,7 @@ fn lifecycle_shares_one_driver_generation() {
         &mut driver,
     )
     .unwrap();
-    assert_eq!(r2.generation, 2);
+    assert_eq!(r2.unwrap().generation, 2);
     assert_eq!(driver.desired_enabled, Some(true));
     // Disable advances desired/live state without touching the receipt.
     drive_disable(&mut filter, &mut driver).unwrap();

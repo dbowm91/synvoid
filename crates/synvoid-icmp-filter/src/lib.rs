@@ -350,10 +350,18 @@ impl IcmpFilterManager {
         )
     ))]
     pub fn new(config: IcmpFilterConfig) -> Result<Self> {
+        let desired_enabled = config.enabled;
+        let desired_fingerprint = adapt_config_to_policy(&config)
+            .ok()
+            .map(|(policy, _)| policy_fingerprint(&policy));
         let filter = Self::create_filter(config)?;
         Ok(Self {
             filter,
-            driver: DriverState::default(),
+            driver: DriverState {
+                desired_enabled: Some(desired_enabled),
+                desired_fingerprint,
+                ..DriverState::default()
+            },
         })
     }
 
@@ -603,7 +611,7 @@ impl IcmpFilterManager {
         }
     }
 
-    pub fn update_config(&mut self, config: IcmpFilterConfig) -> Result<()> {
+    pub fn update_config(&mut self, config: IcmpFilterConfig) -> Result<Option<ApplyReceipt>> {
         #[cfg(any(
             target_os = "linux",
             all(target_os = "macos", feature = "icmp-pf"),
@@ -616,7 +624,7 @@ impl IcmpFilterManager {
         {
             // Workstream C/F: compile-before-mutate with verified receipts
             // through the shared driver (same flow the fake tests prove).
-            drive_update(&mut *self.filter, config, &mut self.driver).map(|_| ())
+            drive_update(&mut *self.filter, config, &mut self.driver)
         }
         #[cfg(not(any(
             target_os = "linux",
@@ -690,12 +698,24 @@ impl IcmpFilterManager {
             let outcome = self.filter.verify_ownership(&plan);
             match &outcome {
                 VerificationOutcome::Verified => {
-                    self.driver.live = Some(EnforcementState::Applied);
-                    self.driver.last_verify_error = None;
+                    if self.driver.desired_enabled == Some(false) {
+                        self.driver.live = Some(EnforcementState::Drifted);
+                        self.driver.last_verify_error = Some(
+                            "owned enforcement remains present while disabled state is desired"
+                                .to_string(),
+                        );
+                    } else {
+                        self.driver.live = Some(EnforcementState::Applied);
+                        self.driver.last_verify_error = None;
+                    }
                 }
                 VerificationOutcome::Absent => {
                     self.driver.live = Some(EnforcementState::Absent);
-                    self.driver.last_verify_error = Some("owned objects absent".to_string());
+                    self.driver.last_verify_error = if self.driver.desired_enabled == Some(true) {
+                        Some("owned objects absent while enforcement is desired".to_string())
+                    } else {
+                        None
+                    };
                 }
                 VerificationOutcome::Drifted { detail } => {
                     self.driver.live = Some(EnforcementState::Drifted);
@@ -791,13 +811,56 @@ fn rebuild_verify_plan(backend: FilterBackend, config: &IcmpFilterConfig) -> Enf
     }
 }
 
+/// Refresh only observed live truth after an operation may have changed the
+/// backend despite returning an error. Committed desired fields and receipts
+/// remain untouched; a new readback is the only source for changing `live`.
+fn record_failed_operation_readback(
+    filter: &dyn IcmpFilter,
+    driver: &mut DriverState,
+    operation_error: &str,
+) {
+    let plan = rebuild_verify_plan(filter.backend(), filter.config());
+    let detail = match filter.verify_ownership(&plan) {
+        VerificationOutcome::Verified => {
+            if driver.desired_enabled == Some(true)
+                && driver.desired_fingerprint == Some(plan.fingerprint)
+            {
+                driver.live = Some(EnforcementState::Applied);
+                "previous committed enforcement remains verified".to_string()
+            } else {
+                driver.live = Some(EnforcementState::Drifted);
+                "readback found live owned state outside the committed desired generation"
+                    .to_string()
+            }
+        }
+        VerificationOutcome::Absent => {
+            driver.live = Some(EnforcementState::Absent);
+            if driver.desired_enabled == Some(true) {
+                "required owned enforcement is absent".to_string()
+            } else {
+                "owned enforcement is verified absent".to_string()
+            }
+        }
+        VerificationOutcome::Drifted { detail } => {
+            driver.live = Some(EnforcementState::Drifted);
+            detail
+        }
+        VerificationOutcome::Unknown { detail } => {
+            driver.live = Some(EnforcementState::Unknown);
+            detail
+        }
+    };
+    driver.last_verify_error = Some(format!("{operation_error}; readback: {detail}"));
+}
+
 /// Phase 87 replacement driver: compile-before-mutate with verified
 /// receipts. Operates on any `IcmpFilter` (real backends and test fakes
 /// share this exact flow):
 /// 1. adapt + compile the replacement (pure; zero mutation on failure);
 /// 2. install through the backend's atomic/staged replacement;
 /// 3. verify live owned state;
-/// 4. advance the receipt/generation only on `Verified`.
+/// 4. advance the receipt/generation on a verified enabled install; verified
+///    disabled absence commits desired state without an apply receipt.
 ///
 /// Returns the new receipt on success. Any other outcome leaves applied
 /// state un-advanced and records `live` + `last_verify_error` on `driver`.
@@ -807,7 +870,7 @@ pub fn drive_update(
     filter: &mut dyn IcmpFilter,
     config: IcmpFilterConfig,
     driver: &mut DriverState,
-) -> Result<ApplyReceipt> {
+) -> Result<Option<ApplyReceipt>> {
     let (policy, backend_options) =
         adapt_config_to_policy(&config).map_err(IcmpFilterError::from)?;
     let backend = filter.backend();
@@ -821,16 +884,27 @@ pub fn drive_update(
             )));
         }
     };
-    driver.desired_fingerprint = Some(plan.fingerprint);
-    driver.desired_enabled = Some(config.enabled);
+    let enabled = config.enabled;
     if let Err(e) = filter.update_config(config) {
         crate::metrics::icmp_apply_finished(backend_label(backend), "install_failed");
-        driver.last_verify_error =
-            Some(format!("install failed, previous generation retained: {e}"));
+        record_failed_operation_readback(
+            filter,
+            driver,
+            &format!("install failed, committed generation retained: {e}"),
+        );
         return Err(e);
     }
     match filter.verify_ownership(&plan) {
         VerificationOutcome::Verified => {
+            if !enabled {
+                driver.live = Some(EnforcementState::Drifted);
+                driver.last_verify_error =
+                    Some("disabled replacement left owned enforcement live".to_string());
+                crate::metrics::icmp_apply_finished(backend_label(backend), "drifted");
+                return Err(IcmpFilterError::BackendUnavailable(
+                    "disabled replacement left owned enforcement live".to_string(),
+                ));
+            }
             driver.generation += 1;
             let receipt = ApplyReceipt {
                 backend,
@@ -844,15 +918,25 @@ pub fn drive_update(
             driver.last_verify_error = None;
             crate::metrics::icmp_apply_finished(backend_label(backend), "applied");
             crate::metrics::icmp_verification_observed(backend_label(backend), "applied");
-            Ok(receipt)
+            driver.desired_fingerprint = Some(plan.fingerprint);
+            driver.desired_enabled = Some(true);
+            Ok(Some(receipt))
         }
         VerificationOutcome::Absent => {
             driver.live = Some(EnforcementState::Absent);
-            driver.last_verify_error = Some("owned objects absent after install".to_string());
-            crate::metrics::icmp_apply_finished(backend_label(backend), "drifted");
-            Err(IcmpFilterError::BackendUnavailable(
-                "install succeeded but owned objects are absent live (drifted)".to_string(),
-            ))
+            if enabled {
+                driver.last_verify_error = Some("owned objects absent after install".to_string());
+                crate::metrics::icmp_apply_finished(backend_label(backend), "drifted");
+                Err(IcmpFilterError::BackendUnavailable(
+                    "install succeeded but owned objects are absent live (drifted)".to_string(),
+                ))
+            } else {
+                driver.desired_fingerprint = Some(plan.fingerprint);
+                driver.desired_enabled = Some(false);
+                driver.last_verify_error = None;
+                crate::metrics::icmp_apply_finished(backend_label(backend), "disabled");
+                Ok(None)
+            }
         }
         VerificationOutcome::Drifted { detail } => {
             driver.live = Some(EnforcementState::Drifted);
@@ -882,7 +966,6 @@ pub fn drive_update(
 /// only when installation plus live verification succeeds; a failed enable
 /// creates no apply receipt.
 pub fn drive_enable(filter: &mut dyn IcmpFilter, driver: &mut DriverState) -> Result<ApplyReceipt> {
-    driver.desired_enabled = Some(true);
     let backend = filter.backend();
     // Compile the current policy first (pure): an inexpressible policy
     // installs nothing and advances no receipt.
@@ -902,21 +985,47 @@ pub fn drive_enable(filter: &mut dyn IcmpFilter, driver: &mut DriverState) -> Re
             )));
         }
     };
-    driver.desired_fingerprint = Some(plan.fingerprint);
-    match filter.enable() {
-        Ok(()) => {}
+    let already_enabled = match filter.enable() {
+        Ok(()) => false,
         Err(IcmpFilterError::AlreadyEnabled) => {
             // Idempotent path: already enabled — fall through to live
             // verification of the current install rather than failing.
+            true
         }
         Err(e) => {
             crate::metrics::icmp_apply_finished(backend_label(backend), "install_failed");
-            driver.last_verify_error = Some(format!("enable failed, no state change claimed: {e}"));
+            record_failed_operation_readback(
+                filter,
+                driver,
+                &format!("enable failed, committed desired state retained: {e}"),
+            );
             return Err(e);
         }
-    }
+    };
     match filter.verify_ownership(&plan) {
         VerificationOutcome::Verified => {
+            if already_enabled {
+                if driver.desired_enabled == Some(true)
+                    && driver.desired_fingerprint == Some(plan.fingerprint)
+                    && driver
+                        .last_receipt
+                        .as_ref()
+                        .is_some_and(|r| r.fingerprint == plan.fingerprint)
+                {
+                    driver.live = Some(EnforcementState::Applied);
+                    driver.last_verify_error = None;
+                    return driver.last_receipt.clone().ok_or_else(|| {
+                        IcmpFilterError::BackendUnavailable(
+                            "verified enabled state has no committed receipt".to_string(),
+                        )
+                    });
+                }
+                driver.live = Some(EnforcementState::Drifted);
+                driver.last_verify_error = Some("backend was already enabled outside the committed generation; reconciliation required".to_string());
+                return Err(IcmpFilterError::BackendUnavailable(
+                    "backend already enabled without matching committed generation".to_string(),
+                ));
+            }
             driver.generation += 1;
             let receipt = ApplyReceipt {
                 backend,
@@ -926,6 +1035,8 @@ pub fn drive_enable(filter: &mut dyn IcmpFilter, driver: &mut DriverState) -> Re
                 ownership_tag: plan.ownership_tag.clone(),
             };
             driver.last_receipt = Some(receipt.clone());
+            driver.desired_enabled = Some(true);
+            driver.desired_fingerprint = Some(plan.fingerprint);
             driver.live = Some(EnforcementState::Applied);
             driver.last_verify_error = None;
             crate::metrics::icmp_apply_finished(backend_label(backend), "applied");
@@ -969,7 +1080,6 @@ pub fn drive_enable(filter: &mut dyn IcmpFilter, driver: &mut DriverState) -> Re
 /// report's desired/live state makes clear enforcement is disabled/Absent.
 /// A failed disable never claims Absent.
 pub fn drive_disable(filter: &mut dyn IcmpFilter, driver: &mut DriverState) -> Result<()> {
-    driver.desired_enabled = Some(false);
     let backend = filter.backend();
     // Already-disabled fast path: prove absence rather than assuming it.
     if !filter.is_enabled() {
@@ -977,6 +1087,8 @@ pub fn drive_disable(filter: &mut dyn IcmpFilter, driver: &mut DriverState) -> R
         match filter.verify_ownership(&plan) {
             VerificationOutcome::Absent => {
                 driver.live = Some(EnforcementState::Absent);
+                driver.desired_enabled = Some(false);
+                driver.desired_fingerprint = Some(plan.fingerprint);
                 driver.last_verify_error = None;
                 return Ok(());
             }
@@ -1012,7 +1124,11 @@ pub fn drive_disable(filter: &mut dyn IcmpFilter, driver: &mut DriverState) -> R
             // Lost a race with a concurrent disable: verify absence below.
         }
         Err(e) => {
-            driver.last_verify_error = Some(format!("disable failed: {e}"));
+            record_failed_operation_readback(
+                filter,
+                driver,
+                &format!("disable failed, committed desired state retained: {e}"),
+            );
             return Err(e);
         }
     }
@@ -1020,6 +1136,8 @@ pub fn drive_disable(filter: &mut dyn IcmpFilter, driver: &mut DriverState) -> R
     match filter.verify_ownership(&plan) {
         VerificationOutcome::Absent => {
             driver.live = Some(EnforcementState::Absent);
+            driver.desired_enabled = Some(false);
+            driver.desired_fingerprint = Some(plan.fingerprint);
             driver.last_verify_error = None;
             crate::metrics::icmp_apply_finished(backend_label(backend), "disabled");
             Ok(())

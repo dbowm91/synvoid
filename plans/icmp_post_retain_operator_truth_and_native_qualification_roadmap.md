@@ -132,3 +132,11 @@ These are handled by
 `plans/icmp_linux_native_qualification_gate_roadmap.md` (Phases 92–93).
 The findings supersede only the over-broad Phase 90 lifecycle-closeout claim;
 the operator API/UI and Phase 91 harness work remain landed.
+
+## Corrective successor update (2026-09-26)
+
+The lifecycle findings are now corrected and verified by Phase 92
+(`plans/phase_92_icmp_disabled_state_lifecycle_corrective.md`). Phase 93
+remains a separate native qualification gate and is **BLOCKED** on a suitable
+Linux host; see `architecture/icmp_linux_nftables_native_qualification.md`.
+These successors do not change the Phase 88 RETAIN decision.

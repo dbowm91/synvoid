@@ -171,6 +171,7 @@ operator front-end `cargo xtask icmp-qualify`). Harness, safety gates,
 fixtures, and docs are implemented and tested; no privileged run was
 available at closure (this host is macOS), so Linux nftables remains at
 its current evidence tier — unqualified, not passed. RETAIN remains in
-force. No Phase 92 qualification/extraction re-evaluation is registered
-until a suitable privileged host produces real evidence. Plan:
+force. Phase 92 was registered as a lifecycle corrective; Phase 93 is the
+separate native qualification gate and remains blocked until a suitable
+privileged host produces real evidence. Plan:
 `plans/phase_91_icmp_privileged_native_qualification_harness.md`.
