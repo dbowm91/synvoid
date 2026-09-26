@@ -1,6 +1,10 @@
 # Phase 87 Plan: ICMP Transactional Enforcement and State Verification
 
-Status: planned.
+Status: closed 2026-09-26. Implementation SHA:
+`8ecd81fe3972448b561a4760d05b2339c1e3d5b3`. Closeout:
+`architecture/icmp_phase87_transactional_enforcement_closeout.md`.
+Phase 88 is unblocked (boundary is compilable, transactional, and
+verifiable; only native qualification + the go/no-go record remain).
 
 Registered in: `plans/roadmap.md` and
 `plans/icmp_policy_enforcement_extraction_preparation_roadmap.md`.
