@@ -358,6 +358,21 @@ impl RateLimitPolicy {
 }
 
 /// Portable enforcement policy: the single semantic owner for Phase 85.
+///
+/// ```
+/// use synvoid_icmp_filter::policy::{
+///     IcmpFamily, IcmpPolicy, IcmpRule, IcmpSelector, IcmpVerdict,
+/// };
+///
+/// let mut policy = IcmpPolicy::default();
+/// // Numeric type 8 is ambiguous without a family; the selector binds it.
+/// policy.rules.push(IcmpRule::new(
+///     IcmpSelector::raw_v4(8, None),
+///     IcmpVerdict::Block,
+/// ));
+/// assert_eq!(policy.rules_for_family(IcmpFamily::V4).count(), 1);
+/// assert_eq!(policy.rules_for_family(IcmpFamily::V6).count(), 0);
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IcmpPolicy {
     #[serde(default)]

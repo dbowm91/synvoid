@@ -52,6 +52,21 @@ pub struct ValidationOverride {
 /// `strict` upgrades critical PMTUD/ND hazards from warning to error.
 /// The default SynVoid migration path uses non-strict (preserve behavior,
 /// surface diagnostics); operators who want a hard gate opt into strict.
+///
+/// ```
+/// use synvoid_icmp_filter::policy::{IcmpPolicy, IcmpRule, IcmpSelector, IcmpV6Type, IcmpVerdict};
+/// use synvoid_icmp_filter::validation::{
+///     validate_policy, ValidationOverride, ValidationRole,
+/// };
+///
+/// let mut policy = IcmpPolicy::default();
+/// policy.rules.push(IcmpRule::new(
+///     IcmpSelector::V6 { icmp_type: IcmpV6Type::PacketTooBig, code: None },
+///     IcmpVerdict::Block,
+/// ));
+/// let findings = validate_policy(&policy, ValidationRole::Host, false, ValidationOverride::default());
+/// assert!(findings.iter().any(|f| f.code == "icmpv6_ptb_blocked"));
+/// ```
 pub fn validate_policy(
     policy: &IcmpPolicy,
     role: ValidationRole,

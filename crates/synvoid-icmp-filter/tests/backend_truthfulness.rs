@@ -120,8 +120,9 @@ fn target_feature_manifest_closure() {
         );
     }
     assert!(
-        manifest.contains("[target.'cfg(windows)'.dependencies]"),
-        "Windows deps must be target-gated"
+        manifest.contains("[target.'cfg(windows)'.dependencies]")
+            || manifest.contains("[target.\"cfg(windows)\".dependencies]"),
+        "Windows deps must be target-gated (either manifest quoting)"
     );
 }
 

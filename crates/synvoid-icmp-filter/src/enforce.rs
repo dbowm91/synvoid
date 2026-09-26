@@ -64,6 +64,22 @@ pub enum PolicyCompileResult {
 
 /// Pure compilation: policy + backend capabilities + backend options.
 /// Performs zero kernel mutation.
+///
+/// ```
+/// use synvoid_icmp_filter::enforce::{compile_policy, PolicyCompileResult};
+/// use synvoid_icmp_filter::policy::{BackendOptions, IcmpPolicy, IcmpRule, IcmpSelector, IcmpVerdict};
+/// use synvoid_icmp_filter::traits::FilterBackend;
+///
+/// let mut policy = IcmpPolicy::default();
+/// policy.rules.push(IcmpRule::new(
+///     IcmpSelector::raw_v4(8, None),
+///     IcmpVerdict::Block,
+/// ));
+/// match compile_policy(FilterBackend::Nftables, &policy, &BackendOptions::default()) {
+///     PolicyCompileResult::Exact(plan) => assert!(plan.ownership_tag.contains("nft:inet:")),
+///     PolicyCompileResult::Unsupported { reasons, .. } => panic!("{reasons:?}"),
+/// }
+/// ```
 pub fn compile_policy(
     backend: FilterBackend,
     policy: &IcmpPolicy,

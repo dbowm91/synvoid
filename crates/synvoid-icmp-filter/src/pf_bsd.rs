@@ -91,10 +91,13 @@ impl PfBsdFilter {
     fn build_rules(&self) -> String {
         let mut rules = String::new();
 
+        // No direction keyword means both directions ("in out" is invalid
+        // pf grammar; caught by native pfctl -n on macOS for the shared
+        // builder shape).
         let direction = match self.config.direction {
-            Direction::Both => "in out",
-            Direction::Inbound => "in",
-            Direction::Outbound => "out",
+            Direction::Both => String::new(),
+            Direction::Inbound => "in ".to_string(),
+            Direction::Outbound => "out ".to_string(),
         };
 
         let interface_clause = match &self.config.interfaces {
@@ -143,7 +146,7 @@ impl PfBsdFilter {
         for type_rule in &self.config.icmp_type_rules {
             rules.push_str(&self.build_icmp_type_rule(
                 type_rule,
-                direction,
+                &direction,
                 &interface_clause,
                 false,
             ));
@@ -152,7 +155,7 @@ impl PfBsdFilter {
         for type_rule in &self.config.icmpv6_type_rules {
             rules.push_str(&self.build_icmp_type_rule(
                 type_rule,
-                direction,
+                &direction,
                 &interface_clause,
                 true,
             ));
@@ -199,8 +202,10 @@ impl PfBsdFilter {
             format!("{} {}", type_keyword, rule.icmp_type)
         };
 
+        // No trailing `all` after the type match (same grammar defect as
+        // the macOS lane had; fixed for both, natively proven on macOS).
         format!(
-            "{} {} {} {} proto {} {} all\n",
+            "{} {} {} {} proto {} {}\n",
             action, direction, interface_clause, inet, proto, type_match
         )
     }

@@ -51,7 +51,8 @@ Root `icmp-filter` forwards **no** backend sub-features (`icmp-ebpf`, `icmp-pf`,
 |---------|-------------|---------------------|------|------|-------|----------------|--------------|
 | nftables | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ |
 | eBPF | ✓ | ✓ | ✓ | ✓ | ✓ | — | — (prepare-then-attach) |
-| PF (all variants) | ✓ | ✓ | ✓ | ✓ | ✓ | — | — (staged anchor reload) |
+| PF (FreeBSD/OpenBSD) | ✓ | ✓ | ✓ | ✓ | ✓ | — | — (staged anchor reload) |
+| PF (macOS) | ✓ | — (rejected at admission; bare `max-src-conn-rate` is invalid macOS grammar per native `pfctl -n`) | ✓ | ✓ | ✓ | — | — (staged anchor reload) |
 | WFP | ✓ | — | ✓ | ✓ | ✓ | ✓ (LUID) | ✓ |
 | winfw | ✓ | — | ✓ | ✓ | ✓ | — (friendly names) | — |
 

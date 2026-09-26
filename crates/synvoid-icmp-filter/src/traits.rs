@@ -50,6 +50,11 @@ impl FilterBackend {
 
 /// Static expressiveness of one backend. No runtime state: a `true` here
 /// never means "currently enforcing".
+///
+/// Note: `Pf` describes the FreeBSD/OpenBSD expressiveness. The macOS lane
+/// additionally rejects global rate limits at admission (`PfFilter`
+/// constructor/enable/update) because bare `max-src-conn-rate` is invalid
+/// macOS grammar (native `pfctl -n` proof); see `architecture/icmp_filter.md`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BackendCapabilities {
     pub backend: FilterBackend,

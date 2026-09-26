@@ -21,11 +21,30 @@ pub struct PfFilter {
 impl PfFilter {
     pub fn new(config: IcmpFilterConfig) -> Result<Self> {
         config.validate().map_err(IcmpFilterError::Config)?;
+        // macOS admission: checked before the privilege-requiring probe so
+        // rejection is deterministic and unprivileged-testable.
+        Self::check_macos_admissible(&config)?;
         Self::check_pf_available()?;
         Ok(Self {
             config,
             enabled: false,
         })
+    }
+
+    /// macOS PF cannot express global rate limits: `max-src-conn-rate` is
+    /// valid only inside state options (`keep state (...)`) on this
+    /// platform (proven by native `pfctl -n`), which conflicts with
+    /// block-by-default semantics. Reject at admission with a typed error
+    /// rather than installing broken grammar that `pfctl -f` refuses.
+    /// (FreeBSD/OpenBSD accept the bare rule option; see `pf_bsd`.)
+    fn check_macos_admissible(config: &IcmpFilterConfig) -> Result<()> {
+        if config.rate_limit.as_ref().is_some_and(|r| r.enabled) {
+            return Err(IcmpFilterError::Unsupported(
+                "macOS PF cannot express global rate limits (max-src-conn-rate is state-option-only on macOS); remove the rate limit or use a Linux/BSD lane"
+                    .to_string(),
+            ));
+        }
+        Ok(())
     }
 
     fn check_pf_available() -> Result<()> {
@@ -66,10 +85,12 @@ impl PfFilter {
     fn build_rules(&self) -> String {
         let mut rules = String::new();
 
+        // A rule without a direction keyword applies to both directions;
+        // "in out" is not valid pf grammar (caught by native pfctl -n).
         let direction = match self.config.direction {
-            Direction::Both => "in out",
-            Direction::Inbound => "in",
-            Direction::Outbound => "out",
+            Direction::Both => String::new(),
+            Direction::Inbound => "in ".to_string(),
+            Direction::Outbound => "out ".to_string(),
         };
 
         let interface_clause = match &self.config.interfaces {
@@ -80,18 +101,9 @@ impl PfFilter {
             }
         };
 
-        let rate_clause = if let Some(ref rate_limit) = self.config.rate_limit {
-            if rate_limit.enabled {
-                format!(
-                    " max-src-conn-rate {}/{} overload <icmp_flood> flush global",
-                    rate_limit.burst, rate_limit.packets_per_second
-                )
-            } else {
-                String::new()
-            }
-        } else {
-            String::new()
-        };
+        // No rate clause: check_macos_admissible rejects enabled rate
+        // limits at admission because bare max-src-conn-rate is invalid
+        // macOS grammar (native pfctl -n proof). Unreachable otherwise.
 
         for ip in &self.config.exempt_ips {
             let (inet, proto) = match ip {
@@ -107,7 +119,7 @@ impl PfFilter {
         for type_rule in &self.config.icmp_type_rules {
             rules.push_str(&self.build_icmp_type_rule(
                 type_rule,
-                direction,
+                &direction,
                 &interface_clause,
                 false,
             ));
@@ -116,20 +128,20 @@ impl PfFilter {
         for type_rule in &self.config.icmpv6_type_rules {
             rules.push_str(&self.build_icmp_type_rule(
                 type_rule,
-                direction,
+                &direction,
                 &interface_clause,
                 true,
             ));
         }
 
         rules.push_str(&format!(
-            "block {} {} inet proto icmp all{}\n",
-            direction, interface_clause, rate_clause
+            "block {} {} inet proto icmp all\n",
+            direction, interface_clause
         ));
 
         rules.push_str(&format!(
-            "block {} {} inet6 proto icmp6 all{}",
-            direction, interface_clause, rate_clause
+            "block {} {} inet6 proto icmp6 all\n",
+            direction, interface_clause
         ));
 
         rules
@@ -155,8 +167,11 @@ impl PfFilter {
             format!("{} {}", type_keyword, rule.icmp_type)
         };
 
+        // No trailing address/filter after the type match: pf grammar
+        // accepts `icmp-type 8` bare; a trailing `all` is a syntax error
+        // (native pfctl -n proof).
         format!(
-            "{} {} {} {} proto {} {} all\n",
+            "{} {} {} {} proto {} {}\n",
             action, direction, interface_clause, inet, proto, type_match
         )
     }
@@ -252,8 +267,10 @@ impl IcmpFilter for PfFilter {
             return Err(IcmpFilterError::AlreadyEnabled);
         }
 
-        // Compile first: nothing is installed for an inexpressible policy.
+        // Compile + macOS admission first: nothing is installed for an
+        // inexpressible policy.
         let _fingerprint = Self::planned_fingerprint_for(&self.config)?;
+        Self::check_macos_admissible(&self.config)?;
         self.enable_pf()?;
         self.add_anchor()?;
         self.enabled = true;
@@ -294,8 +311,9 @@ impl IcmpFilter for PfFilter {
 
     fn update_config(&mut self, config: IcmpFilterConfig) -> Result<()> {
         config.validate().map_err(IcmpFilterError::Config)?;
-        // Compile the replacement before mutating anchor state.
+        // Compile + macOS admission before mutating anchor state.
         let _fingerprint = Self::planned_fingerprint_for(&config)?;
+        Self::check_macos_admissible(&config)?;
         let old = std::mem::replace(&mut self.config, config);
         let was_enabled = self.enabled;
         let want_enabled = self.config.enabled;
@@ -374,5 +392,103 @@ impl Drop for PfFilter {
                 tracing::warn!("Failed to remove PF anchor on drop: {}", e);
             }
         }
+    }
+}
+
+/// Native grammar evidence (Phase 88, Workstream C).
+///
+/// These tests run only on macOS hosts (`pfctl` is a base-system binary
+/// there) and feed REAL builder output to the platform parser
+/// (`pfctl -n -f -`, no privileges required). They prove rule grammar, not
+/// enforcement: loading still needs root and belongs to privileged
+/// qualification on a macOS host.
+#[cfg(all(test, target_os = "macos"))]
+mod native_syntax_tests {
+    use super::*;
+    use crate::config::{IcmpAction, InterfaceSpec};
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    fn syntax_test_filter() -> PfFilter {
+        let config = IcmpFilterConfig {
+            enabled: true,
+            filter_type: crate::config::FilterType::Auto,
+            direction: Direction::Both,
+            interfaces: InterfaceSpec::Specific(vec!["en0".to_string()]),
+            table_name: "synvoid-icmp".to_string(),
+            exempt_ips: vec!["10.0.0.1".parse().unwrap()],
+            // No rate limit: macOS admission rejects it (state-option-only
+            // grammar); the rejection itself is tested below.
+            rate_limit: None,
+            icmp_type_rules: vec![
+                IcmpTypeRule::new(8, IcmpAction::Block),
+                IcmpTypeRule::new(3, IcmpAction::Allow).with_code(3),
+            ],
+            icmpv6_type_rules: vec![IcmpTypeRule::new(128, IcmpAction::Block)],
+            ebpf_bytecode_path: None,
+        };
+        // Bypass the privilege-requiring availability probe; grammar tests
+        // run unprivileged by design.
+        PfFilter {
+            config,
+            enabled: false,
+        }
+    }
+
+    fn pfctl_check_syntax(ruleset: &str) {
+        let mut child = Command::new("pfctl")
+            .args(["-n", "-f", "-"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("pfctl must exist on macOS hosts");
+        child
+            .stdin
+            .take()
+            .expect("stdin")
+            .write_all(ruleset.as_bytes())
+            .expect("write ruleset");
+        let output = child.wait_with_output().expect("wait pfctl");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "platform pfctl rejected builder ruleset:\n{ruleset}\nstderr: {stderr}"
+        );
+    }
+
+    #[test]
+    fn builder_ruleset_parses_with_platform_pfctl() {
+        let filter = syntax_test_filter();
+        let ruleset = filter.build_rules();
+        // Cardinality the readback contract relies on.
+        assert_eq!(filter.planned_rule_count(), 1 + 3 + 2);
+        pfctl_check_syntax(&ruleset);
+    }
+
+    #[test]
+    fn minimal_ruleset_parses_with_platform_pfctl() {
+        let mut filter = syntax_test_filter();
+        filter.config.exempt_ips.clear();
+        filter.config.icmp_type_rules.clear();
+        filter.config.icmpv6_type_rules.clear();
+        filter.config.rate_limit = None;
+        filter.config.interfaces = InterfaceSpec::All;
+        pfctl_check_syntax(&filter.build_rules());
+    }
+
+    #[test]
+    fn rate_limited_policy_rejected_at_macos_admission() {
+        let mut config = syntax_test_filter().config.clone();
+        config.rate_limit = Some(crate::config::RateLimitConfig {
+            enabled: true,
+            packets_per_second: 10,
+            burst: 20,
+        });
+        let err = PfFilter::check_macos_admissible(&config).unwrap_err();
+        assert!(
+            matches!(err, IcmpFilterError::Unsupported(_)),
+            "macOS rate limit must be Unsupported, got {err:?}"
+        );
     }
 }
