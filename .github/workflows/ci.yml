@@ -9,6 +9,12 @@ on:
   schedule:
     - cron: "0 6 * * *"
   workflow_dispatch:
+    inputs:
+      sandbox_native_qualification:
+        description: Run the Phase 94 Linux Landlock/seccomp and jail proof lane
+        type: boolean
+        required: false
+        default: false
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -74,3 +80,49 @@ jobs:
 
       - name: Advisory audit (cargo-audit)
         run: cargo audit
+
+  sandbox-native-qualification:
+    name: sandbox-native-qualification
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.sandbox_native_qualification }}
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: 1
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable as of 2026-09-12
+        with:
+          components: rustfmt, clippy
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Record proof host
+        run: |
+          {
+            echo '## Phase 94 Linux sandbox native qualification'
+            echo "- Proof SHA: $GITHUB_SHA"
+            echo "- Runner: $RUNNER_OS / $RUNNER_ARCH"
+            echo "- Kernel: $(uname -a)"
+            echo "- Rust: $(rustc -Vv | tr '\n' ' ')"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Run Linux sandbox enforcement probes
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test -p synvoid-platform --profile ci -- --nocapture 2>&1 | tee /tmp/synvoid-sandbox-platform.log
+          if grep -E 'SKIP: Landlock ABI unavailable|UNQUALIFIED: seccomp unavailable' /tmp/synvoid-sandbox-platform.log; then
+            echo 'Linux runner did not enforce the requested native mechanisms.' >&2
+            exit 1
+          fi
+
+      - name: Run jail workload and isolation tests
+        run: |
+          cargo test -p synvoid-jail-runtime --profile ci
+          cargo test --test jail_isolation_guard --profile ci

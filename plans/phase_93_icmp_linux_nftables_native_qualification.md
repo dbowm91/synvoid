@@ -280,3 +280,6 @@ product defect inferred, and Phase 88 RETAIN remains unchanged. Resume only
 on a suitable disposable Linux VM/host and perform the complete two-run
 matrix and repository verification from this plan. The harness evidence
 record is `architecture/icmp_linux_nftables_native_qualification.md`.
+The Phase 92 prerequisite implementation SHA is
+`94d50efacb4146cfeafc608ac37d3c357c1247ee`; no Phase 93 native proof was
+produced at that SHA.

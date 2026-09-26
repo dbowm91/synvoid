@@ -887,7 +887,8 @@ Constraints:
 - routine CI remains non-privileged and proportionate.
 
 Phases 90–91 are closed. Phase 89 implementation is landed but its terminal
-sandbox qualification is superseded by planned Phase 94. ICMP Phases 92–93
+sandbox qualification is superseded by Phase 94 (implementation complete;
+hosted/native proof pending). ICMP Phases 92–93
 are registered separately below. Extraction stays DEFER (sandbox) and RETAIN
 (ICMP) under their recorded re-evaluation triggers. The independent cross-repo
 Eggbench handoff remains planned and is not blocked on Phase 94.

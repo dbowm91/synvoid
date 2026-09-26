@@ -2041,6 +2041,15 @@ impl PreparedSandbox {
         // apply (the required-guarantee check above already enforced it).
         // Filesystem/ambient mechanism: exactly one backend apply.
         let sandbox = ProcessSandbox::new(SandboxLevel::Basic);
+        #[cfg(target_os = "linux")]
+        if self.plan.filesystem_requested {
+            sandbox
+                .backend
+                .apply(&read_refs, &write_refs, &denied_refs)?;
+        }
+        // Non-Linux backends lower multiple portable guarantees through one
+        // native entry point, independent of Linux's filesystem selection.
+        #[cfg(not(target_os = "linux"))]
         sandbox
             .backend
             .apply(&read_refs, &write_refs, &denied_refs)?;
@@ -2082,8 +2091,8 @@ impl PreparedSandbox {
     }
 
     /// Deterministic test-only entry with a caller-supplied backend and a
-    /// counting seccomp stub. Proves one prepared request produces exactly
-    /// one filesystem backend entry plus at most one seccomp install,
+    /// counting seccomp stub. Proves one prepared request produces the
+    /// selected filesystem backend entry plus at most one seccomp install,
     /// without touching irreversible host mechanisms.
     #[cfg(test)]
     pub(crate) fn enter_with_test_backend(
@@ -2094,8 +2103,8 @@ impl PreparedSandbox {
     ) -> Result<EnteredSandbox, SandboxError> {
         // Injected test path: the caller supplies a fake backend, so host
         // projection must not gate mechanics. The fake backend `apply` above
-        // is the filesystem entry (exactly once); the ledger below is the
-        // seccomp selection (at most once). The returned witness carries a
+        // is the selected filesystem entry (at most once); the ledger below
+        // is the seccomp selection (at most once). The returned witness carries a
         // fake receipt-backed report where every requested guarantee is
         // Enforced by the test fake — this evidences single-entry mechanics
         // only, never host enforcement.
@@ -2118,9 +2127,11 @@ impl PreparedSandbox {
             .map(|p| p.as_path())
             .collect();
         let sandbox = ProcessSandbox::with_backend(backend);
-        sandbox
-            .backend
-            .apply(&read_refs, &write_refs, &denied_refs)?;
+        if self.plan.filesystem_requested {
+            sandbox
+                .backend
+                .apply(&read_refs, &write_refs, &denied_refs)?;
+        }
         // Record the seccomp selection without installing host filters.
         let categories = (
             self.plan.network_seccomp_requested,
@@ -2321,23 +2332,21 @@ fn finalize_report_from_receipt(
                             }
                         }
                     }
-                    Guarantee::ExecDenied => {
+                    Guarantee::ExecDenied
                         if request.required.contains(&Guarantee::ExecDenied)
-                            || request.optional.contains(&Guarantee::ExecDenied)
-                        {
-                            if receipt.exec_installed {
-                                decision.status = GuaranteeStatus::Enforced;
-                                decision.mechanism = "seccomp-errno";
-                                decision.detail =
-                                    "exec-denial rules installed (execve/execveat EPERM, tsync)"
-                                        .to_string();
-                            } else {
-                                decision.status = GuaranteeStatus::Unsupported;
-                                decision.mechanism = "seccomp-errno";
-                                decision.detail =
-                                    "exec-denial requested but no successful install receipt"
-                                        .to_string();
-                            }
+                            || request.optional.contains(&Guarantee::ExecDenied) =>
+                    {
+                        decision.mechanism = "seccomp-errno";
+                        if receipt.exec_installed {
+                            decision.status = GuaranteeStatus::Enforced;
+                            decision.detail =
+                                "exec-denial rules installed (execve/execveat EPERM, tsync)"
+                                    .to_string();
+                        } else {
+                            decision.status = GuaranteeStatus::Unsupported;
+                            decision.detail =
+                                "exec-denial requested but no successful install receipt"
+                                    .to_string();
                         }
                     }
                     _ => {}
@@ -3238,7 +3247,7 @@ mod tests {
 
     // Phase 89: single-entry + mechanism-selection + receipt-backed reporting.
     struct CountingBackend {
-        calls: std::sync::Mutex<usize>,
+        calls: std::sync::Arc<std::sync::Mutex<usize>>,
         fail: bool,
     }
 
@@ -3290,7 +3299,7 @@ mod tests {
         assert!(plan.exec_seccomp_requested);
         let prepared = prepare_sandbox(req).expect("prepare");
         let backend = Box::new(CountingBackend {
-            calls: std::sync::Mutex::new(0),
+            calls: std::sync::Arc::new(std::sync::Mutex::new(0)),
             fail: false,
         });
         let ledger = std::sync::Mutex::new(Vec::new());
@@ -3315,7 +3324,7 @@ mod tests {
         let prepared = prepare_sandbox(req).expect("prepare");
         assert!(!prepared.mechanism_plan().seccomp_requested());
         let backend = Box::new(CountingBackend {
-            calls: std::sync::Mutex::new(0),
+            calls: std::sync::Arc::new(std::sync::Mutex::new(0)),
             fail: false,
         });
         let ledger = std::sync::Mutex::new(Vec::new());
@@ -3329,6 +3338,61 @@ mod tests {
     }
 
     #[test]
+    fn linux_mechanism_selection_controls_entry_exactly_once() {
+        use super::{jail_guarantee_request, prepare_sandbox, Guarantee, SandboxRequest};
+
+        let cases = [
+            (
+                SandboxRequest::new().optional(Guarantee::FilesystemReadAllowlist),
+                1,
+                None,
+            ),
+            (
+                SandboxRequest::new().optional(Guarantee::NetworkDenied),
+                0,
+                Some((true, false, false)),
+            ),
+            (
+                SandboxRequest::new().optional(Guarantee::ChildCreationDenied),
+                0,
+                Some((false, true, false)),
+            ),
+            (
+                SandboxRequest::new().optional(Guarantee::ExecDenied),
+                0,
+                Some((false, false, true)),
+            ),
+            (
+                SandboxRequest::new()
+                    .optional(Guarantee::NetworkDenied)
+                    .optional(Guarantee::ExecDenied),
+                0,
+                Some((true, false, true)),
+            ),
+            (jail_guarantee_request(), 1, Some((true, true, true))),
+        ];
+
+        for (request, expected_backend_calls, expected_seccomp) in cases {
+            let prepared = prepare_sandbox(request).expect("prepare test request");
+            let calls = std::sync::Arc::new(std::sync::Mutex::new(0));
+            let backend = Box::new(CountingBackend {
+                calls: calls.clone(),
+                fail: false,
+            });
+            let seccomp = std::sync::Mutex::new(Vec::new());
+            let _witness = prepared
+                .enter_with_test_backend(backend, &seccomp, false)
+                .expect("injected entry succeeds");
+            assert_eq!(*calls.lock().unwrap(), expected_backend_calls);
+            let selected = seccomp.lock().unwrap();
+            assert_eq!(selected.len(), usize::from(expected_seccomp.is_some()));
+            if let Some(categories) = expected_seccomp {
+                assert_eq!(selected.as_slice(), &[categories]);
+            }
+        }
+    }
+
+    #[test]
     fn injected_seccomp_failure_fails_closed_with_no_witness() {
         use super::{prepare_sandbox, Guarantee};
         let req = super::SandboxRequest::new()
@@ -3336,7 +3400,7 @@ mod tests {
             .require(Guarantee::NetworkDenied);
         let prepared = prepare_sandbox(req).expect("prepare");
         let backend = Box::new(CountingBackend {
-            calls: std::sync::Mutex::new(0),
+            calls: std::sync::Arc::new(std::sync::Mutex::new(0)),
             fail: false,
         });
         let ledger = std::sync::Mutex::new(Vec::new());
@@ -3355,7 +3419,7 @@ mod tests {
         let req = super::SandboxRequest::new().require(Guarantee::FilesystemReadAllowlist);
         let prepared = prepare_sandbox(req).expect("prepare");
         let backend = Box::new(CountingBackend {
-            calls: std::sync::Mutex::new(0),
+            calls: std::sync::Arc::new(std::sync::Mutex::new(0)),
             fail: true,
         });
         let ledger = std::sync::Mutex::new(Vec::new());

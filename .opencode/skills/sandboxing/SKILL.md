@@ -173,6 +173,12 @@ for the jail's no-network/no-child/no-exec needs.
   / `NetworkUdpRestricted` alone are unsupported on Linux. Thread creation
   keeps working (proven). Denied set is hardcoded. Final reports are
   receipt-backed, never compile-probe claims.
+- Phase 94 correction: on Linux the internal mechanism plan controls entry.
+  Seccomp-only requests skip Landlock; filesystem-only requests do not install
+  seccomp; the combined jail request enters each selected mechanism once.
+  Legacy `ProcessSandbox::with_paths` probes qualify filesystem semantics
+  only. Native seccomp probes use `prepare_sandbox(request)?.enter()` and
+  assert the contracted errno. Unsupported hosts are unqualified, not proof.
 - Portable callers use the guarantee contract (`SandboxRequest` →
   `prepare_sandbox` → `enter` → `EnteredSandbox`); the jail requirement is
   `jail_guarantee_request()` (ambient-FS deny, read allowlist, inherited IPC,

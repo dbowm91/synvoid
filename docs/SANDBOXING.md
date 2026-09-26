@@ -1,4 +1,4 @@
-# Sandboxing Guide (Phases 46, 81–84 corrective truthfulness; Phase 89 entry/policy semantics corrective)
+# Sandboxing Guide (Phases 46, 81–84 corrective truthfulness; Phases 89 and 94 entry semantics)
 
 SynVoid uses OS-level sandboxing to limit the damage potential of a compromised process. The sandbox restricts what resources (files, network, process creation) a compromised worker/jail process can access.
 
@@ -69,6 +69,15 @@ represent deny under an allowed ancestor).
 A categorical seccomp layer (`seccompiler`, pure Rust, no system lib) is
 selected per guarantee, never installed unconditionally with Landlock
 (Phase 89 Finding B):
+
+The Linux `MechanismPlan` is authoritative at entry (Phase 94): the
+guarantee-driven path enters Landlock only when filesystem/ambient-resource
+guarantees select it, and installs one combined seccomp filter only when
+network, child-creation, or exec denial is selected. A seccomp-only request
+does not enter Landlock; filesystem-only requests do not install seccomp.
+Final claims require successful mechanism entry. The legacy
+`ProcessSandbox::with_paths` adapter remains filesystem-only and its tests do
+not qualify seccomp behavior.
 `NetworkDenied` → `socket`/`socketpair`/`connect` denial;
 `ChildCreationDenied` → non-thread `clone` (+`fork`/`vfork` on x86_64) +
 `clone3` (ENOSYS for transparent glibc fallback); `ExecDenied` →

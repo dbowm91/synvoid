@@ -66,6 +66,11 @@ even when inert (`enabled = false`) — Phase 41 fail-closed config.
   read-only `verify_live()`; stats are `null` (never fabricated zeros);
   backend inventory is `probe_backend_inventory()` (compiled/usable/reason);
   the UI models filtering with re-fetch after mutation.
+- **Lifecycle commits (Phase 92)**: desired state changes only after a
+  successful verified terminal state. Disabled config replacement succeeds
+  only on verified `Absent` and returns no apply receipt; disabled readback
+  absence is healthy. An already verified enable preserves its generation and
+  receipt; mismatched state requires reconciliation.
 - **No `--all-features`**: per audit, `--all-features` is not a deployment
   profile (eBPF resolution conflicts); test backends via their explicit feature.
 - **XDP vs userspace**: for SYN-level dropping performance notes (XDP ~50-100ns

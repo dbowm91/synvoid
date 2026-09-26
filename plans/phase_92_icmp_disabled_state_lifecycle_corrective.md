@@ -340,7 +340,8 @@ verified disabled absence persists the DTO without presenting a historical
 install receipt as the mutation result. Admin route execution is included in
 the pending full repository verification. Phase 88 remains RETAIN.
 
-Implementation SHA: recorded by the Phase 92 commit. Phase 93 is executable
+Implementation SHA: `94d50efacb4146cfeafc608ac37d3c357c1247ee`.
+Phase 93 is executable
 but terminally **BLOCKED** on this host: it is macOS and lacks Linux network
 namespaces, `ip`, `nft`, and required privileges. See
 `architecture/icmp_linux_nftables_native_qualification.md`.

@@ -25,6 +25,13 @@
 
 This document is the single source of truth for what SynVoid CI must verify, at what frequency, and with what commands. It replaces the four-lane system as the authoritative verification specification.
 
+The existing CI workflow also exposes a separate opt-in
+`workflow_dispatch` input, `sandbox_native_qualification`, for Phase 94's
+Linux Landlock/seccomp and real jail proof. It runs only when explicitly
+selected and is not part of the routine `cargo xtask verify` contract or its
+time budget. The job fails if the Linux probes report required native
+mechanisms as unsupported.
+
 ## 1. Routine Verification Contract
 
 The routine contract runs on every pull request. It is expressed as a single command:

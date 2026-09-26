@@ -1,6 +1,6 @@
 # Phase 94 Plan: Process Sandbox Phase 89 Qualification Corrective
 
-Status: planned (2026-09-26).
+Status: implementation complete; exact-SHA hosted and Linux native qualification pending (2026-09-26).
 
 Registered in: `plans/roadmap.md`.
 
@@ -353,6 +353,29 @@ After all corrections are committed:
 5. record the run id and SHA in this plan and the closeout addendum;
 6. only then mark Phase 94 closed and restore the roadmap statement that no
    process-sandbox corrective remains executable.
+
+Implementation adds an opt-in `sandbox_native_qualification` input to the
+existing CI workflow's `workflow_dispatch` event. It runs the native Linux
+platform suite, rejects explicit unsupported Landlock/seccomp output, and
+executes the jail workload and isolation suites. Routine CI remains the
+frozen `cargo xtask verify` contract. Dispatch it against the proof-bearing
+SHA with `gh workflow run ci.yml --ref <sha>
+-f sandbox_native_qualification=true`; this is native evidence only when the
+job passes without an unsupported disposition.
+
+## Implementation verification record
+
+Local macOS results: `cargo xtask verify` **PASS** (10/10); `cargo audit`
+**PASS** (six repository-approved unmaintained-advisory warnings);
+`cargo test -p synvoid-platform --profile ci` **PASS** (88 tests);
+`cargo test -p synvoid-icmp-filter --profile ci` **PASS** (98 tests);
+`cargo test -p synvoid-jail-runtime --profile ci` **PASS** (7 tests);
+`cargo test --test jail_isolation_guard --profile ci` **PASS** (30 tests);
+targeted all-target Clippy for both changed crates **PASS**; and Linux
+`cargo check -p synvoid-platform --target x86_64-unknown-linux-gnu --profile
+ci --tests` **PASS** (cross-compilation only). The macOS host cannot provide
+native Landlock/seccomp evidence. The exact hosted and opt-in Linux runner
+results remain required before terminal closure.
 
 Local green verification is necessary but not sufficient.
 

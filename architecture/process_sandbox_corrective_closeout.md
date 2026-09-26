@@ -307,3 +307,24 @@ desired-but-unqualified network/child/exec), §4 jail minimum boundary
 sentence, and any reading of §2/§5 that implies double entry or
 Landlock-always-seccomp are superseded by this addendum. The DEFER verdict,
 triggers (§8), residuals (§9), and campaign constraints are unchanged.
+
+## 12. Phase 94 qualification corrective (implementation; hosted proof pending)
+
+Phase 89's terminal proof claim is superseded by
+`plans/phase_94_process_sandbox_qualification_corrective.md`. The Linux
+guarantee-driven `PreparedSandbox::enter()` now honors
+`MechanismPlan::filesystem_requested`: seccomp-only requests skip Landlock,
+filesystem-only requests do not select seccomp, and combined jail requests
+enter both selected mechanisms once. Non-Linux backend entry remains governed
+by its platform lowering rather than this Linux-specific bit. The test seam
+counts backend entry and seccomp selection; Linux native seccomp child probes
+now enter via `prepare_sandbox(...).enter()` and check EPERM for socket, exec,
+and process creation while retaining the witness. Legacy Landlock probes
+remain filesystem-only, including a raw socket allowance check.
+
+The Phase 94 Clippy correction is structural. Exact implementation SHA,
+local full verification, Landlock-capable native results, and hosted CI plus
+dependency-security run ID are recorded by the Phase 94 plan after the exact
+commit's hosted run completes. Until then, this section is an implementation
+update and not terminal qualification evidence. Phases 81–84 remain
+historically closed; extraction remains **DEFER**.

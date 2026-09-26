@@ -127,9 +127,11 @@ fn child_main() -> i32 {
             }
         }
         "seccomp-socket-denied" => {
-            if apply_allowlist(&allowed, &write_dir).is_err() {
-                return 1;
-            }
+            let _entered =
+                match enter_guarantee(synvoid_platform::sandbox::Guarantee::NetworkDenied) {
+                    Ok(entered) => entered,
+                    Err(_) => return 1,
+                };
             // New network authority must be denied with EPERM (seccomp).
             let fd = unsafe { libc::socket(libc::AF_INET, libc::SOCK_STREAM, 0) };
             if fd >= 0 {
@@ -143,11 +145,23 @@ fn child_main() -> i32 {
                 2 // wrong errno (still denied, but not the contract)
             }
         }
+        "legacy-socket-allowed" => {
+            if apply_allowlist(&allowed, &write_dir).is_err() {
+                return 1;
+            }
+            let fd = unsafe { libc::socket(libc::AF_INET, libc::SOCK_STREAM, 0) };
+            if fd >= 0 {
+                unsafe { libc::close(fd) };
+                0
+            } else {
+                2
+            }
+        }
         "seccomp-exec-denied" => {
-            // exec of a new program must fail: seccomp denies the syscall
-            // (EPERM) AND Landlock grants no EXECUTE right on any mapped
-            // hierarchy, so either layer refuses. Probe via a raw syscall
-            // to isolate exec-denial from clone-denial (a Command::spawn
+            // exec of a new program must fail: the exec-only guarantee
+            // request installs the seccomp category and no filesystem
+            // mechanism. Probe via a raw syscall to isolate exec-denial
+            // from clone-denial (a Command::spawn
             // would conflate the two). Exit-code trick: on success the
             // image is REPLACED and we never return, so the replacement
             // must exit nonzero (/bin/false → 1) while denial returns to
@@ -155,9 +169,10 @@ fn child_main() -> i32 {
             if !std::path::Path::new("/bin/false").exists() {
                 return 1;
             }
-            if apply_allowlist(&allowed, &write_dir).is_err() {
-                return 1;
-            }
+            let _entered = match enter_guarantee(synvoid_platform::sandbox::Guarantee::ExecDenied) {
+                Ok(entered) => entered,
+                Err(_) => return 1,
+            };
             let r = unsafe {
                 libc::syscall(
                     libc::SYS_execve,
@@ -168,14 +183,38 @@ fn child_main() -> i32 {
             };
             if r == 0 {
                 2 // unreachable if exec succeeded (image replaced)
+            } else if unsafe { *libc::__errno_location() } == libc::EPERM {
+                0 // seccomp supplied the contracted errno
             } else {
-                0 // enforced (syscall refused, still in the probe)
+                2
+            }
+        }
+        "seccomp-child-denied" => {
+            let _entered =
+                match enter_guarantee(synvoid_platform::sandbox::Guarantee::ChildCreationDenied) {
+                    Ok(entered) => entered,
+                    Err(_) => return 1,
+                };
+            let pid = unsafe { libc::fork() };
+            if pid == 0 {
+                unsafe { libc::_exit(0) }
+            }
+            if pid > 0 {
+                unsafe { libc::waitpid(pid, std::ptr::null_mut(), 0) };
+                return 2;
+            }
+            if unsafe { *libc::__errno_location() } == libc::EPERM {
+                0
+            } else {
+                2
             }
         }
         "seccomp-thread-clone-works" => {
-            if apply_allowlist(&allowed, &write_dir).is_err() {
-                return 1;
-            }
+            let _entered =
+                match enter_guarantee(synvoid_platform::sandbox::Guarantee::ChildCreationDenied) {
+                    Ok(entered) => entered,
+                    Err(_) => return 1,
+                };
             // Thread creation (CLONE_THREAD) must KEEP working under the
             // filter — the Wasmtime/YARA runtimes create worker threads
             // after entry. A joinable thread proves the flag-conditional
@@ -188,6 +227,15 @@ fn child_main() -> i32 {
         }
         _ => 1,
     }
+}
+
+fn enter_guarantee(
+    guarantee: synvoid_platform::sandbox::Guarantee,
+) -> Result<synvoid_platform::sandbox::EnteredSandbox, String> {
+    use synvoid_platform::sandbox::{prepare_sandbox, SandboxRequest};
+    prepare_sandbox(SandboxRequest::new().require(guarantee))
+        .and_then(|prepared| prepared.enter())
+        .map_err(|error| error.to_string())
 }
 
 fn apply_allowlist(allowed: &std::path::Path, write: &std::path::Path) -> Result<(), String> {
@@ -215,6 +263,17 @@ fn requires_landlock() -> bool {
         return false;
     }
     true
+}
+
+fn requires_seccomp() -> bool {
+    use synvoid_platform::sandbox::{prepare_sandbox, Guarantee, SandboxRequest};
+    match prepare_sandbox(SandboxRequest::new().require(Guarantee::NetworkDenied)) {
+        Ok(_) => true,
+        Err(error) => {
+            eprintln!("UNQUALIFIED: seccomp unavailable: {error}");
+            false
+        }
+    }
 }
 
 fn run_probe_status() -> i32 {
@@ -332,7 +391,7 @@ fn linux_seccomp_denies_new_sockets_with_contracted_errno() {
     if std::env::var(PROBE_ENV).is_ok() {
         return;
     }
-    if !requires_landlock() {
+    if !requires_seccomp() {
         return;
     }
     let (_tmp, allowed, denied, write) = fixture_dirs();
@@ -343,11 +402,23 @@ fn linux_seccomp_denies_new_sockets_with_contracted_errno() {
 }
 
 #[test]
+fn legacy_filesystem_entry_does_not_install_jail_network_filter() {
+    if std::env::var(PROBE_ENV).is_ok() || !requires_landlock() {
+        return;
+    }
+    let (_tmp, allowed, denied, write) = fixture_dirs();
+    assert_eq!(
+        run_probe("legacy-socket-allowed", &allowed, &denied, &write),
+        0
+    );
+}
+
+#[test]
 fn linux_seccomp_denies_exec() {
     if std::env::var(PROBE_ENV).is_ok() {
         return;
     }
-    if !requires_landlock() {
+    if !requires_seccomp() {
         return;
     }
     let (_tmp, allowed, denied, write) = fixture_dirs();
@@ -358,11 +429,23 @@ fn linux_seccomp_denies_exec() {
 }
 
 #[test]
+fn linux_seccomp_denies_process_creation_with_contracted_errno() {
+    if std::env::var(PROBE_ENV).is_ok() || !requires_seccomp() {
+        return;
+    }
+    let (_tmp, allowed, denied, write) = fixture_dirs();
+    assert_eq!(
+        run_probe("seccomp-child-denied", &allowed, &denied, &write),
+        0
+    );
+}
+
+#[test]
 fn linux_seccomp_preserves_thread_creation() {
     if std::env::var(PROBE_ENV).is_ok() {
         return;
     }
-    if !requires_landlock() {
+    if !requires_seccomp() {
         return;
     }
     let (_tmp, allowed, denied, write) = fixture_dirs();
