@@ -186,7 +186,7 @@ async fn disabled_icmp_config_route_persists_only_verified_absence() {
         ),
     );
     put.extensions_mut().insert(axum::extract::ConnectInfo(
-        "127.0.0.1:4311".parse().unwrap(),
+        "127.0.0.1:4311".parse::<std::net::SocketAddr>().unwrap(),
     ));
     let put_response = router.clone().oneshot(put).await.unwrap();
     assert_eq!(put_response.status(), StatusCode::OK);
