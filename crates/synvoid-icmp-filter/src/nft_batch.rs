@@ -7,8 +7,8 @@
 //! Batch grammar (all imperative, one command per line):
 //!
 //! ```text
+//! destroy table inet <table>
 //! add table inet <table>
-//! flush table inet <table>
 //! add chain inet <table> input_icmp { type filter hook input priority -150; policy accept; }
 //! add rule inet <table> input_icmp <match> <verdict>
 //! ...
@@ -17,6 +17,16 @@
 //! ...
 //! add chain inet <table> gen_<16hex>
 //! ```
+//!
+//! Rule order inside each hook chain is load-bearing:
+//!
+//! 1. exempt-source ACCEPTs (bypass everything, including the global cap);
+//! 2. global rate-limit DROP-over-limit (when enabled; must precede per-type
+//!    ACCEPTs or allowed types bypass the cap — native `rate_limit_global`
+//!    proved this in Phase 95 run `36333721321`);
+//! 3. per-type ALLOW/BLOCK rules (double-protocol form
+//!    `ip protocol icmp icmp type …`, likewise `ip6 nexthdr icmpv6 …`);
+//! 4. plain base DROP (no embedded limit; the limit already ran early).
 //!
 //! Why this shape:
 //!
@@ -27,14 +37,14 @@
 //!   brace and cascading errors for every inner `chain`/`type`/`policy`/rule
 //!   line (Phase 93 run `36279326809`, 0/8). Every line here is a complete
 //!   imperative command, which is what stdin batch mode parses.
-//! - `add table` is idempotent (`create` would fail when the table already
-//!   exists), so the same batch serves first install and replacement.
-//! - `flush table` inside the same transaction clears stale chains/rules
-//!   from the previous generation (including the previous `gen_*` marker)
-//!   without touching unrelated tables. No `flush ruleset`, no
-//!   `delete table`, no host-scoped flush.
+//! - `destroy table` is idempotent (no error when the table is absent, unlike
+//!   `delete`), so the same batch serves first install and replacement, and
+//!   unlike `flush table` (which leaves chains behind and caused stale
+//!   `gen_*` markers plus rule-append instead of replace in run
+//!   `36333721321`) it truly clears the previous generation.
 //! - A single `nft -f` load is atomic: on failure the previous owned table
-//!   survives, which is what the rollback/failure-path case requires.
+//!   survives, which is what the rollback/failure-path case requires. No
+//!   `flush ruleset`, no host-scoped flush, no unrelated-table mutation.
 //! - Disable never uses this batch; it runs scoped
 //!   `delete table inet <owned-table>` only.
 
@@ -96,21 +106,38 @@ fn icmp_type_match_body(rule: &IcmpTypeRule, interface_filter: &str, is_v6: bool
     format!("{interface_filter}{ip_proto} {proto} {type_match}")
 }
 
-fn base_match_body(config: &IcmpFilterConfig, interface_filter: &str, is_v6: bool) -> String {
+fn base_match_body(interface_filter: &str, is_v6: bool) -> String {
+    // Plain terminal drop. The global rate cap (when enabled) is emitted as
+    // separate early rules via `limit_match_body` so it precedes per-type
+    // ACCEPTs; embedding the limit here would leave allowed types uncapped.
     let (proto, ip_proto) = if is_v6 {
         ("icmpv6", "ip6 nexthdr")
     } else {
         ("icmp", "ip protocol")
     };
-    if let Some(ref rate_limit) = config.rate_limit {
-        if rate_limit.enabled {
-            return format!(
-                "{interface_filter}{ip_proto} {proto} limit rate over {}/second burst {} packets drop",
-                rate_limit.packets_per_second, rate_limit.burst
-            );
-        }
-    }
     format!("{interface_filter}{ip_proto} {proto} drop")
+}
+
+/// Global rate-cap rule bodies (one per family) when the policy enables the
+/// limiter. Emitted after exempt ACCEPTs and before per-type rules so the
+/// cap is truly global for non-exempt traffic.
+fn limit_match_bodies(config: &IcmpFilterConfig, interface_filter: &str) -> Vec<String> {
+    let Some(ref rate_limit) = config.rate_limit else {
+        return Vec::new();
+    };
+    if !rate_limit.enabled {
+        return Vec::new();
+    }
+    vec![
+        format!(
+            "{interface_filter}ip protocol icmp limit rate over {}/second burst {} packets drop",
+            rate_limit.packets_per_second, rate_limit.burst
+        ),
+        format!(
+            "{interface_filter}ip6 nexthdr icmpv6 limit rate over {}/second burst {} packets drop",
+            rate_limit.packets_per_second, rate_limit.burst
+        ),
+    ]
 }
 
 /// Render the single atomic replacement batch for install, replacement,
@@ -118,9 +145,12 @@ fn base_match_body(config: &IcmpFilterConfig, interface_filter: &str, is_v6: boo
 pub(crate) fn render_batch(config: &IcmpFilterConfig, fingerprint: u64) -> String {
     let table = &config.table_name;
     let mut lines = Vec::new();
-    // Idempotent create, then owned-scope clear, both inside one transaction.
+    // Idempotent destroy (no-op when absent) then create, both inside one
+    // atomic transaction. `flush table` is insufficient: it leaves chains
+    // (including the previous `gen_*` marker) behind, turning replacement
+    // into rule-append with a stale generation still present.
+    lines.push(format!("destroy table inet {table}"));
     lines.push(format!("add table inet {table}"));
-    lines.push(format!("flush table inet {table}"));
 
     let (in_if, out_if) = interface_filters(config);
 
@@ -135,6 +165,9 @@ pub(crate) fn render_batch(config: &IcmpFilterConfig, fingerprint: u64) -> Strin
             };
             lines.push(format!("add rule inet {table} input_icmp {body}"));
         }
+        for body in limit_match_bodies(config, &in_if) {
+            lines.push(format!("add rule inet {table} input_icmp {body}"));
+        }
         for rule in &config.icmp_type_rules {
             let body = icmp_type_match_body(rule, &in_if, false);
             lines.push(format!("add rule inet {table} input_icmp {body}"));
@@ -144,7 +177,7 @@ pub(crate) fn render_batch(config: &IcmpFilterConfig, fingerprint: u64) -> Strin
             lines.push(format!("add rule inet {table} input_icmp {body}"));
         }
         for is_v6 in [false, true] {
-            let body = base_match_body(config, &in_if, is_v6);
+            let body = base_match_body(&in_if, is_v6);
             lines.push(format!("add rule inet {table} input_icmp {body}"));
         }
     }
@@ -160,6 +193,9 @@ pub(crate) fn render_batch(config: &IcmpFilterConfig, fingerprint: u64) -> Strin
             };
             lines.push(format!("add rule inet {table} output_icmp {body}"));
         }
+        for body in limit_match_bodies(config, &out_if) {
+            lines.push(format!("add rule inet {table} output_icmp {body}"));
+        }
         for rule in &config.icmp_type_rules {
             let body = icmp_type_match_body(rule, &out_if, false);
             lines.push(format!("add rule inet {table} output_icmp {body}"));
@@ -169,7 +205,7 @@ pub(crate) fn render_batch(config: &IcmpFilterConfig, fingerprint: u64) -> Strin
             lines.push(format!("add rule inet {table} output_icmp {body}"));
         }
         for is_v6 in [false, true] {
-            let body = base_match_body(config, &out_if, is_v6);
+            let body = base_match_body(&out_if, is_v6);
             lines.push(format!("add rule inet {table} output_icmp {body}"));
         }
     }
@@ -205,7 +241,7 @@ mod tests {
     }
 
     #[test]
-    fn batch_uses_add_flush_add_sequence() {
+    fn batch_uses_destroy_add_sequence() {
         let cfg = minimal_config();
         let batch = render_batch(&cfg, 0x0123_4567_89ab_cdef);
         let lines: Vec<&str> = batch.lines().collect();
@@ -213,8 +249,8 @@ mod tests {
             lines.len() >= 5,
             "batch must carry table+chains+rules+marker"
         );
-        assert_eq!(lines[0], "add table inet synvoid_q_abc123");
-        assert_eq!(lines[1], "flush table inet synvoid_q_abc123");
+        assert_eq!(lines[0], "destroy table inet synvoid_q_abc123");
+        assert_eq!(lines[1], "add table inet synvoid_q_abc123");
         assert!(
             lines[2]
                 .starts_with("add chain inet synvoid_q_abc123 input_icmp { type filter hook input"),
@@ -234,6 +270,12 @@ mod tests {
                 "add rule inet synvoid_q_abc123 input_icmp ip protocol icmp icmp type 8 drop"
             ),
             "type rule must be an add-rule command, got:\n{batch}"
+        );
+        // `flush table` leaves chains (and stale markers) behind; replacement
+        // must destroy so the new generation is exact, not appended.
+        assert!(
+            !batch.contains("flush table "),
+            "replacement must destroy, not flush, got:\n{batch}"
         );
     }
 
@@ -267,8 +309,8 @@ mod tests {
         // Every nft line is an imperative command.
         for line in batch.lines() {
             assert!(
-                line.starts_with("add table ")
-                    || line.starts_with("flush table ")
+                line.starts_with("destroy table ")
+                    || line.starts_with("add table ")
                     || line.starts_with("add chain ")
                     || line.starts_with("add rule "),
                 "every batch line must be imperative, got: {line}"
@@ -285,8 +327,8 @@ mod tests {
             "must never flush the whole ruleset"
         );
         assert!(
-            !batch.contains("delete table"),
-            "replacement batch must not delete tables"
+            !batch.contains("flush table "),
+            "must destroy, not flush, so stale chains cannot survive replacement"
         );
         assert!(
             !batch.contains("flush chain"),
@@ -329,7 +371,8 @@ mod tests {
                 "synvoid_q_abc123".to_string()
             ]
         );
-        // The replacement batch never deletes; disable never loads the batch.
+        // The replacement batch uses idempotent `destroy` (not `delete`, which
+        // fails when absent); disable never loads the batch.
         let batch = render_batch(&minimal_config(), 7);
         assert!(!batch.contains("delete "), "replacement must not delete");
     }
@@ -384,6 +427,23 @@ mod tests {
         assert!(
             batch.contains("add rule inet synvoid_q_abc123 output_icmp ip daddr 10.201.0.2 accept"),
             "output exempt must use daddr, got:\n{batch}"
+        );
+        // Global cap must precede per-type ACCEPTs or allowed types bypass
+        // it (native `rate_limit_global` proved burst_loss=false otherwise).
+        let limit_pos = batch
+            .find("limit rate over 10/second burst 20 packets drop")
+            .expect("limit rule must be present");
+        let allow_pos = batch
+            .find("icmp type 0 accept")
+            .expect("allow rule must be present");
+        assert!(
+            limit_pos < allow_pos,
+            "limit must precede type allow, got:\n{batch}"
+        );
+        // Base stays a plain terminal drop; the cap already ran early.
+        assert!(
+            batch.contains("add rule inet synvoid_q_abc123 input_icmp ip protocol icmp drop"),
+            "base must remain a plain drop, got:\n{batch}"
         );
     }
 
