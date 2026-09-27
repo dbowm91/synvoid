@@ -133,12 +133,15 @@ These are handled by
 The findings supersede only the over-broad Phase 90 lifecycle-closeout claim;
 the operator API/UI and Phase 91 harness work remain landed.
 
-## Corrective successor update (2026-09-26)
+## Corrective successor update (2026-09-27)
 
 The lifecycle findings are corrected and verified by Phase 92
 (`plans/phase_92_icmp_disabled_state_lifecycle_corrective.md`). Phase 93's
-manual Linux native attempt failed on nftables batch syntax; its terminal
-disposition is recorded in the Phase 93 plan and
-`architecture/icmp_linux_nftables_native_qualification.md`. Phase 95 is
-registered to correct that backend and repeat native qualification. These
+manual Linux native attempt failed on nftables batch syntax, but Phase 95
+corrected that backend and qualified the full two-run matrix on
+proof-bearing SHA `39bfced25d51267ee5837eaecedae7da9af163d0` (hosted run
+`36335520434`, 8/8 per pass); Phase 93 is superseded QUALIFIED and Linux
+nftables is native-supported. Terminal dispositions live in the Phase
+93/95 plans and
+`architecture/icmp_linux_nftables_native_qualification.md`. These
 successors do not change the Phase 88 RETAIN decision.

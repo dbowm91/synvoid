@@ -203,6 +203,9 @@ no tier, no extraction verdict, and no support claim.
   empty; re-run `--cleanup` if not.
 - **Evidence feeds the trigger**: attach the artifact to a future focused
   qualification/re-evaluation plan. A skipped or refused run is "not
-  qualified", never proof. Phase 92 was registered to correct lifecycle
-  semantics before native qualification; Phase 93 remains blocked until a
-  suitable Linux host produces real evidence.
+  qualified", never proof. Phase 92 corrected lifecycle semantics before
+  native qualification; Phase 93 is superseded QUALIFIED and Phase 95 closed
+  QUALIFIED with the exact-SHA two-run proof (`39bfced2`, run `36335520434`,
+  8/8 per pass) recorded in
+  `architecture/icmp_linux_nftables_native_qualification.md`. Linux nftables
+  is native-supported; other lanes are unchanged.

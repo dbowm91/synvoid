@@ -1,6 +1,7 @@
 # ICMP Linux Native Qualification Gate Roadmap (Phases 92–93)
 
-Status: Phase 92 **CORRECTED**; Phase 93 **FAILED — BACKEND DEFECT FOUND** on 2026-09-26. Phase 95 is registered for correction and requalification.
+Status: Phase 92 **CORRECTED**; Phase 93 **QUALIFIED (superseded by Phase
+95)** on 2026-09-27. Phase 95 is closed QUALIFIED.
 
 Registered in: `plans/roadmap.md`.
 
@@ -126,3 +127,13 @@ Phase 95 is the next ICMP gate action. It corrects the nftables replacement
 batch and then repeats this roadmap's exact two-run criteria. Until it closes,
 Phase 93 remains **FAILED / UNQUALIFIED**, and Linux nftables retains its
 existing evidence tier.
+
+## Gate closure (2026-09-27)
+
+Phase 95 closed **QUALIFIED** on proof-bearing SHA
+`39bfced25d51267ee5837eaecedae7da9af163d0` (hosted run `36335520434`,
+passes `36335520434-a`/`36335520434-b`, 8/8 per pass, verified cleanup,
+both JSON artifacts). Phase 93 is superseded as **QUALIFIED**; Linux
+nftables is native-supported. The gate roadmap is terminally closed: no
+further gate action remains. Phase 88 stays **RETAIN**; no extraction is
+authorized by this closure.

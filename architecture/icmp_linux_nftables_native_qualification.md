@@ -1,10 +1,14 @@
 # ICMP Linux nftables Native Qualification
 
-Status: **FAILED / UNQUALIFIED** (2026-09-26). The manual native matrix ran
-on a suitable privileged Linux VM and found an nftables backend batch syntax
-defect; no support-tier upgrade is supported by this evidence.
+Status: **QUALIFIED** (2026-09-27) via Phase 95 corrective proof. Linux
+nftables is native-supported; see the Phase 95 proof below. eBPF, PF, WFP,
+Windows Firewall and other platform tiers are unchanged; Phase 88 remains
+**RETAIN** with no extraction authorized.
 
-Plan: `plans/phase_93_icmp_linux_nftables_native_qualification.md`.
+Plan: `plans/phase_93_icmp_linux_nftables_native_qualification.md`
+(superseded QUALIFIED).
+Corrective: `plans/phase_95_icmp_nftables_batch_corrective.md` (closed
+QUALIFIED).
 Gate roadmap: `plans/icmp_linux_native_qualification_gate_roadmap.md`.
 Phase 92 lifecycle prerequisite: **CORRECTED**.
 
@@ -80,3 +84,40 @@ is the current failure evidence; repeat the full two-run matrix after
 Disposition: **FAILED / UNQUALIFIED**. Linux nftables retains its existing
 evidence tier. eBPF, PF, WFP, Windows Firewall and other platform tiers are
 unchanged; Phase 88 remains **RETAIN**.
+
+## Phase 95 qualification proof (2026-09-27)
+
+Phase 95 corrected the backend batch (imperative destroy+add atomic batch,
+double-protocol type matches, limit-before-allow ordering, owned delete
+argv, echo-reply pairing) plus one harness-only burst-reliability fix
+(flood instead of interval burst, strictly stronger), then re-ran the exact
+Phase 93 matrix twice on the proof-bearing SHA:
+
+- Proof SHA: `39bfced25d51267ee5837eaecedae7da9af163d0`.
+- Hosted run: `36335520434` (workflow_dispatch on `main`).
+- Host: disposable GitHub-hosted Linux VM, Ubuntu 24.04, x86_64, kernel
+  `6.17.0-1022-azure`, Rust `1.98.1`, nftables `1.0.9`, iproute2 `6.1.0`,
+  as root with `euid=0` and `cap_net_admin=true`. Preflight and the
+  zero-mutation dry-run passed.
+- Pass A (`36335520434-a`, namespaces `synvoid-q-a-90887e`/`synvoid-q-b-90887e`):
+  8/8 — install/readback (`89e51f4f6341e417` gen 1 verified), v4/v6
+  type-code packet behavior, exemptions, rate-limit
+  (below/burst/recovery), replacement (`89e51f4f6341e417`→`108765c43394382f`
+  gen 1→2, stale absent), drift (`Drifted`, owned chain missing),
+  disable (verified Absent, peer restored, owned gone), rollback
+  (rejected generation, previous effective). Isolation proven
+  (host `net:[4026531833]` vs target `net:[4026532313]`). Cleanup
+  verified, no harness namespaces remain.
+- Pass B (`36335520434-b`, namespaces `synvoid-q-a-90887f`/`synvoid-q-b-90887f`):
+  8/8 with identical dispositions, fingerprints, and generations
+  (deterministic). Cleanup verified again.
+- Artifacts: both bounded JSON evidences uploaded
+  (`target/icmp-qualify-36335520434-a.json`,
+  `target/icmp-qualify-36335520434-b.json`).
+- Routine verification at the proof SHA: local `cargo xtask verify`
+  10/10 plus hosted `ci` + `dependency-security` success on the same run.
+
+Disposition: **QUALIFIED**. Linux nftables is native-supported
+(`docs/PLATFORM_SUPPORT.md`, `architecture/icmp_filter.md`). eBPF, PF,
+WFP, Windows Firewall and other platform tiers are unchanged; Phase 88
+remains **RETAIN**.

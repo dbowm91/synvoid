@@ -88,7 +88,7 @@ Root `icmp-filter` forwards no backend sub-features; enable lanes per-crate expl
 
 | Lane | Platform | Crate feature | Tier | Notes |
 |------|----------|---------------|------|-------|
-| nftables | Linux | `icmp-filter` | experimental | Baseline; transactional batch; global rate limit |
+| nftables | Linux | `icmp-filter` | supported | Baseline; atomic destroy+add batch; global rate limit; native-qualified 8/8 x2 runs on Ubuntu 24.04 nftables 1.0.9 (Phase 95 proof `36335520434` on `39bfced2`) |
 | eBPF (XDP/TC) | Linux | `icmp-ebpf` | experimental | Needs BTF + `CAP_BPF`/root (load) + `CAP_NET_ADMIN`/root (attach) |
 | PF | macOS | `icmp-pf` | experimental | Staged anchor reload, not transactional |
 | PF | FreeBSD / OpenBSD | `icmp-pf` | experimental | Qualified separately per variant |

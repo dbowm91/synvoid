@@ -1,6 +1,10 @@
 # Phase 93 Plan: ICMP Linux nftables Native Qualification
 
-Status: **FAILED — BACKEND DEFECT FOUND** (2026-09-26); the suitable Linux host passed preflight, but all eight native cases failed in nftables ruleset parsing. Linux nftables remains unqualified; Phase 95 is registered for the focused corrective.
+Status: **QUALIFIED — SUPERSEDED BY PHASE 95** (2026-09-27). The original
+native attempt failed on backend batch parsing (0/8); the focused Phase 95
+corrective re-ran the full two-pass matrix on the exact proof-bearing SHA
+and passed 8/8 per pass. Linux nftables is native-qualified; Phase 88
+remains RETAIN with no extraction authorized.
 
 Registered in: `plans/roadmap.md` and
 `plans/icmp_linux_native_qualification_gate_roadmap.md`.
@@ -332,3 +336,16 @@ Disposition: **FAILED**, not qualified. Linux nftables stays at its existing
 unqualified evidence tier; no platform support-tier upgrade, extraction, or
 publication is authorized. Phase 88 remains **RETAIN**. Focused follow-up:
 `plans/phase_95_icmp_nftables_batch_corrective.md`.
+
+## Phase 93 supersession (2026-09-27)
+
+Phase 95 closed **QUALIFIED** on proof-bearing SHA
+`39bfced25d51267ee5837eaecedae7da9af163d0` (hosted run `36335520434`,
+passes `36335520434-a`/`36335520434-b`, 8/8 cases per pass with packet
+behavior, replacement, drift, disable, rollback, and verified cleanup).
+Phase 93's terminal disposition is therefore superseded from **FAILED** to
+**QUALIFIED** without re-running Phase 93 itself: the Phase 95 proof ran
+this plan's exact matrix and repeatability criteria. The binding evidence
+is `architecture/icmp_linux_nftables_native_qualification.md`. Linux
+nftables is native-supported; eBPF/PF/WFP/Windows tiers are unchanged;
+Phase 88 stays **RETAIN** and no extraction is authorized.
