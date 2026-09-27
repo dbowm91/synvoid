@@ -103,12 +103,13 @@ impl NftablesFilter {
     }
 
     fn remove_ruleset(&self) -> Result<()> {
-        let table_name = &self.config.table_name;
-
+        // Owned-scope delete only; the argv is the tested single source of
+        // truth in `nft_batch::delete_table_argv`.
+        let argv = nft_batch::delete_table_argv(&self.config.table_name);
         let output = Command::new("nft")
-            .args(["delete", "table", "inet", table_name])
+            .args(&argv[1..])
             .output()
-            .map_err(|e| IcmpFilterError::Nftables(format!("Failed to delete table: {}", e)))?;
+            .map_err(|e| IcmpFilterError::Nftables(format!("Failed to delete table: {e}")))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);

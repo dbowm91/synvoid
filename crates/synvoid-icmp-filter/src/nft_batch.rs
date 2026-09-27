@@ -46,9 +46,13 @@ pub(crate) fn marker_chain(fingerprint: u64) -> String {
     format!("gen_{}", fingerprint_hex(fingerprint))
 }
 
-/// Scoped delete command used by the disable path (owned table only).
-pub(crate) fn delete_table_command(table: &str) -> String {
-    format!("delete table inet {table}")
+/// Scoped delete argv used by the disable path (owned table only).
+/// Single source of truth: `nftables::remove_ruleset` executes exactly this.
+pub(crate) fn delete_table_argv(table: &str) -> Vec<String> {
+    ["delete", "table", "inet", table]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
 }
 
 fn wants_input(config: &IcmpFilterConfig) -> bool {
@@ -77,6 +81,10 @@ fn icmp_type_match_body(rule: &IcmpTypeRule, interface_filter: &str, is_v6: bool
     let action = if rule.is_block() { "drop" } else { "accept" };
     let proto = if is_v6 { "icmpv6" } else { "icmp" };
     let ip_proto = if is_v6 { "ip6 nexthdr" } else { "ip protocol" };
+    // `ip protocol icmp` selects the L4 proto; the following `icmp type …`
+    // (and optional `icmp code …`) selects within the ICMP header. Both
+    // `icmp` tokens are required: `ip protocol icmp type 8` parses `type`
+    // as unexpected (native nft 1.0.9, Phase 95 run 36332367209).
     let type_match = if let Some(code) = rule.icmp_code {
         format!(
             "{} type {} {} code {} {}",
@@ -85,7 +93,7 @@ fn icmp_type_match_body(rule: &IcmpTypeRule, interface_filter: &str, is_v6: bool
     } else {
         format!("{} type {} {}", proto, rule.icmp_type, action)
     };
-    format!("{interface_filter}{ip_proto} {type_match}")
+    format!("{interface_filter}{ip_proto} {proto} {type_match}")
 }
 
 fn base_match_body(config: &IcmpFilterConfig, interface_filter: &str, is_v6: bool) -> String {
@@ -222,8 +230,9 @@ mod tests {
             "batch must carry the generation marker chain"
         );
         assert!(
-            batch
-                .contains("add rule inet synvoid_q_abc123 input_icmp ip protocol icmp type 8 drop"),
+            batch.contains(
+                "add rule inet synvoid_q_abc123 input_icmp ip protocol icmp icmp type 8 drop"
+            ),
             "type rule must be an add-rule command, got:\n{batch}"
         );
     }
@@ -310,8 +319,16 @@ mod tests {
 
     #[test]
     fn disable_is_owned_delete_only() {
-        let cmd = delete_table_command("synvoid_q_abc123");
-        assert_eq!(cmd, "delete table inet synvoid_q_abc123");
+        let argv = delete_table_argv("synvoid_q_abc123");
+        assert_eq!(
+            argv,
+            vec![
+                "delete".to_string(),
+                "table".to_string(),
+                "inet".to_string(),
+                "synvoid_q_abc123".to_string()
+            ]
+        );
         // The replacement batch never deletes; disable never loads the batch.
         let batch = render_batch(&minimal_config(), 7);
         assert!(!batch.contains("delete "), "replacement must not delete");
@@ -377,7 +394,7 @@ mod tests {
         let batch = render_batch(&cfg, 11);
         assert!(
             batch.contains(
-                "add rule inet synvoid_q_abc123 input_icmp ip6 nexthdr icmpv6 type 128 drop"
+                "add rule inet synvoid_q_abc123 input_icmp ip6 nexthdr icmpv6 icmpv6 type 128 drop"
             ),
             "v6 type rule must use ip6 nexthdr, got:\n{batch}"
         );
