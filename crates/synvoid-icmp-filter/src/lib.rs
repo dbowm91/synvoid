@@ -3,6 +3,7 @@ pub mod config;
 pub mod enforce;
 pub mod error;
 pub mod metrics;
+pub(crate) mod nft_batch;
 pub mod platform;
 pub mod policy;
 pub mod traits;

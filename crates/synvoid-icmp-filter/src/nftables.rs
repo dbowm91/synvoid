@@ -1,8 +1,9 @@
 use crate::{
     compat::adapt_config_to_policy,
-    config::{Direction, IcmpFilterConfig, IcmpTypeRule},
-    enforce::{fingerprint_hex, policy_fingerprint, EnforcementPlan, VerificationOutcome},
+    config::{Direction, IcmpFilterConfig},
+    enforce::{policy_fingerprint, EnforcementPlan, VerificationOutcome},
     error::{IcmpFilterError, Result},
+    nft_batch,
     traits::{FilterBackend, FilterStatus, IcmpFilter},
 };
 use std::process::Command;
@@ -35,7 +36,7 @@ impl NftablesFilter {
     }
 
     fn marker_chain(fingerprint: u64) -> String {
-        format!("gen_{}", fingerprint_hex(fingerprint))
+        nft_batch::marker_chain(fingerprint)
     }
 
     fn check_nft_available() -> Result<()> {
@@ -54,188 +55,22 @@ impl NftablesFilter {
     }
 
     fn build_ruleset(&self, fingerprint: u64) -> String {
-        let table_name = &self.config.table_name;
-        let mut rules = Vec::new();
-
-        let input_chain =
-            self.config.direction == Direction::Both || self.config.direction == Direction::Inbound;
-        let output_chain = self.config.direction == Direction::Both
-            || self.config.direction == Direction::Outbound;
-
-        let (in_interface_filter, out_interface_filter) = match &self.config.interfaces {
-            crate::config::InterfaceSpec::All => (String::new(), String::new()),
-            crate::config::InterfaceSpec::Specific(ifaces) => {
-                if ifaces.len() == 1 {
-                    (format!("iif {} ", ifaces[0]), format!("oif {} ", ifaces[0]))
-                } else {
-                    let iface_list = ifaces.join(", ");
-                    (
-                        format!("iif {{ {} }} ", iface_list),
-                        format!("oif {{ {} }} ", iface_list),
-                    )
-                }
-            }
-        };
-
-        rules.push(format!("table inet {}", table_name));
-        rules.push("{".to_string());
-
-        if input_chain {
-            rules.push("\tchain input_icmp {".to_string());
-            rules.push("\t\ttype filter hook input priority -150; policy accept;".to_string());
-
-            for ip in &self.config.exempt_ips {
-                let exempt_rule = match ip {
-                    std::net::IpAddr::V4(addr) => {
-                        format!("\t\t{}ip saddr {} accept", in_interface_filter, addr)
-                    }
-                    std::net::IpAddr::V6(addr) => {
-                        format!("\t\t{}ip6 saddr {} accept", in_interface_filter, addr)
-                    }
-                };
-                rules.push(exempt_rule);
-            }
-
-            for type_rule in &self.config.icmp_type_rules {
-                rules.push(self.build_icmp_type_rule(type_rule, true, &in_interface_filter, false));
-            }
-
-            for type_rule in &self.config.icmpv6_type_rules {
-                rules.push(self.build_icmp_type_rule(type_rule, true, &in_interface_filter, true));
-            }
-
-            let base_icmp_rule = self.build_base_icmp_rule(&in_interface_filter, false);
-            rules.push(base_icmp_rule);
-
-            let base_icmpv6_rule = self.build_base_icmp_rule(&in_interface_filter, true);
-            rules.push(base_icmpv6_rule);
-
-            rules.push("\t}".to_string());
-        }
-
-        if output_chain {
-            rules.push("\tchain output_icmp {".to_string());
-            rules.push("\t\ttype filter hook output priority -150; policy accept;".to_string());
-
-            for ip in &self.config.exempt_ips {
-                let exempt_rule = match ip {
-                    std::net::IpAddr::V4(addr) => {
-                        format!("\t\t{}ip daddr {} accept", out_interface_filter, addr)
-                    }
-                    std::net::IpAddr::V6(addr) => {
-                        format!("\t\t{}ip6 daddr {} accept", out_interface_filter, addr)
-                    }
-                };
-                rules.push(exempt_rule);
-            }
-
-            for type_rule in &self.config.icmp_type_rules {
-                rules.push(self.build_icmp_type_rule(
-                    type_rule,
-                    false,
-                    &out_interface_filter,
-                    false,
-                ));
-            }
-
-            for type_rule in &self.config.icmpv6_type_rules {
-                rules.push(self.build_icmp_type_rule(
-                    type_rule,
-                    false,
-                    &out_interface_filter,
-                    true,
-                ));
-            }
-
-            let base_icmp_rule = self.build_base_icmp_rule(&out_interface_filter, false);
-            rules.push(base_icmp_rule);
-
-            let base_icmpv6_rule = self.build_base_icmp_rule(&out_interface_filter, true);
-            rules.push(base_icmpv6_rule);
-
-            rules.push("\t}".to_string());
-        }
-
-        rules.push("}".to_string());
-
-        // Generation marker: an unhooked, inert chain binding this table to
-        // the installed policy fingerprint. Readback checks it; unrelated
-        // operator tables never carry this name.
-        rules.push(format!(
-            "add chain inet {} {}",
-            table_name,
-            Self::marker_chain(fingerprint)
-        ));
-
-        rules.join("\n")
+        // Single source of truth lives in `nft_batch` so deterministic
+        // batch-grammar tests run on every platform without `nft`.
+        // Install, replacement, drift repair, and rollback-retry all load
+        // this exact batch; disable uses scoped `delete table` only.
+        nft_batch::render_batch(&self.config, fingerprint)
     }
 
-    fn build_icmp_type_rule(
-        &self,
-        rule: &IcmpTypeRule,
-        _is_input: bool,
-        interface_filter: &str,
-        is_v6: bool,
-    ) -> String {
-        let action = if rule.is_block() { "drop" } else { "accept" };
-        let proto = if is_v6 { "icmpv6" } else { "icmp" };
-        let ip_proto = if is_v6 { "ip6 nexthdr" } else { "ip protocol" };
-
-        let type_match = if let Some(code) = rule.icmp_code {
-            format!(
-                "{} type {} {} code {} {}",
-                proto, rule.icmp_type, proto, code, action
-            )
-        } else {
-            format!("{} type {} {}", proto, rule.icmp_type, action)
-        };
-
-        format!("\t\t{}{} {}", interface_filter, ip_proto, type_match)
-    }
-
-    fn build_base_icmp_rule(&self, interface_filter: &str, is_v6: bool) -> String {
-        let (proto, ip_proto) = if is_v6 {
-            ("icmpv6", "ip6 nexthdr")
-        } else {
-            ("icmp", "ip protocol")
-        };
-
-        if let Some(ref rate_limit) = self.config.rate_limit {
-            if rate_limit.enabled {
-                format!(
-                    "\t\t{}{} {} limit rate over {}/second burst {} packets drop",
-                    interface_filter,
-                    ip_proto,
-                    proto,
-                    rate_limit.packets_per_second,
-                    rate_limit.burst
-                )
-            } else {
-                format!("\t\t{}{} {} drop", interface_filter, ip_proto, proto)
-            }
-        } else {
-            format!("\t\t{}{} {} drop", interface_filter, ip_proto, proto)
-        }
-    }
-
-    /// Atomic replacement: one `nft -f` batch flushes and recreates the
-    /// owned table. On failure the previous table survives (nft batch
-    /// atomicity) and the error propagates; the caller must not advance
-    /// applied state. A missing table (first install, stale cleanup) falls
-    /// back to a create-only batch.
+    /// Atomic replacement: one `nft -f -` transaction renders the owned
+    /// table (`add table` idempotent, then `flush table`, then `add chain`
+    /// / `add rule`). On failure the previous owned table survives (nft
+    /// batch atomicity) and the error propagates; the caller must not
+    /// advance applied state. No unrelated tables, chains, or host firewall
+    /// state are flushed or removed.
     fn apply_ruleset(&self, fingerprint: u64) -> Result<()> {
-        let table_name = &self.config.table_name;
-        let ruleset = self.build_ruleset(fingerprint);
-        let flush_batch = format!("flush table inet {table_name}\n{ruleset}");
-        match Self::load_batch(&flush_batch) {
-            Ok(()) => Ok(()),
-            Err(e) if is_missing_table_error(&e) => Self::load_batch(&ruleset).map_err(|e2| {
-                IcmpFilterError::Nftables(format!(
-                    "atomic replace failed (flush: {e}; create: {e2})"
-                ))
-            }),
-            Err(e) => Err(e),
-        }
+        let batch = self.build_ruleset(fingerprint);
+        Self::load_batch(&batch)
     }
 
     fn load_batch(batch: &str) -> Result<()> {
@@ -365,20 +200,6 @@ fn is_missing_table_stderr(stderr: &str) -> bool {
     let lower = stderr.to_lowercase();
     lower.contains("no such")
         && (lower.contains("table") || lower.contains("file") || lower.contains("directory"))
-}
-
-fn is_missing_table_error(e: &IcmpFilterError) -> bool {
-    match e {
-        IcmpFilterError::Nftables(msg) => {
-            // `nft -f` reports batch failures by exit status without
-            // machine-readable detail; treat any flush-batch failure as
-            // possibly-missing-table and let the create-only retry decide.
-            // A genuinely broken ruleset fails both attempts and surfaces.
-            let _ = msg;
-            true
-        }
-        _ => false,
-    }
 }
 
 impl IcmpFilter for NftablesFilter {
