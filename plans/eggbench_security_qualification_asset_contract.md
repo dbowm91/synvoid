@@ -1,10 +1,17 @@
 # Plan: Eggbench Security Qualification Asset Contract
 
-Status: planned (2026-09-26).
+Status: ready for implementation (2026-09-27).
 
 Registered in: `plans/roadmap.md` as an independent cross-repo qualification-support handoff.
 
-Baseline: `main` at `49b4624b696b4c3aa0172b0326a04ae9e275ca3f`.
+Planning baseline: `49b4624b696b4c3aa0172b0326a04ae9e275ca3f`.
+
+Implementation re-audit baseline: `fb2acbc1c918f8706fc7c65676efe5b275995bfe`.
+
+The unrelated ICMP/sandbox work that landed after the original planning baseline
+does not block or alter this contract. Re-audit the selected WAF fixtures and
+minimal runtime config at implementation start against the implementation
+baseline; preserve this plan's ownership and safety boundaries.
 
 Dependency position: independent of the ICMP Phase 90-91 line. This phase may
 execute without reopening or waiting on the ICMP RETAIN follow-up.
@@ -361,3 +368,43 @@ Reject implementation that:
   enforcement without a live semantic check;
 - adds a second SynVoid load generator;
 - stores production secrets in qualification assets.
+
+
+## Implementation handoff and closure
+
+This plan is dependency-ready.
+
+Execution order:
+
+1. freeze the v1 export allowlist/exclusion manifest;
+2. implement the repository-local materializer/export/check surface;
+3. materialize and config-test the loopback-only minimal runtime tree;
+4. emit the Eggbench corpus + provenance contract;
+5. add deterministic routine/self-tests;
+6. run the live loopback semantic proof against the real minimal SynVoid
+   binary;
+7. run the normal SynVoid verification set;
+8. commit a proof-bearing closure record and reconcile the roadmap.
+
+Closure record:
+
+`architecture/eggbench_security_qualification_asset_contract_closeout.md`
+
+The closeout must record:
+
+- implementation SHA;
+- package version and Cargo.lock digest;
+- qualification policy identifier;
+- allowlisted fixture IDs;
+- exclusion manifest/digest;
+- generated corpus/config/provenance schema versions and digests;
+- exact block/pass wire statuses;
+- minimal binary SHA-256 and build command;
+- configtest result;
+- live Pass/Detect semantic proof;
+- routine verification result;
+- unresolved findings.
+
+Do not mark this plan closed on export-generation tests alone. A live
+reverse-proxy proof is mandatory because Eggbench's remaining M002 closure
+condition depends on owner-authored wire semantics, not only unit-corpus truth.
