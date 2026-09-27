@@ -140,6 +140,46 @@ fn limit_match_bodies(config: &IcmpFilterConfig, interface_filter: &str) -> Vec<
     ]
 }
 
+/// Paired echo-reply auto-allowance.
+///
+/// A stateless `ALLOW echo-request` alone cannot make `ping` work: the
+/// request (v4 type 8 / v6 type 128) is accepted on ingress, but the
+/// kernel-generated reply (v4 type 0 / v6 type 129) leaves via the opposite
+/// hook chain and hits the terminal base DROP. Native
+/// `atomic_update_replacement` (allow-echo generation B) and
+/// `rate_limit_global` (allow-echo under-limit) both proved
+/// `allowed_b=false` / `below=0/3` without this.
+///
+/// When the policy explicitly allows the request type and carries no
+/// explicit rule (allow or block) for the paired reply type, emit an
+/// `ALLOW` for the reply in both hook chains so bidirectional echo works.
+/// An explicit reply rule always wins (no auto-add), and a blocked request
+/// never auto-allows its reply.
+fn echo_reply_auto_allows(config: &IcmpFilterConfig) -> Vec<(u8, bool)> {
+    let mut out = Vec::new();
+    let v4_has = |t: u8| config.icmp_type_rules.iter().any(|r| r.icmp_type == t);
+    let v4_allows = |t: u8| {
+        config
+            .icmp_type_rules
+            .iter()
+            .any(|r| r.icmp_type == t && r.is_allow())
+    };
+    if v4_allows(8) && !v4_has(0) {
+        out.push((0, false));
+    }
+    let v6_has = |t: u8| config.icmpv6_type_rules.iter().any(|r| r.icmp_type == t);
+    let v6_allows = |t: u8| {
+        config
+            .icmpv6_type_rules
+            .iter()
+            .any(|r| r.icmp_type == t && r.is_allow())
+    };
+    if v6_allows(128) && !v6_has(129) {
+        out.push((129, true));
+    }
+    out
+}
+
 /// Render the single atomic replacement batch for install, replacement,
 /// drift repair, and rollback-retry paths (all share this exact grammar).
 pub(crate) fn render_batch(config: &IcmpFilterConfig, fingerprint: u64) -> String {
@@ -176,6 +216,11 @@ pub(crate) fn render_batch(config: &IcmpFilterConfig, fingerprint: u64) -> Strin
             let body = icmp_type_match_body(rule, &in_if, true);
             lines.push(format!("add rule inet {table} input_icmp {body}"));
         }
+        for (reply_type, is_v6) in echo_reply_auto_allows(config) {
+            let auto = IcmpTypeRule::new(reply_type, crate::config::IcmpAction::Allow);
+            let body = icmp_type_match_body(&auto, &in_if, is_v6);
+            lines.push(format!("add rule inet {table} input_icmp {body}"));
+        }
         for is_v6 in [false, true] {
             let body = base_match_body(&in_if, is_v6);
             lines.push(format!("add rule inet {table} input_icmp {body}"));
@@ -202,6 +247,11 @@ pub(crate) fn render_batch(config: &IcmpFilterConfig, fingerprint: u64) -> Strin
         }
         for rule in &config.icmpv6_type_rules {
             let body = icmp_type_match_body(rule, &out_if, true);
+            lines.push(format!("add rule inet {table} output_icmp {body}"));
+        }
+        for (reply_type, is_v6) in echo_reply_auto_allows(config) {
+            let auto = IcmpTypeRule::new(reply_type, crate::config::IcmpAction::Allow);
+            let body = icmp_type_match_body(&auto, &out_if, is_v6);
             lines.push(format!("add rule inet {table} output_icmp {body}"));
         }
         for is_v6 in [false, true] {
@@ -468,5 +518,54 @@ mod tests {
     fn marker_chain_format_is_stable() {
         assert_eq!(marker_chain(0x0123_4567_89ab_cdef), "gen_0123456789abcdef");
         assert!(marker_chain(0).starts_with("gen_"));
+    }
+
+    #[test]
+    fn allow_echo_auto_allows_reply_both_chains() {
+        let mut cfg = minimal_config();
+        // minimal_config blocks echo; switch to allow to trigger pairing.
+        cfg.icmp_type_rules = vec![IcmpTypeRule::new(8, IcmpAction::Allow)];
+        let batch = render_batch(&cfg, 77);
+        assert!(
+            batch.contains(
+                "add rule inet synvoid_q_abc123 input_icmp ip protocol icmp icmp type 0 accept"
+            ),
+            "input must auto-allow echo-reply, got:\n{batch}"
+        );
+        assert!(
+            batch.contains(
+                "add rule inet synvoid_q_abc123 output_icmp ip protocol icmp icmp type 0 accept"
+            ),
+            "output must auto-allow echo-reply, got:\n{batch}"
+        );
+    }
+
+    #[test]
+    fn explicit_reply_rule_wins_over_auto() {
+        let mut cfg = minimal_config();
+        cfg.icmp_type_rules = vec![
+            IcmpTypeRule::new(8, IcmpAction::Allow),
+            IcmpTypeRule::new(0, IcmpAction::Block),
+        ];
+        let batch = render_batch(&cfg, 78);
+        // Explicit BLOCK 0 present; auto ALLOW 0 must not appear.
+        assert!(
+            batch.contains("icmp type 0 drop"),
+            "explicit block must survive, got:\n{batch}"
+        );
+        assert!(
+            !batch.contains("icmp type 0 accept"),
+            "auto-allow must not override explicit block, got:\n{batch}"
+        );
+    }
+
+    #[test]
+    fn block_echo_never_auto_allows_reply() {
+        // minimal_config blocks 8 and has no 0 rule: no auto-allow.
+        let batch = render_batch(&minimal_config(), 79);
+        assert!(
+            !batch.contains("type 0"),
+            "blocked request must not auto-allow reply, got:\n{batch}"
+        );
     }
 }
