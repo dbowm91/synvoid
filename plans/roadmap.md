@@ -892,15 +892,18 @@ separately below. Extraction stays DEFER (sandbox) and RETAIN
 Eggbench handoff remains planned and is not blocked on Phase 94.
 
 
-## Independent Cross-Repo Handoff: Eggbench Security Qualification Assets — Planned
+## Independent Cross-Repo Handoff: Eggbench Security Qualification Assets — Ready
 
-Status: **planned** 2026-09-26.
+Status: **ready for implementation** 2026-09-27.
 
 Plan:
 `plans/eggbench_security_qualification_asset_contract.md`.
 
-Baseline:
+Planning baseline:
 `49b4624b696b4c3aa0172b0326a04ae9e275ca3f`.
+
+Implementation re-audit baseline:
+`fb2acbc1c918f8706fc7c65676efe5b275995bfe`.
 
 Consumer:
 `eggstack/eggbench` Security Qualification M002.
@@ -928,8 +931,7 @@ Key constraints:
 - no production WAF behavior is changed merely to satisfy the harness;
 - no new SynVoid load generator is added.
 
-This plan is the next cross-repo prerequisite for Eggbench Security
-Qualification M002a. It may execute independently of Phases 89-91.
+This plan is dependency-ready and is the next cross-repo prerequisite for Eggbench Security Qualification M002 full closure. It may execute independently of the ICMP/sandbox corrective lines. Closure requires the owner-side live reverse-proxy semantic proof, not only export-generation tests.
 
 
 ## Post-Phase-91 ICMP Gate: Disabled-State Corrective and Linux nftables Native Qualification — Phases 92–93
