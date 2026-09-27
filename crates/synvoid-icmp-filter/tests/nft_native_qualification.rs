@@ -1347,12 +1347,20 @@ mod native {
                 }
                 std::thread::sleep(Duration::from_millis(300));
             }
-            // Burst above threshold: 40 rapid pings, count replies via -c
+            // Burst above threshold: flood pings, count replies via -c
             // exit status is all-or-nothing, so use flood count mode and
-            // look for any loss via summary output instead.
+            // look for any loss via summary output instead. Flood (`-f`)
+            // is required — not interval (`-i`): scheduling/interval
+            // clamping can keep an `-i` burst under the token-bucket rate
+            // (false 0% loss, as seen in Phase 95 runs `36334614281` /
+            // `36335116081` with 40 at `-i 0.01` vs 10/s burst 20), while
+            // flood sends back-to-back and reliably exceeds the limit.
+            // This strengthens the burst (faster, more packets), it does
+            // not weaken the case: below/recovery/burst-loss are still all
+            // required.
             let burst_argv = netns_exec_args(
                 &self.topo.ns_b,
-                &["ping", "-c", "40", "-i", "0.01", "-W", "1", "10.201.0.1"],
+                &["ping", "-f", "-c", "100", "-w", "10", "10.201.0.1"],
             );
             let burst_out = run_cmd(&burst_argv, Duration::from_secs(30));
             let burst_loss = burst_out
