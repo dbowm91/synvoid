@@ -892,9 +892,22 @@ separately below. Extraction stays DEFER (sandbox) and RETAIN
 Eggbench handoff remains planned and is not blocked on Phase 94.
 
 
-## Independent Cross-Repo Handoff: Eggbench Security Qualification Assets — Ready
+## Independent Cross-Repo Handoff: Eggbench Security Qualification Assets — Closed
 
-Status: **ready for implementation** 2026-09-27.
+Status: **CLOSED** 2026-09-28. Implementation
+`ae045481752b8f750d6e6079b185c526a09c91d5`; closeout
+`architecture/eggbench_security_qualification_asset_contract_closeout.md`.
+Policy `synvoid.eggbench-qualification.v1` (15-case allowlist, 12-case
+exclusion manifest, deterministic xtask materializer, loopback-only
+minimal config config-tested on the release minimal binary, provenance
+manifest, 15-test self-qualification) plus the mandatory live
+reverse-proxy semantic proof (15/15 corpus agreement + 2/2 perf paths
+against the pinned minimal binary). Routine verification 10/10 green;
+no production WAF semantic weakened. No registered SynVoid future plan
+was blocked on this handoff; its downstream is the external Eggbench
+Security Qualification M002 full closure.
+
+Historical planning record (superseded status only; content retained):
 
 Plan:
 `plans/eggbench_security_qualification_asset_contract.md`.

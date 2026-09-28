@@ -1,6 +1,11 @@
 # Plan: Eggbench Security Qualification Asset Contract
 
-Status: ready for implementation (2026-09-27).
+Status: CLOSED (2026-09-28). Implementation
+`ae045481752b8f750d6e6079b185c526a09c91d5`; closeout
+`architecture/eggbench_security_qualification_asset_contract_closeout.md`.
+Live reverse-proxy proof done (15/15 + 2/2 perf paths, pinned minimal
+binary); routine verification green. No SynVoid future plan was blocked
+on this handoff; downstream is the external Eggbench M002 closure.
 
 Registered in: `plans/roadmap.md` as an independent cross-repo qualification-support handoff.
 
