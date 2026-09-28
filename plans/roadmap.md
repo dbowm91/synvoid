@@ -947,6 +947,36 @@ Key constraints:
 This plan is dependency-ready and is the next cross-repo prerequisite for Eggbench Security Qualification M002 full closure. It may execute independently of the ICMP/sandbox corrective lines. Closure requires the owner-side live reverse-proxy semantic proof, not only export-generation tests.
 
 
+## Independent Cross-Repo Handoff: Eggbench Security Qualification M003 Telemetry — Ready
+
+Status: **READY** (2026-09-28).
+
+Plan:
+`plans/eggbench_security_qualification_m003_telemetry_contract.md`.
+
+Planning baseline:
+`30e68af8f6e79ce0fe07f0c1871f1d0caa6be6f2`.
+
+Consumer:
+`eggstack/eggbench` Security Qualification M003c/M003d.
+
+This handoff is independent of the closed M002 qualification-asset contract and of the Phase 96-101 architecture-maintenance campaign. It may execute in parallel.
+
+The handoff exists because SynVoid already owns the live worker/CPU-worker performance signals Eggbench needs—event-loop lag, request-queue timing, active connections, process/worker resource observations, body-buffering counters, and CPU-offload saturation counters—but those signals are not yet a frozen owner-qualified live Prometheus contract under the minimal `--no-default-features` qualification runtime.
+
+Required outcome:
+
+- wire/reconcile the loopback-only Prometheus exporter lifecycle for the minimal runtime when explicitly enabled;
+- publish a bounded stable metric inventory with gauge/counter semantics;
+- extend the existing `eggbench-qualification` materializer with optional telemetry output and a deterministic `telemetry-contract.json`;
+- bind telemetry/config identity into owner provenance;
+- live-prove real scrapes while the existing controlled proxy/WAF traffic executes;
+- preserve telemetry-off M002 export behavior;
+- add no Eggbench Rust dependency, no new load generator, and no security-semantic change.
+
+Eggbench owns generic scrape timing/aggregation and downstream `subject_*` metric normalization. SynVoid remains the authority for metric names and source semantics.
+
+
 ## Post-Phase-91 ICMP Gate: Disabled-State Corrective and Linux nftables Native Qualification — Phases 92–93
 
 Status: **Phase 92 CORRECTED; Phase 93 QUALIFIED (superseded by Phase 95);
