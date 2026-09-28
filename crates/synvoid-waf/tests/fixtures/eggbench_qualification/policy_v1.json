@@ -1,0 +1,58 @@
+{
+  "policy_id": "synvoid.eggbench-qualification.v1",
+  "policy_version": "v1",
+  "description": "SynVoid v1 qualification policy for Eggbench Security Qualification M002. Maps WAF source `detect|pass` expectations to externally observable HTTP status codes under the supported minimal runtime.",
+  "synvoid_package_version": "1.1.0",
+  "qualification_runtime": "--no-default-features",
+  "scope": [
+    "SynVoid attack detection is enabled",
+    "Terminal attack action is configured as `block`",
+    "A source fixture with `expected_result = detect` maps to an expected live HTTP block status (403)",
+    "A source fixture with `expected_result = pass` maps to the controlled origin's success status (200)",
+    "Initial externally observable expectations are HTTP status only"
+  ],
+  "out_of_scope_v1": [
+    "challenge",
+    "stall",
+    "tarpit",
+    "drop",
+    "log-only",
+    "internal reason codes",
+    "threat-level escalation",
+    "rate limiting",
+    "bot controls",
+    "distributed-state semantics"
+  ],
+  "live_status_mapping": {
+    "detect": 403,
+    "pass": 200
+  },
+  "excluded_header_names": [
+    "host",
+    "x-forwarded-for",
+    "x-real-ip",
+    "forwarded",
+    "authorization",
+    "proxy-authorization",
+    "cookie",
+    "set-cookie",
+    "transfer-encoding",
+    "content-length",
+    "connection",
+    "keep-alive",
+    "upgrade",
+    "proxy-connection",
+    "te",
+    "trailer"
+  ],
+  "transport_rules": [
+    "Requests are plain HTTP/1.1 to the loopback listener with the natural Host header (127.0.0.1:<listen-port>); no Host override is required.",
+    "The driver MUST send a neutral (non-bot) User-Agent: SynVoid's UA bot stage has no config kill-switch and 403s known-bot UAs (e.g. curl/*) independent of site bot settings.",
+    "Corpus paths are stored losslessly; ASCII SP inside a request-target MUST be percent-encoded as %20 on the wire (raw SP is illegal in a request-target). The WAF normalizer decodes %20 before detection, so observable semantics are unchanged."
+  ],
+  "perf_paths": [
+    "/qualbench/small",
+    "/qualbench/stream"
+  ],
+  "semantic_change_rule": "Any semantic mapping change requires a new policy identifier (new policy_version)."
+}

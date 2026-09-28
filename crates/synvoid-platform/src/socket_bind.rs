@@ -38,6 +38,14 @@ pub fn is_reuse_port_available() -> bool {
     reuse_port_supported()
 }
 
+/// Bind a TCP listener with SO_REUSEADDR (+SO_REUSEPORT where available).
+///
+/// The returned socket is **nonblocking**: every production caller feeds it
+/// straight into `tokio::net::TcpListener::from_std`, which panics on
+/// blocking sockets ("Registering a blocking socket with the tokio runtime
+/// is unsupported"). Returning a blocking socket here silently broke all
+/// listener paths built on this helper (found via the eggbench minimal
+/// qualification runtime).
 pub fn bind_tcp_reuse(addr: SocketAddr) -> io::Result<std::net::TcpListener> {
     let domain = if addr.is_ipv6() {
         Domain::IPV6
@@ -56,9 +64,15 @@ pub fn bind_tcp_reuse(addr: SocketAddr) -> io::Result<std::net::TcpListener> {
     socket.bind(&addr.into())?;
     socket.listen(1024)?;
 
+    socket.set_nonblocking(true)?;
+
     Ok(socket.into())
 }
 
+/// Bind a UDP socket with SO_REUSEADDR (+SO_REUSEPORT where available).
+///
+/// Nonblocking for the same reason as [`bind_tcp_reuse`]: callers convert
+/// with `tokio::net::UdpSocket::from_std`, which rejects blocking sockets.
 pub fn bind_udp_reuse(addr: SocketAddr) -> io::Result<std::net::UdpSocket> {
     let domain = if addr.is_ipv6() {
         Domain::IPV6
@@ -75,6 +89,8 @@ pub fn bind_udp_reuse(addr: SocketAddr) -> io::Result<std::net::UdpSocket> {
     }
 
     socket.bind(&addr.into())?;
+
+    socket.set_nonblocking(true)?;
 
     Ok(socket.into())
 }

@@ -320,3 +320,9 @@ name = "config_capability_preflight_guard"
 class = "static_policy"
 owners = ["synvoid-config"]
 reason = "validates Phase 41 fail-closed config capability preflight (new feature-gated fields must join matrix/preflight, checked derivations, mesh restart truthfulness)"
+
+[[test]]
+name = "eggbench_qualification_live_proof"
+class = "qualification"
+owners = ["synvoid-waf", "synvoid-proxy", "synvoid-http"]
+reason = "owner-side live reverse-proxy semantic proof for the eggbench v1 qualification asset contract (policy synvoid.eggbench-qualification.v1): drives the exported corpus through the real minimal binary against a controlled loopback origin; opt-in/ignored, never a routine-CI gate"

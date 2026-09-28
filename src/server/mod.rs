@@ -594,15 +594,11 @@ impl UnifiedServer {
 
         server = server.with_app_servers(Some(state.app_servers.clone()));
 
-        #[cfg(feature = "mesh")]
-        {
-            server.serve().await
-        }
-        #[cfg(not(feature = "mesh"))]
-        {
-            let _ = server;
-            Ok(())
-        }
+        // NOTE (eggbench qualification): the HTTP listener serves on all
+        // profiles. A `#[cfg(not(feature = "mesh"))] let _ = server;`
+        // stub here silently disabled the data plane on minimal builds;
+        // the accept loop carries no mesh dependency.
+        server.serve().await
     }
 
     pub(crate) async fn run_https_server_inner(

@@ -676,7 +676,12 @@ impl ProcessManager {
 
     fn record_spawn(&self, id: &WorkerId, pid: u32, port: Option<u16>, event: ProcessEvent) {
         self.metrics.total_spawns.fetch_add(1, Ordering::Relaxed);
-        if let Err(e) = self.event_tx.blocking_send(event) {
+        // try_send (not blocking_send): record_spawn executes on Tokio
+        // runtime threads during supervised spawns, where blocking_send
+        // panics ("Cannot block the current thread from within a runtime").
+        // The event channel is drained continuously; a full channel only
+        // drops one telemetry event, which the debug log records.
+        if let Err(e) = self.event_tx.try_send(event) {
             tracing::debug!("Failed to send spawn event: {:?}", e);
         }
         if let Some(p) = port {
@@ -981,7 +986,7 @@ impl ProcessManager {
         }
         let _ = self
             .event_tx
-            .blocking_send(ProcessEvent::UnifiedServerWorkerStopped(worker_id));
+            .try_send(ProcessEvent::UnifiedServerWorkerStopped(worker_id));
     }
 
     pub fn remove_unified_server_worker(&self, worker_id: WorkerId) {
@@ -1337,7 +1342,7 @@ impl ProcessManager {
         self.metrics.total_failures.fetch_add(1, Ordering::Relaxed);
         if self
             .event_tx
-            .blocking_send(ProcessEvent::WorkerFailed(worker_id, error))
+            .try_send(ProcessEvent::WorkerFailed(worker_id, error))
             .is_err()
         {
             tracing::debug!("dropped_worker_event");
@@ -1355,7 +1360,7 @@ impl ProcessManager {
         }
         let _ = self
             .event_tx
-            .blocking_send(ProcessEvent::WorkerStopped(worker_id));
+            .try_send(ProcessEvent::WorkerStopped(worker_id));
     }
 
     pub fn handle_blocklist_request(
@@ -1865,7 +1870,7 @@ impl ProcessManager {
                 self.metrics.total_restarts.fetch_add(1, Ordering::Relaxed);
                 let _ = self
                     .event_tx
-                    .blocking_send(ProcessEvent::WorkerRestarted(worker_id, restart_count));
+                    .try_send(ProcessEvent::WorkerRestarted(worker_id, restart_count));
             }
             Err(e) => {
                 tracing::error!("Failed to restart worker {}: {}", worker_id, e);
@@ -1933,7 +1938,8 @@ impl ProcessManager {
 
     pub async fn graceful_shutdown(&self) {
         tracing::info!("Initiating graceful shutdown");
-        if let Err(e) = self.event_tx.blocking_send(ProcessEvent::ShutdownInitiated) {
+        // try_send: graceful_shutdown is async and runs on runtime threads.
+        if let Err(e) = self.event_tx.try_send(ProcessEvent::ShutdownInitiated) {
             tracing::debug!("Failed to send ShutdownInitiated event: {:?}", e);
         }
 
@@ -1948,7 +1954,7 @@ impl ProcessManager {
         self.kill_remaining_workers();
 
         tracing::info!("Shutdown complete");
-        if let Err(e) = self.event_tx.blocking_send(ProcessEvent::ShutdownComplete) {
+        if let Err(e) = self.event_tx.try_send(ProcessEvent::ShutdownComplete) {
             tracing::debug!("Failed to send ShutdownComplete event: {:?}", e);
         }
     }

@@ -1,3 +1,4 @@
+mod eggbench_qualification;
 mod icmp_qualify;
 mod report;
 mod verify;
@@ -26,6 +27,13 @@ fn main() {
         }
         Some("test") => dispatch_test(&positional[1..], dry_run, json_output, verbose),
         Some("icmp-qualify") => icmp_qualify::run_icmp_qualify(&args, json_output),
+        Some("eggbench-qualification") => match eggbench_qualification::run(&args) {
+            Ok(msg) => {
+                println!("{msg}");
+                Ok(())
+            }
+            Err(e) => Err(format!("eggbench-qualification: {e}")),
+        },
         Some("help") | Some("--help") | Some("-h") => {
             print_usage();
             Ok(())
@@ -80,6 +88,8 @@ USAGE:
     cargo xtask test package <name> Test a specific package
     cargo xtask test guards         Run all architectural guard tests
     cargo xtask icmp-qualify (--check | --dry-run | --native | --cleanup) [--json] [--timeout-secs N] [--out PATH]
+    cargo xtask eggbench-qualification export --output <dir> --listen-port <port> --origin-port <port> [--configtest] [--configtest-binary <path>]
+    cargo xtask eggbench-qualification check  --input  <dir> [--configtest] [--configtest-binary <path>]
 
 VERIFY (routine):
     Runs the single canonical routine verification contract (formatting, linting,
@@ -104,6 +114,13 @@ ICMP-QUALIFY (manual, Phase 91):
     Linux + root/CAP_NET_ADMIN + SYNVOID_ICMP_QUALIFY_NATIVE=1 and shells
     the ignored crate matrix; --cleanup removes harness namespaces.
     Anything unmet is \"not qualified\", never success.
+
+EGGBENCH-QUALIFICATION (synvoid.eggbench-qualification.v1):
+    Materialize the SynVoid-owned qualification asset contract for the
+    Eggbench Security Qualification M002 consumer. `export` writes a
+    loopback-only minimal runtime tree + corpus + provenance manifest.
+    `check` proves a previously materialized tree is internally coherent
+    (canonical-JSON equality, allowlist consistency, --configtest pass).
 
 OPTIONS:
     --dry-run       Print commands without executing

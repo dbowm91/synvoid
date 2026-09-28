@@ -208,7 +208,12 @@ impl HttpServer {
         self
     }
 
-    #[cfg(feature = "mesh")]
+    // NOTE (eggbench qualification): `serve` is intentionally NOT
+    // mesh-gated. The `--no-default-features` minimal build is the
+    // documented WAF/proxy data-plane profile and must bind its HTTP
+    // listener; the accept loop itself carries no mesh dependency (mesh
+    // fields inside are individually cfg-gated). Gating this on mesh
+    // silently reduced minimal binaries to no-listen stubs.
     pub async fn serve(self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         accept_loop::run_accept_loop(self.addr, self.shutdown_rx, self.runtime).await
     }

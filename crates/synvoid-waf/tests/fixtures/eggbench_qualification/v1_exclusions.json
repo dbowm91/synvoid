@@ -1,0 +1,54 @@
+{
+  "policy_id": "synvoid.eggbench-qualification.v1",
+  "description": "Authoritative v1 exclusion manifest of WAF request fixtures that are NOT eligible for the Eggbench Security Qualification M002 corpus. Each entry preserves the source fixture ID and a checked-in reason; this manifest is the single product-owned compatibility surface and may not be silently rewritten. Adding/removing exclusions requires a new policy identifier.",
+  "exclusions": [
+    {
+      "id": "cache_purge_auth",
+      "reason": "credential-bearing header (X-Auth-Token) — outside v1 corpus restrictions."
+    },
+    {
+      "id": "chunk_boundary_split",
+      "reason": "hop-by-hop Transfer-Encoding header — forbidden by Eggbench v1 corpus contract."
+    },
+    {
+      "id": "cl_te_smuggling_detected",
+      "reason": "request-smuggling (Transfer-Encoding + Content-Length conflict) — forbidden by Eggbench v1 corpus contract."
+    },
+    {
+      "id": "multipart_field_attack",
+      "reason": "multipart/form-data request body — outside v1 inline-only scope; also a known detector gap."
+    },
+    {
+      "id": "normal_admin_auth_failure",
+      "reason": "credential-bearing form body (username/password) — outside v1 corpus restrictions."
+    },
+    {
+      "id": "normal_basic_auth_failure",
+      "reason": "credential-bearing Authorization header — forbidden by Eggbench v1 corpus contract."
+    },
+    {
+      "id": "normal_binary_upload",
+      "reason": "binary request body (PNG file) — non-UTF8/binary bodies are outside v1 corpus restrictions."
+    },
+    {
+      "id": "normal_multipart_upload",
+      "reason": "multipart/form-data request body — outside v1 inline-only scope."
+    },
+    {
+      "id": "raw_cl_te_smuggling",
+      "reason": "request-smuggling (Transfer-Encoding + Content-Length conflict) — forbidden by Eggbench v1 corpus contract."
+    },
+    {
+      "id": "serverless_route_bypass",
+      "reason": "serverless bypass probe (/.aws/instance/meta-data) — fixture expects internal-only entry-point semantics not reproduced by the live reverse-proxy path; not a stable ordinary reverse-proxy request contract."
+    },
+    {
+      "id": "xff_external_ip_attack",
+      "reason": "proxy/forwarding header (X-Forwarded-For) — proxy headers are forbidden by Eggbench v1 corpus contract."
+    },
+    {
+      "id": "xff_trusted_proxy_chain",
+      "reason": "proxy/forwarding headers (X-Forwarded-For, X-Real-IP) — proxy headers are forbidden by Eggbench v1 corpus contract."
+    }
+  ]
+}

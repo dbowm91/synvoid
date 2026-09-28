@@ -1,0 +1,96 @@
+{
+  "policy_id": "synvoid.eggbench-qualification.v1",
+  "description": "Authoritative v1 export allowlist of WAF request fixtures eligible for the Eggbench Security Qualification M002 corpus. Each entry preserves the stable SynVoid source fixture ID and the opaque attack-family label. Selection is owner-authored: any change requires a new policy identifier.",
+  "cases": [
+    {
+      "id": "benign_json_body",
+      "attack_family": "none",
+      "expected_result": "pass",
+      "rationale": "Benign JSON POST body — pass control for the controlled origin."
+    },
+    {
+      "id": "benign_overlong_unicode",
+      "attack_family": "none",
+      "expected_result": "pass",
+      "rationale": "Benign overlong percent-encoded characters — pass control."
+    },
+    {
+      "id": "benign_percent_encoded_unicode",
+      "attack_family": "none",
+      "expected_result": "pass",
+      "rationale": "Benign percent-encoded Unicode — pass control."
+    },
+    {
+      "id": "benign_query_strings",
+      "attack_family": "none",
+      "expected_result": "pass",
+      "rationale": "Benign GET query string — pass control."
+    },
+    {
+      "id": "benign_url_encoding",
+      "attack_family": "none",
+      "expected_result": "pass",
+      "rationale": "Benign URL-encoded parameters — pass control."
+    },
+    {
+      "id": "path_traversal_literal",
+      "attack_family": "path_traversal",
+      "expected_result": "detect",
+      "rationale": "Literal `..` traversal — representative attack-detection case."
+    },
+    {
+      "id": "query_string_proxy_path",
+      "attack_family": "sqli",
+      "expected_result": "detect",
+      "rationale": "SQL injection via proxy path — representative attack-detection case."
+    },
+    {
+      "id": "sqli_invalid_utf8",
+      "attack_family": "sqli",
+      "expected_result": "detect",
+      "rationale": "SQLi via percent-encoded invalid UTF-8 query — representative attack-detection case."
+    },
+    {
+      "id": "ssrf_decimal_private_ip",
+      "attack_family": "ssrf",
+      "expected_result": "detect",
+      "rationale": "SSRF via decimal-encoded private IP — representative attack-detection case."
+    },
+    {
+      "id": "ssrf_encoded_private_ip",
+      "attack_family": "ssrf",
+      "expected_result": "detect",
+      "rationale": "SSRF via percent-encoded private IP — representative attack-detection case."
+    },
+    {
+      "id": "ssrf_localhost_variations",
+      "attack_family": "ssrf",
+      "expected_result": "detect",
+      "rationale": "SSRF targeting localhost shorthand — representative attack-detection case."
+    },
+    {
+      "id": "ssrf_octal_private_ip",
+      "attack_family": "ssrf",
+      "expected_result": "detect",
+      "rationale": "SSRF via octal-encoded private IP — representative attack-detection case."
+    },
+    {
+      "id": "xss_invalid_utf8",
+      "attack_family": "xss",
+      "expected_result": "detect",
+      "rationale": "XSS via overlong percent-encoded path — representative attack-detection case."
+    },
+    {
+      "id": "xss_mixed_overlong_canonical",
+      "attack_family": "xss",
+      "expected_result": "detect",
+      "rationale": "Mixed overlong + canonical XSS in path — representative attack-detection case."
+    },
+    {
+      "id": "xss_percent_encoded",
+      "attack_family": "xss",
+      "expected_result": "detect",
+      "rationale": "Canonical percent-encoded XSS in path — representative attack-detection case."
+    }
+  ]
+}

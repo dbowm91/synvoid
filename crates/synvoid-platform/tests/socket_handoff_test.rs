@@ -94,6 +94,28 @@ mod socket_handoff_tests {
         assert!(addr.port() > 0, "Port should be assigned");
     }
 
+    /// Regression (eggbench minimal qualification): reuse-bound sockets
+    /// must be nonblocking so `tokio::net::{TcpListener,UdpSocket}::from_std`
+    /// accepts them. A blocking socket makes from_std panic inside the
+    /// runtime, which silently broke every listener built on these helpers.
+    #[tokio::test]
+    async fn test_socket_reuse_bind_tcp_is_tokio_compatible() {
+        let std_listener =
+            bind_tcp_reuse("127.0.0.1:0".parse().unwrap()).expect("reuse bind should succeed");
+        let tokio_listener =
+            tokio::net::TcpListener::from_std(std_listener).expect("must be nonblocking");
+        assert!(tokio_listener.local_addr().unwrap().port() > 0);
+    }
+
+    #[tokio::test]
+    async fn test_socket_reuse_bind_udp_is_tokio_compatible() {
+        let std_socket =
+            bind_udp_reuse("127.0.0.1:0".parse().unwrap()).expect("reuse bind should succeed");
+        let tokio_socket =
+            tokio::net::UdpSocket::from_std(std_socket).expect("must be nonblocking");
+        assert!(tokio_socket.local_addr().unwrap().port() > 0);
+    }
+
     #[tokio::test]
     async fn test_socket_handoff_tcp_listener_port_acquisition() {
         let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
