@@ -1,11 +1,17 @@
 # Plan: Eggbench Security Qualification M003 Telemetry Contract
 
-Status: **CLOSED QUALIFIED 2026-09-29**.
+Status: **CORRECTIVE REQUIRED — terminal qualification superseded 2026-09-29**.
 
-Closeout: `architecture/eggbench_security_qualification_m003_telemetry_closeout.md`.
+Historical closeout:
+`architecture/eggbench_security_qualification_m003_telemetry_closeout.md`.
+That document records the implementation evidence at `619602a6cd2440d685020eb52e19c0887622dee1`
+but is no longer terminal authority.
 
-Implementation SHA: recorded in the follow-up commit accompanying this
-closeout (same convention as Phases 80 / 95 / 101).
+Active corrective:
+`plans/eggbench_security_qualification_m003_telemetry_interop_corrective.md`.
+
+Implementation SHA retained as historical implementation evidence:
+`619602a6cd2440d685020eb52e19c0887622dee1`.
 
 Consumer: eggstack/eggbench Security Qualification M003c/M003d.
 
