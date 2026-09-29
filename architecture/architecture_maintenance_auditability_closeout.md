@@ -1,11 +1,13 @@
 # Architecture Maintenance and Auditability Campaign Closeout
 
-Status: implementation and local qualification in progress; terminal closure
-requires exact-SHA hosted CI and dependency-security evidence.
+Status: **CLOSED QUALIFIED — 2026-09-29**.
 
-Campaign phases: 96–100 are implemented and closed; Phase 101 reconciles the
-result. Baseline: `30e68af8f6e79ce0fe07f0c1871f1d0caa6be6f2`. Implementation
-range and proof-bearing SHA will be filled from the committed tree.
+Campaign phases: 96–101 are implemented, reconciled, and closed. Baseline:
+`30e68af8f6e79ce0fe07f0c1871f1d0caa6be6f2`. Implementation range:
+`30e68af8f6e79ce0fe07f0c1871f1d0caa6be6f2..2bfc3c6cfd1a1f2454f801cc02c01a0cbafa2e30`.
+The proof-bearing implementation SHA is
+`2bfc3c6cfd1a1f2454f801cc02c01a0cbafa2e30`; the documentation-only closure
+commit follows that verified source tree.
 
 ## Dependency graph
 
@@ -88,7 +90,10 @@ tests remain in `synvoid-mesh-protocol` and `synvoid-mesh`.
   helper module's non-Linux dead-code status explicitly; the all-targets,
   all-features clippy command then passed with no errors (third-party warnings
   remain as listed in compiler output).
-- Exact-head hosted CI and dependency-security result: pending.
+- Exact-SHA hosted result: GitHub Actions run [36515438452](https://github.com/dbowm91/synvoid/actions/runs/36515438452)
+  completed successfully on `2bfc3c6cfd1a1f2454f801cc02c01a0cbafa2e30`;
+  both `ci` and `dependency-security` jobs passed. Conditional native
+  qualification jobs were skipped and are not claimed as evidence.
 
 ## Performance and footprint
 
@@ -111,8 +116,9 @@ and transport comparison. There is no prior campaign-head capture for block-stor
 jail process round trip, configuration startup, mesh DHT/canonical/proxy, or
 release package size, so no numeric before/after claim is made for those
 surfaces. This is an explicit evidence gap; it is not interpreted as measured
-zero regression. Release artifact sizes and dependency deltas are pending
-`cargo xtask verify-release`.
+zero regression. The default `synvoid` release binary measured 78,689,008
+bytes; the no-default-features binary measured 65,694,720 bytes on this host.
+These are single-host final sizes, with no frozen baseline for a size delta.
 
 ## Future boundary decisions
 
@@ -136,12 +142,16 @@ zero regression. Release artifact sizes and dependency deltas are pending
 |---|---|
 | `cargo xtask verify` | Passed 10/10 steps, 2026-09-29. |
 | `cargo xtask verify-full` | Passed all 10 stages; 7,845 tests passed, 7 skipped, 215 binaries; all doctests passed. |
-| `cargo xtask verify-release` | First clean-tree run passed 12 of 13 steps and found the macOS-only dead-code lint; fix is in place and exact-tree rerun is pending. |
+| `cargo xtask verify-release` | Passed on the proof-bearing implementation tree; release package checks passed, including 47 publishable packages (17 packaged-source-verified, 30 deferred behind internal predecessors) and both jail binaries. No publishing occurred. |
 | `cargo clippy --all-targets --all-features -- -D warnings` | Passed after the host-specific Linux renderer annotation. |
 | `cargo deny check` / `cargo audit` | Passed; six allowed unmaintained warnings as listed above. |
 | Focused Phases 96–100 suites | Passed as listed in each phase closeout. |
-| Hosted CI and dependency-security on proof-bearing SHA | Pending; required for CLOSED. |
+| Hosted CI and dependency-security on proof-bearing SHA | Passed on exact SHA `2bfc3c6cfd1a1f2454f801cc02c01a0cbafa2e30`, run 36515438452. |
 
-Final verdict remains **implementation-qualified / pending exact-SHA hosted
-proof** until all local commands pass, the evidence fields are filled, and the
-hosted run result is observed. Do not mark Phase 101 CLOSED before then.
+Final verdict: **CLOSED QUALIFIED**. Focused performance evidence is limited
+to current-host measurements without a frozen pre-change comparator; release
+size deltas and several uninstrumented subsystem hot paths therefore remain
+unquantified. This evidence limitation was accepted without asserting zero
+regression. No registered downstream plan was blocked on this campaign.
+Mesh-consensus remains deferred, synvoid-filter remains retained, and
+process-manager/IPC extraction remains deferred pending a cleaner boundary.

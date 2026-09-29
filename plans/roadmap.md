@@ -1,6 +1,6 @@
 # SynVoid Architecture Hardening Roadmap
 
-Status: Tracks 1–3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). Eggfetch 0.2 runtime adoption is closed through Phase 62 (`c3568ef4...`) and performance/reproducibility adjudication is closed through Phase 63; Phase 64 docs/evidence-truth correction is closed. Production remains on eggfetch. The EggServe 0.2.2-line inbound H1 campaign remains historical/retained at Phase 65; Phases 66–69 were never started. EggServe 0.3 H1 adoption and corrective requalification are closed as `ADOPTED` through Phase 80 on exact pins `eggserve-server = "=0.4.0"` / `eggserve-primitives = "=0.2.2"`; the Phase 78 terminal claim is superseded by Phase 80 proof-bearing SHA `174fdbcd6f133b35099ed4492f5ed8d3fcaa7d4c` (hosted run `36201213413`). Phase 79 implementation SHA: `171dd1e47f965b04b34465fc72c87adf4d9a9cab`. See `architecture/eggserve_0_3_h1_adoption_closeout.md`. Phases 70–72 remain historical/closed with evidence aligned to their then-current Hyper H1 runtime. The process-sandbox correctness and extraction-readiness campaign (Phases 81-84) remains closed DEFER; Phase 94 corrected and qualified Phase 89's Linux mechanism-selection and native-evidence gaps on exact SHA `e86fb35372b1b66bb59c8a6336bf32e55ff5c93e` (hosted/native run `36271417398`). The independent ICMP policy/enforcement extraction-preparation campaign (Phases 85-88) remains closed RETAIN (see the Post-Phase-80 section below); Phases 90–91 are closed, Phase 92 is CLOSED CORRECTED, Phase 93 is QUALIFIED (superseded by Phase 95 exact-SHA two-run proof `36335520434` on `39bfced25d51267ee5837eaecedae7da9af163d0`), and Phase 95 is CLOSED QUALIFIED with Linux nftables native-supported. Phase 88 stays RETAIN with no extraction authorized. The closed independent cross-repo Eggbench security-qualification asset handoff remains separately registered, and the new Eggbench Security Qualification M003 telemetry handoff is registered READY as an independent parallel plan. A new post-Phase-95 architecture-maintenance and auditability campaign is now registered as planned/open for Phases 96-101; it narrows dependency/capability reach while binding implementation to no capability reduction.
+Status: Tracks 1–3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). Eggfetch 0.2 runtime adoption is closed through Phase 62 (`c3568ef4...`) and performance/reproducibility adjudication is closed through Phase 63; Phase 64 docs/evidence-truth correction is closed. Production remains on eggfetch. The EggServe 0.2.2-line inbound H1 campaign remains historical/retained at Phase 65; Phases 66–69 were never started. EggServe 0.3 H1 adoption and corrective requalification are closed as `ADOPTED` through Phase 80 on exact pins `eggserve-server = "=0.4.0"` / `eggserve-primitives = "=0.2.2"`; the Phase 78 terminal claim is superseded by Phase 80 proof-bearing SHA `174fdbcd6f133b35099ed4492f5ed8d3fcaa7d4c` (hosted run `36201213413`). Phase 79 implementation SHA: `171dd1e47f965b04b34465fc72c87adf4d9a9cab`. See `architecture/eggserve_0_3_h1_adoption_closeout.md`. Phases 70–72 remain historical/closed with evidence aligned to their then-current Hyper H1 runtime. The process-sandbox correctness and extraction-readiness campaign (Phases 81-84) remains closed DEFER; Phase 94 corrected and qualified Phase 89's Linux mechanism-selection and native-evidence gaps on exact SHA `e86fb35372b1b66bb59c8a6336bf32e55ff5c93e` (hosted/native run `36271417398`). The independent ICMP policy/enforcement extraction-preparation campaign (Phases 85-88) remains closed RETAIN (see the Post-Phase-80 section below); Phases 90–91 are closed, Phase 92 is CLOSED CORRECTED, Phase 93 is QUALIFIED (superseded by Phase 95 exact-SHA two-run proof `36335520434` on `39bfced25d51267ee5837eaecedae7da9af163d0`), and Phase 95 is CLOSED QUALIFIED with Linux nftables native-supported. Phase 88 stays RETAIN with no extraction authorized. The closed independent cross-repo Eggbench security-qualification asset handoff remains separately registered, and the new Eggbench Security Qualification M003 telemetry handoff is registered READY as an independent parallel plan. The post-Phase-95 architecture-maintenance and auditability campaign (Phases 96–101) is closed qualified on proof-bearing SHA `2bfc3c6cfd1a1f2454f801cc02c01a0cbafa2e30`; see `architecture/architecture_maintenance_auditability_closeout.md`.
 
 Scope: this roadmap covers architecture hardening, trust-boundary closure, verification, release readiness, post-hardening cleanup, and the architecture-convergence work required before another broad feature-expansion pass.
 
@@ -1139,10 +1139,12 @@ extraction/publication is authorized by this closeout. No registered
 future plan was blocked on Phase 95.
 
 
-## Post-Phase-95 Campaign: Architecture Maintenance and Auditability — Phases 96–101 Active
+## Post-Phase-95 Campaign: Architecture Maintenance and Auditability — Phases 96–101 Closed
 
-Status: **ACTIVE** (registered 2026-09-28). Phases 96–100 are implemented and
-closed; Phase 101 is unblocked as the campaign qualification.
+Status: **CLOSED QUALIFIED** (registered 2026-09-28; closed 2026-09-29).
+Phases 96–101 are implemented and closed. Proof-bearing implementation SHA:
+`2bfc3c6cfd1a1f2454f801cc02c01a0cbafa2e30`; hosted run 36515438452 passed.
+See `architecture/architecture_maintenance_auditability_closeout.md`.
 
 Roadmap:
 plans/architecture_maintenance_auditability_roadmap.md.
@@ -1238,7 +1240,7 @@ Execution order:
      simplification candidates without implementing a new extraction inside
      closeout;
    - require exact-SHA hosted CI/dependency-security proof for terminal closure.
-   - Status: UNBLOCKED; sole prerequisite, Phase 100, is closed.
+   - Status: CLOSED QUALIFIED; exact-SHA local release and hosted CI/dependency-security evidence passed. Future candidates remain RETAIN/DEFER as recorded in the campaign closeout.
    - Plan: plans/phase_101_architecture_maintenance_qualification_closeout.md.
 
 Binding constraints:
@@ -1257,6 +1259,7 @@ Binding constraints:
 - no count-only crate split/merge;
 - routine CI remains proportionate and focused.
 
-The campaign closes only through Phase 101 with a proof-bearing architecture
-closeout. Until then the phase plans are executable handoff documents, not
-evidence that the architecture has already changed.
+No registered downstream plan was blocked on this campaign. Mesh-consensus
+and process-manager/IPC extraction remain deferred; synvoid-filter remains
+retained. These are candidate decisions, not newly registered executable
+plans.
