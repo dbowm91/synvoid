@@ -88,7 +88,7 @@ USAGE:
     cargo xtask test package <name> Test a specific package
     cargo xtask test guards         Run all architectural guard tests
     cargo xtask icmp-qualify (--check | --dry-run | --native | --cleanup) [--json] [--timeout-secs N] [--out PATH]
-    cargo xtask eggbench-qualification export --output <dir> --listen-port <port> --origin-port <port> [--configtest] [--configtest-binary <path>]
+cargo xtask eggbench-qualification export --output <dir> --listen-port <port> --origin-port <port> [--metrics-port <port>] [--configtest] [--configtest-binary <path>]
     cargo xtask eggbench-qualification check  --input  <dir> [--configtest] [--configtest-binary <path>]
 
 VERIFY (routine):
@@ -113,14 +113,19 @@ ICMP-QUALIFY (manual, Phase 91):
     --dry-run are read-only/print-only (safe everywhere). --native requires
     Linux + root/CAP_NET_ADMIN + SYNVOID_ICMP_QUALIFY_NATIVE=1 and shells
     the ignored crate matrix; --cleanup removes harness namespaces.
-    Anything unmet is \"not qualified\", never success.
+    Anything unmet is reported as 'not qualified', never success.
 
-EGGBENCH-QUALIFICATION (synvoid.eggbench-qualification.v1):
+EGGBENCH-QUALIFICATION (synvoid.eggbench-qualification.v1 + synvoid.eggbench-telemetry.v1):
     Materialize the SynVoid-owned qualification asset contract for the
-    Eggbench Security Qualification M002 consumer. `export` writes a
-    loopback-only minimal runtime tree + corpus + provenance manifest.
-    `check` proves a previously materialized tree is internally coherent
-    (canonical-JSON equality, allowlist consistency, --configtest pass).
+    Eggbench Security Qualification M002 (corpus/provenance) and M003
+    (telemetry) consumers. `export` writes a loopback-only minimal runtime
+    tree + corpus + provenance manifest; passing `--metrics-port <port>`
+    also enables the supervisor-side Prometheus exporter on the loopback
+    port and emits `telemetry-contract.json` + `telemetry-mapping.json`
+    plus a provenance extension. `check` proves a previously materialized
+    tree is internally coherent (canonical-JSON equality, allowlist
+    consistency, telemetry contract / mapping / enabled-config digest
+    verification, --configtest pass).
 
 OPTIONS:
     --dry-run       Print commands without executing

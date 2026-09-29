@@ -138,6 +138,16 @@ pub(crate) static DROPPED_YARA_BROADCASTS: LazyLock<AtomicU64> = LazyLock::new(|
 - **Static Files**: Cache hit tracking
 - **Admin API**: Metrics endpoints for dashboards
 - **Bandwidth**: Protocol-level bandwidth monitoring
+- **Supervisor (M003 telemetry bridge)**: When `[metrics]` is enabled,
+  the supervisor-side `telemetry_bridge.rs` aggregates
+  `ProcessManager::get_all_unified_server_worker_metrics()` + CPU-worker
+  `CpuOffloadStats` heartbeats into the bounded
+  `synvoid.eggbench-telemetry.v1` owner inventory. The exporter
+  listener is loopback-only and the recorder is installed explicitly
+  exactly once. Counter monotonicity across worker generations is
+  preserved via per-worker `WorkerCounterState` with reset boundary
+  observation. See `plans/eggbench_security_qualification_m003_telemetry_contract.md`
+  and `architecture/eggbench_security_qualification_m003_telemetry_closeout.md`.
 
 ---
 

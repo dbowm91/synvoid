@@ -31,8 +31,22 @@ pub const CORPUS_SCHEMA_VERSION: &str = "eggbench.security_qualification.corpus.
 pub const PROVENANCE_SCHEMA_VERSION: &str = "eggbench.security_qualification.provenance.v1";
 pub const CONFIG_SCHEMA_VERSION: &str = "eggbench.security_qualification.config.v1";
 
+// Telemetry contract (M003): identifiers + schema versions for the
+// supervisor-side Prometheus exporter contract. The contract identifier
+// is owned by SynVoid; an incompatible change requires a new identifier
+// per the binding plan.
+pub const TELEMETRY_CONTRACT_ID: &str = "synvoid.eggbench-telemetry.v1";
+pub const TELEMETRY_CONTRACT_VERSION: &str = "v1";
+pub const TELEMETRY_CONTRACT_SCHEMA_VERSION: &str = "synvoid.eggbench-telemetry.contract.v1";
+pub const TELEMETRY_MAPPING_SCHEMA_VERSION: &str =
+    "eggbench.security_qualification.telemetry_mapping.v1";
+pub const TELEMETRY_SOURCE_REFRESH_CADENCE_SECS: u64 = 5;
+pub const TELEMETRY_SCRAPE_PATH: &str = "/metrics";
+pub const TELEMETRY_MAPPING_FILENAME: &str = "telemetry-mapping.json";
+pub const TELEMETRY_CONTRACT_FILENAME: &str = "telemetry-contract.json";
+
 pub const MATERIALIZER_NAME: &str = "synvoid-eggbench-qualification-materializer";
-pub const MATERIALIZER_VERSION: &str = "1.0.0";
+pub const MATERIALIZER_VERSION: &str = "1.1.0";
 
 // Live wire status mapping under policy v1. The canonical SynVoid block
 // response for action = "block" is 403; see
@@ -261,6 +275,21 @@ pub struct Provenance {
     pub generated_config_sha256: String,
     pub generated_corpus_sha256: String,
     pub site_config_sha256: String,
+    /// M003 telemetry: present only when `--metrics-port` was supplied
+    /// at export. Additive optional fields, not part of the closed M002
+    /// schema. Existing checkers that reject unknown keys must use the
+    /// `check_telemetry_form` path which loads these fields directly
+    /// from the telemetry contract file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub telemetry_metrics_port: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub telemetry_contract_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub telemetry_contract_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub telemetry_mapping_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub telemetry_enabled_config_digest: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -273,6 +302,354 @@ pub struct ConfigBundle {
     pub materializer: String,
     pub listen_port: u16,
     pub origin_port: u16,
+}
+
+// ============================================================================
+// M003 telemetry types (Workstream F: owner manifest + Eggbench mapping)
+// ============================================================================
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TelemetryMetricKind {
+    Gauge,
+    Counter,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TelemetryMetricEntry {
+    pub prometheus_name: String,
+    pub kind: TelemetryMetricKind,
+    pub unit: String,
+    pub aggregation: String,
+    pub required: bool,
+    pub source_field: String,
+    pub reset_semantics: String,
+    pub help: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TelemetryContract {
+    pub schema_version: String,
+    pub contract_id: String,
+    pub contract_version: String,
+    pub synvoid_package_version: String,
+    pub synvoid_git_sha: String,
+    pub metrics_port: u16,
+    pub scrape_url: String,
+    pub scrape_path: String,
+    pub source_refresh_cadence_secs: u64,
+    pub metrics: Vec<TelemetryMetricEntry>,
+    pub mapping_filename: String,
+    pub mapping_sha256: String,
+    /// SHA-256 of the byte-stable serialized telemetry contract itself
+    /// (excluding this field). Consumers re-hash the file and compare.
+    pub contract_digest: String,
+    /// SHA-256 of the telemetry-enabled `main.toml` content shipped in
+    /// the materialization. Lets downstream verifiers detect tampering
+    /// without re-deriving it from the manifest.
+    pub enabled_config_digest: String,
+}
+
+/// Field name in Eggbench's normalized telemetry output. The
+/// `subject_<suffix>` naming is owned by Eggbench; SynVoid's mapping
+/// artifact records the stable Prometheus name ↔ normalized field
+/// pairing it is bound to.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TelemetryMappingField {
+    pub output_name: String,
+    pub prometheus_name: String,
+    pub kind: TelemetryMetricKind,
+    pub unit: String,
+    pub aggregation: String,
+    pub required: bool,
+}
+
+/// Eggbench-compatible interoperability mapping artifact. Mirrors
+/// Eggbench's landed `prometheus-http` mapping schema v1: an ordered
+/// list of fields, each binding one Prometheus metric to one normalized
+/// `subject_*` field. Produced by the SynVoid materializer; consumed by
+/// the Eggbench generic collector.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TelemetryMapping {
+    pub schema_version: String,
+    pub source: String,
+    pub contract_id: String,
+    pub fields: Vec<TelemetryMappingField>,
+}
+
+// ============================================================================
+// M003 owner metric inventory
+// ============================================================================
+//
+// Every metric shipped under `synvoid.eggbench-telemetry.v1`. Names
+// are underscore-only so Prometheus name sanitization does not become
+// part of the compatibility contract. The order is the contract order;
+// it must match the supervisor-side bridge inventory exactly.
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TelemetryOwnerMetric {
+    EventLoopLagMs,
+    RequestQueueP95Ms,
+    ActiveConnections,
+    WorkerMemoryBytes,
+    WorkerCpuPercent,
+    BodyBufferingBytesTotal,
+    OffloadSubmissionsTotal,
+    OffloadTimeoutsTotal,
+    OffloadRejectionsTotal,
+    OffloadFallbacksTotal,
+    CpuWorkerRssBytes,
+    WorkerMetricResetsTotal,
+}
+
+impl TelemetryOwnerMetric {
+    pub const fn prometheus_name(self) -> &'static str {
+        match self {
+            Self::EventLoopLagMs => "synvoid_subject_event_loop_lag_ms",
+            Self::RequestQueueP95Ms => "synvoid_subject_request_queue_p95_ms",
+            Self::ActiveConnections => "synvoid_subject_active_connections",
+            Self::WorkerMemoryBytes => "synvoid_subject_worker_memory_bytes",
+            Self::WorkerCpuPercent => "synvoid_subject_worker_cpu_percent",
+            Self::BodyBufferingBytesTotal => "synvoid_subject_body_buffering_bytes_total",
+            Self::OffloadSubmissionsTotal => "synvoid_subject_offload_submissions_total",
+            Self::OffloadTimeoutsTotal => "synvoid_subject_offload_timeouts_total",
+            Self::OffloadRejectionsTotal => "synvoid_subject_offload_rejections_total",
+            Self::OffloadFallbacksTotal => "synvoid_subject_offload_fallbacks_total",
+            Self::CpuWorkerRssBytes => "synvoid_subject_cpu_worker_rss_bytes",
+            Self::WorkerMetricResetsTotal => "synvoid_subject_worker_metric_resets_total",
+        }
+    }
+
+    pub const fn kind(self) -> TelemetryMetricKind {
+        match self {
+            Self::EventLoopLagMs
+            | Self::RequestQueueP95Ms
+            | Self::ActiveConnections
+            | Self::WorkerMemoryBytes
+            | Self::WorkerCpuPercent
+            | Self::CpuWorkerRssBytes => TelemetryMetricKind::Gauge,
+            _ => TelemetryMetricKind::Counter,
+        }
+    }
+
+    pub const fn unit(self) -> &'static str {
+        match self {
+            Self::EventLoopLagMs => "ms",
+            Self::RequestQueueP95Ms => "ms",
+            Self::ActiveConnections => "connections",
+            Self::WorkerMemoryBytes => "bytes",
+            Self::WorkerCpuPercent => "percent",
+            Self::CpuWorkerRssBytes => "bytes",
+            _ => "events",
+        }
+    }
+
+    pub const fn required(self) -> bool {
+        matches!(
+            self,
+            Self::CpuWorkerRssBytes | Self::WorkerMetricResetsTotal
+        ) == false
+    }
+
+    pub const fn aggregation(self) -> &'static str {
+        match self {
+            Self::EventLoopLagMs => "max",
+            Self::RequestQueueP95Ms => "max",
+            Self::ActiveConnections => "sum",
+            Self::WorkerMemoryBytes => "sum",
+            Self::WorkerCpuPercent => "sum",
+            Self::CpuWorkerRssBytes => "latest_ready",
+            _ => "supervisor_lifetime_monotonic_bridge",
+        }
+    }
+
+    pub const fn source_field(self) -> &'static str {
+        match self {
+            Self::EventLoopLagMs => "WorkerMetricsPayload::event_loop_lag_ms",
+            Self::RequestQueueP95Ms => "WorkerMetricsPayload::request_queue_time_ms.p95_ms",
+            Self::ActiveConnections => "WorkerMetricsPayload::active_connections",
+            Self::WorkerMemoryBytes => "WorkerMetricsPayload::memory_bytes",
+            Self::WorkerCpuPercent => "WorkerMetricsPayload::cpu_percent",
+            Self::BodyBufferingBytesTotal => "WorkerMetricsPayload::body_buffering_bytes_total",
+            Self::OffloadSubmissionsTotal => "WorkerMetricsPayload::offload_submissions_total",
+            Self::OffloadTimeoutsTotal => "WorkerMetricsPayload::offload_timeouts_total",
+            Self::OffloadRejectionsTotal => "WorkerMetricsPayload::offload_rejections_total",
+            Self::OffloadFallbacksTotal => "WorkerMetricsPayload::offload_fallbacks_total",
+            Self::CpuWorkerRssBytes => "CpuOffloadStats::worker_rss_bytes",
+            Self::WorkerMetricResetsTotal => "internal_counter",
+        }
+    }
+
+    pub const fn reset_semantics(self) -> &'static str {
+        match self {
+            Self::CpuWorkerRssBytes => "omitted_when_cpu_worker_absent",
+            _ if matches!(self.kind(), TelemetryMetricKind::Counter) => {
+                "supervisor_lifetime_monotonic_with_reset_boundary_observation"
+            }
+            _ => "latest_value_per_worker_snapshot",
+        }
+    }
+
+    pub const fn help(self) -> &'static str {
+        match self {
+            Self::EventLoopLagMs => "Maximum event_loop_lag_ms across Unified Server workers (ms).",
+            Self::RequestQueueP95Ms => {
+                "Maximum p95 request_queue_time_ms across Unified Server workers (ms)."
+            }
+            Self::ActiveConnections => "Sum of active_connections across Unified Server workers.",
+            Self::WorkerMemoryBytes => "Sum of memory_bytes across Unified Server workers.",
+            Self::WorkerCpuPercent => "Sum of cpu_percent across Unified Server workers.",
+            Self::BodyBufferingBytesTotal => {
+                "Supervisor-lifetime monotonic bridge of body_buffering_bytes_total."
+            }
+            Self::OffloadSubmissionsTotal => {
+                "Supervisor-lifetime monotonic bridge of offload_submissions_total."
+            }
+            Self::OffloadTimeoutsTotal => {
+                "Supervisor-lifetime monotonic bridge of offload_timeouts_total."
+            }
+            Self::OffloadRejectionsTotal => {
+                "Supervisor-lifetime monotonic bridge of offload_rejections_total."
+            }
+            Self::OffloadFallbacksTotal => {
+                "Supervisor-lifetime monotonic bridge of offload_fallbacks_total."
+            }
+            Self::CpuWorkerRssBytes => "Latest ready CPU-worker worker_rss_bytes (bytes).",
+            Self::WorkerMetricResetsTotal => {
+                "Total worker counter reset boundaries observed during bridging."
+            }
+        }
+    }
+
+    /// Eggbench `subject_<suffix>` normalized output name. Owned by
+    /// Eggbench semantics; SynVoid only records the binding.
+    pub const fn eggbench_output_name(self) -> &'static str {
+        // The mapping is the Prometheus metric suffix without the
+        // `synvoid_subject_` prefix. Matches Eggbench's normalized
+        // output naming convention (subject_event_loop_lag_ms, etc.).
+        match self {
+            Self::EventLoopLagMs => "subject_event_loop_lag_ms",
+            Self::RequestQueueP95Ms => "subject_request_queue_p95_ms",
+            Self::ActiveConnections => "subject_active_connections",
+            Self::WorkerMemoryBytes => "subject_worker_memory_bytes",
+            Self::WorkerCpuPercent => "subject_worker_cpu_percent",
+            Self::BodyBufferingBytesTotal => "subject_body_buffering_bytes_total",
+            Self::OffloadSubmissionsTotal => "subject_offload_submissions_total",
+            Self::OffloadTimeoutsTotal => "subject_offload_timeouts_total",
+            Self::OffloadRejectionsTotal => "subject_offload_rejections_total",
+            Self::OffloadFallbacksTotal => "subject_offload_fallbacks_total",
+            Self::CpuWorkerRssBytes => "subject_cpu_worker_rss_bytes",
+            Self::WorkerMetricResetsTotal => "subject_worker_metric_resets_total",
+        }
+    }
+}
+
+pub const TELEMETRY_OWNER_INVENTORY: &[TelemetryOwnerMetric] = &[
+    TelemetryOwnerMetric::EventLoopLagMs,
+    TelemetryOwnerMetric::RequestQueueP95Ms,
+    TelemetryOwnerMetric::ActiveConnections,
+    TelemetryOwnerMetric::WorkerMemoryBytes,
+    TelemetryOwnerMetric::WorkerCpuPercent,
+    TelemetryOwnerMetric::BodyBufferingBytesTotal,
+    TelemetryOwnerMetric::OffloadSubmissionsTotal,
+    TelemetryOwnerMetric::OffloadTimeoutsTotal,
+    TelemetryOwnerMetric::OffloadRejectionsTotal,
+    TelemetryOwnerMetric::OffloadFallbacksTotal,
+    TelemetryOwnerMetric::CpuWorkerRssBytes,
+    TelemetryOwnerMetric::WorkerMetricResetsTotal,
+];
+
+/// Build the owner contract. `contract_digest` is the SHA-256 of the
+/// canonical JSON serialization with `contract_digest` itself cleared
+/// to the empty string. This is a content-addressed fingerprint:
+/// consumers recompute it by serializing the same content tree with
+/// the field emptied, and they do not depend on the digest field
+/// itself being stable across edits.
+pub fn build_telemetry_contract(
+    metrics_port: u16,
+    package_version: &str,
+    git_sha: &str,
+    mapping_sha256: &str,
+    enabled_config_bytes: &[u8],
+) -> Result<(TelemetryContract, Vec<u8>)> {
+    let metrics: Vec<TelemetryMetricEntry> = TELEMETRY_OWNER_INVENTORY
+        .iter()
+        .map(|&m| TelemetryMetricEntry {
+            prometheus_name: m.prometheus_name().to_string(),
+            kind: m.kind(),
+            unit: m.unit().to_string(),
+            aggregation: m.aggregation().to_string(),
+            required: m.required(),
+            source_field: m.source_field().to_string(),
+            reset_semantics: m.reset_semantics().to_string(),
+            help: m.help().to_string(),
+        })
+        .collect();
+
+    let enabled_config_digest = sha256_hex(enabled_config_bytes);
+
+    let scrape_url = format!("http://127.0.0.1:{metrics_port}{TELEMETRY_SCRAPE_PATH}");
+
+    // Step 1: build the contract with an empty digest placeholder and
+    // serialize. The hash over these bytes is the contract fingerprint.
+    let mut skeleton = TelemetryContract {
+        schema_version: TELEMETRY_CONTRACT_SCHEMA_VERSION.to_string(),
+        contract_id: TELEMETRY_CONTRACT_ID.to_string(),
+        contract_version: TELEMETRY_CONTRACT_VERSION.to_string(),
+        synvoid_package_version: package_version.to_string(),
+        synvoid_git_sha: git_sha.to_string(),
+        metrics_port,
+        scrape_url,
+        scrape_path: TELEMETRY_SCRAPE_PATH.to_string(),
+        source_refresh_cadence_secs: TELEMETRY_SOURCE_REFRESH_CADENCE_SECS,
+        metrics,
+        mapping_filename: TELEMETRY_MAPPING_FILENAME.to_string(),
+        mapping_sha256: mapping_sha256.to_string(),
+        contract_digest: String::new(),
+        enabled_config_digest,
+    };
+    let pre_digest_bytes = canonical_json(&skeleton)?;
+    let digest = sha256_hex(&pre_digest_bytes);
+
+    // Step 2: re-serialize with the populated digest field so the
+    // on-disk file is self-describing (operators can read the digest
+    // without recomputing). The check function re-computes the digest
+    // over the same skeleton (with the field emptied) and compares.
+    skeleton.contract_digest = digest.clone();
+    let final_bytes = canonical_json(&skeleton)?;
+    Ok((skeleton, final_bytes))
+}
+
+/// Recompute the contract fingerprint for verification: serialize the
+/// contract with `contract_digest` emptied and hash the result.
+pub fn recompute_contract_digest(contract: &TelemetryContract) -> Result<String> {
+    let mut skeleton = contract.clone();
+    skeleton.contract_digest.clear();
+    let bytes = canonical_json(&skeleton)?;
+    Ok(sha256_hex(&bytes))
+}
+
+/// Build the Eggbench-consumable telemetry mapping artifact.
+pub fn build_telemetry_mapping() -> Result<(TelemetryMapping, Vec<u8>)> {
+    let fields: Vec<TelemetryMappingField> = TELEMETRY_OWNER_INVENTORY
+        .iter()
+        .map(|&m| TelemetryMappingField {
+            output_name: m.eggbench_output_name().to_string(),
+            prometheus_name: m.prometheus_name().to_string(),
+            kind: m.kind(),
+            unit: m.unit().to_string(),
+            aggregation: m.aggregation().to_string(),
+            required: m.required(),
+        })
+        .collect();
+    let mapping = TelemetryMapping {
+        schema_version: TELEMETRY_MAPPING_SCHEMA_VERSION.to_string(),
+        source: "prometheus".to_string(),
+        contract_id: TELEMETRY_CONTRACT_ID.to_string(),
+        fields,
+    };
+    let bytes = canonical_json(&mapping)?;
+    Ok((mapping, bytes))
 }
 
 // ============================================================================
@@ -604,6 +981,7 @@ pub struct BuildInputs<'a> {
     pub git_sha: &'a str,
 }
 
+#[derive(Debug)]
 pub struct BuildOutputs {
     pub corpus: Corpus,
     pub provenance: Provenance,
@@ -613,6 +991,15 @@ pub struct BuildOutputs {
     pub site_toml: String,
     #[allow(dead_code)]
     pub config_bundle: ConfigBundle,
+    /// `Some` iff `--metrics-port` was supplied at export.
+    #[allow(dead_code)]
+    pub telemetry_contract: Option<TelemetryContract>,
+    #[allow(dead_code)]
+    pub telemetry_mapping: Option<TelemetryMapping>,
+    #[allow(dead_code)]
+    pub telemetry_mapping_bytes: Option<Vec<u8>>,
+    #[allow(dead_code)]
+    pub telemetry_contract_bytes: Option<Vec<u8>>,
 }
 
 pub fn build_corpus(
@@ -698,6 +1085,7 @@ pub fn build_provenance(
     main_toml_bytes: &[u8],
     site_toml_bytes: &[u8],
     corpus_bytes: &[u8],
+    telemetry: Option<&TelemetryProvenanceFields>,
 ) -> Result<Provenance> {
     // Provenance source fixtures: include allowlisted fixtures only, with
     // their relative paths and SHA-256 digests.
@@ -736,7 +1124,7 @@ pub fn build_provenance(
         })
         .collect();
 
-    Ok(Provenance {
+    let mut p = Provenance {
         schema_version: PROVENANCE_SCHEMA_VERSION.to_string(),
         policy_id: POLICY_ID.to_string(),
         policy_version: POLICY_VERSION.to_string(),
@@ -752,7 +1140,30 @@ pub fn build_provenance(
         generated_config_sha256: sha256_hex(main_toml_bytes),
         generated_corpus_sha256: sha256_hex(corpus_bytes),
         site_config_sha256: sha256_hex(site_toml_bytes),
-    })
+        telemetry_metrics_port: None,
+        telemetry_contract_id: None,
+        telemetry_contract_digest: None,
+        telemetry_mapping_digest: None,
+        telemetry_enabled_config_digest: None,
+    };
+    if let Some(t) = telemetry {
+        p.telemetry_metrics_port = Some(t.metrics_port);
+        p.telemetry_contract_id = Some(TELEMETRY_CONTRACT_ID.to_string());
+        p.telemetry_contract_digest = Some(t.contract_digest.clone());
+        p.telemetry_mapping_digest = Some(t.mapping_sha256.clone());
+        p.telemetry_enabled_config_digest = Some(t.enabled_config_digest.clone());
+    }
+    Ok(p)
+}
+
+/// M003 provenance extension fields. Bounded payload so adding new
+/// provenance fields in the future requires a schema version bump
+/// rather than ad-hoc provenance mutations.
+pub struct TelemetryProvenanceFields {
+    pub metrics_port: u16,
+    pub contract_digest: String,
+    pub mapping_sha256: String,
+    pub enabled_config_digest: String,
 }
 
 // ============================================================================
@@ -763,26 +1174,54 @@ pub fn build_provenance(
 ///
 /// - bind 127.0.0.1:<listen_port> only
 /// - upstream defaults to a no-op `return_404` fallback (the site file owns
-///   the real upstream); admin disabled; metrics disabled; rate limiting
-///   disabled; persistence disabled; logging paths inside the
-///   qualification dir; threat_level disabled; no IP feeds; no traffic
-///   shaping; no TLS; no HTTP/3; no socket-handoff; no mesh; no DNS; no
-///   flood/ICMP; tunnelling disabled; plugins/serverless/app-server
-///   disabled; cookie/session defaults left empty.
-pub fn build_main_toml(inputs: &BuildInputs, output_dir: &Path) -> String {
+///   the real upstream); admin disabled; rate limiting disabled; persistence
+///   disabled; logging paths inside the qualification dir; threat_level
+///   disabled; no IP feeds; no traffic shaping; no TLS; no HTTP/3; no
+///   socket-handoff; no mesh; no DNS; no flood/ICMP; tunnelling disabled;
+///   plugins/serverless/app-server disabled; cookie/session defaults left
+///   empty.
+/// - When `metrics_port` is `Some`, the `[metrics]` table enables the
+///   supervisor-side Prometheus exporter on `127.0.0.1:<metrics_port>` and
+///   `admin.enabled` remains `false`. When `metrics_port` is `None`, the
+///   M002 v1 closed-export form is preserved: `[metrics] enabled = false`.
+pub fn build_main_toml(
+    inputs: &BuildInputs,
+    output_dir: &Path,
+    metrics_port: Option<u16>,
+) -> String {
     let log_dir = output_dir.join("logs");
     let state_dir = output_dir.join("state");
     let _ = fs::create_dir_all(&log_dir);
     let _ = fs::create_dir_all(&state_dir);
 
+    let (metrics_block, header_comment) = match metrics_port {
+        Some(port) => (
+            format!(
+                r#"[metrics]
+enabled = true
+port = {port}
+bind_address = "127.0.0.1""#
+            ),
+            format!(
+                "# Eggbench Security Qualification M002+M003 — policy synvoid.eggbench-qualification.v1\n\
+                 # plus synvoid.eggbench-telemetry.v1 (telemetry exporter on 127.0.0.1:{port})."
+            ),
+        ),
+        None => (
+            "[metrics]\nenabled = false\nport = 9090\nbind_address = \"127.0.0.1\"".to_string(),
+            "# Eggbench Security Qualification M002 — policy synvoid.eggbench-qualification.v1.\n\
+             # DO NOT EDIT BY HAND. Regenerate with `cargo xtask eggbench-qualification export`."
+                .to_string(),
+        ),
+    };
+
     format!(
         r#"# SynVoid qualification runtime configuration (auto-generated).
-# Eggbench Security Qualification M002 — policy synvoid.eggbench-qualification.v1.
-# DO NOT EDIT BY HAND. Regenerate with `cargo xtask eggbench-qualification export`.
+{header_comment}
 #
 # Loopback-only: bind 127.0.0.1:{listen_port}, upstream is the controlled origin
 # bound to 127.0.0.1:{origin_port}. No public listeners, no remote mesh, no DNS,
-# no flood/ICMP, no admin, no metrics, no rate limiting.
+# no flood/ICMP, no admin, no rate limiting.
 
 [server]
 host = "127.0.0.1"
@@ -877,9 +1316,7 @@ global_security_headers = false
 sanitize_forwarded_headers = true
 allow_insecure_ipc_key = false
 
-[metrics]
-enabled = false
-port = 9090
+{metrics_block}
 
 [defaults]
 
@@ -919,7 +1356,7 @@ ttl_secs = 60
 enabled = false
 ban_duration = "1h"
 
-[defaults.honeypot_probe]
+[defaults.honeypot.probe]
 enabled = false
 max_endpoints_per_window = 3
 window_secs = 300
@@ -1029,6 +1466,8 @@ file = ""
         origin_port = inputs.origin_port,
         log_dir = log_dir.display(),
         state_dir = state_dir.display(),
+        metrics_block = metrics_block,
+        header_comment = header_comment,
     )
 }
 
@@ -1170,6 +1609,11 @@ pub struct ExportOptions {
     pub output_dir: PathBuf,
     pub listen_port: u16,
     pub origin_port: u16,
+    /// M003 telemetry: when `Some`, the supervisor-side Prometheus
+    /// exporter is enabled on this loopback port. None preserves the
+    /// closed M002 v1 export semantics (metrics disabled, no telemetry
+    /// artifacts, no provenance extension).
+    pub metrics_port: Option<u16>,
     pub run_configtest: bool,
     pub configtest_binary: Option<PathBuf>,
 }
@@ -1180,6 +1624,7 @@ impl std::fmt::Debug for ExportOptions {
             .field("output_dir", &self.output_dir)
             .field("listen_port", &self.listen_port)
             .field("origin_port", &self.origin_port)
+            .field("metrics_port", &self.metrics_port)
             .field("run_configtest", &self.run_configtest)
             .field(
                 "configtest_binary",
@@ -1202,6 +1647,25 @@ pub fn run_export(opts: ExportOptions, workspace: &Path) -> Result<BuildOutputs>
         return Err(MaterializerError::Invalid(
             "origin_port must be non-zero".to_string(),
         ));
+    }
+    if let Some(metrics_port) = opts.metrics_port {
+        if metrics_port == 0 {
+            return Err(MaterializerError::Invalid(
+                "metrics_port must be non-zero when provided".to_string(),
+            ));
+        }
+        if metrics_port == opts.listen_port {
+            return Err(MaterializerError::Invalid(format!(
+                "metrics_port {} must differ from listen-port (port collision)",
+                metrics_port
+            )));
+        }
+        if metrics_port == opts.origin_port {
+            return Err(MaterializerError::Invalid(format!(
+                "metrics_port {} must differ from origin-port (port collision)",
+                metrics_port
+            )));
+        }
     }
 
     let _policy = load_policy(workspace)?;
@@ -1242,11 +1706,45 @@ pub fn run_export(opts: ExportOptions, workspace: &Path) -> Result<BuildOutputs>
         git_sha: &git_sha,
     };
 
-    let main_toml = build_main_toml(&inputs, &opts.output_dir);
+    let main_toml = build_main_toml(&inputs, &opts.output_dir, opts.metrics_port);
     let site_toml = build_site_toml(&inputs);
 
     let main_toml_bytes = main_toml.as_bytes().to_vec();
     let site_toml_bytes = site_toml.as_bytes().to_vec();
+
+    // M003 telemetry artifacts (only when `--metrics-port` was supplied).
+    let (
+        telemetry_contract,
+        telemetry_contract_bytes,
+        telemetry_mapping,
+        telemetry_mapping_bytes,
+        telemetry_provenance,
+    ) = if let Some(metrics_port) = opts.metrics_port {
+        let (mapping, mapping_bytes) = build_telemetry_mapping()?;
+        let mapping_sha256 = sha256_hex(&mapping_bytes);
+        let (contract, contract_bytes) = build_telemetry_contract(
+            metrics_port,
+            &package_version,
+            &git_sha,
+            &mapping_sha256,
+            &main_toml_bytes,
+        )?;
+        let prov = TelemetryProvenanceFields {
+            metrics_port,
+            contract_digest: contract.contract_digest.clone(),
+            mapping_sha256: mapping_sha256.clone(),
+            enabled_config_digest: contract.enabled_config_digest.clone(),
+        };
+        (
+            Some(contract),
+            Some(contract_bytes),
+            Some(mapping),
+            Some(mapping_bytes),
+            Some(prov),
+        )
+    } else {
+        (None, None, None, None, None)
+    };
 
     let provenance = build_provenance(
         &inputs,
@@ -1256,6 +1754,7 @@ pub fn run_export(opts: ExportOptions, workspace: &Path) -> Result<BuildOutputs>
         &main_toml_bytes,
         &site_toml_bytes,
         &corpus_bytes,
+        telemetry_provenance.as_ref(),
     )?;
 
     let config_bundle = ConfigBundle {
@@ -1285,12 +1784,34 @@ pub fn run_export(opts: ExportOptions, workspace: &Path) -> Result<BuildOutputs>
     let bundle_bytes = canonical_json(&config_bundle)?;
     fs::write(opts.output_dir.join("config_manifest.json"), &bundle_bytes).map_err(io_err)?;
 
+    // M003 telemetry artifacts.
+    if let (Some(_contract), Some(contract_bytes)) =
+        (&telemetry_contract, &telemetry_contract_bytes)
+    {
+        fs::write(
+            opts.output_dir.join(TELEMETRY_CONTRACT_FILENAME),
+            contract_bytes,
+        )
+        .map_err(io_err)?;
+    }
+    if let (Some(_mapping), Some(mapping_bytes)) = (&telemetry_mapping, &telemetry_mapping_bytes) {
+        fs::write(
+            opts.output_dir.join(TELEMETRY_MAPPING_FILENAME),
+            mapping_bytes,
+        )
+        .map_err(io_err)?;
+    }
+
     let outputs = BuildOutputs {
         corpus,
         provenance,
         main_toml,
         site_toml,
         config_bundle,
+        telemetry_contract,
+        telemetry_mapping,
+        telemetry_mapping_bytes,
+        telemetry_contract_bytes,
     };
 
     if opts.run_configtest {
@@ -1378,6 +1899,133 @@ pub fn run_check(opts: CheckOptions, workspace: &Path) -> Result<()> {
         )));
     }
 
+    // M003 telemetry artifacts (optional; present iff `--metrics-port`
+    // was supplied at export). When present, the provenance extension
+    // is required and the contract / mapping / enabled-config digests
+    // must match the on-disk artifacts exactly.
+    let telemetry_contract_path = input_dir.join(TELEMETRY_CONTRACT_FILENAME);
+    let telemetry_mapping_path = input_dir.join(TELEMETRY_MAPPING_FILENAME);
+    let telemetry_present = telemetry_contract_path.exists() && telemetry_mapping_path.exists();
+    if telemetry_present != provenance.telemetry_contract_digest.is_some() {
+        return Err(MaterializerError::Invalid(format!(
+            "telemetry artifacts presence mismatch: contract_exists={}, mapping_exists={}, provenance_carries_telemetry={}",
+            telemetry_contract_path.exists(),
+            telemetry_mapping_path.exists(),
+            provenance.telemetry_contract_digest.is_some()
+        )));
+    }
+    if telemetry_present {
+        let contract_bytes = fs::read(&telemetry_contract_path).map_err(io_err)?;
+        let contract: TelemetryContract =
+            serde_json::from_slice(&contract_bytes).map_err(parse_err)?;
+        let mapping_bytes = fs::read(&telemetry_mapping_path).map_err(io_err)?;
+        let mapping: TelemetryMapping =
+            serde_json::from_slice(&mapping_bytes).map_err(parse_err)?;
+
+        let canon_contract = canonical_json(&contract)?;
+        if canon_contract != contract_bytes {
+            return Err(MaterializerError::Invalid(
+                "telemetry-contract.json is not byte-deterministic against canonical re-serialization"
+                    .to_string(),
+            ));
+        }
+        let canon_mapping = canonical_json(&mapping)?;
+        if canon_mapping != mapping_bytes {
+            return Err(MaterializerError::Invalid(
+                "telemetry-mapping.json is not byte-deterministic against canonical re-serialization"
+                    .to_string(),
+            ));
+        }
+
+        if contract.contract_id != TELEMETRY_CONTRACT_ID {
+            return Err(MaterializerError::Invalid(format!(
+                "telemetry contract_id mismatch: expected {}, got {}",
+                TELEMETRY_CONTRACT_ID, contract.contract_id
+            )));
+        }
+        if contract.metrics_port != provenance.telemetry_metrics_port.unwrap_or(0) {
+            return Err(MaterializerError::Invalid(format!(
+                "telemetry metrics_port mismatch: contract={}, provenance={:?}",
+                contract.metrics_port, provenance.telemetry_metrics_port
+            )));
+        }
+        // Recompute the contract fingerprint from the file content and
+        // compare to the embedded value. This catches tampering that
+        // modifies the file but leaves the manifest's digest in place.
+        let recomputed = recompute_contract_digest(&contract)?;
+        if recomputed != contract.contract_digest {
+            return Err(MaterializerError::Invalid(format!(
+                "telemetry contract_digest self-check failed: embedded={}, recomputed={}",
+                contract.contract_digest, recomputed
+            )));
+        }
+        // Owner manifest must agree with provenance.
+        if Some(contract.contract_digest.clone()) != provenance.telemetry_contract_digest {
+            return Err(MaterializerError::Invalid(format!(
+                "telemetry contract_digest mismatch: contract={}, provenance={:?}",
+                contract.contract_digest, provenance.telemetry_contract_digest
+            )));
+        }
+        if Some(sha256_hex(&mapping_bytes)) != provenance.telemetry_mapping_digest {
+            return Err(MaterializerError::Invalid(format!(
+                "telemetry mapping digest mismatch: actual={}, provenance={:?}",
+                sha256_hex(&mapping_bytes),
+                provenance.telemetry_mapping_digest
+            )));
+        }
+        if Some(sha256_hex(&main_toml)) != provenance.telemetry_enabled_config_digest {
+            return Err(MaterializerError::Invalid(format!(
+                "telemetry enabled_config_digest mismatch: actual={}, provenance={:?}",
+                sha256_hex(&main_toml),
+                provenance.telemetry_enabled_config_digest
+            )));
+        }
+        // Mapping must reference the same contract id and source.
+        if mapping.contract_id != contract.contract_id {
+            return Err(MaterializerError::Invalid(format!(
+                "mapping contract_id mismatch: expected {}, got {}",
+                contract.contract_id, mapping.contract_id
+            )));
+        }
+        if mapping.source != "prometheus" {
+            return Err(MaterializerError::Invalid(format!(
+                "mapping source mismatch: expected prometheus, got {}",
+                mapping.source
+            )));
+        }
+        // Mapping fields must cover every required owner metric exactly.
+        let mut mapped: BTreeMap<&str, &TelemetryMappingField> = BTreeMap::new();
+        for f in &mapping.fields {
+            mapped.insert(&f.prometheus_name, f);
+        }
+        for &m in TELEMETRY_OWNER_INVENTORY {
+            if m.required() {
+                let field = mapped.get(m.prometheus_name()).ok_or_else(|| {
+                    MaterializerError::Invalid(format!(
+                        "telemetry mapping missing required field for {}",
+                        m.prometheus_name()
+                    ))
+                })?;
+                if field.kind != m.kind() {
+                    return Err(MaterializerError::Invalid(format!(
+                        "telemetry mapping kind mismatch for {}: expected {:?}, got {:?}",
+                        m.prometheus_name(),
+                        m.kind(),
+                        field.kind
+                    )));
+                }
+                if field.unit != m.unit() {
+                    return Err(MaterializerError::Invalid(format!(
+                        "telemetry mapping unit mismatch for {}: expected {}, got {}",
+                        m.prometheus_name(),
+                        m.unit(),
+                        field.unit
+                    )));
+                }
+            }
+        }
+    }
+
     // Determinism: re-canonicalize the corpus and compare.
     let canon = canonical_json(&corpus)?;
     if canon != corpus_bytes {
@@ -1454,6 +2102,7 @@ pub fn run_check(opts: CheckOptions, workspace: &Path) -> Result<()> {
             output_dir: opts.input_dir.clone(),
             listen_port: corpus.listen_port,
             origin_port: corpus.origin_port,
+            metrics_port: provenance.telemetry_metrics_port,
             run_configtest: true,
             configtest_binary: opts.configtest_binary.clone(),
         };
@@ -1541,6 +2190,7 @@ pub fn parse_subcommand(args: &[String]) -> Result<Subcommand> {
     let mut positional: Vec<&str> = Vec::new();
     let mut listen_port: Option<u16> = None;
     let mut origin_port: Option<u16> = None;
+    let mut metrics_port: Option<u16> = None;
     let mut output_dir: Option<PathBuf> = None;
     let mut input_dir: Option<PathBuf> = None;
     let mut run_configtest = false;
@@ -1558,6 +2208,11 @@ pub fn parse_subcommand(args: &[String]) -> Result<Subcommand> {
             "--origin-port" => {
                 if let Some((_, v)) = iter.next() {
                     origin_port = Some(parse_port(v)?);
+                }
+            }
+            "--metrics-port" => {
+                if let Some((_, v)) = iter.next() {
+                    metrics_port = Some(parse_port(v)?);
                 }
             }
             "--output" => {
@@ -1601,6 +2256,7 @@ pub fn parse_subcommand(args: &[String]) -> Result<Subcommand> {
             origin_port: origin_port.ok_or_else(|| {
                 MaterializerError::Invalid("`export` requires --origin-port <port>".to_string())
             })?,
+            metrics_port,
             run_configtest,
             configtest_binary,
         })),
@@ -1825,7 +2481,7 @@ mod tests {
             git_sha: &git_sha,
         };
         let output_dir = workspace().join("target/eggbench_qualification_test");
-        let main_toml = build_main_toml(&inputs, &output_dir);
+        let main_toml = build_main_toml(&inputs, &output_dir, None);
         let site_toml = build_site_toml(&inputs);
 
         // Loopback-only: only 127.0.0.1, no 0.0.0.0 / public binds.
@@ -1933,7 +2589,7 @@ mod tests {
             git_sha: &git_sha,
         };
         let output_dir = workspace().join("target/eggbench_qualification_e2e");
-        let main_toml = build_main_toml(&inputs, &output_dir);
+        let main_toml = build_main_toml(&inputs, &output_dir, None);
         let site_toml = build_site_toml(&inputs);
         let main_bytes = main_toml.as_bytes().to_vec();
         let site_bytes = site_toml.as_bytes().to_vec();
@@ -1946,6 +2602,7 @@ mod tests {
             &main_bytes,
             &site_bytes,
             &corpus_bytes,
+            None,
         )
         .unwrap();
 
@@ -2002,5 +2659,363 @@ mod tests {
                 forbidden
             );
         }
+    }
+
+    // ----------------------------------------------------------------
+    // M003 telemetry contract self-tests
+    // ----------------------------------------------------------------
+
+    fn temp_dir(label: &str) -> PathBuf {
+        let dir = workspace().join(format!(
+            "target/eggbench_m003_{label}_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn telemetry_contract_inventory_is_stable_and_underscore_only() {
+        let names: Vec<&'static str> = TELEMETRY_OWNER_INVENTORY
+            .iter()
+            .map(|m| m.prometheus_name())
+            .collect();
+        // Pin order exactly.
+        assert_eq!(
+            names,
+            vec![
+                "synvoid_subject_event_loop_lag_ms",
+                "synvoid_subject_request_queue_p95_ms",
+                "synvoid_subject_active_connections",
+                "synvoid_subject_worker_memory_bytes",
+                "synvoid_subject_worker_cpu_percent",
+                "synvoid_subject_body_buffering_bytes_total",
+                "synvoid_subject_offload_submissions_total",
+                "synvoid_subject_offload_timeouts_total",
+                "synvoid_subject_offload_rejections_total",
+                "synvoid_subject_offload_fallbacks_total",
+                "synvoid_subject_cpu_worker_rss_bytes",
+                "synvoid_subject_worker_metric_resets_total",
+            ]
+        );
+        for n in names {
+            assert!(n.is_ascii());
+            assert!(n.starts_with("synvoid_subject_"));
+            assert!(
+                !n.contains('-'),
+                "name {n:?} contains hyphen (sanitization risk)"
+            );
+        }
+    }
+
+    #[test]
+    fn telemetry_owner_inventory_partition_matches_bridge() {
+        let required = TELEMETRY_OWNER_INVENTORY
+            .iter()
+            .filter(|m| m.required())
+            .count();
+        let optional = TELEMETRY_OWNER_INVENTORY
+            .iter()
+            .filter(|m| !m.required())
+            .count();
+        assert_eq!(required, 10, "10 required metrics in v1");
+        assert_eq!(optional, 2, "CPU-worker RSS + resets optional");
+    }
+
+    #[test]
+    fn telemetry_contract_and_mapping_are_deterministic_and_digest_stable() {
+        let (m1, m1_bytes) = build_telemetry_mapping().unwrap();
+        let (m2, m2_bytes) = build_telemetry_mapping().unwrap();
+        assert_eq!(m1_bytes, m2_bytes);
+        assert_eq!(m1.contract_id, TELEMETRY_CONTRACT_ID);
+        assert_eq!(m1.source, "prometheus");
+        let (c1, c1_bytes) =
+            build_telemetry_contract(19191, "1.1.0", "deadbeef", &sha256_hex(&m1_bytes), b"")
+                .unwrap();
+        let (c2, c2_bytes) =
+            build_telemetry_contract(19191, "1.1.0", "deadbeef", &sha256_hex(&m1_bytes), b"")
+                .unwrap();
+        assert_eq!(c1_bytes, c2_bytes);
+        // The embedded digest matches the SHA-256 of the canonical
+        // serialization with the digest field cleared — i.e. it is a
+        // content-addressed fingerprint, not a self-reference.
+        let recomputed = recompute_contract_digest(&c1).unwrap();
+        assert_eq!(recomputed, c1.contract_digest);
+        assert_eq!(c1.contract_id, TELEMETRY_CONTRACT_ID);
+        assert_eq!(c1.metrics_port, 19191);
+        assert_eq!(
+            c1.scrape_url,
+            format!("http://127.0.0.1:19191{TELEMETRY_SCRAPE_PATH}")
+        );
+        assert_eq!(
+            c1.source_refresh_cadence_secs,
+            TELEMETRY_SOURCE_REFRESH_CADENCE_SECS
+        );
+    }
+
+    #[test]
+    fn telemetry_mapping_covers_required_owner_metrics_with_matching_kind_and_unit() {
+        let (mapping, _) = build_telemetry_mapping().unwrap();
+        let mut by_name: BTreeMap<&str, &TelemetryMappingField> = BTreeMap::new();
+        for f in &mapping.fields {
+            by_name.insert(f.prometheus_name.as_str(), f);
+        }
+        for &m in TELEMETRY_OWNER_INVENTORY {
+            if m.required() {
+                let f = by_name
+                    .get(m.prometheus_name())
+                    .expect("required mapping missing");
+                assert_eq!(f.kind, m.kind(), "kind for {}", m.prometheus_name());
+                assert_eq!(f.unit, m.unit(), "unit for {}", m.prometheus_name());
+                assert!(f.required, "required flag for {}", m.prometheus_name());
+            }
+        }
+        // Eggbench output names are subject_<suffix> — pin a sample.
+        assert_eq!(
+            by_name
+                .get("synvoid_subject_event_loop_lag_ms")
+                .unwrap()
+                .output_name,
+            "subject_event_loop_lag_ms"
+        );
+        assert_eq!(
+            by_name
+                .get("synvoid_subject_offload_fallbacks_total")
+                .unwrap()
+                .output_name,
+            "subject_offload_fallbacks_total"
+        );
+    }
+
+    #[test]
+    fn telemetry_off_export_remains_compatible_and_emits_no_telemetry_artifacts() {
+        let allowlist = load_allowlist(&workspace()).unwrap();
+        let exclusions = load_exclusions(&workspace()).unwrap();
+        let package_version = synvoid_package_version(&workspace()).unwrap();
+        let git_sha = git_head_sha(&workspace()).unwrap();
+        let source_fixtures = load_source_fixtures(&workspace()).unwrap();
+
+        let dir = temp_dir("off");
+        let opts = ExportOptions {
+            output_dir: dir.clone(),
+            listen_port: 28700,
+            origin_port: 28800,
+            metrics_port: None,
+            run_configtest: false,
+            configtest_binary: None,
+        };
+        let _outputs = run_export(opts, &workspace()).unwrap();
+        assert!(
+            !dir.join(TELEMETRY_CONTRACT_FILENAME).exists(),
+            "telemetry contract must not be emitted without --metrics-port"
+        );
+        assert!(
+            !dir.join(TELEMETRY_MAPPING_FILENAME).exists(),
+            "telemetry mapping must not be emitted without --metrics-port"
+        );
+        let main_toml = fs::read_to_string(dir.join("config/main.toml")).unwrap();
+        assert!(main_toml.contains("[metrics]\nenabled = false"));
+        // The closed M002 v1 form is preserved (admin disabled, no metrics port leak).
+        assert!(main_toml.contains("[admin]\nenabled = false"));
+
+        let provenance_bytes = fs::read_to_string(dir.join("provenance.json")).unwrap();
+        let provenance: Provenance = serde_json::from_str(&provenance_bytes).unwrap();
+        assert!(provenance.telemetry_metrics_port.is_none());
+        assert!(provenance.telemetry_contract_digest.is_none());
+
+        // No-telemetry check must succeed.
+        let check_opts = CheckOptions {
+            input_dir: dir.clone(),
+            run_configtest: false,
+            configtest_binary: None,
+        };
+        run_check(check_opts, &workspace()).expect("telemetry-off check must succeed");
+        let _ = fs::remove_dir_all(&dir);
+        let _ = (
+            allowlist,
+            exclusions,
+            package_version,
+            git_sha,
+            source_fixtures,
+        );
+    }
+
+    #[test]
+    fn telemetry_on_export_emits_contract_and_mapping_and_extensions_provenance() {
+        let dir = temp_dir("on");
+        let opts = ExportOptions {
+            output_dir: dir.clone(),
+            listen_port: 28710,
+            origin_port: 28810,
+            metrics_port: Some(28910),
+            run_configtest: false,
+            configtest_binary: None,
+        };
+        let outputs = run_export(opts, &workspace()).unwrap();
+        let telemetry_contract = outputs.telemetry_contract.expect("contract");
+        let telemetry_mapping = outputs.telemetry_mapping.expect("mapping");
+        assert_eq!(telemetry_contract.contract_id, TELEMETRY_CONTRACT_ID);
+        assert_eq!(telemetry_contract.metrics_port, 28910);
+        assert_eq!(
+            telemetry_contract.mapping_sha256,
+            sha256_hex(outputs.telemetry_mapping_bytes.as_ref().unwrap())
+        );
+        assert_eq!(telemetry_mapping.contract_id, TELEMETRY_CONTRACT_ID);
+
+        // Mapped files exist on disk.
+        let contract_bytes = fs::read(dir.join(TELEMETRY_CONTRACT_FILENAME)).unwrap();
+        let mapping_bytes = fs::read(dir.join(TELEMETRY_MAPPING_FILENAME)).unwrap();
+        // The on-disk contract bytes include the populated digest
+        // field; the contract_digest is the SHA-256 of the canonical
+        // representation with the digest field cleared. Recompute and
+        // compare.
+        let contract_from_disk: TelemetryContract =
+            serde_json::from_slice(&contract_bytes).unwrap();
+        let recomputed = recompute_contract_digest(&contract_from_disk).unwrap();
+        assert_eq!(recomputed, contract_from_disk.contract_digest);
+        assert_eq!(recomputed, telemetry_contract.contract_digest);
+        assert_eq!(
+            sha256_hex(&mapping_bytes),
+            telemetry_contract.mapping_sha256
+        );
+
+        let main_toml = fs::read_to_string(dir.join("config/main.toml")).unwrap();
+        assert!(main_toml.contains("port = 28910"));
+        assert!(main_toml.contains("[metrics]\nenabled = true"));
+        assert!(main_toml.contains("bind_address = \"127.0.0.1\""));
+        // Admin remains disabled even when telemetry is enabled.
+        assert!(main_toml.contains("[admin]\nenabled = false"));
+
+        let provenance_bytes = fs::read_to_string(dir.join("provenance.json")).unwrap();
+        let provenance: Provenance = serde_json::from_str(&provenance_bytes).unwrap();
+        assert_eq!(provenance.telemetry_metrics_port, Some(28910));
+        assert_eq!(
+            provenance.telemetry_contract_id.as_deref(),
+            Some(TELEMETRY_CONTRACT_ID)
+        );
+        assert_eq!(
+            provenance.telemetry_contract_digest.as_deref(),
+            Some(telemetry_contract.contract_digest.as_str())
+        );
+        assert_eq!(
+            provenance.telemetry_mapping_digest.as_deref(),
+            Some(telemetry_contract.mapping_sha256.as_str())
+        );
+        assert_eq!(
+            provenance.telemetry_enabled_config_digest.as_deref(),
+            Some(telemetry_contract.enabled_config_digest.as_str())
+        );
+
+        let check_opts = CheckOptions {
+            input_dir: dir.clone(),
+            run_configtest: false,
+            configtest_binary: None,
+        };
+        run_check(check_opts, &workspace()).expect("telemetry-on check must succeed");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn telemetry_on_export_rejects_metrics_port_collision() {
+        let dir = temp_dir("collision");
+        let opts = ExportOptions {
+            output_dir: dir.clone(),
+            listen_port: 28720,
+            origin_port: 28820,
+            metrics_port: Some(28720), // collides with listen
+            run_configtest: false,
+            configtest_binary: None,
+        };
+        let err = run_export(opts, &workspace()).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("metrics_port"), "err message: {msg}");
+        let _ = fs::remove_dir_all(&dir);
+
+        let dir2 = temp_dir("collision_origin");
+        let opts2 = ExportOptions {
+            output_dir: dir2.clone(),
+            listen_port: 28730,
+            origin_port: 28830,
+            metrics_port: Some(28830), // collides with origin
+            run_configtest: false,
+            configtest_binary: None,
+        };
+        let err2 = run_export(opts2, &workspace()).unwrap_err();
+        let msg2 = format!("{err2}");
+        assert!(msg2.contains("metrics_port"), "err message: {msg2}");
+        let _ = fs::remove_dir_all(&dir2);
+    }
+
+    #[test]
+    fn telemetry_check_detects_contract_tampering() {
+        let dir = temp_dir("tamper");
+        let opts = ExportOptions {
+            output_dir: dir.clone(),
+            listen_port: 28740,
+            origin_port: 28840,
+            metrics_port: Some(28940),
+            run_configtest: false,
+            configtest_binary: None,
+        };
+        let _outputs = run_export(opts, &workspace()).unwrap();
+
+        // Tamper with the contract: rewrite metrics_port. The
+        // recompute-on-check will detect the digest mismatch.
+        let contract_path = dir.join(TELEMETRY_CONTRACT_FILENAME);
+        let original = fs::read_to_string(&contract_path).unwrap();
+        let mut v: serde_json::Value = serde_json::from_str(&original).unwrap();
+        v["metrics_port"] = serde_json::json!(39999);
+        fs::write(&contract_path, serde_json::to_vec(&v).unwrap()).unwrap();
+
+        let check_opts = CheckOptions {
+            input_dir: dir.clone(),
+            run_configtest: false,
+            configtest_binary: None,
+        };
+        let err = run_check(check_opts, &workspace()).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("digest") || msg.contains("metrics_port"),
+            "check should report tamper, got: {msg}"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn telemetry_check_detects_main_toml_tampering() {
+        let dir = temp_dir("tamper_main");
+        let opts = ExportOptions {
+            output_dir: dir.clone(),
+            listen_port: 28750,
+            origin_port: 28850,
+            metrics_port: Some(28950),
+            run_configtest: false,
+            configtest_binary: None,
+        };
+        let _outputs = run_export(opts, &workspace()).unwrap();
+
+        // Tamper with main.toml by adding a top-level unauthorized section.
+        let main_path = dir.join("config/main.toml");
+        let mut text = fs::read_to_string(&main_path).unwrap();
+        text.push_str("\n[admin]\nenabled = true\n");
+        fs::write(&main_path, text).unwrap();
+
+        let check_opts = CheckOptions {
+            input_dir: dir.clone(),
+            run_configtest: false,
+            configtest_binary: None,
+        };
+        let err = run_check(check_opts, &workspace()).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("SHA mismatch") || msg.contains("enabled_config_digest"),
+            "expected main.toml tamper detection, got: {msg}"
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -1341,9 +1341,19 @@ fn process_run_method_has_no_bare_spawns() {
     // Allowed function names that may be called via tokio::spawn inside run().
     // These are the registered task entry points — the spawn is followed by
     // supervisor_tasks.register() on the next line.
+    //
+    // Anonymous async blocks for the telemetry exporter and bridge loop are
+    // also allowed: each spawn is immediately followed by a
+    // `supervisor_tasks.register(...)` call on the next non-blank line that
+    // owns the JoinHandle. The guard relies on the *register follows spawn*
+    // structural invariant; we additionally recognize the registered task
+    // names that come right after each spawn so anonymous closures are
+    // legitimate.
     let allowed_spawn_targets = [
         "run_supervisor_ipc_accept_loop",
         "run_supervisor_control_api_task",
+        "supervisor_eggbench_telemetry_exporter",
+        "supervisor_eggbench_telemetry_bridge",
     ];
 
     let bare_spawns: Vec<_> = run_body

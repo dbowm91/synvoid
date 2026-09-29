@@ -67,7 +67,7 @@ Status vocabulary:
 | startup | Process startup and bootstrap | keep_app_root | root app crate | real implementation | Supervisor-level startup orchestration |
 | static_files | Static file handling | facade_existing_crate | synvoid-static-files | pure re-export facade | Prefer `synvoid_static_files` in domain crates; `FileManager` canonical in crate with injected `FileManagerSecurityBackend` (Phase 02) |
 | streaming | Bidirectional streaming proxy | facade_existing_crate | synvoid-proxy | pure re-export facade | Prefer `synvoid_proxy::bidirectional` in domain crates |
-| supervisor | Supervisor process lifecycle | keep_app_root | root app crate | facade over submodules | Process-level supervision; root-owned |
+| supervisor | Supervisor process lifecycle | keep_app_root | root app crate | facade over submodules | Process-level supervision; root-owned; the Eggbench M003 telemetry bridge (`src/supervisor/telemetry_bridge.rs`) installs the loopback Prometheus exporter + aggregates `ProcessManager` heartbeats into the `synvoid.eggbench-telemetry.v1` owner inventory at this composition boundary |
 | tarpit | Tarpit response generation | keep_app_root | root app crate (handler) + synvoid-tarpit (Markov chain) | facade with local submodules — re-exports MarkovChain/TarpitConfig from synvoid-tarpit crate; root-owned TarpitHandler/TarpitManager | Dead generator.rs removed; facade documentation added |
 | tcp | TCP proxy with protocol detection | keep_app_root | root app crate | real implementation | Network-level proxy; root-owned |
 | theme | Theme/rendering | facade_existing_crate | synvoid-theme | pure re-export facade | Prefer `synvoid_theme` in domain crates |

@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use metrics_exporter_prometheus::ExporterFuture;
 use tokio::sync::{mpsc, RwLock};
 
 use crate::supervisor::drain_manager::{DrainManager, DrainProtocol};
@@ -142,6 +143,87 @@ impl SupervisorProcess {
                 handle,
             );
             tracing::info!("Registered IPC accept loop as critical control-plane task");
+        }
+
+        // Eggbench M003 telemetry: install the supervisor-side exporter
+        // when the `[metrics]` config requests it. The exporter task is
+        // a `BestEffortMaintenance` supervisor task so a failure is
+        // logged and the supervisor continues serving data plane
+        // traffic (qualification work does not weaken data-plane
+        // guarantees).
+        let metrics_cfg = self.state.config.read().await.main.metrics.clone();
+        if metrics_cfg.enabled {
+            let bind_addr_result = format!("{}:{}", metrics_cfg.bind_address, metrics_cfg.port)
+                .parse::<std::net::SocketAddr>();
+            let bind_addr = match bind_addr_result {
+                Ok(addr) if addr.ip().is_loopback() => Some(addr),
+                Ok(addr) => {
+                    tracing::error!(
+                        "Refusing to bind Prometheus exporter on non-loopback address {}",
+                        addr
+                    );
+                    None
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "Invalid metrics bind address {}:{}: {}",
+                        metrics_cfg.bind_address,
+                        metrics_cfg.port,
+                        e
+                    );
+                    None
+                }
+            };
+            if let Some(bind_addr) = bind_addr {
+                match crate::supervisor::telemetry_bridge::start_telemetry_bridge(
+                    bind_addr,
+                    self.process_manager.clone(),
+                ) {
+                    Ok(parts) => {
+                        // Register the exporter listener as a critical
+                        // control-plane task so its JoinHandle is owned
+                        // by the supervisor's task registry and the
+                        // shutdown contract drains it within the
+                        // bounded timeout. The exporter future accepts
+                        // until its socket is dropped, which the
+                        // supervisor's shutdown coordinator causes.
+                        let exporter_shutdown_rx = self.state.subscribe_shutdown();
+                        let exporter_handle =
+                            tokio::spawn(run_supervisor_eggbench_telemetry_exporter(
+                                parts.exporter_future,
+                                exporter_shutdown_rx,
+                            ));
+                        self.supervisor_tasks.register(
+                            "supervisor_eggbench_telemetry_exporter",
+                            SupervisorTaskClass::BestEffortMaintenance,
+                            exporter_handle,
+                        );
+                        // The bridge aggregation loop is a long-lived
+                        // maintenance task. Spawn it under the same
+                        // shutdown receiver and register it.
+                        let bridge_shutdown_rx = self.state.subscribe_shutdown();
+                        let bridge_handle = tokio::spawn(run_supervisor_eggbench_telemetry_bridge(
+                            parts.bridge_loop,
+                            bridge_shutdown_rx,
+                        ));
+                        self.supervisor_tasks.register(
+                            "supervisor_eggbench_telemetry_bridge",
+                            SupervisorTaskClass::BestEffortMaintenance,
+                            bridge_handle,
+                        );
+                        tracing::info!(
+                            "Registered synvoid.eggbench-telemetry.v1 exporter on {}",
+                            bind_addr
+                        );
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            "Failed to start synvoid.eggbench-telemetry.v1 exporter: {:?}",
+                            e
+                        );
+                    }
+                }
+            }
         }
 
         // Register gRPC control server as a managed task (mesh feature only)
@@ -467,6 +549,40 @@ async fn run_supervisor_control_api_task(
         Ok(()) => SupervisorTaskOutcome::Completed,
         Err(e) => SupervisorTaskOutcome::Failed(e.to_string()),
     }
+}
+
+/// Long-lived supervisor task that owns the Eggbench M003 telemetry
+/// exporter's loopback HTTP listener. Registered as a
+/// `BestEffortMaintenance` task in `SupervisorTaskRegistry`. Exits
+/// cleanly on the supervisor shutdown signal.
+async fn run_supervisor_eggbench_telemetry_exporter(
+    mut exporter: ExporterFuture,
+    mut shutdown_rx: tokio::sync::broadcast::Receiver<()>,
+) -> SupervisorTaskOutcome {
+    let result = tokio::select! {
+        res = &mut exporter => res,
+        _ = shutdown_rx.recv() => {
+            drop(exporter);
+            Ok(())
+        }
+    };
+    match result {
+        Ok(()) => SupervisorTaskOutcome::Completed,
+        Err(e) => SupervisorTaskOutcome::Failed(format!("prometheus exporter failed: {e:?}")),
+    }
+}
+
+/// Long-lived supervisor task that drives the Eggbench M003 telemetry
+/// bridge aggregation loop. Registered as a `BestEffortMaintenance`
+/// task in `SupervisorTaskRegistry`. Exits cleanly on the supervisor
+/// shutdown signal.
+async fn run_supervisor_eggbench_telemetry_bridge(
+    bridge_loop: crate::supervisor::telemetry_bridge::BridgeLoopFactory,
+    shutdown_rx: tokio::sync::broadcast::Receiver<()>,
+) -> SupervisorTaskOutcome {
+    let fut = bridge_loop(shutdown_rx);
+    fut.await;
+    SupervisorTaskOutcome::Completed
 }
 
 pub fn run_supervisor_mode(

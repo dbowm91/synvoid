@@ -14,6 +14,7 @@ pub mod process;
 pub mod shutdown;
 pub mod state;
 pub mod task_registry;
+pub mod telemetry_bridge;
 
 pub use mesh::run_mesh_agent_mode;
 pub use process::{run_supervisor_mode, SupervisorProcess};

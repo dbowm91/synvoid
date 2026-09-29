@@ -1,6 +1,11 @@
 # Plan: Eggbench Security Qualification M003 Telemetry Contract
 
-Status: **READY — REBASED 2026-09-29**.
+Status: **CLOSED QUALIFIED 2026-09-29**.
+
+Closeout: `architecture/eggbench_security_qualification_m003_telemetry_closeout.md`.
+
+Implementation SHA: recorded in the follow-up commit accompanying this
+closeout (same convention as Phases 80 / 95 / 101).
 
 Consumer: eggstack/eggbench Security Qualification M003c/M003d.
 

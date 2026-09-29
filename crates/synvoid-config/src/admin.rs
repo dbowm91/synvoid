@@ -261,6 +261,12 @@ pub struct MetricsConfig {
     pub enabled: bool,
     #[serde(default = "default_metrics_port")]
     pub port: u16,
+    /// Bind address for the Prometheus exporter. Defaults to loopback
+    /// and validated to refuse non-loopback binds so the
+    /// `synvoid.eggbench-telemetry.v1` runtime contract (loopback-only)
+    /// is enforced at config-load time, not only at runtime.
+    #[serde(default = "default_metrics_bind_address")]
+    pub bind_address: String,
 }
 
 fn default_metrics_enabled() -> bool {
@@ -269,6 +275,47 @@ fn default_metrics_enabled() -> bool {
 
 fn default_metrics_port() -> u16 {
     9090
+}
+
+fn default_metrics_bind_address() -> String {
+    "127.0.0.1".to_string()
+}
+
+impl MetricsConfig {
+    /// Validate the metrics config: nonzero port and a loopback bind.
+    /// Non-loopback binds are rejected so the loopback-only telemetry
+    /// runtime contract is enforced before the supervisor process is
+    /// ever started.
+    pub fn validate(&self) -> Result<(), ConfigValidationError> {
+        if self.enabled && self.port == 0 {
+            return Err(ConfigValidationError {
+                field: "metrics.port".to_string(),
+                message: "metrics port must be non-zero when enabled".to_string(),
+            });
+        }
+        if self.enabled && !is_loopback_bind(&self.bind_address) {
+            return Err(ConfigValidationError {
+                field: "metrics.bind_address".to_string(),
+                message: format!(
+                    "metrics bind_address must be loopback (127.0.0.1, ::1); got {:?}",
+                    self.bind_address
+                ),
+            });
+        }
+        Ok(())
+    }
+}
+
+/// Loopback bind detector for IPv4 / IPv6 / `localhost` literal.
+fn is_loopback_bind(addr: &str) -> bool {
+    let trimmed = addr.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    matches!(
+        trimmed,
+        "127.0.0.1" | "::1" | "localhost" | "[::1]" | "127.0.0.1:0"
+    ) || trimmed.starts_with("127.")
 }
 
 #[cfg(test)]

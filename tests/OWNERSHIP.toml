@@ -326,3 +326,9 @@ name = "eggbench_qualification_live_proof"
 class = "qualification"
 owners = ["synvoid-waf", "synvoid-proxy", "synvoid-http"]
 reason = "owner-side live reverse-proxy semantic proof for the eggbench v1 qualification asset contract (policy synvoid.eggbench-qualification.v1): drives the exported corpus through the real minimal binary against a controlled loopback origin; opt-in/ignored, never a routine-CI gate"
+
+[[test]]
+name = "eggbench_m003_telemetry_live_proof"
+class = "qualification"
+owners = ["synvoid-waf", "synvoid-proxy", "synvoid-http"]
+reason = "owner-side live Prometheus telemetry proof for the eggbench v1 telemetry contract (policy synvoid.eggbench-telemetry.v1): scrapes the supervisor-side loopback exporter after driving benign/WAF traffic through the real minimal binary against a controlled loopback origin; asserts required owner metrics are present with finite values and declared kinds, gauges are plausible under load, counters are monotonic, optional absent data is omitted, and the registered exporter task/listener stops with the supervisor; opt-in/ignored, never a routine-CI gate"

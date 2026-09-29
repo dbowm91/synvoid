@@ -268,6 +268,7 @@ impl MainConfig {
         self.fallback.validate()?;
         self.logging.validate()?;
         self.admin.validate()?;
+        self.metrics.validate()?;
         self.defaults.validate()?;
         self.tunnel.validate()?;
         // Phase 41: process/supervisor capacities are operator-reachable and
@@ -367,6 +368,7 @@ impl MainConfig {
             metrics: MetricsConfig {
                 enabled: true,
                 port: 9090,
+                bind_address: "127.0.0.1".to_string(),
             },
             tokio: TokioConfig::default(),
             http: HttpConfig::default(),

@@ -55,7 +55,8 @@ reference fails the guard until the row is reclassified with a reason.
 | moka | — | remove_candidate | — | Phase 31: removed from root (0 src uses) | removed Phase 31 | — |
 | memmap2 | — | remove_candidate | — | Phase 42: removed from root (0 src uses; mmap owned by synvoid-upstream) | removed Phase 42 | — |
 | metrics | metrics | composition_runtime | default | Metrics facade for observability | keep | admin, honeypot_port, http, icmp_filter, process, server, supervisor, tarpit, tcp, tls, udp, waf, worker |
-| metrics-exporter-prometheus | metrics | composition_runtime | default | Prometheus metrics endpoint | keep | admin |
+| metrics-024 | metrics | composition_runtime | default | metrics 0.24 facade used only by `src/supervisor/telemetry_bridge.rs` to install / emit into the `metrics-exporter-prometheus` recorder; rest of the workspace continues to use the `metrics` 0.22 facade | keep | supervisor |
+| metrics-exporter-prometheus | metrics | composition_runtime | default | Prometheus metrics endpoint | keep | admin, supervisor |
 | http | http, http_client | composition_runtime | default | HTTP type definitions | keep | admin, honeypot_port, http, http_client, server, serverless, theme, tls, waf, worker |
 | ipnetwork | — | remove_candidate | — | Phase 31: removed from root (0 src uses) | removed Phase 31 | — |
 | rand | admin, commands, honeypot_port, process, supervisor, tarpit, waf | composition_runtime | default | Random number generation (admin tokens, PoW challenges, request IDs) | keep | admin, commands, honeypot_port, process, supervisor, tarpit, waf |

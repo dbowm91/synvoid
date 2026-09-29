@@ -107,6 +107,14 @@ arc-swap = "1"
 # moka: Phase 31 removed; 0 root src uses (canonical use in domain crates)
 # memmap2: Phase 42 removed; 0 root src uses (mmap owned by synvoid-upstream)
 metrics = "0.22"
+# Phase M003 telemetry contract: bridge module installs the
+# `metrics-exporter-prometheus` recorder as the metrics 0.24 global
+# recorder; the rest of the workspace continues to use the metrics 0.22
+# macros (which resolve to the 0.22 global recorder; the bridge is the
+# sole consumer of the 0.24 surface). Two parallel versions of metrics
+# are tolerated because the exporter crate hard-pins 0.24 and a single
+# workspace-wide bump would ripple through every caller.
+metrics-024 = { package = "metrics", version = "0.24" }
 metrics-exporter-prometheus = "0.18"
 http = "1"
 # ipnetwork: Phase 31 removed; 0 root src uses (canonical use in domain crates)
