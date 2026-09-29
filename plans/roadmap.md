@@ -1,6 +1,6 @@
 # SynVoid Architecture Hardening Roadmap
 
-Status: Tracks 1–3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). Eggfetch 0.2 runtime adoption is closed through Phase 62 (`c3568ef4...`) and performance/reproducibility adjudication is closed through Phase 63; Phase 64 docs/evidence-truth correction is closed. Production remains on eggfetch. The EggServe 0.2.2-line inbound H1 campaign remains historical/retained at Phase 65; Phases 66–69 were never started. EggServe 0.3 H1 adoption and corrective requalification are closed as `ADOPTED` through Phase 80 on exact pins `eggserve-server = "=0.4.0"` / `eggserve-primitives = "=0.2.2"`; the Phase 78 terminal claim is superseded by Phase 80 proof-bearing SHA `174fdbcd6f133b35099ed4492f5ed8d3fcaa7d4c` (hosted run `36201213413`). Phase 79 implementation SHA: `171dd1e47f965b04b34465fc72c87adf4d9a9cab`. See `architecture/eggserve_0_3_h1_adoption_closeout.md`. Phases 70–72 remain historical/closed with evidence aligned to their then-current Hyper H1 runtime. The process-sandbox correctness and extraction-readiness campaign (Phases 81-84) remains closed DEFER; Phase 94 corrected and qualified Phase 89's Linux mechanism-selection and native-evidence gaps on exact SHA `e86fb35372b1b66bb59c8a6336bf32e55ff5c93e` (hosted/native run `36271417398`). The independent ICMP policy/enforcement extraction-preparation campaign (Phases 85-88) remains closed RETAIN (see the Post-Phase-80 section below); Phases 90–91 are closed, Phase 92 is CLOSED CORRECTED, Phase 93 is QUALIFIED (superseded by Phase 95 exact-SHA two-run proof `36335520434` on `39bfced25d51267ee5837eaecedae7da9af163d0`), and Phase 95 is CLOSED QUALIFIED with Linux nftables native-supported. Phase 88 stays RETAIN with no extraction authorized. The closed independent cross-repo Eggbench security-qualification asset handoff remains separately registered, and the Eggbench Security Qualification M003 telemetry handoff is **CLOSED QUALIFIED 2026-09-29** against the post-Phase-101 architecture and Eggbench's landed generic Prometheus collector (see `architecture/eggbench_security_qualification_m003_telemetry_closeout.md`). The post-Phase-95 architecture-maintenance and auditability campaign (Phases 96–101) is closed qualified on proof-bearing SHA `2bfc3c6cfd1a1f2454f801cc02c01a0cbafa2e30`; see `architecture/architecture_maintenance_auditability_closeout.md`.
+Status: Tracks 1–3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). Eggfetch 0.2 runtime adoption is closed through Phase 62 (`c3568ef4...`) and performance/reproducibility adjudication is closed through Phase 63; Phase 64 docs/evidence-truth correction is closed. Production remains on eggfetch. The EggServe 0.2.2-line inbound H1 campaign remains historical/retained at Phase 65; Phases 66–69 were never started. EggServe 0.3 H1 adoption and corrective requalification are closed as `ADOPTED` through Phase 80 on exact pins `eggserve-server = "=0.4.0"` / `eggserve-primitives = "=0.2.2"`; the Phase 78 terminal claim is superseded by Phase 80 proof-bearing SHA `174fdbcd6f133b35099ed4492f5ed8d3fcaa7d4c` (hosted run `36201213413`). Phase 79 implementation SHA: `171dd1e47f965b04b34465fc72c87adf4d9a9cab`. See `architecture/eggserve_0_3_h1_adoption_closeout.md`. Phases 70–72 remain historical/closed with evidence aligned to their then-current Hyper H1 runtime. The process-sandbox correctness and extraction-readiness campaign (Phases 81-84) remains closed DEFER; Phase 94 corrected and qualified Phase 89's Linux mechanism-selection and native-evidence gaps on exact SHA `e86fb35372b1b66bb59c8a6336bf32e55ff5c93e` (hosted/native run `36271417398`). The independent ICMP policy/enforcement extraction-preparation campaign (Phases 85-88) remains closed RETAIN (see the Post-Phase-80 section below); Phases 90–91 are closed, Phase 92 is CLOSED CORRECTED, Phase 93 is QUALIFIED (superseded by Phase 95 exact-SHA two-run proof `36335520434` on `39bfced25d51267ee5837eaecedae7da9af163d0`), and Phase 95 is CLOSED QUALIFIED with Linux nftables native-supported. Phase 88 stays RETAIN with no extraction authorized. The closed independent cross-repo Eggbench security-qualification asset handoff remains separately registered. The Eggbench Security Qualification M003 telemetry implementation landed at `619602a6cd2440d685020eb52e19c0887622dee1`, but its former terminal qualification is **SUPERSEDED — CORRECTIVE REQUIRED** after direct consumer-schema and bridge-generation audit; current authority is `plans/eggbench_security_qualification_m003_telemetry_interop_corrective.md`. The post-Phase-95 architecture-maintenance and auditability campaign (Phases 96–101) is closed qualified on proof-bearing SHA `2bfc3c6cfd1a1f2454f801cc02c01a0cbafa2e30`; see `architecture/architecture_maintenance_auditability_closeout.md`.
 
 Scope: this roadmap covers architecture hardening, trust-boundary closure, verification, release readiness, post-hardening cleanup, and the architecture-convergence work required before another broad feature-expansion pass.
 
@@ -947,101 +947,92 @@ Key constraints:
 This plan is dependency-ready and is the next cross-repo prerequisite for Eggbench Security Qualification M002 full closure. It may execute independently of the ICMP/sandbox corrective lines. Closure requires the owner-side live reverse-proxy semantic proof, not only export-generation tests.
 
 
-## Independent Cross-Repo Handoff: Eggbench Security Qualification M003 Telemetry — Closed Qualified
+## Independent Cross-Repo Handoff: Eggbench Security Qualification M003 Telemetry — Corrective Open
 
-Status: **CLOSED QUALIFIED 2026-09-29**.
+Status: **SUPERSEDED — CORRECTIVE REQUIRED** (2026-09-29).
 
-Closeout:
-`architecture/eggbench_security_qualification_m003_telemetry_closeout.md`.
+Parent plan:
+`plans/eggbench_security_qualification_m003_telemetry_contract.md`.
 
-Plan:
-plans/eggbench_security_qualification_m003_telemetry_contract.md.
+Active corrective:
+`plans/eggbench_security_qualification_m003_telemetry_interop_corrective.md`.
 
-Original planning baseline:
-30e68af8f6e79ce0fe07f0c1871f1d0caa6be6f2 (superseded for implementation).
+Historical implementation:
+`619602a6cd2440d685020eb52e19c0887622dee1`.
 
-Rebase baseline:
-f3cdfda2416147e12b464bd55b0240acfffe58f1.
+Historical closeout:
+`architecture/eggbench_security_qualification_m003_telemetry_closeout.md`
+is retained for implementation evidence but is not current terminal authority.
 
-Architecture predecessor:
-Phases 96–101 CLOSED QUALIFIED; proof-bearing implementation
-2bfc3c6cfd1a1f2454f801cc02c01a0cbafa2e30, hosted run 36515438452 green.
+Corrective baseline:
+`c0f121be771456ace2c7eaa1b26fb9f2fe3eb95f`.
 
-Consumer state observed during rebase:
-eggstack/eggbench at 18b1c1c8398d559d38bd74d717ff3dc79e3b20ad;
-M003c's generic prometheus-http collector is implemented at
-2742e0eafaaef38899db5978f1721611ce58a7bc and terminally blocked on this
-owner contract/live proof. M003d's Eggsec load slice is also implemented but
-remains downstream-gated.
+Pinned downstream consumer reviewed for the corrective:
 
-Result summary: the supervisor-side `synvoid.eggbench-telemetry.v1`
-contract (aggregate/no-label, 10 required + 2 optional metrics,
-loopback-only, supervisor-lifetime monotonic counter bridges across
-worker generations, explicit `SupervisorTaskRegistry` ownership of
-both the exporter future and the bridge aggregation loop) is
-implemented, self-tested (xtask 43/43 green including 9 new
-M003 self-tests; root lib 691/691 green including 14 new bridge
-tests), config-tested on the minimal binary, and live-proven against
-the real minimal SynVoid binary (`target/debug/synvoid`,
-SHA-256 ddb175dd6ce9aadf3dc8421c9f4b786bda9b87b09cad2456189a6acb72c38068)
-under real proxy + WAF traffic. Closed M002 v1 export form preserved
-when `--metrics-port` is absent; no M002 regression; no production
-WAF/security semantic weakened. The pre-existing
-`cargo deny check` `RUSTSEC-2026-0315` / `RUSTSEC-2026-0316` failure
-on the transitive `wasmtime 47.0.4` line (via `synvoid-yara`)
-pre-dates M003 and is tracked under
-`architecture/dependency_security_baseline_phase25.md`
-`Re-audit: 2026-10-01`.
+- `eggstack/eggbench@18b1c1c8398d559d38bd74d717ff3dc79e3b20ad`
+- generic Prometheus collector:
+  `2742e0eafaaef38899db5978f1721611ce58a7bc`
+- parser:
+  `crates/eggbench-drivers/src/prometheus_http.rs`
 
-No registered SynVoid future plan was blocked on this handoff.
-Downstream: external Eggbench M003c/M003d terminal closure consumes
-the emitted `telemetry-contract.json` + `telemetry-mapping.json` pair.
+The supervisor-side implementation remains useful and is retained: loopback-only
+Prometheus export, explicit global-recorder installation, supervisor-owned
+exporter/bridge lifecycle, ProcessManager heartbeat truth, no admin coupling,
+no Eggbench Rust dependency, preserved M002 telemetry-off output, and unchanged
+WAF/security semantics.
 
-The rebase preserved the handoff objective but corrected its implementation
-architecture:
+The terminal qualification was reopened because direct producer/consumer audit
+found four blocking classes of defects:
 
-1. The existing src/admin/prometheus_exporter.rs is not a usable proof-bearing
-   exporter as-is: it is dormant, drops the recorder returned by
-   PrometheusBuilder::build(), and spawns the exporter as an unowned task.
-   Implementation must install the recorder and register/drain the exporter
-   through SupervisorTaskRegistry.
-2. SynVoid's M003 source truth is cross-process. Unified Server telemetry lives
-   in WorkerMetricsPayload heartbeats retained by
-   ProcessManager::get_all_unified_server_worker_metrics(); CPU-worker
-   telemetry lives in retained CpuOffloadStats. A supervisor-local recorder
-   alone cannot observe child-process metrics.
-3. The supervisor/root composition layer therefore owns a bounded heartbeat
-   aggregation bridge. It must not use legacy get_worker_metrics() for the
-   production Unified Server data plane and must not create a
-   synvoid-metrics -> synvoid-ipc dependency cycle.
-4. Phase 99's config boundary remains intact: MetricsConfig stays in
-   synvoid-config; synvoid-config-model receives no exporter/runtime authority.
-5. Eggbench already owns generic bounded scrape parsing, trial synchronization,
-   subject_* normalization, gauge aggregation and counter-delta semantics.
-   SynVoid now only needs to freeze/publish owner Prometheus names and emit a
-   deterministic mapping artifact compatible with that landed collector.
-6. The v1 owner metric inventory is aggregate/no-label: event-loop lag,
-   request-queue p95, active connections, worker memory/CPU, body-buffering and
-   offload counters, plus optional CPU-worker RSS. Worker absolute counters are
-   bridged into supervisor-lifetime monotonic counters across generation
-   resets; absent optional sources are omitted rather than fabricated as zero.
-7. The existing five-second Unified Server heartbeat cadence is part of the
-   source semantics. M003 remains diagnostic initially; implementation must
-   not change heartbeat cadence merely for benchmark resolution without a
-   measured decision.
-8. The M002 materializer remains the owner tool. Optional --metrics-port
-   enables telemetry while keeping admin disabled, emits
-   telemetry-contract.json plus an Eggbench-consumable
-   telemetry-mapping.json, binds their digests into provenance, and preserves
-   telemetry-off M002 behavior.
+1. **Mapping schema incompatibility.** SynVoid emits a string mapping schema
+   identifier, an extra top-level `contract_id`, and string aggregation on
+   every field. Pinned Eggbench uses strict `#[serde(deny_unknown_fields)]`,
+   requires numeric `schema_version = 1`, has no `contract_id`, accepts only
+   `mean|max|min` for gauge trial aggregation, and requires counters to have
+   no trial aggregation. The current materialized mapping therefore fails
+   before a live trial starts.
+2. **Owner/trial aggregation conflation and unit defect.** Producer-side worker
+   aggregation such as `sum` and
+   `supervisor_lifetime_monotonic_bridge` was incorrectly placed in
+   Eggbench's trial-aggregation field. In addition,
+   `body_buffering_bytes_total` is labeled with unit `events` instead of
+   `bytes`.
+3. **Generation/reset correctness.** The bridge counts a first nonzero worker
+   observation as a reset, can count one first/reset boundary once per counter,
+   and lacks explicit worker-generation identity. Because Unified Server
+   workers respawn with the same WorkerId, a new process whose counters already
+   exceed the previous process values can be undercounted.
+4. **Evidence/retirement mismatch.** Production bridge state does not execute
+   the claimed worker-retirement policy, and the rebased plan's required real
+   Eggbench consumer proof was moved to an external residual rather than run
+   before terminal closure.
 
-Required closeout remains owner-side and live: real minimal SynVoid,
-loopback-only metrics endpoint, real worker/CPU-worker values, deterministic
-mapping/provenance, actual Eggbench prometheus-http ingestion, clean exporter
-shutdown, and no WAF/security-semantic change.
+Binding corrective decisions:
 
-No new phase or separate cross-repo plan is required by the rebase. The
-existing plan is the executable handoff.
+- do not silently rewrite the already-materialized v1 semantic contract;
+- withdraw v1 as unqualified historical evidence and advance the corrected
+  owner identity to `synvoid.eggbench-telemetry.v2`;
+- preserve stable Prometheus sample names unless a separate concrete defect
+  requires a rename;
+- separate owner/source aggregation in the owner manifest from Eggbench trial
+  aggregation in `telemetry-mapping.json`;
+- make the mapping bytes directly parseable by Eggbench
+  `PrometheusMappingV1` without translation;
+- add explicit monotonic worker-generation identity in ProcessManager telemetry
+  snapshots;
+- distinguish first observation from generation/reset boundaries and count a
+  boundary once, not once per metric;
+- prune bridge state on the production refresh path;
+- correct the stale generated `[tokio]` comment without changing Tokio
+  runtime semantics;
+- require an actual pinned Eggbench parser/collector interoperability proof
+  before restoring `CLOSED QUALIFIED`.
+
+No broad architecture phase and no Eggbench feature redesign are authorized by
+this corrective. Existing M003c remains the downstream Eggbench consumer
+authority. The corrective is complete only when the exact generated mapping is
+accepted by that consumer and a real minimal SynVoid trial succeeds end to end.
+
 
 ## Post-Phase-91 ICMP Gate: Disabled-State Corrective and Linux nftables Native Qualification — Phases 92–93
 
