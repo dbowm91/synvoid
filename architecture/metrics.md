@@ -141,13 +141,16 @@ pub(crate) static DROPPED_YARA_BROADCASTS: LazyLock<AtomicU64> = LazyLock::new(|
 - **Supervisor (M003 telemetry bridge)**: When `[metrics]` is enabled,
   the supervisor-side `telemetry_bridge.rs` aggregates
   `ProcessManager::get_all_unified_server_worker_metrics()` + CPU-worker
-  `CpuOffloadStats` heartbeats into the bounded
+  `CpuOffloadStats` heartbeats into the currently implemented
   `synvoid.eggbench-telemetry.v1` owner inventory. The exporter
   listener is loopback-only and the recorder is installed explicitly
-  exactly once. Counter monotonicity across worker generations is
-  preserved via per-worker `WorkerCounterState` with reset boundary
-  observation. See `plans/eggbench_security_qualification_m003_telemetry_contract.md`
-  and `architecture/eggbench_security_qualification_m003_telemetry_closeout.md`.
+  exactly once. Post-closeout audit found that v1's counter bridge lacks
+  explicit worker-generation identity and misclassifies some first observations
+  as resets, so its former terminal qualification is superseded. The active
+  corrective advances the qualified owner contract to v2 and adds
+  generation-aware counter semantics plus real Eggbench mapping interoperability.
+  See `plans/eggbench_security_qualification_m003_telemetry_interop_corrective.md`;
+  the v1 closeout is historical evidence only.
 
 ---
 
