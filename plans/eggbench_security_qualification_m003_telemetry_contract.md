@@ -1,14 +1,21 @@
 # Plan: Eggbench Security Qualification M003 Telemetry Contract
 
-Status: **CORRECTIVE REQUIRED — terminal qualification superseded 2026-09-29**.
+Status: **CLOSED QUALIFIED 2026-09-29 (v2 corrective)**.
 
 Historical closeout:
 `architecture/eggbench_security_qualification_m003_telemetry_closeout.md`.
 That document records the implementation evidence at `619602a6cd2440d685020eb52e19c0887622dee1`
-but is no longer terminal authority.
+but is superseded and is not terminal authority (v1 withdrawn/unqualified).
 
-Active corrective:
-`plans/eggbench_security_qualification_m003_telemetry_interop_corrective.md`.
+Terminal corrective closeout:
+`architecture/eggbench_security_qualification_m003_telemetry_corrective_closeout.md`.
+
+Active corrective (closed):
+`plans/eggbench_security_qualification_m003_telemetry_interop_corrective.md`
+(**CLOSED QUALIFIED** 2026-09-29, implementation
+`739e7ba6f02c5e3f83fe9ff5321b09213182b193`).
+
+Qualified owner contract: `synvoid.eggbench-telemetry.v2`.
 
 Implementation SHA retained as historical implementation evidence:
 `619602a6cd2440d685020eb52e19c0887622dee1`.

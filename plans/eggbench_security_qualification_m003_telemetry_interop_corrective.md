@@ -1,6 +1,6 @@
 # Plan: Eggbench Security Qualification M003 Telemetry Interoperability Corrective
 
-Status: **READY — CORRECTIVE REQUIRED** (2026-09-29).
+Status: **CLOSED QUALIFIED** (2026-09-29).
 
 Registered in: `plans/roadmap.md`.
 
@@ -9,6 +9,13 @@ Corrective baseline:
 
 Implementation being corrected:
 `619602a6cd2440d685020eb52e19c0887622dee1`.
+
+Corrective implementation:
+`739e7ba6f02c5e3f83fe9ff5321b09213182b193`.
+
+Terminal closeout:
+`architecture/eggbench_security_qualification_m003_telemetry_corrective_closeout.md`
+(sole current terminal authority).
 
 Historical closeout being superseded for terminal qualification:
 `architecture/eggbench_security_qualification_m003_telemetry_closeout.md`.

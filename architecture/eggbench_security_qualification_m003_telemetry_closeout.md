@@ -5,10 +5,12 @@ Status: **SUPERSEDED — CORRECTIVE REQUIRED** (2026-09-29).
 This document preserves the implementation/qualification evidence produced at
 `619602a6cd2440d685020eb52e19c0887622dee1`, but its former terminal
 `CLOSED QUALIFIED` disposition is invalidated by the post-closeout audit.
-Current authority is
-`plans/eggbench_security_qualification_m003_telemetry_interop_corrective.md`.
-Do not use this file as terminal Eggbench interoperability evidence until the
-corrective closes.
+The corrective closed qualified on 2026-09-29 at
+`739e7ba6f02c5e3f83fe9ff5321b09213182b193`; current terminal authority is
+`architecture/eggbench_security_qualification_m003_telemetry_corrective_closeout.md`
+(plan `plans/eggbench_security_qualification_m003_telemetry_interop_corrective.md`,
+**CLOSED QUALIFIED**).
+Do not use this file as terminal Eggbench interoperability evidence.
 
 Historical disposition at the time of implementation: **CLOSED QUALIFIED**
 (2026-09-29). The SynVoid-owned
