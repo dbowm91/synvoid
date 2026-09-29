@@ -1,6 +1,17 @@
-# Eggbench Security Qualification M003 Telemetry Contract — Closeout
+# Eggbench Security Qualification M003 Telemetry Contract — Historical Closeout
 
-Final disposition: **CLOSED QUALIFIED** (2026-09-29). The SynVoid-owned
+Status: **SUPERSEDED — CORRECTIVE REQUIRED** (2026-09-29).
+
+This document preserves the implementation/qualification evidence produced at
+`619602a6cd2440d685020eb52e19c0887622dee1`, but its former terminal
+`CLOSED QUALIFIED` disposition is invalidated by the post-closeout audit.
+Current authority is
+`plans/eggbench_security_qualification_m003_telemetry_interop_corrective.md`.
+Do not use this file as terminal Eggbench interoperability evidence until the
+corrective closes.
+
+Historical disposition at the time of implementation: **CLOSED QUALIFIED**
+(2026-09-29). The SynVoid-owned
 telemetry contract for the `eggstack/eggbench` Security Qualification
 M003 consumer is implemented, self-tested, config-tested, and
 live-proven against the real minimal (`--no-default-features`) SynVoid
@@ -391,6 +402,22 @@ Eggbench dependency, no telemetry over authenticated admin routes,
 no exporter authority in `synvoid-config-model`, no
 variable-cardinality labels, no WAF/security semantic change, no
 heartbeat cadence change, no SynVoid-side load generator.
+
+## Corrective supersession finding
+
+A later direct comparison against the pinned Eggbench consumer at
+`18b1c1c8398d559d38bd74d717ff3dc79e3b20ad` found that the emitted
+`telemetry-mapping.json` does not satisfy Eggbench's strict
+`PrometheusMappingV1` schema: SynVoid emits a string schema identifier,
+an extra `contract_id`, and owner-side aggregation vocabulary where Eggbench
+expects numeric schema version 1, no unknown fields, and only
+`mean|max|min` gauge trial aggregation with no counter aggregation.
+
+The same audit found bridge reset/generation evidence defects: first nonzero
+observations are counted as resets, explicit worker-generation identity is
+absent, and production retirement does not implement the bounded-retention
+claim. These findings supersede the terminal conclusion below. See the active
+corrective plan for binding remediation and requalification requirements.
 
 ## 12. Residuals / unresolved findings
 
