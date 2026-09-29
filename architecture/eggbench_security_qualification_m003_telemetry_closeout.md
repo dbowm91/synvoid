@@ -17,12 +17,13 @@ qualification-support handoff section, now closed).
 - Architecture predecessor: Phases 96–101 closed qualified
   (`2bfc3c6cfd1a1f2454f801cc02c01a0cbafa2e30`, hosted run
   `36515438452`).
-- Implementation SHA: recorded in the follow-up commit
-  accompanying this closeout (same convention as Phases 80 / 95 /
-  101). The closeout commit references the implementation tree
-  `2bfc3c6cfd1a1f2454f801cc02c01a0cbafa2e30` (Phase 101 close) as
-  the architecture predecessor; the M003 implementation commit's
-  SHA is captured by the commit itself.
+- Implementation SHA: `619602a6cd2440d685020eb52e19c0887622dee1`
+  (this commit). Plan
+  `plans/eggbench_security_qualification_m003_telemetry_contract.md`
+  was dependency-ready on the rebase baseline
+  `f3cdfda2416147e12b464bd55b0240acfffe58f1` (post-Phase-101
+  architecture; Phases 96–101 closed qualified on
+  `2bfc3c6cfd1a1f2454f801cc02c01a0cbafa2e30`).
 - Package version: `1.1.0` (unchanged).
 - Cargo.lock: delta only adds `metrics 0.24` (package alias
   `metrics-024`) as a direct root dep alongside the existing
