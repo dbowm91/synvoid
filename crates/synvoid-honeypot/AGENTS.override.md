@@ -57,7 +57,7 @@ Honeypot crate: deception layer deploying fake service endpoints to detect attac
 
 ### Dependencies
 - `synvoid-storage` (SQLite)
-- `synvoid-config` (PortHoneypotConfig)
+- `synvoid-config-model` (PortHoneypotConfig)
 - `tokio` (async runtime, channels, semaphores)
 - `rand` (port selection, content variation)
 - `sha2` (payload hashing)

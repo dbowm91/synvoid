@@ -16,7 +16,10 @@ use crate::topology::{MeshTopology, PeerStatus};
 impl MeshTransport {
     pub(crate) fn clone_for_maintenance(&self) -> MeshTransport {
         MeshTransport {
-            backend_pool: None,
+            application: crate::transport::MeshApplicationCapabilities {
+                backend_pool: None,
+                ..self.application.clone()
+            },
             config: self.config.clone(),
             topology: self.topology.clone(),
             cert_manager: self.cert_manager.clone(),
@@ -26,13 +29,18 @@ impl MeshTransport {
             peer_connections: self.peer_connections.clone(),
             auth_keys: self.auth_keys.clone(),
             connection_times: self.connection_times.clone(),
-            query_dedup: self.query_dedup.clone(),
-            pending_queries: self.pending_queries.clone(),
-            pending_dht_queries: self.pending_dht_queries.clone(),
-            pending_serverless_invocations: self.pending_serverless_invocations.clone(),
-            pending_consistent_read_responses: self.pending_consistent_read_responses.clone(),
-            pending_snapshot_responses: self.pending_snapshot_responses.clone(),
-            pending_snapshot_transfers: self.pending_snapshot_transfers.clone(),
+            pending: crate::transport::MeshPendingRequests {
+                query_dedup: self.pending.query_dedup.clone(),
+                pending_queries: self.pending.pending_queries.clone(),
+                pending_dht_queries: self.pending.pending_dht_queries.clone(),
+                pending_serverless_invocations: self.pending.pending_serverless_invocations.clone(),
+                pending_consistent_read_responses: self
+                    .pending
+                    .pending_consistent_read_responses
+                    .clone(),
+                pending_snapshot_responses: self.pending.pending_snapshot_responses.clone(),
+                pending_snapshot_transfers: self.pending.pending_snapshot_transfers.clone(),
+            },
             auth_failures: self.auth_failures.clone(),
             peer_message_times: self.peer_message_times.clone(),
             snapshot_request_times: self.snapshot_request_times.clone(),
@@ -45,8 +53,6 @@ impl MeshTransport {
             mesh_signer: self.mesh_signer.clone(),
             record_store: self.record_store.clone(),
             routing_manager: self.routing_manager.clone(),
-            threat_intel: self.threat_intel.clone(),
-            yara_rules: self.yara_rules.clone(),
             seen_messages: Arc::new(RwLock::new(
                 lru_time_cache::LruCache::with_expiry_duration_and_capacity(
                     Duration::from_secs(300),
@@ -64,35 +70,36 @@ impl MeshTransport {
             site_config_sync_tx: self.site_config_sync_tx.clone(),
             verification_manager: self.verification_manager.clone(),
             revocation_list: self.revocation_list.clone(),
-            serverless_manager: self.serverless_manager.clone(),
             #[cfg(feature = "dns")]
             ownership_challenge_store: self.ownership_challenge_store.clone(),
             raft_instance: self.raft_instance.clone(),
             pending_membership_changes: self.pending_membership_changes.clone(),
             edge_replica_manager: self.edge_replica_manager.clone(),
             raft_proposal_replay_cache: self.raft_proposal_replay_cache.clone(),
-            task_group: self.task_group.clone(),
-            lifecycle_state: self.lifecycle_state.clone(),
-            shutdown_started: self.shutdown_started.clone(),
-            mesh_exit_tx: self.mesh_exit_tx.clone(),
-            peer_sessions: self.peer_sessions.clone(),
-            startup_failure_hook: self.startup_failure_hook.clone(),
-            lifecycle_op: tokio::sync::Mutex::new(()),
-            id_generator: self.id_generator.clone(),
-            running_projection: self.running_projection.clone(),
-            accept_loop_report: self.accept_loop_report.clone(),
-            failed_startup_residue: self.failed_startup_residue.clone(),
-            auxiliary_tasks: self.auxiliary_tasks.clone(),
-            auxiliary_submission_lock: self.auxiliary_submission_lock.clone(),
-            startup_generation: self.startup_generation.clone(),
-            session_generation: self.session_generation.clone(),
-            session_exit_tx: self.session_exit_tx.clone(),
-            session_reaper_shutdown: self.session_reaper_shutdown.clone(),
-            auxiliary_exit_tx: self.auxiliary_exit_tx.clone(),
-            aggregate_handler_drained: self.aggregate_handler_drained.clone(),
-            aggregate_handler_aborted: self.aggregate_handler_aborted.clone(),
-            aggregate_handler_failed: self.aggregate_handler_failed.clone(),
-            auxiliary_test_hooks: self.auxiliary_test_hooks.clone(),
+            lifecycle: crate::transport::MeshTransportLifecycle {
+                task_group: self.lifecycle.task_group.clone(),
+                lifecycle_state: self.lifecycle.lifecycle_state.clone(),
+                shutdown_started: self.lifecycle.shutdown_started.clone(),
+                mesh_exit_tx: self.lifecycle.mesh_exit_tx.clone(),
+                peer_sessions: self.lifecycle.peer_sessions.clone(),
+                startup_failure_hook: self.lifecycle.startup_failure_hook.clone(),
+                lifecycle_op: tokio::sync::Mutex::new(()),
+                id_generator: self.lifecycle.id_generator.clone(),
+                running_projection: self.lifecycle.running_projection.clone(),
+                accept_loop_report: self.lifecycle.accept_loop_report.clone(),
+                failed_startup_residue: self.lifecycle.failed_startup_residue.clone(),
+                auxiliary_tasks: self.lifecycle.auxiliary_tasks.clone(),
+                auxiliary_submission_lock: self.lifecycle.auxiliary_submission_lock.clone(),
+                startup_generation: self.lifecycle.startup_generation.clone(),
+                session_generation: self.lifecycle.session_generation.clone(),
+                session_exit_tx: self.lifecycle.session_exit_tx.clone(),
+                session_reaper_shutdown: self.lifecycle.session_reaper_shutdown.clone(),
+                auxiliary_exit_tx: self.lifecycle.auxiliary_exit_tx.clone(),
+                aggregate_handler_drained: self.lifecycle.aggregate_handler_drained.clone(),
+                aggregate_handler_aborted: self.lifecycle.aggregate_handler_aborted.clone(),
+                aggregate_handler_failed: self.lifecycle.aggregate_handler_failed.clone(),
+                auxiliary_test_hooks: self.lifecycle.auxiliary_test_hooks.clone(),
+            },
         }
     }
 
@@ -295,11 +302,11 @@ impl MeshTransport {
 
         self.discover_serverless_functions();
 
-        if self.serverless_manager.read().is_some() {
+        if self.application.serverless_manager.read().is_some() {
             self.announce_serverless();
         }
 
-        if let Some(ref yara_rules) = self.yara_rules {
+        if let Some(ref yara_rules) = self.application.yara_rules {
             if let Some(sync_msg) = yara_rules.request_sync_from_global() {
                 if let Err(e) = self.send_datagram_to_peer(peer_node_id, &sync_msg).await {
                     tracing::debug!(
@@ -311,7 +318,7 @@ impl MeshTransport {
             }
         }
 
-        if let Some(ref threat_intel) = self.threat_intel {
+        if let Some(ref threat_intel) = self.application.threat_intel {
             let sync_msg = threat_intel.create_sync_request();
             if let Err(e) = self.send_datagram_to_peer(peer_node_id, &sync_msg).await {
                 tracing::debug!(
@@ -324,7 +331,7 @@ impl MeshTransport {
 
         {
             // Phase 5: Look up persisted cursor for incremental catchup.
-            let since_sequence = if let Some(ref ti) = self.threat_intel {
+            let since_sequence = if let Some(ref ti) = self.application.threat_intel {
                 let bs = ti.get_block_store();
                 let cursor = bs.get_blocklist_peer_cursor(peer_node_id, &self.config.node_id());
                 cursor.and_then(|c| c.last_sequence)
@@ -599,7 +606,7 @@ impl MeshTransport {
     pub(crate) async fn maintain_connections(&self) {
         if let Some(ref stake_mgr) = self.stake_manager {
             if stake_mgr.get_config().strict_mode {
-                if let Some(ref threat_intel) = self.threat_intel {
+                if let Some(ref threat_intel) = self.application.threat_intel {
                     let rep_mgr = threat_intel.get_reputation_manager();
                     stake_mgr.sync_from_reputation(&rep_mgr);
                 }
@@ -707,7 +714,7 @@ impl MeshTransport {
             );
         }
 
-        if let Some(ref threat_intel) = self.threat_intel {
+        if let Some(ref threat_intel) = self.application.threat_intel {
             let rep_mgr = threat_intel.get_reputation_manager();
             let peer_ids = rep_mgr.get_all_peer_ids();
 

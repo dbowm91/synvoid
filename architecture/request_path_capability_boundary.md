@@ -48,7 +48,7 @@ Request-path code consumes narrow traits instead of concrete types:
 | `ThreatIntelLookup` | `src/worker/context.rs` | Request-time threat intel lookups — decouples from `ThreatIntelligenceManager` (adapter in `services.rs` and `init_mesh.rs`) |
 | `BehavioralIntelLookup` | `src/worker/context.rs` | Request-time behavioral analysis — decouples from `BehavioralIntelligenceManager` (adapter in `services.rs`) |
 | `WafAccess` | `crates/synvoid-waf/src/access.rs` | WAF service adapter for HTTP/3 |
-| `Http3RequestWaf` | `crates/synvoid-http/src/http3_request_dispatch.rs` | HTTP/3 WAF evaluation |
+| `Http3RequestWaf` | `crates/synvoid-http3/src/http3_request_dispatch.rs` | HTTP/3 WAF evaluation |
 
 ## RequestServices
 

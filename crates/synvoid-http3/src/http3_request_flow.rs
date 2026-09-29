@@ -13,7 +13,7 @@ use synvoid_waf::ConnectionLimiter;
 use crate::http3_request_prelude::{
     prepare_http3_request_prelude, Http3RequestPrelude, Http3RequestPreludeOutcome,
 };
-use crate::traffic_control::ConnectionTokenGuard;
+use synvoid_http::traffic_control::ConnectionTokenGuard;
 
 pub struct Http3RequestDispatchContext<W> {
     pub prelude: Http3RequestPrelude,
@@ -28,7 +28,7 @@ pub enum Http3RequestDispatchOutcome<W> {
 
 #[async_trait::async_trait]
 pub trait Http3RequestResolver: Send {
-    type RequestStream: crate::Http3RequestStream + Send;
+    type RequestStream: crate::http3_body::Http3RequestStream + Send;
     type Error: std::error::Error + Send + Sync + 'static;
 
     async fn resolve_request(self)
@@ -90,7 +90,7 @@ where
 }
 
 #[async_trait]
-impl<S, B> crate::Http3RequestStream for h3::server::RequestStream<S, B>
+impl<S, B> crate::http3_body::Http3RequestStream for h3::server::RequestStream<S, B>
 where
     S: h3::quic::RecvStream + h3::quic::SendStream<B> + Send,
     B: Buf + Send + From<Bytes>,

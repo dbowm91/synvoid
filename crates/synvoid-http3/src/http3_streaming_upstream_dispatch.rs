@@ -26,11 +26,11 @@ use synvoid_proxy::{
 };
 use synvoid_upstream::upstream_tls_from_site_config;
 
-use crate::headers::generate_stealth_timestamp;
 use crate::http3_body::Http3RequestStream;
-use crate::response_helpers::apply_security_headers;
-use crate::shared_handler::StreamingWafScanner;
-use crate::streaming_waf_body::StreamingWafBody;
+use synvoid_http::headers::generate_stealth_timestamp;
+use synvoid_http::response_helpers::apply_security_headers;
+use synvoid_http::shared_handler::StreamingWafScanner;
+use synvoid_http::streaming_waf_body::StreamingWafBody;
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 

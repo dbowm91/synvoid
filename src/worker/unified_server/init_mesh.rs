@@ -197,13 +197,10 @@ pub async fn init_mesh_and_threat_intel(
         };
 
         let mesh_config: Option<crate::mesh::config::MeshConfig> = match mesh_config_external {
-            Some(c) => match serde_json::to_string(&c)
-                .ok()
-                .and_then(|json| serde_json::from_str(&json).ok())
-            {
-                Some(cfg) => Some(cfg),
-                None => {
-                    tracing::error!("Invalid mesh config — refusing to start mesh subsystem");
+            Some(config) => match crate::supervisor::mesh::realize_mesh_runtime_config(&config) {
+                Ok(config) => Some(config),
+                Err(error) => {
+                    tracing::error!(%error, "Invalid mesh config — refusing to start mesh subsystem");
                     return MeshInit::disabled();
                 }
             },
@@ -717,7 +714,50 @@ pub fn wire_port_honeypot_to_mesh(
 ) {
     if let Some(runner) = port_honeypot_runner {
         if let Some(threat_intel) = threat_intel_manager {
-            Arc::clone(runner).start_mesh_threat_publishing(threat_intel.clone(), 30);
+            struct HoneypotThreatPublisherAdapter(Arc<ThreatIntelligenceManager>);
+            impl synvoid_honeypot::HoneypotThreatPublisher for HoneypotThreatPublisherAdapter {
+                fn publish_indicator(
+                    &self,
+                    ip: std::net::IpAddr,
+                    indicator_type: &synvoid_honeypot::IndicatorType,
+                    severity: &synvoid_honeypot::SeverityLevel,
+                    reason: String,
+                    ttl_seconds: Option<u64>,
+                    site_scope: &str,
+                ) {
+                    let threat_type = match indicator_type {
+                        synvoid_honeypot::IndicatorType::SourceIp => {
+                            synvoid_mesh::protocol::ThreatType::IpBlock
+                        }
+                        _ => synvoid_mesh::protocol::ThreatType::SuspiciousActivity,
+                    };
+                    let severity = match severity {
+                        synvoid_honeypot::SeverityLevel::Critical => {
+                            synvoid_mesh::protocol::ThreatSeverity::Critical
+                        }
+                        synvoid_honeypot::SeverityLevel::High => {
+                            synvoid_mesh::protocol::ThreatSeverity::High
+                        }
+                        synvoid_honeypot::SeverityLevel::Medium => {
+                            synvoid_mesh::protocol::ThreatSeverity::Medium
+                        }
+                        synvoid_honeypot::SeverityLevel::Low => {
+                            synvoid_mesh::protocol::ThreatSeverity::Low
+                        }
+                    };
+                    self.0.announce_honeypot_indicator(
+                        ip,
+                        threat_type,
+                        severity,
+                        reason,
+                        ttl_seconds,
+                        site_scope,
+                    );
+                }
+            }
+            let publisher: Arc<dyn synvoid_honeypot::HoneypotThreatPublisher> =
+                Arc::new(HoneypotThreatPublisherAdapter(threat_intel.clone()));
+            Arc::clone(runner).start_mesh_threat_publishing(publisher, 30);
             if has_mesh_transport {
                 tracing::info!("Port honeypot threat publishing wired to mesh network");
             } else {

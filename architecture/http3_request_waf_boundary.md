@@ -4,16 +4,16 @@
 
 | Owner | Scope |
 |-------|-------|
-| `crates/synvoid-http3` | HTTP/3 QUIC protocol handling only |
+| `crates/synvoid-http3` | HTTP/3 QUIC protocol handling, request/stream state, and H3 dispatch |
 | `crates/synvoid-waf` | WAF engine traits (`WafProcessor`, `WafAccess`, `BlockListStore`, etc.) and primitives (`WafDecision`) |
-| `crates/synvoid-http` | Protocol-neutral request dispatch, WAF decision mapping, body collection |
+| `crates/synvoid-http` | Protocol-neutral HTTP normalization, security policy, and shared helpers |
 | `src/waf/` | Concrete WAF implementation (`WafCore`) and infrastructure adapters |
 | `src/worker/unified_server/` | Data-plane composition, service injection, worker lifecycle |
 
 ### Required Invariants
 
-1. **`crates/synvoid-http3` owns HTTP/3 protocol handling only.** It accepts WAF as `Arc<dyn Http3WafBackend>` and must never import concrete root-owned types.
-2. **`crates/synvoid-http3` depends only on narrow traits.** It may use `Http3RequestWaf`, `WafAccess`, and shared DTOs (`WafDecision`, `ConnectionLimiter`, `FloodProtector`). It must not import `BlockStore`, `ThreatIntelligenceManager`, `GeoIpManager`, `ChallengeManager`, or violation persistence.
+1. **`crates/synvoid-http3` owns HTTP/3 protocol handling and request/stream state.** It accepts WAF as `Arc<dyn Http3WafBackend>` and must never import concrete root-owned types.
+2. **`crates/synvoid-http3` consumes narrow service traits and shared HTTP helpers.** It may use `Http3RequestWaf`, `WafAccess`, and shared DTOs (`WafDecision`, `ConnectionLimiter`, `FloodProtector`). It must not import `BlockStore`, `ThreatIntelligenceManager`, `GeoIpManager`, `ChallengeManager`, or violation persistence.
 3. **`crates/synvoid-waf` owns WAF semantics and service traits.** Infrastructure traits (`BlockListStore`, `GeoIpLookup`, `ChallengeService`, `WafPersistence`) are defined here.
 4. **`src/waf/adapters.rs` bridges root services to WAF crate traits.** `BlockStoreAdapter`, `GeoIpAdapter`, `ChallengeServiceAdapter`, `ViolationPersistenceAdapter` live here.
 5. **`src/worker/unified_server/` owns composition.** Concrete services are constructed and injected into the WAF and HTTP layers here.
@@ -31,7 +31,7 @@
 |---------|------|----------------|
 | `Http3WafBackend` trait | `lib.rs:21` | Protocol adapter (composite trait boundary) |
 | `Http3Server` struct | `server.rs:20` | Protocol adapter |
-| `Http3Server::handle_request()` | `server.rs:205` | Protocol adapter — calls `prepare_http3_request_dispatch` + `handle_http3_request_dispatch` |
+| `Http3Server::handle_request()` | `server.rs:205` | Protocol adapter — calls crate-owned `prepare_http3_request_dispatch` + `handle_http3_request_dispatch` |
 | WAF connection limiter access | `server.rs:218,264` | Protocol adapter — delegates to `WafAccess` trait |
 | WAF streaming scanner access | `server.rs:261-262` | Protocol adapter — delegates to `WafAccess` trait |
 | WAF bandwidth check | `server.rs:219` | Protocol adapter — delegates to `WafAccess` trait |
@@ -85,14 +85,15 @@
 
 ```
 crates/synvoid-http3
-  ├── synvoid-http      (Http3RequestWaf, dispatch functions)
+  ├── synvoid-http      (protocol-neutral HTTP policy helpers)
   ├── synvoid-waf       (WafAccess, WafDecision, ConnectionLimiter)
   ├── synvoid-core      (StreamingWafScanner — test only)
   ├── synvoid-config    (Http3Config, MainConfig, SiteBotConfig)
   ├── synvoid-proxy     (Router, UpstreamClientRegistry)
   ├── synvoid-http-client (HttpClient)
   ├── synvoid-metrics   (WorkerMetrics, bandwidth)
-  └── synvoid-platform  (bind_udp_reuse)
+  ├── synvoid-platform  (bind_udp_reuse)
+  └── synvoid-upstream  (site-to-TLS policy adapter)
 
   ✗ NO root crate imports (no `use synvoid::`)
   ✗ NO concrete WafCore, BlockStore, ThreatIntelligenceManager
@@ -111,7 +112,7 @@ Both HTTP/1/2 and HTTP/3 pass **individual fields** to WAF check functions rathe
 ### HTTP/3 WAF Check Parameters
 
 ```rust
-// crates/synvoid-http/src/http3_request_dispatch.rs:163-176
+// crates/synvoid-http3/src/http3_request_dispatch.rs:163-176
 waf.check_request_full(
     waf_site_id,        // Option<&str> — from route or host
     client_ip,          // IpAddr
@@ -194,7 +195,7 @@ waf.check_request_full_owned(
 
 ### HTTP/3 Body Collection Flow
 
-1. `collect_http3_request_body()` in `crates/synvoid-http/src/http3_body.rs` reads the QUIC stream.
+1. `collect_http3_request_body()` in `crates/synvoid-http3/src/http3_body.rs` reads the QUIC stream.
 2. If `stream_scanned_upstream_mode` is true, body bytes are passed to `StreamingWafScanner::scan_chunk()` during collection.
 3. Terminal WAF decisions during streaming cause early termination (response sent via QUIC stream).
 4. Backpressure is preserved via QUIC flow control.

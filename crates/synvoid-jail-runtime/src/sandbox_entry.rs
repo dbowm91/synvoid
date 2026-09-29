@@ -29,7 +29,7 @@
 
 use std::io::{Read, Write};
 
-use synvoid_ipc::{serve_jail_connection, JailHandler, JailKind, ServeOutcome};
+use synvoid_jail_protocol::{serve_jail_connection, JailHandler, JailKind, ServeOutcome};
 use synvoid_platform::{jail_guarantee_request, prepare_sandbox, EnteredSandbox};
 
 /// Test-only escape hatch permitting jail execution without OS sandbox
@@ -38,7 +38,7 @@ use synvoid_platform::{jail_guarantee_request, prepare_sandbox, EnteredSandbox};
 pub const JAIL_PERMIT_NO_SANDBOX_ENV: &str = "SYNVOID_JAIL_PERMIT_NO_SANDBOX";
 
 /// Crate version of the jail runtime (packaging identity, not wire compat).
-/// Wire compatibility is governed by `synvoid_ipc::JAIL_PROTOCOL_VERSION`.
+/// Wire compatibility is governed by `synvoid_jail_protocol::JAIL_PROTOCOL_VERSION`.
 pub const JAIL_RUNTIME_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Minimal stderr logging for jail children: stdout is the framed IPC

@@ -2,21 +2,7 @@ use std::io;
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
-
-/// Trait for platform-specific IP mitigation (blocking/unblocking).
-///
-/// This provides an abstraction over kernel-level blocking (eBPF on Linux)
-/// and userspace fallback implementations.
-pub trait MitigationProvider: Send + Sync {
-    /// Block an IP address for the specified duration.
-    fn block_ip(&self, ip: IpAddr, reason: &str, duration: Duration) -> io::Result<()>;
-
-    /// Unblock an IP address.
-    fn unblock_ip(&self, ip: IpAddr) -> io::Result<()>;
-
-    /// Returns the name of the provider (e.g., "aya-ebpf", "userspace-fallback").
-    fn name(&self) -> &'static str;
-}
+pub use synvoid_core::mitigation::MitigationProvider;
 
 /// A mitigation provider that does nothing, used as a default or for testing.
 pub struct NoOpMitigationProvider;

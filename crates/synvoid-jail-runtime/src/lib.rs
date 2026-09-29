@@ -1,7 +1,8 @@
 //! Jail runtime: child-side WASM/YARA execution package (Phase 29).
 //!
 //! Explicit process-boundary owner for sandboxed child execution. The wire
-//! protocol and parent supervision live in `synvoid-ipc`; the parent
+//! protocol lives in `synvoid-jail-protocol`; parent supervision remains in
+//! `synvoid-ipc`. The parent
 //! policy/composition lives in the root `synvoid::sandbox`; this crate owns:
 //!
 //! - child-side handler dispatch (`WasmJailService`, `YaraJailService`);
@@ -13,7 +14,7 @@
 //!
 //! This crate must never import root `synvoid::`, supervisor, admin, or mesh
 //! implementation paths (enforced by `jail_runtime_boundary` repo guards).
-//! It depends only on `synvoid-ipc`, `synvoid-platform`, and the narrow
+//! It depends only on `synvoid-jail-protocol`, `synvoid-platform`, and the narrow
 //! engine crates.
 //!
 //! Binaries: `synvoid-wasm-jail` (requires `wasm` feature) and

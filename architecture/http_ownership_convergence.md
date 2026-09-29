@@ -112,10 +112,12 @@ where the transport semantics live.
   sequences flagged via `NormalizationFlags`, rejected under
   `strict_normalization`).
 
-### HTTP/3 overlap
+### HTTP/3 policy overlap and transport ownership (Phase 98)
 
 QUIC frames carry explicit lengths, so transfer-framing ambiguity does not
-exist on that path. The overlapping policy is shared:
+exist on that path. H3 request/stream state and dispatch now live in
+`synvoid-http3`; protocol-neutral normalization and security policy remain
+shared with `synvoid-http`:
 
 - metadata → `http3_request_prelude::prepare_http3_request_prelude`
   (same `resolve_client_ip`, same router types);

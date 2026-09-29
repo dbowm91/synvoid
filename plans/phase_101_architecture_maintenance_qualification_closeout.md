@@ -1,6 +1,6 @@
 # Phase 101 Plan: Architecture Maintenance Qualification and Closeout
 
-Status: planned/open.
+Status: unblocked/in progress.
 
 Registered in: plans/roadmap.md and plans/architecture_maintenance_auditability_roadmap.md.
 

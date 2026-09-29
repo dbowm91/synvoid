@@ -6,6 +6,12 @@ Specialized guidance for configuration management in `crates/synvoid-config/`.
 
 `ConfigManager` is defined in `crates/synvoid-config/src/lib.rs:113-241`, NOT in `main_config.rs`. `MainConfig` is in `main_config.rs` but `ConfigManager` is a separate struct that wraps it.
 
+Low-capability DTOs may live in `crates/synvoid-config-model/`; `synvoid-config`
+re-exports them for compatibility. File loading and `ConfigManager` stay in
+`synvoid-config`. Mesh identity/key realization belongs to `synvoid-mesh` and
+is invoked by the root supervisor composition adapter, never during model
+deserialization.
+
 ## Feature-Gated Compilation
 
 The config module uses standard Rust feature gates:

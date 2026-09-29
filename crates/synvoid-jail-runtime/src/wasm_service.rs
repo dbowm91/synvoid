@@ -3,7 +3,7 @@
 //! Canonical owner (Phase 29): `synvoid-jail-runtime`. The root
 //! `src/sandbox/wasm_service.rs` is a pure re-export facade.
 //!
-//! Implements [`synvoid_ipc::JailHandler`] for [`synvoid_ipc::JailKind::Wasm`]
+//! Implements [`synvoid_jail_protocol::JailHandler`] for [`synvoid_jail_protocol::JailKind::Wasm`]
 //! by loading parent-approved modules with [`WasmRuntime`] and invoking their
 //! `handle_request` export with bounded input.
 //!
@@ -12,7 +12,7 @@
 //! verifies the content digest (constant-time), enforces runtime limits
 //! (fuel, memory, timeout, epoch backstop), and — crucially — never grants
 //! ambient authority: capabilities are rebuilt from the narrow
-//! [`synvoid_ipc::JailHookCapabilities`] in the load request, so filesystem,
+//! [`synvoid_jail_protocol::JailHookCapabilities`] in the load request, so filesystem,
 //! network, mesh, admin, persistence, and metrics authority cannot be granted
 //! inside the jail regardless of the parent-side manifest.
 
@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use synvoid_ipc::{
+use synvoid_jail_protocol::{
     JailError, JailErrorDto, JailHandler, JailHookCapabilities, JailOperation, JailOutput,
     JailResult, JAIL_MAX_INVOKE_OUTPUT_BYTES, JAIL_MAX_MODULES,
 };
@@ -59,7 +59,7 @@ impl WasmJailService {
                 JailError::ResourceExhausted("too many loaded modules".to_string()).to_dto(),
             );
         }
-        if !synvoid_ipc::verify_sha256_hex(wasm_bytes, digest_sha256_hex) {
+        if !synvoid_jail_protocol::verify_sha256_hex(wasm_bytes, digest_sha256_hex) {
             return JailResult::Err(
                 JailError::DigestMismatch("wasm digest mismatch".to_string()).to_dto(),
             );
@@ -100,7 +100,7 @@ impl WasmJailService {
                 // Load failure text may name exports; keep the message but
                 // bounded via the DTO constructor.
                 JailResult::Err(JailErrorDto::new(
-                    synvoid_ipc::JailErrorCode::ExecutionFailed,
+                    synvoid_jail_protocol::JailErrorCode::ExecutionFailed,
                     format!("wasm load failed: {e}"),
                 ))
             }
@@ -132,7 +132,7 @@ impl WasmJailService {
                 let status = response.status().as_u16();
                 let mut out_headers = Vec::new();
                 for (name, value) in response.headers().iter() {
-                    if out_headers.len() >= synvoid_ipc::JAIL_MAX_HEADERS {
+                    if out_headers.len() >= synvoid_jail_protocol::JAIL_MAX_HEADERS {
                         break;
                     }
                     if let Ok(v) = value.to_str() {
@@ -152,7 +152,7 @@ impl WasmJailService {
                 })
             }
             Err(e) => JailResult::Err(JailErrorDto::new(
-                synvoid_ipc::JailErrorCode::ExecutionFailed,
+                synvoid_jail_protocol::JailErrorCode::ExecutionFailed,
                 format!("wasm invoke failed: {e}"),
             )),
         }

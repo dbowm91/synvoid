@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 
-use synvoid_ipc::{
+use synvoid_jail_protocol::{
     JailError, JAIL_MAX_HEADERS, JAIL_MAX_HEADER_NAME_LEN, JAIL_MAX_HEADER_VALUE_LEN,
 };
 

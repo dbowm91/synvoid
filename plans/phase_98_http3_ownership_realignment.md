@@ -1,6 +1,8 @@
 # Phase 98 Plan: HTTP/3 Ownership Realignment
 
-Status: planned/open.
+Status: implemented and closed 2026-09-28.
+
+Closeout: `architecture/http3_ownership_phase98_closeout.md`.
 
 Registered in: plans/roadmap.md and plans/architecture_maintenance_auditability_roadmap.md.
 

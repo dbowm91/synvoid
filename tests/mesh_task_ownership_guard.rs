@@ -1504,8 +1504,9 @@ fn test_steady_state_uses_global_generation() {
     let connect_fn = extract_function(&source, "connect_to_peer");
 
     // Must use session_generation.fetch_add
+    let compact_connect_fn: String = connect_fn.split_whitespace().collect();
     assert!(
-        connect_fn.contains("session_generation.fetch_add"),
+        compact_connect_fn.contains("session_generation.fetch_add"),
         "connect_to_peer must use global session_generation atomic"
     );
 }

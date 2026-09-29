@@ -12,11 +12,6 @@ use crate::storage::HoneypotStorage;
 use crate::storage_writer::HoneypotWriter;
 #[cfg(feature = "mesh")]
 use crate::threat_intel::HoneypotIntelExtractor;
-#[cfg(feature = "mesh")]
-use synvoid_mesh::protocol::ThreatType;
-#[cfg(feature = "mesh")]
-use synvoid_mesh::threat_intel::ThreatIntelligenceManager;
-
 /// Phase 57: private runner lifecycle ownership, separate from the
 /// user-visible `is_running()` status.
 ///
@@ -409,7 +404,7 @@ impl PortHoneypotRunner {
     #[cfg(feature = "mesh")]
     pub fn start_mesh_threat_publishing(
         self: &Arc<Self>,
-        threat_intel: Arc<ThreatIntelligenceManager>,
+        threat_intel: Arc<dyn crate::threat_intel::HoneypotThreatPublisher>,
         publish_interval_secs: u64,
     ) {
         let storage = self.storage.clone();
@@ -493,26 +488,6 @@ impl PortHoneypotRunner {
                                 continue;
                             }
 
-                            let threat_type = match indicator.indicator_type {
-                                crate::threat_intel::IndicatorType::SourceIp => ThreatType::IpBlock,
-                                _ => ThreatType::SuspiciousActivity,
-                            };
-
-                            let severity = match indicator.severity {
-                                crate::threat_intel::SeverityLevel::Critical => {
-                                    synvoid_mesh::protocol::ThreatSeverity::Critical
-                                }
-                                crate::threat_intel::SeverityLevel::High => {
-                                    synvoid_mesh::protocol::ThreatSeverity::High
-                                }
-                                crate::threat_intel::SeverityLevel::Medium => {
-                                    synvoid_mesh::protocol::ThreatSeverity::Medium
-                                }
-                                crate::threat_intel::SeverityLevel::Low => {
-                                    synvoid_mesh::protocol::ThreatSeverity::Low
-                                }
-                            };
-
                             let publish_ip = match indicator.indicator_type {
                                 crate::threat_intel::IndicatorType::SourceIp => {
                                     indicator.value.parse::<std::net::IpAddr>().ok()
@@ -527,10 +502,10 @@ impl PortHoneypotRunner {
                                     tracing::warn!("Failed to persist announced indicator: {}", e);
                                 }
 
-                                threat_intel.announce_honeypot_indicator(
+                                threat_intel.publish_indicator(
                                     ip,
-                                    threat_type,
-                                    severity,
+                                    &indicator.indicator_type,
+                                    &indicator.severity,
                                     indicator.description,
                                     Some(scoring_config.mesh_ttl_secs),
                                     &site_scope,

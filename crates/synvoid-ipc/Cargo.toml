@@ -14,6 +14,7 @@ rkyv = []
 synvoid-config = { path = "../synvoid-config" , version = "0.1" }
 synvoid-utils = { path = "../synvoid-utils" , version = "0.1" }
 synvoid-platform = { path = "../synvoid-platform" , version = "0.1" }
+synvoid-jail-protocol = { path = "../synvoid-jail-protocol", version = "0.1" }
 synvoid-metrics = { path = "../synvoid-metrics" , version = "0.1" }
 synvoid-tls = { path = "../synvoid-tls" , version = "0.1" }
 parking_lot = "0.12"

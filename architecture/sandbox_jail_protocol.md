@@ -8,12 +8,14 @@ transport. This document is the normative spec for the jail frame protocol,
 operations, transport ordering, supervision, failure semantics, and
 observability.
 
-Canonical implementation (Phase 29):
+Canonical implementation (Phase 97; parent behavior remains Phase 29):
 
-- Protocol DTOs, framing, policy, errors, limits, metrics, parent handle,
-  restart policy, child serve-loop driver, and deterministic binary resolution:
-  `crates/synvoid-ipc/src/` (`jail_protocol.rs`, `jail_process.rs`,
-  `jail_binary.rs` — exe-dir lookup only, no CWD/PATH/writable-dir search)
+- Protocol DTOs, framing, policy, errors, limits, digest helpers, and child
+  serve loop: `crates/synvoid-jail-protocol/` (SVJL v1)
+- Parent metrics, handle, restart policy, and deterministic binary resolution:
+  `crates/synvoid-ipc/src/` (`jail_metrics.rs`, `jail_process.rs`,
+  `jail_binary.rs` — exe-dir lookup only, no CWD/PATH/writable-dir search);
+  `jail_protocol.rs` is a compatibility re-export
 - Child execution services, sandbox-entry sequencing, and child-only
   observability: `crates/synvoid-jail-runtime/src/` (`wasm_service.rs`,
   `yara_service.rs`, `sandbox_entry.rs`, `headers.rs`; binaries in `src/bin/`)
@@ -30,8 +32,8 @@ Canonical implementation (Phase 29):
 - WASM engine: `crates/synvoid-plugin-runtime/src/` consumed by the jail
   runtime (hook-only capabilities rebuilt in-jail).
 - Behavioral + static-policy coverage: `tests/jail_isolation_guard.rs`
-  (composition; unit coverage in `synvoid-ipc` for pure framing, golden pins
-  in `crates/synvoid-ipc/tests/jail_protocol_golden.rs`, packaged-binary
+  (composition; unit coverage in `synvoid-jail-protocol` for framing, golden
+  pins in `crates/synvoid-ipc/tests/jail_protocol_golden.rs`, packaged-binary
   round trips in
   `crates/synvoid-jail-runtime/tests/jail_binary_integration.rs`) plus
   `tools/synvoid-repo-guards/tests/yara_execution_boundary.rs` (Phase 26
@@ -141,7 +143,7 @@ thread demultiplexes the single outstanding response with `recv_timeout`. This
 makes request-ID matching trivial and eliminates queue-depth accounting (depth
 is always 0 or 1).
 
-Size bounds (all `pub const` in `synvoid_ipc`, defined in `jail_protocol`):
+Size bounds (all `pub const` in `synvoid_jail_protocol`):
 
 | Bound | Value | Applies to |
 |-------|-------|-----------|
@@ -240,7 +242,7 @@ driven from `src/sandbox/policy.rs` `JailClient::spawn_resolved` composition):
 
 ## 7. Call-site policy (incremental migration)
 
-`IsolationPolicy` (`synvoid_ipc::jail_protocol`, consumed via `JailClient` in
+`IsolationPolicy` (`synvoid_jail_protocol`, consumed via `JailClient` in
 `src/sandbox/policy.rs`):
 
 - `InProcess` (default) — current behavior, no jail
@@ -298,7 +300,7 @@ is never treated as successful execution.
 
 ## 10. Observability
 
-Jail metrics (in `synvoid_ipc::jail_protocol`, `jail_metrics_snapshot()`) use process-local atomic counters —
+Jail metrics (in `synvoid_ipc::jail_metrics`, `jail_metrics_snapshot()`) use process-local atomic counters —
 no string labels, so metric cardinality is structurally bounded (module names,
 digests, paths, and rule text never appear):
 

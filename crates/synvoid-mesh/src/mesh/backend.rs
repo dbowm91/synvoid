@@ -496,9 +496,12 @@ pub async fn initialize_mesh_transports(
         tracing::info!("Edge replica manager initialized");
     }
 
-    quic_transport_inner
-        .org_key_manager
-        .start_background_tasks(quic_transport_inner.session_reaper_shutdown.subscribe());
+    quic_transport_inner.org_key_manager.start_background_tasks(
+        quic_transport_inner
+            .lifecycle
+            .session_reaper_shutdown
+            .subscribe(),
+    );
 
     transport_manager.set_quic_transport(quic_transport);
 

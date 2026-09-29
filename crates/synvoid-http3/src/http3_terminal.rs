@@ -6,8 +6,8 @@ use metrics::{counter, histogram};
 
 use synvoid_proxy::RouteResult;
 
-use crate::headers::generate_stealth_timestamp;
 use crate::http3_body::{send_response_with_body, Http3RequestStream};
+use synvoid_http::headers::generate_stealth_timestamp;
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 

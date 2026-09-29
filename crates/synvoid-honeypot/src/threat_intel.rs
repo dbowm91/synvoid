@@ -379,6 +379,21 @@ pub enum SeverityLevel {
     Low,
 }
 
+/// Narrow capability used by the honeypot publisher to share actionable
+/// observations. The mesh implementation is supplied by the application
+/// composition root so this crate does not own mesh runtime state.
+pub trait HoneypotThreatPublisher: Send + Sync {
+    fn publish_indicator(
+        &self,
+        ip: std::net::IpAddr,
+        indicator_type: &IndicatorType,
+        severity: &SeverityLevel,
+        reason: String,
+        ttl_seconds: Option<u64>,
+        site_scope: &str,
+    );
+}
+
 impl SeverityLevel {
     pub fn from_service(service: &str) -> Self {
         match service.to_lowercase().as_str() {

@@ -9,8 +9,8 @@ use synvoid_metrics::bandwidth::{BandwidthProtocol, BandwidthTracker, EgressDire
 use synvoid_metrics::{record_stall_timeout, StallPermit};
 use synvoid_waf::WafDecision;
 
-use crate::headers::generate_stealth_timestamp;
 use crate::http3_body::{build_json_error_response, send_response_with_body, Http3RequestStream};
+use synvoid_http::headers::generate_stealth_timestamp;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Http3WafDecisionOutcome {

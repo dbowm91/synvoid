@@ -44,6 +44,8 @@ pub mod threat_intel;
 pub mod threat_level;
 pub mod traffic_shaper;
 pub mod violation_tracker;
+#[cfg(feature = "mesh")]
+pub mod yara_snapshot;
 
 pub mod adapter;
 
@@ -237,7 +239,7 @@ pub type AppWafConfig = WafCoreConfig;
 impl synvoid_proxy::protocol::trait_def::WafCoreBackend for WafCore {}
 
 #[async_trait]
-impl synvoid_http::Http3RequestWaf for WafCore {
+impl synvoid_http3::Http3RequestWaf for WafCore {
     async fn check_request_full(
         &self,
         site_id: Option<&str>,

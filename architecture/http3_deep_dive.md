@@ -66,8 +66,8 @@ Response via QUIC stream
 |------|----------|---------|
 | `Http3Server` | `crates/synvoid-http3/src/server.rs` | Main server |
 | `Http3WafBackend` | `crates/synvoid-http3/src/lib.rs` | WAF trait boundary |
-| `Http3RequestStream` | `crates/synvoid-http/src/http3_body.rs` | QUIC stream abstraction (trait) |
-| `Http3RequestResolver` | `crates/synvoid-http/src/http3_request_flow.rs` | Request resolution trait |
+| `Http3RequestStream` | `crates/synvoid-http3/src/http3_body.rs` | QUIC stream abstraction (trait) |
+| `Http3RequestResolver` | `crates/synvoid-http3/src/http3_request_flow.rs` | Request resolution trait |
 
 ## Integration Points
 

@@ -6,7 +6,7 @@ use metrics::counter;
 
 use synvoid_proxy::{RouteResult, Router};
 
-use crate::request_parse::resolve_client_ip;
+use synvoid_http::request_parse::resolve_client_ip;
 
 pub struct Http3RequestPrelude {
     pub parts: http::request::Parts,

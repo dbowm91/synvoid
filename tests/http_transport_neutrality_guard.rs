@@ -180,3 +180,39 @@ fn http3_independent_of_eggserve() {
         "HTTP/3 must not depend on the EggServe runtime: {violations:?}"
     );
 }
+
+#[test]
+fn http3_specific_state_machine_is_owned_by_http3_crate() {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let http_manifest = read(repo, "crates/synvoid-http/Cargo.toml");
+    assert!(
+        !http_manifest
+            .lines()
+            .any(|line| line.trim_start().starts_with("h3 =")),
+        "synvoid-http must not depend directly on H3 framing"
+    );
+    let http_src = repo.join("crates/synvoid-http/src");
+    for module in [
+        "http3_body.rs",
+        "http3_request_flow.rs",
+        "http3_request_dispatch.rs",
+        "http3_request_prelude.rs",
+        "http3_route_dispatch.rs",
+        "http3_buffered_upstream_dispatch.rs",
+        "http3_streaming_upstream_dispatch.rs",
+        "http3_terminal.rs",
+        "http3_waf_dispatch.rs",
+    ] {
+        assert!(
+            !http_src.join(module).exists(),
+            "{module} still lives in synvoid-http"
+        );
+        assert!(
+            repo.join("crates/synvoid-http3/src").join(module).exists(),
+            "{module} missing from synvoid-http3"
+        );
+    }
+    let http3_manifest = read(repo, "crates/synvoid-http3/Cargo.toml");
+    assert!(http3_manifest.contains("synvoid-http ="));
+    assert!(!http3_manifest.contains("synvoid-http3 ="));
+}

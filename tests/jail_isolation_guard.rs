@@ -186,7 +186,7 @@ fn yara_load_op(rules_id: &str) -> JailOperation {
 
 #[test]
 fn jail_protocol_has_no_generic_exec_surface() {
-    let text = strip_comments_and_strings(&read_source("crates/synvoid-ipc/src/jail_protocol.rs"));
+    let text = strip_comments_and_strings(&read_source("crates/synvoid-jail-protocol/src/lib.rs"));
     for forbidden in [
         "std::process::Command",
         "Command::new",
@@ -278,7 +278,7 @@ fn jail_parent_never_sets_test_hatch() {
     // set it (production spawn must fail closed, never bypass).
     for file in [
         "crates/synvoid-ipc/src/jail_process.rs",
-        "crates/synvoid-ipc/src/jail_protocol.rs",
+        "crates/synvoid-jail-protocol/src/lib.rs",
         "crates/synvoid-ipc/src/jail_binary.rs",
         "src/sandbox/policy.rs",
         "src/sandbox/wasm_service.rs",
@@ -319,7 +319,7 @@ fn jail_parent_never_sets_test_hatch() {
 fn jail_code_owns_its_children_without_forget() {
     for file in [
         "crates/synvoid-ipc/src/jail_process.rs",
-        "crates/synvoid-ipc/src/jail_protocol.rs",
+        "crates/synvoid-jail-protocol/src/lib.rs",
         "crates/synvoid-ipc/src/jail_binary.rs",
         "src/sandbox/mod.rs",
         "src/sandbox/policy.rs",
@@ -362,7 +362,7 @@ fn jail_respects_composition_boundary() {
         "src/sandbox/wasm_service.rs",
         "src/sandbox/yara_service.rs",
         "crates/synvoid-ipc/src/jail_process.rs",
-        "crates/synvoid-ipc/src/jail_protocol.rs",
+        "crates/synvoid-jail-protocol/src/lib.rs",
         "crates/synvoid-ipc/src/jail_binary.rs",
         "crates/synvoid-jail-runtime/src/lib.rs",
         "crates/synvoid-jail-runtime/src/sandbox_entry.rs",

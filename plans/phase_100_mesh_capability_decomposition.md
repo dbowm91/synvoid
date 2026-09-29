@@ -1,6 +1,8 @@
 # Phase 100 Plan: Mesh Capability Decomposition and Application Dependency Inversion
 
-Status: planned/open.
+Status: implemented and closed 2026-09-29.
+
+Closeout: `architecture/mesh_capability_decomposition_phase100_closeout.md`.
 
 Registered in: plans/roadmap.md and plans/architecture_maintenance_auditability_roadmap.md.
 

@@ -1,9 +1,7 @@
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use parking_lot::RwLock;
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
@@ -13,14 +11,6 @@ use utoipa::ToSchema;
 pub struct NodeIdentityConfig {
     #[serde(default)]
     pub private_key_path: Option<String>,
-    #[serde(skip)]
-    pub private_key: Option<Vec<u8>>,
-    #[serde(skip)]
-    pub public_key: Option<Vec<u8>>,
-    #[serde(skip)]
-    pub node_id: Option<String>,
-    #[serde(skip)]
-    pub router_id: Option<String>,
     #[serde(default)]
     pub encryption_passphrase_path: Option<String>,
     #[serde(default)]
@@ -31,72 +21,6 @@ pub struct NodeIdentityConfig {
     pub genesis_key_base64: Option<String>,
 }
 
-impl NodeIdentityConfig {
-    pub fn public_key_hex(&self) -> Option<String> {
-        self.public_key.as_ref().map(hex::encode)
-    }
-
-    pub fn load_or_generate(&mut self) -> Result<(), String> {
-        // Placeholder implementation
-        if self.private_key.is_none() {
-            let mut key = [0u8; 32];
-            use rand::RngCore;
-            rand::rng().fill_bytes(&mut key);
-            self.private_key = Some(key.to_vec());
-            self.public_key = Some(derive_node_id_hash(&key));
-            self.node_id = Some(derive_node_id(&key));
-            self.router_id = Some(derive_router_id(&key));
-        }
-        Ok(())
-    }
-
-    pub fn derive_signing_key_from_genesis(
-        &mut self,
-        genesis_key: &[u8; 32],
-        public_key: &[u8],
-    ) -> Result<(), String> {
-        use hkdf::Hkdf;
-
-        const INFO: &[u8] = b"synvoid-global-node-signing-key";
-
-        let hk = Hkdf::<Sha256>::new(Some(genesis_key), INFO);
-        let mut okm = [0u8; 32];
-
-        hk.expand(public_key, &mut okm)
-            .map_err(|e| format!("HKDF expand failed: {}", e))?;
-
-        self.private_key = Some(okm.to_vec());
-        self.public_key = Some(derive_node_id_hash(&okm));
-        self.node_id = Some(derive_node_id(&okm));
-        self.router_id = Some(derive_router_id(&okm));
-
-        Ok(())
-    }
-}
-
-fn derive_node_id_hash(private_key: &[u8]) -> Vec<u8> {
-    let mut hasher = Sha256::new();
-    hasher.update(b"public-key-from:");
-    hasher.update(private_key);
-    hasher.finalize().to_vec()
-}
-
-fn derive_node_id(private_key: &[u8]) -> String {
-    let node_hash = derive_node_id_hash(private_key);
-    format!("node-{}", hex::encode(&node_hash[..8]))
-}
-
-pub fn derive_router_id(private_key: &[u8]) -> String {
-    let node_hash = derive_node_id_hash(private_key);
-    let mut hasher = Sha256::new();
-    hasher.update(&node_hash);
-    let hash = hasher.finalize();
-    base32::encode(
-        base32::Alphabet::Rfc4648Lower { padding: false },
-        &hash[..10],
-    )
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 pub struct GlobalNodeConfig {
     #[serde(default)]
@@ -105,16 +29,8 @@ pub struct GlobalNodeConfig {
     pub known_edge_keys: HashMap<String, String>,
     #[serde(default)]
     pub x25519_private_key_base64: Option<String>,
-    #[serde(skip)]
-    pub x25519_private_key: Option<[u8; 32]>,
-    #[serde(skip)]
-    pub x25519_public_key_base64: Option<String>,
     #[serde(default)]
     pub ed25519_private_key_base64: Option<String>,
-    #[serde(skip)]
-    pub ed25519_private_key: Option<[u8; 32]>,
-    #[serde(skip)]
-    pub ed25519_public_key_base64: Option<String>,
     #[serde(default)]
     pub invite_tokens: Vec<String>,
     #[serde(default)]
@@ -123,71 +39,10 @@ pub struct GlobalNodeConfig {
     pub key_exchange_require_edge_auth: bool,
 }
 
-impl GlobalNodeConfig {
-    pub fn is_invite_token_valid(&self, token: &str) -> bool {
-        use subtle::ConstantTimeEq;
-        self.invite_tokens
-            .iter()
-            .any(|t| bool::from(t.as_bytes().ct_eq(token.as_bytes())))
-    }
-
-    pub fn load_keys(&mut self) -> Result<(), String> {
-        // Load X25519 key
-        if let Some(ref b64) = self.x25519_private_key_base64 {
-            let key_bytes = URL_SAFE_NO_PAD
-                .decode(b64)
-                .map_err(|e| format!("Invalid base64 X25519 key: {}", e))?;
-
-            if key_bytes.len() != 32 {
-                return Err("X25519 key must be 32 bytes".to_string());
-            }
-
-            let mut key = [0u8; 32];
-            key.copy_from_slice(&key_bytes);
-            self.x25519_private_key = Some(key);
-
-            // Derive public key
-            use x25519_dalek::{PublicKey, StaticSecret};
-            let secret = StaticSecret::from(key);
-            let public = PublicKey::from(&secret);
-            self.x25519_public_key_base64 = Some(URL_SAFE_NO_PAD.encode(public.as_bytes()));
-        }
-
-        // Load Ed25519 key
-        #[cfg(feature = "mesh")]
-        if let Some(ref b64) = self.ed25519_private_key_base64 {
-            let key_bytes = URL_SAFE_NO_PAD
-                .decode(b64)
-                .map_err(|e| format!("Invalid base64 Ed25519 key: {}", e))?;
-
-            if key_bytes.len() != 32 {
-                return Err("Ed25519 key must be 32 bytes".to_string());
-            }
-
-            let mut key = [0u8; 32];
-            key.copy_from_slice(&key_bytes);
-            self.ed25519_private_key = Some(key);
-
-            // Derive public key
-            #[cfg(feature = "mesh")]
-            use ed25519_dalek::SigningKey;
-            let signing_key = SigningKey::from_bytes(&key);
-            self.ed25519_public_key_base64 =
-                Some(URL_SAFE_NO_PAD.encode(signing_key.verifying_key().as_bytes()));
-        }
-
-        Ok(())
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 pub struct GenesisKeyConfig {
     #[serde(default)]
     pub private_key_base64: Option<String>,
-    #[serde(skip)]
-    pub private_key: Option<[u8; 32]>,
-    #[serde(skip)]
-    pub public_key: Option<String>,
     #[serde(default)]
     pub is_first_node: bool,
     #[serde(default)]
@@ -202,10 +57,6 @@ impl GenesisKeyConfig {
         self.authorized_genesis_keys
             .iter()
             .any(|k| k == genesis_public_key)
-    }
-
-    pub fn get_public_key(&self) -> Option<String> {
-        self.public_key.clone()
     }
 }
 
@@ -762,77 +613,7 @@ impl Default for MeshConfig {
     }
 }
 
-impl MeshConfig {
-    pub fn node_id(&self) -> String {
-        self.node_id
-            .clone()
-            .or_else(|| self.node_identity.node_id.clone())
-            .unwrap_or_else(|| "unknown".to_string())
-    }
-
-    pub fn router_id(&self) -> String {
-        self.node_identity
-            .router_id
-            .clone()
-            .unwrap_or_else(|| "unknown".to_string())
-    }
-
-    pub fn signing_key(&self) -> Option<&[u8]> {
-        self.node_identity.private_key.as_deref()
-    }
-
-    pub fn has_signing_key(&self) -> bool {
-        self.node_identity.private_key.is_some()
-    }
-
-    pub fn signing_public_key(&self) -> Option<Vec<u8>> {
-        self.node_identity.public_key.clone()
-    }
-
-    #[cfg(feature = "mesh")]
-    pub fn load_node_identity(&mut self) -> Result<(), String> {
-        if let Some(ref genesis_b64) = self.node_identity.genesis_key_base64 {
-            tracing::warn!(
-                "DEPRECATION: Using genesis_key_base64 for identity derivation is deprecated and will be removed in a future version. \
-                 Please migrate to Decentralized Admission (JoinRequest)."
-            );
-            let genesis_bytes = URL_SAFE_NO_PAD
-                .decode(genesis_b64)
-                .map_err(|e| format!("Invalid genesis key base64: {}", e))?;
-
-            if genesis_bytes.len() != 32 {
-                return Err("Genesis key must be 32 bytes".to_string());
-            }
-
-            let mut genesis_key = [0u8; 32];
-            genesis_key.copy_from_slice(&genesis_bytes);
-
-            // In the real implementation, we derive the public key from the private key.
-            // Since we don't have the full crypto logic here, we'll use a placeholder
-            // or use ed25519-dalek to get the public key.
-            use ed25519_dalek::SigningKey;
-            let signing_key = SigningKey::from_bytes(&genesis_key);
-            let public_key = signing_key.verifying_key().to_bytes();
-
-            let public_key_b64 = URL_SAFE_NO_PAD.encode(public_key);
-
-            if let Some(genesis_config) = &self.genesis_key {
-                if !genesis_config.is_genesis_key_authorized(&public_key_b64) {
-                    return Err("Genesis key is not in the authorized list".to_string());
-                }
-            }
-
-            self.node_identity
-                .derive_signing_key_from_genesis(&genesis_key, &public_key)
-        } else {
-            self.node_identity.load_or_generate()
-        }
-    }
-
-    pub fn load_global_node_keys(&mut self) -> Result<(), String> {
-        self.global_node.load_keys()
-    }
-}
+impl MeshConfig {}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 pub struct MeshImageProtectionConfig {

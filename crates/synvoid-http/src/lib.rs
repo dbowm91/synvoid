@@ -14,15 +14,6 @@ pub mod early_parse;
 pub mod fastcgi_php_backend_dispatch;
 pub mod framing;
 pub mod headers;
-pub mod http3_body;
-pub mod http3_buffered_upstream_dispatch;
-pub mod http3_request_dispatch;
-pub mod http3_request_flow;
-pub mod http3_request_prelude;
-pub mod http3_route_dispatch;
-pub mod http3_streaming_upstream_dispatch;
-pub mod http3_terminal;
-pub mod http3_waf_dispatch;
 pub mod http_request_flow;
 pub mod http_request_postlude;
 pub mod hyper_adapter;
@@ -77,24 +68,6 @@ pub use framing::{
     validate_request_framing, validate_transfer_framing, FramingError, ValidatedAuthority,
     HTTP_VALID_METHODS,
 };
-pub use http3_body::{
-    collect_http3_request_body, Http3BodyCollectionOutcome, Http3CollectedBody, Http3RequestStream,
-};
-pub use http3_buffered_upstream_dispatch::handle_http3_buffered_upstream_pass;
-pub use http3_request_dispatch::{
-    handle_http3_request_dispatch, Http3DispatchDeps, Http3RequestMetadata, Http3RequestWaf,
-};
-pub use http3_request_flow::{
-    prepare_http3_request_dispatch, Http3RequestDispatchContext, Http3RequestDispatchOutcome,
-    Http3RequestResolver,
-};
-pub use http3_request_prelude::{
-    prepare_http3_request_prelude, Http3RequestPrelude, Http3RequestPreludeOutcome,
-};
-pub use http3_route_dispatch::handle_http3_found_route;
-pub use http3_streaming_upstream_dispatch::handle_http3_streaming_upstream_pass;
-pub use http3_terminal::{finalize_http3_request, maybe_handle_http3_terminal_route_result};
-pub use http3_waf_dispatch::{maybe_handle_http3_waf_decision, Http3WafDecisionOutcome};
 pub use http_request_flow::{prepare_http_request_flow, HttpRequestFlowOutcome};
 pub use http_request_postlude::{handle_http_request_postlude, HttpRequestPostludeContext};
 pub use internal_endpoint_dispatch::{dispatch_internal_endpoint, InternalEndpointDispatch};
@@ -147,8 +120,7 @@ pub use streaming_waf_upstream_dispatch::{
     handle_streaming_waf_upstream_pass, StreamingWafUpstreamError,
 };
 pub use traffic_control::{
-    maybe_enforce_http3_site_connection_limits, maybe_enforce_request_traffic_limits,
-    ConnectionTokenGuard, TrafficControlOutcome,
+    maybe_enforce_request_traffic_limits, ConnectionTokenGuard, TrafficControlOutcome,
 };
 pub use upload_validation_dispatch::{maybe_handle_upload_validation, UploadValidationWaf};
 pub use upstream_buffered_dispatch::handle_buffered_upstream_request;

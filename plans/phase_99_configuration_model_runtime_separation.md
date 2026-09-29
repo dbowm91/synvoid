@@ -1,6 +1,8 @@
 # Phase 99 Plan: Configuration Model and Runtime Capability Separation
 
-Status: planned/open.
+Status: implemented and closed 2026-09-28.
+
+Closeout: `architecture/config_model_phase99_closeout.md`.
 
 Registered in: plans/roadmap.md and plans/architecture_maintenance_auditability_roadmap.md.
 

@@ -5,13 +5,13 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct PortHoneypotController {
     runner: Arc<RwLock<Option<Arc<PortHoneypotRunner>>>>,
-    config: Arc<RwLock<synvoid_config::honeypot_port::HoneypotPortConfig>>,
+    config: Arc<RwLock<synvoid_config_model::honeypot_port::HoneypotPortConfig>>,
 }
 
 impl PortHoneypotController {
     pub fn new(
         runner: Arc<PortHoneypotRunner>,
-        config: synvoid_config::honeypot_port::HoneypotPortConfig,
+        config: synvoid_config_model::honeypot_port::HoneypotPortConfig,
     ) -> Self {
         Self {
             runner: Arc::new(RwLock::new(Some(runner))),
@@ -23,18 +23,18 @@ impl PortHoneypotController {
         Self {
             runner: Arc::new(RwLock::new(Some(runner))),
             config: Arc::new(RwLock::new(
-                synvoid_config::honeypot_port::HoneypotPortConfig::default(),
+                synvoid_config_model::honeypot_port::HoneypotPortConfig::default(),
             )),
         }
     }
 
-    pub fn get_config(&self) -> synvoid_config::honeypot_port::HoneypotPortConfig {
+    pub fn get_config(&self) -> synvoid_config_model::honeypot_port::HoneypotPortConfig {
         self.config.read().clone()
     }
 
     pub fn update_config(
         &self,
-        new_config: synvoid_config::honeypot_port::HoneypotPortConfig,
+        new_config: synvoid_config_model::honeypot_port::HoneypotPortConfig,
     ) -> Result<(), String> {
         let mut config = self.config.write();
         *config = new_config;

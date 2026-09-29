@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document covers the configuration library (`crates/synvoid-config/`) and utility library (`crates/synvoid-utils/`).
+This document covers the configuration loader (`crates/synvoid-config/`), low-capability DTO crate (`crates/synvoid-config-model/`), and utility library (`crates/synvoid-utils/`).
 
 ---
 

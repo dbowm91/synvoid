@@ -222,6 +222,28 @@ pub enum AttackType {
     Other,
 }
 
+impl AttackType {
+    /// Stable label used by exported blocked-by-type metrics.
+    pub const fn metrics_label(self) -> &'static str {
+        match self {
+            Self::Sqli => "Sqli",
+            Self::Xss => "Xss",
+            Self::PathTraversal => "PathTraversal",
+            Self::Rfi => "Rfi",
+            Self::Ssrf => "Ssrf",
+            Self::Ssti => "Ssti",
+            Self::CmdInjection => "CmdInjection",
+            Self::Xxe => "Xxe",
+            Self::Jwt => "Jwt",
+            Self::RequestSmuggling => "RequestSmuggling",
+            Self::LdapInjection => "LdapInjection",
+            Self::XPathInjection => "XPathInjection",
+            Self::OpenRedirect => "OpenRedirect",
+            Self::Other => "Other",
+        }
+    }
+}
+
 impl std::fmt::Display for AttackType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -239,6 +261,35 @@ impl std::fmt::Display for AttackType {
             AttackType::XPathInjection => write!(f, "XPathInjection"),
             AttackType::OpenRedirect => write!(f, "OpenRedirect"),
             AttackType::Other => write!(f, "Other"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod metric_label_tests {
+    use super::AttackType;
+
+    #[test]
+    fn metric_labels_preserve_the_exported_debug_names() {
+        let cases = [
+            (AttackType::Sqli, "Sqli"),
+            (AttackType::Xss, "Xss"),
+            (AttackType::PathTraversal, "PathTraversal"),
+            (AttackType::Rfi, "Rfi"),
+            (AttackType::Ssrf, "Ssrf"),
+            (AttackType::Ssti, "Ssti"),
+            (AttackType::CmdInjection, "CmdInjection"),
+            (AttackType::Xxe, "Xxe"),
+            (AttackType::Jwt, "Jwt"),
+            (AttackType::RequestSmuggling, "RequestSmuggling"),
+            (AttackType::LdapInjection, "LdapInjection"),
+            (AttackType::XPathInjection, "XPathInjection"),
+            (AttackType::OpenRedirect, "OpenRedirect"),
+            (AttackType::Other, "Other"),
+        ];
+        for (attack_type, expected) in cases {
+            assert_eq!(attack_type.metrics_label(), expected);
+            assert_eq!(format!("{attack_type:?}"), expected);
         }
     }
 }

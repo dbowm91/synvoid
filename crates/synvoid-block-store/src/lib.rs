@@ -28,7 +28,7 @@ pub use synvoid_core::block_store::{
     BlocklistPeerCursorStoreSnapshot, BlocklistSnapshotApplyResult, BlocklistSnapshotChunk,
     BlocklistSnapshotCursor, BlocklistSnapshotOptions, BlocklistTargetStateRecord, MeshBlockEntry,
 };
-use synvoid_waf::mitigation::{MitigationProvider, SizedMitigationProvider};
+use synvoid_core::mitigation::MitigationProvider;
 
 pub type GlobalBlockHook = Arc<dyn Fn(IpAddr) + Send + Sync>;
 
@@ -539,6 +539,8 @@ pub struct BlockStore {
     cursor_persist_path: Option<PathBuf>,
     local_sequence: std::sync::atomic::AtomicU64,
 }
+
+struct SizedMitigationProvider(Arc<dyn MitigationProvider>);
 
 impl BlockStore {
     async fn persist_request(

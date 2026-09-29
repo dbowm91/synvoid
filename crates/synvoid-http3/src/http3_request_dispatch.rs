@@ -33,14 +33,15 @@ use crate::http3_request_prelude::Http3RequestPrelude;
 use crate::http3_route_dispatch::handle_http3_found_route;
 use crate::http3_terminal::maybe_handle_http3_terminal_route_result;
 use crate::http3_waf_dispatch::{maybe_handle_http3_waf_decision, Http3WafDecisionOutcome};
-use crate::traffic_control::ConnectionTokenGuard;
+use synvoid_http::traffic_control::ConnectionTokenGuard;
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
 pub struct Http3DispatchDeps {
     pub max_request_size: usize,
-    pub streaming_waf_for_body: Option<Box<dyn crate::shared_handler::StreamingWafScanner>>,
-    pub streaming_waf_for_upstream: Option<Box<dyn crate::shared_handler::StreamingWafScanner>>,
+    pub streaming_waf_for_body: Option<Box<dyn synvoid_http::shared_handler::StreamingWafScanner>>,
+    pub streaming_waf_for_upstream:
+        Option<Box<dyn synvoid_http::shared_handler::StreamingWafScanner>>,
     pub connection_limiter: Option<Arc<ConnectionLimiter>>,
     pub main_config: Arc<MainConfig>,
     pub upstream_client_registry: Arc<UpstreamClientRegistry>,

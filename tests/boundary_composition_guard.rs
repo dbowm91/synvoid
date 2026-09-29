@@ -1577,7 +1577,7 @@ fn assert_no_worker_lifecycle_imports(source: &str, file_label: &str) {
 fn http3_dispatch_must_not_import_worker_lifecycle_modules() {
     let root = workspace_root();
     let source =
-        std::fs::read_to_string(root.join("crates/synvoid-http/src/http3_request_dispatch.rs"))
+        std::fs::read_to_string(root.join("crates/synvoid-http3/src/http3_request_dispatch.rs"))
             .expect("failed to read http3_request_dispatch.rs");
     assert_no_worker_lifecycle_imports(&source, "http3_request_dispatch.rs");
 }
@@ -1594,7 +1594,7 @@ fn http1_request_flow_must_not_import_worker_lifecycle_modules() {
 fn http3_dispatch_uses_context_structs() {
     let root = workspace_root();
     let source =
-        std::fs::read_to_string(root.join("crates/synvoid-http/src/http3_request_dispatch.rs"))
+        std::fs::read_to_string(root.join("crates/synvoid-http3/src/http3_request_dispatch.rs"))
             .expect("failed to read http3_request_dispatch.rs");
     let stripped = strip_comments(&source);
 
@@ -1659,7 +1659,7 @@ fn request_pipeline_stage_vocabulary_is_documented() {
 fn http3_dispatch_does_not_import_unified_server_worker_state() {
     let root = workspace_root();
     let source =
-        std::fs::read_to_string(root.join("crates/synvoid-http/src/http3_request_dispatch.rs"))
+        std::fs::read_to_string(root.join("crates/synvoid-http3/src/http3_request_dispatch.rs"))
             .expect("failed to read http3_request_dispatch.rs");
     let stripped = strip_comments(&source);
     assert!(
@@ -1721,7 +1721,7 @@ fn http_request_pipeline_doc_does_not_claim_http3_has_no_deps_struct() {
 fn http3_dispatch_signature_uses_context_structs() {
     let root = workspace_root();
     let source =
-        std::fs::read_to_string(root.join("crates/synvoid-http/src/http3_request_dispatch.rs"))
+        std::fs::read_to_string(root.join("crates/synvoid-http3/src/http3_request_dispatch.rs"))
             .expect("failed to read http3_request_dispatch.rs");
     let stripped = strip_comments(&source);
 

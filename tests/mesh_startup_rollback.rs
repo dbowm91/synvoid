@@ -566,16 +566,17 @@ fn test_stop_server_exists() {
 #[test]
 fn accept_loop_report_is_shared_via_arc_in_clone() {
     let content = read_file("crates/synvoid-mesh/src/mesh/transport_connection.rs");
+    let compact = content.split_whitespace().collect::<String>();
 
-    // clone_for_maintenance should clone the accept_loop_report Arc, not create a new one
+    // clone_for_maintenance should clone the grouped lifecycle report Arc.
     assert!(
-        content.contains("accept_loop_report: self.accept_loop_report.clone()"),
+        compact.contains("accept_loop_report:self.lifecycle.accept_loop_report.clone()"),
         "clone_for_maintenance must share accept_loop_report via Arc::clone"
     );
 
     // Should NOT create a new default
     assert!(
-        !content.contains("accept_loop_report: Arc::new(tokio::sync::Mutex::new(\n                crate::lifecycle::MeshAcceptLoopReport::default(),\n            ))"),
+        !compact.contains("accept_loop_report:Arc::new(tokio::sync::Mutex::new(crate::lifecycle::MeshAcceptLoopReport::default(),))"),
         "clone_for_maintenance must not create a new default accept_loop_report"
     );
 }
@@ -1374,8 +1375,9 @@ async fn test_global_session_generation() {
 
     // connect_to_peer must use session_generation.fetch_add
     let connect_fn = extract_function(&source, "connect_to_peer");
+    let compact_connect_fn = connect_fn.split_whitespace().collect::<String>();
     assert!(
-        connect_fn.contains("session_generation.fetch_add"),
+        compact_connect_fn.contains("lifecycle.session_generation.fetch_add"),
         "connect_to_peer must use transport-global session_generation"
     );
 

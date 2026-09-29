@@ -22,7 +22,7 @@ use synvoid_proxy::{
 
 use crate::http3_body::{send_response_with_body, Http3RequestStream};
 use crate::http3_terminal::finalize_http3_request;
-use crate::response_helpers::apply_security_headers;
+use synvoid_http::response_helpers::apply_security_headers;
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 

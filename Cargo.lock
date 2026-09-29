@@ -8343,7 +8343,6 @@ dependencies = [
  "synvoid-core",
  "synvoid-mesh",
  "synvoid-utils",
- "synvoid-waf",
  "tempfile",
  "tokio",
  "tracing",
@@ -8377,33 +8376,33 @@ dependencies = [
 name = "synvoid-config"
 version = "0.1.0"
 dependencies = [
- "aes-gcm",
  "anyhow",
- "base32",
- "base64 0.22.1",
  "bytes",
  "chrono",
- "ed25519-dalek",
- "hex",
- "hkdf",
  "http 1.4.1",
  "ipnetwork 0.18.0",
  "parking_lot",
- "pbkdf2",
- "pqc",
  "rand 0.9.4",
  "rkyv 0.8.18",
  "schemars 0.8.22",
  "serde",
  "serde_json",
- "sha2",
- "subtle",
+ "synvoid-config-model",
  "tempfile",
  "toml 0.8.23",
  "tracing",
  "utoipa",
  "uuid",
- "x25519-dalek",
+]
+
+[[package]]
+name = "synvoid-config-model"
+version = "0.1.0"
+dependencies = [
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "utoipa",
 ]
 
 [[package]]
@@ -8559,9 +8558,8 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "synvoid-config",
+ "synvoid-config-model",
  "synvoid-http-client",
- "synvoid-mesh",
  "synvoid-utils",
  "thiserror 2.0.20",
  "tokio",
@@ -8583,7 +8581,6 @@ dependencies = [
  "eggserve-primitives",
  "eggserve-server",
  "futures",
- "h3",
  "http 1.4.1",
  "http-body",
  "http-body-util",
@@ -8652,6 +8649,7 @@ dependencies = [
 name = "synvoid-http3"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "bytes",
  "h3",
@@ -8671,6 +8669,7 @@ dependencies = [
  "synvoid-metrics",
  "synvoid-platform",
  "synvoid-proxy",
+ "synvoid-upstream",
  "synvoid-waf",
  "tokio",
  "tracing",
@@ -8732,6 +8731,7 @@ dependencies = [
  "socket2 0.5.10",
  "subtle",
  "synvoid-config",
+ "synvoid-jail-protocol",
  "synvoid-metrics",
  "synvoid-platform",
  "synvoid-tls",
@@ -8745,11 +8745,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "synvoid-jail-protocol"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "postcard",
+ "serde",
+ "serde_bytes",
+ "sha2",
+ "subtle",
+ "thiserror 2.0.20",
+ "tracing",
+]
+
+[[package]]
 name = "synvoid-jail-runtime"
 version = "0.1.0"
 dependencies = [
  "serde_json",
  "synvoid-ipc",
+ "synvoid-jail-protocol",
  "synvoid-platform",
  "synvoid-plugin-runtime",
  "synvoid-yara",
@@ -8867,7 +8882,6 @@ dependencies = [
  "serde_json",
  "synvoid-core",
  "synvoid-utils",
- "synvoid-waf",
  "thiserror 2.0.20",
  "tokio",
  "tracing",
@@ -9004,6 +9018,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "regex",
+ "serde",
  "tempfile",
  "toml 0.8.23",
 ]

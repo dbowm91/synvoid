@@ -11,6 +11,7 @@ pub mod enforcement;
 pub mod error;
 pub mod ids;
 pub mod metrics;
+pub mod mitigation;
 pub mod net;
 pub mod request;
 pub mod routing;

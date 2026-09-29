@@ -482,8 +482,9 @@ fn load_threat_feed_payload(
         Err(e) => return Err(format!("Failed to load config: {}", e).into()),
     };
 
-    let mesh_config = match main_config.tunnel.mesh {
-        Some(m) => m,
+    let mesh_config = match main_config.tunnel.mesh.as_ref() {
+        Some(model) => crate::supervisor::mesh::realize_mesh_runtime_config(model)
+            .map_err(|error| format!("Failed to realize mesh identity: {error}"))?,
         None => return Err("Mesh is not enabled - cannot export threat feed".into()),
     };
 

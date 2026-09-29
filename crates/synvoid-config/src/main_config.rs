@@ -223,8 +223,8 @@ impl MainConfig {
     /// creation, no child processes. Validation follows the exact production
     /// path, including admin-token validation (which may consult the
     /// `SYNVOID_ADMIN_TOKEN` environment variable or generate an ephemeral
-    /// token, exactly as file loads do). Operator side-effects that require
-    /// the filesystem (mesh key/identity loading) live in `from_file` only.
+    /// token, exactly as file loads do). Mesh key/identity realization lives
+    /// in the mesh runtime adapter at the application composition boundary.
     ///
     /// Order (Phase 41): raw TOML parse → capability preflight → typed
     /// deserialization → typed validation.
@@ -253,17 +253,6 @@ impl MainConfig {
                     Set security.ipc_session_key_env or security.ipc_session_key in config. \
                     Generating ephemeral key (workers will not be able to reconnect after restart)."
                 );
-            }
-        }
-
-        // Load global node keys and node identity if mesh is configured
-        #[cfg(feature = "mesh")]
-        if let Some(ref mut mesh_config) = config.tunnel.mesh {
-            if let Err(e) = mesh_config.load_global_node_keys() {
-                tracing::warn!("Failed to load global node keys: {}", e);
-            }
-            if let Err(e) = mesh_config.load_node_identity() {
-                tracing::warn!("Failed to load node identity: {}", e);
             }
         }
 

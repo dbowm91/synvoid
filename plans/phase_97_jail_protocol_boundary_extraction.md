@@ -1,6 +1,6 @@
 # Phase 97 Plan: Jail Protocol Boundary Extraction
 
-Status: planned/open.
+Status: implemented and closed 2026-09-28; evidence: `architecture/jail_protocol_phase97_closeout.md`.
 
 Registered in: plans/roadmap.md and plans/architecture_maintenance_auditability_roadmap.md.
 

@@ -3,7 +3,7 @@
 //! Canonical owner (Phase 29): `synvoid-jail-runtime`. The root
 //! `src/sandbox/yara_service.rs` is a pure re-export facade.
 //!
-//! Implements [`synvoid_ipc::JailHandler`] for [`synvoid_ipc::JailKind::Yara`]
+//! Implements [`synvoid_jail_protocol::JailHandler`] for [`synvoid_jail_protocol::JailKind::Yara`]
 //! by compiling parent-approved rule text with the canonical
 //! `synvoid-yara` engine and scanning bounded buffers.
 //!
@@ -15,7 +15,7 @@
 
 use std::collections::HashMap;
 
-use synvoid_ipc::{
+use synvoid_jail_protocol::{
     JailError, JailHandler, JailOperation, JailOutput, JailResult, YaraMatchDto, JAIL_MAX_MATCHES,
     JAIL_MAX_RULESETS,
 };
@@ -53,7 +53,7 @@ impl YaraJailService {
                 JailError::ResourceExhausted("too many loaded rule sets".to_string()).to_dto(),
             );
         }
-        if !synvoid_ipc::verify_sha256_hex(rules_text.as_bytes(), digest_sha256_hex) {
+        if !synvoid_jail_protocol::verify_sha256_hex(rules_text.as_bytes(), digest_sha256_hex) {
             return JailResult::Err(
                 JailError::DigestMismatch("yara rules digest mismatch".to_string()).to_dto(),
             );
@@ -81,7 +81,7 @@ impl YaraJailService {
         };
         // Bound the data actually handed to the scanner even though framing
         // already validated the length (defense in depth).
-        if data.len() > synvoid_ipc::JAIL_MAX_SCAN_INPUT_BYTES {
+        if data.len() > synvoid_jail_protocol::JAIL_MAX_SCAN_INPUT_BYTES {
             return JailResult::Err(
                 JailError::Oversized("yara scan input too large".to_string()).to_dto(),
             );

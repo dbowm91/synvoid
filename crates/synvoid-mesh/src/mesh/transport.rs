@@ -120,16 +120,7 @@ pub struct MeshTransport {
     pub(crate) peer_connections: Arc<DashMap<String, MeshPeerConnection>>,
     pub(crate) auth_keys: Arc<RwLock<HashMap<String, Vec<u8>>>>,
     pub(crate) connection_times: Arc<RwLock<Vec<Instant>>>,
-    pub(crate) query_dedup: Arc<Mutex<HashMap<String, oneshot::Sender<RouteQueryResult>>>>,
-    pub(crate) pending_queries: Arc<Mutex<PendingQueryManager>>,
-    pub(crate) pending_dht_queries: Arc<Mutex<HashMap<String, oneshot::Sender<DhtRecord>>>>,
-    pub(crate) pending_serverless_invocations:
-        Arc<Mutex<HashMap<String, oneshot::Sender<crate::protocol::ServerlessInvokeResponse>>>>,
-    pub(crate) pending_consistent_read_responses:
-        Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<crate::protocol::MeshMessage>>>>,
-    pub(crate) pending_snapshot_responses:
-        Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<Vec<u8>>>>>,
-    pub(crate) pending_snapshot_transfers: Arc<Mutex<HashMap<String, InProgressSnapshot>>>,
+    pub(crate) pending: MeshPendingRequests,
     pub(crate) auth_failures: Arc<RwLock<HashMap<String, Vec<Instant>>>>,
     pub(crate) peer_message_times: Arc<RwLock<HashMap<String, Vec<Instant>>>>,
     pub(crate) snapshot_request_times: Arc<RwLock<HashMap<String, Vec<Instant>>>>,
@@ -142,12 +133,10 @@ pub struct MeshTransport {
     pub(crate) mesh_signer: Option<Arc<crate::protocol::MeshMessageSigner>>,
     pub(crate) record_store: Option<Arc<crate::dht::RecordStoreManager>>,
     pub(crate) routing_manager: Option<Arc<crate::dht::routing::DhtRoutingManager>>,
-    pub(crate) threat_intel: Option<Arc<crate::threat_intel::ThreatIntelligenceManager>>,
-    pub(crate) yara_rules: Option<Arc<crate::yara_rules::YaraRulesManager>>,
     pub(crate) seen_messages: Arc<RwLock<lru_time_cache::LruCache<String, Instant>>>,
     pub(crate) stake_manager: Option<Arc<crate::dht::StakeManager>>,
     pub(crate) mlkem_session_manager: Option<Arc<SessionManager<MlKem768>>>,
-    pub(crate) backend_pool: Option<Arc<crate::backend::MeshBackendPool>>,
+    pub(crate) application: MeshApplicationCapabilities,
     #[cfg(feature = "dns")]
     pub(crate) dns_resolver: Option<Arc<dyn synvoid_dns::resolver::DnsResolver>>,
     #[cfg(feature = "dns")]
@@ -169,8 +158,6 @@ pub struct MeshTransport {
     pub(crate) verification_manager:
         Arc<RwLock<Option<Arc<crate::verification::VerificationTaskManager>>>>,
     pub(crate) revocation_list: Option<Arc<crate::peer_auth::GlobalNodeRevocationList>>,
-    pub(crate) serverless_manager:
-        Arc<RwLock<Option<Arc<synvoid_serverless::manager::ServerlessManager>>>>,
     #[cfg(feature = "dns")]
     pub(crate) ownership_challenge_store: Arc<RwLock<OwnershipChallengeStore>>,
     pub(crate) raft_instance: Arc<RwLock<Option<Arc<crate::raft::instance::RaftInstance>>>>,
@@ -179,6 +166,24 @@ pub struct MeshTransport {
         Arc<RwLock<Option<Arc<crate::raft::edge_replica::EdgeReplicaManager>>>>,
     pub(crate) raft_proposal_replay_cache:
         Arc<tokio::sync::Mutex<crate::raft::state_machine::ReplayProtectionCache>>,
+    pub(crate) lifecycle: MeshTransportLifecycle,
+}
+
+/// Optional application-facing services attached to peer message handling.
+/// Kept together so transport protocol state and local integrations are
+/// separately visible during capability review.
+#[derive(Clone, Default)]
+pub(crate) struct MeshApplicationCapabilities {
+    pub(crate) threat_intel: Option<Arc<crate::threat_intel::ThreatIntelligenceManager>>,
+    pub(crate) yara_rules: Option<Arc<crate::yara_rules::YaraRulesManager>>,
+    pub(crate) backend_pool: Option<Arc<crate::backend::MeshBackendPool>>,
+    pub(crate) serverless_manager:
+        Arc<RwLock<Option<Arc<synvoid_serverless::manager::ServerlessManager>>>>,
+}
+
+/// Lifecycle and task ownership shared by the transport and its registered
+/// peer/background tasks. Task registration and shutdown remain transactional.
+pub(crate) struct MeshTransportLifecycle {
     pub(crate) task_group: Arc<tokio::sync::Mutex<MeshTaskGroup>>,
     pub(crate) lifecycle_state: Arc<tokio::sync::Mutex<MeshLifecycleState>>,
     pub(crate) shutdown_started: Arc<AtomicBool>,
@@ -187,38 +192,38 @@ pub struct MeshTransport {
         Arc<tokio::sync::Mutex<HashMap<String, crate::lifecycle::PeerSessionTask>>>,
     pub(crate) startup_failure_hook:
         Arc<Mutex<Option<Box<dyn Fn(StartupFailurePoint) -> Result<(), String> + Send>>>>,
-    /// Serializes lifecycle start/stop transitions to prevent interleaving.
     pub(crate) lifecycle_op: tokio::sync::Mutex<()>,
-    /// Globally unique task ID generator shared across task-group generations.
     pub(crate) id_generator: Arc<MeshTaskIdGenerator>,
-    /// Atomic projection of `Running` lifecycle state for synchronous checks.
     pub(crate) running_projection: Arc<AtomicBool>,
-    /// Report from the mesh accept loop, populated during shutdown.
     pub(crate) accept_loop_report: Arc<tokio::sync::Mutex<MeshAcceptLoopReport>>,
-    /// Retained metadata from an incomplete startup rollback (Iteration 73, Phase 8).
     pub(crate) failed_startup_residue: Arc<tokio::sync::Mutex<Option<FailedStartupResidue>>>,
-    /// Auxiliary (preflight/best-effort) tasks owned by the transport (Iteration 73, Phase 13-14).
     pub(crate) auxiliary_tasks:
         Arc<tokio::sync::Mutex<HashMap<MeshTaskId, AuxiliaryRegistryEntry>>>,
-    /// Serializes auxiliary task deduplication, capacity, reservation, and insertion (Iteration 80).
     pub(crate) auxiliary_submission_lock: Arc<tokio::sync::Mutex<()>>,
-    /// Channel for peer session exit events, consumed by the session reaper (Iteration 73, Phase 15-18).
     pub(crate) session_exit_tx: broadcast::Sender<crate::lifecycle::PeerSessionExit>,
-    /// Generation counter incremented at each startup, used to validate accept-loop report freshness (Phase 19).
     pub(crate) startup_generation: Arc<AtomicU64>,
-    /// Per-session generation counter for incoming connections (accept-loop path).
-    /// Outbound sessions use the stage counter; inbound sessions use this atomic.
     pub(crate) session_generation: Arc<AtomicU64>,
-    /// Shutdown signal for the session reaper (Iteration 74, Phase 14).
     pub(crate) session_reaper_shutdown: Arc<watch::Sender<bool>>,
-    /// Channel for auxiliary task exit events, consumed by the auxiliary reaper (Iteration 74, Phase 20).
     pub(crate) auxiliary_exit_tx: broadcast::Sender<crate::lifecycle::AuxiliaryTaskExit>,
-    /// Aggregate stream handler drain counters (Phase 23). Incremented in
-    /// `peer_message_loop` after each session's drain, read during shutdown.
     pub(crate) aggregate_handler_drained: Arc<AtomicUsize>,
     pub(crate) aggregate_handler_aborted: Arc<AtomicUsize>,
     pub(crate) aggregate_handler_failed: Arc<AtomicUsize>,
     pub(crate) auxiliary_test_hooks: Arc<Mutex<Option<AuxiliarySubmissionTestHooks>>>,
+}
+
+/// Typed request/response rendezvous owned by the transport protocol path.
+#[derive(Clone)]
+pub(crate) struct MeshPendingRequests {
+    pub(crate) query_dedup: Arc<Mutex<HashMap<String, oneshot::Sender<RouteQueryResult>>>>,
+    pub(crate) pending_queries: Arc<Mutex<PendingQueryManager>>,
+    pub(crate) pending_dht_queries: Arc<Mutex<HashMap<String, oneshot::Sender<DhtRecord>>>>,
+    pub(crate) pending_serverless_invocations:
+        Arc<Mutex<HashMap<String, oneshot::Sender<crate::protocol::ServerlessInvokeResponse>>>>,
+    pub(crate) pending_consistent_read_responses:
+        Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<crate::protocol::MeshMessage>>>>,
+    pub(crate) pending_snapshot_responses:
+        Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<Vec<u8>>>>>,
+    pub(crate) pending_snapshot_transfers: Arc<Mutex<HashMap<String, InProgressSnapshot>>>,
 }
 
 /// Failure injection points for deterministic startup testing.
@@ -427,7 +432,7 @@ impl Default for OwnershipChallengeStore {
 impl Clone for MeshTransport {
     fn clone(&self) -> Self {
         Self {
-            backend_pool: self.backend_pool.clone(),
+            application: self.application.clone(),
             config: self.config.clone(),
             topology: self.topology.clone(),
             cert_manager: self.cert_manager.clone(),
@@ -437,13 +442,18 @@ impl Clone for MeshTransport {
             peer_connections: self.peer_connections.clone(),
             auth_keys: self.auth_keys.clone(),
             connection_times: self.connection_times.clone(),
-            query_dedup: self.query_dedup.clone(),
-            pending_queries: self.pending_queries.clone(),
-            pending_dht_queries: self.pending_dht_queries.clone(),
-            pending_serverless_invocations: self.pending_serverless_invocations.clone(),
-            pending_consistent_read_responses: self.pending_consistent_read_responses.clone(),
-            pending_snapshot_responses: self.pending_snapshot_responses.clone(),
-            pending_snapshot_transfers: self.pending_snapshot_transfers.clone(),
+            pending: MeshPendingRequests {
+                query_dedup: self.pending.query_dedup.clone(),
+                pending_queries: self.pending.pending_queries.clone(),
+                pending_dht_queries: self.pending.pending_dht_queries.clone(),
+                pending_serverless_invocations: self.pending.pending_serverless_invocations.clone(),
+                pending_consistent_read_responses: self
+                    .pending
+                    .pending_consistent_read_responses
+                    .clone(),
+                pending_snapshot_responses: self.pending.pending_snapshot_responses.clone(),
+                pending_snapshot_transfers: self.pending.pending_snapshot_transfers.clone(),
+            },
             auth_failures: self.auth_failures.clone(),
             peer_message_times: self.peer_message_times.clone(),
             snapshot_request_times: self.snapshot_request_times.clone(),
@@ -456,8 +466,6 @@ impl Clone for MeshTransport {
             mesh_signer: self.mesh_signer.clone(),
             record_store: self.record_store.clone(),
             routing_manager: self.routing_manager.clone(),
-            threat_intel: self.threat_intel.clone(),
-            yara_rules: self.yara_rules.clone(),
             seen_messages: Arc::new(RwLock::new(
                 lru_time_cache::LruCache::with_expiry_duration_and_capacity(
                     Duration::from_secs(300),
@@ -475,35 +483,36 @@ impl Clone for MeshTransport {
             site_config_sync_tx: self.site_config_sync_tx.clone(),
             verification_manager: self.verification_manager.clone(),
             revocation_list: self.revocation_list.clone(),
-            serverless_manager: self.serverless_manager.clone(),
             #[cfg(feature = "dns")]
             ownership_challenge_store: self.ownership_challenge_store.clone(),
             raft_instance: self.raft_instance.clone(),
             pending_membership_changes: self.pending_membership_changes.clone(),
             edge_replica_manager: self.edge_replica_manager.clone(),
             raft_proposal_replay_cache: self.raft_proposal_replay_cache.clone(),
-            task_group: self.task_group.clone(),
-            lifecycle_state: self.lifecycle_state.clone(),
-            shutdown_started: self.shutdown_started.clone(),
-            mesh_exit_tx: self.mesh_exit_tx.clone(),
-            peer_sessions: self.peer_sessions.clone(),
-            startup_failure_hook: self.startup_failure_hook.clone(),
-            lifecycle_op: tokio::sync::Mutex::new(()),
-            id_generator: self.id_generator.clone(),
-            running_projection: self.running_projection.clone(),
-            accept_loop_report: self.accept_loop_report.clone(),
-            failed_startup_residue: self.failed_startup_residue.clone(),
-            auxiliary_tasks: self.auxiliary_tasks.clone(),
-            auxiliary_submission_lock: self.auxiliary_submission_lock.clone(),
-            startup_generation: self.startup_generation.clone(),
-            session_generation: self.session_generation.clone(),
-            session_exit_tx: self.session_exit_tx.clone(),
-            session_reaper_shutdown: self.session_reaper_shutdown.clone(),
-            auxiliary_exit_tx: self.auxiliary_exit_tx.clone(),
-            aggregate_handler_drained: self.aggregate_handler_drained.clone(),
-            aggregate_handler_aborted: self.aggregate_handler_aborted.clone(),
-            aggregate_handler_failed: self.aggregate_handler_failed.clone(),
-            auxiliary_test_hooks: self.auxiliary_test_hooks.clone(),
+            lifecycle: MeshTransportLifecycle {
+                task_group: self.lifecycle.task_group.clone(),
+                lifecycle_state: self.lifecycle.lifecycle_state.clone(),
+                shutdown_started: self.lifecycle.shutdown_started.clone(),
+                mesh_exit_tx: self.lifecycle.mesh_exit_tx.clone(),
+                peer_sessions: self.lifecycle.peer_sessions.clone(),
+                startup_failure_hook: self.lifecycle.startup_failure_hook.clone(),
+                lifecycle_op: tokio::sync::Mutex::new(()),
+                id_generator: self.lifecycle.id_generator.clone(),
+                running_projection: self.lifecycle.running_projection.clone(),
+                accept_loop_report: self.lifecycle.accept_loop_report.clone(),
+                failed_startup_residue: self.lifecycle.failed_startup_residue.clone(),
+                auxiliary_tasks: self.lifecycle.auxiliary_tasks.clone(),
+                auxiliary_submission_lock: self.lifecycle.auxiliary_submission_lock.clone(),
+                startup_generation: self.lifecycle.startup_generation.clone(),
+                session_generation: self.lifecycle.session_generation.clone(),
+                session_exit_tx: self.lifecycle.session_exit_tx.clone(),
+                session_reaper_shutdown: self.lifecycle.session_reaper_shutdown.clone(),
+                auxiliary_exit_tx: self.lifecycle.auxiliary_exit_tx.clone(),
+                aggregate_handler_drained: self.lifecycle.aggregate_handler_drained.clone(),
+                aggregate_handler_aborted: self.lifecycle.aggregate_handler_aborted.clone(),
+                aggregate_handler_failed: self.lifecycle.aggregate_handler_failed.clone(),
+                auxiliary_test_hooks: self.lifecycle.auxiliary_test_hooks.clone(),
+            },
         }
     }
 }
@@ -760,7 +769,6 @@ impl MeshTransport {
         };
 
         Self {
-            backend_pool,
             config: config.clone(),
             topology,
             cert_manager: cert_manager.clone(),
@@ -770,13 +778,15 @@ impl MeshTransport {
             peer_connections: Arc::new(DashMap::new()),
             auth_keys: Arc::new(RwLock::new(auth_keys)),
             connection_times: Arc::new(RwLock::new(Vec::new())),
-            query_dedup: Arc::new(Mutex::new(HashMap::new())),
-            pending_queries: Arc::new(Mutex::new(PendingQueryManager::new())),
-            pending_dht_queries: Arc::new(Mutex::new(HashMap::new())),
-            pending_serverless_invocations: Arc::new(Mutex::new(HashMap::new())),
-            pending_consistent_read_responses: Arc::new(Mutex::new(HashMap::new())),
-            pending_snapshot_responses: Arc::new(Mutex::new(HashMap::new())),
-            pending_snapshot_transfers: Arc::new(Mutex::new(HashMap::new())),
+            pending: MeshPendingRequests {
+                query_dedup: Arc::new(Mutex::new(HashMap::new())),
+                pending_queries: Arc::new(Mutex::new(PendingQueryManager::new())),
+                pending_dht_queries: Arc::new(Mutex::new(HashMap::new())),
+                pending_serverless_invocations: Arc::new(Mutex::new(HashMap::new())),
+                pending_consistent_read_responses: Arc::new(Mutex::new(HashMap::new())),
+                pending_snapshot_responses: Arc::new(Mutex::new(HashMap::new())),
+                pending_snapshot_transfers: Arc::new(Mutex::new(HashMap::new())),
+            },
             auth_failures: Arc::new(RwLock::new(HashMap::new())),
             peer_message_times: Arc::new(RwLock::new(HashMap::new())),
             snapshot_request_times: Arc::new(RwLock::new(HashMap::new())),
@@ -811,8 +821,12 @@ impl MeshTransport {
             mesh_signer,
             record_store,
             routing_manager: None,
-            threat_intel,
-            yara_rules: None,
+            application: MeshApplicationCapabilities {
+                threat_intel,
+                yara_rules: None,
+                backend_pool,
+                serverless_manager: Arc::new(RwLock::new(None)),
+            },
             seen_messages: Arc::new(RwLock::new(seen_messages)),
             stake_manager,
             mlkem_session_manager,
@@ -829,7 +843,6 @@ impl MeshTransport {
             } else {
                 None
             },
-            serverless_manager: Arc::new(RwLock::new(None)),
             #[cfg(feature = "dns")]
             ownership_challenge_store: Arc::new(RwLock::new(OwnershipChallengeStore::new())),
             raft_instance: Arc::new(RwLock::new(None)),
@@ -838,40 +851,44 @@ impl MeshTransport {
             raft_proposal_replay_cache: Arc::new(tokio::sync::Mutex::new(
                 crate::raft::state_machine::ReplayProtectionCache::default(),
             )),
-            task_group: Arc::new(tokio::sync::Mutex::new(MeshTaskGroup::new())),
-            lifecycle_state: Arc::new(tokio::sync::Mutex::new(MeshLifecycleState::Stopped)),
-            shutdown_started: Arc::new(AtomicBool::new(false)),
-            mesh_exit_tx: {
-                let (tx, _) = broadcast::channel(64);
-                tx
+            lifecycle: MeshTransportLifecycle {
+                task_group: Arc::new(tokio::sync::Mutex::new(MeshTaskGroup::new())),
+                lifecycle_state: Arc::new(tokio::sync::Mutex::new(MeshLifecycleState::Stopped)),
+                shutdown_started: Arc::new(AtomicBool::new(false)),
+                mesh_exit_tx: {
+                    let (tx, _) = broadcast::channel(64);
+                    tx
+                },
+                peer_sessions: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+                startup_failure_hook: Arc::new(Mutex::new(None)),
+                lifecycle_op: tokio::sync::Mutex::new(()),
+                id_generator: Arc::new(MeshTaskIdGenerator::new()),
+                running_projection: Arc::new(AtomicBool::new(false)),
+                accept_loop_report: Arc::new(tokio::sync::Mutex::new(
+                    MeshAcceptLoopReport::default(),
+                )),
+                failed_startup_residue: Arc::new(tokio::sync::Mutex::new(None)),
+                auxiliary_tasks: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+                auxiliary_submission_lock: Arc::new(tokio::sync::Mutex::new(())),
+                session_exit_tx: {
+                    let (tx, _) = broadcast::channel(64);
+                    tx
+                },
+                startup_generation: Arc::new(AtomicU64::new(0)),
+                session_generation: Arc::new(AtomicU64::new(0)),
+                session_reaper_shutdown: {
+                    let (tx, _) = watch::channel(false);
+                    Arc::new(tx)
+                },
+                auxiliary_exit_tx: {
+                    let (tx, _) = broadcast::channel(64);
+                    tx
+                },
+                aggregate_handler_drained: Arc::new(AtomicUsize::new(0)),
+                aggregate_handler_aborted: Arc::new(AtomicUsize::new(0)),
+                aggregate_handler_failed: Arc::new(AtomicUsize::new(0)),
+                auxiliary_test_hooks: Arc::new(Mutex::new(None)),
             },
-            peer_sessions: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-            startup_failure_hook: Arc::new(Mutex::new(None)),
-            lifecycle_op: tokio::sync::Mutex::new(()),
-            id_generator: Arc::new(MeshTaskIdGenerator::new()),
-            running_projection: Arc::new(AtomicBool::new(false)),
-            accept_loop_report: Arc::new(tokio::sync::Mutex::new(MeshAcceptLoopReport::default())),
-            failed_startup_residue: Arc::new(tokio::sync::Mutex::new(None)),
-            auxiliary_tasks: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-            auxiliary_submission_lock: Arc::new(tokio::sync::Mutex::new(())),
-            session_exit_tx: {
-                let (tx, _) = broadcast::channel(64);
-                tx
-            },
-            startup_generation: Arc::new(AtomicU64::new(0)),
-            session_generation: Arc::new(AtomicU64::new(0)),
-            session_reaper_shutdown: {
-                let (tx, _) = watch::channel(false);
-                Arc::new(tx)
-            },
-            auxiliary_exit_tx: {
-                let (tx, _) = broadcast::channel(64);
-                tx
-            },
-            aggregate_handler_drained: Arc::new(AtomicUsize::new(0)),
-            aggregate_handler_aborted: Arc::new(AtomicUsize::new(0)),
-            aggregate_handler_failed: Arc::new(AtomicUsize::new(0)),
-            auxiliary_test_hooks: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -893,29 +910,32 @@ impl MeshTransport {
         &self,
         hook: impl Fn(StartupFailurePoint) -> Result<(), String> + Send + 'static,
     ) {
-        *self.startup_failure_hook.blocking_lock() = Some(Box::new(hook));
+        *self.lifecycle.startup_failure_hook.blocking_lock() = Some(Box::new(hook));
     }
 
     /// Clear the startup failure hook.
     pub fn clear_startup_failure_hook(&self) {
-        *self.startup_failure_hook.blocking_lock() = None;
+        *self.lifecycle.startup_failure_hook.blocking_lock() = None;
     }
 
     /// Check if a startup failure hook is currently set.
     pub fn has_startup_failure_hook(&self) -> bool {
-        self.startup_failure_hook.blocking_lock().is_some()
+        self.lifecycle
+            .startup_failure_hook
+            .blocking_lock()
+            .is_some()
     }
 
     #[cfg(test)]
     #[allow(dead_code)]
     pub(crate) fn set_auxiliary_test_hooks(&self, hooks: AuxiliarySubmissionTestHooks) {
-        *self.auxiliary_test_hooks.blocking_lock() = Some(hooks);
+        *self.lifecycle.auxiliary_test_hooks.blocking_lock() = Some(hooks);
     }
 
     #[cfg(test)]
     #[allow(dead_code)]
     pub(crate) fn clear_auxiliary_test_hooks(&self) {
-        *self.auxiliary_test_hooks.blocking_lock() = None;
+        *self.lifecycle.auxiliary_test_hooks.blocking_lock() = None;
     }
 
     pub fn set_site_config_sync_callback(
@@ -1032,7 +1052,7 @@ impl MeshTransport {
     }
 
     pub fn get_threat_intel(&self) -> Option<Arc<crate::threat_intel::ThreatIntelligenceManager>> {
-        self.threat_intel.clone()
+        self.application.threat_intel.clone()
     }
 
     pub fn get_stake_manager(&self) -> Option<Arc<crate::dht::StakeManager>> {
@@ -1274,7 +1294,7 @@ impl MeshTransport {
             return;
         };
 
-        let serverless_manager = self.serverless_manager.read().clone();
+        let serverless_manager = self.application.serverless_manager.read().clone();
         let Some(manager) = serverless_manager else {
             tracing::debug!("No serverless manager configured, skipping announcement");
             return;
@@ -1593,14 +1613,14 @@ impl MeshTransport {
         if let Some(ref rs) = transport_arc.record_store {
             rs.set_transport(transport_arc.clone());
         }
-        if let Some(ref ti) = transport_arc.threat_intel {
+        if let Some(ref ti) = transport_arc.application.threat_intel {
             ti.set_transport(Arc::clone(&transport_arc));
         }
         transport_arc
             .org_key_manager
             .set_transport(transport_arc.clone());
 
-        if transport_arc.backend_pool.is_some() {
+        if transport_arc.application.backend_pool.is_some() {
             let raft_client = Arc::new(crate::raft::client::RaftAwareClient::new(
                 transport_arc.clone(),
                 transport_arc.config.clone(),
@@ -1627,8 +1647,9 @@ impl MeshTransport {
                 .org_key_manager
                 .set_raft_client(raft_client.clone());
 
-            raft_client
-                .start_reconciliation_loop(transport_arc.session_reaper_shutdown.subscribe());
+            raft_client.start_reconciliation_loop(
+                transport_arc.lifecycle.session_reaper_shutdown.subscribe(),
+            );
         }
 
         let wasm_dist_manager = Arc::new(crate::wasm_dist::WasmDistManager::new());
@@ -1693,11 +1714,11 @@ impl MeshTransport {
         &self,
         manager: Arc<synvoid_serverless::manager::ServerlessManager>,
     ) {
-        *self.serverless_manager.write() = Some(manager);
+        *self.application.serverless_manager.write() = Some(manager);
     }
 
     pub(crate) async fn update_threat_intel_global_nodes(&self) {
-        if let Some(ref threat_intel) = self.threat_intel {
+        if let Some(ref threat_intel) = self.application.threat_intel {
             let global_nodes = self.topology.get_global_nodes_as_peer_info().await;
             threat_intel.update_global_nodes(global_nodes);
         }
@@ -1994,7 +2015,7 @@ impl MeshTransport {
         );
 
         let response_future = {
-            let mut pending = self.pending_serverless_invocations.lock().await;
+            let mut pending = self.pending.pending_serverless_invocations.lock().await;
             let (tx, rx) = tokio::sync::oneshot::channel();
             let key = format!("{}:{}", function_name, self.config.node_id());
             pending.insert(key, tx);
@@ -2018,7 +2039,7 @@ impl MeshTransport {
             )),
             Err(_) => {
                 // Clean up pending invocation on timeout
-                let mut pending = self.pending_serverless_invocations.lock().await;
+                let mut pending = self.pending.pending_serverless_invocations.lock().await;
                 let key = format!("{}:{}", function_name, self.config.node_id());
                 pending.remove(&key);
                 Err(MeshTransportError::Timeout)
@@ -2161,11 +2182,11 @@ impl MeshTransport {
         &self,
         policy: MeshStartupPolicy,
     ) -> Result<MeshStartupReport, MeshTransportError> {
-        let _lifecycle_guard = self.lifecycle_op.lock().await;
+        let _lifecycle_guard = self.lifecycle.lifecycle_op.lock().await;
 
         // Phase 1: Acquire lifecycle lock and validate state
         {
-            let mut state = self.lifecycle_state.lock().await;
+            let mut state = self.lifecycle.lifecycle_state.lock().await;
             if !state.can_start() {
                 return Err(MeshTransportError::LifecycleConflict(format!(
                     "Cannot start: current state is {state}"
@@ -2178,16 +2199,22 @@ impl MeshTransport {
 
         // Phase 2: Create staged startup
         let mut stage = MeshStartupStage::new(MeshTaskGroup::new_with_forward_and_id_gen(
-            self.mesh_exit_tx.clone(),
-            self.id_generator.clone(),
+            self.lifecycle.mesh_exit_tx.clone(),
+            self.lifecycle.id_generator.clone(),
         ));
         let shutdown_rx = stage.task_group.shutdown_receiver();
-        self.shutdown_started.store(false, Ordering::SeqCst);
+        self.lifecycle
+            .shutdown_started
+            .store(false, Ordering::SeqCst);
 
         // Reset accept loop report for this startup generation
         {
-            let mut report = self.accept_loop_report.lock().await;
-            let gen = self.startup_generation.fetch_add(1, Ordering::SeqCst) + 1;
+            let mut report = self.lifecycle.accept_loop_report.lock().await;
+            let gen = self
+                .lifecycle
+                .startup_generation
+                .fetch_add(1, Ordering::SeqCst)
+                + 1;
             report.generation = gen;
             report.drained_handshakes = 0;
             report.aborted_handshakes = 0;
@@ -2215,7 +2242,7 @@ impl MeshTransport {
         &self,
         point: StartupFailurePoint,
     ) -> Result<(), MeshTransportError> {
-        let hook = self.startup_failure_hook.lock().await;
+        let hook = self.lifecycle.startup_failure_hook.lock().await;
         if let Some(ref f) = *hook {
             f(point).map_err(MeshTransportError::StartupFailed)
         } else {
@@ -2656,7 +2683,7 @@ impl MeshTransport {
     ) -> Result<MeshStartupReport, MeshTransportError> {
         // 1. Validate lifecycle state is Starting (without mutating yet)
         {
-            let state = self.lifecycle_state.lock().await;
+            let state = self.lifecycle.lifecycle_state.lock().await;
             if !matches!(*state, MeshLifecycleState::Starting) {
                 return Err(MeshTransportError::StartupFailed(format!(
                     "Commit attempted but lifecycle is {state}, expected Starting"
@@ -2677,7 +2704,7 @@ impl MeshTransport {
 
         // 4. Transfer staged task group into transport ownership
         let old_task_group = {
-            let mut tg = self.task_group.lock().await;
+            let mut tg = self.lifecycle.task_group.lock().await;
             let (c, b, ch) = tg.active_count();
             if c + b + ch > 0 {
                 return Err(MeshTransportError::LifecycleConflict(format!(
@@ -2694,12 +2721,12 @@ impl MeshTransport {
 
         // 6. Transition lifecycle state to Running
         {
-            let mut state = self.lifecycle_state.lock().await;
+            let mut state = self.lifecycle.lifecycle_state.lock().await;
             match state.transition_to_running() {
                 Ok(()) => {}
                 Err(e) => {
                     // Lifecycle transition failed — restore task group so caller can roll back
-                    let mut tg = self.task_group.lock().await;
+                    let mut tg = self.lifecycle.task_group.lock().await;
                     stage.task_group = std::mem::replace(&mut *tg, old_task_group);
                     return Err(MeshTransportError::StartupFailed(format!(
                         "State transition to running failed: {e}"
@@ -2709,10 +2736,14 @@ impl MeshTransport {
         }
 
         // 7. Set running projection
-        self.running_projection.store(true, Ordering::SeqCst);
+        self.lifecycle
+            .running_projection
+            .store(true, Ordering::SeqCst);
 
         // 8. Mark stage committed
-        self.shutdown_started.store(false, Ordering::SeqCst);
+        self.lifecycle
+            .shutdown_started
+            .store(false, Ordering::SeqCst);
         stage.committed = true;
 
         // 9. Spawn session reaper on the committed task group (Iteration 73, Phase 15-18)
@@ -2739,10 +2770,10 @@ impl MeshTransport {
     /// (Iteration 74, Phase 15).
     async fn spawn_session_reaper(&self) {
         let transport = self.clone();
-        let mut exit_rx = self.session_exit_tx.subscribe();
-        let mut shutdown_rx = self.session_reaper_shutdown.subscribe();
+        let mut exit_rx = self.lifecycle.session_exit_tx.subscribe();
+        let mut shutdown_rx = self.lifecycle.session_reaper_shutdown.subscribe();
 
-        let mut group = self.task_group.lock().await;
+        let mut group = self.lifecycle.task_group.lock().await;
         group.spawn_critical("session_reaper", async move {
             loop {
                 tokio::select! {
@@ -2750,7 +2781,7 @@ impl MeshTransport {
                         match event {
                             Ok(exit) => {
                                 let removed = {
-                                    let mut sessions = transport.peer_sessions.lock().await;
+                                    let mut sessions = transport.lifecycle.peer_sessions.lock().await;
                                     match sessions.get(&exit.session_id) {
                                         Some(task) if task.generation == exit.generation => {
                                             sessions.remove(&exit.session_id)
@@ -2820,7 +2851,7 @@ impl MeshTransport {
     async fn reap_finished_peer_sessions(&self) {
         let mut to_join = Vec::new();
         {
-            let mut sessions = self.peer_sessions.lock().await;
+            let mut sessions = self.lifecycle.peer_sessions.lock().await;
             let mut to_remove = Vec::new();
             for (session_id, task) in sessions.iter() {
                 if task.handle.is_finished() {
@@ -2898,13 +2929,13 @@ impl MeshTransport {
     where
         F: std::future::Future<Output = MeshTaskExitReason> + Send + 'static,
     {
-        let task_id = self.id_generator.next();
+        let task_id = self.lifecycle.id_generator.next();
 
         // Acquire submission lock — serializes all state/dedup/capacity/insert operations.
-        let _guard = self.auxiliary_submission_lock.lock().await;
+        let _guard = self.lifecycle.auxiliary_submission_lock.lock().await;
 
         #[cfg(test)]
-        if let Some(ref hooks) = *self.auxiliary_test_hooks.lock().await {
+        if let Some(ref hooks) = *self.lifecycle.auxiliary_test_hooks.lock().await {
             if let Some(ref barrier) = hooks.after_lock {
                 barrier.wait().await;
             }
@@ -2912,7 +2943,7 @@ impl MeshTransport {
 
         // Recheck lifecycle state under the lock (Phase 19).
         {
-            let state = self.lifecycle_state.lock().await;
+            let state = self.lifecycle.lifecycle_state.lock().await;
             let transport_state = match *state {
                 crate::lifecycle::MeshLifecycleState::Stopped => {
                     crate::lifecycle::MeshTransportState::Stopped
@@ -2946,7 +2977,7 @@ impl MeshTransport {
         // Deduplication and capacity check.
         const MAX_CONCURRENT_EDGE_REPLICA_REFRESH: usize = 8;
         let stale_tasks = {
-            let mut aux = self.auxiliary_tasks.lock().await;
+            let mut aux = self.lifecycle.auxiliary_tasks.lock().await;
             match Self::dedup_and_check_capacity(
                 &mut aux,
                 kind,
@@ -2978,7 +3009,7 @@ impl MeshTransport {
 
         // Gate: future cannot start until registration is complete.
         let (start_tx, start_rx) = tokio::sync::oneshot::channel();
-        let aux_exit_tx = self.auxiliary_exit_tx.clone();
+        let aux_exit_tx = self.lifecycle.auxiliary_exit_tx.clone();
         let task_id_for_exit = task_id;
         let session_id_for_exit = session_id.clone();
 
@@ -3025,7 +3056,7 @@ impl MeshTransport {
         });
 
         #[cfg(test)]
-        if let Some(ref hooks) = *self.auxiliary_test_hooks.lock().await {
+        if let Some(ref hooks) = *self.lifecycle.auxiliary_test_hooks.lock().await {
             if let Some(ref barrier) = hooks.before_insert {
                 barrier.wait().await;
             }
@@ -3033,7 +3064,7 @@ impl MeshTransport {
 
         // Insert into registry BEFORE opening the gate.
         {
-            let mut aux = self.auxiliary_tasks.lock().await;
+            let mut aux = self.lifecycle.auxiliary_tasks.lock().await;
             aux.insert(
                 task_id,
                 AuxiliaryRegistryEntry::Running(AuxiliaryTask {
@@ -3047,7 +3078,7 @@ impl MeshTransport {
         }
 
         #[cfg(test)]
-        if let Some(ref hooks) = *self.auxiliary_test_hooks.lock().await {
+        if let Some(ref hooks) = *self.lifecycle.auxiliary_test_hooks.lock().await {
             if let Some(ref barrier) = hooks.before_gate_release {
                 barrier.wait().await;
             }
@@ -3105,10 +3136,10 @@ impl MeshTransport {
     /// The reaper is cancellation-aware and handles broadcast lag gracefully.
     async fn spawn_auxiliary_reaper(&self) {
         let transport = self.clone();
-        let mut exit_rx = self.auxiliary_exit_tx.subscribe();
-        let mut shutdown_rx = self.session_reaper_shutdown.subscribe();
+        let mut exit_rx = self.lifecycle.auxiliary_exit_tx.subscribe();
+        let mut shutdown_rx = self.lifecycle.session_reaper_shutdown.subscribe();
 
-        let mut group = self.task_group.lock().await;
+        let mut group = self.lifecycle.task_group.lock().await;
         group.spawn_critical("auxiliary_reaper", async move {
             loop {
                 tokio::select! {
@@ -3116,7 +3147,7 @@ impl MeshTransport {
                         match event {
                             Ok(exit) => {
                                 let removed = {
-                                    let mut aux = transport.auxiliary_tasks.lock().await;
+                                    let mut aux = transport.lifecycle.auxiliary_tasks.lock().await;
                                     aux.remove(&exit.task_id)
                                 };
                                 match removed {
@@ -3174,7 +3205,7 @@ impl MeshTransport {
     async fn reap_finished_auxiliary_tasks(&self) {
         let mut to_join = Vec::new();
         {
-            let mut aux = self.auxiliary_tasks.lock().await;
+            let mut aux = self.lifecycle.auxiliary_tasks.lock().await;
             let mut to_remove = Vec::new();
             for (task_id, entry) in aux.iter() {
                 match entry {
@@ -3436,7 +3467,7 @@ impl MeshTransport {
 
         // Phase 9: Reset accept-loop report for diagnostics and future generations
         if stage.runtime_started {
-            let mut ar = self.accept_loop_report.lock().await;
+            let mut ar = self.lifecycle.accept_loop_report.lock().await;
             ar.drained_handshakes = 0;
             ar.aborted_handshakes = 0;
             ar.rejected_at_capacity = 0;
@@ -3479,7 +3510,7 @@ impl MeshTransport {
         // and surface that as incomplete cleanup (Phase 11).
         if peer.session_task_id.is_some() {
             let task = {
-                let mut sessions = self.peer_sessions.lock().await;
+                let mut sessions = self.lifecycle.peer_sessions.lock().await;
                 sessions.remove(&peer.session_id)
             };
             if let Some(task) = task {
@@ -3619,7 +3650,7 @@ impl MeshTransport {
 
         // Check that no staged session IDs remain in the session-task registry
         {
-            let sessions = self.peer_sessions.lock().await;
+            let sessions = self.lifecycle.peer_sessions.lock().await;
             for peer in &stage.created_peers {
                 if let Some(ref task_id) = peer.session_task_id {
                     if sessions.contains_key(&peer.session_id) {
@@ -3633,13 +3664,13 @@ impl MeshTransport {
         }
 
         // Check that running projection is false
-        if self.running_projection.load(Ordering::SeqCst) {
+        if self.lifecycle.running_projection.load(Ordering::SeqCst) {
             issues.push("running_projection is still true after rollback".to_string());
         }
 
         // Check lifecycle is not Running
         {
-            let state = self.lifecycle_state.lock().await;
+            let state = self.lifecycle.lifecycle_state.lock().await;
             if matches!(*state, MeshLifecycleState::Running) {
                 issues.push("lifecycle state is Running after rollback".to_string());
             }
@@ -3653,7 +3684,7 @@ impl MeshTransport {
     /// Called during rollback to ensure auxiliary tasks (e.g., preflight route
     /// queries) do not outlive the peer sessions they were spawned for (Phase 14).
     async fn cancel_auxiliary_tasks_for_sessions(&self, session_ids: &[String]) {
-        let mut aux = self.auxiliary_tasks.lock().await;
+        let mut aux = self.lifecycle.auxiliary_tasks.lock().await;
         let to_remove: Vec<MeshTaskId> = aux
             .iter()
             .filter(|(_, entry)| {
@@ -3675,7 +3706,7 @@ impl MeshTransport {
     /// Complete a failed startup by transitioning to `Stopped` (if rollback
     /// was clean) or `Failed` (if rollback itself had issues).
     async fn finish_failed_startup(&self, rollback: &RollbackReport) {
-        let mut state = self.lifecycle_state.lock().await;
+        let mut state = self.lifecycle.lifecycle_state.lock().await;
         if rollback.clean {
             // Successful rollback -> Stopped (safe to retry)
             state.transition_to_stopped();
@@ -3700,12 +3731,12 @@ impl MeshTransport {
     /// 4. Verifies no owned tasks/sessions/connections remain
     /// 5. Transitions to `Stopped` only after successful verification
     pub async fn recover_failed_state(&self, timeout: Duration) -> Result<(), MeshTransportError> {
-        let _lifecycle_guard = self.lifecycle_op.lock().await;
+        let _lifecycle_guard = self.lifecycle.lifecycle_op.lock().await;
         let deadline = std::time::Instant::now() + timeout;
 
         // Verify current state is Failed
         {
-            let state = self.lifecycle_state.lock().await;
+            let state = self.lifecycle.lifecycle_state.lock().await;
             if !matches!(*state, MeshLifecycleState::Failed) {
                 return Err(MeshTransportError::LifecycleConflict(format!(
                     "Cannot recover: current state is {state}, expected Failed"
@@ -3719,16 +3750,18 @@ impl MeshTransport {
         );
 
         // Phase 1: Signal shutdown intent
-        self.shutdown_started.store(true, Ordering::SeqCst);
+        self.lifecycle
+            .shutdown_started
+            .store(true, Ordering::SeqCst);
 
         // Phase 2: Signal the top-level MeshTaskGroup
         {
-            let group = self.task_group.lock().await;
+            let group = self.lifecycle.task_group.lock().await;
             group.begin_shutdown().await;
         }
 
         // Signal session and auxiliary reapers to exit (Iteration 74, Phase 14/20)
-        let _ = self.session_reaper_shutdown.send(true);
+        let _ = self.lifecycle.session_reaper_shutdown.send(true);
 
         // Phase 3: Stop the QUIC runtime/endpoint
         if let Some(ref runtime) = self.runtime {
@@ -3751,7 +3784,7 @@ impl MeshTransport {
         // as incomplete cleanup.
         let mut session_errors: Vec<String> = Vec::new();
         {
-            let mut sessions = self.peer_sessions.lock().await;
+            let mut sessions = self.lifecycle.peer_sessions.lock().await;
             let session_keys: Vec<String> = sessions.keys().cloned().collect();
             for key in session_keys {
                 if let Some(task) = sessions.remove(&key) {
@@ -3790,13 +3823,13 @@ impl MeshTransport {
         // branch (abort + await + synthetic Aborted exit).
         {
             let task_remaining = remaining(deadline);
-            let mut group = self.task_group.lock().await;
+            let mut group = self.lifecycle.task_group.lock().await;
             let _exits = group.join_all(task_remaining).await;
         }
 
         // Phase 7: Apply retained residue before clearing (Iteration 74, Phase 2-3)
         let residue = {
-            let mut guard = self.failed_startup_residue.lock().await;
+            let mut guard = self.lifecycle.failed_startup_residue.lock().await;
             guard.take()
         };
 
@@ -3834,7 +3867,7 @@ impl MeshTransport {
 
             // Retain residue if any peers are unresolved
             if !remaining_peers.is_empty() {
-                *self.failed_startup_residue.lock().await = Some(FailedStartupResidue {
+                *self.lifecycle.failed_startup_residue.lock().await = Some(FailedStartupResidue {
                     peers: remaining_peers,
                     generation: residue.generation,
                     runtime_started: residue.runtime_started,
@@ -3851,8 +3884,8 @@ impl MeshTransport {
         // Phase 8: Clear auxiliary tasks.
         // Acquire submission lock first to prevent new submissions during drain.
         {
-            let _aux_submission_guard = self.auxiliary_submission_lock.lock().await;
-            let mut aux = self.auxiliary_tasks.lock().await;
+            let _aux_submission_guard = self.lifecycle.auxiliary_submission_lock.lock().await;
+            let mut aux = self.lifecycle.auxiliary_tasks.lock().await;
             for (_id, entry) in aux.drain() {
                 let AuxiliaryRegistryEntry::Running(task) = entry;
                 task.handle.abort();
@@ -3862,14 +3895,16 @@ impl MeshTransport {
 
         // Phase 9: Clear accept-loop report
         {
-            let mut report = self.accept_loop_report.lock().await;
+            let mut report = self.lifecycle.accept_loop_report.lock().await;
             report.drained_handshakes = 0;
             report.aborted_handshakes = 0;
             report.rejected_at_capacity = 0;
         }
 
         // Clear running projection
-        self.running_projection.store(false, Ordering::SeqCst);
+        self.lifecycle
+            .running_projection
+            .store(false, Ordering::SeqCst);
 
         // Phase 10: Full verification
         let mut issues = Vec::new();
@@ -3878,7 +3913,7 @@ impl MeshTransport {
 
         // Verify task group is empty
         {
-            let group = self.task_group.lock().await;
+            let group = self.lifecycle.task_group.lock().await;
             let (c, b, ch) = group.active_count();
             if c + b + ch > 0 {
                 issues.push(format!(
@@ -3889,7 +3924,7 @@ impl MeshTransport {
 
         // Verify peer-session registry is empty
         {
-            let sessions = self.peer_sessions.lock().await;
+            let sessions = self.lifecycle.peer_sessions.lock().await;
             if !sessions.is_empty() {
                 issues.push(format!("{} peer sessions still present", sessions.len()));
             }
@@ -3905,7 +3940,7 @@ impl MeshTransport {
 
         // Verify auxiliary tasks are empty
         {
-            let aux = self.auxiliary_tasks.lock().await;
+            let aux = self.lifecycle.auxiliary_tasks.lock().await;
             if !aux.is_empty() {
                 issues.push(format!("{} auxiliary tasks still present", aux.len()));
             }
@@ -3913,29 +3948,31 @@ impl MeshTransport {
 
         // Verify failed-startup residue is cleared
         {
-            let residue = self.failed_startup_residue.lock().await;
+            let residue = self.lifecycle.failed_startup_residue.lock().await;
             if residue.is_some() {
                 issues.push("failed_startup_residue is still present".to_string());
             }
         }
 
         // Verify running projection is clear
-        if self.running_projection.load(Ordering::SeqCst) {
+        if self.lifecycle.running_projection.load(Ordering::SeqCst) {
             issues.push("running_projection is still true".to_string());
         }
 
         // Verify lifecycle is not Running
         {
-            let state = self.lifecycle_state.lock().await;
+            let state = self.lifecycle.lifecycle_state.lock().await;
             if matches!(*state, MeshLifecycleState::Running) {
                 issues.push("lifecycle state is Running".to_string());
             }
         }
 
         if issues.is_empty() {
-            let mut state = self.lifecycle_state.lock().await;
+            let mut state = self.lifecycle.lifecycle_state.lock().await;
             state.transition_to_stopped();
-            self.shutdown_started.store(false, Ordering::SeqCst);
+            self.lifecycle
+                .shutdown_started
+                .store(false, Ordering::SeqCst);
             tracing::info!("Recovery from Failed state complete; lifecycle: stopped");
             Ok(())
         } else {
@@ -3971,11 +4008,11 @@ impl MeshTransport {
         if !rollback.clean {
             let residue = FailedStartupResidue {
                 peers: rollback.unresolved_peers.clone(),
-                generation: self.accept_loop_report.lock().await.generation,
+                generation: self.lifecycle.accept_loop_report.lock().await.generation,
                 runtime_started: stage.runtime_started,
                 rollback_errors: rollback.errors.clone(),
             };
-            *self.failed_startup_residue.lock().await = Some(residue);
+            *self.lifecycle.failed_startup_residue.lock().await = Some(residue);
         }
 
         // Lifecycle selection now reflects actual cleanup reality
@@ -4056,7 +4093,7 @@ impl MeshTransport {
                         }
                         // Publish accept loop report
                         {
-                            let mut report = self.accept_loop_report.lock().await;
+                            let mut report = self.lifecycle.accept_loop_report.lock().await;
                             report.drained_handshakes = drained;
                             report.aborted_handshakes = aborted;
                         }
@@ -4341,8 +4378,12 @@ impl MeshTransport {
         let topo = self.topology.clone();
         let session_id_for_loop = session_id.clone();
         let peer_node_id_for_loop = peer_node_id.clone();
-        let exit_tx = self.session_exit_tx.clone();
-        let gen = self.session_generation.fetch_add(1, Ordering::SeqCst) + 1;
+        let exit_tx = self.lifecycle.session_exit_tx.clone();
+        let gen = self
+            .lifecycle
+            .session_generation
+            .fetch_add(1, Ordering::SeqCst)
+            + 1;
         let handle_gen = gen;
         // Cooperative cancellation channel (Iteration 76, Phase 6).
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
@@ -4359,7 +4400,7 @@ impl MeshTransport {
                 .await;
             let _ = exit_tx.send(exit);
         });
-        let mut sessions = self.peer_sessions.lock().await;
+        let mut sessions = self.lifecycle.peer_sessions.lock().await;
         sessions.insert(
             session_id.clone(),
             PeerSessionTask {
@@ -4389,11 +4430,11 @@ impl MeshTransport {
         let deadline = std::time::Instant::now() + timeout;
 
         // Serialize lifecycle transitions
-        let _lifecycle_guard = self.lifecycle_op.lock().await;
+        let _lifecycle_guard = self.lifecycle.lifecycle_op.lock().await;
 
         // Transition to Stopping
         {
-            let mut state = self.lifecycle_state.lock().await;
+            let mut state = self.lifecycle.lifecycle_state.lock().await;
             if !state.can_stop() {
                 tracing::warn!(
                     "Mesh shutdown requested but state is {}; returning empty report",
@@ -4405,12 +4446,16 @@ impl MeshTransport {
         }
 
         // Clear running projection
-        self.running_projection.store(false, Ordering::SeqCst);
+        self.lifecycle
+            .running_projection
+            .store(false, Ordering::SeqCst);
 
         // Signal shutdown to all tasks
-        self.shutdown_started.store(true, Ordering::SeqCst);
+        self.lifecycle
+            .shutdown_started
+            .store(true, Ordering::SeqCst);
         {
-            let group = self.task_group.lock().await;
+            let group = self.lifecycle.task_group.lock().await;
             group.begin_shutdown().await;
         }
 
@@ -4420,7 +4465,7 @@ impl MeshTransport {
         }
 
         // Signal session and auxiliary reapers to exit (Iteration 74, Phase 14/20)
-        let _ = self.session_reaper_shutdown.send(true);
+        let _ = self.lifecycle.session_reaper_shutdown.send(true);
 
         // Close all QUIC connections
         for entry in self.peer_connections.iter() {
@@ -4435,8 +4480,8 @@ impl MeshTransport {
         // Drain auxiliary tasks (Iteration 73, Phase 13-14).
         // Acquire submission lock first to prevent new submissions during drain.
         {
-            let _aux_submission_guard = self.auxiliary_submission_lock.lock().await;
-            let mut aux = self.auxiliary_tasks.lock().await;
+            let _aux_submission_guard = self.lifecycle.auxiliary_submission_lock.lock().await;
+            let mut aux = self.lifecycle.auxiliary_tasks.lock().await;
             for (_id, entry) in aux.drain() {
                 let AuxiliaryRegistryEntry::Running(task) = entry;
                 task.handle.abort();
@@ -4446,7 +4491,7 @@ impl MeshTransport {
 
         // Join all tasks with the shared deadline
         let task_timeout = remaining(deadline);
-        let mut group = self.task_group.lock().await;
+        let mut group = self.lifecycle.task_group.lock().await;
         let exits = group.join_all(task_timeout).await;
         drop(group);
 
@@ -4454,7 +4499,7 @@ impl MeshTransport {
         // using the shared `stop_peer_session_task` helper. Always signal
         // cooperative cancellation first; only fall back to forced parent
         // abort if the cooperative return does not complete in time.
-        let mut sessions = self.peer_sessions.lock().await;
+        let mut sessions = self.lifecycle.peer_sessions.lock().await;
         let mut drained = 0;
         let mut aborted = 0;
         let mut failed = 0;
@@ -4477,8 +4522,8 @@ impl MeshTransport {
         drop(sessions);
 
         // Include accept loop report in shutdown report (Iteration 74, Phase 29-30)
-        let accept_report = self.accept_loop_report.lock().await.clone();
-        let current_gen = self.startup_generation.load(Ordering::SeqCst);
+        let accept_report = self.lifecycle.accept_loop_report.lock().await.clone();
+        let current_gen = self.lifecycle.startup_generation.load(Ordering::SeqCst);
         let report_is_fresh = if current_gen == 0 {
             // No startup yet; accept-loop report is not meaningful
             false
@@ -4501,9 +4546,18 @@ impl MeshTransport {
             aborted_peer_sessions: aborted,
             failed_peer_sessions: failed,
             stream_handler_drain: crate::lifecycle::PeerStreamDrainReport {
-                drained: self.aggregate_handler_drained.swap(0, Ordering::Relaxed),
-                aborted: self.aggregate_handler_aborted.swap(0, Ordering::Relaxed),
-                failed: self.aggregate_handler_failed.swap(0, Ordering::Relaxed),
+                drained: self
+                    .lifecycle
+                    .aggregate_handler_drained
+                    .swap(0, Ordering::Relaxed),
+                aborted: self
+                    .lifecycle
+                    .aggregate_handler_aborted
+                    .swap(0, Ordering::Relaxed),
+                failed: self
+                    .lifecycle
+                    .aggregate_handler_failed
+                    .swap(0, Ordering::Relaxed),
             },
             accept_loop_report: if report_is_fresh {
                 Some(accept_report.clone())
@@ -4529,7 +4583,7 @@ impl MeshTransport {
 
         // Phase 31: Reset accept-loop report counts after consuming
         if report_is_fresh {
-            let mut ar = self.accept_loop_report.lock().await;
+            let mut ar = self.lifecycle.accept_loop_report.lock().await;
             ar.drained_handshakes = 0;
             ar.aborted_handshakes = 0;
             ar.rejected_at_capacity = 0;
@@ -4538,7 +4592,7 @@ impl MeshTransport {
 
         // Transition to Stopped
         {
-            let mut state = self.lifecycle_state.lock().await;
+            let mut state = self.lifecycle.lifecycle_state.lock().await;
             state.transition_to_stopped();
         }
 
@@ -4558,12 +4612,12 @@ impl MeshTransport {
     /// The worker composition root should subscribe before calling `start()`
     /// to avoid missing early critical exits.
     pub fn subscribe_exits(&self) -> broadcast::Receiver<MeshTaskExit> {
-        self.mesh_exit_tx.subscribe()
+        self.lifecycle.mesh_exit_tx.subscribe()
     }
 
     /// Returns the current lifecycle state.
     pub async fn lifecycle_state(&self) -> MeshLifecycleState {
-        *self.lifecycle_state.lock().await
+        *self.lifecycle.lifecycle_state.lock().await
     }
 
     /// Force-set the lifecycle state for testing.
@@ -4573,10 +4627,10 @@ impl MeshTransport {
     #[cfg(test)]
     pub async fn force_set_lifecycle_state(&self, state: MeshLifecycleState) {
         {
-            let mut lock = self.lifecycle_state.lock().await;
+            let mut lock = self.lifecycle.lifecycle_state.lock().await;
             *lock = state;
         }
-        self.running_projection.store(
+        self.lifecycle.running_projection.store(
             state == MeshLifecycleState::Running,
             std::sync::atomic::Ordering::SeqCst,
         );
@@ -4602,13 +4656,18 @@ impl MeshTransport {
     /// Check whether a task ID is present in the auxiliary registry (test-only).
     #[cfg(test)]
     pub async fn has_auxiliary_task(&self, task_id: &MeshTaskId) -> bool {
-        self.auxiliary_tasks.lock().await.contains_key(task_id)
+        self.lifecycle
+            .auxiliary_tasks
+            .lock()
+            .await
+            .contains_key(task_id)
     }
 
     /// Count active auxiliary tasks of a given kind (test-only).
     #[cfg(test)]
     pub async fn count_auxiliary_tasks(&self, kind: AuxiliaryTaskKind) -> usize {
-        self.auxiliary_tasks
+        self.lifecycle
+            .auxiliary_tasks
             .lock()
             .await
             .values()
@@ -5152,9 +5211,9 @@ impl MeshTransport {
                 .task_group
                 .spawn_child("preflight_peer_routes", preflight_future);
         } else {
-            let task_id = self.id_generator.next();
+            let task_id = self.lifecycle.id_generator.next();
             let session_id_clone = session_id.to_string();
-            let aux_exit_tx = self.auxiliary_exit_tx.clone();
+            let aux_exit_tx = self.lifecycle.auxiliary_exit_tx.clone();
             let session_id_for_exit = session_id.to_string();
             let preflight_handle = tokio::spawn(async move {
                 preflight_future.await;
@@ -5170,7 +5229,7 @@ impl MeshTransport {
                     reason: crate::lifecycle::MeshTaskExitReason::CleanCompletion,
                 }
             });
-            let mut aux = self.auxiliary_tasks.lock().await;
+            let mut aux = self.lifecycle.auxiliary_tasks.lock().await;
             aux.insert(
                 task_id,
                 AuxiliaryRegistryEntry::Running(AuxiliaryTask {
@@ -5184,8 +5243,11 @@ impl MeshTransport {
         }
 
         // Use transport-global generation for every session (Iteration 74, Phase 25).
-        let session_generation_for_task =
-            self.session_generation.fetch_add(1, Ordering::SeqCst) + 1;
+        let session_generation_for_task = self
+            .lifecycle
+            .session_generation
+            .fetch_add(1, Ordering::SeqCst)
+            + 1;
 
         let transport = self.clone();
         let conn = connection;
@@ -5194,7 +5256,7 @@ impl MeshTransport {
         let session_id_for_loop = session_id.to_string();
         let node_id_for_session = peer_node_id.clone();
         let session_id_key = session_id.to_string();
-        let exit_tx = self.session_exit_tx.clone();
+        let exit_tx = self.lifecycle.session_exit_tx.clone();
         let gen = session_generation_for_task;
         // Cooperative cancellation channel (Iteration 76, Phase 6).
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
@@ -5211,7 +5273,7 @@ impl MeshTransport {
                 .await;
             let _ = exit_tx.send(exit);
         });
-        let mut sessions = self.peer_sessions.lock().await;
+        let mut sessions = self.lifecycle.peer_sessions.lock().await;
         sessions.insert(
             session_id_key,
             PeerSessionTask {
@@ -5306,7 +5368,8 @@ impl MeshTransport {
 
         let (response_tx, _response_rx) = tokio::sync::oneshot::channel();
 
-        self.pending_queries
+        self.pending
+            .pending_queries
             .lock()
             .await
             .register(query_id.clone(), response_tx);
@@ -5344,14 +5407,19 @@ impl MeshTransport {
             tokio::time::sleep(collection_timeout).await;
 
             let providers = {
-                let mut pending = self.pending_queries.lock().await;
+                let mut pending = self.pending.pending_queries.lock().await;
                 pending
                     .collected_providers
                     .remove(&query_id)
                     .unwrap_or_default()
             };
 
-            self.pending_queries.lock().await.pending.remove(&query_id);
+            self.pending
+                .pending_queries
+                .lock()
+                .await
+                .pending
+                .remove(&query_id);
 
             if !providers.is_empty() {
                 let scores = self.topology.peer_scores().read().await;
@@ -5392,7 +5460,8 @@ impl MeshTransport {
 
             // Re-register for the global node query
             let (tx, rx) = tokio::sync::oneshot::channel();
-            self.pending_queries
+            self.pending
+                .pending_queries
                 .lock()
                 .await
                 .register(query_id.clone(), tx);
@@ -5415,12 +5484,12 @@ impl MeshTransport {
                         self.wait_for_route_event(upstream_id, Duration::ZERO).await
                     }
                 };
-                self.pending_queries.lock().await.take(&query_id);
+                self.pending.pending_queries.lock().await.take(&query_id);
                 if let Some(r) = global_result {
                     return Ok(r);
                 }
             } else {
-                self.pending_queries.lock().await.take(&query_id);
+                self.pending.pending_queries.lock().await.take(&query_id);
             }
         }
 
@@ -6058,7 +6127,7 @@ impl MeshTransport {
     }
 
     pub(crate) async fn complete_dht_query(&self, request_id: &str, record: DhtRecord) -> bool {
-        let mut pending = self.pending_dht_queries.lock().await;
+        let mut pending = self.pending.pending_dht_queries.lock().await;
         if let Some(sender) = pending.remove(request_id) {
             return sender.send(record).is_ok();
         }
@@ -6068,14 +6137,14 @@ impl MeshTransport {
     pub(crate) async fn get_pending_consistent_read_responses(
         &self,
     ) -> Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<MeshMessage>>>> {
-        self.pending_consistent_read_responses.clone()
+        self.pending.pending_consistent_read_responses.clone()
     }
 
     #[allow(dead_code)]
     pub(crate) async fn get_pending_snapshot_responses(
         &self,
     ) -> Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<Vec<u8>>>>> {
-        self.pending_snapshot_responses.clone()
+        self.pending.pending_snapshot_responses.clone()
     }
 }
 

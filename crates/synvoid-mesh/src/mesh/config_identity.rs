@@ -11,7 +11,7 @@ impl GlobalNodeConfig {
         bool::from(m)
     }
 
-    pub fn load_keys(&mut self) -> Result<(), String> {
+    fn load_classical_keys(&mut self) -> Result<(), String> {
         use base64::Engine;
 
         // Load X25519 key
@@ -55,6 +55,12 @@ impl GlobalNodeConfig {
             self.ed25519_public_key_base64 =
                 Some(URL_SAFE_NO_PAD.encode(signing_key.verifying_key().as_bytes()));
         }
+
+        Ok(())
+    }
+
+    pub fn load_keys(&mut self) -> Result<(), String> {
+        self.load_classical_keys()?;
 
         // Load ML-KEM-768 key - if private key is provided, derive public key
         if let Some(ref b64) = self.ml_kem_private_key_base64 {
@@ -284,6 +290,7 @@ impl NodeIdentityConfig {
         self.private_key = Some(okm.to_vec());
         self.public_key = Some(derive_node_id_hash(&okm));
         self.node_id = Some(derive_node_id(&okm));
+        self.router_id = Some(crate::mesh::config::derive_router_id(&okm));
 
         if let Some(ref path) = self.private_key_path {
             if let Some(ref key) = self.private_key {
@@ -346,6 +353,7 @@ impl NodeIdentityConfig {
                     let decrypted = self.decrypt_key(&key_data, passphrase)?;
                     let pubkey = derive_node_id_hash(&decrypted);
                     let node_id = derive_node_id(&decrypted);
+                    let router_id = crate::mesh::config::derive_router_id(&decrypted);
 
                     if let Some(ref proof) = self.minting_proof {
                         if pubkey != proof.node_public_key {
@@ -358,6 +366,7 @@ impl NodeIdentityConfig {
                     self.private_key = Some(decrypted);
                     self.public_key = Some(pubkey);
                     self.node_id = Some(node_id);
+                    self.router_id = Some(router_id);
                     return Ok(());
                 } else if key_data.len() == 32 {
                     let pubkey = derive_node_id_hash(&key_data);
@@ -374,6 +383,7 @@ impl NodeIdentityConfig {
                     self.private_key = Some(key_data.clone());
                     self.public_key = Some(pubkey);
                     self.node_id = Some(node_id);
+                    self.router_id = Some(crate::mesh::config::derive_router_id(&key_data));
                     return Ok(());
                 } else {
                     return Err("Invalid signing key file format".to_string());
@@ -394,6 +404,7 @@ impl NodeIdentityConfig {
         self.private_key = Some(key.to_vec());
         self.public_key = Some(derive_node_id_hash(&key));
         self.node_id = Some(derive_node_id(&key));
+        self.router_id = Some(crate::mesh::config::derive_router_id(&key));
 
         if let Some(ref path) = self.private_key_path {
             if let Some(ref key) = self.private_key {
@@ -502,5 +513,78 @@ impl NodeIdentityConfig {
 
     pub fn router_id(&self) -> Option<&String> {
         self.router_id.as_ref()
+    }
+}
+
+#[cfg(test)]
+mod phase99_identity_vectors {
+    use super::NodeIdentityConfig;
+
+    #[test]
+    fn genesis_hkdf_and_identity_derivation_known_answer() {
+        let mut identity = NodeIdentityConfig::default();
+        identity
+            .derive_signing_key_from_genesis(&[0x11; 32], &[0x22; 32])
+            .expect("known-answer HKDF input is valid");
+
+        assert_eq!(
+            hex::encode(identity.private_key.as_deref().unwrap()),
+            "fd64bff777ff2ebba7093c21fe46ba313cc6b98551730150f65d003d67a94c66"
+        );
+        assert_eq!(identity.node_id.as_deref(), Some("node-b7bf0ec8e77fe742"));
+        assert_eq!(identity.router_id.as_deref(), Some("da2ajmfm6mowykea"));
+    }
+
+    #[test]
+    fn invite_token_matching_remains_constant_time_and_exact() {
+        let config = super::GlobalNodeConfig {
+            invite_tokens: vec!["known-invite-token".to_string()],
+            ..Default::default()
+        };
+        assert!(config.is_invite_token_valid("known-invite-token"));
+        assert!(!config.is_invite_token_valid("Known-invite-token"));
+        assert!(!config.is_invite_token_valid("known-invite-token-extra"));
+    }
+
+    #[test]
+    fn x25519_and_ed25519_public_key_known_answers() {
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+
+        let x25519_private =
+            hex::decode("77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a")
+                .unwrap();
+        let ed25519_private =
+            hex::decode("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60")
+                .unwrap();
+        let (_, ml_kem_private) = pqc::MlKem768::generate_keypair().unwrap();
+
+        let mut config = super::GlobalNodeConfig {
+            x25519_private_key_base64: Some(URL_SAFE_NO_PAD.encode(x25519_private)),
+            ed25519_private_key_base64: Some(URL_SAFE_NO_PAD.encode(ed25519_private)),
+            ml_kem_private_key_base64: Some(ml_kem_private.to_base64()),
+            ..Default::default()
+        };
+        config.load_classical_keys().unwrap();
+
+        assert_eq!(
+            hex::encode(
+                config
+                    .x25519_public_key_base64
+                    .as_deref()
+                    .map(|key| URL_SAFE_NO_PAD.decode(key).unwrap())
+                    .unwrap()
+            ),
+            "8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a"
+        );
+        assert_eq!(
+            hex::encode(
+                config
+                    .ed25519_public_key_base64
+                    .as_deref()
+                    .map(|key| URL_SAFE_NO_PAD.decode(key).unwrap())
+                    .unwrap()
+            ),
+            "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
+        );
     }
 }

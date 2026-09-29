@@ -1,6 +1,6 @@
 # HTTP Request Pipeline
 
-Internal architecture reference for developers working on request handling in `crates/synvoid-http/`. Both HTTP/1 and HTTP/3 follow the same conceptual stages but use different stream types, body collection strategies, and dispatch modules. This document maps stages to files.
+Internal architecture reference for developers working on request handling in `crates/synvoid-http/` and `crates/synvoid-http3/`. Both protocols follow the same conceptual stages but use different stream types, body collection strategies, and dispatch modules. This document maps stages to files.
 
 Phase 01 closed the last plaintext/HTTPS policy fork: `HttpServer::handle_request`
 (`src/http/server.rs`) and `HttpsServer::handle_request_with_cache`
@@ -128,7 +128,7 @@ pub struct Http3DispatchDeps {
 }
 ```
 
-`handle_http3_request_dispatch()` receives `Http3RequestMetadata`, `Http3DispatchDeps`, the request stream, the optional connection guard, and the WAF backend. This keeps QUIC/server ownership in `synvoid-http3` while the protocol-independent dispatch stages remain in `synvoid-http`.
+`handle_http3_request_dispatch()` receives `Http3RequestMetadata`, `Http3DispatchDeps`, the request stream, the optional connection guard, and the WAF backend. HTTP/3 framing, body flow, request state, and dispatch are owned by `synvoid-http3`; protocol-neutral HTTP policy helpers remain in `synvoid-http` and are called through narrow functions and traits.
 
 ### RequestServices (worker-level narrow handle)
 

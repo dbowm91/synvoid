@@ -13,7 +13,7 @@ fn main() {
             eprintln!(
                 "synvoid-yara-jail {} (protocol v{})",
                 synvoid_jail_runtime::JAIL_RUNTIME_VERSION,
-                synvoid_ipc::JAIL_PROTOCOL_VERSION
+                synvoid_jail_protocol::JAIL_PROTOCOL_VERSION
             );
             std::process::exit(0);
         }

@@ -13,7 +13,6 @@
 //! instance (pipes discarded) and restarts within a bounded budget rather than
 //! continuing on a desynchronized stream.
 
-use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -23,149 +22,6 @@ use std::time::{Duration, Instant};
 
 use super::jail_protocol::*;
 
-// ---------------------------------------------------------------------------
-// Child side: request handler trait and serve loop
-// ---------------------------------------------------------------------------
-
-/// Workload executor behind the jail boundary. Implementations live with the
-/// workload owner (`src/sandbox/wasm_service.rs`, `src/sandbox/yara_service.rs`);
-/// this crate only drives the framed loop.
-pub trait JailHandler {
-    /// Execute one validated operation. Must be total: never panic, never
-    /// block unboundedly, never return oversized output (the serve loop
-    /// re-validates output bounds before writing).
-    fn handle(&mut self, op: &JailOperation) -> JailResult;
-}
-
-/// How the serve loop terminated.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ServeOutcome {
-    /// Peer sent `Shutdown`; a `ShutdownAck` was delivered.
-    CleanShutdown,
-    /// Clean EOF on stdin (parent exited or closed the pipe).
-    ConnectionClosed,
-    /// Unrecoverable framing/desync error; the child must exit so the parent
-    /// restarts a fresh instance.
-    ProtocolFatal,
-}
-
-/// Run the jail request loop to completion.
-///
-/// Reads length-delimited [`JailRequest`] frames from `reader`, dispatches
-/// validated operations to `handler`, and writes [`JailResponse`] frames to
-/// `writer`. Request IDs must be nonzero and strictly increasing; violations
-/// are answered with a typed error without breaking stream sync. Malformed
-/// frames (bad length, truncated payload, bad postcard) desynchronize the
-/// stream, so the loop returns [`ServeOutcome::ProtocolFatal`] and the child
-/// exits nonzero — the parent observes EOF and restarts the jail.
-pub fn serve_jail_connection<R: Read, W: Write>(
-    kind: JailKind,
-    reader: &mut R,
-    writer: &mut W,
-    handler: &mut impl JailHandler,
-) -> ServeOutcome {
-    tracing::info!(kind = kind.as_str(), "jail serve loop started");
-    let mut last_id: u64 = 0;
-    loop {
-        let payload = match read_frame(reader, JAIL_MAX_FRAME_BYTES) {
-            Ok(FrameRead::Frame(payload)) => payload,
-            Ok(FrameRead::CleanEof) => {
-                tracing::info!(kind = kind.as_str(), "jail parent EOF; exiting");
-                return ServeOutcome::ConnectionClosed;
-            }
-            Err(e) => {
-                tracing::warn!(kind = kind.as_str(), error = %e, "jail frame read failed");
-                record_jail_failure(&e);
-                return ServeOutcome::ProtocolFatal;
-            }
-        };
-        let req = match decode_request(&payload) {
-            Ok(req) => req,
-            Err(e) => {
-                tracing::warn!(kind = kind.as_str(), error = %e, "jail request decode failed");
-                record_jail_failure(&e);
-                return ServeOutcome::ProtocolFatal;
-            }
-        };
-        if req.id <= last_id {
-            tracing::warn!(
-                kind = kind.as_str(),
-                id = req.id,
-                "jail duplicate/non-increasing request id"
-            );
-            let err =
-                JailError::ProtocolViolation("duplicate or non-increasing request id".to_string());
-            record_jail_failure(&err);
-            // IDs are unusable for sync here only if id == 0, which decode
-            // already rejected; echo the offending id so the parent can match
-            // the rejection to its outstanding call.
-            let response = JailResponse::new(req.id, JailResult::Err(err.to_dto()));
-            match encode_response(&response) {
-                Ok(frame) => {
-                    if write_frame(writer, &frame).is_err() {
-                        return ServeOutcome::ProtocolFatal;
-                    }
-                }
-                Err(_) => return ServeOutcome::ProtocolFatal,
-            }
-            continue;
-        }
-        last_id = req.id;
-
-        if matches!(req.op, JailOperation::Shutdown) {
-            tracing::info!(kind = kind.as_str(), "jail orderly shutdown requested");
-            let response = JailResponse::new(req.id, JailResult::Ok(JailOutput::ShutdownAck));
-            match encode_response(&response) {
-                Ok(frame) => {
-                    let _ = write_frame(writer, &frame);
-                }
-                Err(e) => {
-                    tracing::warn!(kind = kind.as_str(), error = %e, "shutdown ack encode failed");
-                }
-            }
-            record_jail_shutdown();
-            return ServeOutcome::CleanShutdown;
-        }
-
-        record_jail_invocation(kind);
-        let result = handler.handle(&req.op);
-        // Defense in depth: re-check output bounds even though handlers must.
-        let result = match &result {
-            JailResult::Ok(JailOutput::WasmResult { body, .. })
-                if body.len() > JAIL_MAX_INVOKE_OUTPUT_BYTES =>
-            {
-                let err = JailError::Oversized("handler output too large".to_string());
-                record_jail_failure(&err);
-                JailResult::Err(err.to_dto())
-            }
-            JailResult::Ok(JailOutput::YaraScanResult { matches })
-                if matches.len() > JAIL_MAX_MATCHES =>
-            {
-                let err = JailError::Oversized("handler returned too many matches".to_string());
-                record_jail_failure(&err);
-                JailResult::Err(err.to_dto())
-            }
-            _ => result,
-        };
-        if let JailResult::Err(dto) = &result {
-            record_jail_failure(&JailError::from(dto.clone()));
-        }
-        let response = JailResponse::new(req.id, result);
-        match encode_response(&response) {
-            Ok(frame) => {
-                if write_frame(writer, &frame).is_err() {
-                    return ServeOutcome::ProtocolFatal;
-                }
-            }
-            Err(e) => {
-                tracing::warn!(kind = kind.as_str(), error = %e, "jail response encode failed");
-                return ServeOutcome::ProtocolFatal;
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Restart policy (platform-independent, unit-tested)
 // ---------------------------------------------------------------------------
 
@@ -801,6 +657,7 @@ fn reader_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Read, Write};
 
     #[test]
     fn restart_tracker_backoff_grows_and_caps() {

@@ -15,6 +15,9 @@ synvoid-proxy = { path = "../synvoid-proxy" , version = "0.1" }
 synvoid-waf = { path = "../synvoid-waf" , version = "0.1" }
 synvoid-metrics = { path = "../synvoid-metrics" , version = "0.1" }
 synvoid-platform = { path = "../synvoid-platform" , version = "0.1" }
+synvoid-upstream = { path = "../synvoid-upstream", version = "0.1" }
+async-trait = "0.1"
+anyhow = "1"
 quinn = { version = "0.11", features = ["runtime-tokio"] }
 h3 = "0.0.8"
 h3-quinn = "0.0.10"

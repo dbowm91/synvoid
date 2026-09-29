@@ -52,6 +52,33 @@ fn jail_runtime_never_imports_root_implementation() {
 }
 
 #[test]
+fn jail_runtime_uses_protocol_leaf_without_ipc_dependency() {
+    let manifest = read_repo("crates/synvoid-jail-runtime/Cargo.toml");
+    assert!(manifest.contains("synvoid-jail-protocol"));
+    let production_dependencies = manifest
+        .split("[dev-dependencies]")
+        .next()
+        .unwrap_or(&manifest);
+    assert!(
+        !production_dependencies
+            .lines()
+            .any(|line| line.trim_start().starts_with("synvoid-ipc")),
+        "child runtime production code must not depend on parent IPC/process implementation"
+    );
+    for rel in [
+        "crates/synvoid-jail-runtime/src/sandbox_entry.rs",
+        "crates/synvoid-jail-runtime/src/wasm_service.rs",
+        "crates/synvoid-jail-runtime/src/yara_service.rs",
+    ] {
+        let source = prepare_for_scanning(&read_repo(rel));
+        assert!(
+            !source.contains("synvoid_ipc"),
+            "{rel} retains a parent IPC import"
+        );
+    }
+}
+
+#[test]
 fn jail_runtime_child_never_exposes_generic_exec_or_stdout_logs() {
     let mut violations = Violations::new();
     for rel in [

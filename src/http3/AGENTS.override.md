@@ -31,9 +31,9 @@ Specialized guidance for HTTP/3 QUIC request handling and proxying.
 
 | Owner | Scope |
 |-------|-------|
-| `crates/synvoid-http3` | HTTP/3 protocol handling only |
+| `crates/synvoid-http3` | HTTP/3 protocol handling, request/stream state, and H3 response adaptation |
 | `crates/synvoid-waf` | WAF traits (`WafAccess`, `WafProcessor`) and primitives (`WafDecision`) |
-| `crates/synvoid-http` | `Http3RequestWaf` trait, dispatch functions, WAF decision mapping |
+| `crates/synvoid-http` | Protocol-neutral HTTP security/policy helpers consumed through narrow interfaces |
 | `src/waf/` | Concrete `WafCore` and infrastructure adapters |
 | `src/worker/unified_server/` | Composition, service injection |
 

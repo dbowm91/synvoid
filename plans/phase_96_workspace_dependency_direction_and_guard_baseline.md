@@ -1,6 +1,6 @@
 # Phase 96 Plan: Workspace Dependency Direction and Guard Baseline
 
-Status: planned/open.
+Status: implemented and closed 2026-09-28; evidence: `architecture/workspace_dependency_direction_phase96_closeout.md`.
 
 Registered in: plans/roadmap.md and plans/architecture_maintenance_auditability_roadmap.md.
 

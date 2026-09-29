@@ -10,7 +10,7 @@ use parking_lot::Mutex;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use synvoid_waf::attack_detection::config::AttackType;
+const MAX_BLOCKED_TYPE_LABELS: usize = 16;
 
 fn summarize_timing_samples(samples: &[u64]) -> TimingStatsPayload {
     if samples.is_empty() {
@@ -47,7 +47,7 @@ pub struct SiteMetrics {
     pub upstream_successes: AtomicU64,
     pub upstream_failures: AtomicU64,
     pub latency_samples: Mutex<Vec<u64>>,
-    pub blocked_by_type: DashMap<AttackType, AtomicU64>,
+    pub blocked_by_type: DashMap<&'static str, AtomicU64>,
 }
 
 impl Clone for SiteMetrics {
@@ -160,7 +160,7 @@ impl SiteMetrics {
         let mut blocked_types = HashMap::new();
         for entry in self.blocked_by_type.iter() {
             blocked_types.insert(
-                format!("{:?}", entry.key()),
+                entry.key().to_string(),
                 entry.value().load(Ordering::Relaxed),
             );
         }
@@ -252,7 +252,7 @@ pub struct WorkerMetrics {
     pub latency_samples: Mutex<Vec<u64>>,
     pub request_queue_samples: Mutex<VecDeque<u64>>,
     pub inline_cpu_phase_samples: Mutex<HashMap<WorkerInlineCpuPhase, VecDeque<u64>>>,
-    pub blocked_by_type: DashMap<AttackType, AtomicU64>,
+    pub blocked_by_type: DashMap<&'static str, AtomicU64>,
     pub per_site: Mutex<HashMap<String, SiteMetrics>>,
     pub bandwidth: Arc<BandwidthTracker>,
     pub per_serverless: Mutex<HashMap<String, ServerlessMetrics>>,
@@ -451,13 +451,17 @@ impl WorkerMetrics {
             .store(cpu_percent.to_bits(), Ordering::Relaxed);
     }
 
-    pub fn record_blocked(&self, attack_type: AttackType) {
+    pub fn record_blocked(&self, label: &'static str) {
         self.blocked.fetch_add(1, Ordering::Relaxed);
-        let counter = self
-            .blocked_by_type
-            .entry(attack_type)
-            .or_insert_with(|| AtomicU64::new(0));
-        counter.value().fetch_add(1, Ordering::Relaxed);
+        if let Some(counter) = self.blocked_by_type.get(label) {
+            counter.fetch_add(1, Ordering::Relaxed);
+        } else if self.blocked_by_type.len() < MAX_BLOCKED_TYPE_LABELS {
+            let counter = self
+                .blocked_by_type
+                .entry(label)
+                .or_insert_with(|| AtomicU64::new(0));
+            counter.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     pub fn record_challenged(&self) {
@@ -522,7 +526,7 @@ impl WorkerMetrics {
         }
     }
 
-    pub fn blocked_by_type(&self) -> HashMap<AttackType, u64> {
+    pub fn blocked_by_type(&self) -> HashMap<&'static str, u64> {
         let mut result = HashMap::new();
         for entry in self.blocked_by_type.iter() {
             result.insert(*entry.key(), entry.value().load(Ordering::Relaxed));
@@ -627,7 +631,7 @@ impl WorkerMetrics {
         let blocked_by_type = self.blocked_by_type();
         let mut blocked_by_type_str = HashMap::new();
         for (k, v) in blocked_by_type {
-            blocked_by_type_str.insert(format!("{:?}", k), v);
+            blocked_by_type_str.insert(k.to_string(), v);
         }
 
         let latency_samples = self.latency_samples.lock();
@@ -749,6 +753,37 @@ impl CpuWorkerMetrics {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn blocked_type_labels_are_bounded_and_export_without_renaming() {
+        let metrics = WorkerMetrics::new();
+        for label in [
+            "Sqli",
+            "Xss",
+            "PathTraversal",
+            "Rfi",
+            "Ssrf",
+            "Ssti",
+            "CmdInjection",
+            "Xxe",
+            "Jwt",
+            "RequestSmuggling",
+            "LdapInjection",
+            "XPathInjection",
+            "OpenRedirect",
+            "Other",
+        ] {
+            metrics.record_blocked(label);
+        }
+        metrics.record_blocked("extra-one");
+        metrics.record_blocked("extra-two");
+        metrics.record_blocked("bounded-overflow");
+        assert_eq!(metrics.blocked_by_type.len(), MAX_BLOCKED_TYPE_LABELS);
+        let payload = metrics.to_payload(1);
+        assert_eq!(payload.blocked_by_type.len(), MAX_BLOCKED_TYPE_LABELS);
+        assert_eq!(payload.blocked_by_type.get("Sqli"), Some(&1));
+        assert_eq!(payload.blocked_by_type.get("XPathInjection"), Some(&1));
+    }
 
     /// Phase 52: repeated hot-key accounting must not allocate a new key and
     /// must not run eviction that removes unrelated idle entries.

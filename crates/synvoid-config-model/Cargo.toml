@@ -1,0 +1,15 @@
+[package]
+name = "synvoid-config-model"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Low-capability configuration data models"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+schemars = "0.8"
+utoipa = "5"
+
+[dev-dependencies]
+serde_json = "1"

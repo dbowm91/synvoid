@@ -10,14 +10,36 @@ use synvoid_metrics::bandwidth::BandwidthTracker;
 use synvoid_metrics::WorkerMetrics;
 use synvoid_proxy::client_registry::UpstreamClientRegistry;
 use synvoid_proxy::RouteTarget;
-use synvoid_waf::ConnectionLimiter;
+use synvoid_waf::{ConnectionLimitError, ConnectionLimiter};
 
 use crate::http3_body::Http3RequestStream;
 use crate::http3_buffered_upstream_dispatch::handle_http3_buffered_upstream_pass;
 use crate::http3_streaming_upstream_dispatch::handle_http3_streaming_upstream_pass;
-use crate::traffic_control::{maybe_enforce_http3_site_connection_limits, ConnectionTokenGuard};
+use synvoid_http::traffic_control::ConnectionTokenGuard;
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
+
+async fn maybe_enforce_http3_site_connection_limits(
+    connection_guard: Option<&ConnectionTokenGuard>,
+    connection_limiter: Option<&Arc<ConnectionLimiter>>,
+    route_target: &RouteTarget,
+    client_ip: IpAddr,
+) -> Result<(), ConnectionLimitError> {
+    let site_traffic_config = &route_target.site_config.traffic_shaping.connection;
+    if let Some(guard) = connection_guard {
+        guard
+            .maybe_enforce_site_connection_limits(
+                connection_limiter,
+                &route_target.site_id,
+                client_ip,
+                site_traffic_config.max_connections,
+                site_traffic_config.max_connections_per_ip,
+            )
+            .await
+    } else {
+        Ok(())
+    }
+}
 
 #[allow(clippy::too_many_arguments)]
 pub async fn handle_http3_found_route<W>(
@@ -32,7 +54,7 @@ pub async fn handle_http3_found_route<W>(
     request_stream: &mut W,
     max_request_size: usize,
     body_bytes: Vec<u8>,
-    streaming_waf: Option<Box<dyn crate::shared_handler::StreamingWafScanner>>,
+    streaming_waf: Option<Box<dyn synvoid_http::shared_handler::StreamingWafScanner>>,
     connection_guard: Option<&ConnectionTokenGuard>,
     connection_limiter: Option<&Arc<ConnectionLimiter>>,
     main_config: &Arc<MainConfig>,

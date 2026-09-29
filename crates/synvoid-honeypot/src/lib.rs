@@ -40,8 +40,8 @@ pub use runner::PortHoneypotRunner;
 pub use storage::HoneypotStorage;
 pub use storage_writer::HoneypotWriter;
 pub use threat_intel::{
-    HoneypotIndicator, HoneypotIntelExtractor, HoneypotSignalScore, IndicatorActionClass,
-    IndicatorType, ScoringConfig, SeverityLevel, SignalClass,
+    HoneypotIndicator, HoneypotIntelExtractor, HoneypotSignalScore, HoneypotThreatPublisher,
+    IndicatorActionClass, IndicatorType, ScoringConfig, SeverityLevel, SignalClass,
 };
 
 #[cfg(test)]

@@ -1139,10 +1139,10 @@ extraction/publication is authorized by this closeout. No registered
 future plan was blocked on Phase 95.
 
 
-## Post-Phase-95 Campaign: Architecture Maintenance and Auditability — Phases 96–101 Planned/Open
+## Post-Phase-95 Campaign: Architecture Maintenance and Auditability — Phases 96–101 Active
 
-Status: **PLANNED / OPEN** (registered 2026-09-28). No implementation from
-this campaign has landed yet.
+Status: **ACTIVE** (registered 2026-09-28). Phases 96–100 are implemented and
+closed; Phase 101 is unblocked as the campaign qualification.
 
 Roadmap:
 plans/architecture_maintenance_auditability_roadmap.md.
@@ -1176,15 +1176,16 @@ distributed-state authority must be preserved.
 
 Execution order:
 
-1. **Phase 96 — Workspace Dependency Direction and Guard Baseline**
+1. **Phase 96 — Workspace Dependency Direction and Guard Baseline — CLOSED**
    - remove avoidable metrics -> WAF and block-store -> WAF edges;
    - use the canonical core restricted-IP helper directly where mesh currently
      reaches through proxy;
    - audit manifest entitlement;
    - add a workspace dependency-direction guard.
+   - Closeout: architecture/workspace_dependency_direction_phase96_closeout.md.
    - Plan: plans/phase_96_workspace_dependency_direction_and_guard_baseline.md.
 
-2. **Phase 97 — Jail Protocol Boundary Extraction**
+2. **Phase 97 — Jail Protocol Boundary Extraction — CLOSED**
    - create an internal low-capability synvoid-jail-protocol leaf;
    - move only v1 wire DTOs/bounds/validation/framing/digest/policy vocabulary;
    - keep binary resolution, process supervision, restart/quarantine, and
@@ -1192,6 +1193,7 @@ Execution order:
    - make synvoid-jail-runtime consume the protocol leaf directly;
    - require byte-identical SVJL v1 golden vectors and unchanged jail package
      behavior.
+   - Closeout: architecture/jail_protocol_phase97_closeout.md.
    - Plan: plans/phase_97_jail_protocol_boundary_extraction.md.
 
 3. **Phase 98 — HTTP/3 Ownership Realignment**
@@ -1200,6 +1202,7 @@ Execution order:
    - retain one shared protocol-neutral security/policy layer;
    - preserve EggServe H1, Hyper H2, and quinn/h3 H3 production ownership;
    - prohibit synvoid-http <-> synvoid-http3 cycles.
+   - Status: CLOSED; closeout: architecture/http3_ownership_phase98_closeout.md.
    - Plan: plans/phase_98_http3_ownership_realignment.md.
 
 4. **Phase 99 — Configuration Model / Runtime Capability Separation**
@@ -1211,6 +1214,7 @@ Execution order:
    - migrate only true model-only consumers to the lower-capability boundary;
    - create synvoid-config-model only if the measured boundary is materially
      lower-capability.
+   - Status: CLOSED; closeout: architecture/config_model_phase99_closeout.md.
    - Plan: plans/phase_99_configuration_model_runtime_separation.md.
 
 5. **Phase 100 — Mesh Capability Decomposition**
@@ -1222,6 +1226,7 @@ Execution order:
      dependency reach;
    - preserve canonical-vs-advisory authority and lifecycle/task ownership;
    - do not create a mesh-consensus crate merely because mesh is large.
+   - Status: CLOSED; closeout: architecture/mesh_capability_decomposition_phase100_closeout.md.
    - Plan: plans/phase_100_mesh_capability_decomposition.md.
 
 6. **Phase 101 — Architecture Maintenance Qualification and Closeout**
@@ -1233,6 +1238,7 @@ Execution order:
      simplification candidates without implementing a new extraction inside
      closeout;
    - require exact-SHA hosted CI/dependency-security proof for terminal closure.
+   - Status: UNBLOCKED; sole prerequisite, Phase 100, is closed.
    - Plan: plans/phase_101_architecture_maintenance_qualification_closeout.md.
 
 Binding constraints:

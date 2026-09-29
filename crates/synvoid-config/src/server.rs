@@ -33,27 +33,13 @@ impl ServerConfig {
             });
         }
         for proxy in &self.trusted_proxies {
-            if proxy.parse::<std::net::IpAddr>().is_err() {
-                if let Some(cidr) = proxy.strip_suffix("/32") {
-                    if cidr.parse::<std::net::IpAddr>().is_err() {
-                        return Err(ConfigValidationError {
-                            field: "server.trusted_proxies".to_string(),
-                            message: format!("Invalid trusted proxy: {}", proxy),
-                        });
-                    }
-                } else if let Some(cidr) = proxy.strip_suffix("/128") {
-                    if cidr.parse::<std::net::IpAddr>().is_err() {
-                        return Err(ConfigValidationError {
-                            field: "server.trusted_proxies".to_string(),
-                            message: format!("Invalid trusted proxy: {}", proxy),
-                        });
-                    }
-                } else {
-                    return Err(ConfigValidationError {
-                        field: "server.trusted_proxies".to_string(),
-                        message: format!("Invalid trusted proxy: {}", proxy),
-                    });
-                }
+            if proxy.parse::<std::net::IpAddr>().is_err()
+                && proxy.parse::<ipnetwork::IpNetwork>().is_err()
+            {
+                return Err(ConfigValidationError {
+                    field: "server.trusted_proxies".to_string(),
+                    message: format!("Invalid trusted proxy: {}", proxy),
+                });
             }
         }
         Ok(())

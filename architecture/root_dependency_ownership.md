@@ -75,7 +75,7 @@ reference fails the guard until the row is reclassified with a reason.
 | synvoid-config | config | composition_runtime | default | Configuration types and ConfigManager | keep | admin, commands, config, http, icmp_filter, static_files, supervisor, waf, worker |
 | synvoid-dns | dns | composition_runtime | dns | DNS server with DNSSEC validation | keep | dns |
 | synvoid-icmp-filter | icmp_filter | composition_runtime | icmp-filter | ICMP filtering | keep | icmp_filter |
-| synvoid-honeypot | honeypot_port | composition_runtime | default | Honeypot port detection | keep | honeypot_port |
+| synvoid-honeypot | honeypot_port, worker | composition_runtime | default | Honeypot port detection and root-owned mesh publication adapter | keep | honeypot_port, worker |
 | synvoid-upload | http, waf, worker | composition_runtime | default | File upload handling in synvoid_upload; root upload/ removed Phase 03 | keep | http, waf, worker |
 | synvoid-yara | worker, supervisor | composition_runtime | default | Canonical YARA engine for CPU worker + mesh validator injection (Phase 26 single yara-x owner; Phase 29 jail service lives in synvoid-jail-runtime) | keep | supervisor, worker |
 | synvoid-ipc | process | composition_runtime | default | IPC transport abstractions | keep | http, process, sandbox, supervisor, worker |
@@ -125,7 +125,7 @@ reference fails the guard until the row is reclassified with a reason.
 | synvoid-admin | admin | composition_runtime | default | Admin API handler types | keep | admin |
 | synvoid-proxy | proxy | composition_runtime | default | Reverse proxy routing and location matching | keep | http, location_matcher, protocol, proxy, router, router_adapter, streaming, tls, waf |
 | synvoid-http | http | composition_runtime | default | Canonical HTTP parsing/normalization/body-policy/dispatch; root `http` is application composition over it (Phase 20); root `http_client` shim re-exports the Phase 34 WAF-body owner (Phase 34) | keep | http, http_client, listener, server, tls, waf, worker |
-| synvoid-http3 | http3 | composition_runtime | default | HTTP/3 QUIC server | keep | http3 |
+| synvoid-http3 | http3, waf | composition_runtime | default | HTTP/3 QUIC server; root WAF adapter implements the crate-owned narrow service trait | keep | http3, waf |
 | synvoid-serverless | serverless | composition_runtime | default | Serverless WASM function runtime | keep | serverless, worker |
 | synvoid-geoip | geoip | composition_runtime | default | GeoIP database lookups | keep | admin, lib |
 | synvoid-integrity | — | migration_blocker | default | No direct root consumer in src/ (measured 2026-09-12); retained for origin_key_exchange feature-surface wiring (synvoid-integrity/origin_key_exchange) | Phase 31 removal audit | — |

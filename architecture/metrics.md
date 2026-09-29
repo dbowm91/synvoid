@@ -29,7 +29,7 @@ pub struct SiteMetrics {
     pub upstream_successes: AtomicU64,
     pub upstream_failures: AtomicU64,
     pub latency_samples: Mutex<Vec<u64>>,
-    pub blocked_by_type: DashMap<AttackType, AtomicU64>,
+    pub blocked_by_type: DashMap<&'static str, AtomicU64>,
 }
 
 pub struct BandwidthTracker {
@@ -81,14 +81,15 @@ pub struct WorkerMetrics {
     pub total_latency_ms: AtomicU64,
     pub request_count: AtomicU64,
     pub latency_samples: Mutex<Vec<u64>>,
-    pub blocked_by_type: DashMap<AttackType, AtomicU64>,
+    pub blocked_by_type: DashMap<&'static str, AtomicU64>,
     pub per_site: Mutex<HashMap<String, SiteMetrics>>,
     pub bandwidth: Arc<BandwidthTracker>,
     pub per_serverless: Mutex<HashMap<String, ServerlessMetrics>>,
 }
 
 // Verified in crates/synvoid-metrics/src/types.rs: both SiteMetrics and
-// WorkerMetrics use DashMap (not Mutex<HashMap>) for blocked_by_type; new
+// WorkerMetrics use DashMap (not Mutex<HashMap>) for blocked_by_type, using
+// bounded static string labels. WAF maps AttackType through metrics_label(); new
 // counter fields include request_queue_samples, inline_cpu_phase_samples
 // (WorkerMetrics), per_upstream/monthly/rate state (BandwidthTracker).
 

@@ -9,7 +9,6 @@ use http_body_util::combinators::BoxBody;
 use metrics::counter;
 
 use synvoid_config::MainConfig;
-use synvoid_proxy::RouteTarget;
 use synvoid_waf::{ConnectionLimitError, ConnectionLimiter, ConnectionToken};
 
 use crate::response_builder::build_response_with_alt_svc;
@@ -57,32 +56,6 @@ impl ConnectionTokenGuard {
             .try_acquire_with_limits(site_id, client_ip, site_max_connections, site_max_per_ip)
             .await?;
         self.release_and_acquire(new_token);
-        Ok(())
-    }
-}
-
-pub async fn maybe_enforce_http3_site_connection_limits(
-    connection_guard: Option<&ConnectionTokenGuard>,
-    connection_limiter: Option<&Arc<ConnectionLimiter>>,
-    route_target: &RouteTarget,
-    client_ip: IpAddr,
-) -> Result<(), ConnectionLimitError> {
-    let site_id = route_target.site_id.as_ref();
-    let site_traffic_config = &route_target.site_config.traffic_shaping.connection;
-    let site_max_connections = site_traffic_config.max_connections;
-    let site_max_per_ip = site_traffic_config.max_connections_per_ip;
-
-    if let Some(guard) = connection_guard {
-        guard
-            .maybe_enforce_site_connection_limits(
-                connection_limiter,
-                site_id,
-                client_ip,
-                site_max_connections,
-                site_max_per_ip,
-            )
-            .await
-    } else {
         Ok(())
     }
 }

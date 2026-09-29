@@ -18,7 +18,9 @@ pub use config::{
 pub use malware_scanner::{MalwareMatch, MatchConfidence, MatchSource, ScanContext};
 pub use sandbox::{QuarantineEntry, Sandbox, SandboxConfig, SandboxError, SandboxHandle};
 pub use signature::{FileCategory, FileSignature, SignatureRegistry};
-pub use yara_rule_feed::{ParsedYaraRules, YaraRuleFeedManager, YaraRuleSource};
+pub use yara_rule_feed::{
+    ParsedYaraRules, YaraRuleFeedManager, YaraRuleSnapshotProvider, YaraRuleSource,
+};
 pub use yara_scanner::{
     compute_sha256, validate_rules_syntax, verify_content_digest, yara_match_to_malware_match,
     WindowedScanResult, YaraDirectoryConfig, YaraError, YaraMatch, YaraRuleManifest,
@@ -369,8 +371,7 @@ pub struct UploadValidator {
     malware_scanner: Option<Arc<MalwareScanner>>,
     config: UploadConfig,
     _reload_lock: parking_lot::RwLock<()>,
-    #[cfg(feature = "mesh")]
-    yara_rules: Option<Arc<synvoid_mesh::yara_rules::YaraRulesManager>>,
+    yara_rules: Option<Arc<dyn YaraRuleSnapshotProvider>>,
 }
 
 impl UploadValidator {
@@ -378,10 +379,9 @@ impl UploadValidator {
         Self::new_with_yara_rules(config, None)
     }
 
-    #[cfg(feature = "mesh")]
     pub fn new_with_yara_rules(
         config: UploadConfig,
-        yara_rules: Option<Arc<synvoid_mesh::yara_rules::YaraRulesManager>>,
+        yara_rules: Option<Arc<dyn YaraRuleSnapshotProvider>>,
     ) -> Result<Self, UploadValidationError> {
         let sandbox_config = SandboxConfig::new(&config.sandbox_dir, &config.quarantine_dir);
         let sandbox = Arc::new(Sandbox::new(sandbox_config));
@@ -410,40 +410,6 @@ impl UploadValidator {
             config,
             _reload_lock: parking_lot::RwLock::new(()),
             yara_rules,
-        })
-    }
-
-    #[cfg(not(feature = "mesh"))]
-    pub fn new_with_yara_rules(
-        config: UploadConfig,
-        _yara_rules: Option<Arc<dyn std::any::Any>>,
-    ) -> Result<Self, UploadValidationError> {
-        let sandbox_config = SandboxConfig::new(&config.sandbox_dir, &config.quarantine_dir);
-        let sandbox = Arc::new(Sandbox::new(sandbox_config));
-
-        let malware_scanner = if config.scan_with_yara {
-            let source = YaraRulesSource::from_config(
-                config.yara_rules_dir.clone().map(std::path::PathBuf::from),
-                true,
-            )
-            .unwrap_or(YaraRulesSource::Bundled);
-            let scanner = YaraScanner::with_timeout(
-                source,
-                config.yara_timeout_ms,
-                config.yara_max_concurrent_scans,
-                config.yara_max_queued_scans,
-                config.yara_queue_timeout_ms,
-            )?;
-            Some(Arc::new(MalwareScanner::with_yara(Some(scanner))))
-        } else {
-            Some(Arc::new(MalwareScanner::with_yara(None)))
-        };
-
-        Ok(Self {
-            sandbox,
-            malware_scanner,
-            config,
-            _reload_lock: parking_lot::RwLock::new(()),
         })
     }
 
@@ -527,21 +493,20 @@ impl UploadValidator {
         // mesh version always triggers local compilation via
         // `reload_with_rules`. A version bump with no acceptable source
         // retains the previous generation (fail-closed per upload policy).
-        #[cfg(feature = "mesh")]
         {
             if let Some(scanner) = &self.malware_scanner {
                 if let Some(yara_scanner) = scanner.get_yara_scanner() {
                     if let Some(yara_rules) = &self.yara_rules {
                         let current_version = yara_scanner.get_version();
-                        let new_version = yara_rules.get_current_version();
+                        let new_version = yara_rules.current_version();
 
                         if current_version != new_version {
                             let _guard = self._reload_lock.write();
                             let current_version = yara_scanner.get_version();
-                            let new_version = yara_rules.get_current_version();
+                            let new_version = yara_rules.current_version();
 
                             if current_version != new_version {
-                                if let Some(new_rules) = yara_rules.get_current_rules() {
+                                if let Some(new_rules) = yara_rules.current_source() {
                                     tracing::debug!(
                                         current_version = ?current_version,
                                         new_version = ?new_version,
@@ -560,10 +525,6 @@ impl UploadValidator {
                     }
                 }
             }
-        }
-        #[cfg(not(feature = "mesh"))]
-        {
-            let _ = self;
         }
         Ok(())
     }
@@ -1888,7 +1849,6 @@ impl UploadValidator {
             malware_scanner: scanner.map(Arc::new),
             config,
             _reload_lock: parking_lot::RwLock::new(()),
-            #[cfg(feature = "mesh")]
             yara_rules: None,
         }
     }
@@ -3075,6 +3035,16 @@ mod tests {
         use super::*;
         use synvoid_config::mesh::MeshNodeRole;
         use synvoid_mesh::yara_rules::{YaraRuleSource, YaraRulesManager, YaraRulesManagerConfig};
+
+        impl YaraRuleSnapshotProvider for YaraRulesManager {
+            fn current_version(&self) -> Option<String> {
+                self.get_current_version()
+            }
+
+            fn current_source(&self) -> Option<String> {
+                self.get_current_rules()
+            }
+        }
 
         fn make_manager() -> Arc<YaraRulesManager> {
             Arc::new(YaraRulesManager::new(

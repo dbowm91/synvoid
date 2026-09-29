@@ -3,6 +3,9 @@ pub mod config;
 pub mod enforce;
 pub mod error;
 pub mod metrics;
+// This backend renderer is exercised and used on Linux; other hosts compile
+// the portable crate API while selecting their native backend instead.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(crate) mod nft_batch;
 pub mod platform;
 pub mod policy;

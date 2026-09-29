@@ -345,13 +345,13 @@ impl MeshTransport {
             mesh_name: mesh_name.map(|s| s.to_string()),
         };
 
-        let mut pending = self.pending_queries.lock().await;
+        let mut pending = self.pending.pending_queries.lock().await;
         pending.add_provider(query_id, provider_info);
     }
 
     pub(crate) async fn complete_pending_query(&self, query_id: &str, upstream_id: &str) {
         let (providers, sender) = {
-            let mut pending = self.pending_queries.lock().await;
+            let mut pending = self.pending.pending_queries.lock().await;
             let providers = pending
                 .collected_providers
                 .remove(query_id)
@@ -386,7 +386,7 @@ impl MeshTransport {
             query_id
         );
 
-        if let Some(sender) = self.pending_queries.lock().await.take(query_id) {
+        if let Some(sender) = self.pending.pending_queries.lock().await.take(query_id) {
             let _ = sender.send(RouteQueryResult {
                 query_id: query_id.to_string(),
                 upstream_id: upstream_id.to_string(),
@@ -584,7 +584,8 @@ impl MeshTransport {
 
             // Create a one-shot channel to receive the response
             let (tx, rx) = tokio::sync::oneshot::channel();
-            self.pending_queries
+            self.pending
+                .pending_queries
                 .lock()
                 .await
                 .register(query_id.clone(), tx);
@@ -609,7 +610,7 @@ impl MeshTransport {
                 }
             }
 
-            self.pending_queries.lock().await.take(&query_id);
+            self.pending.pending_queries.lock().await.take(&query_id);
         }
 
         Ok(())

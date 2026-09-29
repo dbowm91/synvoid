@@ -87,6 +87,13 @@ pub enum YaraRuleSource {
     MeshApproved,
 }
 
+/// Read-only view of the approved YARA source selected by a rule authority.
+/// Upload always compiles source locally and never accepts compiled blobs.
+pub trait YaraRuleSnapshotProvider: Send + Sync {
+    fn current_version(&self) -> Option<String>;
+    fn current_source(&self) -> Option<String>;
+}
+
 pub struct YaraRuleFeedManager {
     config: YaraRuleFeedConfig,
     client: EggfetchUpstreamClient,

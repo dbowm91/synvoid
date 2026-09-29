@@ -1489,7 +1489,7 @@ impl MeshTransport {
                 timestamp,
                 immediate_indicator,
             } => {
-                if let Some(ref threat_intel) = self.threat_intel {
+                if let Some(ref threat_intel) = self.application.threat_intel {
                     threat_intel.handle_hot_threat_gossip(
                         bloom_filter,
                         hashes,
@@ -1500,7 +1500,7 @@ impl MeshTransport {
             }
             MeshMessage::BlocklistEventGossip { .. } => {
                 tracing::debug!("Received blocklist event gossip from {}", peer_id);
-                if let Some(ref ti) = self.threat_intel {
+                if let Some(ref ti) = self.application.threat_intel {
                     let bs = ti.get_block_store();
                     if let MeshMessage::BlocklistEventGossip {
                         ref event_id,
@@ -1565,7 +1565,7 @@ impl MeshTransport {
                     since_sequence,
                     max_events
                 );
-                if let Some(ref ti) = self.threat_intel {
+                if let Some(ref ti) = self.application.threat_intel {
                     let bs = ti.get_block_store();
                     let cursor = crate::stubs::block_store::BlocklistEventCursor {
                         since_sequence,
@@ -1637,7 +1637,7 @@ impl MeshTransport {
                         );
                     }
                 }
-                if let Some(ref ti) = self.threat_intel {
+                if let Some(ref ti) = self.application.threat_intel {
                     let bs = ti.get_block_store();
                     let mut applied = 0u32;
                     let mut noop = 0u32;
@@ -1724,7 +1724,7 @@ impl MeshTransport {
                     peer_id,
                     request_id
                 );
-                if let Some(ref ti) = self.threat_intel {
+                if let Some(ref ti) = self.application.threat_intel {
                     let bs = ti.get_block_store();
                     let options = crate::stubs::block_store::BlocklistSnapshotOptions {
                         include_ip_blocks,
@@ -1816,7 +1816,7 @@ impl MeshTransport {
                     has_more,
                     request_id
                 );
-                if let Some(ref ti) = self.threat_intel {
+                if let Some(ref ti) = self.application.threat_intel {
                     let bs = ti.get_block_store();
 
                     // Convert wire format to core types.
@@ -2802,7 +2802,7 @@ impl MeshTransport {
             | MeshMessage::ThreatSyncRequest { .. }
             | MeshMessage::ThreatSyncResponse { .. }
             | MeshMessage::ThreatAcknowledgement { .. } => {
-                if let Some(ref threat_intel) = self.threat_intel {
+                if let Some(ref threat_intel) = self.application.threat_intel {
                     let peer_role = self
                         .topology
                         .get_peer(peer_id)
@@ -2830,7 +2830,7 @@ impl MeshTransport {
             | MeshMessage::YaraRuleAcknowledgement { .. }
             | MeshMessage::YaraRuleSubmission { .. }
             | MeshMessage::YaraRuleSubmissionResponse { .. } => {
-                if let Some(ref yara_rules) = self.yara_rules {
+                if let Some(ref yara_rules) = self.application.yara_rules {
                     if let Some(response) = yara_rules.handle_mesh_message(&msg, peer_id) {
                         let _ = self.send_datagram_to_peer(peer_id, &response).await;
                     }
@@ -4212,11 +4212,14 @@ impl MeshTransport {
         );
 
         // Phase 23: Aggregate stream handler drain stats for shutdown report.
-        self.aggregate_handler_drained
+        self.lifecycle
+            .aggregate_handler_drained
             .fetch_add(drain_report.drained, Ordering::Relaxed);
-        self.aggregate_handler_aborted
+        self.lifecycle
+            .aggregate_handler_aborted
             .fetch_add(drain_report.aborted, Ordering::Relaxed);
-        self.aggregate_handler_failed
+        self.lifecycle
+            .aggregate_handler_failed
             .fetch_add(drain_report.failed, Ordering::Relaxed);
 
         // Update topology status
@@ -4841,7 +4844,7 @@ impl MeshTransport {
             let start = Instant::now();
 
             let sm = {
-                let guard = self.serverless_manager.read();
+                let guard = self.application.serverless_manager.read();
                 guard.clone()
             };
 
@@ -4923,7 +4926,7 @@ impl MeshTransport {
         &self,
         response: &crate::protocol::ServerlessInvokeResponse,
     ) -> Result<(), MeshTransportError> {
-        let mut pending = self.pending_serverless_invocations.lock().await;
+        let mut pending = self.pending.pending_serverless_invocations.lock().await;
         let key = format!("{}:{}", response.function_name, response.caller_node_id);
         if let Some(sender) = pending.remove(&key) {
             tracing::debug!(
@@ -5209,7 +5212,7 @@ impl MeshTransport {
                                 header.request_id,
                                 header.total_size
                             );
-                            let mut pending = self.pending_snapshot_transfers.lock().await;
+                            let mut pending = self.pending.pending_snapshot_transfers.lock().await;
                             pending.insert(
                                 header.request_id.clone(),
                                 crate::transport::InProgressSnapshot::with_sender(
@@ -5223,7 +5226,7 @@ impl MeshTransport {
                             None
                         }
                         RaftSnapshotFrame::Chunk(chunk) => {
-                            let mut pending = self.pending_snapshot_transfers.lock().await;
+                            let mut pending = self.pending.pending_snapshot_transfers.lock().await;
                             let request_id = chunk.request_id.clone();
                             let is_complete = if let Some(snapshot) = pending.get_mut(&request_id) {
                                 if !snapshot.add_chunk(
@@ -5251,7 +5254,8 @@ impl MeshTransport {
                                     "Snapshot assembly complete for request_id {}, installing...",
                                     request_id
                                 );
-                                let mut pending = self.pending_snapshot_transfers.lock().await;
+                                let mut pending =
+                                    self.pending.pending_snapshot_transfers.lock().await;
                                 let completed = pending.remove(&request_id);
                                 if let Some(snapshot) = completed {
                                     let vote: VoteOf<GlobalRegistryConfig> =
@@ -5317,7 +5321,7 @@ impl MeshTransport {
                                 header.request_id,
                                 header.total_size
                             );
-                            let mut pending = self.pending_snapshot_transfers.lock().await;
+                            let mut pending = self.pending.pending_snapshot_transfers.lock().await;
                             pending.insert(
                                 header.request_id.clone(),
                                 crate::transport::InProgressSnapshot::with_sender(
@@ -5332,7 +5336,7 @@ impl MeshTransport {
                         } else if let Ok(chunk) =
                             postcard::from_bytes::<crate::protocol::SnapshotChunk>(&payload.data)
                         {
-                            let mut pending = self.pending_snapshot_transfers.lock().await;
+                            let mut pending = self.pending.pending_snapshot_transfers.lock().await;
                             let request_id = chunk.request_id.clone();
                             let is_complete = if let Some(snapshot) = pending.get_mut(&request_id) {
                                 if !snapshot.add_chunk(
@@ -5360,7 +5364,8 @@ impl MeshTransport {
                                     "Snapshot assembly complete for request_id {}, installing...",
                                     request_id
                                 );
-                                let mut pending = self.pending_snapshot_transfers.lock().await;
+                                let mut pending =
+                                    self.pending.pending_snapshot_transfers.lock().await;
                                 let completed = pending.remove(&request_id);
                                 if let Some(snapshot) = completed {
                                     let vote: VoteOf<GlobalRegistryConfig> =
@@ -5587,7 +5592,7 @@ impl MeshTransport {
         let port = parsed_url.port().unwrap_or(80);
 
         if let Ok(ip) = host_str.parse::<std::net::IpAddr>() {
-            if synvoid_proxy::headers::is_private_ip(&ip) {
+            if synvoid_core::net::is_restricted_ip(&ip) {
                 tracing::warn!(
                     "SSRF prevention: rejecting connection to private IP {} via mesh proxy",
                     ip
@@ -5605,7 +5610,7 @@ impl MeshTransport {
                 Ok(ips) => {
                     for ip in ips {
                         let ip_addr = ip.ip();
-                        if synvoid_proxy::headers::is_private_ip(&ip_addr) {
+                        if synvoid_core::net::is_restricted_ip(&ip_addr) {
                             tracing::warn!(
                                 "SSRF prevention: rejecting connection to private IP {} resolved from domain {} via mesh proxy",
                                 ip_addr,
@@ -6018,7 +6023,7 @@ impl MeshTransport {
             .unwrap_or(upstream_id);
 
         let serverless_manager_opt = {
-            let sm_guard = self.serverless_manager.read();
+            let sm_guard = self.application.serverless_manager.read();
             sm_guard.as_ref().cloned()
         };
 

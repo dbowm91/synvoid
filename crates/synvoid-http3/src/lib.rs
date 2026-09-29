@@ -8,6 +8,15 @@
 //! The `bind_udp_reuse` platform utility is consumed via `synvoid-platform`.
 //! The root crate re-exports `Http3Server` from this crate.
 
+pub mod http3_body;
+pub mod http3_buffered_upstream_dispatch;
+pub mod http3_request_dispatch;
+pub mod http3_request_flow;
+pub mod http3_request_prelude;
+pub mod http3_route_dispatch;
+pub mod http3_streaming_upstream_dispatch;
+pub mod http3_terminal;
+pub mod http3_waf_dispatch;
 pub mod server;
 
 use synvoid_waf::access::WafAccess;
@@ -18,8 +27,23 @@ use synvoid_waf::access::WafAccess;
 ///
 /// This trait is defined here so the HTTP/3 server can accept WAF backends
 /// as trait objects without depending on concrete root-owned types.
-pub trait Http3WafBackend: synvoid_http::Http3RequestWaf + WafAccess {}
-impl<T> Http3WafBackend for T where T: synvoid_http::Http3RequestWaf + WafAccess {}
+pub trait Http3WafBackend: Http3RequestWaf + WafAccess {}
+impl<T> Http3WafBackend for T where T: Http3RequestWaf + WafAccess {}
+
+pub use http3_body::{
+    collect_http3_request_body, Http3BodyCollectionOutcome, Http3CollectedBody, Http3RequestStream,
+};
+pub use http3_request_dispatch::{
+    handle_http3_request_dispatch, Http3DispatchDeps, Http3RequestMetadata, Http3RequestWaf,
+};
+pub use http3_request_flow::{
+    prepare_http3_request_dispatch, Http3RequestDispatchContext, Http3RequestDispatchOutcome,
+    Http3RequestResolver,
+};
+pub use http3_request_prelude::{
+    prepare_http3_request_prelude, Http3RequestPrelude, Http3RequestPreludeOutcome,
+};
+pub use http3_waf_dispatch::{maybe_handle_http3_waf_decision, Http3WafDecisionOutcome};
 
 pub use server::Http3Server;
 
@@ -37,7 +61,7 @@ mod tests {
     struct MockWaf;
 
     #[async_trait::async_trait]
-    impl synvoid_http::Http3RequestWaf for MockWaf {
+    impl Http3RequestWaf for MockWaf {
         async fn check_request_full(
             &self,
             _site_id: Option<&str>,

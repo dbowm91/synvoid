@@ -18,6 +18,24 @@ use synvoid_mesh::{
     topology::MeshTopology, transports::MeshTransportManager,
 };
 
+/// Convert the parsed configuration DTO into the mesh-owned runtime config
+/// and realize identity/key material at this composition boundary.
+#[cfg(feature = "mesh")]
+pub fn realize_mesh_runtime_config(
+    model: &synvoid_config::mesh::MeshConfig,
+) -> Result<synvoid_mesh::mesh::config::MeshConfig, String> {
+    let json = serde_json::to_string(model).map_err(|error| error.to_string())?;
+    let mut config: synvoid_mesh::mesh::config::MeshConfig =
+        serde_json::from_str(&json).map_err(|error| error.to_string())?;
+    if let Err(error) = config.load_global_node_keys() {
+        tracing::warn!(%error, "Failed to load global node keys");
+    }
+    if let Err(error) = config.load_node_identity() {
+        tracing::warn!(%error, "Failed to load mesh node identity");
+    }
+    Ok(config)
+}
+
 #[cfg(feature = "mesh")]
 pub struct MeshControlPlane {
     pub transport_manager: Arc<MeshTransportManager>,
@@ -116,21 +134,13 @@ pub async fn init_mesh_control_plane(
     block_store: Arc<BlockStore>,
 ) -> Option<MeshControlPlane> {
     let mesh_config_external = main_config.tunnel.mesh.as_ref()?;
-    let mesh_config_value = match serde_json::to_value(mesh_config_external) {
-        Ok(value) => value,
+    let mesh_config = match realize_mesh_runtime_config(mesh_config_external) {
+        Ok(config) => config,
         Err(error) => {
-            tracing::error!(%error, "Failed to serialize mesh configuration");
+            tracing::error!(%error, "Failed to convert mesh configuration");
             return None;
         }
     };
-    let mesh_config: crate::mesh::config::MeshConfig =
-        match serde_json::from_value(mesh_config_value) {
-            Ok(config) => config,
-            Err(error) => {
-                tracing::error!(%error, "Failed to convert mesh configuration");
-                return None;
-            }
-        };
 
     if !mesh_config.enabled {
         tracing::info!("Mesh is disabled in configuration.");

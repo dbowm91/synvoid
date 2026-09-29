@@ -15,7 +15,7 @@
 
 ## 1. Purpose and Responsibility
 
-The `synvoid-config` crate (`crates/synvoid-config/`) provides strongly-typed configuration structs for all SynVoid subsystems. It handles:
+The `synvoid-config` crate (`crates/synvoid-config/`) owns configuration loading, file discovery/reload, feature-aware parsing, and validation. Low-capability DTOs that have model-only consumers live in `synvoid-config-model` and are re-exported by `synvoid-config` for compatibility. Mesh identity/key realization runs in `synvoid-mesh` at the root composition boundary.
 
 - **Main Configuration**: Global settings for the entire SynVoid server
 - **Site Configuration**: Per-domain/site settings with granular control
@@ -572,7 +572,7 @@ pub struct BlockedDefaults {
 [features]
 dns = []           # DNS server module (disabled by default)
 icmp-filter = []    # ICMP filtering module (disabled by default)
-mesh = ["dep:ed25519-dalek"]  # Mesh networking (requires ed25519-dalek)
+mesh = []  # Mesh configuration DTOs are available; runtime capability is composed by the root binary
 rkyv = []          # Rkyv serialization (optional)
 ```
 
@@ -583,7 +583,7 @@ rkyv = []          # Rkyv serialization (optional)
 | `dns` | `dns/` module, `MainConfig.dns` | `hickory-proto`, `hickory-resolver`, `tokio-dstip`, `getrandom` | **On** |
 | `dns-hsm` | DNSSEC HSM backing via the keystore custody boundary | `cryptoki` (through `synvoid-dnssec-keystore/pkcs11`; fail-closed, no silent fallback) | **Off** |
 | `icmp-filter` | `icmp_filter.rs`, `MainConfig.icmp_filter` | None | **Off** |
-| `mesh` | `mesh.rs` module, `TunnelConfig.mesh`, `MeshConfig` | `ed25519-dalek`, `openraft` | **On** |
+| `mesh` | `mesh.rs` module, `TunnelConfig.mesh`, `MeshConfig` | runtime dependency supplied by synvoid-mesh | **On** |
 | `socket-handoff` | Socket handoff support | None | **On** |
 | `erased_pool` | Erased connection pool | None | **On** |
 | `swagger-ui` | OpenAPI Swagger UI | `utoipa-swagger-ui` | **On** |

@@ -60,15 +60,16 @@ Crates must be published in this exact order. Each crate's path dependencies mus
 | 19 | `synvoid-tunnel` | synvoid-config, synvoid-upstream, synvoid-utils |
 | 20 | `synvoid-mesh` | synvoid-core, synvoid-config, synvoid-utils, synvoid-integrity, synvoid-geoip, synvoid-tls, synvoid-tunnel, synvoid-proxy, synvoid-proxy-cache, synvoid-serverless, synvoid-mesh-protocol, synvoid-platform, synvoid-rate-limit, pqc |
 | 21 | `synvoid-waf` | synvoid-core, synvoid-utils, synvoid-challenge, synvoid-config, synvoid-mesh |
-| 22 | `synvoid-metrics` | synvoid-core, synvoid-utils, synvoid-waf |
-| 23 | `synvoid-ipc` | synvoid-config, synvoid-utils, synvoid-platform, synvoid-metrics, synvoid-tls |
-| 24 | `synvoid-block-store` | synvoid-config, synvoid-core, synvoid-utils, synvoid-waf, synvoid-mesh |
+| 22 | `synvoid-metrics` | synvoid-core, synvoid-utils |
+| 22a | `synvoid-jail-protocol` | serde, postcard, sha2, hex, thiserror (Phase 97; internal SVJL v1 leaf) |
+| 23 | `synvoid-ipc` | synvoid-config, synvoid-utils, synvoid-platform, synvoid-metrics, synvoid-tls, synvoid-jail-protocol |
+| 24 | `synvoid-block-store` | synvoid-config, synvoid-core, synvoid-utils, synvoid-mesh |
 | 25 | `synvoid-serverless` | synvoid-config, synvoid-plugin-runtime |
 | 26 | `synvoid-app-handlers` | synvoid-core, synvoid-config, synvoid-serverless, synvoid-plugin-runtime, synvoid-http-client |
 | 27 | `synvoid-static-files` | synvoid-config, synvoid-ipc, synvoid-theme, synvoid-utils, synvoid-app-handlers |
 | 28 | `synvoid-honeypot` | synvoid-config, synvoid-utils, synvoid-http-client, synvoid-mesh |
 | 29 | `synvoid-upload` | synvoid-config, synvoid-utils, synvoid-http-client, synvoid-platform, synvoid-app-handlers, synvoid-mesh, synvoid-yara |
-| 29a | `synvoid-jail-runtime` | synvoid-ipc, synvoid-platform, synvoid-plugin-runtime, synvoid-yara (Phase 29; ships `synvoid-wasm-jail` + `synvoid-yara-jail` binaries) |
+| 29a | `synvoid-jail-runtime` | synvoid-jail-protocol, synvoid-platform, synvoid-plugin-runtime, synvoid-yara (Phase 97; ships `synvoid-wasm-jail` + `synvoid-yara-jail` binaries) |
 | 30 | `synvoid-admin` | synvoid-core, synvoid-config, synvoid-ipc, synvoid-waf, synvoid-metrics, synvoid-static-files, synvoid-app-server |
 | 31 | `synvoid-http` | synvoid-core, synvoid-config, synvoid-metrics, synvoid-waf, synvoid-challenge, synvoid-http-client, synvoid-upstream, synvoid-app-server, synvoid-app-handlers, synvoid-proxy, synvoid-upload, synvoid-plugin-runtime, synvoid-utils, synvoid-mesh, synvoid-serverless, synvoid-static-files, synvoid-ipc |
 | 32 | `synvoid-http3` | synvoid-core, synvoid-config, synvoid-http, synvoid-http-client, synvoid-proxy, synvoid-waf, synvoid-metrics, synvoid-platform |

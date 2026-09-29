@@ -1,0 +1,67 @@
+# Forbidden production direct internal edges. Build dependencies count because
+# they execute as part of package production; dev-dependencies are excluded so
+# integration fixtures can exercise real providers without adding runtime edges.
+[[rules]]
+package = "synvoid-core"
+forbidden = ["synvoid-admin", "synvoid-mesh", "synvoid-waf", "synvoid-proxy", "synvoid-http", "synvoid-config", "synvoid-platform", "synvoid-ipc"]
+reason = "core owns neutral contracts and must not depend on domain/runtime owners"
+
+[[rules]]
+package = "synvoid-config-model"
+forbidden = ["synvoid", "synvoid-config", "synvoid-admin", "synvoid-mesh", "synvoid-http", "synvoid-proxy", "synvoid-platform", "synvoid-ipc", "synvoid-http-client", "synvoid-waf", "synvoid-tls", "synvoid-dns", "synvoid-yara"]
+reason = "configuration model owns DTOs only, below loading and runtime authorities"
+
+[[rules]]
+package = "synvoid-utils"
+forbidden = ["synvoid-admin", "synvoid-mesh", "synvoid-waf", "synvoid-proxy", "synvoid-http", "synvoid-config", "synvoid-platform", "synvoid-ipc"]
+reason = "utils must remain below domain and runtime crates"
+
+[[rules]]
+package = "synvoid-metrics"
+forbidden = ["synvoid-waf", "synvoid-proxy", "synvoid-mesh", "synvoid-admin"]
+reason = "metrics observes through neutral labels and payloads"
+
+[[rules]]
+package = "synvoid-block-store"
+forbidden = ["synvoid-waf"]
+reason = "block store consumes the neutral core mitigation contract"
+
+[[rules]]
+package = "synvoid-mesh-protocol"
+forbidden = ["synvoid-mesh", "synvoid-admin", "synvoid-config", "synvoid-platform", "synvoid-ipc", "synvoid-proxy", "synvoid-http", "synvoid-waf", "openraft", "quinn", "yara-x"]
+reason = "mesh protocol remains a low-capability wire and verification leaf"
+
+[[rules]]
+package = "synvoid-upload"
+forbidden = ["synvoid-mesh"]
+reason = "upload consumes an application-owned YARA snapshot capability, not mesh runtime"
+
+[[rules]]
+package = "synvoid-honeypot"
+forbidden = ["synvoid-mesh"]
+reason = "honeypot publishes actionable observations through a root-owned adapter"
+
+[[rules]]
+package = "synvoid-dnssec-keystore"
+forbidden = ["synvoid-dns", "synvoid-mesh", "synvoid-admin", "synvoid-http", "synvoid-proxy"]
+reason = "DNSSEC key custody stays below query and control-plane owners"
+
+[[rules]]
+package = "synvoid-jail-protocol"
+forbidden = ["synvoid", "synvoid-ipc", "synvoid-jail-runtime", "synvoid-platform", "synvoid-config", "synvoid-metrics", "synvoid-plugin-runtime", "synvoid-yara", "tokio", "openraft", "quinn"]
+reason = "SVJL v1 protocol contains only wire/validation/framing semantics"
+
+[[rules]]
+package = "synvoid-yara"
+forbidden = ["synvoid-mesh", "synvoid-upload", "synvoid-jail-runtime", "synvoid-admin", "synvoid-http", "synvoid-proxy"]
+reason = "YARA engine owns execution without depending on its callers"
+
+[[rules]]
+package = "synvoid-rate-limit"
+forbidden = ["synvoid-waf", "synvoid-mesh", "synvoid-admin", "synvoid-http", "synvoid-proxy"]
+reason = "rate-limit contracts remain domain-neutral"
+
+[[rules]]
+package = "synvoid-native-extension"
+forbidden = ["synvoid-plugin-runtime", "synvoid-mesh", "synvoid-admin", "synvoid-http", "synvoid-proxy"]
+reason = "native loader backend remains below plugin orchestration"

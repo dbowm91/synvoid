@@ -14,7 +14,6 @@ mesh = ["dep:synvoid-mesh", "synvoid-mesh/mesh"]
 synvoid-config = { path = "../synvoid-config" , version = "0.1" }
 synvoid-core = { path = "../synvoid-core" , version = "0.1" }
 synvoid-utils = { path = "../synvoid-utils" , version = "0.1" }
-synvoid-waf = { path = "../synvoid-waf" , version = "0.1" }
 synvoid-mesh = { path = "../synvoid-mesh", optional = true , version = "0.1" }
 parking_lot = "0.12"
 serde = { version = "1", features = ["derive"] }

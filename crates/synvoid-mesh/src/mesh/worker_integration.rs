@@ -148,7 +148,8 @@ impl ManagedMeshService for std::sync::Arc<crate::transport::MeshTransport> {
     }
 
     fn is_running(&self) -> bool {
-        self.running_projection
+        self.lifecycle
+            .running_projection
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 

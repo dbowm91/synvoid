@@ -331,7 +331,9 @@ fn execute_show_node_info() -> Result<OneShotOutcome, OneShotError> {
     lines.push("================".to_string());
     lines.push(String::new());
 
-    if let Some(ref mesh) = config.tunnel.mesh {
+    if let Some(ref mesh_model) = config.tunnel.mesh {
+        let mesh = crate::supervisor::mesh::realize_mesh_runtime_config(mesh_model)
+            .map_err(|error| OneShotError::Io(format!("Error realizing mesh identity: {error}")))?;
         lines.push(format!("Mesh Role: {:?}", mesh.role));
         lines.push(format!("Node ID: {}", mesh.node_id()));
         lines.push(format!("Router ID: {}", mesh.router_id()));
@@ -347,7 +349,7 @@ fn execute_show_node_info() -> Result<OneShotOutcome, OneShotError> {
             lines.push("Genesis Key: NOT configured".to_string());
         }
 
-        if mesh.node_identity.genesis_key_base64.is_some() {
+        if mesh_model.node_identity.genesis_key_base64.is_some() {
             lines.push("Genesis Key Base64: configured in node_identity".to_string());
         }
 

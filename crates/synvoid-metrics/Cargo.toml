@@ -13,8 +13,7 @@ rkyv = []
 [dependencies]
 synvoid-core = { path = "../synvoid-core" , version = "0.1" }
 synvoid-utils = { path = "../synvoid-utils" , version = "0.1" }
-synvoid-waf = { path = "../synvoid-waf" , version = "0.1" }
-chrono = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
 parking_lot = "0.12"
 schemars = "0.8"
 serde = { version = "1", features = ["derive"] }

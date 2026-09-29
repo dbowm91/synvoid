@@ -206,25 +206,39 @@ impl<'de> Deserialize<'de> for TokioConfig {
     {
         #[derive(Deserialize)]
         #[serde(untagged)]
-        enum RawValue {
+        enum RawScalar {
             String(String),
             Number(usize),
         }
 
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum RawValue {
+            Scalar(RawScalar),
+            LegacyTable { worker_threads: RawScalar },
+        }
+
         let raw = Option::<RawValue>::deserialize(deserializer)?;
 
-        let worker_threads = match raw {
-            Some(RawValue::String(s)) if s.to_lowercase() == "auto" => {
+        let scalar = match raw {
+            Some(RawValue::Scalar(value))
+            | Some(RawValue::LegacyTable {
+                worker_threads: value,
+            }) => Some(value),
+            None => None,
+        };
+        let worker_threads = match scalar {
+            Some(RawScalar::String(s)) if s.to_lowercase() == "auto" => {
                 std::thread::available_parallelism()
                     .map(|p| p.get())
                     .unwrap_or(4)
             }
-            Some(RawValue::String(s)) => s.parse().unwrap_or_else(|_| {
+            Some(RawScalar::String(s)) => s.parse().unwrap_or_else(|_| {
                 std::thread::available_parallelism()
                     .map(|p| p.get())
                     .unwrap_or(4)
             }),
-            Some(RawValue::Number(n)) => n,
+            Some(RawScalar::Number(n)) => n,
             None => std::thread::available_parallelism()
                 .map(|p| p.get())
                 .unwrap_or(4),

@@ -12,6 +12,7 @@ use super::validation::ConfigValidationError;
 use crate::theme::ThemeDefaults;
 
 #[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
+#[serde(default)]
 pub struct DefaultsConfig {
     pub ratelimit: RateLimitDefaults,
     pub blocked: BlockedDefaults,
@@ -96,6 +97,7 @@ pub struct RateLimitDefaults {
     pub mode: String,
     pub ip: IpRateLimitConfig,
     pub global: GlobalRateLimitConfig,
+    #[serde(default)]
     pub endpoints: Vec<EndpointRateLimitConfig>,
 }
 
@@ -484,6 +486,7 @@ pub struct HoneypotDefaults {
     pub paths_per_ip: usize,
     #[serde(default = "default_honeypot_ttl")]
     pub ttl_secs: u64,
+    #[serde(default)]
     pub block: HoneypotBlockDefaults,
 }
 

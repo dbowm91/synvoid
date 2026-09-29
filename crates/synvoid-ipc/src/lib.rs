@@ -11,6 +11,7 @@ pub mod ipc_rate_limit;
 pub mod ipc_signed;
 pub mod ipc_transport;
 pub mod jail_binary;
+mod jail_metrics;
 pub mod jail_process;
 pub mod jail_protocol;
 pub mod manager;
@@ -30,10 +31,7 @@ pub use jail_binary::{
     jail_binary_name, jail_spawn_args, resolve_jail_binary, resolved_jail_spawn_spec,
     verify_jail_binary, JAIL_WASM_BINARY_NAME, JAIL_YARA_BINARY_NAME,
 };
-pub use jail_process::{
-    serve_jail_connection, JailHandle, JailHandleConfig, JailHandler, JailSpawnSpec,
-    RestartTracker, ServeOutcome,
-};
+pub use jail_process::{JailHandle, JailHandleConfig, JailSpawnSpec, RestartTracker};
 pub use jail_protocol::{
     decode_request, decode_response, encode_request, encode_response, jail_metrics_snapshot,
     read_frame, record_jail_exit, record_jail_failure, record_jail_invocation, record_jail_restart,
@@ -49,6 +47,7 @@ pub use jail_protocol::{
     JAIL_MIN_TIMEOUT_MS, JAIL_PROTOCOL_VERSION, JAIL_RESTART_BASE_BACKOFF_MS,
     JAIL_RESTART_MAX_BACKOFF_MS, JAIL_SHUTDOWN_GRACE_MS,
 };
+pub use synvoid_jail_protocol::{serve_jail_connection, JailHandler, ServeOutcome};
 
 #[cfg(windows)]
 pub mod ipc_windows;

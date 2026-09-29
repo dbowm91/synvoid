@@ -203,7 +203,7 @@ impl Http3Server {
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let start = Instant::now();
         let max_request_size = self.config.max_request_size;
-        let flow = match synvoid_http::prepare_http3_request_dispatch(
+        let flow = match crate::prepare_http3_request_dispatch(
             start,
             resolver,
             remote_addr,
@@ -214,19 +214,19 @@ impl Http3Server {
         )
         .await
         {
-            Ok(synvoid_http::Http3RequestDispatchOutcome::Continue(flow)) => *flow,
-            Ok(synvoid_http::Http3RequestDispatchOutcome::Respond) => {
+            Ok(crate::Http3RequestDispatchOutcome::Continue(flow)) => *flow,
+            Ok(crate::Http3RequestDispatchOutcome::Respond) => {
                 return Ok(());
             }
             Err(e) => return Err(Box::new(e)),
         };
 
-        let synvoid_http::Http3RequestDispatchContext {
+        let crate::Http3RequestDispatchContext {
             prelude,
             mut request_stream,
             connection_guard,
         } = flow;
-        let synvoid_http::Http3RequestPrelude {
+        let crate::Http3RequestPrelude {
             parts,
             route_result,
             client_ip,
@@ -241,7 +241,7 @@ impl Http3Server {
 
         let bandwidth = get_global_bandwidth_tracker_or_log();
 
-        let metadata = synvoid_http::Http3RequestMetadata {
+        let metadata = crate::Http3RequestMetadata {
             start,
             route_result,
             path,
@@ -253,7 +253,7 @@ impl Http3Server {
             client_ip,
         };
 
-        let deps = synvoid_http::Http3DispatchDeps {
+        let deps = crate::Http3DispatchDeps {
             max_request_size,
             streaming_waf_for_body: self.waf.streaming(),
             streaming_waf_for_upstream: self.waf.streaming(),
@@ -264,7 +264,7 @@ impl Http3Server {
             metrics: self.metrics.clone(),
         };
 
-        synvoid_http::handle_http3_request_dispatch(
+        crate::handle_http3_request_dispatch(
             metadata,
             deps,
             &mut request_stream,

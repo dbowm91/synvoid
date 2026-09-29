@@ -1,6 +1,6 @@
 # Architecture Maintenance and Auditability Roadmap (Phases 96-101)
 
-Status: planned/open as of 2026-09-28. No implementation from this campaign has landed yet.
+Status: active; Phases 96–100 implemented and closed 2026-09-29. Phase 101 is unblocked and in progress.
 
 Registered in: plans/roadmap.md.
 
@@ -76,10 +76,12 @@ The next step is internal capability decomposition and consumer-owned narrow ser
 
 1. Phase 96 — workspace dependency-direction cleanup and guard baseline.
 2. Phase 97 — jail protocol leaf extraction.
-3. Phase 98 — HTTP/3 ownership realignment.
-4. Phase 99 — configuration model/runtime capability separation.
-5. Phase 100 — mesh internal capability decomposition and application dependency inversion.
-6. Phase 101 — cross-campaign qualification, architecture reconciliation, and future extraction decisions.
+3. Phase 98 — HTTP/3 ownership realignment (closed 2026-09-28; see
+   `architecture/http3_ownership_phase98_closeout.md`).
+4. Phase 99 — configuration model/runtime capability separation (closed
+   2026-09-28; see `architecture/config_model_phase99_closeout.md`).
+5. Phase 100 — mesh internal capability decomposition and application dependency inversion (closed 2026-09-29; see `architecture/mesh_capability_decomposition_phase100_closeout.md`).
+6. Phase 101 — cross-campaign qualification, architecture reconciliation, and future extraction decisions (unblocked).
 
 Phases are ordered to establish low-level dependency rules before adding new boundaries. Phase 100 depends on the earlier HTTP/config cleanup so it does not build new adapters on transitional ownership.
 
