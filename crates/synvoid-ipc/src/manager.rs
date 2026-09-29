@@ -252,6 +252,13 @@ pub struct ProcessManager {
     workers: Arc<PLRwLock<HashMap<usize, WorkerProcess>>>,
     cpu_worker: Arc<PLRwLock<Option<CpuWorkerProcess>>>,
     unified_server_workers: Arc<PLRwLock<HashMap<usize, UnifiedServerWorkerProcess>>>,
+    /// Supervisor-local Unified Server worker generation identities (M003
+    /// corrective v2). Keyed by `WorkerId.0`; first spawn observes
+    /// generation 1 and every same-ID replacement advances monotonically.
+    /// Retained across `remove_unified_server_worker` so a removed ID that
+    /// is later re-added is a new generation, never a reset to zero.
+    /// Never PID-derived. No wire/protocol change: supervisor-local only.
+    unified_server_worker_generations: Arc<PLRwLock<HashMap<usize, u64>>>,
     next_worker_id: Arc<PLRwLock<usize>>,
     running: Arc<AtomicBool>,
     shutdown_tx: broadcast::Sender<()>,
@@ -285,6 +292,18 @@ pub enum ProcessEvent {
     UnifiedServerWorkerFailed(WorkerId, String),
     ShutdownInitiated,
     ShutdownComplete,
+}
+
+/// Supervisor-local Unified Server worker telemetry snapshot (M003
+/// corrective v2). Carries the explicit process-generation identity the
+/// telemetry bridge uses to detect same-ID restarts without inferring
+/// generations from counter magnitude. No wire/protocol change:
+/// generation is supervisor-local `ProcessManager` state.
+#[derive(Debug, Clone)]
+pub struct UnifiedServerWorkerTelemetrySnapshot {
+    pub worker_id: WorkerId,
+    pub generation: u64,
+    pub metrics: WorkerMetricsPayload,
 }
 
 struct ProcessManagerMetrics {
@@ -348,6 +367,7 @@ impl ProcessManager {
                 workers: Arc::new(PLRwLock::new(HashMap::new())),
                 cpu_worker: Arc::new(PLRwLock::new(None)),
                 unified_server_workers: Arc::new(PLRwLock::new(HashMap::new())),
+                unified_server_worker_generations: Arc::new(PLRwLock::new(HashMap::new())),
                 next_worker_id: Arc::new(PLRwLock::new(0)),
                 running: Arc::new(AtomicBool::new(true)),
                 shutdown_tx,
@@ -886,7 +906,13 @@ impl ProcessManager {
         })?;
 
         let pid = child.id();
-        let unified_worker_process = UnifiedServerWorkerProcess::new(id, pid, child);
+        // M003 corrective v2: allocate the supervisor-local generation
+        // before replacing the entry so same-ID respawns (resize or
+        // failure) advance monotonically and never reset to zero. The
+        // generation is not PID-derived and requires no wire change.
+        let generation = self.next_unified_server_worker_generation(id);
+        let unified_worker_process =
+            UnifiedServerWorkerProcess::new_with_generation(id, pid, child, generation);
 
         {
             let mut unified_server_workers = self.unified_server_workers.write();
@@ -963,6 +989,51 @@ impl ProcessManager {
             .values()
             .map(|w| (w.id, w.metrics.clone()))
             .collect()
+    }
+
+    /// Supervisor-local generation allocator for Unified Server workers
+    /// (M003 corrective v2). First spawn for a worker ID observes
+    /// generation 1; every same-ID replacement advances monotonically
+    /// (saturating at `u64::MAX`). Never zero, never PID-derived, retained
+    /// across explicit removal so re-add is a new generation.
+    pub fn next_unified_server_worker_generation(&self, id: WorkerId) -> u64 {
+        let mut generations = self.unified_server_worker_generations.write();
+        let next = match generations.get(&id.as_usize()).copied() {
+            None => 1,
+            Some(prev) => prev.saturating_add(1).max(1),
+        };
+        generations.insert(id.as_usize(), next);
+        next
+    }
+
+    /// Current supervisor-local generation for a Unified Server worker ID,
+    /// if that ID has ever spawned in this supervisor lifetime.
+    pub fn get_unified_server_worker_generation(&self, id: WorkerId) -> Option<u64> {
+        self.unified_server_worker_generations
+            .read()
+            .get(&id.as_usize())
+            .copied()
+    }
+
+    /// Narrow generation-aware telemetry snapshot for the root telemetry
+    /// bridge (M003 corrective v2). Sorted by worker ID for determinism.
+    /// The legacy `get_all_unified_server_worker_metrics()` remains for
+    /// compatibility; the bridge must use this getter so same-ID restarts
+    /// are detected even when new absolute counters exceed old values.
+    pub fn get_all_unified_server_worker_metrics_with_generation(
+        &self,
+    ) -> Vec<UnifiedServerWorkerTelemetrySnapshot> {
+        let unified_server_workers = self.unified_server_workers.read();
+        let mut out: Vec<UnifiedServerWorkerTelemetrySnapshot> = unified_server_workers
+            .values()
+            .map(|w| UnifiedServerWorkerTelemetrySnapshot {
+                worker_id: w.id,
+                generation: w.generation.max(1),
+                metrics: w.metrics.clone(),
+            })
+            .collect();
+        out.sort_by_key(|s| s.worker_id.as_usize());
+        out
     }
 
     pub fn get_unified_server_worker_metrics(
@@ -2605,5 +2676,69 @@ mod tests {
         {
             let _ = runtime_path;
         }
+    }
+
+    #[test]
+    fn unified_worker_generation_initial_spawn_is_one_and_not_pid_derived() {
+        let (pm, _rx) = ProcessManager::new(ProcessManagerConfig::default(), None);
+        let id = WorkerId(7);
+        // Generation is supervisor-local, never PID-derived: two different
+        // PIDs for the same first spawn must still observe generation 1.
+        let gen = pm.next_unified_server_worker_generation(id);
+        assert_eq!(gen, 1);
+        assert_eq!(pm.get_unified_server_worker_generation(id), Some(1));
+    }
+
+    #[test]
+    fn unified_worker_generation_advances_on_same_id_resize_restart() {
+        let (pm, _rx) = ProcessManager::new(ProcessManagerConfig::default(), None);
+        let id = WorkerId(3);
+        let first = pm.next_unified_server_worker_generation(id);
+        assert_eq!(first, 1);
+        // Simulated threadpool-resize respawn with the same WorkerId.
+        let second = pm.next_unified_server_worker_generation(id);
+        assert_eq!(second, 2);
+        assert!(second > first);
+    }
+
+    #[test]
+    fn unified_worker_generation_advances_on_same_id_failure_restart() {
+        let (pm, _rx) = ProcessManager::new(ProcessManagerConfig::default(), None);
+        let id = WorkerId(5);
+        let g1 = pm.next_unified_server_worker_generation(id);
+        let g2 = pm.next_unified_server_worker_generation(id);
+        // Simulated failure respawn with the same WorkerId.
+        let g3 = pm.next_unified_server_worker_generation(id);
+        assert_eq!((g1, g2, g3), (1, 2, 3));
+    }
+
+    #[test]
+    fn unified_worker_generation_is_monotonic_and_never_zero() {
+        let (pm, _rx) = ProcessManager::new(ProcessManagerConfig::default(), None);
+        let id = WorkerId(9);
+        let mut prev = 0u64;
+        for _ in 0..16 {
+            let gen = pm.next_unified_server_worker_generation(id);
+            assert!(gen >= 1, "generation must never be zero");
+            assert!(gen > prev, "generation must advance monotonically");
+            prev = gen;
+        }
+        // Distinct worker IDs have independent generations.
+        let other = WorkerId(10);
+        assert_eq!(pm.next_unified_server_worker_generation(other), 1);
+        assert_eq!(pm.get_unified_server_worker_generation(id), Some(16));
+    }
+
+    #[test]
+    fn unified_worker_generation_survives_explicit_removal() {
+        let (pm, _rx) = ProcessManager::new(ProcessManagerConfig::default(), None);
+        let id = WorkerId(11);
+        assert_eq!(pm.next_unified_server_worker_generation(id), 1);
+        assert_eq!(pm.next_unified_server_worker_generation(id), 2);
+        // Explicit removal of the worker entry must not reset the
+        // supervisor-local generation: a later re-add is a new generation.
+        pm.remove_unified_server_worker(id);
+        assert_eq!(pm.get_unified_server_worker_generation(id), Some(2));
+        assert_eq!(pm.next_unified_server_worker_generation(id), 3);
     }
 }

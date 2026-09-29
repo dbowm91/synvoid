@@ -189,10 +189,20 @@ pub struct UnifiedServerWorkerProcess {
     pub restart_count: u32,
     pub last_restart_at: Option<Instant>,
     pub ipc: Option<Arc<tokio::sync::Mutex<super::ipc::IpcStream>>>,
+    /// Supervisor-local process-generation identity for the M003 telemetry
+    /// bridge (corrective v2). Same-`WorkerId` respawns share the ID but
+    /// must not share a generation: first spawn observes generation 1 and
+    /// every same-ID replacement advances monotonically. Never PID-derived,
+    /// never zero, never reset by respawn replacement.
+    pub generation: u64,
 }
 
 impl UnifiedServerWorkerProcess {
     pub fn new(id: WorkerId, pid: u32, child: Child) -> Self {
+        Self::new_with_generation(id, pid, child, 1)
+    }
+
+    pub fn new_with_generation(id: WorkerId, pid: u32, child: Child, generation: u64) -> Self {
         Self {
             id,
             base: BaseWorkerProcess::new(pid, child),
@@ -200,6 +210,7 @@ impl UnifiedServerWorkerProcess {
             restart_count: 0,
             last_restart_at: None,
             ipc: None,
+            generation: generation.max(1),
         }
     }
 }

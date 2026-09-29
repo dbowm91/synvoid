@@ -50,7 +50,7 @@ Only joined during shutdown, not monitored live at all.
 |---|-----------|-----------|-------|-------|
 | 1 | `supervisor_ipc_accept` | `process.rs:127` | CriticalControlPlane | IPC accept loop over Unix domain socket / named pipe |
 | 2 | `supervisor_grpc_control_api` | `process.rs:160` | CriticalControlPlane | tonic gRPC control plane server |
-| 3 | `eggbench_telemetry_exporter` | `telemetry_bridge.rs` (exported future) | BestEffortMaintenance | Optional supervisor-side Prometheus exporter for `synvoid.eggbench-telemetry.v1`; spawned only when `[metrics].enabled = true`. Loopback-only by config + runtime contract; exporter future is owned via the bridge's explicit `tokio::spawn` and shuts down on supervisor shutdown signal. |
+| 3 | `eggbench_telemetry_exporter` | `telemetry_bridge.rs` (exported future) | BestEffortMaintenance | Optional supervisor-side Prometheus exporter for `synvoid.eggbench-telemetry.v2`; spawned only when `[metrics].enabled = true`. Loopback-only by config + runtime contract; exporter future is owned via the bridge's explicit `tokio::spawn` and shuts down on supervisor shutdown signal. |
 
 ### Known Exceptions (Not in Registry)
 
@@ -167,7 +167,7 @@ When adding a new long-lived task to the supervisor:
 
 | Aspect | Supervisor | Worker |
 |--------|-----------|--------|
-| `src/supervisor/telemetry_bridge.rs` | Owner of the Eggbench M003 supervisor-side exporter; bridges `ProcessManager` heartbeats into `synvoid.eggbench-telemetry.v1` Prometheus metrics; bound to supervisor lifecycle via shared `broadcast::Receiver<()>` |
+| `src/supervisor/telemetry_bridge.rs` | Owner of the Eggbench M003 supervisor-side exporter; bridges `ProcessManager` heartbeats into `synvoid.eggbench-telemetry.v2` Prometheus metrics; bound to supervisor lifecycle via shared `broadcast::Receiver<()>` |
 | Task classes | 4 classes (see above) | 5 classes (`CriticalService`, `RestartableBackground`, `BoundedChild`, `CpuOffload`, `Detached`) |
 | Documentation | This document | `architecture/worker_task_lifecycle.md` |
 | Shutdown budget | 10 seconds (task join) + `graceful_shutdown_timeout_secs` (drain) | Per-task cancellation tokens + `JoinSet` drain |

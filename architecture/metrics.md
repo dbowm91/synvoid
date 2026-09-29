@@ -140,17 +140,18 @@ pub(crate) static DROPPED_YARA_BROADCASTS: LazyLock<AtomicU64> = LazyLock::new(|
 - **Bandwidth**: Protocol-level bandwidth monitoring
 - **Supervisor (M003 telemetry bridge)**: When `[metrics]` is enabled,
   the supervisor-side `telemetry_bridge.rs` aggregates
-  `ProcessManager::get_all_unified_server_worker_metrics()` + CPU-worker
-  `CpuOffloadStats` heartbeats into the currently implemented
-  `synvoid.eggbench-telemetry.v1` owner inventory. The exporter
+  `ProcessManager::get_all_unified_server_worker_metrics_with_generation()`
+  + CPU-worker `CpuOffloadStats` heartbeats into the
+  `synvoid.eggbench-telemetry.v2` owner inventory. The exporter
   listener is loopback-only and the recorder is installed explicitly
-  exactly once. Post-closeout audit found that v1's counter bridge lacks
-  explicit worker-generation identity and misclassifies some first observations
-  as resets, so its former terminal qualification is superseded. The active
-  corrective advances the qualified owner contract to v2 and adds
-  generation-aware counter semantics plus real Eggbench mapping interoperability.
-  See `plans/eggbench_security_qualification_m003_telemetry_interop_corrective.md`;
-  the v1 closeout is historical evidence only.
+  exactly once. The v1 contract is withdrawn/unqualified historical
+  evidence (wrong body-buffering unit, owner/trial aggregation conflation,
+  first-observation-as-reset, missing generation identity, test-only
+  retirement). v2 carries explicit worker-generation identity, first vs
+  boundary-distinct monotonic bridging with once-per-worker boundary
+  counting, production pruning, and an Eggbench-`PrometheusMappingV1`
+  mapping artifact.
+  See `plans/eggbench_security_qualification_m003_telemetry_interop_corrective.md`.
 
 ---
 

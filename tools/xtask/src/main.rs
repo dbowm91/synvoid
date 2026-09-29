@@ -115,7 +115,7 @@ ICMP-QUALIFY (manual, Phase 91):
     the ignored crate matrix; --cleanup removes harness namespaces.
     Anything unmet is reported as 'not qualified', never success.
 
-EGGBENCH-QUALIFICATION (synvoid.eggbench-qualification.v1 + synvoid.eggbench-telemetry.v1):
+EGGBENCH-QUALIFICATION (synvoid.eggbench-qualification.v1 + synvoid.eggbench-telemetry.v2):
     Materialize the SynVoid-owned qualification asset contract for the
     Eggbench Security Qualification M002 (corpus/provenance) and M003
     (telemetry) consumers. `export` writes a loopback-only minimal runtime

@@ -76,7 +76,7 @@ pub use ipc_transport::{
 };
 pub use manager::{
     check_port_available, check_ports_available, start_health_monitor, ProcessEvent,
-    ProcessManager, ProcessManagerConfig, WorkerConfig,
+    ProcessManager, ProcessManagerConfig, UnifiedServerWorkerTelemetrySnapshot, WorkerConfig,
 };
 pub use pidfile::{PidFileManager, SupervisorLockError, SupervisorLockFile};
 pub use socket_path::{

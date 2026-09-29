@@ -1,7 +1,7 @@
 //! Root-test ownership: QUALIFICATION
 //! Rationale: owner-side live Prometheus telemetry proof for the
 //! Eggbench Security Qualification M003 contract
-//! (`synvoid.eggbench-telemetry.v1`). Exercises the loopback-only
+//! (`synvoid.eggbench-telemetry.v2`). Exercises the loopback-only
 //! supervisor-side exporter through the real minimal
 //! (`--no-default-features`) SynVoid binary against a controlled loopback
 //! origin and proves: every required contract metric is present, finite,
@@ -22,7 +22,7 @@ use serde::Deserialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
-const POLICY_ID: &str = "synvoid.eggbench-telemetry.v1";
+const POLICY_ID: &str = "synvoid.eggbench-telemetry.v2";
 const QUAL_POLICY_ID: &str = "synvoid.eggbench-qualification.v1";
 const DRIVER_UA: &str = "synvoid-eggbench-telemetry-m003/1.0";
 const OPT_IN_ENV: &str = "SYNVOID_EGGBENCH_M003_LIVE_PROOF";

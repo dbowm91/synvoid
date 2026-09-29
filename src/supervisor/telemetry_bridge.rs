@@ -1,7 +1,7 @@
 //! Eggbench Security Qualification M003 telemetry bridge.
 //!
 //! This module owns the supervisor-side subject telemetry aggregation for
-//! the `synvoid.eggbench-telemetry.v1` contract. It bridges heartbeat
+//! the `synvoid.eggbench-telemetry.v2` contract. It bridges heartbeat
 //! snapshots from `ProcessManager` into a bounded set of stable Prometheus
 //! metrics, preserves supervisor-lifetime counter monotonicity across
 //! worker generations, and owns the loopback exporter lifecycle through
@@ -34,26 +34,36 @@
 //! - It does not change worker heartbeat cadence.
 //! - It does not lower any security limit or alter WAF semantics.
 //! - It does not export per-worker / per-site / per-request labels —
-//!   the v1 contract is bounded to aggregate / no-label inventory.
+//!   the v2 contract is bounded to aggregate / no-label inventory.
 //! - It does not push authority into `synvoid-config` or
 //!   `synvoid-config-model`. The runtime decides whether the exporter is
 //!   enabled; the materializer-driven config provides the loopback port.
 //!
-//! See `plans/eggbench_security_qualification_m003_telemetry_contract.md`
-//! for the binding design.
+//! See `plans/eggbench_security_qualification_m003_telemetry_interop_corrective.md`
+//! for the binding corrective design. The v1 contract
+//! (`synvoid.eggbench-telemetry.v1`) is withdrawn/unqualified historical
+//! evidence; v2 is the sole current terminal authority.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
 use metrics_024::{counter as counter_macro, gauge as gauge_macro};
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle, PrometheusRecorder};
-use synvoid_ipc::{CpuOffloadStats, ProcessManager, WorkerId, WorkerMetricsPayload};
+use synvoid_ipc::{
+    CpuOffloadStats, ProcessManager, UnifiedServerWorkerTelemetrySnapshot, WorkerId,
+    WorkerMetricsPayload,
+};
 
 /// Owner contract identifier (immutable; any incompatible owner metric
-/// change requires a new identifier).
-pub const CONTRACT_ID: &str = "synvoid.eggbench-telemetry.v1";
+/// change requires a new identifier). v2 advances from the withdrawn v1
+/// because the corrective fixes a declared unit (`body_buffering_bytes_total`
+/// `events` -> `bytes`, offload/reset counters `events` -> `count`) and
+/// clarifies source-aggregation vs trial-aggregation semantics.
+pub const CONTRACT_ID: &str = "synvoid.eggbench-telemetry.v2";
+/// Owner contract JSON schema identifier.
+pub const CONTRACT_SCHEMA_VERSION: &str = "synvoid.eggbench-telemetry.contract.v2";
 /// Source refresh cadence is the documented Unified Server heartbeat
 /// cadence. M003 telemetry is diagnostic initially; this value is part
 /// of the contract and must match the live worker heartbeat cadence.
@@ -62,8 +72,9 @@ pub const SOURCE_REFRESH_CADENCE_SECS: u64 = 5;
 /// or materializer; the URL form is part of the contract).
 pub const SCRAPE_PATH: &str = "/metrics";
 /// Maximum number of worker generations retained in the bounded
-/// monotonic counter bridge. Excess entries are retired first-in/first-out
-/// so memory stays bounded across many worker restarts.
+/// monotonic counter bridge. Production pruning keeps bridge state bounded
+/// by live `ProcessManager` worker state (see `BridgeState::prune_to_live`);
+/// no arbitrary historical generation FIFO is retained.
 #[allow(dead_code)]
 const MAX_GENERATION_RETENTION: usize = 64;
 
@@ -85,7 +96,7 @@ impl OwnerMetricKind {
 }
 
 /// Owner metric inventory: every metric shipped under
-/// `synvoid.eggbench-telemetry.v1`. Names are underscore-only so
+/// `synvoid.eggbench-telemetry.v2`. Names are underscore-only so
 /// Prometheus name sanitization does not become part of the
 /// compatibility contract.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -105,9 +116,11 @@ pub enum OwnerMetric {
 }
 
 impl OwnerMetric {
-    /// Exact Prometheus name as shipped under `synvoid.eggbench-telemetry.v1`.
+    /// Exact Prometheus name as shipped under `synvoid.eggbench-telemetry.v2`.
     /// Names are part of the compatibility contract; rename = new owner
-    /// contract version.
+    /// contract version. v2 preserves the v1 sample names verbatim to
+    /// reduce downstream churn; only units and aggregation semantics are
+    /// corrected.
     pub const fn prometheus_name(self) -> &'static str {
         match self {
             Self::EventLoopLagMs => "synvoid_subject_event_loop_lag_ms",
@@ -145,7 +158,9 @@ impl OwnerMetric {
 
     /// Unit (the exporter crate does not emit `UNIT` metadata in 0.18.3,
     /// but the unit string is part of the owner contract and the
-    /// manifest records it).
+    /// manifest records it). v2 corrects the v1 unit defect:
+    /// `body_buffering_bytes_total` is `bytes` (not generic `events`);
+    /// offload/reset counters are `count`.
     pub const fn unit(self) -> &'static str {
         match self {
             Self::EventLoopLagMs => "ms",
@@ -154,17 +169,19 @@ impl OwnerMetric {
             Self::WorkerMemoryBytes => "bytes",
             Self::WorkerCpuPercent => "percent",
             Self::CpuWorkerRssBytes => "bytes",
-            Self::BodyBufferingBytesTotal
-            | Self::OffloadSubmissionsTotal
+            Self::BodyBufferingBytesTotal => "bytes",
+            Self::OffloadSubmissionsTotal
             | Self::OffloadTimeoutsTotal
             | Self::OffloadRejectionsTotal
             | Self::OffloadFallbacksTotal
-            | Self::WorkerMetricResetsTotal => "events",
+            | Self::WorkerMetricResetsTotal => "count",
         }
     }
 
-    /// Required vs optional under v1. CPU-worker RSS is optional because
+    /// Required vs optional under v2. CPU-worker RSS is optional because
     /// the supported minimal runtime may run without a CPU worker.
+    /// The resets/boundary counter is optional because it is zero until
+    /// the first generation boundary is observed.
     pub const fn required(self) -> bool {
         !matches!(
             self,
@@ -172,8 +189,13 @@ impl OwnerMetric {
         )
     }
 
-    /// Static owner aggregation rule. See the table in the plan.
-    pub const fn aggregation_rule(self) -> &'static str {
+    /// Static owner/source aggregation rule (supervisor-side, across worker
+    /// heartbeat snapshots at one instant). This is intentionally distinct
+    /// from Eggbench trial aggregation (`mean|max|min` for gauges, none
+    /// for counters) which Eggbench performs across repeated scrapes. A
+    /// producer-side `sum` must never be placed in the trial-aggregation
+    /// field.
+    pub const fn source_aggregation(self) -> &'static str {
         match self {
             Self::EventLoopLagMs => "max",
             Self::RequestQueueP95Ms => "max",
@@ -187,6 +209,29 @@ impl OwnerMetric {
             | Self::OffloadFallbacksTotal => "supervisor_lifetime_monotonic_bridge",
             Self::CpuWorkerRssBytes => "latest_ready",
             Self::WorkerMetricResetsTotal => "supervisor_lifetime_monotonic_bridge",
+        }
+    }
+
+    /// Eggbench trial aggregation for `telemetry-mapping.json` (performed
+    /// by Eggbench across repeated scrapes during a measured trial).
+    /// Gauges use `mean|max|min`; counters use none (`None`). This is
+    /// intentionally distinct from `source_aggregation`: e.g. active
+    /// connections are source-summed across workers at one instant but
+    /// trial-maxed across scrapes.
+    pub const fn trial_aggregation(self) -> Option<&'static str> {
+        match self {
+            Self::EventLoopLagMs => Some("max"),
+            Self::RequestQueueP95Ms => Some("max"),
+            Self::ActiveConnections => Some("max"),
+            Self::WorkerMemoryBytes => Some("max"),
+            Self::WorkerCpuPercent => Some("mean"),
+            Self::CpuWorkerRssBytes => Some("max"),
+            Self::BodyBufferingBytesTotal
+            | Self::OffloadSubmissionsTotal
+            | Self::OffloadTimeoutsTotal
+            | Self::OffloadRejectionsTotal
+            | Self::OffloadFallbacksTotal
+            | Self::WorkerMetricResetsTotal => None,
         }
     }
 
@@ -294,77 +339,150 @@ pub const OWNER_INVENTORY: &[OwnerMetric] = &[
 
 /// Per-worker counter monotonicity state. Worker payloads carry
 /// process-lifetime absolute counters; summing current worker snapshots
-/// can decrease after a worker restart. We retain a per-worker,
-/// per-counter "last seen absolute" and observe reset boundaries
-/// explicitly.
+/// can decrease after a worker restart. We retain the supervisor-observed
+/// generation plus the last-seen absolute per counter, and observe
+/// generation/reset boundaries explicitly rather than inferring them from
+/// counter magnitude.
 #[derive(Debug, Clone, Default)]
 struct WorkerCounterState {
-    /// Last observed absolute value for the worker.
+    /// Supervisor-observed generation for this worker ID.
+    generation: u64,
+    /// Last observed absolute value per bridged counter.
     last_absolute: HashMap<OwnerMetric, u64>,
 }
 
-impl WorkerCounterState {
-    /// Apply the new absolute value, returning the non-negative delta
-    /// (which equals the absolute value on the very first observation
-    /// and on a reset boundary, and the new-old delta otherwise).
-    fn apply(&mut self, metric: OwnerMetric, current: u64) -> (u64, bool) {
-        match self.last_absolute.get(&metric).copied() {
-            None => {
-                self.last_absolute.insert(metric, current);
-                (current, true)
-            }
-            Some(prev) => {
-                if current < prev {
-                    self.last_absolute.insert(metric, current);
-                    (current, true)
-                } else if current == prev {
-                    (0, false)
-                } else {
-                    self.last_absolute.insert(metric, current);
-                    (current - prev, false)
-                }
+/// Typed counter-observation vocabulary (corrective v2). First observation
+/// and reset/generation change are distinct states: a first nonzero
+/// observation seeds cumulative truth and is never counted as a reset.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CounterObservation {
+    /// First observation for this worker ID: seeds cumulative truth.
+    First(u64),
+    /// Same-generation increase: contributes `current - previous`.
+    Delta(u64),
+    /// Explicit generation change: re-baselines, contributes new absolute.
+    GenerationReset(u64),
+    /// Unexpected same-generation decrease: re-baselines without a
+    /// negative delta, contributes new absolute, observable once per
+    /// worker observation.
+    CounterReset(u64),
+    /// Unchanged: contributes zero.
+    Unchanged,
+}
+
+fn observe_counter(
+    previous: Option<u64>,
+    current: u64,
+    generation_changed: bool,
+) -> CounterObservation {
+    match previous {
+        None => CounterObservation::First(current),
+        Some(prev) => {
+            if generation_changed {
+                CounterObservation::GenerationReset(current)
+            } else if current == prev {
+                CounterObservation::Unchanged
+            } else if current > prev {
+                CounterObservation::Delta(current - prev)
+            } else {
+                CounterObservation::CounterReset(current)
             }
         }
     }
 }
 
-/// Bridge state: per-worker counter monotonicity plus the running
-/// supervisor-lifetime counter values. Owned by the bridge task; not
-/// accessed concurrently.
+/// Bridge state: per-worker counter monotonicity plus running
+/// supervisor-lifetime cumulative counter values. Owned by the bridge
+/// task; not accessed concurrently.
+///
+/// `worker_metric_resets_total` (v2 semantics): counts worker
+/// generation-boundary + unexpected same-generation decrease events,
+/// exactly once per worker observation that contains such a boundary —
+/// never once per counter, never for first observations.
 #[derive(Debug, Default)]
 struct BridgeState {
     worker_counter_state: HashMap<WorkerId, WorkerCounterState>,
-    /// Generation FIFO so memory stays bounded. Currently populated by
-    /// `retire` for tests; the bridge task does not yet observe worker
-    /// removal events, so production code does not push into this FIFO
-    /// during a normal run. The constant + field are retained for the
-    /// bounded retention policy promised by the contract.
-    #[allow(dead_code)]
-    retired_generations: Vec<WorkerId>,
-    /// Total resets observed across all workers / generations.
+    /// Supervisor-lifetime cumulative counter truth. Each poll contributes
+    /// only per-worker deltas; the snapshot publishes these cumulative
+    /// values via absolute counter semantics so exposition never decreases.
+    cumulative: CounterDeltas,
+    /// Total generation/reset boundaries observed (v2 meaning above).
     total_resets: u64,
 }
 
 impl BridgeState {
-    fn apply_worker(&mut self, id: WorkerId, payload: &WorkerMetricsPayload) -> CounterDeltas {
-        let state = self
-            .worker_counter_state
-            .entry(id)
-            .or_insert_with(WorkerCounterState::default);
-
-        let mut deltas = CounterDeltas::default();
-        for &metric in &[
+    /// Generation-aware per-worker application (corrective v2).
+    ///
+    /// - first observation seeds cumulative with the current absolute and
+    ///   does not increment `total_resets`;
+    /// - same-generation increase contributes `current - previous`;
+    /// - explicit generation change re-baselines all bridged counters,
+    ///   contributes new absolutes, increments `total_resets` once;
+    /// - unexpected same-generation decrease re-baselines without a
+    ///   negative delta and increments `total_resets` once per worker
+    ///   observation (not once per counter);
+    /// - unchanged contributes zero; arithmetic is saturating.
+    fn apply_worker(
+        &mut self,
+        id: WorkerId,
+        generation: u64,
+        payload: &WorkerMetricsPayload,
+    ) -> CounterDeltas {
+        const BRIDGED: &[OwnerMetric] = &[
             OwnerMetric::BodyBufferingBytesTotal,
             OwnerMetric::OffloadSubmissionsTotal,
             OwnerMetric::OffloadTimeoutsTotal,
             OwnerMetric::OffloadRejectionsTotal,
             OwnerMetric::OffloadFallbacksTotal,
-        ] {
+        ];
+        let generation = generation.max(1);
+        let is_first = !self.worker_counter_state.contains_key(&id);
+        let stored_generation = self
+            .worker_counter_state
+            .get(&id)
+            .map(|s| s.generation)
+            .unwrap_or(0);
+        let generation_changed = !is_first && stored_generation != generation;
+
+        let state = self
+            .worker_counter_state
+            .entry(id)
+            .or_insert_with(WorkerCounterState::default);
+        // Record the observed generation before computing observations so
+        // a new worker ID seeds generation truth immediately.
+        if is_first {
+            state.generation = generation;
+        }
+
+        let mut deltas = CounterDeltas::default();
+        let mut worker_boundary = false;
+        for &metric in BRIDGED {
             let current = metric.worker_counter_value(payload);
-            let (delta, was_first_or_reset) = state.apply(metric, current);
-            if was_first_or_reset && delta > 0 {
-                self.total_resets = self.total_resets.saturating_add(1);
+            let previous = if is_first {
+                None
+            } else {
+                state.last_absolute.get(&metric).copied()
+            };
+            let observation = observe_counter(previous, current, generation_changed);
+            let delta = match observation {
+                CounterObservation::First(v)
+                | CounterObservation::Delta(v)
+                | CounterObservation::GenerationReset(v)
+                | CounterObservation::CounterReset(v) => v,
+                CounterObservation::Unchanged => 0,
+            };
+            // Boundary accounting: generation change or unexpected
+            // same-generation decrease. First observations never count.
+            // Count once per worker observation (see below), not here.
+            match observation {
+                CounterObservation::GenerationReset(_) | CounterObservation::CounterReset(_) => {
+                    worker_boundary = true;
+                }
+                CounterObservation::First(_)
+                | CounterObservation::Delta(_)
+                | CounterObservation::Unchanged => {}
             }
+            state.last_absolute.insert(metric, current);
             match metric {
                 OwnerMetric::BodyBufferingBytesTotal => {
                     deltas.body_buffering_bytes = delta;
@@ -384,17 +502,50 @@ impl BridgeState {
                 _ => {}
             }
         }
+        if generation_changed {
+            state.generation = generation;
+        }
+        if worker_boundary {
+            self.total_resets = self.total_resets.saturating_add(1);
+        }
+        // Accumulate into supervisor-lifetime truth (saturating).
+        self.cumulative.body_buffering_bytes = self
+            .cumulative
+            .body_buffering_bytes
+            .saturating_add(deltas.body_buffering_bytes);
+        self.cumulative.offload_submissions = self
+            .cumulative
+            .offload_submissions
+            .saturating_add(deltas.offload_submissions);
+        self.cumulative.offload_timeouts = self
+            .cumulative
+            .offload_timeouts
+            .saturating_add(deltas.offload_timeouts);
+        self.cumulative.offload_rejections = self
+            .cumulative
+            .offload_rejections
+            .saturating_add(deltas.offload_rejections);
+        self.cumulative.offload_fallbacks = self
+            .cumulative
+            .offload_fallbacks
+            .saturating_add(deltas.offload_fallbacks);
         deltas
     }
 
+    /// Production pruning (corrective v2): retain bridge state only for
+    /// worker IDs present in the authoritative `ProcessManager` snapshot.
+    /// Called on every bridge refresh so retained state is bounded by live
+    /// worker state with no historical FIFO.
+    fn prune_to_live(&mut self, live_ids: &HashSet<WorkerId>) {
+        self.worker_counter_state
+            .retain(|id, _| live_ids.contains(id));
+    }
+
+    /// Backwards-compatible single-ID retirement (tests + transitional
+    /// callers). Production code uses `prune_to_live`.
     #[allow(dead_code)]
     fn retire(&mut self, id: WorkerId) {
-        if self.worker_counter_state.remove(&id).is_some() {
-            self.retired_generations.push(id);
-            while self.retired_generations.len() > MAX_GENERATION_RETENTION {
-                self.retired_generations.remove(0);
-            }
-        }
+        self.worker_counter_state.remove(&id);
     }
 }
 
@@ -577,52 +728,39 @@ pub async fn run_telemetry_bridge_loop(
             _ = ticker.tick() => {}
         }
 
-        let workers = pm.get_all_unified_server_worker_metrics();
+        // Generation-aware authoritative snapshot: explicit worker
+        // generation identity from ProcessManager, never inferred from
+        // counter magnitude (corrective v2).
+        let snapshots: Vec<UnifiedServerWorkerTelemetrySnapshot> =
+            pm.get_all_unified_server_worker_metrics_with_generation();
         let cpu = if pm.is_cpu_worker_ready() {
             Some(pm.get_cpu_worker_cpu_offload_stats())
         } else {
             None
         };
 
-        let mut snapshot = BridgeSnapshot::from_worker_gauges(&workers);
+        // Production pruning: bound bridge state by live ProcessManager
+        // worker state on every refresh (corrective v2 §7).
+        let live_ids: HashSet<WorkerId> = snapshots.iter().map(|s| s.worker_id).collect();
+        state.prune_to_live(&live_ids);
+
+        let gauge_inputs: Vec<(WorkerId, WorkerMetricsPayload)> = snapshots
+            .iter()
+            .map(|s| (s.worker_id, s.metrics.clone()))
+            .collect();
+        let mut snapshot = BridgeSnapshot::from_worker_gauges(&gauge_inputs);
         snapshot.apply_cpu_worker(cpu.as_ref());
 
         // Counter monotonicity: per-worker deltas accumulate into
-        // the supervisor-lifetime snapshot.
-        let mut totals = CounterDeltas::default();
-        for (id, payload) in &workers {
-            let deltas = state.apply_worker(*id, payload);
-            totals.body_buffering_bytes = totals
-                .body_buffering_bytes
-                .saturating_add(deltas.body_buffering_bytes);
-            totals.offload_submissions = totals
-                .offload_submissions
-                .saturating_add(deltas.offload_submissions);
-            totals.offload_timeouts = totals
-                .offload_timeouts
-                .saturating_add(deltas.offload_timeouts);
-            totals.offload_rejections = totals
-                .offload_rejections
-                .saturating_add(deltas.offload_rejections);
-            totals.offload_fallbacks = totals
-                .offload_fallbacks
-                .saturating_add(deltas.offload_fallbacks);
+        // supervisor-lifetime cumulative truth inside BridgeState.
+        for s in &snapshots {
+            state.apply_worker(s.worker_id, s.generation, &s.metrics);
         }
-        snapshot.body_buffering_bytes_total = snapshot
-            .body_buffering_bytes_total
-            .saturating_add(totals.body_buffering_bytes);
-        snapshot.offload_submissions_total = snapshot
-            .offload_submissions_total
-            .saturating_add(totals.offload_submissions);
-        snapshot.offload_timeouts_total = snapshot
-            .offload_timeouts_total
-            .saturating_add(totals.offload_timeouts);
-        snapshot.offload_rejections_total = snapshot
-            .offload_rejections_total
-            .saturating_add(totals.offload_rejections);
-        snapshot.offload_fallbacks_total = snapshot
-            .offload_fallbacks_total
-            .saturating_add(totals.offload_fallbacks);
+        snapshot.body_buffering_bytes_total = state.cumulative.body_buffering_bytes;
+        snapshot.offload_submissions_total = state.cumulative.offload_submissions;
+        snapshot.offload_timeouts_total = state.cumulative.offload_timeouts;
+        snapshot.offload_rejections_total = state.cumulative.offload_rejections;
+        snapshot.offload_fallbacks_total = state.cumulative.offload_fallbacks;
         snapshot.worker_metric_resets_total = state.total_resets;
 
         publish_snapshot(&handle, &snapshot);
@@ -799,11 +937,11 @@ mod tests {
     }
 
     #[test]
-    fn required_metrics_count_matches_v1_inventory() {
+    fn required_metrics_count_matches_v2_inventory() {
         let required = OWNER_INVENTORY.iter().filter(|m| m.required()).count();
         assert_eq!(
             required, 10,
-            "10 required metrics in v1 (CPU-worker RSS + resets optional)"
+            "10 required metrics in v2 (CPU-worker RSS + resets optional)"
         );
     }
 
@@ -851,51 +989,150 @@ mod tests {
     }
 
     #[test]
-    fn counter_first_observation_seeds_baseline_without_emitting_delta() {
+    fn counter_first_nonzero_observation_is_not_a_reset_but_seeds_truth() {
         let id = WorkerId(1);
         let mut state = BridgeState::default();
         let mut payload = empty_payload();
         payload.body_buffering_bytes_total = 1000;
-        let deltas = state.apply_worker(id, &payload);
-        // First observation: the entire absolute value becomes the
-        // baseline; the per-worker contribution to the supervisor
-        // counter is the full 1000 (the supervisor counter simply
-        // equals the sum of current values for the very first snapshot
-        // and only tracks deltas after that).
+        payload.offload_submissions_total = 50;
+        let deltas = state.apply_worker(id, 1, &payload);
         assert_eq!(deltas.body_buffering_bytes, 1000);
-        assert_eq!(state.total_resets, 1, "first observation is also a reset");
+        assert_eq!(deltas.offload_submissions, 50);
+        assert_eq!(
+            state.total_resets, 0,
+            "first nonzero observation must not count as a reset (v2 §6.1)"
+        );
+        assert_eq!(state.cumulative.body_buffering_bytes, 1000);
+        assert_eq!(state.cumulative.offload_submissions, 50);
     }
 
     #[test]
-    fn counter_subsequent_observation_yields_delta_only() {
+    fn counter_same_generation_delta_is_exact() {
         let id = WorkerId(1);
         let mut state = BridgeState::default();
         let mut payload = empty_payload();
         payload.body_buffering_bytes_total = 1000;
-        let _ = state.apply_worker(id, &payload);
+        let _ = state.apply_worker(id, 1, &payload);
 
         payload.body_buffering_bytes_total = 1500;
-        let deltas = state.apply_worker(id, &payload);
+        let deltas = state.apply_worker(id, 1, &payload);
         assert_eq!(deltas.body_buffering_bytes, 500);
-        assert_eq!(state.total_resets, 1, "no new reset on monotonic increase");
+        assert_eq!(state.total_resets, 0, "no new boundary on increase");
+        assert_eq!(state.cumulative.body_buffering_bytes, 1500);
     }
 
     #[test]
-    fn counter_reset_boundary_re_baselines_and_records_reset() {
+    fn counter_unchanged_contributes_zero() {
+        let id = WorkerId(1);
+        let mut state = BridgeState::default();
+        let mut payload = empty_payload();
+        payload.body_buffering_bytes_total = 1000;
+        let _ = state.apply_worker(id, 1, &payload);
+        let deltas = state.apply_worker(id, 1, &payload);
+        assert_eq!(deltas.body_buffering_bytes, 0);
+        assert_eq!(state.total_resets, 0);
+        assert_eq!(state.cumulative.body_buffering_bytes, 1000);
+    }
+
+    #[test]
+    fn explicit_generation_change_lower_value_rebaselines_once() {
         let id = WorkerId(1);
         let mut state = BridgeState::default();
         let mut payload = empty_payload();
         payload.body_buffering_bytes_total = 1500;
-        let _ = state.apply_worker(id, &payload);
+        payload.offload_submissions_total = 300;
+        payload.offload_timeouts_total = 20;
+        payload.offload_rejections_total = 10;
+        payload.offload_fallbacks_total = 5;
+        let _ = state.apply_worker(id, 1, &payload);
 
-        // Worker restart → payload counter resets to a low absolute.
+        // Restarted process, generation 2, counters reset low.
         payload.body_buffering_bytes_total = 200;
-        let deltas = state.apply_worker(id, &payload);
-        // After reset, the bridge re-baselines; the per-worker
-        // contribution to the supervisor-lifetime counter is the new
-        // absolute value (the supervisor counter then never decreases).
+        payload.offload_submissions_total = 30;
+        payload.offload_timeouts_total = 2;
+        payload.offload_rejections_total = 1;
+        payload.offload_fallbacks_total = 0;
+        let deltas = state.apply_worker(id, 2, &payload);
         assert_eq!(deltas.body_buffering_bytes, 200);
-        assert_eq!(state.total_resets, 2);
+        assert_eq!(deltas.offload_submissions, 30);
+        assert_eq!(
+            state.total_resets, 1,
+            "generation transition counts once, not once per metric"
+        );
+        assert_eq!(state.cumulative.body_buffering_bytes, 1700);
+    }
+
+    #[test]
+    fn explicit_generation_change_higher_value_is_still_detected() {
+        let id = WorkerId(1);
+        let mut state = BridgeState::default();
+        let mut payload = empty_payload();
+        payload.body_buffering_bytes_total = 100;
+        let _ = state.apply_worker(id, 1, &payload);
+
+        // Restarted process already accumulated past the old value before
+        // the next bridge poll: magnitude inference alone would miss this,
+        // but explicit generation identity must detect it.
+        payload.body_buffering_bytes_total = 5000;
+        let deltas = state.apply_worker(id, 2, &payload);
+        assert_eq!(deltas.body_buffering_bytes, 5000);
+        assert_eq!(state.total_resets, 1);
+        assert_eq!(state.cumulative.body_buffering_bytes, 5100);
+    }
+
+    #[test]
+    fn unexpected_same_generation_decrease_never_emits_negative_delta() {
+        let id = WorkerId(1);
+        let mut state = BridgeState::default();
+        let mut payload = empty_payload();
+        payload.body_buffering_bytes_total = 1500;
+        payload.offload_submissions_total = 100;
+        let _ = state.apply_worker(id, 1, &payload);
+
+        // Same generation, one counter decreases unexpectedly (no restart
+        // signal). Re-baseline without negative delta; count once for the
+        // worker observation.
+        payload.body_buffering_bytes_total = 200;
+        payload.offload_submissions_total = 120;
+        let deltas = state.apply_worker(id, 1, &payload);
+        assert_eq!(deltas.body_buffering_bytes, 200);
+        assert_eq!(deltas.offload_submissions, 20);
+        assert_eq!(state.total_resets, 1, "one boundary per worker observation");
+        // Cumulative never decreases.
+        assert_eq!(state.cumulative.body_buffering_bytes, 1700);
+        assert_eq!(state.cumulative.offload_submissions, 120);
+    }
+
+    #[test]
+    fn production_pruning_bounds_retained_bridge_state() {
+        let mut state = BridgeState::default();
+        let payload = empty_payload();
+        let _ = state.apply_worker(WorkerId(1), 1, &payload);
+        let _ = state.apply_worker(WorkerId(2), 1, &payload);
+        assert_eq!(state.worker_counter_state.len(), 2);
+        // Simulate a ProcessManager snapshot where worker 2 disappeared.
+        let mut live = HashSet::new();
+        live.insert(WorkerId(1));
+        state.prune_to_live(&live);
+        assert_eq!(state.worker_counter_state.len(), 1);
+        assert!(state.worker_counter_state.contains_key(&WorkerId(1)));
+    }
+
+    #[test]
+    fn repeated_remove_readd_remains_bounded_with_new_generation() {
+        let mut state = BridgeState::default();
+        let payload = empty_payload();
+        for generation in 1..=10u64 {
+            let _ = state.apply_worker(WorkerId(1), generation, &payload);
+            // Each generation is pruned to the live set on refresh; state
+            // holds at most the live worker regardless of history length.
+            let mut live = HashSet::new();
+            live.insert(WorkerId(1));
+            state.prune_to_live(&live);
+            assert_eq!(state.worker_counter_state.len(), 1);
+        }
+        // Ten generations produced nine boundaries (first is not a reset).
+        assert_eq!(state.total_resets, 9);
     }
 
     #[test]
@@ -903,11 +1140,9 @@ mod tests {
         let mut state = BridgeState::default();
         let id = WorkerId(1);
         let payload = empty_payload();
-        let _ = state.apply_worker(id, &payload);
+        let _ = state.apply_worker(id, 1, &payload);
         state.retire(id);
         assert!(state.worker_counter_state.is_empty());
-        // Retire is idempotent and bounded; the FIFO stays small.
-        assert!(state.retired_generations.len() <= MAX_GENERATION_RETENTION);
     }
 
     #[test]
@@ -923,10 +1158,74 @@ mod tests {
     }
 
     #[test]
-    fn contract_id_is_stable() {
-        assert_eq!(CONTRACT_ID, "synvoid.eggbench-telemetry.v1");
+    fn contract_id_is_stable_v2() {
+        assert_eq!(CONTRACT_ID, "synvoid.eggbench-telemetry.v2");
+        assert_eq!(
+            CONTRACT_SCHEMA_VERSION,
+            "synvoid.eggbench-telemetry.contract.v2"
+        );
     }
 
+    #[test]
+    fn body_buffering_uses_bytes_and_offload_counters_use_count() {
+        assert_eq!(OwnerMetric::BodyBufferingBytesTotal.unit(), "bytes");
+        for m in [
+            OwnerMetric::OffloadSubmissionsTotal,
+            OwnerMetric::OffloadTimeoutsTotal,
+            OwnerMetric::OffloadRejectionsTotal,
+            OwnerMetric::OffloadFallbacksTotal,
+            OwnerMetric::WorkerMetricResetsTotal,
+        ] {
+            assert_eq!(m.unit(), "count", "{:?} must use count", m);
+        }
+    }
+
+    #[test]
+    fn source_aggregation_is_distinct_from_trial_aggregation() {
+        // Owner/source aggregation (supervisor across workers at one
+        // instant) vs trial aggregation (Eggbench across scrapes).
+        assert_eq!(OwnerMetric::ActiveConnections.source_aggregation(), "sum");
+        assert_eq!(
+            OwnerMetric::ActiveConnections.trial_aggregation(),
+            Some("max")
+        );
+        assert_eq!(OwnerMetric::WorkerCpuPercent.source_aggregation(), "sum");
+        assert_eq!(
+            OwnerMetric::WorkerCpuPercent.trial_aggregation(),
+            Some("mean")
+        );
+        // Counters carry no trial aggregation.
+        for m in [
+            OwnerMetric::BodyBufferingBytesTotal,
+            OwnerMetric::OffloadSubmissionsTotal,
+            OwnerMetric::OffloadTimeoutsTotal,
+            OwnerMetric::OffloadRejectionsTotal,
+            OwnerMetric::OffloadFallbacksTotal,
+            OwnerMetric::WorkerMetricResetsTotal,
+        ] {
+            assert_eq!(
+                m.trial_aggregation(),
+                None,
+                "{:?} must have no trial aggregation",
+                m
+            );
+        }
+        // Gauges carry only mean|max|min.
+        for m in [
+            OwnerMetric::EventLoopLagMs,
+            OwnerMetric::RequestQueueP95Ms,
+            OwnerMetric::ActiveConnections,
+            OwnerMetric::WorkerMemoryBytes,
+            OwnerMetric::WorkerCpuPercent,
+            OwnerMetric::CpuWorkerRssBytes,
+        ] {
+            assert!(
+                matches!(m.trial_aggregation(), Some("mean" | "max" | "min")),
+                "{:?} trial aggregation must be mean|max|min",
+                m
+            );
+        }
+    }
     #[test]
     fn every_required_metric_has_a_distinct_prometheus_name() {
         let mut seen = std::collections::HashSet::new();
@@ -977,12 +1276,12 @@ mod tests {
     fn no_high_cardinality_labels_in_inventory() {
         // The contract is aggregate/no-label. Every metric name ends in
         // a stable suffix (no `{label}` placeholders) and the
-        // `aggregation_rule` does not reference per-worker IDs.
+        // `source_aggregation` does not reference per-worker IDs.
         for m in OWNER_INVENTORY {
             assert!(!m.prometheus_name().contains('{'));
-            assert!(!m.aggregation_rule().contains("worker_id"));
-            assert!(!m.aggregation_rule().contains("site_id"));
-            assert!(!m.aggregation_rule().contains("path"));
+            assert!(!m.source_aggregation().contains("worker_id"));
+            assert!(!m.source_aggregation().contains("site_id"));
+            assert!(!m.source_aggregation().contains("path"));
         }
     }
 }

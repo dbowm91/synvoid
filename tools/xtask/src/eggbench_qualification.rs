@@ -31,15 +31,18 @@ pub const CORPUS_SCHEMA_VERSION: &str = "eggbench.security_qualification.corpus.
 pub const PROVENANCE_SCHEMA_VERSION: &str = "eggbench.security_qualification.provenance.v1";
 pub const CONFIG_SCHEMA_VERSION: &str = "eggbench.security_qualification.config.v1";
 
-// Telemetry contract (M003): identifiers + schema versions for the
-// supervisor-side Prometheus exporter contract. The contract identifier
-// is owned by SynVoid; an incompatible change requires a new identifier
-// per the binding plan.
-pub const TELEMETRY_CONTRACT_ID: &str = "synvoid.eggbench-telemetry.v1";
-pub const TELEMETRY_CONTRACT_VERSION: &str = "v1";
-pub const TELEMETRY_CONTRACT_SCHEMA_VERSION: &str = "synvoid.eggbench-telemetry.contract.v1";
-pub const TELEMETRY_MAPPING_SCHEMA_VERSION: &str =
-    "eggbench.security_qualification.telemetry_mapping.v1";
+// Telemetry contract (M003 corrective v2): identifiers + schema versions
+// for the supervisor-side Prometheus exporter contract. The contract
+// identifier is owned by SynVoid; v2 advances from the withdrawn v1
+// because the corrective fixes a declared unit and clarifies
+// source-aggregation vs trial-aggregation semantics. The v1 contract ID
+// and mapping schema string are retained in Git history only.
+pub const TELEMETRY_CONTRACT_ID: &str = "synvoid.eggbench-telemetry.v2";
+pub const TELEMETRY_CONTRACT_VERSION: &str = "v2";
+pub const TELEMETRY_CONTRACT_SCHEMA_VERSION: &str = "synvoid.eggbench-telemetry.contract.v2";
+/// Numeric Eggbench mapping schema version (matches pinned Eggbench
+/// `PrometheusMappingV1::MAPPING_SCHEMA_VERSION == 1`).
+pub const TELEMETRY_MAPPING_SCHEMA_VERSION: u32 = 1;
 pub const TELEMETRY_SOURCE_REFRESH_CADENCE_SECS: u64 = 5;
 pub const TELEMETRY_SCRAPE_PATH: &str = "/metrics";
 pub const TELEMETRY_MAPPING_FILENAME: &str = "telemetry-mapping.json";
@@ -315,12 +318,28 @@ pub enum TelemetryMetricKind {
     Counter,
 }
 
+/// Eggbench trial aggregation for gauges (performed by Eggbench across
+/// repeated scrapes). Counters carry no trial aggregation (`None`,
+/// omitted from the mapping JSON). Vocabulary is exactly
+/// `mean|max|min`; owner/source aggregation must never appear here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TelemetryTrialAggregation {
+    Mean,
+    Max,
+    Min,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TelemetryMetricEntry {
     pub prometheus_name: String,
     pub kind: TelemetryMetricKind,
     pub unit: String,
-    pub aggregation: String,
+    /// Owner/source aggregation performed by the supervisor across worker
+    /// heartbeat snapshots at one instant (e.g. `sum`, `max`,
+    /// `supervisor_lifetime_monotonic_bridge`, `latest_ready`). Distinct
+    /// from Eggbench trial aggregation.
+    pub source_aggregation: String,
     pub required: bool,
     pub source_field: String,
     pub reset_semantics: String,
@@ -355,25 +374,36 @@ pub struct TelemetryContract {
 /// artifact records the stable Prometheus name ↔ normalized field
 /// pairing it is bound to.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TelemetryMappingField {
     pub output_name: String,
     pub prometheus_name: String,
     pub kind: TelemetryMetricKind,
     pub unit: String,
-    pub aggregation: String,
+    /// Trial aggregation for gauges; absent (`None`, omitted) for
+    /// counters. Serialized as absent — never owner-side `sum`/bridge
+    /// vocabulary — so pinned Eggbench `PrometheusMappingV1` accepts the
+    /// bytes directly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aggregation: Option<TelemetryTrialAggregation>,
+    /// Exact low-cardinality label selector; omitted means no selector.
+    /// v2 uses no labels.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub labels: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
     pub required: bool,
 }
 
-/// Eggbench-compatible interoperability mapping artifact. Mirrors
-/// Eggbench's landed `prometheus-http` mapping schema v1: an ordered
-/// list of fields, each binding one Prometheus metric to one normalized
-/// `subject_*` field. Produced by the SynVoid materializer; consumed by
-/// the Eggbench generic collector.
+/// Eggbench-compatible interoperability mapping artifact. Structurally
+/// identical to pinned Eggbench `PrometheusMappingV1`: numeric
+/// `schema_version == 1`, `source == "prometheus"`, no `contract_id`,
+/// no owner metadata, `deny_unknown_fields`. Bound to the owner contract
+/// by SHA-256 recorded in `telemetry-contract.json` and provenance.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TelemetryMapping {
-    pub schema_version: String,
+    pub schema_version: u32,
     pub source: String,
-    pub contract_id: String,
     pub fields: Vec<TelemetryMappingField>,
 }
 
@@ -440,7 +470,12 @@ impl TelemetryOwnerMetric {
             Self::WorkerMemoryBytes => "bytes",
             Self::WorkerCpuPercent => "percent",
             Self::CpuWorkerRssBytes => "bytes",
-            _ => "events",
+            Self::BodyBufferingBytesTotal => "bytes",
+            Self::OffloadSubmissionsTotal
+            | Self::OffloadTimeoutsTotal
+            | Self::OffloadRejectionsTotal
+            | Self::OffloadFallbacksTotal
+            | Self::WorkerMetricResetsTotal => "count",
         }
     }
 
@@ -451,7 +486,9 @@ impl TelemetryOwnerMetric {
         ) == false
     }
 
-    pub const fn aggregation(self) -> &'static str {
+    /// Owner/source aggregation (supervisor across worker snapshots at one
+    /// instant). Distinct from Eggbench trial aggregation.
+    pub const fn source_aggregation(self) -> &'static str {
         match self {
             Self::EventLoopLagMs => "max",
             Self::RequestQueueP95Ms => "max",
@@ -460,6 +497,20 @@ impl TelemetryOwnerMetric {
             Self::WorkerCpuPercent => "sum",
             Self::CpuWorkerRssBytes => "latest_ready",
             _ => "supervisor_lifetime_monotonic_bridge",
+        }
+    }
+
+    /// Eggbench trial aggregation for the mapping artifact. Gauges use
+    /// `mean|max|min`; counters use none.
+    pub const fn trial_aggregation(self) -> Option<TelemetryTrialAggregation> {
+        match self {
+            Self::EventLoopLagMs => Some(TelemetryTrialAggregation::Max),
+            Self::RequestQueueP95Ms => Some(TelemetryTrialAggregation::Max),
+            Self::ActiveConnections => Some(TelemetryTrialAggregation::Max),
+            Self::WorkerMemoryBytes => Some(TelemetryTrialAggregation::Max),
+            Self::WorkerCpuPercent => Some(TelemetryTrialAggregation::Mean),
+            Self::CpuWorkerRssBytes => Some(TelemetryTrialAggregation::Max),
+            _ => None,
         }
     }
 
@@ -578,7 +629,7 @@ pub fn build_telemetry_contract(
             prometheus_name: m.prometheus_name().to_string(),
             kind: m.kind(),
             unit: m.unit().to_string(),
-            aggregation: m.aggregation().to_string(),
+            source_aggregation: m.source_aggregation().to_string(),
             required: m.required(),
             source_field: m.source_field().to_string(),
             reset_semantics: m.reset_semantics().to_string(),
@@ -629,7 +680,12 @@ pub fn recompute_contract_digest(contract: &TelemetryContract) -> Result<String>
     Ok(sha256_hex(&bytes))
 }
 
-/// Build the Eggbench-consumable telemetry mapping artifact.
+/// Build the Eggbench-consumable telemetry mapping artifact (corrective
+/// v2). Emits exactly the pinned Eggbench `PrometheusMappingV1` shape:
+/// numeric `schema_version == 1`, `source == "prometheus"`, no
+/// `contract_id`, gauge trial aggregation `mean|max|min`, no counter
+/// aggregation, no labels, `subject_*` outputs. Recommended v2 trial
+/// mapping per the corrective plan.
 pub fn build_telemetry_mapping() -> Result<(TelemetryMapping, Vec<u8>)> {
     let fields: Vec<TelemetryMappingField> = TELEMETRY_OWNER_INVENTORY
         .iter()
@@ -638,14 +694,14 @@ pub fn build_telemetry_mapping() -> Result<(TelemetryMapping, Vec<u8>)> {
             prometheus_name: m.prometheus_name().to_string(),
             kind: m.kind(),
             unit: m.unit().to_string(),
-            aggregation: m.aggregation().to_string(),
+            aggregation: m.trial_aggregation(),
+            labels: std::collections::BTreeMap::new(),
             required: m.required(),
         })
         .collect();
     let mapping = TelemetryMapping {
-        schema_version: TELEMETRY_MAPPING_SCHEMA_VERSION.to_string(),
+        schema_version: TELEMETRY_MAPPING_SCHEMA_VERSION,
         source: "prometheus".to_string(),
-        contract_id: TELEMETRY_CONTRACT_ID.to_string(),
         fields,
     };
     let bytes = canonical_json(&mapping)?;
@@ -1204,7 +1260,7 @@ bind_address = "127.0.0.1""#
             ),
             format!(
                 "# Eggbench Security Qualification M002+M003 — policy synvoid.eggbench-qualification.v1\n\
-                 # plus synvoid.eggbench-telemetry.v1 (telemetry exporter on 127.0.0.1:{port})."
+                 # plus synvoid.eggbench-telemetry.v2 (telemetry exporter on 127.0.0.1:{port})."
             ),
         ),
         None => (
@@ -1228,10 +1284,11 @@ host = "127.0.0.1"
 port = {listen_port}
 trusted_proxies = ["127.0.0.1", "::1"]
 
-# NOTE: no [tokio] section. TokioConfig carries a scalar-oriented custom
-# deserializer that rejects the `[tokio]` table form (the shipped
-# config/main.toml trips the same error); the field is #[serde(default)]
-# so omission yields available_parallelism().
+# NOTE: no [tokio] section. Post-Phase-99 `TokioConfig` accepts both the
+# scalar form and the documented legacy `[tokio]` table form (with
+# `worker_threads = <n> | "auto"`); omission yields
+# `available_parallelism()`. The materializer omits the section by choice
+# to keep the qualification runtime on the default scheduler sizing.
 [http]
 header_read_timeout_secs = 10
 keep_alive_timeout_secs = 30
@@ -1980,11 +2037,11 @@ pub fn run_check(opts: CheckOptions, workspace: &Path) -> Result<()> {
                 provenance.telemetry_enabled_config_digest
             )));
         }
-        // Mapping must reference the same contract id and source.
-        if mapping.contract_id != contract.contract_id {
+        // Mapping must be exactly the pinned Eggbench v1 shape.
+        if mapping.schema_version != TELEMETRY_MAPPING_SCHEMA_VERSION {
             return Err(MaterializerError::Invalid(format!(
-                "mapping contract_id mismatch: expected {}, got {}",
-                contract.contract_id, mapping.contract_id
+                "mapping schema_version mismatch: expected {}, got {}",
+                TELEMETRY_MAPPING_SCHEMA_VERSION, mapping.schema_version
             )));
         }
         if mapping.source != "prometheus" {
@@ -1993,9 +2050,32 @@ pub fn run_check(opts: CheckOptions, workspace: &Path) -> Result<()> {
                 mapping.source
             )));
         }
-        // Mapping fields must cover every required owner metric exactly.
+        // Mapping fields must cover every required owner metric exactly,
+        // with Eggbench trial aggregation (gauges mean|max|min, counters
+        // none) and no labels in v2.
         let mut mapped: BTreeMap<&str, &TelemetryMappingField> = BTreeMap::new();
         for f in &mapping.fields {
+            if !f.output_name.starts_with("subject_") {
+                return Err(MaterializerError::Invalid(format!(
+                    "mapping output_name must start with subject_: got {}",
+                    f.output_name
+                )));
+            }
+            if !f.labels.is_empty() {
+                return Err(MaterializerError::Invalid(format!(
+                    "mapping labels must be empty in v2 for {}",
+                    f.prometheus_name
+                )));
+            }
+            // Gauge/counter vs trial-aggregation parity (Eggbench rule:
+            // gauge iff aggregation is Some).
+            let is_gauge = matches!(f.kind, TelemetryMetricKind::Gauge);
+            if is_gauge != f.aggregation.is_some() {
+                return Err(MaterializerError::Invalid(format!(
+                    "mapping aggregation parity violated for {}: kind={:?} aggregation={:?}",
+                    f.prometheus_name, f.kind, f.aggregation
+                )));
+            }
             mapped.insert(&f.prometheus_name, f);
         }
         for &m in TELEMETRY_OWNER_INVENTORY {
@@ -2020,6 +2100,14 @@ pub fn run_check(opts: CheckOptions, workspace: &Path) -> Result<()> {
                         m.prometheus_name(),
                         m.unit(),
                         field.unit
+                    )));
+                }
+                if field.aggregation != m.trial_aggregation() {
+                    return Err(MaterializerError::Invalid(format!(
+                        "telemetry mapping trial aggregation mismatch for {}: expected {:?}, got {:?}",
+                        m.prometheus_name(),
+                        m.trial_aggregation(),
+                        field.aggregation
                     )));
                 }
             }
@@ -2723,8 +2811,102 @@ mod tests {
             .iter()
             .filter(|m| !m.required())
             .count();
-        assert_eq!(required, 10, "10 required metrics in v1");
+        assert_eq!(required, 10, "10 required metrics in v2");
         assert_eq!(optional, 2, "CPU-worker RSS + resets optional");
+    }
+
+    #[test]
+    fn telemetry_mapping_is_exactly_eggbench_v1_compatible() {
+        // Local DTO structurally identical to pinned Eggbench
+        // `PrometheusMappingV1`: numeric schema_version, deny_unknown_fields,
+        // no contract_id, gauge-only trial aggregation, no labels.
+        let (mapping, mapping_bytes) = build_telemetry_mapping().unwrap();
+        assert_eq!(mapping.schema_version, 1);
+        assert_eq!(mapping.schema_version, TELEMETRY_MAPPING_SCHEMA_VERSION);
+        assert_eq!(mapping.source, "prometheus");
+        // No unknown top-level fields: re-parse with a strict local DTO.
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct StrictMapping {
+            schema_version: u32,
+            source: String,
+            fields: Vec<StrictField>,
+        }
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct StrictField {
+            output_name: String,
+            prometheus_name: String,
+            kind: String,
+            unit: String,
+            #[serde(default)]
+            aggregation: Option<String>,
+            #[serde(default)]
+            labels: std::collections::BTreeMap<String, String>,
+            #[serde(default)]
+            required: bool,
+        }
+        let strict: StrictMapping = serde_json::from_slice(&mapping_bytes).expect("strict parse");
+        assert_eq!(strict.schema_version, 1);
+        assert_eq!(strict.source, "prometheus");
+        assert_eq!(strict.fields.len(), TELEMETRY_OWNER_INVENTORY.len());
+        // Raw JSON must not contain the withdrawn owner keys.
+        let raw = String::from_utf8(mapping_bytes.clone()).unwrap();
+        assert!(
+            !raw.contains("contract_id"),
+            "mapping must not carry contract_id"
+        );
+        assert!(
+            !raw.contains("source_aggregation"),
+            "mapping must not carry owner source aggregation"
+        );
+        assert!(
+            !raw.contains("supervisor_lifetime_monotonic_bridge"),
+            "mapping must not carry owner bridge vocabulary"
+        );
+        assert!(
+            !raw.contains("latest_ready"),
+            "mapping must not carry latest_ready"
+        );
+        assert!(!raw.contains("\"sum\""), "mapping must not carry owner sum");
+    }
+
+    #[test]
+    fn telemetry_owner_manifest_distinguishes_source_aggregation() {
+        let (_, mapping_bytes) = build_telemetry_mapping().unwrap();
+        let (contract, _) =
+            build_telemetry_contract(19191, "1.1.0", "deadbeef", &sha256_hex(&mapping_bytes), b"")
+                .unwrap();
+        assert_eq!(contract.contract_id, TELEMETRY_CONTRACT_ID);
+        assert_eq!(
+            contract.schema_version, TELEMETRY_CONTRACT_SCHEMA_VERSION,
+            "owner schema must be v2"
+        );
+        // Owner manifest uses source_aggregation, never bare aggregation.
+        let raw = canonical_json(&contract).unwrap();
+        let raw_str = String::from_utf8(raw).unwrap();
+        assert!(raw_str.contains("source_aggregation"));
+        // Body buffering is bytes; offload/reset counters are count.
+        let mut by_name = BTreeMap::new();
+        for m in &contract.metrics {
+            by_name.insert(m.prometheus_name.as_str(), m);
+        }
+        assert_eq!(
+            by_name
+                .get("synvoid_subject_body_buffering_bytes_total")
+                .unwrap()
+                .unit,
+            "bytes"
+        );
+        for name in [
+            "synvoid_subject_offload_submissions_total",
+            "synvoid_subject_offload_timeouts_total",
+            "synvoid_subject_offload_rejections_total",
+            "synvoid_subject_offload_fallbacks_total",
+            "synvoid_subject_worker_metric_resets_total",
+        ] {
+            assert_eq!(by_name.get(name).unwrap().unit, "count", "unit for {name}");
+        }
     }
 
     #[test]
@@ -2732,7 +2914,7 @@ mod tests {
         let (m1, m1_bytes) = build_telemetry_mapping().unwrap();
         let (m2, m2_bytes) = build_telemetry_mapping().unwrap();
         assert_eq!(m1_bytes, m2_bytes);
-        assert_eq!(m1.contract_id, TELEMETRY_CONTRACT_ID);
+        assert_eq!(m1.schema_version, 1);
         assert_eq!(m1.source, "prometheus");
         let (c1, c1_bytes) =
             build_telemetry_contract(19191, "1.1.0", "deadbeef", &sha256_hex(&m1_bytes), b"")
@@ -2772,8 +2954,27 @@ mod tests {
                     .expect("required mapping missing");
                 assert_eq!(f.kind, m.kind(), "kind for {}", m.prometheus_name());
                 assert_eq!(f.unit, m.unit(), "unit for {}", m.prometheus_name());
+                assert_eq!(
+                    f.aggregation,
+                    m.trial_aggregation(),
+                    "trial aggregation for {}",
+                    m.prometheus_name()
+                );
                 assert!(f.required, "required flag for {}", m.prometheus_name());
+                assert!(f.labels.is_empty(), "no labels in v2");
+                assert!(
+                    f.output_name.starts_with("subject_"),
+                    "output must start with subject_"
+                );
             }
+            // Counter/trial-aggregation parity for every field.
+            let f = by_name.get(m.prometheus_name()).unwrap();
+            assert_eq!(
+                matches!(f.kind, TelemetryMetricKind::Gauge),
+                f.aggregation.is_some(),
+                "gauge iff aggregation for {}",
+                m.prometheus_name()
+            );
         }
         // Eggbench output names are subject_<suffix> — pin a sample.
         assert_eq!(
@@ -2865,7 +3066,8 @@ mod tests {
             telemetry_contract.mapping_sha256,
             sha256_hex(outputs.telemetry_mapping_bytes.as_ref().unwrap())
         );
-        assert_eq!(telemetry_mapping.contract_id, TELEMETRY_CONTRACT_ID);
+        assert_eq!(telemetry_mapping.schema_version, 1);
+        assert_eq!(telemetry_mapping.source, "prometheus");
 
         // Mapped files exist on disk.
         let contract_bytes = fs::read(dir.join(TELEMETRY_CONTRACT_FILENAME)).unwrap();

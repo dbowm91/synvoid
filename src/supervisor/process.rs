@@ -212,13 +212,13 @@ impl SupervisorProcess {
                             bridge_handle,
                         );
                         tracing::info!(
-                            "Registered synvoid.eggbench-telemetry.v1 exporter on {}",
+                            "Registered synvoid.eggbench-telemetry.v2 exporter on {}",
                             bind_addr
                         );
                     }
                     Err(e) => {
                         tracing::error!(
-                            "Failed to start synvoid.eggbench-telemetry.v1 exporter: {:?}",
+                            "Failed to start synvoid.eggbench-telemetry.v2 exporter: {:?}",
                             e
                         );
                     }
