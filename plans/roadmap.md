@@ -1604,7 +1604,10 @@ Execution lanes:
      hygiene, and explicit API/semver classification;
    - terminal disposition is GO EXTRACT, DEFER, or RETAIN from evidence; no
      automatic publication.
-   - Status: **PLANNED / READY** (Phase 106 CLOSED QUALIFIED).
+   - Status: **CLOSED DEFER** (2026-10-01). Packaged source and outside-workspace
+     consumer passed; extraction is deferred on explicit release/security and
+     support prerequisites. See
+     `architecture/honeypot_standalone_qualification_phase107.md`.
    - Plan:
      `plans/phase_107_honeypot_standalone_qualification_extraction_decision.md`.
 

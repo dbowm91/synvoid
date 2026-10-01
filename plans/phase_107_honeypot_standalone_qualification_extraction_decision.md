@@ -1,6 +1,6 @@
 # Phase 107 Plan: Honeypot Standalone Qualification and Extraction Decision
 
-Status: **PLANNED / READY** (Phase 106 CLOSED QUALIFIED at `a87d0b0c`).
+Status: **CLOSED DEFER** (2026-10-01; qualified package, extraction deferred).
 
 Registered in: `plans/roadmap.md` and
 `plans/subsystem_boundary_extraction_roadmap.md`.
@@ -196,3 +196,32 @@ Reject a GO verdict that:
 - turns advisory honeypot intel into implicit enforcement;
 - requires synchronized unreleased commits in two repositories;
 - equates repository extraction with a stable 1.0/public support promise.
+
+## Closeout
+
+Terminal disposition: **DEFER**. The package and independent consumer are
+qualified, but this is not a GO EXTRACT support decision. See
+`architecture/honeypot_standalone_qualification_phase107.md` for the tested
+package evidence, threat model, API classification, and exact blockers.
+
+Verification:
+
+- `cargo test -p synvoid-honeypot --profile ci` — 207 passed;
+- `cargo package -p synvoid-honeypot` — passed;
+- `cargo publish -p synvoid-honeypot --dry-run` — passed; upload explicitly
+  aborted by dry-run;
+- external consumer using extracted `synvoid-honeypot-0.1.0.crate` — passed,
+  including loopback listener, persistence readback, fake publisher, responder,
+  and orderly shutdown;
+- `cargo xtask verify` — passed 10/10 on Phase 106 implementation SHA;
+- `cargo xtask verify-full` — passed 10/10 (7,896 tests and doctests);
+- `cargo xtask verify-release` — passed 14/14, including package inspection;
+  package classification: `synvoid-honeypot` PackagedSourceVerified;
+- `cargo deny check` — passed;
+- `cargo audit` — no vulnerable advisory, six repository-allowed unmaintained
+  dependency warnings.
+
+The qualification head was Phase 106 implementation commit `a87d0b0c` with
+closeout commit `340c13fb`; the external tarball consumer ran after packaging
+that same crate source. No publication or repository creation occurred. Phase
+108 remains ready from Phase 105. Phase 109 remains blocked on Phase 108.

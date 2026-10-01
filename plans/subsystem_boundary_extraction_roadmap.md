@@ -46,7 +46,15 @@ permissions remain unqualified for external support. Phase 107 is READY to run
 packaged consumer, release hygiene, and threat-model qualification before an
 extraction decision.
 
-Disposition: **GO PREPARE**; repository move remains gated on Phase 107 evidence.
+Phase 107 CLOSED **DEFER**: packaged-source and outside-workspace consumer
+qualification passed, but no independent support promise, MSRV, user docs,
+versioned storage schema, hard resource ceilings, parser fuzz campaign,
+multi-target native evidence, or second production consumer exists. No external
+repository or publication is authorized. Exact blockers and API classification
+are recorded in `architecture/honeypot_standalone_qualification_phase107.md`.
+
+Disposition: **RETAIN IN WORKSPACE / DEFER EXTRACTION** until a follow-up plan
+owns those support and security prerequisites.
 
 ### DNS — strong candidate after simplification and dependency inversion
 
