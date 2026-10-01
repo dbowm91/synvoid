@@ -36,19 +36,17 @@ responders, AI budgets, persistence, port rotation, threat-intelligence scoring,
 and an injected `HoneypotThreatPublisher`. The previous direct mesh dependency is
 gone.
 
-Remaining SynVoid coupling is narrow but real:
+Phase 106 CLOSED QUALIFIED at proof-bearing SHA `a87d0b0c`: the runtime config
+is library-owned, persisted DTO translation remains in the root application,
+and normal SynVoid dependency edges are zero. Provider egress and threat
+publication are injected. The adapter preserves the persisted DTO vocabulary;
+the existing range/count runtime cannot exactly represent sparse port lists,
+and current listeners support TCP only. Storage hard limits and platform file
+permissions remain unqualified for external support. Phase 107 is READY to run
+packaged consumer, release hygiene, and threat-model qualification before an
+extraction decision.
 
-- `synvoid-config-model`;
-- `synvoid-http-client`;
-- `synvoid-utils`.
-
-There are also two similarly named configuration surfaces today:
-`synvoid_config_model::honeypot_port::HoneypotPortConfig` used by the
-controller/config model and `synvoid_honeypot::config::PortHoneypotConfig` used
-by the runtime. The extraction work must reconcile that ownership rather than
-creating a third public config vocabulary.
-
-Disposition: **GO PREPARE**, then independently qualify before any repository move.
+Disposition: **GO PREPARE**; repository move remains gated on Phase 107 evidence.
 
 ### DNS — strong candidate after simplification and dependency inversion
 

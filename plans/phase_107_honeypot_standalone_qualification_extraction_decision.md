@@ -1,6 +1,6 @@
 # Phase 107 Plan: Honeypot Standalone Qualification and Extraction Decision
 
-Status: **PLANNED — blocked on Phase 106**.
+Status: **PLANNED / READY** (Phase 106 CLOSED QUALIFIED at `a87d0b0c`).
 
 Registered in: `plans/roadmap.md` and
 `plans/subsystem_boundary_extraction_roadmap.md`.
