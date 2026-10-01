@@ -1,6 +1,6 @@
 # SynVoid Architecture Hardening Roadmap
 
-Status: Phase 102 (eggfetch 0.2.1 patch adoption) is CLOSED QUALIFIED (2026-10-01; closeout `architecture/eggfetch_0_2_1_patch_adoption_closeout.md`). Tracks 1–3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). Eggfetch 0.2 runtime adoption is closed through Phase 62 (`c3568ef4...`) and performance/reproducibility adjudication is closed through Phase 63; Phase 64 docs/evidence-truth correction is closed. Production remains on eggfetch. The EggServe 0.2.2-line inbound H1 campaign remains historical/retained at Phase 65; Phases 66–69 were never started. EggServe 0.3 H1 adoption and corrective requalification are closed as `ADOPTED` through Phase 80 on exact pins `eggserve-server = "=0.4.0"` / `eggserve-primitives = "=0.2.2"`; the Phase 78 terminal claim is superseded by Phase 80 proof-bearing SHA `174fdbcd6f133b35099ed4492f5ed8d3fcaa7d4c` (hosted run `36201213413`). Phase 79 implementation SHA: `171dd1e47f965b04b34465fc72c87adf4d9a9cab`. See `architecture/eggserve_0_3_h1_adoption_closeout.md`. Phases 70–72 remain historical/closed with evidence aligned to their then-current Hyper H1 runtime. The process-sandbox correctness and extraction-readiness campaign (Phases 81-84) remains closed DEFER; Phase 94 corrected and qualified Phase 89's Linux mechanism-selection and native-evidence gaps on exact SHA `e86fb35372b1b66bb59c8a6336bf32e55ff5c93e` (hosted/native run `36271417398`). The independent ICMP policy/enforcement extraction-preparation campaign (Phases 85-88) remains closed RETAIN (see the Post-Phase-80 section below); Phases 90–91 are closed, Phase 92 is CLOSED CORRECTED, Phase 93 is QUALIFIED (superseded by Phase 95 exact-SHA two-run proof `36335520434` on `39bfced25d51267ee5837eaecedae7da9af163d0`), and Phase 95 is CLOSED QUALIFIED with Linux nftables native-supported. Phase 88 stays RETAIN with no extraction authorized. The closed independent cross-repo Eggbench security-qualification asset handoff remains separately registered. The Eggbench Security Qualification M003 telemetry corrective is closed qualified at `739e7ba6f02c5e3f83fe9ff5321b09213182b193` (owner contract `synvoid.eggbench-telemetry.v2`; terminal closeout `architecture/eggbench_security_qualification_m003_telemetry_corrective_closeout.md`); the former v1 terminal qualification remains superseded/withdrawn. The post-Phase-95 architecture-maintenance and auditability campaign (Phases 96–101) is closed qualified on proof-bearing SHA `2bfc3c6cfd1a1f2454f801cc02c01a0cbafa2e30`; see `architecture/architecture_maintenance_auditability_closeout.md`.
+Status: Phase 103 (dependency-security re-audit and Wasmtime remediation) is ACTIVE / READY FOR IMPLEMENTATION. Phase 102 (eggfetch 0.2.1 patch adoption) is CLOSED QUALIFIED (2026-10-01; closeout `architecture/eggfetch_0_2_1_patch_adoption_closeout.md`). Tracks 1–3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). Eggfetch 0.2 runtime adoption is closed through Phase 62 (`c3568ef4...`) and performance/reproducibility adjudication is closed through Phase 63; Phase 64 docs/evidence-truth correction is closed. Production remains on eggfetch. The EggServe 0.2.2-line inbound H1 campaign remains historical/retained at Phase 65; Phases 66–69 were never started. EggServe 0.3 H1 adoption and corrective requalification are closed as `ADOPTED` through Phase 80 on exact pins `eggserve-server = "=0.4.0"` / `eggserve-primitives = "=0.2.2"`; the Phase 78 terminal claim is superseded by Phase 80 proof-bearing SHA `174fdbcd6f133b35099ed4492f5ed8d3fcaa7d4c` (hosted run `36201213413`). Phase 79 implementation SHA: `171dd1e47f965b04b34465fc72c87adf4d9a9cab`. See `architecture/eggserve_0_3_h1_adoption_closeout.md`. Phases 70–72 remain historical/closed with evidence aligned to their then-current Hyper H1 runtime. The process-sandbox correctness and extraction-readiness campaign (Phases 81-84) remains closed DEFER; Phase 94 corrected and qualified Phase 89's Linux mechanism-selection and native-evidence gaps on exact SHA `e86fb35372b1b66bb59c8a6336bf32e55ff5c93e` (hosted/native run `36271417398`). The independent ICMP policy/enforcement extraction-preparation campaign (Phases 85-88) remains closed RETAIN (see the Post-Phase-80 section below); Phases 90–91 are closed, Phase 92 is CLOSED CORRECTED, Phase 93 is QUALIFIED (superseded by Phase 95 exact-SHA two-run proof `36335520434` on `39bfced25d51267ee5837eaecedae7da9af163d0`), and Phase 95 is CLOSED QUALIFIED with Linux nftables native-supported. Phase 88 stays RETAIN with no extraction authorized. The closed independent cross-repo Eggbench security-qualification asset handoff remains separately registered. The Eggbench Security Qualification M003 telemetry corrective is closed qualified at `739e7ba6f02c5e3f83fe9ff5321b09213182b193` (owner contract `synvoid.eggbench-telemetry.v2`; terminal closeout `architecture/eggbench_security_qualification_m003_telemetry_corrective_closeout.md`); the former v1 terminal qualification remains superseded/withdrawn. The post-Phase-95 architecture-maintenance and auditability campaign (Phases 96–101) is closed qualified on proof-bearing SHA `2bfc3c6cfd1a1f2454f801cc02c01a0cbafa2e30`; see `architecture/architecture_maintenance_auditability_closeout.md`.
 
 Scope: this roadmap covers architecture hardening, trust-boundary closure, verification, release readiness, post-hardening cleanup, and the architecture-convergence work required before another broad feature-expansion pass.
 
@@ -1409,4 +1409,82 @@ itself is the only `ACTIVE` plan at registration; the post-Phase-101
 residual candidates (mesh-consensus DEFER, process-manager/IPC DEFER,
 synvoid-filter RETAIN) are not implicitly authorized or unblocked as
 implementation work by this closure.
+
+## Post-Phase-102 Maintenance: Dependency Security Re-audit and Wasmtime Remediation — Phase 103 Active
+
+Status: **ACTIVE / READY FOR IMPLEMENTATION** (registered 2026-10-01).
+
+Plan:
+`plans/phase_103_dependency_security_reaudit_and_wasmtime_remediation.md`.
+
+Planning baseline:
+`daaa154a9bc16f1922da891ad368a7a28da35268`.
+
+Trigger: the Phase 102 closeout preserved two pre-existing dependency-security
+failures rather than hiding them. The 2026-09-29 RustSec advisory refresh now
+requires real maintenance on both resolved Wasmtime lines, and the scheduled
+2026-10-01 exception/fork review deadline has arrived.
+
+Research disposition:
+
+- `RUSTSEC-2026-0315` does not affect the direct Wasmtime 36 LTS line but
+  does affect the YARA transitive 47.0.4 line; 47.x has no patched release.
+- `RUSTSEC-2026-0316` affects both current lines; `36.0.16` is the
+  supported direct-LTS patch and `48.0.3` is the nearest supported line
+  that clears both new advisories for the YARA path.
+- Wasmtime 48 is an LTS line and Rust 1.95+; SynVoid's pinned Rust 1.98.1
+  satisfies its MSRV.
+- official YARA-X v1.21.0 (2026-09-29) still declares Wasmtime 45.0.3, so
+  replacing the existing compatibility fork with stock 1.21.0 would not
+  remediate the Wasmtime findings;
+- upstream YARA-X PR #769, whose 47.0.4 manifest delta Phase 40 mirrored, is
+  now closed unmerged. Phase 103 therefore tests a project-controlled
+  manifest-only `47.0.4 -> 48.0.3` security delta against the exact official
+  YARA-X 1.20.0 source base; any required vendor `src/**` or `build.rs`
+  change is a corrective-plan trigger rather than implicit scope expansion;
+- the only retained advisory exceptions remain RSA
+  `RUSTSEC-2023-0071` and rkyv `RUSTSEC-2026-0235`; both are due for
+  current-path/exposure re-triage before their review deadline is extended;
+- official minify-html remains 0.18.1 and the current upstream dependency
+  chain does not yet provide a demonstrated release path off the retained
+  rkyv 0.7/minifier compatibility line;
+- temporary-fork guards currently assert a literal historical
+  `Re-audit: 2026-10-01` string instead of evaluating expiration. Phase
+  103 makes fork review metadata time-aware using the existing deterministic
+  security-review date mechanism.
+
+Execution shape:
+
+1. reproduce and record the current advisory/graph failures;
+2. patch the direct plugin runtime `36.0.15 -> 36.0.16`;
+3. probe and, only if source-compatible, land YARA's manifest-only
+   `47.0.4 -> 48.0.3` runtime update;
+4. re-triage RSA/rkyv exceptions and both temporary forks, updating only
+   current authority with bounded future review dates;
+5. harden temporary-fork review guards against expired metadata;
+6. run focused plugin/YARA/security/full verification and a bounded YARA
+   compile/scan/reload performance comparison;
+7. clean the isolated Phase 102 duplicate hosted-proof paragraph and stale
+   Phase 64-active roadmap heading;
+8. require normal hosted `ci` and `dependency-security` success on the
+   exact proof-bearing SHA before closeout.
+
+Binding constraints:
+
+- no new ignore for Wasmtime 0315/0316;
+- no stock YARA-X upgrade that resolves a known-affected Wasmtime line;
+- no git dependency or arbitrary contributor branch;
+- no silent source-divergent YARA vendor fork;
+- no Wasmtime-major convergence for its own sake;
+- no WASI filesystem capability addition;
+- no weakening plugin fuel/epoch/resource/sandbox limits or YARA source-only
+  trust boundaries;
+- no date-only exception extension without current exposure/upstream
+  re-triage;
+- preserve historical Phase 25/37/39/40/58-64/102 evidence as historical
+  records rather than bulk-rewriting old version/date statements.
+
+Terminal closeout requires a new
+`architecture/dependency_security_reaudit_phase103_closeout.md` plus green
+exact-SHA hosted `ci` and `dependency-security` evidence.
 
