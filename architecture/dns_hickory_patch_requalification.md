@@ -1,9 +1,10 @@
 # Hickory 0.26.3 Patch Requalification
 
-Status: implementation complete; exact-SHA hosted CI/dependency-security
-qualification pending.
+Status: **CLOSED QUALIFIED** (2026-10-01).
 
 Baseline: `19c0636535f3728e80b7c6777ec6a552c38c61a0` (2026-10-01).
+Proof-bearing implementation SHA: `857d2e76dd453dc9dd0c84aa89bc1293cc8a1e1b`.
+Exact-SHA hosted CI and dependency-security: [run 36922488692](https://github.com/dbowm91/synvoid/actions/runs/36922488692), passed.
 
 ## Dependency change
 
@@ -66,5 +67,9 @@ samples are a sanity check only; observed improvements, especially sub-
 nanosecond limit checks, are treated as run noise and not claimed as product
 gains.
 
-Hosted CI and dependency-security must pass on the exact proof-bearing SHA
-before Phase 105 is marked CLOSED QUALIFIED.
+## Formal closure
+
+Phase 105 is CLOSED QUALIFIED. The qualified baseline, lockfile delta, local
+verification, benchmark evidence, and accepted measurement limits are recorded
+above. Exact-SHA hosted CI and dependency-security both passed on the
+proof-bearing implementation SHA.

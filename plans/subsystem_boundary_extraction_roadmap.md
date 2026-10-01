@@ -57,13 +57,11 @@ currently depends on SynVoid config/core/TLS/GeoIP/platform/utils/keystore and
 optionally mesh. Moving the current crate verbatim would export SynVoid internals
 rather than create a clean independent service.
 
-The Phase 105 implementation has moved the Hickory family from 0.26.1 to
-0.26.3 and completed local tests, feature-profile checks, dependency gates, the
-full verification contract, and bounded before/after benchmarks. The final
-security qualification awaits exact-SHA hosted CI/dependency-security proof.
-Phase 108 remains blocked until that proof is recorded. SynVoid's custom DNS
-implementation must then be audited against functionality now owned by
-Hickory.
+Phase 105 CLOSED QUALIFIED the Hickory family at 0.26.3 on proof-bearing SHA
+`857d2e76dd453dc9dd0c84aa89bc1293cc8a1e1b`; exact-SHA hosted CI and
+dependency-security passed in run `36922488692`. Phase 108 is unblocked and
+ready. SynVoid's custom DNS implementation must be audited against
+functionality now owned by Hickory.
 
 Disposition: **GO MAINTAIN + SIMPLIFY**, then **GO PREPARE** an application-neutral
 boundary if the simplification evidence supports it.

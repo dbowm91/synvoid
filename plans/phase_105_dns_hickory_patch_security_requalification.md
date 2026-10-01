@@ -1,10 +1,10 @@
 # Phase 105 Plan: DNS Hickory Patch Adoption and Security Requalification
 
-Status: **IMPLEMENTATION COMPLETE — PENDING EXACT-SHA HOSTED PROOF**.
+Status: **CLOSED QUALIFIED** (2026-10-01).
 
-Interim evidence: `architecture/dns_hickory_patch_requalification.md`.
-The terminal CLOSED QUALIFIED status remains gated on hosted CI and
-dependency-security for the exact proof-bearing SHA.
+Closeout: `architecture/dns_hickory_patch_requalification.md`.
+Proof-bearing implementation SHA: `857d2e76dd453dc9dd0c84aa89bc1293cc8a1e1b`.
+Exact-SHA hosted CI and dependency-security: [run 36922488692](https://github.com/dbowm91/synvoid/actions/runs/36922488692), passed.
 
 Registered in: `plans/roadmap.md` and
 `plans/subsystem_boundary_extraction_roadmap.md`.
@@ -182,8 +182,8 @@ cargo audit
 
 Use the repository's current equivalent if feature names/gates have changed.
 
-Hosted CI + dependency-security on the proof-bearing SHA are required for
-terminal CLOSED QUALIFIED status because this phase is security-motivated.
+Hosted CI and dependency-security passed for the exact proof-bearing SHA; the
+security-motivated terminal qualification gate is satisfied.
 
 ## Acceptance criteria
 

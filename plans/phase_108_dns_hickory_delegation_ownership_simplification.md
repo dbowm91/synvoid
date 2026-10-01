@@ -1,12 +1,12 @@
 # Phase 108 Plan: DNS Hickory Delegation and Ownership Simplification
 
-Status: **PLANNED — blocked on Phase 105**.
+Status: **PLANNED / READY** (Phase 105 CLOSED QUALIFIED).
 
 Registered in: `plans/roadmap.md` and
 `plans/subsystem_boundary_extraction_roadmap.md`.
 
 Planning baseline for registration: `main` at `19c0636535f3728e80b7c6777ec6a552c38c61a0` (2026-10-01).
-Implementation must rebase on the Phase 105 qualified Hickory baseline.
+Qualified Hickory baseline and evidence: `architecture/dns_hickory_patch_requalification.md`, proof-bearing SHA `857d2e76dd453dc9dd0c84aa89bc1293cc8a1e1b`.
 
 Owner: DNS / architecture / security.
 
