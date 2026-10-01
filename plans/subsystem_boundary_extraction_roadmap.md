@@ -69,8 +69,15 @@ dependency-security passed in run `36922488692`. Phase 108 is unblocked and
 ready. SynVoid's custom DNS implementation must be audited against
 functionality now owned by Hickory.
 
-Disposition: **GO MAINTAIN + SIMPLIFY**, then **GO PREPARE** an application-neutral
-boundary if the simplification evidence supports it.
+Phase 108 CLOSED QUALIFIED: the current Hickory-backed message decode and
+resolver/recursor delegation are confirmed; other protocol/server/transport
+overlap remains owned until behavior parity is demonstrated. Phase 108 removed
+no source/dependencies and claims no maintenance or size reduction. The source
+coupling map and Phase 109 inversion requirements are recorded in
+`architecture/dns_hickory_delegation_phase108.md`. Phase 109 is READY.
+
+Disposition: **GO MAINTAIN + PREPARE APPLICATION-NEUTRAL BOUNDARY**; no external
+DNS repository is ready or authorized.
 
 ### ICMP enforcement — boundary prepared, extraction remains RETAIN
 

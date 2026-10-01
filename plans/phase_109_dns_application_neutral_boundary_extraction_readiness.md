@@ -1,6 +1,6 @@
 # Phase 109 Plan: DNS Application-Neutral Boundary and Extraction Readiness
 
-Status: **PLANNED — blocked on Phase 108**.
+Status: **PLANNED / READY** (Phase 108 CLOSED QUALIFIED).
 
 Registered in: `plans/roadmap.md` and
 `plans/subsystem_boundary_extraction_roadmap.md`.

@@ -1,6 +1,6 @@
 # Phase 108 Plan: DNS Hickory Delegation and Ownership Simplification
 
-Status: **PLANNED / READY** (Phase 105 CLOSED QUALIFIED).
+Status: **CLOSED QUALIFIED** (2026-10-01; no unsafe deletions).
 
 Registered in: `plans/roadmap.md` and
 `plans/subsystem_boundary_extraction_roadmap.md`.
@@ -236,3 +236,35 @@ Reject implementation that:
 - treats experimental upstream behavior as production parity without evidence;
 - changes zone/update/transfer/DNSSEC semantics incidentally;
 - mixes application-boundary extraction into this simplification phase.
+
+## Closeout
+
+The disposition matrix and Phase 109 sibling-edge handoff are recorded in
+`architecture/dns_hickory_delegation_phase108.md`. Hickory 0.26.3 already owns
+complete DNS message decoding and ordinary recursive resolver/recursor
+mechanics. The other adjacent baseline implementations were retained or
+deferred because this audit did not establish differential parity for their
+security, wire, lifecycle and compatibility semantics. No source/dependency
+removal is claimed: attributable deltas are 0 edges, 0 modules and 0 LOC.
+
+Verification:
+
+- `cargo test -p synvoid-dns --profile ci` — 1,262 tests passed;
+- `cargo test -p synvoid-dns --profile ci --features mesh` — 1,274 tests
+  passed;
+- focused mesh DNSSEC, TSIG, recursive isolation and transport lifecycle — 155
+  tests passed;
+- `cargo xtask verify` and `cargo xtask verify-full` — passed on the same
+  implementation base at `a87d0b0c` (Phase 106 source implementation);
+- `cargo xtask verify-release` — passed 14/14 and package inspection on that
+  same source base, including all-feature clippy and release checks;
+- `cargo deny check` — passed;
+- `cargo audit` — no vulnerability; six allowed unmaintained dependency
+  warnings.
+
+Current graph evidence (Hickory baseline, no Phase 108 source changes): 48
+active normal direct dependency entries, 7 required SynVoid siblings, one
+optional mesh edge inactive by default, 864 expanded normal-tree package lines.
+No binary-size or benchmark improvement is claimed. Phase 109 is **READY** with
+the exact sibling uses and inversion boundaries recorded in the architecture
+handoff.

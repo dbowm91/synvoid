@@ -1628,7 +1628,8 @@ Execution lanes:
    - move runtime config ownership into DNS, invert mesh/Geo/TLS/platform
      integration behind narrow adapters, and keep DNSSEC key custody separate;
    - prove a standalone DNS consumer and decide GO EXTRACT / DEFER / RETAIN.
-   - Status: **PLANNED / BLOCKED ON PHASE 108**.
+   - Status: **PLANNED / READY** (Phase 108 CLOSED QUALIFIED; application
+     dependency inventory is recorded for Phase 109).
    - Plan:
      `plans/phase_109_dns_application_neutral_boundary_extraction_readiness.md`.
 
