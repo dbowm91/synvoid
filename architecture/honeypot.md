@@ -2,6 +2,15 @@
 
 ## 1. Purpose and Responsibility
 
+The canonical runtime, including `PortHoneypotConfig`, lives in
+`crates/synvoid-honeypot/`. `src/honeypot_port/` re-exports the runtime API and
+owns the adapter from SynVoid's persisted
+`synvoid_config_model::honeypot_port::HoneypotPortConfig`. AI egress is injected
+through the runtime's `AiProviderTransport`; the library does not own
+SynVoid's HTTP client or mesh publication implementation. See
+[`honeypot_application_neutral_boundary.md`](./honeypot_application_neutral_boundary.md)
+for config mapping, retention, storage and transport limits.
+
 The Honeypot system consists of two complementary modules for **attack capture and threat intelligence extraction**:
 
 - **Port Honeypot** (`src/honeypot_port/`): Multi-protocol honeypot with configurable ports, AI responses, and protocol detection
@@ -24,7 +33,7 @@ The Honeypot system consists of two complementary modules for **attack capture a
 ```rust
 pub struct PortHoneypotController {
     runner: Arc<RwLock<Option<Arc<PortHoneypotRunner>>>>,
-    config: Arc<RwLock<HoneypotPortConfig>>,
+    config: Arc<RwLock<PortHoneypotConfig>>,
 }
 
 pub struct ProtocolDetector { /* fingerprinting logic */ }
@@ -363,13 +372,13 @@ Default is `Disabled`. Operators must explicitly opt-in to AI responder usage.
 
 | Field | Default | Purpose |
 |-------|---------|---------|
-| `max_prompt_bytes` | 8192 | Truncates prompt tail to this byte limit before provider call |
-| `max_response_bytes` | 4096 | Truncates provider response to this byte limit |
-| `max_concurrent_requests` | 5 | Global semaphore gating concurrent AI provider calls |
-| `max_turns_per_connection` | 10 | Per-connection turn counter; fallback after limit |
-| `request_timeout_secs` | 10 | Wraps every provider call in `tokio::time::timeout` |
-| `circuit_breaker_max_failures` | 5 | Opens circuit after N consecutive failures |
-| `circuit_breaker_reset_secs` | 60 | Cooldown before circuit half-opens |
+| `max_prompt_bytes` | 4096 | Bounds prompt input before provider calls |
+| `max_response_bytes` | 2048 | Bounds provider response bytes and retained text |
+| `max_concurrent_requests` | 4 | Global semaphore gating concurrent AI provider calls |
+| `max_turns_per_connection` | 5 | Per-connection turn counter; fallback after limit |
+| `max_generation_duration_secs` | 10 | Hard upper bound on each provider call |
+| `max_provider_failures` | 3 | Opens circuit after N consecutive failures |
+| circuit cooldown | 60 seconds | Cooldown before a provider probe is allowed |
 
 ### Circuit Breaker
 

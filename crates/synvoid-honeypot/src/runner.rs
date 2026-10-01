@@ -51,6 +51,17 @@ pub struct PortHoneypotRunner {
 
 impl PortHoneypotRunner {
     pub fn new(config: PortHoneypotConfig) -> Result<Arc<Self>, Box<dyn std::error::Error>> {
+        if !config
+            .transport_protocols
+            .iter()
+            .any(|protocol| protocol.eq_ignore_ascii_case("tcp"))
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "honeypot runtime supports TCP transport only",
+            )
+            .into());
+        }
         let storage = HoneypotStorage::new(&config.storage)?;
         let writer = HoneypotWriter::new(storage.clone(), config.storage.writer.clone());
 
@@ -83,6 +94,11 @@ impl PortHoneypotRunner {
 
     pub fn storage(&self) -> &Arc<HoneypotStorage> {
         &self.storage
+    }
+
+    /// Runtime configuration snapshot used to start this runner.
+    pub fn config(&self) -> &PortHoneypotConfig {
+        &self.config
     }
 
     pub fn writer(&self) -> &Arc<HoneypotWriter> {

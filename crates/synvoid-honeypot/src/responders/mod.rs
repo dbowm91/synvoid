@@ -6,7 +6,8 @@ pub use crate::responses::AiResponder;
 pub use ai::{
     default_ssh_system_prompt, http_system_prompt, mysql_system_prompt, postgresql_system_prompt,
     rdp_system_prompt, redis_system_prompt, smb_system_prompt, smtp_system_prompt,
-    vnc_system_prompt, AiProvider, AiResponderBudget, AnthropicResponder, OllamaResponder,
+    vnc_system_prompt, AiProvider, AiProviderResponse, AiProviderTransport,
+    AiProviderTransportError, AiResponderBudget, AnthropicResponder, OllamaResponder,
     OpenAIResponder,
 };
 pub use r#static::StaticResponder;

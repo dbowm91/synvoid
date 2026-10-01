@@ -3,7 +3,7 @@
 ## Quick Commands
 
 ```bash
-# All tests (182 tests)
+# All tests (206 tests as of Phase 106)
 cargo test -p synvoid-honeypot --all-targets
 
 # All features
@@ -56,8 +56,11 @@ Honeypot crate: deception layer deploying fake service endpoints to detect attac
 - Circuit breaker: 3 failures, 60s cooldown
 
 ### Dependencies
-- `synvoid-storage` (SQLite)
-- `synvoid-config-model` (PortHoneypotConfig)
+- `rusqlite` (bundled SQLite persistence)
+- persisted configuration is adapted by the root composition layer; this crate
+  owns runtime `PortHoneypotConfig`
+- AI provider egress is injected through `AiProviderTransport`; implementations
+  are owned by the embedding application
 - `tokio` (async runtime, channels, semaphores)
 - `rand` (port selection, content variation)
 - `sha2` (payload hashing)

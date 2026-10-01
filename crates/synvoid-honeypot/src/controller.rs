@@ -1,3 +1,4 @@
+use crate::config::PortHoneypotConfig;
 use crate::PortHoneypotRunner;
 use parking_lot::RwLock;
 use std::sync::Arc;
@@ -5,14 +6,11 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct PortHoneypotController {
     runner: Arc<RwLock<Option<Arc<PortHoneypotRunner>>>>,
-    config: Arc<RwLock<synvoid_config_model::honeypot_port::HoneypotPortConfig>>,
+    config: Arc<RwLock<PortHoneypotConfig>>,
 }
 
 impl PortHoneypotController {
-    pub fn new(
-        runner: Arc<PortHoneypotRunner>,
-        config: synvoid_config_model::honeypot_port::HoneypotPortConfig,
-    ) -> Self {
+    pub fn new(runner: Arc<PortHoneypotRunner>, config: PortHoneypotConfig) -> Self {
         Self {
             runner: Arc::new(RwLock::new(Some(runner))),
             config: Arc::new(RwLock::new(config)),
@@ -20,22 +18,18 @@ impl PortHoneypotController {
     }
 
     pub fn from_runner(runner: Arc<PortHoneypotRunner>) -> Self {
+        let config = runner.config().clone();
         Self {
             runner: Arc::new(RwLock::new(Some(runner))),
-            config: Arc::new(RwLock::new(
-                synvoid_config_model::honeypot_port::HoneypotPortConfig::default(),
-            )),
+            config: Arc::new(RwLock::new(config)),
         }
     }
 
-    pub fn get_config(&self) -> synvoid_config_model::honeypot_port::HoneypotPortConfig {
+    pub fn get_config(&self) -> PortHoneypotConfig {
         self.config.read().clone()
     }
 
-    pub fn update_config(
-        &self,
-        new_config: synvoid_config_model::honeypot_port::HoneypotPortConfig,
-    ) -> Result<(), String> {
+    pub fn update_config(&self, new_config: PortHoneypotConfig) -> Result<(), String> {
         let mut config = self.config.write();
         *config = new_config;
         Ok(())
@@ -81,4 +75,20 @@ pub struct ControllerStatus {
     pub pause_reason: Option<String>,
     pub active_ports: Vec<u16>,
     pub total_connections: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PortHoneypotController;
+    use crate::{config::PortHoneypotConfig, PortHoneypotRunner};
+
+    #[tokio::test]
+    async fn controller_from_runner_uses_the_runners_runtime_config() {
+        let mut config = PortHoneypotConfig::default();
+        config.site_scope = "tenant-a".into();
+        config.storage.database_path = ":memory:".into();
+        let runner = PortHoneypotRunner::new(config).unwrap();
+        let controller = PortHoneypotController::from_runner(runner);
+        assert_eq!(controller.get_config().site_scope, "tenant-a");
+    }
 }

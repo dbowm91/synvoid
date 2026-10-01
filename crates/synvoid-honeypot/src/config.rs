@@ -25,6 +25,9 @@ fn default_max_concurrent_ai() -> usize {
 fn default_max_provider_failures() -> usize {
     3
 }
+fn default_transport_protocols() -> Vec<String> {
+    vec!["tcp".to_string()]
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThreatIntelConfig {
@@ -102,6 +105,9 @@ impl Default for AiBudgetConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PortHoneypotConfig {
     pub enabled: bool,
+    /// Requested transport protocols; the runtime currently serves TCP only.
+    #[serde(default = "default_transport_protocols")]
+    pub transport_protocols: Vec<String>,
     pub bind_address: IpAddr,
     pub min_port: u16,
     pub max_port: u16,
@@ -136,7 +142,7 @@ pub struct ResponseModeConfig {
     pub responder_type: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct AiConfig {
     /// AI responder mode. Default: `Disabled`.
     #[serde(default)]
@@ -144,6 +150,7 @@ pub struct AiConfig {
     /// Provider identifier: "ollama", "openai", or "anthropic".
     pub provider: String,
     pub endpoint: Option<String>,
+    #[serde(default, skip_serializing)]
     pub api_key: Option<String>,
     pub model: String,
     pub timeout_secs: u64,
@@ -151,6 +158,21 @@ pub struct AiConfig {
     /// Hard budgets for prompt/response sizes, concurrency, and circuit breaker.
     #[serde(default)]
     pub budget: AiBudgetConfig,
+}
+
+impl std::fmt::Debug for AiConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AiConfig")
+            .field("mode", &self.mode)
+            .field("provider", &self.provider)
+            .field("endpoint", &self.endpoint)
+            .field("api_key", &self.api_key.as_ref().map(|_| "[REDACTED]"))
+            .field("model", &self.model)
+            .field("timeout_secs", &self.timeout_secs)
+            .field("system_prompt", &self.system_prompt)
+            .field("budget", &self.budget)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -218,6 +240,7 @@ impl Default for PortHoneypotConfig {
     fn default() -> Self {
         Self {
             enabled: false,
+            transport_protocols: default_transport_protocols(),
             bind_address: IpAddr::from([0, 0, 0, 0]),
             min_port: 10000,
             max_port: 60000,
@@ -369,4 +392,29 @@ fn default_services() -> Vec<ServiceConfig> {
             ],
         },
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AiBudgetConfig, AiConfig, AiResponderMode};
+
+    #[test]
+    fn provider_secrets_are_redacted_from_debug_and_serialization() {
+        let config = AiConfig {
+            mode: AiResponderMode::ExternalProvider,
+            provider: "openai".into(),
+            endpoint: None,
+            api_key: Some("test-secret-must-not-appear".into()),
+            model: "test-model".into(),
+            timeout_secs: 3,
+            system_prompt: None,
+            budget: AiBudgetConfig::default(),
+        };
+        assert!(!format!("{config:?}").contains("test-secret-must-not-appear"));
+        let serialized = serde_json::to_value(&config).unwrap();
+        assert!(serialized.get("api_key").is_none());
+        assert!(!serialized
+            .to_string()
+            .contains("test-secret-must-not-appear"));
+    }
 }

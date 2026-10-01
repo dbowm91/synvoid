@@ -98,7 +98,9 @@ pub async fn update_honeypot_port_config(
     drop(config);
 
     if let Some(ref controller) = state.honeypot.port_honeypot_controller {
-        if let Err(e) = controller.update_config(req.config.clone()) {
+        if let Err(e) = controller.update_config(
+            crate::honeypot_port::runtime_config_from_persisted(&req.config),
+        ) {
             return Ok(Json(AdminMutationResult {
                 status: AdminMutationStatus::Failed,
                 target: "honeypot_port".to_string(),

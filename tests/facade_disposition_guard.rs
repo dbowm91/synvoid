@@ -7,7 +7,8 @@
 //! - removed facades must not be redeclared in `src/lib.rs`, must not exist on disk,
 //!   and must be recorded as removed in the ledger + disposition matrix;
 //! - retained pure facades must stay thin (re-exports only, no local items);
-//! - documented adapters (`config`, `proxy`, `http_client`, `metrics`) are exempt
+//! - documented adapters (`config`, `proxy`, `http_client`, `metrics`,
+//!   `honeypot_port`) are exempt
 //!   from thinness but must be documented in the matrix + ledger.
 //!
 //! NOTE (Phase 25): the pre-existing orphan `.rs` files that used to sit beside
@@ -43,7 +44,6 @@ const PURE_FACADES: &[&str] = &[
     "block_store",
     "fastcgi",
     "geoip:inline",
-    "honeypot_port",
     "http3",
     "listener",
     "location_matcher",
@@ -68,7 +68,8 @@ const PURE_FACADES: &[&str] = &[
 ];
 
 /// Documented adapters exempt from thinness (must be documented, not thin).
-const DOCUMENTED_ADAPTERS: &[&str] = &["config", "proxy", "http_client", "metrics"];
+const DOCUMENTED_ADAPTERS: &[&str] =
+    &["config", "proxy", "http_client", "metrics", "honeypot_port"];
 
 fn entry_source(repo: &std::path::Path, facade: &str) -> Option<String> {
     if let Some(inline) = facade.strip_suffix(":inline") {

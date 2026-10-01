@@ -21,7 +21,7 @@ reverse counts include workspace packages with a normal/build edge.
 | `synvoid-config` | 1 (`config-model`) / 22 | Runtime config owns loading and validation; DTO/default schema boundary is now the lower-capability model crate. |
 | `synvoid-config-model` | 0 / config + honeypot | Schema-bearing DTO/default crate; no runtime loader or mesh key realization dependency. |
 | `synvoid-upload` | 6 / root + HTTP | Removed production mesh edge; YARA source snapshots are provided through a consumer-owned trait. |
-| `synvoid-honeypot` | 3 / root | Depends on config-model, HTTP client, utils; removed production mesh edge through publisher trait. |
+| `synvoid-honeypot` | 0 / root | Runtime config is crate-owned; persisted DTO conversion and AI egress are injected from composition. Removed config-model, HTTP-client and utils edges (Phase 106). |
 | `synvoid-mesh` | 14 / root, block store, DNS, fuzz, HTTP | Still a broad application/control-plane crate; see Phase 100 residual and Phase 101 extraction decision. |
 
 These are source-of-truth manifest counts rather than planning estimates. The
@@ -104,7 +104,7 @@ inputs, so it is not listed per row).
 | synvoid-upstream | Upstream pool, balancing, health (+ site→TLS adapter, Phase 34) | 2488 | Yes — selection, health gating | Limited | 3 (http, proxy, tunnel) | config, http-client, utils | Keep | Narrow egress boundary consumed by proxy/tunnel/http |
 | synvoid-tunnel | QUIC/WireGuard tunnel transports | 11426 | Yes — tunnel lifecycle, routing | Limited | 2 | config, upstream, utils | Keep | `wireguard`/`tun-rs` features isolate heavy transports |
 | synvoid-proxy-cache | Proxy response cache | 1905 | Yes — cache key/TTL/revalidation | Limited | 2 | none | Keep | Zero-dep cache semantics; reusable without proxy engine |
-| synvoid-honeypot | Deception responders + intel extraction | 8199 | Yes — rotation, detection, budgets | Limited | root only | config, http-client, mesh, utils | Keep | Optional deception layer with own invariants |
+| synvoid-honeypot | Deception responders + intel extraction | 8199 | Yes — rotation, detection, budgets | Limited | root only | none (metrics/tracing facades, rusqlite, tokio) | Keep | Publisher trait, runtime-owned config and injected provider transport keep app policy outside the crate (Phase 106) |
 | synvoid-tarpit | Markov-chain tarpit core | 1349 | Yes — generation budgets | Limited | root only | none | Keep | Zero-dep generator core; root owns handler/manager |
 | synvoid-rate-limit | Shared lock-free rate-limit mechanism: sliding windows, neutral contracts, slot hash (Phase 33) | 732 | Yes — rotation/overflow/reset determinism, shard spread | Yes — WAF + mesh consume it; policy-free by design | 1 (mesh) + root WAF composition + compat re-export | none (leaf: std only, no config/metrics/HTTP) | Keep | Mechanism extraction that deletes the mesh window stub and the root window duplicate; blackhole/slotted/shm/token-bucket policy stays domain-owned. Phase 35 retention: 2 real consumers (root WAF `core.rs` + `asn_tracker.rs` via root, mesh `rate_limit.rs` + `transport_types.rs`), std-only leaf, deterministic tests, ~86ns hot path — passes the same bar as every other crate, not kept merely for being new |
 | synvoid-serverless | Serverless function runtime | 2951 | Yes — function lifecycle, mesh serverless | Limited | 3 | config, plugin-runtime | Keep | Runtime boundary over plugin-runtime |

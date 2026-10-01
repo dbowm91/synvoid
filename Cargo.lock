@@ -8547,10 +8547,7 @@ name = "synvoid-honeypot"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "bytes",
  "hex",
- "http 1.4.1",
- "http-body-util",
  "metrics 0.22.4",
  "parking_lot",
  "rand 0.9.4",
@@ -8559,9 +8556,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "synvoid-config-model",
- "synvoid-http-client",
- "synvoid-utils",
  "thiserror 2.0.20",
  "tokio",
  "tracing",

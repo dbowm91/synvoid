@@ -4,13 +4,73 @@ use crate::ai_budget::{
 use crate::config::AiBudgetConfig;
 use crate::responses::{AiResponder, HoneypotContext};
 use async_trait::async_trait;
-use http::Method;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
-use synvoid_http_client::eggfetch_transport::{native_to_httpresponse, EggfetchUpstreamClient};
-use synvoid_http_client::UpstreamTlsConfig;
+
+/// Application supplied, bounded JSON egress for AI providers. Implementors
+/// own TLS/proxy policy and must enforce `max_response_bytes` while reading.
+#[async_trait]
+pub trait AiProviderTransport: Send + Sync {
+    async fn post_json(
+        &self,
+        url: &str,
+        headers: &[(String, String)],
+        body: Vec<u8>,
+        timeout: Duration,
+        max_response_bytes: usize,
+    ) -> Result<AiProviderResponse, AiProviderTransportError>;
+}
+
+pub struct AiProviderResponse {
+    pub status: u16,
+    pub body: Vec<u8>,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum AiProviderTransportError {
+    #[error("provider transport failed")]
+    Failed,
+    #[error("provider request timed out")]
+    TimedOut,
+    #[error("provider response status {0}")]
+    Status(u16),
+    #[error("provider response exceeded {limit} bytes")]
+    ResponseTooLarge { limit: usize },
+    #[error("provider request exceeded {limit} bytes")]
+    RequestTooLarge { limit: usize },
+}
+
+fn serialize_bounded_request<T: Serialize>(
+    value: &T,
+    budget: &AiBudgetConfig,
+) -> Result<Vec<u8>, AiProviderTransportError> {
+    const JSON_OVERHEAD_ALLOWANCE: usize = 4096;
+    let limit = budget
+        .max_prompt_bytes
+        .saturating_mul(2)
+        .saturating_add(JSON_OVERHEAD_ALLOWANCE);
+    let body = serde_json::to_vec(value).map_err(|_| AiProviderTransportError::Failed)?;
+    if body.len() > limit {
+        return Err(AiProviderTransportError::RequestTooLarge { limit });
+    }
+    Ok(body)
+}
+
+fn ensure_model_bound(model: &str) -> Result<(), AiProviderTransportError> {
+    if model.len() > 256 {
+        return Err(AiProviderTransportError::RequestTooLarge { limit: 256 });
+    }
+    Ok(())
+}
+
+fn ensure_api_key_bound(api_key: &str) -> Result<(), AiProviderTransportError> {
+    if api_key.len() > 4096 {
+        return Err(AiProviderTransportError::RequestTooLarge { limit: 4096 });
+    }
+    Ok(())
+}
 
 // ---------------------------------------------------------------------------
 // Provider configs
@@ -40,7 +100,7 @@ impl Default for OllamaConfig {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct OpenAIConfig {
     pub api_key: String,
     pub model: String,
@@ -59,7 +119,7 @@ impl Default for OpenAIConfig {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct AnthropicConfig {
     pub api_key: String,
     pub model: String,
@@ -112,28 +172,20 @@ impl Clone for AiResponderBudget {
 // ---------------------------------------------------------------------------
 
 pub struct OllamaResponder {
-    client: EggfetchUpstreamClient,
+    transport: Arc<dyn AiProviderTransport>,
     config: OllamaConfig,
     system_prompt: Arc<RwLock<String>>,
     budget: Arc<AiResponderBudget>,
 }
 
 impl OllamaResponder {
-    pub fn new(config: OllamaConfig, budget: Arc<AiResponderBudget>) -> Self {
+    pub fn new(
+        config: OllamaConfig,
+        budget: Arc<AiResponderBudget>,
+        transport: Arc<dyn AiProviderTransport>,
+    ) -> Self {
         Self {
-            // Phase 60: eggfetch lane. Mirrors `create_http_client()` (5s
-            // connect, 1000 idle/host, 30s idle, plaintext-permitting
-            // default TLS — providers are frequently plaintext loopback).
-            client: EggfetchUpstreamClient::build(
-                Duration::from_secs(5),
-                1000,
-                Duration::from_secs(30),
-                &UpstreamTlsConfig {
-                    allow_plaintext: true,
-                    ..UpstreamTlsConfig::default()
-                },
-            )
-            .expect("eggfetch lane must build for default AI policy"),
+            transport,
             config,
             system_prompt: Arc::new(RwLock::new(default_ssh_system_prompt())),
             budget,
@@ -171,7 +223,11 @@ impl AiResponder for OllamaResponder {
             .ok_or(BudgetExceeded::ConcurrencyLimit)?;
 
         let truncated = truncate_prompt(prompt, self.budget.config.max_prompt_bytes);
-        let system = self.system_prompt.read().clone();
+        let system = truncate_response(
+            &self.system_prompt.read(),
+            self.budget.config.max_prompt_bytes,
+        );
+        ensure_model_bound(&self.config.model)?;
 
         let payload = serde_json::json!({
             "model": self.config.model,
@@ -187,6 +243,11 @@ impl AiResponder for OllamaResponder {
         });
 
         let url = format!("{}/api/chat", self.config.endpoint);
+        if url.len() > 2048 {
+            self.budget.circuit_breaker.record_failure();
+            return Err(AiProviderTransportError::RequestTooLarge { limit: 2048 }.into());
+        }
+        let body = serialize_bounded_request(&payload, &self.budget.config)?;
         let timeout = Duration::from_secs(
             self.config
                 .timeout_secs
@@ -195,11 +256,28 @@ impl AiResponder for OllamaResponder {
 
         match tokio::time::timeout(
             timeout,
-            self.client.post_json_with_timeout(&url, &payload, timeout),
+            self.transport.post_json(
+                &url,
+                &[("content-type".into(), "application/json".into())],
+                body,
+                timeout,
+                self.budget.config.max_response_bytes,
+            ),
         )
         .await
         {
             Ok(Ok(response)) => {
+                if response.body.len() > self.budget.config.max_response_bytes {
+                    self.budget.circuit_breaker.record_failure();
+                    return Err(AiProviderTransportError::ResponseTooLarge {
+                        limit: self.budget.config.max_response_bytes,
+                    }
+                    .into());
+                }
+                if !(200..300).contains(&response.status) {
+                    self.budget.circuit_breaker.record_failure();
+                    return Err(AiProviderTransportError::Status(response.status).into());
+                }
                 let result: serde_json::Value = serde_json::from_slice(&response.body)?;
                 if let Some(content) = result["message"]["content"].as_str() {
                     self.budget.circuit_breaker.record_success();
@@ -212,24 +290,20 @@ impl AiResponder for OllamaResponder {
                     Err("invalid response from Ollama".into())
                 }
             }
-            Ok(Err(e)) => {
+            Ok(Err(_)) => {
                 self.budget.circuit_breaker.record_failure();
-                Err(e.to_string().into())
+                Err(AiProviderTransportError::Failed.into())
             }
             Err(_) => {
                 self.budget.circuit_breaker.record_failure();
-                Err(BudgetExceeded::PromptTooLarge {
-                    limit: 0,
-                    actual: 0,
-                }
-                .into())
+                Err(AiProviderTransportError::TimedOut.into())
             }
         }
     }
 
     fn clone_box(&self) -> Box<dyn AiResponder> {
         Box::new(Self {
-            client: self.client.clone(),
+            transport: self.transport.clone(),
             config: self.config.clone(),
             system_prompt: self.system_prompt.clone(),
             budget: self.budget.clone(),
@@ -242,28 +316,20 @@ impl AiResponder for OllamaResponder {
 // ---------------------------------------------------------------------------
 
 pub struct OpenAIResponder {
-    client: EggfetchUpstreamClient,
+    transport: Arc<dyn AiProviderTransport>,
     config: OpenAIConfig,
     system_prompt: Arc<RwLock<String>>,
     budget: Arc<AiResponderBudget>,
 }
 
 impl OpenAIResponder {
-    pub fn new(config: OpenAIConfig, budget: Arc<AiResponderBudget>) -> Self {
+    pub fn new(
+        config: OpenAIConfig,
+        budget: Arc<AiResponderBudget>,
+        transport: Arc<dyn AiProviderTransport>,
+    ) -> Self {
         Self {
-            // Phase 60: eggfetch lane. Mirrors `create_http_client()` (5s
-            // connect, 1000 idle/host, 30s idle, plaintext-permitting
-            // default TLS — providers are frequently plaintext loopback).
-            client: EggfetchUpstreamClient::build(
-                Duration::from_secs(5),
-                1000,
-                Duration::from_secs(30),
-                &UpstreamTlsConfig {
-                    allow_plaintext: true,
-                    ..UpstreamTlsConfig::default()
-                },
-            )
-            .expect("eggfetch lane must build for default AI policy"),
+            transport,
             config,
             system_prompt: Arc::new(RwLock::new(default_ssh_system_prompt())),
             budget,
@@ -328,13 +394,22 @@ impl AiResponder for OpenAIResponder {
             .ok_or(BudgetExceeded::ConcurrencyLimit)?;
 
         let truncated = truncate_prompt(prompt, self.budget.config.max_prompt_bytes);
-        let system = self.system_prompt.read().clone();
+        let system = truncate_response(
+            &self.system_prompt.read(),
+            self.budget.config.max_prompt_bytes,
+        );
 
         let endpoint = self
             .config
             .endpoint
             .clone()
             .unwrap_or_else(|| "https://api.openai.com/v1/chat/completions".to_string());
+        if endpoint.len() > 2048 {
+            self.budget.circuit_breaker.record_failure();
+            return Err(AiProviderTransportError::RequestTooLarge { limit: 2048 }.into());
+        }
+        ensure_model_bound(&self.config.model)?;
+        ensure_api_key_bound(&self.config.api_key)?;
 
         let request = OpenAIRequest {
             model: self.config.model.clone(),
@@ -351,16 +426,7 @@ impl AiResponder for OpenAIResponder {
             temperature: 0.7,
         };
 
-        let uri: http::Uri = endpoint.parse()?;
-        let json = serde_json::to_string(&request)?;
-
-        let req = http::Request::builder()
-            .method(Method::POST)
-            .uri(uri)
-            .header("Authorization", format!("Bearer {}", self.config.api_key))
-            .header("Content-Type", "application/json")
-            .body(http_body_util::Full::new(bytes::Bytes::from(json)))
-            .map_err(|e| e.to_string())?;
+        let body = serialize_bounded_request(&request, &self.budget.config)?;
 
         let timeout = Duration::from_secs(
             self.config
@@ -368,24 +434,47 @@ impl AiResponder for OpenAIResponder {
                 .min(self.budget.config.max_generation_duration_secs),
         );
 
-        // Phase 60: eggfetch lane. Outer deadline preserved exactly;
-        // inner execution is deadline-free (legacy parity: timeout bounds
-        // time-to-headers, body collection unbounded).
-        let response =
-            match tokio::time::timeout(timeout, self.client.execute(req, None, None)).await {
-                Ok(Ok(resp)) => resp,
-                Ok(Err(e)) => {
-                    self.budget.circuit_breaker.record_failure();
-                    return Err(e.to_string().into());
-                }
-                Err(_) => {
-                    self.budget.circuit_breaker.record_failure();
-                    return Err("request timed out".into());
-                }
-            };
+        let response = match tokio::time::timeout(
+            timeout,
+            self.transport.post_json(
+                &endpoint,
+                &[
+                    (
+                        "authorization".into(),
+                        format!("Bearer {}", self.config.api_key),
+                    ),
+                    ("content-type".into(), "application/json".into()),
+                ],
+                body,
+                timeout,
+                self.budget.config.max_response_bytes,
+            ),
+        )
+        .await
+        {
+            Ok(Ok(resp)) => resp,
+            Ok(Err(_)) => {
+                self.budget.circuit_breaker.record_failure();
+                return Err(AiProviderTransportError::Failed.into());
+            }
+            Err(_) => {
+                self.budget.circuit_breaker.record_failure();
+                return Err(AiProviderTransportError::TimedOut.into());
+            }
+        };
 
-        let http_response = native_to_httpresponse(response, None).await;
-        let result: OpenAIResponse = serde_json::from_slice(&http_response.body)?;
+        if response.body.len() > self.budget.config.max_response_bytes {
+            self.budget.circuit_breaker.record_failure();
+            return Err(AiProviderTransportError::ResponseTooLarge {
+                limit: self.budget.config.max_response_bytes,
+            }
+            .into());
+        }
+        if !(200..300).contains(&response.status) {
+            self.budget.circuit_breaker.record_failure();
+            return Err(AiProviderTransportError::Status(response.status).into());
+        }
+        let result: OpenAIResponse = serde_json::from_slice(&response.body)?;
 
         if let Some(choice) = result.choices.first() {
             self.budget.circuit_breaker.record_success();
@@ -401,7 +490,7 @@ impl AiResponder for OpenAIResponder {
 
     fn clone_box(&self) -> Box<dyn AiResponder> {
         Box::new(Self {
-            client: self.client.clone(),
+            transport: self.transport.clone(),
             config: self.config.clone(),
             system_prompt: self.system_prompt.clone(),
             budget: self.budget.clone(),
@@ -414,28 +503,20 @@ impl AiResponder for OpenAIResponder {
 // ---------------------------------------------------------------------------
 
 pub struct AnthropicResponder {
-    client: EggfetchUpstreamClient,
+    transport: Arc<dyn AiProviderTransport>,
     config: AnthropicConfig,
     system_prompt: Arc<RwLock<String>>,
     budget: Arc<AiResponderBudget>,
 }
 
 impl AnthropicResponder {
-    pub fn new(config: AnthropicConfig, budget: Arc<AiResponderBudget>) -> Self {
+    pub fn new(
+        config: AnthropicConfig,
+        budget: Arc<AiResponderBudget>,
+        transport: Arc<dyn AiProviderTransport>,
+    ) -> Self {
         Self {
-            // Phase 60: eggfetch lane. Mirrors `create_http_client()` (5s
-            // connect, 1000 idle/host, 30s idle, plaintext-permitting
-            // default TLS — providers are frequently plaintext loopback).
-            client: EggfetchUpstreamClient::build(
-                Duration::from_secs(5),
-                1000,
-                Duration::from_secs(30),
-                &UpstreamTlsConfig {
-                    allow_plaintext: true,
-                    ..UpstreamTlsConfig::default()
-                },
-            )
-            .expect("eggfetch lane must build for default AI policy"),
+            transport,
             config,
             system_prompt: Arc::new(RwLock::new(default_ssh_system_prompt())),
             budget,
@@ -496,10 +577,15 @@ impl AiResponder for AnthropicResponder {
             .ok_or(BudgetExceeded::ConcurrencyLimit)?;
 
         let truncated = truncate_prompt(prompt, self.budget.config.max_prompt_bytes);
-        let system = self.system_prompt.read().clone();
+        let system = truncate_response(
+            &self.system_prompt.read(),
+            self.budget.config.max_prompt_bytes,
+        );
 
         let max_tokens = (self.budget.config.max_response_bytes / 4).min(1024) as u32;
 
+        ensure_model_bound(&self.config.model)?;
+        ensure_api_key_bound(&self.config.api_key)?;
         let request = AnthropicRequest {
             model: self.config.model.clone(),
             max_tokens,
@@ -510,17 +596,8 @@ impl AiResponder for AnthropicResponder {
             }],
         };
 
-        let uri: http::Uri = "https://api.anthropic.com/v1/messages".parse()?;
-        let json = serde_json::to_string(&request)?;
-
-        let req = http::Request::builder()
-            .method(Method::POST)
-            .uri(uri)
-            .header("x-api-key", &self.config.api_key)
-            .header("anthropic-version", "2023-06-01")
-            .header("Content-Type", "application/json")
-            .body(http_body_util::Full::new(bytes::Bytes::from(json)))
-            .map_err(|e| e.to_string())?;
+        let endpoint = "https://api.anthropic.com/v1/messages";
+        let body = serialize_bounded_request(&request, &self.budget.config)?;
 
         let timeout = Duration::from_secs(
             self.config
@@ -528,24 +605,45 @@ impl AiResponder for AnthropicResponder {
                 .min(self.budget.config.max_generation_duration_secs),
         );
 
-        // Phase 60: eggfetch lane. Outer deadline preserved exactly;
-        // inner execution is deadline-free (legacy parity: timeout bounds
-        // time-to-headers, body collection unbounded).
-        let response =
-            match tokio::time::timeout(timeout, self.client.execute(req, None, None)).await {
-                Ok(Ok(resp)) => resp,
-                Ok(Err(e)) => {
-                    self.budget.circuit_breaker.record_failure();
-                    return Err(e.to_string().into());
-                }
-                Err(_) => {
-                    self.budget.circuit_breaker.record_failure();
-                    return Err("request timed out".into());
-                }
-            };
+        let response = match tokio::time::timeout(
+            timeout,
+            self.transport.post_json(
+                endpoint,
+                &[
+                    ("x-api-key".into(), self.config.api_key.clone()),
+                    ("anthropic-version".into(), "2023-06-01".into()),
+                    ("content-type".into(), "application/json".into()),
+                ],
+                body,
+                timeout,
+                self.budget.config.max_response_bytes,
+            ),
+        )
+        .await
+        {
+            Ok(Ok(resp)) => resp,
+            Ok(Err(_)) => {
+                self.budget.circuit_breaker.record_failure();
+                return Err(AiProviderTransportError::Failed.into());
+            }
+            Err(_) => {
+                self.budget.circuit_breaker.record_failure();
+                return Err(AiProviderTransportError::TimedOut.into());
+            }
+        };
 
-        let http_response = native_to_httpresponse(response, None).await;
-        let result: AnthropicResponse = serde_json::from_slice(&http_response.body)?;
+        if response.body.len() > self.budget.config.max_response_bytes {
+            self.budget.circuit_breaker.record_failure();
+            return Err(AiProviderTransportError::ResponseTooLarge {
+                limit: self.budget.config.max_response_bytes,
+            }
+            .into());
+        }
+        if !(200..300).contains(&response.status) {
+            self.budget.circuit_breaker.record_failure();
+            return Err(AiProviderTransportError::Status(response.status).into());
+        }
+        let result: AnthropicResponse = serde_json::from_slice(&response.body)?;
 
         if let Some(content) = result.content.first() {
             self.budget.circuit_breaker.record_success();
@@ -561,7 +659,7 @@ impl AiResponder for AnthropicResponder {
 
     fn clone_box(&self) -> Box<dyn AiResponder> {
         Box::new(Self {
-            client: self.client.clone(),
+            transport: self.transport.clone(),
             config: self.config.clone(),
             system_prompt: self.system_prompt.clone(),
             budget: self.budget.clone(),
@@ -709,6 +807,64 @@ fn harden_prompt(base: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct FakeTransport;
+
+    #[async_trait]
+    impl AiProviderTransport for FakeTransport {
+        async fn post_json(
+            &self,
+            url: &str,
+            headers: &[(String, String)],
+            body: Vec<u8>,
+            timeout: Duration,
+            max_response_bytes: usize,
+        ) -> Result<AiProviderResponse, AiProviderTransportError> {
+            assert_eq!(url, "https://api.openai.com/v1/chat/completions");
+            assert!(headers
+                .iter()
+                .any(|(name, value)| { name == "authorization" && value == "Bearer fake-secret" }));
+            assert!(serde_json::from_slice::<serde_json::Value>(&body).is_ok());
+            assert!(timeout <= Duration::from_secs(30));
+            assert_eq!(max_response_bytes, 2048);
+            Ok(AiProviderResponse {
+                status: 200,
+                body: br#"{"choices":[{"message":{"content":"simulated"}}]}"#.to_vec(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn provider_uses_injected_transport_and_response_budget() {
+        let responder = OpenAIResponder::new(
+            OpenAIConfig {
+                api_key: "fake-secret".into(),
+                model: "test".into(),
+                endpoint: None,
+                timeout_secs: 30,
+            },
+            Arc::new(AiResponderBudget::new(AiBudgetConfig::default())),
+            Arc::new(FakeTransport),
+        );
+        let context = HoneypotContext {
+            remote_ip: "127.0.0.1".into(),
+            remote_port: 1234,
+            local_port: 22,
+            service: "ssh".into(),
+            protocol: "ssh".into(),
+            payload: Vec::new(),
+            payload_hex: String::new(),
+            detected_pattern: None,
+            bytes_received: 0,
+            duration_ms: 0,
+            connection_start: std::time::Instant::now(),
+        };
+        let result = responder
+            .generate_response("whoami", &context)
+            .await
+            .unwrap();
+        assert_eq!(result, "simulated");
+    }
 
     #[test]
     fn test_harden_prompt_contains_simulation_header() {

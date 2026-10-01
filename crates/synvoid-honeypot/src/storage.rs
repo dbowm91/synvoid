@@ -201,8 +201,8 @@ impl HoneypotStorage {
     pub fn prune_old_records(&self) -> Result<usize, rusqlite::Error> {
         let conn = self.conn.lock();
 
-        let cutoff = synvoid_utils::safe_unix_timestamp() as i64
-            - (self.config.retention_days as i64 * 86400);
+        let cutoff =
+            crate::time::unix_timestamp_secs() as i64 - (self.config.retention_days as i64 * 86400);
 
         let deleted = conn.execute(
             "DELETE FROM honeypot_connections WHERE timestamp < ?1",
@@ -333,7 +333,7 @@ impl HoneypotStorage {
     pub fn set_metadata(&self, key: &str, value: &str) -> Result<(), rusqlite::Error> {
         let conn = self.conn.lock();
 
-        let now = synvoid_utils::safe_unix_timestamp() as i64;
+        let now = crate::time::unix_timestamp_secs() as i64;
 
         conn.execute(
             "INSERT OR REPLACE INTO honeypot_metadata (key, value, updated_at) VALUES (?1, ?2, ?3)",
@@ -368,7 +368,7 @@ impl HoneypotStorage {
 
     pub fn mark_indicator_announced(&self, key: &str) -> Result<(), rusqlite::Error> {
         let conn = self.conn.lock();
-        let now = synvoid_utils::safe_unix_timestamp() as i64;
+        let now = crate::time::unix_timestamp_secs() as i64;
         conn.execute(
             "INSERT OR IGNORE INTO honeypot_announced_indicators (indicator_key, announced_at) VALUES (?1, ?2)",
             params![key, now],

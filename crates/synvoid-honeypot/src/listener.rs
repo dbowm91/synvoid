@@ -14,7 +14,6 @@ use crate::protocol::{Confidence, ProtocolDetector};
 use crate::responders::AiResponderBudget;
 use crate::storage::HoneypotRecord;
 use crate::storage_writer::HoneypotWriter;
-use synvoid_utils::current_timestamp;
 
 /// RAII guard that decrements per-IP connection count on drop.
 /// When the count reaches zero, the entry is removed from the map.
@@ -381,7 +380,7 @@ pub(crate) async fn handle_connection(
 
     let record = HoneypotRecord {
         id: 0,
-        timestamp: current_timestamp() as i64,
+        timestamp: crate::time::unix_timestamp_secs() as i64,
         remote_ip: remote_addr.ip().to_string(),
         remote_port: remote_addr.port(),
         local_port,

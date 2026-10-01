@@ -11,11 +11,8 @@ default = []
 mesh = []
 
 [dependencies]
-synvoid-config-model = { path = "../synvoid-config-model", version = "0.1" }
-synvoid-utils = { path = "../synvoid-utils" , version = "0.1" }
-synvoid-http-client = { path = "../synvoid-http-client" , version = "0.1" }
 parking_lot = "0.12"
-tokio = { version = "1", features = ["rt", "net", "time", "sync", "macros"] }
+tokio = { version = "1", features = ["rt", "net", "time", "sync", "macros", "io-util"] }
 rusqlite = { version = "0.32", features = ["bundled", "backup"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -25,8 +22,5 @@ regex = "1"
 async-trait = "0.1"
 tracing = "0.1"
 thiserror = "2"
-http = "1"
-http-body-util = "0.1"
-bytes = "1"
 metrics = "0.22"
 sha2 = "0.10"

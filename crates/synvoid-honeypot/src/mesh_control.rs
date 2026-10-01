@@ -57,7 +57,7 @@ impl HoneypotMeshController {
         &self,
         command: HoneypotControlCommand,
     ) -> Result<(), HoneypotControlError> {
-        let now = synvoid_utils::current_timestamp();
+        let now = crate::time::unix_timestamp_secs();
 
         match &command {
             HoneypotControlCommand::Enable => {

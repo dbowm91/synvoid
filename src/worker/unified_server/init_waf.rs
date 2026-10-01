@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use crate::honeypot_port::{PortHoneypotConfig, PortHoneypotRunner};
+use crate::honeypot_port::PortHoneypotRunner;
 use crate::server::UnifiedServer;
 use synvoid_config::ConfigManager;
 use synvoid_upload::UploadValidator;
@@ -99,24 +99,16 @@ pub async fn build_port_honeypot(
         return None;
     }
 
-    let port_honeypot_config = PortHoneypotConfig {
-        enabled: honeypot_port_config.enabled,
-        min_port: honeypot_port_config
-            .ports
-            .iter()
-            .copied()
-            .min()
-            .unwrap_or(10000),
-        max_port: honeypot_port_config
-            .ports
-            .iter()
-            .copied()
-            .max()
-            .unwrap_or(60000),
-        num_honeypot_ports: honeypot_port_config.ports.len(),
-        site_scope: honeypot_port_config.site_scope.clone(),
-        ..Default::default()
-    };
+    let port_honeypot_config =
+        crate::honeypot_port::runtime_config_from_persisted(&honeypot_port_config);
+    if !port_honeypot_config
+        .transport_protocols
+        .iter()
+        .any(|protocol| protocol.eq_ignore_ascii_case("tcp"))
+    {
+        tracing::info!("Port honeypot has no supported TCP transport enabled");
+        return None;
+    }
 
     match PortHoneypotRunner::new(port_honeypot_config) {
         Ok(runner) => {

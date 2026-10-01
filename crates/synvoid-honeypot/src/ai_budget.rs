@@ -93,7 +93,7 @@ impl AiCircuitBreaker {
         if opened == 0 {
             return true;
         }
-        let now = synvoid_utils::safe_unix_timestamp();
+        let now = crate::time::unix_timestamp_secs();
         now.saturating_sub(opened) < self.cooldown_secs
     }
 
@@ -109,7 +109,7 @@ impl AiCircuitBreaker {
         if prev + 1 >= self.max_failures {
             let mut opened = self.opened_at.write();
             if *opened == 0 {
-                *opened = synvoid_utils::safe_unix_timestamp();
+                *opened = crate::time::unix_timestamp_secs();
                 tracing::warn!(
                     failures = prev + 1,
                     max = self.max_failures,

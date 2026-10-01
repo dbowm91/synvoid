@@ -13,6 +13,7 @@ pub mod runner;
 pub mod storage;
 pub mod storage_writer;
 pub mod threat_intel;
+mod time;
 
 pub use ai_budget::{
     AiCircuitBreaker, AiConcurrencyLimiter, AiConcurrencyPermit, AiTurnCounter, BudgetExceeded,
@@ -29,8 +30,9 @@ pub use mesh_control::{
 pub use protocol::{Confidence, ProtocolDetector, ProtocolMatch, ServiceBanner};
 pub use responders::{
     default_ssh_system_prompt, http_system_prompt, mysql_system_prompt, redis_system_prompt,
-    AiHoneypotResponder, AiProvider, AiResponder, AiResponderBudget, AnthropicResponder,
-    OllamaResponder, OpenAIResponder, StaticResponder, TemplateResponder, VulnerableAppResponder,
+    AiHoneypotResponder, AiProvider, AiProviderResponse, AiProviderTransport,
+    AiProviderTransportError, AiResponder, AiResponderBudget, AnthropicResponder, OllamaResponder,
+    OpenAIResponder, StaticResponder, TemplateResponder, VulnerableAppResponder,
 };
 pub use responses::{
     HoneypotContext, HoneypotResponder, HoneypotResponderRegistry, HoneypotResponse, ResponseType,
