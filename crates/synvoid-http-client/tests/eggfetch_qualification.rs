@@ -1,9 +1,12 @@
-//! Eggfetch 0.2.0 qualification suite (Phase 58, Workstreams C/D/E).
+//! Eggfetch qualification suite — established for Phase 58 (Workstreams C/D/E)
+//! against `eggfetch-core =0.2.0`, retained as the regression contract for the
+//! current qualified `0.2.x` exact pin (currently `=0.2.1` since Phase 102).
 //!
-//! Proves eggfetch 0.2.0 satisfies SynVoid's egress transport and security
+//! Proves eggfetch satisfies SynVoid's egress transport and security
 //! contracts through the **native** execution surface
-//! (`Client::execute_http_body`), before any production request path is
-//! switched to it. No production code routes through eggfetch in this phase.
+//! (`Client::execute_http_body`). The Phase 58 historical frame was the
+//! pre-production switch; today the suite is the regression/qualification
+//! contract for the in-production eggfetch-backed transport.
 //!
 //! Coverage:
 //!

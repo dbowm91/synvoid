@@ -2424,9 +2424,9 @@ dependencies = [
 
 [[package]]
 name = "eggfetch-core"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6cd254b82aa20d1becb6e3e90a5103e8bcc2d7057bb13532096326e43cd98904"
+checksum = "826f2baa59cf84f0ba06017685f60065121d69419856a1a57669f184ea7e5b99"
 dependencies = [
  "bytes",
  "futures-core",

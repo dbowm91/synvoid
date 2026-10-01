@@ -1,6 +1,14 @@
 # Phase 102 Plan: Eggfetch 0.2.1 Patch Adoption
 
-Status: ACTIVE / READY FOR IMPLEMENTATION.
+Status: CLOSED QUALIFIED (2026-10-01). Implementation and qualification
+complete; terminal closeout is
+`architecture/eggfetch_0_2_1_patch_adoption_closeout.md`. No registered
+future plan was blocked on Phase 102. Pre-existing baseline failures
+(`cargo deny check` for RUSTSEC-2026-0315/0316 on wasmtime;
+`advisory_ignores_carry_owner_and_review_metadata` re-audit-date reached)
+are unchanged by this patch and remain owned by the routine
+`dependency-security` CI job and the Phase 25 dependency security baseline
+re-audit cycle.
 
 Registered in: plans/roadmap.md.
 
@@ -188,6 +196,29 @@ The closeout must record:
 
 Then update this plan and plans/roadmap.md from ACTIVE to CLOSED QUALIFIED.
 
+## Future plans / unblocking disposition
+
+No registered SynVoid plan was found blocked on Phase 102. The Phase 102
+plan itself is the only `ACTIVE` plan at planning registration, and no
+follow-up or downstream plan registers dependency on this exact-pin
+refresh. The pre-existing research disposition ("no independently
+supported public `synvoid-http-client` until the current eggfetch line is
+re-evaluated") is unchanged: Phase 102 is a patch adoption and does not
+authorize a publication decision.
+
+The post-Phase-101 architecture maintenance campaign closed with the
+recorded residual candidates (mesh-consensus DEFER, process-manager/IPC
+DEFER, synvoid-filter RETAIN); these are not implicitly authorized or
+unblocked as implementation work by this closure.
+
+The pre-existing wasmtime-line RUSTSEC-2026-0315 / RUSTSEC-2026-0316
+advisories and the `advisory_ignores_carry_owner_and_review_metadata`
+re-audit-date test failure are not in scope for Phase 102 (no eggfetch
+dependency change introduces them; both predate this patch on the
+planning head `0dc1f7fb21a5df60e72fc7f2cd60b7cb73bc9f35`) and remain
+owned by the routine `dependency-security` CI job / daily schedule and
+the Phase 25 dependency security baseline re-audit cycle.
+
 ## Performance disposition
 
 Do not rerun the Phase 63 transport benchmark campaign solely for this version bump.
@@ -242,3 +273,13 @@ If one occurs, leave Phase 102 open and write a narrow corrective plan describin
 - No public synvoid-http-client publication decision.
 - No broad dependency refresh.
 - No full performance requalification absent a runtime-path change.
+
+## Closure
+
+Phase 102 closed **QUALIFIED** on 2026-10-01. The lock update delta was
+exactly the expected narrow shape: one package (`eggfetch-core`) version
+`0.2.0 → 0.2.1` and one checksum. No transitive ripple. No new advisory.
+No source change. The qualification suite, package suite, and root guard
+suite all pass on the resolved 0.2.1 artifact. Terminal authority:
+`architecture/eggfetch_0_2_1_patch_adoption_closeout.md`. No registered
+future plan was blocked on Phase 102.

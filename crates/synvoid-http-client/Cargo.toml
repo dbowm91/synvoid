@@ -28,12 +28,15 @@ rustls = { version = "0.23", features = ["prefer-post-quantum", "aws-lc-rs"] }
 rustls-native-certs = "0.8"
 rustls-pki-types = "1"
 webpki-roots = "0.26"
-# Phase 58: eggfetch 0.2.0 qualification lane. Narrow native H1/H2 + Rustls
-# profile only. No http3/proxy/cookies/compression/redirect-retry policy:
-# SynVoid keeps retry/upstream/WAF/cache/auth/compression/redirect/QUIC-tunnel
-# policy above transport. Pinned exactly during qualification (pre-1.0 line).
+# Phase 58: eggfetch qualification lane (originally pinned to 0.2.0; moved
+# forward to 0.2.1 by Phase 102 — same production eggfetch-core surface, the
+# upstream 0.2.1 release changes only release identity in the manifest).
+# Narrow native H1/H2 + Rustls profile only. No http3/proxy/cookies/compression/
+# redirect-retry policy: SynVoid keeps retry/upstream/WAF/cache/auth/compression/
+# redirect/QUIC-tunnel policy above transport. Pinned exactly during
+# qualification (pre-1.0 line).
 [dependencies.eggfetch-core]
-version = "=0.2.0"
+version = "=0.2.1"
 default-features = false
 features = [
     "native-http1",
