@@ -1,6 +1,6 @@
 # SynVoid Architecture Hardening Roadmap
 
-Status: Phase 104 (Phase 103 qualification-evidence corrective closeout) is CLOSED QUALIFIED (2026-10-01; closeout `architecture/dependency_security_phase104_corrective_closeout.md`; proof-bearing implementation SHA `e0032cd176cd1061a3aa5877555f49ebc4f46a3b`; hosted CI + `dependency-security` green on `36901352762`). Phase 103 (dependency-security re-audit and Wasmtime remediation) remains CLOSED QUALIFIED for its security remediation (2026-10-01; closeout `architecture/dependency_security_reaudit_phase103_closeout.md`; proof-bearing implementation SHA `aeeebc7bac38b1dcc441b06f53c838a74582cd24`; hosted CI + `dependency-security` green on `36891196284`), with Phase 104 owning the residual performance-evidence and support-date corrections. Phase 102 (eggfetch 0.2.1 patch adoption) is CLOSED QUALIFIED (2026-10-01; closeout `architecture/eggfetch_0_2_1_patch_adoption_closeout.md`). Tracks 1–3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). Eggfetch 0.2 runtime adoption is closed through Phase 62 (`c3568ef4...`) and performance/reproducibility adjudication is closed through Phase 63; Phase 64 docs/evidence-truth correction is closed. Production remains on eggfetch. The EggServe 0.2.2-line inbound H1 campaign remains historical/retained at Phase 65; Phases 66–69 were never started. EggServe 0.3 H1 adoption and corrective requalification are closed as `ADOPTED` through Phase 80 on exact pins `eggserve-server = "=0.4.0"` / `eggserve-primitives = "=0.2.2"`; the Phase 78 terminal claim is superseded by Phase 80 proof-bearing SHA `174fdbcd6f133b35099ed4492f5ed8d3fcaa7d4c` (hosted run `36201213413`). Phase 79 implementation SHA: `171dd1e47f965b04b34465fc72c87adf4d9a9cab`. See `architecture/eggserve_0_3_h1_adoption_closeout.md`. Phases 70–72 remain historical/closed with evidence aligned to their then-current Hyper H1 runtime. The process-sandbox correctness and extraction-readiness campaign (Phases 81-84) remains closed DEFER; Phase 94 corrected and qualified Phase 89's Linux mechanism-selection and native-evidence gaps on exact SHA `e86fb35372b1b66bb59c8a6336bf32e55ff5c93e` (hosted/native run `36271417398`). The independent ICMP policy/enforcement extraction-preparation campaign (Phases 85-88) remains closed RETAIN (see the Post-Phase-80 section below); Phases 90–91 are closed, Phase 92 is CLOSED CORRECTED, Phase 93 is QUALIFIED (superseded by Phase 95 exact-SHA two-run proof `36335520434` on `39bfced25d51267ee5837eaecedae7da9af163d0`), and Phase 95 is CLOSED QUALIFIED with Linux nftables native-supported. Phase 88 stays RETAIN with no extraction authorized. The closed independent cross-repo Eggbench security-qualification asset handoff remains separately registered. The Eggbench Security Qualification M003 telemetry corrective is closed qualified at `739e7ba6f02c5e3f83fe9ff5321b09213182b193` (owner contract `synvoid.eggbench-telemetry.v2`; terminal closeout `architecture/eggbench_security_qualification_m003_telemetry_corrective_closeout.md`); the former v1 terminal qualification remains superseded/withdrawn. The post-Phase-95 architecture-maintenance and auditability campaign (Phases 96–101) is closed qualified on proof-bearing SHA `2bfc3c6cfd1a1f2454f801cc02c01a0cbafa2e30`; see `architecture/architecture_maintenance_auditability_closeout.md`.
+Status: The post-Phase-104 subsystem-boundary/extraction campaign (Phases 105–112) is ACTIVE / REGISTERED (2026-10-01; umbrella: `plans/subsystem_boundary_extraction_roadmap.md`). Phase 105 (DNS Hickory patch/security requalification) and Phase 106 (honeypot application-neutral boundary) are ACTIVE / READY; Phases 107–112 are registered successors/gates with explicit dependencies. Existing ICMP RETAIN, process-sandbox DEFER, and YARA upstream-gated decisions remain authoritative until Phase 112 re-evaluates their recorded triggers. Phase 104 (Phase 103 qualification-evidence corrective closeout) is CLOSED QUALIFIED (2026-10-01; closeout `architecture/dependency_security_phase104_corrective_closeout.md`; proof-bearing implementation SHA `e0032cd176cd1061a3aa5877555f49ebc4f46a3b`; hosted CI + `dependency-security` green on `36901352762`). Phase 103 (dependency-security re-audit and Wasmtime remediation) remains CLOSED QUALIFIED for its security remediation (2026-10-01; closeout `architecture/dependency_security_reaudit_phase103_closeout.md`; proof-bearing implementation SHA `aeeebc7bac38b1dcc441b06f53c838a74582cd24`; hosted CI + `dependency-security` green on `36891196284`), with Phase 104 owning the residual performance-evidence and support-date corrections. Phase 102 (eggfetch 0.2.1 patch adoption) is CLOSED QUALIFIED (2026-10-01; closeout `architecture/eggfetch_0_2_1_patch_adoption_closeout.md`). Tracks 1–3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). Eggfetch 0.2 runtime adoption is closed through Phase 62 (`c3568ef4...`) and performance/reproducibility adjudication is closed through Phase 63; Phase 64 docs/evidence-truth correction is closed. Production remains on eggfetch. The EggServe 0.2.2-line inbound H1 campaign remains historical/retained at Phase 65; Phases 66–69 were never started. EggServe 0.3 H1 adoption and corrective requalification are closed as `ADOPTED` through Phase 80 on exact pins `eggserve-server = "=0.4.0"` / `eggserve-primitives = "=0.2.2"`; the Phase 78 terminal claim is superseded by Phase 80 proof-bearing SHA `174fdbcd6f133b35099ed4492f5ed8d3fcaa7d4c` (hosted run `36201213413`). Phase 79 implementation SHA: `171dd1e47f965b04b34465fc72c87adf4d9a9cab`. See `architecture/eggserve_0_3_h1_adoption_closeout.md`. Phases 70–72 remain historical/closed with evidence aligned to their then-current Hyper H1 runtime. The process-sandbox correctness and extraction-readiness campaign (Phases 81-84) remains closed DEFER; Phase 94 corrected and qualified Phase 89's Linux mechanism-selection and native-evidence gaps on exact SHA `e86fb35372b1b66bb59c8a6336bf32e55ff5c93e` (hosted/native run `36271417398`). The independent ICMP policy/enforcement extraction-preparation campaign (Phases 85-88) remains closed RETAIN (see the Post-Phase-80 section below); Phases 90–91 are closed, Phase 92 is CLOSED CORRECTED, Phase 93 is QUALIFIED (superseded by Phase 95 exact-SHA two-run proof `36335520434` on `39bfced25d51267ee5837eaecedae7da9af163d0`), and Phase 95 is CLOSED QUALIFIED with Linux nftables native-supported. Phase 88 stays RETAIN with no extraction authorized. The closed independent cross-repo Eggbench security-qualification asset handoff remains separately registered. The Eggbench Security Qualification M003 telemetry corrective is closed qualified at `739e7ba6f02c5e3f83fe9ff5321b09213182b193` (owner contract `synvoid.eggbench-telemetry.v2`; terminal closeout `architecture/eggbench_security_qualification_m003_telemetry_corrective_closeout.md`); the former v1 terminal qualification remains superseded/withdrawn. The post-Phase-95 architecture-maintenance and auditability campaign (Phases 96–101) is closed qualified on proof-bearing SHA `2bfc3c6cfd1a1f2454f801cc02c01a0cbafa2e30`; see `architecture/architecture_maintenance_auditability_closeout.md`.
 
 Scope: this roadmap covers architecture hardening, trust-boundary closure, verification, release readiness, post-hardening cleanup, and the architecture-convergence work required before another broad feature-expansion pass.
 
@@ -1558,4 +1558,120 @@ Binding constraints:
 
 Terminal closeout:
 `architecture/dependency_security_phase104_corrective_closeout.md`.
+
+## Post-Phase-104 Campaign: Subsystem Boundary and Extraction — Phases 105–112 ACTIVE / REGISTERED
+
+Status: **ACTIVE / REGISTERED** (2026-10-01).
+
+Umbrella roadmap:
+`plans/subsystem_boundary_extraction_roadmap.md`.
+
+Planning baseline:
+`19c0636535f3728e80b7c6777ec6a552c38c61a0`.
+
+Purpose: reduce SynVoid's repository-level maintenance and audit surface by
+extracting or externalizing only subsystems with independent lifecycle,
+security, compatibility, and release boundaries. This is not a crate-count
+campaign. Existing closed RETAIN/DEFER decisions remain binding until their
+explicit triggers are satisfied.
+
+Execution lanes:
+
+1. **Phase 105 — DNS Hickory Patch Adoption and Security Requalification**
+   - move the resolved Hickory 0.26.1 DNS graph to the qualified 0.26.3 patch
+     line with targeted lockfile churn;
+   - requalify DNSSEC, recursive resolution, cache/error behavior, encrypted
+     DNS transport integration, and DNS/mesh+DNS profiles;
+   - establish the dependency/security baseline required by Phase 108.
+   - Status: **ACTIVE / READY**.
+   - Plan: `plans/phase_105_dns_hickory_patch_security_requalification.md`.
+
+2. **Phase 106 — Honeypot Application-Neutral Boundary Preparation**
+   - reconcile the current dual config vocabularies and make the honeypot own
+     its runtime configuration;
+   - remove unnecessary `synvoid-config-model`, `synvoid-http-client`, and
+     `synvoid-utils` coupling;
+   - preserve injected threat publication, AI budgets, retention/privacy, and
+     storage behavior;
+   - prove standalone package behavior without creating a new repository yet.
+   - Status: **ACTIVE / READY**.
+   - Plan: `plans/phase_106_honeypot_application_neutral_boundary.md`.
+
+3. **Phase 107 — Honeypot Standalone Qualification and Extraction Decision**
+   - requires Phase 106;
+   - prove an out-of-workspace consumer, threat model, MSRV/package/release
+     hygiene, and explicit API/semver classification;
+   - terminal disposition is GO EXTRACT, DEFER, or RETAIN from evidence; no
+     automatic publication.
+   - Status: **PLANNED / BLOCKED ON PHASE 106**.
+   - Plan:
+     `plans/phase_107_honeypot_standalone_qualification_extraction_decision.md`.
+
+4. **Phase 108 — DNS Hickory Delegation and Ownership Simplification**
+   - requires Phase 105;
+   - classify DNS modules as DELEGATE / WRAP / RETAIN / DEFER against qualified
+     Hickory;
+   - remove redundant baseline protocol machinery only behind differential and
+     security evidence;
+   - preserve SynVoid-specific health/Geo, firewall/RPZ, HSM custody,
+     mesh/distributed integration, and operational semantics.
+   - Status: **PLANNED / BLOCKED ON PHASE 105**.
+   - Plan:
+     `plans/phase_108_dns_hickory_delegation_ownership_simplification.md`.
+
+5. **Phase 109 — DNS Application-Neutral Boundary and Extraction Readiness**
+   - requires Phase 108;
+   - move runtime config ownership into DNS, invert mesh/Geo/TLS/platform
+     integration behind narrow adapters, and keep DNSSEC key custody separate;
+   - prove a standalone DNS consumer and decide GO EXTRACT / DEFER / RETAIN.
+   - Status: **PLANNED / BLOCKED ON PHASE 108**.
+   - Plan:
+     `plans/phase_109_dns_application_neutral_boundary_extraction_readiness.md`.
+
+6. **Phase 110 — Mesh Consensus and DHT Boundary Decomposition**
+   - preserve the Phase 101 decision against aggregate mesh extraction;
+   - isolate canonical consensus/state-machine and advisory DHT mechanisms only
+     when they can be application-service-free one-way boundaries;
+   - preserve canonical-vs-advisory authority, replay, freshness, partition, and
+     wire semantics;
+   - no external mesh repository/publication.
+   - Status: **PLANNED**.
+   - Plan: `plans/phase_110_mesh_consensus_dht_boundary_decomposition.md`.
+
+7. **Phase 111 — SynVoid Tunnel / Eggtunnel / Eggress Convergence**
+   - build a capability/symbol matrix across SynVoid tunnel/VPN, Eggtunnel and
+     Eggress;
+   - adopt or upstream generic session/QUIC/relay mechanisms where parity and
+     maintenance reduction are demonstrated;
+   - retain SynVoid route/mesh/VPN policy and explicitly adjudicate
+     UDP/datagram and WireGuard/TUN ownership;
+   - do not create a standalone SynVoid tunnel repository.
+   - Status: **PLANNED**.
+   - Plan: `plans/phase_111_tunnel_eggtunnel_eggress_convergence.md`.
+
+8. **Phase 112 — Extraction Gate Refresh and Campaign Closeout**
+   - recompute final dependency/maintenance-surface evidence;
+   - refresh ICMP RETAIN triggers (including the now-satisfied Linux native
+     qualification trigger), process-sandbox DEFER triggers plus current
+     ecosystem differential, and YARA upstream/second-consumer triggers;
+   - reconcile honeypot/DNS terminal decisions and mesh/tunnel ownership;
+   - require exact-SHA hosted CI/dependency-security proof for CLOSED QUALIFIED.
+   - Status: **PLANNED / TERMINAL CAMPAIGN PHASE**.
+   - Plan: `plans/phase_112_extraction_gate_refresh_campaign_closeout.md`.
+
+Binding constraints:
+
+- no supported runtime capability is removed to make extraction easier;
+- no repository move may leave the extracted library depending on SynVoid
+  application/runtime crates without a documented unavoidable reason;
+- repository location does not imply class-3/public API stability;
+- security-sensitive platform support requires native proof;
+- DNS simplification must prove parity/security before deleting custom
+  mechanisms;
+- aggregate `synvoid-mesh` remains in SynVoid unless a future plan separately
+  proves a clean external boundary;
+- tunnel genericity converges toward Eggtunnel/Eggress rather than spawning a
+  competing repository;
+- Phase 88 ICMP RETAIN, Phase 84/94 sandbox DEFER, and current YARA fork-removal
+  gates are not silently superseded by registration of this campaign.
 
