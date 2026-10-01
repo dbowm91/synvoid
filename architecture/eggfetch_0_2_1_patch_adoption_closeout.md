@@ -220,7 +220,9 @@ new downstream regression was added.
   0.2.0 -> 0.2.1 exact refresh, Phase 102 qualification re-ran`); this
   commit contains the code changes (Cargo.toml pin + Cargo.lock delta +
   qualification-suite preamble reword) and the plan/roadmap status updates.
-- Closeout commit (this document): see the next entry on main.
+- Closeout commit (this document):
+  `a15f04483e351e24803acd23b80cbe9dc28a9b9d` (`closeout: Phase 102
+  eggfetch 0.2.1 patch adoption closed qualified`).
 - Hosted CI / native qualification: not invoked for Phase
   102 — the patch is a narrow exact-pin refresh with no source change and
   no resolved-graph drift; per the plan, no new CI job, no native
