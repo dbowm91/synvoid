@@ -101,11 +101,21 @@ expired, malformed, and conflicting date scenarios plus the
 | `rkyv 0.7.46` chain | `cargo tree -i rkyv@0.7.46` | single chain to `synvoid-static-files` via vendored minify-html-compat |
 | `rsa 0.9.10` chain | `cargo tree -i rsa@0.9.10` | `synvoid-dns` (mesh_dnssec verify) → `synvoid-dnssec-keystore` (key parsing + SIGN) → `synvoid-tls` (cert parsing) + `synvoid-yara` (yara-x `crypto` feature RSA VERIFY); zero decrypt calls across all four paths |
 
-## YARA runtime performance (Phase 103 Workstream G)
+## YARA runtime performance (Phase 103 Workstream G; corrected by Phase 104)
 
-Focused same-host before/after probe (50 iterations, release profile).
+> Correction note (Phase 104, 2026-10-01): the original Phase 103 section
+> below recorded only the post-change probe and compared it to Phase 40
+> different-fixture numbers. That comparison is retained only as explicitly
+> non-comparable historical context. Regression acceptance now rests on the
+> Phase 104 same-host, same-fixture paired comparison across
+> `d960f473` (Wasmtime 47.0.4) → `aeeebc7b` (Wasmtime 48.0.3), recorded in
+> `architecture/dependency_security_phase104_corrective_closeout.md`.
+> No production dependency or runtime change was made by Phase 104.
+
+Original Phase 103 current-state measurement (retained; NOT acceptance proof).
 Probe lived in `crates/synvoid-yara/tests/yara_phase103_perf_probe.rs`
 and was removed before commit; numbers were captured via stderr.
+Single-sided (post-change only, 50 iterations, release profile):
 
 | Operation | n | median | min | max |
 | --- | --- | --- | --- | --- |
@@ -114,6 +124,37 @@ and was removed before commit; numbers were captured via stderr.
 | Matching scan (~512 B payload, 13 rules, 1 forced match) | 50 | 183 µs | 170 µs | 246 µs |
 | Reload (fresh generation) | 50 | 1121 µs | 1014 µs | 1593 µs |
 
+Phase 104 paired evidence (acceptance proof). Deterministic 13-rule fixture
+(`P104_FIXTURE sha256=8892c2d7274dd6183b6843203b76c57c02b69f9f89fc5a97e8697c998cf1cc39`,
+`rule_bytes=1850`, `payload_len=512`, `warmup=5`), release profile, same host
+(Apple M4 Pro, macOS 26.6.2, Darwin 25.6.0, rustc 1.98.1). Full methodology
+and rerun adjudication in the Phase 104 closeout.
+
+Pass 1 (primary, n=50 each):
+
+| Operation | Before `d960f473` (47.0.4) median / min / max (µs) | After `aeeebc7b` (48.0.3) median / min / max (µs) | Delta_pct `(after-before)/before*100` |
+| --- | --- | --- | --- |
+| Compile (`reload_with_rules`) | 1050 / 898 / 1597 | 996 / 909 / 1383 | -5.14% (improvement; rerun required by >5% shift rule) |
+| Clean scan | 204 / 165 / 524 | 197 / 179 / 707 | -3.43% (within ±5% tolerance) |
+| Matching scan | 208 / 165 / 833 | 186 / 178 / 303 | -10.58% (improvement; rerun required) |
+| Reload (fresh `YaraScanner::new`) | 1040 / 857 / 1622 | 1021 / 947 / 1399 | -1.83% (within ±5% tolerance) |
+
+Rerun (pass 2, n=50 each; required because two pass-1 shifts exceeded ±5%):
+
+| Operation | Before rerun median / min / max (µs) | After rerun median / min / max (µs) | Delta_pct |
+| --- | --- | --- | --- |
+| Compile (`reload_with_rules`) | 1025 / 888 / 1397 | 990 / 852 / 1490 | -3.41% |
+| Clean scan | 183 / 171 / 465 | 191 / 164 / 579 | +4.37% |
+| Matching scan | 187 / 166 / 256 | 186 / 169 / 271 | -0.53% |
+| Reload (fresh `YaraScanner::new`) | 959 / 879 / 1388 | 957 / 853 / 1622 | -0.21% |
+
+Regression disposition: no repeatable >10% regression; all rerun deltas lie
+within ±5% host/noise tolerance, with opposite-direction movement on clean
+scan (+4.37% vs -3.43%) confirming noise rather than directional regression.
+The pass-1 improvements did not reproduce as regressions. Docs-only closure
+justified; no runtime corrective required.
+
+Historical context only (explicitly non-comparable; NOT acceptance evidence).
 Qualitative comparison to Phase 40 closeout
 (`architecture/dependency_security_baseline_phase25.md` §11):
 
@@ -123,10 +164,11 @@ Qualitative comparison to Phase 40 closeout
 - Phase 40 reload: **3.6 ms**.
 
 Different rule corpus and payload size rule out a strict apples-to-apples
-comparison, but Phase 103 numbers are within the Phase 40 ballpark and
-show no material regression. No source divergence (manifest-only delta
-under the same fork), so the Cranelift JIT cost change between
-wasmtime 47 and wasmtime 48 is the dominant expected delta.
+comparison. The ballpark proximity below is historical context only and is
+not regression proof; acceptance rests on the Phase 104 paired data above.
+No source divergence (manifest-only delta under the same fork), so the
+Cranelift JIT cost change between wasmtime 47 and wasmtime 48 remains the
+dominant expected delta.
 
 ## Final qualification ledger
 

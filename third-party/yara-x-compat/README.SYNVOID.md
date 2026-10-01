@@ -28,7 +28,7 @@ Phase 103 advanced from the Phase 40 wasmtime 47.0.4 / rust-version
 1.94.0 line because 47.0.4 is affected by RUSTSEC-2026-0315
 (exponential fuel amplification in `call_ref` / exception `catch`) and
 RUSTSEC-2026-0316 (dynamic component-record lifting fuel-limit bypass).
-Wasmtime 48.0.3 (48 LTS line, supported for 24 months from 2026-06-04,
+Wasmtime 48.0.3 (48 LTS line, released 2026-08-20 and supported for 24 months,
 `rust-version = "1.95.0"`) is the minimum line patched for both. The
 fork does NOT track any contributor's PR branch: it re-applies the
 manifest delta as an immutable in-tree vendor, not a moving git ref.
