@@ -227,10 +227,6 @@ new downstream regression was added.
   102 — the patch is a narrow exact-pin refresh with no source change and
   no resolved-graph drift; per the plan, no new CI job, no native
   qualification host, and no full benchmark rerun is required.
-- Hosted CI / native qualification: not invoked for Phase
-  102 — the patch is a narrow exact-pin refresh with no source change and
-  no resolved-graph drift; per the plan, no new CI job, no native
-  qualification host, and no full benchmark rerun is required.
 
 ## Performance disposition
 

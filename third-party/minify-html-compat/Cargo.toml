@@ -15,8 +15,11 @@
 #   0.111 target (closed unmerged). Public API used by SynVoid (`Cfg`,
 #   `minify(&[u8], &Cfg)`) is unchanged.
 #
-# Owner: security / static-files. Date added: 2026-09-18.
-# Re-audit: 2026-10-01 (with the dependency review).
+# Owner: security / static-files. Date added: 2026-09-18 (Phase 39);
+#   refreshed 2026-10-01 (Phase 103 re-audit; no source delta).
+# Reviewed: 2026-10-01.
+# Re-audit: 2026-11-01 (time-aware via SYNVOID_SECURITY_REVIEW_AS_OF;
+#   enforced by `minify_fork_is_temporary_guard`).
 # Removal condition: remove this `[patch.crates-io]` fork as soon as an
 #   official minify-html release eliminates the Oxc 0.95 / external bumpalo
 #   3.19 path and passes `crates/synvoid-static-files/tests/minify_parity.rs`.

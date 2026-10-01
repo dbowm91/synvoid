@@ -1,4 +1,4 @@
-# SynVoid temporary compatibility fork of `yara-x 1.20.0` (Phase 40).
+# SynVoid temporary compatibility fork of `yara-x 1.20.0` (Phase 40, Phase 103).
 #
 # Upstream: https://github.com/VirusTotal/yara-x (tag v1.20.0, released
 # 2026-08-24; upstream git sha1 `60ad06971467029e77967e59d580cbbe85a1474d`
@@ -6,32 +6,40 @@
 # `015b06cc60800856d04c3115ef6b7c6cbb95f59f20a9df4358dd2f85f3d5b391`).
 # Base source: exact released 1.20.0 crate content (see README.SYNVOID.md).
 # The vendored `Cargo.lock` and `.cargo_vcs_info.json` were removed;
-# `Cargo.toml.orig` is retained as provenance evidence. Only the two lines
-# marked `SYNVOID-PHASE40` below differ from the released manifest.
+# `Cargo.toml.orig` is retained as provenance evidence. Only the lines
+# marked `SYNVOID-PHASE40` / `SYNVOID-PHASE103` below differ from the
+# released manifest.
 #
 # Delta from upstream (manifest-only, no `src/`/`build.rs` changes):
-#   wasmtime: "45.0.3" -> "47.0.4" (SYNVOID-PHASE40);
-#   rust-version: "1.93.0" -> "1.94.0" (SYNVOID-PHASE40, required by
-#     wasmtime 47.0.4 which declares rust-version = "1.94.0").
-# This is exactly the change proposed by upstream PR #769
-# ("fix(deps): Bump wasmtime and msrv version", branch
-# `wasmtime-47.0.4-msrv-1.94`, still OPEN as of 2026-09-18): stock 1.20.0
-# resolves wasmtime 45.0.3, which is affected by RUSTSEC-2026-0222 and
-# RUSTSEC-2026-0269; 47.0.4 is the minimum line patched for both.
-# Purpose: version-remediate GHSA-2jx3-ff3v-j7jj (fixed in yara-x >=1.19)
-# and the wasmtime 40.0.4 advisory set without landing a known-affected
-# transitive Wasmtime line. No engine semantics change: `src/` and
-# `build.rs` are byte-identical to upstream 1.20.0.
+#   Phase 40:   wasmtime "45.0.3" -> "47.0.4" (SYNVOID-PHASE40)
+#               rust-version "1.93.0" -> "1.94.0" (SYNVOID-PHASE40)
+#   Phase 103:  wasmtime "47.0.4" -> "48.0.3" (SYNVOID-PHASE103)
+#               rust-version "1.94.0" -> "1.95.0" (SYNVOID-PHASE103, required
+#                 by wasmtime 48.0.3 which declares rust-version = "1.95.0")
+# Phase 40 was the project-controlled minimal delta tracking upstream PR
+# #769 (wasmtime 47.0.4 + MSRV 1.94). PR #769 was subsequently closed
+# unmerged (2026-09-22). Phase 103 retains the manifest-only contract and
+# advances wasmtime to the 48 LTS line because 47.0.4 is affected by
+# RUSTSEC-2026-0315 (exponential fuel amplification in `call_ref` /
+# exception `catch`) and RUSTSEC-2026-0316 (dynamic component-record
+# lifting fuel-limit bypass). 48.0.3 is the minimum line patched for both.
+# `src/` and `build.rs` are byte-identical to upstream 1.20.0 — the fork
+# remains a manifest-only security delta and does NOT track any
+# contributor's branch.
 #
-# Owner: security / yara. Date added: 2026-09-18.
-# Re-audit: 2026-10-01 (with the dependency review).
+# Owner: security / yara. Date added: 2026-09-18 (Phase 40); refreshed
+#   2026-10-01 (Phase 103 wasmtime 48 LTS security remediation).
+# Reviewed: 2026-10-01.
+# Re-audit: 2026-11-01 (time-aware via SYNVOID_SECURITY_REVIEW_AS_OF).
 # Removal condition: remove this `[patch.crates-io]` fork as soon as an
 #   official crates.io yara-x release >=1.19 resolves a Wasmtime line that
 #   is patched for all advisories relevant to the enabled feature set
-#   (currently: >=47.0.4 for RUSTSEC-2026-0222/-0269, or a supported LTS
+#   (currently: >=48.0.3 for RUSTSEC-2026-0315/-0316, or a supported LTS
 #   successor), and `cargo tree -i wasmtime` + `cargo audit` + `cargo deny
-#   check` are green without it. Do NOT replace with a contributor PR
-#   branch: only official releases or a re-vendored official release.
+#   check` are green without it. Stock yara-x 1.21.0 (released 2026-09-29)
+#   still resolves wasmtime ^45.0.3 and does not satisfy this condition.
+#   Do NOT replace with a contributor PR branch: only official releases or
+#   a re-vendored official release.
 #
 # Consumed via root `[patch.crates-io]` (path override, no git source, so
 # `deny.toml` keeps `unknown-git = "deny"` with zero allows).
@@ -53,7 +61,7 @@
 
 [package]
 edition = "2024"
-rust-version = "1.94.0"  # SYNVOID-PHASE40 (upstream "1.93.0"; see header)
+rust-version = "1.95.0"  # SYNVOID-PHASE103 (Phase 40: 1.94.0; upstream 1.93.0)
 name = "yara-x"
 version = "1.20.0"
 authors = ["Victor M. Alvarez <vmalvarez@virustotal.com>"]
@@ -516,7 +524,7 @@ version = "1.20.0"
 optional = true
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies.wasmtime]
-version = "47.0.4"  # SYNVOID-PHASE40 (upstream "45.0.3"; see header)
+version = "48.0.3"  # SYNVOID-PHASE103 (Phase 40: 47.0.4; upstream 45.0.3)
 features = [
     "cranelift",
     "runtime",

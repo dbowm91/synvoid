@@ -1,5 +1,7 @@
-# SynVoid dependency policy (Phase 25 baseline; Phases 26-31 landed; corrective pass normalizes metadata)
-# Reviewed: 2026-09-13 (corrective pass: milestone labels replaced with calendar Re-audit dates)
+# SynVoid dependency policy (Phase 25 baseline; Phases 26-31 landed; Phases 37/40
+# corrected; Phase 103 re-audit).
+# Reviewed: 2026-10-01 (Phase 103: 0315/0316 fixed by Wasmtime 36.0.16 / 48.0.3;
+#   two retained ignores refreshed with re-triaged capability evidence).
 # Run: cargo deny check && cargo audit
 # Owner: security / release
 # Pinned tool: cargo-deny 0.20.2 (see docs/testing/verification-contract.md)
@@ -7,23 +9,20 @@
 # version/feature/capability separation; this file summarizes, that file proves).
 # Phase 26: `yara-x` single owner is `synvoid-yara`; `synvoid-mesh` no longer
 # links it, `synvoid-upload` consumes it only via `synvoid-yara` (guard:
-# yara_execution_boundary.rs). Phase 40: the YARA transitive Wasmtime line
-# is 47.0.4 (via the temporary `third-party/yara-x-compat` manifest-only
-# fork of official yara-x 1.20.0; see its README.SYNVOID.md). Wasmtime
-# 40.0.4 is gone from the graph, so the 40.x-only advisory ignores were
-# removed (RUSTSEC-2026-0085..0096, -0114, -0222, -0269); both resolved
-# Wasmtime lines (direct 36.0.15 LTS, transitive 47.0.4) are version-patched
-# for those advisories (see
-# architecture/dependency_security_baseline_phase25.md §4/§6/§11).
+# yara_execution_boundary.rs). Phase 40 + Phase 103: the YARA transitive
+# Wasmtime line is 48.0.3 (via the temporary `third-party/yara-x-compat` fork
+# of official yara-x 1.20.0; see its README.SYNVOID.md). The direct plugin
+# runtime is 36.0.16 LTS (Phase 103: in-line LTS patch update from 36.0.15
+# for RUSTSEC-2026-0316). Both resolved Wasmtime lines are version-patched
+# for the relevant advisories (RUSTSEC-2026-0315 affects 47.0.4 only;
+# RUSTSEC-2026-0316 affected 36.0.15 and 47.0.4 — both remediated; see
+# architecture/dependency_security_baseline_phase25.md §4/§6/§11/§12).
 #
 # Advisory-ignore metadata rule (enforced by deny_ignore_metadata_guard):
 # every ignored advisory MUST state dependency path, affected capability,
 # whether wasmtime-wasi is resolved, exposure, Owner:, Reviewed: YYYY-MM-DD,
 # Re-audit: YYYY-MM-DD (single machine-enforced future deadline), and
-# Remove condition: (upstream/event, not a date). Stale "patched" language
-# for RUSTSEC-2026-0269 is forbidden where it does not apply: the direct
-# 36 LTS runtime IS patched (>=36.0.14); the transitive yara-x 40.0.4 line is
-# affected and capability-gated (see §4 and the 0269 entry below).
+# Remove condition: (upstream/event, not a date).
 
 [licenses]
 allow = [
@@ -47,43 +46,81 @@ confidence-threshold = 0.8
 # All ignored advisories must have: rationale, exposure assessment, review date.
 # Ignored advisories are re-audited on each major release.
 ignore = [
-    # RUSTSEC-2023-0071: rsa Marvin Attack (Bleichenbacher timing)
-    # Dependency path: synvoid-yara -> yara-x 1.20.0 (compat fork) -> rsa
-    #   0.9.10 (transitive; also via synvoid-dns/keystore/tls verification
-    #   paths; no direct root edge since Phase 31 removed the unused root
-    #   rsa dependency). Still present after the Phase 40 upgrade (yara-x
-    #   `crypto` feature unchanged); no fixed upgrade available upstream.
-    # Affected capability: RSA signing/decryption timing side-channel.
-    # Exposure: LOW — yara-x uses RSA only for optional rule signature verification;
-    #   SynVoid verifies rule feeds with ed25519-dalek instead. The rsa code path is
-    #   never invoked in SynVoid operation.
+    # RUSTSEC-2023-0071: rsa Marvin Attack (Bleichenbacher timing on PKCS#1 v1.5 decryption).
+    # Dependency paths (Phase 103 re-audit):
+    #   - synvoid-yara -> yara-x 1.20.0 (compat fork) -> rsa 0.9.10 (transitive);
+    #     used in third-party/yara-x-compat/src/modules/utils/crypto.rs for
+    #     RSA signature VERIFICATION (`rsa::RsaPublicKey`, `rsa::Pkcs1v15Sign`,
+    #     `rsa::pkcs8::DecodePublicKey`) — public key only; YARA-X's signing
+    #     path is not invoked from SynVoid's source-only YARA execution model.
+    #   - synvoid-dns (mesh_dnssec.rs) -> rsa 0.9.10 (RSA `RsaPublicKey`
+    #     verification; signing not invoked).
+    #   - synvoid-dnssec-keystore (key.rs, keystore.rs) -> rsa 0.9.10
+    #     (RSA private-key parsing + PKCS#1 v1.5 SIGN generation only;
+    #     no decryption path).
+    #   - synvoid-tls (cert_resolver.rs) -> rsa 0.9.10 (RSA private-key
+    #     DER parsing for X.509 certificates only).
+    # Affected capability: timing side-channel on RSA PKCS#1 v1.5 DECRYPTION
+    #   (Bleichenbacher/Marvin).
+    # Exposure: LOW — no SynVoid code path invokes RSA decryption
+    #   (`rsa::RsaPrivateKey::decrypt(Pkcs1v15Encrypt)` /
+    #   `decrypt(OAEP)` are not called; grep on
+    #   crates/synvoid-{dns,dnssec-keystore,tls}/src/ yields zero hits).
+    #   All resolved RSA usage is signing, signature verification, key
+    #   generation, or key DER parsing. The Marvin Attack does not apply
+    #   to these operations; the affected decrypt path is unreachable.
+    # No fixed upgrade available upstream: the rsa crate has no patched
+    #   release for RUSTSEC-2023-0071.
     # Owner: security.
-    # Reviewed: 2026-09-18.
-    # Re-audit: 2026-10-01.
-    # Remove condition: yara-x moves off rsa, or RSA-based YARA signing is enabled
-    #   (in which case this advisory MUST be resolved immediately).
-    # Escalation: If RSA-based YARA signing is ever enabled, this advisory MUST be resolved.
+    # Reviewed: 2026-10-01.
+    # Re-audit: 2026-11-01.
+    # Remove condition: rsa crate releases a 0.9.x or 0.10.x version that
+    #   constant-time-patches the PKCS#1 v1.5 decrypt operations, or
+    #   SynVoid stops linking RSA entirely (would require migrating DNSSEC
+    #   RSA keys and any X.509 certificates carrying RSA keys off RSA —
+    #   out of scope for dependency-security maintenance).
+    # Escalation: any new SynVoid code path that calls
+    #   `rsa::RsaPrivateKey::decrypt(...)` MUST be rejected at code review
+    #   and immediately reopens this exception.
     "RUSTSEC-2023-0071",
 
-    # Phase 40: wasmtime 40.0.4 is absent from Cargo.lock (YARA line is now
-    # 47.0.4 via the compat fork). The RUSTSEC-2026-0085..0096, -0114,
-    # -0222, and -0269 ignores lived only for that retired path and are
-    # removed here — `cargo deny check` emits `advisory-not-detected` if a
-    # stale ignore is re-added while no affected wasmtime resolves, and
-    # `wasmtime_transitive_matches_baseline` pins the expected YARA line.
-    # Do NOT re-add them without a version-affected wasmtime in the graph;
-    # do not describe a capability-unreachable advisory as patched (see the
-    # baseline §3 for the wasmtime-wasi absence evidence, which still holds).
+    # Phase 40 + Phase 103: wasmtime 40.0.4 is absent from Cargo.lock
+    # (YARA line is now 48.0.3 via the compat fork; Phase 103 advanced
+    # from 47.0.4 to clear RUSTSEC-2026-0315/0316). The
+    # RUSTSEC-2026-0085..0096, -0114, -0222, and -0269 ignores lived only
+    # for that retired path and are removed here. Phase 103 adds no new
+    # ignore: 0315 affects only 47.0.4 (now gone) and 0316 affects 36.0.15
+    # and 47.0.4 (both remediated via in-line LTS patch + manifest-only
+    # fork bump to 48.0.3). `cargo deny check` emits `advisory-not-detected`
+    # if a stale ignore is re-added while no affected wasmtime resolves,
+    # and `wasmtime_transitive_matches_baseline` pins the expected YARA
+    # line. Do NOT re-add 0315/0316 ignores without a version-affected
+    # wasmtime in the graph; do not describe a capability-unreachable
+    # advisory as patched (see the baseline §3 for the wasmtime-wasi
+    # absence evidence, which still holds).
 
     # RUSTSEC-2026-0235: rkyv 0.7.46 insufficient archive validation (Rc/Arc OOB reads).
-    # Dependency path: minify-html -> lightningcss -> parcel_sourcemap -> rkyv 0.7.46 (transitive).
+    # Dependency path (Phase 103 re-audit, unchanged from Phase 39/40):
+    #   minify-html -> lightningcss -> parcel_sourcemap -> rkyv 0.7.46
+    #   (transitive; resolved via the temporary
+    #   third-party/minify-html-compat/ fork).
     # Affected capability: archive deserialization with Rc/Arc.
-    # Exposure: LOW — SynVoid's own code uses rkyv 0.8.x; the 0.7 instance only handles
-    #   minifier-internal sourcemaps, never untrusted network archives.
+    # Exposure: LOW — SynVoid's own code uses rkyv 0.8.x; the 0.7 instance
+    #   only handles minifier-internal sourcemaps inside the
+    #   lightningcss/parcel_sourcemap stack, never untrusted SynVoid
+    #   archives/state. Confirmed by `cargo tree -i rkyv@0.7.46` (single
+    #   chain to synvoid-static-files via the vendored fork) and grep
+    #   against the workspace (no `rkyv` Rust API call site touches the
+    #   0.7 instance).
+    # Upstream review (2026-10-01): official minify-html latest release is
+    #   still 0.18.1; no upstream release removes the rkyv 0.7 instance
+    #   while preserving SynVoid's current minification behavior.
     # Owner: security.
-    # Reviewed: 2026-09-13.
-    # Re-audit: 2026-10-01.
-    # Remove condition: lightningcss/parcel_sourcemap drops rkyv 0.7.
+    # Reviewed: 2026-10-01.
+    # Re-audit: 2026-11-01.
+    # Remove condition: an official minify-html release eliminates the
+    #   rkyv 0.7 transitive (lightningcss/parcel_sourcemap drop rkyv 0.7),
+    #   or SynVoid removes its minify-html consumer.
     "RUSTSEC-2026-0235",
 ]
 
@@ -106,22 +143,23 @@ multiple-versions = "warn"
 # No workspace manifest uses `*` (verified 2026-09-12); verify-release rejects them too.
 wildcards = "deny"
 
-# Duplicate-version allowlist (narrow): the wasmtime 47.0.4 (YARA transitive,
+# Duplicate-version allowlist (narrow): the wasmtime 48.0.3 (YARA transitive,
 # via the temporary `third-party/yara-x-compat` fork of official yara-x
-# 1.20.0) + 36.0.15 (direct LTS runtime) split is documented in
+# 1.20.0) + 36.0.16 (direct LTS runtime) split is documented in
 # architecture/dependency_security_baseline_phase25.md §4/§6/§11 and
 # collapses to a single supported line when an official fixed yara-x
 # release replaces the fork.
 # The skip silences only the multiple-versions warning for the direct runtime pin.
 [[bans.skip]]
 name = "wasmtime"
-version = "=36.0.15"
+version = "=36.0.16"
 
 [sources]
-# Phase 37: unknown registries are denied (crates.io only). Unknown git sources are
-# denied with NO exceptions: the wasmtime 42.0.2 git patch is removed (direct
-# runtime is 36.0.15 LTS from crates.io) and no other git dependency remains
-# (verified: no `git =` in any manifest, no `git+` source in Cargo.lock).
-# Re-adding any git source requires an allow-git entry plus baseline evidence.
+# Phase 37 + Phase 103: unknown registries are denied (crates.io only). Unknown
+# git sources are denied with NO exceptions: the wasmtime 42.0.2 git patch is
+# removed (direct runtime is 36.0.16 LTS from crates.io) and no other git
+# dependency remains (verified: no `git =` in any manifest, no `git+` source in
+# Cargo.lock). Re-adding any git source requires an allow-git entry plus
+# baseline evidence.
 unknown-registry = "deny"
 unknown-git = "deny"

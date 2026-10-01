@@ -46,16 +46,18 @@ Pinned tools: cargo-deny 0.20.2, cargo-audit 0.22.2
    RUSTSEC-2026-0286, fixed 0.12.0 → 0.12.1 via targeted `cargo update -p`)
    gets an upgrade, not an ignore.
 2. **Never describe a capability-unreachable advisory as patched; never call
-   an affected version "patched".** The direct runtime is 36.0.15 LTS from
+   an affected version "patched".** The direct runtime is 36.0.16 LTS from
    crates.io (supported through 2027-08-20, no git patch) and IS patched
-   for RUSTSEC-2026-0269 (>=36.0.14; proven by a clean isolated `cargo
-   audit` with no ignores) — it needs no 0269 ignore. The YARA transitive
-   line is 47.0.4 (patched >=47.0.4) via the temporary manifest-only
-   `yara-x` compat fork (`third-party/yara-x-compat/`, exact upstream
-   1.20.0 sources + the unreleased upstream PR #769 two-line delta:
-   wasmtime 45.0.3 → 47.0.4; root `[patch.crates-io]` path override, no git
-   source). Wasmtime 40.0.4 is gone, so its 14 ignores are removed — do not
-   re-add them without a version-affected wasmtime in the graph.
+   for RUSTSEC-2026-0269 (>=36.0.14) and RUSTSEC-2026-0316 (>=36.0.16) —
+   it needs no ignore for either. The YARA transitive line is 48.0.3
+   (48 LTS line, patched >=48.0.3 for 0269, 0315, 0316, and the
+   2026-04 batch) via the temporary manifest-only `yara-x` compat fork
+   (`third-party/yara-x-compat/`, exact upstream 1.20.0 sources + the
+   manifest-only wasmtime 45.0.3 → 47.0.4 (Phase 40) → 48.0.3
+   (Phase 103) delta; root `[patch.crates-io]` path override, no git
+   source). Wasmtime 40.0.4 and 47.0.4 are gone, so their ignores are
+   removed — do not re-add them without a version-affected wasmtime in
+   the graph.
    `wasmtime-wasi` remains absent (capability absence still holds and is
    still guard-enforced, but it is not a substitute for version remediation).
    `yara_fork_is_temporary_guard` + `wasmtime_transitive_matches_baseline`

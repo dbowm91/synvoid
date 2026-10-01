@@ -1,4 +1,4 @@
-# SynVoid temporary `minify-html` compatibility fork
+# SynVoid temporary `minify-html` compatibility fork (Phase 39; Phase 103 re-audit)
 
 Base: official `minify-html 0.18.1` (crates.io; upstream tag `v0.18.1` at
 https://github.com/wilsonzlin/minify-html).
@@ -8,6 +8,12 @@ Vendored: 2026-09-18 by copying the exact released crate source
 `Cargo.lock` and `.cargo-checksum.json` were removed; `Cargo.toml` was
 rewritten from the normalized registry manifest with full provenance in its
 header comment.
+
+Phase 103 (2026-10-01) re-audit: no source re-vendoring; metadata-only
+refresh (Owner / Reviewed / Re-audit / Removal condition) for
+time-aware guard enforcement. Removal condition unchanged (depends on
+upstream minify-html dropping the Oxc 0.95 / external bumpalo 3.19
+path).
 
 ## Delta from upstream 0.18.1 (complete)
 
@@ -46,7 +52,9 @@ crate during Phase 39 implementation).
 ## Removal
 
 See `Cargo.toml` header and
-`architecture/dependency_security_baseline_phase25.md` §10: remove this fork
-as soon as an official minify-html release eliminates the Oxc 0.95 /
-external bumpalo 3.19 path and passes
-`crates/synvoid-static-files/tests/minify_parity.rs`.
+`architecture/dependency_security_baseline_phase25.md` §10/§12: remove
+this fork as soon as an official minify-html release eliminates the
+Oxc 0.95 / external bumpalo 3.19 path and passes
+`crates/synvoid-static-files/tests/minify_parity.rs`. Enforced by
+`minify_fork_is_temporary_guard` (time-aware via
+`SYNVOID_SECURITY_REVIEW_AS_OF`).

@@ -117,12 +117,14 @@ The following vulnerabilities exist in transitive dependencies and are documente
 | ~~Winch compiler backend sandbox escape~~ | ~~`wasmtime` 40.0.4 (via yara-x)~~ | ~~RUSTSEC-2026-0095~~ | **Remediated (Phase 40)** | YARA line moved to wasmtime 47.0.4 (patched); ignore removed 2026-09-18 |
 | ~~Cranelift aarch64 sandbox escape~~ | ~~`wasmtime` 40.0.4 (via yara-x)~~ | ~~RUSTSEC-2026-0096~~ | **Remediated (Phase 40)** | YARA line moved to wasmtime 47.0.4 (patched); ignore removed 2026-09-18 |
 | ~~Filesystem sandbox escape (trailing-slash paths/symlinks)~~ | ~~`wasmtime` 40.0.4 (via yara-x); direct 36.0.15 LTS patched~~ | ~~RUSTSEC-2026-0269~~ | **Remediated (Phase 40)** | Both lines version-patched (direct 36.0.15 LTS >=36.0.14; transitive 47.0.4 >=47.0.4); ignore removed 2026-09-18. See `architecture/dependency_security_baseline_phase25.md` §11. |
+| ~~`call_ref` / exception `catch` exponential fuel amplification~~ | ~~`wasmtime` 47.0.4 (via yara-x)~~ | ~~RUSTSEC-2026-0315~~ | **Remediated (Phase 103)** | Direct 36.0.15 LTS unaffected (versions below 47 explicitly unaffected); transitive YARA line moved to wasmtime 48.0.3 (patched >=48.0.3); no ignore added |
+| ~~Dynamic record lifting fuel-limit bypass~~ | ~~`wasmtime` 36.0.15 (direct) + 47.0.4 (via yara-x)~~ | ~~RUSTSEC-2026-0316~~ | **Remediated (Phase 103)** | Direct runtime patched in-line to wasmtime 36.0.16 LTS (>=36.0.16,<37.0.0); transitive YARA line moved to 48.0.3 (>=48.0.3,<49.0.0); no ignore added |
 
 ### Medium Severity
 
 | Vulnerability | Crate | ID | Status | Notes |
 |---------------|-------|-----|--------|-------|
-| Marvin Attack | `rsa` | RUSTSEC-2023-0071 | **Low exposure** | Direct + transitive (yara-x); assessed low exposure — not actively invoked in current code paths |
+| Marvin Attack | `rsa` | RUSTSEC-2023-0071 | **Low exposure (Phase 103 re-audit)** | Transitive via `synvoid-yara` (yara-x `crypto` feature), `synvoid-dns` (mesh_dnssec verification), `synvoid-dnssec-keystore` (private-key parsing + sign-only), `synvoid-tls` (cert parsing). Marvin Attack affects PKCS#1 v1.5 **decryption** timing; zero decrypt invocations across all four paths. Reviewed: 2026-10-01; Re-audit: 2026-11-01 |
 
 ### Unmaintained Dependencies (Warnings)
 
@@ -241,7 +243,7 @@ let error = scanner.get_last_reload_error();
 - Documented rationale, exposure, owner, Reviewed/Re-audit dates, and remove
   conditions for all ignored advisories (guard-enforced by `deny_ignore_metadata_guard`)
 - Duplicate-version allowlist narrowed to the documented wasmtime split
-  (transitive 47.0.4 via the yara-x compat fork + direct 36.0.15 LTS)
+  (transitive 48.0.3 via the yara-x compat fork + direct 36.0.16 LTS)
 
 `cargo audit` runs as a blocking gate with the same narrow exceptions mirrored
 in `.cargo/audit.toml` (cargo-audit does not read `deny.toml`).
@@ -261,16 +263,30 @@ in `.cargo/audit.toml` (cargo-audit does not read `deny.toml`).
 ### wasmtime (RUSTSEC-2026-0095 and related 2026-04 advisories — remediated Phase 40)
 - **Issue**: Winch compiler backend sandbox escape (CVE-2026-34987) + Cranelift/Winch/component-model advisories 0085-0096, 0114, 0222
 - **Severity**: High (0095/0096 critical-class sandbox escapes)
-- **Fix**: Direct runtime at `wasmtime 36.0.15` LTS (unaffected by every advisory in this group — proven by a clean `cargo audit` on an isolated 36.0.15 resolve with no ignores, 2026-09-17); YARA transitive line moved 40.0.4 → 47.0.4 in Phase 40 (patched; ignores removed 2026-09-18)
+- **Fix**: Direct runtime at `wasmtime 36.0.16` LTS (Phase 103 in-line LTS patch from 36.0.15 — unaffected by every advisory in this group — proven by a clean `cargo audit` on an isolated 36.0.16 resolve with no ignores, 2026-10-01); YARA transitive line moved 40.0.4 → 47.0.4 → 48.0.3 in Phase 40 + Phase 103 (patched; ignores removed)
 - **Status**: Not affected (direct) / version-patched (YARA transitive) — no ignores remain for this group
 
 ### wasmtime (RUSTSEC-2026-0269 — patched on both lines, Phase 40)
 - **Issue**: Filesystem sandbox escape when paths/symlinks contain trailing slashes (GHSA-vqjp-4c8c-hfgg)
-- **Severity**: High (8.8). Affected: 37.0.0–46.0.2 except backported LTS lines; patched ranges include >=36.0.14,<37.0.0 and >=47.0.4. Direct 36.0.15 is PATCHED; transitive 47.0.4 is PATCHED.
+- **Severity**: High (8.8). Affected: 37.0.0–46.0.2 except backported LTS lines; patched ranges include >=36.0.14,<37.0.0, >=47.0.4, and >=48.0.3. Direct 36.0.16 LTS is PATCHED; transitive 48.0.3 is PATCHED.
 - **Exposure**: Capability-absent on top of version remediation — `wasmtime-wasi` is not resolved, linked, or reachable from either consumer (proven from the lockfile/feature graph, not from absence of a PoC).
-- **Upgrade**: Phase 40 moved the YARA line off wasmtime 40.x (temporary `third-party/yara-x-compat` fork of official yara-x 1.20.0 with the PR #769 wasmtime-47.0.4 delta); the per-advisory ignore is removed. Removal condition for the fork: an official fixed yara-x release (see `architecture/dependency_security_baseline_phase25.md` §11). Re-audit: 2026-10-01.
+- **Upgrade**: Phase 40 moved the YARA line off wasmtime 40.x; Phase 103 advanced the same line 47.0.4 → 48.0.3 to clear RUSTSEC-2026-0315/0316 (manifest-only delta in the same temporary `third-party/yara-x-compat` fork; no source divergence). Removal condition for the fork: an official fixed yara-x release (see `architecture/dependency_security_baseline_phase25.md` §11/§12). Re-audit: 2026-11-01.
 - **Status**: Patched (both lines) + documented decision + guard-enforced (`wasmtime_baseline_guard`, `wasmtime_transitive_matches_baseline`)
 - **Reference**: `architecture/dependency_security_baseline_phase25.md`
+
+### wasmtime (RUSTSEC-2026-0315 — exponential fuel amplification, remediated Phase 103)
+- **Issue**: `call_ref` and exception `catch` can drop some fuel accounting, leading to exponential fuel amplification (GHSA-m63x-6p34-q65x).
+- **Severity**: Medium (5.7).
+- **Affected range**: Wasmtime 47.x only (fixed in >=48.0.3,<49.0.0 / >=49.0.1; versions below 47 are explicitly unaffected).
+- **Disposition**: Direct 36.0.16 LTS is not affected (below 47); transitive YARA line moved 47.0.4 → 48.0.3 in Phase 103. **No ignore added** — both resolved lines are version-patched.
+- **Reference**: `architecture/dependency_security_baseline_phase25.md` §12.
+
+### wasmtime (RUSTSEC-2026-0316 — dynamic record lifting fuel-limit bypass, remediated Phase 103)
+- **Issue**: Dynamic component-record lifting can allocate beyond the hostcall fuel limit (GHSA-jqpg-j7w6-42pr).
+- **Severity**: Low (1).
+- **Affected range**: 36.0.0–46.x and 47.x (fixed in >=36.0.16,<37.0.0 / >=48.0.3,<49.0.0 / >=49.0.1).
+- **Disposition**: Direct runtime patched in-line 36.0.15 → 36.0.16 LTS; transitive YARA line moved 47.0.4 → 48.0.3 in Phase 103. **No ignore added** — both resolved lines are version-patched.
+- **Reference**: `architecture/dependency_security_baseline_phase25.md` §12.
 
 ### rustls-pemfile Removal
 - **Issue**: Unmaintained (RUSTSEC-2025-0134)
@@ -305,27 +321,33 @@ in `.cargo/audit.toml` (cargo-audit does not read `deny.toml`).
 - **Error Handling**: Methods return `Result` types with proper error propagation
 - **Completed**: 2025-03-12
 
-### yara-x/rsa Exposure Assessment (RUSTSEC-2023-0071)
-- **Vulnerability**: Marvin Attack - potential key recovery through timing side-channels
-- **Exposure**: LOW
-- **Analysis**:
-  - The `rsa` crate is a transitive dependency via yara-x
-  - yara-x uses RSA only for optional YARA rule signature verification
-  - SynVoid uses **ed25519-dalek** for YARA rule feed signature verification (not RSA)
-  - The RSA functionality is loaded but never invoked in the current code path
-- **Recommendation**: No action required unless you enable RSA-based YARA rule signing
+### yara-x/rsa Exposure Assessment (RUSTSEC-2023-0071; Phase 103 re-audit)
+- **Vulnerability**: Marvin Attack - potential key recovery through timing side-channels on RSA PKCS#1 v1.5 **decryption**
+- **Exposure**: LOW (all four resolve paths)
+- **Analysis (2026-10-01)**:
+  - The `rsa` crate is a transitive dependency via four SynVoid paths:
+    1. `synvoid-yara` → `yara-x 1.20.0` (compat fork) — yara-x uses RSA only for optional YARA rule signature **verification** (`RsaPublicKey` + `Pkcs1v15Sign`); no signing or decrypt calls.
+    2. `synvoid-dns` (`mesh_dnssec.rs`) — RSA signature **verification** only; no signing/decrypt calls.
+    3. `synvoid-dnssec-keystore` (`key.rs`, `keystore.rs`) — RSA private-key parsing + PKCS#1 v1.5 SIGN generation only; zero `RsaPrivateKey::decrypt(...)` invocations.
+    4. `synvoid-tls` (`cert_resolver.rs`) — RSA private-key DER parsing for X.509 certificates only; no decrypt calls.
+  - The Marvin Attack affects PKCS#1 v1.5 **decryption** timing. Grep on
+    `crates/synvoid-{dns,dnssec-keystore,tls}/src/` yields zero hits for
+    `RsaPrivateKey::decrypt` / `Pkcs1v15Encrypt` / `OAEP` — the affected
+    capability is unreachable.
+  - SynVoid uses **ed25519-dalek** for YARA rule feed signature verification (not RSA).
+- **Recommendation**: No action required unless you introduce a SynVoid code path that calls `rsa::RsaPrivateKey::decrypt(...)` (such a path MUST be rejected at code review and immediately reopens this exception).
 
-### yara-x/wasmtime Transitive Line (remediated Phase 40)
+### yara-x/wasmtime Transitive Line (remediated Phase 40; Wasmtime 48 LTS Phase 103)
 - **Prior issue**: yara-x 1.15 pulled wasmtime 40.0.4 which had multiple vulnerabilities
-- **Your direct version**: wasmtime 36.0.15 LTS from crates.io (patched for RUSTSEC-2026-0269 and unaffected by the 2026-04 advisories — see above; no git patch)
-- **Current path**: yara-x 1.20.0 (temporary manifest-only compat fork) → wasmtime 47.0.4 (patched; transitive)
-- **Mitigation**: single `synvoid-yara` owner for yara-x; version-patched transitive line with guard-enforced fork removal metadata (Reviewed: 2026-09-18; Re-audit: 2026-10-01)
-- **Recommendation**: Replace the fork with an official fixed yara-x release when available (see `third-party/yara-x-compat/README.SYNVOID.md`)
+- **Your direct version**: wasmtime 36.0.16 LTS from crates.io (patched for RUSTSEC-2026-0269 >=36.0.14 and for RUSTSEC-2026-0316 >=36.0.16; unaffected by the 2026-04 advisories; Phase 103 in-line LTS patch from 36.0.15; no git patch)
+- **Current path**: yara-x 1.20.0 (temporary manifest-only compat fork) → wasmtime 48.0.3 (patched for RUSTSEC-2026-0315 / -0316; Phase 103 advanced from 47.0.4 → 48.0.3; transitive)
+- **Mitigation**: single `synvoid-yara` owner for yara-x; version-patched transitive line with guard-enforced fork removal metadata (Reviewed: 2026-10-01; Re-audit: 2026-11-01; time-aware via `evaluate_fork_block` + `SYNVOID_SECURITY_REVIEW_AS_OF`)
+- **Recommendation**: Replace the fork with an official fixed yara-x release when available (see `third-party/yara-x-compat/README.SYNVOID.md`; stock yara-x 1.21.0 still resolves wasmtime ^45.0.3 and does not satisfy the removal condition)
 
 ### yara-x Serialized-Rule Deserialization (GHSA-2jx3-ff3v-j7jj, Phase 36; version-remediated Phase 40)
 - **Issue**: YARA-X <=1.18 `Rules::deserialize` on malformed serialized bytes can cause memory corruption. Fixed upstream in 1.19.0+. SynVoid is now on yara-x 1.20.0 (no RUSTSEC ID mapped — `cargo audit`/`cargo deny` do not fire; tracked here instead).
 - **Exposure after Phase 36**: NO remote/mesh/wire bytes reach any deserializer. `YaraScanner::reload_with_compiled_rules`, `CompiledArtifact::deserialize_verified`, `from_bytes_with_binding`, mesh `local_compiled_rules`/`apply_compiled_rules`/`get_current_compiled_rules`, and the `CompiledBundle` source type were removed; upload/mesh/jail paths recompile approved source text locally. Residual risk is local-only (malformed bytes from a local operator artifact), fail-closed with previous-generation retention.
-- **Upgrade status**: LANDED in Phase 40 (temporary manifest-only compat fork of official 1.20.0 with the PR #769 wasmtime-47.0.4 delta; `YARA_ENGINE_VERSION` is `yara-x/1.20`). No advisory ignore exists for this GHSA (nothing to ignore — unmapped; documented instead of silenced). Remove the fork (not this section) when an official fixed yara-x release replaces it.
+- **Upgrade status**: LANDED in Phase 40 (temporary manifest-only compat fork of official 1.20.0; Phase 103 advanced the wasmtime line from 47.0.4 to 48.0.3; `YARA_ENGINE_VERSION` is `yara-x/1.20`). No advisory ignore exists for this GHSA (nothing to ignore — unmapped; documented instead of silenced). Remove the fork (not this section) when an official fixed yara-x release replaces it.
 
 ### Post-Quantum Architecture
 - **Hybrid Key Exchange**: X25519 + final ML-KEM-768 provides defense-in-depth (wasm-pow client via `ml-kem` 0.3, server via `aws-lc-rs`; Phase 44)
@@ -393,7 +415,7 @@ The following security measures are enabled by default in production builds:
 
 - **eBPF features require root** and Linux kernel 5.8+ with BTF support; falls back to nftables when unavailable
 - **Post-quantum features are experimental** — functional but limited real-world validation
-- **YARA compilation uses wasmtime** (47.0.4 via the temporary yara-x 1.20 compat fork, version-patched; direct runtime is 36.0.15 LTS, patched; `wasmtime-wasi` unreachable) with guard-enforced fork removal metadata (Reviewed: 2026-09-18; Re-audit: 2026-10-01; remove the fork when an official fixed yara-x release replaces it)
+- **YARA compilation uses wasmtime** (48.0.3 via the temporary yara-x 1.20 compat fork, version-patched for RUSTSEC-2026-0315 / -0316; direct runtime is 36.0.16 LTS, patched for RUSTSEC-2026-0316; `wasmtime-wasi` unreachable) with guard-enforced fork removal metadata (Reviewed: 2026-10-01; Re-audit: 2026-11-01; time-aware via `evaluate_fork_block` + `SYNVOID_SECURITY_REVIEW_AS_OF`; remove the fork when an official fixed yara-x release replaces it)
 - **External DNSSEC tooling deferred** — zone signing is internal but external key management tooling is not yet shipped
 - **KyberSlash closed (Phase 44)** — wasm-pow migrated from draft-Kyber `pqc_kyber_edit` to maintained final ML-KEM (`ml-kem` 0.3); RUSTSEC-2023-0079 no longer applies to the graph (guard `pqc_backend_is_maintained_ml_kem`)
 - **Archive inspection is ZIP-only and non-recursive** — TAR/GZIP/BZIP2/7z are detected by MIME but not opened; nested archives are counted but not recursively scanned

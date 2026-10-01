@@ -367,7 +367,7 @@ public API architecture. Phase 56's landed writer-shutdown and cache-governor
 fixes remain in force. No active performance-corrective handoff remains.
 
 
-## Post-Phase-57 Campaign: Eggfetch 0.2 Transport Consolidation — Runtime/Performance Closed; Phase 64 Docs Correction Active
+## Post-Phase-57 Campaign: Eggfetch 0.2 Transport Consolidation — Runtime/Performance/Docs Closed
 
 Status: runtime implementation closed through Phase 62; Phase 61 closeout superseded; Phase 63 performance-evidence requalification closed 2026-09-22 with one accepted, labeled tail residual (`stream-concurrent` under synchronized concurrency ≥ 4). Phase 64 documentation/evidence correction (immutable-session count and concrete upstream-plan reference) is complete/closed; it did not reopen runtime or performance adjudication. Production remains on eggfetch. Final measured authority remains `architecture/eggfetch_0_2_transport_performance_requalification.md`.
 

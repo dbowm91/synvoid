@@ -717,11 +717,11 @@ them intentionally in the same commit that updates the pins below.
 - Routine invocation count is 9 → 10 Cargo invocations (fmt + deny + 8);
   `verify-full` raw commands are 9 → 10 with `minimal-tests`.
 - Rust 1.98.1 satisfies the `rust-version` requirements of the landed direct
-  runtime (wasmtime 36.0.15 LTS) and the transitive yara-x 1.20 line (wasmtime
-  47.0.4 via the `third-party/yara-x-compat` fork); a
-  future ≥46/48 move (re-attempted only after the `bumpalo` blocker clears —
-  see the dependency-security baseline §4/§9; Re-audit: 2026-10-01) re-checks
-  this toolchain bound at that time.
+  runtime (wasmtime 36.0.16 LTS) and the transitive yara-x 1.20 line (wasmtime
+  48.0.3 via the `third-party/yara-x-compat` fork); a
+  future plugin-runtime 36 → 48 move (re-attempted only after the `bumpalo`
+  blocker clears — see the dependency-security baseline §4/§12; Re-audit:
+  2026-11-01) re-checks this toolchain bound at that time.
 
 ### Reproducibility vs review-time semantics
 
