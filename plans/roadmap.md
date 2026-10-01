@@ -1,6 +1,6 @@
 # SynVoid Architecture Hardening Roadmap
 
-Status: Phase 104 (Phase 103 qualification-evidence corrective closeout) is ACTIVE / READY FOR IMPLEMENTATION. Phase 103 (dependency-security re-audit and Wasmtime remediation) remains CLOSED QUALIFIED for its security remediation (2026-10-01; closeout `architecture/dependency_security_reaudit_phase103_closeout.md`; proof-bearing implementation SHA `aeeebc7bac38b1dcc441b06f53c838a74582cd24`; hosted CI + `dependency-security` green on `36891196284`), with Phase 104 owning the residual performance-evidence and support-date corrections. Phase 102 (eggfetch 0.2.1 patch adoption) is CLOSED QUALIFIED (2026-10-01; closeout `architecture/eggfetch_0_2_1_patch_adoption_closeout.md`). Tracks 1–3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). Eggfetch 0.2 runtime adoption is closed through Phase 62 (`c3568ef4...`) and performance/reproducibility adjudication is closed through Phase 63; Phase 64 docs/evidence-truth correction is closed. Production remains on eggfetch. The EggServe 0.2.2-line inbound H1 campaign remains historical/retained at Phase 65; Phases 66–69 were never started. EggServe 0.3 H1 adoption and corrective requalification are closed as `ADOPTED` through Phase 80 on exact pins `eggserve-server = "=0.4.0"` / `eggserve-primitives = "=0.2.2"`; the Phase 78 terminal claim is superseded by Phase 80 proof-bearing SHA `174fdbcd6f133b35099ed4492f5ed8d3fcaa7d4c` (hosted run `36201213413`). Phase 79 implementation SHA: `171dd1e47f965b04b34465fc72c87adf4d9a9cab`. See `architecture/eggserve_0_3_h1_adoption_closeout.md`. Phases 70–72 remain historical/closed with evidence aligned to their then-current Hyper H1 runtime. The process-sandbox correctness and extraction-readiness campaign (Phases 81-84) remains closed DEFER; Phase 94 corrected and qualified Phase 89's Linux mechanism-selection and native-evidence gaps on exact SHA `e86fb35372b1b66bb59c8a6336bf32e55ff5c93e` (hosted/native run `36271417398`). The independent ICMP policy/enforcement extraction-preparation campaign (Phases 85-88) remains closed RETAIN (see the Post-Phase-80 section below); Phases 90–91 are closed, Phase 92 is CLOSED CORRECTED, Phase 93 is QUALIFIED (superseded by Phase 95 exact-SHA two-run proof `36335520434` on `39bfced25d51267ee5837eaecedae7da9af163d0`), and Phase 95 is CLOSED QUALIFIED with Linux nftables native-supported. Phase 88 stays RETAIN with no extraction authorized. The closed independent cross-repo Eggbench security-qualification asset handoff remains separately registered. The Eggbench Security Qualification M003 telemetry corrective is closed qualified at `739e7ba6f02c5e3f83fe9ff5321b09213182b193` (owner contract `synvoid.eggbench-telemetry.v2`; terminal closeout `architecture/eggbench_security_qualification_m003_telemetry_corrective_closeout.md`); the former v1 terminal qualification remains superseded/withdrawn. The post-Phase-95 architecture-maintenance and auditability campaign (Phases 96–101) is closed qualified on proof-bearing SHA `2bfc3c6cfd1a1f2454f801cc02c01a0cbafa2e30`; see `architecture/architecture_maintenance_auditability_closeout.md`.
+Status: Phase 104 (Phase 103 qualification-evidence corrective closeout) is CLOSED QUALIFIED (2026-10-01; closeout `architecture/dependency_security_phase104_corrective_closeout.md`; proof-bearing implementation SHA `e0032cd176cd1061a3aa5877555f49ebc4f46a3b`; hosted CI + `dependency-security` green on `36901352762`). Phase 103 (dependency-security re-audit and Wasmtime remediation) remains CLOSED QUALIFIED for its security remediation (2026-10-01; closeout `architecture/dependency_security_reaudit_phase103_closeout.md`; proof-bearing implementation SHA `aeeebc7bac38b1dcc441b06f53c838a74582cd24`; hosted CI + `dependency-security` green on `36891196284`), with Phase 104 owning the residual performance-evidence and support-date corrections. Phase 102 (eggfetch 0.2.1 patch adoption) is CLOSED QUALIFIED (2026-10-01; closeout `architecture/eggfetch_0_2_1_patch_adoption_closeout.md`). Tracks 1–3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). Eggfetch 0.2 runtime adoption is closed through Phase 62 (`c3568ef4...`) and performance/reproducibility adjudication is closed through Phase 63; Phase 64 docs/evidence-truth correction is closed. Production remains on eggfetch. The EggServe 0.2.2-line inbound H1 campaign remains historical/retained at Phase 65; Phases 66–69 were never started. EggServe 0.3 H1 adoption and corrective requalification are closed as `ADOPTED` through Phase 80 on exact pins `eggserve-server = "=0.4.0"` / `eggserve-primitives = "=0.2.2"`; the Phase 78 terminal claim is superseded by Phase 80 proof-bearing SHA `174fdbcd6f133b35099ed4492f5ed8d3fcaa7d4c` (hosted run `36201213413`). Phase 79 implementation SHA: `171dd1e47f965b04b34465fc72c87adf4d9a9cab`. See `architecture/eggserve_0_3_h1_adoption_closeout.md`. Phases 70–72 remain historical/closed with evidence aligned to their then-current Hyper H1 runtime. The process-sandbox correctness and extraction-readiness campaign (Phases 81-84) remains closed DEFER; Phase 94 corrected and qualified Phase 89's Linux mechanism-selection and native-evidence gaps on exact SHA `e86fb35372b1b66bb59c8a6336bf32e55ff5c93e` (hosted/native run `36271417398`). The independent ICMP policy/enforcement extraction-preparation campaign (Phases 85-88) remains closed RETAIN (see the Post-Phase-80 section below); Phases 90–91 are closed, Phase 92 is CLOSED CORRECTED, Phase 93 is QUALIFIED (superseded by Phase 95 exact-SHA two-run proof `36335520434` on `39bfced25d51267ee5837eaecedae7da9af163d0`), and Phase 95 is CLOSED QUALIFIED with Linux nftables native-supported. Phase 88 stays RETAIN with no extraction authorized. The closed independent cross-repo Eggbench security-qualification asset handoff remains separately registered. The Eggbench Security Qualification M003 telemetry corrective is closed qualified at `739e7ba6f02c5e3f83fe9ff5321b09213182b193` (owner contract `synvoid.eggbench-telemetry.v2`; terminal closeout `architecture/eggbench_security_qualification_m003_telemetry_corrective_closeout.md`); the former v1 terminal qualification remains superseded/withdrawn. The post-Phase-95 architecture-maintenance and auditability campaign (Phases 96–101) is closed qualified on proof-bearing SHA `2bfc3c6cfd1a1f2454f801cc02c01a0cbafa2e30`; see `architecture/architecture_maintenance_auditability_closeout.md`.
 
 Scope: this roadmap covers architecture hardening, trust-boundary closure, verification, release readiness, post-hardening cleanup, and the architecture-convergence work required before another broad feature-expansion pass.
 
@@ -1466,15 +1466,48 @@ Historical research / execution-shape / binding-constraints notes from the
 ACTIVE version of this section are preserved in the planning registration
 SHAs (`5f680f81` plan, `d960f473` registration) and are not re-stated here.
 
-## Post-Phase-103 Corrective: Qualification Evidence and Provenance — Phase 104 Active
+## Post-Phase-103 Corrective: Qualification Evidence and Provenance — Phase 104 CLOSED QUALIFIED
 
-Status: **ACTIVE / READY FOR IMPLEMENTATION** (registered 2026-10-01).
+Status: **CLOSED QUALIFIED** (2026-10-01).
 
 Plan:
-`plans/phase_104_phase103_qualification_evidence_corrective_closeout.md`.
+`plans/phase_104_phase103_qualification_evidence_corrective_closeout.md`
+(now marked CLOSED QUALIFIED at the top).
 
-Planning baseline:
-`136bc2143a849b0941b48c80afcb1add2d90a975`.
+Closeout:
+`architecture/dependency_security_phase104_corrective_closeout.md`.
+
+Proof-bearing implementation SHA:
+`e0032cd176cd1061a3aa5877555f49ebc4f46a3b`.
+
+Hosted CI run: `36901352762` (`ci` success; `dependency-security` success;
+`icmp-native-qualification` and `sandbox-native-qualification` skipped — out
+of scope for Phase 104). URL:
+https://github.com/dbowm91/synvoid/actions/runs/36901352762
+
+Terminal disposition:
+
+- same-host, same-fixture paired YARA comparison across `d960f473`
+  (Wasmtime 47.0.4) → `aeeebc7b` (Wasmtime 48.0.3) shows no repeatable
+  regression (pass-1 deltas -5.14%/-3.43%/-10.58%/-1.83% with two rerun
+  triggers; rerun deltas -3.41%/+4.37%/-0.53%/-0.21% all within ±5%);
+- Phase 103 closeout performance section corrected to reference the paired
+  evidence (Phase 40 data demoted to explicitly non-comparable historical
+  context);
+- Wasmtime 48 LTS provenance corrected to “released 2026-08-20 and
+  supported for 24 months” per upstream policy/release record;
+- dependency graph unchanged (direct 36.0.16 + YARA 48.0.3, no WASI
+  filesystem, no git source, no 0315/0316 ignores);
+- focused YARA/repo-guard/security verification plus `cargo xtask verify`
+  (10/10) green; hosted exact-SHA proof green.
+
+Future-plan unblocking: no registered SynVoid plan was blocked on Phase 104.
+No previously-blocked plan is unblocked by this closure. Residual triggers
+remain those recorded in the Phase 103/104 closeouts.
+
+Historical execution-shape notes from the ACTIVE version of this section are
+preserved in the planning registration SHAs (`c3242aa7` plan, `3af7aa42`
+registration, `e0032cd1` implementation) and are not re-stated here.
 
 Scope: corrective closeout only. Phase 103's dependency-security remediation
 remains the accepted production state: direct Wasmtime 36.0.16 LTS,
