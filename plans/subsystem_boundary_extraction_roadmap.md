@@ -57,10 +57,12 @@ currently depends on SynVoid config/core/TLS/GeoIP/platform/utils/keystore and
 optionally mesh. Moving the current crate verbatim would export SynVoid internals
 rather than create a clean independent service.
 
-The current lock also resolves Hickory 0.26.1 while the 0.26.2/0.26.3 train
-contains material DNSSEC/security/correctness fixes. Before extraction work, the
-current Hickory line must be brought to the qualified current patch and SynVoid's
-custom DNS implementation must be audited against functionality now owned by
+The Phase 105 implementation has moved the Hickory family from 0.26.1 to
+0.26.3 and completed local tests, feature-profile checks, dependency gates, the
+full verification contract, and bounded before/after benchmarks. The final
+security qualification awaits exact-SHA hosted CI/dependency-security proof.
+Phase 108 remains blocked until that proof is recorded. SynVoid's custom DNS
+implementation must then be audited against functionality now owned by
 Hickory.
 
 Disposition: **GO MAINTAIN + SIMPLIFY**, then **GO PREPARE** an application-neutral

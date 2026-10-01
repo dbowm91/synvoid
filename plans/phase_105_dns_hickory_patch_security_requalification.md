@@ -1,6 +1,10 @@
 # Phase 105 Plan: DNS Hickory Patch Adoption and Security Requalification
 
-Status: **ACTIVE / READY**.
+Status: **IMPLEMENTATION COMPLETE — PENDING EXACT-SHA HOSTED PROOF**.
+
+Interim evidence: `architecture/dns_hickory_patch_requalification.md`.
+The terminal CLOSED QUALIFIED status remains gated on hosted CI and
+dependency-security for the exact proof-bearing SHA.
 
 Registered in: `plans/roadmap.md` and
 `plans/subsystem_boundary_extraction_roadmap.md`.

@@ -1,5 +1,9 @@
 # DNS Module Architecture
 
+The qualified Hickory dependency baseline is 0.26.3 for proto/net/resolver;
+see [`dns_hickory_patch_requalification.md`](dns_hickory_patch_requalification.md)
+for the Phase 105 security, verification, and benchmark evidence.
+
 ## 1. Purpose and Responsibility
 
 The SynVoid DNS module provides a **comprehensive DNS server** with support for:
@@ -2216,4 +2220,3 @@ settings schema/UI (unsupported toggles marked, `PUT /config/dns` validates).
 | `scripts/dns/stress_tests.sh` | Resource-limit verification under load |
 | `scripts/dns_diagnostic_smoke.sh` | Live DNS smoke testing (UDP, TCP, SOA, DNSSEC) |
 | `scripts/dns/benchmark_report.sh` | Benchmark report generator |
-
