@@ -331,4 +331,10 @@ reason = "owner-side live reverse-proxy semantic proof for the eggbench v1 quali
 name = "eggbench_m003_telemetry_live_proof"
 class = "qualification"
 owners = ["synvoid-waf", "synvoid-proxy", "synvoid-http"]
-reason = "owner-side live Prometheus telemetry proof for the eggbench v1 telemetry contract (policy synvoid.eggbench-telemetry.v1): scrapes the supervisor-side loopback exporter after driving benign/WAF traffic through the real minimal binary against a controlled loopback origin; asserts required owner metrics are present with finite values and declared kinds, gauges are plausible under load, counters are monotonic, optional absent data is omitted, and the registered exporter task/listener stops with the supervisor; opt-in/ignored, never a routine-CI gate"
+reason = "owner-side live Prometheus telemetry proof for the eggbench v2 telemetry contract (policy synvoid.eggbench-telemetry.v2): scrapes the supervisor-side loopback exporter after driving benign/WAF traffic plus a proxied POST body and an in-flight slow request through the real minimal binary against a controlled loopback origin; asserts required owner metrics are present with finite values and declared kinds, that worker-backed values are live rather than inventory-at-zero (worker memory, in-flight active connections, and a workload-derived monotonic counter), that counters never decrease across the whole live window, that optional absent data is omitted, and that the registered exporter task/listener stops with the supervisor; opt-in/ignored, never a routine-CI gate"
+
+[[test]]
+name = "unified_server_heartbeat_dispatch"
+class = "composition"
+owners = ["synvoid-ipc", "synvoid-metrics"]
+reason = "validates the M003 telemetry heartbeat-dispatch corrective composition chain: a real Message::UnifiedServerWorkerHeartbeat written on a real IpcStream through handle_worker_connection into ProcessManager's generation-aware snapshot and out through the synvoid.eggbench-telemetry.v2 bridge as Prometheus samples, plus per-worker identity/rate-limit classification, same-generation replacement, and unowned-worker refusal"

@@ -6,6 +6,90 @@ use synvoid_ipc::{ErrorCode, ErrorSeverity, Message, ProcessManager, WorkerId};
 
 use crate::supervisor::state::SupervisorState;
 
+/// Origin identity of a single worker -> supervisor IPC message.
+///
+/// The supervisor applies two security/control decisions on this
+/// classification before it ever routes the message:
+///
+/// 1. per-worker IPC rate limiting (`IpcRateLimiter::check_worker`) instead
+///    of the shared global bucket;
+/// 2. peer-PID binding verification on an established worker connection —
+///    a startup message binds `worker_id -> socket peer PID`, and every
+///    later message from that worker must come from the same PID.
+///
+/// A worker -> supervisor message that is absent from this table falls back
+/// to `worker_id = None`, which silently degrades both decisions to the
+/// global/unverified path. `UnifiedServerWorkerHeartbeat` used to be absent
+/// for exactly that reason, so worker-backed telemetry never reached the
+/// v2 bridge. This type is the single production classifier; tests call it
+/// instead of re-implementing a parallel match.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct WorkerMessageIdentity {
+    /// Worker ID this message claims, when the variant carries one.
+    worker_id: Option<u64>,
+    /// PID the worker claims in its startup message, if any.
+    startup_pid: Option<u32>,
+    /// True for the worker startup message that establishes the peer-PID
+    /// binding for an established worker connection.
+    is_startup: bool,
+}
+
+impl WorkerMessageIdentity {
+    /// Classify a worker -> supervisor message.
+    ///
+    /// Only worker-originated variants belong here. Supervisor -> worker
+    /// commands (`UnifiedServerWorkerDrain`, `UnifiedServerWorkerResize`,
+    /// `WorkerDrain`, upgrade/drain control traffic, ...) are never received
+    /// on a worker connection and must stay unclassified.
+    fn classify(message: &Message) -> Self {
+        match message {
+            Message::WorkerStarted { id, pid, .. } => Self {
+                worker_id: Some(id.as_usize() as u64),
+                startup_pid: Some(*pid as u32),
+                is_startup: true,
+            },
+            Message::CpuWorkerStarted { worker_id, pid } => Self {
+                worker_id: Some(*worker_id as u64),
+                startup_pid: Some(*pid),
+                is_startup: true,
+            },
+            Message::UnifiedServerWorkerStarted { id, pid, .. } => Self {
+                worker_id: Some(id.as_usize() as u64),
+                startup_pid: Some(*pid),
+                is_startup: true,
+            },
+            Message::WorkerReady { id } => Self::for_worker(*id),
+            Message::WorkerHeartbeat { id, .. } => Self::for_worker(*id),
+            Message::WorkerError { id, .. } => Self::for_worker(*id),
+            Message::CpuWorkerReady { worker_id } => Self::for_cpu_worker(*worker_id),
+            Message::CpuWorkerHeartbeat { worker_id, .. } => Self::for_cpu_worker(*worker_id),
+            Message::UnifiedServerWorkerReady { id } => Self::for_worker(*id),
+            Message::UnifiedServerWorkerHeartbeat { id, .. } => Self::for_worker(*id),
+            Message::UnifiedServerWorkerShutdownComplete { id } => Self::for_worker(*id),
+            Message::UnifiedServerWorkerError { id, .. } => Self::for_worker(*id),
+            Message::UnifiedServerWorkerDrained { id, .. } => Self::for_worker(*id),
+            Message::UnifiedServerWorkerResizeAck { id, .. } => Self::for_worker(*id),
+            _ => Self::default(),
+        }
+    }
+
+    fn for_worker(id: WorkerId) -> Self {
+        Self {
+            worker_id: Some(id.as_usize() as u64),
+            startup_pid: None,
+            is_startup: false,
+        }
+    }
+
+    fn for_cpu_worker(worker_id: usize) -> Self {
+        Self {
+            worker_id: Some(worker_id as u64),
+            startup_pid: None,
+            is_startup: false,
+        }
+    }
+}
+
 pub async fn handle_worker_connection(
     ipc: AsyncIpcStream,
     process_manager: Arc<ProcessManager>,
@@ -80,31 +164,12 @@ async fn handle_worker_connection_internal(
                     continue;
                 }
 
-                let (worker_id, is_startup_message, claimed_pid_for_startup) = match &message {
-                    Message::WorkerStarted { id, pid, .. } => {
-                        (Some(id.as_usize() as u64), true, Some(*pid as u32))
-                    }
-                    Message::CpuWorkerStarted { worker_id, pid } => {
-                        (Some(*worker_id as u64), true, Some(*pid))
-                    }
-                    Message::UnifiedServerWorkerStarted { id, pid, .. } => {
-                        (Some(id.as_usize() as u64), true, Some(*pid))
-                    }
-                    Message::WorkerReady { id } => (Some(id.as_usize() as u64), false, None),
-                    Message::WorkerHeartbeat { id, .. } => {
-                        (Some(id.as_usize() as u64), false, None)
-                    }
-                    Message::WorkerError { id, .. } => (Some(id.as_usize() as u64), false, None),
-                    Message::CpuWorkerReady { worker_id } => (Some(*worker_id as u64), false, None),
-                    Message::CpuWorkerHeartbeat { worker_id, .. } => {
-                        (Some(*worker_id as u64), false, None)
-                    }
-                    _ => (None, false, None),
-                };
+                let identity = WorkerMessageIdentity::classify(&message);
+                let worker_id = identity.worker_id;
 
-                if is_startup_message {
+                if identity.is_startup {
                     if let Some(actual_pid) = peer_pid {
-                        if let Some(claimed_pid) = claimed_pid_for_startup {
+                        if let Some(claimed_pid) = identity.startup_pid {
                             if claimed_pid != actual_pid {
                                 tracing::error!(
                                     "IPC security: FATAL - worker {} claims PID {} but socket peer PID is {}",
@@ -397,6 +462,19 @@ async fn handle_worker_connection_internal(
                         Message::UnifiedServerWorkerReady { id } => {
                             process_manager.handle_unified_server_worker_ready(id);
                         }
+                        // Unified Server workers are the sole owner of
+                        // `synvoid.eggbench-telemetry.v2` worker-backed values.
+                        // Without this arm the heartbeat falls through to the
+                        // catch-all, ProcessManager keeps its default/stale
+                        // `WorkerMetricsPayload`, and the v2 bridge publishes
+                        // a correct inventory with zero live values.
+                        Message::UnifiedServerWorkerHeartbeat {
+                            id,
+                            timestamp: _,
+                            metrics,
+                        } => {
+                            process_manager.handle_unified_server_worker_heartbeat(id, metrics);
+                        }
                         _ => {}
                     }
                     Ok(())
@@ -494,6 +572,37 @@ async fn handle_worker_connection_internal(
 mod tests {
     use super::*;
     use synvoid_metrics::WorkerMetricsPayload;
+
+    /// `Message` has no `Debug`-free discriminant helper, and its derived
+    /// `Debug` prints every payload field. Variant names are what an
+    /// assertion failure needs to be actionable about.
+    fn msg_variant_name(message: &Message) -> &'static str {
+        match message {
+            Message::WorkerStarted { .. } => "WorkerStarted",
+            Message::WorkerReady { .. } => "WorkerReady",
+            Message::WorkerHeartbeat { .. } => "WorkerHeartbeat",
+            Message::WorkerError { .. } => "WorkerError",
+            Message::WorkerShutdownComplete { .. } => "WorkerShutdownComplete",
+            Message::WorkerDrain { .. } => "WorkerDrain",
+            Message::BlocklistUpdate { .. } => "BlocklistUpdate",
+            Message::MinifyError { .. } => "MinifyError",
+            Message::CpuWorkerStarted { .. } => "CpuWorkerStarted",
+            Message::CpuWorkerReady { .. } => "CpuWorkerReady",
+            Message::CpuWorkerHeartbeat { .. } => "CpuWorkerHeartbeat",
+            Message::UnifiedServerWorkerStarted { .. } => "UnifiedServerWorkerStarted",
+            Message::UnifiedServerWorkerReady { .. } => "UnifiedServerWorkerReady",
+            Message::UnifiedServerWorkerHeartbeat { .. } => "UnifiedServerWorkerHeartbeat",
+            Message::UnifiedServerWorkerShutdownComplete { .. } => {
+                "UnifiedServerWorkerShutdownComplete"
+            }
+            Message::UnifiedServerWorkerError { .. } => "UnifiedServerWorkerError",
+            Message::UnifiedServerWorkerDrain { .. } => "UnifiedServerWorkerDrain",
+            Message::UnifiedServerWorkerDrained { .. } => "UnifiedServerWorkerDrained",
+            Message::UnifiedServerWorkerResize { .. } => "UnifiedServerWorkerResize",
+            Message::UnifiedServerWorkerResizeAck { .. } => "UnifiedServerWorkerResizeAck",
+            _ => "other",
+        }
+    }
 
     #[tokio::test]
     async fn test_worker_started_message_parsing() {
@@ -727,7 +836,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_message_dispatch_identifies_worker_id() {
-        // Verify all worker-originating messages carry extractable IDs
+        // Exercises the production classifier rather than a test-only copy of
+        // its match: a duplicated match is exactly how
+        // `UnifiedServerWorkerHeartbeat` escaped classification.
         let messages = vec![
             (
                 Message::WorkerStarted {
@@ -760,14 +871,187 @@ mod tests {
         ];
 
         for (msg, expected_id) in messages {
-            let extracted = match &msg {
-                Message::WorkerStarted { id, .. } => Some(id.as_usize() as u64),
-                Message::WorkerReady { id } => Some(id.as_usize() as u64),
-                Message::WorkerHeartbeat { id, .. } => Some(id.as_usize() as u64),
-                Message::WorkerError { id, .. } => Some(id.as_usize() as u64),
-                _ => None,
-            };
-            assert_eq!(extracted, expected_id, "Mismatch for {:?}", msg);
+            let identity = WorkerMessageIdentity::classify(&msg);
+            assert_eq!(identity.worker_id, expected_id, "Mismatch for {:?}", msg);
+        }
+    }
+
+    #[tokio::test]
+    async fn unified_server_worker_messages_are_classified_with_their_worker_id() {
+        // C1: every worker -> supervisor Unified Server lifecycle message
+        // carries its real worker ID, so none of them silently degrades to
+        // the global IPC rate-limit bucket / unverified peer-PID path.
+        let classified: Vec<(Message, u64)> = vec![
+            (Message::UnifiedServerWorkerReady { id: WorkerId(11) }, 11),
+            (
+                Message::UnifiedServerWorkerHeartbeat {
+                    id: WorkerId(12),
+                    timestamp: 0,
+                    metrics: crate::metrics::WorkerMetricsPayload::default(),
+                },
+                12,
+            ),
+            (
+                Message::UnifiedServerWorkerShutdownComplete { id: WorkerId(13) },
+                13,
+            ),
+            (
+                Message::UnifiedServerWorkerError {
+                    id: WorkerId(14),
+                    error: "test".into(),
+                    severity: ErrorSeverity::Error,
+                    error_code: ErrorCode::Unknown,
+                },
+                14,
+            ),
+            (
+                Message::UnifiedServerWorkerDrained {
+                    id: WorkerId(15),
+                    remaining_connections: 0,
+                    drain_id: 1,
+                },
+                15,
+            ),
+            (
+                Message::UnifiedServerWorkerResizeAck {
+                    id: WorkerId(16),
+                    worker_threads: 4,
+                },
+                16,
+            ),
+        ];
+
+        for (msg, expected) in classified {
+            let identity = WorkerMessageIdentity::classify(&msg);
+            assert_eq!(
+                identity.worker_id,
+                Some(expected),
+                "{} must classify as worker {}",
+                msg_variant_name(&msg),
+                expected
+            );
+            assert!(
+                !identity.is_startup,
+                "{} is not a startup message",
+                msg_variant_name(&msg)
+            );
+            assert_eq!(
+                identity.startup_pid,
+                None,
+                "{} carries no startup PID",
+                msg_variant_name(&msg)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn unified_server_worker_startup_binds_pid_and_heartbeat_keeps_identity() {
+        let started = Message::UnifiedServerWorkerStarted {
+            id: WorkerId(21),
+            pid: 4242,
+            timestamp: 0,
+        };
+        let startup = WorkerMessageIdentity::classify(&started);
+        assert!(startup.is_startup);
+        assert_eq!(startup.worker_id, Some(21));
+        assert_eq!(startup.startup_pid, Some(4242));
+
+        // The heartbeat that follows on the same connection is not a startup
+        // message but must resolve to the same worker so the established
+        // peer-PID binding is checked against it.
+        let heartbeat = Message::UnifiedServerWorkerHeartbeat {
+            id: WorkerId(21),
+            timestamp: 0,
+            metrics: crate::metrics::WorkerMetricsPayload::default(),
+        };
+        let identity = WorkerMessageIdentity::classify(&heartbeat);
+        assert!(!identity.is_startup);
+        assert_eq!(identity.worker_id, startup.worker_id);
+    }
+
+    #[tokio::test]
+    async fn supervisor_to_worker_commands_are_never_classified_as_worker_origin() {
+        // The Unified Server drain/resize commands travel supervisor -> worker.
+        // Classifying them would attribute a worker ID (and therefore a
+        // per-worker rate-limit bucket and peer-PID binding) to a message the
+        // supervisor itself originates.
+        let commands = vec![
+            Message::UnifiedServerWorkerDrain {
+                timeout_secs: 30,
+                drain_id: 7,
+            },
+            Message::UnifiedServerWorkerResize { worker_threads: 8 },
+            Message::WorkerDrain {
+                id: WorkerId(3),
+                timeout_secs: 30,
+            },
+        ];
+
+        for msg in commands {
+            let identity = WorkerMessageIdentity::classify(&msg);
+            assert_eq!(
+                identity.worker_id,
+                None,
+                "{} must not be worker-classified",
+                msg_variant_name(&msg)
+            );
+            assert!(!identity.is_startup);
+            assert_eq!(identity.startup_pid, None);
+        }
+    }
+
+    #[tokio::test]
+    async fn cpu_worker_classification_is_unchanged() {
+        let started = Message::CpuWorkerStarted {
+            worker_id: 7,
+            pid: 99,
+        };
+        let startup = WorkerMessageIdentity::classify(&started);
+        assert_eq!(
+            startup,
+            WorkerMessageIdentity {
+                worker_id: Some(7),
+                startup_pid: Some(99),
+                is_startup: true,
+            }
+        );
+
+        let heartbeat = Message::CpuWorkerHeartbeat {
+            worker_id: 7,
+            timestamp: 0,
+            static_cache_hits: 0,
+            static_cache_misses: 0,
+            cpu_offload_stats: Default::default(),
+        };
+        assert_eq!(
+            WorkerMessageIdentity::classify(&heartbeat),
+            WorkerMessageIdentity {
+                worker_id: Some(7),
+                startup_pid: None,
+                is_startup: false,
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn non_worker_messages_stay_unclassified() {
+        for msg in [
+            Message::BlocklistUpdate {
+                blocks: vec![],
+                mesh_blocks: vec![],
+                version: 1,
+            },
+            Message::MinifyError {
+                request_id: 7,
+                error: "boom".into(),
+            },
+        ] {
+            assert_eq!(
+                WorkerMessageIdentity::classify(&msg),
+                WorkerMessageIdentity::default(),
+                "{} must not be worker-classified",
+                msg_variant_name(&msg)
+            );
         }
     }
 

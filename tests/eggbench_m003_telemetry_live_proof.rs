@@ -5,14 +5,16 @@
 //! supervisor-side exporter through the real minimal
 //! (`--no-default-features`) SynVoid binary against a controlled loopback
 //! origin and proves: every required contract metric is present, finite,
-//! and has the declared Prometheus type; at least one gauge is plausible
-//! under live load; at least one contract counter is monotonic; absent
-//! optional data is omitted (not zeroed); the registered exporter task
-//! stops cleanly with the supervisor.
+//! and has the declared Prometheus type; the published values are
+//! **worker-backed rather than inventory-at-zero** (the heartbeat-dispatch
+//! corrective's claim); counters are monotonic across scrapes; legitimately
+//! zero counters are not forced non-zero; optional absent data is omitted
+//! (not zeroed); the registered exporter task stops cleanly with the
+//! supervisor.
 //!
 //! Opt-in: `#[ignore]`d and additionally gated on
 //! `SYNVOID_EGGBENCH_M003_LIVE_PROOF=1` (binds loopback ports, spawns the
-//! supervisor + origin + scrape, ~30-60s). Never a routine-CI gate.
+//! supervisor + origin + scrape, ~60-120s). Never a routine-CI gate.
 
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
@@ -26,6 +28,16 @@ const POLICY_ID: &str = "synvoid.eggbench-telemetry.v2";
 const QUAL_POLICY_ID: &str = "synvoid.eggbench-qualification.v1";
 const DRIVER_UA: &str = "synvoid-eggbench-telemetry-m003/1.0";
 const OPT_IN_ENV: &str = "SYNVOID_EGGBENCH_M003_LIVE_PROOF";
+
+/// Origin path whose response is delayed long enough to span at least two
+/// Unified Server heartbeat cadences and two bridge refreshes. A request that
+/// is in flight across a heartbeat is the only way `active_connections`
+/// becomes non-zero in the published payload.
+const SLOW_PATH: &str = "/qualbench/slow";
+const SLOW_ORIGIN_DELAY: Duration = Duration::from_secs(12);
+/// POST body size used to prove `body_buffering_bytes_total` is
+/// workload-derived rather than an inventory zero.
+const POST_BODY: &[u8] = b"synvoid-m003-live-proof-body-0123456789abcdef0123456789abcdef";
 
 /// RAII child-process guard.
 struct ProcessGuard {
@@ -107,6 +119,9 @@ async fn run_origin(
                         .and_then(|l| l.split_whitespace().nth(1))
                         .unwrap_or("/")
                         .to_string();
+                    if path == SLOW_PATH {
+                        tokio::time::sleep(SLOW_ORIGIN_DELAY).await;
+                    }
                     {
                         let mut st = state.lock().await;
                         st.hits += 1;
@@ -172,6 +187,72 @@ async fn drive_case(listen_port: u16, path: &str) -> Result<u16, String> {
         .and_then(|s| s.parse().ok())
         .ok_or_else(|| format!("unparseable status line: {status_line:?}"))?;
     Ok(code)
+}
+
+/// POST a small benign body through the real proxy. The request path records
+/// `body_buffering_bytes(request_body_size)` for every proxied request, so a
+/// successful POST is the workload evidence that
+/// `synvoid_subject_body_buffering_bytes_total` is worker-derived.
+async fn drive_post(listen_port: u16, path: &str) -> Result<u16, String> {
+    let request = format!(
+        "POST {} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nUser-Agent: {}\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        path,
+        listen_port,
+        DRIVER_UA,
+        POST_BODY.len()
+    );
+    let mut stream = TcpStream::connect(("127.0.0.1", listen_port))
+        .await
+        .map_err(|e| format!("connect failed: {e}"))?;
+    stream
+        .write_all(request.as_bytes())
+        .await
+        .map_err(|e| format!("write head failed: {e}"))?;
+    stream
+        .write_all(POST_BODY)
+        .await
+        .map_err(|e| format!("write body failed: {e}"))?;
+    let mut response = Vec::new();
+    stream
+        .read_to_end(&mut response)
+        .await
+        .map_err(|e| format!("read failed: {e}"))?;
+    let head = String::from_utf8_lossy(&response);
+    let status_line = head.lines().next().unwrap_or("");
+    status_line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| format!("unparseable status line: {status_line:?}"))
+}
+
+/// Fire the deliberately slow request without waiting for it, so it stays in
+/// flight across the scrape window.
+async fn start_slow_case(listen_port: u16) -> tokio::task::JoinHandle<Result<u16, String>> {
+    let request = format!(
+        "GET {SLOW_PATH} HTTP/1.1\r\nHost: 127.0.0.1:{listen_port}\r\nUser-Agent: {DRIVER_UA}\r\nConnection: close\r\n\r\n"
+    );
+    tokio::spawn(async move {
+        let mut stream = TcpStream::connect(("127.0.0.1", listen_port))
+            .await
+            .map_err(|e| format!("connect failed: {e}"))?;
+        stream
+            .write_all(request.as_bytes())
+            .await
+            .map_err(|e| format!("write failed: {e}"))?;
+        let mut response = Vec::new();
+        stream
+            .read_to_end(&mut response)
+            .await
+            .map_err(|e| format!("read failed: {e}"))?;
+        let head = String::from_utf8_lossy(&response);
+        Ok(head
+            .lines()
+            .next()
+            .and_then(|l| l.split_whitespace().nth(1))
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0))
+    })
 }
 
 /// Fetch the metrics endpoint over plain HTTP/1.1.
@@ -487,7 +568,117 @@ async fn eggbench_m003_telemetry_live_proof() {
         gauge_names
     );
 
-    // 9. Cleanup. Drop the supervisor guard first so the exporter
+    // 9. Live worker-backed value window (heartbeat-dispatch corrective).
+    //
+    //    Inventory presence is not the claim. These assertions fail whenever
+    //    the supervisor is not storing a real Unified Server worker payload:
+    //    `Default::default()` is zero in every field below, so a value above
+    //    zero can only come from a heartbeat that travelled
+    //    worker -> supervisor dispatch -> ProcessManager -> bridge.
+    //
+    //    - `worker_memory_bytes`: a running worker always reports non-zero
+    //      RSS. Proves a real payload reached ProcessManager.
+    //    - `active_connections`: only non-zero while a proxied request is in
+    //      flight across a heartbeat. Proves the traffic gauge is
+    //      worker-derived rather than the inventory default.
+    //    - `body_buffering_bytes_total`: the exercised path records
+    //      `request_body_size` for every proxied request, so a successful
+    //      POST must make this counter non-zero. Proves a workload-relevant
+    //      monotonic counter carries live state.
+    //
+    //    Offload submission/timeout/rejection/fallback counters are NOT
+    //    required to be non-zero: the supported minimal runtime need not run a
+    //    CPU offload worker, and manufacturing load to move them would be
+    //    fabricating evidence.
+    let slow_request = start_slow_case(listen_port).await;
+    for _ in 0..3 {
+        let code = drive_post(listen_port, "/qualbench/post")
+            .await
+            .expect("POST driver must run");
+        assert_eq!(
+            code, 200,
+            "the controlled origin must accept the benign POST body"
+        );
+        let _ = drive_case(listen_port, "/qualbench/small").await;
+    }
+
+    let mut series: Vec<Vec<(String, f64, String)>> = Vec::new();
+    let live_window = Instant::now() + Duration::from_secs(20);
+    while Instant::now() < live_window {
+        let scrape = fetch_metrics(metrics_port)
+            .await
+            .expect("live-window scrape must succeed");
+        let (observed_live, failures_live) = verify_required_metrics(&scrape, &contract);
+        assert!(
+            failures_live.is_empty(),
+            "live-window scrape failures: {failures_live:?}"
+        );
+        series.push(observed_live);
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    let _ = slow_request.await;
+
+    let max_series = |name: &str| -> f64 {
+        series
+            .iter()
+            .filter_map(|scrape| {
+                scrape
+                    .iter()
+                    .find(|(n, _, _)| n == name)
+                    .map(|(_, v, _)| *v)
+            })
+            .fold(f64::NEG_INFINITY, f64::max)
+    };
+    let value_of = |name: &str| max_series(name).max(0.0);
+
+    eprintln!(
+        "live worker-backed maxima over {} scrapes: memory_bytes={} active_connections={} \
+         event_loop_lag_ms={} request_queue_p95_ms={} worker_cpu_percent={} \
+         body_buffering_bytes_total={} offload_submissions_total={} offload_timeouts_total={} \
+         offload_rejections_total={} offload_fallbacks_total={}",
+        series.len(),
+        value_of("synvoid_subject_worker_memory_bytes"),
+        value_of("synvoid_subject_active_connections"),
+        value_of("synvoid_subject_event_loop_lag_ms"),
+        value_of("synvoid_subject_request_queue_p95_ms"),
+        value_of("synvoid_subject_worker_cpu_percent"),
+        value_of("synvoid_subject_body_buffering_bytes_total"),
+        value_of("synvoid_subject_offload_submissions_total"),
+        value_of("synvoid_subject_offload_timeouts_total"),
+        value_of("synvoid_subject_offload_rejections_total"),
+        value_of("synvoid_subject_offload_fallbacks_total"),
+    );
+
+    assert!(
+        max_series("synvoid_subject_worker_memory_bytes") > 0.0,
+        "worker_memory_bytes must be worker-backed, not the inventory zero: the supervisor is \
+         not storing a real Unified Server heartbeat payload"
+    );
+    assert!(
+        max_series("synvoid_subject_active_connections") > 0.0,
+        "active_connections must be non-zero at least once while a proxied request was in flight"
+    );
+    assert!(
+        max_series("synvoid_subject_body_buffering_bytes_total") > 0.0,
+        "body_buffering_bytes_total must carry live workload state after a proxied POST body"
+    );
+
+    // Counter monotonicity must hold across the whole live window, not just
+    // two scrapes: the bridge never emits a decreasing absolute counter.
+    for name in &counter_names {
+        let mut previous = f64::NEG_INFINITY;
+        for (index, scrape) in series.iter().enumerate() {
+            if let Some((_, v, _)) = scrape.iter().find(|(n, _, _)| n == name) {
+                assert!(
+                    *v >= previous,
+                    "counter {name} decreased at scrape {index} ({previous} -> {v})"
+                );
+                previous = *v;
+            }
+        }
+    }
+
+    // 10. Cleanup. Drop the supervisor guard first so the exporter
     //    task is bound to its shutdown (the bridge listens on the
     //    supervisor's shutdown signal). Then verify the metrics port
     //    is no longer reachable — proves the registered exporter
@@ -504,7 +695,7 @@ async fn eggbench_m003_telemetry_live_proof() {
         metrics_port
     );
 
-    // 10. Origin cleanup.
+    // 11. Origin cleanup.
     let _ = origin_shutdown_tx.send(());
     origin_task.abort();
     let _ = std::fs::remove_dir_all(&workdir);

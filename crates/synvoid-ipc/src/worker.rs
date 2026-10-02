@@ -213,6 +213,35 @@ impl UnifiedServerWorkerProcess {
             generation: generation.max(1),
         }
     }
+
+    /// Childless record, mirroring `WorkerProcess::new_placeholder`.
+    ///
+    /// A Unified Server worker is normally created by
+    /// `ProcessManager::spawn_unified_server_workers`, which owns the child
+    /// handle. Supervisor-side composition proofs that must observe real
+    /// `Message::UnifiedServerWorkerHeartbeat` routing end to end without
+    /// launching a data plane register a record through
+    /// `ProcessManager::register_unified_server_worker_record` instead.
+    /// Everything a heartbeat actually mutates — `metrics`, `last_heartbeat`,
+    /// `status`, `generation` — lives on the record itself, so no telemetry
+    /// behavior differs between a spawned worker and a registered record.
+    pub fn new_record(id: WorkerId, pid: Option<u32>, generation: u64) -> Self {
+        Self {
+            id,
+            base: BaseWorkerProcess {
+                pid,
+                status: WorkerStatus::Starting,
+                child: None,
+                started_at: Instant::now(),
+                last_heartbeat: Instant::now(),
+            },
+            metrics: WorkerMetricsPayload::default(),
+            restart_count: 0,
+            last_restart_at: None,
+            ipc: None,
+            generation: generation.max(1),
+        }
+    }
 }
 
 impl WorkerProcessBase for UnifiedServerWorkerProcess {

@@ -928,6 +928,31 @@ impl ProcessManager {
         Ok(id)
     }
 
+    /// Register a childless Unified Server worker telemetry record and
+    /// return its supervisor-local generation.
+    ///
+    /// Production registration only happens through
+    /// `spawn_unified_server_workers`, which allocates the same generation
+    /// and owns the child handle. This entry point exists so supervisor-side
+    /// composition proofs can observe real
+    /// `Message::UnifiedServerWorkerHeartbeat` routing — dispatch ->
+    /// `handle_unified_server_worker_heartbeat` -> generation-aware snapshot
+    /// -> telemetry bridge — without launching a data plane, and so a
+    /// supervisor that adopts an already-running worker (socket handoff,
+    /// resize adoption) can make that worker visible to telemetry.
+    ///
+    /// It deliberately does **not** bypass ownership: heartbeats for worker
+    /// IDs that were never registered or spawned are still ignored by
+    /// `handle_unified_server_worker_heartbeat`, so telemetry can never
+    /// invent an unmanaged worker record.
+    pub fn register_unified_server_worker_record(&self, id: WorkerId, pid: Option<u32>) -> u64 {
+        let generation = self.next_unified_server_worker_generation(id);
+        let record = UnifiedServerWorkerProcess::new_record(id, pid, generation);
+        let mut unified_server_workers = self.unified_server_workers.write();
+        unified_server_workers.insert(id.as_usize(), record);
+        generation
+    }
+
     pub fn handle_unified_server_worker_heartbeat(
         &self,
         worker_id: WorkerId,
@@ -2740,5 +2765,55 @@ mod tests {
         pm.remove_unified_server_worker(id);
         assert_eq!(pm.get_unified_server_worker_generation(id), Some(2));
         assert_eq!(pm.next_unified_server_worker_generation(id), 3);
+    }
+
+    #[test]
+    fn registered_record_heartbeat_is_stored_and_generation_aware() {
+        let (pm, _rx) = ProcessManager::new(ProcessManagerConfig::default(), None);
+        let id = WorkerId(4);
+        let generation = pm.register_unified_server_worker_record(id, None);
+        assert_eq!(generation, 1);
+
+        let payload = WorkerMetricsPayload {
+            total_requests: 4242,
+            memory_bytes: 987_654_321,
+            cpu_percent: 31.5,
+            event_loop_lag_ms: 7,
+            active_connections: 13,
+            ..Default::default()
+        };
+        pm.handle_unified_server_worker_heartbeat(id, payload);
+
+        let snapshot = pm.get_all_unified_server_worker_metrics_with_generation();
+        assert_eq!(snapshot.len(), 1);
+        assert_eq!(snapshot[0].worker_id, id);
+        assert_eq!(snapshot[0].generation, 1);
+        assert_eq!(snapshot[0].metrics.total_requests, 4242);
+        assert_eq!(snapshot[0].metrics.memory_bytes, 987_654_321);
+        assert_eq!(snapshot[0].metrics.event_loop_lag_ms, 7);
+        assert_eq!(snapshot[0].metrics.active_connections, 13);
+    }
+
+    #[test]
+    fn heartbeat_for_unknown_worker_never_creates_an_unmanaged_record() {
+        let (pm, _rx) = ProcessManager::new(ProcessManagerConfig::default(), None);
+        let id = WorkerId(99);
+        assert_eq!(pm.get_unified_server_worker_count(), 0);
+        pm.handle_unified_server_worker_heartbeat(
+            id,
+            WorkerMetricsPayload {
+                total_requests: 1234,
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            pm.get_unified_server_worker_count(),
+            0,
+            "telemetry must never invent a worker record from an unknown heartbeat id"
+        );
+        assert!(pm
+            .get_all_unified_server_worker_metrics_with_generation()
+            .is_empty());
+        assert!(pm.get_unified_server_worker_metrics(id).is_none());
     }
 }

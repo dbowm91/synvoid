@@ -704,6 +704,73 @@ pub fn register_inventory(handle: &PrometheusHandle) {
     let _ = handle.render();
 }
 
+/// Bounded monotonic aggregation state for the v2 bridge.
+///
+/// The cadence loop (`run_telemetry_bridge_loop`) owns one of these for the
+/// supervisor's lifetime, but the refresh itself is a deterministic function
+/// of `(ProcessManager, PrometheusHandle)`. Owning the state here lets
+/// composition proofs drive the exact production aggregation path — dispatch
+/// -> `ProcessManager` -> generation-aware snapshot -> Prometheus — without
+/// waiting on the 5s cadence and without a second, divergent copy of the
+/// aggregation rules.
+#[derive(Debug, Default)]
+pub struct BridgeAggregator {
+    state: BridgeState,
+}
+
+impl BridgeAggregator {
+    pub fn new() -> Self {
+        Self {
+            state: BridgeState::default(),
+        }
+    }
+
+    /// One bridge refresh tick. Pulls the generation-aware authoritative
+    /// snapshot, prunes bridge state to live workers, folds per-worker
+    /// counters into supervisor-lifetime monotonic truth, and publishes the
+    /// resulting Prometheus snapshot. Returns the published snapshot.
+    pub fn refresh(&mut self, pm: &ProcessManager, handle: &PrometheusHandle) -> BridgeSnapshot {
+        // Generation-aware authoritative snapshot: explicit worker generation
+        // identity from ProcessManager, never inferred from counter magnitude
+        // (corrective v2).
+        let snapshots: Vec<UnifiedServerWorkerTelemetrySnapshot> =
+            pm.get_all_unified_server_worker_metrics_with_generation();
+        let cpu = if pm.is_cpu_worker_ready() {
+            Some(pm.get_cpu_worker_cpu_offload_stats())
+        } else {
+            None
+        };
+
+        // Production pruning: bound bridge state by live ProcessManager
+        // worker state on every refresh (corrective v2 §7).
+        let live_ids: HashSet<WorkerId> = snapshots.iter().map(|s| s.worker_id).collect();
+        self.state.prune_to_live(&live_ids);
+
+        let gauge_inputs: Vec<(WorkerId, WorkerMetricsPayload)> = snapshots
+            .iter()
+            .map(|s| (s.worker_id, s.metrics.clone()))
+            .collect();
+        let mut snapshot = BridgeSnapshot::from_worker_gauges(&gauge_inputs);
+        snapshot.apply_cpu_worker(cpu.as_ref());
+
+        // Counter monotonicity: per-worker deltas accumulate into
+        // supervisor-lifetime cumulative truth inside BridgeState.
+        for s in &snapshots {
+            self.state
+                .apply_worker(s.worker_id, s.generation, &s.metrics);
+        }
+        snapshot.body_buffering_bytes_total = self.state.cumulative.body_buffering_bytes;
+        snapshot.offload_submissions_total = self.state.cumulative.offload_submissions;
+        snapshot.offload_timeouts_total = self.state.cumulative.offload_timeouts;
+        snapshot.offload_rejections_total = self.state.cumulative.offload_rejections;
+        snapshot.offload_fallbacks_total = self.state.cumulative.offload_fallbacks;
+        snapshot.worker_metric_resets_total = self.state.total_resets;
+
+        publish_snapshot(handle, &snapshot);
+        snapshot
+    }
+}
+
 /// Bridge loop entry point. Designed to be spawned by the supervisor
 /// (which owns the JoinHandle and registers it with
 /// `SupervisorTaskRegistry`). The future returns `()` on shutdown and
@@ -717,7 +784,7 @@ pub async fn run_telemetry_bridge_loop(
     alive: Arc<std::sync::atomic::AtomicBool>,
     mut shutdown_rx: tokio::sync::broadcast::Receiver<()>,
 ) {
-    let mut state = BridgeState::default();
+    let mut aggregator = BridgeAggregator::new();
     let mut ticker = tokio::time::interval(Duration::from_secs(SOURCE_REFRESH_CADENCE_SECS));
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let _ = ticker.tick().await;
@@ -728,42 +795,7 @@ pub async fn run_telemetry_bridge_loop(
             _ = ticker.tick() => {}
         }
 
-        // Generation-aware authoritative snapshot: explicit worker
-        // generation identity from ProcessManager, never inferred from
-        // counter magnitude (corrective v2).
-        let snapshots: Vec<UnifiedServerWorkerTelemetrySnapshot> =
-            pm.get_all_unified_server_worker_metrics_with_generation();
-        let cpu = if pm.is_cpu_worker_ready() {
-            Some(pm.get_cpu_worker_cpu_offload_stats())
-        } else {
-            None
-        };
-
-        // Production pruning: bound bridge state by live ProcessManager
-        // worker state on every refresh (corrective v2 §7).
-        let live_ids: HashSet<WorkerId> = snapshots.iter().map(|s| s.worker_id).collect();
-        state.prune_to_live(&live_ids);
-
-        let gauge_inputs: Vec<(WorkerId, WorkerMetricsPayload)> = snapshots
-            .iter()
-            .map(|s| (s.worker_id, s.metrics.clone()))
-            .collect();
-        let mut snapshot = BridgeSnapshot::from_worker_gauges(&gauge_inputs);
-        snapshot.apply_cpu_worker(cpu.as_ref());
-
-        // Counter monotonicity: per-worker deltas accumulate into
-        // supervisor-lifetime cumulative truth inside BridgeState.
-        for s in &snapshots {
-            state.apply_worker(s.worker_id, s.generation, &s.metrics);
-        }
-        snapshot.body_buffering_bytes_total = state.cumulative.body_buffering_bytes;
-        snapshot.offload_submissions_total = state.cumulative.offload_submissions;
-        snapshot.offload_timeouts_total = state.cumulative.offload_timeouts;
-        snapshot.offload_rejections_total = state.cumulative.offload_rejections;
-        snapshot.offload_fallbacks_total = state.cumulative.offload_fallbacks;
-        snapshot.worker_metric_resets_total = state.total_resets;
-
-        publish_snapshot(&handle, &snapshot);
+        let snapshot = aggregator.refresh(&pm, &handle);
         *snapshot_lock.write() = snapshot;
     }
 
