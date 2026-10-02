@@ -1,6 +1,6 @@
 # Phase 112 Plan: Extraction Gate Refresh and Campaign Closeout
 
-Status: **IN PROGRESS — terminal campaign phase** (2026-10-02).
+Status: **IN PROGRESS — terminal campaign phase; release and hosted proof pending** (2026-10-02).
 
 Registered in: `plans/roadmap.md` and
 `plans/subsystem_boundary_extraction_roadmap.md`.
@@ -216,6 +216,26 @@ It must contain:
 - final campaign verdict.
 
 ## Verification
+
+### Execution record (2026-10-02)
+
+- Final dependency inventory: 53 workspace packages, 47 `synvoid-*` packages,
+  1,037 total metadata packages, and 187 internal path edges across dependency
+  kinds. These are current inventory counts, not campaign-wide reduction claims.
+- `cargo xtask verify`: passed all 10 steps. The first attempt hit the known
+  macOS XZ architecture mismatch; rerun with
+  `PKG_CONFIG_PATH=/usr/local/opt/xz/lib/pkgconfig` passed.
+- `cargo xtask verify-full`: passed all 10 steps. Nextest ran 7,896 tests
+  across 217 binaries (8 skipped), followed by workspace doctests. The first
+  full run found a deterministic partial-frame bounds panic in the
+  `eggserve_plaintext_adoption` test helper; the decoder now waits for full
+  16-bit headers/payloads, its focused test passed, and the complete rerun
+  passed.
+- Phase 112 hosted run `36948353038` passed CI and dependency-security on
+  predecessor source SHA `12f52977901ee24ba74c5b9d90d19cea5624b420`; final
+  hosted evidence for the test-helper correction is pending.
+- `cargo xtask verify-release` and final local `cargo deny check` / `cargo
+  audit` remain pending. The release command requires a clean committed tree.
 
 At minimum:
 

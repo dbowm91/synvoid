@@ -786,10 +786,16 @@ fn ws_decode_text(wire: &[u8]) -> Vec<Vec<u8>> {
         let mut len = (wire[i + 1] & 0x7f) as usize;
         i += 2;
         if len == 126 {
+            if wire.len() - i < 2 {
+                break;
+            }
             len = u16::from_be_bytes([wire[i], wire[i + 1]]) as usize;
             i += 2;
         }
         if opcode == 0x8 {
+            break;
+        }
+        if len > wire.len() - i {
             break;
         }
         if opcode == 0x1 || opcode == 0x2 {

@@ -1,6 +1,6 @@
 # Subsystem Boundary Extraction Campaign Closeout (Phases 105–112)
 
-Status: **IN PROGRESS — local evidence collected; final full verification and hosted exact-SHA proof pending** (2026-10-02).
+Status: **IN PROGRESS — local comprehensive checks passed; final-head release and hosted proof pending** (2026-10-02).
 
 Campaign plans: `plans/phase_105_dns_hickory_patch_security_requalification.md` through `plans/phase_112_extraction_gate_refresh_campaign_closeout.md`.
 
@@ -10,7 +10,11 @@ Campaign plans: `plans/phase_105_dns_hickory_patch_security_requalification.md` 
 - Implementation range: Phase 105 Hickory qualification SHA `857d2e76dd453dc9dd0c84aa89bc1293cc8a1e1b` through current Phase 111 closeout `bcdfaa283c0f78f31d1443de61cb055f14b29944`; Phase 106 implementation `a87d0b0c`; Phase 109 implementation/verification commit `cbfbd798`.
 - Current closeout working head before this document: `bcdfaa283c0f78f31d1443de61cb055f14b29944`.
 - Hosted proof already attached to Phase 105: run `36922488692` passed `ci` and `dependency-security` on `857d2e76dd453dc9dd0c84aa89bc1293cc8a1e1b`.
-- Hosted exact-SHA run for the campaign final proof is **pending**. Record the run ID and SHA here after push; this document remains IN PROGRESS until its CI and dependency-security jobs both pass.
+- Campaign proof-bearing SHA: `12f52977901ee24ba74c5b9d90d19cea5624b420` (Phase 112 source and evidence state).
+- Hosted exact-SHA run `36948353038` passed `ci` and `dependency-security` on that SHA. Native sandbox and ICMP jobs were skipped by the workflow conditions; no native qualification claim is made here.
+- Local `cargo xtask verify` passed all 10 steps with `PKG_CONFIG_PATH=/usr/local/opt/xz/lib/pkgconfig`, matching the Phase 105 macOS x86_64 XZ toolchain workaround.
+- Local `cargo xtask verify-full` passed all 10 steps: 7,896 tests across 217 binaries (8 skipped), minimal profile tests, all configured feature profile checks, and workspace doctests. The first run exposed a fragmented-WebSocket test decoder bounds bug; the helper now waits for complete frames, the focused regression passed, and the full rerun passed.
+- `cargo xtask verify-release`, final `cargo deny check`/`cargo audit`, and hosted exact-SHA proof for the final test-helper fix remain before formal closure.
 
 ## Workspace and dependency graph
 
