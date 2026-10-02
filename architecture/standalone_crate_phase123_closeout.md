@@ -68,8 +68,10 @@ initial `verify-release` command did not reach its package-inspection phase;
 the three campaign leaf tarballs were separately packaged, dry-run checked and
 consumer-qualified in Phases 121–122. Hosted CI for the exact final branch head
 must be checked after push. The all-workspace suite ran on `888fb99` before the
-semantics-preserving ICMP lint cleanup; final-head hosted CI is the requested
-exact-SHA regression check.
+semantics-preserving ICMP lint cleanup. After that cleanup,
+`cargo test -p synvoid-icmp-filter --profile ci` passed (60 unit, 12 boundary,
+16 transactional-enforcement tests and 3 doctests). Final-head hosted CI is the
+requested exact-SHA regression check.
 
 Phase 115's earlier `cargo xtask verify` failure-injection compile was
 interrupted and is not reported as a pass. Linux is the only available native
