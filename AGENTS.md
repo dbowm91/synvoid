@@ -1,6 +1,6 @@
 # AGENTS.md
 
-SynVoid is a high-performance WAF & reverse proxy in Rust with mesh networking and a multi-process architecture (Supervisor + UnifiedServerWorker data plane + CPU offload). 51-member Cargo workspace: root app, 43 `synvoid-*` crates under `crates/`, plus `pqc`, `admin-ui` (Yew/WASM via Trunk), `examples/*`, `fuzz`, `tools/{xtask,synvoid-repo-guards}`. Linux is the primary deployment target.
+SynVoid is a high-performance WAF & reverse proxy in Rust with mesh networking and a multi-process architecture (Supervisor + UnifiedServerWorker data plane + CPU offload). 53-member Cargo workspace (verified with `cargo metadata` on 2026-10-02), including 47 `synvoid-*` crates, the root app, `pqc`, `admin-ui` (Yew/WASM via Trunk), `fuzz`, and `tools/{xtask,synvoid-repo-guards}`. Linux is the primary deployment target.
 
 ## Build & Setup
 

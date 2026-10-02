@@ -1,12 +1,16 @@
 # Phase 112 Plan: Extraction Gate Refresh and Campaign Closeout
 
-Status: **PLANNED — terminal campaign phase**.
+Status: **IN PROGRESS — terminal campaign phase** (2026-10-02).
 
 Registered in: `plans/roadmap.md` and
 `plans/subsystem_boundary_extraction_roadmap.md`.
 
 Planning baseline for registration: `main` at `19c0636535f3728e80b7c6777ec6a552c38c61a0` (2026-10-01).
 Execute against the final implementation head of Phases 105–111.
+
+Execution record: `architecture/subsystem_boundary_extraction_closeout.md`.
+This phase cannot be formally closed until final-head verification and hosted
+exact-SHA `ci` plus `dependency-security` both pass.
 
 Owner: architecture / security / release.
 

@@ -1,6 +1,6 @@
 # Subsystem Boundary and Extraction Roadmap (Phases 105–112)
 
-Status: **ACTIVE / REGISTERED — Phases 105–111 CLOSED; Phase 112 READY — 2026-10-02**.
+Status: **ACTIVE / REGISTERED — Phases 105–111 CLOSED; Phase 112 IN PROGRESS — 2026-10-02**.
 
 Registered in: `plans/roadmap.md`.
 
@@ -29,22 +29,17 @@ all supported runtime capabilities and avoiding tightly synchronized repositorie
 
 ## Current researched disposition
 
-### Honeypot/deception — strongest near-term extraction candidate
+### Honeypot/deception — application-neutral crate; extraction DEFER
 
 `synvoid-honeypot` already owns its listener/runner, protocol detection,
 responders, AI budgets, persistence, port rotation, threat-intelligence scoring,
 and an injected `HoneypotThreatPublisher`. The previous direct mesh dependency is
 gone.
 
-Phase 106 CLOSED QUALIFIED at proof-bearing SHA `a87d0b0c`: the runtime config
-is library-owned, persisted DTO translation remains in the root application,
-and normal SynVoid dependency edges are zero. Provider egress and threat
-publication are injected. The adapter preserves the persisted DTO vocabulary;
-the existing range/count runtime cannot exactly represent sparse port lists,
-and current listeners support TCP only. Storage hard limits and platform file
-permissions remain unqualified for external support. Phase 107 is READY to run
-packaged consumer, release hygiene, and threat-model qualification before an
-extraction decision.
+Phase 106 CLOSED QUALIFIED at implementation SHA `a87d0b0c`: runtime config is
+library-owned, persisted DTO translation remains in root, normal SynVoid
+dependency edges are zero, and provider egress/publication are injected. The
+adapter preserves persisted DTO semantics; current listeners support TCP only.
 
 Phase 107 CLOSED **DEFER**: packaged-source and outside-workspace consumer
 qualification passed, but no independent support promise, MSRV, user docs,
@@ -56,25 +51,23 @@ are recorded in `architecture/honeypot_standalone_qualification_phase107.md`.
 Disposition: **RETAIN IN WORKSPACE / DEFER EXTRACTION** until a follow-up plan
 owns those support and security prerequisites.
 
-### DNS — strong candidate after simplification and dependency inversion
+### DNS — Hickory qualified; application-neutral extraction DEFER
 
-`synvoid-dns` is a coherent independently deployable service, but the crate
-currently depends on SynVoid config/core/TLS/GeoIP/platform/utils/keystore and
-optionally mesh. Moving the current crate verbatim would export SynVoid internals
-rather than create a clean independent service.
+`synvoid-dns` depends on six required SynVoid siblings (config, core,
+dnssec-keystore, geoip, tls, utils) and optional mesh. Phase 109 removed one
+unused platform edge. Moving the current crate verbatim would export SynVoid
+internals rather than create an independent service.
 
 Phase 105 CLOSED QUALIFIED the Hickory family at 0.26.3 on proof-bearing SHA
 `857d2e76dd453dc9dd0c84aa89bc1293cc8a1e1b`; exact-SHA hosted CI and
-dependency-security passed in run `36922488692`. Phase 108 is unblocked and
-ready. SynVoid's custom DNS implementation must be audited against
-functionality now owned by Hickory.
+dependency-security passed in run `36922488692`.
 
 Phase 108 CLOSED QUALIFIED: the current Hickory-backed message decode and
 resolver/recursor delegation are confirmed; other protocol/server/transport
 overlap remains owned until behavior parity is demonstrated. Phase 108 removed
 no source/dependencies and claims no maintenance or size reduction. The source
 coupling map and Phase 109 inversion requirements are recorded in
-`architecture/dns_hickory_delegation_phase108.md`. Phase 109 is READY.
+`architecture/dns_hickory_delegation_phase108.md`.
 
 Phase 109 CLOSED **DEFER**: one unused `synvoid-platform` direct dependency was
 removed; six required SynVoid siblings and optional mesh remain active. DNS
@@ -88,11 +81,12 @@ ready or authorized.
 
 ### ICMP enforcement — boundary prepared, extraction remains RETAIN
 
-Phases 85–95 already produced the portable policy/compiler/enforcement boundary,
-operator truth contract, qualification harness, and Linux nftables native proof.
-The formal Phase 88 extraction decision remains RETAIN because the crate still has
-one real consumer, incomplete native evidence outside Linux, and publication
-hygiene/support-burden gaps.
+Phases 85–95 produced the portable policy/compiler/enforcement boundary,
+operator truth contract, qualification harness, and exact-SHA Linux nftables
+native proof (Phase 95). That satisfies the Linux native trigger only. Other
+lanes remain experimental/compile-only/unsupported; no second independent
+consumer exists; MSRV, semver/support policy, examples, and observability
+feature-gating remain publication gaps. Phase 112 rechecked these triggers.
 
 Disposition: **RETAIN unless recorded re-evaluation triggers fire**. Do not reopen
 the architecture merely because this campaign discusses extraction.
@@ -103,40 +97,49 @@ Phases 81–94 already established the guarantee-oriented sandbox contract
 (`Guarantee`, `SandboxRequest`, `EnforcementReport`,
 `PreparedSandbox`/`EnteredSandbox`) and corrected backend semantics.
 
-Extraction is still gated on a second consumer, broader native proof, Windows
-launch-isolation disposition, API stability, and a fresh comparison against
-current reusable Rust sandbox libraries.
+Extraction remains gated on a second independent consumer, native Linux plus
+BSD evidence, Windows launch-isolation disposition, API stability, and a fresh
+ecosystem comparison. Phase 112 compared Birdcage (archived) and current Skarn;
+the guarantee/evidence contract remains specialized but has adjacent
+alternatives. No extraction is justified without another real consumer and
+support proof.
 
 Disposition: **DEFER unless triggers fire**.
 
-### Mesh — decompose internally, do not repo-extract the aggregate
+### Mesh — retain internal; no consensus/DHT extraction qualified
 
-`synvoid-mesh` still carries application dependencies including config, tunnel,
-proxy, proxy-cache, and serverless. Phase 101 correctly retained mesh consensus
-because no application-service-free state-machine boundary existed.
+`synvoid-mesh` still has live config, tunnel, proxy, proxy-cache, and serverless
+edges in adapters/dispatch. Phase 110 mapped ownership and confirmed that
+consensus/DHT modules do not yet form an application-service-free one-way seam.
+No crate, source edge, or LOC was removed; protocol docs now clarify Rust/wire
+compatibility and replay assumptions.
 
-Disposition: **GO internal consensus/DHT decomposition**. No external mesh repo is
-authorized by this campaign.
+Disposition: **RETAIN INTERNAL**. No external mesh repository is authorized.
+Reconsider only after transport dispatch, neutral config and identity
+capabilities are narrowed and dependency metadata proves reduced reachability.
 
-### Tunnel — converge with Eggstack, do not create another repository
+### Tunnel — retain pending Eggtunnel protocol evidence
 
-`eggstack/eggtunnel` already owns an embeddable authenticated tunnel protocol
-and client/server runtime over Eggress transports. SynVoid's tunnel crate still
-owns additional UDP/datagram, VPN, TUN/WireGuard, route and mesh integration
-semantics.
+The Eggtunnel checkout/API was unavailable during Phase 111. Inspected Eggress
+source exposes generic byte relay and proxy/H3 QUIC/UDP mechanisms but does not
+establish authenticated tunnel wire/session parity. SynVoid owns its framing,
+session lifecycle, datagrams, VPN/TUN/WireGuard, route and mesh integration; no
+migration is safe without Eggtunnel source and mixed-version evidence.
 
-Disposition: **GO convergence matrix + generic-mechanism migration**. Do not create
-`synvoid-tunnel.git`.
+Disposition: **DEFER convergence**. Reopen when Eggtunnel source and tested API
+version are available. Do not create `synvoid-tunnel.git`.
 
-### YARA — clean boundary, repository move remains upstream-gated
+### YARA — neutral boundary; upstream and second-consumer gates remain closed
 
-`synvoid-yara` has no SynVoid internal dependency and is structurally close to
-standalone. However SynVoid currently carries a narrow manifest-only YARA-X
-compatibility fork to keep the transitive Wasmtime line on a security-qualified
-version. Stock YARA-X 1.21.0 does not satisfy the current fork-removal condition.
+`synvoid-yara` has no SynVoid internal dependency and is structurally
+application-neutral. Official YARA-X 1.21.0 (released 2026-09-29) still
+resolves Wasmtime 45.0.3; the manifest-only fork pins 48.0.3 to clear the
+current advisory set. Eggsec does not depend on or consume `synvoid-yara`, so
+there is no second real consumer.
 
-Disposition: **DEFER repository extraction** until upstream/dependency and
-second-consumer triggers are re-evaluated.
+Disposition: **DEFER repository extraction**. Re-evaluate when an official
+YARA-X release resolves a Wasmtime line satisfying the security gate and a
+second real consumer adopts the neutral API.
 
 ## Binding constraints
 
@@ -175,8 +178,7 @@ Then:
 5. **Phase 109 — DNS application-neutral boundary and extraction readiness.**
 6. **Phase 110 — mesh consensus/DHT internal boundary decomposition: CLOSED RETAIN INTERNAL.**
 7. **Phase 111 — SynVoid tunnel / Eggtunnel / Eggress convergence: CLOSED DEFER.**
-8. **Phase 112 — extraction gate refresh and campaign closeout: READY.**
-8. **Phase 112 — deferred extraction-gate refresh and campaign closeout.**
+8. **Phase 112 — extraction gate refresh and campaign closeout: IN PROGRESS.**
 
 Phase 108 depends on Phase 105 so the Hickory comparison is made against the
 qualified current dependency line. Phase 109 depends on Phase 108. Phase 107

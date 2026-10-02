@@ -30,7 +30,7 @@ Current disposition (Phase 86 exit; native proof belongs to Phase 88):
 
 | Backend | Platform | Feature gate | Tier | Notes |
 |---------|----------|--------------|------|-------|
-| nftables | Linux | `icmp-filter` (root forwards no backend sub-features) | `experimental` | Baseline lane; transactional batch; global rate limit |
+| nftables | Linux | `icmp-filter` (root forwards no backend sub-features) | `supported` | Phase 95 native privileged apply/update/readback/drift/cleanup proof; exact-SHA hosted run `36335520434`, two deterministic 8/8 passes |
 | eBPF (XDP/TC) | Linux | `icmp-ebpf` (per-crate, optional) | `experimental` | Needs BTF + `CAP_BPF`/root (load) + `CAP_NET_ADMIN`/root (attach); `tc` subprocess retained deliberately (Phase 88 adjudicates) |
 | PF (macOS) | macOS | `icmp-pf` (per-crate) | `experimental` | Anchor reload is staged, not transactional |
 | PF (FreeBSD) | FreeBSD | `icmp-pf` (per-crate) | `experimental` | Qualified separately from OpenBSD/macOS |
@@ -209,3 +209,14 @@ no tier, no extraction verdict, and no support claim.
   8/8 per pass) recorded in
   `architecture/icmp_linux_nftables_native_qualification.md`. Linux nftables
   is native-supported; other lanes are unchanged.
+
+## 11. Phase 112 extraction trigger refresh (2026-10-02)
+
+Linux nftables' native qualification trigger is satisfied by Phase 95's exact
+proof SHA `39bfced25d51267ee5837eaecedae7da9af163d0` and hosted run
+`36335520434` (two deterministic 8/8 passes). The Phase 88 RETAIN decision is
+still current: eBPF and PF variants remain experimental, Windows WFP/Firewall
+remain compile-only, NetBSD remains unsupported, there is no second independent
+consumer, and publication hygiene gaps remain. The detailed gate refresh is in
+`architecture/subsystem_boundary_extraction_closeout.md` §“ICMP”. No extraction
+or promotion plan is unblocked.

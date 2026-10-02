@@ -590,3 +590,15 @@ Closeout evidence: `architecture/dependency_security_reaudit_phase103_closeout.m
   RUSTSEC-2026-0315 (>=48.0.3), and RUSTSEC-2026-0316 (>=48.0.3). No
   ignore is added for 0315 or 0316 — both are version-remediated, not
   capability-gated.
+
+## 13. Phase 112 YARA upstream gate refresh (2026-10-02)
+
+Official YARA-X `1.21.0` (latest release, 2026-09-29) still declares Wasmtime
+`45.0.3`; it does not satisfy the fork-removal gate. The workspace continues to
+use the manifest-only `1.20.0` source snapshot with Wasmtime `48.0.3` for the
+YARA feature set, with no source divergence. `synvoid-yara` remains the only
+production `yara-x` consumer; Eggsec does not consume this API. Keep the fork
+and DEFER external extraction. Source manifest was checked from the published
+crate; release record: <https://github.com/VirusTotal/yara-x/releases/tag/v1.21.0>.
+The trigger evidence and full campaign disposition are in
+`architecture/subsystem_boundary_extraction_closeout.md` §“YARA”.

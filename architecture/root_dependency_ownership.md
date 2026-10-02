@@ -74,9 +74,9 @@ reference fails the guard until the row is reclassified with a reason.
 | serde_bytes | — | remove_candidate | — | Phase 31: removed from root (0 src uses; canonical use in synvoid-ipc) | removed Phase 31 | — |
 | synvoid-cli | commands | composition_runtime | default | CLI argument parsing definitions | keep | commands, main |
 | synvoid-config | config, honeypot_port | composition_runtime | default | Configuration types and ConfigManager; honeypot_port translates the persisted honeypot DTO into runtime-owned honeypot config (Phase 106) | keep | admin, commands, config, honeypot_port, http, icmp_filter, static_files, supervisor, waf, worker |
-| synvoid-dns | dns | composition_runtime | dns | DNS server with DNSSEC validation | keep | dns |
+| synvoid-dns | dns | composition_runtime | dns | DNS server with DNSSEC validation; six required SynVoid siblings and optional mesh remain (Phase 109 extraction DEFER) | keep | dns |
 | synvoid-icmp-filter | icmp_filter | composition_runtime | icmp-filter | ICMP filtering | keep | icmp_filter |
-| synvoid-honeypot | honeypot_port, worker | composition_runtime | default | Honeypot port detection and root-owned mesh publication adapter | keep | honeypot_port, worker |
+| synvoid-honeypot | honeypot_port, worker | composition_runtime | default | Honeypot runtime with injected transport and publisher; persisted-config and mesh adapter remain root-owned (Phases 106–107; extraction DEFER) | keep | honeypot_port, worker |
 | synvoid-upload | http, waf, worker | composition_runtime | default | File upload handling in synvoid_upload; root upload/ removed Phase 03 | keep | http, waf, worker |
 | synvoid-yara | worker, supervisor | composition_runtime | default | Canonical YARA engine for CPU worker + mesh validator injection (Phase 26 single yara-x owner; Phase 29 jail service lives in synvoid-jail-runtime) | keep | supervisor, worker |
 | synvoid-ipc | process | composition_runtime | default | IPC transport abstractions | keep | http, process, sandbox, supervisor, worker |
@@ -130,7 +130,7 @@ reference fails the guard until the row is reclassified with a reason.
 | synvoid-serverless | serverless | composition_runtime | default | Serverless WASM function runtime | keep | serverless, worker |
 | synvoid-geoip | geoip | composition_runtime | default | GeoIP database lookups | keep | admin, lib |
 | synvoid-integrity | — | migration_blocker | default | No direct root consumer in src/ (measured 2026-09-12); retained for origin_key_exchange feature-surface wiring (synvoid-integrity/origin_key_exchange) | Phase 31 removal audit | — |
-| synvoid-mesh | mesh | composition_runtime | mesh | Mesh networking, DHT, transport, Raft | keep | admin, http, mesh, supervisor, worker |
+| synvoid-mesh | mesh | composition_runtime | mesh | Mesh networking, DHT, transport, Raft; Phase 110 retained internally because no one-way application-service-free seam qualified | keep | admin, http, mesh, supervisor, worker |
 | synvoid-mesh-protocol | waf | composition_runtime | mesh | Low-capability wire/identity verification vocabulary (Phase 27); feed signature + threat value types without DHT/Raft/SQLite/YARA | keep | waf |
 | synvoid-app-handlers | fastcgi, mime | composition_runtime | default | Application protocol handlers; root cgi/ + php/ removed Phase 03 (canonical synvoid_app_handlers::cgi/php); root facades remain for fastcgi/mime | keep | fastcgi, mime |
 | synvoid-metrics | metrics | composition_runtime | default | Metrics collection and export | keep | admin, http, metrics, supervisor, tls, worker |

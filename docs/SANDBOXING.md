@@ -225,3 +225,10 @@ let sandbox = ProcessSandbox::with_paths(SandboxLevel::Strict, paths)?;
 - On macOS, canonicalize temp paths (`/var` → `/private/var`) before comparing allowlists in tests; the backend canonicalizes automatically
 - Never claim Apple App Sandbox equivalence for the `sandbox_init` backend
 - Historical Phase 46/48 backend evidence is superseded by the Phases 81–84 corrective (`architecture/process_sandbox_corrective_closeout.md`); extraction is DEFERRED (no standalone crate)
+
+Phase 112 (2026-10-02) rechecked the extraction trigger against Birdcage and
+Skarn. The current decision remains DEFER: the SynVoid guarantee/evidence and
+jail IPC contract is specialized, but no second independent consumer or broader
+native platform proof exists. See
+`architecture/subsystem_boundary_extraction_closeout.md` §“Process sandbox”
+for the current comparison and capability map.

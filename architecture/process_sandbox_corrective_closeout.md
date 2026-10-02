@@ -335,3 +335,24 @@ attempts and the successful corrective requalification.
 Phase 94 is **CLOSED — QUALIFIED**. Phase 89 remains historical implementation
 evidence with its terminal claim superseded. Phases 81–84 remain historically
 closed; extraction remains **DEFER**.
+
+## 13. Phase 112 extraction trigger refresh (2026-10-02)
+
+The DEFER decision remains current. `synvoid-jail-runtime` is the only
+production consumer of the guarantee-oriented `SandboxRequest` /
+`EnteredSandbox` contract; the upload helper and tests are not a second
+independent consumer. Linux Landlock and selected seccomp guarantees have native
+proof; BSD backends remain experimental without independent native evidence;
+macOS remains deprecated Seatbelt/experimental; Windows remains Job-Object
+resource limits only, with strict filesystem isolation failing closed and no
+AppContainer launch backend in SynVoid. No API stability/support policy or
+second consumer was added.
+
+The current ecosystem comparison and guarantee map are recorded in
+`architecture/subsystem_boundary_extraction_closeout.md` §“Process sandbox”.
+Birdcage is archived; current Skarn exposes overlapping filesystem, network,
+restriction-report, and multi-platform APIs. SynVoid retains a distinct typed
+required/optional guarantee contract, staged entry, retained evidence witness,
+and jail IPC/descendant lifecycle integration. This is a meaningful specialized
+contract, but does not resolve the missing second consumer and platform proof.
+No extraction plan is unblocked.
