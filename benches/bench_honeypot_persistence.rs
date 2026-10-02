@@ -9,7 +9,7 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use synvoid_honeypot::config::{PayloadRetentionMode, StorageConfig, StorageWriterConfig};
 use synvoid_honeypot::protocol::Confidence;
 use synvoid_honeypot::storage::{HoneypotRecord, HoneypotStorage};
-use synvoid_honeypot::storage_writer::HoneypotWriter;
+use synvoid_honeypot::PortHoneypotRunner;
 
 fn test_record(payload: Vec<u8>) -> HoneypotRecord {
     HoneypotRecord {
@@ -48,26 +48,41 @@ fn temp_storage() -> (tempfile::TempDir, HoneypotStorage) {
     (dir, storage)
 }
 
+fn temp_runner(
+    rt: &tokio::runtime::Runtime,
+    writer: StorageWriterConfig,
+) -> (tempfile::TempDir, std::sync::Arc<PortHoneypotRunner>) {
+    let dir = tempfile::tempdir().expect("bench tempdir");
+    let mut config = synvoid_honeypot::PortHoneypotConfig::default();
+    config.storage.database_path = dir.path().join("bench.db").to_string_lossy().into_owned();
+    config.storage.max_records = 100_000;
+    config.storage.retention_days = 7;
+    config.storage.flush_interval_secs = 3600;
+    config.storage.writer = writer;
+    let runner = rt
+        .block_on(async { PortHoneypotRunner::new(config) })
+        .expect("bench runner");
+    (dir, runner)
+}
+
 fn benchmark_enqueue_only(c: &mut Criterion) {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
         .build()
         .expect("bench runtime");
-    let (_dir, storage) = temp_storage();
+    let (_dir, runner) = temp_runner(
+        &rt,
+        StorageWriterConfig {
+            queue_capacity: 8192,
+            batch_size: 64,
+            flush_interval_ms: 50,
+            ..StorageWriterConfig::default()
+        },
+    );
     // Healthy consumer: small batches + short interval so the queue drains
     // during the benchmark and `try_send` measures steady-state enqueue cost.
-    let writer = rt.block_on(async {
-        HoneypotWriter::new(
-            storage.clone(),
-            StorageWriterConfig {
-                queue_capacity: 8192,
-                batch_size: 64,
-                flush_interval_ms: 50,
-                ..StorageWriterConfig::default()
-            },
-        )
-    });
+    let writer = runner.writer().clone();
 
     let mut group = c.benchmark_group("honeypot/enqueue");
     group.bench_function("try_write_record", |b| {
@@ -128,21 +143,18 @@ fn benchmark_retention_modes(c: &mut Criterion) {
     let mut writers = Vec::new();
     let mut _dirs = Vec::new();
     for (_, mode) in &modes {
-        let (dir, storage) = temp_storage();
+        let (dir, runner) = temp_runner(
+            &rt,
+            StorageWriterConfig {
+                queue_capacity: 8192,
+                batch_size: 64,
+                flush_interval_ms: 50,
+                payload_retention_mode: mode.clone(),
+                ..StorageWriterConfig::default()
+            },
+        );
         _dirs.push(dir);
-        let writer = rt.block_on(async {
-            HoneypotWriter::new(
-                storage.clone(),
-                StorageWriterConfig {
-                    queue_capacity: 8192,
-                    batch_size: 64,
-                    flush_interval_ms: 50,
-                    payload_retention_mode: mode.clone(),
-                    ..StorageWriterConfig::default()
-                },
-            )
-        });
-        writers.push(writer);
+        writers.push(runner.writer().clone());
     }
 
     let mut group = c.benchmark_group("honeypot/retention");
