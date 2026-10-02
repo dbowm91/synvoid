@@ -107,4 +107,8 @@ failed its `dependency-security` job because Wasmtime 48.0.3 had become
 affected by `RUSTSEC-2026-0326` and `RUSTSEC-2026-0327`; the main verify job
 also stopped at dependency policy. The pinned YARA fork and lockfile now use
 Wasmtime 48.0.5 (48.0.4 is the fixed minimum), with no advisory ignore.
-After the final push, record the follow-up exact-SHA workflow result here.
+
+The exact-head workflow-dispatch run for `f81182149889e21c4908b7ee38c74bc6b4518f6b`
+passed both required jobs: `ci` / Verify and `dependency-security` (cargo-deny
+and cargo-audit). The two optional native qualification jobs were skipped by
+their false-by-default inputs; macOS and HSM qualification remain residuals.

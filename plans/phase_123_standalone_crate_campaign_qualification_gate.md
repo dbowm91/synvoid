@@ -2,8 +2,9 @@
 
 Status: **CLOSED WITH EXPLICIT QUALIFICATION RESIDUALS** (2026-10-02; closeout:
 `architecture/standalone_crate_phase123_closeout.md`). No class-3 promotion or
-repository-extraction follow-up was triggered. Exact-SHA hosted CI is the
-remaining post-push campaign check; no unsupported platform claim is made.
+repository-extraction follow-up was triggered. Exact-SHA hosted CI passed on
+`f81182149889e21c4908b7ee38c74bc6b4518f6b`; macOS and live HSM qualification
+remain explicit residuals, with no unsupported platform claim.
 
 Registered in: `plans/roadmap.md` and
 `plans/standalone_crate_generalization_roadmap.md`.

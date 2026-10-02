@@ -1887,7 +1887,7 @@ Execution lanes:
    - Closeout: `architecture/standalone_crate_phase122_closeout.md`.
 
 9. **Phase 123 — Standalone-Crate Campaign Qualification and Promotion Gate**
-   - Status: **CLOSED WITH EXPLICIT QUALIFICATION RESIDUALS** (2026-10-02).
+   - Status: **CLOSED WITH EXPLICIT QUALIFICATION RESIDUALS** (2026-10-02; hosted exact-SHA CI passed at `f8118214`).
    - Plan: `plans/phase_123_standalone_crate_campaign_qualification_gate.md`.
    - Closeout: `architecture/standalone_crate_phase123_closeout.md`.
    - Regenerated dependency/package evidence and refreshed the ICMP/YARA/
