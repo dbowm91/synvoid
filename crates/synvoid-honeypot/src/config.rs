@@ -29,6 +29,62 @@ fn default_transport_protocols() -> Vec<String> {
     vec!["tcp".to_string()]
 }
 
+/// Absolute hostile-input and configuration allocation ceilings.
+pub const MAX_RETAINED_PAYLOAD_BYTES: usize = 64 * 1024;
+pub const MAX_CONNECTIONS: usize = 4096;
+pub const MAX_CONNECTIONS_PER_IP: usize = 256;
+pub const MAX_LISTENERS: usize = 512;
+pub const MAX_PORT_SCAN_SPAN: u32 = 65_536;
+pub const MAX_STORAGE_QUEUE_CAPACITY: usize = 16_384;
+pub const MAX_STORAGE_BATCH_SIZE: usize = 4096;
+pub const MAX_AI_PROMPT_BYTES: usize = 64 * 1024;
+pub const MAX_AI_RESPONSE_BYTES: usize = 64 * 1024;
+pub const MAX_AI_CONCURRENCY: usize = 256;
+pub const MAX_CONFIGURED_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HoneypotConfigError {
+    pub field: &'static str,
+    pub actual: usize,
+    pub maximum: usize,
+}
+
+impl std::fmt::Display for HoneypotConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.field == "port_range" {
+            write!(
+                f,
+                "port range minimum {} exceeds maximum {}",
+                self.actual, self.maximum
+            )
+        } else {
+            write!(
+                f,
+                "{}={} exceeds hard maximum {}",
+                self.field, self.actual, self.maximum
+            )
+        }
+    }
+}
+
+impl std::error::Error for HoneypotConfigError {}
+
+fn enforce_max(
+    field: &'static str,
+    actual: usize,
+    maximum: usize,
+) -> Result<(), HoneypotConfigError> {
+    if actual > maximum {
+        Err(HoneypotConfigError {
+            field,
+            actual,
+            maximum,
+        })
+    } else {
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThreatIntelConfig {
     #[serde(default = "default_true")]
@@ -102,6 +158,41 @@ impl Default for AiBudgetConfig {
     }
 }
 
+impl AiBudgetConfig {
+    pub fn validate_resource_limits(&self) -> Result<(), HoneypotConfigError> {
+        enforce_max(
+            "ai_config.budget.max_prompt_bytes",
+            self.max_prompt_bytes,
+            MAX_AI_PROMPT_BYTES,
+        )?;
+        enforce_max(
+            "ai_config.budget.max_response_bytes",
+            self.max_response_bytes,
+            MAX_AI_RESPONSE_BYTES,
+        )?;
+        enforce_max(
+            "ai_config.budget.max_generation_duration_secs",
+            self.max_generation_duration_secs.min(usize::MAX as u64) as usize,
+            300,
+        )?;
+        enforce_max(
+            "ai_config.budget.max_turns_per_connection",
+            self.max_turns_per_connection,
+            100,
+        )?;
+        enforce_max(
+            "ai_config.budget.max_concurrent_requests",
+            self.max_concurrent_requests,
+            MAX_AI_CONCURRENCY,
+        )?;
+        enforce_max(
+            "ai_config.budget.max_provider_failures",
+            self.max_provider_failures,
+            100,
+        )
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PortHoneypotConfig {
     pub enabled: bool,
@@ -127,6 +218,131 @@ pub struct PortHoneypotConfig {
     pub ai_config: Option<AiConfig>,
     pub site_scope: String,
     pub threat_intel: ThreatIntelConfig,
+}
+
+impl PortHoneypotConfig {
+    /// Reject resource settings that can cause unbounded allocation or
+    /// attacker-amplified work. Values are rejected, never silently clamped.
+    pub fn validate_resource_limits(&self) -> Result<(), HoneypotConfigError> {
+        enforce_max(
+            "max_payload_size",
+            self.max_payload_size,
+            MAX_RETAINED_PAYLOAD_BYTES,
+        )?;
+        enforce_max(
+            "connection_timeout_ms",
+            self.connection_timeout_ms.min(usize::MAX as u64) as usize,
+            300_000,
+        )?;
+        enforce_max(
+            "read_timeout_ms",
+            self.read_timeout_ms.min(usize::MAX as u64) as usize,
+            300_000,
+        )?;
+        if self.min_port > self.max_port {
+            return Err(HoneypotConfigError {
+                field: "port_range",
+                actual: self.min_port as usize,
+                maximum: self.max_port as usize,
+            });
+        }
+        enforce_max(
+            "max_concurrent_connections",
+            self.max_concurrent_connections,
+            MAX_CONNECTIONS,
+        )?;
+        enforce_max(
+            "max_connections_per_ip",
+            self.max_connections_per_ip,
+            MAX_CONNECTIONS_PER_IP,
+        )?;
+        enforce_max("num_honeypot_ports", self.num_honeypot_ports, MAX_LISTENERS)?;
+        enforce_max("transport_protocols", self.transport_protocols.len(), 16)?;
+        enforce_max("stable_ports", self.stable_ports.len(), MAX_LISTENERS)?;
+        enforce_max("services", self.services.len(), 256)?;
+        let port_span = u32::from(self.max_port)
+            .saturating_sub(u32::from(self.min_port))
+            .saturating_add(1);
+        enforce_max(
+            "port_scan_span",
+            port_span as usize,
+            MAX_PORT_SCAN_SPAN as usize,
+        )?;
+        enforce_max(
+            "storage.writer.queue_capacity",
+            self.storage.writer.queue_capacity,
+            MAX_STORAGE_QUEUE_CAPACITY,
+        )?;
+        enforce_max(
+            "storage.writer.batch_size",
+            self.storage.writer.batch_size,
+            MAX_STORAGE_BATCH_SIZE,
+        )?;
+        enforce_max(
+            "storage.writer.max_stored_payload_bytes",
+            self.storage.writer.max_stored_payload_bytes,
+            MAX_RETAINED_PAYLOAD_BYTES,
+        )?;
+        enforce_max(
+            "storage.writer.max_stored_payload_hex_bytes",
+            self.storage.writer.max_stored_payload_hex_bytes,
+            MAX_RETAINED_PAYLOAD_BYTES.saturating_mul(2),
+        )?;
+        enforce_max(
+            "storage.max_records",
+            self.storage.max_records.min(usize::MAX as u64) as usize,
+            100_000_000,
+        )?;
+        enforce_max(
+            "storage.retention_days",
+            self.storage.retention_days as usize,
+            3650,
+        )?;
+        enforce_max(
+            "ai_config.system_prompt",
+            self.ai_config
+                .as_ref()
+                .and_then(|c| c.system_prompt.as_ref())
+                .map_or(0, String::len),
+            MAX_AI_PROMPT_BYTES,
+        )?;
+        if let Some(ai) = &self.ai_config {
+            ai.budget.validate_resource_limits()?;
+            enforce_max(
+                "ai_config.timeout_secs",
+                ai.timeout_secs.min(usize::MAX as u64) as usize,
+                300,
+            )?;
+        }
+        let configured_response_bytes = self.services.iter().fold(0usize, |sum, service| {
+            sum.saturating_add(service.banner.len())
+                .saturating_add(service.response_patterns.iter().fold(0usize, |inner, p| {
+                    inner
+                        .saturating_add(p.pattern.len())
+                        .saturating_add(p.response.len())
+                }))
+                .saturating_add(
+                    service
+                        .ports
+                        .len()
+                        .saturating_mul(std::mem::size_of::<u16>()),
+                )
+        });
+        enforce_max(
+            "services.response_data_bytes",
+            configured_response_bytes,
+            MAX_CONFIGURED_RESPONSE_BYTES,
+        )?;
+        for service in &self.services {
+            enforce_max("service.ports", service.ports.len(), MAX_LISTENERS)?;
+            enforce_max(
+                "service.response_patterns",
+                service.response_patterns.len(),
+                1024,
+            )?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

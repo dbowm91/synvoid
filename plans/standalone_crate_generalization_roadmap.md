@@ -2,7 +2,7 @@
 
 Status: **ACTIVE / REGISTERED** (2026-10-02; Phase 115 closed with routine
 qualification residual; Phase 116 DEFER/117 blocked; Phase 118 DEFER/119
-blocked; Phase 120 RETAIN; remaining independent tracks continue).
+blocked; Phase 120 RETAIN; Phase 121 target DEFER; Phase 122 remains eligible).
 
 Registered in: `plans/roadmap.md`.
 
@@ -178,9 +178,10 @@ or support promise is not a success metric.
 9. **Phase 123 — Campaign qualification and promotion/repository gate refresh.**
 
 Phases 116 and 118 have formally closed DEFER. Phases 117 and 119 are blocked on
-those prerequisites, respectively. Phase 120 closed RETAIN. Phases 121/122
-remain independent after Phase 115. Phase 123 waits for all implementation
-tracks to close or record explicit DEFER/RETAIN outcomes.
+those prerequisites, respectively. Phase 120 closed RETAIN. Phase 121
+implemented package hardening and closed with native macOS qualification
+deferred. Phase 122 remains independent after Phase 115. Phase 123 waits for all
+implementation tracks to close or record explicit DEFER/RETAIN outcomes.
 
 Phase 115's implementation is recorded in
 `architecture/standalone_crate_phase115_closeout.md`. The contract and baseline
@@ -197,6 +198,10 @@ Phase 119 block are recorded in
 Phase 120's RETAIN decision is recorded in
 `architecture/standalone_crate_phase120_closeout.md`; no sandbox crate was
 created and no support tier changed.
+
+Phase 121's implementation and Linux-only qualification evidence are recorded
+in `architecture/standalone_crate_phase121_closeout.md`; the native macOS gate
+remains open for a suitable runner.
 
 ## Success criteria
 

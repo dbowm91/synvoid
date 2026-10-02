@@ -5,6 +5,12 @@ edition = "2021"
 license.workspace = true
 repository.workspace = true
 description = "Honeypot deployment and attack emulation"
+readme = "README.md"
+
+[package.metadata.synvoid]
+standalone_class = "class2"
+external_support = false
+standalone_msr = "1.85.0"
 
 [features]
 default = []
@@ -24,3 +30,7 @@ tracing = "0.1"
 thiserror = "2"
 metrics = "0.22"
 sha2 = "0.10"
+
+[dev-dependencies]
+tempfile = "3"
+proptest = "1.5"

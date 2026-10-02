@@ -1868,10 +1868,11 @@ Execution lanes:
    - Closeout: `architecture/standalone_crate_phase120_closeout.md`.
 
 7. **Phase 121 — Honeypot Standalone-Package Hardening**
-   - Status: **PLANNED / READY AFTER PHASE 115**.
+   - Status: **CLOSED DEFER — native macOS qualification unavailable** (2026-10-02).
    - Plan: `plans/phase_121_honeypot_standalone_package_hardening.md`.
    - Closes Phase 107's resource-ceiling, persistence, hostile-input,
      provider-containment, docs/MSRV and target-proof gaps.
+   - Closeout: `architecture/standalone_crate_phase121_closeout.md`.
 
 8. **Phase 122 — DNSSEC-Keystore and Mesh-Protocol Leaf Package Hardening**
    - Status: **PLANNED / READY AFTER PHASE 115**.

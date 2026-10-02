@@ -31,11 +31,13 @@ pub fn run(args: &[String]) -> Result<(), String> {
                 .ok_or("usage: cargo xtask standalone consumer <crate> [--features FEATURES]")?;
             let features = option(&args[2..], "--features");
             let source = option(&args[2..], "--consumer-src").map(PathBuf::from);
+            let toolchain = option(&args[2..], "--toolchain");
             consumer(
                 &root,
                 name,
                 features,
                 source.as_deref(),
+                toolchain,
                 args.contains(&"--expect-fail"),
             )
         }
@@ -212,6 +214,7 @@ fn consumer(
     name: &str,
     features: Option<&str>,
     source: Option<&Path>,
+    toolchain: Option<&str>,
     expect_fail: bool,
 ) -> Result<(), String> {
     let crate_name = name;
@@ -276,6 +279,8 @@ fn consumer(
                 .map_err(|e| format!("consumer source {}: {e}", source.display()))?
         } else if name == "synvoid-rate-limit" {
             "#[test]\nfn public_api_smoke() { let clock = synvoid_rate_limit::WindowClock::new(); let window = synvoid_rate_limit::AtomicSlidingWindow::new(1, 10); window.increment_now(&clock); assert_eq!(window.count_now(&clock), 1); }\n".to_owned()
+        } else if name == "synvoid-honeypot" {
+            "#[test]\nfn public_api_smoke() { let config = synvoid_honeypot::PortHoneypotConfig::default(); config.validate_resource_limits().unwrap(); let matched = synvoid_honeypot::ProtocolDetector::new().detect(b\"SSH-2.0-test\\r\\n\").unwrap(); assert_eq!(matched.protocol, \"ssh\"); }\n".to_owned()
         } else {
             "#[test]\nfn package_dependency_is_visible() { assert!(!env!(\"CARGO_MANIFEST_DIR\").is_empty()); }\n".to_owned()
         };
@@ -285,6 +290,9 @@ fn consumer(
         )
         .map_err(|e| e.to_string())?;
         let mut cmd = Command::new("cargo");
+        if let Some(toolchain) = toolchain {
+            cmd.arg(format!("+{toolchain}"));
+        }
         cmd.args(["test", "--manifest-path"])
             .arg(consumer.join("Cargo.toml"));
         cmd.env("CARGO_NET_OFFLINE", "true");
@@ -301,8 +309,9 @@ fn consumer(
             return Err(format!("outside-workspace consumer failed for {name}"));
         }
         println!(
-            "qualified packaged source: {name} {version}; feature argument={}",
-            features.unwrap_or("default")
+            "qualified packaged source: {name} {version}; features={}; toolchain={}",
+            features.unwrap_or("default"),
+            toolchain.unwrap_or("current")
         );
         Ok(())
     })();

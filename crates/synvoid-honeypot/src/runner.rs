@@ -51,6 +51,7 @@ pub struct PortHoneypotRunner {
 
 impl PortHoneypotRunner {
     pub fn new(config: PortHoneypotConfig) -> Result<Arc<Self>, Box<dyn std::error::Error>> {
+        config.validate_resource_limits()?;
         if !config
             .transport_protocols
             .iter()
@@ -70,10 +71,11 @@ impl PortHoneypotRunner {
             .ai_config
             .as_ref()
             .filter(|c| c.mode != crate::config::AiResponderMode::Disabled)
-            .map(|c| Arc::new(AiResponderBudget::new(c.budget.clone())));
+            .map(|c| AiResponderBudget::new(c.budget.clone()).map(Arc::new))
+            .transpose()?;
 
         let config = Arc::new(config);
-        let listener = PortHoneypotListener::new((*config).clone(), writer.clone(), ai_budget);
+        let listener = PortHoneypotListener::new((*config).clone(), writer.clone(), ai_budget)?;
 
         // Phase 57: stateful cancellation. `watch` retains `true` once `stop()`
         // requests shutdown, so a receiver subscribing after the request still

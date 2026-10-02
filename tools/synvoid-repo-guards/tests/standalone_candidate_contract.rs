@@ -45,13 +45,7 @@ fn registered_standalone_class2_candidates_obey_contract() {
             .get("package")
             .and_then(toml::Value::as_table)
             .expect("[package]");
-        for field in [
-            "description",
-            "license",
-            "repository",
-            "readme",
-            "rust-version",
-        ] {
+        for field in ["description", "license", "repository", "readme"] {
             assert!(
                 package
                     .get(field)
@@ -76,6 +70,14 @@ fn registered_standalone_class2_candidates_obey_contract() {
                 .get("external_support")
                 .and_then(toml::Value::as_bool),
             Some(false)
+        );
+        assert!(
+            metadata
+                .get("standalone_msr")
+                .and_then(toml::Value::as_str)
+                .is_some(),
+            "{} must record packaged-source MSRV evidence without setting Cargo rust-version",
+            candidate.package
         );
         assert_ne!(
             metadata.get("release_class").and_then(toml::Value::as_str),

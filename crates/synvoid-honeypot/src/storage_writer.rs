@@ -39,7 +39,7 @@ impl Clone for HoneypotWriter {
 }
 
 impl HoneypotWriter {
-    pub fn new(storage: HoneypotStorage, config: StorageWriterConfig) -> Self {
+    pub(crate) fn new(storage: HoneypotStorage, config: StorageWriterConfig) -> Self {
         let (tx, rx) = mpsc::channel(config.queue_capacity);
         let storage = Arc::new(storage);
         let (done_tx, _initial_rx) = watch::channel(false);

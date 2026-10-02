@@ -9,8 +9,16 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
 
-/// Application supplied, bounded JSON egress for AI providers. Implementors
-/// own TLS/proxy policy and must enforce `max_response_bytes` while reading.
+/// Application-supplied JSON egress for AI providers.
+///
+/// Implementors own and must enforce all external-call policy: TLS certificate
+/// and hostname validation, endpoint/destination allowlists, outbound proxy and
+/// network policy, the supplied deadline, response streaming byte limits before
+/// buffering, cancellation when this future is dropped, and retry/cost limits.
+/// Errors must not include request headers, API keys, or provider response text;
+/// the typed errors below intentionally carry only bounded status/limit values.
+/// The honeypot crate does not supply a provider SDK or imply that arbitrary
+/// configured URLs are safe to contact.
 #[async_trait]
 pub trait AiProviderTransport: Send + Sync {
     async fn post_json(
@@ -148,12 +156,13 @@ pub struct AiResponderBudget {
 }
 
 impl AiResponderBudget {
-    pub fn new(config: AiBudgetConfig) -> Self {
-        Self {
+    pub fn new(config: AiBudgetConfig) -> Result<Self, crate::config::HoneypotConfigError> {
+        config.validate_resource_limits()?;
+        Ok(Self {
             circuit_breaker: AiCircuitBreaker::from_config(&config),
             concurrency: AiConcurrencyLimiter::from_config(&config),
             config,
-        }
+        })
     }
 }
 
@@ -843,7 +852,7 @@ mod tests {
                 endpoint: None,
                 timeout_secs: 30,
             },
-            Arc::new(AiResponderBudget::new(AiBudgetConfig::default())),
+            Arc::new(AiResponderBudget::new(AiBudgetConfig::default()).unwrap()),
             Arc::new(FakeTransport),
         );
         let context = HoneypotContext {

@@ -70,7 +70,7 @@ pub struct AiCircuitBreaker {
 }
 
 impl AiCircuitBreaker {
-    pub fn new(max_failures: usize, cooldown_secs: u64) -> Self {
+    pub(crate) fn new(max_failures: usize, cooldown_secs: u64) -> Self {
         Self {
             failures: AtomicUsize::new(0),
             max_failures,
@@ -79,7 +79,7 @@ impl AiCircuitBreaker {
         }
     }
 
-    pub fn from_config(config: &AiBudgetConfig) -> Self {
+    pub(crate) fn from_config(config: &AiBudgetConfig) -> Self {
         Self::new(config.max_provider_failures, 60)
     }
 
@@ -131,14 +131,14 @@ pub struct AiConcurrencyLimiter {
 }
 
 impl AiConcurrencyLimiter {
-    pub fn new(max_concurrent: usize) -> Self {
+    pub(crate) fn new(max_concurrent: usize) -> Self {
         Self {
             semaphore: Arc::new(Semaphore::new(max_concurrent)),
             active: Arc::new(AtomicUsize::new(0)),
         }
     }
 
-    pub fn from_config(config: &AiBudgetConfig) -> Self {
+    pub(crate) fn from_config(config: &AiBudgetConfig) -> Self {
         Self::new(config.max_concurrent_requests)
     }
 
@@ -198,7 +198,7 @@ pub struct AiTurnCounter {
 }
 
 impl AiTurnCounter {
-    pub fn new(max_turns: usize) -> Self {
+    pub(crate) fn new(max_turns: usize) -> Self {
         Self {
             count: AtomicUsize::new(0),
             max_turns,

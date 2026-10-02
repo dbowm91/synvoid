@@ -2,4 +2,6 @@ schema = "synvoid.standalone-candidates.v1"
 
 # Entries are added only after a phase proves the contract. `allowed_sibling`
 # names deliberate low-capability pairings; all other SynVoid normal edges fail.
-candidates = []
+candidates = [
+  { package = "synvoid-honeypot", allowed_siblings = [] },
+]

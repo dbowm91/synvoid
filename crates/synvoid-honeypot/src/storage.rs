@@ -1,7 +1,9 @@
 use parking_lot::Mutex;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use std::path::Path;
 use std::sync::Arc;
+
+const STORAGE_SCHEMA_VERSION: i32 = 1;
 
 use super::config::StorageConfig;
 use super::protocol::Confidence;
@@ -49,12 +51,14 @@ impl HoneypotStorage {
 
     pub fn new(config: &StorageConfig) -> Result<Self, rusqlite::Error> {
         let db_path = Path::new(&config.database_path);
-
-        if let Some(parent) = db_path.parent() {
-            std::fs::create_dir_all(parent).ok();
-        }
-
-        let conn = Connection::open(db_path)?;
+        prepare_storage_path(db_path)?;
+        let mut conn = Connection::open_with_flags(
+            db_path,
+            OpenFlags::SQLITE_OPEN_READ_WRITE
+                | OpenFlags::SQLITE_OPEN_CREATE
+                | OpenFlags::SQLITE_OPEN_NOFOLLOW,
+        )?;
+        harden_storage_file(db_path)?;
 
         conn.execute_batch(
             "PRAGMA journal_mode = WAL;
@@ -87,43 +91,7 @@ impl HoneypotStorage {
         )?;
 
         // Migration: add confidence column if missing (existing databases)
-        let has_confidence: bool = conn
-            .prepare("PRAGMA table_info(honeypot_connections)")
-            .ok()
-            .and_then(|mut stmt| {
-                stmt.query_map([], |row| {
-                    let name: String = row.get(1)?;
-                    Ok(name)
-                })
-                .ok()
-                .map(|rows| rows.filter_map(|c| c.ok()).any(|c| c == "confidence"))
-            })
-            .unwrap_or(false);
-        if !has_confidence {
-            let _ = conn.execute_batch(
-                "ALTER TABLE honeypot_connections ADD COLUMN confidence TEXT NOT NULL DEFAULT 'low'",
-            );
-        }
-
-        // Migration: add payload_hash and payload_length columns if missing
-        let has_payload_hash: bool = conn
-            .prepare("PRAGMA table_info(honeypot_connections)")
-            .ok()
-            .and_then(|mut stmt| {
-                stmt.query_map([], |row| {
-                    let name: String = row.get(1)?;
-                    Ok(name)
-                })
-                .ok()
-                .map(|rows| rows.filter_map(|c| c.ok()).any(|c| c == "payload_hash"))
-            })
-            .unwrap_or(false);
-        if !has_payload_hash {
-            let _ = conn.execute_batch(
-                "ALTER TABLE honeypot_connections ADD COLUMN payload_hash TEXT;
-                 ALTER TABLE honeypot_connections ADD COLUMN payload_length INTEGER NOT NULL DEFAULT 0",
-            );
-        }
+        migrate_schema(&mut conn)?;
 
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_honeypot_timestamp ON honeypot_connections(timestamp)",
@@ -374,5 +342,226 @@ impl HoneypotStorage {
             params![key, now],
         )?;
         Ok(())
+    }
+}
+
+fn storage_io_error(error: std::io::Error) -> rusqlite::Error {
+    rusqlite::Error::ToSqlConversionFailure(Box::new(error))
+}
+
+fn prepare_storage_path(path: &Path) -> Result<(), rusqlite::Error> {
+    if path == Path::new(":memory:") {
+        return Ok(());
+    }
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        #[cfg(unix)]
+        let parent_existed = parent.exists();
+        std::fs::create_dir_all(parent).map_err(storage_io_error)?;
+        #[cfg(unix)]
+        if !parent_existed {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = std::fs::metadata(parent)
+                .map_err(storage_io_error)?
+                .permissions();
+            permissions.set_mode(0o700);
+            std::fs::set_permissions(parent, permissions).map_err(storage_io_error)?;
+        }
+    }
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            Err(storage_io_error(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "honeypot database path is a symlink",
+            )))
+        }
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(storage_io_error(error)),
+    }
+}
+
+fn harden_storage_file(path: &Path) -> Result<(), rusqlite::Error> {
+    if path == Path::new(":memory:") {
+        return Ok(());
+    }
+    let metadata = std::fs::symlink_metadata(path).map_err(storage_io_error)?;
+    if metadata.file_type().is_symlink() {
+        return Err(storage_io_error(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "honeypot database path became a symlink",
+        )));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = metadata.permissions();
+        permissions.set_mode(0o600);
+        std::fs::set_permissions(path, permissions).map_err(storage_io_error)?;
+    }
+    Ok(())
+}
+
+fn migrate_schema(conn: &mut Connection) -> Result<(), rusqlite::Error> {
+    let version: i32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    if version > STORAGE_SCHEMA_VERSION {
+        return Err(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_MISMATCH),
+            Some(format!("database schema version {version} is newer than supported {STORAGE_SCHEMA_VERSION}")),
+        ));
+    }
+    let tx = conn.transaction()?;
+    ensure_column(&tx, "confidence", "confidence TEXT NOT NULL DEFAULT 'low'")?;
+    ensure_column(&tx, "payload_hash", "payload_hash TEXT")?;
+    ensure_column(
+        &tx,
+        "payload_length",
+        "payload_length INTEGER NOT NULL DEFAULT 0",
+    )?;
+    tx.pragma_update(None, "user_version", STORAGE_SCHEMA_VERSION)?;
+    tx.commit()
+}
+
+fn ensure_column(conn: &Connection, name: &str, definition: &str) -> Result<(), rusqlite::Error> {
+    let mut statement = conn.prepare("PRAGMA table_info(honeypot_connections)")?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?;
+    if !columns.iter().any(|column| column == name) {
+        conn.execute_batch(&format!(
+            "ALTER TABLE honeypot_connections ADD COLUMN {definition}"
+        ))?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::StorageConfig;
+    use tempfile::tempdir;
+
+    #[test]
+    fn creates_versioned_schema_and_nested_private_database_path() {
+        let tmp = tempdir().unwrap();
+        let path = tmp.path().join("private").join("honeypot.db");
+        let config = StorageConfig {
+            database_path: path.to_string_lossy().into_owned(),
+            ..StorageConfig::default()
+        };
+        let storage = HoneypotStorage::new(&config).unwrap();
+        let conn = storage.conn();
+        let version: i32 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, STORAGE_SCHEMA_VERSION);
+        let columns = conn
+            .prepare("PRAGMA table_info(honeypot_connections)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        for expected in ["confidence", "payload_hash", "payload_length"] {
+            assert!(columns.iter().any(|column| column == expected));
+        }
+        drop(conn);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+            assert_eq!(
+                std::fs::metadata(path.parent().unwrap())
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o700
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn refuses_database_symlinks() {
+        use std::os::unix::fs::symlink;
+        let tmp = tempdir().unwrap();
+        let target = tmp.path().join("target.db");
+        Connection::open(&target).unwrap();
+        let link = tmp.path().join("link.db");
+        symlink(&target, &link).unwrap();
+        let config = StorageConfig {
+            database_path: link.to_string_lossy().into_owned(),
+            ..StorageConfig::default()
+        };
+        assert!(HoneypotStorage::new(&config).is_err());
+    }
+
+    #[test]
+    fn invalid_parent_path_fails_closed() {
+        let tmp = tempdir().unwrap();
+        let blocker = tmp.path().join("not-a-directory");
+        std::fs::write(&blocker, b"x").unwrap();
+        let path = blocker.join("honeypot.db");
+        let config = StorageConfig {
+            database_path: path.to_string_lossy().into_owned(),
+            ..StorageConfig::default()
+        };
+        assert!(HoneypotStorage::new(&config).is_err());
+    }
+
+    #[test]
+    fn rejects_database_schema_from_a_newer_version() {
+        let tmp = tempdir().unwrap();
+        let path = tmp.path().join("future.db");
+        let conn = Connection::open(&path).unwrap();
+        conn.pragma_update(None, "user_version", STORAGE_SCHEMA_VERSION + 1)
+            .unwrap();
+        drop(conn);
+        let config = StorageConfig {
+            database_path: path.to_string_lossy().into_owned(),
+            ..StorageConfig::default()
+        };
+        assert!(HoneypotStorage::new(&config).is_err());
+    }
+
+    #[test]
+    fn upgrades_legacy_schema_transactionally_and_records_user_version() {
+        let tmp = tempdir().unwrap();
+        let path = tmp.path().join("legacy.db");
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE honeypot_connections (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp INTEGER NOT NULL,
+            remote_ip TEXT NOT NULL, remote_port INTEGER NOT NULL, local_port INTEGER NOT NULL,
+            protocol TEXT NOT NULL, service TEXT NOT NULL, payload BLOB, payload_hex TEXT,
+            detected_pattern TEXT, bytes_received INTEGER NOT NULL DEFAULT 0,
+            bytes_sent INTEGER NOT NULL DEFAULT 0, duration_ms INTEGER NOT NULL DEFAULT 0,
+            connection_info TEXT, payload_truncated INTEGER NOT NULL DEFAULT 0);",
+        )
+        .unwrap();
+        drop(conn);
+        let config = StorageConfig {
+            database_path: path.to_string_lossy().into_owned(),
+            ..StorageConfig::default()
+        };
+        let storage = HoneypotStorage::new(&config).unwrap();
+        let conn = storage.conn();
+        let version: i32 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, STORAGE_SCHEMA_VERSION);
+        let columns = conn
+            .prepare("PRAGMA table_info(honeypot_connections)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(columns.iter().any(|column| column == "confidence"));
+        assert!(columns.iter().any(|column| column == "payload_hash"));
+        assert!(columns.iter().any(|column| column == "payload_length"));
     }
 }

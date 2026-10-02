@@ -2,6 +2,8 @@ pub mod ai_budget;
 #[cfg(test)]
 mod ai_responder_containment_tests;
 pub mod config;
+#[cfg(test)]
+mod config_tests;
 pub mod controller;
 pub mod listener;
 pub mod mesh_control;
@@ -19,8 +21,12 @@ pub use ai_budget::{
     AiCircuitBreaker, AiConcurrencyLimiter, AiConcurrencyPermit, AiTurnCounter, BudgetExceeded,
 };
 pub use config::{
-    AiBudgetConfig, AiConfig, AiResponderMode, PayloadRetentionMode, PortHoneypotConfig,
-    ResponseModeConfig, StablePortConfig, StorageWriterConfig, ThreatIntelConfig,
+    AiBudgetConfig, AiConfig, AiResponderMode, HoneypotConfigError, PayloadRetentionMode,
+    PortHoneypotConfig, ResponseModeConfig, StablePortConfig, StorageWriterConfig,
+    ThreatIntelConfig, MAX_AI_CONCURRENCY, MAX_AI_PROMPT_BYTES, MAX_AI_RESPONSE_BYTES,
+    MAX_CONFIGURED_RESPONSE_BYTES, MAX_CONNECTIONS, MAX_CONNECTIONS_PER_IP, MAX_LISTENERS,
+    MAX_PORT_SCAN_SPAN, MAX_RETAINED_PAYLOAD_BYTES, MAX_STORAGE_BATCH_SIZE,
+    MAX_STORAGE_QUEUE_CAPACITY,
 };
 pub use controller::PortHoneypotController;
 pub use listener::PortHoneypotListener;

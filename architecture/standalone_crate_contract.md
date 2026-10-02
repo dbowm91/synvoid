@@ -20,7 +20,7 @@ Standalone-capable class 2 requires all of the following:
 
 1. No normal dependency on the root `synvoid`, `synvoid-config`, `synvoid-core`, or other application-policy crate. An explicitly named security leaf pairing may be allowed in the candidate registry.
 2. No hidden root-relative files, workspace-only build assumptions, or undocumented environment variables.
-3. Cargo metadata states the package's purpose, license, repository, README, and evidence-based MSRV. Package metadata says `standalone_class = "class2"` and `external_support = false`.
+3. Cargo metadata states the package's purpose, license, repository, README, and evidence-based standalone MSRV in `package.metadata.synvoid.standalone_msr`. Do not set Cargo `rust-version` for class 2: the current public-crate guard reserves that field for class-3 support commitments. Package metadata says `standalone_class = "class2"` and `external_support = false`.
 4. Default features are useful and bounded; heavyweight/native capabilities are opt-in where appropriate.
 5. Any persisted, wire, and storage surface has a written compatibility classification.
 6. `cargo package` source is extracted outside the repository and compiled by a tiny consumer with workspace Cargo variables removed. Feature selections are recorded.
