@@ -37,7 +37,16 @@ const SLOW_PATH: &str = "/qualbench/slow";
 const SLOW_ORIGIN_DELAY: Duration = Duration::from_secs(12);
 /// POST body size used to prove `body_buffering_bytes_total` is
 /// workload-derived rather than an inventory zero.
-const POST_BODY: &[u8] = b"synvoid-m003-live-proof-body-0123456789abcdef0123456789abcdef";
+///
+/// `collect_and_scan_request_body` only records `request_body_size` on the
+/// chunked-WAF collection path, which is taken for bodies strictly larger than
+/// `CHUNK_WAF_THRESHOLD` (256 KiB). A small body legitimately records zero, so
+/// the proof deliberately exercises the above-threshold path rather than
+/// pretending a tiny body should have moved the counter.
+const POST_BODY_BYTES: usize = 512 * 1024;
+/// Concurrent in-test load drivers. Enough in-flight work to keep the worker's
+/// runtime busy so a heartbeat tick is observed late at least once.
+const LIVE_LOAD_CONCURRENCY: usize = 16;
 
 /// RAII child-process guard.
 struct ProcessGuard {
@@ -110,9 +119,38 @@ async fn run_origin(
                 let Ok((mut stream, _)) = accepted else { break };
                 let state = state.clone();
                 tokio::spawn(async move {
-                    let mut buf = vec![0u8; 4096];
-                    let Ok(n) = stream.read(&mut buf).await else { return };
-                    let head = String::from_utf8_lossy(&buf[..n]);
+                    // Read the whole request (head + declared body) before
+                    // responding: closing mid-upload would surface upstream as
+                    // 502 and the driver would not be measuring the worker.
+                    let mut raw = Vec::with_capacity(4096);
+                    let mut chunk = vec![0u8; 64 * 1024];
+                    let header_end = loop {
+                        if let Some(idx) = raw.windows(4).position(|w| w == b"\r\n\r\n") {
+                            break idx + 4;
+                        }
+                        let Ok(n) = stream.read(&mut chunk).await else { return };
+                        if n == 0 {
+                            return;
+                        }
+                        raw.extend_from_slice(&chunk[..n]);
+                    };
+                    let head = String::from_utf8_lossy(&raw[..header_end]).into_owned();
+                    let content_length: usize = head
+                        .lines()
+                        .find_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            name.trim()
+                                .eq_ignore_ascii_case("content-length")
+                                .then(|| value.trim().parse().ok())?
+                        })
+                        .unwrap_or(0);
+                    while raw.len() < header_end + content_length {
+                        let Ok(n) = stream.read(&mut chunk).await else { return };
+                        if n == 0 {
+                            break;
+                        }
+                        raw.extend_from_slice(&chunk[..n]);
+                    }
                     let path = head
                         .lines()
                         .next()
@@ -189,27 +227,28 @@ async fn drive_case(listen_port: u16, path: &str) -> Result<u16, String> {
     Ok(code)
 }
 
-/// POST a small benign body through the real proxy. The request path records
-/// `body_buffering_bytes(request_body_size)` for every proxied request, so a
-/// successful POST is the workload evidence that
+/// POST a benign body through the real proxy, repeatedly. The request path
+/// records `body_buffering_bytes(request_body_size)` for bodies above the
+/// chunked-WAF threshold, so a successful POST is the workload evidence that
 /// `synvoid_subject_body_buffering_bytes_total` is worker-derived.
 async fn drive_post(listen_port: u16, path: &str) -> Result<u16, String> {
-    let request = format!(
+    let body = vec![b'a'; POST_BODY_BYTES];
+    let head = format!(
         "POST {} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nUser-Agent: {}\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         path,
         listen_port,
         DRIVER_UA,
-        POST_BODY.len()
+        body.len()
     );
     let mut stream = TcpStream::connect(("127.0.0.1", listen_port))
         .await
         .map_err(|e| format!("connect failed: {e}"))?;
     stream
-        .write_all(request.as_bytes())
+        .write_all(head.as_bytes())
         .await
         .map_err(|e| format!("write head failed: {e}"))?;
     stream
-        .write_all(POST_BODY)
+        .write_all(&body)
         .await
         .map_err(|e| format!("write body failed: {e}"))?;
     let mut response = Vec::new();
@@ -217,11 +256,11 @@ async fn drive_post(listen_port: u16, path: &str) -> Result<u16, String> {
         .read_to_end(&mut response)
         .await
         .map_err(|e| format!("read failed: {e}"))?;
-    let head = String::from_utf8_lossy(&response);
-    let status_line = head.lines().next().unwrap_or("");
+    let status_line = String::from_utf8_lossy(&response);
     status_line
-        .split_whitespace()
-        .nth(1)
+        .lines()
+        .next()
+        .and_then(|l| l.split_whitespace().nth(1))
         .and_then(|s| s.parse().ok())
         .ok_or_else(|| format!("unparseable status line: {status_line:?}"))
 }
@@ -581,29 +620,56 @@ async fn eggbench_m003_telemetry_live_proof() {
     //    - `active_connections`: only non-zero while a proxied request is in
     //      flight across a heartbeat. Proves the traffic gauge is
     //      worker-derived rather than the inventory default.
-    //    - `body_buffering_bytes_total`: the exercised path records
-    //      `request_body_size` for every proxied request, so a successful
-    //      POST must make this counter non-zero. Proves a workload-relevant
-    //      monotonic counter carries live state.
+    //    - `body_buffering_bytes_total`: bodies above the 256 KiB
+    //      chunked-WAF threshold record `request_body_size`, so a successful
+    //      large POST must make this counter non-zero. Proves a
+    //      workload-relevant monotonic counter carries live state.
+    //    - `event_loop_lag_ms`: the chunked body scan is synchronous work on
+    //      the worker's event loop, so at least one heartbeat must observe a
+    //      non-zero lag.
     //
     //    Offload submission/timeout/rejection/fallback counters are NOT
     //    required to be non-zero: the supported minimal runtime need not run a
     //    CPU offload worker, and manufacturing load to move them would be
     //    fabricating evidence.
+    let live_window_secs = 24u64;
     let slow_request = start_slow_case(listen_port).await;
-    for _ in 0..3 {
-        let code = drive_post(listen_port, "/qualbench/post")
-            .await
-            .expect("POST driver must run");
-        assert_eq!(
-            code, 200,
-            "the controlled origin must accept the benign POST body"
-        );
-        let _ = drive_case(listen_port, "/qualbench/small").await;
-    }
+
+    // Keep the workload alive for the whole window so at least one heartbeat
+    // observes each of: a request in flight, and a busy event loop. The load
+    // is deliberately concurrent — `event_loop_lag_ms` is the heartbeat
+    // task's own scheduling delay, which only becomes non-zero when the
+    // runtime actually has work queued on every worker thread.
+    let load = tokio::spawn(async move {
+        let deadline = Instant::now() + Duration::from_secs(live_window_secs);
+        let mut workers = Vec::with_capacity(LIVE_LOAD_CONCURRENCY);
+        for _ in 0..LIVE_LOAD_CONCURRENCY {
+            workers.push(tokio::spawn(async move {
+                let mut rounds = 0usize;
+                while Instant::now() < deadline {
+                    let code = drive_post(listen_port, "/qualbench/post")
+                        .await
+                        .expect("POST driver must run");
+                    assert_eq!(
+                        code, 200,
+                        "the controlled origin must accept the benign POST body"
+                    );
+                    let _ = drive_case(listen_port, "/qualbench/small").await;
+                    rounds += 1;
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+                rounds
+            }));
+        }
+        let mut rounds = 0usize;
+        for worker in workers {
+            rounds += worker.await.expect("load worker must not panic");
+        }
+        rounds
+    });
 
     let mut series: Vec<Vec<(String, f64, String)>> = Vec::new();
-    let live_window = Instant::now() + Duration::from_secs(20);
+    let live_window = Instant::now() + Duration::from_secs(live_window_secs);
     while Instant::now() < live_window {
         let scrape = fetch_metrics(metrics_port)
             .await
@@ -616,6 +682,7 @@ async fn eggbench_m003_telemetry_live_proof() {
         series.push(observed_live);
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
+    let rounds = load.await.expect("load driver must not panic");
     let _ = slow_request.await;
 
     let max_series = |name: &str| -> f64 {
@@ -632,7 +699,8 @@ async fn eggbench_m003_telemetry_live_proof() {
     let value_of = |name: &str| max_series(name).max(0.0);
 
     eprintln!(
-        "live worker-backed maxima over {} scrapes: memory_bytes={} active_connections={} \
+        "live workload rounds={rounds}; worker-backed maxima over {} scrapes: memory_bytes={} \
+         active_connections={} \
          event_loop_lag_ms={} request_queue_p95_ms={} worker_cpu_percent={} \
          body_buffering_bytes_total={} offload_submissions_total={} offload_timeouts_total={} \
          offload_rejections_total={} offload_fallbacks_total={}",
@@ -660,7 +728,13 @@ async fn eggbench_m003_telemetry_live_proof() {
     );
     assert!(
         max_series("synvoid_subject_body_buffering_bytes_total") > 0.0,
-        "body_buffering_bytes_total must carry live workload state after a proxied POST body"
+        "body_buffering_bytes_total must carry live workload state after proxied \
+         above-threshold POST bodies"
+    );
+    assert!(
+        max_series("synvoid_subject_event_loop_lag_ms") > 0.0,
+        "event_loop_lag_ms must be non-zero at least once: the worker samples it \
+         as the delay past its own heartbeat deadline"
     );
 
     // Counter monotonicity must hold across the whole live window, not just

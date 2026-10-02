@@ -247,7 +247,14 @@ pub async fn build_worker_startup(
     super::lifecycle::request_initial_blocklist(&ipc, worker_id, &unified_server).await;
 
     // ---- Phase 11: build DataPlaneServices + Ready ----
-    let metrics = WorkerMetrics::shared();
+    // NOTE: `metrics` deliberately stays the Phase 5 instance. A process must
+    // hold exactly one `WorkerMetrics`: the request path records through the
+    // instance handed to the server above, and the heartbeat serializes
+    // `state.metrics`. Rebinding a second instance here (a leftover of the
+    // Iteration 93 decomposition) made every request-derived field of the
+    // `synvoid.eggbench-telemetry.v2` payload — total_requests, blocked,
+    // proxied, body_buffering_bytes_total, offload_* — permanently zero,
+    // because the heartbeat read an instance no request had ever touched.
     let _running = RunningFlag::new();
     if let Some(handle) = state::start_shared_connection_heartbeat(worker_id_raw, _running.clone())
     {

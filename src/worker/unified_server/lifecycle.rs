@@ -143,7 +143,14 @@ pub fn spawn_heartbeat_task(
     registry.spawn_background("heartbeat", async move {
         let heartbeat_interval = Duration::from_secs(5);
         let mut interval = tokio::time::interval(heartbeat_interval);
-        let mut next_heartbeat_at = Instant::now() + heartbeat_interval;
+        // `tokio::time::interval` fires its first tick immediately, so the
+        // first scheduled deadline is *now*, not now + one interval. Seeding
+        // the accumulator one interval ahead leaves it permanently ahead of
+        // the tick, and `saturating_duration_since` then clamps every
+        // observed lag to zero: `event_loop_lag_ms` reported a constant 0
+        // regardless of how late the heartbeat actually ran, which is the
+        // `synvoid.eggbench-telemetry.v2` `subject_event_loop_lag_ms` gauge.
+        let mut next_heartbeat_at = Instant::now();
         let mut shutdown_rx = token;
 
         loop {
