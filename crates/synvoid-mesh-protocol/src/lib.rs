@@ -41,10 +41,24 @@
 //! - `MeshMessage` full enum, protobuf encode/decode, compression, DHT/Raft/policy
 //! - transport implementation (QUIC/TCP), persistence, YARA distribution
 //!
-//! Wire compatibility: serde representations of moved types are byte-identical to
+//! ## Compatibility and evolution
+//!
+//! Wire compatibility and Rust API semver are separate contracts. Serde
+//! representations of moved types are byte-identical to
 //! their `synvoid-mesh` predecessors (same variant order, same field order, same
 //! derives minus non-wire `schemars::JsonSchema`). See `tests/golden_vectors.rs`
 //! and the differential suite in `synvoid-mesh`.
+//!
+//! Replay decisions use the protocol's bounded nonce cache and timestamp window;
+//! callers supply the clock and must preserve those limits across reconnects.
+//! Never treat replay protection as durable across process restart unless the
+//! application separately persists the relevant state.
+//!
+//! Wire enum variants, field order, framing, and version constants are protocol
+//! surface. Additions or representation changes require an explicit compatibility
+//! decision, golden vectors, and mixed-version coverage. A Rust crate version
+//! change alone does not authorize a wire change. Consumer guidance describes
+//! current contracts, not the historical phase that introduced them.
 
 pub mod constants;
 pub mod framing;

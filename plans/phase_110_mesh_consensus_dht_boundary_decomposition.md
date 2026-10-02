@@ -1,6 +1,6 @@
 # Phase 110 Plan: Mesh Consensus and DHT Boundary Decomposition
 
-Status: **PLANNED**.
+Status: **CLOSED — RETAIN INTERNAL; no crate extraction qualified** (2026-10-02).
 
 Registered in: `plans/roadmap.md` and
 `plans/subsystem_boundary_extraction_roadmap.md`.
@@ -206,6 +206,21 @@ cargo xtask verify-full
 cargo deny check
 cargo audit
 ```
+
+## Closeout (2026-10-02)
+
+The ownership/dependency map is recorded in
+`architecture/mesh_boundary_decomposition_phase110.md`. Source audit confirmed
+the plan's five direct service dependencies are live in config conversion,
+transport/application dispatch, and proxy/cache adapters. No tested
+consensus/DHT slice is one-way and application-service-free today. No source
+edge or LOC was removed and no crate was created; this is an explicit retain
+decision under the plan's rejection criteria, not a qualified extraction.
+
+The canonical/advisory authority contract remains
+`architecture/distributed_state_contract.md`; no wire or runtime semantics
+changed. Protocol compatibility/replay evolution guidance was added to
+`synvoid-mesh-protocol` crate rustdoc. Phase 111 remains READY and independent.
 
 Recompute cargo metadata/tree before and after any crate extraction.
 
