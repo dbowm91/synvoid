@@ -237,3 +237,43 @@ Reject implementation that:
 - converts skipped native evidence into a support claim;
 - reopens closed RETAIN/DEFER decisions without satisfying their documented
   triggers.
+
+## Post-closeout corrective / follow-up registration
+
+The Phase 105–112 campaign remains **CLOSED QUALIFIED** on proof-bearing SHA
+`e7c0ec5a1317599b6f98e37a534b53544842a29c` with hosted
+`ci` + `dependency-security` run `36955732943`.
+
+Two post-closeout plans are registered without reopening the campaign's tested
+implementation state:
+
+1. **Phase 113 — Subsystem Boundary Closeout Evidence Reconciliation**
+   - Plan:
+     `plans/phase_113_subsystem_boundary_closeout_evidence_reconciliation.md`.
+   - Status: **ACTIVE / READY**.
+   - Repairs stale Pending verification/status text in current authority only.
+   - Does not change production code, dependencies, proof-bearing SHA, or
+     DEFER/RETAIN dispositions.
+
+2. **Phase 114 — Tunnel / Eggtunnel Protocol Parity and Convergence Refresh**
+   - Plan:
+     `plans/phase_114_tunnel_eggtunnel_protocol_parity_and_convergence_refresh.md`.
+   - Status: **PLANNED / READY AFTER PHASE 113**.
+   - Re-runs only Phase 111's cross-repo evidence gap against actual
+     `eggstack/eggtunnel` source.
+   - Research baseline:
+     `eggstack/eggtunnel@ece46fd223265b7b0609e3640b0caa9efadd1535`.
+   - Must distinguish the published Eggtunnel `0.2.0` wire 1.0 artifact from
+     current repository source that implements wire 1.1 while retaining the
+     same workspace version.
+   - Produces ADOPT / ADAPT / UPSTREAM / RETAIN / DEFER dispositions before any
+     production migration.
+   - Any missing generic Eggtunnel/Eggress mechanism receives its own plan in
+     the owning repository; no permanent SynVoid fork or unplanned git
+     dependency is authorized.
+
+These plans do not alter the terminal campaign decisions for honeypot, DNS,
+ICMP, sandbox, YARA, or mesh. Tunnel remains DEFER until Phase 114 produces
+source-backed evidence and a separately registered implementation/upstream plan
+if warranted.
+
