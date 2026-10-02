@@ -1,6 +1,6 @@
 # Phase 113 Plan: Subsystem Boundary Closeout Evidence Reconciliation
 
-Status: **ACTIVE / READY** (2026-10-02).
+Status: **CLOSED QUALIFIED** (2026-10-02; docs-only reconciliation; `cargo xtask verify` 10/10 passed with the documented macOS XZ `PKG_CONFIG_PATH` workaround; `cargo fmt --check`, `synvoid-repo-guards` 122 passed, `git diff --check` clean; no production/dependency change).
 
 Registered in: `plans/roadmap.md` and
 `plans/subsystem_boundary_extraction_roadmap.md`.
@@ -195,6 +195,34 @@ Hosted CI should run normally on the landed docs commit. A new
 dependency-security proof is useful but not required to supersede the already
 qualified Phase 112 implementation evidence because no dependency file may
 change.
+
+## Execution record (2026-10-02)
+
+- Fixed `architecture/subsystem_boundary_extraction_closeout.md`: stale
+  `Verification and residuals` Pending table replaced with the terminal
+  evidence (`fmt` passed; `verify` 10/10; `verify-full` 10/10 with 7,896
+  tests / 8 skipped; `verify-release` 14/14; `deny` passed; `audit` no
+  vulnerabilities + six accepted unmaintained warnings; hosted run
+  `36955732943` on `e7c0ec5a1317599b6f98e37a534b53544842a29c`; skipped
+  native jobs explicitly not upgraded). `Future plan status` now records
+  Phases 105–112 CLOSED QUALIFIED with Phases 113–114 follow-up roles, and
+  the default/minimal feature-graph row records the completed Phase 112
+  profile matrix instead of pending.
+- Fixed `plans/roadmap.md`: detailed campaign heading and status now
+  CLOSED QUALIFIED (2026-10-02, proof SHA + run ID); Phase 108 entry now
+  CLOSED QUALIFIED.
+- Workstream C search leaves only plan-text defect descriptions and the
+  Phase 113 purpose line referencing the stale entry; no current-authority
+  verification table says Pending.
+- Verification: `git diff --check` clean; `cargo fmt --all -- --check`
+  passed; `cargo test -p synvoid-repo-guards --profile ci` 122 passed;
+  `cargo xtask verify` 10/10 passed (with
+  `PKG_CONFIG_PATH=/usr/local/opt/xz/lib/pkgconfig`, matching the Phase
+  112 macOS XZ workaround). `verify-full`/`verify-release` not rerun per
+  plan (docs-only; proof-bearing SHA unchanged).
+- No Rust source, manifest, lockfile, workflow, dependency, support claim,
+  or DEFER/RETAIN disposition changed. Phase 114 is unblocked
+  (ACTIVE / READY).
 
 ## Acceptance criteria
 
