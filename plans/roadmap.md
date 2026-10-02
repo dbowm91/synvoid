@@ -1830,13 +1830,14 @@ Execution lanes:
      passed, so the phase is not labeled qualified.
 
 2. **Phase 116 — DNS Runtime-Config and Core Neutralization**
-   - Status: **PLANNED / READY AFTER PHASE 115**.
+   - Status: **CLOSED DEFER** (2026-10-02; DTO/adapters/parity gate incomplete).
    - Plan: `plans/phase_116_dns_runtime_config_core_neutralization.md`.
    - Moves runtime config ownership into DNS, removes application core/helper
      reach while preserving persisted SynVoid config and behavior.
+   - Closeout: `architecture/standalone_crate_phase116_closeout.md`.
 
 3. **Phase 117 — DNS Provider Inversion and Standalone Consumer Qualification**
-   - Status: **PLANNED / READY AFTER PHASE 116**.
+   - Status: **BLOCKED ON PHASE 116**.
    - Plan: `plans/phase_117_dns_provider_inversion_standalone_consumer.md`.
    - Inverts TLS/Geo/mesh/lifecycle dependencies and requires an outside-
      workspace authoritative/resolver/DNSSEC/encrypted-transport consumer.
@@ -1844,25 +1845,27 @@ Execution lanes:
      authorized.
 
 4. **Phase 118 — Mesh Application-Dispatch Capability Inversion**
-   - Status: **PLANNED / READY AFTER PHASE 115**.
+   - Status: **CLOSED DEFER** (2026-10-02; active dispatch/state owners need typed async seam and parity tests).
    - Plan: `plans/phase_118_mesh_application_dispatch_capability_inversion.md`.
    - Removes concrete proxy/cache/tunnel/serverless/application dispatch from
      reusable peer/runtime mechanisms while preserving canonical-vs-advisory
      authority.
+   - Closeout: `architecture/standalone_crate_phase118_closeout.md`.
 
 5. **Phase 119 — Mesh Runtime Extraction Decision and Standalone Qualification**
-   - Status: **PLANNED / READY AFTER PHASE 118**.
+   - Status: **BLOCKED ON PHASE 118**.
    - Plan: `plans/phase_119_mesh_runtime_extraction_standalone_qualification.md`.
    - Creates an internal `synvoid-mesh-runtime` only if a real one-way seam is
      proven; RETAIN is an acceptable outcome. rust-libp2p/Iroh/noq overlap must
      be adjudicated before adding another generic networking layer.
 
 6. **Phase 120 — Sandbox Guarantee-Boundary Internal Crate Split Decision**
-   - Status: **PLANNED / READY AFTER PHASE 115**.
+   - Status: **CLOSED RETAIN** (2026-10-02; no proven dependency-reachability reduction).
    - Plan: `plans/phase_120_sandbox_guarantee_boundary_crate_split.md`.
    - Evaluates moving the guarantee/evidence/native-backend contract out of
      broad `synvoid-platform` into internal `synvoid-sandbox`; external
      extraction remains DEFER.
+   - Closeout: `architecture/standalone_crate_phase120_closeout.md`.
 
 7. **Phase 121 — Honeypot Standalone-Package Hardening**
    - Status: **PLANNED / READY AFTER PHASE 115**.

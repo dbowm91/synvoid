@@ -1,6 +1,6 @@
 # Phase 118 Plan: Mesh Application-Dispatch Capability Inversion
 
-Status: **PLANNED / READY AFTER PHASE 115** (2026-10-02).
+Status: **CLOSED DEFER** (2026-10-02).
 
 Registered in: `plans/roadmap.md` and
 `plans/standalone_crate_generalization_roadmap.md`.
@@ -168,3 +168,20 @@ Reject implementation that:
 - replaces transport with libp2p/Iroh/noq without a separate parity/performance
   plan;
 - upgrades OpenRaft as incidental extraction work.
+
+## Formal closeout
+
+Disposition: **DEFER**. The source map confirmed direct runtime coupling in
+`mesh/proxy.rs` (owns `ProxyCache`, cache settings and response mutation),
+`transport_peer.rs` (invokes `ServerlessManager` and constructs HTTP responses),
+`transport.rs` (stores the concrete serverless manager and tunnel QUIC types),
+and `backend.rs` (translates concrete cache configuration). Those are active
+dispatch and state-ownership paths, not dead manifest edges. A safe inversion
+requires typed async request/response capabilities plus composition-root wiring
+and differential authority, failure, cancellation, and protocol tests. This pass
+did not produce that seam or its parity proof; retaining the concrete paths is
+safer than introducing an incomplete adapter or changing wire behavior.
+
+The full dependency reduction and runtime behavior gates remain outstanding.
+Phase 119 is **BLOCKED ON PHASE 118**. Phases 120, 121 and 122 remain independent
+and eligible. See `architecture/standalone_crate_phase118_closeout.md`.

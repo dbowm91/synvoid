@@ -1,6 +1,6 @@
 # Phase 120 Plan: Sandbox Guarantee-Boundary Internal Crate Split Decision
 
-Status: **PLANNED / READY AFTER PHASE 115** (2026-10-02).
+Status: **CLOSED RETAIN** (2026-10-02).
 
 Registered in: `plans/roadmap.md` and
 `plans/standalone_crate_generalization_roadmap.md`.
@@ -163,3 +163,23 @@ Reject implementation that:
 - introduces a cycle back to `synvoid-platform`;
 - removes enforcement receipts or retained entry witnesses;
 - calls the crate standalone/public merely because it packages.
+
+## Formal closeout
+
+Disposition: **RETAIN** `synvoid-platform::sandbox`; no files or runtime APIs
+were moved. The guarantee contract and platform-specific backend code currently
+share `crates/synvoid-platform/src/sandbox.rs` and its `crate::sandbox::{linux,
+capsicum,pledge,windows,darwin}` implementations. The production consumer
+`synvoid-jail-runtime::sandbox_entry` uses the canonical prepare/enter API from
+`synvoid-platform`, and existing conformance tests inspect those canonical
+symbols and backend implementation structure. The broad platform crate's
+target-scoped dependencies also support non-sandbox operations (notably socket,
+process, service and Wintun facilities), so no dependency-reachability reduction
+was demonstrated by this source-only split decision.
+
+An internal crate could own the API, but doing so now would duplicate or relocate
+a large multi-platform enforcement surface and require rebuilding native CI
+coverage without a demonstrated reduction in unrelated dependencies. Retaining
+the current canonical boundary is lower risk. The support matrix and external
+DEFER remain unchanged. Evidence and verification are recorded in
+`architecture/standalone_crate_phase120_closeout.md`.

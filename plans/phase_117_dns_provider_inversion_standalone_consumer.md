@@ -1,6 +1,6 @@
 # Phase 117 Plan: DNS Provider Inversion and Standalone Consumer Qualification
 
-Status: **PLANNED / READY AFTER PHASE 116** (2026-10-02).
+Status: **BLOCKED ON PHASE 116** (2026-10-02).
 
 Registered in: `plans/roadmap.md` and
 `plans/standalone_crate_generalization_roadmap.md`.
@@ -167,3 +167,12 @@ Reject implementation that:
 - passes only an in-workspace unit test;
 - calls a DNS package independent while it reaches root files/env/process state;
 - publishes or moves the crate externally under this phase.
+
+## Status reconciliation
+
+Phase 116 closed DEFER because persisted DNS configuration remains present in
+public constructors and runtime modules. This phase is therefore blocked before
+implementation. Do not introduce provider interfaces or claim standalone
+qualification until Phase 116 reopens, completes runtime DTO ownership and
+passes its config-parity gate. See
+`architecture/standalone_crate_phase116_closeout.md`.

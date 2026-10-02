@@ -1,6 +1,6 @@
 # Phase 119 Plan: Mesh Runtime Extraction Decision and Standalone Qualification
 
-Status: **PLANNED / READY AFTER PHASE 118** (2026-10-02).
+Status: **BLOCKED ON PHASE 118** (2026-10-02).
 
 Registered in: `plans/roadmap.md` and
 `plans/standalone_crate_generalization_roadmap.md`.
