@@ -87,7 +87,7 @@ The available Eggress checkout supplied generic byte relay and proxy/H3 transpor
 
 ## Future plan status
 
-Phases 105–112 are formally closed (CLOSED QUALIFIED campaign; see Proof and scope above). Phase 112 was unblocked by Phase 111's closeout and is now closed. No further extraction or upstream-adoption plan is unblocked: honeypot, DNS, ICMP, sandbox, YARA, mesh and tunnel each retain a concrete trigger listed above. Reopen only through a scoped plan when its trigger is evidenced; no blocked plan was silently promoted. Post-closeout Phase 113 (documentation/evidence reconciliation) is ACTIVE / READY; Phase 114 (tunnel/Eggtunnel evidence refresh) is PLANNED / READY AFTER PHASE 113. Neither reopens the qualified implementation, and neither authorizes extraction or adoption.
+Phases 105–112 are formally closed (CLOSED QUALIFIED campaign; see Proof and scope above). Phase 112 was unblocked by Phase 111's closeout and is now closed. No further extraction or upstream-adoption plan is unblocked: honeypot, DNS, ICMP, sandbox, YARA, mesh and tunnel each retain a concrete trigger listed above. Reopen only through a scoped plan when its trigger is evidenced; no blocked plan was silently promoted. Post-closeout Phases 113–114 are CLOSED QUALIFIED (2026-10-02). Phase 113 reconciled the terminal evidence/status record; Phase 114 refreshed tunnel/Eggtunnel source evidence and retained the DEFER disposition. Neither authorized extraction or adoption. The later Phases 115–123 standalone-capable crate generalization campaign is a separate monorepo-first successor and does not retroactively alter this campaign's proof-bearing implementation state.
 
 ## Verification and residuals
 
