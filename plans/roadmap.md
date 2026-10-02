@@ -1642,7 +1642,9 @@ Execution lanes:
    - preserve canonical-vs-advisory authority, replay, freshness, partition, and
      wire semantics;
    - no external mesh repository/publication.
-   - Status: **PLANNED / READY** (independent of DNS Phase 109 DEFER).
+   - Status: **CLOSED — RETAIN INTERNAL** (2026-10-02); no independent one-way
+     consensus/DHT seam qualified. Ownership map:
+     `architecture/mesh_boundary_decomposition_phase110.md`.
    - Plan: `plans/phase_110_mesh_consensus_dht_boundary_decomposition.md`.
 
 7. **Phase 111 — SynVoid Tunnel / Eggtunnel / Eggress Convergence**
@@ -1653,7 +1655,9 @@ Execution lanes:
    - retain SynVoid route/mesh/VPN policy and explicitly adjudicate
      UDP/datagram and WireGuard/TUN ownership;
    - do not create a standalone SynVoid tunnel repository.
-   - Status: **PLANNED**.
+   - Status: **CLOSED DEFER** (2026-10-02); Eggtunnel source was unavailable and
+     Eggress transport does not prove tunnel protocol parity. Evidence:
+     `architecture/tunnel_convergence_phase111.md`.
    - Plan: `plans/phase_111_tunnel_eggtunnel_eggress_convergence.md`.
 
 8. **Phase 112 — Extraction Gate Refresh and Campaign Closeout**
@@ -1663,7 +1667,7 @@ Execution lanes:
      ecosystem differential, and YARA upstream/second-consumer triggers;
    - reconcile honeypot/DNS terminal decisions and mesh/tunnel ownership;
    - require exact-SHA hosted CI/dependency-security proof for CLOSED QUALIFIED.
-   - Status: **PLANNED / TERMINAL CAMPAIGN PHASE**.
+   - Status: **PLANNED / READY — TERMINAL CAMPAIGN PHASE**.
    - Plan: `plans/phase_112_extraction_gate_refresh_campaign_closeout.md`.
 
 Binding constraints:

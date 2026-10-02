@@ -1,6 +1,6 @@
 # Phase 111 Plan: SynVoid Tunnel / Eggtunnel / Eggress Convergence
 
-Status: **PLANNED**.
+Status: **CLOSED DEFER — cross-repo source and protocol parity unavailable** (2026-10-02).
 
 Registered in: `plans/roadmap.md` and
 `plans/subsystem_boundary_extraction_roadmap.md`.
@@ -211,6 +211,22 @@ cargo xtask verify-full
 cargo deny check
 cargo audit
 ```
+
+## Closeout (2026-10-02)
+
+The capability matrix and evidence boundary are recorded in
+`architecture/tunnel_convergence_phase111.md`. The Eggtunnel repository/source
+was not available in the workspace, and the named repository could not be
+located in the local project checkouts. Eggress is available, but its QUIC
+crate is an optional proxy/H3 transport and its generic stream relay is not an
+authenticated tunnel/session protocol. The evidence therefore does not support
+wire/lifecycle parity or a safe migration.
+
+SynVoid retains its existing implementation and wire contracts. No dependency,
+protocol, or runtime behavior changed. Do not remove SynVoid framing, datagram,
+TUN/WireGuard, route, or mesh paths based on Eggress's proxy transport. This
+plan may reopen when Eggtunnel source and its compatibility/security test
+contract are supplied or checked out, with exact release/API versions pinned.
 
 Run mixed-version/wire vectors and end-to-end tunnel tests for affected paths.
 

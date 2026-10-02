@@ -1,6 +1,6 @@
 # Subsystem Boundary and Extraction Roadmap (Phases 105–112)
 
-Status: **ACTIVE / REGISTERED — 2026-10-01**.
+Status: **ACTIVE / REGISTERED — Phases 105–111 CLOSED; Phase 112 READY — 2026-10-02**.
 
 Registered in: `plans/roadmap.md`.
 
@@ -173,8 +173,9 @@ Then:
 3. **Phase 107 — honeypot standalone qualification and extraction decision.**
 4. **Phase 108 — DNS delegate/retain audit and ownership simplification.**
 5. **Phase 109 — DNS application-neutral boundary and extraction readiness.**
-6. **Phase 110 — mesh consensus/DHT internal boundary decomposition.**
-7. **Phase 111 — SynVoid tunnel / Eggtunnel / Eggress convergence.**
+6. **Phase 110 — mesh consensus/DHT internal boundary decomposition: CLOSED RETAIN INTERNAL.**
+7. **Phase 111 — SynVoid tunnel / Eggtunnel / Eggress convergence: CLOSED DEFER.**
+8. **Phase 112 — extraction gate refresh and campaign closeout: READY.**
 8. **Phase 112 — deferred extraction-gate refresh and campaign closeout.**
 
 Phase 108 depends on Phase 105 so the Hickory comparison is made against the
