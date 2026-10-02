@@ -1837,12 +1837,13 @@ Execution lanes:
    - Closeout: `architecture/standalone_crate_phase116_closeout.md`.
 
 3. **Phase 117 — DNS Provider Inversion and Standalone Consumer Qualification**
-   - Status: **BLOCKED ON PHASE 116**.
+   - Status: **CLOSED DEFER — Phase 116 predecessor not delivered** (2026-10-02).
    - Plan: `plans/phase_117_dns_provider_inversion_standalone_consumer.md`.
    - Inverts TLS/Geo/mesh/lifecycle dependencies and requires an outside-
      workspace authoritative/resolver/DNSSEC/encrypted-transport consumer.
    - Hickory remains the protocol foundation; no duplicate DNS stack is
      authorized.
+   - Closeout: `architecture/standalone_crate_phase116_closeout.md`.
 
 4. **Phase 118 — Mesh Application-Dispatch Capability Inversion**
    - Status: **CLOSED DEFER** (2026-10-02; active dispatch/state owners need typed async seam and parity tests).
@@ -1853,11 +1854,12 @@ Execution lanes:
    - Closeout: `architecture/standalone_crate_phase118_closeout.md`.
 
 5. **Phase 119 — Mesh Runtime Extraction Decision and Standalone Qualification**
-   - Status: **BLOCKED ON PHASE 118**.
+   - Status: **CLOSED DEFER — Phase 118 predecessor not delivered** (2026-10-02).
    - Plan: `plans/phase_119_mesh_runtime_extraction_standalone_qualification.md`.
    - Creates an internal `synvoid-mesh-runtime` only if a real one-way seam is
      proven; RETAIN is an acceptable outcome. rust-libp2p/Iroh/noq overlap must
      be adjudicated before adding another generic networking layer.
+   - Closeout: `architecture/standalone_crate_phase118_closeout.md`.
 
 6. **Phase 120 — Sandbox Guarantee-Boundary Internal Crate Split Decision**
    - Status: **CLOSED RETAIN** (2026-10-02; no proven dependency-reachability reduction).
@@ -1875,13 +1877,14 @@ Execution lanes:
    - Closeout: `architecture/standalone_crate_phase121_closeout.md`.
 
 8. **Phase 122 — DNSSEC-Keystore and Mesh-Protocol Leaf Package Hardening**
-   - Status: **PLANNED / READY AFTER PHASE 115**.
+   - Status: **CLOSED CLASS 2 — LIVE HSM PROVIDER DEFERRED; RSA PUBLIC PROMOTION BLOCKED** (2026-10-02).
    - Plan: `plans/phase_122_security_protocol_leaf_package_hardening.md`.
    - Hardens DNSSEC custody threat/secret/crash/HSM behavior and formalizes
      mesh wire/API/replay compatibility before standalone class-2 qualification.
+   - Closeout: `architecture/standalone_crate_phase122_closeout.md`.
 
 9. **Phase 123 — Standalone-Crate Campaign Qualification and Promotion Gate**
-   - Status: **PLANNED / BLOCKED ON PHASES 117, 119, 120, 121, 122**.
+   - Status: **PLANNED / READY TO RECONCILE OUTCOMES**.
    - Plan: `plans/phase_123_standalone_crate_campaign_qualification_gate.md`.
    - Rebuilds dependency/package evidence, refreshes ICMP/YARA/proxy-cache/
      tarpit/filter/jail/native-extension gates, and may register later class-3

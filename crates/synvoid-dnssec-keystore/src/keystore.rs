@@ -822,16 +822,25 @@ impl DnssecKeystore {
 fn secure_dir(dir: &Path) -> Result<(), KeystoreError> {
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        let perms = std::fs::Permissions::from_mode(0o700);
-        std::fs::set_permissions(dir, perms)
-            .map_err(|e| KeystoreError::Storage(format!("secure key directory: {e}")))?;
+        secure_dir_with(dir, |path, permissions| {
+            std::fs::set_permissions(path, permissions)
+        })?;
     }
     #[cfg(not(unix))]
     {
         let _ = dir;
     }
     Ok(())
+}
+
+#[cfg(unix)]
+fn secure_dir_with(
+    dir: &Path,
+    set_permissions: impl FnOnce(&Path, std::fs::Permissions) -> std::io::Result<()>,
+) -> Result<(), KeystoreError> {
+    use std::os::unix::fs::PermissionsExt;
+    set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+        .map_err(|e| KeystoreError::Storage(format!("secure key directory: {e}")))
 }
 
 /// Atomic write: temp file in the same directory + fsync + rename, so a
@@ -855,17 +864,18 @@ fn atomic_write(path: &Path, bytes: &[u8], mode: u32) -> Result<(), KeystoreErro
         ctr,
         hex_suffix(&rand_suffix),
     ));
+    let mut cleanup = TempPathCleanup::new(tmp.clone());
     #[cfg(unix)]
     {
         use std::io::Write;
         use std::os::unix::fs::OpenOptionsExt;
         let mut file = std::fs::OpenOptions::new()
-            .create(true)
+            .create_new(true)
             .write(true)
-            .truncate(true)
             .mode(mode)
             .open(&tmp)
             .map_err(|e| KeystoreError::Storage(format!("write temp key file: {e}")))?;
+        cleanup.arm();
         file.write_all(bytes)
             .map_err(|e| KeystoreError::Storage(format!("write temp key file: {e}")))?;
         file.sync_all()
@@ -875,12 +885,49 @@ fn atomic_write(path: &Path, bytes: &[u8], mode: u32) -> Result<(), KeystoreErro
     #[cfg(not(unix))]
     {
         let _ = mode;
-        std::fs::write(&tmp, bytes)
+        let mut file = std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&tmp)
             .map_err(|e| KeystoreError::Storage(format!("write temp key file: {e}")))?;
+        cleanup.arm();
+        use std::io::Write;
+        file.write_all(bytes)
+            .map_err(|e| KeystoreError::Storage(format!("write temp key file: {e}")))?;
+        file.sync_all()
+            .map_err(|e| KeystoreError::Storage(format!("fsync temp key file: {e}")))?;
     }
     std::fs::rename(&tmp, path)
         .map_err(|e| KeystoreError::Storage(format!("atomic rename key file: {e}")))?;
+    cleanup.disarm();
     Ok(())
+}
+
+struct TempPathCleanup {
+    path: PathBuf,
+    armed: bool,
+}
+
+impl TempPathCleanup {
+    fn new(path: PathBuf) -> Self {
+        Self { path, armed: false }
+    }
+
+    fn arm(&mut self) {
+        self.armed = true;
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for TempPathCleanup {
+    fn drop(&mut self) {
+        if self.armed {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
 }
 
 fn hex_suffix(bytes: &[u8]) -> String {
@@ -1012,6 +1059,108 @@ mod tests {
                 & 0o777;
             assert_eq!(mode, 0o600);
         }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn failed_atomic_replacement_preserves_destination_and_cleans_temp() {
+        let dir = temp_dir();
+        let destination = dir.join("occupied-directory");
+        std::fs::create_dir(&destination).unwrap();
+        let sentinel = destination.join("sentinel");
+        std::fs::write(&sentinel, b"old").unwrap();
+
+        assert!(atomic_write(&destination, b"replacement", 0o600).is_err());
+        assert_eq!(std::fs::read(&sentinel).unwrap(), b"old");
+        let leftovers = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with(".tmp-"))
+            .count();
+        assert_eq!(leftovers, 0);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn key_directory_permission_failure_is_propagated() {
+        let dir = temp_dir();
+        let err = secure_dir_with(&dir, |_path, _permissions| {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "injected permission failure",
+            ))
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("secure key directory"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn malformed_key_metadata_fails_closed() {
+        let dir = temp_dir();
+        let mut ks = DnssecKeystore::new(dir.clone());
+        ks.initialize().unwrap();
+        ks.generate_key(Algorithm::Ed25519, KeyType::KSK, 0, 365)
+            .unwrap();
+        let metadata = std::fs::read_dir(dir.join("ksk"))
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .find(|path| path.extension().is_some_and(|extension| extension == "key"))
+            .unwrap();
+        std::fs::write(&metadata, b"{truncated").unwrap();
+
+        let mut reloaded = DnssecKeystore::new(dir.clone());
+        assert!(reloaded.load_keys_from_disk().is_err());
+        assert!(reloaded.active_ksk().is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn failed_rotation_keeps_current_in_memory_key_active() {
+        let dir = temp_dir();
+        let mut keys = DnssecKeystore::new(dir.clone());
+        keys.initialize().unwrap();
+        keys.generate_key(Algorithm::Ed25519, KeyType::KSK, 0, 365)
+            .unwrap();
+        let active_tag = keys.active_ksk().unwrap().key_tag();
+
+        // Break the on-disk standby-KSK directory after initialization. Standby key
+        // generation must fail before swapping the active in-memory handle.
+        std::fs::write(dir.join("ksk-standby"), b"not a directory").unwrap();
+        assert!(keys.start_key_rollover(KeyType::KSK).is_err());
+        assert_eq!(keys.active_ksk().unwrap().key_tag(), active_tag);
+        assert!(keys.active_ksk().unwrap().sign(b"still active").is_ok());
+        assert!(!keys.rollover_status()["ksk_in_rollover"].as_bool().unwrap());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn sealed_signing_handle_remains_usable_while_keystore_rotates() {
+        let dir = temp_dir();
+        let mut keys = DnssecKeystore::new(dir.clone());
+        keys.initialize().unwrap();
+        keys.generate_key(Algorithm::Ed25519, KeyType::ZSK, 0, 90)
+            .unwrap();
+        let existing = keys.active_zsk().unwrap();
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let signer_barrier = barrier.clone();
+        let signing_task = std::thread::spawn(move || {
+            signer_barrier.wait();
+            for _ in 0..256 {
+                assert_eq!(
+                    existing.sign(b"concurrent canonical rrset").unwrap().len(),
+                    64
+                );
+            }
+        });
+
+        barrier.wait();
+        keys.start_key_rollover(KeyType::ZSK).unwrap();
+        keys.complete_key_rollover(KeyType::ZSK).unwrap();
+        signing_task.join().unwrap();
+        assert!(keys.active_zsk().unwrap().sign(b"after rotation").is_ok());
         std::fs::remove_dir_all(&dir).ok();
     }
 

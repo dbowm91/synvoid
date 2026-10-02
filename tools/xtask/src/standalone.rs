@@ -273,7 +273,11 @@ fn consumer(
                 )
             })
             .unwrap_or_default();
-        fs::write(consumer.join("Cargo.toml"), format!("[package]\nname='standalone-consumer'\nversion='0.1.0'\nedition='2021'\n[dependencies]\n{crate_name} = {{ package = \"{name}\", path = {:?}{feature_arg} }}\n", unpacked)).map_err(|e|e.to_string())?;
+        let consumer_dev_dependencies = match name {
+            "synvoid-dnssec-keystore" => "\n[dev-dependencies]\ned25519-dalek = \"2\"\n",
+            _ => "",
+        };
+        fs::write(consumer.join("Cargo.toml"), format!("[package]\nname='standalone-consumer'\nversion='0.1.0'\nedition='2021'\n[dependencies]\n{crate_name} = {{ package = \"{name}\", path = {:?}{feature_arg} }}\n{consumer_dev_dependencies}", unpacked)).map_err(|e|e.to_string())?;
         let smoke = if let Some(source) = source {
             fs::read_to_string(source)
                 .map_err(|e| format!("consumer source {}: {e}", source.display()))?
@@ -281,6 +285,10 @@ fn consumer(
             "#[test]\nfn public_api_smoke() { let clock = synvoid_rate_limit::WindowClock::new(); let window = synvoid_rate_limit::AtomicSlidingWindow::new(1, 10); window.increment_now(&clock); assert_eq!(window.count_now(&clock), 1); }\n".to_owned()
         } else if name == "synvoid-honeypot" {
             "#[test]\nfn public_api_smoke() { let config = synvoid_honeypot::PortHoneypotConfig::default(); config.validate_resource_limits().unwrap(); let matched = synvoid_honeypot::ProtocolDetector::new().detect(b\"SSH-2.0-test\\r\\n\").unwrap(); assert_eq!(matched.protocol, \"ssh\"); }\n".to_owned()
+        } else if name == "synvoid-dnssec-keystore" {
+            "#[test]\nfn public_api_smoke() { use ed25519_dalek::Verifier; use synvoid_dnssec_keystore::{Algorithm, DnssecKeystore, KeyType}; let root = std::env::temp_dir().join(format!(\"synvoid-keystore-consumer-{}\", std::process::id())); let _ = std::fs::remove_dir_all(&root); let mut keys = DnssecKeystore::new(root.clone()); keys.initialize().unwrap(); keys.generate_key(Algorithm::Ed25519, KeyType::ZSK, 0, 90).unwrap(); let key = keys.active_zsk().unwrap(); let message = b\"standalone canonical bytes\"; let signature = key.sign(message).unwrap(); let public: [u8; 32] = key.public_key().try_into().unwrap(); let verifying = ed25519_dalek::VerifyingKey::from_bytes(&public).unwrap(); verifying.verify(message, &ed25519_dalek::Signature::from_slice(&signature).unwrap()).unwrap(); keys.start_key_rollover(KeyType::ZSK).unwrap(); keys.complete_key_rollover(KeyType::ZSK).unwrap(); drop(keys); let _ = std::fs::remove_dir_all(root); }\n".to_owned()
+        } else if name == "synvoid-mesh-protocol" {
+            "#[test]\nfn public_api_smoke() { let signer = synvoid_mesh_protocol::ProtocolSigner::new([7u8; 32]); let message = b\"standalone mesh protocol\"; let signature = signer.sign(message); let public = signer.get_public_key_bytes(); assert!(signer.verify(message, &signature, &public)); let frame = synvoid_mesh_protocol::encode_with_length_prefix(message).unwrap(); let (decoded, consumed) = synvoid_mesh_protocol::decode_with_length_prefix(&frame).unwrap(); assert_eq!(decoded, message); assert_eq!(consumed, frame.len()); assert!(synvoid_mesh_protocol::is_compatible_message_version(synvoid_mesh_protocol::MESH_MESSAGE_VERSION)); let mut replay = synvoid_mesh_protocol::ReplayProtection::new(); assert_eq!(replay.check_and_add_at(\"consumer-nonce\", 100, 100), synvoid_mesh_protocol::ReplayResult::Valid); assert_eq!(replay.check_and_add_at(\"consumer-nonce\", 100, 100), synvoid_mesh_protocol::ReplayResult::ReplayDetected); }\n".to_owned()
         } else {
             "#[test]\nfn package_dependency_is_visible() { assert!(!env!(\"CARGO_MANIFEST_DIR\").is_empty()); }\n".to_owned()
         };

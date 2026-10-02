@@ -30,7 +30,8 @@ the phase contract and risk runtime behavior.
 
 ## Successor status
 
-Phase 119 is **BLOCKED ON PHASE 118**. Its extraction decision cannot be based on
-a dispatch boundary that has not been established. Phases 120, 121 and 122 remain
-eligible independent tracks. Phase 123 must carry this DEFER and the Phase 119
-block. No standalone or external-support claim is made for `synvoid-mesh`.
+Phase 119 is **CLOSED DEFER** because its required application-dispatch
+predecessor was not delivered. Its extraction decision cannot be based on a
+dispatch boundary that has not been established. Phases 120, 121 and 122 were
+eligible independent tracks. Phase 123 must carry both mesh track DEFERs. No
+standalone or external-support claim is made for `synvoid-mesh`.

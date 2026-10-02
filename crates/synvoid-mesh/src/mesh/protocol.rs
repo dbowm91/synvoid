@@ -25,9 +25,9 @@ use crate::transports::MeshTransportType;
 // Phase 27: canonical wire constants owned by `synvoid-mesh-protocol`.
 // Re-exported here for `synvoid_mesh::protocol::*` compatibility.
 pub use synvoid_mesh_protocol::{
-    COMPRESSION_THRESHOLD, MAX_REPLAY_CACHE_SIZE, MAX_WIRE_MESSAGE_SIZE, MESH_MESSAGE_VERSION,
-    NONCE_SIZE, PRIORITY_TIER_ENTERPRISE, PRIORITY_TIER_FREE, PRIORITY_TIER_PAID,
-    PRIORITY_TIER_PREMIUM, REPLAY_WINDOW_SECS,
+    is_compatible_message_version, COMPRESSION_THRESHOLD, MAX_REPLAY_CACHE_SIZE,
+    MAX_WIRE_MESSAGE_SIZE, MESH_MESSAGE_VERSION, NONCE_SIZE, PRIORITY_TIER_ENTERPRISE,
+    PRIORITY_TIER_FREE, PRIORITY_TIER_PAID, PRIORITY_TIER_PREMIUM, REPLAY_WINDOW_SECS,
 };
 
 #[derive(Clone)]

@@ -49,8 +49,10 @@
 //! derives minus non-wire `schemars::JsonSchema`). See `tests/golden_vectors.rs`
 //! and the differential suite in `synvoid-mesh`.
 //!
-//! Replay decisions use the protocol's bounded nonce cache and timestamp window;
-//! callers supply the clock and must preserve those limits across reconnects.
+//! Replay decisions use Unix-second timestamps with a ±60-second window. The
+//! process-local nonce set is capped at 10,000 entries and is not durable across
+//! restart. Callers must bound untrusted nonce strings; saturation evicts entries
+//! and shortens protection for evicted nonces.
 //! Never treat replay protection as durable across process restart unless the
 //! application separately persists the relevant state.
 //!
@@ -70,9 +72,9 @@ pub mod time;
 pub mod wire;
 
 pub use constants::{
-    COMPRESSION_THRESHOLD, MAX_REPLAY_CACHE_SIZE, MAX_WIRE_MESSAGE_SIZE, MESH_MESSAGE_VERSION,
-    NONCE_SIZE, PRIORITY_TIER_ENTERPRISE, PRIORITY_TIER_FREE, PRIORITY_TIER_PAID,
-    PRIORITY_TIER_PREMIUM, REPLAY_WINDOW_SECS,
+    is_compatible_message_version, COMPRESSION_THRESHOLD, MAX_REPLAY_CACHE_SIZE,
+    MAX_WIRE_MESSAGE_SIZE, MESH_MESSAGE_VERSION, NONCE_SIZE, PRIORITY_TIER_ENTERPRISE,
+    PRIORITY_TIER_FREE, PRIORITY_TIER_PAID, PRIORITY_TIER_PREMIUM, REPLAY_WINDOW_SECS,
 };
 pub use framing::{decode_with_length_prefix, encode_with_length_prefix, FrameError};
 pub use hybrid::{

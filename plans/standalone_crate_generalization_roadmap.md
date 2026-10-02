@@ -1,8 +1,8 @@
 # Standalone-Capable Crate Generalization Roadmap (Phases 115–123)
 
 Status: **ACTIVE / REGISTERED** (2026-10-02; Phase 115 closed with routine
-qualification residual; Phase 116 DEFER/117 blocked; Phase 118 DEFER/119
-blocked; Phase 120 RETAIN; Phase 121 target DEFER; Phase 122 remains eligible).
+qualification residual; Phases 116–119 DEFER; Phase 120 RETAIN; Phase 121 target DEFER; Phase 122 class-2 closed
+with HSM/RSA promotion residuals; Phase 123 eligible to reconcile).
 
 Registered in: `plans/roadmap.md`.
 
@@ -177,11 +177,12 @@ or support promise is not a success metric.
 8. **Phase 122 — DNSSEC-keystore and mesh-protocol leaf hardening.**
 9. **Phase 123 — Campaign qualification and promotion/repository gate refresh.**
 
-Phases 116 and 118 have formally closed DEFER. Phases 117 and 119 are blocked on
-those prerequisites, respectively. Phase 120 closed RETAIN. Phase 121
-implemented package hardening and closed with native macOS qualification
-deferred. Phase 122 remains independent after Phase 115. Phase 123 waits for all
-implementation tracks to close or record explicit DEFER/RETAIN outcomes.
+Phases 116–119 have formally closed DEFER: DNS provider inversion and mesh
+runtime extraction were closed because their prerequisite boundaries were not
+delivered. Phase 120 closed RETAIN. Phase 121 implemented package hardening and
+closed with native macOS qualification deferred. Phase 122 closed both leaf
+packages as class 2, with live-HSM qualification deferred and class-3 RSA
+promotion blocked. Phase 123 is eligible to reconcile these outcomes.
 
 Phase 115's implementation is recorded in
 `architecture/standalone_crate_phase115_closeout.md`. The contract and baseline
@@ -190,10 +191,9 @@ interrupted during failure-injection compilation after earlier routine stages
 passed; this residual is carried into the terminal campaign evidence and is not
 treated as a passing routine gate.
 
-Phase 116's DEFER and Phase 117 block are recorded in
-`architecture/standalone_crate_phase116_closeout.md`. Phase 118's DEFER and
-Phase 119 block are recorded in
-`architecture/standalone_crate_phase118_closeout.md`.
+Phases 116/117 DNS DEFER outcomes are recorded in
+`architecture/standalone_crate_phase116_closeout.md`. Phases 118/119 mesh DEFER
+outcomes are recorded in `architecture/standalone_crate_phase118_closeout.md`.
 
 Phase 120's RETAIN decision is recorded in
 `architecture/standalone_crate_phase120_closeout.md`; no sandbox crate was
@@ -202,6 +202,9 @@ created and no support tier changed.
 Phase 121's implementation and Linux-only qualification evidence are recorded
 in `architecture/standalone_crate_phase121_closeout.md`; the native macOS gate
 remains open for a suitable runner.
+
+Phase 122's dual-package evidence and live-HSM/RSA promotion limitations are
+recorded in `architecture/standalone_crate_phase122_closeout.md`.
 
 ## Success criteria
 

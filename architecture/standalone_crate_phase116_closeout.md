@@ -31,10 +31,11 @@ make the boundary less auditable.
 
 ## Successor status
 
-Phase 117 is **BLOCKED** on this phase's runtime-config/core neutralization and
-must not start provider inversion or claim standalone qualification. Phase 118,
-120, 121, and 122 are independent after Phase 115 and remain eligible. Phase 123
-must carry this DEFER and the Phase 117 block into its final gate.
+Phase 117 is **CLOSED DEFER** because this phase's runtime-config/core
+neutralization and parity prerequisite was not delivered. Do not start provider
+inversion or claim standalone qualification until Phase 116 is reopened and
+qualified. Phase 118, 120, 121, and 122 were independent after Phase 115. Phase
+123 must carry both DNS track DEFERs into its final gate.
 
 No persisted config meaning, DNS behavior, DNSSEC custody, or transport behavior
 was changed. No standalone status is claimed for `synvoid-dns`.

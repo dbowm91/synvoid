@@ -1,6 +1,6 @@
 # Phase 123 Plan: Standalone-Crate Campaign Qualification and Promotion Gate
 
-Status: **PLANNED / BLOCKED ON PHASES 117, 119, 120, 121, 122** (2026-10-02).
+Status: **PLANNED / READY TO RECONCILE EXPLICIT TRACK OUTCOMES** (2026-10-02).
 
 Registered in: `plans/roadmap.md` and
 `plans/standalone_crate_generalization_roadmap.md`.

@@ -18,12 +18,38 @@ fn root() -> PathBuf {
     synvoid_repo_guards::workspace_root()
 }
 
+fn package_string<'a>(
+    package: &'a toml::value::Table,
+    workspace_package: &'a toml::value::Table,
+    field: &str,
+) -> Option<&'a str> {
+    let value = package.get(field)?;
+    if let Some(value) = value.as_str() {
+        return Some(value);
+    }
+    if value
+        .get("workspace")
+        .and_then(toml::Value::as_bool)
+        .unwrap_or(false)
+    {
+        return workspace_package.get(field)?.as_str();
+    }
+    None
+}
+
 #[test]
 fn registered_standalone_class2_candidates_obey_contract() {
     let root = root();
     let path = root.join("architecture/standalone_crate_candidates.toml");
     let registry: Registry = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
     assert_eq!(registry.schema, "synvoid.standalone-candidates.v1");
+    let workspace: toml::Value =
+        toml::from_str(&fs::read_to_string(root.join("Cargo.toml")).unwrap()).unwrap();
+    let workspace_package = workspace
+        .get("workspace")
+        .and_then(|v| v.get("package"))
+        .and_then(toml::Value::as_table)
+        .expect("[workspace.package]");
     let mut seen = BTreeSet::new();
     for candidate in registry.candidates {
         assert!(
@@ -36,8 +62,10 @@ fn registered_standalone_class2_candidates_obey_contract() {
             "non-SynVoid candidate {}",
             candidate.package
         );
-        let folder = candidate.package.strip_prefix("synvoid-").unwrap();
-        let manifest_path = root.join("crates").join(folder).join("Cargo.toml");
+        let manifest_path = root
+            .join("crates")
+            .join(&candidate.package)
+            .join("Cargo.toml");
         let manifest_text = fs::read_to_string(&manifest_path)
             .unwrap_or_else(|e| panic!("{}: {e}", manifest_path.display()));
         let manifest: toml::Value = toml::from_str(&manifest_text).unwrap();
@@ -47,10 +75,7 @@ fn registered_standalone_class2_candidates_obey_contract() {
             .expect("[package]");
         for field in ["description", "license", "repository", "readme"] {
             assert!(
-                package
-                    .get(field)
-                    .and_then(toml::Value::as_str)
-                    .is_some_and(|v| !v.is_empty()),
+                package_string(package, workspace_package, field).is_some_and(|v| !v.is_empty()),
                 "{} must declare package.{field}",
                 candidate.package
             );

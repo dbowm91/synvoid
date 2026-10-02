@@ -98,7 +98,7 @@ pub enum HsmProvider {
 /// Local HSM configuration. `synvoid-dns` converts from
 /// `synvoid_config::dns::HsmConfig` at its facade so this crate does not
 /// depend on the config crate (one-way boundary).
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct HsmConfig {
     pub enabled: bool,
     pub provider: HsmProvider,
@@ -112,6 +112,24 @@ pub struct HsmConfig {
     /// the manager still never *silently* falls back: it reports
     /// unavailability and leaves signing disabled.
     pub require_hsm: bool,
+}
+
+impl std::fmt::Debug for HsmConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HsmConfig")
+            .field("enabled", &self.enabled)
+            .field("provider", &self.provider)
+            .field("module_path_set", &!self.module_path.is_empty())
+            .field("slot_id", &self.slot_id)
+            .field(
+                "pin_set",
+                &self.pin.as_ref().is_some_and(|pin| !pin.is_empty()),
+            )
+            .field("key_label_set", &self.key_label.is_some())
+            .field("key_id_set", &self.key_id.is_some())
+            .field("require_hsm", &self.require_hsm)
+            .finish()
+    }
 }
 
 impl HsmConfig {
@@ -575,6 +593,7 @@ mod tests {
         };
         let rendered = config.redacted();
         assert!(!rendered.contains("super-secret-pin"));
+        assert!(!format!("{config:?}").contains("super-secret-pin"));
     }
 
     #[test]

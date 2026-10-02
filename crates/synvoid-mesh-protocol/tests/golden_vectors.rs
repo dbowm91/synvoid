@@ -12,6 +12,9 @@ use synvoid_mesh_protocol::{
 #[test]
 fn version_and_replay_constants_pinned() {
     assert_eq!(MESH_MESSAGE_VERSION, 1);
+    assert!(synvoid_mesh_protocol::is_compatible_message_version(1));
+    assert!(!synvoid_mesh_protocol::is_compatible_message_version(0));
+    assert!(!synvoid_mesh_protocol::is_compatible_message_version(2));
     assert_eq!(REPLAY_WINDOW_SECS, 60);
     assert_eq!(synvoid_mesh_protocol::NONCE_SIZE, 16);
     assert_eq!(synvoid_mesh_protocol::COMPRESSION_THRESHOLD, 512);
@@ -22,6 +25,19 @@ fn version_and_replay_constants_pinned() {
     );
     assert_eq!(synvoid_mesh_protocol::PRIORITY_TIER_FREE, 0);
     assert_eq!(synvoid_mesh_protocol::PRIORITY_TIER_ENTERPRISE, 3);
+}
+
+#[test]
+fn replay_future_window_is_overflow_safe() {
+    let mut replay = synvoid_mesh_protocol::ReplayProtection::new();
+    assert_eq!(
+        replay.check_and_add_at("near-max", u64::MAX, u64::MAX - 5),
+        synvoid_mesh_protocol::ReplayResult::Valid
+    );
+    assert_eq!(
+        replay.check_and_add_at("too-far", u64::MAX, u64::MAX - 61),
+        synvoid_mesh_protocol::ReplayResult::FutureTimestamp
+    );
 }
 
 #[test]

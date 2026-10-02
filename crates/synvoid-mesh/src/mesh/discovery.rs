@@ -11,7 +11,9 @@ use tokio::time::timeout;
 use crate::cert::MeshCertManager;
 use crate::config::{MeshConfig, MeshSeedNode};
 use crate::peer_auth::GlobalNodeRevocationList;
-use crate::protocol::{MeshCapabilities, MeshMessage, MESH_MESSAGE_VERSION};
+use crate::protocol::{
+    is_compatible_message_version, MeshCapabilities, MeshMessage, MESH_MESSAGE_VERSION,
+};
 use crate::topology::{MeshTopology, PeerStatus};
 
 pub struct MeshDiscovery {
@@ -519,7 +521,7 @@ impl MeshDiscovery {
                 global_node_key,
                 ..
             } => {
-                if version != MESH_MESSAGE_VERSION {
+                if !is_compatible_message_version(version) {
                     return Err(MeshDiscoveryError::VersionMismatch {
                         expected: MESH_MESSAGE_VERSION,
                         got: version,

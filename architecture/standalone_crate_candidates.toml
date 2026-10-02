@@ -4,4 +4,6 @@ schema = "synvoid.standalone-candidates.v1"
 # names deliberate low-capability pairings; all other SynVoid normal edges fail.
 candidates = [
   { package = "synvoid-honeypot", allowed_siblings = [] },
+  { package = "synvoid-dnssec-keystore", allowed_siblings = [] },
+  { package = "synvoid-mesh-protocol", allowed_siblings = [] },
 ]
