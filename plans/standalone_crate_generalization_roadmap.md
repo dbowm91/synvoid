@@ -1,6 +1,7 @@
 # Standalone-Capable Crate Generalization Roadmap (Phases 115–123)
 
-Status: **ACTIVE / REGISTERED** (2026-10-02).
+Status: **ACTIVE / REGISTERED** (2026-10-02; Phase 115 closed with routine
+qualification deferred).
 
 Registered in: `plans/roadmap.md`.
 
@@ -178,6 +179,13 @@ or support promise is not a success metric.
 Phases 116/118/120/121/122 may proceed in parallel after Phase 115. Phase 117
 depends on 116. Phase 119 depends on 118. Phase 123 waits for all implementation
 tracks to close or record explicit DEFER/RETAIN outcomes.
+
+Phase 115's implementation is recorded in
+`architecture/standalone_crate_phase115_closeout.md`. The contract and baseline
+outputs are complete and available to successors. Routine verification was
+interrupted during failure-injection compilation after earlier routine stages
+passed; this residual is carried into the terminal campaign evidence and is not
+treated as a passing routine gate.
 
 ## Success criteria
 

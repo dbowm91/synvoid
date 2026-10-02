@@ -1820,10 +1820,14 @@ external repository.
 Execution lanes:
 
 1. **Phase 115 — Standalone Crate Contract and Dependency Baseline**
-   - Status: **PLANNED / READY**.
+   - Status: **CLOSED / ROUTINE QUALIFICATION DEFERRED** (2026-10-02; implementation `c968594`).
    - Plan: `plans/phase_115_standalone_crate_contract_and_baseline.md`.
    - Defines the standalone-capable class-2 contract, reproducible dependency
      inventory and packaged outside-workspace consumer harness.
+   - Closeout: `architecture/standalone_crate_phase115_closeout.md`. Focused
+     guard/tooling/package-consumer checks passed; `cargo xtask verify` was
+     stopped during failure-injection compilation after earlier routine stages
+     passed, so the phase is not labeled qualified.
 
 2. **Phase 116 — DNS Runtime-Config and Core Neutralization**
    - Status: **PLANNED / READY AFTER PHASE 115**.
