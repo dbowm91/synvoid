@@ -1809,7 +1809,7 @@ Umbrella roadmap:
 `plans/standalone_crate_generalization_roadmap.md`.
 
 Planning baseline: `main` at
-`2002b6f82b5b94d9684390d132de535379c0644f`.
+`10ac2e330d74d012819c592b395f67ee8cc09a38`.
 
 Purpose: keep SynVoid as a monorepo while making selected subsystem crates
 genuinely usable as standalone Rust packages. Standalone-capable class 2 is
