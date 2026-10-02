@@ -248,17 +248,17 @@ Two post-closeout plans are registered without reopening the campaign's tested
 implementation state:
 
 1. **Phase 113 — Subsystem Boundary Closeout Evidence Reconciliation**
-   - Plan:
-     `plans/phase_113_subsystem_boundary_closeout_evidence_reconciliation.md`.
-   - Status: **ACTIVE / READY**.
+    - Plan:
+      `plans/phase_113_subsystem_boundary_closeout_evidence_reconciliation.md`.
+    - Status: **CLOSED QUALIFIED** (2026-10-02; docs-only reconciliation).
    - Repairs stale Pending verification/status text in current authority only.
    - Does not change production code, dependencies, proof-bearing SHA, or
      DEFER/RETAIN dispositions.
 
 2. **Phase 114 — Tunnel / Eggtunnel Protocol Parity and Convergence Refresh**
-   - Plan:
-     `plans/phase_114_tunnel_eggtunnel_protocol_parity_and_convergence_refresh.md`.
-   - Status: **PLANNED / READY AFTER PHASE 113**.
+    - Plan:
+      `plans/phase_114_tunnel_eggtunnel_protocol_parity_and_convergence_refresh.md`.
+    - Status: **CLOSED QUALIFIED** (2026-10-02; RETAIN + DEFER relay reuse; evidence `architecture/tunnel_eggtunnel_parity_phase114.md`; no migration, no cross-repo plan registered, nothing unblocked).
    - Re-runs only Phase 111's cross-repo evidence gap against actual
      `eggstack/eggtunnel` source.
    - Research baseline:
@@ -273,7 +273,8 @@ implementation state:
      dependency is authorized.
 
 These plans do not alter the terminal campaign decisions for honeypot, DNS,
-ICMP, sandbox, YARA, or mesh. Tunnel remains DEFER until Phase 114 produces
-source-backed evidence and a separately registered implementation/upstream plan
-if warranted.
+ICMP, sandbox, YARA, or mesh. Phase 114 has produced the source-backed
+evidence (`architecture/tunnel_eggtunnel_parity_phase114.md`, RETAIN +
+DEFER relay reuse); tunnel convergence remains DEFER and no separately
+registered implementation/upstream plan was warranted.
 

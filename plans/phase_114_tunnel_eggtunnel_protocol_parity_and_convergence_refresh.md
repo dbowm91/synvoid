@@ -1,6 +1,6 @@
 # Phase 114 Plan: Tunnel / Eggtunnel Protocol Parity and Convergence Refresh
 
-Status: **PLANNED / READY AFTER PHASE 113** (2026-10-02).
+Status: **CLOSED QUALIFIED** (2026-10-02; evidence/architecture only; terminal disposition RETAIN + DEFER relay reuse; no production migration, no cross-repo plan registered).
 
 Registered in: `plans/roadmap.md` and
 `plans/subsystem_boundary_extraction_roadmap.md`.
@@ -17,7 +17,7 @@ Owner: tunnel/networking / cross-repo architecture.
 Predecessors:
 
 - Phase 111 CLOSED DEFER;
-- Phase 113 documentation/evidence reconciliation.
+- Phase 113 CLOSED QUALIFIED (docs-only reconciliation, 2026-10-02).
 
 ## Goal
 
@@ -433,3 +433,37 @@ Reject a closeout that:
 - adds UDP as an unbounded or implicit extension;
 - uses a permanent git dependency as the convergence result;
 - claims maintenance reduction without showing removed ownership/code/tests.
+
+## Execution record (2026-10-02)
+
+- Eggtunnel source compared directly at `ece46fd223265b7b0609e3640b0caa9efadd1535`
+  (verified remote `HEAD` via `git ls-remote`; scratch clone, not vendored).
+- Evidence record created: `architecture/tunnel_eggtunnel_parity_phase114.md`
+  (source-backed matrix, wire-incompatibility table, runtime/lifecycle parity,
+  relay/QUIC reuse analysis, datagram-gap disposition, release gate). It
+  supersedes only Phase 111's source-availability limitation; Phase 111 text
+  is otherwise untouched.
+- Terminal dispositions: **RETAIN** for wire/session/registration/
+  correlation/reconnect/heartbeat/drain/QUIC-runtime/TLS/datagram/VPN/mesh/
+  observability; **DEFER** for `eggress-relay` reuse and Eggress
+  outbound-connector integration (parity tests + spike measurements required
+  first); no ADOPT EXISTING, no UPSTREAM FIRST, no PARALLEL PROFILE.
+  Tunnel convergence overall remains DEFER (evidence basis upgraded).
+- Release gate: published `0.2.0` = wire 1.0; wire 1.1 unreleased; any
+  future wire-1.1 adoption needs an Eggtunnel release plan first; no git
+  dependency; no cross-repo plan registered by this phase.
+- No spike run (no high-confidence candidate per plan §G); no production,
+  manifest, lockfile, workflow, or protocol change. Datagrams stay local;
+  mesh/VPN policy stays out of Eggtunnel.
+- SynVoid focused baselines (with macOS XZ `PKG_CONFIG_PATH` workaround):
+  `synvoid-tunnel` 72 passed; `synvoid-vpn-client` 0 tests (no suites,
+  recorded truthfully); `synvoid-mesh` 1,093 passed;
+  `cargo check -p synvoid-tunnel --all-features` clean; `cargo deny check`
+  clean; `cargo audit` no vulnerabilities + six allowed unmaintained
+  warnings. Full `cargo xtask verify` 10/10 owned by the Phase 113 closeout
+  on the same tree; `git diff --check` and `cargo fmt --all -- --check`
+  run at closeout.
+- Unblock check: no downstream extraction/adoption plan is unblocked. No
+  Phase 115+ plan is registered; no other eligible plan file is
+  ACTIVE/READY. Phase 114 registers no implementation or upstream plan, so
+  there is nothing to promote.

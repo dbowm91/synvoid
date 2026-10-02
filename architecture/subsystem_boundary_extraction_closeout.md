@@ -28,7 +28,7 @@ Campaign plans: `plans/phase_105_dns_hickory_patch_security_requalification.md` 
 | DNS | 48 active normal direct entries at Phase 108 → 47 at Phase 109; `synvoid-platform` removed after zero source references; expanded tree 864 → 853 lines | One unused edge removed, no source LOC or active transitive subtree removed, no performance/binary-size claim. Six required SynVoid siblings plus optional mesh remain. |
 | Mesh | No direct dependency edge, crate, module, or LOC removed in Phase 110 | Consensus/DHT remain within `synvoid-mesh`; protocol rustdoc clarifies wire/API versioning and replay assumptions. Existing app/service edges are live in adapters and dispatch. |
 | Tunnel / Eggstack | No dependency, wire protocol, runtime code, or repository changed in Phase 111 | Eggtunnel was unavailable for parity inspection; Eggress relay/QUIC is proxy transport and does not prove tunnel-session equivalence. No fork/repo added. |
-| Default/minimal feature graphs | No feature declaration changed by Phases 105–111. Phase 109 removes one manifest edge; Phase 110–111 documentation-only | Existing reduced-feature fail-closed behavior remains. Phase 112 final profile matrix is pending. |
+| Default/minimal feature graphs | No feature declaration changed by Phases 105–111. Phase 109 removes one manifest edge; Phase 110–111 documentation-only | Existing reduced-feature fail-closed behavior remains. Phase 112 final profile matrix completed via `verify-full` (minimal profile tests plus all configured feature profile checks passed). |
 | New external packages | None added by Phases 105–111. Hickory updates were lockfile version selection within existing dependencies. | No added repository-release coordination. |
 
 No measured maintenance reduction is attributed to moved files alone. Hickory's five bounded same-host benches in Phase 105 found no repeatable material regression; no new comparable transport, mesh, or honeypot benchmark fixture was run in Phases 106–111. This is an evidence gap, not a zero-regression claim.
@@ -87,19 +87,22 @@ The available Eggress checkout supplied generic byte relay and proxy/H3 transpor
 
 ## Future plan status
 
-All sequential predecessors 105–111 are formally closed. Phase 112 is the only active campaign plan and was unblocked by Phase 111's closeout. No further extraction or upstream-adoption plan is unblocked: honeypot, DNS, ICMP, sandbox, YARA, mesh and tunnel each retain a concrete trigger listed above. Reopen only through a scoped plan when its trigger is evidenced; no blocked plan was silently promoted.
+Phases 105–112 are formally closed (CLOSED QUALIFIED campaign; see Proof and scope above). Phase 112 was unblocked by Phase 111's closeout and is now closed. No further extraction or upstream-adoption plan is unblocked: honeypot, DNS, ICMP, sandbox, YARA, mesh and tunnel each retain a concrete trigger listed above. Reopen only through a scoped plan when its trigger is evidenced; no blocked plan was silently promoted. Post-closeout Phase 113 (documentation/evidence reconciliation) is ACTIVE / READY; Phase 114 (tunnel/Eggtunnel evidence refresh) is PLANNED / READY AFTER PHASE 113. Neither reopens the qualified implementation, and neither authorizes extraction or adoption.
 
 ## Verification and residuals
 
-Local Phase 110 proof: `cargo fmt --all -- --check`; `cargo test -p synvoid-mesh-protocol --profile ci` (8 tests); `cargo test -p synvoid-mesh --profile ci` (1,093 tests); `cargo check --no-default-features --features mesh --profile ci`; `cargo check --no-default-features --features mesh,dns --profile ci`; `cargo deny check`; `cargo audit` (six allowed unmaintained warnings, no vulnerability failure). Final-head routine/full/release verification and focused Phase 112 package lanes are **pending** and must be recorded below before closure.
+Local Phase 110 proof: `cargo fmt --all -- --check`; `cargo test -p synvoid-mesh-protocol --profile ci` (8 tests); `cargo test -p synvoid-mesh --profile ci` (1,093 tests); `cargo check --no-default-features --features mesh --profile ci`; `cargo check --no-default-features --features mesh,dns --profile ci`; `cargo deny check`; `cargo audit` (six allowed unmaintained warnings, no vulnerability failure). Final-head routine/full/release verification and focused Phase 112 package lanes are complete and recorded below (Phase 113 reconciliation; proof-bearing implementation SHA unchanged).
 
-| Required final verification | Result |
-|---|---|
-| `cargo fmt --all -- --check` | Pending |
-| `cargo xtask verify` | Pending |
-| `cargo xtask verify-full` | Pending |
-| `cargo xtask verify-release` | Pending |
-| `cargo deny check` / `cargo audit` | Passed locally on pre-closeout source/docs head; final repeat pending |
-| Hosted `ci` + `dependency-security` on exact proof-bearing SHA | Pending |
+| Verification | Terminal evidence |
+| --- | --- |
+| `cargo fmt --all -- --check` | Passed on proof-bearing tree |
+| `cargo xtask verify` | 10/10 passed |
+| `cargo xtask verify-full` | 10/10 passed; 7,896 tests across 217 binaries, 8 skipped |
+| `cargo xtask verify-release` | 14/14 passed |
+| `cargo deny check` | Passed |
+| `cargo audit` | No vulnerabilities; six accepted unmaintained warnings |
+| hosted `ci` + `dependency-security` | Run `36955732943` passed on `e7c0ec5a1317599b6f98e37a534b53544842a29c` |
 
-Accepted residuals: no cross-platform tunnel migration or benchmark claim; DNS and honeypot remain in workspace; current native evidence is platform-scoped; eggtunnel parity remains unavailable; source ownership and support gates for independent packages remain open. These residuals are captured as explicit DEFER/RETAIN decisions rather than extraction success.
+Hosted native sandbox and ICMP jobs were skipped by workflow conditions; no native qualification claim is made here. Phase 112 made no new native qualification claim.
+
+Accepted residuals: no cross-platform tunnel migration or benchmark claim; DNS and honeypot remain in workspace; current native evidence is platform-scoped; tunnel parity/adoption remained deferred by Phase 111; independent package support gates remain open. These residuals are captured as explicit DEFER/RETAIN decisions rather than extraction success. Phase 114 separately reopens the research evidence for tunnel convergence; it does not retroactively make Phase 112's tested source state unqualified.
