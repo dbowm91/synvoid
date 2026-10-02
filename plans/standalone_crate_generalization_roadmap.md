@@ -1,8 +1,10 @@
 # Standalone-Capable Crate Generalization Roadmap (Phases 115–123)
 
-Status: **ACTIVE / REGISTERED** (2026-10-02; Phase 115 closed with routine
-qualification residual; Phases 116–119 DEFER; Phase 120 RETAIN; Phase 121 target DEFER; Phase 122 class-2 closed
-with HSM/RSA promotion residuals; Phase 123 eligible to reconcile).
+Status: **CLOSED WITH EXPLICIT QUALIFICATION RESIDUALS** (2026-10-02; Phases
+116–119 DEFER; Phase 120 RETAIN; Phase 121 class-2 with native macOS deferred;
+Phase 122 class-2 with live-HSM deferred and RSA promotion blocked; Phase 123
+found no class-3 promotion or repository-extraction trigger. Exact-SHA hosted
+CI remains a post-push check.)
 
 Registered in: `plans/roadmap.md`.
 
@@ -205,6 +207,16 @@ remains open for a suitable runner.
 
 Phase 122's dual-package evidence and live-HSM/RSA promotion limitations are
 recorded in `architecture/standalone_crate_phase122_closeout.md`.
+
+Phase 123's final graph, candidate table, local qualification and successor
+gate decisions are recorded in
+`architecture/standalone_crate_phase123_closeout.md`. No future standalone
+promotion/extraction plan is unblocked. Reconsider DNS or mesh only after the
+named DTO/provider or typed async capability prerequisites are implemented and
+parity-tested; reconsider platform splitting only with a demonstrated dependency
+reduction. Gate-only candidates remain closed until their specific second
+consumer/security/semantic triggers are evidenced. Native macOS, live HSM, and
+exact-SHA hosted CI are external evidence gates, not support claims.
 
 ## Success criteria
 

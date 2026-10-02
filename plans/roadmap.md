@@ -1801,9 +1801,12 @@ Binding constraints:
 
 
 
-## Post-Phase-114 Campaign: Standalone-Capable Crate Generalization — Phases 115–123 ACTIVE / REGISTERED
+## Post-Phase-114 Campaign: Standalone-Capable Crate Generalization — Phases 115–123 CLOSED
 
-Status: **ACTIVE / REGISTERED** (2026-10-02).
+Status: **CLOSED WITH EXPLICIT QUALIFICATION RESIDUALS** (2026-10-02; closeout:
+`architecture/standalone_crate_phase123_closeout.md`). No class-3 promotion or
+repository-extraction follow-up was justified. Exact-SHA hosted CI remains a
+post-push check; native macOS and live HSM evidence remain external gates.
 
 Umbrella roadmap:
 `plans/standalone_crate_generalization_roadmap.md`.
@@ -1884,12 +1887,12 @@ Execution lanes:
    - Closeout: `architecture/standalone_crate_phase122_closeout.md`.
 
 9. **Phase 123 — Standalone-Crate Campaign Qualification and Promotion Gate**
-   - Status: **PLANNED / READY TO RECONCILE OUTCOMES**.
+   - Status: **CLOSED WITH EXPLICIT QUALIFICATION RESIDUALS** (2026-10-02).
    - Plan: `plans/phase_123_standalone_crate_campaign_qualification_gate.md`.
-   - Rebuilds dependency/package evidence, refreshes ICMP/YARA/proxy-cache/
-     tarpit/filter/jail/native-extension gates, and may register later class-3
-     or repository-extraction work only if the explicit support/lifecycle
-     criteria are actually satisfied.
+   - Closeout: `architecture/standalone_crate_phase123_closeout.md`.
+   - Regenerated dependency/package evidence and refreshed the ICMP/YARA/
+     proxy-cache/tarpit/filter/jail/native-extension gates. No later class-3 or
+     repository-extraction plan met its explicit support/lifecycle criteria.
 
 Binding constraints:
 

@@ -96,3 +96,15 @@ workspace development. The externally supported order is recorded in
 Before first registry publication: verify crates.io name availability,
 repository metadata, and intentional maintainers/owners. Do not rename after
 publishing without a compatibility/deprecation plan.
+
+## Phase 123 standalone campaign decision — 2026-10-02
+
+Campaign closeout added no class-3 crate and no new-repository candidate.
+`synvoid-honeypot`, `synvoid-dnssec-keystore` and `synvoid-mesh-protocol` have
+packaged-source Rust 1.85 consumer evidence and remain class 2 with
+`external_support=false`. Honeypot still lacks native macOS qualification;
+keystore still lacks a live PKCS#11 provider run and remains exposed to the
+unresolved RSA advisory. These limits block external promotion. The
+ICMP/YARA/proxy-cache/tarpit/filter/jail-protocol/native-extension gates did not
+produce a follow-on promotion plan. See
+`standalone_crate_phase123_closeout.md`.

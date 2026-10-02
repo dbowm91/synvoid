@@ -1,6 +1,9 @@
 # Phase 123 Plan: Standalone-Crate Campaign Qualification and Promotion Gate
 
-Status: **PLANNED / READY TO RECONCILE EXPLICIT TRACK OUTCOMES** (2026-10-02).
+Status: **CLOSED WITH EXPLICIT QUALIFICATION RESIDUALS** (2026-10-02; closeout:
+`architecture/standalone_crate_phase123_closeout.md`). No class-3 promotion or
+repository-extraction follow-up was triggered. Exact-SHA hosted CI is the
+remaining post-push campaign check; no unsupported platform claim is made.
 
 Registered in: `plans/roadmap.md` and
 `plans/standalone_crate_generalization_roadmap.md`.

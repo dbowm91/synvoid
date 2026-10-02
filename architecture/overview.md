@@ -35,7 +35,7 @@ synvoid/
 │   ├── app_server/ metrics/ theme/ tunnel/ vpn_client/  # App-service, counters, theming, tunnels, VPN wiring
 │   ├── bin/                  # `synvoid-vpn`, `server` binaries
 │   └── {proxy,dns,mesh,…}/ # Thin re-export facades over crates/synvoid-*
-├── crates/                 # 43 dedicated synvoid-* library crates (canonical logic)
+├── crates/                 # 47 dedicated synvoid-* library crates (canonical logic)
 ├── pqc/                    # Post-quantum crypto (ML-KEM-768/1024, ML-DSA-44)
 ├── admin-ui/               # Yew/WASM admin frontend (Trunk build → dist/, ~22 pages)
 ├── tools/                  # xtask runner + repo-guard helpers
