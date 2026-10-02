@@ -57,7 +57,7 @@ internal predecessors.
 | `synvoid-core` | Time helpers, restricted-address policy and IPv4 masks. | Separate generic DNS policy from app config; keep local DNS domain helpers or a narrow neutral policy input, after parity. |
 | `synvoid-tls` | `CertResolver` for DoT and secure-server paths. | Replace with DNS-owned neutral certificate/provider contract or rustls primitives; preserve reload, SNI, ALPN and secret custody. |
 | `synvoid-geoip` | DNS steering consumes app Geo lookup. | Invert to a narrow lookup/input trait; preserve absent-database/fallback behavior. |
-| `synvoid-platform` | Anycast/socket-specific implementation. | Keep platform integration at composition boundary; isolate the DNS-facing socket/health contract. |
+| `synvoid-platform` | The manifest listed this sibling, but a source search found no `synvoid_platform` reference. DNS implements its own local `platform::AnycastSocketPlatform`. | Not a justified retained edge; Phase 109 removes the unused direct dependency. |
 | `synvoid-utils` | Safe Unix timestamp helper in mesh sync and related utility calls. | Use `std`/DNS-owned safe timestamp helper where semantics match; do not create a common crate for trivial code. |
 | `synvoid-dnssec-keystore` | Sealed signing handles, key metadata, trust state, HSM. | Deliberate sibling in any future repository topology; preserve low-capability custody boundary, never absorb private-key storage into DNS. |
 | optional `synvoid-mesh` | Mesh transport and typed message/config in optional mesh sync. | Invert behind minimal dynamic-record, health and event capabilities; canonical/advisory provenance remains application-owned. |

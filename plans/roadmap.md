@@ -1628,8 +1628,10 @@ Execution lanes:
    - move runtime config ownership into DNS, invert mesh/Geo/TLS/platform
      integration behind narrow adapters, and keep DNSSEC key custody separate;
    - prove a standalone DNS consumer and decide GO EXTRACT / DEFER / RETAIN.
-   - Status: **PLANNED / READY** (Phase 108 CLOSED QUALIFIED; application
-     dependency inventory is recorded for Phase 109).
+   - Status: **CLOSED DEFER** (2026-10-02). One unused platform edge was
+     removed; six required SynVoid siblings and optional mesh remain active.
+     Exact runtime-boundary work is recorded in
+     `architecture/dns_application_neutral_readiness_phase109.md`.
    - Plan:
      `plans/phase_109_dns_application_neutral_boundary_extraction_readiness.md`.
 
@@ -1640,7 +1642,7 @@ Execution lanes:
    - preserve canonical-vs-advisory authority, replay, freshness, partition, and
      wire semantics;
    - no external mesh repository/publication.
-   - Status: **PLANNED**.
+   - Status: **PLANNED / READY** (independent of DNS Phase 109 DEFER).
    - Plan: `plans/phase_110_mesh_consensus_dht_boundary_decomposition.md`.
 
 7. **Phase 111 — SynVoid Tunnel / Eggtunnel / Eggress Convergence**

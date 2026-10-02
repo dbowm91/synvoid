@@ -76,8 +76,15 @@ no source/dependencies and claims no maintenance or size reduction. The source
 coupling map and Phase 109 inversion requirements are recorded in
 `architecture/dns_hickory_delegation_phase108.md`. Phase 109 is READY.
 
-Disposition: **GO MAINTAIN + PREPARE APPLICATION-NEUTRAL BOUNDARY**; no external
-DNS repository is ready or authorized.
+Phase 109 CLOSED **DEFER**: one unused `synvoid-platform` direct dependency was
+removed; six required SynVoid siblings and optional mesh remain active. DNS
+config, TLS/certificates, Geo, mesh and lifecycle capability inversions plus a
+standalone consumer are still required. Exact source references and package
+graph evidence are in `architecture/dns_application_neutral_readiness_phase109.md`.
+
+Disposition: **RETAIN IN WORKSPACE / DEFER EXTRACTION** until the application
+integrations are inverted and independently qualified. No external DNS repo is
+ready or authorized.
 
 ### ICMP enforcement — boundary prepared, extraction remains RETAIN
 

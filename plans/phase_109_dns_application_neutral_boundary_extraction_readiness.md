@@ -1,6 +1,7 @@
 # Phase 109 Plan: DNS Application-Neutral Boundary and Extraction Readiness
 
-Status: **PLANNED / READY** (Phase 108 CLOSED QUALIFIED).
+Status: **CLOSED DEFER** (2026-10-02; one unused edge removed, extraction
+readiness deferred on active application integrations).
 
 Registered in: `plans/roadmap.md` and
 `plans/subsystem_boundary_extraction_roadmap.md`.
@@ -221,3 +222,35 @@ Reject a GO decision that:
 - changes persisted config without migration;
 - claims all DNS features supported merely because modules compile;
 - moves the current crate to a new repository with its old dependency graph.
+
+## Closeout
+
+Terminal disposition: **DEFER extraction; retain DNS in the workspace**. The
+source-verified edge map, exact blockers, support boundaries and future order of
+work are recorded in
+`architecture/dns_application_neutral_readiness_phase109.md`.
+
+Phase 109 removed the `synvoid-platform` manifest edge after finding no source
+references; DNS already owns the narrow `AnycastSocketPlatform` seam. This
+reduced the active normal dependency graph from 48 to 47 direct dependencies
+and expanded tree from 864 to 853 package lines. Six required SynVoid siblings
+remain, plus optional mesh. No runtime capability or persisted config changed.
+
+Verification after the edge removal:
+
+- `cargo check -p synvoid-dns --profile ci` — passed;
+- `cargo check -p synvoid-dns --features mesh --profile ci` — passed;
+- `cargo test -p synvoid-dns --profile ci` — 1,262 passed;
+- `cargo test -p synvoid-dns --profile ci --features mesh` — 1,274 passed;
+- `cargo test -p synvoid-dnssec-keystore --profile ci` — 40 passed;
+- `cargo xtask verify` — passed 10/10 after the manifest change;
+- `cargo deny check` and `cargo audit` passed on the Phase 108 source base;
+  the latter reported six allowed unmaintained warnings and no vulnerability;
+- Phase 107 `cargo xtask verify-release` passed 14/14 immediately before the
+  unused-edge-only manifest change. No source or resolved external dependency
+  changed after that qualification.
+
+The standalone consumer gate remains unpassed because runtime config,
+certificate, Geo/health and mesh integrations remain application-bound. Phase
+110 may proceed independently; Phase 109 does not authorize repo creation,
+publication, or a Git dependency.
