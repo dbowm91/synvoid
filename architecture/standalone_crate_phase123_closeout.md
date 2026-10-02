@@ -4,8 +4,10 @@ Date: 2026-10-02.
 Plan: `plans/phase_123_standalone_crate_campaign_qualification_gate.md`.
 Disposition: **CLOSED WITH EXPLICIT QUALIFICATION RESIDUALS**. No class-3
 promotion or repository-extraction plan is justified. The campaign remains
-monorepo-first. Exact-SHA hosted CI is required after the final branch push;
-native macOS and live PKCS#11 evidence remain unqualified.
+monorepo-first. The initial exact-head hosted CI run exposed two new Wasmtime
+advisories; Phase 123's security response updated the manifest-only YARA
+compatibility pin from 48.0.3 to 48.0.5. Native macOS and live PKCS#11
+evidence remain unqualified.
 
 ## Dependency and package comparison
 
@@ -97,3 +99,12 @@ No future promotion/extraction plan is unblocked by this campaign:
 No successor plan has been registered. Any future promotion or extraction must
 be separately scoped, owned and approved under
 `architecture/public_crate_release_policy.md` and the campaign rules.
+
+## Exact-head CI follow-up
+
+The first workflow-dispatch run on `d044609711ebfe719d6984a190d41aa7fbfa33bb`
+failed its `dependency-security` job because Wasmtime 48.0.3 had become
+affected by `RUSTSEC-2026-0326` and `RUSTSEC-2026-0327`; the main verify job
+also stopped at dependency policy. The pinned YARA fork and lockfile now use
+Wasmtime 48.0.5 (48.0.4 is the fixed minimum), with no advisory ignore.
+After the final push, record the follow-up exact-SHA workflow result here.

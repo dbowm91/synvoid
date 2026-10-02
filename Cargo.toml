@@ -446,7 +446,8 @@ required-features = ["mesh"]
 [patch.crates-io]
 minify-html = { path = "third-party/minify-html-compat" }
 # Phase 40 (temporary): YARA-X security upgrade. Phase 103 advances the
-# transitive Wasmtime line from 47.0.4 to 48.0.3 to clear
+# transitive Wasmtime line from 47.0.4 to 48.0.3; Phase 123 moves to 48.0.5
+# (48.0.4 is the advisory minimum) for RUSTSEC-2026-0326/-0327.
 # RUSTSEC-2026-0315 (47.0.4 affected) and RUSTSEC-2026-0316 (47.0.4 + 36.0.15
 # affected; direct 36 LTS advanced to 36.0.16). Official `yara-x 1.20.0`
 # (crates.io) still resolves wasmtime 45.0.3; stock `yara-x 1.21.0`
@@ -455,7 +456,7 @@ minify-html = { path = "third-party/minify-html-compat" }
 # 1.94) is now closed-unmerged (2026-09-22). This path patch redirects the
 # single `yara-x` consumer (`synvoid-yara`) at workspace builds to the
 # vendored manifest-only compat fork in `third-party/yara-x-compat` (exact
-# 1.20.0 `src/`/`build.rs`, wasmtime 45.0.3 -> 47.0.4 -> 48.0.3,
+# 1.20.0 `src/`/`build.rs`, wasmtime 45.0.3 -> 47.0.4 -> 48.0.3 -> 48.0.5,
 # rust-version 1.93 -> 1.94 -> 1.95 — no source divergence; see the fork
 # Cargo.toml SYNVOID-PHASE40/SYNVOID-PHASE103 markers). No git source is
 # introduced: `deny.toml` keeps `unknown-git = "deny"` with zero allows.
