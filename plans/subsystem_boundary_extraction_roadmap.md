@@ -278,3 +278,18 @@ evidence (`architecture/tunnel_eggtunnel_parity_phase114.md`, RETAIN +
 DEFER relay reuse); tunnel convergence remains DEFER and no separately
 registered implementation/upstream plan was warranted.
 
+
+
+## Successor campaign (Phases 115–123)
+
+The Phase 105–114 extraction campaign remains historically CLOSED QUALIFIED.
+A new monorepo-first successor is registered at
+`plans/standalone_crate_generalization_roadmap.md`.
+
+The successor does not reverse the historical DEFER/RETAIN evidence by fiat.
+Instead it distinguishes internal crate boundaries and standalone-capable class-2
+packages from external repository/public-support decisions. DNS and mesh reopen
+only their application-neutral capability seams; sandbox reopens only internal
+crate-granularity; honeypot/DNSSEC-keystore/mesh-protocol reopen explicit package
+hardening gaps. Any external extraction still requires a later gate after Phase
+123.
