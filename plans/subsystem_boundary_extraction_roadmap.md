@@ -1,6 +1,6 @@
 # Subsystem Boundary and Extraction Roadmap (Phases 105–112)
 
-Status: **ACTIVE / REGISTERED — Phases 105–111 CLOSED; Phase 112 IN PROGRESS — 2026-10-02**.
+Status: **CLOSED QUALIFIED — 2026-10-02**. Proof-bearing SHA `e7c0ec5a1317599b6f98e37a534b53544842a29c`; hosted CI and dependency-security run `36955732943` passed. No downstream extraction plan is unblocked; ICMP remains RETAIN, process sandbox and YARA remain DEFER.
 
 Registered in: `plans/roadmap.md`.
 
@@ -178,7 +178,7 @@ Then:
 5. **Phase 109 — DNS application-neutral boundary and extraction readiness.**
 6. **Phase 110 — mesh consensus/DHT internal boundary decomposition: CLOSED RETAIN INTERNAL.**
 7. **Phase 111 — SynVoid tunnel / Eggtunnel / Eggress convergence: CLOSED DEFER.**
-8. **Phase 112 — extraction gate refresh and campaign closeout: IN PROGRESS.**
+8. **Phase 112 — extraction gate refresh and campaign closeout: CLOSED QUALIFIED.**
 
 Phase 108 depends on Phase 105 so the Hickory comparison is made against the
 qualified current dependency line. Phase 109 depends on Phase 108. Phase 107

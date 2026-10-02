@@ -1,6 +1,6 @@
 # Phase 112 Plan: Extraction Gate Refresh and Campaign Closeout
 
-Status: **IN PROGRESS — terminal campaign phase; release and hosted proof pending** (2026-10-02).
+Status: **CLOSED QUALIFIED** (2026-10-02).
 
 Registered in: `plans/roadmap.md` and
 `plans/subsystem_boundary_extraction_roadmap.md`.
@@ -9,8 +9,9 @@ Planning baseline for registration: `main` at `19c0636535f3728e80b7c6777ec6a552c
 Execute against the final implementation head of Phases 105–111.
 
 Execution record: `architecture/subsystem_boundary_extraction_closeout.md`.
-This phase cannot be formally closed until final-head verification and hosted
-exact-SHA `ci` plus `dependency-security` both pass.
+Formal closeout evidence is recorded below. The proof-bearing implementation SHA
+is `e7c0ec5a1317599b6f98e37a534b53544842a29c`; hosted exact-SHA run
+`36955732943` passed `ci` and `dependency-security`.
 
 Owner: architecture / security / release.
 
@@ -231,11 +232,17 @@ It must contain:
   `eggserve_plaintext_adoption` test helper; the decoder now waits for full
   16-bit headers/payloads, its focused test passed, and the complete rerun
   passed.
-- Phase 112 hosted run `36948353038` passed CI and dependency-security on
-  predecessor source SHA `12f52977901ee24ba74c5b9d90d19cea5624b420`; final
-  hosted evidence for the test-helper correction is pending.
-- `cargo xtask verify-release` and final local `cargo deny check` / `cargo
-  audit` remain pending. The release command requires a clean committed tree.
+- `cargo xtask verify-release` passed 14/14 steps on clean proof-bearing tree
+  `e7c0ec5a1317599b6f98e37a534b53544842a29c`. Package inspection validated
+  metadata and source contents for all 47 publishable crates; 18 sources were
+  independently packaged and verified, while 29 correctly deferred on internal
+  unpublished predecessors. Both jail artifacts were present. No package was
+  published.
+- Local `cargo deny check` passed. `cargo audit` found no vulnerabilities and
+  emitted the six already allowed unmaintained advisories.
+- Hosted exact-SHA run `36955732943` passed `ci` and `dependency-security` on
+  `e7c0ec5a1317599b6f98e37a534b53544842a29c`. The final campaign closeout
+  commit is documentation-only.
 
 At minimum:
 
