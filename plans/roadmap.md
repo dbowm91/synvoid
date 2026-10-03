@@ -1045,9 +1045,12 @@ and a real minimal SynVoid trial succeeded end to end; see the terminal
 closeout for proof-bearing SHAs and digests.
 
 
-## Independent Cross-Repo Corrective: Eggbench M003 Telemetry Heartbeat Dispatch — Ready
+## Independent Cross-Repo Corrective: Eggbench M003 Telemetry Heartbeat Dispatch — Closed
 
-Status: **READY** (2026-10-02).
+Status: **CLOSED QUALIFIED** (2026-10-02).
+
+Terminal closeout:
+`architecture/eggbench_security_qualification_m003_telemetry_heartbeat_dispatch_corrective_closeout.md`.
 
 Plan:
 `plans/eggbench_security_qualification_m003_telemetry_heartbeat_dispatch_corrective.md`.
@@ -1080,6 +1083,14 @@ Corrective boundary:
 7. pin the corrected owner revision in Eggbench and require unchanged `m003c-13b` plus exact-head four-lane and `live-m003-linux` green before terminal closure.
 
 No v3 telemetry contract, heartbeat cadence change, WAF/security semantic change, Eggbench semantic relaxation, IPC wire change, or new load generator is authorized by this corrective. The closed v2 interoperability corrective remains the schema/generation authority; this new corrective owns the missing live heartbeat-routing proof.
+
+Closure outcome:
+
+- Proof-bearing SHAs `ccf926947acf5d7aaf07e5aa152bd7ecfc9798a2` and `1338ce7b60f3793701091b4c329f80eb542f802d`; four live-value defects repaired (missing supervisor dispatch arm, missing worker-ID classification, a second shadowing `WorkerMetrics` instance, and a lag accumulator seeded one cadence ahead).
+- Minimal binary `251ac1d2e0c45be399570b3e2abcbb2925589bc01102eb2869585bcd7f8030f7`; contract `synvoid.eggbench-telemetry.v2` and mapping `622f6a13c4353cc7465cce39a57ed86fa0db2fe4114258e6f06226c1748d2d99` unchanged, so no contract renegotiation was needed.
+- Eggbench terminal proof on closing revision `30a38251bccb5157beb68202ffe630f6253771e0`: four-lane CI `37143714313` and live external-tool qualification `37143714261` both green, with `m003c-13b` passing against the real pinned owner and all five live jobs green.
+- Eggbench M003c, M003d, and the M003 milestone are now closed and hosted-qualified; the milestone's upstream conditional-closure gate is removed.
+- Reaching that evidence required repairing three defects in Eggbench's own measurement and reporting (performance arms a suite apart, a live-value check that demanded a non-zero health gauge, and stop reasons pointing at deleted logs) plus one portability bound. Those are Eggbench-side, carry their own tests, and are recorded in the closeout; none relaxed a gate or an assertion.
 
 
 ## Post-Phase-91 ICMP Gate: Disabled-State Corrective and Linux nftables Native Qualification — Phases 92–93

@@ -1,6 +1,6 @@
 # Plan: Eggbench M003 Telemetry Heartbeat Dispatch Corrective
 
-Status: **READY**.
+Status: **CLOSED QUALIFIED** (2026-10-02).
 
 Registered in: `plans/roadmap.md`.
 
@@ -499,3 +499,34 @@ cause before broadening the corrective.
 
 No unrelated architecture phase is blocked on this work. Its direct downstream
 is Eggbench Security Qualification M003 terminal closure.
+
+## 16. Closure record
+
+Terminal closeout:
+`architecture/eggbench_security_qualification_m003_telemetry_heartbeat_dispatch_corrective_closeout.md`.
+
+Proof-bearing SHAs `ccf926947acf5d7aaf07e5aa152bd7ecfc9798a2` and
+`1338ce7b60f3793701091b4c329f80eb542f802d`. Minimal binary
+`251ac1d2e0c45be399570b3e2abcbb2925589bc01102eb2869585bcd7f8030f7`.
+
+Acceptance criteria 1-10, 12, and 13 are discharged by the owner-side evidence
+in the closeout. Criteria 11 and 12 are discharged by Eggbench hosted evidence
+on one exact head, closing revision
+`30a38251bccb5157beb68202ffe630f6253771e0`: four-lane CI `37143714313` and live
+external-tool qualification `37143714261`, both green, with
+`m003c-13b required subject series carry live owner values` passing against the
+real pinned owner and all five live jobs green.
+
+Reaching that evidence required repairing three defects in Eggbench's own
+measurement and reporting, plus one portability bound, because the owner's
+corrected telemetry could not be observed as correct through them. They are
+Eggbench-side, each carries its own test evidence, and none relaxed a gate, an
+allowance, or an assertion; the closeout lists them with their symptoms. The
+most consequential was that the performance profiles compared a scenario's
+baseline against a candidate measured a whole suite later, so shared-runner load
+drift was attributed entirely to the candidate and a same-build pair failed.
+
+No SynVoid follow-up is required. The one recorded asymmetry,
+`UnifiedServerWorkerShutdownComplete` having classification but no stop-routing
+arm, is unchanged and out of scope: a ProcessManager child-reaping monitor
+already owns stop detection, so no orphan exists.
