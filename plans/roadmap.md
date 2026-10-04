@@ -1987,9 +1987,9 @@ daily schedule run `37200443692`, `RUSTSEC-2026-0325/0326/0327` against the
 pre-campaign Wasmtime pin) are superseded by that merge-head result, which
 inherits the Phase 123 Wasmtime 48.0.5 remediation.
 
-DNS runtime-DTO research:
+DNS runtime-DTO research at Phase 124 close:
 `architecture/dns_runtime_dto_conversion_research.md`
-(RESEARCH COMPLETE / IMPLEMENTATION NOT REGISTERED, 2026-10-04).
+(RESEARCH COMPLETE / IMPLEMENTATION NOT YET REGISTERED at that historical close; superseded by the Phases 125–130 registration below).
 
 The DNS study resolves the Phase 116 design blocker at research level: persisted
 `synvoid-config` DTOs remain application-owned; a composition adapter belongs
@@ -2006,8 +2006,7 @@ RETAIN, class 2 with `external_support=false` for honeypot/DNSSEC-keystore/
 mesh-protocol, `synvoid-rate-limit` the sole class-3 crate, ICMP RETAIN, YARA
 DEFER, proxy-cache/tarpit/filter/jail-protocol/native-extension internal).
 Native macOS, live PKCS#11/HSM and Windows native sandbox qualification remain
-external evidence gates, not support claims. The DNS runtime-DTO research is
-recorded and referenced but is not registered implementation work.
+external evidence gates, not support claims. At Phase 124 close, the DNS runtime-DTO research was recorded but not yet registered implementation work. That historical statement is superseded by the Phases 125–130 successor registration below.
 
 Binding constraints observed:
 
