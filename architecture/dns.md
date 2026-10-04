@@ -15,9 +15,7 @@ answered at research level in
 boundary facts for future work: Phase 125 starts with the exhaustive persisted-field projection matrix and adapter parity gate; production constructor cutover does not begin until that evidence exists. Persisted DNS config stays in
 `synvoid-config`; the conversion adapter is composition code under
 `src/server/`; `src/dns/` is a guard-enforced pure re-export facade and must
-stay one; `synvoid-dns` owns only parsed runtime values. Nothing in this
-section authorizes DNS source changes, provider inversion, or standalone
-promotion.
+stay one; `synvoid-dns` owns only parsed runtime values. DNS source changes in this line are authorized only by the registered Phases 125–130 plans. Provider inversion and standalone promotion remain outside that campaign.
 
 ## 1. Purpose and Responsibility
 
