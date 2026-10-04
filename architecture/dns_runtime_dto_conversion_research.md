@@ -1,6 +1,6 @@
 # DNS Runtime-DTO Conversion Research
 
-Status: **RESEARCH COMPLETE / IMPLEMENTATION NOT REGISTERED** (2026-10-04).
+Status: **RESEARCH COMPLETE / IMPLEMENTATION REGISTERED** (2026-10-04; successor Phases 125–130 in `plans/dns_runtime_dto_conversion_roadmap.md`).
 
 Research baseline: `main` at
 `cacd44bffe097d7c62e3ddb0c5816967498a7bde`.
@@ -581,7 +581,4 @@ The Phase 116 blocker is now sufficiently understood to write an implementation
 plan. The safest plan should be staged around the slices above and require an
 exhaustive field-ownership matrix before the constructor cutover.
 
-No Phase 125 implementation plan is registered by this research artifact. A
-future plan should use this record as its evidence baseline and should not reopen
-provider inversion until the normal `synvoid-config`, `synvoid-core` and
-`synvoid-utils` edges are removed with parity proof.
+Implementation is now registered as Phases 125–130 under `plans/dns_runtime_dto_conversion_roadmap.md`. Phase 125 begins with the exhaustive field-ownership/projection matrix and adapter parity gate; Phases 126–129 perform the staged cutovers and dependency removals; Phase 130 qualifies the result and decides whether TLS/Geo/mesh provider inversion is ready for a separate successor plan. Provider inversion must not begin until the normal `synvoid-config`, `synvoid-core` and `synvoid-utils` edges are removed with parity proof.
