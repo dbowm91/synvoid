@@ -4,6 +4,21 @@ The qualified Hickory dependency baseline is 0.26.3 for proto/net/resolver;
 see [`dns_hickory_patch_requalification.md`](dns_hickory_patch_requalification.md)
 for the Phase 105 security, verification, and benchmark evidence.
 
+**Current packaging/dependency status (read before planning DNS boundary work).**
+`synvoid-dns` is class 1: it still has six required SynVoid sibling
+dependencies plus optional `synvoid-mesh`. Phases 116/117 closed DEFER
+(`standalone_crate_phase116_closeout.md`), so the persisted-config ->
+runtime-DTO split was **not** delivered. The Phase 116 design blocker is
+answered at research level in
+[`dns_runtime_dto_conversion_research.md`](dns_runtime_dto_conversion_research.md)
+— **research complete / implementation not registered**. Its actionable
+boundary facts for future work: persisted DNS config stays in
+`synvoid-config`; the conversion adapter is composition code under
+`src/server/`; `src/dns/` is a guard-enforced pure re-export facade and must
+stay one; `synvoid-dns` owns only parsed runtime values. Nothing in this
+section authorizes DNS source changes, provider inversion, or standalone
+promotion.
+
 ## 1. Purpose and Responsibility
 
 The SynVoid DNS module provides a **comprehensive DNS server** with support for:

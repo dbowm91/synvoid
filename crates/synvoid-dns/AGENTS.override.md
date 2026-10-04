@@ -888,3 +888,34 @@ All 5 DNS scripts pass `bash -n`:
 ### Final Closure Status
 
 **Closed with accepted deferrals.** Release-ready for specified profiles; deferred items (remote CI visibility, external live-wire interop, external DNSSEC tooling) are explicitly non-blocking. See `plans/dns_milestone_4_deferred_items_closeout_complete.md` for the full closeout record.
+
+## Crate boundary status (Phase 124 reconciliation, 2026-10-04)
+
+`crates/synvoid-dns` is **class 1**, not standalone-capable. It still depends on
+`synvoid-config`, `synvoid-core`, `synvoid-utils`, `synvoid-tls`,
+`synvoid-geoip` and `synvoid-dnssec-keystore` (plus optional `synvoid-mesh`).
+Phases 116/117 are **CLOSED DEFER**; no provider inversion or standalone
+promotion is approved.
+
+If DNS neutralization is ever scheduled, the design blocker is already resolved
+at research level in `architecture/dns_runtime_dto_conversion_research.md`
+(**research complete / implementation not registered**). Its load-bearing
+boundary rules:
+
+- persisted DNS config (`synvoid_config::dns::*`) stays in `synvoid-config` and
+  remains application-owned; do not make it public DNS library API;
+- the persisted-config -> runtime-DTO conversion adapter is composition code
+  under `src/server/` (e.g. alongside `resources.rs`);
+- `src/dns/` is a **guard-enforced pure re-export facade**
+  (`tests/facade_disposition_guard.rs` lists `dns` in `PURE_FACADES`) and must
+  stay one — never place the adapter there;
+- `synvoid-dns` owns only parsed/validated runtime values; unsupported or
+  deferred persisted fields (RPZ, prefetch, trust anchors, padding, QNAME
+  privacy, unwired rebinding/anycast, rejected transfer/update/notify knobs)
+  stay fail-closed in `DnsConfig::validate()` and are absent from any runtime
+  API;
+- `synvoid-dnssec-keystore` is a deliberate low-capability sibling, not a
+  removal target; Hickory stays the protocol engine and its config structs must
+  not become the public runtime contract.
+
+Do not treat this note as authorization to start that work.

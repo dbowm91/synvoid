@@ -1,6 +1,10 @@
 # Phase 124 Plan: Post-Standalone Documentation and Evidence Reconciliation
 
-Status: **PLANNED / READY** (2026-10-04).
+Status: **CLOSED QUALIFIED** (2026-10-04; docs/evidence only; closeout
+`architecture/standalone_crate_phase124_closeout.md`; `git diff --check` clean,
+`cargo fmt --all -- --check` passed, `synvoid-repo-guards` passed,
+`cargo xtask verify` 10/10 passed in 1002.1s; no production/dependency change;
+no successor plan unblocked).
 
 Registered in: `plans/roadmap.md`.
 
@@ -10,8 +14,23 @@ Planning baseline: `main` at
 Related closeout:
 `architecture/standalone_crate_phase123_closeout.md`.
 
+Phase 124 closeout:
+`architecture/standalone_crate_phase124_closeout.md`.
+
 DNS successor research:
 `architecture/dns_runtime_dto_conversion_research.md`.
+
+Outcome summary: the plan's premise that no completed merge-head run was
+visible is obsolete. Hosted CI run `37218651222` passed `ci` and
+`dependency-security` on merge head `cacd44bf`, alongside the campaign-branch
+run `37064917481` on `f8118214`; both are recorded distinctly and neither is
+relabeled as the other. Phases 115–123 keep their exact terminal dispositions.
+Architecture, roadmap, umbrella, historical supersession notes, the DNS
+research pointer and actionable agent guidance were reconciled; the release
+policy, final surface audit, crate granularity audit, `docs/releasing.md` and
+the standalone candidate registry were re-checked and left unchanged. The
+`architecture/overview.md` workspace-count contradiction was corrected against
+`cargo metadata` (53 members, 45 crates under `crates/`).
 
 ## Goal
 
@@ -51,6 +70,15 @@ must distinguish:
   otherwise state that it is not yet evidenced.
 
 Do not convert absence of a status object into either success or failure.
+
+**Resolved during execution:** a real run was found. `cacd44bf` carries
+workflow `CI` run `37218651222` (`ci`/Verify and `dependency-security` both
+success; both native qualification jobs skipped by their false-by-default
+inputs). Both proofs are recorded distinctly. The genuinely red pre-merge runs
+on first parent `fd8fc2a8` (push `37149285202`, daily schedule `37200443692`,
+`RUSTSEC-2026-0325/0326/0327`) are recorded as historical and superseded,
+because the merge carries the Phase 123 Wasmtime `48.0.5` remediation that
+clears them without any advisory ignore.
 
 ### 2. Current architecture summary lags Phase 123
 
@@ -189,6 +217,105 @@ Classify every hit as:
 - stale and corrected.
 
 Record the classification in the Phase 124 closeout.
+
+## Execution record (2026-10-04)
+
+Workstream B — merged-main evidence:
+
+- `gh run view 37218651222` confirms a real completed exact-merge-head run on
+  `cacd44bffe097d7c62e3ddb0c5816967498a7bde`: `ci`/Verify success and
+  `dependency-security` success; `icmp-native-qualification` and
+  `sandbox-native-qualification` skipped. The plan's "no visible run"
+  premise no longer holds, so the Workstream B positive branch applied.
+- Pre-merge first parent `fd8fc2a8` is genuinely red (push `37149285202`;
+  daily schedule `37200443692`) on `RUSTSEC-2026-0325/0326/0327` from the
+  pre-campaign Wasmtime pin. Recorded as historical and superseded: the merge
+  carries the Phase 123 `third-party/yara-x-compat` Wasmtime `48.0.5` pin, and
+  the merge-head `dependency-security` job is green with `deny.toml` still
+  holding exactly two advisory ignores.
+
+Workstream A — terminal status:
+
+- `plans/roadmap.md` status header, campaign section, Phase 115/123 lanes and
+  the Phase 124 registration section rewritten; Phases 115–123 now carry a
+  uniform terminal-disposition list and both exact-SHA proofs.
+- `plans/standalone_crate_generalization_roadmap.md` header, successor-gate
+  paragraph and Phase 124 block updated identically.
+- The Phase 115 interrupted local `cargo xtask verify` remains stated as a
+  truthful historical fact and is explicitly separated from the terminal hosted
+  Verify evidence.
+
+Workstream C — architecture summary:
+
+- `architecture/overview.md` honeypot / DNSSEC-keystore / mesh / DNS rows now
+  carry Phase 121/122/123 and Phase 116/117/118/119 status; Documentation Map
+  links the standalone contract and the Phase 123/124 closeouts.
+- Found and fixed an unrelated-but-real contradiction in the same file: the
+  workspace shape said "51 members / 43 crates under `crates/`" in one place
+  and "47 crates" in another. `cargo metadata --no-deps` reports 53 members
+  with 45 `synvoid-*` crates under `crates/` (47 `synvoid-*` packages total
+  including `synvoid-fuzz` and `synvoid-repo-guards`); both lines now agree
+  with the manifest and `AGENTS.md`.
+- `architecture/public_crate_release_policy.md`,
+  `architecture/final_surface_audit.md`, `architecture/crate_granularity_audit.md`,
+  `docs/releasing.md`, `architecture/standalone_crate_candidates.toml` and the
+  root README were re-checked and left unchanged — no contradiction found.
+
+Workstream D — historical supersession:
+
+- Appended current-status pointers to
+  `architecture/honeypot_standalone_qualification_phase107.md`,
+  `architecture/dns_application_neutral_readiness_phase109.md`,
+  `architecture/mesh_boundary_decomposition_phase110.md` and
+  `architecture/process_sandbox_corrective_closeout.md`. No historical result,
+  test count, proof SHA or contemporaneous reasoning was altered.
+
+Workstream E — DNS next-work pointer:
+
+- `architecture/dns_runtime_dto_conversion_research.md` linked from
+  `architecture/dns.md`, `architecture/overview.md` and the Phase 109 readiness
+  record, each marked RESEARCH COMPLETE / IMPLEMENTATION NOT REGISTERED. No DNS
+  source touched.
+
+Workstream F — stale-status search:
+
+- Full classification ledger recorded in
+  `architecture/standalone_crate_phase124_closeout.md` §7. Stale and corrected:
+  both `post-push check` statements, the Phase 124 `ACTIVE / REGISTERED` and
+  `PLANNED / READY` statuses, and the Phase 107/109/110 references in the
+  overview. Historical and retained: the plan's own defect text and search
+  terms, and the Phase 106/113/118 contemporaneous execution lines. Current and
+  unchanged: every `external_support` and `class 2`/`class 3` statement —
+  `synvoid-rate-limit` remains the only class-3 crate.
+
+Workstream G — agent/skill knowledge:
+
+- `AGENTS.md` public-libraries index extended to Phase 124; new DNS
+  boundary-research index line carrying the `src/server/` vs `src/dns/` pure
+  facade rule.
+- `crates/synvoid-dns/AGENTS.override.md` gained a crate-boundary-status
+  section.
+- `crates/synvoid-honeypot/AGENTS.override.md` and
+  `.opencode/skills/dns_dnssec/SKILL.md` reviewed; neither makes a stale
+  class/support claim, so neither was changed.
+
+Verification:
+
+- `git diff --check` clean.
+- `cargo fmt --all -- --check` passed.
+- `cargo test -p synvoid-repo-guards --profile ci` passed.
+- `cargo xtask verify` passed: 10 steps, 10 passed, 0 failed, 0 skipped
+  (1002.1s).
+- `verify-full` / `verify-release` deliberately not rerun: docs-only, no guard
+  requires them, and the retained exact tested SHAs are not replaced by a docs
+  commit.
+- Changed files are documentation and agent-guidance only; no
+  `Cargo.toml`, `Cargo.lock`, Rust source, workflow, support tier or package
+  metadata changed.
+
+Successor status: **no future plan is unblocked.** Phases 115–123 dispositions
+are unchanged, the DNS runtime-DTO research is recorded rather than registered,
+and no Phase 125 implementation plan exists.
 
 ## Verification
 

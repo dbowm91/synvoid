@@ -1,6 +1,6 @@
 # SynVoid Architecture Hardening Roadmap
 
-Status: Phase 124 post-standalone documentation/evidence reconciliation is **ACTIVE / REGISTERED** (2026-10-04; docs/evidence only; plan `plans/phase_124_post_standalone_documentation_evidence_reconciliation.md`). The subsystem-boundary/extraction campaign (Phases 105–112) is CLOSED QUALIFIED as of 2026-10-02; umbrella: `plans/subsystem_boundary_extraction_roadmap.md`; proof-bearing SHA `e7c0ec5a1317599b6f98e37a534b53544842a29c`, hosted CI/dependency-security run `36955732943`. Phases 105–111 remain formally closed: 105 QUALIFIED, 106 QUALIFIED, 107 DEFER, 108 QUALIFIED, 109 DEFER, 110 RETAIN INTERNAL, and 111 DEFER. Phase 112 completed campaign-wide evidence refresh and terminal closeout. Post-closeout Phases 113-114 are CLOSED QUALIFIED (113 docs-only reconciliation; 114 tunnel/Eggtunnel parity refresh RETAIN + DEFER relay reuse, 2026-10-02; evidence architecture/tunnel_eggtunnel_parity_phase114.md). ICMP remains RETAIN, process sandbox remains DEFER, and YARA remains DEFER. No downstream extraction or adoption is authorized by registration of Phases 113–114. Phase 104 (Phase 103 qualification-evidence corrective closeout) is CLOSED QUALIFIED (2026-10-01; closeout `architecture/dependency_security_phase104_corrective_closeout.md`; proof-bearing implementation SHA `e0032cd176cd1061a3aa5877555f49ebc4f46a3b`; hosted CI + `dependency-security` green on `36901352762`). Phase 103 (dependency-security re-audit and Wasmtime remediation) remains CLOSED QUALIFIED for its security remediation (2026-10-01; closeout `architecture/dependency_security_reaudit_phase103_closeout.md`; proof-bearing implementation SHA `aeeebc7bac38b1dcc441b06f53c838a74582cd24`; hosted CI + `dependency-security` green on `36891196284`), with Phase 104 owning the residual performance-evidence and support-date corrections. Phase 102 (eggfetch 0.2.1 patch adoption) is CLOSED QUALIFIED (2026-10-01; closeout `architecture/eggfetch_0_2_1_patch_adoption_closeout.md`). Tracks 1–3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). Eggfetch 0.2 runtime adoption is closed through Phase 62 (`c3568ef4...`) and performance/reproducibility adjudication is closed through Phase 63; Phase 64 docs/evidence-truth correction is closed. Production remains on eggfetch. The EggServe 0.2.2-line inbound H1 campaign remains historical/retained at Phase 65; Phases 66–69 were never started. EggServe 0.3 H1 adoption and corrective requalification are closed as `ADOPTED` through Phase 80 on exact pins `eggserve-server = "=0.4.0"` / `eggserve-primitives = "=0.2.2"`; the Phase 78 terminal claim is superseded by Phase 80 proof-bearing SHA `174fdbcd6f133b35099ed4492f5ed8d3fcaa7d4c` (hosted run `36201213413`). Phase 79 implementation SHA: `171dd1e47f965b04b34465fc72c87adf4d9a9cab`. See `architecture/eggserve_0_3_h1_adoption_closeout.md`. Phases 70–72 remain historical/closed with evidence aligned to their then-current Hyper H1 runtime. The process-sandbox correctness and extraction-readiness campaign (Phases 81-84) remains closed DEFER; Phase 94 corrected and qualified Phase 89's Linux mechanism-selection and native-evidence gaps on exact SHA `e86fb35372b1b66bb59c8a6336bf32e55ff5c93e` (hosted/native run `36271417398`). The independent ICMP policy/enforcement extraction-preparation campaign (Phases 85-88) remains closed RETAIN (see the Post-Phase-80 section below); Phases 90–91 are closed, Phase 92 is CLOSED CORRECTED, Phase 93 is QUALIFIED (superseded by Phase 95 exact-SHA two-run proof `36335520434` on `39bfced25d51267ee5837eaecedae7da9af163d0`), and Phase 95 is CLOSED QUALIFIED with Linux nftables native-supported. Phase 88 stays RETAIN with no extraction authorized. The closed independent cross-repo Eggbench security-qualification asset handoff remains separately registered. The Eggbench Security Qualification M003 telemetry interoperability corrective remains closed qualified at `739e7ba6f02c5e3f83fe9ff5321b09213182b193` for the v2 schema/generation contract, but the live-value path is reopened by the READY heartbeat-dispatch corrective `plans/eggbench_security_qualification_m003_telemetry_heartbeat_dispatch_corrective.md`: current supervisor IPC drops `UnifiedServerWorkerHeartbeat` instead of updating ProcessManager, and downstream Eggbench `m003c-13b` correctly stops. The former v1 terminal qualification remains superseded/withdrawn. The post-Phase-95 architecture-maintenance and auditability campaign (Phases 96–101) is closed qualified on proof-bearing SHA `2bfc3c6cfd1a1f2454f801cc02c01a0cbafa2e30`; see `architecture/architecture_maintenance_auditability_closeout.md`.
+Status: Phase 124 post-standalone documentation/evidence reconciliation is **CLOSED QUALIFIED** (2026-10-04; docs/evidence only; plan `plans/phase_124_post_standalone_documentation_evidence_reconciliation.md`; closeout `architecture/standalone_crate_phase124_closeout.md`). The standalone-capable crate campaign (Phases 115–123) remains closed with unchanged dispositions, and the merged-main exact-head proof is now recorded: hosted CI run `37218651222` passed `ci` and `dependency-security` on merge head `cacd44bffe097d7c62e3ddb0c5816967498a7bde`, separate from the campaign-branch proof at `f81182149889e21c4908b7ee38c74bc6b4518f6b` (run `37064917481`). Phase 124 unblocks no successor extraction or promotion plan. The subsystem-boundary/extraction campaign (Phases 105–112) is CLOSED QUALIFIED as of 2026-10-02; umbrella: `plans/subsystem_boundary_extraction_roadmap.md`; proof-bearing SHA `e7c0ec5a1317599b6f98e37a534b53544842a29c`, hosted CI/dependency-security run `36955732943`. Phases 105–111 remain formally closed: 105 QUALIFIED, 106 QUALIFIED, 107 DEFER, 108 QUALIFIED, 109 DEFER, 110 RETAIN INTERNAL, and 111 DEFER. Phase 112 completed campaign-wide evidence refresh and terminal closeout. Post-closeout Phases 113-114 are CLOSED QUALIFIED (113 docs-only reconciliation; 114 tunnel/Eggtunnel parity refresh RETAIN + DEFER relay reuse, 2026-10-02; evidence architecture/tunnel_eggtunnel_parity_phase114.md). ICMP remains RETAIN, process sandbox remains DEFER, and YARA remains DEFER. No downstream extraction or adoption is authorized by registration of Phases 113–114. Phase 104 (Phase 103 qualification-evidence corrective closeout) is CLOSED QUALIFIED (2026-10-01; closeout `architecture/dependency_security_phase104_corrective_closeout.md`; proof-bearing implementation SHA `e0032cd176cd1061a3aa5877555f49ebc4f46a3b`; hosted CI + `dependency-security` green on `36901352762`). Phase 103 (dependency-security re-audit and Wasmtime remediation) remains CLOSED QUALIFIED for its security remediation (2026-10-01; closeout `architecture/dependency_security_reaudit_phase103_closeout.md`; proof-bearing implementation SHA `aeeebc7bac38b1dcc441b06f53c838a74582cd24`; hosted CI + `dependency-security` green on `36891196284`), with Phase 104 owning the residual performance-evidence and support-date corrections. Phase 102 (eggfetch 0.2.1 patch adoption) is CLOSED QUALIFIED (2026-10-01; closeout `architecture/eggfetch_0_2_1_patch_adoption_closeout.md`). Tracks 1–3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). Eggfetch 0.2 runtime adoption is closed through Phase 62 (`c3568ef4...`) and performance/reproducibility adjudication is closed through Phase 63; Phase 64 docs/evidence-truth correction is closed. Production remains on eggfetch. The EggServe 0.2.2-line inbound H1 campaign remains historical/retained at Phase 65; Phases 66–69 were never started. EggServe 0.3 H1 adoption and corrective requalification are closed as `ADOPTED` through Phase 80 on exact pins `eggserve-server = "=0.4.0"` / `eggserve-primitives = "=0.2.2"`; the Phase 78 terminal claim is superseded by Phase 80 proof-bearing SHA `174fdbcd6f133b35099ed4492f5ed8d3fcaa7d4c` (hosted run `36201213413`). Phase 79 implementation SHA: `171dd1e47f965b04b34465fc72c87adf4d9a9cab`. See `architecture/eggserve_0_3_h1_adoption_closeout.md`. Phases 70–72 remain historical/closed with evidence aligned to their then-current Hyper H1 runtime. The process-sandbox correctness and extraction-readiness campaign (Phases 81-84) remains closed DEFER; Phase 94 corrected and qualified Phase 89's Linux mechanism-selection and native-evidence gaps on exact SHA `e86fb35372b1b66bb59c8a6336bf32e55ff5c93e` (hosted/native run `36271417398`). The independent ICMP policy/enforcement extraction-preparation campaign (Phases 85-88) remains closed RETAIN (see the Post-Phase-80 section below); Phases 90–91 are closed, Phase 92 is CLOSED CORRECTED, Phase 93 is QUALIFIED (superseded by Phase 95 exact-SHA two-run proof `36335520434` on `39bfced25d51267ee5837eaecedae7da9af163d0`), and Phase 95 is CLOSED QUALIFIED with Linux nftables native-supported. Phase 88 stays RETAIN with no extraction authorized. The closed independent cross-repo Eggbench security-qualification asset handoff remains separately registered. The Eggbench Security Qualification M003 telemetry interoperability corrective remains closed qualified at `739e7ba6f02c5e3f83fe9ff5321b09213182b193` for the v2 schema/generation contract, but the live-value path is reopened by the READY heartbeat-dispatch corrective `plans/eggbench_security_qualification_m003_telemetry_heartbeat_dispatch_corrective.md`: current supervisor IPC drops `UnifiedServerWorkerHeartbeat` instead of updating ProcessManager, and downstream Eggbench `m003c-13b` correctly stops. The former v1 terminal qualification remains superseded/withdrawn. The post-Phase-95 architecture-maintenance and auditability campaign (Phases 96–101) is closed qualified on proof-bearing SHA `2bfc3c6cfd1a1f2454f801cc02c01a0cbafa2e30`; see `architecture/architecture_maintenance_auditability_closeout.md`.
 
 Scope: this roadmap covers architecture hardening, trust-boundary closure, verification, release readiness, post-hardening cleanup, and the architecture-convergence work required before another broad feature-expansion pass.
 
@@ -1816,8 +1816,23 @@ Binding constraints:
 
 Status: **CLOSED WITH EXPLICIT QUALIFICATION RESIDUALS** (2026-10-02; closeout:
 `architecture/standalone_crate_phase123_closeout.md`). No class-3 promotion or
-repository-extraction follow-up was justified. Exact-SHA hosted CI remains a
-post-push check; native macOS and live HSM evidence remain external gates.
+repository-extraction follow-up was justified. Two distinct exact-SHA hosted
+proofs exist and must not be conflated: campaign-branch head
+`f81182149889e21c4908b7ee38c74bc6b4518f6b` (run `37064917481`, `ci` +
+`dependency-security` success) and merged-main head
+`cacd44bffe097d7c62e3ddb0c5816967498a7bde` (run `37218651222`, `ci` +
+`dependency-security` success). Native macOS and live HSM evidence remain
+external gates; the two optional native qualification jobs were skipped by
+their false-by-default inputs on both runs.
+
+Terminal dispositions: 115 CLOSED / ROUTINE QUALIFICATION DEFERRED; 116 CLOSED
+DEFER; 117 CLOSED DEFER (116 predecessor not delivered); 118 CLOSED DEFER; 119
+CLOSED DEFER (118 predecessor not delivered); 120 CLOSED RETAIN; 121 CLOSED
+DEFER with Linux package proof; 122 CLOSED CLASS 2 with live-HSM deferred and
+RSA promotion blocked; 123 CLOSED WITH EXPLICIT QUALIFICATION RESIDUALS. See
+`architecture/standalone_crate_phase124_closeout.md` for the reconciled
+branch-head/merge-head evidence statement and the stale-status classification
+ledger.
 
 Umbrella roadmap:
 `plans/standalone_crate_generalization_roadmap.md`.
@@ -1842,6 +1857,10 @@ Execution lanes:
      guard/tooling/package-consumer checks passed; `cargo xtask verify` was
      stopped during failure-injection compilation after earlier routine stages
      passed, so the phase is not labeled qualified.
+   - The interrupted local run remains a truthful historical fact and is not
+     restated as a pass. Terminal routine verification for the campaign is the
+     hosted Verify job: campaign branch head `f8118214` (run `37064917481`)
+     and merge head `cacd44bf` (run `37218651222`).
 
 2. **Phase 116 — DNS Runtime-Config and Core Neutralization**
    - Status: **CLOSED DEFER** (2026-10-02; DTO/adapters/parity gate incomplete).
@@ -1898,12 +1917,19 @@ Execution lanes:
    - Closeout: `architecture/standalone_crate_phase122_closeout.md`.
 
 9. **Phase 123 — Standalone-Crate Campaign Qualification and Promotion Gate**
-   - Status: **CLOSED WITH EXPLICIT QUALIFICATION RESIDUALS** (2026-10-02; hosted exact-SHA CI passed at `f8118214`).
+   - Status: **CLOSED WITH EXPLICIT QUALIFICATION RESIDUALS** (2026-10-02; hosted
+     exact-SHA CI passed on the campaign branch head
+     `f81182149889e21c4908b7ee38c74bc6b4518f6b`, run `37064917481`).
    - Plan: `plans/phase_123_standalone_crate_campaign_qualification_gate.md`.
    - Closeout: `architecture/standalone_crate_phase123_closeout.md`.
    - Regenerated dependency/package evidence and refreshed the ICMP/YARA/
      proxy-cache/tarpit/filter/jail/native-extension gates. No later class-3 or
      repository-extraction plan met its explicit support/lifecycle criteria.
+   - The PR #51 merge head `cacd44bffe097d7c62e3ddb0c5816967498a7bde` was
+     independently qualified by hosted run `37218651222` (`ci` +
+     `dependency-security` success; both native jobs skipped). That run
+     supersedes the campaign branch as the current-`main` proof and does not
+     change any Phase 115–123 disposition.
 
 Binding constraints:
 
@@ -1920,31 +1946,46 @@ Binding constraints:
 - native security support requires native evidence.
 
 
-## Post-Phase-123 Documentation/Evidence Reconciliation — Phase 124 ACTIVE / REGISTERED
+## Post-Phase-123 Documentation/Evidence Reconciliation — Phase 124 CLOSED QUALIFIED
 
-Status: **PLANNED / READY** (2026-10-04).
+Status: **CLOSED QUALIFIED** (2026-10-04; docs/evidence only).
 
 Plan:
 `plans/phase_124_post_standalone_documentation_evidence_reconciliation.md`.
 
+Closeout:
+`architecture/standalone_crate_phase124_closeout.md`.
+
 Planning baseline:
 `cacd44bffe097d7c62e3ddb0c5816967498a7bde` (PR #51 merge head).
 
-Scope:
+Scope as executed:
 
-- reconcile stale current-authority Phase 115–123 status and exact-SHA CI wording;
-- distinguish the successful campaign-head proof
-  `f81182149889e21c4908b7ee38c74bc6b4518f6b` from any later merged-main
-  exact-SHA proof;
-- refresh the architecture overview and only the release/classification records
-  that are actually stale;
-- add minimal supersession pointers to Phase 107/109/110-era documents without
-  rewriting historical evidence;
-- keep honeypot, DNSSEC-keystore and mesh-protocol class 2 with
+- reconciled stale current-authority Phase 115–123 status and exact-SHA CI
+  wording;
+- distinguished the campaign-head proof
+  `f81182149889e21c4908b7ee38c74bc6b4518f6b` (run `37064917481`) from the
+  merged-main proof `cacd44bffe097d7c62e3ddb0c5816967498a7bde`
+  (run `37218651222`); both exist and neither is relabeled as the other;
+- refreshed the architecture overview and only the release/classification
+  records that were actually stale (`architecture/overview.md`; the release
+  policy, final surface audit, crate granularity audit, `docs/releasing.md` and
+  the standalone candidate registry were re-checked and left unchanged);
+- added minimal supersession pointers to Phase 107/109/110-era and
+  process-sandbox documents without rewriting historical evidence;
+- kept honeypot, DNSSEC-keystore and mesh-protocol class 2 with
   `external_support=false`; `synvoid-rate-limit` remains the sole class-3
   crate;
-- make the next DNS boundary research discoverable without performing DNS source
+- made the next DNS boundary research discoverable without performing DNS source
   changes.
+
+Terminal evidence: merge head `cacd44bf` carries hosted run `37218651222`
+(`ci`/Verify and `dependency-security` both success; `icmp-native-qualification`
+and `sandbox-native-qualification` skipped by their false-by-default inputs).
+The earlier red runs on pre-merge main head `fd8fc2a8` (push run `37149285202`,
+daily schedule run `37200443692`, `RUSTSEC-2026-0325/0326/0327` against the
+pre-campaign Wasmtime pin) are superseded by that merge-head result, which
+inherits the Phase 123 Wasmtime 48.0.5 remediation.
 
 DNS runtime-DTO research:
 `architecture/dns_runtime_dto_conversion_research.md`
@@ -1959,11 +2000,27 @@ absent from the runtime API. The proposed conversion removes
 TLS/Geo/mesh provider-inversion work. No Phase 125 implementation plan is
 registered by Phase 124 or the research record.
 
-Binding constraints:
+Successor status after Phase 124: **no future plan is unblocked.** Every Phase
+115–123 gate decision is unchanged (DNS and mesh extraction DEFER, sandbox
+RETAIN, class 2 with `external_support=false` for honeypot/DNSSEC-keystore/
+mesh-protocol, `synvoid-rate-limit` the sole class-3 crate, ICMP RETAIN, YARA
+DEFER, proxy-cache/tarpit/filter/jail-protocol/native-extension internal).
+Native macOS, live PKCS#11/HSM and Windows native sandbox qualification remain
+external evidence gates, not support claims. The DNS runtime-DTO research is
+recorded and referenced but is not registered implementation work.
 
-- Phase 124 is documentation/evidence only;
-- do not change Rust source, manifests, lockfiles, workflows, package metadata,
-  support tiers or dependency topology;
-- do not claim merge-head exact-SHA CI unless a real run is observed;
-- do not rewrite historical test counts/proof SHAs;
-- do not implicitly reopen DNS Phase 116/117 implementation.
+Binding constraints observed:
+
+- Phase 124 was documentation/evidence only;
+- no Rust source, manifest, lockfile, workflow, package metadata, support tier
+  or dependency topology changed;
+- merge-head exact-SHA CI was recorded only because a real run was observed;
+- no historical test count, proof SHA or DEFER/RETAIN reasoning was rewritten;
+- DNS Phase 116/117 implementation was not reopened.
+
+Verification: `git diff --check` clean, `cargo fmt --all -- --check` passed,
+`synvoid-repo-guards` passed, `cargo xtask verify` 10/10 passed (1002.1s).
+`verify-full` and `verify-release` were deliberately not rerun for this
+docs-only phase; see `architecture/standalone_crate_phase124_closeout.md` §8.
+
+Acceptance criteria: met. Rejection criteria: none triggered.

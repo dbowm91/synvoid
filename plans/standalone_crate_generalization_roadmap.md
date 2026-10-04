@@ -3,8 +3,10 @@
 Status: **CLOSED WITH EXPLICIT QUALIFICATION RESIDUALS** (2026-10-02; Phases
 116–119 DEFER; Phase 120 RETAIN; Phase 121 class-2 with native macOS deferred;
 Phase 122 class-2 with live-HSM deferred and RSA promotion blocked; Phase 123
-found no class-3 promotion or repository-extraction trigger. Exact-SHA hosted
-CI remains a post-push check.)
+found no class-3 promotion or repository-extraction trigger. Two distinct
+exact-SHA hosted proofs exist: campaign branch head `f8118214` (run
+`37064917481`) and merged-main head `cacd44bf` (run `37218651222`); both passed
+`ci` and `dependency-security`, and neither native qualification job ran.)
 
 Registered in: `plans/roadmap.md`.
 
@@ -196,6 +198,8 @@ treated as a passing routine gate.
 Phases 116/117 DNS DEFER outcomes are recorded in
 `architecture/standalone_crate_phase116_closeout.md`. Phases 118/119 mesh DEFER
 outcomes are recorded in `architecture/standalone_crate_phase118_closeout.md`.
+The later DNS runtime-DTO design study is recorded in
+`architecture/dns_runtime_dto_conversion_research.md` (research only).
 
 Phase 120's RETAIN decision is recorded in
 `architecture/standalone_crate_phase120_closeout.md`; no sandbox crate was
@@ -215,8 +219,11 @@ promotion/extraction plan is unblocked. Reconsider DNS or mesh only after the
 named DTO/provider or typed async capability prerequisites are implemented and
 parity-tested; reconsider platform splitting only with a demonstrated dependency
 reduction. Gate-only candidates remain closed until their specific second
-consumer/security/semantic triggers are evidenced. Native macOS, live HSM, and
-exact-SHA hosted CI are external evidence gates, not support claims.
+consumer/security/semantic triggers are evidenced. Native macOS, live HSM and
+Windows native sandbox qualification remain external evidence gates, not
+support claims. The campaign's hosted exact-SHA routine verification is
+complete at both the branch head and the merge head; it is not an open
+post-push question.
 
 ## Success criteria
 
@@ -258,19 +265,25 @@ Reject a closeout that:
 
 The Phase 115–123 campaign remains closed with its terminal decisions unchanged.
 
-Phase 124 is registered separately as a documentation/evidence reconciliation
-pass:
+Phase 124 was registered separately as a documentation/evidence reconciliation
+pass and is now closed:
 
 - plan:
   `plans/phase_124_post_standalone_documentation_evidence_reconciliation.md`;
-- status: **PLANNED / READY** (2026-10-04);
+- status: **CLOSED QUALIFIED** (2026-10-04; docs/evidence only);
 - baseline:
   `cacd44bffe097d7c62e3ddb0c5816967498a7bde`;
-- scope: current-authority status/CI wording, architecture-summary refresh and
-  historical supersession pointers only.
+- closeout: `architecture/standalone_crate_phase124_closeout.md`;
+- scope as executed: current-authority status/CI wording, architecture-summary
+  refresh and historical supersession pointers only.
 
-Phase 124 does not reopen this campaign's implementation state and does not
-change package classes, support tiers or extraction decisions.
+Phase 124 did not reopen this campaign's implementation state and did not
+change package classes, support tiers or extraction decisions. Its only
+evidence addition is the merge-head hosted run `37218651222` on
+`cacd44bffe097d7c62e3ddb0c5816967498a7bde` (`ci` + `dependency-security`
+success), recorded alongside — not in place of — the campaign-branch run
+`37064917481` on `f81182149889e21c4908b7ee38c74bc6b4518f6b`. The stale
+"exact-SHA hosted CI remains a post-push check" wording is retired.
 
 The deferred DNS track has also received a source-level design study:
 `architecture/dns_runtime_dto_conversion_research.md`.
@@ -281,3 +294,7 @@ DNS-owned runtime-value boundary and the staged removal of
 evidence only. No Phase 125 DNS implementation plan is registered here; provider
 inversion remains later work after runtime DTO/core neutralization is actually
 implemented and parity-qualified.
+
+Successor status: no future promotion, extraction or publication plan is
+unblocked by this campaign or by Phase 124. The DNS study is recorded, not
+registered.

@@ -99,3 +99,23 @@ current boundary. Do not create a repository, publish, or add a long-lived git
 dependency. Reopen only with an owner for the support surface and a follow-up
 plan that closes these exact release/security gaps; Phase 112 records this
 decision in the campaign gate refresh.
+
+## Current-status pointer (Phase 124, 2026-10-04)
+
+The Phase 107 disposition above remains the historical result at its date and
+its evidence is unchanged. Two later phases qualify the *package* side of it
+without reopening the extraction decision:
+
+- Phase 121 (`architecture/standalone_crate_phase121_closeout.md`) delivered
+  standalone-package hardening — resource-ceiling, persistence, hostile-input,
+  provider-containment, docs/MSRV and target-proof gaps — plus a Linux
+  packaged-source consumer proof;
+- Phase 123 (`architecture/standalone_crate_phase123_closeout.md`) closed the
+  campaign: `synvoid-honeypot` is standalone-capable **class 2** with
+  `external_support = false`. It is not class 3 and carries no external support
+  promise.
+
+Native macOS runtime qualification remains unavailable, and independent
+release/extraction is still DEFER. Read this file for the Phase 107 evidence
+only; for current status see `plans/roadmap.md` and the Phase 124 closeout
+`architecture/standalone_crate_phase124_closeout.md`.

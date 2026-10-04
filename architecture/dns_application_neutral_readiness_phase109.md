@@ -69,3 +69,26 @@ Disposition: **DEFER extraction / retain the in-workspace service**. Phase 110
 is independently eligible and may proceed. A future implementation plan must
 own the six active application sibling inversions before this extraction gate
 can be reconsidered.
+
+## Current-status pointer (Phase 124, 2026-10-04)
+
+The Phase 109 findings and DEFER disposition above remain the historical result
+at their date; the dependency table and test counts are unchanged. Later
+phases own the current position:
+
+- Phase 116 (`architecture/standalone_crate_phase116_closeout.md`) **CLOSED
+  DEFER** — the runtime-DTO/adapter/parity gate was not delivered, so the
+  `synvoid-config` / `synvoid-core` / `synvoid-utils` edges still exist;
+- Phase 117 (`architecture/standalone_crate_phase116_closeout.md`) **CLOSED
+  DEFER** — provider inversion never became independently eligible;
+- Phase 123 (`architecture/standalone_crate_phase123_closeout.md`) reconfirmed
+  `synvoid-dns` as class 1 with 7 direct SynVoid edges and 838 expanded
+  normal-tree lines, unchanged from Phase 115.
+
+The Phase 116 design blocker is now answered at research level in
+`architecture/dns_runtime_dto_conversion_research.md`: persisted
+`synvoid-config` DNS DTOs stay application-owned, the conversion adapter is
+composition code under `src/server/` (never the guard-enforced pure `src/dns/`
+facade), and `synvoid-dns` owns only parsed runtime values. That record is
+**research complete / implementation not registered** — it is not a DNS
+extraction approval.

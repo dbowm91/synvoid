@@ -356,3 +356,23 @@ required/optional guarantee contract, staged entry, retained evidence witness,
 and jail IPC/descendant lifecycle integration. This is a meaningful specialized
 contract, but does not resolve the missing second consumer and platform proof.
 No extraction plan is unblocked.
+
+## Current-status pointer (Phase 124, 2026-10-04)
+
+The Phases 81–84 DEFER extraction-readiness result above is unchanged and
+remains the authority for the platform sandbox guarantee contract. The later
+standalone-crate campaign revisited the same question and confirmed it:
+
+- Phase 120 (`architecture/standalone_crate_phase120_closeout.md`) **CLOSED
+  RETAIN** — the guarantee/evidence/native-backend vocabulary is co-located in
+  `crates/synvoid-platform/src/sandbox.rs`, and no proven dependency-reachability
+  reduction justifies an internal `synvoid-sandbox` split. No module moved and
+  no support tier changed;
+- Phase 123 (`architecture/standalone_crate_phase123_closeout.md`) kept
+  `synvoid-platform` as a single class-2 crate with no promotion or
+  repository-extraction trigger.
+
+No successor extraction plan is unblocked. Native evidence tiers are unchanged:
+Linux Landlock + seccomp is the production strict-isolation target; macOS
+Seatbelt remains experimental/deprecated; Windows is process-limits only. See
+`docs/SANDBOXING.md` and `architecture/platform.md` for current support tiers.

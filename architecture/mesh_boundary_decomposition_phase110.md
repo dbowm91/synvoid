@@ -55,3 +55,22 @@ and identity contracts exist. Then recompute package dependency closure and prov
 that an extracted crate cannot reach proxy/cache/serverless/tunnel/config while
 preserving the partition and replay test matrix. Phase 111 remains independently
 eligible; this decision does not block tunnel convergence.
+
+## Current-status pointer (Phase 124, 2026-10-04)
+
+The Phase 110 RETAIN INTERNAL decision above remains the historical result and
+its audit is unchanged. Two later phases own the current position:
+
+- Phase 118 (`architecture/standalone_crate_phase118_closeout.md`) **CLOSED
+  DEFER** — application dispatch/state owners still need a typed async seam and
+  parity tests;
+- Phase 119 (`architecture/standalone_crate_phase118_closeout.md`) **CLOSED
+  DEFER** — no `synvoid-mesh-runtime` crate was created because no one-way seam
+  was proven.
+
+Separately, Phase 122 (`architecture/standalone_crate_phase122_closeout.md`)
+package-hardened the verification-only leaf `synvoid-mesh-protocol` and
+qualified it as standalone-capable **class 2** with `external_support = false`.
+That is a leaf-package result, not a mesh-runtime extraction. Mesh
+canonical-vs-advisory authority is unchanged; see
+`architecture/distributed_state_contract.md` (binding).
