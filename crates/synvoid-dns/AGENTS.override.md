@@ -918,7 +918,7 @@ boundary rules:
   removal target; Hickory stays the protocol engine and its config structs must
   not become the public runtime contract.
 
-Do not treat this note as authorization to start that work.
+Do not extend the registered scope beyond the phase plan currently being executed.
 
 
 ## Runtime DTO Conversion — Phases 125–130
