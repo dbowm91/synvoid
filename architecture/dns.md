@@ -11,8 +11,8 @@ dependencies plus optional `synvoid-mesh`. Phases 116/117 closed DEFER
 runtime-DTO split was **not** delivered. The Phase 116 design blocker is
 answered at research level in
 [`dns_runtime_dto_conversion_research.md`](dns_runtime_dto_conversion_research.md)
-— **research complete / implementation not registered**. Its actionable
-boundary facts for future work: persisted DNS config stays in
+— **research complete; implementation registered as Phases 125–130** in `plans/dns_runtime_dto_conversion_roadmap.md`. Its actionable
+boundary facts for future work: Phase 125 starts with the exhaustive persisted-field projection matrix and adapter parity gate; production constructor cutover does not begin until that evidence exists. Persisted DNS config stays in
 `synvoid-config`; the conversion adapter is composition code under
 `src/server/`; `src/dns/` is a guard-enforced pure re-export facade and must
 stay one; `synvoid-dns` owns only parsed runtime values. Nothing in this
