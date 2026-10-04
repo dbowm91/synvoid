@@ -252,3 +252,32 @@ Reject a closeout that:
   support burden was justified;
 - reports file movement or crate count as maintenance reduction without dependency
   and consumer evidence.
+
+
+## Post-closeout Phase 124 and DNS successor research
+
+The Phase 115–123 campaign remains closed with its terminal decisions unchanged.
+
+Phase 124 is registered separately as a documentation/evidence reconciliation
+pass:
+
+- plan:
+  `plans/phase_124_post_standalone_documentation_evidence_reconciliation.md`;
+- status: **PLANNED / READY** (2026-10-04);
+- baseline:
+  `cacd44bffe097d7c62e3ddb0c5816967498a7bde`;
+- scope: current-authority status/CI wording, architecture-summary refresh and
+  historical supersession pointers only.
+
+Phase 124 does not reopen this campaign's implementation state and does not
+change package classes, support tiers or extraction decisions.
+
+The deferred DNS track has also received a source-level design study:
+`architecture/dns_runtime_dto_conversion_research.md`.
+
+That record establishes the intended persisted-config -> application adapter ->
+DNS-owned runtime-value boundary and the staged removal of
+`synvoid-config`, `synvoid-core` and `synvoid-utils`. It is research
+evidence only. No Phase 125 DNS implementation plan is registered here; provider
+inversion remains later work after runtime DTO/core neutralization is actually
+implemented and parity-qualified.
