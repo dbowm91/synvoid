@@ -199,7 +199,7 @@ Phases 116/117 DNS DEFER outcomes are recorded in
 `architecture/standalone_crate_phase116_closeout.md`. Phases 118/119 mesh DEFER
 outcomes are recorded in `architecture/standalone_crate_phase118_closeout.md`.
 The later DNS runtime-DTO design study is recorded in
-`architecture/dns_runtime_dto_conversion_research.md` (research only).
+`architecture/dns_runtime_dto_conversion_research.md`; its focused implementation successor is now registered as Phases 125–130 in `plans/dns_runtime_dto_conversion_roadmap.md`. This does not alter the historical Phase 116/117 DEFER result.
 
 Phase 120's RETAIN decision is recorded in
 `architecture/standalone_crate_phase120_closeout.md`; no sandbox crate was
@@ -290,11 +290,24 @@ The deferred DNS track has also received a source-level design study:
 
 That record establishes the intended persisted-config -> application adapter ->
 DNS-owned runtime-value boundary and the staged removal of
-`synvoid-config`, `synvoid-core` and `synvoid-utils`. It is research
-evidence only. No Phase 125 DNS implementation plan is registered here; provider
-inversion remains later work after runtime DTO/core neutralization is actually
-implemented and parity-qualified.
+`synvoid-config`, `synvoid-core` and `synvoid-utils`. The implementation successor is now registered separately as Phases 125–130 in `plans/dns_runtime_dto_conversion_roadmap.md`; provider inversion remains later work after runtime DTO/core neutralization is actually implemented and parity-qualified.
 
 Successor status: no future promotion, extraction or publication plan is
 unblocked by this campaign or by Phase 124. The DNS study is recorded, not
 registered.
+
+
+## DNS runtime-DTO successor Phases 125–130
+
+The DNS prerequisite that Phases 116/117 left DEFER is now scheduled as a
+separate focused successor campaign:
+
+- umbrella: `plans/dns_runtime_dto_conversion_roadmap.md`;
+- phases: 125–130;
+- baseline: `f86f99d1ba239cd32e423dede232d684cfeb8fa2`;
+- Phase 125: **PLANNED / READY**.
+
+The successor does not rewrite the historical Phase 115–123 dispositions. It
+implements the missing config/runtime/core prerequisite. TLS/Geo/mesh provider
+inversion and any class-2 promotion remain outside the campaign until Phase 130
+qualifies the dependency reduction and records an explicit readiness decision.
