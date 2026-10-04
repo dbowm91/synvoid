@@ -4176,7 +4176,7 @@ impl MeshTransport {
                 member_certificate,
                 org_public_key,
             } => {
-                if version != MESH_MESSAGE_VERSION {
+                if !crate::protocol::is_compatible_message_version(version) {
                     return Err(MeshTransportError::VersionMismatch {
                         expected: MESH_MESSAGE_VERSION,
                         got: version,
@@ -5012,7 +5012,7 @@ impl MeshTransport {
                     peer_wireguard_port
                 );
 
-                if version != MESH_MESSAGE_VERSION {
+                if !crate::protocol::is_compatible_message_version(version) {
                     return Err(MeshTransportError::VersionMismatch {
                         expected: MESH_MESSAGE_VERSION,
                         got: version,

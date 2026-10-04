@@ -69,11 +69,12 @@ impl PortHoneypotListener {
         config: PortHoneypotConfig,
         writer: HoneypotWriter,
         ai_budget: Option<Arc<AiResponderBudget>>,
-    ) -> Arc<Self> {
+    ) -> Result<Arc<Self>, crate::config::HoneypotConfigError> {
+        config.validate_resource_limits()?;
         let (shutdown_tx, _) = broadcast::channel(1);
         let max_concurrent = config.max_concurrent_connections;
 
-        Arc::new(Self {
+        Ok(Arc::new(Self {
             config: Arc::new(config),
             writer: Arc::new(writer),
             detector: Arc::new(ProtocolDetector::new()),
@@ -83,7 +84,7 @@ impl PortHoneypotListener {
             ip_connection_counts: Arc::new(RwLock::new(HashMap::new())),
             global_semaphore: Arc::new(Semaphore::new(max_concurrent)),
             ai_budget,
-        })
+        }))
     }
 
     pub fn current_port(&self) -> u16 {

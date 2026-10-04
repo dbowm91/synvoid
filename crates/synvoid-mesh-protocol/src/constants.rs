@@ -5,6 +5,12 @@
 
 /// Current mesh message wire version.
 pub const MESH_MESSAGE_VERSION: u8 = 1;
+
+/// The mesh handshake currently requires exact message-version equality.
+/// Unknown versions are rejected; there is no implicit cross-version fallback.
+pub const fn is_compatible_message_version(version: u8) -> bool {
+    version == MESH_MESSAGE_VERSION
+}
 /// Payloads at or above this size are eligible for compression in `synvoid-mesh`
 /// (compression itself stays in `synvoid-mesh`; this constant is shared so both
 /// layers agree on the threshold).

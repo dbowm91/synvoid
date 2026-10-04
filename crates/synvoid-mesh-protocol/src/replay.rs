@@ -3,7 +3,8 @@
 //! Copied from `synvoid-mesh/src/mesh/protocol.rs::ReplayProtection` with the
 //! `synvoid_utils::safe_unix_timestamp` dependency replaced by
 //! `crate::time::current_unix_timestamp` plus an injectable `check_and_add_at`
-/// entry point for deterministic tests.
+//! entry point for deterministic tests. Timestamps use Unix seconds, with a
+//! 60-second future/past window. Callers bound untrusted nonce strings.
 use std::collections::HashSet;
 
 use crate::constants::{MAX_REPLAY_CACHE_SIZE, REPLAY_WINDOW_SECS};
@@ -35,7 +36,7 @@ impl ReplayProtection {
 
     /// Deterministic entry point: `now` is injected by the caller.
     pub fn check_and_add_at(&mut self, nonce: &str, timestamp: u64, now: u64) -> ReplayResult {
-        if timestamp > now + 60 {
+        if timestamp.saturating_sub(now) > REPLAY_WINDOW_SECS {
             return ReplayResult::FutureTimestamp;
         }
 

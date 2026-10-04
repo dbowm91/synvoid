@@ -1,6 +1,10 @@
 # Standalone-Capable Crate Generalization Roadmap (Phases 115–123)
 
-Status: **ACTIVE / REGISTERED** (2026-10-02).
+Status: **CLOSED WITH EXPLICIT QUALIFICATION RESIDUALS** (2026-10-02; Phases
+116–119 DEFER; Phase 120 RETAIN; Phase 121 class-2 with native macOS deferred;
+Phase 122 class-2 with live-HSM deferred and RSA promotion blocked; Phase 123
+found no class-3 promotion or repository-extraction trigger. Exact-SHA hosted
+CI remains a post-push check.)
 
 Registered in: `plans/roadmap.md`.
 
@@ -175,9 +179,44 @@ or support promise is not a success metric.
 8. **Phase 122 — DNSSEC-keystore and mesh-protocol leaf hardening.**
 9. **Phase 123 — Campaign qualification and promotion/repository gate refresh.**
 
-Phases 116/118/120/121/122 may proceed in parallel after Phase 115. Phase 117
-depends on 116. Phase 119 depends on 118. Phase 123 waits for all implementation
-tracks to close or record explicit DEFER/RETAIN outcomes.
+Phases 116–119 have formally closed DEFER: DNS provider inversion and mesh
+runtime extraction were closed because their prerequisite boundaries were not
+delivered. Phase 120 closed RETAIN. Phase 121 implemented package hardening and
+closed with native macOS qualification deferred. Phase 122 closed both leaf
+packages as class 2, with live-HSM qualification deferred and class-3 RSA
+promotion blocked. Phase 123 is eligible to reconcile these outcomes.
+
+Phase 115's implementation is recorded in
+`architecture/standalone_crate_phase115_closeout.md`. The contract and baseline
+outputs are complete and available to successors. Routine verification was
+interrupted during failure-injection compilation after earlier routine stages
+passed; this residual is carried into the terminal campaign evidence and is not
+treated as a passing routine gate.
+
+Phases 116/117 DNS DEFER outcomes are recorded in
+`architecture/standalone_crate_phase116_closeout.md`. Phases 118/119 mesh DEFER
+outcomes are recorded in `architecture/standalone_crate_phase118_closeout.md`.
+
+Phase 120's RETAIN decision is recorded in
+`architecture/standalone_crate_phase120_closeout.md`; no sandbox crate was
+created and no support tier changed.
+
+Phase 121's implementation and Linux-only qualification evidence are recorded
+in `architecture/standalone_crate_phase121_closeout.md`; the native macOS gate
+remains open for a suitable runner.
+
+Phase 122's dual-package evidence and live-HSM/RSA promotion limitations are
+recorded in `architecture/standalone_crate_phase122_closeout.md`.
+
+Phase 123's final graph, candidate table, local qualification and successor
+gate decisions are recorded in
+`architecture/standalone_crate_phase123_closeout.md`. No future standalone
+promotion/extraction plan is unblocked. Reconsider DNS or mesh only after the
+named DTO/provider or typed async capability prerequisites are implemented and
+parity-tested; reconsider platform splitting only with a demonstrated dependency
+reduction. Gate-only candidates remain closed until their specific second
+consumer/security/semantic triggers are evidenced. Native macOS, live HSM, and
+exact-SHA hosted CI are external evidence gates, not support claims.
 
 ## Success criteria
 

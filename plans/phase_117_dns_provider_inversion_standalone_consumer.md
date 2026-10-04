@@ -1,6 +1,6 @@
 # Phase 117 Plan: DNS Provider Inversion and Standalone Consumer Qualification
 
-Status: **PLANNED / READY AFTER PHASE 116** (2026-10-02).
+Status: **CLOSED DEFER — PHASE 116 PREDECESSOR NOT DELIVERED** (2026-10-02).
 
 Registered in: `plans/roadmap.md` and
 `plans/standalone_crate_generalization_roadmap.md`.
@@ -167,3 +167,23 @@ Reject implementation that:
 - passes only an in-workspace unit test;
 - calls a DNS package independent while it reaches root files/env/process state;
 - publishes or moves the crate externally under this phase.
+
+## Status reconciliation
+
+Phase 116 closed DEFER because persisted DNS configuration remains present in
+public constructors and runtime modules. This phase is therefore blocked before
+implementation. Do not introduce provider interfaces or claim standalone
+qualification until Phase 116 reopens, completes runtime DTO ownership and
+passes its config-parity gate. See
+`architecture/standalone_crate_phase116_closeout.md`.
+
+## Formal closeout
+
+Disposition: **DEFER**, closed without provider inversion or package changes.
+Phase 116's complete DNS-owned runtime DTOs and application-boundary config
+parity were prerequisites and were not delivered. Starting a TLS/Geo/mesh
+provider conversion against persisted-config public constructors would create a
+partial boundary and could not satisfy this phase's outside-workspace behavior
+proof. Reopen only after Phase 116 is completed and qualified. Phase 123 may
+record this explicit DEFER as the DNS track outcome. No standalone claim is made
+for `synvoid-dns`.

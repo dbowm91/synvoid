@@ -1,6 +1,6 @@
 # Phase 119 Plan: Mesh Runtime Extraction Decision and Standalone Qualification
 
-Status: **PLANNED / READY AFTER PHASE 118** (2026-10-02).
+Status: **CLOSED DEFER — PHASE 118 PREDECESSOR NOT DELIVERED** (2026-10-02).
 
 Registered in: `plans/roadmap.md` and
 `plans/standalone_crate_generalization_roadmap.md`.
@@ -145,3 +145,14 @@ Reject implementation that:
 - hides wire changes in refactoring;
 - adopts a networking framework without parity/security/performance evidence;
 - treats outside-workspace compile-only proof as sufficient runtime qualification.
+
+## Formal closeout
+
+Disposition: **DEFER**, closed without extraction. Phase 118 did not establish
+the required application-dispatch capability inversion or prove a one-way
+runtime seam. Extracting transport, DHT, or consensus now would move the same
+application-owned state and concrete dispatch into a new crate without the
+preceding boundary evidence. Reopen only after Phase 118 completes its dispatch,
+authority, and dependency-reachability gates. Phase 123 may record this explicit
+DEFER as the mesh track outcome. No new `synvoid-mesh-runtime` crate, standalone
+claim, or external support promise is made.

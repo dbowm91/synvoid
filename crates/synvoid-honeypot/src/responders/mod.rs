@@ -147,19 +147,30 @@ impl AiHoneypotResponder {
         ai_responder: Box<dyn AiResponder>,
         system_prompt: String,
         budget_config: AiBudgetConfig,
-    ) -> Self {
+    ) -> Result<Self, crate::config::HoneypotConfigError> {
+        budget_config.validate_resource_limits()?;
+        if system_prompt.len() > crate::config::MAX_AI_PROMPT_BYTES {
+            return Err(crate::config::HoneypotConfigError {
+                field: "ai.system_prompt_bytes",
+                actual: system_prompt.len(),
+                maximum: crate::config::MAX_AI_PROMPT_BYTES,
+            });
+        }
         let max_turns = budget_config.max_turns_per_connection;
-        Self {
+        Ok(Self {
             name,
             service_type,
             ai_responder,
             system_prompt,
             turn_counter: AiTurnCounter::new(max_turns),
             budget_config,
-        }
+        })
     }
 
-    pub fn ssh(ai_responder: Box<dyn AiResponder>, budget_config: AiBudgetConfig) -> Self {
+    pub fn ssh(
+        ai_responder: Box<dyn AiResponder>,
+        budget_config: AiBudgetConfig,
+    ) -> Result<Self, crate::config::HoneypotConfigError> {
         Self::new(
             "ai_ssh".to_string(),
             "ssh".to_string(),
@@ -169,7 +180,10 @@ impl AiHoneypotResponder {
         )
     }
 
-    pub fn http(ai_responder: Box<dyn AiResponder>, budget_config: AiBudgetConfig) -> Self {
+    pub fn http(
+        ai_responder: Box<dyn AiResponder>,
+        budget_config: AiBudgetConfig,
+    ) -> Result<Self, crate::config::HoneypotConfigError> {
         Self::new(
             "ai_http".to_string(),
             "http".to_string(),
@@ -179,7 +193,10 @@ impl AiHoneypotResponder {
         )
     }
 
-    pub fn mysql(ai_responder: Box<dyn AiResponder>, budget_config: AiBudgetConfig) -> Self {
+    pub fn mysql(
+        ai_responder: Box<dyn AiResponder>,
+        budget_config: AiBudgetConfig,
+    ) -> Result<Self, crate::config::HoneypotConfigError> {
         Self::new(
             "ai_mysql".to_string(),
             "mysql".to_string(),
@@ -189,7 +206,10 @@ impl AiHoneypotResponder {
         )
     }
 
-    pub fn redis(ai_responder: Box<dyn AiResponder>, budget_config: AiBudgetConfig) -> Self {
+    pub fn redis(
+        ai_responder: Box<dyn AiResponder>,
+        budget_config: AiBudgetConfig,
+    ) -> Result<Self, crate::config::HoneypotConfigError> {
         Self::new(
             "ai_redis".to_string(),
             "redis".to_string(),
@@ -199,7 +219,10 @@ impl AiHoneypotResponder {
         )
     }
 
-    pub fn postgresql(ai_responder: Box<dyn AiResponder>, budget_config: AiBudgetConfig) -> Self {
+    pub fn postgresql(
+        ai_responder: Box<dyn AiResponder>,
+        budget_config: AiBudgetConfig,
+    ) -> Result<Self, crate::config::HoneypotConfigError> {
         Self::new(
             "ai_postgresql".to_string(),
             "postgresql".to_string(),
@@ -209,7 +232,10 @@ impl AiHoneypotResponder {
         )
     }
 
-    pub fn smb(ai_responder: Box<dyn AiResponder>, budget_config: AiBudgetConfig) -> Self {
+    pub fn smb(
+        ai_responder: Box<dyn AiResponder>,
+        budget_config: AiBudgetConfig,
+    ) -> Result<Self, crate::config::HoneypotConfigError> {
         Self::new(
             "ai_smb".to_string(),
             "smb".to_string(),
@@ -219,7 +245,10 @@ impl AiHoneypotResponder {
         )
     }
 
-    pub fn rdp(ai_responder: Box<dyn AiResponder>, budget_config: AiBudgetConfig) -> Self {
+    pub fn rdp(
+        ai_responder: Box<dyn AiResponder>,
+        budget_config: AiBudgetConfig,
+    ) -> Result<Self, crate::config::HoneypotConfigError> {
         Self::new(
             "ai_rdp".to_string(),
             "rdp".to_string(),
@@ -229,7 +258,10 @@ impl AiHoneypotResponder {
         )
     }
 
-    pub fn vnc(ai_responder: Box<dyn AiResponder>, budget_config: AiBudgetConfig) -> Self {
+    pub fn vnc(
+        ai_responder: Box<dyn AiResponder>,
+        budget_config: AiBudgetConfig,
+    ) -> Result<Self, crate::config::HoneypotConfigError> {
         Self::new(
             "ai_vnc".to_string(),
             "vnc".to_string(),
@@ -239,7 +271,10 @@ impl AiHoneypotResponder {
         )
     }
 
-    pub fn smtp(ai_responder: Box<dyn AiResponder>, budget_config: AiBudgetConfig) -> Self {
+    pub fn smtp(
+        ai_responder: Box<dyn AiResponder>,
+        budget_config: AiBudgetConfig,
+    ) -> Result<Self, crate::config::HoneypotConfigError> {
         Self::new(
             "ai_smtp".to_string(),
             "smtp".to_string(),

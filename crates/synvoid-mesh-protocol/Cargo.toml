@@ -5,6 +5,12 @@ edition = "2021"
 license.workspace = true
 repository.workspace = true
 description = "Low-capability mesh wire/identity/signature vocabulary (Phase 27 extraction)"
+readme = "README.md"
+
+[package.metadata.synvoid]
+standalone_class = "class2"
+external_support = false
+standalone_msr = "1.85.0"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

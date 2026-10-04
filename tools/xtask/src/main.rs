@@ -1,6 +1,7 @@
 mod eggbench_qualification;
 mod icmp_qualify;
 mod report;
+mod standalone;
 mod verify;
 
 use std::process;
@@ -34,6 +35,7 @@ fn main() {
             }
             Err(e) => Err(format!("eggbench-qualification: {e}")),
         },
+        Some("standalone") => standalone::run(&args),
         Some("help") | Some("--help") | Some("-h") => {
             print_usage();
             Ok(())
@@ -87,6 +89,8 @@ USAGE:
     cargo xtask verify-release      Run release verification (production artifacts)
     cargo xtask test package <name> Test a specific package
     cargo xtask test guards         Run all architectural guard tests
+    cargo xtask standalone baseline [--output PATH]  Regenerate candidate dependency evidence
+    cargo xtask standalone consumer <crate> [--features FEATURES]  Test packaged crate outside workspace
     cargo xtask icmp-qualify (--check | --dry-run | --native | --cleanup) [--json] [--timeout-secs N] [--out PATH]
 cargo xtask eggbench-qualification export --output <dir> --listen-port <port> --origin-port <port> [--metrics-port <port>] [--configtest] [--configtest-binary <path>]
     cargo xtask eggbench-qualification check  --input  <dir> [--configtest] [--configtest-binary <path>]

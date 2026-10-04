@@ -917,4 +917,25 @@ mod tests {
         assert!(Confidence::High > Confidence::Medium);
         assert!(Confidence::Medium > Confidence::Low);
     }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config { cases: 128, .. proptest::test_runner::Config::default() })]
+        #[test]
+        fn arbitrary_bounded_protocol_bytes_never_panic(bytes in proptest::collection::vec(proptest::prelude::any::<u8>(), 0..=4096)) {
+            let found = ProtocolDetector::new().detect(&bytes);
+            if let Some(found) = found {
+                proptest::prop_assert!(!found.protocol.is_empty());
+                proptest::prop_assert!(found.protocol.len() <= 32);
+                proptest::prop_assert!(!found.evidence.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn maximum_detector_window_handles_binary_data() {
+        let mut bytes = vec![0xff; crate::config::MAX_RETAINED_PAYLOAD_BYTES];
+        bytes[..4].copy_from_slice(b"SSH-");
+        let found = ProtocolDetector::new().detect(&bytes).unwrap();
+        assert_eq!(found.protocol, "ssh");
+    }
 }

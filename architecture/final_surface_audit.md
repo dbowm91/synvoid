@@ -456,3 +456,14 @@ statement, so all stay (1)/(2) with no registry churn):
 | No raw threat-intel enforcement | None | Guard passes | Clean |
 | No mem::forget lifecycle leaks | None | Guard passes | Clean |
 | Partition quorum loss | Low | Fail-closed `QuorumUnavailable` + freshness-classified reads per binding `architecture/distributed_state_contract.md` (MESH-15 closed) | Accepted |
+
+## Phase 123 standalone campaign status — 2026-10-02
+
+The registered Phases 115–123 campaign is closed. Only honeypot, DNSSEC
+keystore and mesh-protocol gained/finished standalone-capable class-2 evidence;
+none gained external support. DNS and mesh application dependency reachability
+did not change, sandbox was retained in `synvoid-platform`, and the gate-only
+ICMP, YARA, proxy-cache, tarpit, filter, jail-protocol and native-extension
+candidates did not meet a new promotion trigger. See
+`standalone_crate_phase123_closeout.md` for measured graph, package and
+qualification evidence.

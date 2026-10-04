@@ -1,11 +1,11 @@
-# Dependency Security Baseline — Phase 25 Evidence (current through Phase 103)
+# Dependency Security Baseline — Phase 25 Evidence (current through Phase 123)
 
 Status: binding evidence for Track 4 Phase 25 (`plans/phase_25_dependency_security_baseline_and_entitlement.md`).
-Owner: security / release. Reviewed: 2026-10-01 (Phase 103: Wasmtime
-RUSTSEC-2026-0315 / -0316 remediation — direct runtime 36.0.15 → 36.0.16
-LTS patch, transitive YARA line 47.0.4 → 48.0.3 via the same manifest-only
-temporary compat fork; minify-html fork retained, upstream still 0.18.1;
-two retained advisory exceptions re-triaged).
+Owner: security / release. Reviewed: 2026-10-02 (Phase 123: Wasmtime
+RUSTSEC-2026-0326 / -0327 remediation — transitive YARA line 48.0.3 → 48.0.5
+(48.0.4 advisory minimum);
+direct runtime remains 36.0.16; minify-html fork retained, upstream still
+0.18.1; two retained advisory exceptions re-triaged).
 Re-audit: 2026-11-01 (machine-enforced via `effective_review_date()` +
 `SYNVOID_SECURITY_REVIEW_AS_OF`).
 
@@ -28,8 +28,8 @@ Evidence commands (run 2026-10-01 for the Phase 103 closeout, advisory DB curren
 ```bash
 cargo tree -i wasmtime@36.0.16 --workspace
 cargo tree -e features -i wasmtime@36.0.16 --workspace
-cargo tree -i wasmtime@48.0.3 --workspace
-cargo tree -e features -i wasmtime@48.0.3 --workspace
+cargo tree -i wasmtime@48.0.5 --workspace
+cargo tree -e features -i wasmtime@48.0.5 --workspace
 cargo tree -i yara-x --workspace
 cargo tree -i wasmtime-wasi --workspace        # expect: no match
 cargo tree -i wasi-filesystem --workspace      # expect: no match
@@ -40,7 +40,7 @@ cargo deny check
 ## 1. Direct Wasmtime path (plugin runtime)
 
 <!-- guard-anchor: wasmtime-direct-version = "36.0.16" -->
-<!-- guard-anchor: wasmtime-transitive-version = "48.0.3" -->
+<!-- guard-anchor: wasmtime-transitive-version = "48.0.5" -->
 <!-- guard-anchor: wasmtime-wasi-absent-from-lock = true -->
 
 - Version: **36.0.16** (Wasmtime 36 LTS line, supported through 2027-08-20),
@@ -64,14 +64,14 @@ cargo deny check
 
 ## 2. Transitive Wasmtime path (YARA compilation)
 
-- Version: **48.0.3** from crates.io, via **yara-x 1.20.0** as vendored in the
+- Version: **48.0.5** from crates.io, via **yara-x 1.20.0** as vendored in the
   temporary manifest-only compat fork `third-party/yara-x-compat/` (exact
-  upstream 1.20.0 sources; only the Phase 40 + Phase 103 manifest delta:
-  wasmtime 45.0.3 → 47.0.4 → 48.0.3, rust-version 1.93 → 1.94 → 1.95). Wasmtime
+  upstream 1.20.0 sources; only the Phase 40 + Phase 103 + Phase 123 manifest
+  delta: wasmtime 45.0.3 → 47.0.4 → 48.0.3 → 48.0.5, rust-version 1.93 → 1.94 → 1.95). Wasmtime
   40.0.4 is absent from the graph (Phase 40); Wasmtime 47.0.4 is absent
   from the graph (Phase 103). No source divergence — `src/` and `build.rs`
   remain byte-identical to upstream 1.20.0.
-- Consumers (`cargo tree -i wasmtime@48.0.3`, verified 2026-10-01): `synvoid-yara`
+- Consumers (`cargo tree -i wasmtime@48.0.5`, verified 2026-10-02): `synvoid-yara`
   (single owner since Phase 26) → `synvoid-upload`, `synvoid-jail-runtime`, root.
   `synvoid-mesh` no longer links `yara-x`.
 - Enabled features (via yara-x `default-modules`; the upstream-removed `linkme`
@@ -602,3 +602,16 @@ and DEFER external extraction. Source manifest was checked from the published
 crate; release record: <https://github.com/VirusTotal/yara-x/releases/tag/v1.21.0>.
 The trigger evidence and full campaign disposition are in
 `architecture/subsystem_boundary_extraction_closeout.md` §“YARA”.
+
+## 14. Phase 123 Wasmtime advisory response (2026-10-02)
+
+The exact-head hosted CI run for the standalone campaign found newly
+published `RUSTSEC-2026-0326` and `RUSTSEC-2026-0327` affecting the YARA
+consumer's Wasmtime 48.0.3. The advisories identify 48.0.4 as fixed; the
+manifest-only compatibility fork now pins 48.0.5, the available resolved
+release, and retains its Rust 1.95 MSRV. No advisory ignore was added. The
+workspace lock resolves the transitive Wasmtime family at 48.0.5; direct
+plugin-runtime Wasmtime remains 36.0.16. `cargo deny check`, `cargo audit`,
+and the transitive-version repository guard pass on the updated graph.
+This is a dependency-only YARA security update: source remains byte-identical
+to official yara-x 1.20.0. Re-audit remains 2026-11-01.

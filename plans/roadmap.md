@@ -1812,9 +1812,12 @@ Binding constraints:
 
 
 
-## Post-Phase-114 Campaign: Standalone-Capable Crate Generalization — Phases 115–123 ACTIVE / REGISTERED
+## Post-Phase-114 Campaign: Standalone-Capable Crate Generalization — Phases 115–123 CLOSED
 
-Status: **ACTIVE / REGISTERED** (2026-10-02).
+Status: **CLOSED WITH EXPLICIT QUALIFICATION RESIDUALS** (2026-10-02; closeout:
+`architecture/standalone_crate_phase123_closeout.md`). No class-3 promotion or
+repository-extraction follow-up was justified. Exact-SHA hosted CI remains a
+post-push check; native macOS and live HSM evidence remain external gates.
 
 Umbrella roadmap:
 `plans/standalone_crate_generalization_roadmap.md`.
@@ -1831,65 +1834,76 @@ external repository.
 Execution lanes:
 
 1. **Phase 115 — Standalone Crate Contract and Dependency Baseline**
-   - Status: **PLANNED / READY**.
+   - Status: **CLOSED / ROUTINE QUALIFICATION DEFERRED** (2026-10-02; implementation `c968594`).
    - Plan: `plans/phase_115_standalone_crate_contract_and_baseline.md`.
    - Defines the standalone-capable class-2 contract, reproducible dependency
      inventory and packaged outside-workspace consumer harness.
+   - Closeout: `architecture/standalone_crate_phase115_closeout.md`. Focused
+     guard/tooling/package-consumer checks passed; `cargo xtask verify` was
+     stopped during failure-injection compilation after earlier routine stages
+     passed, so the phase is not labeled qualified.
 
 2. **Phase 116 — DNS Runtime-Config and Core Neutralization**
-   - Status: **PLANNED / READY AFTER PHASE 115**.
+   - Status: **CLOSED DEFER** (2026-10-02; DTO/adapters/parity gate incomplete).
    - Plan: `plans/phase_116_dns_runtime_config_core_neutralization.md`.
    - Moves runtime config ownership into DNS, removes application core/helper
      reach while preserving persisted SynVoid config and behavior.
+   - Closeout: `architecture/standalone_crate_phase116_closeout.md`.
 
 3. **Phase 117 — DNS Provider Inversion and Standalone Consumer Qualification**
-   - Status: **PLANNED / READY AFTER PHASE 116**.
+   - Status: **CLOSED DEFER — Phase 116 predecessor not delivered** (2026-10-02).
    - Plan: `plans/phase_117_dns_provider_inversion_standalone_consumer.md`.
    - Inverts TLS/Geo/mesh/lifecycle dependencies and requires an outside-
      workspace authoritative/resolver/DNSSEC/encrypted-transport consumer.
    - Hickory remains the protocol foundation; no duplicate DNS stack is
      authorized.
+   - Closeout: `architecture/standalone_crate_phase116_closeout.md`.
 
 4. **Phase 118 — Mesh Application-Dispatch Capability Inversion**
-   - Status: **PLANNED / READY AFTER PHASE 115**.
+   - Status: **CLOSED DEFER** (2026-10-02; active dispatch/state owners need typed async seam and parity tests).
    - Plan: `plans/phase_118_mesh_application_dispatch_capability_inversion.md`.
    - Removes concrete proxy/cache/tunnel/serverless/application dispatch from
      reusable peer/runtime mechanisms while preserving canonical-vs-advisory
      authority.
+   - Closeout: `architecture/standalone_crate_phase118_closeout.md`.
 
 5. **Phase 119 — Mesh Runtime Extraction Decision and Standalone Qualification**
-   - Status: **PLANNED / READY AFTER PHASE 118**.
+   - Status: **CLOSED DEFER — Phase 118 predecessor not delivered** (2026-10-02).
    - Plan: `plans/phase_119_mesh_runtime_extraction_standalone_qualification.md`.
    - Creates an internal `synvoid-mesh-runtime` only if a real one-way seam is
      proven; RETAIN is an acceptable outcome. rust-libp2p/Iroh/noq overlap must
      be adjudicated before adding another generic networking layer.
+   - Closeout: `architecture/standalone_crate_phase118_closeout.md`.
 
 6. **Phase 120 — Sandbox Guarantee-Boundary Internal Crate Split Decision**
-   - Status: **PLANNED / READY AFTER PHASE 115**.
+   - Status: **CLOSED RETAIN** (2026-10-02; no proven dependency-reachability reduction).
    - Plan: `plans/phase_120_sandbox_guarantee_boundary_crate_split.md`.
    - Evaluates moving the guarantee/evidence/native-backend contract out of
      broad `synvoid-platform` into internal `synvoid-sandbox`; external
      extraction remains DEFER.
+   - Closeout: `architecture/standalone_crate_phase120_closeout.md`.
 
 7. **Phase 121 — Honeypot Standalone-Package Hardening**
-   - Status: **PLANNED / READY AFTER PHASE 115**.
+   - Status: **CLOSED DEFER — native macOS qualification unavailable** (2026-10-02).
    - Plan: `plans/phase_121_honeypot_standalone_package_hardening.md`.
    - Closes Phase 107's resource-ceiling, persistence, hostile-input,
      provider-containment, docs/MSRV and target-proof gaps.
+   - Closeout: `architecture/standalone_crate_phase121_closeout.md`.
 
 8. **Phase 122 — DNSSEC-Keystore and Mesh-Protocol Leaf Package Hardening**
-   - Status: **PLANNED / READY AFTER PHASE 115**.
+   - Status: **CLOSED CLASS 2 — LIVE HSM PROVIDER DEFERRED; RSA PUBLIC PROMOTION BLOCKED** (2026-10-02).
    - Plan: `plans/phase_122_security_protocol_leaf_package_hardening.md`.
    - Hardens DNSSEC custody threat/secret/crash/HSM behavior and formalizes
      mesh wire/API/replay compatibility before standalone class-2 qualification.
+   - Closeout: `architecture/standalone_crate_phase122_closeout.md`.
 
 9. **Phase 123 — Standalone-Crate Campaign Qualification and Promotion Gate**
-   - Status: **PLANNED / BLOCKED ON PHASES 117, 119, 120, 121, 122**.
+   - Status: **CLOSED WITH EXPLICIT QUALIFICATION RESIDUALS** (2026-10-02; hosted exact-SHA CI passed at `f8118214`).
    - Plan: `plans/phase_123_standalone_crate_campaign_qualification_gate.md`.
-   - Rebuilds dependency/package evidence, refreshes ICMP/YARA/proxy-cache/
-     tarpit/filter/jail/native-extension gates, and may register later class-3
-     or repository-extraction work only if the explicit support/lifecycle
-     criteria are actually satisfied.
+   - Closeout: `architecture/standalone_crate_phase123_closeout.md`.
+   - Regenerated dependency/package evidence and refreshed the ICMP/YARA/
+     proxy-cache/tarpit/filter/jail/native-extension gates. No later class-3 or
+     repository-extraction plan met its explicit support/lifecycle criteria.
 
 Binding constraints:
 

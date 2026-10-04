@@ -1,4 +1,4 @@
-# SynVoid temporary `yara-x` compatibility fork (Phase 40; Phase 103 Wasmtime 48 LTS security delta)
+# SynVoid temporary `yara-x` compatibility fork (Phase 40; Phase 123 Wasmtime security deltas)
 
 Base: official `yara-x 1.20.0` (crates.io; upstream tag `v1.20.0`,
 released 2026-08-24 at https://github.com/VirusTotal/yara-x;
@@ -9,7 +9,7 @@ upstream git sha1 `60ad06971467029e77967e59d580cbbe85a1474d` for `lib/`;
 Vendored: 2026-09-18 by unpacking the released crate (Phase 40). The
 vendored `Cargo.lock` and `.cargo_vcs_info.json` were removed;
 `Cargo.toml.orig` is retained as provenance evidence. `Cargo.toml`
-carries the Phase 40 + Phase 103 manifest deltas plus a provenance
+carries the Phase 40 + Phase 103 + Phase 123 manifest deltas plus a provenance
 header (lines marked `SYNVOID-PHASE40` and `SYNVOID-PHASE103`).
 
 ## Delta from upstream 1.20.0 (complete)
@@ -21,7 +21,7 @@ Manifest-only. No file under `src/` or `build.rs` is modified:
 +rust-version = "1.95.0"
  [target.'cfg(not(target_family = "wasm"))'.dependencies.wasmtime]
 -version = "45.0.3"
-+version = "48.0.3"
++version = "48.0.5"
 ```
 
 Phase 103 advanced from the Phase 40 wasmtime 47.0.4 / rust-version

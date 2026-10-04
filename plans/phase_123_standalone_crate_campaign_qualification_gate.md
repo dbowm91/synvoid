@@ -1,6 +1,10 @@
 # Phase 123 Plan: Standalone-Crate Campaign Qualification and Promotion Gate
 
-Status: **PLANNED / BLOCKED ON PHASES 117, 119, 120, 121, 122** (2026-10-02).
+Status: **CLOSED WITH EXPLICIT QUALIFICATION RESIDUALS** (2026-10-02; closeout:
+`architecture/standalone_crate_phase123_closeout.md`). No class-3 promotion or
+repository-extraction follow-up was triggered. Exact-SHA hosted CI passed on
+`f81182149889e21c4908b7ee38c74bc6b4518f6b`; macOS and live HSM qualification
+remain explicit residuals, with no unsupported platform claim.
 
 Registered in: `plans/roadmap.md` and
 `plans/standalone_crate_generalization_roadmap.md`.

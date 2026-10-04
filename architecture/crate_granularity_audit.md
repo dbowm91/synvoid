@@ -247,3 +247,24 @@ retain bar (no "keep" merely for being new):
   (forbidden branch — no gap evidence); publishing internal crates merely for
   looking reusable (publication decision is separate — see
   `crate_boundary_reuse_closeout.md` §reuse policy).
+
+## Phase 123 current standalone campaign reconciliation — 2026-10-02
+
+The Phase 115–123 campaign closes without DNS/mesh/sandbox extraction. Phase 115
+established the reproducible ten-candidate snapshot in
+`standalone_crate_dependency_baseline.json`; Phase 123 regenerated it after
+Phases 121–122. Comparing the Phase 115 and Phase 123 snapshots shows no change
+in direct SynVoid dependencies or expanded normal dependency-tree line counts
+for DNS (7 / 838), mesh (14 / 1928), or platform (1 / 106). Those tracks made no
+dependency-reachability reduction. Honeypot, DNSSEC keystore and mesh protocol
+remain zero-SynVoid-dependency packages; package manifests grew only to include
+their new README/class metadata (26→29, 15→16 and 14→15 files respectively),
+with expanded dependency line counts unchanged (99, 132, 85). File counts are
+package contents, not a maintenance-reduction measure.
+
+The qualified reusable class-2 packages are `synvoid-honeypot`,
+`synvoid-dnssec-keystore` and `synvoid-mesh-protocol`. Their Phase 121–122
+closeouts carry Linux/Rust 1.85 packaged-consumer evidence and residual native
+macOS / live PKCS#11 / RSA advisory limits. No class-3 promotion or repository
+extraction is justified. The sole class-3 crate remains `synvoid-rate-limit`
+under the independent Phase 47 policy.

@@ -104,6 +104,16 @@ dry-run, justified burden).
 
 ## 2. Package Metadata Requirements
 
+### Phase 123 standalone package status (2026-10-02)
+
+`synvoid-honeypot`, `synvoid-dnssec-keystore` and `synvoid-mesh-protocol` are
+class-2 packaged-source candidates only. Each has an outside-workspace Rust
+1.85 consumer smoke recorded in its phase closeout. None is externally
+supported or published. Live HSM qualification (keystore), the unresolved RSA
+advisory, and native macOS qualification (honeypot) remain explicit blockers;
+no new publication order entry is created. `synvoid-rate-limit` remains the
+only class-3 library.
+
 Every publishable crate must have these Cargo.toml fields:
 
 | Field | Source | Notes |

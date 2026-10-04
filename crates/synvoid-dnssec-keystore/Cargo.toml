@@ -5,6 +5,12 @@ edition = "2021"
 license.workspace = true
 repository.workspace = true
 description = "DNSSEC private-key custody boundary: generation/signing/HSM/software storage (Phase 30 extraction)"
+readme = "README.md"
+
+[package.metadata.synvoid]
+standalone_class = "class2"
+external_support = false
+standalone_msr = "1.85.0"
 
 [features]
 default = []

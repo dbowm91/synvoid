@@ -1,6 +1,6 @@
 # Phase 121 Plan: Honeypot Standalone-Package Hardening
 
-Status: **PLANNED / READY AFTER PHASE 115** (2026-10-02).
+Status: **CLOSED DEFER — native macOS qualification unavailable** (2026-10-02).
 
 Registered in: `plans/roadmap.md` and
 `plans/standalone_crate_generalization_roadmap.md`.
@@ -152,3 +152,20 @@ Reject implementation that:
 - turns advisory indicators into enforcement;
 - claims cross-platform support without native evidence;
 - publishes the package.
+
+## Formal closeout
+
+The security, persistence, resource-limit, property-test, documentation, and
+packaged-consumer workstreams are implemented. Linux package/test/doc checks
+and an outside-workspace Rust 1.85.0 consumer passed. The package is recorded as
+a class-2 candidate with `external_support = false`; this is packaged Linux
+evidence, not a class-3 support commitment. The required native macOS run was
+unavailable because only `x86_64-unknown-linux-gnu` is installed in this
+worktree environment. Cross-compilation would not meet the plan's native target
+criterion, so target qualification is **DEFERRED**. No Windows target claim is
+made. Detailed evidence is in
+`architecture/standalone_crate_phase121_closeout.md`.
+
+Phase 122 remains eligible and independent. Phase 123 must retain this target
+qualification residual; it must not describe the crate as fully qualified
+across platforms or publish it.

@@ -1478,8 +1478,8 @@ fn yara_fork_is_temporary_guard() {
         "vendored fork must keep version 1.20.0 to satisfy the \"1.20\" requirement"
     );
     assert!(
-        fork_manifest.contains("version = \"48.0.3\""),
-        "vendored fork must pin wasmtime to 48.0.3 (Phase 103 security delta clears 0315/0316)"
+        fork_manifest.contains("version = \"48.0.5\""),
+        "vendored fork must pin wasmtime to 48.0.5 (Phase 123 clears 0326/0327)"
     );
     assert!(
         !fork_manifest.contains("version = \"47.0.4\"")
@@ -1493,6 +1493,10 @@ fn yara_fork_is_temporary_guard() {
     assert!(
         fork_manifest.contains("SYNVOID-PHASE103"),
         "vendored fork manifest must mark the Phase 103 delta lines"
+    );
+    assert!(
+        fork_manifest.contains("SYNVOID-PHASE123"),
+        "vendored fork manifest must mark the Phase 123 delta line"
     );
     let fork_block = fork_metadata_block(&fork_manifest);
     let fork_violations = evaluate_fork_block("yara-x-compat (fork manifest)", &fork_block, as_of);

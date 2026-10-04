@@ -1,6 +1,6 @@
 # Phase 122 Plan: DNSSEC-Keystore and Mesh-Protocol Leaf Package Hardening
 
-Status: **PLANNED / READY AFTER PHASE 115** (2026-10-02).
+Status: **CLOSED CLASS 2 — LIVE HSM PROVIDER DEFERRED; RSA PUBLIC PROMOTION BLOCKED** (2026-10-02).
 
 Registered in: `plans/roadmap.md` and
 `plans/standalone_crate_generalization_roadmap.md`.
@@ -182,3 +182,29 @@ Reject implementation that:
 - changes mesh enum representation without wire decision;
 - equates Rust crate semver with wire compatibility;
 - publishes either crate.
+
+## Formal closeout
+
+Both crates are registered as standalone-capable class-2 candidates with
+`external_support = false`, evidence-based Rust 1.85 metadata and consumer
+READMEs. The outside-workspace packaged consumers passed. The DNSSEC README
+states the threat model, owned-buffer zeroization limits, Unix/Windows
+persistence behavior, fail-closed HSM procedure, and unresolved RSA advisory.
+`HsmConfig` now redacts PINs from ordinary `Debug`; software-key temporary
+buffers are zeroized on error/drop; failed atomic replacement cleans its temp
+file and does not replace the prior destination. The mesh protocol README
+separates Rust API, wire, signature-envelope, and replay contracts; the exact
+version-1 handshake policy is pinned and used by discovery/transport; no wire
+representation changed.
+
+The default and PKCS#11-feature test builds passed. No live PKCS#11 provider was
+available, so the README records the hardware/token qualification procedure and
+no live-HSM qualification is claimed. RustSec still lists `rsa` with no patched
+release for RUSTSEC-2023-0071; this disposition is documented as unresolved, and
+class-3/public-support promotion is blocked while RSA software signing remains
+in scope. Class-2 packaged use remains unsupported externally. Detailed proof is
+in `architecture/standalone_crate_phase122_closeout.md`.
+
+Phase 123 is now eligible after recording Phases 116–122 outcomes, including
+blocked DNS/mesh successors and the Phase 115 routine-verification residual.
+It must not promote either package to class 3 or publish them.

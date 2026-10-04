@@ -1,6 +1,6 @@
 # Phase 115 Plan: Standalone Crate Contract and Dependency Baseline
 
-Status: **PLANNED / READY** (2026-10-02).
+Status: **CLOSED / ROUTINE QUALIFICATION DEFERRED** (2026-10-02).
 
 Registered in: `plans/roadmap.md` and
 `plans/standalone_crate_generalization_roadmap.md`.
@@ -151,3 +151,15 @@ Reject implementation that:
 - hard-codes current dependency counts into a guard that cannot be regenerated;
 - requires network access for routine CI package-consumer tests;
 - creates a new repository or registry release.
+
+## Formal closeout
+
+Implementation commit: `c968594`.
+Closeout evidence: `architecture/standalone_crate_phase115_closeout.md`.
+
+The contract, generated inventory, focused guard, and positive/negative
+packaged-consumer controls are complete. The focused tests passed. The required
+full `cargo xtask verify` run did not complete: it was stopped during compilation
+of the failure-injection target after earlier routine stages passed. The phase is
+closed with that qualification residual explicitly deferred; it is not marked
+`CLOSED QUALIFIED`.

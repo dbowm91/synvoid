@@ -106,6 +106,9 @@ fn threat_serde_differential() {
 
 #[test]
 fn wire_enum_codes_stable() {
+    assert!(synvoid_mesh_protocol::is_compatible_message_version(1));
+    assert!(!synvoid_mesh_protocol::is_compatible_message_version(0));
+    assert!(!synvoid_mesh_protocol::is_compatible_message_version(2));
     assert_eq!(AckStatus::Success.as_u8(), 0);
     assert_eq!(AckStatus::from_u8(6), AckStatus::InternalError);
     assert_eq!(AckStatus::from_u8(99), AckStatus::InternalError);

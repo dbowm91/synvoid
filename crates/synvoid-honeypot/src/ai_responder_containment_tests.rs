@@ -330,11 +330,11 @@ fn test_template_responder_clone() {
 fn test_ai_responder_sync_returns_fallback() {
     // The sync respond() must NEVER call block_on; it returns static fallback
     let budget_config = AiBudgetConfig::default();
-    let _budget = Arc::new(AiResponderBudget::new(budget_config.clone()));
+    let _budget = Arc::new(AiResponderBudget::new(budget_config.clone()).unwrap());
 
     // We can't create a real AiResponder without a provider, so we test
     // the sync path behavior via the trait contract
-    let responder = AiHoneypotResponder::ssh(Box::new(DummyAiResponder), budget_config);
+    let responder = AiHoneypotResponder::ssh(Box::new(DummyAiResponder), budget_config).unwrap();
     let context = make_context("ssh");
     let response = responder.respond(b"test", &context);
 
@@ -350,7 +350,7 @@ async fn test_ai_responder_sync_from_async_context_does_not_panic() {
     // that panics when called from within a Tokio runtime. Calling it from
     // an async context via spawn_blocking verifies no runtime re-entry.
     let budget_config = AiBudgetConfig::default();
-    let responder = AiHoneypotResponder::ssh(Box::new(DummyAiResponder), budget_config);
+    let responder = AiHoneypotResponder::ssh(Box::new(DummyAiResponder), budget_config).unwrap();
     let context = make_context("ssh");
     let response = tokio::task::spawn_blocking(move || responder.respond(b"test", &context))
         .await
@@ -362,7 +362,7 @@ async fn test_ai_responder_sync_from_async_context_does_not_panic() {
 #[test]
 fn test_ai_responder_name_and_service() {
     let budget_config = AiBudgetConfig::default();
-    let responder = AiHoneypotResponder::http(Box::new(DummyAiResponder), budget_config);
+    let responder = AiHoneypotResponder::http(Box::new(DummyAiResponder), budget_config).unwrap();
     assert_eq!(responder.name(), "ai_http");
     assert_eq!(responder.service_type(), "http");
 }
@@ -428,7 +428,7 @@ fn test_ai_responder_budget_creates_subcomponents() {
         max_concurrent_requests: 1,
         ..Default::default()
     };
-    let budget = AiResponderBudget::new(config);
+    let budget = AiResponderBudget::new(config).unwrap();
     assert!(!budget.circuit_breaker.is_open());
     assert_eq!(budget.concurrency.active_count(), 0);
 
@@ -443,7 +443,7 @@ fn test_ai_responder_budget_creates_subcomponents() {
 #[test]
 fn test_ai_responder_budget_clone_shares_no_state() {
     let config = AiBudgetConfig::default();
-    let b1 = AiResponderBudget::new(config);
+    let b1 = AiResponderBudget::new(config).unwrap();
     b1.circuit_breaker.record_failure();
     b1.circuit_breaker.record_failure();
 

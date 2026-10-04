@@ -117,7 +117,7 @@ impl std::fmt::Debug for SealedSigningKey {
 
 /// Raw keypair parts: (public_key, private_key, key_tag, flags, key_size).
 /// Factored out so generation helpers share one shape.
-pub(crate) type KeypairParts = (Vec<u8>, Vec<u8>, u16, u16, Option<u32>);
+pub(crate) type KeypairParts = (Vec<u8>, Zeroizing<Vec<u8>>, u16, u16, Option<u32>);
 
 impl SealedSigningKey {
     /// Canonical constructor used by generation/import paths inside this crate.
@@ -129,7 +129,7 @@ impl SealedSigningKey {
         created_at: u64,
         expires_at: u64,
         public_key: Vec<u8>,
-        private_key: Vec<u8>,
+        private_key: Zeroizing<Vec<u8>>,
         key_tag: u16,
         flags: u16,
         key_size: Option<u32>,
@@ -141,7 +141,7 @@ impl SealedSigningKey {
             created_at,
             expires_at,
             public_key,
-            private_key: Zeroizing::new(private_key),
+            private_key,
             key_tag,
             flags,
             key_size,
@@ -226,7 +226,7 @@ impl SealedSigningKey {
             created_at,
             expires_at,
             public_key,
-            private_key,
+            Zeroizing::new(private_key),
             key_tag,
             flags,
             key_size,
@@ -315,11 +315,13 @@ impl SealedSigningKey {
 
     fn sign_ed25519(&self, data: &[u8]) -> Result<Vec<u8>, KeystoreError> {
         use ed25519_dalek::Signer;
-        let bytes: [u8; 32] = self.private_key.as_slice().try_into().map_err(|_| {
+        let mut bytes: [u8; 32] = self.private_key.as_slice().try_into().map_err(|_| {
             KeystoreError::InvalidKey("invalid Ed25519 private key length".to_string())
         })?;
         let signing_key = ed25519_dalek::SigningKey::from_bytes(&bytes);
-        Ok(signing_key.sign(data).to_bytes().to_vec())
+        let signature = signing_key.sign(data).to_bytes().to_vec();
+        bytes.zeroize();
+        Ok(signature)
     }
 
     fn sign_rsa(&self, data: &[u8]) -> Result<Vec<u8>, KeystoreError> {
@@ -381,7 +383,7 @@ pub(crate) fn generate_keypair(
 ) -> Result<KeypairParts, KeystoreError> {
     match algorithm {
         Algorithm::Ed25519 => {
-            let bytes = crate::rng::random_bytes(32)?;
+            let bytes = Zeroizing::new(crate::rng::random_bytes(32)?);
             let signing_key = ed25519_dalek::SigningKey::from_bytes(
                 bytes
                     .as_slice()
@@ -389,7 +391,9 @@ pub(crate) fn generate_keypair(
                     .expect("random_bytes(32) always returns 32 bytes"),
             );
             let public = signing_key.verifying_key().to_bytes().to_vec();
-            let private = signing_key.to_bytes().to_vec();
+            let mut private_seed = signing_key.to_bytes();
+            let private = Zeroizing::new(private_seed.to_vec());
+            private_seed.zeroize();
             let flags = if key_type == KeyType::KSK { 257 } else { 256 };
             let tag = calculate_key_tag(flags, 3, Algorithm::Ed25519.to_u8(), &public);
             Ok((public, private, tag, flags, None))
@@ -429,7 +433,7 @@ pub(crate) fn generate_keypair(
             }
             public_dnskey.extend_from_slice(&e_bytes);
             public_dnskey.extend_from_slice(&n_bytes);
-            let private_der = {
+            let private_der = Zeroizing::new({
                 use rsa::pkcs8::EncodePrivateKey;
                 private_key
                     .to_pkcs8_der()
@@ -440,7 +444,7 @@ pub(crate) fn generate_keypair(
                     })?
                     .as_bytes()
                     .to_vec()
-            };
+            });
             let flags = if key_type == KeyType::KSK { 257 } else { 256 };
             let tag = calculate_key_tag(flags, 3, Algorithm::RSA.to_u8(), &public_dnskey);
             Ok((public_dnskey, private_der, tag, flags, Some(bits as u32)))
@@ -477,7 +481,7 @@ mod tests {
         getrandom::getrandom(&mut seed).expect("rng");
         let signing = ed25519_dalek::SigningKey::from_bytes(&seed);
         let public = signing.verifying_key().to_bytes().to_vec();
-        let private = signing.to_bytes().to_vec();
+        let private = Zeroizing::new(signing.to_bytes().to_vec());
         let tag = calculate_key_tag(256, 3, 15, &public);
         SealedSigningKey::new_sealed(
             "zsk".to_string(),

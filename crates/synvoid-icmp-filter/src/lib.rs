@@ -113,9 +113,9 @@ pub fn select_backend_for_host(requested: FilterType) -> Result<SelectionReport>
                 }
                 #[cfg(not(feature = "icmp-ebpf"))]
                 {
-                    return Err(IcmpFilterError::FeatureNotEnabled(
+                    Err(IcmpFilterError::FeatureNotEnabled(
                         "icmp-ebpf feature not enabled".to_string(),
-                    ));
+                    ))
                 }
             }
             FilterType::Nftables => {
@@ -127,10 +127,10 @@ pub fn select_backend_for_host(requested: FilterType) -> Result<SelectionReport>
                         reason: "explicit nftables request satisfied".to_string(),
                     });
                 }
-                return Err(IcmpFilterError::BackendUnavailable(format!(
+                Err(IcmpFilterError::BackendUnavailable(format!(
                     "explicit nftables request cannot be satisfied: {}",
                     probe.reason
-                )));
+                )))
             }
             FilterType::Auto => {
                 #[cfg(feature = "icmp-ebpf")]
@@ -152,16 +152,14 @@ pub fn select_backend_for_host(requested: FilterType) -> Result<SelectionReport>
                         reason: "auto: nftables baseline selected".to_string(),
                     });
                 }
-                return Err(IcmpFilterError::BackendUnavailable(format!(
+                Err(IcmpFilterError::BackendUnavailable(format!(
                     "auto selection found no usable Linux backend: {}",
                     probe.reason
-                )));
+                )))
             }
-            other => {
-                return Err(IcmpFilterError::Config(format!(
-                    "{other:?} is not available on Linux"
-                )));
-            }
+            other => Err(IcmpFilterError::Config(format!(
+                "{other:?} is not available on Linux"
+            ))),
         }
     }
     #[cfg(all(
@@ -786,7 +784,7 @@ impl IcmpFilterManager {
                     VerificationOutcome::Unknown { .. } => "unknown",
                 },
             );
-            return outcome;
+            outcome
         }
         #[cfg(not(any(
             target_os = "linux",
