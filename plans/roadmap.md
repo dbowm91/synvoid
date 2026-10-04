@@ -1918,3 +1918,52 @@ Binding constraints:
 - mesh authority/partition/provenance semantics cannot weaken;
 - OpenRaft/QUIC/network-stack upgrades are separate from boundary extraction;
 - native security support requires native evidence.
+
+
+## Post-Phase-123 Documentation/Evidence Reconciliation — Phase 124 ACTIVE / REGISTERED
+
+Status: **PLANNED / READY** (2026-10-04).
+
+Plan:
+`plans/phase_124_post_standalone_documentation_evidence_reconciliation.md`.
+
+Planning baseline:
+`cacd44bffe097d7c62e3ddb0c5816967498a7bde` (PR #51 merge head).
+
+Scope:
+
+- reconcile stale current-authority Phase 115–123 status and exact-SHA CI wording;
+- distinguish the successful campaign-head proof
+  `f81182149889e21c4908b7ee38c74bc6b4518f6b` from any later merged-main
+  exact-SHA proof;
+- refresh the architecture overview and only the release/classification records
+  that are actually stale;
+- add minimal supersession pointers to Phase 107/109/110-era documents without
+  rewriting historical evidence;
+- keep honeypot, DNSSEC-keystore and mesh-protocol class 2 with
+  `external_support=false`; `synvoid-rate-limit` remains the sole class-3
+  crate;
+- make the next DNS boundary research discoverable without performing DNS source
+  changes.
+
+DNS runtime-DTO research:
+`architecture/dns_runtime_dto_conversion_research.md`
+(RESEARCH COMPLETE / IMPLEMENTATION NOT REGISTERED, 2026-10-04).
+
+The DNS study resolves the Phase 116 design blocker at research level: persisted
+`synvoid-config` DTOs remain application-owned; a composition adapter belongs
+under `src/server/`; `synvoid-dns` should own only parsed runtime values;
+unsupported/deferred persisted fields remain fail-closed in config and are
+absent from the runtime API. The proposed conversion removes
+`synvoid-config`, `synvoid-core`, and `synvoid-utils` before the later
+TLS/Geo/mesh provider-inversion work. No Phase 125 implementation plan is
+registered by Phase 124 or the research record.
+
+Binding constraints:
+
+- Phase 124 is documentation/evidence only;
+- do not change Rust source, manifests, lockfiles, workflows, package metadata,
+  support tiers or dependency topology;
+- do not claim merge-head exact-SHA CI unless a real run is observed;
+- do not rewrite historical test counts/proof SHAs;
+- do not implicitly reopen DNS Phase 116/117 implementation.
