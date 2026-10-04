@@ -90,5 +90,4 @@ The Phase 116 design blocker is now answered at research level in
 `synvoid-config` DNS DTOs stay application-owned, the conversion adapter is
 composition code under `src/server/` (never the guard-enforced pure `src/dns/`
 facade), and `synvoid-dns` owns only parsed runtime values. That record is
-**research complete / implementation not registered** — it is not a DNS
-extraction approval.
+**research complete / implementation registered** as the focused Phases 125–130 campaign in `plans/dns_runtime_dto_conversion_roadmap.md`. This successor implements the missing runtime DTO/config-core prerequisite; it is still not a DNS extraction or standalone-promotion approval.
