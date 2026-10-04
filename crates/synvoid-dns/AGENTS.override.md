@@ -899,7 +899,7 @@ promotion is approved.
 
 If DNS neutralization is ever scheduled, the design blocker is already resolved
 at research level in `architecture/dns_runtime_dto_conversion_research.md`
-(**research complete / implementation not registered**). Its load-bearing
+(**research complete / implementation registered as Phases 125–130**). Its load-bearing
 boundary rules:
 
 - persisted DNS config (`synvoid_config::dns::*`) stays in `synvoid-config` and
@@ -919,3 +919,27 @@ boundary rules:
   not become the public runtime contract.
 
 Do not treat this note as authorization to start that work.
+
+
+## Runtime DTO Conversion — Phases 125–130
+
+Implementation is now registered in
+`plans/dns_runtime_dto_conversion_roadmap.md`.
+
+Binding rules for work in this line:
+
+- Phase 125 owns the exhaustive persisted-field -> runtime projection matrix and
+  root adapter parity gate before constructor cutover.
+- Persisted schema remains in `synvoid-config`; do not add Serde/OpenAPI schema
+  ownership to the DNS runtime.
+- The application adapter lives under `src/server/`; `src/dns/` remains a
+  pure re-export facade.
+- Unsupported/deferred persisted knobs stay fail-closed and absent from the
+  runtime DTO until their behavior is separately implemented.
+- Phase 128 is the hard gate for removing the normal `synvoid-config` edge.
+- Phase 129 removes `synvoid-core` and `synvoid-utils` only with differential
+  parity for time, restricted-IP, prefix-mask and lifecycle behavior.
+- Do not perform TLS/Geo/mesh provider inversion before Phase 130's readiness
+  decision.
+- DNSSEC private-key/HSM custody remains in
+  `synvoid-dnssec-keystore`; never move raw-key ownership back into DNS.
