@@ -2025,9 +2025,13 @@ docs-only phase; see `architecture/standalone_crate_phase124_closeout.md` §8.
 Acceptance criteria: met. Rejection criteria: none triggered.
 
 
-## DNS Runtime-DTO Conversion — Phases 125–130 ACTIVE / REGISTERED
+## DNS Runtime-DTO Conversion — Phases 125–130 COMPLETE
 
-Status: **ACTIVE / REGISTERED** (2026-10-04).
+Status: **COMPLETE** (2026-10-05). All six phases **CLOSED QUALIFIED**; terminal
+qualification and the provider-inversion **DEFER** decision are in
+`architecture/dns_runtime_dto_phase130_closeout.md`. Registered 2026-10-04
+(`2a1d5cd6`), closed 2026-10-05. Provider inversion is no longer deferred: it
+was separately registered and closed as Phases 131–136 below.
 
 Umbrella:
 `plans/dns_runtime_dto_conversion_roadmap.md`.
@@ -2141,7 +2145,7 @@ Binding constraints:
 
 ## DNS Startup Truthfulness and Provider Inversion — Phases 131–136 CLOSED QUALIFIED
 
-Status line: **ACTIVE** (2026-10-05). Umbrella:
+Status line: **CLOSED QUALIFIED** (2026-10-05). Umbrella:
 `plans/dns_startup_truthfulness_and_provider_inversion_roadmap.md`.
 
 This campaign continues from the terminal state of Phases 125–130 and carries
