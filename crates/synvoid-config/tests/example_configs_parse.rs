@@ -2,13 +2,18 @@
 //!
 //! Ensures every example TOML deserializes into `DnsConfig` without error
 //! and contains the expected structural values.
+//!
+//! **Phase 128:** these fixtures live here rather than in `synvoid-dns`
+//! because they assert the *persisted* schema, which `synvoid-config` owns.
+//! The runtime projection of the same files is asserted by the root
+//! composition test `tests/dns_runtime_config_parity.rs`.
 
 use synvoid_config::dns::{
     DnsConfig, DnsMode, DnsRateLimitMode, DnsSecAlgorithm, RecursiveUpstreamProvider, TsigAlgorithm,
 };
 
 fn example_path(name: &str) -> String {
-    format!("{}/../../examples/dns/{}", env!("CARGO_MANIFEST_DIR"), name,)
+    format!("{}/../../examples/dns/{}", env!("CARGO_MANIFEST_DIR"), name)
 }
 
 /// Wrapper to deserialize `[dns]` section from the example TOML files.

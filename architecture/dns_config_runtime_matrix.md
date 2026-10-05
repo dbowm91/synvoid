@@ -1228,3 +1228,43 @@ adapter re-parses independently (defense in depth) but that path is not
 reachable through `dns_runtime_config_from_persisted`. The parity fixtures
 assert the validation-gate behavior and exercise `IpNetwork::parse` directly
 for the projection semantics.
+
+---
+
+## Phase 128 findings
+
+Added by `architecture/dns_runtime_dto_phase128_closeout.md`, which is where
+each finding is written up in full. This section keeps the matrix the single
+lookup for "what did the cutover find".
+
+### F-5: the TSIG minimum-secret threshold was too low in Phase 125 (corrected)
+
+Phase 125's `TsigAlgorithmRuntime::min_secret_len()` returned the HMAC *input*
+block size (16/24/32), while the pre-cutover
+`synvoid_config::dns::TsigAlgorithm::key_size()` rejected anything shorter than
+the HMAC *output* length (32/48/64). The Phase 125 adapter therefore accepted
+keys the old server rejected. Corrected to 32/48/64 in Phase 128 and pinned by
+`test_tsig_algorithm_min_secret_len_matches_pre_cutover_key_size`. RFC 8945
+§4.3.2 recommends the output length; the earlier citation was wrong.
+
+### F-6: `[dns.zones]` is converted but never loaded
+
+`DnsServer::new` discards the converted zone specs (`zones: _`), and
+`load_zones(Vec<ZoneSpec>)` has no production caller. A shipped `[dns.zones]`
+entry is validated and converted, then dropped; zones reach a running server
+only via `load_zones_from_store` (the SQLite zone store). Pre-existing — before
+Phase 125 the constructor took `DnsConfig` and equally ignored `config.zones` —
+and deliberately not fixed here, because loading zones at startup is a
+behavior change while this campaign's acceptance criteria require parity.
+
+**Follow-up required (not part of this campaign):** either have composition
+call `load_zones(runtime.zones)` explicitly, or drop `[dns.zones]` from the
+shipped schema and document that zones come from the zone store. Until then,
+`[dns.zones]` should be treated as non-functional in `architecture/dns.md`.
+
+### F-7: TSIG keys are discarded by the constructor by design
+
+Same `tsig_keys: _` destructuring, but wired: `src/server/resources.rs` reads
+`runtime_cfg.tsig_keys` before constructing the server and feeds them to
+`TsigVerifier` for zone transfers. Recorded so F-6 and F-7 are not confused —
+one is a dead path, the other is a deliberate one.

@@ -32,3 +32,8 @@ rkyv = []
 
 [dev-dependencies]
 tempfile = "3"
+# Phase 128: the shipped `examples/dns/*.toml` parse fixtures moved here from
+# `synvoid-dns`, because they assert the *persisted* schema and now belong to
+# the crate that owns it. Already in Cargo.lock; no new supply-chain surface.
+toml = "0.8"
+serde = { version = "1", features = ["derive"] }

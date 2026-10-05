@@ -549,14 +549,38 @@ impl TsigAlgorithmRuntime {
         }
     }
 
+    /// RFC 8945 algorithm-name code used in the TSIG RDATA and MAC input.
+    pub const fn to_u16(&self) -> u16 {
+        match self {
+            TsigAlgorithmRuntime::HmacSha256 => 161,
+            TsigAlgorithmRuntime::HmacSha384 => 170,
+            TsigAlgorithmRuntime::HmacSha512 => 172,
+        }
+    }
+
+    /// Inverse of [`TsigAlgorithmRuntime::to_u16`].
+    pub const fn from_u16(value: u16) -> Option<Self> {
+        match value {
+            161 => Some(TsigAlgorithmRuntime::HmacSha256),
+            170 => Some(TsigAlgorithmRuntime::HmacSha384),
+            172 => Some(TsigAlgorithmRuntime::HmacSha512),
+            _ => None,
+        }
+    }
+
     /// Minimum decoded secret length, in bytes. Enforced at conversion time
     /// so undersized keys never reach the verifier.
+    ///
+    /// The threshold is the HMAC *output* length, which is what
+    /// `synvoid_config::dns::TsigAlgorithm::key_size()` used before the
+    /// runtime-DTO cutover and what RFC 8945 §4.3.2 recommends. Using the
+    /// HMAC input block size (16/24/32) here would silently accept weaker
+    /// keys than the pre-cutover server rejected.
     pub const fn min_secret_len(&self) -> usize {
         match self {
-            // RFC 8945 recommends at least half the hash output.
-            TsigAlgorithmRuntime::HmacSha256 => 16,
-            TsigAlgorithmRuntime::HmacSha384 => 24,
-            TsigAlgorithmRuntime::HmacSha512 => 32,
+            TsigAlgorithmRuntime::HmacSha256 => 32,
+            TsigAlgorithmRuntime::HmacSha384 => 48,
+            TsigAlgorithmRuntime::HmacSha512 => 64,
         }
     }
 }
@@ -1051,6 +1075,120 @@ pub(crate) mod test_fixtures {
     //! so a fixture with no overrides behaves like a default server.
 
     use super::*;
+
+    /// Default authoritative runtime: loopback bind, no zones, no DNSSEC.
+    pub fn authoritative_runtime() -> AuthoritativeRuntimeConfig {
+        AuthoritativeRuntimeConfig {
+            bind_address: SocketAddr::from(([127, 0, 0, 1], 0)),
+            ttl: TtlRuntimeConfig {
+                default_ttl: 300,
+                min_geo_ttl: 60,
+                negative_cache_ttl: 300,
+            },
+            cache: CacheRuntimeConfig {
+                enabled: true,
+                capacity: 10_000,
+                max_ttl: Duration::from_secs(3600),
+                min_ttl: Duration::from_secs(0),
+                serve_stale: None,
+            },
+            limits: LimitsRuntimeConfig {
+                max_tcp_connections: 100,
+                max_concurrent_queries: 1_000,
+                max_query_size: 65_535,
+                max_response_size: 65_535,
+                max_records_per_response: 100,
+                max_tcp_idle_time: Duration::from_secs(30),
+                max_tcp_query_time: Duration::from_secs(10),
+                enable_graceful_degradation: false,
+                udp_buffer_size: 65_535,
+            },
+            rate_limit: DnsRateLimitRuntimeConfig {
+                mode: DnsRateLimitModeRuntime::Shared,
+                per_second: 100,
+            },
+            rrl: RrlRuntimeConfig { enabled: false },
+            firewall: DnsFirewallRuntimeConfig {
+                enabled: false,
+                block_internal_ips: true,
+                block_zone_transfers: true,
+            },
+            ecs: EcsRuntimeConfig {
+                enabled: false,
+                prefix_v4: 24,
+                prefix_v6: 48,
+                allow_private_prefix: false,
+            },
+            query_coalescing: QueryCoalescingRuntimeConfig {
+                enabled: false,
+                max_wait: Duration::from_millis(5),
+                max_entries: 1_000,
+                entry_ttl: Duration::from_secs(30),
+                cleanup_interval: Duration::from_secs(60),
+            },
+            dns64: None,
+            dot: disabled_dot(),
+            doh: disabled_doh(),
+            doq: disabled_doq(),
+            dynamic_update: DynamicUpdateRuntimeConfig {
+                enabled: false,
+                allow_any: true,
+                require_tsig: false,
+                max_update_size: 65_535,
+            },
+            zone_transfer: ZoneTransferRuntimeConfig {
+                allow_transfer: Vec::new(),
+                allow_wildcard_transfer: false,
+                wildcard_transfer_requires_tsig: true,
+                ixfr_enabled: true,
+                ixfr_fallback_to_axfr: true,
+                require_tsig: false,
+            },
+            anycast: AnycastRuntimeConfig { enabled: false },
+        }
+    }
+
+    /// Default DNSSEC runtime: signing disabled, software keystore.
+    pub fn dnssec_runtime() -> DnssecRuntimeConfig {
+        DnssecRuntimeConfig {
+            enabled: false,
+            domain: "example.com".to_string(),
+            key_path: PathBuf::from("/var/lib/synvoid/dns/keys"),
+            algorithm: DnssecAlgorithmRuntime::Ed25519,
+            key_type: DnssecKeyTypeRuntime::Ksk,
+            rsa_key_size: 2048,
+            ksk_key_size: 2048,
+            rollover_interval: Duration::from_secs(90 * 86_400),
+            denial: DnssecDenialPolicyRuntime {
+                nsec_enabled: true,
+                nsec3_enabled: false,
+                nsec3_iterations: 5,
+                nsec3_algorithm: 1,
+            },
+            hsm: HsmRuntimeConfig::default(),
+        }
+    }
+
+    /// A whole-DNS runtime bound to `bind`/`port`, the canonical
+    /// `DnsServer::new` input.
+    ///
+    /// `bind` must be an IP literal; the application adapter rejects anything
+    /// else before a server is ever constructed, so an unparseable literal is
+    /// a test bug rather than a runtime condition.
+    pub fn dns_runtime(bind: &str, port: u16) -> DnsRuntimeConfig {
+        DnsRuntimeConfig {
+            enabled: true,
+            authoritative: AuthoritativeRuntimeConfig {
+                bind_address: parse_bind_address(bind, port)
+                    .unwrap_or_else(|| panic!("bind '{bind}' must be an IP literal")),
+                ..authoritative_runtime()
+            },
+            dnssec: dnssec_runtime(),
+            zones: Vec::new(),
+            tsig_keys: Vec::new(),
+            recursive: recursive_runtime(),
+        }
+    }
 
     /// Default recursive runtime: system resolver, loopback bind, cache on.
     pub fn recursive_runtime() -> RecursiveRuntimeConfig {

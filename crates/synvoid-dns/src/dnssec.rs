@@ -35,13 +35,13 @@ pub use super::dnssec_validation::{
     get_ds_record, verify_ds_digest,
 };
 
-/// Convert the DNS config algorithm enum into the custody-crate algorithm.
-/// A free function (not `From`) because both types are foreign to this
-/// crate after the Phase 30 extraction (orphan rule).
-pub fn algorithm_from_config(config: synvoid_config::dns::DnsSecAlgorithm) -> Algorithm {
+/// Convert the DNS-owned runtime algorithm enum into the custody-crate
+/// algorithm. A free function (not `From`) because both types are foreign to
+/// this crate after the Phase 30 extraction (orphan rule).
+pub fn algorithm_from_runtime(config: crate::runtime_config::DnssecAlgorithmRuntime) -> Algorithm {
     match config {
-        synvoid_config::dns::DnsSecAlgorithm::Ed25519 => Algorithm::Ed25519,
-        synvoid_config::dns::DnsSecAlgorithm::RsaSha256 => Algorithm::RSA,
+        crate::runtime_config::DnssecAlgorithmRuntime::Ed25519 => Algorithm::Ed25519,
+        crate::runtime_config::DnssecAlgorithmRuntime::Rsa => Algorithm::RSA,
     }
 }
 

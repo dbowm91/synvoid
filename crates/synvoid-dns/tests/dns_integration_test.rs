@@ -111,62 +111,6 @@ mod tests {
     }
 
     #[test]
-    fn test_dns_config_defaults() {
-        use synvoid_config::dns::{DnsConfig, DnsMode};
-
-        let config = DnsConfig::default();
-        assert!(!config.enabled);
-        assert_eq!(config.bind_address, "0.0.0.0");
-        assert_eq!(config.port, 53);
-        assert_eq!(config.mode, DnsMode::Standalone);
-    }
-
-    #[test]
-    fn test_dns_ratelimit_config_defaults() {
-        use synvoid_config::dns::{DnsRateLimitConfig, DnsRateLimitMode};
-
-        let config = DnsRateLimitConfig::default();
-        assert_eq!(config.mode, DnsRateLimitMode::Shared);
-        assert_eq!(config.per_second, 500);
-        assert_eq!(config.per_minute, 5000);
-    }
-
-    #[test]
-    fn test_dns_rrl_config_defaults() {
-        use synvoid_config::dns::DnsRrlConfig;
-
-        let config = DnsRrlConfig {
-            enabled: true,
-            responses_per_second: 100,
-            window_secs: 5,
-            max_responses: 1000,
-            ttl: 300,
-        };
-        assert!(config.enabled);
-        assert_eq!(config.responses_per_second, 100);
-        assert_eq!(config.window_secs, 5);
-        assert_eq!(config.ttl, 300);
-    }
-
-    #[test]
-    fn test_dnssec_config_defaults() {
-        use synvoid_config::dns::DnsSecConfig;
-
-        let config = DnsSecConfig::default();
-        assert!(!config.enabled);
-    }
-
-    #[test]
-    fn test_tsig_key_config_defaults() {
-        use synvoid_config::dns::{TsigAlgorithm, TsigKeyConfig};
-
-        let config = TsigKeyConfig::default();
-        assert!(config.name.is_empty());
-        assert!(config.secret_base64.is_empty());
-        assert_eq!(config.algorithm, TsigAlgorithm::HmacSha256);
-    }
-
-    #[test]
     fn test_dns_firewall_action_variants() {
         use synvoid_dns::DnsFirewallAction;
 

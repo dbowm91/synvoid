@@ -1,11 +1,12 @@
 use super::*;
+use crate::runtime_config::ZoneSpec;
 
 #[cfg(feature = "mesh")]
 use crate::mesh_sync::MeshDnsRegistry;
 
 impl DnsServer {
-    pub fn load_zones(&self, zone_configs: Vec<DnsZoneEntry>) -> Result<(), String> {
-        let zone_origins: Vec<String> = zone_configs.iter().map(|zc| zc.zone.clone()).collect();
+    pub fn load_zones(&self, zone_configs: Vec<ZoneSpec>) -> Result<(), String> {
+        let zone_origins: Vec<String> = zone_configs.iter().map(|zc| zc.origin.clone()).collect();
         let loaded_count = self.load_zones_inner(&zone_configs, &zone_origins)?;
         for _ in 0..loaded_count {
             metrics::counter!("dns_zones_loaded_total").increment(1);
@@ -16,22 +17,22 @@ impl DnsServer {
 
     fn load_zones_inner(
         &self,
-        zone_configs: &[DnsZoneEntry],
+        zone_configs: &[ZoneSpec],
         zone_origins: &[String],
     ) -> Result<usize, String> {
         for zone_config in zone_configs {
-            let mut zone = Zone::new(zone_config.zone.clone());
+            let mut zone = Zone::new(zone_config.origin.clone());
             zone.dnskey_ttl = Some(3600);
 
             let zone_dnssec = zone_config.dnssec.as_ref();
             let use_global = zone_dnssec.map(|z| !z.enabled).unwrap_or(true);
 
             if use_global {
-                zone.nsec3_enabled = self.deferred.dnssec.nsec3_enabled;
-                zone.nsec_enabled = self.deferred.dnssec.nsec_enabled;
-                zone.nsec3param = if self.deferred.dnssec.nsec3_enabled {
+                zone.nsec3_enabled = self.dnssec_runtime.denial.nsec3_enabled;
+                zone.nsec_enabled = self.dnssec_runtime.denial.nsec_enabled;
+                zone.nsec3param = if self.dnssec_runtime.denial.nsec3_enabled {
                     Some(crate::dnssec::Nsec3Config::new(
-                        self.deferred.dnssec.nsec3_iterations,
+                        self.dnssec_runtime.denial.nsec3_iterations,
                         Self::generate_random_salt().map_err(|e| e.to_string())?,
                     ))
                 } else {
@@ -43,7 +44,7 @@ impl DnsServer {
                 zone.nsec3param = if dnssec.nsec3_enabled {
                     let iterations = dnssec
                         .nsec3_iterations
-                        .unwrap_or(self.deferred.dnssec.nsec3_iterations);
+                        .unwrap_or(self.dnssec_runtime.denial.nsec3_iterations);
                     Some(crate::dnssec::Nsec3Config::new(
                         iterations,
                         Self::generate_random_salt().map_err(|e| e.to_string())?,
@@ -54,34 +55,15 @@ impl DnsServer {
             }
 
             for record_config in &zone_config.records {
-                let record_type = match record_config.record_type {
-                    synvoid_config::dns::DnsRecordType::A => RecordType::A,
-                    synvoid_config::dns::DnsRecordType::Aaaa => RecordType::AAAA,
-                    synvoid_config::dns::DnsRecordType::CName => RecordType::CNAME,
-                    synvoid_config::dns::DnsRecordType::Mx => RecordType::MX,
-                    synvoid_config::dns::DnsRecordType::Txt => RecordType::TXT,
-                    synvoid_config::dns::DnsRecordType::Ns => RecordType::NS,
-                    synvoid_config::dns::DnsRecordType::Soa => RecordType::SOA,
-                    synvoid_config::dns::DnsRecordType::Srv => RecordType::SRV,
-                    synvoid_config::dns::DnsRecordType::Ptr => RecordType::PTR,
-                    synvoid_config::dns::DnsRecordType::Caa => RecordType::CAA,
-                    synvoid_config::dns::DnsRecordType::Tlsa => RecordType::TLSA,
-                    synvoid_config::dns::DnsRecordType::Svcb => RecordType::SVCB,
-                    synvoid_config::dns::DnsRecordType::Https => RecordType::HTTPS,
-                    synvoid_config::dns::DnsRecordType::Naptr => RecordType::NAPTR,
-                    synvoid_config::dns::DnsRecordType::Sshfp => RecordType::SSHFP,
-                    synvoid_config::dns::DnsRecordType::Uri => RecordType::from(256),
-                    synvoid_config::dns::DnsRecordType::Rp => RecordType::from(17),
-                    synvoid_config::dns::DnsRecordType::Afsdb => RecordType::from(18),
-                    synvoid_config::dns::DnsRecordType::Ds => RecordType::DS,
-                    synvoid_config::dns::DnsRecordType::Other => RecordType::NULL,
-                };
+                // The application adapter already mapped the persisted
+                // record-type enum to Hickory's runtime type.
+                let record_type = record_config.record_type;
 
                 if record_type == RecordType::MX || record_type == RecordType::SRV {
                     if let Some(pri) = record_config.priority {
                         if pri > u16::MAX as u32 {
                             tracing::warn!(
-                                zone = %zone_config.zone,
+                                zone = %zone_config.origin,
                                 name = %record_config.name,
                                 priority = %pri,
                                 "Skipping record: priority {} exceeds u16::MAX (65535)",
@@ -96,27 +78,27 @@ impl DnsServer {
                     let parts: Vec<&str> = record_config.value.split_whitespace().collect();
                     if parts.len() < 7 {
                         tracing::error!(
-                            zone = %zone_config.zone,
+                            zone = %zone_config.origin,
                             name = %record_config.name,
                             "Rejecting zone: SOA record requires 7 fields (mname rname serial refresh retry expire minimum), got {}",
                             parts.len()
                         );
                         return Err(format!(
                             "Zone {}: SOA record requires 7 fields, got {}",
-                            zone_config.zone,
+                            zone_config.origin,
                             parts.len()
                         ));
                     }
                     if parts[2].parse::<u32>().is_err() {
                         tracing::error!(
-                            zone = %zone_config.zone,
+                            zone = %zone_config.origin,
                             name = %record_config.name,
                             serial = %parts[2],
                             "Rejecting zone: SOA serial is not a valid u32"
                         );
                         return Err(format!(
                             "Zone {}: SOA serial '{}' is not a valid u32",
-                            zone_config.zone, parts[2]
+                            zone_config.origin, parts[2]
                         ));
                     }
                     for (idx, field_name) in
@@ -124,7 +106,7 @@ impl DnsServer {
                     {
                         if parts[3 + idx].parse::<u32>().is_err() {
                             tracing::error!(
-                                zone = %zone_config.zone,
+                                zone = %zone_config.origin,
                                 name = %record_config.name,
                                 field = %field_name,
                                 value = %parts[3 + idx],
@@ -133,7 +115,7 @@ impl DnsServer {
                             );
                             return Err(format!(
                                 "Zone {}: SOA {} '{}' is not a valid u32",
-                                zone_config.zone,
+                                zone_config.origin,
                                 field_name,
                                 parts[3 + idx]
                             ));

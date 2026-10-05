@@ -107,10 +107,10 @@ pub fn ephemeral_port() -> u16 {
 /// The returned config has default settings with `cache_enabled` left
 /// at its default (true).  Set `config.settings.cache_enabled = false`
 /// in tests that need a cold server.
-pub fn make_config(port: u16) -> synvoid_config::dns::DnsConfig {
-    synvoid_config::dns::DnsConfig {
-        bind_address: "127.0.0.1".to_string(),
-        port,
-        ..Default::default()
-    }
+/// Authoritative runtime for a loopback bind on `port` (Phase 128: the
+/// persisted `DnsConfig` is no longer reachable from this crate).
+pub fn make_config(port: u16) -> synvoid_dns::runtime_config::AuthoritativeRuntimeConfig {
+    let mut config = crate::support::runtime_config::authoritative_runtime();
+    config.bind_address = format!("127.0.0.1:{port}").parse().expect("bind address");
+    config
 }

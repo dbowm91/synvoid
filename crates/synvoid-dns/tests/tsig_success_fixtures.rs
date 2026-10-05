@@ -3,39 +3,43 @@
 //! Verifies that TsigVerifier sign/verify produces correct HMAC for each
 //! algorithm, supports multiple keys, and handles replay cache correctly.
 
-use synvoid_config::dns::{TsigAlgorithm, TsigKeyConfig};
+use synvoid_dns::runtime_config::{TsigAlgorithmRuntime, TsigRuntimeKey};
 use synvoid_dns::tsig::{TsigError, TsigVerifier};
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
-fn sha256_key_config(name: &str) -> TsigKeyConfig {
-    use base64::Engine;
-    TsigKeyConfig {
+/// Runtime TSIG keys. The secret arrives already base64-decoded and
+/// length-checked by the application adapter, so fixtures supply raw bytes.
+fn runtime_key(name: &str, secret: &[u8], algorithm: TsigAlgorithmRuntime) -> TsigRuntimeKey {
+    TsigRuntimeKey {
         name: name.to_string(),
-        secret_base64: base64::engine::general_purpose::STANDARD
-            .encode(b"super-secret-key-material-for-testing-1234567890"),
-        algorithm: TsigAlgorithm::HmacSha256,
+        secret: secret.to_vec(),
+        algorithm,
     }
 }
 
-fn sha512_key_config(name: &str) -> TsigKeyConfig {
-    use base64::Engine;
-    TsigKeyConfig {
-        name: name.to_string(),
-        secret_base64: base64::engine::general_purpose::STANDARD
-            .encode(b"another-secret-key-for-sha512-testing-purposes-0123456789abcdef-extra"),
-        algorithm: TsigAlgorithm::HmacSha512,
-    }
+fn sha256_key_config(name: &str) -> TsigRuntimeKey {
+    runtime_key(
+        name,
+        b"super-secret-key-material-for-testing-1234567890",
+        TsigAlgorithmRuntime::HmacSha256,
+    )
 }
 
-fn sha384_key_config(name: &str) -> TsigKeyConfig {
-    use base64::Engine;
-    TsigKeyConfig {
-        name: name.to_string(),
-        secret_base64: base64::engine::general_purpose::STANDARD
-            .encode(b"sha384-key-for-hmac-testing-purposes-abcdef-0123456789"),
-        algorithm: TsigAlgorithm::HmacSha384,
-    }
+fn sha512_key_config(name: &str) -> TsigRuntimeKey {
+    runtime_key(
+        name,
+        b"another-secret-key-for-sha512-testing-purposes-0123456789abcdef-extra",
+        TsigAlgorithmRuntime::HmacSha512,
+    )
+}
+
+fn sha384_key_config(name: &str) -> TsigRuntimeKey {
+    runtime_key(
+        name,
+        b"sha384-key-for-hmac-testing-purposes-abcdef-0123456789",
+        TsigAlgorithmRuntime::HmacSha384,
+    )
 }
 
 // ══════════════════════════════════════════════════════════════════════

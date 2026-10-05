@@ -50,7 +50,6 @@ use synvoid_dns::runtime_config::{
     ServeStaleRuntimeConfig, TsigAlgorithmRuntime, TsigRuntimeKey, TtlRuntimeConfig,
     ZoneDnssecSpec, ZoneRecordSpec, ZoneSpec, ZoneTransferRuntimeConfig,
 };
-use synvoid_dns::runtime_config_deferred::DeferredDnsConfig;
 
 /// Typed conversion failure. Every variant names the offending persisted
 /// path so operators get an actionable message. None of them embed secret
@@ -169,35 +168,17 @@ pub fn dns_runtime_config_from_persisted(config: &DnsConfig) -> Result<DnsRuntim
     })
 }
 
-/// Phase 126 constructor input for `DnsServer`.
+/// Canonical `DnsServer` construction input.
 ///
-/// Produces the authoritative runtime values plus the deferred persisted
-/// sections that Phases 127/128 still own. This is the only conversion entry
-/// point production uses.
-pub fn dns_server_runtime_config_from_persisted(
-    config: &DnsConfig,
-) -> Result<DnsServerRuntimeConfig> {
-    let runtime = dns_runtime_config_from_persisted(config)?;
-    Ok(DnsServerRuntimeConfig {
-        authoritative: runtime.authoritative,
-        recursive: runtime.recursive,
-        deferred: DeferredDnsConfig {
-            dnssec: config.dnssec.clone(),
-            zones: config.zones.clone(),
-        },
-    })
-}
-
-/// Canonical Phase 126 `DnsServer` construction input.
-#[derive(Debug, Clone)]
-pub struct DnsServerRuntimeConfig {
-    /// Authoritative server and encrypted-transport runtime values.
-    pub authoritative: AuthoritativeRuntimeConfig,
-    /// Recursive resolver runtime values (Phase 127).
-    pub recursive: RecursiveRuntimeConfig,
-    /// DNSSEC/HSM/zone sections still owned by Phase 128.
-    pub deferred: DeferredDnsConfig,
-}
+/// This is the whole-DNS runtime projection produced by
+/// [`dns_runtime_config_from_persisted`]. Phase 128 removed the intermediate
+/// two-stage shape (`AuthoritativeRuntimeConfig` + `RecursiveRuntimeConfig` +
+/// a deferred persisted passthrough): `DnsServer::new` now takes exactly this
+/// value plus the composition-owned `CertResolver`.
+///
+/// Kept as a named alias so call sites read clearly and so the single
+/// conversion entry point stays greppable.
+pub type DnsServerRuntimeConfig = DnsRuntimeConfig;
 
 // ---------------------------------------------------------------------------
 // Bind parsing

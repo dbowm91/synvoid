@@ -42,7 +42,6 @@ pub mod resolver;
 pub mod resolver_global;
 pub mod rpz;
 pub mod runtime_config;
-pub mod runtime_config_deferred;
 pub mod secure_server;
 pub mod server;
 pub mod store;
@@ -129,15 +128,11 @@ pub use runtime_config::{
     RecursiveRuntimeConfig, RecursiveUpstreamRuntime, RrlRuntimeConfig, TsigAlgorithmRuntime,
     TsigRuntimeKey, ZoneDnssecSpec, ZoneRecordSpec, ZoneSpec,
 };
-pub use runtime_config_deferred::DeferredDnsConfig;
 pub use secure_server::{
     DnsServerConfig, SecureDnsServerBase, MAX_QUERY_SIZE, TLS_HANDSHAKE_TIMEOUT_SECS,
 };
 pub use server::{DnsRateLimiter, DnsServer, DnsZoneRecord, DsRecordExport, RecordType, Zone};
 pub use store::ZoneStore;
-pub use synvoid_config::dns::{
-    RecursiveCacheConfig, RecursiveDnsConfig, RecursiveUpstreamProvider, RecursiveUpstreamServer,
-};
 pub use transfer::{ZoneTransfer, AXFR_QUERY_TYPE, IXFR_QUERY_TYPE};
 pub use trust_anchor::{
     Rfc5011Event, TrustAnchorConfig, TrustAnchorManager, TrustAnchorState, TrustAnchorStatus,

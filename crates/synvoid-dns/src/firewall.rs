@@ -6,10 +6,6 @@ use synvoid_core::time::current_timestamp_secs;
 
 use crate::parsed_query::ParsedDnsQuery;
 
-fn is_private_ip(ip: &IpAddr) -> bool {
-    synvoid_core::net::is_restricted_ip(ip)
-}
-
 #[derive(Debug, Clone)]
 pub struct DnsFirewallRule {
     pub id: String,
@@ -537,53 +533,4 @@ pub fn create_rate_limit_rules() -> Vec<DnsFirewallRule> {
             enabled: true,
         },
     ]
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum RebindingCheckResult {
-    Allowed,
-    Blocked { reason: String },
-}
-
-pub fn check_rebinding_protection(
-    qname: &str,
-    resolved_ips: &[IpAddr],
-    record_ttl: u32,
-    config: &synvoid_config::dns::RebindingProtectionConfig,
-) -> RebindingCheckResult {
-    if !config.enabled {
-        return RebindingCheckResult::Allowed;
-    }
-
-    if config
-        .allowed_internal_domains
-        .iter()
-        .any(|d| qname.ends_with(d) || qname == d.trim_start_matches('.'))
-    {
-        return RebindingCheckResult::Allowed;
-    }
-
-    let has_internal_ip = resolved_ips.iter().any(is_private_ip);
-
-    if has_internal_ip {
-        if config.block_short_ttl_internal && record_ttl < config.min_ttl_for_internal {
-            return RebindingCheckResult::Blocked {
-                reason: format!(
-                    "DNS rebinding protection: internal IP resolved with short TTL ({}s < {}s)",
-                    record_ttl, config.min_ttl_for_internal
-                ),
-            };
-        }
-
-        if config.min_ttl_for_internal > 0 && record_ttl < config.min_ttl_for_internal {
-            return RebindingCheckResult::Blocked {
-                reason: format!(
-                    "DNS rebinding protection: internal IP resolved with TTL {}s below minimum {}s",
-                    record_ttl, config.min_ttl_for_internal
-                ),
-            };
-        }
-    }
-
-    RebindingCheckResult::Allowed
 }

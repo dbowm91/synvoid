@@ -1,6 +1,14 @@
 # Phase 128 Plan: DNS Zone, DNSSEC, TSIG/HSM Conversion and synvoid-config Removal
 
-Status: **PLANNED / READY** (2026-10-04). Unblocked by Phase 127, which closed QUALIFIED on 2026-10-04 with `architecture/dns_runtime_dto_phase127_closeout.md`.
+Status: **CLOSED QUALIFIED** (2026-10-04). Closeout:
+`architecture/dns_runtime_dto_phase128_closeout.md`. Phase 129 is unblocked.
+
+The `synvoid-config` normal edge is gone: 6 direct SynVoid normal edges (was 7),
+846 expanded `cargo tree -e normal` lines (was 847). All persisted DNS schema is
+converted by `src/server/dns_runtime_config.rs`; `runtime_config_deferred.rs` is
+deleted. Persisted-schema test coverage moved to `crates/synvoid-config/tests/`
+rather than being dropped. Phase 129 (`synvoid-core` / `synvoid-utils`
+neutralization) is unblocked with its gates already landed `#[ignore]`d.
 
 Registered in: `plans/roadmap.md` and
 `plans/dns_runtime_dto_conversion_roadmap.md`.

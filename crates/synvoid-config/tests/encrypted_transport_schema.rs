@@ -1,3 +1,11 @@
+//! Persisted encrypted-transport schema round-trip fixtures.
+//!
+//! **Phase 128:** these assert the *persisted* `DnsDotConfig`/`DnsDohConfig`/
+//! `DnsDoqConfig` schema, which `synvoid-config` owns, so they live here rather
+//! than in `synvoid-dns`. The runtime projection of the same settings is
+//! asserted by `synvoid-dns/tests/encrypted_transport.rs` and by the root
+//! composition test `tests/dns_runtime_config_parity.rs`.
+
 use synvoid_config::dns::{DnsDohConfig, DnsDoqConfig, DnsDotConfig};
 
 fn default_dot_config() -> DnsDotConfig {

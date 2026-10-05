@@ -4,172 +4,18 @@ mod support;
 
 #[cfg(test)]
 mod dns_config_tests {
-    #[test]
-    fn test_admin_token_validation_rejects_weak_tokens() {
-        use synvoid_config::admin::AdminConfig;
-
-        let weak_tokens = vec![
-            "short",
-            "password123",
-            "admin",
-            "changeme",
-            "12345678",
-            "qwertyui",
-        ];
-
-        for token in weak_tokens {
-            let mut config = AdminConfig::default();
-            config.port = 8081;
-            config.token = token.to_string();
-            let _result = config.validate();
-            let resolved = config.resolve_token();
-            assert!(!resolved.is_empty());
-        }
-
-        let strong_token = "ThisIsAveryLongSecureTokenThatIsHardToGuessABCDEF!@#$%";
-        let mut config = AdminConfig::default();
-        config.port = 8081;
-        config.token = strong_token.to_string();
-        config.bcrypt_cost = 12;
-        assert!(
-            config.validate().is_ok(),
-            "Validation failed for strong token: {:?}",
-            config.validate()
-        );
-    }
 
     #[test]
-    fn test_recursive_cache_config_defaults() {
-        // The persisted defaults remain owned by `synvoid-config`; assert both
-        // the persisted shape and the DNS-owned runtime projection of it.
-        use synvoid_config::dns::RecursiveCacheConfig;
-
-        let persisted = RecursiveCacheConfig::default();
-        assert_eq!(persisted.capacity, 1_000_000);
-        assert_eq!(persisted.negative_ttl_secs, 300);
-        assert_eq!(persisted.stale_ttl_secs, 86400);
-        assert_eq!(persisted.max_ttl_secs, 86400);
-        assert_eq!(persisted.min_ttl_secs, 0);
-
+    fn test_recursive_cache_runtime_defaults() {
+        // The persisted defaults are asserted in
+        // `synvoid-config/tests/dns_schema_contract.rs`; Phase 128 keeps this
+        // half on the DNS-owned runtime projection.
         let runtime = crate::support::recursive_runtime().cache;
         assert_eq!(runtime.capacity, 1_000_000);
         assert_eq!(runtime.negative_ttl, std::time::Duration::from_secs(300));
         assert_eq!(runtime.stale_ttl, std::time::Duration::from_secs(86_400));
         assert_eq!(runtime.max_ttl, std::time::Duration::from_secs(86_400));
         assert_eq!(runtime.min_ttl, std::time::Duration::from_secs(0));
-    }
-
-    #[test]
-    fn test_recursive_dns_config_defaults() {
-        use synvoid_config::dns::{RecursiveDnsConfig, RecursiveUpstreamProvider};
-
-        let config = RecursiveDnsConfig::default();
-
-        assert!(!config.enabled);
-        assert_eq!(config.bind_address, "127.0.0.1");
-        assert_eq!(config.port, 1053);
-        assert_eq!(config.upstream_provider, RecursiveUpstreamProvider::System);
-        assert!(config.dnssec_validation);
-        assert!(config.qname_minimization);
-        assert_eq!(config.query_timeout_secs, 5);
-        assert_eq!(config.max_concurrent_queries, 10000);
-    }
-
-    #[test]
-    fn test_recursive_dns_config_validation() {
-        use synvoid_config::dns::{RecursiveDnsConfig, RecursiveUpstreamProvider};
-
-        let mut config = RecursiveDnsConfig::default();
-        config.enabled = true;
-        config.upstream_provider = RecursiveUpstreamProvider::Custom;
-        config.upstream_servers = vec![];
-
-        let result = config.validate();
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_recursive_dns_config_upstream_ips_google() {
-        use std::net::IpAddr;
-        use synvoid_config::dns::{RecursiveDnsConfig, RecursiveUpstreamProvider};
-
-        let mut config = RecursiveDnsConfig::default();
-        config.upstream_provider = RecursiveUpstreamProvider::Google;
-
-        let ips = config.upstream_ips();
-
-        assert!(!ips.is_empty());
-        assert!(ips
-            .iter()
-            .any(|ip: &IpAddr| ip.to_string() == "8.8.8.8" || ip.to_string() == "8.8.4.4"));
-    }
-
-    #[test]
-    fn test_recursive_dns_config_upstream_ips_cloudflare() {
-        use synvoid_config::dns::{RecursiveDnsConfig, RecursiveUpstreamProvider};
-
-        let mut config = RecursiveDnsConfig::default();
-        config.upstream_provider = RecursiveUpstreamProvider::Cloudflare;
-
-        let ips = config.upstream_ips();
-
-        assert!(!ips.is_empty());
-    }
-
-    #[test]
-    fn test_recursive_dns_config_custom_servers() {
-        use std::net::IpAddr;
-        use synvoid_config::dns::{
-            RecursiveDnsConfig, RecursiveUpstreamProvider, RecursiveUpstreamServer,
-        };
-
-        let mut config = RecursiveDnsConfig::default();
-        config.upstream_provider = RecursiveUpstreamProvider::Custom;
-        config.upstream_servers = vec![RecursiveUpstreamServer {
-            address: "1.1.1.1".to_string(),
-            port: 53,
-            ip: Some(IpAddr::from([1, 1, 1, 1])),
-        }];
-
-        let ips = config.upstream_ips();
-        assert!(ips.contains(&IpAddr::from([1, 1, 1, 1])));
-    }
-
-    #[test]
-    fn test_recursive_dns_config_recursive_provider() {
-        use synvoid_config::dns::{RecursiveDnsConfig, RecursiveUpstreamProvider};
-
-        let mut config = RecursiveDnsConfig::default();
-        config.upstream_provider = RecursiveUpstreamProvider::Recursive;
-
-        assert_eq!(
-            config.upstream_provider,
-            RecursiveUpstreamProvider::Recursive
-        );
-        assert_eq!(config.root_hints_path, "root.hints");
-        assert_eq!(config.trust_anchor_path, "trusted-key.key");
-    }
-
-    #[test]
-    fn test_recursive_dns_config_default_paths() {
-        use synvoid_config::dns::RecursiveDnsConfig;
-
-        let config = RecursiveDnsConfig::default();
-
-        assert_eq!(config.root_hints_path, "root.hints");
-        assert_eq!(config.trust_anchor_path, "trusted-key.key");
-    }
-
-    #[test]
-    fn test_recursive_dns_config_validation_timeout() {
-        use synvoid_config::dns::RecursiveDnsConfig;
-
-        let mut config = RecursiveDnsConfig::default();
-        config.enabled = true;
-        config.query_timeout_secs = 0;
-
-        let result = config.validate();
-        assert!(result.is_err());
     }
 
     #[test]
@@ -313,16 +159,6 @@ mod dns_config_tests {
     }
 
     #[test]
-    fn test_dns_config_includes_recursive() {
-        use synvoid_config::dns::DnsConfig;
-
-        let config = DnsConfig::default();
-
-        assert!(!config.recursive.enabled);
-        assert_eq!(config.recursive.port, 1053);
-    }
-
-    #[test]
     fn test_dnssec_message_flags_authentic_data() {
         use synvoid_dns::wire::MessageFlags;
 
@@ -437,16 +273,6 @@ mod dns_config_tests {
     }
 
     #[test]
-    fn test_dnssec_config_validation() {
-        use synvoid_config::dns::RecursiveDnsConfig;
-
-        let mut config = RecursiveDnsConfig::default();
-        config.dnssec_validation = true;
-
-        assert!(config.dnssec_validation);
-    }
-
-    #[test]
     fn test_dnssec_build_response_with_ad_flag() {
         use synvoid_dns::wire::{build_response_header, MessageFlags};
 
@@ -494,26 +320,19 @@ mod dns_config_tests {
 
     #[tokio::test]
     async fn test_dnssec_recursive_config_with_dnssec_enabled() {
-        use synvoid_config::dns::RecursiveDnsConfig;
-
-        let mut config = RecursiveDnsConfig::default();
-        config.enabled = true;
-        config.dnssec_validation = true;
-
-        assert!(config.dnssec_validation);
-        assert!(config.enabled);
+        let runtime = crate::support::recursive_runtime();
+        assert!(runtime.dnssec_validation);
+        assert!(runtime.enabled);
     }
 
     #[tokio::test]
     async fn test_dnssec_recursive_config_with_dnssec_disabled() {
-        use synvoid_config::dns::RecursiveDnsConfig;
+        let mut runtime = crate::support::recursive_runtime();
+        runtime.enabled = true;
+        runtime.dnssec_validation = false;
 
-        let mut config = RecursiveDnsConfig::default();
-        config.enabled = true;
-        config.dnssec_validation = false;
-
-        assert!(!config.dnssec_validation);
-        assert!(config.enabled);
+        assert!(!runtime.dnssec_validation);
+        assert!(runtime.enabled);
     }
 
     #[test]
@@ -575,25 +394,6 @@ mod dns_config_tests {
         query.extend_from_slice(&1u16.to_be_bytes());
 
         query
-    }
-
-    #[test]
-    fn test_rfc5011_config_timeouts() {
-        use synvoid_config::dns::TrustAnchorConfig;
-
-        let config = TrustAnchorConfig {
-            enabled: true,
-            pending_observation_days: 30,
-            revocation_grace_days: 30,
-            extended_removal_days: 60,
-            trust_anchor_retention_days: 7,
-            ..TrustAnchorConfig::default()
-        };
-
-        assert_eq!(config.pending_observation_days, 30);
-        assert_eq!(config.revocation_grace_days, 30);
-        assert_eq!(config.extended_removal_days, 60);
-        assert_eq!(config.trust_anchor_retention_days, 7);
     }
 
     #[test]

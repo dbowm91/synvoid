@@ -16,7 +16,7 @@
 //! | [`zone`] | Zone construction helpers (`build_test_zone`, `zone_with_soa`, `zone_with_records`) |
 //! | [`context`] | Test context setup (`setup`, `make_ctx`, `ephemeral_port`, `make_config`) |
 //! | [`response`] | Response wire-format parsers (`response_rcode`, `skip_wire_name`, etc.) |
-//! | [`runtime_config`] | DNS-owned runtime config fixtures (`AuthoritativeRuntimeBuilder`, `deferred_config`) — Phase 126+; `DnsServer::new` no longer accepts a persistence DTO |
+//! | [`runtime_config`] | DNS-owned runtime config fixtures (`AuthoritativeRuntimeBuilder`, `recursive_runtime`, `dns_runtime`) — Phases 126-128; `DnsServer::new` accepts no persistence DTO |
 //!
 //! # Design principles
 //!
@@ -56,11 +56,11 @@ pub use response::{
 };
 #[allow(unused_imports)]
 pub use runtime_config::{
-    authoritative_runtime, circuit_breaker_runtime, deferred_config, deferred_dnssec_enabled,
-    disabled_doh, disabled_doq, disabled_dot, doh_on, doq_on, dot_on, firewall_persisted,
-    recursive_cache_runtime, recursive_disabled, recursive_runtime, recursive_runtime_on,
-    recursive_with_acl, recursive_with_upstreams, AuthoritativeRuntimeBuilder,
-    FIREWALL_MAX_RULES_SERDE_DEFAULT,
+    authoritative_runtime, circuit_breaker_runtime, disabled_doh, disabled_doq, disabled_dot,
+    dns_runtime, dns_runtime_on, dnssec_enabled_runtime, dnssec_runtime, doh_on, doq_on, dot_on,
+    free_port, recursive_cache_runtime, recursive_disabled, recursive_runtime,
+    recursive_runtime_on, recursive_with_acl, recursive_with_upstreams, tsig_key, zone_spec,
+    AuthoritativeRuntimeBuilder,
 };
 #[allow(unused_imports)]
 pub use zone::{build_test_zone, update_soa_value, zone_with_records, zone_with_soa};

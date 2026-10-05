@@ -12,7 +12,6 @@ mod support;
 
 use std::time::Duration;
 
-use synvoid_config::dns::DnsConfig;
 use synvoid_dns::server::DnsServer;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -53,23 +52,8 @@ async fn read_frame(stream: &mut tokio::net::TcpStream) -> Vec<u8> {
     buf
 }
 
-fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0")
-        .expect("bind ephemeral")
-        .local_addr()
-        .expect("local addr")
-        .port()
-}
-
 async fn start_server(port: u16) -> DnsServer {
-    let mut server = DnsServer::new(
-        support::AuthoritativeRuntimeBuilder::new()
-            .port(port)
-            .build(),
-        support::recursive_disabled(),
-        support::deferred_config(),
-        None,
-    );
+    let mut server = DnsServer::new(support::dns_runtime_on(port), None);
     server.start().await.expect("server start");
     server
 }
@@ -77,7 +61,7 @@ async fn start_server(port: u16) -> DnsServer {
 /// A single TCP connection serves two sequential queries and echoes both IDs.
 #[tokio::test]
 async fn tcp_connection_serves_multiple_sequential_queries() {
-    let port = free_port();
+    let port = support::free_port();
     let mut server = start_server(port).await;
 
     let mut stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port))
@@ -100,7 +84,7 @@ async fn tcp_connection_serves_multiple_sequential_queries() {
 /// connection instead of allocating or responding.
 #[tokio::test]
 async fn tcp_zero_length_frame_closes_connection() {
-    let port = free_port();
+    let port = support::free_port();
     let mut server = start_server(port).await;
 
     let mut stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port))
@@ -130,17 +114,10 @@ async fn tcp_zero_length_frame_closes_connection() {
 /// via a tight custom limit instead.
 #[tokio::test]
 async fn tcp_frame_beyond_max_query_size_is_rejected() {
-    let port = free_port();
-    let mut authoritative = support::AuthoritativeRuntimeBuilder::new()
-        .port(port)
-        .build();
-    authoritative.limits.max_query_size = 512;
-    let mut server = DnsServer::new(
-        authoritative,
-        support::recursive_disabled(),
-        support::deferred_config(),
-        None,
-    );
+    let port = support::free_port();
+    let mut runtime = support::dns_runtime_on(port);
+    runtime.authoritative.limits.max_query_size = 512;
+    let mut server = DnsServer::new(runtime, None);
     server.start().await.expect("server start");
 
     let mut stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port))
@@ -166,20 +143,7 @@ async fn tcp_frame_beyond_max_query_size_is_rejected() {
 /// without requiring any DoQ address material.
 #[tokio::test]
 async fn disabled_transports_do_not_bind() {
-    let port = free_port();
-    let config = DnsConfig {
-        enabled: true,
-        bind_address: "127.0.0.1".to_string(),
-        port,
-        ..Default::default()
-    };
-    // The persisted config still governs whether a transport activates, and
-    // must remain valid.
-    assert!(!config.dot.enabled);
-    assert!(!config.doh.enabled);
-    assert!(!config.doq.enabled);
-    assert!(config.validate().is_ok());
-
+    let port = support::free_port();
     let authoritative = support::AuthoritativeRuntimeBuilder::new()
         .port(port)
         .build();
@@ -187,12 +151,7 @@ async fn disabled_transports_do_not_bind() {
     assert!(!authoritative.doh.enabled);
     assert!(!authoritative.doq.enabled);
 
-    let mut server = DnsServer::new(
-        authoritative,
-        support::recursive_disabled(),
-        support::deferred_config(),
-        None,
-    );
+    let mut server = DnsServer::new(support::dns_runtime_on(port), None);
     server.start().await.expect("server start");
     server.shutdown_runtime();
 }

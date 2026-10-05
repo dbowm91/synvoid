@@ -19,7 +19,6 @@ use tokio::sync::mpsc;
 use tokio_dstip::TcpListenerWithDst;
 
 use crate::platform::AnycastSocketPlatform;
-use synvoid_config::dns::DnsAnycastConfig;
 
 #[derive(Debug, Clone)]
 pub struct BoundSocket {
@@ -57,12 +56,35 @@ pub struct AnycastPacketInfo {
     pub dest_ip: IpAddr,
 }
 
+/// DNS-owned anycast socket input.
+///
+/// **This is not a runtime DTO setting.** Anycast activation is unsupported:
+/// `DnsServer::start()` fails closed when `AnycastRuntimeConfig::enabled` is
+/// set, so `AnycastSocketManager` is never constructed in production. The
+/// struct exists so the anycast socket implementation has a DNS-owned input
+/// type instead of a persistence DTO, and it is deliberately kept out of
+/// `runtime_config.rs` so no apparently-usable anycast setting is exposed
+/// (enforced by `runtime_config_absent_by_design`).
+///
+/// Retained for parity until provider inversion resolves anycast; see the
+/// Phase 128 closeout.
+#[derive(Debug, Clone, Default)]
+pub struct AnycastSocketConfig {
+    /// Bind addresses for the anycast VIPs.
+    pub bind_addresses: Vec<String>,
+    pub port: u16,
+    /// Linux `IP_PKTINFO` support, so replies carry the original destination.
+    pub use_pktinfo: bool,
+    /// Probe name used for anycast health evaluation.
+    pub health_check_domain: String,
+}
+
 pub struct AnycastSocketManager {
     sockets: Vec<BoundSocket>,
     #[cfg(target_os = "linux")]
     tcp_listeners: Vec<Arc<BoundTcpListener>>,
     platform: Arc<dyn AnycastSocketPlatform>,
-    config: DnsAnycastConfig,
+    config: AnycastSocketConfig,
     health_status: Arc<RwLock<HashMap<IpAddr, bool>>>,
     health_tx: Option<mpsc::Sender<AnycastHealthUpdate>>,
     health_check_domain: String,
@@ -79,7 +101,7 @@ pub struct AnycastHealthUpdate {
 
 impl AnycastSocketManager {
     pub async fn new(
-        config: &DnsAnycastConfig,
+        config: &AnycastSocketConfig,
         platform: Arc<dyn AnycastSocketPlatform>,
     ) -> Result<Self, String> {
         let mut sockets = Vec::new();

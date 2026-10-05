@@ -21,9 +21,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use metrics::{Key, KeyName, Recorder};
-use synvoid_config::dns::DnsZoneEntry;
 use synvoid_dns::recursive::CircuitBreaker;
-use synvoid_dns::runtime_config::AuthoritativeRuntimeConfig;
+use synvoid_dns::runtime_config::ZoneSpec;
 
 static COUNTER_STORE: parking_lot::Mutex<Vec<(String, Arc<AtomicU64>)>> =
     parking_lot::Mutex::new(Vec::new());
@@ -66,23 +65,11 @@ fn read_counter(name: &str) -> u64 {
         .unwrap_or(0)
 }
 
-fn default_zone_config(origin: &str) -> DnsZoneEntry {
-    DnsZoneEntry {
-        zone: origin.to_string(),
+fn default_zone_config(origin: &str) -> ZoneSpec {
+    ZoneSpec {
+        origin: origin.to_string(),
         records: vec![],
         dnssec: None,
-    }
-}
-
-/// Authoritative runtime for a loopback bind with no listener.
-///
-/// `load_zones` still takes persisted `DnsZoneEntry` values until Phase 128
-/// converts zone loading; that is the only remaining persistence DTO in this
-/// test file.
-fn minimal_config() -> AuthoritativeRuntimeConfig {
-    AuthoritativeRuntimeConfig {
-        bind_address: "127.0.0.1:0".parse().expect("bind address"),
-        ..support::authoritative_runtime()
     }
 }
 
@@ -128,12 +115,7 @@ fn zone_reload_failure_emits_metric() {
     let recorder = TestRecorder;
     let _guard = metrics::set_default_local_recorder(&recorder);
     reset_counters();
-    let server = synvoid_dns::server::DnsServer::new(
-        minimal_config(),
-        support::recursive_disabled(),
-        support::deferred_config(),
-        None,
-    );
+    let server = synvoid_dns::server::DnsServer::new(support::dns_runtime(), None);
     // Origin containing a control character triggers `IllegalOriginCharacters`.
     let result = server.load_zones(vec![default_zone_config("\x07bad.example.com")]);
     assert!(result.is_err(), "control-char origin must fail to load");
@@ -148,12 +130,7 @@ fn zone_reload_success_emits_success_metric() {
     let recorder = TestRecorder;
     let _guard = metrics::set_default_local_recorder(&recorder);
     reset_counters();
-    let server = synvoid_dns::server::DnsServer::new(
-        minimal_config(),
-        support::recursive_disabled(),
-        support::deferred_config(),
-        None,
-    );
+    let server = synvoid_dns::server::DnsServer::new(support::dns_runtime(), None);
     // Empty zone list succeeds without inserting any zones; the outer
     // `load_zones` wrapper still records the operation count (0).
     let result = server.load_zones(vec![]);

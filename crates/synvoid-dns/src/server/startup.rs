@@ -48,7 +48,7 @@ impl DnsServer {
     }
 
     pub async fn start(&mut self) -> Result<(), String> {
-        if self.deferred.dnssec.enabled {
+        if self.dnssec_runtime.enabled {
             if let Err(e) = self.initialize_dnssec() {
                 tracing::warn!("Failed to initialize DNSSEC: {}", e);
                 self.health.set_dnssec_signing_enabled(false);
@@ -678,8 +678,7 @@ impl DnsServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime_config::AuthoritativeRuntimeConfig;
-    use crate::runtime_config_deferred::DeferredDnsConfig;
+    use crate::runtime_config::{test_fixtures::dns_runtime, AuthoritativeRuntimeConfig};
     use std::net::{Ipv4Addr, Ipv6Addr};
 
     /// Minimal DNS-owned authoritative runtime for a loopback bind.
@@ -688,91 +687,7 @@ mod tests {
     /// assemble it. An unparseable literal is represented as an unreachable
     /// case because the application adapter rejects it before construction.
     fn make_config(bind: &str, port: u16) -> AuthoritativeRuntimeConfig {
-        AuthoritativeRuntimeConfig {
-            bind_address: crate::runtime_config::parse_bind_address(bind, port)
-                .unwrap_or_else(|| panic!("bind '{bind}' must be an IP literal")),
-            ..test_authoritative_runtime()
-        }
-    }
-
-    /// Defaults for the authoritative groups, matching the persisted defaults
-    /// the server previously read.
-    fn test_authoritative_runtime() -> AuthoritativeRuntimeConfig {
-        AuthoritativeRuntimeConfig {
-            bind_address: SocketAddr::from(([127, 0, 0, 1], 0)),
-            ttl: crate::runtime_config::TtlRuntimeConfig {
-                default_ttl: 300,
-                min_geo_ttl: 60,
-                negative_cache_ttl: 300,
-            },
-            cache: crate::runtime_config::CacheRuntimeConfig {
-                enabled: true,
-                capacity: 10_000,
-                max_ttl: std::time::Duration::from_secs(3600),
-                min_ttl: std::time::Duration::from_secs(0),
-                serve_stale: None,
-            },
-            limits: crate::runtime_config::LimitsRuntimeConfig {
-                max_tcp_connections: 100,
-                max_concurrent_queries: 1_000,
-                max_query_size: 65_535,
-                max_response_size: 65_535,
-                max_records_per_response: 100,
-                max_tcp_idle_time: std::time::Duration::from_secs(30),
-                max_tcp_query_time: std::time::Duration::from_secs(10),
-                enable_graceful_degradation: false,
-                udp_buffer_size: 65_535,
-            },
-            rate_limit: crate::runtime_config::DnsRateLimitRuntimeConfig {
-                mode: crate::runtime_config::DnsRateLimitModeRuntime::Shared,
-                per_second: 100,
-            },
-            rrl: crate::runtime_config::RrlRuntimeConfig { enabled: false },
-            firewall: crate::runtime_config::DnsFirewallRuntimeConfig {
-                enabled: false,
-                block_internal_ips: true,
-                block_zone_transfers: true,
-            },
-            ecs: crate::runtime_config::EcsRuntimeConfig {
-                enabled: false,
-                prefix_v4: 24,
-                prefix_v6: 48,
-                allow_private_prefix: false,
-            },
-            query_coalescing: crate::runtime_config::QueryCoalescingRuntimeConfig {
-                enabled: false,
-                max_wait: std::time::Duration::from_millis(5),
-                max_entries: 1_000,
-                entry_ttl: std::time::Duration::from_secs(30),
-                cleanup_interval: std::time::Duration::from_secs(60),
-            },
-            dns64: None,
-            dot: crate::runtime_config::disabled_dot(),
-            doh: crate::runtime_config::disabled_doh(),
-            doq: crate::runtime_config::disabled_doq(),
-            dynamic_update: crate::runtime_config::DynamicUpdateRuntimeConfig {
-                enabled: false,
-                allow_any: true,
-                require_tsig: false,
-                max_update_size: 65_535,
-            },
-            zone_transfer: crate::runtime_config::ZoneTransferRuntimeConfig {
-                allow_transfer: Vec::new(),
-                allow_wildcard_transfer: false,
-                wildcard_transfer_requires_tsig: true,
-                ixfr_enabled: true,
-                ixfr_fallback_to_axfr: true,
-                require_tsig: false,
-            },
-            anycast: crate::runtime_config::AnycastRuntimeConfig { enabled: false },
-        }
-    }
-
-    fn deferred() -> DeferredDnsConfig {
-        DeferredDnsConfig {
-            dnssec: Default::default(),
-            zones: Default::default(),
-        }
+        dns_runtime(bind, port).authoritative
     }
 
     #[test]
@@ -823,13 +738,7 @@ mod tests {
 
     #[test]
     fn shutdown_runtime_is_idempotent() {
-        let config = make_config("127.0.0.1", 5353);
-        let mut server = DnsServer::new(
-            config,
-            crate::runtime_config::test_fixtures::recursive_runtime(),
-            deferred(),
-            None,
-        );
+        let mut server = DnsServer::new(dns_runtime("127.0.0.1", 5353), None);
         // First call should send the signal
         server.shutdown_runtime();
         // Second call should not panic

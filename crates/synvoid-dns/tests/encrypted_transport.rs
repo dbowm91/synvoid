@@ -2,9 +2,6 @@ mod support;
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
-use synvoid_config::dns::DnsDohConfig;
-use synvoid_config::dns::DnsDoqConfig;
-use synvoid_config::dns::DnsDotConfig;
 use synvoid_dns::cache::TransportClass;
 use synvoid_dns::doh::DohServer;
 use synvoid_dns::doq::DoqServer;
@@ -23,68 +20,6 @@ fn doh_runtime() -> DohRuntimeConfig {
 
 fn doq_runtime() -> DoqRuntimeConfig {
     support::doq_on(853)
-}
-
-#[test]
-fn dot_config_defaults_from_json() {
-    let config: DnsDotConfig = serde_json::from_str("{}").unwrap();
-    assert_eq!(config.port, 853);
-    assert_eq!(config.bind_address, "");
-    assert!(config.tls_cert_path.is_none());
-    assert!(config.tls_key_path.is_none());
-    assert!(config.use_system_cert_store);
-    assert!(!config.enabled);
-}
-
-#[test]
-fn doh_config_defaults_from_json() {
-    let config: DnsDohConfig = serde_json::from_str("{}").unwrap();
-    assert_eq!(config.port, 443);
-    assert_eq!(config.bind_address, "");
-    assert_eq!(config.path, "/dns-query");
-    assert!(config.json_path.is_empty());
-    assert!(config.tls_cert_path.is_none());
-    assert!(config.tls_key_path.is_none());
-    assert!(config.use_system_cert_store);
-    assert!(!config.enabled);
-}
-
-#[test]
-fn doq_config_defaults_from_json() {
-    let config: DnsDoqConfig = serde_json::from_str("{}").unwrap();
-    assert_eq!(config.port, 853);
-    assert_eq!(config.bind_address, "");
-    assert!(config.tls_cert_path.is_none());
-    assert!(config.tls_key_path.is_none());
-    assert!(config.use_system_cert_store);
-    assert_eq!(config.max_concurrent_streams, 100);
-    assert_eq!(config.idle_timeout_secs, 30);
-    assert!(!config.enabled);
-}
-
-#[test]
-fn dot_config_custom_port() {
-    let json = r#"{"port": 8853, "bind_address": "10.0.0.1"}"#;
-    let config: DnsDotConfig = serde_json::from_str(json).unwrap();
-    assert_eq!(config.port, 8853);
-    assert_eq!(config.bind_address, "10.0.0.1");
-}
-
-#[test]
-fn doh_config_custom_port_and_path() {
-    let json = r#"{"port": 8443, "path": "/dns-query", "json_path": "/dns"}"#;
-    let config: DnsDohConfig = serde_json::from_str(json).unwrap();
-    assert_eq!(config.port, 8443);
-    assert_eq!(config.path, "/dns-query");
-    assert_eq!(config.json_path, "/dns");
-}
-
-#[test]
-fn doq_config_custom_concurrency() {
-    let json = r#"{"max_concurrent_streams": 256, "idle_timeout_secs": 60}"#;
-    let config: DnsDoqConfig = serde_json::from_str(json).unwrap();
-    assert_eq!(config.max_concurrent_streams, 256);
-    assert_eq!(config.idle_timeout_secs, 60);
 }
 
 #[test]

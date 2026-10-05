@@ -95,7 +95,6 @@ The module is located at `crates/synvoid-dns/` and exports a rich set of submodu
 | `cache.rs` | `crates/synvoid-dns/src/cache.rs` | `DnsCache` - authoritative server cache |
 | `compression.rs` | `crates/synvoid-dns/src/compression.rs` | DNS message compression |
 | `runtime_config.rs` | `crates/synvoid-dns/src/runtime_config.rs` | DNS-owned runtime configuration vocabulary (Phase 125+): authoritative, transports, DNSSEC, zones, TSIG, recursive. No persistence derives |
-| `runtime_config_deferred.rs` | `crates/synvoid-dns/src/runtime_config_deferred.rs` | **Temporary** persistence passthrough for Phases 127/128. Deleted with the `synvoid-config` edge in Phase 128 |
 | `edns.rs` | `crates/synvoid-dns/src/edns.rs` | EDNS(0) option parsing |
 | `messages.rs` | `crates/synvoid-dns/src/messages.rs` | Mesh DNS message types |
 | `mesh_dnssec.rs` | `crates/synvoid-dns/src/mesh_dnssec.rs` | Mesh DNSSEC validation - `MeshDnsSecValidator`, `MeshTrustAnchor` |
@@ -337,10 +336,22 @@ pub struct AuthoritativeRuntimeConfig {
 }
 ```
 
-`DnsServer::new(AuthoritativeRuntimeConfig, DeferredDnsConfig, Option<Arc<CertResolver>>)`
-is the canonical constructor. The single persisted-to-runtime conversion lives
-in `src/server/dns_runtime_config.rs` (composition), never in the `src/dns/`
+`DnsServer::new(DnsRuntimeConfig, Option<Arc<CertResolver>>)` is the canonical
+constructor: the whole-DNS runtime projection plus a composition-owned
+`CertResolver`. The single persisted-to-runtime conversion lives in
+`src/server/dns_runtime_config.rs` (composition), never in the `src/dns/`
 facade.
+
+`crates/synvoid-dns` no longer depends on `synvoid-config` (Phase 128). The
+temporary `runtime_config_deferred.rs` passthrough that Phases 126/127 needed is
+deleted, and the manifest edge is gated by
+`tools/synvoid-repo-guards/tests/dns_dependency_edges.rs`.
+
+**Known gap:** `[dns.zones]` is validated and converted into `ZoneSpec` values,
+but `DnsServer::new` discards them (`zones: _`) and `load_zones(Vec<ZoneSpec>)`
+has no production caller. Zones reach a running server only through
+`load_zones_from_store` (the SQLite zone store), not from `main.toml`. See
+`dns_runtime_dto_phase128_closeout.md` finding F-2.
 
 ### 3.10 AuthoritativeLookupOutcome (server/zone.rs)
 

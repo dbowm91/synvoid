@@ -8459,7 +8459,6 @@ dependencies = [
  "sha1",
  "sha2",
  "subtle",
- "synvoid-config",
  "synvoid-core",
  "synvoid-dnssec-keystore",
  "synvoid-geoip",

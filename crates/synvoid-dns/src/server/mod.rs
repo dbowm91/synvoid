@@ -19,7 +19,6 @@ use super::edns::{parse_edns_options, EdnsOptions};
 use super::query_validator::DnsQueryValidator;
 use super::store::ZoneStore;
 use super::wire;
-use synvoid_config::dns::DnsZoneEntry;
 use synvoid_core::time::current_timestamp_secs;
 use synvoid_tls::cert_resolver::CertResolver;
 
@@ -1631,9 +1630,9 @@ pub struct DnsServer {
     authoritative: Arc<super::runtime_config::AuthoritativeRuntimeConfig>,
     /// Recursive resolver runtime (Phase 127 cutover).
     recursive: Arc<super::runtime_config::RecursiveRuntimeConfig>,
-    /// DNSSEC / HSM / zone sections still owned by Phase 128. Deleted with the
-    /// `synvoid-config` edge in Phase 128.
-    deferred: Arc<crate::runtime_config_deferred::DeferredDnsConfig>,
+    /// Global DNSSEC policy and HSM wiring (Phase 128 cutover). Distinct from
+    /// the `dnssec` key manager field above.
+    dnssec_runtime: Arc<super::runtime_config::DnssecRuntimeConfig>,
     zones: Arc<ShardedZoneStore>,
     zone_trie: Arc<RwLock<super::zone_trie::ZoneTrie>>,
     zone_index: Arc<RwLock<Vec<(String, String)>>>,
@@ -1681,7 +1680,6 @@ impl Clone for DnsServer {
         Self {
             authoritative: self.authoritative.clone(),
             recursive: self.recursive.clone(),
-            deferred: self.deferred.clone(),
             zones: self.zones.clone(),
             zone_trie: self.zone_trie.clone(),
             zone_index: self.zone_index.clone(),
@@ -1696,6 +1694,7 @@ impl Clone for DnsServer {
             shutdown_watcher_tx: None, // Cannot clone sender
             cache: self.cache.clone(),
             dnssec: self.dnssec.clone(),
+            dnssec_runtime: self.dnssec_runtime.clone(),
             signer_name: self.signer_name.clone(),
             rrl_enabled: self.rrl_enabled,
             cert_resolver: self.cert_resolver.clone(),
@@ -1758,16 +1757,25 @@ mod btree_tests {
 }
 
 impl DnsServer {
-    /// Canonical Phase 126 constructor.
+    /// Canonical constructor (Phases 125-128 cutover).
     ///
-    /// Takes DNS-owned runtime values only. The single persisted-config
-    /// conversion path is `src/server/dns_runtime_config.rs`.
+    /// Takes DNS-owned runtime values only — never a persistence DTO. The
+    /// single persisted-config conversion path is
+    /// `src/server/dns_runtime_config.rs`.
     pub fn new(
-        authoritative: super::runtime_config::AuthoritativeRuntimeConfig,
-        recursive: super::runtime_config::RecursiveRuntimeConfig,
-        deferred: crate::runtime_config_deferred::DeferredDnsConfig,
+        runtime: super::runtime_config::DnsRuntimeConfig,
         cert_resolver: Option<Arc<CertResolver>>,
     ) -> Self {
+        let super::runtime_config::DnsRuntimeConfig {
+            authoritative,
+            recursive,
+            dnssec,
+            // Zones are zone *input*: the caller activates them explicitly via
+            // `load_zones`, so they are not consumed by the constructor.
+            zones: _,
+            tsig_keys: _,
+            enabled: _,
+        } = runtime;
         let rate_limiter = match authoritative.rate_limit.mode {
             super::runtime_config::DnsRateLimitModeRuntime::Shared => None,
             super::runtime_config::DnsRateLimitModeRuntime::Dedicated => {
@@ -1798,16 +1806,15 @@ impl DnsServer {
             None
         };
 
-        // DNSSEC key custody and HSM establishment stay on the deferred
-        // persisted sections until Phase 128 converts them.
-        let (dnssec, signer_name) = if deferred.dnssec.enabled {
-            let key_path = std::path::PathBuf::from(&deferred.dnssec.key_path);
+        // DNSSEC key custody and HSM establishment.
+        let (dnssec_key_manager, signer_name) = if dnssec.enabled {
+            let key_path = dnssec.key_path.clone();
             let mut manager = DnsSecKeyManager::new(key_path.clone());
 
             let algorithm = super::dnssec::Algorithm::Ed25519;
 
             let key_type = super::dnssec::KeyType::KSK;
-            let key_name = format!("ksk.{}", deferred.dnssec.domain);
+            let key_name = format!("ksk.{}", dnssec.domain);
 
             if !key_path.exists() {
                 if let Err(e) = std::fs::create_dir_all(&key_path) {
@@ -1835,9 +1842,9 @@ impl DnsServer {
         // Phase 30: HSM establishment is fail-closed. A PKCS#11 failure
         // never falls back to software keys; zones requiring HSM must
         // refuse signed answers (callers check `is_available()`).
-        let hsm_manager = if deferred.dnssec.enabled || deferred.dnssec.hsm.enabled {
+        let hsm_manager = if dnssec.enabled || dnssec.hsm.enabled {
             let hsm = super::hsm::HsmManager::new();
-            let ks_config = super::hsm::keystore_config_from_dns(&deferred.dnssec.hsm);
+            let ks_config = super::hsm::keystore_config_from_runtime(&dnssec.hsm);
             if let Err(e) = hsm.initialize(&ks_config) {
                 tracing::warn!("Failed to initialize HSM (fail-closed, no fallback): {}", e);
             }
@@ -2020,7 +2027,7 @@ impl DnsServer {
         let server = Self {
             authoritative: Arc::new(authoritative),
             recursive: Arc::new(recursive),
-            deferred: Arc::new(deferred),
+            dnssec_runtime: Arc::new(dnssec),
             zones: Arc::new(ShardedZoneStore::new()),
             zone_trie: Arc::new(RwLock::new(super::zone_trie::ZoneTrie::new())),
             zone_index: Arc::new(RwLock::new(Vec::new())),
@@ -2034,7 +2041,7 @@ impl DnsServer {
             shutdown_tx: None,
             shutdown_watcher_tx: None,
             cache,
-            dnssec,
+            dnssec: dnssec_key_manager,
             signer_name,
             rrl_enabled,
             cert_resolver,
@@ -2091,10 +2098,9 @@ impl DnsServer {
         self.health
             .set_cache_operational(self.authoritative.cache.enabled);
 
-        // DNSSEC signing state. Still read from the deferred persisted
-        // section until Phase 128 converts the DNSSEC policy.
+        // DNSSEC signing state.
         self.health
-            .set_dnssec_signing_enabled(self.deferred.dnssec.enabled);
+            .set_dnssec_signing_enabled(self.dnssec_runtime.enabled);
 
         // Encrypted transport state.
         self.health.set_dot_enabled(self.authoritative.dot.enabled);

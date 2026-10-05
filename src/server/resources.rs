@@ -127,22 +127,17 @@ impl UnifiedServerResources {
         let (dns_server, acme_manager) = if plan.dns_enabled {
             let dns_cfg = main_config.dns.clone();
 
-            // Phase 126: the canonical persisted-config -> runtime conversion.
-            // `DnsServer::new` takes DNS-owned runtime values only; this is the
-            // single place persisted DNS schema reaches the DNS crate.
+            // The canonical persisted-config -> runtime conversion. `DnsServer`
+            // takes DNS-owned runtime values only; this is the single place
+            // persisted DNS schema reaches the DNS crate.
             let runtime_cfg =
-                crate::server::dns_runtime_config::dns_server_runtime_config_from_persisted(
-                    &dns_cfg,
-                )
-                .map_err(|e| UnifiedServerResourceError::Dns(e.to_string()))?;
+                crate::server::dns_runtime_config::dns_runtime_config_from_persisted(&dns_cfg)
+                    .map_err(|e| UnifiedServerResourceError::Dns(e.to_string()))?;
             let bind_addr = runtime_cfg.authoritative.bind_address;
 
-            let mut dns_server = crate::dns::DnsServer::new(
-                runtime_cfg.authoritative.clone(),
-                runtime_cfg.recursive.clone(),
-                runtime_cfg.deferred.clone(),
-                cert_resolver.clone(),
-            );
+            // TSIG keys are already decoded and length-checked by the adapter.
+            let tsig_keys = runtime_cfg.tsig_keys.clone();
+            let mut dns_server = crate::dns::DnsServer::new(runtime_cfg, cert_resolver.clone());
 
             // Wire up zone transfer configuration
             if !dns_cfg.settings.allow_transfer.is_empty()
@@ -150,8 +145,8 @@ impl UnifiedServerResources {
             {
                 use crate::dns::tsig::TsigVerifier;
 
-                let tsig_verifier = if !dns_cfg.dnssec.tsig_keys.is_empty() {
-                    match TsigVerifier::new(dns_cfg.dnssec.tsig_keys.clone()) {
+                let tsig_verifier = if !tsig_keys.is_empty() {
+                    match TsigVerifier::new(tsig_keys) {
                         Ok(v) => Some(Arc::new(v)),
                         Err(e) => {
                             tracing::warn!("Failed to initialize TSIG for zone transfers: {}", e);

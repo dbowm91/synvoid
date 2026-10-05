@@ -12,9 +12,9 @@
 //! the authoritative runtime reads, so a fixture with no overrides behaves
 //! like a default server. Override exactly the group a test is about.
 //!
-//! Two fixtures still need persisted shapes, because Phases 127/128 own them:
-//! [`deferred_config`] (recursive/DNSSEC/zones) and [`recursive_persisted`].
-//! Those are clearly named so the residual edge stays visible.
+//! Phase 128 removed the last persisted-shape fixture: this crate no longer
+//! links `synvoid-config` at all. Every fixture here is a DNS-owned runtime
+//! value.
 
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -22,24 +22,12 @@ use std::time::Duration;
 use synvoid_dns::runtime_config::{
     AnycastRuntimeConfig, AuthoritativeRuntimeConfig, CacheRuntimeConfig,
     CircuitBreakerRuntimeConfig, CustomUpstreamEndpoint, DnsFirewallRuntimeConfig,
-    DnsRateLimitModeRuntime, DnsRateLimitRuntimeConfig, DohRuntimeConfig, DoqRuntimeConfig,
-    DotRuntimeConfig, DynamicUpdateRuntimeConfig, EcsRuntimeConfig, LimitsRuntimeConfig,
-    QueryCoalescingRuntimeConfig, RecursiveCacheRuntimeConfig, RecursiveClientAclRuntime,
-    RecursiveEcsPolicyRuntime, RecursiveEcsRuntimeConfig, RecursiveRuntimeConfig,
-    RecursiveUpstreamRuntime, RrlRuntimeConfig, ZoneTransferRuntimeConfig,
+    DnsRateLimitModeRuntime, DnsRateLimitRuntimeConfig, DnssecRuntimeConfig, DohRuntimeConfig,
+    DoqRuntimeConfig, DotRuntimeConfig, DynamicUpdateRuntimeConfig, EcsRuntimeConfig,
+    LimitsRuntimeConfig, QueryCoalescingRuntimeConfig, RecursiveCacheRuntimeConfig,
+    RecursiveClientAclRuntime, RecursiveEcsPolicyRuntime, RecursiveEcsRuntimeConfig,
+    RecursiveRuntimeConfig, RecursiveUpstreamRuntime, RrlRuntimeConfig, ZoneTransferRuntimeConfig,
 };
-use synvoid_dns::runtime_config_deferred::DeferredDnsConfig;
-
-/// Serde default for `dns.firewall.max_rules`. See the Phase 125 closeout
-/// finding F-1: the derived Rust `Default` disagrees with the serde default.
-pub const FIREWALL_MAX_RULES_SERDE_DEFAULT: usize = 1000;
-
-fn firewall() -> synvoid_config::dns::DnsFirewallConfig {
-    synvoid_config::dns::DnsFirewallConfig {
-        max_rules: FIREWALL_MAX_RULES_SERDE_DEFAULT,
-        ..Default::default()
-    }
-}
 
 /// Default authoritative runtime configuration, matching
 /// `DnsConfig::default()` for every authoritative group.
@@ -306,28 +294,6 @@ impl AuthoritativeRuntimeBuilder {
     }
 }
 
-/// Persisted sections still owned by Phase 128, with defaults.
-///
-/// Delete this fixture (and `DeferredDnsConfig`) in Phase 128.
-pub fn deferred_config() -> DeferredDnsConfig {
-    DeferredDnsConfig {
-        dnssec: synvoid_config::dns::DnsSecConfig::default(),
-        zones: synvoid_config::dns::DnsZonesConfig::default(),
-    }
-}
-
-/// Deferred fixture with DNSSEC signing requested, for key-manager tests.
-pub fn deferred_dnssec_enabled(key_path: std::path::PathBuf, domain: &str) -> DeferredDnsConfig {
-    let mut deferred = deferred_config();
-    deferred.dnssec = synvoid_config::dns::DnsSecConfig {
-        enabled: true,
-        key_path: key_path.to_string_lossy().to_string(),
-        domain: domain.to_string(),
-        ..Default::default()
-    };
-    deferred
-}
-
 /// Recursive runtime for a loopback bind.
 ///
 /// Mirrors `RecursiveDnsConfig::default()` for every value the recursive
@@ -445,7 +411,88 @@ pub fn circuit_breaker_runtime(
     }
 }
 
-/// Persisted firewall config that passes the Phase 45 fail-closed contract.
-pub fn firewall_persisted() -> synvoid_config::dns::DnsFirewallConfig {
-    firewall()
+/// Default DNSSEC runtime (signing disabled).
+pub fn dnssec_runtime() -> DnssecRuntimeConfig {
+    DnssecRuntimeConfig {
+        enabled: false,
+        domain: "example.com".to_string(),
+        key_path: std::path::PathBuf::from("/var/lib/synvoid/dns/keys"),
+        algorithm: synvoid_dns::runtime_config::DnssecAlgorithmRuntime::Ed25519,
+        key_type: synvoid_dns::runtime_config::DnssecKeyTypeRuntime::Ksk,
+        rsa_key_size: 2048,
+        ksk_key_size: 2048,
+        rollover_interval: Duration::from_secs(90 * 86_400),
+        denial: synvoid_dns::runtime_config::DnssecDenialPolicyRuntime {
+            nsec_enabled: true,
+            nsec3_enabled: false,
+            nsec3_iterations: 5,
+            nsec3_algorithm: 1,
+        },
+        hsm: synvoid_dns::runtime_config::HsmRuntimeConfig::default(),
+    }
+}
+
+/// DNSSEC runtime with signing requested, for key-manager tests.
+pub fn dnssec_enabled_runtime(key_path: std::path::PathBuf, domain: &str) -> DnssecRuntimeConfig {
+    DnssecRuntimeConfig {
+        enabled: true,
+        key_path,
+        domain: domain.to_string(),
+        ..dnssec_runtime()
+    }
+}
+
+/// A full DNS runtime, the canonical `DnsServer::new` input.
+pub fn dns_runtime() -> synvoid_dns::runtime_config::DnsRuntimeConfig {
+    synvoid_dns::runtime_config::DnsRuntimeConfig {
+        enabled: true,
+        authoritative: authoritative_runtime(),
+        dnssec: dnssec_runtime(),
+        zones: Vec::new(),
+        tsig_keys: Vec::new(),
+        recursive: recursive_runtime(),
+    }
+}
+
+/// Reserve an ephemeral loopback port by binding and immediately releasing
+/// it. Callers that actually start a listener must use this, because
+/// [`dns_runtime`] binds port 0 and `DnsServer::start` rejects a zero port.
+pub fn free_port() -> u16 {
+    std::net::UdpSocket::bind("127.0.0.1:0")
+        .expect("bind ephemeral")
+        .local_addr()
+        .expect("local addr")
+        .port()
+}
+
+/// A whole-DNS runtime bound to a concrete loopback port, for tests that call
+/// `DnsServer::start` and then dial the server.
+pub fn dns_runtime_on(port: u16) -> synvoid_dns::runtime_config::DnsRuntimeConfig {
+    let mut runtime = dns_runtime();
+    runtime.authoritative.bind_address = SocketAddr::from(([127, 0, 0, 1], port));
+    runtime
+}
+
+/// A TSIG runtime key with a 32-byte HMAC-SHA256 secret.
+pub fn tsig_key(name: &str) -> synvoid_dns::runtime_config::TsigRuntimeKey {
+    synvoid_dns::runtime_config::TsigRuntimeKey {
+        name: name.to_string(),
+        secret: vec![0x11; 32],
+        algorithm: synvoid_dns::runtime_config::TsigAlgorithmRuntime::HmacSha256,
+    }
+}
+
+/// One zone runtime spec with a single apex SOA record.
+pub fn zone_spec(origin: &str) -> synvoid_dns::runtime_config::ZoneSpec {
+    synvoid_dns::runtime_config::ZoneSpec {
+        origin: origin.to_string(),
+        records: vec![synvoid_dns::runtime_config::ZoneRecordSpec {
+            name: origin.to_string(),
+            record_type: synvoid_dns::runtime_config::RecordType::SOA,
+            ttl: Some(300),
+            value: format!("ns1.{origin}. admin.{origin}. 1 7200 3600 604800 300"),
+            priority: None,
+        }],
+        dnssec: None,
+    }
 }

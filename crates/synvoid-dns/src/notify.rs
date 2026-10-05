@@ -15,15 +15,6 @@ pub struct NotifyConfig {
     pub also_notify: Vec<String>,
 }
 
-impl From<&synvoid_config::dns::NotifyConfig> for NotifyConfig {
-    fn from(config: &synvoid_config::dns::NotifyConfig) -> Self {
-        Self {
-            enabled: config.enabled,
-            also_notify: config.also_notify.clone(),
-        }
-    }
-}
-
 #[derive(Clone)]
 pub struct NotifyHandler {
     zones: Arc<ShardedZoneStore>,

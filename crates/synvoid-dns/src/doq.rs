@@ -434,16 +434,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_doq_serde_defaults_remain_stable() {
-        // Persisted defaults are unchanged by the Phase 126 cutover; only the
-        // runtime projection is new.
-        let config: synvoid_config::dns::DnsDoqConfig = serde_json::from_str("{}").unwrap();
-
-        assert_eq!(config.port, 853);
-        assert_eq!(config.max_concurrent_streams, 100);
-        assert_eq!(config.idle_timeout_secs, 30);
-    }
+    /// Persisted DoQ defaults are owned by `synvoid-config` and asserted in
+    /// `synvoid-config/tests/encrypted_transport_schema.rs`. The runtime
+    /// projection is asserted by `test_doq_server_creation` above.
 
     #[test]
     fn test_doq_frame_format() {

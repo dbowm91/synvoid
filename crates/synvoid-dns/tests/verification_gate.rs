@@ -1,8 +1,5 @@
 mod support;
 
-use synvoid_config::dns::{
-    DnsConfig, DnsDohConfig, DnsDoqConfig, DnsDotConfig, RecursiveDnsConfig,
-};
 use synvoid_dns::cache::{CacheKey, DnsCache, InvalidationReason, TransportClass};
 use synvoid_dns::dnssec::{Algorithm, DsDigestType, KeyType, Nsec3Config, ZoneSigningKey};
 use synvoid_dns::dnssec_signing::{create_nsec_record, create_rrsig_record, sign_data};
@@ -85,12 +82,7 @@ fn ed25519_test_key() -> ZoneSigningKey {
 fn successful_reload_swaps_zone_atomically() {
     use synvoid_dns::server::DnsServer;
 
-    let server = DnsServer::new(
-        support::authoritative_runtime(),
-        support::recursive_disabled(),
-        support::deferred_config(),
-        None,
-    );
+    let server = DnsServer::new(support::dns_runtime(), None);
     let zones = server.get_zones();
 
     let mut initial = build_test_zone();
@@ -136,12 +128,7 @@ fn successful_reload_swaps_zone_atomically() {
 fn failed_reload_preserves_previous_active_zone() {
     use synvoid_dns::server::DnsServer;
 
-    let server = DnsServer::new(
-        support::authoritative_runtime(),
-        support::recursive_disabled(),
-        support::deferred_config(),
-        None,
-    );
+    let server = DnsServer::new(support::dns_runtime(), None);
     let zones = server.get_zones();
 
     // Install a known-good active zone.
@@ -234,12 +221,7 @@ fn successful_reload_invalidates_cache_for_zone() {
     use synvoid_dns::cache::CacheKey;
     use synvoid_dns::server::DnsServer;
 
-    let server = DnsServer::new(
-        support::authoritative_runtime(),
-        support::recursive_disabled(),
-        support::deferred_config(),
-        None,
-    );
+    let server = DnsServer::new(support::dns_runtime(), None);
     let initial = build_test_zone();
     server
         .replace_zone_with_validation(initial.clone())
@@ -474,95 +456,6 @@ fn rrsig_creation_with_valid_key() {
 // Gate 4: Encrypted Transport Adapters
 // ══════════════════════════════════════════════════════════════════════
 
-/// Verify DoT config serialization roundtrip.
-///
-/// All fields must survive a serde_json serialize-deserialize cycle.
-#[test]
-fn dot_config_all_fields_roundtrip() {
-    let config = DnsDotConfig {
-        enabled: true,
-        port: 8853,
-        bind_address: "10.0.0.1".to_string(),
-        tls_cert_path: Some("/etc/certs/dot.pem".to_string()),
-        tls_key_path: Some("/etc/certs/dot-key.pem".to_string()),
-        use_system_cert_store: false,
-    };
-
-    let json = serde_json::to_string(&config).expect("DoT config must serialize");
-    let restored: DnsDotConfig = serde_json::from_str(&json).expect("DoT config must deserialize");
-
-    assert!(restored.enabled);
-    assert_eq!(restored.port, 8853);
-    assert_eq!(restored.bind_address, "10.0.0.1");
-    assert_eq!(
-        restored.tls_cert_path,
-        Some("/etc/certs/dot.pem".to_string())
-    );
-    assert_eq!(
-        restored.tls_key_path,
-        Some("/etc/certs/dot-key.pem".to_string())
-    );
-    assert!(!restored.use_system_cert_store);
-}
-
-/// Verify DoH config serialization roundtrip.
-///
-/// All fields must survive a serde_json serialize-deserialize cycle.
-#[test]
-fn doh_config_all_fields_roundtrip() {
-    let config = DnsDohConfig {
-        enabled: true,
-        port: 1443,
-        bind_address: "10.0.0.2".to_string(),
-        path: "/custom-dns".to_string(),
-        json_path: "/custom-dns-json".to_string(),
-        tls_cert_path: Some("/etc/certs/doh.pem".to_string()),
-        tls_key_path: Some("/etc/certs/doh-key.pem".to_string()),
-        use_system_cert_store: true,
-    };
-
-    let json = serde_json::to_string(&config).expect("DoH config must serialize");
-    let restored: DnsDohConfig = serde_json::from_str(&json).expect("DoH config must deserialize");
-
-    assert!(restored.enabled);
-    assert_eq!(restored.port, 1443);
-    assert_eq!(restored.bind_address, "10.0.0.2");
-    assert_eq!(restored.path, "/custom-dns");
-    assert_eq!(restored.json_path, "/custom-dns-json");
-    assert_eq!(
-        restored.tls_cert_path,
-        Some("/etc/certs/doh.pem".to_string())
-    );
-    assert!(restored.use_system_cert_store);
-}
-
-/// Verify DoQ config serialization roundtrip.
-///
-/// All fields must survive a serde_json serialize-deserialize cycle.
-#[test]
-fn doq_config_all_fields_roundtrip() {
-    let config = DnsDoqConfig {
-        enabled: true,
-        port: 7853,
-        bind_address: "10.0.0.3".to_string(),
-        tls_cert_path: Some("/etc/certs/doq.pem".to_string()),
-        tls_key_path: Some("/etc/certs/doq-key.pem".to_string()),
-        use_system_cert_store: false,
-        max_concurrent_streams: 200,
-        idle_timeout_secs: 60,
-    };
-
-    let json = serde_json::to_string(&config).expect("DoQ config must serialize");
-    let restored: DnsDoqConfig = serde_json::from_str(&json).expect("DoQ config must deserialize");
-
-    assert!(restored.enabled);
-    assert_eq!(restored.port, 7853);
-    assert_eq!(restored.bind_address, "10.0.0.3");
-    assert_eq!(restored.max_concurrent_streams, 200);
-    assert_eq!(restored.idle_timeout_secs, 60);
-    assert!(!restored.use_system_cert_store);
-}
-
 /// Verify transport class isolation — different transport classes produce
 /// different cache keys so responses are never cross-contaminated.
 #[test]
@@ -593,69 +486,9 @@ fn transport_class_isolation_all_variants() {
     assert_ne!(tcp, quic);
 }
 
-/// Verify all encrypted transport config defaults.
-///
-/// Serde defaults must produce correct values for omitted fields.
-#[test]
-fn encrypted_transport_config_defaults() {
-    let dot: DnsDotConfig = serde_json::from_str("{}").unwrap();
-    assert_eq!(dot.port, 853, "DoT default port must be 853");
-    assert!(!dot.enabled, "DoT must be disabled by default");
-    assert!(
-        dot.use_system_cert_store,
-        "DoT must use system cert store by default"
-    );
-
-    let doh: DnsDohConfig = serde_json::from_str("{}").unwrap();
-    assert_eq!(doh.port, 443, "DoH default port must be 443");
-    assert!(!doh.enabled, "DoH must be disabled by default");
-    assert_eq!(
-        doh.path, "/dns-query",
-        "DoH default path must be /dns-query"
-    );
-    assert!(
-        doh.use_system_cert_store,
-        "DoH must use system cert store by default"
-    );
-
-    let doq: DnsDoqConfig = serde_json::from_str("{}").unwrap();
-    assert_eq!(doq.port, 853, "DoQ default port must be 853");
-    assert!(!doq.enabled, "DoQ must be disabled by default");
-    assert_eq!(
-        doq.max_concurrent_streams, 100,
-        "DoQ default max concurrent streams"
-    );
-    assert_eq!(doq.idle_timeout_secs, 30, "DoQ default idle timeout");
-    assert!(
-        doq.use_system_cert_store,
-        "DoQ must use system cert store by default"
-    );
-}
-
 // ══════════════════════════════════════════════════════════════════════
 // Gate 5: Recursive Resolver Safety
 // ══════════════════════════════════════════════════════════════════════
-
-/// Verify recursive DNS is disabled by default.
-///
-/// The default DnsConfig must have recursive.enabled = false with
-/// sensible loopback binding to prevent open-resolver misconfigurations.
-#[test]
-fn recursive_disabled_by_default() {
-    let config = DnsConfig::default();
-    assert!(
-        !config.recursive.enabled,
-        "Recursive DNS must be disabled by default"
-    );
-    assert_eq!(
-        config.recursive.bind_address, "127.0.0.1",
-        "Recursive must bind to loopback by default"
-    );
-    assert_eq!(
-        config.recursive.port, 1053,
-        "Recursive must use non-standard port (1053) by default"
-    );
-}
 
 /// Verify recursive cache key shapes are isolated from authoritative.
 ///
@@ -740,105 +573,6 @@ fn dnssec_validation_state_cache_separation() {
     assert_ne!(
         DnssecValidationState::Insecure,
         DnssecValidationState::Bogus
-    );
-}
-
-/// Verify CNAME depth limit is enforced.
-///
-/// When max_cname_depth > 0, the recursive resolver must reject queries
-/// that exceed the depth limit to prevent CNAME loops.
-#[test]
-fn cname_depth_limit_enforced() {
-    // Default max_cname_depth must be 10
-    let default_config = RecursiveDnsConfig::default();
-    assert_eq!(
-        default_config.max_cname_depth, 10,
-        "default max_cname_depth must be 10"
-    );
-
-    // Setting max_cname_depth = 0 means unlimited (valid)
-    let config = RecursiveDnsConfig {
-        enabled: true,
-        max_cname_depth: 0,
-        ..Default::default()
-    };
-    assert!(
-        config.validate().is_ok(),
-        "max_cname_depth=0 (unlimited) must be accepted"
-    );
-
-    // Setting max_cname_depth = 1 is valid (very restrictive)
-    let config = RecursiveDnsConfig {
-        enabled: true,
-        max_cname_depth: 1,
-        ..Default::default()
-    };
-    assert!(
-        config.validate().is_ok(),
-        "max_cname_depth=1 must be accepted"
-    );
-}
-
-/// Verify recursive config validation rules.
-///
-/// Key constraints: query_timeout_secs > 0, max_concurrent_queries > 0,
-/// negative_ttl_secs <= max_ttl_secs, open-resolver guard.
-#[test]
-fn recursive_config_validation() {
-    // Valid config
-    let mut config = RecursiveDnsConfig {
-        enabled: true,
-        ..Default::default()
-    };
-    assert!(
-        config.validate().is_ok(),
-        "default enabled config must validate: {:?}",
-        config.validate()
-    );
-
-    // query_timeout_secs = 0 is invalid
-    config.query_timeout_secs = 0;
-    assert!(
-        config.validate().is_err(),
-        "query_timeout_secs=0 must fail validation"
-    );
-    config.query_timeout_secs = 5;
-
-    // max_concurrent_queries = 0 is invalid
-    config.max_concurrent_queries = 0;
-    assert!(
-        config.validate().is_err(),
-        "max_concurrent_queries=0 must fail validation"
-    );
-    config.max_concurrent_queries = 100;
-
-    // negative_ttl_secs > max_ttl_secs is invalid
-    config.cache.negative_ttl_secs = 1000;
-    config.cache.max_ttl_secs = 500;
-    assert!(
-        config.validate().is_err(),
-        "negative_ttl > max_ttl must fail validation"
-    );
-    config.cache.negative_ttl_secs = 60;
-    config.cache.max_ttl_secs = 300;
-
-    // Open-resolver guard: 0.0.0.0 is rejected
-    config.bind_address = "0.0.0.0".to_string();
-    assert!(
-        config.validate().is_err(),
-        "bind_address=0.0.0.0 must fail (open resolver)"
-    );
-
-    config.bind_address = "::".to_string();
-    assert!(
-        config.validate().is_err(),
-        "bind_address=:: must fail (open resolver)"
-    );
-
-    config.bind_address = "127.0.0.1".to_string();
-    assert!(
-        config.validate().is_ok(),
-        "bind_address=127.0.0.1 must pass"
     );
 }
 
@@ -1159,100 +893,6 @@ fn ds_digest_lengths_match_rfc_6605() {
 // Gate 8: Recursive Safety Semantics (Milestone 3 Corrective Pass WS7)
 // ══════════════════════════════════════════════════════════════════════
 
-/// Recursive mode disabled by default — the default RecursiveDnsConfig
-/// must have `enabled = false` and bind to loopback. (Config-level test.)
-#[test]
-fn recursive_mode_disabled_and_loopback_by_default() {
-    use synvoid_config::dns::RecursiveDnsConfig;
-    let cfg = RecursiveDnsConfig::default();
-    assert!(!cfg.enabled, "Recursive mode must be disabled by default");
-    assert_eq!(
-        cfg.bind_address, "127.0.0.1",
-        "Recursive must bind to loopback by default (open-resolver prevention)"
-    );
-}
-
-/// Recursive config validation rejects wildcard bind addresses
-/// (0.0.0.0, ::) — this is the open-resolver guard.
-#[test]
-fn recursive_config_rejects_wildcard_bind() {
-    use synvoid_config::dns::RecursiveDnsConfig;
-    let mut cfg = RecursiveDnsConfig {
-        enabled: true,
-        bind_address: "0.0.0.0".to_string(),
-        ..Default::default()
-    };
-    assert!(
-        cfg.validate().is_err(),
-        "0.0.0.0 recursive bind must fail (open resolver)"
-    );
-    cfg.bind_address = "::".to_string();
-    assert!(
-        cfg.validate().is_err(),
-        ":: recursive bind must fail (open resolver)"
-    );
-    cfg.bind_address = "127.0.0.1".to_string();
-    assert!(cfg.validate().is_ok(), "loopback must be allowed");
-}
-
-/// CNAME depth limit (default=10) and `0 = unlimited` is a config-level
-/// invariant. Runtime depth enforcement is in `resolve_query_with_depth`.
-#[test]
-fn recursive_cname_depth_limit_config_invariants() {
-    use synvoid_config::dns::RecursiveDnsConfig;
-    let mut cfg = RecursiveDnsConfig::default();
-    assert_eq!(cfg.max_cname_depth, 10, "default max_cname_depth = 10");
-    cfg.max_cname_depth = 0;
-    assert!(cfg.validate().is_ok(), "0 = unlimited must be valid");
-    cfg.max_cname_depth = 1;
-    assert!(cfg.validate().is_ok(), "1 = restrictive but valid");
-}
-
-/// Recursion depth limit (default=16) and `0 = unlimited`.
-#[test]
-fn recursive_depth_limit_config_invariants() {
-    use synvoid_config::dns::RecursiveDnsConfig;
-    let cfg = RecursiveDnsConfig::default();
-    assert_eq!(
-        cfg.max_recursion_depth, 16,
-        "default max_recursion_depth = 16"
-    );
-    let cfg = RecursiveDnsConfig {
-        max_recursion_depth: 0,
-        ..Default::default()
-    };
-    assert!(cfg.validate().is_ok(), "0 = unlimited must be valid");
-}
-
-/// Per-client outstanding query limit (default=100) and `0 = unlimited`.
-#[test]
-fn recursive_per_client_limit_config_invariants() {
-    use synvoid_config::dns::RecursiveDnsConfig;
-    let cfg = RecursiveDnsConfig::default();
-    assert_eq!(
-        cfg.max_per_client_queries, 100,
-        "default max_per_client_queries = 100"
-    );
-    let cfg = RecursiveDnsConfig {
-        max_per_client_queries: 0,
-        ..Default::default()
-    };
-    assert!(cfg.validate().is_ok(), "0 = unlimited must be valid");
-}
-
-/// ECS forwarding policy default is `Never` — meaning ECS is stripped
-/// from outgoing queries by default. The policy types must be wired.
-#[test]
-fn ecs_default_policy_is_never() {
-    use synvoid_config::dns::EcsForwardingPolicy;
-    let cfg = EcsForwardingPolicy::default();
-    assert_eq!(
-        cfg,
-        EcsForwardingPolicy::Never,
-        "ECS must default to Never (strip ECS by default for privacy)"
-    );
-}
-
 // ══════════════════════════════════════════════════════════════════════
 // Gate 9: Encrypted Transport Adapter Semantics (WS6)
 // ══════════════════════════════════════════════════════════════════════
@@ -1278,55 +918,6 @@ fn dot_uses_standard_tcp_framing() {
     assert_eq!(len as usize, query.len(), "frame length must match payload");
     let read_query = &framed[2..2 + len as usize];
     assert_eq!(read_query, &query[..], "roundtrip must preserve payload");
-}
-
-/// DoH (RFC 8484) requires the request body to use `application/dns-message`
-/// content type. Wrong / missing content type returns HTTP 415 at the
-/// DoH adapter layer (verified in `encrypted_transport.rs` and by source
-/// inspection of `doh.rs::handle_request`).
-#[test]
-fn doh_content_type_must_be_application_dns_message() {
-    // Documented invariant — the DoH server MUST enforce the content type.
-    // The runtime check is in src/doh.rs::handle_request. The test here
-    // asserts the documented behavior at the integration test tier.
-    use synvoid_config::dns::DnsDohConfig;
-    let cfg: DnsDohConfig = serde_json::from_str("{}").expect("parse defaults");
-    assert_eq!(
-        cfg.path, "/dns-query",
-        "Default DoH path must be /dns-query per RFC 8484"
-    );
-}
-
-/// DoH (RFC 8484 §4) supports both GET and POST. POST is the
-/// production path; GET is optional. SynVoid supports GET through the
-/// `?dns=...` query parameter (base64url). This is exercised in
-/// encrypted_transport.rs::doh_paths_accepted.
-#[test]
-fn doh_default_path_is_rfc_8484_compliant() {
-    use synvoid_config::dns::DnsDohConfig;
-    let cfg: DnsDohConfig = serde_json::from_str("{}").expect("parse defaults");
-    assert_eq!(cfg.path, "/dns-query");
-    assert!(
-        !cfg.enabled,
-        "DoH must be disabled by default (opt-in encrypted transport)"
-    );
-    assert_eq!(cfg.port, 443, "DoH default port must be 443");
-}
-
-/// DoQ (RFC 9250) ALPN token is `doq`. Quinn QUIC adapter uses this
-/// for connection negotiation. Verified at runtime in
-/// `encrypted_transport.rs::doq_alpn_is_doq` and in `doq.rs` source.
-#[test]
-fn doq_default_port_and_alpn() {
-    use synvoid_config::dns::DnsDoqConfig;
-    let cfg: DnsDoqConfig = serde_json::from_str("{}").expect("parse defaults");
-    assert_eq!(cfg.port, 853, "DoQ default port must be 853");
-    assert!(!cfg.enabled, "DoQ must be disabled by default");
-    assert_eq!(
-        cfg.max_concurrent_streams, 100,
-        "DoQ default max concurrent streams"
-    );
-    assert_eq!(cfg.idle_timeout_secs, 30, "DoQ default idle timeout");
 }
 
 /// Encrypted transports propagate TransportClass into the cache key,

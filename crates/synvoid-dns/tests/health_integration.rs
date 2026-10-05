@@ -7,38 +7,28 @@
 
 mod support;
 
-use support::runtime_config::{deferred_config, AuthoritativeRuntimeBuilder};
+use support::runtime_config::AuthoritativeRuntimeBuilder;
 use synvoid_dns::health::{
     DnsHealthChecker, DnsHealthStatus, DnssecHealth, EncryptedTransportHealth, HealthState,
     RecursiveHealth, TransferUpdateHealth,
 };
 use synvoid_dns::server::DnsServer;
 
-/// Build a server from DNS-owned runtime values (Phases 126/127 cutovers).
+/// Build a server from DNS-owned runtime values (Phases 126/127/128 cutovers).
 fn server_with(
     authoritative: synvoid_dns::runtime_config::AuthoritativeRuntimeConfig,
 ) -> DnsServer {
-    server_with_all(
-        authoritative,
-        support::recursive_disabled(),
-        deferred_config(),
-    )
+    server_with_recursive(authoritative, support::recursive_disabled())
 }
 
 fn server_with_recursive(
     authoritative: synvoid_dns::runtime_config::AuthoritativeRuntimeConfig,
     recursive: synvoid_dns::runtime_config::RecursiveRuntimeConfig,
-    deferred: synvoid_dns::runtime_config_deferred::DeferredDnsConfig,
 ) -> DnsServer {
-    DnsServer::new(authoritative, recursive, deferred, None)
-}
-
-fn server_with_all(
-    authoritative: synvoid_dns::runtime_config::AuthoritativeRuntimeConfig,
-    recursive: synvoid_dns::runtime_config::RecursiveRuntimeConfig,
-    deferred: synvoid_dns::runtime_config_deferred::DeferredDnsConfig,
-) -> DnsServer {
-    DnsServer::new(authoritative, recursive, deferred, None)
+    let mut runtime = support::dns_runtime();
+    runtime.authoritative = authoritative;
+    runtime.recursive = recursive;
+    DnsServer::new(runtime, None)
 }
 
 #[test]
@@ -119,7 +109,6 @@ fn recursive_enabled_marks_recursive_healthy_initially() {
     let server = server_with_recursive(
         AuthoritativeRuntimeBuilder::new().build(),
         support::recursive_runtime(),
-        deferred_config(),
     );
     let status = server.health_checker().status();
     assert!(matches!(status.recursive_state, RecursiveHealth::Healthy));
@@ -134,7 +123,6 @@ fn circuit_breaker_open_marks_recursive_degraded() {
     let server = server_with_recursive(
         AuthoritativeRuntimeBuilder::new().build(),
         support::recursive_runtime(),
-        deferred_config(),
     );
     let checker = server.health_checker();
     checker.set_recursive_healthy();
@@ -210,14 +198,12 @@ fn dnssec_disabled_initially() {
 
 #[test]
 fn dnssec_enabled_reflected() {
-    let server = server_with_all(
-        AuthoritativeRuntimeBuilder::new().build(),
-        support::recursive_disabled(),
-        support::runtime_config::deferred_dnssec_enabled(
-            std::env::temp_dir().join("synvoid-health-test-keys"),
-            "example.com",
-        ),
+    let mut runtime = support::dns_runtime();
+    runtime.dnssec = support::runtime_config::dnssec_enabled_runtime(
+        std::env::temp_dir().join("synvoid-health-test-keys"),
+        "example.com",
     );
+    let server = DnsServer::new(runtime, None);
     let status = server.health_checker().status();
     assert!(status.dnssec_state.signing_enabled);
 }

@@ -17,7 +17,6 @@ hsm = ["synvoid-dnssec-keystore/pkcs11"]
 [dependencies]
 synvoid-core = { path = "../synvoid-core" , version = "0.1" }
 synvoid-mesh = { path = "../synvoid-mesh", optional = true , version = "0.1" }
-synvoid-config = { path = "../synvoid-config", features = ["dns"] , version = "0.1" }
 synvoid-tls = { path = "../synvoid-tls", features = ["dns"] , version = "0.1" }
 synvoid-utils = { path = "../synvoid-utils" , version = "0.1" }
 synvoid-geoip = { path = "../synvoid-geoip" , version = "0.1" }

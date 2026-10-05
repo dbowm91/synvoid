@@ -10,24 +10,24 @@ impl DnsServer {
         manager.load_keys_from_disk().map_err(|e| e.to_string())?;
 
         if manager.active_ksk().is_err() {
-            let algorithm = crate::dnssec::algorithm_from_config(self.deferred.dnssec.algorithm);
+            let algorithm = crate::dnssec::algorithm_from_runtime(self.dnssec_runtime.algorithm);
             manager
                 .generate_key(
                     algorithm,
                     crate::dnssec::KeyType::KSK,
-                    self.deferred.dnssec.ksk_key_size,
+                    self.dnssec_runtime.ksk_key_size,
                     365,
                 )
                 .map_err(|e| e.to_string())?;
         }
 
         if manager.active_zsk().is_err() {
-            let algorithm = crate::dnssec::algorithm_from_config(self.deferred.dnssec.algorithm);
+            let algorithm = crate::dnssec::algorithm_from_runtime(self.dnssec_runtime.algorithm);
             manager
                 .generate_key(
                     algorithm,
                     crate::dnssec::KeyType::ZSK,
-                    self.deferred.dnssec.rsa_key_size,
+                    self.dnssec_runtime.rsa_key_size,
                     90,
                 )
                 .map_err(|e| e.to_string())?;

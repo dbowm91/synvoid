@@ -2,15 +2,13 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use crate::runtime_config::{TsigAlgorithmRuntime, TsigRuntimeKey};
 use hmac::{Hmac, Mac};
 use parking_lot::RwLock;
 use sha2::{Digest, Sha256, Sha384, Sha512};
 use subtle::ConstantTimeEq;
 
 use thiserror::Error;
-
-use synvoid_config::dns::{TsigAlgorithm, TsigKeyConfig};
 
 type HmacSha256 = Hmac<Sha256>;
 type HmacSha384 = Hmac<Sha384>;
@@ -84,26 +82,31 @@ impl ReplayCache {
 pub struct TsigKey {
     pub name: String,
     pub secret: Vec<u8>,
-    pub algorithm: TsigAlgorithm,
+    pub algorithm: TsigAlgorithmRuntime,
 }
 
 impl TsigKey {
-    pub fn from_config(config: &TsigKeyConfig) -> Result<Self, String> {
-        let secret = BASE64
-            .decode(&config.secret_base64)
-            .map_err(|e| format!("Invalid TSIG secret base64: {}", e))?;
-
-        if secret.len() < config.algorithm.key_size() {
+    /// Build from a DNS-owned runtime key.
+    ///
+    /// The application-owned adapter already base64-decoded and
+    /// length-checked the secret, so this is normally infallible. The
+    /// length check is repeated here because `TsigVerifier::new` is public
+    /// and a hand-built `TsigRuntimeKey` must never reach the verifier with an
+    /// undersized secret. The error carries the key name and algorithm only,
+    /// never secret bytes.
+    pub fn from_runtime(key: &TsigRuntimeKey) -> Result<Self, String> {
+        if key.secret.len() < key.algorithm.min_secret_len() {
             return Err(format!(
-                "TSIG secret too short for {}",
-                config.algorithm.dns_algorithm_name()
+                "TSIG key '{}' secret too short for {}",
+                key.name,
+                key.algorithm.as_str()
             ));
         }
 
         Ok(Self {
-            name: config.name.clone(),
-            secret,
-            algorithm: config.algorithm,
+            name: key.name.clone(),
+            secret: key.secret.clone(),
+            algorithm: key.algorithm,
         })
     }
 }
@@ -114,11 +117,11 @@ pub struct TsigVerifier {
 }
 
 impl TsigVerifier {
-    pub fn new(keys_config: Vec<TsigKeyConfig>) -> Result<Self, String> {
+    pub fn new(keys_config: Vec<TsigRuntimeKey>) -> Result<Self, String> {
         let mut keys = HashMap::new();
 
         for config in keys_config {
-            let key = TsigKey::from_config(&config)?;
+            let key = TsigKey::from_runtime(&config)?;
             keys.insert(key.name.clone(), key);
         }
 
@@ -128,8 +131,8 @@ impl TsigVerifier {
         })
     }
 
-    pub fn add_key(&self, config: TsigKeyConfig) -> Result<(), String> {
-        let key = TsigKey::from_config(&config)?;
+    pub fn add_key(&self, config: TsigRuntimeKey) -> Result<(), String> {
+        let key = TsigKey::from_runtime(&config)?;
         self.keys.write().insert(key.name.clone(), key);
         Ok(())
     }
@@ -195,19 +198,19 @@ impl TsigVerifier {
         }
 
         let computed_mac = match key.algorithm {
-            TsigAlgorithm::HmacSha256 => {
+            TsigAlgorithmRuntime::HmacSha256 => {
                 let mut mac =
                     HmacSha256::new_from_slice(&key.secret).map_err(|_| TsigError::InvalidKey)?;
                 mac.update(&data_to_sign);
                 mac.finalize().into_bytes().to_vec()
             }
-            TsigAlgorithm::HmacSha384 => {
+            TsigAlgorithmRuntime::HmacSha384 => {
                 let mut mac =
                     HmacSha384::new_from_slice(&key.secret).map_err(|_| TsigError::InvalidKey)?;
                 mac.update(&data_to_sign);
                 mac.finalize().into_bytes().to_vec()
             }
-            TsigAlgorithm::HmacSha512 => {
+            TsigAlgorithmRuntime::HmacSha512 => {
                 let mut mac =
                     HmacSha512::new_from_slice(&key.secret).map_err(|_| TsigError::InvalidKey)?;
                 mac.update(&data_to_sign);
@@ -267,19 +270,19 @@ impl TsigVerifier {
         data_to_sign.extend_from_slice(&0u16.to_be_bytes());
 
         let mac = match key.algorithm {
-            TsigAlgorithm::HmacSha256 => {
+            TsigAlgorithmRuntime::HmacSha256 => {
                 let mut mac =
                     HmacSha256::new_from_slice(&key.secret).map_err(|_| TsigError::InvalidKey)?;
                 mac.update(&data_to_sign);
                 mac.finalize().into_bytes().to_vec()
             }
-            TsigAlgorithm::HmacSha384 => {
+            TsigAlgorithmRuntime::HmacSha384 => {
                 let mut mac =
                     HmacSha384::new_from_slice(&key.secret).map_err(|_| TsigError::InvalidKey)?;
                 mac.update(&data_to_sign);
                 mac.finalize().into_bytes().to_vec()
             }
-            TsigAlgorithm::HmacSha512 => {
+            TsigAlgorithmRuntime::HmacSha512 => {
                 let mut mac =
                     HmacSha512::new_from_slice(&key.secret).map_err(|_| TsigError::InvalidKey)?;
                 mac.update(&data_to_sign);
@@ -446,113 +449,107 @@ mod tests {
 
     #[test]
     fn test_tsig_algorithm_u16() {
-        assert_eq!(TsigAlgorithm::HmacSha256.to_u16(), 161);
-        assert_eq!(TsigAlgorithm::HmacSha384.to_u16(), 170);
-        assert_eq!(TsigAlgorithm::HmacSha512.to_u16(), 172);
+        assert_eq!(TsigAlgorithmRuntime::HmacSha256.to_u16(), 161);
+        assert_eq!(TsigAlgorithmRuntime::HmacSha384.to_u16(), 170);
+        assert_eq!(TsigAlgorithmRuntime::HmacSha512.to_u16(), 172);
     }
 
     #[test]
     fn test_tsig_algorithm_from_u16() {
         assert_eq!(
-            TsigAlgorithm::from_u16(161),
-            Some(TsigAlgorithm::HmacSha256)
+            TsigAlgorithmRuntime::from_u16(161),
+            Some(TsigAlgorithmRuntime::HmacSha256)
         );
         assert_eq!(
-            TsigAlgorithm::from_u16(170),
-            Some(TsigAlgorithm::HmacSha384)
+            TsigAlgorithmRuntime::from_u16(170),
+            Some(TsigAlgorithmRuntime::HmacSha384)
         );
         assert_eq!(
-            TsigAlgorithm::from_u16(172),
-            Some(TsigAlgorithm::HmacSha512)
+            TsigAlgorithmRuntime::from_u16(172),
+            Some(TsigAlgorithmRuntime::HmacSha512)
         );
-        assert_eq!(TsigAlgorithm::from_u16(999), None);
+        assert_eq!(TsigAlgorithmRuntime::from_u16(999), None);
     }
 
     #[test]
     fn test_tsig_algorithm_dns_name() {
-        assert_eq!(
-            TsigAlgorithm::HmacSha256.dns_algorithm_name(),
-            "hmac-sha256"
-        );
-        assert_eq!(
-            TsigAlgorithm::HmacSha384.dns_algorithm_name(),
-            "hmac-sha384"
-        );
-        assert_eq!(
-            TsigAlgorithm::HmacSha512.dns_algorithm_name(),
-            "hmac-sha512"
-        );
+        assert_eq!(TsigAlgorithmRuntime::HmacSha256.as_str(), "hmac-sha256.");
+        assert_eq!(TsigAlgorithmRuntime::HmacSha384.as_str(), "hmac-sha384.");
+        assert_eq!(TsigAlgorithmRuntime::HmacSha512.as_str(), "hmac-sha512.");
+    }
+
+    /// Pins the minimum-secret threshold to the pre-cutover
+    /// `TsigAlgorithm::key_size()` values (the HMAC output length). A
+    /// regression to the HMAC input block size would silently accept weaker
+    /// keys than the server rejected before the runtime-DTO cutover.
+    #[test]
+    fn test_tsig_algorithm_min_secret_len_matches_pre_cutover_key_size() {
+        assert_eq!(TsigAlgorithmRuntime::HmacSha256.min_secret_len(), 32);
+        assert_eq!(TsigAlgorithmRuntime::HmacSha384.min_secret_len(), 48);
+        assert_eq!(TsigAlgorithmRuntime::HmacSha512.min_secret_len(), 64);
+    }
+
+    fn runtime_key(name: &str, secret_len: usize) -> TsigRuntimeKey {
+        TsigRuntimeKey {
+            name: name.to_string(),
+            secret: vec![0x7C; secret_len],
+            algorithm: TsigAlgorithmRuntime::HmacSha256,
+        }
     }
 
     #[test]
-    fn test_tsig_algorithm_key_size() {
-        assert_eq!(TsigAlgorithm::HmacSha256.key_size(), 32);
-        assert_eq!(TsigAlgorithm::HmacSha384.key_size(), 48);
-        assert_eq!(TsigAlgorithm::HmacSha512.key_size(), 64);
-    }
-
-    #[test]
-    fn test_tsig_key_from_config() {
-        let config = TsigKeyConfig {
-            name: "test-key".to_string(),
-            secret_base64: "dGVzdC1zZWNyZXQtMTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0".to_string(),
-            algorithm: TsigAlgorithm::HmacSha256,
-        };
-
-        let key = TsigKey::from_config(&config).unwrap();
+    fn test_tsig_key_from_runtime() {
+        let key = TsigKey::from_runtime(&runtime_key("test-key", 32)).unwrap();
         assert_eq!(key.name, "test-key");
         assert!(!key.secret.is_empty());
     }
 
     #[test]
     fn test_tsig_key_rejects_short_secret() {
-        let config = TsigKeyConfig {
-            name: "short-key".to_string(),
-            secret_base64: base64::Engine::encode(
-                &base64::engine::general_purpose::STANDARD,
-                b"sixteen-byte-key",
-            ),
-            algorithm: TsigAlgorithm::HmacSha256,
-        };
+        // 16 bytes is below the 32-byte HMAC-SHA256 minimum.
+        assert!(TsigKey::from_runtime(&runtime_key("short-key", 16)).is_err());
+    }
 
-        assert!(TsigKey::from_config(&config).is_err());
+    /// The error names the key and algorithm but must never echo the secret.
+    #[test]
+    fn test_tsig_key_rejection_error_does_not_leak_the_secret() {
+        let key = TsigRuntimeKey {
+            name: "short-key".to_string(),
+            secret: vec![0xDE, 0xAD, 0xBE, 0xEF],
+            algorithm: TsigAlgorithmRuntime::HmacSha256,
+        };
+        let rendered = TsigKey::from_runtime(&key).err().expect("must reject");
+        assert!(rendered.contains("short-key"));
+        assert!(!rendered.contains("deadbeef"));
     }
 
     #[test]
-    fn test_tsig_key_from_config_all_algorithms() {
+    fn test_tsig_key_from_runtime_all_algorithms() {
         let algorithms = [
-            TsigAlgorithm::HmacSha256,
-            TsigAlgorithm::HmacSha384,
-            TsigAlgorithm::HmacSha512,
+            TsigAlgorithmRuntime::HmacSha256,
+            TsigAlgorithmRuntime::HmacSha384,
+            TsigAlgorithmRuntime::HmacSha512,
         ];
 
         for algorithm in algorithms {
-            use base64::Engine;
-            let config = TsigKeyConfig {
-                name: format!("test-key-{:?}", algorithm),
-                secret_base64: base64::engine::general_purpose::STANDARD
-                    .encode(b"test-secret-key-material-that-is-long-enough-for-all-tsig-algorithms-0123456789"),
+            let key = TsigRuntimeKey {
+                name: format!("test-key-{algorithm:?}"),
+                // Long enough for the strictest (HMAC-SHA512) threshold.
+                secret: vec![0x7C; 64],
                 algorithm,
             };
 
-            let key = TsigKey::from_config(&config);
+            let parsed = TsigKey::from_runtime(&key);
             assert!(
-                key.is_ok(),
-                "Should be able to create key for {:?}",
-                algorithm
+                parsed.is_ok(),
+                "Should be able to create key for {algorithm:?}"
             );
         }
     }
 
     #[test]
     fn test_tsig_verifier() {
-        let config = TsigKeyConfig {
-            name: "test-key".to_string(),
-            secret_base64: "dGVzdC1zZWNyZXQtMTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0".to_string(),
-            algorithm: TsigAlgorithm::HmacSha256,
-        };
-
-        let verifier = TsigVerifier::new(vec![config]).unwrap();
+        let verifier = TsigVerifier::new(vec![runtime_key("test-key", 32)]).unwrap();
         assert!(verifier.remove_key("test-key").is_some());
     }
 
@@ -560,13 +557,9 @@ mod tests {
     fn test_tsig_verifier_add_remove_key() {
         let verifier = TsigVerifier::new(vec![]).unwrap();
 
-        let config = TsigKeyConfig {
-            name: "new-key".to_string(),
-            secret_base64: "dGVzdC1zZWNyZXQtMTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0".to_string(),
-            algorithm: TsigAlgorithm::HmacSha256,
-        };
+        let key = runtime_key("new-key", 32);
 
-        assert!(verifier.add_key(config.clone()).is_ok());
+        assert!(verifier.add_key(key.clone()).is_ok());
         assert!(verifier.remove_key("new-key").is_some());
         assert!(verifier.remove_key("nonexistent").is_none());
     }
