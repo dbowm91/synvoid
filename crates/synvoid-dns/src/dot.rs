@@ -10,12 +10,25 @@ use tokio_rustls::TlsAcceptor;
 use crate::limits::MAX_TCP_QUERIES_PER_CONNECTION;
 use crate::runtime_config::DotRuntimeConfig;
 use crate::secure_server::{
-    DnsServerConfig, SecureDnsServerBase, MAX_QUERY_SIZE, TLS_HANDSHAKE_TIMEOUT_SECS,
+    AlpnProtocols, DnsServerConfig, SecureDnsServerBase, MAX_QUERY_SIZE, TLS_HANDSHAKE_TIMEOUT_SECS,
 };
 use crate::secure_transport::SecureTransportConfig;
 use crate::server::DnsServer;
 
 pub const DOT_MAX_QUERY_SIZE: usize = MAX_QUERY_SIZE;
+
+/// ALPN identifiers DoT advertises: **none**.
+///
+/// RFC 7858 defines no ALPN identifier for DNS-over-TLS, and mainstream DoT
+/// clients (kdig, getdns, BIND) do not offer one. `dot` is IANA-registered,
+/// but advertising it is not a fix: in rustls a non-empty `our_protocols`
+/// makes the server *require* a negotiated match, so offering `dot` would
+/// reject precisely the clients that connect today. A client that offers no
+/// ALPN at all still completes the handshake either way.
+///
+/// Phase 137. DoQ, which does have an RFC-assigned identifier, sets `doq` in
+/// `doq.rs`; that path is not this one.
+pub const DOT_ALPN: AlpnProtocols = &[];
 
 impl DnsServerConfig for DotRuntimeConfig {
     fn bind_address(&self) -> Option<SocketAddr> {
@@ -58,7 +71,12 @@ impl DotServer {
             .ok_or_else(|| "DoT server is not enabled: no bind address".to_string())?;
         tracing::info!(bind_address = %bind_address, "DoT server starting");
         self.base
-            .start_server(bind_address, "DoT server", Self::handle_connection)
+            .start_server(
+                bind_address,
+                "DoT server",
+                DOT_ALPN,
+                Self::handle_connection,
+            )
             .await
     }
 

@@ -1,6 +1,8 @@
 # Phase 137 Plan: ALPN Negotiation for DoT and DoH
 
-Status: **REGISTERED** (2026-10-05). Not started.
+Status: **CLOSED QUALIFIED** (2026-10-05).
+
+Closeout: `architecture/dns_provider_inversion_phase137_closeout.md`.
 
 Campaign: `plans/dns_residual_truthfulness_roadmap.md` (REGISTERED).
 Predecessor: Phase 136 (the campaign that recorded this residual, CLOSED
@@ -94,6 +96,15 @@ Options, in preference order:
 Record which was chosen and why. If option 2, note explicitly that it re-opens
 the Phase 134 seam and must not widen the provider's responsibilities.
 
+> **Resolved.** Option 1 as written turned out to be **infeasible**:
+> `create_tls_acceptor` is called *internally* by `start_server` and its result
+> is never returned, so there is no call site to mutate. The shape implemented is
+> the nearest correct one: `alpn_protocols` is a **parameter** on
+> `create_tls_acceptor` and `start_server`, passed by each transport's own
+> `start()`. This keeps option 1's intent — ALPN applied outside the provider,
+> at the transport's call site — without touching the Phase 134 trait.
+> `SecureTransportConfig::server_config()` is unchanged. See the closeout.
+
 ## Workstream B — implement DoH ALPN
 
 - advertise exactly `h2` on the DoH path;
@@ -128,6 +139,14 @@ or a sibling suite:
   succeeds **or** fails — record which, as the actual observed behavior, rather
   than assuming;
 - a DoQ handshake still negotiates `doq` (parity with today's behavior).
+
+> **Resolved, with one finding.** The DoT case was **observed to succeed** with
+> no protocol selected. The mismatch check is gated on the server having a
+> non-empty list, and DoT has none, so there is nothing to mismatch. Also:
+> `encrypted_transport.rs` contained `doq_alpn_is_doq` =
+> `assert_eq!(b"doq", b"doq)`, a tautology that asserted nothing about the code
+> and was the repo's only supposed DoQ-ALPN pin. It was replaced by a real QUIC
+> handshake. See the closeout.
 
 **Two existing pins stay true and must NOT be inverted:**
 `build_server_config_configures_no_alpn_protocols`

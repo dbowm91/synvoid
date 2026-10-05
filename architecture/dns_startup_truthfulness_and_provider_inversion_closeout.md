@@ -303,6 +303,12 @@ not presented as one.
 3. **ALPN for the encrypted transports** — `build_server_config` configures none,
    so a client requiring ALPN negotiation cannot use the DoT/DoH/DoQ listeners
    (F-6). Recorded; a protocol behavior change, not a refactor.
+   > **Resolved by Phase 137, with two corrections to this item.** (1) DoQ was
+   > already correct — it set `doq` ALPN per RFC 9250 — so "DoT/DoH/DoQ" was
+   > wrong; the gap was DoT and DoH. (2) DoT and DoH share one builder and need
+   > *different* values, so this was a signature change rather than a list edit.
+   > ALPN now lives at the DNS call sites, per transport. See
+   > `architecture/dns_provider_inversion_phase137_closeout.md`.
 4. **`prefer_post_quantum` is telemetry, not a gate** (F-7). It selects nothing;
    availability comes from the compiled-in rustls feature.
 5. **Zone reload atomicity** (Phase 132 F-4) — a multi-zone batch can leave a
@@ -324,3 +330,6 @@ Applied by pointer, never by rewriting a historical record:
   injected-concrete-`CertResolver` note.
 - `architecture/dns_config_runtime_matrix.md` — F-6's resolution pointer, plus
   the Phase 131/132/133/134/135 finding sections.
+- `architecture/dns_provider_inversion_phase133_closeout.md` — the F-6 "no ALPN
+  is configured" scope: DoQ already set `doq` ALPN, so the gap was DoT and DoH.
+  Resolved by Phase 137.

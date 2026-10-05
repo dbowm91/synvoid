@@ -1660,11 +1660,26 @@ pub enum TransportClass {
 
 SynVoid supports three encrypted DNS transport protocols, each implemented as a thin adapter over the core authoritative query engine (`handle_parsed_query_with_cache`). All three share the same query pipeline, ensuring rate limiting, firewall, DNSSEC, coalescing, and cache semantics are applied identically.
 
-| Protocol | RFC | Transport Layer | Default Port | TransportClass | Source File |
-|----------|-----|-----------------|--------------|----------------|-------------|
-| DoT (DNS-over-TLS) | RFC 7858 | TCP + TLS 1.3 | 853 | `TransportClass::Tcp` | `dot.rs` |
-| DoH (DNS-over-HTTPS) | RFC 8484 | HTTP/2 + TLS 1.3 | 443 | `TransportClass::Http` | `doh.rs` |
-| DoQ (DNS-over-QUIC) | RFC 9250 | QUIC + TLS 1.3 | 853 | `TransportClass::Quic` | `doq.rs` |
+| Protocol | RFC | Transport Layer | Default Port | ALPN | TransportClass | Source File |
+|----------|-----|-----------------|--------------|------|----------------|-------------|
+| DoT (DNS-over-TLS) | RFC 7858 | TCP + TLS 1.3 | 853 | none (RFC 7858 defines none) | `TransportClass::Tcp` | `dot.rs` |
+| DoH (DNS-over-HTTPS) | RFC 8484 | HTTP/2 + TLS 1.3 | 443 | `h2` | `TransportClass::Http` | `doh.rs` |
+| DoQ (DNS-over-QUIC) | RFC 9250 | QUIC + TLS 1.3 | 853 | `doq` | `TransportClass::Quic` | `doq.rs` |
+
+**ALPN is per transport, and the provider configures none of it (Phase 137).**
+The TLS provider capability returns a `ServerConfig` with an empty
+`alpn_protocols` — it must not decide which DNS protocol its listener speaks.
+Each transport declares its own constant and passes it to the shared builder:
+`dot::DOT_ALPN` (empty), `doh::DOH_ALPN` (`[b"h2"]`), and DoQ's existing `doq`
+in `doq.rs`. DoT and DoH share `SecureDnsServerBase::create_tls_acceptor`, which
+is why the value is a parameter and not a constant there. A DoT listener must
+keep advertising nothing: in rustls a non-empty protocol list makes the server
+*require* a negotiated match, so advertising the IANA-registered `dot` would
+reject exactly the clients that connect today. There is deliberately **no
+configuration knob** — served protocol constants are absent by design.
+
+Wire evidence: `crates/synvoid-dns/tests/encrypted_transport_alpn_negotiation.rs`;
+source gate: `encrypted_transport_alpn_is_per_transport`.
 
 #### DoT (DNS-over-TLS)
 

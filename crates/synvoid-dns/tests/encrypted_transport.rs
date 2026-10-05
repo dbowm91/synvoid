@@ -118,10 +118,12 @@ fn doq_frame_max_size_boundary() {
     assert_eq!(length, 0);
 }
 
-#[test]
-fn doq_alpn_is_doq() {
-    assert_eq!(b"doq", b"doq");
-}
+/// Phase 137: the `doq_alpn_is_doq` test that used to live here was
+/// `assert_eq!(b"doq", b"doq)` — a comparison of two byte-string literals that
+/// said nothing about the code and could never fail. It is replaced by
+/// `doq_still_negotiates_doq` in `encrypted_transport_alpn_negotiation.rs`,
+/// which drives a real QUIC handshake against a real DoQ endpoint and observes
+/// the negotiated protocol.
 
 #[test]
 fn doh_paths_accepted() {

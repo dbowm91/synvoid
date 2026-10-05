@@ -14,12 +14,25 @@ use tokio_rustls::TlsAcceptor;
 
 use crate::runtime_config::DohRuntimeConfig;
 use crate::secure_server::{
-    DnsServerConfig, SecureDnsServerBase, MAX_QUERY_SIZE, TLS_HANDSHAKE_TIMEOUT_SECS,
+    AlpnProtocols, DnsServerConfig, SecureDnsServerBase, MAX_QUERY_SIZE, TLS_HANDSHAKE_TIMEOUT_SECS,
 };
 use crate::secure_transport::SecureTransportConfig;
 use crate::server::DnsServer;
 
 pub const DOH_MAX_QUERY_SIZE: usize = MAX_QUERY_SIZE;
+
+/// ALPN identifiers DoH advertises: `h2` (RFC 9113 §3.1 / RFC 8484 §4.1).
+///
+/// `h2` and **not** `http/1.1`, because this path is HTTP/2-only by
+/// construction: `handle_connection` builds a
+/// `hyper::server::conn::http2::Builder` and there is no `http1` import on it.
+/// Advertising `http/1.1` would be a protocol lie the handler cannot honour,
+/// and would let a client negotiate a version that then fails.
+///
+/// Phase 137. Before this phase DoH advertised nothing, so a client that
+/// requires ALPN negotiation — which is common for DoH, since the DoH profile is
+/// defined over HTTP/2 — could not use the listener.
+pub const DOH_ALPN: AlpnProtocols = &[b"h2"];
 
 impl DnsServerConfig for DohRuntimeConfig {
     fn bind_address(&self) -> Option<SocketAddr> {
@@ -62,7 +75,12 @@ impl DohServer {
             .ok_or_else(|| "DoH server is not enabled: no bind address".to_string())?;
         tracing::info!(bind_address = %bind_address, "DoH server starting");
         self.base
-            .start_server(bind_address, "DoH server", Self::handle_connection)
+            .start_server(
+                bind_address,
+                "DoH server",
+                DOH_ALPN,
+                Self::handle_connection,
+            )
             .await
     }
 

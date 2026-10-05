@@ -184,6 +184,21 @@ dependency surface that makes it unreachable.
 
 ### F-6 — no ALPN is configured (severity: medium, recorded not changed)
 
+> **Correction, Phase 137.** This finding is accurate about the **provider** and
+> over-claims about the transports. Corrected by pointer; the original text is
+> preserved above as the Phase 133 record. See
+> `architecture/dns_provider_inversion_phase137_closeout.md`.
+>
+> 1. "no ALPN is configured" is true of `build_server_config` and was presented
+>    as true of the encrypted transports. **DoQ already set `doq` ALPN**
+>    (`crates/synvoid-dns/src/doq.rs:72`) and was correct per RFC 9250. The gap
+>    was **DoT and DoH only**, so "which is relevant to DoH" understated it and
+>    the campaign summary's "the DoT/DoH/DoQ listeners" was wrong.
+> 2. Both provider pins named above **remain true and unmodified**. Phase 137
+>    resolved F-6 at the DNS call sites, leaving the provider alone — the
+>    opposite of the F-1 disposition, where the fix landed in the layer the pin
+>    covered.
+
 `build_server_config` sets protocol versions, an optional client verifier, and
 the certificate resolver — and no ALPN. `ServerConfig::alpn_protocols` is empty,
 and a client offering `h2` and `doq` completes the handshake with no negotiated

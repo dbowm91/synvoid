@@ -378,6 +378,137 @@ fn encrypted_transport_error_contract_is_duplicated_consistently() {
     violations.assert_ok("encrypted_transport_error_contract_is_duplicated_consistently");
 }
 
+/// Phase 137: ALPN is chosen **per transport at the DNS call site**, and the
+/// three encrypted transports deliberately do not share one value.
+///
+/// This gate exists because the shared builder is a trap. DoT and DoH both call
+/// `SecureDnsServerBase::create_tls_acceptor`, and the obvious implementation —
+/// give the shared builder an ALPN value — is wrong for one of them:
+///
+/// | Transport | Advertises | Why |
+/// |---|---|---|
+/// | DoT | nothing | RFC 7858 defines none; a non-empty `our_protocols` makes rustls *require* a match and rejects clients that offer none |
+/// | DoH | `h2` | HTTP/2-only by construction (`hyper::server::conn::http2::Builder`) |
+/// | DoQ | `doq` | RFC 9250 — already correct before this phase, and must stay that way |
+///
+/// So the gate pins four things: the shared base hardcodes **no** protocol, each
+/// stream transport passes its own constant, and DoQ keeps the `doq` value it
+/// already had and is not routed through the base.
+#[test]
+fn encrypted_transport_alpn_is_per_transport() {
+    let root = workspace_root();
+    let base = read(&root.join("crates/synvoid-dns/src/secure_server.rs"));
+    let dot = read(&root.join("crates/synvoid-dns/src/dot.rs"));
+    let doh = read(&root.join("crates/synvoid-dns/src/doh.rs"));
+    let doq = read(&root.join("crates/synvoid-dns/src/doq.rs"));
+
+    let mut violations = Violations::new();
+
+    // 1. The shared base names no ALPN protocol at all. If it ever hardcodes
+    //    one, DoT and DoH silently become one transport again.
+    for protocol in ["b\"h2\"", "b\"doq\"", "b\"dot\""] {
+        if base.contains(protocol) {
+            violations.push(format!(
+                "the shared builder `secure_server.rs` hardcodes the ALPN protocol \
+                 `{protocol}`; ALPN is a per-transport protocol constant and must be \
+                 supplied by each transport's call site"
+            ));
+        }
+    }
+    if !base.contains("fn with_alpn(") {
+        violations.push(
+            "the shared builder no longer attaches ALPN to the provider's config; the \
+             provider deliberately configures none (Phase 134), so dropping this would \
+             silently disable ALPN for both stream transports"
+                .to_string(),
+        );
+    }
+
+    // 2. Each stream transport passes its own constant to the shared base.
+    for (name, source, constant) in [("dot.rs", &dot, "DOT_ALPN"), ("doh.rs", &doh, "DOH_ALPN")] {
+        if !source.contains(&format!("pub const {constant}: AlpnProtocols")) {
+            violations.push(format!(
+                "`{name}` must declare `pub const {constant}: AlpnProtocols`; the value \
+                 is a served protocol constant and belongs next to the transport that \
+                 serves it"
+            ));
+        }
+        if !source.contains(&format!("{constant},")) {
+            violations.push(format!(
+                "`{name}` must pass `{constant}` to `start_server`; a transport that \
+                 omits it would negotiate nothing"
+            ));
+        }
+    }
+
+    // 3. DoT advertises nothing, and in particular not `h2`.
+    if !dot.contains("pub const DOT_ALPN: AlpnProtocols = &[];") {
+        violations.push(
+            "`dot::DOT_ALPN` must stay empty: RFC 7858 defines no ALPN identifier for \
+             DoT, and advertising one makes rustls require a negotiated match"
+                .to_string(),
+        );
+    }
+    if dot.contains("b\"h2\"") {
+        violations.push(
+            "`dot.rs` must not advertise `h2`; that is DoH's protocol, and advertising \
+             it on DoT would reject clients that offer no ALPN"
+                .to_string(),
+        );
+    }
+
+    // 4. DoH advertises `h2` and never `http/1.1`. Its handler is built on
+    //    `hyper::server::conn::http2::Builder`, so `http/1.1` would advertise a
+    //    version the transport cannot serve.
+    if !doh.contains("pub const DOH_ALPN: AlpnProtocols = &[b\"h2\"];") {
+        violations.push(
+            "`doh::DOH_ALPN` must be exactly `[b\"h2\"]`; DoH is HTTP/2-only by \
+             construction"
+                .to_string(),
+        );
+    }
+    for forbidden in ["b\"http/1.1\"", "b\"doq\"", "b\"dot\""] {
+        if doh.contains(forbidden) {
+            violations.push(format!(
+                "`doh.rs` must not advertise `{forbidden}`; DoH speaks HTTP/2 only"
+            ));
+        }
+    }
+
+    // 5. DoQ was already correct before this phase. Pin the existing value so
+    //    the ALPN work cannot regress the one transport that had it, and keep
+    //    DoQ off the shared base (it needs a `QuicServerConfig`).
+    if !doq.contains("alpn_protocols = vec![b\"doq\".to_vec()]") {
+        violations.push(
+            "`doq.rs` must keep setting its `doq` ALPN; it was correct before Phase 137 \
+             (RFC 9250) and is the reason the phase's scope is DoT and DoH only"
+                .to_string(),
+        );
+    }
+    for borrowed in ["DOH_ALPN", "DOT_ALPN", "with_alpn"] {
+        if doq.contains(borrowed) {
+            violations.push(format!(
+                "`doq.rs` must not reference `{borrowed}`; QUIC needs a \
+                 `QuicServerConfig` and cannot share the stream builder"
+            ));
+        }
+    }
+
+    // 6. No ALPN configuration knob. A served protocol constant is absent by
+    //    design; reading one from the runtime DTO would recreate the inert
+    //    setting this campaign exists to close.
+    let runtime = read(&root.join("crates/synvoid-dns/src/runtime_config.rs"));
+    if runtime.contains("alpn") {
+        violations.push(
+            "`runtime_config.rs` must not mention ALPN; the served protocol constants \
+             are absent by design, and a knob there would be inert by construction"
+                .to_string(),
+        );
+    }
+
+    violations.assert_ok("encrypted_transport_alpn_is_per_transport");
+}
+
 // ---------------------------------------------------------------------------
 // 6. TLS provider-inversion gates (Phase 134)
 // ---------------------------------------------------------------------------

@@ -12,6 +12,26 @@ use crate::server::DnsServer;
 pub const TLS_HANDSHAKE_TIMEOUT_SECS: u64 = 10;
 pub const MAX_QUERY_SIZE: usize = 65535;
 
+/// ALPN protocol identifiers a stream transport advertises, in preference
+/// order.
+///
+/// This is a **parameter** and not a constant here because DoT and DoH share
+/// this base and RFC-correct for only one of them. Phase 137:
+///
+/// - DoT advertises nothing. RFC 7858 defines no ALPN identifier for
+///   DNS-over-TLS, and mainstream DoT clients offer none. `dot` is
+///   IANA-registered, but advertising it would make rustls *require* a
+///   negotiated match and reject exactly those clients.
+/// - DoH advertises `h2`, because its handler is HTTP/2-only by construction.
+///
+/// Each transport declares its own value next to its protocol implementation
+/// (`dot::DOT_ALPN`, `doh::DOH_ALPN`). Nothing reads ALPN from the runtime
+/// configuration, because a served protocol constant is absent by design
+/// (`runtime_config.rs`, and the F-2 `PERSISTENCE` precedent in
+/// `architecture/dns_config_runtime_matrix.md`) — a knob here would recreate
+/// the inert-setting problem this campaign exists to close.
+pub type AlpnProtocols = &'static [&'static [u8]];
+
 /// Transport configuration consumed by the encrypted-DNS listeners.
 ///
 /// Phase 126: implementations are DNS-owned runtime types, not persisted
@@ -21,6 +41,31 @@ pub trait DnsServerConfig: Send + Sync + Clone + 'static {
     /// Parsed listener socket, or `None` when the transport is disabled.
     fn bind_address(&self) -> Option<SocketAddr>;
     fn server_name(&self) -> &'static str;
+}
+
+/// Attach ALPN to a provider-supplied server configuration.
+///
+/// The provider returns an `Arc<ServerConfig>` shared behind its own `Arc`, and
+/// `rustls::ServerConfig` is `Clone`. That clone is **shallow**: the
+/// certificate resolver is itself `Arc`-backed, so a clone keeps certificate
+/// reload visible through the already-built config — the property
+/// `a_reload_is_visible_through_an_already_built_server_config` pins in
+/// `crates/synvoid-tls/tests/cert_resolver_provider_evidence.rs`. A
+/// configuration that is not ALPN-relevant is returned untouched, with no
+/// clone at all, so DoT's config is the provider's own object.
+///
+/// `doq.rs` performs the equivalent mutation for its `QuicServerConfig` and is
+/// deliberately not routed through here.
+fn with_alpn(
+    shared: Arc<rustls::ServerConfig>,
+    alpn_protocols: &[&[u8]],
+) -> Arc<rustls::ServerConfig> {
+    if alpn_protocols.is_empty() {
+        return shared;
+    }
+    let mut config = (*shared).clone();
+    config.alpn_protocols = alpn_protocols.iter().map(|p| p.to_vec()).collect();
+    Arc::new(config)
 }
 
 pub struct SecureDnsServerBase<C: DnsServerConfig> {
@@ -52,14 +97,19 @@ impl<C: DnsServerConfig> SecureDnsServerBase<C> {
     /// the guard
     /// `encrypted_transport_error_contract_is_duplicated_consistently` fails if
     /// they drift.
-    pub fn create_tls_acceptor(&self) -> Result<TlsAcceptor, String> {
+    ///
+    /// `alpn_protocols` is supplied by the caller rather than read from the
+    /// provider: see [`AlpnProtocols`]. The provider deliberately configures no
+    /// ALPN (Phase 134), because it must not decide which DNS protocol its
+    /// listener speaks.
+    pub fn create_tls_acceptor(&self, alpn_protocols: &[&[u8]]) -> Result<TlsAcceptor, String> {
         self.cert_resolver
             .as_ref()
             .ok_or_else(|| "No TLS certificate resolver available".to_string())
             .and_then(|provider| {
                 provider
                     .server_config()
-                    .map(TlsAcceptor::from)
+                    .map(|shared| TlsAcceptor::from(with_alpn(shared, alpn_protocols)))
                     .map_err(|e| format!("Failed to build TLS config: {}", e))
             })
     }
@@ -68,6 +118,7 @@ impl<C: DnsServerConfig> SecureDnsServerBase<C> {
         &mut self,
         bind_address: SocketAddr,
         server_name: &'static str,
+        alpn_protocols: &[&[u8]],
         handle_connection: F,
     ) -> Result<(), String>
     where
@@ -98,7 +149,7 @@ impl<C: DnsServerConfig> SecureDnsServerBase<C> {
 
         tracing::info!("{} server listening on {}", server_name, bind_addr);
 
-        let acceptor = Arc::new(self.create_tls_acceptor()?);
+        let acceptor = Arc::new(self.create_tls_acceptor(alpn_protocols)?);
 
         let dns_server = self.dns_server.clone();
         let config = self.config.clone();
@@ -226,6 +277,7 @@ mod tests {
             .start_server(
                 SocketAddr::from(([127, 0, 0, 1], port)),
                 "Test server",
+                &[],
                 dummy_handler,
             )
             .await
@@ -247,6 +299,7 @@ mod tests {
             .start_server(
                 SocketAddr::from(([127, 0, 0, 1], 0)),
                 "Test server",
+                &[],
                 dummy_handler,
             )
             .await

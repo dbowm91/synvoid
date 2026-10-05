@@ -69,6 +69,12 @@ tempfile = "3"
 toml = "0.8"
 proptest = "1.5"
 criterion = { version = "0.5", features = ["html_reports"] }
+# Phase 137: the ALPN evidence suite performs real TLS handshakes against the
+# encrypted DNS listeners, which needs a certificate. `rcgen` generates it in
+# process, so no fixture PEM is checked in. Dev-only: it adds no normal edge, and
+# it is the same dependency `synvoid-tls`, `synvoid-mesh`, `synvoid-tunnel`, and
+# `synvoid-http-client` already use for their own handshake suites.
+rcgen = "0.13"
 
 [[bench]]
 name = "cache_bench"

@@ -1504,7 +1504,7 @@ and a GO decision.
 | F-3 `GeoLocation::from_str` cannot fail; a typo becomes a no-op rule | low | Phase 135 |
 | F-4 positive GeoLocation matrix is only testable provider-side | none | becomes in-crate testable in Phase 135 |
 | F-5 `synvoid-dns` cannot construct a provider at all | none | resolved by inversion |
-| F-6 no ALPN is configured anywhere in the TLS path | medium | recorded, deliberately not changed |
+| F-6 no ALPN is configured in the **provider**'s `ServerConfig` | medium | resolved in Phase 137 — ALPN moved to the DNS call sites, per transport |
 | F-7 `prefer_post_quantum` is telemetry, not a gate | low | recorded; Phase 134 must not claim otherwise |
 | F-8 the permissive version branch is not the default | none | pinned |
 | F-9 `get_country_info`'s second lookup cannot change the answer | low | Phase 135 must not inherit it |
@@ -1512,7 +1512,19 @@ and a GO decision.
 | F-11 the mTLS "no CA certificates" branch is dead code | low | recorded |
 | F-12 the encrypted-transport TLS contract is duplicated, not shared | low | both copies converted together in Phase 134 |
 
-### F-6 detail: no ALPN, and why it was not added
+### F-6 detail: no ALPN in the provider — resolved in Phase 137
+
+> **Superseded by Phase 137.** The finding below is retained as the Phase 133
+> record. Two statements in it were wrong and are corrected here; see
+> `architecture/dns_provider_inversion_phase137_closeout.md`.
+>
+> 1. "no ALPN is configured anywhere in the TLS path" was an over-claim.
+>    **DoQ already set `doq` ALPN** (`crates/synvoid-dns/src/doq.rs:72`,
+>    RFC 9250) and still does. The gap was DoT and DoH only.
+> 2. "on all three transports at once" was the wrong instruction to leave
+>    behind. DoT and DoH **share one builder** (`secure_server.rs`
+>    `create_tls_acceptor`) and need *different* values, so the work was a
+>    signature change, not a list edit — and DoQ needed no work at all.
 
 `CertResolver::build_server_config` sets protocol versions, an optional client
 verifier, and the certificate resolver — and no ALPN. `ServerConfig::alpn_protocols`
@@ -1524,6 +1536,16 @@ the encrypted transports negotiate, which the campaign explicitly excludes. It i
 recorded because DoH is HTTP/2-based, so a client that requires ALPN negotiation
 cannot use the listener as configured today. If ALPN is ever added it belongs in
 its own phase with its own parity evidence, on all three transports at once.
+
+**Where it landed.** Phase 137 applied ALPN at the DNS call sites, not in the
+provider, so the provider still configures none and the two
+`crates/synvoid-tls/tests/cert_resolver_provider_evidence.rs` pins that assert
+that (`build_server_config_configures_no_alpn_protocols`,
+`no_alpn_is_negotiated_even_when_the_client_offers_one`) remain **true and
+unmodified**. Each transport declares its own constant — `dot::DOT_ALPN` (empty),
+`doh::DOH_ALPN` (`[b"h2"]`), and DoQ's existing `doq` — passed to
+`SecureDnsServerBase::create_tls_acceptor`. Wire evidence lives in
+`crates/synvoid-dns/tests/encrypted_transport_alpn_negotiation.rs`.
 
 ### F-7 detail: `prefer_post_quantum` is not a preference
 

@@ -1,6 +1,7 @@
 # DNS Residual Truthfulness Roadmap — Phases 137–140
 
-Status: **REGISTERED** (2026-10-05). Not started.
+Status: **ACTIVE** (2026-10-05). Phase 137 **CLOSED QUALIFIED**; Phases 138–140
+REGISTERED, not started.
 
 Predecessor: `plans/dns_startup_truthfulness_and_provider_inversion_roadmap.md`
 (**CLOSED QUALIFIED**). That campaign closed with six residuals it deliberately
@@ -32,13 +33,18 @@ historical closeouts **by pointer only**; no historical record is rewritten.
 
 | Phase | Scope | Gate / dependency |
 |---|---|---|
-| **137** — ALPN for DoT and DoH | advertise `h2` on DoH, keep DoT and DoQ unchanged | none; **do first**, it is the cheapest and corrects a live over-claim |
+| **137** — ALPN for DoT and DoH | advertise `h2` on DoH, keep DoT and DoQ unchanged | none; **done first**, it is the cheapest and corrects a live over-claim |
 | **138** — Wire `[geoip]` in composition | construct and thread a real geo provider; replace the tripwire guard | needs a startup-semantics decision (Workstream A) |
 | **139** — Mesh coupling disposition and inversion | decide wire-or-delete first; invert only if wired | **gated on its own Workstream A disposition** |
 | **140** — `prefer_post_quantum` truthfulness | document the setting as telemetry; optionally rename | none; smallest item |
 
 Phases 137, 138 and 140 are independent. Phase 139 is gated internally and may
 terminate at its disposition step without inverting anything.
+
+Phase 137 outcome: DoH advertises `h2`, and DoT and DoQ are unchanged. ALPN lives
+at the DNS call sites rather than in the provider, so the two `synvoid-tls`
+provider ALPN pins stayed true and were not inverted. See
+`architecture/dns_provider_inversion_phase137_closeout.md`.
 
 Sequencing note: 137 before 138 is a convenience, not a dependency — both touch
 DNS but neither reads the other's output. Running 138 first would leave the

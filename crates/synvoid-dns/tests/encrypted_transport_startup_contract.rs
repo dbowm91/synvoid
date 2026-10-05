@@ -41,8 +41,10 @@ use std::sync::Arc;
 
 use rustls::crypto::CryptoProvider;
 use rustls::ServerConfig;
+use synvoid_dns::doh::DOH_ALPN;
+use synvoid_dns::dot::DOT_ALPN;
 use synvoid_dns::runtime_config::{DohRuntimeConfig, DotRuntimeConfig};
-use synvoid_dns::secure_server::{DnsServerConfig, SecureDnsServerBase};
+use synvoid_dns::secure_server::{AlpnProtocols, DnsServerConfig, SecureDnsServerBase};
 use synvoid_dns::secure_transport::SecureTransportConfig;
 
 /// The fixed prefix a provider capability must keep in front of its own error.
@@ -127,12 +129,18 @@ async fn noop_handler(
 
 /// `create_tls_acceptor` through the shared base, for one of the two
 /// stream-oriented transports.
+///
+/// `alpn_protocols` is passed explicitly rather than defaulted, so every
+/// caller drives the base with the value its transport actually ships. Phase
+/// 137 added the parameter to prove that a transport's ALPN choice cannot
+/// disturb the error contract these tests pin.
 fn acceptor_error<C: DnsServerConfig>(
     config: C,
+    alpn_protocols: AlpnProtocols,
     provider: Option<Arc<dyn SecureTransportConfig>>,
 ) -> String {
     let base = SecureDnsServerBase::new(config, provider);
-    match base.create_tls_acceptor() {
+    match base.create_tls_acceptor(alpn_protocols) {
         Ok(_) => panic!("acceptor construction was expected to fail"),
         Err(message) => message,
     }
@@ -146,8 +154,8 @@ fn acceptor_error<C: DnsServerConfig>(
 /// source level by the guard named in the module docs.
 #[test]
 fn no_resolver_yields_the_same_message_on_every_stream_transport() {
-    let dot = acceptor_error(support::dot_on(853), None);
-    let doh = acceptor_error(support::doh_on(443), None);
+    let dot = acceptor_error(support::dot_on(853), DOT_ALPN, None);
+    let doh = acceptor_error(support::doh_on(443), DOH_ALPN, None);
 
     assert_eq!(dot, NO_RESOLVER, "DoT must report the absent resolver");
     assert_eq!(doh, NO_RESOLVER, "DoH must report the absent resolver");
@@ -167,11 +175,11 @@ fn provider_errors_are_propagated_verbatim_behind_a_fixed_prefix() {
     for (name, message) in [
         (
             "DoT",
-            acceptor_error(support::dot_on(853), failing(PROVIDER_ERROR)),
+            acceptor_error(support::dot_on(853), DOT_ALPN, failing(PROVIDER_ERROR)),
         ),
         (
             "DoH",
-            acceptor_error(support::doh_on(443), failing(PROVIDER_ERROR)),
+            acceptor_error(support::doh_on(443), DOH_ALPN, failing(PROVIDER_ERROR)),
         ),
     ] {
         assert!(
@@ -190,7 +198,11 @@ fn provider_errors_are_propagated_verbatim_behind_a_fixed_prefix() {
 /// the same prefix, which is what proves the text is genuinely propagated.
 #[test]
 fn a_different_provider_failure_produces_a_different_message() {
-    let message = acceptor_error(support::dot_on(853), failing(OTHER_PROVIDER_ERROR));
+    let message = acceptor_error(
+        support::dot_on(853),
+        DOT_ALPN,
+        failing(OTHER_PROVIDER_ERROR),
+    );
     assert_eq!(
         message.strip_prefix(ACCEPTOR_FAILURE_PREFIX),
         Some(OTHER_PROVIDER_ERROR),
@@ -207,7 +219,7 @@ fn a_different_provider_failure_produces_a_different_message() {
 #[test]
 fn a_succeeding_provider_still_yields_an_acceptor() {
     SecureDnsServerBase::new(support::dot_on(853), succeeding())
-        .create_tls_acceptor()
+        .create_tls_acceptor(DOT_ALPN)
         .expect("acceptor construction succeeds when the provider succeeds");
 }
 
@@ -220,7 +232,12 @@ fn a_succeeding_provider_still_yields_an_acceptor() {
 async fn a_zero_port_is_rejected_before_the_resolver_is_consulted() {
     let mut base = SecureDnsServerBase::new(support::dot_on(853), None);
     let message = base
-        .start_server(SocketAddr::from(([127, 0, 0, 1], 0)), "DoT", noop_handler)
+        .start_server(
+            SocketAddr::from(([127, 0, 0, 1], 0)),
+            "DoT",
+            DOT_ALPN,
+            noop_handler,
+        )
         .await
         .expect_err("a zero port must be rejected");
 
@@ -246,6 +263,7 @@ async fn an_acceptor_failure_releases_the_bound_port() {
         .start_server(
             SocketAddr::from(([127, 0, 0, 1], port)),
             "DoT",
+            DOT_ALPN,
             noop_handler,
         )
         .await
