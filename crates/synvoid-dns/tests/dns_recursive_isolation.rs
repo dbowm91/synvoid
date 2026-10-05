@@ -293,7 +293,7 @@ fn test_anycast_requires_mesh_feature() {
     runtime.authoritative.anycast =
         synvoid_dns::runtime_config::AnycastRuntimeConfig { enabled: true };
 
-    let mut server = DnsServer::new(runtime, None);
+    let mut server = DnsServer::new(runtime, None, None);
 
     // Starting the server with anycast enabled should fail because mesh
     // feature is not compiled in (the extracted dns crate doesn't have mesh).
@@ -328,7 +328,7 @@ fn test_disabled_dns_skips_startup() {
     let mut runtime = support::dns_runtime();
     runtime.enabled = false;
     runtime.authoritative.bind_address = "127.0.0.1:5353".parse().unwrap();
-    let server = DnsServer::new(runtime, None);
+    let server = DnsServer::new(runtime, None, None);
 
     // The server's config indicates it's disabled
     // We can't directly access config.enabled on DnsServer, but we verified

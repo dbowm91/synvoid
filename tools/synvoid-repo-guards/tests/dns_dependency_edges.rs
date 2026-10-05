@@ -700,46 +700,129 @@ fn dns_declares_exactly_the_two_geo_capability_methods() {
     violations.assert_ok("dns_declares_exactly_the_two_geo_capability_methods");
 }
 
-/// Phase 135 F-17 tripwire: **no composition path constructs a
-/// `GeoIpManager`.** The `[geoip]` configuration section is documented and
-/// parsed, but nothing builds the provider, so every `geoip:` field in the root
-/// is `None` and DNS can never evaluate a geo rule.
+/// Phase 138: the F-17 tripwire is **deleted**, not weakened — its own assert
+/// message instructed exactly that ("delete this gate in that phase rather
+/// than weakening it here").
 ///
-/// This gate exists so that wiring it cannot happen silently. Wiring GeoIP
-/// activates country classification for the first time in production and would
-/// change the meaning of a configured `GeoLocation` firewall rule under the
-/// Phase 135 F-2 fail-closed semantics — so it is a feature change that needs
-/// its own phase and its own evidence, not a side effect of a later edit.
+/// ## Two properties of the deleted gate, recorded because the Phase 135
+/// closeout described it wrongly
+///
+/// 1. It was **substring-based, not semantic**: it flagged any line under
+///    `src/` containing `GeoIpManager::new(`, so a `type G = GeoIpManager;` plus
+///    `G::new(...)` would not trip it. The Phase 136 claim that wiring is
+///    "impossible by accident" overstated the mechanism.
+/// 2. It had **no `#[cfg(test)]` awareness** — it only skipped lines whose
+///    `trim_start` began with `//`, so an in-file test module outside `src/geo/`
+///    would trip it, while the Phase 135 closeout claimed it failed only on
+///    "non-test" files.
+/// 3. It **exempted `src/geo/` entirely** — which is where the construction
+///    naturally belongs. So it would not have fired even for a legitimate
+///    wiring; it only prevented construction *outside* the adapter module.
+///    That is a third way it was weaker than described.
+///
+/// ## The positive invariant that replaces it
+///
+/// A gate that only checks an absence cannot notice when the thing it forbade
+/// becomes the thing that is required. This one asserts the wiring exists, so
+/// deleting the seam is now a failure rather than a silent regression.
 #[test]
-fn geoip_provider_is_still_unwired_by_composition() {
+fn geoip_capability_is_wired_through_composition() {
     let root = workspace_root();
-    let files = collect_rs_files(&root.join("src"));
+    let provider = read(&root.join("src/geo/dns_provider.rs"));
+    let resources = read(&root.join("src/server/resources.rs"));
+    let main_config = read(&root.join("crates/synvoid-config/src/main_config.rs"));
+    let server = read(&root.join("crates/synvoid-dns/src/server/mod.rs"));
+    let geo_module = read(&root.join("src/geo/mod.rs"));
 
-    let mut construction_sites = Vec::new();
-    for file in &files {
-        let rel = file
-            .strip_prefix(&root)
-            .unwrap_or(file)
-            .display()
-            .to_string();
-        for (index, line) in read(file).lines().enumerate() {
-            let trimmed = line.trim_start();
-            if trimmed.starts_with("//") {
-                continue;
-            }
-            if trimmed.contains("GeoIpManager::new(") && !rel.contains("src/geo/") {
-                construction_sites.push(format!("{rel}:{}", index + 1));
-            }
-        }
+    let mut violations = Violations::new();
+
+    // 1. The provider is constructed from persisted configuration, not by hand.
+    if !provider.contains("GeoIpManager::new(") {
+        violations.push(
+            "`src/geo/dns_provider.rs` must construct the `GeoIpManager`; before \
+             Phase 138 nothing in the repository built one"
+                .to_string(),
+        );
+    }
+    if !provider.contains("pub fn country_lookup_from_config(") {
+        violations.push(
+            "`src/geo/dns_provider.rs` must expose `country_lookup_from_config`, the \
+             single place persisted `[geoip]` becomes a DNS capability"
+                .to_string(),
+        );
+    }
+    // A disabled section must yield no capability: Phase 135 F-2 made
+    // "no provider" and "provider that answers no" opposite behaviors.
+    if !provider.contains("if !config.enabled {") {
+        violations.push(
+            "`country_lookup_from_config` must return `None` for a disabled section; \
+             a fabricated present-but-answerless provider converts a fail-closed block \
+             into a silent allow"
+                .to_string(),
+        );
     }
 
-    assert!(
-        construction_sites.is_empty(),
-        "composition now constructs a GeoIpManager at {construction_sites:?}. \
-         Phase 135 F-17 recorded that `[geoip]` is unwired, and wiring it is a \
-         behavior change, not a refactor: it activates country classification in \
-         production and changes what a configured `GeoLocation` firewall rule means \
-         under the Phase 135 F-2 fail-closed semantics. Give it its own phase, and \
-         delete this gate in that phase rather than weakening it here"
-    );
+    // 2. Composition actually passes the capability into the DNS server. A
+    //    hardcoded `None` here is the exact F-17 defect.
+    if !resources.contains("country_lookup_from_config(") {
+        violations.push(
+            "`src/server/resources.rs` must build the DNS country-lookup capability \
+             and pass it to `DnsServer::new`; passing `None` is the F-17 defect this \
+             phase removes"
+                .to_string(),
+        );
+    }
+    if !resources.contains("geo::country_lookup_from_config(") {
+        violations.push(
+            "`src/server/resources.rs` must call `crate::geo::country_lookup_from_config` \
+             so the construction stays in the adapter module"
+                .to_string(),
+        );
+    }
+
+    // 3. The configuration source exists. This is the check that would have
+    //    caught the real blocker: `GeoIpConfig` was declared and consumed by
+    //    `synvoid-geoip`, but no config struct owned a `geoip` field, so
+    //    `[geoip]` was not a real section.
+    if !main_config.contains("pub geoip: GeoIpConfig,") {
+        violations.push(
+            "`MainConfig` must own a `geoip: GeoIpConfig` field. Without it the type \
+             is unreachable from any configuration file and the whole wiring is dead on \
+             arrival"
+                .to_string(),
+        );
+    }
+    if !geo_module.contains("country_lookup_from_config") {
+        violations.push(
+            "`src/geo/mod.rs` must re-export `country_lookup_from_config`; composition \
+             reaches it through this module"
+                .to_string(),
+        );
+    }
+
+    // 4. The DNS side must accept the capability rather than hardcoding it.
+    //    This is the line the phase was opened to remove.
+    if server.contains("let geoip_lookup = None;") {
+        violations.push(
+            "`crates/synvoid-dns/src/server/mod.rs` must not hardcode \
+             `let geoip_lookup = None;`; the capability is an injected constructor \
+             parameter"
+                .to_string(),
+        );
+    }
+    if !server.contains("country_lookup: Option<Arc<dyn CountryLookup>>") {
+        violations.push(
+            "`DnsServer::new` must accept `country_lookup: Option<Arc<dyn CountryLookup>>`"
+                .to_string(),
+        );
+    }
+    if !server.contains("with_country_lookup(Arc::clone(lookup))") {
+        violations.push(
+            "`DnsServer::new` must give the firewall the same handle it keeps for \
+             itself; the two hold separate `country_lookup` fields and can drift"
+                .to_string(),
+        );
+    }
+
+    violations.assert_ok("geoip_capability_is_wired_through_composition");
 }

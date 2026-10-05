@@ -538,7 +538,7 @@ where
         let mut runtime = dns_runtime_on(port);
         configure(&mut runtime);
 
-        let mut server = synvoid_dns::server::DnsServer::new(runtime, None);
+        let mut server = synvoid_dns::server::DnsServer::new(runtime, None, None);
         match server.start().await {
             Ok(()) => {
                 return BoundServer { server, port };

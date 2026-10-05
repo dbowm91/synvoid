@@ -148,6 +148,24 @@ refactor — and it needs its own phase, its own evidence, and a decision about
 which country sets and sites apply. The composition adapter
 (`src/geo/dns_provider.rs`) is written and ready for that phase.
 
+> **Correction, Phase 138.** Three claims here were wrong, and each would have
+> misdirected the phase that followed. Corrected by pointer; the original text
+> is preserved below. See
+> `architecture/dns_provider_inversion_phase138_closeout.md`.
+>
+> 1. "The composition adapter is written and **ready**" was incomplete in a way
+>    that changed the scope. The adapter existed, but `DnsServer::new` hardcoded
+>    `let geoip_lookup = None;` **inside `synvoid-dns`**, so the phase was never
+>    composition-only.
+> 2. The tripwire "fails the moment any **non-test** root file constructs a
+>    `GeoIpManager`" — it had no `#[cfg(test)]` awareness, and it **exempted
+>    `src/geo/`** entirely, which is where the construction naturally belongs. It
+>    would not have fired for a legitimate wiring. It was deleted in Phase 138
+>    and replaced by a positive gate.
+> 3. The operational consequence recorded for F-2 is **unreachable**: no
+>    `GeoLocation` rule can be declared, because `DnsFirewallConfig` has no
+>    `rules` field and every `add_rule` call site is hardcoded.
+
 Because "unwired" is a state that can change silently, a **tripwire guard**
 exists: `geoip_provider_is_still_unwired_by_composition` fails the moment any
 non-test root file constructs a `GeoIpManager`, with a message pointing at F-17

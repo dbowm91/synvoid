@@ -1356,13 +1356,38 @@ Two facts about these seams are load-bearing and guarded:
   (Block/Redirect/Sinkhole/RateLimit) fail closed, permissive ones (Allow/LogOnly)
   fail open, the decision names the rule and the reason, and a warning fires once
   per firewall.
-- **`[geoip]` is constructed nowhere in composition** (Phase 135 F-17). The
-  section is documented and parsed, but no root path builds a `GeoIpManager`, so
-  every `geoip:` field is `None` and DNS can never evaluate a geo rule. Combined
-  with the fail-closed posture above, a configured restrictive geo rule blocks
-  **all** traffic. Wiring GeoIP is a feature change with its own phase, and the
-  tripwire guard `geoip_provider_is_still_unwired_by_composition` fails the moment
-  a root file constructs one.
+- **`[geoip]` is wired in composition** (Phase 138, resolving Phase 135 F-17).
+  `[geoip]` is a real `MainConfig` field (`#[serde(default)]`, `enabled` defaults
+  to `false`, so the section is opt-in and no existing configuration changes
+  behavior). `crate::geo::country_lookup_from_config` builds the `GeoIpManager`
+  and adapts it to the DNS-owned `CountryLookup`, which composition passes as a
+  third argument to `DnsServer::new`. The DNS crate still has no `synvoid-geoip`
+  edge, and the capability is still exactly two methods wide.
+- **A `GeoLocation` firewall rule still cannot be declared.** `DnsFirewallConfig`
+  has no `rules` field, the `firewall_runtime` adapter projects only `enabled`
+  and two booleans, and every `add_rule` call site in the repository is the
+  hardcoded `Subnet`/`Block` block inside `DnsServer::new`. The fail-closed
+  posture above is therefore correct code with **no reachable input** — the
+  earlier claim here that a configured restrictive geo rule blocks all traffic
+  described an unreachable consequence and is corrected by pointer in
+  `architecture/dns_provider_inversion_phase138_closeout.md`.
+- **Phase 138 is "wired, not yet load-bearing."** An injected handle reaches both
+  consumers — `DnsServer::geoip_lookup` and the firewall's separate
+  `country_lookup` field — and is preserved across a `DnsServer` clone, pinned by
+  `crates/synvoid-dns/tests/geoip_composition_wiring.rs`. But nothing can declare
+  a rule that would consume it.
+- **Enabled with no usable database, the phase warns rather than refusing to
+  start.** `GeoIpManager::new` returns `Option` and never reports a load failure,
+  and `GeoIpLookup::new` returns `Ok(reader: None)` for a missing path, so
+  composition cannot distinguish "no path configured" from "path typo" from
+  "corrupt database" — a refusal would have to reject all three, and would reject
+  a currently-harmless configuration for no benefit. `database_loaded()` is
+  exposed so the states are at least distinguishable.
+- The F-17 tripwire guard `geoip_provider_is_still_unwired_by_composition` was
+  **deleted** in Phase 138, as its own assert message instructed, and replaced by
+  the positive gate `geoip_capability_is_wired_through_composition`. Note the
+  deleted guard exempted `src/geo/`, so it would not have fired even for a
+  legitimate wiring.
 
 Full evidence and all twelve findings:
 `architecture/dns_provider_inversion_phase133_closeout.md`.

@@ -28,7 +28,7 @@ fn server_with_recursive(
     let mut runtime = support::dns_runtime();
     runtime.authoritative = authoritative;
     runtime.recursive = recursive;
-    DnsServer::new(runtime, None)
+    DnsServer::new(runtime, None, None)
 }
 
 #[test]
@@ -203,7 +203,7 @@ fn dnssec_enabled_reflected() {
         std::env::temp_dir().join("synvoid-health-test-keys"),
         "example.com",
     );
-    let server = DnsServer::new(runtime, None);
+    let server = DnsServer::new(runtime, None, None);
     let status = server.health_checker().status();
     assert!(status.dnssec_state.signing_enabled);
 }

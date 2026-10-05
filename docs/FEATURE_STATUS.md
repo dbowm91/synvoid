@@ -30,6 +30,7 @@ These features are supported but not in the default profile. Enable them via fea
 | FastCGI Streaming | `fastcgi_streaming` | Streaming FastCGI response handling | All |
 | Flood eBPF | `flood-ebpf` | XDP SYN-level dropping via `ebpf-flood` (needs Aya tooling + CAP_NET_ADMIN/root) | Linux |
 | DNS HSM | `dns-hsm` | Opt-in PKCS#11/HSM backing for DNSSEC via the keystore custody boundary (off by default: no `cryptoki` in graph) | All (with HSM) |
+| GeoIP | none (config-gated) | `[geoip]` section in `main.toml`, default-disabled. Composition builds the provider and threads it into the DNS construction path as of Phase 138. **No DNS firewall rule can be declared yet** — `DnsFirewallConfig` has no `rules` field — so the capability is present but not yet consumed by any rule. Enabled with no usable database logs a warning rather than refusing to start | All |
 | Unsafe Native Extensions | `unsafe-native-extensions` | Opt-in in-process native extensions (compile gate PLUS runtime gates: disabled by default, risk acknowledgement + path allowlist; NOT sandboxed) | All |
 
 ## Beta Features

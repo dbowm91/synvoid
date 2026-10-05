@@ -144,7 +144,7 @@ async fn start_with_zones(config: &DnsConfig) -> (DnsServer, u16) {
             .clone();
         let zones = runtime.zones.clone();
 
-        let mut server = DnsServer::new(runtime, None);
+        let mut server = DnsServer::new(runtime, None, None);
 
         // Phase 132: activate the declared zones, fail closed on error.
         server
@@ -311,7 +311,7 @@ fn zone_that_cannot_activate_is_an_error_not_a_skip() {
 
     let runtime = dns_runtime_config_from_persisted(&config).expect("conversion succeeds");
     let zones = runtime.zones.clone();
-    let server = DnsServer::new(runtime, None);
+    let server = DnsServer::new(runtime, None, None);
 
     let error = server
         .load_zones(zones)

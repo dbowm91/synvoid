@@ -738,7 +738,7 @@ mod tests {
 
     #[test]
     fn shutdown_runtime_is_idempotent() {
-        let mut server = DnsServer::new(dns_runtime("127.0.0.1", 5353), None);
+        let mut server = DnsServer::new(dns_runtime("127.0.0.1", 5353), None, None);
         // First call should send the signal
         server.shutdown_runtime();
         // Second call should not panic

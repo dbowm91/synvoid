@@ -1766,6 +1766,7 @@ impl DnsServer {
     pub fn new(
         runtime: super::runtime_config::DnsRuntimeConfig,
         cert_resolver: Option<Arc<dyn SecureTransportConfig>>,
+        country_lookup: Option<Arc<dyn CountryLookup>>,
     ) -> Self {
         let super::runtime_config::DnsRuntimeConfig {
             authoritative,
@@ -1868,7 +1869,12 @@ impl DnsServer {
 
         let rrl_enabled = authoritative.rrl.enabled;
 
-        let geoip_lookup = None;
+        // Phase 138: injected by composition rather than hardcoded. This is
+        // the handle the mesh geo-derivation path reads
+        // (`server/query.rs::resolve_from_mesh`); the firewall gets the same
+        // handle below, so "the server can answer" and "the firewall can answer"
+        // cannot drift apart.
+        let geoip_lookup = country_lookup;
 
         let query_validator = DnsQueryValidator::from_config(
             authoritative.limits.max_query_size,
@@ -1882,6 +1888,10 @@ impl DnsServer {
 
         let firewall = if authoritative.firewall.enabled {
             let mut fw = super::firewall::DnsFirewall::new();
+
+            if let Some(ref lookup) = geoip_lookup {
+                fw = fw.with_country_lookup(Arc::clone(lookup));
+            }
 
             if authoritative.firewall.block_internal_ips {
                 let rule = super::firewall::DnsFirewallRule {

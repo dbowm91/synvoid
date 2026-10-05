@@ -205,7 +205,7 @@ Findings discovered during the campaign:
 | 133 F-6 | medium | no ALPN anywhere in the TLS path | recorded, deliberately not changed |
 | 133 F-16 | low | dead mTLS "no CA certificates" branch | recorded |
 | 135 F-16 | — | ASN-scoped geo rule unmatchable | **fixed, Phase 135** |
-| 135 F-17 | — | `[geoip]` unwired in composition | recorded; deferred to its own phase, with a tripwire guard |
+| 135 F-17 | — | `[geoip]` unwired in composition | recorded; deferred to its own phase, with a tripwire guard. **Resolved by Phase 138**, which also found that `[geoip]` was not a real configuration section and that no `GeoLocation` rule can be declared at all |
 | 134 F-13 | — | root depends on `rustls` again for one use | recorded in the root dependency ledger, reverting the Phase 31 removal |
 | 134 F-14 | — | a guard needed strengthening, not loosening | resolved |
 | 134 F-15 | — | a Phase 132 guard was coupled to rustfmt line shape | resolved |
@@ -300,6 +300,13 @@ not presented as one.
 1. **mesh provider inversion** — needs its own design phase. Not registered here.
 2. **Wiring `[geoip]`** — a feature change with its own phase; the tripwire guard
    makes it impossible to do by accident.
+   > **Resolved by Phase 138**, with two corrections. The guard was weaker than
+   > described: it had no `#[cfg(test)]` awareness and it **exempted `src/geo/`**,
+   > so it would not have fired for a legitimate wiring. And the scope was larger
+   > than "adapter written and ready" — `DnsServer::new` hardcoded
+   > `let geoip_lookup = None;` inside `synvoid-dns`, and `[geoip]` was not a real
+   > configuration section at all. See
+   > `architecture/dns_provider_inversion_phase138_closeout.md`.
 3. **ALPN for the encrypted transports** — `build_server_config` configures none,
    so a client requiring ALPN negotiation cannot use the DoT/DoH/DoQ listeners
    (F-6). Recorded; a protocol behavior change, not a refactor.

@@ -1,7 +1,7 @@
 # DNS Residual Truthfulness Roadmap — Phases 137–140
 
-Status: **ACTIVE** (2026-10-05). Phase 137 **CLOSED QUALIFIED**; Phases 138–140
-REGISTERED, not started.
+Status: **ACTIVE** (2026-10-05). Phases 137 and 138 **CLOSED QUALIFIED**; Phases
+139–140 REGISTERED, not started.
 
 Predecessor: `plans/dns_startup_truthfulness_and_provider_inversion_roadmap.md`
 (**CLOSED QUALIFIED**). That campaign closed with six residuals it deliberately
@@ -34,7 +34,7 @@ historical closeouts **by pointer only**; no historical record is rewritten.
 | Phase | Scope | Gate / dependency |
 |---|---|---|
 | **137** — ALPN for DoT and DoH | advertise `h2` on DoH, keep DoT and DoQ unchanged | none; **done first**, it is the cheapest and corrects a live over-claim |
-| **138** — Wire `[geoip]` in composition | construct and thread a real geo provider; replace the tripwire guard | needs a startup-semantics decision (Workstream A) |
+| **138** — Wire `[geoip]` in composition | construct and thread a real geo provider; replace the tripwire guard | **done** — needed an authorised `[geoip]` config section, which did not exist |
 | **139** — Mesh coupling disposition and inversion | decide wire-or-delete first; invert only if wired | **gated on its own Workstream A disposition** |
 | **140** — `prefer_post_quantum` truthfulness | document the setting as telemetry; optionally rename | none; smallest item |
 
@@ -45,6 +45,20 @@ Phase 137 outcome: DoH advertises `h2`, and DoT and DoQ are unchanged. ALPN live
 at the DNS call sites rather than in the provider, so the two `synvoid-tls`
 provider ALPN pins stayed true and were not inverted. See
 `architecture/dns_provider_inversion_phase137_closeout.md`.
+
+Phase 138 outcome: `[geoip]` is a real `MainConfig` field (additive, default
+disabled) and composition builds the provider from it, replacing the F-17
+hardcoded `None` and the tripwire guard. The phase is **wired, not yet
+load-bearing**: no DNS firewall rule can be declared, so nothing consumes the
+capability. The plan's motivating "silent allow" hazard turned out to be
+unreachable, which is recorded rather than engineered against. See
+`architecture/dns_provider_inversion_phase138_closeout.md`.
+
+**A consequence for the sequencing note above:** the audit behind this campaign
+was right that three closeout problem statements were wrong, but it could not
+have found that `[geoip]` was not a configuration section at all — the type was
+declared and exported, which reads as "configured" in any surface-level scan.
+Phase 138 required an explicitly authorised persisted-TOML change to fix.
 
 Sequencing note: 137 before 138 is a convenience, not a dependency — both touch
 DNS but neither reads the other's output. Running 138 first would leave the

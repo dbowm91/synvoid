@@ -1,6 +1,8 @@
 # Phase 138 Plan: Wire `[geoip]` in Composition
 
-Status: **REGISTERED** (2026-10-05). Not started.
+Status: **CLOSED QUALIFIED** (2026-10-05).
+
+Closeout: `architecture/dns_provider_inversion_phase138_closeout.md`.
 
 Campaign: `plans/dns_residual_truthfulness_roadmap.md` (REGISTERED).
 Predecessor: Phase 137. Source campaign:
@@ -71,6 +73,27 @@ startup semantics that stay fail-closed and loud when the database is absent.
 
 This is the phase's first decision, because it determines Workstreams B and C.
 
+> **Resolved as "no new refusal".** Option 1 (refuse to start) was rejected, and
+> the reasons are evidence-based rather than stylistic. `GeoIpManager::new`
+> returns `Option` and **never reports a load failure** — an unparseable
+> database yields a manager with no reader plus a `warn!` only
+> (`crates/synvoid-geoip/src/manager.rs:48-58`) — and `GeoIpLookup::new`
+> returns `Ok(reader: None)` for a non-existent path
+> (`crates/synvoid-geoip/src/lookup.rs:19-22`). Composition therefore cannot
+> distinguish "no path configured" from "path typo" from "corrupt database", so
+> a refusal would have to reject all three. It would also be **unobservable**:
+> see the correction below, no DNS geo rule can be declared at all. Refusing
+> startup for a section nothing reads would break a currently-harmless
+> configuration for no benefit. The phase warns loudly instead, via
+> `database_loaded()`.
+>
+> Option 2 remains the right answer for whoever adds the firewall-rule config
+> path, and is carried forward as a precondition.
+>
+> **Correction to the plan's premise:** the plan treated this as the first
+> decision. It was not, because Workstream C was blocked by a defect neither the
+> plan nor the Phase 136 closeout identified — see "The blocker" below.
+
 Options:
 
 1. **`[geoip] enabled = true` with no usable database → refuse to start.**
@@ -91,6 +114,53 @@ Options:
 Record the choice and its operator-visible consequence. Whichever is chosen, the
 Phase 135 fail-closed rule must still hold: a restrictive geo rule that cannot
 be evaluated applies its action.
+
+## The blocker: there is no persisted GeoIP configuration at all
+
+Found while implementing Workstream C, and it is larger than the phase's stated
+scope. **`[geoip]` was not a real configuration section.**
+
+`GeoIpConfig` and `SiteGeoipConfig` are declared and exported by
+`synvoid-config`, and `synvoid-geoip`'s API accepts both — but **no
+configuration struct owns a `geoip` field**. `MainConfig` has none, and neither
+does `SiteSecurityConfig`. A case-insensitive search of the whole config crate
+for `geoip` returns only the two type definitions, the module declaration, and
+two re-export lines. The only `geo` fields in the crate are `Option<String>`
+peer and anycast location labels (`mesh.rs:204,337`, `dns_anycast.rs:38`),
+which describe a place rather than naming a database or a rule.
+
+So Workstream C's instruction — "construct `GeoIpManager` from
+`synvoid_config::geoip::GeoIpConfig`" — had nothing to read. The phase therefore
+required an explicitly authorised persisted-TOML change, which the plan's own
+rejection criteria had forbidden. The user authorised adding
+`#[serde(default)] pub geoip: GeoIpConfig` to `MainConfig` (additive; `enabled`
+defaults to `false`, so no existing configuration changes behavior). A
+site-level section was **not** authorised and remains residual work.
+
+This is a worse state than "declared but unowned": the type looks configurable,
+so an operator can write `[geoip]` and observe no effect and no diagnostic.
+
+## Correction: no DNS firewall rule can be declared either
+
+The plan's central premise — that naive wiring would convert a fail-closed
+block into a silent allow — requires a `GeoLocation` firewall rule. **None can
+exist.** `DnsFirewallConfig` (`crates/synvoid-config/src/dns/dns_firewall.rs:139`)
+has no `rules` field; the `firewall_runtime` adapter
+(`src/server/dns_runtime_config.rs:253`) projects only `enabled` and two
+booleans; and every `add_rule` call site in the repository is the hardcoded
+`Subnet`/`Block` block inside `DnsServer::new`.
+
+Two consequences, both of which this phase corrects in documentation:
+
+1. The "silent-allow trap" is **not currently reachable**, which is why Phase 138
+   could ship without the loud-failure machinery Workstream E originally
+   contemplated.
+2. `AGENTS.md` and the Phase 135 closeout both state that a configured
+   restrictive geo rule "blocks all DNS traffic". That consequence is
+   **unreachable** — the antecedent does not exist. Corrected by pointer.
+
+The honest disposition of this phase is therefore **wired, not yet
+load-bearing**.
 
 ## Workstream B — thread the lookup inside `synvoid-dns`
 
@@ -145,6 +215,12 @@ they are wrong in the closeout's description:
 Add a replacement gate that pins the **positive** invariant instead: composition
 constructs a geo provider and threads it into the DNS construction path.
 
+> **A third property, found while deleting it:** the guard **exempted
+> `src/geo/` entirely** — the module where the construction naturally belongs. So
+> it would not have fired even for a legitimate wiring; it only prevented
+> construction *outside* the adapter. It was weaker than described in two
+> separate ways beyond the two the plan already identified.
+
 ## Workstream E — evidence
 
 - positive: a configured `[geoip]` with a real database evaluates a
@@ -159,10 +235,21 @@ constructs a geo provider and threads it into the DNS construction path.
 
 ## Workstream F — operator-visible change
 
-Wiring GeoIP **activates two previously-dead paths**: geo-A-record steering
-(`crates/synvoid-dns/src/query.rs:884-886`) and mesh edge geo derivation
-(`mesh_sync/registry.rs:69-70`). These become live for the first time. Record
-both in the closeout as activated, not as unchanged.
+> **Correction.** The plan claims wiring activates two paths. Neither is
+> activated, and the cited path is wrong.
+>
+> - `crates/synvoid-dns/src/query.rs` **does not exist**; the real site is
+>   `crates/synvoid-dns/src/server/query.rs:884`.
+> - That site is inside `#[cfg(feature = "mesh")] pub(super) fn
+>   resolve_from_mesh`, so it runs only under `--features mesh` **and** only when
+>   a mesh registry has an origin for the domain. The mesh registry is unwired,
+>   so the path is dead (this is Phase 139's F-18 finding).
+> - `mesh_sync/registry.rs:69-70` is behind a dead injection point with zero
+>   production callers.
+>
+> The **actual** consequence of this phase is that the *capability* becomes
+> reachable, with no runtime behavior change. Recorded as such in the closeout
+> rather than as two activated paths.
 
 ## Workstream G — documentation
 

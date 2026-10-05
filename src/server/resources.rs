@@ -147,9 +147,23 @@ impl UnifiedServerResources {
             // `CertResolver`. The adapter is the only place that knows how a
             // certificate provider becomes a rustls `ServerConfig`, so this
             // crate keeps no `synvoid-tls` edge.
+            // Phase 138: DNS receives a DNS-owned capability, not the concrete
+            // provider. `[geoip]` gained a real `MainConfig` field in this
+            // phase, so there is finally a configuration source; it defaults
+            // to disabled, which yields `None` and leaves the Phase 135
+            // fail-closed posture intact.
+            //
+            // `&[]` for site configs because `SiteGeoipConfig` is in the same
+            // position `GeoIpConfig` was: declared, exported, and accepted by
+            // `GeoIpManager::new`, but owned by no site config struct, so no
+            // per-site geo policy is deserialisable either. Wiring a site-level
+            // section is a second schema change and was not authorised with
+            // this one; it is recorded as residual work.
+            let country_lookup = crate::geo::country_lookup_from_config(&main_config.geoip, &[]);
             let mut dns_server = crate::dns::DnsServer::new(
                 runtime_cfg,
                 crate::tls::dns_providers::as_transport(cert_resolver.clone()),
+                country_lookup,
             );
 
             // Phase 132: activate zones declared in `main.toml`.

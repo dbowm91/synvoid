@@ -14,4 +14,4 @@
 pub mod dns_provider;
 
 #[cfg(feature = "dns")]
-pub use dns_provider::{as_country_lookup, GeoIpCountryLookup};
+pub use dns_provider::{as_country_lookup, country_lookup_from_config, GeoIpCountryLookup};

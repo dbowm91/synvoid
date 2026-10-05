@@ -15,6 +15,7 @@ use super::admin::{AdminConfig, AdminCorsConfig, AdminRateLimitConfig, MetricsCo
 use super::defaults::DefaultsConfig;
 #[cfg(feature = "dns")]
 use super::dns::DnsConfig;
+use super::geoip::GeoIpConfig;
 use super::honeypot_port::HoneypotPortConfig;
 use super::http::{Http3Config, HttpConfig, TokioConfig};
 use super::limits::{BlocklistLimitsConfig, ProxyLimitsConfig, RateLimitMemoryConfig};
@@ -112,6 +113,23 @@ pub struct MainConfig {
     pub traffic_shaping: TrafficShapingConfig,
     #[serde(default)]
     pub security: MainSecurityConfig,
+    /// GeoIP database and country allow/block settings.
+    ///
+    /// Phase 138: `GeoIpConfig` was declared in this crate and consumed by
+    /// `synvoid-geoip`'s API signatures, but **no config struct owned a
+    /// `geoip` field**, so `[geoip]` in `main.toml` was not a real section and
+    /// nothing could deserialise it. This field is what makes the type
+    /// reachable, and it is the first place the DNS geo rules have a config
+    /// source at all.
+    ///
+    /// Defaults to `enabled = false`, so every existing configuration is
+    /// unaffected and the section is strictly opt-in. `GeoIpConfig` has a
+    /// hand-written `Default` that agrees with its serde defaults, so
+    /// `#[serde(default)]` here and `Default::default()` cannot diverge — the
+    /// hazard recorded for `DnsFirewallConfig` in
+    /// `architecture/dns_config_runtime_matrix.md`.
+    #[serde(default)]
+    pub geoip: GeoIpConfig,
     #[serde(default)]
     pub static_config: Option<MainStaticConfig>,
     #[serde(default)]
@@ -388,6 +406,7 @@ impl MainConfig {
             persistence: super::defaults::PersistenceConfig::default(),
             traffic_shaping: TrafficShapingConfig::default(),
             security: MainSecurityConfig::default(),
+            geoip: GeoIpConfig::default(),
             static_config: None,
             tunnel: TunnelConfig::default(),
             plugins: PluginConfig::default(),

@@ -79,6 +79,65 @@ pub fn as_country_lookup(
     manager.map(|manager| Arc::new(GeoIpCountryLookup::new(manager)) as Arc<dyn CountryLookup>)
 }
 
+/// Build the DNS country-lookup capability from persisted configuration.
+///
+/// Phase 138. Returns `None` when `[geoip]` is disabled, which is the normal
+/// case and must stay distinguishable from "enabled but cannot answer" — a
+/// *disabled* provider and a *database-less* one are different states, and
+/// Phase 135 F-2 made that distinction load-bearing for fail-closed geo rules.
+///
+/// ## What this does not do
+///
+/// It does **not** refuse to start when `[geoip]` is enabled but no database is
+/// usable, and it does not warn. Two reasons, both evidence-based:
+///
+/// 1. `GeoIpManager::new` returns `Option` and **never reports a load failure** —
+///    an unparseable database yields a manager with no reader and a `warn!`
+///    only (`crates/synvoid-geoip/src/manager.rs:48-58`), and
+///    `GeoIpLookup::new` returns `Ok(reader: None)` for a non-existent path
+///    (`crates/synvoid-geoip/src/lookup.rs:19-22`). Composition therefore cannot
+///    tell "no path configured" from "path typo" from "corrupt database", so a
+///    refusal would have to reject all three.
+/// 2. A refusal would be **unobservable and harmful today**: no DNS firewall
+///    rule can be declared at all, because `DnsFirewallConfig` has no `rules`
+///    field and every `add_rule` call site is a hardcoded `Subnet`/`Block` rule
+///    inside `DnsServer::new`. Refusing startup for a section nothing reads
+///    would break a currently-harmless configuration for no benefit.
+///
+/// `database_loaded()` exists so an operator can tell the two states apart, and
+/// so whoever adds the firewall-rule config path inherits a capability that can
+/// be interrogated rather than guessed at.
+pub fn country_lookup_from_config(
+    config: &synvoid_config::geoip::GeoIpConfig,
+    site_configs: &[synvoid_config::site::SiteGeoipConfig],
+) -> Option<Arc<dyn CountryLookup>> {
+    if !config.enabled {
+        return None;
+    }
+
+    let manager = Arc::new(synvoid_geoip::GeoIpManager::new(
+        config.clone(),
+        site_configs,
+        None,
+    )?);
+
+    // Built as the concrete adapter first, because `database_loaded` is an
+    // inherent method: it is not part of the DNS-owned `CountryLookup`
+    // capability, which must stay exactly two methods wide.
+    let lookup = GeoIpCountryLookup::new(manager);
+    if !lookup.database_loaded() {
+        // Loud, but not fatal. See the doc comment: the provider cannot
+        // distinguish the failure modes, and no DNS geo rule can be declared
+        // today, so refusing to start would reject valid configurations.
+        tracing::warn!(
+            "geoip enabled but no database is loaded; DNS GeoLocation rules \
+             cannot be evaluated and a restrictive rule will fail closed"
+        );
+    }
+
+    Some(Arc::new(lookup) as Arc<dyn CountryLookup>)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -133,5 +192,78 @@ mod tests {
         let adapter = GeoIpCountryLookup::new(Arc::clone(&manager));
         assert!(!adapter.database_loaded());
         assert!(Arc::ptr_eq(adapter.manager(), &manager));
+    }
+
+    // ---- Phase 138: construction from persisted configuration --------------
+
+    /// A disabled section must produce no capability. This is the whole basis of
+    /// the Phase 135 F-2 fail-closed posture: a *disabled* provider and a
+    /// *provider that answers "no"* are opposite behaviors, and manufacturing the
+    /// latter from a disabled section would convert a fail-closed block into a
+    /// silent allow.
+    #[test]
+    fn a_disabled_section_yields_no_capability_from_the_config_path() {
+        let config = GeoIpConfig {
+            enabled: false,
+            database_path: Some("/nonexistent/GeoLite2-City.mmdb".to_string()),
+            ..Default::default()
+        };
+
+        assert!(
+            country_lookup_from_config(&config, &[]).is_none(),
+            "a disabled section must not construct a provider even when a path is set"
+        );
+    }
+
+    /// An enabled section with no database constructs a provider. It answers
+    /// `None` rather than erroring, which is why Phase 138 chose a loud warning
+    /// over a startup refusal — see the function's doc comment.
+    #[test]
+    fn an_enabled_section_without_a_database_still_constructs_a_provider() {
+        let config = GeoIpConfig {
+            enabled: true,
+            database_path: None,
+            update_enabled: false,
+            edition_ids: Vec::new(),
+            ..Default::default()
+        };
+
+        let lookup =
+            country_lookup_from_config(&config, &[]).expect("an enabled section constructs");
+
+        // Present but unable to answer. This is the state a naive wiring turns
+        // into a silent allow, so it is pinned explicitly.
+        assert!(
+            lookup.country_info(ip()).is_none(),
+            "a database-less provider must answer `None`, never a country"
+        );
+    }
+
+    /// A path that does not exist is indistinguishable from no path, because
+    /// `GeoIpLookup::new` returns `Ok(reader: None)` for a missing file. This
+    /// test records that limitation rather than asserting a distinction the
+    /// provider cannot make — it is the reason the phase warns instead of
+    /// refusing to start.
+    #[test]
+    fn a_typo_in_the_database_path_is_indistinguishable_from_no_path() {
+        let typo = GeoIpConfig {
+            enabled: true,
+            database_path: Some("/var/lib/synvoid/geoip/GeoLite2-City.mmdb".to_string()),
+            update_enabled: false,
+            edition_ids: Vec::new(),
+            ..Default::default()
+        };
+        let absent = GeoIpConfig {
+            database_path: None,
+            ..typo.clone()
+        };
+
+        let from_typo = country_lookup_from_config(&typo, &[]).expect("constructs");
+        let from_absent = country_lookup_from_config(&absent, &[]).expect("constructs");
+
+        assert!(from_typo.country_info(ip()).is_none());
+        assert!(from_absent.country_info(ip()).is_none());
+        // Both are "present but cannot answer". A future fix that separates these
+        // two states would legitimately change this test.
     }
 }

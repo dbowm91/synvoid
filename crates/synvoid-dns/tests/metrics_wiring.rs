@@ -115,7 +115,7 @@ fn zone_reload_failure_emits_metric() {
     let recorder = TestRecorder;
     let _guard = metrics::set_default_local_recorder(&recorder);
     reset_counters();
-    let server = synvoid_dns::server::DnsServer::new(support::dns_runtime(), None);
+    let server = synvoid_dns::server::DnsServer::new(support::dns_runtime(), None, None);
     // Origin containing a control character triggers `IllegalOriginCharacters`.
     let result = server.load_zones(vec![default_zone_config("\x07bad.example.com")]);
     assert!(result.is_err(), "control-char origin must fail to load");
@@ -130,7 +130,7 @@ fn zone_reload_success_emits_success_metric() {
     let recorder = TestRecorder;
     let _guard = metrics::set_default_local_recorder(&recorder);
     reset_counters();
-    let server = synvoid_dns::server::DnsServer::new(support::dns_runtime(), None);
+    let server = synvoid_dns::server::DnsServer::new(support::dns_runtime(), None, None);
     // Empty zone list succeeds without inserting any zones; the outer
     // `load_zones` wrapper still records the operation count (0).
     let result = server.load_zones(vec![]);

@@ -1653,6 +1653,21 @@ never match however it was written. An empty field is now a placeholder rather
 than a value — which is also what makes the deliberately-narrow `asn() ->
 Option<u32>` seam reachable at all.
 
+> **Superseded by Phase 138.** The finding below is retained as the Phase 135
+> record. One statement in it was wrong, and one load-bearing fact was missing.
+> See `architecture/dns_provider_inversion_phase138_closeout.md`.
+>
+> 1. "a configured restrictive `GeoLocation` rule now blocks **all** DNS traffic"
+>    described an **unreachable** consequence. No `GeoLocation` rule can be
+>    declared at all: `DnsFirewallConfig` has no `rules` field, and every
+>    `add_rule` call site in the repository is the hardcoded `Subnet`/`Block`
+>    block inside `DnsServer::new`. The fail-closed rule is correct code with no
+>    reachable input, so there was no visible operator change to disclose.
+> 2. The missing fact: **`[geoip]` was not a real configuration section.**
+>    `GeoIpConfig` existed and `synvoid-geoip` accepted it, but no config struct
+>    owned a `geoip` field. "Unwired" understated the gap — there was no
+>    configuration to wire *from*.
+
 ### F-17 (recorded, not fixed): `[geoip]` is unwired in composition
 
 No root path constructs a `GeoIpManager`. Every `geoip:` field is `None`, and

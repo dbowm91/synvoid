@@ -64,7 +64,7 @@ async fn udp_port_reusable_after_shutdown() {
     // port is the behavior under test, so taking a different port would turn a
     // real failure into a pass.
     {
-        let mut server = DnsServer::new(config.clone(), None);
+        let mut server = DnsServer::new(config.clone(), None, None);
         server.start().await.expect("second start should succeed");
         tokio::time::sleep(Duration::from_millis(100)).await;
         server.shutdown_runtime();
@@ -87,7 +87,7 @@ async fn tcp_port_reusable_after_shutdown() {
 
     // Verify TCP port is reusable
     {
-        let mut server = DnsServer::new(config.clone(), None);
+        let mut server = DnsServer::new(config.clone(), None, None);
         server.start().await.expect("second start should succeed");
         tokio::time::sleep(Duration::from_millis(100)).await;
         server.shutdown_runtime();
@@ -122,7 +122,7 @@ async fn shutdown_before_start_is_safe() {
     // authoritative port only has to be non-zero.
     let config = make_config("127.0.0.1", support::UNBOUND_TEST_PORT);
 
-    let mut server = DnsServer::new(config, None);
+    let mut server = DnsServer::new(config, None, None);
     // Shutdown on a server that was never started — must not panic
     server.shutdown_runtime();
     server.shutdown_runtime();
@@ -189,7 +189,7 @@ fn recursive_server_handle_is_not_leaked() {
 
     let config = make_config("127.0.0.1", support::UNBOUND_TEST_PORT);
 
-    let server = DnsServer::new(config, None);
+    let server = DnsServer::new(config, None, None);
 
     // Verify server can be dropped without issues (no join handle leaks)
     drop(server);
