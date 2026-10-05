@@ -216,5 +216,10 @@ silently absorbed:
    dead, pinned as the named residual by
    `mesh_anycast_cluster_remains_the_only_named_residual`.
 
-Plus one unrelated item the campaign never owned: the pre-existing `metrics_wiring.rs`
-parallel-execution race, which needs its own dedicated commit.
+Plus one item that was unrelated to the campaign and was **fixed separately after it
+closed**: the pre-existing `metrics_wiring.rs` parallel-execution race. All four tests
+shared one `static COUNTER_STORE` and each called `reset_counters()`, so a concurrent
+test's reset could delete the counter another was about to assert on. Re-measured on the
+pre-fix tree at **3 failures in 120 runs (2.5%)**, against **0 in 210** after giving each
+`TestRecorder` its own store. It never showed up in CI because `nextest` gives each test
+its own process.

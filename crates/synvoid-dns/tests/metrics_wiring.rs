@@ -24,15 +24,41 @@ use metrics::{Key, KeyName, Recorder};
 use synvoid_dns::recursive::CircuitBreaker;
 use synvoid_dns::runtime_config::ZoneSpec;
 
-static COUNTER_STORE: parking_lot::Mutex<Vec<(String, Arc<AtomicU64>)>> =
-    parking_lot::Mutex::new(Vec::new());
+/// Per-test counter storage.
+///
+/// This used to be a `static` shared by all four tests in this file, which made
+/// the suite order-dependent: each test called `reset_counters()`, and a
+/// *concurrent* test's reset landing between this test's increment and its read
+/// deleted the counter it was about to assert on. `register_counter` then
+/// re-created a fresh `AtomicU64(0)` under the same name, so the increment was
+/// genuinely lost rather than hidden.
+///
+/// The failure was intermittent (~3.3% over 60 runs, measured), and only under
+/// `cargo test` — `nextest` gives each test its own process, so CI never saw it.
+/// The fix is ownership, not serialization: every `TestRecorder` carries its own
+/// store, so the tests are independent no matter what order or thread count the
+/// runner picks.
+type CounterStore = Arc<parking_lot::Mutex<Vec<(String, Arc<AtomicU64>)>>>;
 
-fn reset_counters() {
-    COUNTER_STORE.lock().clear();
+#[derive(Clone)]
+struct TestRecorder {
+    store: CounterStore,
 }
 
-#[derive(Default, Clone, Copy)]
-struct TestRecorder;
+impl TestRecorder {
+    /// Returns the recorder and the store to read from. The store is handed
+    /// back because a test must read the *same* store it installed; deriving
+    /// the read path from a separate global is precisely what caused the race.
+    fn new() -> (Self, CounterStore) {
+        let store: CounterStore = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        (
+            TestRecorder {
+                store: Arc::clone(&store),
+            },
+            store,
+        )
+    }
+}
 
 impl Recorder for TestRecorder {
     fn describe_counter(&self, _: KeyName, _: Option<metrics::Unit>, _: metrics::SharedString) {}
@@ -40,7 +66,7 @@ impl Recorder for TestRecorder {
     fn describe_histogram(&self, _: KeyName, _: Option<metrics::Unit>, _: metrics::SharedString) {}
     fn register_counter(&self, key: &Key, _: &metrics::Metadata<'_>) -> metrics::Counter {
         let name = key.name().to_string();
-        let mut store = COUNTER_STORE.lock();
+        let mut store = self.store.lock();
         if let Some((_, h)) = store.iter().find(|(n, _)| n == &name) {
             return metrics::Counter::from_arc(h.clone());
         }
@@ -56,8 +82,8 @@ impl Recorder for TestRecorder {
     }
 }
 
-fn read_counter(name: &str) -> u64 {
-    COUNTER_STORE
+fn read_counter(store: &CounterStore, name: &str) -> u64 {
+    store
         .lock()
         .iter()
         .find(|(n, _)| n == name)
@@ -75,12 +101,11 @@ fn default_zone_config(origin: &str) -> ZoneSpec {
 
 #[test]
 fn circuit_breaker_opens_metric_threshold_behavior() {
-    let recorder = TestRecorder;
+    let (recorder, store) = TestRecorder::new();
     let _guard = metrics::set_default_local_recorder(&recorder);
 
     // Phase 1: threshold breached → metric emitted
     {
-        reset_counters();
         let cb = CircuitBreaker::new(&support::circuit_breaker_runtime(3, 1, 60));
 
         for _ in 0..3 {
@@ -88,14 +113,14 @@ fn circuit_breaker_opens_metric_threshold_behavior() {
         }
 
         assert!(
-            read_counter("dns_recursive_circuit_breaker_opens_total") >= 1,
+            read_counter(&store, "dns_recursive_circuit_breaker_opens_total") >= 1,
             "expected dns_recursive_circuit_breaker_opens_total >= 1"
         );
     }
 
     // Phase 2: below threshold → metric NOT emitted
     {
-        reset_counters();
+        store.lock().clear();
         let cb = CircuitBreaker::new(&support::circuit_breaker_runtime(10, 1, 60));
 
         for _ in 0..3 {
@@ -103,7 +128,7 @@ fn circuit_breaker_opens_metric_threshold_behavior() {
         }
 
         assert_eq!(
-            read_counter("dns_recursive_circuit_breaker_opens_total"),
+            read_counter(&store, "dns_recursive_circuit_breaker_opens_total"),
             0,
             "metric must not emit below the configured threshold"
         );
@@ -112,24 +137,22 @@ fn circuit_breaker_opens_metric_threshold_behavior() {
 
 #[test]
 fn zone_reload_failure_emits_metric() {
-    let recorder = TestRecorder;
+    let (recorder, store) = TestRecorder::new();
     let _guard = metrics::set_default_local_recorder(&recorder);
-    reset_counters();
     let server = synvoid_dns::server::DnsServer::new(support::dns_runtime(), None, None);
     // Origin containing a control character triggers `IllegalOriginCharacters`.
     let result = server.load_zones(vec![default_zone_config("\x07bad.example.com")]);
     assert!(result.is_err(), "control-char origin must fail to load");
     assert!(
-        read_counter("dns_zone_reload_failures_total") >= 1,
+        read_counter(&store, "dns_zone_reload_failures_total") >= 1,
         "expected dns_zone_reload_failures_total increment on validation failure"
     );
 }
 
 #[test]
 fn zone_reload_success_emits_success_metric() {
-    let recorder = TestRecorder;
+    let (recorder, _store) = TestRecorder::new();
     let _guard = metrics::set_default_local_recorder(&recorder);
-    reset_counters();
     let server = synvoid_dns::server::DnsServer::new(support::dns_runtime(), None, None);
     // Empty zone list succeeds without inserting any zones; the outer
     // `load_zones` wrapper still records the operation count (0).
@@ -145,9 +168,8 @@ fn zone_reload_success_emits_success_metric() {
 // emitted counter, this test will fail at compile time.
 #[test]
 fn metric_names_resolve() {
-    let recorder = TestRecorder;
+    let (recorder, _store) = TestRecorder::new();
     let _guard = metrics::set_default_local_recorder(&recorder);
-    reset_counters();
     metrics::counter!("dns_active_tcp_connections").increment(0);
     metrics::counter!("dns_recursive_circuit_breaker_opens_total").increment(0);
     metrics::counter!("dns_encode_failures_total").increment(0);

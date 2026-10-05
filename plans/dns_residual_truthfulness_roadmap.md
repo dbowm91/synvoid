@@ -71,8 +71,12 @@ All four phases are CLOSED QUALIFIED. Residuals left registered and deliberately
    cycle (carried from Phase 139).
 2. The anycast broadcast cluster — `crates/synvoid-dns/src/anycast_sync.rs`, coupled and dead,
    pinned as the named residual by `mesh_anycast_cluster_remains_the_only_named_residual`.
-3. Unrelated to this campaign: the pre-existing `metrics_wiring.rs` parallel-execution race,
-   which needs its own dedicated commit.
+3. The pre-existing `metrics_wiring.rs` parallel-execution race — **fixed** in a separate
+   commit after the campaign closed. All four tests shared one `static COUNTER_STORE` and
+   each called `reset_counters()`, so a concurrent test's reset could delete the counter
+   another was about to assert on. Measured at 3 failures in 120 runs before, 0 in 210
+   after giving each recorder its own store. Invisible to CI because `nextest` isolates
+   each test in its own process.
 
 Phase 137 outcome: DoH advertises `h2`, and DoT and DoQ are unchanged. ALPN lives
 at the DNS call sites rather than in the provider, so the two `synvoid-tls`
