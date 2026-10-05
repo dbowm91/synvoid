@@ -67,17 +67,44 @@ run_internal() {
     echo ""
 }
 
+# Same accounting, for a lane that lives in a different package.
+run_internal_pkg() {
+    local pkg="$1"
+    local name="$2"
+    local test_target="$3"
+
+    echo "--- $name ($pkg) ---"
+    if cargo test -p "$pkg" $RELEASE_FLAG --test "$test_target" $TEST_THREADS_FLAG 2>&1; then
+        INTERNAL_PASSED=$((INTERNAL_PASSED + 1))
+    else
+        echo "FAILED: $name"
+        INTERNAL_FAILED=$((INTERNAL_FAILED + 1))
+    fi
+    echo ""
+}
+
 run_internal "dns_interop_authoritative" "dns_interop_authoritative"
 run_internal "dns_interop_truncation" "dns_interop_truncation"
 run_internal "dns_interop_dnssec" "dns_interop_dnssec"
 run_internal "dns_interop_transfers" "dns_interop_transfers"
 run_internal "dns_interop_update_notify" "dns_interop_update_notify"
-run_internal "dns_interop_encrypted" "dns_interop_encrypted"
+# NOTE: the former `dns_interop_encrypted` lane was removed in Phase 128.
+# Despite the `dns_interop_` prefix it only ever asserted persisted
+# `DnsDotConfig`/`DnsDohConfig`/`DnsDoqConfig` JSON round-trips — no wire
+# bytes, no `handle_query()` — so it moved to the crate that owns the
+# schema as `encrypted_transport_schema` below. No protocol coverage was
+# lost; the name was simply misleading. The actual encrypted-transport
+# runtime coverage is `synvoid-dns/tests/encrypted_transport.rs`.
 run_internal "dns_interop_recursive" "dns_interop_recursive"
-# Phase 45: persistent TCP/DoT contract, DoQ bind fidelity, example-profile
-# validation (fail-closed config contract).
+# Phase 45: persistent TCP/DoT contract, DoQ bind fidelity (fail-closed config
+# contract).
 run_internal "dns_phase45_contract" "dns_phase45_contract"
-run_internal "example_configs_parse" "example_configs_parse"
+# Phase 128 moved the two persisted-schema lanes out of `synvoid-dns` (which no
+# longer depends on `synvoid-config`) into the crate that owns the schema.
+# They are still part of DNS qualification, so they run here from their new
+# home rather than being dropped from the suite.
+run_internal_pkg "synvoid-config" "example_configs_parse" "example_configs_parse"
+run_internal_pkg "synvoid-config" "encrypted_transport_schema" "encrypted_transport_schema"
 
 INTERNAL_TOTAL=$((INTERNAL_PASSED + INTERNAL_FAILED))
 
@@ -96,13 +123,27 @@ echo ""
 EXTERNAL_RUNNABLE=0
 EXTERNAL_SKIPPED=0
 
-declare -A TOOL_FOUND
-for tool in dig kdig delv ldns-verify-zone named-checkzone curl; do
+# Phase 130: replaced a bash-4 associative array with a lookup function.
+# macOS still ships bash 3.2, where `declare -A` is a fatal error, so the
+# script aborted before printing the external-lane status at all. The tool
+# list is short and fixed, so a function costs nothing and keeps the script
+# runnable on the primary developer platform.
+EXTERNAL_TOOLS="dig kdig delv ldns-verify-zone named-checkzone curl"
+
+tool_found() {
+    local candidate="$1"
+    for tool in $EXTERNAL_TOOLS; do
+        if [[ "$tool" == "$candidate" ]]; then
+            command -v "$candidate" &>/dev/null && return 0 || return 1
+        fi
+    done
+    return 1
+}
+
+for tool in $EXTERNAL_TOOLS; do
     if command -v "$tool" &>/dev/null; then
-        TOOL_FOUND[$tool]=1
         echo "  [FOUND]  $tool"
     else
-        TOOL_FOUND[$tool]=0
         echo "  [SKIP]   $tool (not installed)"
     fi
 done
@@ -117,7 +158,7 @@ check_external() {
     local tool="$2"
     local description="$3"
 
-    if [[ "${TOOL_FOUND[$tool]}" -eq 1 ]]; then
+    if tool_found "$tool"; then
         echo "  [READY]  $name — $description"
         echo "           (requires running DnsServer on local port; not executed here)"
         EXTERNAL_RUNNABLE=$((EXTERNAL_RUNNABLE + 1))

@@ -91,3 +91,27 @@ The Phase 116 design blocker is now answered at research level in
 composition code under `src/server/` (never the guard-enforced pure `src/dns/`
 facade), and `synvoid-dns` owns only parsed runtime values. That record is
 **research complete / implementation registered** as the focused Phases 125–130 campaign in `plans/dns_runtime_dto_conversion_roadmap.md`. This successor implements the missing runtime DTO/config-core prerequisite; it is still not a DNS extraction or standalone-promotion approval.
+
+## Current-status pointer (Phase 130, 2026-10-05)
+
+The Phase 109 findings and DEFER disposition above remain the historical
+result at their date. The successor campaign has now run to completion:
+
+- Phases 125–129 are **CLOSED QUALIFIED** (closeouts
+  `architecture/dns_runtime_dto_phase125_closeout.md` …
+  `..._phase129_closeout.md`). The `synvoid-config`, `synvoid-core`, and
+  `synvoid-utils` normal edges are gone: `synvoid-dns` went from 7 direct
+  SynVoid normal edges to **4** (`synvoid-tls`, `synvoid-geoip`,
+  `synvoid-dnssec-keystore`, optional `synvoid-mesh`), and from 838 expanded
+  normal-tree lines (Phase 123 baseline) to **827**.
+- `synvoid-config` is no longer a **direct** edge. It still appears in the
+  expanded tree, reachable only through `synvoid-tls` and `synvoid-geoip` —
+  i.e. the residual is entirely inside the provider crates, not in DNS.
+- Phase 130 (`architecture/dns_runtime_dto_phase130_closeout.md`) is the
+  campaign's terminal qualification and records a **DEFER** decision on
+  provider inversion, with the per-provider missing evidence listed.
+
+`synvoid-dns` **remains class 1**. The Phase 109 DEFER above stands as the
+current extraction verdict: the prerequisite is now delivered, but provider
+inversion (TLS / GeoIP / mesh) is not, and this document's disposition is not
+revised by that alone.

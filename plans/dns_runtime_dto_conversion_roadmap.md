@@ -1,7 +1,14 @@
 # DNS Runtime-DTO Conversion Roadmap — Phases 125–130
 
-Status: **ACTIVE** (2026-10-04). Phases 125-129 are **CLOSED QUALIFIED**;
-Phase 130 is **READY**.
+Status: **COMPLETE** (2026-10-05). Phases 125-130 are all **CLOSED
+QUALIFIED**. Terminal qualification and the provider-inversion **DEFER**
+decision are in `architecture/dns_runtime_dto_phase130_closeout.md`.
+
+Outcome: 7 → 4 direct SynVoid normal edges, 838 → 827 expanded normal-tree
+lines, `synvoid-config` / `synvoid-core` / `synvoid-utils` all removed as
+direct edges, and `synvoid-core` / `synvoid-utils` removed from the tree
+entirely. `synvoid-dns` remains class 1; provider inversion is a separate,
+unregistered campaign.
 
 Registered in: `plans/roadmap.md`.
 
@@ -114,7 +121,9 @@ Rules:
    expanded `cargo tree -e normal` lines (was 846). Time, restricted-IP,
    prefix-mask, and lifecycle helpers are DNS-owned with differential tests.
 6. **Phase 130 — Campaign qualification and provider-inversion readiness gate** —
-   **READY** (unblocked by Phase 129).
+   **CLOSED QUALIFIED** (2026-10-05);
+   `architecture/dns_runtime_dto_phase130_closeout.md`. Provider-inversion
+   readiness decision: **DEFER**.
 
 The phases are intentionally sequential. Each changes the canonical constructor
 or configuration ownership used by the next phase and is a rollback/evidence

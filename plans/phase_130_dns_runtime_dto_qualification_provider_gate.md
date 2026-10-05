@@ -1,6 +1,22 @@
 # Phase 130 Plan: DNS Runtime-DTO Qualification and Provider-Inversion Gate
 
-Status: **PLANNED / BLOCKED ON PHASE 129** (2026-10-04).
+Status: **CLOSED QUALIFIED** (2026-10-05). Closeout:
+`architecture/dns_runtime_dto_phase130_closeout.md`. The campaign is complete.
+
+Proven, not assumed: 4 direct SynVoid normal edges (`synvoid-tls`,
+`synvoid-geoip`, `synvoid-dnssec-keystore`, optional `synvoid-mesh`) and 827
+expanded `cargo tree -e normal` lines, against a Phase 123 baseline of 7 / 838.
+`synvoid-core` and `synvoid-utils` are absent entirely; `synvoid-config` is no
+longer a direct edge and survives in the expanded tree only through
+`synvoid-tls` and `synvoid-geoip`.
+
+Provider-inversion readiness: **DEFER**. TLS (2 types) and GeoIP (1 method) are
+narrow enough to invert but lack the SNI/reload/ALPN and
+missing-DB/deterministic-fallback evidence their gate requires; mesh is not a
+narrow seam at all. The per-provider missing evidence is listed in the closeout.
+
+`synvoid-dns` remains class 1. No provider trait was implemented and no
+promotion is claimed.
 
 Registered in: `plans/roadmap.md` and
 `plans/dns_runtime_dto_conversion_roadmap.md`.

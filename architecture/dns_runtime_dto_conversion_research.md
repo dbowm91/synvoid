@@ -1,6 +1,6 @@
 # DNS Runtime-DTO Conversion Research
 
-Status: **RESEARCH COMPLETE / IMPLEMENTATION REGISTERED** (2026-10-04; successor Phases 125–130 in `plans/dns_runtime_dto_conversion_roadmap.md`).
+Status: **RESEARCH COMPLETE / IMPLEMENTATION COMPLETE** (2026-10-05; successor Phases 125–130 in `plans/dns_runtime_dto_conversion_roadmap.md`, all CLOSED QUALIFIED, terminal qualification in `architecture/dns_runtime_dto_phase130_closeout.md`).
 
 Research baseline: `main` at
 `cacd44bffe097d7c62e3ddb0c5816967498a7bde`.
@@ -582,3 +582,5 @@ plan. The safest plan should be staged around the slices above and require an
 exhaustive field-ownership matrix before the constructor cutover.
 
 Implementation is now registered as Phases 125–130 under `plans/dns_runtime_dto_conversion_roadmap.md`. Phase 125 begins with the exhaustive field-ownership/projection matrix and adapter parity gate; Phases 126–129 perform the staged cutovers and dependency removals; Phase 130 qualifies the result and decides whether TLS/Geo/mesh provider inversion is ready for a separate successor plan. Provider inversion must not begin until the normal `synvoid-config`, `synvoid-core` and `synvoid-utils` edges are removed with parity proof.
+
+**That precondition is now met and proven.** The three edges are gone: `synvoid-dns` has 4 direct SynVoid normal edges (down from 7) and 827 expanded normal-tree lines. `synvoid-config` survives only transitively, through `synvoid-tls` and `synvoid-geoip`. Phase 130 nevertheless records **DEFER** on provider inversion, because the per-provider evidence its own gate requires (SNI/reload/ALPN for TLS, missing-DB and deterministic-fallback for GeoIP, provenance/freshness/authority for mesh) has not been produced. The prerequisite was necessary, not sufficient.
