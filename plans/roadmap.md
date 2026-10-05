@@ -1,6 +1,8 @@
 # SynVoid Architecture Hardening Roadmap
 
-Status: DNS startup-truthfulness and provider-inversion Phases 131–136 are **CLOSED QUALIFIED** (2026-10-05; umbrella `plans/dns_startup_truthfulness_and_provider_inversion_roadmap.md`; campaign closeout `architecture/dns_startup_truthfulness_and_provider_inversion_closeout.md`; Phase 131 conformance determinism, Phase 132 authoritative zone startup activation, Phase 133 provider-inversion evidence gate returned **GO for TLS and GeoIP**; Phase 134 removed the `synvoid-tls` edge; Phase 135 removed the `synvoid-geoip` edge and fixed both high-severity findings it had recorded (F-1 a config-reachable `GeoIpManager::new` panic, F-2 a GeoLocation block rule that silently allowed traffic without a provider) plus F-16 (an ASN-scoped geo rule was unmatchable). `synvoid-dns` is now at **2 direct SynVoid normal edges** (`synvoid-dnssec-keystore` plus optional `synvoid-mesh`), the campaign target, down from 7 at the Phase 123 baseline; expanded **default-feature** normal-tree lines 838 → 552. **F-18:** that figure is feature-conditional — `synvoid-mesh` is optional, and `cargo tree -p synvoid-dns -e normal --features mesh` runs 2047 lines and returns all five removed dependencies (`synvoid-config`/`-core`/`-utils`/`-tls`/`-geoip`) transitively through mesh, so mesh is the **measured** single remaining blocker at 1495 closure lines, not a qualitative one. `synvoid-dns` remains class 1. **F-17: `[geoip]` is constructed nowhere in composition** — wiring it is a feature change with its own phase, guarded by a tripwire. mesh inversion out of scope. DNS runtime-DTO conversion Phases 125–130 are **COMPLETE** (2026-10-05; umbrella `plans/dns_runtime_dto_conversion_roadmap.md`; all six phases **CLOSED QUALIFIED**; closeouts `architecture/dns_runtime_dto_phase12{5,6,7,8,9}_closeout.md` and `..._phase130_closeout.md`. Outcome: 7 -> 4 direct SynVoid normal edges (838 -> 827 expanded lines); provider-inversion readiness **DEFER**; `synvoid-dns` remains class 1). Phase 124 post-standalone documentation/evidence reconciliation is **CLOSED QUALIFIED** (2026-10-04; docs/evidence only; plan `plans/phase_124_post_standalone_documentation_evidence_reconciliation.md`; closeout `architecture/standalone_crate_phase124_closeout.md`). The standalone-capable crate campaign (Phases 115–123) remains closed with unchanged dispositions, and the merged-main exact-head proof is now recorded: hosted CI run `37218651222` passed `ci` and `dependency-security` on merge head `cacd44bffe097d7c62e3ddb0c5816967498a7bde`, separate from the campaign-branch proof at `f81182149889e21c4908b7ee38c74bc6b4518f6b` (run `37064917481`). Phase 124 unblocks no successor extraction or promotion plan. The subsystem-boundary/extraction campaign (Phases 105–112) is CLOSED QUALIFIED as of 2026-10-02; umbrella: `plans/subsystem_boundary_extraction_roadmap.md`; proof-bearing SHA `e7c0ec5a1317599b6f98e37a534b53544842a29c`, hosted CI/dependency-security run `36955732943`. Phases 105–111 remain formally closed: 105 QUALIFIED, 106 QUALIFIED, 107 DEFER, 108 QUALIFIED, 109 DEFER, 110 RETAIN INTERNAL, and 111 DEFER. Phase 112 completed campaign-wide evidence refresh and terminal closeout. Post-closeout Phases 113-114 are CLOSED QUALIFIED (113 docs-only reconciliation; 114 tunnel/Eggtunnel parity refresh RETAIN + DEFER relay reuse, 2026-10-02; evidence architecture/tunnel_eggtunnel_parity_phase114.md). ICMP remains RETAIN, process sandbox remains DEFER, and YARA remains DEFER. No downstream extraction or adoption is authorized by registration of Phases 113–114. Phase 104 (Phase 103 qualification-evidence corrective closeout) is CLOSED QUALIFIED (2026-10-01; closeout `architecture/dependency_security_phase104_corrective_closeout.md`; proof-bearing implementation SHA `e0032cd176cd1061a3aa5877555f49ebc4f46a3b`; hosted CI + `dependency-security` green on `36901352762`). Phase 103 (dependency-security re-audit and Wasmtime remediation) remains CLOSED QUALIFIED for its security remediation (2026-10-01; closeout `architecture/dependency_security_reaudit_phase103_closeout.md`; proof-bearing implementation SHA `aeeebc7bac38b1dcc441b06f53c838a74582cd24`; hosted CI + `dependency-security` green on `36891196284`), with Phase 104 owning the residual performance-evidence and support-date corrections. Phase 102 (eggfetch 0.2.1 patch adoption) is CLOSED QUALIFIED (2026-10-01; closeout `architecture/eggfetch_0_2_1_patch_adoption_closeout.md`). Tracks 1–3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). Eggfetch 0.2 runtime adoption is closed through Phase 62 (`c3568ef4...`) and performance/reproducibility adjudication is closed through Phase 63; Phase 64 docs/evidence-truth correction is closed. Production remains on eggfetch. The EggServe 0.2.2-line inbound H1 campaign remains historical/retained at Phase 65; Phases 66–69 were never started. EggServe 0.3 H1 adoption and corrective requalification are closed as `ADOPTED` through Phase 80 on exact pins `eggserve-server = "=0.4.0"` / `eggserve-primitives = "=0.2.2"`; the Phase 78 terminal claim is superseded by Phase 80 proof-bearing SHA `174fdbcd6f133b35099ed4492f5ed8d3fcaa7d4c` (hosted run `36201213413`). Phase 79 implementation SHA: `171dd1e47f965b04b34465fc72c87adf4d9a9cab`. See `architecture/eggserve_0_3_h1_adoption_closeout.md`. Phases 70–72 remain historical/closed with evidence aligned to their then-current Hyper H1 runtime. The process-sandbox correctness and extraction-readiness campaign (Phases 81-84) remains closed DEFER; Phase 94 corrected and qualified Phase 89's Linux mechanism-selection and native-evidence gaps on exact SHA `e86fb35372b1b66bb59c8a6336bf32e55ff5c93e` (hosted/native run `36271417398`). The independent ICMP policy/enforcement extraction-preparation campaign (Phases 85-88) remains closed RETAIN (see the Post-Phase-80 section below); Phases 90–91 are closed, Phase 92 is CLOSED CORRECTED, Phase 93 is QUALIFIED (superseded by Phase 95 exact-SHA two-run proof `36335520434` on `39bfced25d51267ee5837eaecedae7da9af163d0`), and Phase 95 is CLOSED QUALIFIED with Linux nftables native-supported. Phase 88 stays RETAIN with no extraction authorized. The closed independent cross-repo Eggbench security-qualification asset handoff remains separately registered. The Eggbench Security Qualification M003 telemetry interoperability corrective remains closed qualified at `739e7ba6f02c5e3f83fe9ff5321b09213182b193` for the v2 schema/generation contract, but the live-value path is reopened by the READY heartbeat-dispatch corrective `plans/eggbench_security_qualification_m003_telemetry_heartbeat_dispatch_corrective.md`: current supervisor IPC drops `UnifiedServerWorkerHeartbeat` instead of updating ProcessManager, and downstream Eggbench `m003c-13b` correctly stops. The former v1 terminal qualification remains superseded/withdrawn. The post-Phase-95 architecture-maintenance and auditability campaign (Phases 96–101) is closed qualified on proof-bearing SHA `2bfc3c6cfd1a1f2454f801cc02c01a0cbafa2e30`; see `architecture/architecture_maintenance_auditability_closeout.md`.
+Status: DNS residual-truthfulness Phases 137–140 are **REGISTERED** (2026-10-05; umbrella `plans/dns_residual_truthfulness_roadmap.md`) and not started. They are the registered successor for four of the six residuals the previous campaign left unregistered, re-scoped against a code audit rather than the closeout wording: **F-6** is DoT/DoH only — `doq.rs:72` already sets `doq` ALPN, so "no ALPN anywhere" is an over-claim, and the two remaining transports share one builder needing *different* values, making it a signature change; **F-17** is not composition-only — `server/mod.rs:1871` hardcodes `let geoip_lookup = None;` inside class-1 `synvoid-dns`; **mesh inversion** is 7 types rather than 8 and its whole surface is **dead at runtime** (all four injection points have zero callers), so it is gated on a wire-or-delete disposition decision rather than a scheduled inversion. Two further residuals are registered as **preconditions, not phases**, because no live trigger exists for either. Corrections are applied to historical closeouts by pointer only.
+
+Prior campaign: DNS startup-truthfulness and provider-inversion Phases 131–136 are **CLOSED QUALIFIED** (2026-10-05; umbrella `plans/dns_startup_truthfulness_and_provider_inversion_roadmap.md`; campaign closeout `architecture/dns_startup_truthfulness_and_provider_inversion_closeout.md`; Phase 131 conformance determinism, Phase 132 authoritative zone startup activation, Phase 133 provider-inversion evidence gate returned **GO for TLS and GeoIP**; Phase 134 removed the `synvoid-tls` edge; Phase 135 removed the `synvoid-geoip` edge and fixed both high-severity findings it had recorded (F-1 a config-reachable `GeoIpManager::new` panic, F-2 a GeoLocation block rule that silently allowed traffic without a provider) plus F-16 (an ASN-scoped geo rule was unmatchable). `synvoid-dns` is now at **2 direct SynVoid normal edges** (`synvoid-dnssec-keystore` plus optional `synvoid-mesh`), the campaign target, down from 7 at the Phase 123 baseline; expanded **default-feature** normal-tree lines 838 → 552. **F-18:** that figure is feature-conditional — `synvoid-mesh` is optional, and `cargo tree -p synvoid-dns -e normal --features mesh` runs 2047 lines and returns all five removed dependencies (`synvoid-config`/`-core`/`-utils`/`-tls`/`-geoip`) transitively through mesh, so mesh is the **measured** single remaining blocker at 1495 closure lines, not a qualitative one. `synvoid-dns` remains class 1. **F-17: `[geoip]` is constructed nowhere in composition** — wiring it is a feature change with its own phase, guarded by a tripwire. mesh inversion out of scope. DNS runtime-DTO conversion Phases 125–130 are **COMPLETE** (2026-10-05; umbrella `plans/dns_runtime_dto_conversion_roadmap.md`; all six phases **CLOSED QUALIFIED**; closeouts `architecture/dns_runtime_dto_phase12{5,6,7,8,9}_closeout.md` and `..._phase130_closeout.md`. Outcome: 7 -> 4 direct SynVoid normal edges (838 -> 827 expanded lines); provider-inversion readiness **DEFER**; `synvoid-dns` remains class 1). Phase 124 post-standalone documentation/evidence reconciliation is **CLOSED QUALIFIED** (2026-10-04; docs/evidence only; plan `plans/phase_124_post_standalone_documentation_evidence_reconciliation.md`; closeout `architecture/standalone_crate_phase124_closeout.md`). The standalone-capable crate campaign (Phases 115–123) remains closed with unchanged dispositions, and the merged-main exact-head proof is now recorded: hosted CI run `37218651222` passed `ci` and `dependency-security` on merge head `cacd44bffe097d7c62e3ddb0c5816967498a7bde`, separate from the campaign-branch proof at `f81182149889e21c4908b7ee38c74bc6b4518f6b` (run `37064917481`). Phase 124 unblocks no successor extraction or promotion plan. The subsystem-boundary/extraction campaign (Phases 105–112) is CLOSED QUALIFIED as of 2026-10-02; umbrella: `plans/subsystem_boundary_extraction_roadmap.md`; proof-bearing SHA `e7c0ec5a1317599b6f98e37a534b53544842a29c`, hosted CI/dependency-security run `36955732943`. Phases 105–111 remain formally closed: 105 QUALIFIED, 106 QUALIFIED, 107 DEFER, 108 QUALIFIED, 109 DEFER, 110 RETAIN INTERNAL, and 111 DEFER. Phase 112 completed campaign-wide evidence refresh and terminal closeout. Post-closeout Phases 113-114 are CLOSED QUALIFIED (113 docs-only reconciliation; 114 tunnel/Eggtunnel parity refresh RETAIN + DEFER relay reuse, 2026-10-02; evidence architecture/tunnel_eggtunnel_parity_phase114.md). ICMP remains RETAIN, process sandbox remains DEFER, and YARA remains DEFER. No downstream extraction or adoption is authorized by registration of Phases 113–114. Phase 104 (Phase 103 qualification-evidence corrective closeout) is CLOSED QUALIFIED (2026-10-01; closeout `architecture/dependency_security_phase104_corrective_closeout.md`; proof-bearing implementation SHA `e0032cd176cd1061a3aa5877555f49ebc4f46a3b`; hosted CI + `dependency-security` green on `36901352762`). Phase 103 (dependency-security re-audit and Wasmtime remediation) remains CLOSED QUALIFIED for its security remediation (2026-10-01; closeout `architecture/dependency_security_reaudit_phase103_closeout.md`; proof-bearing implementation SHA `aeeebc7bac38b1dcc441b06f53c838a74582cd24`; hosted CI + `dependency-security` green on `36891196284`), with Phase 104 owning the residual performance-evidence and support-date corrections. Phase 102 (eggfetch 0.2.1 patch adoption) is CLOSED QUALIFIED (2026-10-01; closeout `architecture/eggfetch_0_2_1_patch_adoption_closeout.md`). Tracks 1–3 and their corrective closures remain complete. Phases 41-48 of the runtime-truthfulness/security/publication campaign are complete (see `architecture/runtime_truthfulness_security_publication_closeout.md`). The post-Phase-48 performance optimization campaign (Phases 49-55) remains complete; Phases 56–57 corrective closure is implemented and closed (Phase 56 `57ad3158754b2f4851e1ce408043d33104106974`, Phase 57 proof-bearing `5212c6862426ee17795994ef1bba590113c52fad`). Eggfetch 0.2 runtime adoption is closed through Phase 62 (`c3568ef4...`) and performance/reproducibility adjudication is closed through Phase 63; Phase 64 docs/evidence-truth correction is closed. Production remains on eggfetch. The EggServe 0.2.2-line inbound H1 campaign remains historical/retained at Phase 65; Phases 66–69 were never started. EggServe 0.3 H1 adoption and corrective requalification are closed as `ADOPTED` through Phase 80 on exact pins `eggserve-server = "=0.4.0"` / `eggserve-primitives = "=0.2.2"`; the Phase 78 terminal claim is superseded by Phase 80 proof-bearing SHA `174fdbcd6f133b35099ed4492f5ed8d3fcaa7d4c` (hosted run `36201213413`). Phase 79 implementation SHA: `171dd1e47f965b04b34465fc72c87adf4d9a9cab`. See `architecture/eggserve_0_3_h1_adoption_closeout.md`. Phases 70–72 remain historical/closed with evidence aligned to their then-current Hyper H1 runtime. The process-sandbox correctness and extraction-readiness campaign (Phases 81-84) remains closed DEFER; Phase 94 corrected and qualified Phase 89's Linux mechanism-selection and native-evidence gaps on exact SHA `e86fb35372b1b66bb59c8a6336bf32e55ff5c93e` (hosted/native run `36271417398`). The independent ICMP policy/enforcement extraction-preparation campaign (Phases 85-88) remains closed RETAIN (see the Post-Phase-80 section below); Phases 90–91 are closed, Phase 92 is CLOSED CORRECTED, Phase 93 is QUALIFIED (superseded by Phase 95 exact-SHA two-run proof `36335520434` on `39bfced25d51267ee5837eaecedae7da9af163d0`), and Phase 95 is CLOSED QUALIFIED with Linux nftables native-supported. Phase 88 stays RETAIN with no extraction authorized. The closed independent cross-repo Eggbench security-qualification asset handoff remains separately registered. The Eggbench Security Qualification M003 telemetry interoperability corrective remains closed qualified at `739e7ba6f02c5e3f83fe9ff5321b09213182b193` for the v2 schema/generation contract, but the live-value path is reopened by the READY heartbeat-dispatch corrective `plans/eggbench_security_qualification_m003_telemetry_heartbeat_dispatch_corrective.md`: current supervisor IPC drops `UnifiedServerWorkerHeartbeat` instead of updating ProcessManager, and downstream Eggbench `m003c-13b` correctly stops. The former v1 terminal qualification remains superseded/withdrawn. The post-Phase-95 architecture-maintenance and auditability campaign (Phases 96–101) is closed qualified on proof-bearing SHA `2bfc3c6cfd1a1f2454f801cc02c01a0cbafa2e30`; see `architecture/architecture_maintenance_auditability_closeout.md`.
 
 Scope: this roadmap covers architecture hardening, trust-boundary closure, verification, release readiness, post-hardening cleanup, and the architecture-convergence work required before another broad feature-expansion pass.
 
@@ -2343,3 +2345,101 @@ Binding constraints:
   easier;
 - every edge-removal claim requires `cargo metadata` / `cargo tree` proof, and
   every skipped lane is recorded as not-run.
+
+
+## DNS Residual Truthfulness — Phases 137–140 REGISTERED
+
+Status: **REGISTERED** (2026-10-05). Not started.
+
+Umbrella: `plans/dns_residual_truthfulness_roadmap.md`.
+
+This is the registered successor for four of the six residuals the
+DNS startup-truthfulness/provider-inversion campaign (Phases 131–136, CLOSED
+QUALIFIED) deliberately left unregistered. It was opened after an audit of those
+residuals against the code found that **three of the closeout's problem
+statements are wrong in ways that would cause the work to be built
+incorrectly**, so the scope here is set by what the code shows, not by the
+closeout wording. Corrections are applied to historical closeouts by pointer
+only.
+
+1. **Phase 137 — ALPN Negotiation for DoT and DoH**
+   - Status: **REGISTERED** (2026-10-05).
+   - Plan: `plans/phase_137_dns_encrypted_transport_alpn.md`.
+   - Source: Phase 133 F-6. **Scope corrected:** the closeout says "no ALPN
+     anywhere in the TLS path" and names DoT/DoH/DoQ, but `doq.rs:72` already
+     sets `doq` ALPN, so DoQ is correct today. The real gap is DoT and DoH,
+     which **share one builder** (`secure_server.rs:55-65`) needing *different*
+     values — so this is a signature change, not a list edit, and adding `h2`
+     naively would break DoT. The two `synvoid-tls` provider ALPN pins stay true
+     and must not be inverted, because ALPN belongs at the DNS call sites.
+
+2. **Phase 138 — Wire `[geoip]` in Composition**
+   - Status: **REGISTERED** (2026-10-05).
+   - Plan: `plans/phase_138_dns_geoip_composition_wiring.md`.
+   - Source: Phase 135 F-17. **Scope corrected:** "the adapter is written and
+     ready" understates the work. `server/mod.rs:1871` hardcodes
+     `let geoip_lookup = None;` inside class-1 `synvoid-dns`, `:1884` never
+     calls `with_country_lookup`, and all three builders have zero production
+     callers. The phase therefore edits the crate, not just composition. It
+     must also avoid a silent-allow regression: a wired-but-database-less
+     provider maps to `GeoMatch::No`, not `Unavailable`, which would convert the
+     Phase 135 fail-closed block back into a silent allow with no diagnostic.
+     The tripwire guard must be **deleted, not weakened**, per its own assert
+     message, and replaced with a positive gate.
+
+3. **Phase 139 — Mesh DNS Coupling Disposition and Capability Inversion**
+   - Status: **REGISTERED** (2026-10-05).
+   - Plan: `plans/phase_139_dns_mesh_coupling_disposition.md`.
+   - Source: Phase 136 F-18 and the standing mesh-inversion residual.
+     **Scope corrected:** 7 types, not 8 (the 8 was a `sort -u` path count), and
+     the `anycast_sync.rs` transport/wire cluster is omitted by the closeout's
+     "DHT storage, routing, and signed provenance" description. Decisively,
+     **all four mesh injection points have zero callers** and
+     `MeshDnsRegistry::with_config` hardcodes `None` handles, so the
+     mesh-gated DNS surface is **dead at runtime**. The phase is therefore
+     **gated on a wire-or-delete disposition decision** (Workstream A) and
+     inverts only if the feature is confirmed live. It must also add the
+     manifest and source-level mesh gates that do not exist today.
+
+4. **Phase 140 — `prefer_post_quantum` Truthfulness**
+   - Status: **REGISTERED** (2026-10-05).
+   - Plan: `plans/phase_140_tls_prefer_post_quantum_truthfulness.md`.
+   - Source: Phase 133 F-7. The field is read at exactly one site for a debug
+     log and a counter and selects nothing; availability comes from the
+     compiled-in rustls feature. Recommended disposition is to document it as
+     telemetry, following the `doh.path` `PERSISTURE` precedent, because removal
+     or rename costs a `≥ 0.2.0` semver bump on a published class-3 crate and
+     making it gate would require a second `CryptoProvider`, breaking the
+     documented single-provider invariant.
+
+Registered as preconditions rather than phases, because the audit found neither
+has a live trigger: **P-1** zone-reload atomicity (`load_zones_inner` is
+insert-then-validate and skips `rebuild_zone_index()` on error, but no runtime
+reload path exists — SIGHUP is skipped at `synvoid-platform/src/unix.rs:401`
+and `reload_config` only iterates site configs) and **P-2** the public
+authoritative profile's loopback block (`block_internal_ips` installs 8 rules
+including `127.0.0.0/8`; loopback is not separately controllable, and
+`docs/FEATURE_STATUS.md` never mentions it). Both carry their full requirements
+in the umbrella so whoever builds the triggering lane inherits them.
+
+Also recorded with no phase: 133 F-11 (dead mTLS "no CA certificates" branch,
+still dead at `cert_resolver.rs:300-318`), 133 F-3 (`GeoLocation::from_str`
+still cannot fail, `firewall.rs:572`), and 131 F-3 (two `#[ignore]`d Eggbench
+suites still predict ports).
+
+Binding constraints:
+
+- no provider trait implemented inside `synvoid-dns`; providers stay in
+  composition roots;
+- no trait signature may name a `synvoid-mesh`, `synvoid-tls`, or `synvoid-geoip`
+  type;
+- no persisted TOML/OpenAPI/admin schema change without a separate explicit
+  decision;
+- no class/support/promotion/publication claim — `synvoid-dns` remains class 1,
+  and inverting mesh does not by itself qualify it, because the edge is
+  `optional` and the `--features mesh` closure is unaffected;
+- `architecture/distributed_state_contract.md` remains binding: DHT is never
+  policy authority or a fallback, and `MeshMessage` protobufs remain in
+  `synvoid-mesh`;
+- historical closeouts are corrected by pointer only, never rewritten;
+- every skipped verification lane is recorded as not-run with its reason.
