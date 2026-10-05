@@ -598,17 +598,19 @@ pub fn reviewed_date_in_block(block: &str) -> Result<Option<chrono::NaiveDate>, 
                 .trim_end_matches('.')
                 .to_string();
             match parse_ymd(&token) {
-                Some(d) => {
-                    if found.is_none() {
-                        found = Some(d);
-                    } else if found != Some(d) {
+                Some(d) => match found {
+                    // A repeat of the same date is fine; a second, different
+                    // date in one metadata block is the error.
+                    Some(existing) if existing != d => {
                         return Err(format!(
                             "conflicting Reviewed dates in one metadata block ({} vs {})",
-                            found.unwrap().format("%Y-%m-%d"),
+                            existing.format("%Y-%m-%d"),
                             d.format("%Y-%m-%d")
                         ));
                     }
-                }
+                    Some(_) => {}
+                    None => found = Some(d),
+                },
                 None => return Err(format!("malformed Reviewed date {token:?} in {t:?}")),
             }
             search = &rest[token.len()..];

@@ -1,10 +1,32 @@
 # Phase 133 Plan: Provider-Inversion Evidence Gate (TLS + GeoIP)
 
-Status: **PLANNED** (2026-10-05).
+Status: **CLOSED QUALIFIED** (2026-10-05).
 
 Campaign: `plans/dns_startup_truthfulness_and_provider_inversion_roadmap.md`.
 Predecessor: Phase 132.
 Registered in: `plans/roadmap.md`.
+
+## Outcome
+
+**GO for both providers.** The decisions name the exact traits, method
+signatures, and implementing types; see the closeout's Decision section.
+
+Corrections to this plan's premises, found while producing the evidence:
+
+- The GeoIP seam is **two** methods, not one (`get_asn_info` at
+  `firewall.rs:361` is easy to miss).
+- The TLS seam has **three** call sites, not one: DoQ is QUIC and duplicates the
+  contract in its own `create_tls_config` (F-12).
+- There is no `Health` firewall rule type. `DnsFirewallRuleType` is Domain,
+  IpAddress, Subnet, QueryType, Opcode, ResponseCode, GeoLocation, TimeWindow;
+  `synvoid_dns::health` reports server state and takes no part in query
+  evaluation. What the firewall has is first-match-in-insertion-order, which is
+  what Workstream B item 4 now pins.
+
+Twelve findings are recorded, two of them high severity and both deferred to
+Phase 135 by design: a config-reachable panic in `GeoIpManager::new` (F-1) and
+a GeoLocation block rule that silently allows traffic when no provider is
+configured (F-2).
 
 ## Goal
 

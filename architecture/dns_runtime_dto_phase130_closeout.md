@@ -159,6 +159,24 @@ Updated to the actual dependency graph:
 
 ## Workstream E — provider-inversion readiness: **DEFER**
 
+> **Superseded by `architecture/dns_provider_inversion_phase133_closeout.md`.**
+> Phase 133 produced the evidence this section says is missing, and returned
+> **GO** for both TLS and GeoIP.
+>
+> Two statements below are factually wrong and are corrected here by pointer
+> rather than by rewriting the historical record:
+>
+> - "DNS calls **zero** methods on `CertResolver`" is incorrect. DNS calls
+>   exactly one — `build_server_config()`, at
+>   `crates/synvoid-dns/src/secure_server.rs:53` and
+>   `crates/synvoid-dns/src/doq.rs:112`. This matters because it moves the
+>   inversion target from a certificate-loading trait to a rustls-shaped one.
+> - The GeoIP seam is **two** methods, not one: `get_asn_info` is also called,
+>   at `crates/synvoid-dns/src/firewall.rs:361`.
+>
+> The DEFER verdict itself was correct on its own terms — the evidence did not
+> exist when this was written.
+
 The Phase 123 precondition — remove the `synvoid-config`, `synvoid-core`, and
 `synvoid-utils` edges with parity proof — is now **met and proven**. That was
 necessary but not sufficient. Each remaining concrete edge was evaluated

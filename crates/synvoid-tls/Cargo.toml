@@ -30,3 +30,10 @@ metrics = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 thiserror = "2"
 tracing = "0.1"
+
+[dev-dependencies]
+# Phase 133 Workstream A: the evidence suite needs real certificate material to
+# exercise SNI selection and handshake-level version policy. `rcgen` is already
+# a workspace dependency (via synvoid-tunnel / synvoid-mesh / instant-acme), so
+# this adds no new supply-chain surface.
+rcgen = "0.13"

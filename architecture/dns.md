@@ -1299,6 +1299,34 @@ pub struct TrustAnchor { ... }
 | DNSSEC validation | `resolver.rs:423` | `HickoryResolver` always returns `is_dnssec_validated: false` |
 | GlobalNodeResolver | `resolver_global.rs` | Resolves via mesh global nodes |
 | mesh_sync | `anycast_sync.rs` | Mesh-based zone sync |
+| TLS provider seam | `secure_server.rs:53` (DoT/DoH), `doq.rs:112` (DoQ) | The **only** method called on `CertResolver`: `build_server_config()`. DoQ is QUIC and duplicates the two error literals in its own `create_tls_config` (`doq.rs:105`) — both copies must change together. |
+| ACME TXT seam | `server/query.rs:997` | The only call to `AcmeDnsChallenge::get_txt_value` |
+| GeoIP provider seam | `firewall.rs:333`, `firewall.rs:361`, `mesh_sync/registry.rs:75`, `server/query.rs:881` | Exactly two methods: `get_country_info` (3 sites) and `get_asn_info` (1 site) |
+
+### 10.1 Provider seams (Phase 133)
+
+`synvoid-dns` still holds concrete `synvoid-tls` and `synvoid-geoip` types, but
+both seams are now narrow and evidenced, and both are approved for inversion:
+
+| Provider | Surface | Phase 133 decision |
+|---|---|---|
+| TLS | 2 traits over 1 method | **GO** — `SecureTransportConfig::server_config`, `AcmeTxtChallenges::txt_value` |
+| GeoIP | 1 trait over 2 methods | **GO** — `CountryLookup::country_info`, `CountryLookup::asn` |
+| mesh | 8 types across DHT storage, routing, signed provenance | **out** — not a narrow seam; needs its own design phase |
+
+Two facts about these seams are load-bearing and guarded:
+
+- **Certificate reload is provider-internal.** DNS never names `reload_tx`,
+  `watch_for_cert_changes`, or `load_certificates`, and a reload is visible
+  through an already-built `ServerConfig` because the resolver's certificate map
+  is shared behind an `Arc`. A replacement trait must keep that indirection or
+  encrypted-transport reload breaks.
+- **A GeoLocation block rule with no provider silently allows traffic.** This is
+  a real fail-open behavior, not a documented one, and it is scheduled for a
+  deliberate fix in Phase 135 (Phase 133 finding F-2).
+
+Full evidence and all twelve findings:
+`architecture/dns_provider_inversion_phase133_closeout.md`.
 
 ---
 

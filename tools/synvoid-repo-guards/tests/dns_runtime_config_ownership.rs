@@ -16,7 +16,7 @@
 //! with Phase 129.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use synvoid_repo_guards::{collect_rs_files, workspace_root, Violations};
 

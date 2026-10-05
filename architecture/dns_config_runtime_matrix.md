@@ -1485,3 +1485,52 @@ Pre-existing and left unchanged: fixing it is a behavior change to the runtime
 reload path, which is outside this phase. Recorded so a future reload campaign
 knows the guarantee is "no partial activation" only by accident of where it is
 called, not by design.
+
+## Phase 133 findings — provider-inversion evidence gate
+
+Full narrative, decisions, and all twelve findings:
+`architecture/dns_provider_inversion_phase133_closeout.md`. Summarized here
+because the matrix is where a reader looks for "what is still not proven".
+
+Phase 133 inverted nothing, so the field-ownership ledger above is unchanged.
+What changed is that the two provider edges — the only remaining non-DNS-owned
+normal edges besides the DNSSEC keystore and mesh — now have executable evidence
+and a GO decision.
+
+| Finding | Severity | Disposition |
+|---|---|---|
+| F-1 `GeoIpManager::new` panics with no download credentials | high | mandatory Phase 135 workstream 0a |
+| F-2 GeoLocation block rule with no provider silently allows traffic | high | mandatory Phase 135 workstream 0b |
+| F-3 `GeoLocation::from_str` cannot fail; a typo becomes a no-op rule | low | Phase 135 |
+| F-4 positive GeoLocation matrix is only testable provider-side | none | becomes in-crate testable in Phase 135 |
+| F-5 `synvoid-dns` cannot construct a provider at all | none | resolved by inversion |
+| F-6 no ALPN is configured anywhere in the TLS path | medium | recorded, deliberately not changed |
+| F-7 `prefer_post_quantum` is telemetry, not a gate | low | recorded; Phase 134 must not claim otherwise |
+| F-8 the permissive version branch is not the default | none | pinned |
+| F-9 `get_country_info`'s second lookup cannot change the answer | low | Phase 135 must not inherit it |
+| F-10 the ASN seam is narrower than `AsnInfo` | none | folded into the trait signature |
+| F-11 the mTLS "no CA certificates" branch is dead code | low | recorded |
+| F-12 the encrypted-transport TLS contract is duplicated, not shared | low | both copies converted together in Phase 134 |
+
+### F-6 detail: no ALPN, and why it was not added
+
+`CertResolver::build_server_config` sets protocol versions, an optional client
+verifier, and the certificate resolver — and no ALPN. `ServerConfig::alpn_protocols`
+is empty, and a client offering `h2` and `doq` completes the handshake with no
+negotiated protocol.
+
+This is a protocol behavior, not a structural gap: adding ALPN would change what
+the encrypted transports negotiate, which the campaign explicitly excludes. It is
+recorded because DoH is HTTP/2-based, so a client that requires ALPN negotiation
+cannot use the listener as configured today. If ALPN is ever added it belongs in
+its own phase with its own parity evidence, on all three transports at once.
+
+### F-7 detail: `prefer_post_quantum` is not a preference
+
+The setting emits a debug log and increments a counter. It selects no key
+exchange groups. A client offering *only* `X25519MLKEM768` completes a handshake
+against a server built with the flag **off**; availability comes from the
+compiled-in `prefer-post-quantum` rustls feature, not from this setting.
+
+A DNS-owned trait in Phase 134 must therefore not be documented as honouring a
+post-quantum preference, because there is no preference to honour.

@@ -9101,6 +9101,7 @@ dependencies = [
  "metrics 0.22.4",
  "notify",
  "parking_lot",
+ "rcgen 0.13.2",
  "rsa",
  "rustls",
  "rustls-pki-types",

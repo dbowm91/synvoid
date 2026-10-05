@@ -59,10 +59,20 @@ of these was a behavior or evidence change outside it:
    Sequenced before inversion because it is user-visible and independent of it.
 3. **Phase 133 — Provider-inversion evidence gate (TLS + GeoIP)** — produce the
    evidence Phase 130 found missing and re-gate. No inversion here.
+   **CLOSED QUALIFIED — GO for both providers**
+   (`architecture/dns_provider_inversion_phase133_closeout.md`). The evidence
+   exists as 47 tests, and the seams are narrower than Phase 130 recorded: TLS
+   is two traits over one method, GeoIP is one trait over two methods. Twelve
+   findings; two are high severity and both are carried into Phase 135 as
+   mandatory workstreams — a config-reachable panic in `GeoIpManager::new`
+   (F-1) and a GeoLocation block rule that silently allows traffic when no
+   provider is configured (F-2).
 4. **Phase 134 — TLS provider inversion** — remove the `synvoid-tls` direct
-   edge.
+   edge. Proceed on the Phase 133 GO. Three call sites, not one: DoT/DoH share
+   `SecureDnsServerBase` and DoQ has its own QUIC copy of the same contract
+   (F-12), so all three must be converted together.
 5. **Phase 135 — GeoIP provider inversion** — remove the `synvoid-geoip`
-   direct edge.
+   direct edge. Proceed on the Phase 133 GO, and **first** fix F-1 and F-2.
 6. **Phase 136 — Campaign qualification** — terminal dependency proof, parity
    re-run, documentation reconciliation, class decision.
 

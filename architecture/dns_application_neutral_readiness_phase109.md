@@ -115,3 +115,26 @@ result at their date. The successor campaign has now run to completion:
 current extraction verdict: the prerequisite is now delivered, but provider
 inversion (TLS / GeoIP / mesh) is not, and this document's disposition is not
 revised by that alone.
+
+## Current-status pointer (Phase 133, 2026-10-05)
+
+> Supersedes the "provider inversion is not [eligible]" statement above, by
+> pointer. The Phase 130 record deferred provider inversion for want of
+> evidence; Phase 133 produced that evidence and returned **GO** for TLS and
+> GeoIP. See `architecture/dns_provider_inversion_phase133_closeout.md`.
+
+The missing evidence named in the Phase 130 record — SNI behavior, reload
+semantics, private-key ownership, ALPN, DoT/DoH/DoQ startup and failure parity,
+GeoIP missing-database and unknown-location behavior, and the absent-provider
+fallback — now exists as executable tests:
+
+| Provider | GO | Named capability |
+|---|---|---|
+| TLS | yes | `SecureTransportConfig::server_config`, `AcmeTxtChallenges::txt_value` |
+| GeoIP | yes | `CountryLookup::country_info`, `CountryLookup::asn` |
+| mesh | no | not a narrow seam; requires its own design phase |
+
+This does **not** revise the extraction verdict. The edges are still present
+until Phases 134 and 135 land, `synvoid-dns` is still class 1, and mesh remains
+out of scope. What changed is that the last stated blocker is no longer
+"unproven" — it is "scheduled".

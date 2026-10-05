@@ -246,6 +246,13 @@ Certificate selection remains an injected provider/concrete `CertResolver`
 until the later provider-inversion phase. This conversion must not duplicate
 TLS ownership inside DNS.
 
+> **Phase 133 update** (`architecture/dns_provider_inversion_phase133_closeout.md`):
+> the "injected concrete `CertResolver`" is consumed at exactly one method,
+> `build_server_config()`, and the inversion decision is **GO** for a
+> rustls-shaped DNS-owned trait. The certificate *paths* stay out of the
+> runtime DTO, as this research concluded — they are provider inputs, not
+> runtime values.
+
 Hickory 0.26.3 supports library integration for authoritative/forwarding/
 recursive service and DoT/DoH/DoQ/DoH3. Its resolver configuration types such as
 `ResolverConfig`, `NameServerConfig` and `ResolverOpts` are
