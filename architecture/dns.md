@@ -360,6 +360,99 @@ normal closure runs **2047** lines instead of 552, and all five of
 becomes a direct DNS edge again, so the structural result stands; but the mesh
 edge is the single remaining blocker and it is heavy, not marginal.
 
+### Mesh coupling: disposition WIRE, Phase 139
+
+The mesh coupling was measured, not assumed. The pre-Phase-139 state:
+
+| Fact | Measurement |
+|------|-------------|
+| Mesh types named by `synvoid-dns` | 7 distinct types across 8 path strings, 88 `cfg` sites in 6 files |
+| DHT injection points | `RecordStoreManager` and `DhtRoutingManager`, hardcoded `None` by `MeshDnsRegistry::with_config` |
+| Live callers on those injection points | 0 |
+| Dead reads they caused | 9 `if let Some(ref …)` sites in `health.rs`, `registration.rs`, `verification.rs`, `dht.rs` |
+| Latent reverse edge | `crates/synvoid-mesh/Cargo.toml` declares `dns = []` with no `synvoid-dns` dependency; `cargo check -p synvoid-mesh --features dns` fails with 20 errors |
+
+The disposition is **WIRE**: the capability was *unreachable*, not unwanted, so
+deleting it would have discarded a designed capability rather than fixed a
+defect. Phase 139 inverts it and makes it live.
+
+```
+crates/synvoid-dns/src/mesh_sync/dht_capability.rs   DNS-owned traits (the seam)
+  DhtRecordStore    — 7 methods, all projections of RecordStoreManager methods
+  DhtGlobalLocator  — 1 method, find_closest_global
+src/worker/unified_server/mesh_dht_capability.rs     provider adapters (the only
+                                                       file naming mesh DHT types)
+crates/synvoid-dns/src/mesh_sync/registry.rs         Arc<dyn DhtRecordStore> /
+                                                      Arc<dyn DhtGlobalLocator>
+```
+
+Three provider methods returned concrete mesh types, so the traits return DNS-owned
+projections (`AdvertisedAnycastNode`, `AdvertisedAnycastRecord`,
+`AdvertisedDomainRegistration`) instead. The hard case was
+`get_record_verifier().verify(&SignedDhtRecord)`, which would have required DNS to
+*construct* a signed record. It is resolved by inverting the question: DNS hands over
+the fields it read and asks `is_anycast_advertisement_authentic(&AdvertisedAnycastRecord)
+-> bool`, and the provider builds and verifies. Signature verification stays on the
+provider side; no mesh type enters a DNS-owned signature.
+
+**Coupling after Phase 139** — `grep -rho "synvoid_mesh::…" crates/synvoid-dns/src`
+returns four path strings naming **three** types (`MeshNodeRole`, `MeshMessage`,
+`MeshTransport`), all inside `anycast_sync.rs` (910 lines). That file is reachable only
+through `update.rs`'s `None`-valued `zone_sync`, and `with_zone_sync` has zero callers.
+It is deliberately left coupled: wiring it would silently widen DNS's request-path
+capabilities, which this phase does not authorize.
+
+**Late binding was a prerequisite, not a convenience.** `DnsServer::new` runs before the
+mesh registry and the ACME manager exist, and composition holds the server as
+`Arc<DnsServer>` with no setter. Two capabilities therefore use `LateBinding<T>`
+(`Arc<OnceLock<T>>`, set-once, shared across `Clone`):
+
+```rust
+pub struct LateBinding<T> { cell: Arc<OnceLock<T>> }
+impl<T> LateBinding<T> {
+    pub fn empty() -> Self;
+    pub fn set(&self, value: T, what: &str) -> bool;  // false = already bound
+    pub fn get(&self) -> Option<&T>;
+}
+```
+
+`OnceLock` rather than a lock-guarded cell because `QueryContext<'_>` borrows from
+`self` and cannot return a guard bounded by a lock, while `OnceLock::get` yields a
+reference tied only to the `&self` borrow the context already holds. Sharing the inner
+`Arc` is what makes a binding made through any clone visible to the `Arc<DnsServer>`
+the request path holds.
+
+This surfaced two shipped defects, both recorded rather than papered over:
+
+1. **ACME DNS-01 was never attached.** `init_apps.rs` did
+   `let _server = (*dns_server).clone().with_acme_dns_challenges(…)` and dropped the
+   clone — rebinding a temporary and discarding it — while logging `"ACME DNS-01
+   challenges wired to DNS server"`. For the life of the process the request path
+   could not answer a `_acme-challenge` TXT query. Repaired via `set_acme_dns_challenges`.
+2. **No registry could ever be observed.** `server/startup.rs` hardcoded
+   `mesh_registry: None` in *both* the UDP and TCP `QueryContext` builds. Even with a
+   registry attached, `resolve_from_mesh` would have seen `None` on the plain
+   transports. Both now read the bound cell.
+
+Wiring also **armed** a latent trust bypass: `query_anycast_from_dht` hardcoded
+`authenticated: true` on every DHT-sourced node. Unreachable while the capability was
+`None`; once attached it would have asserted that anything in the DHT is authentic,
+which `architecture/distributed_state_contract.md` forbids. It now reports `false`;
+the verified path is `sync_from_dht`, which sets the field from
+`is_anycast_advertisement_authentic`.
+
+**Startup ordering is safe and was checked, not assumed.** `setup_acme` runs at
+`startup_plan.rs:164`, `init_mesh_and_threat_intel` at `:181`, and `run()` — which
+spawns the DNS listeners and is where `srv.start()` captures the cell — at `:406`. Both
+bindings therefore strictly precede listener startup. The *global* registry is the one
+bound, because `get_best_edge_for_client` selects among anycast nodes from a DHT-wide
+view that an edge node's registry cannot have.
+
+**Still coupled, still dead, recorded not fixed:** the anycast broadcast cluster; and
+`synvoid-mesh`'s `dns = []` feature, which does not compile and cannot be repaired
+without a dependency cycle. See
+`architecture/dns_provider_inversion_phase139_closeout.md`.
+
 DNS-owned replacements for the removed helper crates live in this crate:
 
 | Module | Replaces | Notes |

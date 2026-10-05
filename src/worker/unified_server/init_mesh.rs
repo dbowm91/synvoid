@@ -255,6 +255,12 @@ pub async fn init_mesh_and_threat_intel(
         let verification_pool =
             Arc::new(crate::mesh::crypto_verification::CryptoVerificationPool::default());
 
+        // Phase 139: `create_record_store` consumes the routing manager, but the
+        // DNS registry needs its own handle to that same instance, so clone the
+        // `Arc` before the move rather than building a second manager.
+        #[cfg(all(feature = "mesh", feature = "dns"))]
+        let dns_routing_manager = routing_manager.clone();
+
         let record_store = crate::mesh::backend::create_record_store(
             mesh_config,
             routing_manager,
@@ -348,6 +354,15 @@ pub async fn init_mesh_and_threat_intel(
         // Iteration 84 Part F: Background task components are returned for
         // the composition root to spawn and register in WorkerTaskRegistry.
         // No bare tokio::spawn() calls remain in this function.
+        // Phase 139: the same `[geoip]`-derived capability Phase 138 wired into
+        // the DNS server. The mesh registry holds its own separate field and uses
+        // it to derive an edge's geo label, so both sides are built once here.
+        #[cfg(all(feature = "mesh", feature = "dns"))]
+        let country_lookup = {
+            let config = shared_config.read().await;
+            crate::geo::country_lookup_from_config(&config.main.geoip, &[])
+        };
+
         #[cfg(all(feature = "mesh", feature = "dns"))]
         let mut dns_verification_registries: Vec<(
             Arc<crate::dns::mesh_sync::MeshDnsRegistry>,
@@ -398,11 +413,25 @@ pub async fn init_mesh_and_threat_intel(
                         ..Default::default()
                     };
 
+                    // Phase 139: the DHT advisory surface is injected rather
+                    // than hardcoded to `None` inside `with_config`, which is
+                    // what made every `if let Some(ref dht_store)` read in
+                    // `health`/`registration`/`verification` dead.
                     let registry = crate::dns::mesh_sync::MeshDnsRegistry::with_config(
                         mesh_config.node_id(),
                         false,
                         registry_config,
                     );
+                    let registry =
+                        crate::worker::unified_server::mesh_dht_capability::attach_dht_capabilities(
+                            registry,
+                            record_store.clone(),
+                            dns_routing_manager.clone(),
+                        );
+                    let registry = match country_lookup.clone() {
+                        Some(lookup) => registry.with_country_lookup(lookup),
+                        None => registry,
+                    };
                     // Iteration 84 Part F: Return registry for composition
                     // root to spawn and register in WorkerTaskRegistry.
                     dns_verification_registries.push((Arc::new(registry), false));
@@ -449,10 +478,47 @@ pub async fn init_mesh_and_threat_intel(
                                     registry_config,
                                 )
                                 .with_dns_resolver(resolver);
+                                let registry =
+                                    crate::worker::unified_server::mesh_dht_capability::attach_dht_capabilities(
+                                        registry,
+                                        record_store.clone(),
+                                        dns_routing_manager.clone(),
+                                    );
+                                let registry = match country_lookup.clone() {
+                                    Some(lookup) => registry.with_country_lookup(lookup),
+                                    None => registry,
+                                };
+                                let registry = Arc::new(registry);
+                                // Phase 139: previously never called, so
+                                // `sync_from_dht` never ran and `origin_nodes` was
+                                // only ever filled by live registrations.
+                                registry.start_periodic_dht_sync(dns_cfg.mesh.sync_interval_secs);
+
+                                // Phase 139: bind the *global* registry to the DNS
+                                // server so `resolve_from_mesh` can actually run.
+                                // The global registry is the correct one to bind:
+                                // `get_best_edge_for_client` selects among anycast
+                                // nodes from a DHT-wide view, which an edge node's
+                                // registry cannot have. The edge registry is not
+                                // bound — it has no DHT global resolver either
+                                // (`build_verification_loop` returns `None` without
+                                // `dns_resolver`), so it would contribute nothing
+                                // to the query path.
+                                if let Some(dns_server) = unified_server.get_dns_server() {
+                                    if dns_server.set_mesh_registry(registry.clone()) {
+                                        tracing::info!(
+                                            "Mesh DNS registry bound to DNS server (global)"
+                                        );
+                                    }
+                                } else {
+                                    tracing::warn!(
+                                        "Mesh DNS registry not bound: DNS server unavailable"
+                                    );
+                                }
 
                                 // Iteration 84 Part F: Return registry for composition
                                 // root to spawn and register in WorkerTaskRegistry.
-                                dns_verification_registries.push((Arc::new(registry), true));
+                                dns_verification_registries.push((registry, true));
                             }
                             Err(e) => {
                                 tracing::error!("Failed to create DNS resolver: {}", e);

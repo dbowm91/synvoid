@@ -298,6 +298,15 @@ not presented as one.
 ## Residual work this campaign deliberately left
 
 1. **mesh provider inversion** — needs its own design phase. Not registered here.
+   > **Resolved by Phase 139, with corrections.** The disposition was **WIRE**, not
+   > DELETE: the DHT capability was unreachable rather than abandoned, so it was
+   > inverted behind DNS-owned traits and wired from composition. The DHT advisory
+   > surface is gone from the seam, but this item's premise — that inversion was
+   > needed to fix the dependency measurement — was only partly right. Inversion
+   > removed **type names**, not the dependency: the 2047-line `--features mesh`
+   > closure is unchanged, and `synvoid-dns` remains class 1. What remains coupled
+   > is the anycast broadcast cluster, deliberately left dead. See
+   > `architecture/dns_provider_inversion_phase139_closeout.md`.
 2. **Wiring `[geoip]`** — a feature change with its own phase; the tripwire guard
    makes it impossible to do by accident.
    > **Resolved by Phase 138**, with two corrections. The guard was weaker than

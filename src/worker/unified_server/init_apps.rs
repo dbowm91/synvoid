@@ -128,10 +128,19 @@ pub fn setup_acme(unified_server: &Arc<UnifiedServer>, worker_id: WorkerId) {
                 if let Some(dns_challenges) = acme_manager.get_dns_challenges() {
                     // Phase 134: adapted to the DNS-owned capability here, so
                     // the DNS crate never names the concrete challenge type.
-                    let _server = (*dns_server).clone().with_acme_dns_challenges(
+                    //
+                    // Phase 139: bind through the live server. This previously
+                    // did `let _server = (*dns_server).clone().with_…(…)` and
+                    // dropped the clone, so the ACME DNS-01 capability was
+                    // never actually attached — the request path could not
+                    // answer a `_acme-challenge` TXT query for the lifetime of
+                    // the process. `set_acme_dns_challenges` writes through the
+                    // `Arc` the composition root holds.
+                    if dns_server.set_acme_dns_challenges(
                         crate::tls::dns_providers::as_acme_challenges(dns_challenges),
-                    );
-                    tracing::info!("ACME DNS-01 challenges wired to DNS server");
+                    ) {
+                        tracing::info!("ACME DNS-01 challenges wired to DNS server");
+                    }
                 }
             }
         }

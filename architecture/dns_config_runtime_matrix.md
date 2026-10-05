@@ -1717,3 +1717,36 @@ nearly violated by the claim the plan steered toward.
 Not fixed: making it true requires mesh inversion, which is out of scope by plan
 and needs its own design phase. Mesh is heavy, not marginal, and is the single
 remaining blocker to class 2.
+
+**Partly addressed by Phase 139.** Mesh inversion of the *DHT advisory surface* did
+land: `crates/synvoid-dns/src/mesh_sync/dht_capability.rs` owns `DhtRecordStore` and
+`DhtGlobalLocator`, so the crate no longer names `RecordStoreManager`,
+`DhtRoutingManager`, `SignedDhtRecord` or `SignedRecordType`. What remains is the
+anycast broadcast cluster in `anycast_sync.rs` (`MeshMessage`, `MeshTransport`,
+`MeshNodeRole`), which is left coupled and dead on purpose. The **2047-line mesh
+closure is therefore unchanged** — inversion removed type names from the seam, not
+the dependency, because `synvoid-mesh` still carries the protobuf and the live
+verification transport. The sentence above is still true.
+
+---
+
+## Phase 139 — no persisted configuration was added
+
+Phase 139 changed no persisted TOML, no OpenAPI shape, and no admin schema. Its
+configuration input is the **existing** `[dns.mesh]` section, specifically
+`sync_interval_secs`, which now has a caller for the first time:
+
+| Field | Owner | Consumer | Change in Phase 139 |
+|-------|-------|----------|----------------------|
+| `dns.mesh.sync_interval_secs` | `synvoid-config` | `MeshDnsRegistry::start_periodic_dht_sync` | **first real caller** — previously `start_periodic_dht_sync` had zero callers, so `sync_from_dht` never ran |
+
+Nothing was invented to make the wiring work, and no section was renamed, defaulted,
+or reshaped. The one persisted-to-runtime boundary Phase 139 touched is the mesh
+capability itself, which is constructed in composition from handles that already
+existed there (`RecordStoreManager`, `DhtRoutingManager`), never projected from
+config.
+
+The `[geoip]` section added in Phase 138 remains the most recent persisted-schema
+change in this campaign.
+
+> Full record: `architecture/dns_provider_inversion_phase139_closeout.md`.

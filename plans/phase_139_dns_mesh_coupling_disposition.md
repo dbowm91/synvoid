@@ -1,6 +1,19 @@
 # Phase 139 Plan: Mesh DNS Coupling Disposition and Capability Inversion
 
-Status: **REGISTERED** (2026-10-05). Not started.
+Status: **CLOSED QUALIFIED** (2026-10-05). Disposition: **WIRE**. Closeout:
+`architecture/dns_provider_inversion_phase139_closeout.md`.
+
+> **Correction to this plan (recorded at closeout, not retrofitted).** Two figures
+> in the plan were wrong and are corrected here rather than rewritten through the
+> document: the reverse-feature sites are **88 `cfg` sites across 6 files**, not 96;
+> and the crate named **7 distinct types** across 8 path strings, not 8 types — the
+> "8" counted a path segment, not a type. Both were re-measured on the head this
+> phase ran against.
+>
+> **Deviation from Workstream B, recorded:** the plan expected a follow-on phase to
+> wire the injection points. Phase 139 wired them, because attaching them required a
+> late-binding cell on `DnsServer` that did not exist, and adding the capability
+> without it would have left a second unreachable provider in place.
 
 Campaign: `plans/dns_residual_truthfulness_roadmap.md` (REGISTERED).
 Predecessor: Phase 138. Source campaign:
@@ -110,7 +123,7 @@ wire format belongs to `synvoid-mesh`.
 **The phase does not proceed until this is decided and recorded.**
 
 1. Prove the deadness claim on the current head: run
-   `cargo check -p synvoid-mesh --features dns` to confirm the 96 reverse sites
+   `cargo check -p synvoid-mesh --features dns` to confirm the 88 reverse sites
    do not compile, and confirm the four injection points still have zero callers.
 2. Decide, and record the reasoning:
    - **WIRE** — mesh DNS is an intended feature awaiting wiring. Then Phase 139

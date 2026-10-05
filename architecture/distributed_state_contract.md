@@ -121,6 +121,26 @@ Raft transport notes: `RaftCommand::{Set, Delete}` are WAL-logged with `(term, i
 
 ---
 
+## 3e. DNS consumption of the DHT (Phase 139 amendment, binding)
+
+`synvoid-dns` names `DnsZone`, `DnsRecord` and `AnycastNode` in the 3c table above. Until Phase 139 it did so only as *types it could have reached*: `MeshDnsRegistry::with_config` hardcoded its DHT fields to `None`, so every `if let Some(ref …)` read of advertised DNS state was unreachable. Phase 139 makes that read live and therefore needs an explicit rule — the authority taxonomy above says what a namespace *is*, and does not say what a consumer may do with it once it can actually read it.
+
+**The amendment is narrow.** It authorizes exactly one thing that was not previously exercised: a DNS server may *read* advertised DNS state through two DNS-owned capability traits (`DhtRecordStore`, `DhtGlobalLocator` in `crates/synvoid-dns/src/mesh_sync/dht_capability.rs`). It authorizes nothing about writing, nothing about authority, and no new namespace.
+
+| Rule | Statement |
+|------|-----------|
+| DHT-A1 | A capability read remains `advisory-distributed`. Attaching the capability grants DNS no authority it did not have, and a DNS answer derived from the DHT is a hint, never canonical. |
+| DHT-A2 | An advertisement is **not** authenticated until the provider's verifier says so. A projection that carries no signature must not assert authenticity; `RegisteredAnycastNode.authenticated` derived from a zone query must be `false`, not `true`. Phase 139 corrected exactly this (`query_anycast_from_dht` previously hardcoded `true`, which was unreachable only because the capability could not be attached). |
+| DHT-A3 | DNS must not treat the DHT as zone authority. Zone ownership and resolution stay local-authoritative (§3d); DHT advertisements may inform edge selection, never substitute for a locally held zone. |
+| DHT-A4 | DNS must not use the DHT as a fallback. A local resolution failure is `SERVFAIL`/`REFUSED`/NXDOMAIN per §8; it is never rescued by a remote advertisement. This is the "never a fallback" half of the advisory rule and it is why the capability is consulted only on paths that would otherwise be advisory anyway. |
+| DHT-A5 | No `synvoid-mesh` type may appear in a DNS-owned trait signature. The provider projects into DNS-owned structs (`Advertised*`) and runs verification provider-side; DNS asks *whether an advertisement is authentic* rather than constructing a signed record to verify. Guard: `dht_capability_seam_is_inverted_in_the_registry`. |
+| DHT-A6 | Composition owns the binding. `synvoid-dns` holds `Arc<dyn DhtRecordStore>`; a concrete `synvoid-mesh` type is named only in `src/worker/unified_server/mesh_dht_capability.rs`. |
+| DHT-A7 | Writing is not authorized by this amendment. `DhtRecordStore`'s write methods exist because the provider API does, and they pass through the provider's own acceptance decision; DNS does not derive admission rules from them and does not treat a `true` as authority. |
+
+**Residual, not closed by this amendment.** The anycast broadcast cluster (`crates/synvoid-dns/src/anycast_sync.rs`) still names `MeshMessage`, `MeshTransport` and `MeshNodeRole` directly, and the mesh-side consumer `synvoid_mesh::dht::…DnsNodeShutdown` is gated behind `synvoid-mesh`'s `dns` feature, which does not compile. That cluster stays coupled, stays dead, and is recorded in `architecture/dns_provider_inversion_phase139_closeout.md`. The amendment above does not cover it and must not be read as covering it.
+
+---
+
 ## 4. Versioning, conflict, and clock rules (binding)
 
 1. Prefer explicit version/order metadata: Raft `(term, index)` for canonical; source identity + monotonic `source_sequence` for source-scoped streams (blocklist, gossip); content/version digests (`content_hash`, `version: u64`, `sequence: u32`) for immutable/versioned records.

@@ -90,7 +90,7 @@ impl MeshDnsRegistry {
         }
 
         if let Some(ref dht_store) = self.dht_record_store {
-            let nodes = dht_store.get_anycast_nodes_for_zone(zone);
+            let nodes = dht_store.anycast_nodes_for_zone(zone);
             nodes
                 .into_iter()
                 .map(|value| RegisteredAnycastNode {
@@ -102,7 +102,18 @@ impl MeshDnsRegistry {
                     latency_ms: None,
                     load_percent: None,
                     last_update: value.registered_at,
-                    authenticated: true,
+                    // Phase 139: this projection carries no signature, so it
+                    // cannot assert authenticity. This previously read
+                    // `authenticated: true` unconditionally — harmless only
+                    // because the capability could never be attached, since
+                    // `with_config` hardcoded `dht_record_store` to `None`.
+                    // Wiring the capability would have turned that into a live
+                    // "any advertisement in the DHT is authentic" claim, which
+                    // `architecture/distributed_state_contract.md` forbids: the
+                    // DHT is not an authority. The verified path is
+                    // `sync_from_dht`, which sets this field from
+                    // `DhtRecordStore::is_anycast_advertisement_authentic`.
+                    authenticated: false,
                     dns_zones: value.dns_zones,
                 })
                 .filter(|n| n.healthy)

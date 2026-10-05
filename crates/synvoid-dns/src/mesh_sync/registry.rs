@@ -100,18 +100,16 @@ impl MeshDnsRegistry {
         self
     }
 
-    pub fn with_routing_manager(
-        mut self,
-        rm: Arc<synvoid_mesh::dht::routing::manager::DhtRoutingManager>,
-    ) -> Self {
+    /// Phase 139: takes the DNS-owned capability, so `synvoid-mesh` types do not
+    /// cross the seam. Composition implements it over `DhtRoutingManager`.
+    pub fn with_routing_manager(mut self, rm: Arc<dyn DhtGlobalLocator>) -> Self {
         self.routing_manager = Some(rm);
         self
     }
 
-    pub fn with_dht_record_store(
-        mut self,
-        store: Arc<synvoid_mesh::dht::record_store::RecordStoreManager>,
-    ) -> Self {
+    /// Phase 139: takes the DNS-owned capability, so `synvoid-mesh` types do not
+    /// cross the seam. Composition implements it over `RecordStoreManager`.
+    pub fn with_dht_record_store(mut self, store: Arc<dyn DhtRecordStore>) -> Self {
         self.dht_record_store = Some(store);
         self
     }

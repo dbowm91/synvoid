@@ -450,10 +450,32 @@ impl DnsServer {
         self.zones.rebuild_index();
     }
 
+    /// Attach the mesh DNS registry.
+    ///
+    /// Prefer [`Self::set_mesh_registry`]: composition holds the server as an
+    /// `Arc<DnsServer>`, and this consuming builder only rebinds the temporary
+    /// clone it is called on.
     #[cfg(feature = "mesh")]
-    pub fn with_mesh_registry(mut self, registry: Arc<MeshDnsRegistry>) -> Self {
-        self.mesh_registry = Some(registry);
+    pub fn with_mesh_registry(self, registry: Arc<MeshDnsRegistry>) -> Self {
+        self.set_mesh_registry(registry);
         self
+    }
+
+    /// Bind the mesh DNS registry on the live server.
+    ///
+    /// The registry is created in composition after `DnsServer::new` has
+    /// already run, so it can only be attached here rather than through the
+    /// constructor. Returns `true` if this call performed the binding, `false`
+    /// if the registry was already bound (existing binding kept).
+    #[cfg(feature = "mesh")]
+    pub fn set_mesh_registry(&self, registry: Arc<MeshDnsRegistry>) -> bool {
+        self.mesh_registry.set(registry, "mesh DNS registry")
+    }
+
+    /// The bound mesh DNS registry, if any.
+    #[cfg(feature = "mesh")]
+    pub fn mesh_registry(&self) -> Option<&Arc<MeshDnsRegistry>> {
+        self.mesh_registry.get()
     }
 
     /// Attach the DNS-owned country-lookup capability.
@@ -519,10 +541,10 @@ impl DnsServer {
             notify_handler: self.notify_handler.as_ref(),
             query_coalescer: self.query_coalescer.as_ref(),
             dns64_translator: self.dns64_translator.as_ref(),
-            acme_dns_challenges: self.acme_dns_challenges.as_ref(),
+            acme_dns_challenges: self.acme_dns_challenges.get(),
             cookie_server: self.cookie_server.as_ref(),
             #[cfg(feature = "mesh")]
-            mesh_registry: self.mesh_registry.as_ref(),
+            mesh_registry: self.mesh_registry.get(),
         }
     }
 

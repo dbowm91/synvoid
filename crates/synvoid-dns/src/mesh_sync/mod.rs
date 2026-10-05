@@ -19,11 +19,14 @@ use crate::resolver::DnsResolver;
 use crate::time::unix_timestamp_secs;
 
 mod dht;
+pub mod dht_capability;
 mod health;
 mod query;
 mod registration;
 mod registry;
 mod verification;
+
+pub use dht_capability::{DhtGlobalLocator, DhtRecordStore};
 
 #[derive(Clone)]
 pub struct RegisteredEdgeNode {
@@ -154,9 +157,9 @@ pub struct MeshDnsRegistry {
     is_global: bool,
     config: MeshDnsRegistryConfig,
     trusted_certificates: Arc<RwLock<HashMap<String, MeshNodeCertificate>>>,
-    dht_record_store: Option<Arc<synvoid_mesh::dht::record_store::RecordStoreManager>>,
+    dht_record_store: Option<Arc<dyn DhtRecordStore>>,
     pending_verifications: Arc<RwLock<HashMap<String, DomainVerificationRequest>>>,
-    routing_manager: Option<Arc<synvoid_mesh::dht::routing::manager::DhtRoutingManager>>,
+    routing_manager: Option<Arc<dyn DhtGlobalLocator>>,
     dns_resolver: Option<Arc<dyn DnsResolver>>,
     verification_tx: Option<mpsc::Sender<VerificationTask>>,
     verification_failure_tx: Option<mpsc::Sender<VerificationFailure>>,

@@ -18,6 +18,8 @@ pub mod init_runtime;
 pub mod init_waf;
 pub mod lifecycle;
 pub mod mesh_attachment;
+#[cfg(all(feature = "mesh", feature = "dns"))]
+pub mod mesh_dht_capability;
 pub mod passthrough_validation;
 pub mod services;
 pub mod shutdown_executor;

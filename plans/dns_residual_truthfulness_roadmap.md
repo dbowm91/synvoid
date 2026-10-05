@@ -1,7 +1,7 @@
 # DNS Residual Truthfulness Roadmap — Phases 137–140
 
-Status: **ACTIVE** (2026-10-05). Phases 137 and 138 **CLOSED QUALIFIED**; Phases
-139–140 REGISTERED, not started.
+Status: **ACTIVE** (2026-10-05). Phases 137, 138 and 139 **CLOSED QUALIFIED**; Phase
+140 REGISTERED, not started.
 
 Predecessor: `plans/dns_startup_truthfulness_and_provider_inversion_roadmap.md`
 (**CLOSED QUALIFIED**). That campaign closed with six residuals it deliberately
@@ -35,11 +35,23 @@ historical closeouts **by pointer only**; no historical record is rewritten.
 |---|---|---|
 | **137** — ALPN for DoT and DoH | advertise `h2` on DoH, keep DoT and DoQ unchanged | none; **done first**, it is the cheapest and corrects a live over-claim |
 | **138** — Wire `[geoip]` in composition | construct and thread a real geo provider; replace the tripwire guard | **done** — needed an authorised `[geoip]` config section, which did not exist |
-| **139** — Mesh coupling disposition and inversion | decide wire-or-delete first; invert only if wired | **gated on its own Workstream A disposition** |
+| **139** — Mesh coupling disposition and inversion | decide wire-or-delete first; invert only if wired | **done — disposition WIRE**; inverted, wired, and the late-binding cell that made wiring possible was built here |
 | **140** — `prefer_post_quantum` truthfulness | document the setting as telemetry; optionally rename | none; smallest item |
 
-Phases 137, 138 and 140 are independent. Phase 139 is gated internally and may
-terminate at its disposition step without inverting anything.
+Phases 137, 138 and 140 are independent. Phase 139 was gated internally on its own
+Workstream A disposition.
+
+Phase 139 outcome: disposition **WIRE** — the DHT capability was unreachable, not
+abandoned, so it was inverted behind DNS-owned `DhtRecordStore` / `DhtGlobalLocator`
+traits and wired from composition. Coupling dropped from 7 mesh types across 6 files
+to 3 types in 1 file (the anycast cluster, deliberately left coupled and dead).
+`synvoid-dns` remains **class 1**. Wiring required a `LateBinding` cell on `DnsServer`,
+because the registry and the ACME manager do not exist when the server is constructed
+and composition holds it as an `Arc` with no setter; that repaired two shipped defects
+(ACME DNS-01 was bound to a dropped clone; both transports hardcoded
+`mesh_registry: None`) and armed a third, which was fixed before commit
+(`query_anycast_from_dht` asserted `authenticated: true` for DHT-sourced nodes).
+Closeout: `architecture/dns_provider_inversion_phase139_closeout.md`.
 
 Phase 137 outcome: DoH advertises `h2`, and DoT and DoQ are unchanged. ALPN lives
 at the DNS call sites rather than in the provider, so the two `synvoid-tls`

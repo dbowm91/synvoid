@@ -160,3 +160,19 @@ Reject a closeout that:
 
 See `architecture/dns_startup_truthfulness_and_provider_inversion_closeout.md`
 for the campaign closeout.
+
+## Successor campaign (pointer, recorded 2026-10-05)
+
+This campaign's residuals were re-scoped in
+`plans/dns_residual_truthfulness_roadmap.md` (Phases 137–140), against a code audit
+rather than carried forward from this plan's wording:
+
+- **137 ALPN** — CLOSED QUALIFIED, `architecture/dns_provider_inversion_phase137_closeout.md`
+- **138 GeoIP wiring** — CLOSED QUALIFIED, `architecture/dns_provider_inversion_phase138_closeout.md`
+- **139 mesh coupling** — CLOSED QUALIFIED, disposition WIRE,
+  `architecture/dns_provider_inversion_phase139_closeout.md`
+- **140 `prefer_post_quantum`** — REGISTERED, not started
+
+`synvoid-dns` remains **class 1** after 139. The class-1 argument is now narrower
+but not closed: mesh coupling dropped from 7 types across 6 files to 3 types in 1
+file, and the 2047-line `--features mesh` closure is unchanged.

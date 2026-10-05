@@ -81,58 +81,38 @@ impl MeshDnsRegistry {
         }
 
         if let Some(ref dht_store) = self.dht_record_store {
-            let registrations = dht_store.get_all_dns_domain_registrations();
-            for (domain, origin_id, ips) in registrations {
+            let registrations = dht_store.all_dns_domain_registrations();
+            for registration in registrations {
                 let existing = {
                     let origins = self.origin_nodes.read();
-                    origins.get(&origin_id).cloned()
+                    origins.get(&registration.origin_node_id).cloned()
                 };
 
                 if existing.is_none() {
-                    self.apply_dht_domain_registration(domain, origin_id, ips);
+                    self.apply_dht_domain_registration(
+                        registration.domain,
+                        registration.origin_node_id,
+                        registration.ip_addresses,
+                    );
                 } else {
-                    self.update_origin_node(&origin_id, vec![domain], true, 100, None, None);
+                    self.update_origin_node(
+                        &registration.origin_node_id,
+                        vec![registration.domain],
+                        true,
+                        100,
+                        None,
+                        None,
+                    );
                 }
             }
 
-            let anycast_records = dht_store.get_all_anycast_records();
+            let anycast_records = dht_store.all_anycast_advertisements();
             for record in anycast_records {
-                // Verify signature if present
-                let is_authenticated = if !record.signature.is_empty() {
-                    if let Some(ref signer_pk) = record.signer_public_key {
-                        if !signer_pk.is_empty() {
-                            let signed_record = synvoid_mesh::dht::SignedDhtRecord {
-                                key: record.key.clone(),
-                                value: record.value.clone(),
-                                publisher_id: record.source_node_id.clone(),
-                                signature: record.signature.clone(),
-                                created_at: record.timestamp,
-                                expires_at: Some(record.timestamp + record.ttl_seconds),
-                                record_type: synvoid_mesh::dht::SignedRecordType::AnycastNode,
-                                sequence_number: 0,
-                                source_node_id: record.source_node_id.clone(),
-                                ttl_seconds: record.ttl_seconds,
-                                signer_public_key: record.signer_public_key.clone(),
-                            };
-
-                            // Verify using the DHT record verifier if available
-                            if let Some(ref verifier) = dht_store.get_record_verifier() {
-                                verifier.verify(&signed_record)
-                            } else {
-                                tracing::warn!(
-                                    "No record verifier available, cannot verify anycast node signature"
-                                );
-                                false
-                            }
-                        } else {
-                            false
-                        }
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                };
+                // Phase 139: DNS no longer constructs a mesh signed record.
+                // It hands the advertised fields to the provider and asks the
+                // one question it actually has — is this authentic? — so no
+                // `synvoid-mesh` type appears here.
+                let is_authenticated = dht_store.is_anycast_advertisement_authentic(&record);
 
                 if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&record.value) {
                     if let (

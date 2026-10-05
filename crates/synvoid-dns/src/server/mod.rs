@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use parking_lot::RwLock;
@@ -1592,8 +1592,14 @@ struct DnsHandlerState {
     update_handler: Option<super::update::DynamicUpdateHandler>,
     notify_handler: Option<super::notify::NotifyHandler>,
     query_coalescer: Option<Arc<super::query_coalesce::QueryCoalescer>>,
-    acme_dns_challenges: Option<Arc<dyn AcmeTxtChallenges>>,
+    acme_dns_challenges: LateBinding<Arc<dyn AcmeTxtChallenges>>,
     cookie_server: Option<Arc<crate::cookie::DnsCookieServer>>,
+    /// Mesh registry, propagated into the query path (Phase 139). This was
+    /// hardcoded `None` in both the UDP and TCP `QueryContext` builds, so a
+    /// bound registry could never be observed on the plain transports even
+    /// once composition could attach one.
+    #[cfg(feature = "mesh")]
+    mesh_registry: LateBinding<Arc<crate::mesh_sync::MeshDnsRegistry>>,
 }
 
 /// Shared DNS query context to reduce function parameter count.
@@ -1623,6 +1629,61 @@ pub struct QueryContext<'a> {
     pub cookie_server: Option<&'a Arc<crate::cookie::DnsCookieServer>>,
     #[cfg(feature = "mesh")]
     pub mesh_registry: Option<&'a Arc<crate::mesh_sync::MeshDnsRegistry>>,
+}
+
+/// A set-once, read-many capability slot (Phase 139).
+///
+/// Composition constructs `DnsServer` before the mesh registry and the ACME
+/// manager exist, so neither capability can be supplied through
+/// `DnsServer::new`. Both are bound afterwards, through
+/// [`DnsServer::set_acme_dns_challenges`] and [`DnsServer::set_mesh_registry`].
+///
+/// `OnceLock` rather than a lock-guarded cell: `QueryContext<'_>` borrows from
+/// `self` and cannot hand out a guard bounded by a lock, whereas a
+/// `OnceLock::get` reference is tied only to the `&self` borrow the context
+/// already holds. The cell is `Arc`-shared, so a binding made through any
+/// `DnsServer` clone is visible to the `Arc<DnsServer>` composition holds — a
+/// `DnsServer` is shared as an `Arc` and cloned into startup tasks, and a
+/// binding that only reached the clone would be invisible to the request path.
+pub struct LateBinding<T> {
+    cell: Arc<OnceLock<T>>,
+}
+
+impl<T> LateBinding<T> {
+    /// An as-yet unbound slot. Reads yield `None`; the first `set` wins.
+    pub fn empty() -> Self {
+        Self {
+            cell: Arc::new(OnceLock::new()),
+        }
+    }
+
+    /// Bind `value`, or return `false` without disturbing an existing binding
+    /// if this slot is already occupied. `what` names the capability in the
+    /// warning, so a duplicate attach is visible in operator logs instead of
+    /// silently replacing a live capability.
+    pub fn set(&self, value: T, what: &str) -> bool {
+        if self.cell.set(value).is_ok() {
+            true
+        } else {
+            tracing::warn!(
+                "{what} was already bound on this DNS server; keeping the existing binding"
+            );
+            false
+        }
+    }
+
+    /// The bound value, or `None` while unbound.
+    pub fn get(&self) -> Option<&T> {
+        self.cell.get()
+    }
+}
+
+impl<T> Clone for LateBinding<T> {
+    fn clone(&self) -> Self {
+        Self {
+            cell: self.cell.clone(),
+        }
+    }
 }
 
 pub struct DnsServer {
@@ -1665,15 +1726,18 @@ pub struct DnsServer {
     anycast_manager: Option<Arc<super::anycast::AnycastSocketManager>>,
     recursive_server: Option<Arc<super::recursive::RecursiveDnsServer>>,
     dns64_translator: Option<super::dns64::Dns64Translator>,
-    pub(crate) acme_dns_challenges: Option<Arc<dyn AcmeTxtChallenges>>,
+    /// ACME DNS-01 challenge capability, bound late (Phase 139).
+    /// See [`LateBinding`].
+    pub(crate) acme_dns_challenges: LateBinding<Arc<dyn AcmeTxtChallenges>>,
     cookie_server: Option<Arc<crate::cookie::DnsCookieServer>>,
     /// Health checker — reflects real runtime state via setter calls at
     /// listener startup, zone load/reload, recursive init, encrypted-transport
     /// startup, and shutdown. Exposed via `health_checker()` for operators
     /// and admin endpoints.
     pub health: Arc<crate::health::DnsHealthChecker>,
+    /// Mesh DNS registry, bound late (Phase 139). See [`LateBinding`].
     #[cfg(feature = "mesh")]
-    mesh_registry: Option<Arc<crate::mesh_sync::MeshDnsRegistry>>,
+    mesh_registry: LateBinding<Arc<crate::mesh_sync::MeshDnsRegistry>>,
 }
 
 impl Clone for DnsServer {
@@ -2068,20 +2132,40 @@ impl DnsServer {
             anycast_manager: None,
             recursive_server: None,
             dns64_translator,
-            acme_dns_challenges: None,
+            acme_dns_challenges: LateBinding::empty(),
             cookie_server: Some(Arc::new(crate::cookie::DnsCookieServer::new())),
             health: Arc::new(crate::health::DnsHealthChecker::new()),
             #[cfg(feature = "mesh")]
-            mesh_registry: None,
+            mesh_registry: LateBinding::empty(),
         };
 
         server.init_health_state();
         server
     }
 
-    pub fn with_acme_dns_challenges(mut self, challenges: Arc<dyn AcmeTxtChallenges>) -> Self {
-        self.acme_dns_challenges = Some(challenges);
+    /// Attach the ACME DNS-01 challenge capability.
+    ///
+    /// Prefer [`Self::set_acme_dns_challenges`]: composition holds the server
+    /// as an `Arc<DnsServer>`, and this consuming builder only rebinds the
+    /// temporary clone it is called on.
+    pub fn with_acme_dns_challenges(self, challenges: Arc<dyn AcmeTxtChallenges>) -> Self {
+        self.set_acme_dns_challenges(challenges);
         self
+    }
+
+    /// Bind the ACME DNS-01 challenge capability on the live server.
+    ///
+    /// Returns `true` if this call performed the binding, `false` if the
+    /// capability was already bound (in which case the existing binding is
+    /// kept).
+    pub fn set_acme_dns_challenges(&self, challenges: Arc<dyn AcmeTxtChallenges>) -> bool {
+        self.acme_dns_challenges
+            .set(challenges, "ACME DNS-01 challenges")
+    }
+
+    /// The bound ACME DNS-01 challenge capability, if any.
+    pub fn acme_dns_challenges(&self) -> Option<&Arc<dyn AcmeTxtChallenges>> {
+        self.acme_dns_challenges.get()
     }
 
     pub fn with_cookie_server(

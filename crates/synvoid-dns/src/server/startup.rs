@@ -39,6 +39,8 @@ impl DnsServer {
             query_coalescer: self.query_coalescer.clone(),
             acme_dns_challenges: self.acme_dns_challenges.clone(),
             cookie_server: self.cookie_server.clone(),
+            #[cfg(feature = "mesh")]
+            mesh_registry: self.mesh_registry.clone(),
         }
     }
 
@@ -172,6 +174,8 @@ impl DnsServer {
         let acme_dns_challenges_udp = self.acme_dns_challenges.clone();
         let _cookie_server_udp = self.cookie_server.clone();
         let dns64_translator_udp = self.dns64_translator.clone();
+        #[cfg(feature = "mesh")]
+        let mesh_registry_udp = self.mesh_registry.clone();
 
         tokio::spawn(async move {
             let DnsHandlerState {
@@ -195,6 +199,8 @@ impl DnsServer {
                 query_coalescer: query_coalescer_udp,
                 acme_dns_challenges: _acme_dns_challenges_udp,
                 cookie_server: cookie_server_udp,
+                #[cfg(feature = "mesh")]
+                    mesh_registry: _mesh_registry_udp,
             } = udp_state;
             let ctx = QueryContext {
                 zones: &zones_udp,
@@ -217,10 +223,10 @@ impl DnsServer {
                 notify_handler: notify_handler_udp.as_ref(),
                 query_coalescer: query_coalescer_udp.as_ref(),
                 dns64_translator: dns64_translator_udp.as_ref(),
-                acme_dns_challenges: acme_dns_challenges_udp.as_ref(),
+                acme_dns_challenges: acme_dns_challenges_udp.get(),
                 cookie_server: cookie_server_udp.as_ref(),
                 #[cfg(feature = "mesh")]
-                mesh_registry: None,
+                mesh_registry: mesh_registry_udp.get(),
             };
             let mut buf = vec![0u8; udp_buffer_size];
 
@@ -438,6 +444,8 @@ impl DnsServer {
         let acme_dns_challenges_tcp = self.acme_dns_challenges.clone();
         let cookie_server_tcp = self.cookie_server.clone();
         let dns64_translator_tcp = self.dns64_translator.clone();
+        #[cfg(feature = "mesh")]
+        let mesh_registry_tcp = self.mesh_registry.clone();
 
         tokio::spawn(async move {
             let DnsHandlerState {
@@ -461,6 +469,8 @@ impl DnsServer {
                 query_coalescer: query_coalescer_tcp,
                 acme_dns_challenges: _acme_dns_challenges_tcp,
                 cookie_server: _cookie_server_tcp,
+                #[cfg(feature = "mesh")]
+                    mesh_registry: _mesh_registry_tcp,
             } = tcp_state;
             let _buf = vec![0u8; tcp_buffer_size];
 
@@ -502,6 +512,8 @@ impl DnsServer {
                                 let notify_handler_clone = notify_handler_tcp.clone();
                                 let query_coalescer_clone = query_coalescer_tcp.clone();
                                 let acme_dns_challenges_clone = acme_dns_challenges_tcp.clone();
+                                #[cfg(feature = "mesh")]
+                                let mesh_registry_clone = mesh_registry_tcp.clone();
                                 let cookie_server_clone = cookie_server_tcp.clone();
                                 let connection_limits_clone = connection_limits_tcp.clone();
                                 let dns64_clone = dns64_translator_tcp.clone();
@@ -546,10 +558,10 @@ impl DnsServer {
                                         notify_handler: notify_handler_clone.as_ref(),
                                         query_coalescer: query_coalescer_clone.as_ref(),
                                         dns64_translator: dns64_clone.as_ref(),
-                                        acme_dns_challenges: acme_dns_challenges_clone.as_ref(),
+                                        acme_dns_challenges: acme_dns_challenges_clone.get(),
                                         cookie_server: cookie_server_clone.as_ref(),
                                         #[cfg(feature = "mesh")]
-                                        mesh_registry: None,
+                                        mesh_registry: mesh_registry_clone.get(),
                                     };
                                     if let Err(e) = Self::handle_tcp_query(stream, ctx).await {
                                         tracing::debug!(

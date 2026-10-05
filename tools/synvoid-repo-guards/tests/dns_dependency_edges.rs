@@ -47,6 +47,33 @@ fn read(path: &Path) -> String {
     std::fs::read_to_string(path).unwrap_or_default()
 }
 
+/// `source` with whole-line comments (`//`, `///`, `//!`) removed.
+///
+/// Several gates here are about what code *names*, and these files legitimately
+/// discuss the forbidden symbols in prose — a doc comment saying "DNS no longer
+/// builds a `SignedDhtRecord`" is the opposite of a violation. Blanking the line
+/// keeps those explanations in the source without weakening the gate. Inline
+/// trailing comments are not stripped, which is deliberate: a trailing
+/// `// …SignedDhtRecord` on a real code line would be the sneaky form.
+fn code_only(source: &str) -> String {
+    source
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Whether `code` names `symbol` as a whole identifier.
+///
+/// Substring matching cannot express "must not name `DhtRecord`" here:
+/// `DhtRecordStore` is the DNS-owned trait that is *supposed* to be present, and
+/// `AdvertisedAnycastNode` is the DNS-owned projection. Only exact token equality
+/// distinguishes a reintroduced provider type from the DNS type named after it.
+fn mentions_symbol(code: &str, symbol: &str) -> bool {
+    code.split(|c: char| !c.is_alphanumeric() && c != '_')
+        .any(|token| token == symbol)
+}
+
 /// Whether `manifest` declares `edge` (a bare SynVoid crate name) in any
 /// dependency section.
 ///
@@ -825,4 +852,318 @@ fn geoip_capability_is_wired_through_composition() {
     }
 
     violations.assert_ok("geoip_capability_is_wired_through_composition");
+}
+
+/// Phase 139, gate 1 — the DHT advisory surface is inverted, so no
+/// `synvoid-dns` source outside the anycast cluster may name a concrete
+/// `synvoid-mesh` type.
+///
+/// The check is deliberately *scoped to the residual*, not "no mesh symbols
+/// anywhere": the anycast broadcast cluster (`anycast_sync.rs`) still holds the
+/// live verification transport and the `MeshMessage` protobuf, and Phase 139
+/// explicitly did not wire it. A blanket ban would either fail today or force
+/// the residual to be silently deleted. What must hold is that the ban is
+/// **exactly** the residual — anything else is a reintroduced concrete edge.
+#[test]
+fn dns_names_no_mesh_provider_type_outside_the_anycast_cluster() {
+    let root = workspace_root();
+    let files = collect_rs_files(&root.join("crates/synvoid-dns/src"));
+
+    let mut violations = Violations::new();
+    for file in files {
+        if file.ends_with("anycast_sync.rs") {
+            continue;
+        }
+        let rel = file
+            .strip_prefix(&root)
+            .unwrap_or(&file)
+            .display()
+            .to_string();
+        for (index, line) in read(&file).lines().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            for forbidden in [
+                "synvoid_mesh::",
+                "RecordStoreManager",
+                "DhtRoutingManager",
+                "SignedDhtRecord",
+                "SignedRecordType",
+            ] {
+                if trimmed.contains(forbidden) {
+                    violations.push(format!(
+                        "{rel}:{} names `{forbidden}`. Phase 139 replaced the advisory \
+                         DHT surface with the DNS-owned `DhtRecordStore` and \
+                         `DhtGlobalLocator` capabilities; a concrete provider type here \
+                         would restore the edge this phase removed",
+                        index + 1
+                    ));
+                }
+            }
+        }
+    }
+
+    violations.assert_ok("dns_names_no_mesh_provider_type_outside_the_anycast_cluster");
+}
+
+/// Phase 139, gate 2 — pin the residual that gate 1 carves out.
+///
+/// Without this, the carve-out above is an open-ended exemption: `anycast_sync.rs`
+/// could accumulate every mesh type the crate once had and the gate would still
+/// pass. The measured residual at the end of Phase 139 is three types in one
+/// file. Both directions matter — growing it is an unrecorded regression,
+/// shrinking it is good news that must be re-measured and re-recorded rather
+/// than absorbed.
+#[test]
+fn mesh_anycast_cluster_remains_the_only_named_residual() {
+    let root = workspace_root();
+    let residual = root.join("crates/synvoid-dns/src/anycast_sync.rs");
+
+    let mut violations = Violations::new();
+    if !residual.exists() {
+        // Deleting the residual is a real change, not a silent pass.
+        violations.push(
+            "`crates/synvoid-dns/src/anycast_sync.rs` no longer exists. Phase 139 \
+             recorded it as the only remaining file naming `synvoid-mesh` types; if it \
+             was removed, re-measure the coupling and update this gate and the closeout"
+                .to_string(),
+        );
+    } else {
+        let source = read(&residual);
+        // `synvoid_mesh::config::MeshNodeRole`, `synvoid_mesh::protocol::MeshMessage`,
+        // `synvoid_mesh::transport::MeshTransport`.
+        let mut seen: Vec<&str> = Vec::new();
+        for symbol in ["MeshNodeRole", "MeshMessage", "MeshTransport"] {
+            if source.contains(symbol) {
+                seen.push(symbol);
+            }
+        }
+        let expected = ["MeshNodeRole", "MeshMessage", "MeshTransport"];
+        if seen.len() != expected.len() {
+            violations.push(format!(
+                "`anycast_sync.rs` names {:?} of the expected residual types {expected:?}. \
+                 Phase 139 measured exactly these three; a different set means the residual \
+                 moved and the closeout must be corrected before this gate is updated",
+                seen
+            ));
+        }
+    }
+
+    // No second file may claim the carve-out.
+    for file in collect_rs_files(&root.join("crates/synvoid-dns/src")) {
+        if file.ends_with("anycast_sync.rs") {
+            continue;
+        }
+        if read(&file).contains("synvoid_mesh::") {
+            violations.push(format!(
+                "{} also names `synvoid_mesh::`; only `anycast_sync.rs` is exempt",
+                file.strip_prefix(&root).unwrap_or(&file).display()
+            ));
+        }
+    }
+
+    violations.assert_ok("mesh_anycast_cluster_remains_the_only_named_residual");
+}
+
+/// Phase 139, gate 3 — the seam shape itself.
+///
+/// A source scan cannot tell an inverted seam from a renamed one, so pin the
+/// declaration sites: the two DNS-owned traits exist, and the registry holds
+/// them as `Arc<dyn …>`. A concrete `Option<RecordStoreManager>` back in the
+/// registry struct is the exact regression this gate exists to catch.
+#[test]
+fn dht_capability_seam_is_inverted_in_the_registry() {
+    let root = workspace_root();
+    let capability = read(&root.join("crates/synvoid-dns/src/mesh_sync/dht_capability.rs"));
+    let registry = read(&root.join("crates/synvoid-dns/src/mesh_sync/mod.rs"));
+
+    let mut violations = Violations::new();
+
+    for signature in [
+        "pub trait DhtRecordStore: Send + Sync {",
+        "pub trait DhtGlobalLocator: Send + Sync {",
+    ] {
+        if capability.matches(signature).count() != 1 {
+            violations.push(format!(
+                "`crates/synvoid-dns/src/mesh_sync/dht_capability.rs` must declare exactly \
+                 one `{signature}`"
+            ));
+        }
+    }
+
+    for field in [
+        "dht_record_store: Option<Arc<dyn DhtRecordStore>>",
+        "routing_manager: Option<Arc<dyn DhtGlobalLocator>>",
+    ] {
+        if !registry.contains(field) {
+            violations.push(format!(
+                "`MeshDnsRegistry` must hold `{field}`. Holding the concrete provider type \
+                 keeps the edge alive even when the call sites no longer name it"
+            ));
+        }
+    }
+
+    // The trait signatures themselves must stay mesh-free. This is the property
+    // that makes the inversion real rather than nominal. Comments are excluded
+    // because this module documents the inversion by naming what it removed, and
+    // matching is whole-token so the DNS-owned `DhtRecordStore` /
+    // `AdvertisedAnycastNode` do not read as the provider's `DhtRecord` /
+    // `AnycastNode`.
+    let capability_code = code_only(&capability);
+    for forbidden in [
+        "synvoid_mesh",
+        "SignedDhtRecord",
+        "DhtRecord",
+        "AnycastNode",
+    ] {
+        if mentions_symbol(&capability_code, forbidden) {
+            violations.push(format!(
+                "`dht_capability.rs` names `{forbidden}` outside a comment. No provider \
+                 type may appear in a DNS-owned trait: the provider projects into \
+                 `Advertised*` structs and the verifier runs provider-side"
+            ));
+        }
+    }
+
+    violations.assert_ok("dht_capability_seam_is_inverted_in_the_registry");
+}
+
+/// Phase 139, gate 4 — positive wiring gate.
+///
+/// `with_config` hardcoding the DHT fields to `None` is what made all nine
+/// `if let Some(ref …)` reads dead, and the provider existing without a caller is
+/// what made `attach_dht_capabilities` a decoration. This asserts both halves:
+/// the fields are still `None` by default (correct — a registry is not a DHT),
+/// and composition really does attach a provider and bind the registry to the
+/// live DNS server.
+#[test]
+fn mesh_dht_capability_is_wired_through_composition() {
+    let root = workspace_root();
+    let registry_impl = read(&root.join("crates/synvoid-dns/src/mesh_sync/registry.rs"));
+    let adapter = read(&root.join("src/worker/unified_server/mesh_dht_capability.rs"));
+    let init_mesh = read(&root.join("src/worker/unified_server/init_mesh.rs"));
+
+    let mut violations = Violations::new();
+
+    if !registry_impl.contains("pub fn with_dht_record_store(") {
+        violations.push(
+            "`MeshDnsRegistry::with_dht_record_store` must exist as the injection point; \
+             `with_config` hardcodes `None`, so without a builder the field can never be \
+             populated"
+                .to_string(),
+        );
+    }
+    if !registry_impl.contains("pub fn with_routing_manager(") {
+        violations.push(
+            "`MeshDnsRegistry::with_routing_manager` must exist as the injection point \
+             for the global locator"
+                .to_string(),
+        );
+    }
+
+    // The provider side must actually implement both capabilities.
+    for symbol in [
+        "impl DhtRecordStore for DhtRecordStoreAdapter",
+        "impl DhtGlobalLocator for DhtGlobalLocatorAdapter",
+    ] {
+        if !adapter.contains(symbol) {
+            violations.push(format!(
+                "`src/worker/unified_server/mesh_dht_capability.rs` must contain `{symbol}`; \
+                 the adapter is where concrete mesh types are allowed to be named"
+            ));
+        }
+    }
+
+    // Authenticity must be decided provider-side, not asserted by DNS.
+    if !adapter.contains("get_record_verifier()") {
+        violations.push(
+            "the adapter must call `get_record_verifier()`; a DNS-side authenticity \
+             decision would move signature verification into the request path"
+                .to_string(),
+        );
+    }
+
+    // Composition must actually call the attachment, for both registries.
+    let attach_calls = init_mesh.matches("attach_dht_capabilities(").count();
+    if attach_calls < 2 {
+        violations.push(format!(
+            "`init_mesh.rs` must call `attach_dht_capabilities` for both the edge and the \
+             global registry; found {attach_calls}"
+        ));
+    }
+    if !init_mesh.contains("set_mesh_registry(") {
+        violations.push(
+            "`init_mesh.rs` must bind the registry to the DNS server via \
+             `set_mesh_registry`; without it `resolve_from_mesh` still sees `None`"
+                .to_string(),
+        );
+    }
+    if !init_mesh.contains("start_periodic_dht_sync(") {
+        violations.push(
+            "`init_mesh.rs` must call `start_periodic_dht_sync`; `sync_from_dht` never \
+             ran before Phase 139, so `origin_nodes` was only ever filled by live \
+             registrations"
+                .to_string(),
+        );
+    }
+
+    violations.assert_ok("mesh_dht_capability_is_wired_through_composition");
+}
+
+/// Phase 139, gate 5 — the late-binding cell, and the ACME defect it repairs.
+///
+/// `setup_acme` did `let _server = (*dns_server).clone().with_acme_dns_challenges(…)`
+/// and dropped the clone, so ACME DNS-01 support was never attached for the life
+/// of the process while logging that it was. That is a silent capability loss:
+/// the guard has to name the dropped-clone shape, not just require a setter to
+/// exist, because a setter that nothing calls reproduces it exactly.
+#[test]
+fn dns_server_capabilities_are_bound_on_the_live_server() {
+    let root = workspace_root();
+    let init_apps = read(&root.join("src/worker/unified_server/init_apps.rs"));
+    let startup = read(&root.join("crates/synvoid-dns/src/server/startup.rs"));
+    let server = read(&root.join("crates/synvoid-dns/src/server/mod.rs"));
+
+    let mut violations = Violations::new();
+
+    if code_only(&init_apps).contains("let _server =") {
+        violations.push(
+            "`init_apps.rs` still binds a dropped clone in code. `let _server = \
+             (*dns_server).clone().with_acme_dns_challenges(…)` rebinds a temporary \
+             and discards it: the ACME DNS-01 capability is never attached, while the \
+             log line claims it is. Use `set_acme_dns_challenges` on the live server"
+                .to_string(),
+        );
+    }
+    if !init_apps.contains("set_acme_dns_challenges(") {
+        violations.push(
+            "`init_apps.rs` must call `set_acme_dns_challenges` so the ACME challenge \
+             capability reaches the request path"
+                .to_string(),
+        );
+    }
+
+    // The cell must be shared across clones; a plain `Option` field cloned by
+    // value would leave the `Arc<DnsServer>` the query path reads unbound.
+    if !server.contains("acme_dns_challenges: LateBinding<Arc<dyn AcmeTxtChallenges>>") {
+        violations.push(
+            "`DnsServer::acme_dns_challenges` must be a `LateBinding`; an `Option` field \
+             cannot be bound after the server is wrapped in an `Arc`"
+                .to_string(),
+        );
+    }
+
+    // `mesh_registry: None` in the transport query contexts was the defect that
+    // made a bound registry invisible even once one existed.
+    let hardcoded = startup.matches("mesh_registry: None,").count();
+    if hardcoded != 0 {
+        violations.push(format!(
+            "`server/startup.rs` hardcodes `mesh_registry: None` in {hardcoded} transport \
+             query context(s). The registry must be read from the bound cell, or the \
+             plain UDP/TCP path can never observe a registry bound after startup"
+        ));
+    }
+
+    violations.assert_ok("dns_server_capabilities_are_bound_on_the_live_server");
 }
