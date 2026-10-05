@@ -29,6 +29,8 @@ use crate::worker::drain_state::WorkerDrainState;
 use std::sync::Mutex as StdMutex;
 use synvoid_http::runtime::HttpRuntimeContext;
 
+#[cfg(feature = "dns")]
+pub mod dns_runtime_config;
 pub mod listener_tasks;
 pub mod plugin_runtime;
 pub mod resources;
@@ -36,6 +38,9 @@ pub mod runtime_handles;
 pub mod service_assembly;
 pub mod startup_plan;
 pub mod waf_handler;
+
+#[cfg(feature = "dns")]
+pub use dns_runtime_config::{dns_runtime_config_from_persisted, DnsRuntimeConversionError};
 
 pub use plugin_runtime::{PluginRuntimeOwner, PluginRuntimeReport};
 pub use resources::{UnifiedServerResourceError, UnifiedServerResources};

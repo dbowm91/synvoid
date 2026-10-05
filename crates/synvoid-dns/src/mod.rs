@@ -42,6 +42,7 @@ pub mod recursive_cache;
 pub mod resolver;
 pub mod resolver_global;
 pub mod rpz;
+pub mod runtime_config;
 pub mod secure_server;
 pub mod server;
 pub mod store;
@@ -117,6 +118,18 @@ pub use resolver::{
 };
 pub use resolver_global::GlobalNodeResolver;
 pub use rpz::{RpzAction, RpzManager, RpzPolicy, RpzZone};
+pub use runtime_config::RecordType as DnsRecordTypeRuntime;
+pub use runtime_config::{
+    AnycastRuntimeConfig, CircuitBreakerRuntimeConfig, CustomUpstreamEndpoint, Dns64RuntimeConfig,
+    DnsFirewallRuntimeConfig, DnsRateLimitModeRuntime, DnsRateLimitRuntimeConfig, DnsRuntimeConfig,
+    DnssecAlgorithmRuntime, DnssecDenialPolicyRuntime, DnssecKeyTypeRuntime, DnssecRuntimeConfig,
+    DohRuntimeConfig, DoqRuntimeConfig, DotRuntimeConfig, DynamicUpdateRuntimeConfig,
+    EcsRuntimeConfig, HsmRuntimeConfig, IpNetwork, LimitsRuntimeConfig,
+    QueryCoalescingRuntimeConfig, RecursiveAclActionRuntime, RecursiveCacheRuntimeConfig,
+    RecursiveClientAclRuntime, RecursiveEcsPolicyRuntime, RecursiveEcsRuntimeConfig,
+    RecursiveRuntimeConfig, RecursiveUpstreamRuntime, RrlRuntimeConfig, TsigAlgorithmRuntime,
+    TsigRuntimeKey, ZoneDnssecSpec, ZoneRecordSpec, ZoneSpec,
+};
 pub use secure_server::{
     DnsServerConfig, SecureDnsServerBase, MAX_QUERY_SIZE, TLS_HANDSHAKE_TIMEOUT_SECS,
 };

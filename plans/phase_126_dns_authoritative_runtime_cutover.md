@@ -1,9 +1,16 @@
 # Phase 126 Plan: DNS Authoritative and Encrypted-Transport Runtime Cutover
 
-Status: **PLANNED / READY AFTER PHASE 125** (2026-10-04).
+Status: **PLANNED / READY** (2026-10-04). Unblocked by Phase 125, which closed
+QUALIFIED on 2026-10-04 with
+`architecture/dns_runtime_dto_phase125_closeout.md`.
 
 Registered in: `plans/roadmap.md` and
 `plans/dns_runtime_dto_conversion_roadmap.md`.
+
+Predecessor evidence: Phase 125 closeout
+(`architecture/dns_runtime_dto_phase125_closeout.md`) — the runtime DTO
+vocabulary, the root adapter, the exhaustive ownership ledger, and 43 parity
+fixtures exist, so the constructor cutover has its parity prerequisite.
 
 ## Goal
 

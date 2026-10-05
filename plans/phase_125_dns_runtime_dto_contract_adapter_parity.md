@@ -1,11 +1,17 @@
 # Phase 125 Plan: DNS Runtime DTO Contract, Ownership Matrix and Adapter Parity
 
-Status: **PLANNED / READY** (2026-10-04).
+Status: **CLOSED QUALIFIED** (2026-10-04).
 
 Registered in: `plans/roadmap.md` and
 `plans/dns_runtime_dto_conversion_roadmap.md`.
 
 Planning baseline: `main` at `f86f99d1ba239cd32e423dede232d684cfeb8fa2`.
+
+Closeout: `architecture/dns_runtime_dto_phase125_closeout.md`.
+Closeout head: `main` at `1df5680738d0b41cc4e859cc012dc2c699d16456`
+plus the Phase 125 implementation commit.
+
+Successor: Phase 126 is **unblocked / READY**.
 
 Research authority:
 `architecture/dns_runtime_dto_conversion_research.md`.
@@ -175,3 +181,36 @@ Reject implementation that:
 - lets tests construct runtime config from invalid persisted config;
 - cuts over constructors before parity evidence is complete;
 - moves provider inversion into this phase.
+
+
+## Closeout (2026-10-04)
+
+**CLOSED QUALIFIED.** All acceptance criteria are met; see
+`architecture/dns_runtime_dto_phase125_closeout.md` for the evidence table,
+ledger corrections, and the two carried-forward findings.
+
+Result summary:
+
+- the exhaustive persisted-field ownership/projection ledger is in
+  `architecture/dns_config_runtime_matrix.md`;
+- DNS-owned runtime vocabulary compiles independently of persistence derives
+  (`crates/synvoid-dns/src/runtime_config.rs`);
+- one root composition adapter converts validated persisted config
+  (`src/server/dns_runtime_config.rs`);
+- 15 absent-by-design tests plus 43 parity fixtures are green;
+- production behavior is unchanged except the recorded DNS64 fail-closed
+  tightening;
+- no persisted schema, default, or admin API change;
+- no support/classification change.
+
+Carried forward:
+
+- **F-1** — `dns.firewall.max_rules` has a serde default (1000) that disagrees
+  with its derived Rust `Default` (0). Pinned, not fixed; persisted-default
+  drift is out of scope for this campaign.
+- **F-2** — the adapter's ACL re-parse is defense in depth only; the persisted
+  validation gate rejects those inputs first.
+
+Phase 126 is unblocked. The dependency-edge guards for
+`synvoid-config`/`core`/`utils` are intentionally deferred to Phases 128/129,
+which own the removals they protect.

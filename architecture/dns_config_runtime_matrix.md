@@ -918,3 +918,313 @@ is enabled; a disabled firewall keeps the whole section parseable. Defaults
 | `doq_bind_addr` tests | `crates/synvoid-dns/src/doq.rs` | 5 unit tests |
 | secure-server bind tests | `crates/synvoid-dns/src/secure_server.rs` | 2 tests |
 | example profile validation | `crates/synvoid-dns/tests/example_configs_parse.rs` | 2 tests |
+
+---
+
+# Phase 125 Runtime-DTO Ownership and Projection Ledger
+
+Added 2026-10-04. This section is the **merge gate** for Phases 126–128: every
+persisted DNS field is classified, and its runtime destination (or explicit
+absence) is named.
+
+Binding documents:
+
+- research authority: `architecture/dns_runtime_dto_conversion_research.md`;
+- runtime DTO: `crates/synvoid-dns/src/runtime_config.rs`;
+- conversion adapter: `src/server/dns_runtime_config.rs`;
+- campaign: `plans/dns_runtime_dto_conversion_roadmap.md`.
+
+`src/dns/` remains a pure re-export facade; conversion is application-owned
+composition. `tools/synvoid-repo-guards/tests/dns_runtime_config_ownership.rs`
+enforces both.
+
+## Classification vocabulary
+
+| Class | Meaning |
+|---|---|
+| **RUNTIME** | Persisted value is projected into a DNS-owned runtime field and consumed at runtime. |
+| **PROVIDER** | Consumed through composition/provider ownership (TLS, GeoIP, mesh). No runtime DTO field. Deferred to provider inversion (outside Phases 125–130). |
+| **PERSISTENCE** | Persisted and validated, but no runtime consumer. Not projected. |
+| **UNSUPPORTED** | Fail-closed: activation is rejected by `DnsConfig::validate()`. No runtime field, and no runtime field may ever be added without a new plan. |
+
+The `Adapter normalization` column names what the adapter does with the value.
+The default rule everywhere is **reject, never clamp or default** — except
+where noted as an intentional fail-closed tightening.
+
+## 1. `DnsConfig` root
+
+| Config path | Validation | Runtime consumer | Runtime DTO destination | Adapter normalization | Class |
+|---|---|---|---|---|---|
+| `dns.enabled` | parsed | composition startup gate | `DnsRuntimeConfig::enabled` | verbatim | RUNTIME |
+| `dns.bind_address` | `InvalidBindAddress` | `configured_bind_addr()` | `bind_address: SocketAddr` | parsed; wildcard `0.0.0.0`/`::` accepted | RUNTIME |
+| `dns.port` | `InvalidPort` (non-zero) | `configured_bind_addr()` | `bind_address.port` | zero rejected | RUNTIME |
+| `dns.mode` | `DnsMeshConfig::validate` in Mesh mode | none (Standalone is the implicit path) | — | — | PERSISTENCE |
+| `dns.ratelimit` | `DnsRateLimitConfig::validate` | `DnsRateLimiter::new` | `rate_limit` | enum → `DnsRateLimitModeRuntime` | RUNTIME |
+| `dns.rrl` | `DnsRrlConfig::validate` | `rrl_enabled` health flag only | `rrl.enabled` | verbatim | RUNTIME |
+| `dns.firewall` | `DnsFirewallConfig::validate` | `DnsFirewall::new` | `firewall` | implemented controls only | RUNTIME / see §3 |
+| `dns.settings` | `DnsSettingsConfig::validate` | many | see §2 | see §2 | RUNTIME |
+| `dns.limits` | `DnsLimitsConfig::validate` | `ConnectionLimits`, `DnsQueryValidator` | `limits` | `_secs` → `Duration` | RUNTIME |
+| `dns.dnssec` | `DnsSecConfig::validate` | `DnsSecKeyManager`, `HsmManager`, zone loader | `dnssec`, `hsm`, `tsig_keys` | see §8 | RUNTIME |
+| `dns.dot` | `DnsDotConfig::validate` | `DotServer::new` | `dot` | bind parsed only when enabled | RUNTIME / see §9 |
+| `dns.doh` | `DnsDohConfig::validate` | `DohServer::new` | `doh` | bind parsed only when enabled | RUNTIME / see §9 |
+| `dns.doq` | `DnsDoqConfig::validate` | `DoqServer::new` | `doq` | bind parsed only when enabled | RUNTIME / see §9 |
+| `dns.recursive` | `RecursiveDnsConfig::validate` | `RecursiveDnsServer` | `recursive` | see §5 | RUNTIME |
+| `dns.mesh` | mesh-mode only | none in this crate | — | — | PERSISTENCE |
+| `dns.zones` | item shape only | `DnsServer::load_zones` | `zones` | see §7 | RUNTIME |
+| `dns.anycast` | `DnsAnycastConfig::validate` | `DnsServer::start` fail-closed | `anycast.enabled` | rejection signal only | RUNTIME (guard) |
+| `dns.rpz` | fail-closed on activation | none | — | — | UNSUPPORTED |
+| `dns.prefetch` | fail-closed on activation | none | — | — | UNSUPPORTED |
+| `dns.trust_anchors` | fail-closed on activation | none | — | — | UNSUPPORTED |
+| `dns.dns64` | shape only | `Dns64Translator::new` | `dns64: Option<Dns64RuntimeConfig>` | prefix parsed to `Ipv6Addr` | RUNTIME |
+
+### `dns.dns64.prefix` — intentional fail-closed tightening
+
+The pre-Phase-125 runtime parsed the prefix with
+`parse().unwrap_or_else(|_| warn!(... default))`. The adapter now **rejects**
+an unparseable prefix. This is a deliberate, recorded behavior change
+required by the Phase 125 adapter contract ("reject conversion on invalid
+values rather than clamp/fallback silently"): a malformed DNS64 prefix is an
+operator error that must surface at conversion rather than silently produce
+translation with the well-known prefix. Pinned by
+`tests/dns_runtime_config_parity.rs::invalid_dns64_prefix_is_rejected_instead_of_defaulted`.
+
+## 2. `DnsSettingsConfig`
+
+| Config path | Runtime consumer | Runtime DTO destination | Class |
+|---|---|---|---|
+| `settings.default_ttl` | zone loader TTL fallback | `ttl.default_ttl` | RUNTIME |
+| `settings.min_geo_ttl` | `DnsHandlerState::min_geo_ttl` | `ttl.min_geo_ttl` | RUNTIME |
+| `settings.negative_cache_ttl` | `DnsHandlerState::negative_cache_ttl` | `ttl.negative_cache_ttl` | RUNTIME |
+| `settings.allow_transfer` | `with_zone_transfer_config` | `zone_transfer.allow_transfer: Vec<IpNetwork>` | RUNTIME |
+| `settings.cache_enabled` | `DnsCache` construction, health | `cache.enabled` | RUNTIME |
+| `settings.cache_size` | `DnsCache::new` | `cache.capacity` | RUNTIME |
+| `settings.cache_max_ttl` | `DnsCache`, `DnsQueryValidator` | `cache.max_ttl: Duration` | RUNTIME |
+| `settings.cache_min_ttl` | `DnsCache` | `cache.min_ttl: Duration` | RUNTIME |
+| `settings.allow_wildcard_transfer` | `ZoneTransfer` | `zone_transfer.allow_wildcard_transfer` | RUNTIME |
+| `settings.wildcard_transfer_requires_tsig` | `ZoneTransfer` | `zone_transfer.wildcard_transfer_requires_tsig` | RUNTIME |
+| `settings.require_tsig` | `ZoneTransfer`, health | `zone_transfer.require_tsig` | RUNTIME |
+| `settings.serve_stale.*` | `DnsCache::with_serve_stale` | `cache.serve_stale` | RUNTIME |
+| `settings.ixfr_enabled` | `ZoneTransfer`, health | `zone_transfer.ixfr_enabled` | RUNTIME |
+| `settings.ixfr_fallback_to_axfr` | `ZoneTransfer` | `zone_transfer.ixfr_fallback_to_axfr` | RUNTIME |
+| `settings.ixfr_history_size` | none | — | PERSISTENCE |
+| `settings.ecs_filtering.*` | `EcsFilterConfig::from_settings` | `ecs` | RUNTIME |
+| `settings.query_coalescing.*` | `QueryCoalescer`, cleanup task | `query_coalescing` | RUNTIME |
+| `settings.dynamic_update.*` | `DynamicUpdateHandler` (inactive) | `dynamic_update` | RUNTIME |
+| `settings.notify.*` | `NotifyHandler::from(&NotifyConfig)` | — | PERSISTENCE (fail-closed activation) |
+| `settings.padding.*` | none | — | UNSUPPORTED |
+| `settings.qname_privacy.*` | none | — | UNSUPPORTED |
+
+`settings.dynamic_update` is fail-closed: `enabled = true` is rejected by
+`DnsConfig::validate()`. The runtime DTO therefore carries the policy values
+the handler would need, but no active setting, and no handler is wired.
+
+## 3. `DnsFirewallConfig`
+
+| Config path | Runtime consumer | Runtime DTO destination | Class |
+|---|---|---|---|
+| `firewall.enabled` | `DnsFirewall::new` | `firewall.enabled` | RUNTIME |
+| `firewall.block_internal_ips` | 8 built-in subnet rules | `firewall.block_internal_ips` | RUNTIME |
+| `firewall.block_zone_transfers` | AXFR opcode rule | `firewall.block_zone_transfers` | RUNTIME |
+| `firewall.default_action` | none | — | PERSISTENCE |
+| `firewall.max_rules` | none | — | PERSISTENCE |
+| `firewall.rebinding_protection.*` | none (validation-only) | — | PERSISTENCE (fail-closed activation) |
+
+`firewall.rebinding_protection.enabled = true` is rejected while the firewall
+is on; the other sub-fields are never read. None may gain a runtime field
+without response-path enforcement landing first.
+
+## 4. `DnsLimitsConfig`
+
+All eight fields project to `LimitsRuntimeConfig`. `max_tcp_idle_time_secs`
+and `max_tcp_query_time_secs` become `Duration`s; the rest are verbatim.
+`udp_buffer_size` is consumed by **both** the UDP and TCP authoritative
+listeners (pre-existing behavior, unchanged).
+
+## 5. `RecursiveDnsConfig`
+
+| Config path | Runtime consumer | Runtime DTO destination | Class |
+|---|---|---|---|
+| `recursive.enabled` | `DnsServer::start`, health | `recursive.enabled` | RUNTIME |
+| `recursive.bind_address` | recursive listener | `recursive.bind_address: SocketAddr` | RUNTIME |
+| `recursive.port` | recursive listener | `recursive.bind_address.port` | RUNTIME |
+| `recursive.upstream_provider` | `create_resolver` | `recursive.upstream` (normalized) | RUNTIME |
+| `recursive.upstream_servers` | `upstream_ips()` | `CustomUpstreamEndpoint` list | RUNTIME |
+| `recursive.cache.*` | `RecursiveDnsCache::new` | `recursive.cache` | RUNTIME |
+| `recursive.dnssec_validation` | `HickoryRecursor` | `recursive.dnssec_validation` | RUNTIME |
+| `recursive.qname_minimization` | `HickoryResolver` | `recursive.qname_minimization` | RUNTIME |
+| `recursive.query_timeout_secs` | `HickoryResolver` | `recursive.query_timeout: Duration` | RUNTIME |
+| `recursive.max_concurrent_queries` | `Semaphore` | `recursive.max_concurrent_queries` | RUNTIME |
+| `recursive.ratelimit` | shared limiter | `recursive.rate_limit` | RUNTIME |
+| `recursive.firewall` | firewall instance | `recursive.firewall` | RUNTIME |
+| `recursive.root_hints_path` | `HickoryRecursor` | `upstream.root_hints: PathBuf` | RUNTIME |
+| `recursive.trust_anchor_path` | `HickoryRecursor` | `upstream.trust_anchor: PathBuf` | RUNTIME |
+| `recursive.client_acl` | `is_client_allowed` | `recursive.client_acl` (parsed networks + action enum) | RUNTIME |
+| `recursive.max_cname_depth` | depth guard | `recursive.max_cname_depth` | RUNTIME |
+| `recursive.max_recursion_depth` | depth guard | `recursive.max_recursion_depth` | RUNTIME |
+| `recursive.max_per_client_queries` | per-client semaphore | `recursive.max_per_client_queries` | RUNTIME |
+| `recursive.circuit_breaker.*` | `CircuitBreaker::new` | `recursive.circuit_breaker` | RUNTIME |
+| `recursive.ecs.*` | recursive ECS policy | `recursive.ecs` | RUNTIME |
+
+### Upstream normalization (Phase 127 Workstream B)
+
+The persisted `upstream_provider` conflates `System` and `Custom`. The
+runtime enum separates them:
+
+| Persisted | Persisted endpoints | Runtime |
+|---|---|---|
+| `system` | none | `System` |
+| `system` | ≥1 | `CustomEndpoints(..)` |
+| `custom` | ≥1 (required by validation) | `CustomEndpoints(..)` |
+| `google` | any | `Google` |
+| `cloudflare` | any | `Cloudflare` |
+| `recursive` | any | `Recursive { root_hints, trust_anchor }` |
+| `global_nodes` | any | `GlobalNodes` (retained for parity until provider inversion) |
+
+A literal IP endpoint and a hostname endpoint stay distinguishable
+(`CustomUpstreamEndpoint::Literal` vs `::Hostname`).
+
+### DNSSEC-provider truthfulness
+
+`RecursiveRuntimeConfig::performs_local_dnssec_validation` is `true` **only**
+for `RecursiveUpstreamRuntime::Recursive`. Forwarder modes project the
+persisted `dnssec_validation` flag verbatim but must not claim local
+validation; the existing startup warning is driven from this field so the
+"forwarder does not validate" message stays truthful.
+
+## 6. `DnsMeshConfig`
+
+No runtime field. Mesh is a composition/control-plane concern and anycast
+activation fails closed in the DNS crate. Class: **PROVIDER**.
+
+## 7. `DnsZonesConfig`
+
+| Config path | Runtime consumer | Runtime DTO destination | Class |
+|---|---|---|---|
+| `zones.items[].zone` | `load_zones_inner` | `ZoneSpec::origin` | RUNTIME |
+| `zones.items[].records[].name` | `DnsZoneRecord` | `ZoneRecordSpec::name` | RUNTIME |
+| `zones.items[].records[].record_type` | `RecordType` match | `ZoneRecordSpec::record_type: hickory RecordType` | RUNTIME |
+| `zones.items[].records[].value` | `parse_record_value` | `ZoneRecordSpec::value` (text; validation stays in the loader) | RUNTIME |
+| `zones.items[].records[].ttl` | `unwrap_or(default_ttl)` | `ZoneRecordSpec::ttl: Option<u32>` | RUNTIME |
+| `zones.items[].records[].priority` | MX/SRV bounds | `ZoneRecordSpec::priority` | RUNTIME |
+| `zones.items[].dnssec` | NSEC/NSEC3 chain build | `ZoneSpec::dnssec: Option<ZoneDnssecSpec>` | RUNTIME |
+
+Record-text parsing and all zone validation (single apex SOA, owner names,
+TTL bounds, MX/SRV priority bounds, CNAME exclusivity, target names) stay in
+the authoritative zone loader. The adapter must not make invalid zone data
+valid.
+
+## 8. `DnsSecConfig`
+
+| Config path | Runtime consumer | Runtime DTO destination | Class |
+|---|---|---|---|
+| `dnssec.enabled` | key manager, health, `start()` | `dnssec.enabled` | RUNTIME |
+| `dnssec.domain` | KSK owner name | `dnssec.domain` | RUNTIME |
+| `dnssec.key_path` | `DnsSecKeyManager::new` | `dnssec.key_path: PathBuf` | RUNTIME |
+| `dnssec.algorithm` | key generation | `dnssec.algorithm: DnssecAlgorithmRuntime` | RUNTIME |
+| `dnssec.rsa_key_size` | key generation | `dnssec.rsa_key_size` | RUNTIME |
+| `dnssec.ksk_key_size` | key generation | `dnssec.ksk_key_size` | RUNTIME |
+| `dnssec.rollover_interval_days` | rotation scheduler | `dnssec.rollover_interval: Duration` | RUNTIME |
+| `dnssec.nsec_enabled` | NSEC chain | `dnssec.denial.nsec_enabled` | RUNTIME |
+| `dnssec.nsec3_enabled` | NSEC3 chain | `dnssec.denial.nsec3_enabled` | RUNTIME |
+| `dnssec.nsec3_iterations` | `Nsec3Config` | `dnssec.denial.nsec3_iterations` | RUNTIME |
+| `dnssec.nsec3_algorithm` | `Nsec3Config` | `dnssec.denial.nsec3_algorithm` | RUNTIME |
+| `dnssec.tsig_keys[].name` | `TsigVerifier` | `TsigRuntimeKey::name` | RUNTIME |
+| `dnssec.tsig_keys[].algorithm` | MAC selection | `TsigRuntimeKey::algorithm` | RUNTIME |
+| `dnssec.tsig_keys[].secret_base64` | MAC key | `TsigRuntimeKey::secret` (decoded) | RUNTIME |
+| `dnssec.hsm.*` | `HsmManager::initialize` | `dnssec.hsm` (runtime-owned shape) | RUNTIME |
+
+TSIG conversion rejects a non-base64 secret and any secret shorter than the
+algorithm minimum, and the runtime key's `Debug` impl redacts the secret.
+Conversion errors name the key and algorithm only.
+
+Private-key generation, sealed storage, rotation, and signing dispatch remain
+in `synvoid-dnssec-keystore`. No runtime type carries raw private key bytes.
+
+## 9. Encrypted DNS sub-fields
+
+| Config path | Runtime consumer | Runtime DTO destination | Class |
+|---|---|---|---|
+| `dot.enabled` | `DotServer::new` | `dot.enabled` | RUNTIME |
+| `dot.bind_address` | `SecureDnsServerBase::start_server` | `dot.bind_address` (parsed when enabled) | RUNTIME |
+| `dot.port` | `SecureDnsServerBase::start_server` | `dot.bind_address.port` | RUNTIME |
+| `dot.tls_cert_path` | none | — | PROVIDER (`CertResolver`) |
+| `dot.tls_key_path` | none | — | PROVIDER (`CertResolver`) |
+| `dot.use_system_cert_store` | none | — | PROVIDER (`CertResolver`) |
+| `doh.enabled` | `DohServer::new` | `doh.enabled` | RUNTIME |
+| `doh.bind_address` / `doh.port` | `SecureDnsServerBase::start_server` | `doh.bind_address` | RUNTIME |
+| `doh.path` | none — routes are protocol constants | — | PERSISTENCE |
+| `doh.json_path` | none — routes are protocol constants | — | PERSISTENCE |
+| `doh.tls_cert_path` / `tls_key_path` / `use_system_cert_store` | none | — | PROVIDER |
+| `doh.enable_http2` | not a supported field | — | PERSISTENCE |
+| `doq.enabled` | `DoqServer::new` | `doq.enabled` | RUNTIME |
+| `doq.bind_address` / `doq.port` | `DoqServer::doq_bind_addr` | `doq.bind_address` | RUNTIME |
+| `doq.max_concurrent_streams` | `TransportConfig` | `doq.max_concurrent_streams` | RUNTIME |
+| `doq.idle_timeout_secs` | `quinn::IdleTimeout` | `doq.idle_timeout: Duration` | RUNTIME |
+| `doq.tls_*` | none | — | PROVIDER |
+
+### Correction: `doh.path` / `doh.json_path` are not runtime inputs
+
+The Phase 5 matrix recorded these as "implemented → `DohServer::new()`".
+Code inspection for Phase 125 shows `doh.rs` matches the fixed protocol
+routes `/dns-query`, `/`, `/dns`, and `/dns-query/json` and never reads the
+persisted fields. They are therefore reclassified **PERSISTENCE** and are
+absent from the runtime DTO. Shipping them as runtime values would have
+created a setting the runtime silently ignores — exactly the class of drift
+this ledger exists to prevent.
+
+## 10. Matrix reconciliation summary (Phase 125)
+
+| Prior status | Count | Change |
+|---|---|---|
+| `implemented` | 96 | 89 confirmed RUNTIME |
+| `implemented` | 7 | reclassified **PERSISTENCE** (`doh.path`, `doh.json_path`, `doh.enable_http2`, `dot/doh/doq` TLS fields consumed only via `CertResolver`) |
+| `unsupported` / `partially implemented` | 21 | reclassified **UNSUPPORTED** (fail-closed) or **PERSISTENCE** with the reason recorded per field above |
+
+Persisted schema, defaults, and the admin API are unchanged by this phase.
+
+## 11. Phase 125 findings carried forward
+
+### F-1 (pre-existing): `dns.firewall.max_rules` serde default ≠ Rust `Default`
+
+`DnsFirewallConfig` uses `#[derive(Default, ...)]` with
+`#[serde(default = "default_firewall_max_rules")]` on `max_rules`. The serde
+default is `1000`; the derived Rust `Default` is `0`. `DnsFirewallConfig::validate_at()`
+rejects any `max_rules != 1000` while the firewall is enabled, so a
+**Rust-constructed** `DnsConfig` that enables the firewall fails validation
+with `Unsupported DNS feature at dns.firewall.max_rules` unless the caller
+restores the serde default.
+
+This is not reachable from TOML (the serde default applies), so production is
+unaffected. It is pinned rather than changed: persisted defaults are out of
+scope for Phases 125–130, and Phase 130 forbids default drift without a
+separately planned change.
+
+Pinned by
+`tests/dns_runtime_config_parity.rs::firewall_serde_default_disagrees_with_rust_default`.
+
+**Follow-up required (not part of this campaign):** give `DnsFirewallConfig`
+a manual `Default` impl so the Rust and serde defaults agree, and re-audit
+every other `#[derive(Default)]` struct that mixes `#[serde(default = ...)]`
+field attributes. `RebindingProtectionConfig::enabled` has the same shape
+(`default_true` in serde, `false` via derive) but is unreachable behind the
+same firewall gate.
+
+### F-2: `doh.path` / `doh.json_path` are inert
+
+See §9. The served routes are protocol constants; the persisted fields are
+never read. Reclassified from `implemented` to `PERSISTENCE`.
+
+### F-3: DNS64 prefix now fails closed
+
+See §1. An unparseable `dns.dns64.prefix` previously warned and substituted
+`64:ff9b::`. The adapter rejects it. Intentional, required by the Phase 125
+adapter contract, and pinned by a parity fixture.
+
+### F-4: `RecursiveDnsConfig::validate()` already owns ACL validation
+
+Invalid `client_acl.allowed_clients` CIDRs and unknown `client_acl.action`
+values are rejected by the persisted validation gate before conversion. The
+adapter re-parses independently (defense in depth) but that path is not
+reachable through `dns_runtime_config_from_persisted`. The parity fixtures
+assert the validation-gate behavior and exercise `IpNetwork::parse` directly
+for the projection semantics.

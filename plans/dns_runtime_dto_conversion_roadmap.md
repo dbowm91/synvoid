@@ -1,6 +1,7 @@
 # DNS Runtime-DTO Conversion Roadmap — Phases 125–130
 
-Status: **ACTIVE / REGISTERED** (2026-10-04).
+Status: **ACTIVE** (2026-10-04). Phase 125 is **CLOSED QUALIFIED**; Phase 126
+is **READY**. Phases 127-130 remain sequenced behind it.
 
 Registered in: `plans/roadmap.md`.
 
@@ -44,6 +45,12 @@ synvoid-dns
 The exact result must be proven by `cargo metadata` / `cargo tree`, not
 assumed from this roadmap.
 
+Phase 125 baseline re-measured on 2026-10-04: **7** direct SynVoid normal edges
+and **847** expanded `cargo tree -p synvoid-dns -e normal` lines (the Phase 123
+closeout recorded 7 / 838; the 9-line difference is pre-existing manifest
+drift, not a Phase 125 change). Phase 130 must re-measure rather than assume
+838 is still exact.
+
 ## Binding architecture
 
 Persisted configuration remains application-owned:
@@ -85,11 +92,18 @@ Rules:
 ## Execution order
 
 1. **Phase 125 — Runtime DTO contract, ownership matrix and adapter parity**
+   — **CLOSED QUALIFIED** (2026-10-04);
+   `architecture/dns_runtime_dto_phase125_closeout.md`.
 2. **Phase 126 — Authoritative server and encrypted-transport runtime cutover**
-3. **Phase 127 — Recursive resolver runtime-config cutover**
-4. **Phase 128 — Zone/DNSSEC/TSIG/HSM conversion and synvoid-config removal**
-5. **Phase 129 — synvoid-core / synvoid-utils neutralization**
-6. **Phase 130 — Campaign qualification and provider-inversion readiness gate**
+   — **READY** (unblocked by Phase 125).
+3. **Phase 127 — Recursive resolver runtime-config cutover** — PLANNED, gated
+   on Phase 126.
+4. **Phase 128 — Zone/DNSSEC/TSIG/HSM conversion and synvoid-config removal** —
+   PLANNED, gated on Phase 127.
+5. **Phase 129 — synvoid-core / synvoid-utils neutralization** — PLANNED, gated
+   on Phase 128.
+6. **Phase 130 — Campaign qualification and provider-inversion readiness gate** —
+   PLANNED, BLOCKED ON PHASE 129.
 
 The phases are intentionally sequential. Each changes the canonical constructor
 or configuration ownership used by the next phase and is a rollback/evidence

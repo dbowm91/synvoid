@@ -292,6 +292,12 @@ owners = ["synvoid-static-files"]
 reason = "validates Phase 02 static file-manager ownership convergence (canonical FileManager vs root facade, no no-op refresh)"
 
 [[test]]
+name = "dns_runtime_config_parity"
+class = "composition"
+owners = ["synvoid-dns", "synvoid-config"]
+reason = "validates the application-owned persisted-DNS-config -> runtime-DTO adapter and its exact effective runtime values (Phase 125 Workstream E)"
+
+[[test]]
 name = "facade_disposition_guard"
 class = "static_policy"
 owners = []

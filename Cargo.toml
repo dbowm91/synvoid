@@ -346,6 +346,10 @@ criterion = { version = "0.5", features = ["html_reports"] }
 # synvoid-plugin-runtime's direct version.
 wasmtime = "36.0.16"
 wat = "1"
+# Phase 125: DNS runtime-DTO adapter parity fixtures deserialize the shipped
+# `examples/dns/*.toml` profiles. Already in Cargo.lock via synvoid-dns dev-deps;
+# no new supply-chain surface.
+toml = "0.8"
 # Phase 31: test-only runtime deps moved from [dependencies] (0 production src uses)
 tower = { version = "0.5", features = ["util"] }
 tempfile = "3"
@@ -426,6 +430,12 @@ harness = false
 [[test]]
 name = "mesh_startup_rollback"
 required-features = ["mesh"]
+
+# Phase 125: DNS runtime-DTO adapter parity fixtures exercise the
+# application-owned persisted-config adapter, which is DNS-gated.
+[[test]]
+name = "dns_runtime_config_parity"
+required-features = ["dns"]
 
 # Phase 39 (temporary): Oxc/bumpalo resolver unblock. `minify-html 0.18.1`
 # (crates.io) pins Oxc 0.95 -> `oxc_allocator 0.95 =bumpalo 3.19.0`, which

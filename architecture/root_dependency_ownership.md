@@ -60,7 +60,7 @@ reference fails the guard until the row is reclassified with a reason.
 | http | http, http_client | composition_runtime | default | HTTP type definitions | keep | admin, honeypot_port, http, http_client, server, serverless, theme, tls, waf, worker |
 | ipnetwork | — | remove_candidate | — | Phase 31: removed from root (0 src uses) | removed Phase 31 | — |
 | rand | admin, commands, honeypot_port, process, supervisor, tarpit, waf | composition_runtime | default | Random number generation (admin tokens, PoW challenges, request IDs) | keep | admin, commands, honeypot_port, process, supervisor, tarpit, waf |
-| base64 | utils, mesh | composition_runtime | default | Base64 encoding/decoding | keep | admin, commands, waf |
+| base64 | utils, mesh | composition_runtime | default | Base64 encoding/decoding | keep | admin, commands, server, waf |
 | sha2 | admin, process, supervisor, waf, worker | composition_runtime | default | SHA-256 hashing | keep | admin, process, supervisor, waf, worker |
 | hex | admin, commands, honeypot_port, waf | composition_runtime | default | Hex encoding/decoding | keep | admin, commands, honeypot_port, waf |
 | futures | http_client, proxy | composition_runtime | default | Async stream and future utilities | keep | admin, http, tarpit, waf, worker |
@@ -73,8 +73,8 @@ reference fails the guard until the row is reclassified with a reason.
 | libinjectionrs | — | remove_candidate | — | Phase 31: removed from root (0 src uses; canonical WAF use in synvoid-waf) | removed Phase 31 | — |
 | serde_bytes | — | remove_candidate | — | Phase 31: removed from root (0 src uses; canonical use in synvoid-ipc) | removed Phase 31 | — |
 | synvoid-cli | commands | composition_runtime | default | CLI argument parsing definitions | keep | commands, main |
-| synvoid-config | config, honeypot_port | composition_runtime | default | Configuration types and ConfigManager; honeypot_port translates the persisted honeypot DTO into runtime-owned honeypot config (Phase 106) | keep | admin, commands, config, honeypot_port, http, icmp_filter, static_files, supervisor, waf, worker |
-| synvoid-dns | dns | composition_runtime | dns | DNS server with DNSSEC validation; six required SynVoid siblings and optional mesh remain (Phase 109 extraction DEFER) | keep | dns |
+| synvoid-config | config, honeypot_port, server | composition_runtime | default | Configuration types and ConfigManager; honeypot_port translates the persisted honeypot DTO into runtime-owned honeypot config (Phase 106); `server` owns the canonical persisted-DNS-config → runtime-DTO adapter `server/dns_runtime_config.rs` (Phase 125) | keep | admin, commands, config, honeypot_port, http, icmp_filter, server, static_files, supervisor, waf, worker |
+| synvoid-dns | dns, server | composition_runtime | dns | DNS server with DNSSEC validation; six required SynVoid siblings and optional mesh remain (Phase 109 extraction DEFER); `server` consumes DNS-owned runtime DTOs when composing `DnsServer` (Phase 126) | keep | dns, server |
 | synvoid-icmp-filter | icmp_filter | composition_runtime | icmp-filter | ICMP filtering | keep | icmp_filter |
 | synvoid-honeypot | honeypot_port, worker | composition_runtime | default | Honeypot runtime with injected transport and publisher; persisted-config and mesh adapter remain root-owned (Phases 106–107; extraction DEFER) | keep | honeypot_port, worker |
 | synvoid-upload | http, waf, worker | composition_runtime | default | File upload handling in synvoid_upload; root upload/ removed Phase 03 | keep | http, waf, worker |
