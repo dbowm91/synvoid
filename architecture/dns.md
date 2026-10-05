@@ -1301,7 +1301,7 @@ pub struct TrustAnchor { ... }
 | mesh_sync | `anycast_sync.rs` | Mesh-based zone sync |
 | TLS provider seam | `secure_transport.rs` (trait), `secure_server.rs` (DoT/DoH), `doq.rs` (DoQ) | **Inverted in Phase 134.** DNS owns `SecureTransportConfig::server_config`; composition implements it in `src/tls/dns_providers.rs`. DoQ is QUIC and keeps its own copy of the two error literals (`doq.rs:105`) because `quinn` needs a `QuicServerConfig` — both copies are guarded to stay in step. |
 | ACME TXT seam | `server/query.rs:997` | **Inverted in Phase 134.** DNS owns `AcmeTxtChallenges::txt_value`; composition adapts `AcmeDnsChallenge`. |
-| GeoIP provider seam | `firewall.rs:333`, `firewall.rs:361`, `mesh_sync/registry.rs:75`, `server/query.rs:881` | Exactly two methods: `get_country_info` (3 sites) and `get_asn_info` (1 site) |
+| GeoIP provider seam | `geo.rs` (trait), `firewall.rs` (rules), `mesh_sync/registry.rs`, `server/query.rs` | **Inverted in Phase 135.** DNS owns `CountryLookup`; composition adapts `Arc<GeoIpManager>` in `src/geo/dns_provider.rs`. The trait's `asn` returns `Option<u32>` — the firewall reads only the number. |
 
 ### 10.1 Provider seams (Phase 133)
 
@@ -1311,7 +1311,7 @@ both seams are now narrow and evidenced, and both are approved for inversion:
 | Provider | Surface | Decision | State |
 |---|---|---|---|
 | TLS | 2 traits over 1 method | **GO** — `SecureTransportConfig::server_config`, `AcmeTxtChallenges::txt_value` | **inverted, Phase 134**; `synvoid-tls` gone from DNS's normal closure |
-| GeoIP | 1 trait over 2 methods | **GO** — `CountryLookup::country_info`, `CountryLookup::asn` | pending, Phase 135 |
+| GeoIP | 1 trait over 2 methods | **GO** — `CountryLookup::country_info`, `CountryLookup::asn` | **inverted, Phase 135**; `synvoid-geoip` gone from DNS's closure |
 | mesh | 8 types across DHT storage, routing, signed provenance | **out** — not a narrow seam; needs its own design phase | unchanged |
 
 Two facts about these seams are load-bearing and guarded:
@@ -1323,9 +1323,21 @@ Two facts about these seams are load-bearing and guarded:
   requiring a cheap-to-clone, `Arc`-shared implementation: an implementation that
   snapshotted per call would break encrypted-transport reload. The composition
   adapter holds an `Arc` to the provider and satisfies that contract.
-- **A GeoLocation block rule with no provider silently allows traffic.** This is
-  a real fail-open behavior, not a documented one, and it is scheduled for a
-  deliberate fix in Phase 135 (Phase 133 finding F-2).
+- **A GeoLocation rule that cannot be evaluated now applies its action when that
+  action is restrictive.** Phase 135 F-2 fixed a real fail-open: previously every
+  geo rule silently became a no-op, so a configured country block blocked nothing
+  — no error, and the decision did not name the skipped rule. The condition is now
+  tri-state (`GeoMatch::{Yes, No, Unavailable}`); restrictive actions
+  (Block/Redirect/Sinkhole/RateLimit) fail closed, permissive ones (Allow/LogOnly)
+  fail open, the decision names the rule and the reason, and a warning fires once
+  per firewall.
+- **`[geoip]` is constructed nowhere in composition** (Phase 135 F-17). The
+  section is documented and parsed, but no root path builds a `GeoIpManager`, so
+  every `geoip:` field is `None` and DNS can never evaluate a geo rule. Combined
+  with the fail-closed posture above, a configured restrictive geo rule blocks
+  **all** traffic. Wiring GeoIP is a feature change with its own phase, and the
+  tripwire guard `geoip_provider_is_still_unwired_by_composition` fails the moment
+  a root file constructs one.
 
 Full evidence and all twelve findings:
 `architecture/dns_provider_inversion_phase133_closeout.md`.

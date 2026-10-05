@@ -75,7 +75,13 @@ of these was a behavior or evidence change outside it:
    the same contract (F-12), all three converted together. `synvoid-tls` is gone
    from DNS's normal closure entirely.
 5. **Phase 135 — GeoIP provider inversion** — remove the `synvoid-geoip`
-   direct edge. Proceed on the Phase 133 GO, and **first** fix F-1 and F-2.
+   direct edge. **CLOSED QUALIFIED**
+   (`architecture/dns_provider_inversion_phase135_closeout.md`). Direct SynVoid
+   normal edges 3 → **2** — the campaign target; expanded normal-tree lines
+   717 → 552. F-1 and F-2 are fixed (two recorded behavior changes), plus two
+   new findings: F-16, an ASN-scoped geo rule was unmatchable; and F-17,
+   `[geoip]` is constructed nowhere in composition, so wiring it is a feature
+   change and now has a tripwire guard.
 6. **Phase 136 — Campaign qualification** — terminal dependency proof, parity
    re-run, documentation reconciliation, class decision.
 
@@ -93,7 +99,7 @@ mandatory Phase 135 workstreams rather than inversion work.
 - the per-provider evidence Phase 130 listed as missing exists as executable
   tests, not prose;
 - `synvoid-dns` has no direct normal edge on `synvoid-tls` or `synvoid-geoip`,
-  proven by `cargo metadata` / `cargo tree`;
+  proven by `cargo metadata` / `cargo tree` — **met in Phase 135**;
 - the root 43-fixture adapter parity ledger and the 15-test
   `runtime_config_absent_by_design` suite are unchanged and green;
 - `synvoid-tls` and `synvoid-geoip` survive in the expanded tree only as

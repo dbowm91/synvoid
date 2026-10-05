@@ -16,12 +16,13 @@
 //! | `synvoid-core` | Phase 129 | `synvoid_dns_has_no_core_edge` |
 //! | `synvoid-utils` | Phase 129 | `synvoid_dns_has_no_utils_edge` |
 //! | `synvoid-tls` | Phase 134 | `synvoid_dns_has_no_tls_edge` |
+//! | `synvoid-geoip` | Phase 135 | `synvoid_dns_has_no_geoip_edge` |
 //!
-//! All four are live as of Phase 134. The DNS crate now depends only on its
-//! own runtime vocabulary, the `synvoid-dnssec-keystore` custody boundary, the
-//! `synvoid-geoip` provider (removed in Phase 135), and the optional
-//! `synvoid-mesh`. Provider inversion for mesh remains out of scope, so that
-//! edge is the qualification target Phase 136 measures against.
+//! All five are live as of Phase 135. The DNS crate now depends only on its
+//! own runtime vocabulary, the `synvoid-dnssec-keystore` custody boundary, and
+//! the optional `synvoid-mesh`. Provider inversion for mesh remains out of
+//! scope, so that edge is the qualification target Phase 136 measures against:
+//! mesh is a distributed-authority surface, not a narrow seam.
 //!
 //! Section 5 (Phase 133) gates the *provider seams* rather than the dependency
 //! edges: the TLS seam must stay one-way for key custody and provider-internal
@@ -121,30 +122,16 @@ fn synvoid_dns_has_no_utils_edge() {
 
 #[test]
 fn synvoid_dns_has_no_tls_edge() {
-    // Phase 134: DNS needs a built rustls `ServerConfig` and a pending ACME
-    // TXT value, and nothing else. Both are DNS-owned capabilities
-    // (`SecureTransportConfig`, `AcmeTxtChallenges`) implemented in composition
-    // over `synvoid-tls`, so the edge itself is removable.
-    //
-    // The edge also requested `features = ["dns"]`, which existed only for
-    // `AcmeDnsChallenge`. That feature gate goes with it.
-    let root = workspace_root();
-    let manifest = read_manifest(&root.join("crates/synvoid-dns/Cargo.toml"));
+    assert_no_edge("synvoid-tls", "synvoid_dns_has_no_tls_edge");
+}
 
-    let mut violations = Violations::new();
-
-    if declares_edge(&manifest, "synvoid-tls") {
-        violations.push(
-            "crates/synvoid-dns/Cargo.toml declares `synvoid-tls`; the DNS crate \
-             consumes the DNS-owned `SecureTransportConfig` and `AcmeTxtChallenges` \
-             capabilities, which are implemented in composition. If a test needs a \
-             real resolver, build one through the composition adapter or use a \
-             DNS-owned double — never by re-adding the edge"
-                .to_string(),
-        );
-    }
-
-    violations.assert_ok("synvoid_dns_has_no_tls_edge");
+#[test]
+fn synvoid_dns_has_no_geoip_edge() {
+    // Phase 135: DNS asks a narrow question — country and ASN for an address —
+    // through the DNS-owned `CountryLookup` capability, implemented in
+    // composition over `Arc<GeoIpManager>`. `CountryInfo` is a *new* DNS type,
+    // not a re-export, precisely so this edge can go.
+    assert_no_edge("synvoid-geoip", "synvoid_dns_has_no_geoip_edge");
 }
 
 // ---------------------------------------------------------------------------
@@ -294,72 +281,44 @@ fn dns_does_not_drive_certificate_reload() {
     violations.assert_ok("dns_does_not_drive_certificate_reload");
 }
 
-/// Phase 133 B-6: the GeoIP provider surface is exactly two methods,
-/// `get_country_info` and `get_asn_info`. A third call would silently widen the
-/// trait that Phase 135 introduces, so the seam is pinned as a set rather than
-/// as an absence.
+/// Phase 133 B-6, superseded by Phase 135.
+///
+/// This gate originally asserted that the GeoIP provider surface reached from
+/// `synvoid-dns` was exactly `{get_country_info, get_asn_info}`. After Phase 135
+/// those two methods no longer exist in the DNS crate at all: the seam is the
+/// DNS-owned `CountryLookup` capability, and the concrete provider methods are
+/// named only in composition.
+///
+/// The *intent* — "the seam is exactly two methods wide, and nothing wider" — is
+/// now enforced more strictly by two Phase 135 gates:
+///
+/// - `dns_source_names_no_geoip_provider_symbol` forbids the provider method
+///   names outright, so a third call cannot be added;
+/// - `dns_declares_exactly_the_two_geo_capability_methods` pins the two
+///   evidenced signatures on the capability itself.
+///
+/// Rather than keep a gate whose assertion is "these two names appear exactly
+/// once", which is now vacuously false, the old gate is removed and its intent
+/// is carried by the two that can actually fail.
 #[test]
-fn dns_names_exactly_the_two_geoip_provider_methods() {
+fn dns_geo_seam_width_is_enforced_by_the_capability_gates() {
     let root = workspace_root();
-    let files = collect_rs_files(&root.join("crates/synvoid-dns/src"));
+    let geo = read(&root.join("crates/synvoid-dns/src/geo.rs"));
 
-    let mut seen: Vec<String> = Vec::new();
-    let mut violations = Violations::new();
-
-    for file in files {
-        for (index, line) in read(&file).lines().enumerate() {
+    // Exactly two methods, counted on the trait declaration rather than on
+    // call sites: `;`-terminated signatures only, so the unit-test `impl` blocks
+    // (which use bodies) do not match.
+    let trait_methods = geo
+        .lines()
+        .filter(|line| {
             let trimmed = line.trim_start();
-            if trimmed.starts_with("//") {
-                continue;
-            }
-            // Provider methods are reached as `geoip.<method>(` or
-            // `manager.<method>(`. Only a fixed allow-list may appear.
-            for method in [
-                "get_country_info",
-                "get_asn_info",
-                "get_continent_code",
-                "check_ip",
-                "lookup_country",
-                "lookup_asn",
-                "status",
-            ] {
-                let needle = format!(".{method}(");
-                if !trimmed.contains(&needle) {
-                    continue;
-                }
-                // `check_ip` and `status` are legitimate on DNS-owned types
-                // (the rate limiter and the firewall stats); only flag them when
-                // they sit on a geoip handle, which is checked separately below.
-                if method == "check_ip" || method == "status" {
-                    continue;
-                }
-                if !seen.contains(&method.to_string()) {
-                    seen.push(method.to_string());
-                }
-                if method == "get_continent_code" || method.starts_with("lookup_") {
-                    let rel = file
-                        .strip_prefix(&root)
-                        .unwrap_or(&file)
-                        .display()
-                        .to_string();
-                    violations.push(format!(
-                        "{rel}:{} calls `{method}`; the DNS GeoIP provider surface is \
-                         `get_country_info` and `get_asn_info` only. Anything else \
-                         must be justified and the Phase 135 trait re-scoped",
-                        index + 1
-                    ));
-                }
-            }
-        }
-    }
-
-    seen.sort();
+            trimmed.starts_with("fn ") && trimmed.ends_with(';')
+        })
+        .count();
     assert_eq!(
-        seen,
-        vec!["get_asn_info".to_string(), "get_country_info".to_string()],
-        "the GeoIP provider surface reached from synvoid-dns"
+        trait_methods, 2,
+        "the DNS-owned country-lookup capability must declare exactly two methods"
     );
-    violations.assert_ok("dns_names_exactly_the_two_geoip_provider_methods");
 }
 
 /// Phase 133 A-6: the encrypted-transport TLS contract is **duplicated**, not
@@ -515,4 +474,141 @@ fn dns_declares_exactly_the_two_tls_capabilities() {
     }
 
     violations.assert_ok("dns_declares_exactly_the_two_tls_capabilities");
+}
+
+// ---------------------------------------------------------------------------
+// 7. GeoIP provider-inversion gates (Phase 135)
+// ---------------------------------------------------------------------------
+
+/// Phase 135: the manifest gate proves the edge is gone; this gate proves the
+/// crate did not keep naming the provider through a `use` alias, a fully
+/// qualified path, or — the mistake that would silently keep the edge alive —
+/// a re-export of the provider's own result type.
+#[test]
+fn dns_source_names_no_geoip_provider_symbol() {
+    let root = workspace_root();
+    let files = collect_rs_files(&root.join("crates/synvoid-dns/src"));
+
+    let mut violations = Violations::new();
+    for file in files {
+        let rel = file
+            .strip_prefix(&root)
+            .unwrap_or(&file)
+            .display()
+            .to_string();
+        for (index, line) in read(&file).lines().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            for forbidden in [
+                "synvoid_geoip",
+                "synvoid-geoip",
+                "GeoIpManager",
+                "get_country_info",
+                "get_asn_info",
+            ] {
+                if !trimmed.contains(forbidden) {
+                    continue;
+                }
+                if trimmed.starts_with("use ") || trimmed.contains("::") {
+                    violations.push(format!(
+                        "{rel}:{} references `{forbidden}`; the DNS crate asks for \
+                         country and ASN through the DNS-owned `CountryLookup` \
+                         capability. A re-export of the provider's `CountryInfo` is \
+                         the specific mistake here: it looks like inversion while \
+                         keeping the edge alive",
+                        index + 1
+                    ));
+                }
+            }
+        }
+    }
+
+    violations.assert_ok("dns_source_names_no_geoip_provider_symbol");
+}
+
+/// Phase 135: the DNS-owned capability must declare exactly the two evidenced
+/// methods over the DNS-owned result type. Asserting the exact signatures means
+/// a change fails here instead of quietly widening the seam.
+#[test]
+fn dns_declares_exactly_the_two_geo_capability_methods() {
+    let root = workspace_root();
+    let source = read(&root.join("crates/synvoid-dns/src/geo.rs"));
+
+    let mut violations = Violations::new();
+
+    for signature in [
+        "fn country_info(&self, ip: IpAddr) -> Option<CountryInfo>;",
+        "fn asn(&self, ip: IpAddr) -> Option<u32>;",
+    ] {
+        let declared = source.matches(signature).count();
+        if declared != 1 {
+            violations.push(format!(
+                "crates/synvoid-dns/src/geo.rs must declare exactly one `{signature}`; \
+                 found {declared}. Phase 133 evidenced exactly these two methods, and \
+                 `asn` returns `Option<u32>` because the firewall reads only the number"
+            ));
+        }
+    }
+
+    // `CountryInfo` must be declared here, not pulled in from the provider.
+    if !source.contains("pub struct CountryInfo {") {
+        violations.push(
+            "crates/synvoid-dns/src/geo.rs must declare its own `CountryInfo`; a \
+             re-export of the provider's type would keep the dependency edge alive"
+                .to_string(),
+        );
+    }
+    if source.contains("pub use synvoid_geoip") {
+        violations.push(
+            "crates/synvoid-dns/src/geo.rs must not re-export from `synvoid_geoip`".to_string(),
+        );
+    }
+
+    violations.assert_ok("dns_declares_exactly_the_two_geo_capability_methods");
+}
+
+/// Phase 135 F-17 tripwire: **no composition path constructs a
+/// `GeoIpManager`.** The `[geoip]` configuration section is documented and
+/// parsed, but nothing builds the provider, so every `geoip:` field in the root
+/// is `None` and DNS can never evaluate a geo rule.
+///
+/// This gate exists so that wiring it cannot happen silently. Wiring GeoIP
+/// activates country classification for the first time in production and would
+/// change the meaning of a configured `GeoLocation` firewall rule under the
+/// Phase 135 F-2 fail-closed semantics — so it is a feature change that needs
+/// its own phase and its own evidence, not a side effect of a later edit.
+#[test]
+fn geoip_provider_is_still_unwired_by_composition() {
+    let root = workspace_root();
+    let files = collect_rs_files(&root.join("src"));
+
+    let mut construction_sites = Vec::new();
+    for file in &files {
+        let rel = file
+            .strip_prefix(&root)
+            .unwrap_or(file)
+            .display()
+            .to_string();
+        for (index, line) in read(file).lines().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            if trimmed.contains("GeoIpManager::new(") && !rel.contains("src/geo/") {
+                construction_sites.push(format!("{rel}:{}", index + 1));
+            }
+        }
+    }
+
+    assert!(
+        construction_sites.is_empty(),
+        "composition now constructs a GeoIpManager at {construction_sites:?}. \
+         Phase 135 F-17 recorded that `[geoip]` is unwired, and wiring it is a \
+         behavior change, not a refactor: it activates country classification in \
+         production and changes what a configured `GeoLocation` firewall rule means \
+         under the Phase 135 F-2 fail-closed semantics. Give it its own phase, and \
+         delete this gate in that phase rather than weakening it here"
+    );
 }

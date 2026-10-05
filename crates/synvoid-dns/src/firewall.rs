@@ -1,9 +1,11 @@
 use std::net::IpAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use crate::time::unix_timestamp_secs;
 
+use crate::geo::CountryLookup;
 use crate::parsed_query::ParsedDnsQuery;
 
 #[derive(Debug, Clone)]
@@ -40,11 +42,27 @@ pub enum DnsFirewallAction {
     LogOnly,
 }
 
-#[derive(Debug, Clone)]
 pub struct DnsFirewall {
     rules: Vec<DnsFirewallRule>,
     last_cleanup: u64,
-    geoip_lookup: Option<Arc<synvoid_geoip::GeoIpManager>>,
+    country_lookup: Option<Arc<dyn CountryLookup>>,
+    /// Phase 135 F-2: an unevaluable geo rule is a real condition an operator
+    /// must learn about, but it is evaluated per query. Warn once per firewall
+    /// instance so the signal survives without becoming a log flood.
+    geo_unavailable_warned: AtomicBool,
+}
+
+/// Hand-written rather than derived: the country-lookup capability is a trait
+/// object with no `Debug` bound (adding one would constrain every provider for
+/// no benefit), and printing a provider's internals in a firewall dump is noise.
+impl std::fmt::Debug for DnsFirewall {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DnsFirewall")
+            .field("rules", &self.rules.len())
+            .field("last_cleanup", &self.last_cleanup)
+            .field("can_evaluate_geo_rules", &self.can_evaluate_geo_rules())
+            .finish()
+    }
 }
 
 impl Default for DnsFirewall {
@@ -58,13 +76,24 @@ impl DnsFirewall {
         Self {
             rules: Vec::new(),
             last_cleanup: 0,
-            geoip_lookup: None,
+            country_lookup: None,
+            geo_unavailable_warned: AtomicBool::new(false),
         }
     }
 
-    pub fn with_geoip(mut self, geoip: Arc<synvoid_geoip::GeoIpManager>) -> Self {
-        self.geoip_lookup = Some(geoip);
+    /// Attach the country-lookup capability.
+    ///
+    /// A firewall built without one can still evaluate every non-geo rule. Geo
+    /// rules become indeterminate, which is handled fail-closed for restrictive
+    /// actions and visibly, rather than silently passing traffic.
+    pub fn with_country_lookup(mut self, lookup: Arc<dyn CountryLookup>) -> Self {
+        self.country_lookup = Some(lookup);
         self
+    }
+
+    /// Whether this firewall can evaluate geo rules at all.
+    pub fn can_evaluate_geo_rules(&self) -> bool {
+        self.country_lookup.is_some()
     }
 
     pub fn add_rule(&mut self, rule: DnsFirewallRule) -> Result<(), String> {
@@ -94,15 +123,35 @@ impl DnsFirewall {
                 continue;
             }
 
-            if !self.rule_matches(rule, parsed, client_ip, qname) {
-                continue;
+            match self.rule_matches(rule, parsed, client_ip, qname) {
+                RuleEvaluation::Yes => {
+                    return Ok(DnsFirewallDecision {
+                        action: rule.action.clone(),
+                        rule_id: rule.id.clone(),
+                        reason: format!("Rule {} matched", rule.id),
+                    });
+                }
+                RuleEvaluation::Indeterminate {
+                    reason,
+                    applied: true,
+                } => {
+                    self.warn_indeterminate_once(rule, reason);
+                    return Ok(DnsFirewallDecision {
+                        action: rule.action.clone(),
+                        rule_id: rule.id.clone(),
+                        reason: format!(
+                            "Rule {} could not be evaluated ({}); applied {} because it \
+                             is restrictive",
+                            rule.id,
+                            reason.as_str(),
+                            action_name(&rule.action)
+                        ),
+                    });
+                }
+                // A permissive rule that cannot be evaluated is skipped, and an
+                // unevaluable rule is skipped rather than treated as a match.
+                RuleEvaluation::No | RuleEvaluation::Indeterminate { .. } => continue,
             }
-
-            return Ok(DnsFirewallDecision {
-                action: rule.action.clone(),
-                rule_id: rule.id.clone(),
-                reason: format!("Rule {} matched", rule.id),
-            });
         }
 
         Ok(DnsFirewallDecision {
@@ -110,6 +159,26 @@ impl DnsFirewall {
             rule_id: "default".to_string(),
             reason: "No matching rules, allowing query".to_string(),
         })
+    }
+
+    /// Phase 135 F-2: make the unevaluable condition visible once per firewall.
+    ///
+    /// Silence was half of the original defect: an operator who configured a
+    /// country block and had no GeoIP database got no error and no log line, so
+    /// the control simply stopped existing. The decision `reason` names the rule
+    /// on every affected query; this adds the operator-facing signal without
+    /// turning a per-query condition into a log flood.
+    fn warn_indeterminate_once(&self, rule: &DnsFirewallRule, reason: RuleIndeterminate) {
+        if self.geo_unavailable_warned.swap(true, Ordering::Relaxed) {
+            return;
+        }
+        tracing::warn!(
+            rule_id = %rule.id,
+            target = %rule.target,
+            reason = reason.as_str(),
+            "Geo firewall rule cannot be evaluated and is being applied fail-closed. \
+             Attach a GeoIP provider, or set the rule disabled to park it"
+        );
     }
 
     pub fn evaluate_response(
@@ -149,62 +218,78 @@ impl DnsFirewall {
         parsed: &ParsedDnsQuery<'_>,
         client_ip: IpAddr,
         qname: &str,
-    ) -> bool {
+    ) -> RuleEvaluation {
         match &rule.rule_type {
             DnsFirewallRuleType::Domain => {
                 if qname.eq_ignore_ascii_case(&rule.target) {
-                    return true;
+                    return RuleEvaluation::Yes;
                 }
                 if qname.ends_with(&format!(".{}", rule.target)) {
-                    return true;
+                    return RuleEvaluation::Yes;
                 }
             }
             DnsFirewallRuleType::IpAddress => {
                 if let Ok(rule_ip) = rule.target.parse::<IpAddr>() {
                     if client_ip == rule_ip {
-                        return true;
+                        return RuleEvaluation::Yes;
                     }
                 }
             }
             DnsFirewallRuleType::Subnet => {
                 if let Ok(cidr) = rule.target.parse::<ipnetwork::IpNetwork>() {
                     if cidr.contains(client_ip) {
-                        return true;
+                        return RuleEvaluation::Yes;
                     }
                 }
             }
             DnsFirewallRuleType::QueryType => {
                 if rule.target == format!("0x{:x}", parsed.qtype) {
-                    return true;
+                    return RuleEvaluation::Yes;
                 }
             }
             DnsFirewallRuleType::Opcode => {
                 if rule.target == format!("0x{:x}", parsed.flags.opcode) {
-                    return true;
+                    return RuleEvaluation::Yes;
                 }
             }
             DnsFirewallRuleType::ResponseCode => {
                 if rule.target == format!("0x{:x}", parsed.flags.response_code) {
-                    return true;
+                    return RuleEvaluation::Yes;
                 }
             }
             DnsFirewallRuleType::GeoLocation => {
-                if let Ok(geo) = rule.target.parse::<GeoLocation>() {
-                    if geo.contains(client_ip, self.geoip_lookup.as_ref()) {
-                        return true;
-                    }
-                }
+                let geo = rule.target.parse::<GeoLocation>();
+                return match geo {
+                    Ok(geo) => match geo.matches_ip(client_ip, self.country_lookup.as_ref()) {
+                        GeoMatch::Yes => RuleEvaluation::Yes,
+                        GeoMatch::No => RuleEvaluation::No,
+                        // Phase 135 F-2: a geo rule that cannot be evaluated is
+                        // not "no match". A restrictive action is applied anyway;
+                        // a permissive one is skipped.
+                        GeoMatch::Unavailable => RuleEvaluation::Indeterminate {
+                            reason: RuleIndeterminate::NoCountryLookup,
+                            applied: rule.action.fails_closed_when_indeterminate(),
+                        },
+                    },
+                    // Phase 133 F-3: `GeoLocation::from_str` is infallible in
+                    // practice, so this arm is defensive only. It is kept
+                    // because a future validator would land here.
+                    Err(_) => RuleEvaluation::Indeterminate {
+                        reason: RuleIndeterminate::UnparseableTarget,
+                        applied: rule.action.fails_closed_when_indeterminate(),
+                    },
+                };
             }
             DnsFirewallRuleType::TimeWindow => {
                 if let Ok(time_window) = rule.target.parse::<TimeWindow>() {
                     if time_window.contains(chrono::Utc::now()) {
-                        return true;
+                        return RuleEvaluation::Yes;
                     }
                 }
             }
         }
 
-        false
+        RuleEvaluation::No
     }
 
     fn response_rule_matches(
@@ -300,6 +385,67 @@ impl DnsFirewall {
     }
 }
 
+/// Outcome of evaluating a `GeoLocation` rule against a client address.
+///
+/// Phase 135 F-2: `bool` could not express the case the plan cares about. With
+/// only `true`/`false`, a rule that *cannot be evaluated* was
+/// indistinguishable from one that was evaluated and did not match, so a
+/// `GeoLocation` **block** rule with no provider silently stopped blocking
+/// traffic — no error, no log line, and the decision did not even name the
+/// skipped rule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GeoMatch {
+    /// The provider answered: the address is in the location.
+    Yes,
+    /// The provider answered: the address is not in the location.
+    No,
+    /// The provider is absent or could not answer. The rule is indeterminate.
+    Unavailable,
+}
+
+impl DnsFirewallAction {
+    /// Whether this action should be applied when its rule is indeterminate.
+    ///
+    /// The posture is deliberately asymmetric: a **restrictive** action fails
+    /// closed, because a control that cannot be evaluated must not silently let
+    /// traffic through, while a **permissive** action fails open, because
+    /// applying "allow" to a rule nobody scoped would be granting access nobody
+    /// granted.
+    pub fn fails_closed_when_indeterminate(&self) -> bool {
+        matches!(
+            self,
+            DnsFirewallAction::Block
+                | DnsFirewallAction::Redirect { .. }
+                | DnsFirewallAction::Sinkhole
+                | DnsFirewallAction::RateLimit { .. }
+        )
+    }
+}
+
+/// Why a rule's condition could not be evaluated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuleIndeterminate {
+    /// The rule needs a country lookup and there is no provider.
+    NoCountryLookup,
+    /// The rule's target could not be parsed, so the rule matches nothing.
+    UnparseableTarget,
+}
+
+/// How a rule evaluated against one query.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RuleEvaluation {
+    /// Evaluated, and the condition did not hold.
+    No,
+    /// Evaluated, and the condition held.
+    Yes,
+    /// The condition could not be evaluated. `applied` is `true` when the
+    /// rule's action was applied anyway because it is restrictive.
+    Indeterminate {
+        reason: RuleIndeterminate,
+        applied: bool,
+    },
+}
+
 #[derive(Debug, Clone)]
 pub struct DnsFirewallDecision {
     pub action: DnsFirewallAction,
@@ -324,61 +470,85 @@ pub struct GeoLocation {
 }
 
 impl GeoLocation {
-    pub fn matches_ip(
-        &self,
-        ip: IpAddr,
-        geoip_manager: Option<&Arc<synvoid_geoip::GeoIpManager>>,
-    ) -> bool {
-        if let Some(geoip) = geoip_manager {
-            if let Some(country_info) = geoip.get_country_info(ip) {
-                let country_match = country_info.code.to_uppercase() == self.country.to_uppercase();
+    /// Evaluate this location against a client address.
+    ///
+    /// Phase 135: takes the DNS-owned [`CountryLookup`] capability and returns
+    /// [`GeoMatch`] rather than `bool`, so an unevaluable rule is
+    /// distinguishable from a rule that was evaluated and did not match.
+    pub fn matches_ip(&self, ip: IpAddr, lookup: Option<&Arc<dyn CountryLookup>>) -> GeoMatch {
+        let Some(lookup) = lookup else {
+            return GeoMatch::Unavailable;
+        };
 
-                if !country_match {
-                    return false;
-                }
+        let Some(country_info) = lookup.country_info(ip) else {
+            // A provider that exists but cannot answer this address is still an
+            // *answer*: the address is not in the location. Reporting
+            // `Unavailable` here would make every uncovered address look like a
+            // misconfiguration and turn one bad address into a fail-closed
+            // block.
+            return GeoMatch::No;
+        };
 
-                if let Some(ref region) = self.region {
-                    if let Some(ref subdivision) = country_info.subdivision {
-                        if subdivision.to_uppercase() != region.to_uppercase() {
-                            return false;
-                        }
-                    } else {
-                        return false;
-                    }
-                }
+        if !country_info.code.eq_ignore_ascii_case(&self.country) {
+            return GeoMatch::No;
+        }
 
-                if let Some(ref city) = self.city {
-                    if let Some(ref city_info) = country_info.city {
-                        if city_info.to_uppercase() != city.to_uppercase() {
-                            return false;
-                        }
-                    } else {
-                        return false;
-                    }
-                }
-
-                if let Some(asn) = self.asn {
-                    if let Some(asn_info) = geoip.get_asn_info(ip) {
-                        if asn_info.asn != asn {
-                            return false;
-                        }
-                    } else {
-                        return false;
-                    }
-                }
-
-                return true;
+        if let Some(ref region) = self.region {
+            match country_info.subdivision.as_deref() {
+                Some(subdivision) if subdivision.eq_ignore_ascii_case(region) => {}
+                _ => return GeoMatch::No,
             }
         }
-        false
+
+        if let Some(ref city) = self.city {
+            match country_info.city.as_deref() {
+                Some(found) if found.eq_ignore_ascii_case(city) => {}
+                _ => return GeoMatch::No,
+            }
+        }
+
+        if let Some(asn) = self.asn {
+            // A database that carries no ASN cannot satisfy an ASN-scoped rule.
+            // That is an evaluated "no", not a misconfiguration.
+            match lookup.asn(ip) {
+                Some(found) if found == asn => {}
+                _ => return GeoMatch::No,
+            }
+        }
+
+        GeoMatch::Yes
     }
 
-    pub fn contains(
-        &self,
-        ip: IpAddr,
-        geoip_manager: Option<&Arc<synvoid_geoip::GeoIpManager>>,
-    ) -> bool {
-        self.matches_ip(ip, geoip_manager)
+    /// Whether the address is in this location.
+    ///
+    /// Convenience wrapper for callers that do not care *why* a rule did not
+    /// match. Prefer [`GeoLocation::matches_ip`] in the evaluation path, where
+    /// collapsing `Unavailable` into `false` is the Phase 135 F-2 defect.
+    pub fn contains(&self, ip: IpAddr, lookup: Option<&Arc<dyn CountryLookup>>) -> bool {
+        self.matches_ip(ip, lookup) == GeoMatch::Yes
+    }
+}
+
+impl RuleIndeterminate {
+    /// Stable operator-facing wording. Kept as one place so the log line and
+    /// the decision `reason` cannot drift apart.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RuleIndeterminate::NoCountryLookup => "no country lookup is configured",
+            RuleIndeterminate::UnparseableTarget => "the rule target could not be parsed",
+        }
+    }
+}
+
+/// Stable short name for an action, for decision reasons.
+fn action_name(action: &DnsFirewallAction) -> &'static str {
+    match action {
+        DnsFirewallAction::Block => "block",
+        DnsFirewallAction::Allow => "allow",
+        DnsFirewallAction::Redirect { .. } => "redirect",
+        DnsFirewallAction::Sinkhole => "sinkhole",
+        DnsFirewallAction::RateLimit { .. } => "rate-limit",
+        DnsFirewallAction::LogOnly => "log-only",
     }
 }
 
@@ -409,10 +579,24 @@ impl std::str::FromStr for GeoLocation {
             None
         };
 
+        // Phase 135 F-16: an empty field is a *placeholder*, not a value. The
+        // ASN lives at index 3, so a country+ASN rule has to spell out indices
+        // 1 and 2 — and those used to become `Some("")`, which then failed the
+        // region and city comparisons against a provider that has neither. The
+        // result was that an ASN-scoped rule could never match, however the
+        // target was written.
+        let optional = |index: usize| -> Option<String> {
+            parts
+                .get(index)
+                .map(|part| part.trim())
+                .filter(|part| !part.is_empty())
+                .map(str::to_string)
+        };
+
         Ok(GeoLocation {
             country: parts[0].to_string(),
-            region: parts.get(1).map(|s| s.to_string()),
-            city: parts.get(2).map(|s| s.to_string()),
+            region: optional(1),
+            city: optional(2),
             asn,
         })
     }

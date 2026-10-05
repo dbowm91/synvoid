@@ -8,6 +8,7 @@ use parking_lot::RwLock;
 use sha2::Sha256;
 use tokio::sync::mpsc;
 
+use crate::geo::CountryLookup;
 use crate::messages::{
     DnsAnycastHealthUpdate, DnsAnycastNodeRegistration, DnsEdgeHealthReport, DnsHealthUpdate,
     DnsNodeRole, DnsNodeShutdown, DnsRegistration, DnsRegistrationRequest,
@@ -160,7 +161,8 @@ pub struct MeshDnsRegistry {
     verification_tx: Option<mpsc::Sender<VerificationTask>>,
     verification_failure_tx: Option<mpsc::Sender<VerificationFailure>>,
     verification_metrics: VerificationMetrics,
-    geoip: Option<Arc<synvoid_geoip::GeoIpManager>>,
+    /// DNS-owned country lookup; see `crate::geo::CountryLookup`.
+    geoip: Option<Arc<dyn CountryLookup>>,
 }
 
 pub struct VerificationTask {

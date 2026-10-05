@@ -140,14 +140,37 @@ impl GeoIpUpdater {
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("/var/lib/synvoid/geoip"));
 
-        let editions: Vec<DatabaseEdition> = config
-            .edition_ids
-            .iter()
-            .filter_map(|edition_id| {
-                let url = DatabaseEdition::build_url(edition_id, source.as_ref().unwrap())?;
-                Some(DatabaseEdition::new(edition_id.clone(), url))
-            })
-            .collect();
+        // Phase 133 F-1: `DownloadSource::from_config` returns `None` unless
+        // `update_url` or (`account_id` **and** `license_key`) is set. This used
+        // to `.unwrap()` that value, so `[geoip] enabled = true` with no
+        // download credentials aborted the process during provider
+        // construction — even with `update_enabled = false`, and even though a
+        // `None` source already means "there is nothing to download".
+        //
+        // With no source there are no download URLs to build, so the correct
+        // edition list is empty. `start_auto_update` iterates editions, so it
+        // becomes a no-op rather than failing or spinning.
+        let editions: Vec<DatabaseEdition> = match source.as_ref() {
+            Some(source) => config
+                .edition_ids
+                .iter()
+                .filter_map(|edition_id| {
+                    let url = DatabaseEdition::build_url(edition_id, source)?;
+                    Some(DatabaseEdition::new(edition_id.clone(), url))
+                })
+                .collect(),
+            None => {
+                if !config.edition_ids.is_empty() {
+                    tracing::debug!(
+                        "GeoIP auto-update has {} configured edition(s) but no download \
+                         source (set `update_url`, or `account_id` + `license_key`); \
+                         database auto-update is disabled",
+                        config.edition_ids.len()
+                    );
+                }
+                Vec::new()
+            }
+        };
 
         Self {
             source,

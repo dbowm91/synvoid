@@ -8460,7 +8460,6 @@ dependencies = [
  "sha2",
  "subtle",
  "synvoid-dnssec-keystore",
- "synvoid-geoip",
  "synvoid-mesh",
  "tempfile",
  "thiserror 2.0.20",

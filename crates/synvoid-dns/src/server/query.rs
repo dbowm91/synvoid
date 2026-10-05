@@ -6,6 +6,10 @@ use crate::mesh_sync::MeshDnsRegistry;
 use crate::cache::TransportClass;
 use crate::parsed_query::ParsedDnsQuery;
 
+// Only `resolve_from_mesh` takes the country lookup, and that is mesh-gated.
+#[cfg(feature = "mesh")]
+use crate::geo::CountryLookup;
+
 #[derive(Debug)]
 enum TtlParseError {
     Truncated,
@@ -867,7 +871,7 @@ impl DnsServer {
         mesh_registry: &Arc<MeshDnsRegistry>,
         qname: &str,
         client_ip: std::net::IpAddr,
-        geoip_lookup: Option<&Arc<synvoid_geoip::GeoIpManager>>,
+        geoip_lookup: Option<&Arc<dyn CountryLookup>>,
         qtype: u16,
     ) -> Option<Vec<DnsZoneRecord>> {
         let domain = qname.trim_end_matches('.');
@@ -877,11 +881,9 @@ impl DnsServer {
             return None;
         }
 
-        let client_geo = if let Some(geoip) = geoip_lookup {
-            geoip.get_country_info(client_ip).map(|c| c.code.clone())
-        } else {
-            None
-        };
+        let client_geo = geoip_lookup
+            .and_then(|lookup| lookup.country_info(client_ip))
+            .map(|c| c.code);
 
         let best_edge =
             mesh_registry.get_best_edge_for_client(domain, Some(client_ip), client_geo.as_deref());

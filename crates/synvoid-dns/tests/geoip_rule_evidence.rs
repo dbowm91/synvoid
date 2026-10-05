@@ -1,22 +1,32 @@
-//! Phase 133 Workstream B — GeoIP **consumer** evidence inside `synvoid-dns`.
+//! Phase 133 Workstream B / Phase 135 F-2 — GeoIP **consumer** evidence and
+//! absent-provider semantics inside `synvoid-dns`.
 //!
 //! The provider suite (`crates/synvoid-geoip/tests/geoip_provider_evidence.rs`)
 //! proves what a real database answers. This suite proves what `synvoid-dns`
-//! *does* with the answer, and — more importantly — what it does when the
-//! answer is unavailable. The plan makes the absent-provider case the
-//! central question: "a rule that cannot be evaluated must not silently pass
-//! traffic."
+//! *does* with the answer — and, after Phase 135, it can do so with a
+//! DNS-owned double, because `synvoid-dns` no longer depends on `synvoid-geoip`
+//! and therefore no longer needs a MaxMind database to be tested.
 //!
-//! Scope note: a `GeoLocation` rule's *positive* match requires a real MaxMind
-//! database, which lives in the `synvoid-geoip` test fixtures. Rather than
-//! duplicate that builder, the positive matrix is pinned provider-side and
-//! recorded here as finding F-4. Once Phase 135 introduces a DNS-owned lookup
-//! trait, the positive matrix becomes directly testable in this crate with a
-//! DNS-owned double and no `synvoid-geoip` edge.
+//! ## The behavior change this pins
+//!
+//! Phase 133 F-2: a `GeoLocation` **block** rule with no provider did not match,
+//! so evaluation fell through to the default `Allow`, and the decision did not
+//! name the skipped rule. An operator who configured a country block without a
+//! GeoIP database got no error, no log line, and no traffic blocked.
+//!
+//! Phase 135 makes the rule's condition tri-state (`GeoMatch::Yes` / `No` /
+//! `Unavailable`) and applies a **restrictive** action when the condition is
+//! indeterminate, while a permissive action is skipped. The decision `reason`
+//! names the rule and the reason, and a warning is emitted once per firewall.
+//!
+//! These tests therefore assert the *fixed* behavior. The fail-open state is
+//! preserved in the Phase 133 closeout as a finding, not re-tested here.
 
 use std::net::{IpAddr, Ipv4Addr};
+use std::sync::Arc;
 
-use synvoid_dns::firewall::GeoLocation;
+use synvoid_dns::firewall::{GeoLocation, GeoMatch, RuleIndeterminate};
+use synvoid_dns::geo::{CountryInfo, CountryLookup};
 use synvoid_dns::parsed_query::ParsedDnsQuery;
 use synvoid_dns::{DnsFirewall, DnsFirewallAction, DnsFirewallRule, DnsFirewallRuleType};
 
@@ -60,18 +70,66 @@ fn client_ip() -> IpAddr {
     IpAddr::V4(Ipv4Addr::new(203, 0, 113, 9))
 }
 
-// ---- Workstream B.5 — deterministic fallback for the absent provider -------
+/// A DNS-owned double. Phase 135 is the first phase in which the consumer side
+/// is testable without a real MaxMind database, because the capability is
+/// DNS-owned.
+struct StubLookup {
+    country: Option<&'static str>,
+    subdivision: Option<&'static str>,
+    city: Option<&'static str>,
+    asn: Option<u32>,
+}
 
-/// B-5a (F-2): a `GeoLocation` **block** rule with no provider configured does
-/// not match, so evaluation falls through to the default `Allow`. The security
-/// control silently disappears: an operator who configures a country block and
-/// has no GeoIP database gets no error, no log line, and no traffic blocked.
-///
-/// This is the plan's "rule that cannot be evaluated must not silently pass
-/// traffic" case, and today it does silently pass traffic.
+impl StubLookup {
+    fn answering(country: &'static str) -> Arc<dyn CountryLookup> {
+        Arc::new(Self {
+            country: Some(country),
+            subdivision: None,
+            city: None,
+            asn: None,
+        })
+    }
+
+    /// A provider that exists but has no answer for anything — the shape a real
+    /// provider has when no database is loaded.
+    fn answerless() -> Arc<dyn CountryLookup> {
+        Arc::new(Self {
+            country: None,
+            subdivision: None,
+            city: None,
+            asn: None,
+        })
+    }
+}
+
+impl CountryLookup for StubLookup {
+    fn country_info(&self, _ip: IpAddr) -> Option<CountryInfo> {
+        self.country.map(|code| CountryInfo {
+            code: code.to_string(),
+            name: "Stubland".to_string(),
+            subdivision: self.subdivision.map(str::to_string),
+            city: self.city.map(str::to_string),
+        })
+    }
+
+    fn asn(&self, _ip: IpAddr) -> Option<u32> {
+        self.asn
+    }
+}
+
+// ---- F-2: the absent-provider case is now fail-closed ----------------------
+
+/// F-2 fixed: a `GeoLocation` **block** rule with no provider is applied rather
+/// than skipped. The decision names the rule and says why, so the operator can
+/// see that the control fired because it could not be evaluated rather than
+/// because the client matched.
 #[test]
-fn geo_block_rule_without_provider_silently_allows() {
+fn a_geo_block_rule_without_a_provider_fails_closed() {
     let mut firewall = DnsFirewall::new();
+    assert!(
+        !firewall.can_evaluate_geo_rules(),
+        "precondition: this firewall has no country lookup"
+    );
     firewall
         .add_rule(rule(
             "geo-block",
@@ -88,84 +146,187 @@ fn geo_block_rule_without_provider_silently_allows() {
 
     assert_eq!(
         decision.action,
-        DnsFirewallAction::Allow,
-        "a geo block rule with no provider evaluates to the default Allow"
+        DnsFirewallAction::Block,
+        "a restrictive geo rule must not silently pass traffic when unevaluable"
     );
-    assert_eq!(decision.rule_id, "default");
+    assert_eq!(decision.rule_id, "geo-block");
     assert!(
-        !decision.reason.contains("geo-block"),
-        "the silently-skipped rule must not be named in the decision, which is \
-         why the failure is invisible: got reason {:?}",
+        decision.reason.contains("could not be evaluated"),
+        "the reason must say the rule was unevaluable, got: {}",
+        decision.reason
+    );
+    assert!(
+        decision
+            .reason
+            .contains(RuleIndeterminate::NoCountryLookup.as_str()),
+        "and name the reason, got: {}",
         decision.reason
     );
 }
 
-/// B-5b (F-5): the "provider present but unable to answer" case is **not**
-/// directly testable from this crate, and the reason is itself the finding.
-///
-/// `GeoIpManager::new` takes a `synvoid_config::geoip::GeoIpConfig`, and
-/// Phase 125 removed `synvoid-config` from `synvoid-dns` entirely. A provider
-/// can therefore only reach this crate through a composition root that holds
-/// both types. Constructing one here would mean re-adding the very edge this
-/// campaign is removing.
-///
-/// The outcome is nonetheless determined, and pinned on both sides:
-/// `GeoIpManager::get_country_info` returns `None` for every address when no
-/// database is loaded (see `enabled_config_without_database_path_answers_none`
-/// in the `synvoid-geoip` suite), and `GeoLocation::matches_ip` returns `false`
-/// on `None` (B-5c). The two compose to the same fail-open result as B-5a.
+/// F-2 fixed: a **permissive** geo rule with no provider is skipped, not
+/// applied. Granting "allow" to a rule nobody scoped would hand out access
+/// nobody granted, so the asymmetry is deliberate and it is pinned.
 #[test]
-fn the_answerless_provider_case_is_unreachable_from_this_crate() {
-    // The assertion is about the crate's own dependency surface, which is what
-    // makes the case unreachable. `synvoid-config` is absent, so no
-    // `GeoIpConfig` — and therefore no `GeoIpManager` — can be built here.
-    //
-    // This stays true after Phase 135 removes the `synvoid-geoip` edge: the
-    // provider is then a DNS-owned trait object, which is even more obviously
-    // not constructible from configuration here.
-    let manifest = include_str!("../Cargo.toml");
-    assert!(
-        !manifest.contains("synvoid-config"),
-        "synvoid-dns must not depend on synvoid-config; if this ever changes, \
-         the answerless-provider case becomes testable here and B-5a should be \
-         extended to cover it directly"
+fn a_geo_allow_rule_without_a_provider_is_skipped_not_applied() {
+    let mut firewall = DnsFirewall::new();
+    firewall
+        .add_rule(rule(
+            "geo-allow",
+            DnsFirewallRuleType::GeoLocation,
+            "RU",
+            DnsFirewallAction::Allow,
+        ))
+        .expect("rule accepted");
+
+    let query = example_query();
+    let decision = firewall
+        .evaluate_query(&parse(&query), client_ip(), "example.com")
+        .expect("evaluation succeeds");
+
+    assert_eq!(
+        decision.action,
+        DnsFirewallAction::Allow,
+        "the default is also allow, but for a different reason"
+    );
+    assert_eq!(
+        decision.rule_id, "default",
+        "an unevaluable permissive rule must not be reported as a match"
     );
 }
 
-/// B-5c: `GeoLocation::contains` returns `false` for every geo rule when no
-/// provider is present, so the caller cannot distinguish an unevaluable rule
-/// from a non-matching one.
+/// Every restrictive action fails closed and every permissive one fails open.
+/// Pinned as a matrix so adding an action forces a decision rather than
+/// inheriting a default.
 #[test]
-fn contains_is_false_for_every_geo_rule_without_a_provider() {
-    let ip = client_ip();
-
-    for target in [
-        "RU",
-        "US",
-        "US, California",
-        "US, California, Mountain View",
-        "US, CA, SF, 15169",
-    ] {
-        let geo: GeoLocation = target.parse().expect("parses");
+fn the_indeterminate_posture_is_pinned_for_every_action() {
+    let restrictive = [
+        DnsFirewallAction::Block,
+        DnsFirewallAction::Redirect {
+            target: "sink.example".to_string(),
+        },
+        DnsFirewallAction::Sinkhole,
+        DnsFirewallAction::RateLimit {
+            limit: 10,
+            window: std::time::Duration::from_secs(1),
+        },
+    ];
+    for action in restrictive {
         assert!(
-            !geo.contains(ip, None),
-            "geo rule `{target}` must not match without a provider"
+            action.fails_closed_when_indeterminate(),
+            "{action:?} is restrictive and must fail closed"
         );
-        assert!(!geo.matches_ip(ip, None), "matches_ip agrees with contains");
+    }
+
+    let permissive = [DnsFirewallAction::Allow, DnsFirewallAction::LogOnly];
+    for action in permissive {
+        assert!(
+            !action.fails_closed_when_indeterminate(),
+            "{action:?} is permissive and must fail open"
+        );
     }
 }
 
-// ---- Workstream B.4 — rule evaluation order -------------------------------
-
-/// B-4a: there is no `Health` rule type in the DNS firewall —
-/// `DnsFirewallRuleType` is Domain, IpAddress, Subnet, QueryType, Opcode,
-/// ResponseCode, GeoLocation, TimeWindow. `synvoid_dns::health` reports server
-/// state and takes no part in query evaluation. What the firewall actually
-/// has is first-match-in-insertion-order, and this pins it.
+/// A provider that exists but cannot answer is *not* a misconfiguration: the
+/// address is simply not in the location. Reporting `Unavailable` here would
+/// turn one uncovered address into a fail-closed block, which is a much larger
+/// behavioral change than F-2 asks for.
 #[test]
-fn evaluation_is_first_match_in_insertion_order() {
+fn an_answerless_provider_is_an_evaluated_no_not_an_indeterminate() {
+    let lookup = StubLookup::answerless();
+    let geo: GeoLocation = "RU".parse().expect("parses");
+
+    assert_eq!(
+        geo.matches_ip(client_ip(), Some(&lookup)),
+        GeoMatch::No,
+        "a provider that cannot answer this address is still an answer"
+    );
+
+    let mut firewall = DnsFirewall::new().with_country_lookup(lookup);
+    firewall
+        .add_rule(rule(
+            "geo-block",
+            DnsFirewallRuleType::GeoLocation,
+            "RU",
+            DnsFirewallAction::Block,
+        ))
+        .expect("rule accepted");
+
+    let query = example_query();
+    let decision = firewall
+        .evaluate_query(&parse(&query), client_ip(), "example.com")
+        .expect("evaluation succeeds");
+    assert_eq!(
+        decision.action,
+        DnsFirewallAction::Allow,
+        "with a provider attached, an unmatchable geo rule must not block"
+    );
+    assert_eq!(decision.rule_id, "default");
+}
+
+/// A geo rule the provider *can* evaluate behaves normally: a match applies the
+/// action, and a non-match falls through. This is the positive matrix Phase 133
+/// could not test in this crate (F-4) and is now directly testable.
+#[test]
+fn an_answering_provider_matches_on_country_code_case_insensitively() {
+    let lookup = StubLookup::answering("ru");
+    let geo: GeoLocation = "RU".parse().expect("parses");
+    assert_eq!(geo.matches_ip(client_ip(), Some(&lookup)), GeoMatch::Yes);
+
+    let other: GeoLocation = "US".parse().expect("parses");
+    assert_eq!(other.matches_ip(client_ip(), Some(&lookup)), GeoMatch::No);
+}
+
+/// A region- or city-scoped rule against a provider that carries no subdivision
+/// is an evaluated "no", not a misconfiguration — otherwise a GeoLite2-Country
+/// database would fail-closed block everything.
+#[test]
+fn a_region_scoped_rule_needs_the_provider_to_carry_the_region() {
+    let bare = StubLookup::answering("RU");
+    let scoped: GeoLocation = "RU, Moscow".parse().expect("parses");
+    assert_eq!(scoped.matches_ip(client_ip(), Some(&bare)), GeoMatch::No);
+
+    let detailed: Arc<dyn CountryLookup> = Arc::new(StubLookup {
+        country: Some("RU"),
+        subdivision: Some("Moscow"),
+        city: None,
+        asn: None,
+    });
+    assert_eq!(
+        scoped.matches_ip(client_ip(), Some(&detailed)),
+        GeoMatch::Yes
+    );
+}
+
+/// An ASN-scoped rule needs an ASN from the provider, and the seam is
+/// `Option<u32>` — the provider's organization string never crosses
+/// (Phase 133 F-10).
+#[test]
+fn an_asn_scoped_rule_uses_the_numeric_seam() {
+    let no_asn = StubLookup::answering("RU");
+    let scoped: GeoLocation = "RU, , , 64500".parse().expect("parses");
+    assert_eq!(scoped.matches_ip(client_ip(), Some(&no_asn)), GeoMatch::No);
+
+    let with_asn: Arc<dyn CountryLookup> = Arc::new(StubLookup {
+        country: Some("RU"),
+        subdivision: None,
+        city: None,
+        asn: Some(64500),
+    });
+    assert_eq!(
+        scoped.matches_ip(client_ip(), Some(&with_asn)),
+        GeoMatch::Yes
+    );
+}
+
+// ---- rule ordering ---------------------------------------------------------
+
+/// Evaluation is first-match-in-insertion-order, and an **unevaluable** geo
+/// rule still participates in that order: being fail-closed, it wins over a
+/// later rule rather than being skipped.
+#[test]
+fn a_fail_closed_geo_rule_precedes_a_later_matching_rule() {
     let mut firewall = DnsFirewall::new();
-    // Geo rule first: it cannot be evaluated, so the later domain rule wins.
     firewall
         .add_rule(rule(
             "geo-block",
@@ -187,34 +348,30 @@ fn evaluation_is_first_match_in_insertion_order() {
     let decision = firewall
         .evaluate_query(&parse(&query), client_ip(), "example.com")
         .expect("evaluation succeeds");
-
     assert_eq!(
-        decision.rule_id, "domain-block",
-        "an unevaluable rule is skipped, not treated as a match"
+        decision.rule_id, "geo-block",
+        "the first rule wins even when it is unevaluable and fail-closed"
     );
-    assert_eq!(decision.action, DnsFirewallAction::Block);
 }
 
-/// B-4b: order is the only thing that decides, so the same two rules in the
-/// opposite order give the opposite outcome. This is what makes the B-5a
-/// fail-open reachable in production: a geo rule placed *after* a matching
-/// allow rule never runs, and a geo rule placed first is silently skipped.
+/// An unevaluable **permissive** geo rule is skipped, so a later matching rule
+/// is reached. The other half of the ordering guarantee.
 #[test]
-fn rule_order_is_the_only_tiebreak() {
+fn an_unevaluable_permissive_geo_rule_is_skipped_by_evaluation() {
     let mut firewall = DnsFirewall::new();
     firewall
         .add_rule(rule(
-            "domain-allow",
-            DnsFirewallRuleType::Domain,
-            "example.com",
+            "geo-allow",
+            DnsFirewallRuleType::GeoLocation,
+            "RU",
             DnsFirewallAction::Allow,
         ))
         .expect("rule accepted");
     firewall
         .add_rule(rule(
-            "geo-block",
-            DnsFirewallRuleType::GeoLocation,
-            "RU",
+            "domain-block",
+            DnsFirewallRuleType::Domain,
+            "example.com",
             DnsFirewallAction::Block,
         ))
         .expect("rule accepted");
@@ -223,16 +380,17 @@ fn rule_order_is_the_only_tiebreak() {
     let decision = firewall
         .evaluate_query(&parse(&query), client_ip(), "example.com")
         .expect("evaluation succeeds");
-
-    assert_eq!(decision.rule_id, "domain-allow");
-    assert_eq!(decision.action, DnsFirewallAction::Allow);
+    assert_eq!(
+        decision.rule_id, "domain-block",
+        "a permissive rule that cannot be evaluated must not shadow a later rule"
+    );
 }
 
-/// B-4c: a *disabled* geo rule is skipped, which is the only supported way to
-/// park a geo control that cannot currently be evaluated. Recorded because it
-/// is the operator's only recourse given B-5a.
+/// A *disabled* geo rule is skipped entirely, which remains the operator's
+/// explicit way to park a geo control that cannot be evaluated. Recorded
+/// because it is now the deliberate alternative to a fail-closed block.
 #[test]
-fn a_disabled_geo_rule_is_skipped() {
+fn a_disabled_geo_rule_is_skipped_entirely() {
     let mut disabled = rule(
         "geo-block",
         DnsFirewallRuleType::GeoLocation,
@@ -257,14 +415,13 @@ fn a_disabled_geo_rule_is_skipped() {
         .evaluate_query(&parse(&query), client_ip(), "example.com")
         .expect("evaluation succeeds");
     assert_eq!(decision.rule_id, "domain-block");
+    assert_eq!(decision.action, DnsFirewallAction::Block);
 }
 
-// ---- Workstream B.6 — `GeoLocation` shape ---------------------------------
+// ---- `GeoLocation` shape ---------------------------------------------------
 
-/// B-6a: `GeoLocation` is DNS-owned and holds only primitives — `String`,
-/// `Option<String>`, `Option<u32>`. No `synvoid-geoip` type appears in it, so
-/// the *rule* half of the seam is already inversion-ready; only the parameter
-/// of `contains` still names the provider.
+/// `GeoLocation` is DNS-owned and holds only primitives — `String`,
+/// `Option<String>`, `Option<u32>`. No provider type appears in it.
 #[test]
 fn geo_location_is_dns_owned_and_holds_only_primitives() {
     let geo: GeoLocation = "US, California, Mountain View, 15169"
@@ -275,7 +432,6 @@ fn geo_location_is_dns_owned_and_holds_only_primitives() {
     assert_eq!(geo.city.as_deref(), Some("Mountain View"));
     assert_eq!(geo.asn, Some(15169));
 
-    // Bare country, and country + region.
     let bare: GeoLocation = "DE".parse().expect("parses");
     assert_eq!(bare.country, "DE");
     assert!(bare.region.is_none());
@@ -283,75 +439,56 @@ fn geo_location_is_dns_owned_and_holds_only_primitives() {
     assert!(bare.asn.is_none());
 }
 
-/// B-6b: the seam is exactly two provider methods. `GeoLocation::matches_ip`
-/// calls `get_country_info` and `get_asn_info`; nothing else in the firewall
-/// touches the provider. Pinned at the source level because a *third* call
-/// would silently widen the Phase 135 trait surface.
+/// Phase 133 F-3: `GeoLocation::from_str` cannot fail, so a misspelled target
+/// becomes a country code that matches nothing, and an unparseable ASN is
+/// silently dropped. A typo still degrades a security rule into a rule that
+/// matches nothing — but it no longer degrades into a rule that silently allows
+/// everything, because the rule is now evaluated against a real provider.
 #[test]
-fn the_firewall_calls_exactly_two_provider_methods() {
-    let src = include_str!("../src/firewall.rs");
-
-    let provider_calls: Vec<&str> = src
-        .lines()
-        .flat_map(|line| {
-            let mut found = Vec::new();
-            for method in ["get_country_info", "get_asn_info"] {
-                if line.contains(&format!(".{method}(")) {
-                    found.push(method);
-                }
-            }
-            found
-        })
-        .collect();
-    assert_eq!(
-        provider_calls,
-        vec!["get_country_info", "get_asn_info"],
-        "the DNS firewall's entire provider surface"
-    );
-
-    // No other `synvoid_geoip` symbol is reachable from the firewall beyond the
-    // manager type in the `Option<...>` parameter.
-    for symbol in [
-        "lookup_country",
-        "lookup_asn",
-        "get_continent_code",
-        "check_ip",
-        "status()",
-        "AsnInfo",
-        "CountryInfo",
-        "GeoIpResult",
-    ] {
-        assert!(
-            !src.contains(symbol),
-            "firewall.rs must not reach `{symbol}`: it would widen the seam"
-        );
-    }
-}
-
-/// B-6c (F-3): `GeoLocation::from_str` cannot fail. `"".split(',')` always
-/// yields at least one element, so the `parts.is_empty()` guard is
-/// unreachable, and a misspelled target becomes a country code that matches
-/// nothing. The `if let Ok(geo)` guard in `rule_matches` is therefore dead
-/// defensive code, and a typo degrades a security rule into a no-op with no
-/// diagnostic.
-#[test]
-fn geo_location_parsing_cannot_fail_and_typos_never_match() {
+fn geo_location_parsing_cannot_fail_and_typos_still_never_match() {
     assert!("".parse::<GeoLocation>().is_ok(), "empty target parses");
     assert!(
         "  ,  ,  , notanumber".parse::<GeoLocation>().is_ok(),
         "garbage target parses"
     );
 
+    let lookup = StubLookup::answering("RU");
     let typo: GeoLocation = "RUUU".parse().expect("parses");
-    assert_eq!(typo.country, "RUUU");
-    assert!(
-        !typo.contains(client_ip(), None),
-        "and never matches, with no error surfaced"
+    assert_eq!(
+        typo.matches_ip(client_ip(), Some(&lookup)),
+        GeoMatch::No,
+        "a typo must never match a real country code"
     );
 
-    let bad_asn: GeoLocation = "US, CA, SF, notanumber".parse().expect("parses");
+    let bad_asn: GeoLocation = "RU, , , notanumber".parse().expect("parses");
     assert_eq!(
         bad_asn.asn, None,
         "an unparseable ASN is silently dropped rather than rejected"
     );
+}
+
+/// Phase 135 F-16: the ASN lives at index 3, so a country+ASN rule must spell
+/// out indices 1 and 2. Those placeholders used to become `Some("")` and then
+/// fail the region and city comparisons, which made an ASN-scoped rule
+/// unmatchable however it was written. An empty field is now a placeholder, not
+/// a value.
+#[test]
+fn an_empty_field_is_a_placeholder_rather_than_an_empty_value() {
+    let asn_only: GeoLocation = "RU, , , 64500".parse().expect("parses");
+    assert_eq!(asn_only.country, "RU");
+    assert_eq!(
+        asn_only.region, None,
+        "a placeholder must not become an empty region to match against"
+    );
+    assert_eq!(asn_only.city, None);
+    assert_eq!(asn_only.asn, Some(64500));
+}
+
+/// `contains` is the convenience wrapper and must not resurrect the F-2 defect
+/// by collapsing `Unavailable` into a match.
+#[test]
+fn contains_is_false_when_unavailable_but_matches_ip_reports_why() {
+    let geo: GeoLocation = "RU".parse().expect("parses");
+    assert!(!geo.contains(client_ip(), None));
+    assert_eq!(geo.matches_ip(client_ip(), None), GeoMatch::Unavailable);
 }

@@ -1,4 +1,5 @@
 use super::*;
+use crate::geo::CountryLookup;
 use crate::runtime_config::ZoneSpec;
 
 #[cfg(feature = "mesh")]
@@ -455,8 +456,9 @@ impl DnsServer {
         self
     }
 
-    pub fn with_geoip(mut self, geoip: Arc<synvoid_geoip::GeoIpManager>) -> Self {
-        self.geoip_lookup = Some(geoip);
+    /// Attach the DNS-owned country-lookup capability.
+    pub fn with_country_lookup(mut self, lookup: Arc<dyn CountryLookup>) -> Self {
+        self.geoip_lookup = Some(lookup);
         self
     }
 

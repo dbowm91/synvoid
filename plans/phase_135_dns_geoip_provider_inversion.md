@@ -1,7 +1,30 @@
 # Phase 135 Plan: GeoIP Provider Inversion
 
-Status: **PLANNED** (2026-10-05). Phase 133 returned **GO** — see
-`architecture/dns_provider_inversion_phase133_closeout.md`.
+Status: **CLOSED QUALIFIED** (2026-10-05). Phase 133 returned **GO** — see
+`architecture/dns_provider_inversion_phase133_closeout.md`. Closeout:
+`architecture/dns_provider_inversion_phase135_closeout.md`.
+
+Outcome: both mandatory workstreams done and the `synvoid-geoip` edge removed.
+Direct SynVoid normal edges 3 → **2** (`synvoid-dnssec-keystore` plus optional
+`synvoid-mesh`) — the campaign target. Expanded normal-tree lines 717 → **552**.
+
+Two changes beyond inversion, both recorded behavior changes:
+
+- **F-1 fixed**: `GeoIpManager::new` no longer panics on
+  `[geoip] enabled = true` with no download credentials.
+- **F-2 fixed**: a `GeoLocation` rule that cannot be evaluated now applies its
+  action when that action is restrictive, instead of silently allowing traffic.
+
+Two findings were discovered while doing the work:
+
+- **F-16**: an ASN-scoped `GeoLocation` rule was unmatchable, because the empty
+  placeholder fields the 4-part format requires became `Some("")` and then failed
+  the region and city comparisons. Fixed.
+- **F-17**: **no composition path constructs a `GeoIpManager`.** `[geoip]` is a
+  documented section that nothing wires, so a configured restrictive geo rule
+  will now block all traffic rather than silently allow it. Wiring GeoIP is
+  deliberately left to its own phase, and a tripwire guard fails the moment a
+  root file constructs one.
 
 Campaign: `plans/dns_startup_truthfulness_and_provider_inversion_roadmap.md`.
 Predecessor: Phase 134.

@@ -33,13 +33,27 @@ synvoid-dns
   -> synvoid-mesh (optional)   # provider inversion deferred by design
 ```
 
-with `synvoid-tls` and `synvoid-geoip` present only as transitive providers
-behind DNS-owned traits. State the full trajectory: 7 / 838 (Phase 123) → 4 /
-827 (Phase 130) → measured here.
+**Stronger than the original target, and the plan's expectation is corrected
+accordingly.** The plan assumed `synvoid-tls` and `synvoid-geoip` would survive
+as transitive providers behind DNS-owned traits. They did not: neither appears
+anywhere in `synvoid-dns`'s normal closure, which is why the expanded tree fell
+far further than two edge removals would suggest.
 
-`synvoid-config` will still appear in the expanded tree through
-`synvoid-tls` and `synvoid-geoip`; that is expected and must be described
-precisely rather than described as "absent".
+Trajectory, to be measured here rather than carried forward:
+
+| Point | Direct SynVoid normal edges | Expanded `cargo tree -e normal` lines |
+|---|---|---|
+| Phase 123 baseline | 7 | 838 |
+| Phase 130 | 4 | 827 |
+| Phase 133 (evidence gate) | 4 | 827 |
+| Phase 134 (TLS inverted) | 3 | 717 |
+| Phase 135 (GeoIP inverted) | **2** | **552** |
+
+Measure whether `synvoid-config` still appears in the expanded tree at all. With
+both providers gone from the closure it may not, and the honest statement is
+whichever the measurement shows: "absent" and "present only transitively" are
+different claims, and the Phase 130 record made the second while this plan
+expected it to remain true.
 
 ## Workstream B — parity
 
@@ -72,7 +86,7 @@ cargo check --no-default-features --features mesh,dns --profile ci
 cargo deny check
 cargo audit
 cargo xtask verify
-cargo xtask verify-release
+cargo xtask verify-release   # only after the tree is committed: it fails on a dirty tree
 ./scripts/dns/conformance.sh
 ```
 
@@ -103,6 +117,24 @@ Re-run the Phase 131 repeated-run determinism matrix.
 `architecture/dns_deep_dive.md` and `architecture/dns_zone_lifecycle.md` are
 checked and changed only if the measured state requires it.
 
+## Workstream D2 — the two behavior changes must be stated, not buried
+
+Phase 135 changed runtime behavior twice, and both are operator-visible:
+
+1. **F-1**: `GeoIpManager::new` no longer panics on `[geoip] enabled = true` with
+   no download credentials.
+2. **F-2**: a `GeoLocation` rule that cannot be evaluated now applies its action
+   when that action is restrictive. Previously every geo rule silently became a
+   no-op.
+
+The campaign closeout must state the second prominently, because of F-17:
+**`[geoip]` is constructed nowhere in composition**, so a configured restrictive
+geo rule now blocks *all* DNS traffic rather than silently allowing it. That is
+the correct fail-closed direction and it is loud, but it is a visible change for
+an operator who has such a rule configured. The operator recourse is to disable
+the rule. This belongs in the campaign closeout summary, not only in the Phase
+135 closeout detail.
+
 ## Workstream E — class / support decision
 
 `synvoid-dns` remains **class 1** unless this campaign satisfies the standalone
@@ -123,7 +155,9 @@ only. It is not promotion, and this plan says so explicitly.
 - full qualification matrix green, or residuals recorded with reasons;
 - documentation matches the measured graph;
 - class/support status is not overstated;
-- the campaign closeout lists every carried-forward finding and its resolution.
+- the campaign closeout lists every carried-forward finding and its resolution;
+- both Phase 135 behavior changes are stated in the campaign closeout, and the
+  F-17 consequence of F-2 is stated with it.
 
 ## Rejection criteria
 

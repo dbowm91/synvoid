@@ -60,19 +60,20 @@ impl MeshDnsRegistry {
         self
     }
 
-    pub fn with_geoip(mut self, geoip: Arc<synvoid_geoip::GeoIpManager>) -> Self {
-        self.geoip = Some(geoip);
+    /// Attach the DNS-owned country-lookup capability used for edge steering.
+    pub fn with_country_lookup(mut self, lookup: Arc<dyn CountryLookup>) -> Self {
+        self.geoip = Some(lookup);
         self
     }
 
     pub(crate) fn derive_geo_from_ips(&self, ips: &[String]) -> Option<String> {
-        let Some(geoip) = self.geoip.as_ref() else {
+        let Some(lookup) = self.geoip.as_ref() else {
             return Some("Unknown".to_string());
         };
 
         for ip_str in ips {
             if let Ok(ip) = ip_str.parse::<std::net::IpAddr>() {
-                if let Some(country_info) = geoip.get_country_info(ip) {
+                if let Some(country_info) = lookup.country_info(ip) {
                     return Some(country_info.code);
                 }
             }

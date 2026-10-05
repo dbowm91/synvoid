@@ -310,35 +310,88 @@ fn the_asn_seam_only_needs_the_asn_number() {
     let _ = std::fs::remove_file(&pki);
 }
 
-// ---- Finding F-1: provider construction is not total -----------------------
+// ---- Finding F-1: provider construction is total ---------------------------
 
-/// F-1: `GeoIpUpdater::new` dereferences `DownloadSource::from_config(config)`
-/// with `.unwrap()`, and that function returns `None` unless `update_url` or
-/// (`account_id` **and** `license_key`) is set. So `[geoip] enabled = true`
-/// with no download credentials aborts the process during provider
-/// construction — even with `update_enabled = false`, and even though a
-/// `None` source already means "there is nothing to download".
+/// F-1 (fixed in Phase 135): `GeoIpUpdater::new` used to `.unwrap()` the
+/// `DownloadSource::from_config(config)` result, which is `None` unless
+/// `update_url` or (`account_id` **and** `license_key`) is set. So
+/// `[geoip] enabled = true` with no download credentials aborted the process
+/// during provider construction — even with `update_enabled = false`.
 ///
-/// This pins the current behavior so the defect cannot be lost, and so
-/// Phase 135 fixes it against a test that fails loudly if it regresses to a
-/// different failure mode. The fix belongs to Phase 135, which owns GeoIP
-/// provider construction; Phase 133 changes no production behavior.
-///
-/// The panic message is asserted rather than ignored so that a future fix
-/// turns this test into a loud, deliberate signal (`FAILED`/`should_panic`
-/// mismatch) instead of a silent pass.
+/// This test was originally a `#[should_panic]` pin of that crash, written so
+/// the fix would fail loudly rather than pass silently. It is now inverted: it
+/// asserts the provider is **constructed** and that it simply has no download
+/// editions, because a `None` source means there is nothing to download.
 #[test]
-#[should_panic(expected = "called `Option::unwrap()` on a `None` value")]
-fn enabled_config_without_download_credentials_panics_during_construction() {
+fn enabled_config_without_download_credentials_constructs_a_provider() {
     let config = GeoIpConfig {
         enabled: true,
         database_path: None,
         update_enabled: false,
-        // Default `edition_ids` is non-empty, which is what enters the
-        // panicking `filter_map`.
+        // Default `edition_ids` is non-empty, which is what used to enter the
+        // panicking branch.
         ..Default::default()
     };
-    let _ = GeoIpManager::new(config, &[], None);
+    assert!(
+        !config.edition_ids.is_empty(),
+        "precondition: editions are configured but there is no source"
+    );
+
+    let manager = GeoIpManager::new(config, &[], None)
+        .expect("an enabled GeoIP config must always yield a provider");
+
+    assert!(manager.status().enabled);
+    assert!(!manager.status().database_loaded);
+    assert!(
+        manager.updater().editions().is_empty(),
+        "with no download source there is no URL to build, so there are no editions"
+    );
+    assert!(
+        manager.updater().source().is_none(),
+        "and the absence of a source is reported, not hidden"
+    );
+}
+
+/// F-1 regression guard: the same holds when auto-update is explicitly
+/// requested, which is the combination most likely to be assumed safe. A
+/// provider with no source and no editions must still construct.
+#[test]
+fn enabled_config_requesting_auto_update_without_credentials_also_constructs() {
+    let config = GeoIpConfig {
+        enabled: true,
+        database_path: None,
+        update_enabled: true,
+        ..Default::default()
+    };
+    let manager = GeoIpManager::new(config, &[], None)
+        .expect("construction must be total regardless of update_enabled");
+    assert!(manager.updater().editions().is_empty());
+}
+
+/// F-1 does not regress the case that *does* have a source: a presigned URL
+/// must still produce one edition per configured edition id.
+#[test]
+fn a_configured_download_source_still_builds_editions() {
+    let config = GeoIpConfig {
+        enabled: true,
+        database_path: None,
+        update_enabled: true,
+        update_url: Some("https://example.test/geoip".to_string()),
+        edition_ids: vec!["GeoLite2-City".to_string()],
+        ..Default::default()
+    };
+    let manager = GeoIpManager::new(config, &[], None).expect("a source yields a provider");
+
+    let editions = manager.updater().editions();
+    assert_eq!(editions.len(), 1, "one edition per configured id");
+    assert_eq!(editions[0].edition_id, "GeoLite2-City");
+    assert!(
+        editions[0]
+            .download_url
+            .starts_with("https://example.test/geoip"),
+        "the configured source must be the base of the built URL, got: {}",
+        editions[0].download_url
+    );
 }
 
 // ---- Workstream B.3 — privacy / logging -------------------------------------

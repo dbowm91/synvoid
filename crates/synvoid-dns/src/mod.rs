@@ -26,6 +26,7 @@ pub mod doq;
 pub mod dot;
 pub mod edns;
 pub mod firewall;
+pub mod geo;
 pub mod hsm;
 pub mod limits;
 pub mod messages;
@@ -80,8 +81,9 @@ pub use doq::DoqServer;
 pub use dot::DotServer;
 pub use firewall::{
     DnsFirewall, DnsFirewallAction, DnsFirewallDecision, DnsFirewallRule, DnsFirewallRuleType,
-    DnsFirewallStats,
+    DnsFirewallStats, GeoMatch, RuleEvaluation, RuleIndeterminate,
 };
+pub use geo::{CountryInfo, CountryLookup};
 #[cfg(feature = "hsm")]
 pub use hsm::Pkcs11Hsm;
 pub use hsm::{HsmBackend, HsmError, HsmManager, HsmSigner, SoftHsm};

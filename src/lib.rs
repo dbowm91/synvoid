@@ -46,6 +46,10 @@ pub mod admin;
 pub mod commands;
 pub mod common;
 pub mod drain;
+// Composition for the DNS country-lookup capability (Phase 135). The
+// `synvoid-geoip` provider is adapted to the DNS-owned `CountryLookup` here;
+// DNS itself depends only on the capability.
+pub mod geo;
 pub mod http;
 pub mod log_controller;
 pub mod platform;

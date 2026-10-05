@@ -1585,3 +1585,65 @@ It now anchors on `DnsServer::new(` and scans forward for the moved
 `runtime_cfg`. Recorded because the failure mode is a false positive, and the
 wrong response to a false positive is to weaken the real assertion rather than
 the brittle anchor.
+
+## Phase 135 findings — GeoIP provider inversion
+
+Closeout: `architecture/dns_provider_inversion_phase135_closeout.md`. Two
+behavior changes and two new findings; the field-ownership ledger is unchanged.
+
+| Measure | Phase 123 | Phase 133 | Phase 134 | Phase 135 |
+|---|---|---|---|---|
+| Direct SynVoid normal edges | 7 | 4 | 3 | **2** |
+| Expanded `cargo tree -e normal` lines | 838 | 827 | 717 | **552** |
+
+### F-1 (fixed): `GeoIpManager::new` aborted the process on a config-reachable input
+
+`GeoIpUpdater::new` evaluated `source.as_ref().unwrap()`, and
+`DownloadSource::from_config` returns `None` unless `update_url` or
+(`account_id` **and** `license_key`) is set. `[geoip] enabled = true` with no
+download credentials therefore killed the process, even with
+`update_enabled = false`.
+
+Fixed by yielding an empty edition list — a `None` source means there is nothing
+to download — and logging at debug level when editions were configured without a
+source. The Phase 133 `should_panic` pin was **inverted, not deleted**, so the
+regression stays pinned and the fix could not be a blanket "never build editions".
+
+### F-2 (fixed): a geo rule that cannot be evaluated silently allowed traffic
+
+`GeoLocation::matches_ip` returned `bool`, so "no provider" was indistinguishable
+from "provider says no". A `GeoLocation` **block** rule therefore did not match,
+evaluation fell through to the default `Allow`, and the decision did not name the
+skipped rule: an operator with a country block and no GeoIP database got no error,
+no log line, and no blocked traffic.
+
+Fixed with a tri-state condition and an asymmetric posture — restrictive actions
+fail closed, permissive actions fail open — plus a decision reason and a
+once-per-firewall warning. Pinned as a full action matrix so a new action forces a
+decision.
+
+### F-16 (fixed): an ASN-scoped geo rule was unmatchable
+
+The comma format puts the ASN at index 3, so a country+ASN rule must spell out
+indices 1 and 2. Those placeholders became `Some("")` and then failed the region
+and city comparisons against a provider that has neither, so such a rule could
+never match however it was written. An empty field is now a placeholder rather
+than a value — which is also what makes the deliberately-narrow `asn() ->
+Option<u32>` seam reachable at all.
+
+### F-17 (recorded, not fixed): `[geoip]` is unwired in composition
+
+No root path constructs a `GeoIpManager`. Every `geoip:` field is `None`, and
+nothing ever called `with_geoip` on the DNS server or the mesh registry. So the
+`GeoLocation` rule type exists, parses, and could never match, and the WAF's
+`GeoipManager` and `AsnTracker` are permanently absent.
+
+Consequence of F-2, stated plainly: a configured **restrictive** `GeoLocation`
+rule now blocks **all** DNS traffic rather than silently allowing it. That is the
+correct direction and it is now loud, but it is a visible change for an operator
+who has such a rule today. The operator recourse is to disable the rule.
+
+Wiring GeoIP is deliberately deferred: it activates country classification in
+production for the first time, which is a feature change needing its own phase and
+evidence. `geoip_provider_is_still_unwired_by_composition` is a tripwire that fails
+when a root file constructs a provider, so this state cannot change silently.

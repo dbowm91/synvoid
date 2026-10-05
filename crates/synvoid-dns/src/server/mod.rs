@@ -19,6 +19,7 @@ use super::edns::{parse_edns_options, EdnsOptions};
 use super::query_validator::DnsQueryValidator;
 use super::store::ZoneStore;
 use super::wire;
+use crate::geo::CountryLookup;
 use crate::secure_transport::{AcmeTxtChallenges, SecureTransportConfig};
 use crate::time::unix_timestamp_secs;
 
@@ -1600,7 +1601,7 @@ struct DnsHandlerState {
 pub struct QueryContext<'a> {
     pub zones: &'a Arc<ShardedZoneStore>,
     pub zone_trie: &'a Arc<RwLock<super::zone_trie::ZoneTrie>>,
-    pub geoip_lookup: Option<&'a Arc<synvoid_geoip::GeoIpManager>>,
+    pub geoip_lookup: Option<&'a Arc<dyn CountryLookup>>,
     pub min_geo_ttl: u32,
     pub negative_cache_ttl: u32,
     pub cache: Option<&'a Arc<DnsCache>>,
@@ -1642,7 +1643,7 @@ pub struct DnsServer {
     query_validator: Option<DnsQueryValidator>,
     firewall: Option<Arc<RwLock<super::firewall::DnsFirewall>>>,
     connection_limits: Arc<super::limits::ConnectionLimits>,
-    geoip_lookup: Option<Arc<synvoid_geoip::GeoIpManager>>,
+    geoip_lookup: Option<Arc<dyn CountryLookup>>,
     shutdown_tx: Option<oneshot::Sender<()>>,
     shutdown_watcher_tx: Option<tokio::sync::watch::Sender<bool>>,
     cache: Option<Arc<DnsCache>>,
