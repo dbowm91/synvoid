@@ -1,6 +1,16 @@
 # Phase 129 Plan: DNS Core and Utils Neutralization
 
-Status: **PLANNED / READY AFTER PHASE 128** (2026-10-04).
+Status: **CLOSED QUALIFIED** (2026-10-04). Closeout:
+`architecture/dns_runtime_dto_phase129_closeout.md`. Phase 130 is unblocked.
+
+The `synvoid-core` and `synvoid-utils` normal edges are gone: 4 direct SynVoid
+normal edges (was 6), 827 expanded `cargo tree -e normal` lines (was 846) —
+the plan's target provider set of `synvoid-tls`, `synvoid-geoip`,
+`synvoid-dnssec-keystore`, plus optional `synvoid-mesh`. Time,
+restricted-IP, prefix-mask, and connection-lifecycle helpers are DNS-owned in
+`crates/synvoid-dns/src/{time,net_policy,lifecycle}.rs`, with differential
+tests pinning behavior. The optional mesh feature does not reintroduce the
+utils edge.
 
 Registered in: `plans/roadmap.md` and
 `plans/dns_runtime_dto_conversion_roadmap.md`.

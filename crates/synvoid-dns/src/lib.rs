@@ -15,6 +15,18 @@ mod dns;
 
 pub use dns::*;
 
+/// DNS-owned restricted-IP policy (Phase 129 Workstream B).
+///
+/// Replaces `synvoid_core::net::is_restricted_ip()`. This is a security
+/// boundary: see the module docs before changing any range.
+pub mod net_policy;
+
+/// DNS-owned Unix time helpers (Phase 129 Workstream A).
+pub mod time;
+
+/// DNS-owned connection lifecycle state (Phase 129 Workstream D).
+pub mod lifecycle;
+
 pub mod health;
 
 #[cfg(feature = "mesh")]

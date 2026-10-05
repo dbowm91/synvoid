@@ -14,7 +14,7 @@ impl RebindingChecker {
     }
 
     pub fn is_private_ip(&self, ip: &IpAddr) -> bool {
-        synvoid_core::net::is_restricted_ip(ip)
+        crate::net_policy::is_restricted_ip(ip)
     }
 
     pub fn check(&self, qname: &str, ttl: u32) -> Result<(), String> {

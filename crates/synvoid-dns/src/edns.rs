@@ -481,7 +481,7 @@ pub fn filter_ecs(edns: &mut EdnsOptions, config: &EcsFilterConfig) {
     }
 
     if let Some(ref mut subnet) = edns.client_subnet {
-        let is_private = synvoid_core::net::is_restricted_ip(&subnet.address);
+        let is_private = crate::net_policy::is_restricted_ip(&subnet.address);
 
         if is_private && !config.allow_private_prefix {
             edns.client_subnet = None;
@@ -498,7 +498,7 @@ pub fn filter_ecs(edns: &mut EdnsOptions, config: &EcsFilterConfig) {
             match subnet.address {
                 IpAddr::V4(ref mut ip) => {
                     let ip_val = u32::from_be_bytes(ip.octets());
-                    let mask = synvoid_core::net::ipv4_prefix_mask(new_prefix);
+                    let mask = crate::runtime_config::dns_ipv4_prefix_mask(new_prefix);
                     let masked = ip_val & mask;
                     *ip = std::net::Ipv4Addr::from(masked);
                 }

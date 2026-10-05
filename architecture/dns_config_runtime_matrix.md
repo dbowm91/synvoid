@@ -1268,3 +1268,47 @@ Same `tsig_keys: _` destructuring, but wired: `src/server/resources.rs` reads
 `runtime_cfg.tsig_keys` before constructing the server and feeds them to
 `TsigVerifier` for zone transfers. Recorded so F-6 and F-7 are not confused —
 one is a dead path, the other is a deliberate one.
+
+---
+
+## Phase 129 findings
+
+Added by `architecture/dns_runtime_dto_phase129_closeout.md`, which is where
+each finding is written up in full.
+
+### F-8: `dns_ipv4_prefix_mask` diverged from the helper it replaces
+
+The Phase 125/126 helper returned `0` for IPv4 prefixes above `/32`, while
+`synvoid_core::net::ipv4_prefix_mask()` returns `u32::MAX`. The divergence
+would have masked a client subnet to `0.0.0.0` rather than leaving it intact.
+
+The only call site (`edns.rs` ECS truncation) cannot reach an out-of-range
+length — it is guarded by `new_prefix < subnet.prefix_len`, and `prefix_len` is
+at most 32 for IPv4 — so the divergence was unreachable, and the original test
+*asserted* the wrong value. Corrected in Phase 129 to exact parity
+(`0 => 0`, `1..=32 => u32::MAX << (32 - prefix)`, `_ => u32::MAX`) and the test
+now covers `/0`, `/1`, `/8`, `/24`, `/31`, `/32`, `/33`, `/64`, `/255`.
+
+Recorded because the same class of error is easy to reintroduce: a
+"reasonable-looking" replacement helper that is subtly different at the
+boundary is worse than no replacement at all.
+
+### F-9: the two predecessor time helpers differed only in logging
+
+`synvoid_core::time::current_timestamp_secs()` logs a warning on a pre-epoch
+clock; `synvoid_utils::safe_unix_timestamp()` does not. Both return `0`. The
+DNS helper `time::unix_timestamp_secs()` does not log.
+
+No DNS code path branches on the warning, so this is not a behavior change —
+recorded because "identical behavior" would otherwise be read as
+byte-identical.
+
+### F-10: `synvoid_utils::current_timestamp` is a plain alias for `safe_unix_timestamp`
+
+```rust
+pub fn current_timestamp() -> u64 { safe_unix_timestamp() }
+```
+
+So the eight mesh-gated files were already on identical semantics despite
+using two different names. Both map to `unix_timestamp_secs()` with no
+per-site judgment.

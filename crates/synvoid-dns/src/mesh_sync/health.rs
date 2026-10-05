@@ -1,6 +1,6 @@
 use super::*;
+use crate::time::unix_timestamp_secs;
 use metrics::gauge;
-use synvoid_utils::current_timestamp;
 
 impl MeshDnsRegistry {
     pub async fn update_anycast_health(
@@ -19,7 +19,7 @@ impl MeshDnsRegistry {
                 node.healthy = update.healthy;
                 node.latency_ms = update.latency_ms;
                 node.load_percent = update.load_percent;
-                node.last_update = current_timestamp();
+                node.last_update = unix_timestamp_secs();
 
                 if let Some(latency) = update.latency_ms {
                     gauge!("dns_anycast_node_latency_ms").set(latency as f64);
@@ -222,7 +222,7 @@ impl MeshDnsRegistry {
             score -= (load as f64) * 0.5;
         }
 
-        let now = current_timestamp();
+        let now = unix_timestamp_secs();
         if node.last_update > 0 && now > node.last_update {
             let age_secs = now - node.last_update;
             if age_secs > 300 {
@@ -247,7 +247,7 @@ impl MeshDnsRegistry {
             node.healthy = update.healthy;
             node.latency_ms = update.latency_ms;
             node.load_percent = update.load_percent;
-            node.last_update = current_timestamp();
+            node.last_update = unix_timestamp_secs();
         }
 
         Ok(())
@@ -257,7 +257,7 @@ impl MeshDnsRegistry {
         let mut edges = self.edge_nodes.write();
 
         if let Some(edge) = edges.get_mut(&report.edge_node_id) {
-            edge.last_update = current_timestamp();
+            edge.last_update = unix_timestamp_secs();
 
             if report.healthy {
                 edge.consecutive_failures = 0;
@@ -293,7 +293,7 @@ impl MeshDnsRegistry {
             }
         }
 
-        let now = current_timestamp();
+        let now = unix_timestamp_secs();
 
         if shutdown.graceful {
             let lead_time = self.config.graceful_shutdown_lead_time_secs;

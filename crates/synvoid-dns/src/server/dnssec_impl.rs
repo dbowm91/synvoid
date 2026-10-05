@@ -1,5 +1,5 @@
 use super::*;
-use synvoid_core::time::current_timestamp_secs;
+use crate::time::unix_timestamp_secs;
 
 impl DnsServer {
     pub fn initialize_dnssec(&self) -> Result<(), String> {
@@ -560,7 +560,7 @@ impl DnsServer {
             }
         };
 
-        let now = current_timestamp_secs();
+        let now = unix_timestamp_secs();
         let sig_expire = now + (7 * 86400);
         let sig_inception = now - 86400;
 

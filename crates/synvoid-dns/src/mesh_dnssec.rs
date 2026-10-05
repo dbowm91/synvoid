@@ -1,3 +1,4 @@
+use crate::time::unix_timestamp_secs;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -214,7 +215,7 @@ impl MeshDnsSecValidator {
             });
         }
 
-        let now = synvoid_utils::safe_unix_timestamp();
+        let now = unix_timestamp_secs();
 
         MeshTrustAnchor {
             zone_name,

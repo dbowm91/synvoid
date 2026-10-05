@@ -19,7 +19,7 @@ use super::edns::{parse_edns_options, EdnsOptions};
 use super::query_validator::DnsQueryValidator;
 use super::store::ZoneStore;
 use super::wire;
-use synvoid_core::time::current_timestamp_secs;
+use crate::time::unix_timestamp_secs;
 use synvoid_tls::cert_resolver::CertResolver;
 
 pub use hickory_proto::rr::RecordType;
@@ -542,7 +542,7 @@ impl Zone {
         let history_entry = ZoneHistory {
             serial: old_serial,
             records: self.records.clone(),
-            timestamp: synvoid_core::time::current_timestamp_secs(),
+            timestamp: unix_timestamp_secs(),
         };
 
         if self.history.len() >= max_history {
@@ -554,7 +554,7 @@ impl Zone {
     fn increment_serial_rfc1982(current: u32) -> u32 {
         const HALF_RANGE: u32 = 0x80000000;
 
-        let now = synvoid_core::time::current_timestamp_secs() as u32;
+        let now = unix_timestamp_secs() as u32;
 
         if current < HALF_RANGE && now >= HALF_RANGE {
             return 1;
@@ -626,7 +626,7 @@ impl Zone {
     /// Mark the zone as active with current timestamp and record count.
     pub fn mark_active(&mut self) {
         self.health.state = ZoneState::Active;
-        self.health.last_load_time = Some(synvoid_core::time::current_timestamp_secs());
+        self.health.last_load_time = Some(unix_timestamp_secs());
         self.health.record_count = self.records.len();
         self.health.last_error = None;
     }
@@ -1889,7 +1889,7 @@ impl DnsServer {
                     action: super::firewall::DnsFirewallAction::Block,
                     target: "10.0.0.0/8".to_string(),
                     ttl: 300,
-                    created_at: current_timestamp_secs(),
+                    created_at: unix_timestamp_secs(),
                     expires_at: None,
                     enabled: true,
                 };
@@ -1901,7 +1901,7 @@ impl DnsServer {
                     action: super::firewall::DnsFirewallAction::Block,
                     target: "172.16.0.0/12".to_string(),
                     ttl: 300,
-                    created_at: current_timestamp_secs(),
+                    created_at: unix_timestamp_secs(),
                     expires_at: None,
                     enabled: true,
                 };
@@ -1913,7 +1913,7 @@ impl DnsServer {
                     action: super::firewall::DnsFirewallAction::Block,
                     target: "192.168.0.0/16".to_string(),
                     ttl: 300,
-                    created_at: current_timestamp_secs(),
+                    created_at: unix_timestamp_secs(),
                     expires_at: None,
                     enabled: true,
                 };
@@ -1925,7 +1925,7 @@ impl DnsServer {
                     action: super::firewall::DnsFirewallAction::Block,
                     target: "127.0.0.0/8".to_string(),
                     ttl: 300,
-                    created_at: current_timestamp_secs(),
+                    created_at: unix_timestamp_secs(),
                     expires_at: None,
                     enabled: true,
                 };
@@ -1937,7 +1937,7 @@ impl DnsServer {
                     action: super::firewall::DnsFirewallAction::Block,
                     target: "169.254.0.0/16".to_string(),
                     ttl: 300,
-                    created_at: current_timestamp_secs(),
+                    created_at: unix_timestamp_secs(),
                     expires_at: None,
                     enabled: true,
                 };
@@ -1949,7 +1949,7 @@ impl DnsServer {
                     action: super::firewall::DnsFirewallAction::Block,
                     target: "::1/128".to_string(),
                     ttl: 300,
-                    created_at: current_timestamp_secs(),
+                    created_at: unix_timestamp_secs(),
                     expires_at: None,
                     enabled: true,
                 };
@@ -1961,7 +1961,7 @@ impl DnsServer {
                     action: super::firewall::DnsFirewallAction::Block,
                     target: "fc00::/7".to_string(),
                     ttl: 300,
-                    created_at: current_timestamp_secs(),
+                    created_at: unix_timestamp_secs(),
                     expires_at: None,
                     enabled: true,
                 };
@@ -1973,7 +1973,7 @@ impl DnsServer {
                     action: super::firewall::DnsFirewallAction::Block,
                     target: "fe80::/10".to_string(),
                     ttl: 300,
-                    created_at: current_timestamp_secs(),
+                    created_at: unix_timestamp_secs(),
                     expires_at: None,
                     enabled: true,
                 };
@@ -1987,7 +1987,7 @@ impl DnsServer {
                     action: super::firewall::DnsFirewallAction::Block,
                     target: "0x2".to_string(),
                     ttl: 300,
-                    created_at: current_timestamp_secs(),
+                    created_at: unix_timestamp_secs(),
                     expires_at: None,
                     enabled: true,
                 };

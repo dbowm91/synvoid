@@ -1,7 +1,7 @@
 # DNS Runtime-DTO Conversion Roadmap — Phases 125–130
 
-Status: **ACTIVE** (2026-10-04). Phases 125-128 are **CLOSED QUALIFIED**;
-Phase 129 is **READY**. Phase 130 remains sequenced behind it.
+Status: **ACTIVE** (2026-10-04). Phases 125-129 are **CLOSED QUALIFIED**;
+Phase 130 is **READY**.
 
 Registered in: `plans/roadmap.md`.
 
@@ -107,12 +107,14 @@ Rules:
    `architecture/dns_runtime_dto_phase128_closeout.md`. The `synvoid-config`
    normal edge is removed: 6 direct SynVoid normal edges (was 7), 846 expanded
    `cargo tree -e normal` lines (was 847).
-5. **Phase 129 — synvoid-core / synvoid-utils neutralization** — **READY**
-   (unblocked by Phase 128). Its dependency gates already exist in
-   `tools/synvoid-repo-guards/tests/dns_dependency_edges.rs`, landed
-   `#[ignore]`d so the suite stays green until the phase that owns them.
+5. **Phase 129 — synvoid-core / synvoid-utils neutralization** — **CLOSED
+   QUALIFIED** (2026-10-04);
+   `architecture/dns_runtime_dto_phase129_closeout.md`. The runtime-neutral
+   dependency set is achieved: 4 direct SynVoid normal edges (was 6), 827
+   expanded `cargo tree -e normal` lines (was 846). Time, restricted-IP,
+   prefix-mask, and lifecycle helpers are DNS-owned with differential tests.
 6. **Phase 130 — Campaign qualification and provider-inversion readiness gate** —
-   PLANNED, BLOCKED ON PHASE 129.
+   **READY** (unblocked by Phase 129).
 
 The phases are intentionally sequential. Each changes the canonical constructor
 or configuration ownership used by the next phase and is a rollback/evidence

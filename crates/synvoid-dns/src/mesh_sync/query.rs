@@ -1,5 +1,5 @@
 use super::*;
-use synvoid_utils::current_timestamp;
+use crate::time::unix_timestamp_secs;
 
 impl MeshDnsRegistry {
     pub fn get_edge_nodes_for_domain(&self, domain: &str) -> Vec<RegisteredEdgeNode> {
@@ -237,7 +237,7 @@ impl MeshDnsRegistry {
             score -= (node.consecutive_failures as f64) * 10.0;
         }
 
-        let now = current_timestamp();
+        let now = unix_timestamp_secs();
         if node.last_update > 0 && now > node.last_update {
             let age_secs = now - node.last_update;
             if age_secs > 300 {
@@ -271,7 +271,7 @@ impl MeshDnsRegistry {
             score += (node.capacity as f64) * 0.01;
         }
 
-        let now = current_timestamp();
+        let now = unix_timestamp_secs();
         if node.last_update > 0 && now > node.last_update {
             let age_secs = now - node.last_update;
             if age_secs > 300 {
@@ -312,14 +312,14 @@ impl MeshDnsRegistry {
     }
 
     pub fn cleanup_stale_edge_nodes(&self, max_age_secs: u64) {
-        let now = current_timestamp();
+        let now = unix_timestamp_secs();
         let mut edges = self.edge_nodes.write();
 
         edges.retain(|_, node| now - node.last_update < max_age_secs);
     }
 
     pub fn cleanup_stale_origin_nodes(&self, max_age_secs: u64) {
-        let now = current_timestamp();
+        let now = unix_timestamp_secs();
         let mut origins = self.origin_nodes.write();
 
         origins.retain(|_, node| now - node.last_update < max_age_secs);

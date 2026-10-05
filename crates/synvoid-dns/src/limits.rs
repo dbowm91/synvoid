@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use synvoid_utils::flags::{DrainFlag, RunningFlag};
+use crate::lifecycle::{DegradationState, Draining, LifecycleState};
 
 /// Phase 45 (Workstream D): bound on sequential queries served per
 /// DNS-over-TCP / DNS-over-TLS connection (RFC 7766 connection reuse).
@@ -24,8 +24,7 @@ pub struct ConnectionLimits {
     max_amplification_ratio: f32,
     connection_count: AtomicUsize,
     query_count: AtomicUsize,
-    degraded_mode: RunningFlag,
-    graceful_shutdown: DrainFlag,
+    lifecycle: LifecycleState,
     reject_ratio: f32,
 }
 
@@ -52,8 +51,7 @@ impl ConnectionLimits {
             max_amplification_ratio: 2.0,
             connection_count: AtomicUsize::new(0),
             query_count: AtomicUsize::new(0),
-            degraded_mode: RunningFlag::new(),
-            graceful_shutdown: DrainFlag::new(),
+            lifecycle: LifecycleState::new(),
             reject_ratio: 0.0,
         };
         if enable_graceful_degradation {
@@ -63,25 +61,25 @@ impl ConnectionLimits {
     }
 
     pub fn enable_graceful_degradation(&mut self, reject_ratio: f32) {
-        self.degraded_mode.set(true);
+        self.lifecycle.set_degradation(DegradationState::Degraded);
         self.reject_ratio = reject_ratio.clamp(0.0, 1.0);
     }
 
     pub fn disable_graceful_degradation(&mut self) {
-        self.degraded_mode.set(false);
+        self.lifecycle.set_degradation(DegradationState::Normal);
         self.reject_ratio = 0.0;
     }
 
     pub fn initiate_graceful_shutdown(&self) {
-        self.graceful_shutdown.start_drain();
+        self.lifecycle.set_draining(Draining::Yes);
     }
 
     pub fn is_in_graceful_shutdown(&self) -> bool {
-        self.graceful_shutdown.is_draining()
+        self.lifecycle.is_draining()
     }
 
     pub fn is_degraded(&self) -> bool {
-        self.degraded_mode.is_running()
+        self.lifecycle.is_degraded()
     }
 
     pub fn get_degradation_level(&self) -> DegradationLevel {
@@ -104,7 +102,7 @@ impl ConnectionLimits {
     }
 
     pub fn should_reject_request(&self) -> bool {
-        if !self.degraded_mode.get() {
+        if !self.lifecycle.is_degraded() {
             return false;
         }
 
@@ -150,7 +148,7 @@ impl ConnectionLimits {
     }
 
     pub fn try_acquire_connection(&self) -> Result<ConnectionGuard<'_>, ConnectionLimitError> {
-        if self.graceful_shutdown.get() {
+        if self.lifecycle.is_draining() {
             return Err(ConnectionLimitError::GracefulShutdown);
         }
 
@@ -172,7 +170,7 @@ impl ConnectionLimits {
     }
 
     pub fn try_acquire_query(&self) -> Result<QueryGuard<'_>, ConnectionLimitError> {
-        if self.graceful_shutdown.get() {
+        if self.lifecycle.is_draining() {
             return Err(ConnectionLimitError::GracefulShutdown);
         }
 

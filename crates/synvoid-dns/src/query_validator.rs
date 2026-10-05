@@ -472,7 +472,7 @@ impl DnsQueryValidator {
     }
 
     pub fn is_internal_ip(ip: IpAddr) -> bool {
-        synvoid_core::net::is_restricted_ip(&ip)
+        crate::net_policy::is_restricted_ip(&ip)
     }
 
     pub fn is_reserved_name(name: &str) -> bool {

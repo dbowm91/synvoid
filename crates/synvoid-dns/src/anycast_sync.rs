@@ -1,3 +1,4 @@
+use crate::time::unix_timestamp_secs;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
@@ -150,7 +151,7 @@ impl AnycastZoneSync {
             reason
         );
 
-        let timestamp = synvoid_utils::safe_unix_timestamp();
+        let timestamp = unix_timestamp_secs();
 
         let msg = synvoid_mesh::protocol::MeshMessage::ZoneSyncRequest {
             request_id: format!("{}-{}-trigger-{}", self.node_id, zone_origin, timestamp).into(),
@@ -210,7 +211,7 @@ impl AnycastZoneSync {
             node_id
         );
 
-        let timestamp = synvoid_utils::safe_unix_timestamp();
+        let timestamp = unix_timestamp_secs();
 
         let msg = synvoid_mesh::protocol::MeshMessage::ZoneSyncRequest {
             request_id: format!("{}-{}-immediate-{}", node_id, zone_origin, timestamp).into(),
@@ -253,7 +254,7 @@ impl AnycastZoneSync {
                 }
             };
 
-            let timestamp = synvoid_utils::safe_unix_timestamp();
+            let timestamp = unix_timestamp_secs();
 
             let msg = synvoid_mesh::protocol::MeshMessage::ZoneSyncRequest {
                 request_id: format!("{}-{}", node_id, timestamp).into(),
@@ -478,7 +479,7 @@ impl AnycastZoneSync {
             return Some(SerializedZoneVersion {
                 serial: zone.serial,
                 records,
-                timestamp: synvoid_utils::safe_unix_timestamp(),
+                timestamp: unix_timestamp_secs(),
             });
         }
 

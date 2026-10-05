@@ -1,3 +1,4 @@
+use crate::time::unix_timestamp_secs;
 use parking_lot::RwLock;
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use serde::{Deserialize, Serialize};
@@ -101,7 +102,7 @@ impl DnsPrefetcher {
         }
 
         let key = format!("{}:{}", qname.to_lowercase(), qtype);
-        let now = synvoid_core::time::current_timestamp_secs();
+        let now = unix_timestamp_secs();
 
         let expires_at = now + (ttl as u64);
 
@@ -132,7 +133,7 @@ impl DnsPrefetcher {
         let signatures = self.prefetched_signatures.read();
 
         if let Some(sig) = signatures.get(&key) {
-            let now = synvoid_core::time::current_timestamp_secs();
+            let now = unix_timestamp_secs();
 
             if sig.expires_at > now {
                 return Some(sig.signed_data.clone());
@@ -143,7 +144,7 @@ impl DnsPrefetcher {
     }
 
     fn cleanup_stale(&self, signatures: &mut HashMap<String, PrefetchedSignature>) {
-        let now = synvoid_core::time::current_timestamp_secs();
+        let now = unix_timestamp_secs();
 
         signatures.retain(|_, v| v.expires_at > now);
 

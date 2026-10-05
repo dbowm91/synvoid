@@ -964,17 +964,20 @@ pub(crate) fn dns_unix_timestamp_secs() -> u64 {
 
 /// DNS-owned IPv4 prefix mask (Phase 129 Workstream C).
 ///
-/// `/0` yields `0`; out-of-range lengths are clamped instead of shifting by
-/// the full word width (which would panic).
+/// `/0` yields `0`. Out-of-range lengths return `u32::MAX` rather than
+/// shifting by the full word width, which would panic in debug builds.
 ///
-/// Phase 129 replaces the `synvoid_core::net::ipv4_prefix_mask` call sites
-/// with this helper.
-#[allow(dead_code)]
+/// Parity note: this returns `u32::MAX` for lengths above `/32`, matching
+/// `synvoid_core::net::ipv4_prefix_mask`. An earlier revision of this helper
+/// returned `0` there, which would have masked a client subnet down to
+/// `0.0.0.0` instead of leaving it intact. The only call site (`edns.rs` ECS
+/// truncation) cannot reach an out-of-range length today, but the helper is
+/// `pub(crate)` and the divergence is not worth carrying.
 pub(crate) fn dns_ipv4_prefix_mask(prefix: u8) -> u32 {
     match prefix {
         0 => 0,
         1..=32 => u32::MAX << (32 - u32::from(prefix)),
-        _ => 0,
+        _ => u32::MAX,
     }
 }
 
@@ -1012,14 +1015,23 @@ mod tests {
         assert!(v6.contains(IpAddr::V6("fe80::1".parse().unwrap())));
     }
 
+    /// Prefix-mask parity with the pre-Phase-129
+    /// `synvoid_core::net::ipv4_prefix_mask`: `/0` is `0`, `/1`..`/32` are
+    /// `u32::MAX << (32 - prefix)`, and anything above `/32` saturates to
+    /// `u32::MAX`. The out-of-range case must not shift by the full word width.
     #[test]
     fn ipv4_prefix_mask_edges() {
         assert_eq!(dns_ipv4_prefix_mask(0), 0);
-        assert_eq!(dns_ipv4_prefix_mask(32), u32::MAX);
+        assert_eq!(dns_ipv4_prefix_mask(1), 0x8000_0000);
+        assert_eq!(dns_ipv4_prefix_mask(8), 0xff00_0000);
+        assert_eq!(dns_ipv4_prefix_mask(24), 0xFFFF_FF00);
         assert_eq!(dns_ipv4_prefix_mask(31), 0xFFFF_FFFE);
-        // Out-of-range must not panic and must clamp to "no bits".
-        assert_eq!(dns_ipv4_prefix_mask(33), 0);
-        assert_eq!(dns_ipv4_prefix_mask(255), 0);
+        assert_eq!(dns_ipv4_prefix_mask(32), u32::MAX);
+        // Out-of-range must not panic, and must match the predecessor
+        // (saturate to "all bits"), not zero.
+        assert_eq!(dns_ipv4_prefix_mask(33), u32::MAX);
+        assert_eq!(dns_ipv4_prefix_mask(64), u32::MAX);
+        assert_eq!(dns_ipv4_prefix_mask(255), u32::MAX);
     }
 
     #[test]

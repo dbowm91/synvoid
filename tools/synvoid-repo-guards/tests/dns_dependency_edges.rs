@@ -15,10 +15,16 @@
 //! | `synvoid-config` | Phase 128 | `synvoid_dns_has_no_config_edge` |
 //! | `synvoid-core` | Phase 129 | `synvoid_dns_has_no_core_edge` |
 //! | `synvoid-utils` | Phase 129 | `synvoid_dns_has_no_utils_edge` |
+//!
+//! All three are live as of Phase 129. The DNS crate now depends only on its
+//! own runtime vocabulary plus genuine providers (`synvoid-tls`,
+//! `synvoid-geoip`, `synvoid-dnssec-keystore`) and the optional `synvoid-mesh`.
+//! Provider inversion remains out of scope for Phases 125-130, so this set is
+//! the qualification target Phase 130 measures against.
 
 use std::path::Path;
 
-use synvoid_repo_guards::{workspace_root, Violations};
+use synvoid_repo_guards::{collect_rs_files, workspace_root, Violations};
 
 /// Sections of `Cargo.toml` that can declare a dependency edge. A crate may
 /// name `synvoid-config` in `[dev-dependencies]` for an owned test, but the
@@ -27,6 +33,10 @@ use synvoid_repo_guards::{workspace_root, Violations};
 const DEPENDENCY_SECTIONS: &[&str] = &["dependencies", "dev-dependencies", "build-dependencies"];
 
 fn read_manifest(path: &Path) -> String {
+    std::fs::read_to_string(path).unwrap_or_default()
+}
+
+fn read(path: &Path) -> String {
     std::fs::read_to_string(path).unwrap_or_default()
 }
 
@@ -91,16 +101,70 @@ fn synvoid_dns_has_no_config_edge() {
 }
 
 #[test]
-#[ignore = "Phase 129 owns the `synvoid-core` removal; this gate goes live with it"]
 fn synvoid_dns_has_no_core_edge() {
     // Phase 129: timestamps and net helpers move to `std` / crate-local code.
     assert_no_edge("synvoid-core", "synvoid_dns_has_no_core_edge");
 }
 
 #[test]
-#[ignore = "Phase 129 owns the `synvoid-utils` removal; this gate goes live with it"]
 fn synvoid_dns_has_no_utils_edge() {
     // Phase 129: the shared utility helpers are inlined or replaced with
     // library equivalents.
     assert_no_edge("synvoid-utils", "synvoid_dns_has_no_utils_edge");
+}
+
+// ---------------------------------------------------------------------------
+// 4. Source-level gate: the neutralized helpers stay DNS-owned
+// ---------------------------------------------------------------------------
+
+/// The manifest gates prove the *edge* is gone. This gate proves the crate did
+/// not keep calling the removed helpers through a re-export, a `use` alias, or
+/// a dev-dependency escape hatch.
+///
+/// Mesh-gated code is included on purpose: Phase 129 Workstream D requires
+/// that the optional mesh feature cannot restore the utils dependency.
+#[test]
+fn production_source_names_neither_neutralized_helper_crate() {
+    let root = workspace_root();
+    let src = root.join("crates/synvoid-dns/src");
+    let files = collect_rs_files(&src);
+
+    let mut violations = Violations::new();
+    for file in files {
+        let rel = file
+            .strip_prefix(&root)
+            .unwrap_or(&file)
+            .display()
+            .to_string();
+        for (index, line) in read(&file).lines().enumerate() {
+            let trimmed = line.trim_start();
+            // Comments and doc comments legitimately name the predecessors:
+            // the module docs record what each helper replaced.
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            for forbidden in [
+                "synvoid_core",
+                "synvoid_utils",
+                "synvoid-core",
+                "synvoid-utils",
+            ] {
+                if !trimmed.contains(forbidden) {
+                    continue;
+                }
+                // A bare doc line is fine; a `use` or a call path is not.
+                if trimmed.starts_with("use ") || trimmed.contains("::") {
+                    violations.push(format!(
+                        "{rel}:{} references `{forbidden}`; after the Phase 129 \
+                         cutover `synvoid-dns` owns its time, restricted-IP, and \
+                         lifecycle helpers. Use `crate::time`, `crate::net_policy`, \
+                         and `crate::lifecycle`",
+                        index + 1
+                    ));
+                }
+            }
+        }
+    }
+
+    violations.assert_ok("production_source_names_neither_neutralized_helper_crate");
 }

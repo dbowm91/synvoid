@@ -4,8 +4,8 @@
 // NSEC/NSEC3/RRSIG wire construction stays here: it needs only public
 // metadata (algorithm, key tag) plus caller-supplied signatures.
 
+use crate::time::unix_timestamp_secs;
 use sha2::{Digest, Sha256};
-use synvoid_core::time::current_timestamp_secs;
 
 use super::dnssec::{Nsec3Config, ZoneSigningKey};
 
@@ -31,7 +31,7 @@ pub fn create_rrsig_record(
     rrsig.push(labels_count);
     rrsig.extend_from_slice(&original_ttl.to_be_bytes());
 
-    let now = current_timestamp_secs();
+    let now = unix_timestamp_secs();
     let sig_expire = now + (7 * 86400);
     let sig_inception = now - (86400);
 

@@ -2,7 +2,7 @@ use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use synvoid_core::time::current_timestamp_secs;
+use crate::time::unix_timestamp_secs;
 
 use crate::parsed_query::ParsedDnsQuery;
 
@@ -69,7 +69,7 @@ impl DnsFirewall {
 
     pub fn add_rule(&mut self, rule: DnsFirewallRule) -> Result<(), String> {
         if let Some(expires_at) = rule.expires_at {
-            if expires_at < current_timestamp_secs() {
+            if expires_at < unix_timestamp_secs() {
                 return Err("Rule has already expired".to_string());
             }
         }
@@ -244,7 +244,7 @@ impl DnsFirewall {
     }
 
     fn cleanup_expired_rules(&mut self) {
-        let now = current_timestamp_secs();
+        let now = unix_timestamp_secs();
         if now.saturating_sub(self.last_cleanup) < 60 {
             return;
         }
@@ -447,7 +447,7 @@ pub fn create_default_firewall_rules() -> Vec<DnsFirewallRule> {
             action: DnsFirewallAction::Block,
             target: "10.0.0.0/8".to_string(),
             ttl: 300,
-            created_at: current_timestamp_secs(),
+            created_at: unix_timestamp_secs(),
             expires_at: None,
             enabled: true,
         },
@@ -457,7 +457,7 @@ pub fn create_default_firewall_rules() -> Vec<DnsFirewallRule> {
             action: DnsFirewallAction::Block,
             target: "224.0.0.0/4".to_string(),
             ttl: 300,
-            created_at: current_timestamp_secs(),
+            created_at: unix_timestamp_secs(),
             expires_at: None,
             enabled: true,
         },
@@ -467,7 +467,7 @@ pub fn create_default_firewall_rules() -> Vec<DnsFirewallRule> {
             action: DnsFirewallAction::Block,
             target: "localhost".to_string(),
             ttl: 300,
-            created_at: current_timestamp_secs(),
+            created_at: unix_timestamp_secs(),
             expires_at: None,
             enabled: true,
         },
@@ -477,7 +477,7 @@ pub fn create_default_firewall_rules() -> Vec<DnsFirewallRule> {
             action: DnsFirewallAction::Block,
             target: "example.com".to_string(),
             ttl: 300,
-            created_at: current_timestamp_secs(),
+            created_at: unix_timestamp_secs(),
             expires_at: None,
             enabled: true,
         },
@@ -487,7 +487,7 @@ pub fn create_default_firewall_rules() -> Vec<DnsFirewallRule> {
             action: DnsFirewallAction::Block,
             target: "0xfc".to_string(), // AXFR query type (252)
             ttl: 300,
-            created_at: current_timestamp_secs(),
+            created_at: unix_timestamp_secs(),
             expires_at: None,
             enabled: true,
         },
@@ -497,7 +497,7 @@ pub fn create_default_firewall_rules() -> Vec<DnsFirewallRule> {
             action: DnsFirewallAction::Block,
             target: "0xfb".to_string(), // IXFR query type (251)
             ttl: 300,
-            created_at: current_timestamp_secs(),
+            created_at: unix_timestamp_secs(),
             expires_at: None,
             enabled: true,
         },
@@ -515,7 +515,7 @@ pub fn create_rate_limit_rules() -> Vec<DnsFirewallRule> {
             },
             target: "*".to_string(), // All domains
             ttl: 60,
-            created_at: current_timestamp_secs(),
+            created_at: unix_timestamp_secs(),
             expires_at: None,
             enabled: true,
         },
@@ -528,7 +528,7 @@ pub fn create_rate_limit_rules() -> Vec<DnsFirewallRule> {
             },
             target: "*".to_string(), // All IPs
             ttl: 60,
-            created_at: current_timestamp_secs(),
+            created_at: unix_timestamp_secs(),
             expires_at: None,
             enabled: true,
         },

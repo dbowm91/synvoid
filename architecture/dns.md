@@ -342,10 +342,22 @@ constructor: the whole-DNS runtime projection plus a composition-owned
 `src/server/dns_runtime_config.rs` (composition), never in the `src/dns/`
 facade.
 
-`crates/synvoid-dns` no longer depends on `synvoid-config` (Phase 128). The
-temporary `runtime_config_deferred.rs` passthrough that Phases 126/127 needed is
-deleted, and the manifest edge is gated by
-`tools/synvoid-repo-guards/tests/dns_dependency_edges.rs`.
+`crates/synvoid-dns` depends only on genuine providers: `synvoid-tls`,
+`synvoid-geoip`, `synvoid-dnssec-keystore`, and optional `synvoid-mesh` — 4
+direct SynVoid normal edges. The `synvoid-config` edge (Phase 128) and the
+`synvoid-core` / `synvoid-utils` edges (Phase 129) are all gone, as is the
+temporary `runtime_config_deferred.rs` passthrough. Every edge is gated in
+`tools/synvoid-repo-guards/tests/dns_dependency_edges.rs`, by both a manifest
+gate and a source-level gate.
+
+DNS-owned replacements for the removed helper crates live in this crate:
+
+| Module | Replaces | Notes |
+|---|---|---|
+| `time.rs` | `synvoid_core::time::*`, `synvoid_utils::safe_unix_timestamp()` | pre-epoch returns `0`; no clock trait or global singleton |
+| `net_policy.rs` | `synvoid_core::net::is_restricted_ip()` | **security boundary** — a character-for-character port; do not change any range without separate review |
+| `lifecycle.rs` | `synvoid_utils::flags::{RunningFlag, DrainFlag}` | Acquire/Release ordering preserved; the drain check is what makes graceful shutdown query-boundary |
+| `runtime_config.rs::dns_ipv4_prefix_mask` | `synvoid_core::net::ipv4_prefix_mask()` | ECS truncation |
 
 **Known gap:** `[dns.zones]` is validated and converted into `ZoneSpec` values,
 but `DnsServer::new` discards them (`zones: _`) and `load_zones(Vec<ZoneSpec>)`

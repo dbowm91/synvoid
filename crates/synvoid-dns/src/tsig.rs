@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::runtime_config::{TsigAlgorithmRuntime, TsigRuntimeKey};
+use crate::time::unix_timestamp_secs;
 use hmac::{Hmac, Mac};
 use parking_lot::RwLock;
 use sha2::{Digest, Sha256, Sha384, Sha512};
@@ -158,7 +159,7 @@ impl TsigVerifier {
             return Err(TsigError::BadSignature);
         }
 
-        let now = synvoid_core::time::current_timestamp_secs();
+        let now = unix_timestamp_secs();
 
         let fudge_val = fudge as u64;
         let time_diff = time_signed.abs_diff(now);
@@ -249,7 +250,7 @@ impl TsigVerifier {
             .get(key_name)
             .ok_or(TsigError::UnknownKey(key_name.to_string()))?;
 
-        let now = synvoid_core::time::current_timestamp_secs();
+        let now = unix_timestamp_secs();
         let fudge: u16 = 300;
 
         let mut data_to_sign = Vec::new();
