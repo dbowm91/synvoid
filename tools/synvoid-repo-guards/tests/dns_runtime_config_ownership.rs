@@ -424,11 +424,23 @@ fn composition_activates_configured_zones() {
 
     // The runtime config is moved into `DnsServer::new`, so the zone list must
     // be taken before that move rather than read afterwards.
+    //
+    // The constructor argument is located by scanning forward from the call
+    // rather than matching `DnsServer::new(runtime_cfg` on one line: Phase 134
+    // added a second argument, so rustfmt wraps the call, and an anchor that
+    // requires a specific line shape would fail on formatting alone.
     let zones_clone = resources.find("runtime_cfg.zones.clone()");
-    let constructor = resources.find("DnsServer::new(runtime_cfg");
-    match (zones_clone, constructor) {
-        (Some(zones_at), Some(new_at)) if zones_at < new_at => {}
-        (Some(_), Some(_)) => violations.push(
+    let constructor = resources.find("DnsServer::new(");
+    // The moved `runtime_cfg` is the first mention after the call site.
+    let moved_at = constructor.and_then(|at| {
+        resources[at..]
+            .find("runtime_cfg")
+            .map(|offset| at + offset)
+    });
+
+    match (zones_clone, constructor, moved_at) {
+        (Some(zones_at), Some(_), Some(moved)) if zones_at < moved => {}
+        (Some(_), Some(_), Some(_)) => violations.push(
             "src/server/resources.rs must clone runtime_cfg.zones BEFORE moving runtime_cfg \
              into DnsServer::new"
                 .to_string(),

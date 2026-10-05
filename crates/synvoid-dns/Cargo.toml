@@ -16,7 +16,6 @@ hsm = ["synvoid-dnssec-keystore/pkcs11"]
 
 [dependencies]
 synvoid-mesh = { path = "../synvoid-mesh", optional = true , version = "0.1" }
-synvoid-tls = { path = "../synvoid-tls", features = ["dns"] , version = "0.1" }
 synvoid-geoip = { path = "../synvoid-geoip" , version = "0.1" }
 synvoid-dnssec-keystore = { path = "../synvoid-dnssec-keystore", version = "0.1" }
 hickory-proto = { version = "0.26", features = ["dnssec-ring"] }

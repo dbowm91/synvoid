@@ -6,8 +6,8 @@ use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 use tokio_rustls::TlsAcceptor;
 
+use crate::secure_transport::SecureTransportConfig;
 use crate::server::DnsServer;
-use synvoid_tls::cert_resolver::CertResolver;
 
 pub const TLS_HANDSHAKE_TIMEOUT_SECS: u64 = 10;
 pub const MAX_QUERY_SIZE: usize = 65535;
@@ -25,13 +25,13 @@ pub trait DnsServerConfig: Send + Sync + Clone + 'static {
 
 pub struct SecureDnsServerBase<C: DnsServerConfig> {
     pub config: Arc<C>,
-    pub cert_resolver: Option<Arc<CertResolver>>,
+    pub cert_resolver: Option<Arc<dyn SecureTransportConfig>>,
     pub dns_server: Arc<RwLock<Option<DnsServer>>>,
     pub shutdown_tx: Option<oneshot::Sender<()>>,
 }
 
 impl<C: DnsServerConfig> SecureDnsServerBase<C> {
-    pub fn new(config: C, cert_resolver: Option<Arc<CertResolver>>) -> Self {
+    pub fn new(config: C, cert_resolver: Option<Arc<dyn SecureTransportConfig>>) -> Self {
         Self {
             config: Arc::new(config),
             cert_resolver,
@@ -44,13 +44,21 @@ impl<C: DnsServerConfig> SecureDnsServerBase<C> {
         *self.dns_server.write() = Some(server);
     }
 
+    /// Build the stream-transport acceptor (DoT, DoH).
+    ///
+    /// The two literals here are duplicated in `doq.rs::create_tls_config`,
+    /// which cannot share this base because QUIC needs a
+    /// `QuicServerConfig` rather than a `TlsAcceptor`. Keep the two in step;
+    /// the guard
+    /// `encrypted_transport_error_contract_is_duplicated_consistently` fails if
+    /// they drift.
     pub fn create_tls_acceptor(&self) -> Result<TlsAcceptor, String> {
         self.cert_resolver
             .as_ref()
             .ok_or_else(|| "No TLS certificate resolver available".to_string())
-            .and_then(|resolver| {
-                resolver
-                    .build_server_config()
+            .and_then(|provider| {
+                provider
+                    .server_config()
                     .map(TlsAcceptor::from)
                     .map_err(|e| format!("Failed to build TLS config: {}", e))
             })

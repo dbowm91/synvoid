@@ -126,9 +126,11 @@ pub fn setup_acme(unified_server: &Arc<UnifiedServer>, worker_id: WorkerId) {
             // Wire AcmeDnsChallenge to DNS server for DNS-01 support
             if let Some(dns_server) = unified_server.get_dns_server() {
                 if let Some(dns_challenges) = acme_manager.get_dns_challenges() {
-                    let _server = (*dns_server)
-                        .clone()
-                        .with_acme_dns_challenges(dns_challenges);
+                    // Phase 134: adapted to the DNS-owned capability here, so
+                    // the DNS crate never names the concrete challenge type.
+                    let _server = (*dns_server).clone().with_acme_dns_challenges(
+                        crate::tls::dns_providers::as_acme_challenges(dns_challenges),
+                    );
                     tracing::info!("ACME DNS-01 challenges wired to DNS server");
                 }
             }

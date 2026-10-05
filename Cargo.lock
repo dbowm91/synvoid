@@ -8462,7 +8462,6 @@ dependencies = [
  "synvoid-dnssec-keystore",
  "synvoid-geoip",
  "synvoid-mesh",
- "synvoid-tls",
  "tempfile",
  "thiserror 2.0.20",
  "tokio",

@@ -15,12 +15,13 @@
 //! | `synvoid-config` | Phase 128 | `synvoid_dns_has_no_config_edge` |
 //! | `synvoid-core` | Phase 129 | `synvoid_dns_has_no_core_edge` |
 //! | `synvoid-utils` | Phase 129 | `synvoid_dns_has_no_utils_edge` |
+//! | `synvoid-tls` | Phase 134 | `synvoid_dns_has_no_tls_edge` |
 //!
-//! All three are live as of Phase 129. The DNS crate now depends only on its
-//! own runtime vocabulary plus genuine providers (`synvoid-tls`,
-//! `synvoid-geoip`, `synvoid-dnssec-keystore`) and the optional `synvoid-mesh`.
-//! Provider inversion remains out of scope for Phases 125-130, so this set is
-//! the qualification target Phase 130 measures against.
+//! All four are live as of Phase 134. The DNS crate now depends only on its
+//! own runtime vocabulary, the `synvoid-dnssec-keystore` custody boundary, the
+//! `synvoid-geoip` provider (removed in Phase 135), and the optional
+//! `synvoid-mesh`. Provider inversion for mesh remains out of scope, so that
+//! edge is the qualification target Phase 136 measures against.
 //!
 //! Section 5 (Phase 133) gates the *provider seams* rather than the dependency
 //! edges: the TLS seam must stay one-way for key custody and provider-internal
@@ -116,6 +117,34 @@ fn synvoid_dns_has_no_utils_edge() {
     // Phase 129: the shared utility helpers are inlined or replaced with
     // library equivalents.
     assert_no_edge("synvoid-utils", "synvoid_dns_has_no_utils_edge");
+}
+
+#[test]
+fn synvoid_dns_has_no_tls_edge() {
+    // Phase 134: DNS needs a built rustls `ServerConfig` and a pending ACME
+    // TXT value, and nothing else. Both are DNS-owned capabilities
+    // (`SecureTransportConfig`, `AcmeTxtChallenges`) implemented in composition
+    // over `synvoid-tls`, so the edge itself is removable.
+    //
+    // The edge also requested `features = ["dns"]`, which existed only for
+    // `AcmeDnsChallenge`. That feature gate goes with it.
+    let root = workspace_root();
+    let manifest = read_manifest(&root.join("crates/synvoid-dns/Cargo.toml"));
+
+    let mut violations = Violations::new();
+
+    if declares_edge(&manifest, "synvoid-tls") {
+        violations.push(
+            "crates/synvoid-dns/Cargo.toml declares `synvoid-tls`; the DNS crate \
+             consumes the DNS-owned `SecureTransportConfig` and `AcmeTxtChallenges` \
+             capabilities, which are implemented in composition. If a test needs a \
+             real resolver, build one through the composition adapter or use a \
+             DNS-owned double — never by re-adding the edge"
+                .to_string(),
+        );
+    }
+
+    violations.assert_ok("synvoid_dns_has_no_tls_edge");
 }
 
 // ---------------------------------------------------------------------------
@@ -370,14 +399,120 @@ fn encrypted_transport_error_contract_is_duplicated_consistently() {
         }
     }
 
-    // The provider seam itself is one method in both copies.
+    // The provider seam itself is one call in each copy. Phase 134 replaced the
+    // concrete `build_server_config()` call with the DNS-owned
+    // `SecureTransportConfig::server_config()`.
     for (name, source) in [("secure_server.rs", &base), ("doq.rs", &doq)] {
-        let calls = source.matches(".build_server_config()").count();
+        let calls = source.matches(".server_config()").count();
         assert_eq!(
             calls, 1,
-            "{name} must call the provider exactly once, found {calls}"
+            "{name} must call the DNS-owned provider capability exactly once, \
+             found {calls}"
+        );
+        assert!(
+            !source.contains("build_server_config"),
+            "{name} must not call the concrete provider method; Phase 134 \
+             introduced `SecureTransportConfig::server_config`"
         );
     }
 
     violations.assert_ok("encrypted_transport_error_contract_is_duplicated_consistently");
+}
+
+// ---------------------------------------------------------------------------
+// 6. TLS provider-inversion gates (Phase 134)
+// ---------------------------------------------------------------------------
+
+/// Phase 134: the manifest gate proves the edge is gone. This gate proves the
+/// crate did not keep naming the provider through a `use` alias, a fully
+/// qualified path, or a doc-link that would pull the crate back in.
+///
+/// Comments and doc comments are exempt, because the DNS-owned capabilities
+/// document *what* they replace — that is provenance, not a dependency.
+#[test]
+fn dns_source_names_no_tls_provider_symbol() {
+    let root = workspace_root();
+    let files = collect_rs_files(&root.join("crates/synvoid-dns/src"));
+
+    let mut violations = Violations::new();
+    for file in files {
+        let rel = file
+            .strip_prefix(&root)
+            .unwrap_or(&file)
+            .display()
+            .to_string();
+        for (index, line) in read(&file).lines().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            for forbidden in [
+                "synvoid_tls",
+                "synvoid-tls",
+                "CertResolver",
+                "AcmeDnsChallenge",
+                "build_server_config",
+            ] {
+                if !trimmed.contains(forbidden) {
+                    continue;
+                }
+                // A mention inside a string literal that is *not* a path is
+                // fine; a `use` or a `::` path is not.
+                if trimmed.starts_with("use ") || trimmed.contains("::") {
+                    violations.push(format!(
+                        "{rel}:{} references `{forbidden}`; TLS certificate and ACME \
+                         ownership stays in composition. DNS consumes the DNS-owned \
+                         `SecureTransportConfig` and `AcmeTxtChallenges` capabilities",
+                        index + 1
+                    ));
+                }
+            }
+        }
+    }
+
+    violations.assert_ok("dns_source_names_no_tls_provider_symbol");
+}
+
+/// Phase 134: the two DNS-owned capabilities must stay the *only* way DNS
+/// reaches a provider. Named here because a gate that only checks an absence
+/// cannot catch a trait quietly widened with a third method.
+#[test]
+fn dns_declares_exactly_the_two_tls_capabilities() {
+    let root = workspace_root();
+    let source = read(&root.join("crates/synvoid-dns/src/secure_transport.rs"));
+
+    let mut violations = Violations::new();
+
+    for capability in [
+        "pub trait SecureTransportConfig",
+        "pub trait AcmeTxtChallenges",
+    ] {
+        if !source.contains(capability) {
+            violations.push(format!(
+                "crates/synvoid-dns/src/secure_transport.rs must declare \
+                 `{capability}`; these are the DNS-owned replacements for the \
+                 `synvoid-tls` provider types"
+            ));
+        }
+    }
+
+    // Asserting the exact signatures — not just the method names — means a
+    // signature change fails here instead of quietly widening or narrowing the
+    // seam. A `;`-terminated declaration appears exactly once per trait; the
+    // `impl` blocks in the unit tests use bodies, so they do not match.
+    for signature in [
+        "fn server_config(&self) -> Result<Arc<rustls::ServerConfig>, String>;",
+        "fn txt_value(&self, domain: &str) -> Option<String>;",
+    ] {
+        let declared = source.matches(signature).count();
+        if declared != 1 {
+            violations.push(format!(
+                "crates/synvoid-dns/src/secure_transport.rs must declare exactly one \
+                 `{signature}`; found {declared}. A changed signature widens or \
+                 narrows the seam and needs its own Phase 133-style evidence"
+            ));
+        }
+    }
+
+    violations.assert_ok("dns_declares_exactly_the_two_tls_capabilities");
 }

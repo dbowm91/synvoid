@@ -2227,12 +2227,37 @@ two narrow seams only.
      remains class 1.
 
 4. **Phase 134 — TLS Provider Inversion**
-   - Status: **PLANNED**, conditional on a Phase 133 GO for TLS. **GO received.**
+   - Status: **CLOSED QUALIFIED** (2026-10-05). Structural; no behavior change.
    - Plan: `plans/phase_134_dns_tls_provider_inversion.md`.
-   - DNS-owned `SecureTransportConfig` (returns `Arc<rustls::ServerConfig>`) and
-     `AcmeTxtChallenges`, implemented in composition, remove the direct
-     `synvoid-tls` edge. No new dependency: `synvoid-dns` already depends on
-     `rustls`. Target: 4 → 3 direct SynVoid normal edges.
+   - Closeout: `architecture/dns_provider_inversion_phase134_closeout.md`.
+   - Two DNS-owned capabilities in the new
+     `crates/synvoid-dns/src/secure_transport.rs` —
+     `SecureTransportConfig::server_config` and `AcmeTxtChallenges::txt_value` —
+     replace the concrete `CertResolver` and `AcmeDnsChallenge` handles, with
+     composition adapters in `src/tls/dns_providers.rs`. Neither trait names a
+     `synvoid-tls` type.
+   - `synvoid-tls` is entirely absent from `synvoid-dns`'s normal closure
+     (`cargo tree` proof), because it transitively carried `instant-acme`,
+     `rcgen`, `x509-parser`, `rsa`, `dashmap`, and `notify` into DNS. Direct
+     SynVoid normal edges **4 → 3**; expanded `cargo tree -e normal` lines
+     **827 → 717**.
+   - Root depends on `rustls` again, for exactly one use: the adapter must name
+     `rustls::ServerConfig` to satisfy the trait. This deliberately reverts the
+     Phase 31 removal (correct then, 0 root `rustls::` uses) and is recorded in
+     `architecture/root_dependency_ownership.md`. Defaults exclude `ring`, so
+     the process keeps a single CryptoProvider.
+   - Phase 133 F-12 resolved as planned: both copies of the encrypted-transport
+     contract (`secure_server.rs` for DoT/DoH, `doq.rs` for QUIC DoQ) were
+     converted together, and the duplication guard now also asserts neither
+     calls the concrete method any more.
+   - The DNS-side startup-contract test no longer needs a real provider: it uses
+     a DNS-owned stub whose sentinel error proves the text is propagated rather
+     than reconstructed. The provider's own behavior stays in the `synvoid-tls`
+     suite, where a real provider belongs.
+   - One Phase 132 guard (`composition_activates_configured_zones`) was made
+     formatting-robust: adding a second constructor argument rewrapped the call
+     it anchored on, and the failure was a false positive that could have been
+     "fixed" by weakening the real assertion.
 
 5. **Phase 135 — GeoIP Provider Inversion**
    - Status: **PLANNED**, conditional on a Phase 133 GO for GeoIP. **GO

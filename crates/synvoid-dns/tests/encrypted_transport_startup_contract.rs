@@ -1,6 +1,6 @@
 //! Phase 133 Workstream A.6 — encrypted-transport startup and failure parity.
 //!
-//! Every string here is something Phase 134's replacement trait has to
+//! Every string here is something Phase 134's provider capability has to
 //! reproduce: a composition root decides whether to fall back, fail startup, or
 //! surface the message, and it can only do that if the text is stable and
 //! attributable.
@@ -13,12 +13,16 @@
 //! not implement `DnsServerConfig` at all.
 //!
 //! What the three *do* share is the provider seam — one method,
-//! `build_server_config()` — and, by duplication, the two error strings. That
-//! duplication is itself the finding: the same contract is written out twice
-//! and an inversion that updates one and not the other would silently give DoQ
-//! different diagnostics from DoT and DoH. The duplication is pinned by
-//! `tools/synvoid-repo-guards/tests/dns_dependency_edges.rs`
-//! (`encrypted_transport_error_contract_is_duplicated_consistently`).
+//! `SecureTransportConfig::server_config()` — and, by duplication, the two error
+//! strings. That duplication is pinned at the source level by
+//! `encrypted_transport_error_contract_is_duplicated_consistently` in
+//! `tools/synvoid-repo-guards/tests/dns_dependency_edges.rs`.
+//!
+//! This suite uses a **DNS-owned stub**, not a real `synvoid-tls` resolver.
+//! Phase 134 removed the `synvoid-tls` edge from this crate, which is the point:
+//! the DNS-side contract must be testable without the provider present. What the
+//! *provider* does with certificates is proven separately in
+//! `crates/synvoid-tls/tests/cert_resolver_provider_evidence.rs`.
 //!
 //! Two behaviors are pinned here that are easy to lose in a refactor:
 //!
@@ -35,56 +39,81 @@ mod support;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use rustls::crypto::CryptoProvider;
+use rustls::ServerConfig;
 use synvoid_dns::runtime_config::{DohRuntimeConfig, DotRuntimeConfig};
 use synvoid_dns::secure_server::{DnsServerConfig, SecureDnsServerBase};
-use synvoid_tls::cert_resolver::CertResolver;
-use synvoid_tls::{InternalClientAuthConfig, InternalTlsConfig};
+use synvoid_dns::secure_transport::SecureTransportConfig;
 
-/// The fixed prefix a DNS-owned trait must keep in front of a provider error.
+/// The fixed prefix a provider capability must keep in front of its own error.
 const ACCEPTOR_FAILURE_PREFIX: &str = "Failed to build TLS config: ";
 
 /// The message used when no provider was supplied at all. Duplicated verbatim
 /// in `secure_server.rs` and `doq.rs`.
 const NO_RESOLVER: &str = "No TLS certificate resolver available";
 
-/// A provider with no configured material. `build_server_config` succeeds
-/// regardless — the resolver is installed as the cert resolver and only
-/// discovers the emptiness when a client offers an SNI — which is exactly the
-/// startup-vs-handshake distinction this suite pins.
-fn working_resolver() -> Arc<CertResolver> {
-    let resolver = CertResolver::new(InternalTlsConfig {
-        enabled: true,
-        prefer_post_quantum: false,
-        tls_1_3_only: true,
-        ocsp_stapling_enabled: false,
-        ..Default::default()
-    });
-    // No certificate or key path is configured, so this is expected to fail.
-    // The absence of material is not a startup failure.
-    assert!(
-        resolver.load_certificates().is_err(),
-        "precondition: this provider has no material to load"
-    );
-    Arc::new(resolver)
+/// A provider error the stub chooses, standing in for whatever text a real
+/// provider produces. A sentinel is deliberate: it proves the text is
+/// propagated rather than reconstructed from a constant.
+const PROVIDER_ERROR: &str = "CA certificate path not configured for client authentication";
+const OTHER_PROVIDER_ERROR: &str = "No CA certificates found in file";
+
+/// A cert resolver that never has a certificate.
+///
+/// `build_server_config` on a real provider succeeds regardless of loaded
+/// material, because the resolver is installed as the cert resolver and only
+/// discovers the emptiness when a client offers an SNI. This reproduces that
+/// without a `synvoid-tls` dependency: the config builds, and a handshake would
+/// fail.
+#[derive(Debug)]
+struct NoCertificate;
+
+impl rustls::server::ResolvesServerCert for NoCertificate {
+    fn resolve(
+        &self,
+        _client_hello: rustls::server::ClientHello<'_>,
+    ) -> Option<Arc<rustls::sign::CertifiedKey>> {
+        None
+    }
 }
 
-/// A provider whose build fails, with a message of its own choosing.
-fn failing_resolver(ca_cert_path: Option<std::path::PathBuf>) -> Arc<CertResolver> {
-    let resolver = CertResolver::new(InternalTlsConfig {
-        enabled: true,
-        client_auth: InternalClientAuthConfig {
-            enabled: true,
-            ca_cert_path,
-        },
-        prefer_post_quantum: false,
-        tls_1_3_only: true,
-        ocsp_stapling_enabled: false,
-        ..Default::default()
-    });
-    // Material is irrelevant here: the client-auth misconfiguration is what
-    // makes the build fail.
-    let _ = resolver.load_certificates();
-    Arc::new(resolver)
+fn provider() -> Arc<CryptoProvider> {
+    Arc::new(rustls::crypto::aws_lc_rs::default_provider())
+}
+
+/// Builds a usable `ServerConfig` with no certificate behind it.
+fn config_without_certificate() -> Arc<ServerConfig> {
+    let config = ServerConfig::builder_with_provider(provider())
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .expect("TLS 1.3 is supported")
+        .with_no_client_auth()
+        .with_cert_resolver(Arc::new(NoCertificate));
+    Arc::new(config)
+}
+
+/// A DNS-side stand-in for a TLS provider.
+enum StubTransport {
+    /// Succeeds, like a provider that has loaded its certificates.
+    Succeeds,
+    /// Fails with a message of the stub's choosing.
+    Fails(&'static str),
+}
+
+impl SecureTransportConfig for StubTransport {
+    fn server_config(&self) -> Result<Arc<ServerConfig>, String> {
+        match self {
+            Self::Succeeds => Ok(config_without_certificate()),
+            Self::Fails(message) => Err((*message).to_string()),
+        }
+    }
+}
+
+fn succeeding() -> Option<Arc<dyn SecureTransportConfig>> {
+    Some(Arc::new(StubTransport::Succeeds))
+}
+
+fn failing(message: &'static str) -> Option<Arc<dyn SecureTransportConfig>> {
+    Some(Arc::new(StubTransport::Fails(message)))
 }
 
 async fn noop_handler(
@@ -98,8 +127,11 @@ async fn noop_handler(
 
 /// `create_tls_acceptor` through the shared base, for one of the two
 /// stream-oriented transports.
-fn acceptor_error<C: DnsServerConfig>(config: C, resolver: Option<Arc<CertResolver>>) -> String {
-    let base = SecureDnsServerBase::new(config, resolver);
+fn acceptor_error<C: DnsServerConfig>(
+    config: C,
+    provider: Option<Arc<dyn SecureTransportConfig>>,
+) -> String {
+    let base = SecureDnsServerBase::new(config, provider);
     match base.create_tls_acceptor() {
         Ok(_) => panic!("acceptor construction was expected to fail"),
         Err(message) => message,
@@ -125,20 +157,21 @@ fn no_resolver_yields_the_same_message_on_every_stream_transport() {
 // ---- A-6b: provider failure is propagated verbatim --------------------------
 
 /// A-6b: a provider error crosses the boundary behind a fixed prefix with the
-/// provider's own text intact. A DNS-owned trait that wraps, rewords, or
-/// discards this error would make an mTLS misconfiguration undiagnosable.
+/// provider's own text intact. A capability that wraps, rewords, or discards
+/// this error would make an mTLS misconfiguration undiagnosable.
+///
+/// The stub's message is a sentinel chosen by the test, which is the point: it
+/// proves the text is propagated rather than reconstructed from a constant.
 #[test]
 fn provider_errors_are_propagated_verbatim_behind_a_fixed_prefix() {
-    let provider = failing_resolver(None);
-
     for (name, message) in [
         (
             "DoT",
-            acceptor_error(support::dot_on(853), Some(Arc::clone(&provider))),
+            acceptor_error(support::dot_on(853), failing(PROVIDER_ERROR)),
         ),
         (
             "DoH",
-            acceptor_error(support::doh_on(443), Some(Arc::clone(&provider))),
+            acceptor_error(support::doh_on(443), failing(PROVIDER_ERROR)),
         ),
     ] {
         assert!(
@@ -147,45 +180,35 @@ fn provider_errors_are_propagated_verbatim_behind_a_fixed_prefix() {
         );
         assert_eq!(
             message.strip_prefix(ACCEPTOR_FAILURE_PREFIX),
-            Some("CA certificate path not configured for client authentication"),
+            Some(PROVIDER_ERROR),
             "{name} must preserve the provider's own message verbatim, got: {message}"
         );
     }
 }
 
-/// A-6b': a second, different provider failure produces a different message
-/// under the same prefix, which is what proves the text is genuinely
-/// propagated rather than a constant.
-///
-/// The message is `"No CA certificates found in file"` — it comes from
-/// `load_ca_certs`, and the `"No CA certificates found for client
-/// authentication"` branch in `build_server_config` is unreachable (Phase 133
-/// finding F-11). Pinning the text an operator actually sees is the point.
+/// A-6b': a second, different provider error produces a different message under
+/// the same prefix, which is what proves the text is genuinely propagated.
 #[test]
 fn a_different_provider_failure_produces_a_different_message() {
-    let dir = std::env::temp_dir().join("synvoid-phase133-empty-ca");
-    std::fs::create_dir_all(&dir).expect("create fixture dir");
-    let empty_ca = dir.join("empty-ca.pem");
-    std::fs::write(&empty_ca, b"").expect("write empty CA file");
-
-    let message = acceptor_error(support::dot_on(853), Some(failing_resolver(Some(empty_ca))));
+    let message = acceptor_error(support::dot_on(853), failing(OTHER_PROVIDER_ERROR));
     assert_eq!(
         message.strip_prefix(ACCEPTOR_FAILURE_PREFIX),
-        Some("No CA certificates found in file"),
+        Some(OTHER_PROVIDER_ERROR),
         "a distinct provider failure must surface as a distinct message"
     );
 }
 
-// ---- A-6c: a working provider still builds an acceptor ---------------------
+// ---- A-6c: a succeeding provider still builds an acceptor -------------------
 
-/// A-6c: a provider with no loaded material still yields an acceptor. Material
-/// absence is a handshake-time condition, not a startup-time one, so a listener
-/// with such a provider must start and accept connections.
+/// A-6c: a provider that succeeds yields an acceptor. Certificate absence
+/// *inside* a real provider is a handshake-time condition, not a startup-time
+/// one, so a listener with such a provider must start and accept connections —
+/// which is what the `NoCertificate` resolver reproduces here.
 #[test]
-fn a_provider_without_material_still_yields_an_acceptor() {
-    SecureDnsServerBase::new(support::dot_on(853), Some(working_resolver()))
+fn a_succeeding_provider_still_yields_an_acceptor() {
+    SecureDnsServerBase::new(support::dot_on(853), succeeding())
         .create_tls_acceptor()
-        .expect("acceptor construction succeeds regardless of loaded material");
+        .expect("acceptor construction succeeds when the provider succeeds");
 }
 
 // ---- A-6d: zero port and bind ordering -------------------------------------

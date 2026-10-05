@@ -6,21 +6,24 @@ use parking_lot::RwLock;
 use tokio::sync::oneshot;
 
 use crate::runtime_config::DoqRuntimeConfig;
+use crate::secure_transport::SecureTransportConfig;
 use crate::server::DnsServer;
-use synvoid_tls::cert_resolver::CertResolver;
 
 const DOQ_MAX_QUERY_SIZE: usize = 65535;
 
 pub struct DoqServer {
     config: Arc<DoqRuntimeConfig>,
-    cert_resolver: Option<Arc<CertResolver>>,
+    cert_resolver: Option<Arc<dyn SecureTransportConfig>>,
     dns_server: Arc<RwLock<Option<DnsServer>>>,
     shutdown_tx: Option<oneshot::Sender<()>>,
     endpoint: Option<quinn::Endpoint>,
 }
 
 impl DoqServer {
-    pub fn new(config: DoqRuntimeConfig, cert_resolver: Option<Arc<CertResolver>>) -> Self {
+    pub fn new(
+        config: DoqRuntimeConfig,
+        cert_resolver: Option<Arc<dyn SecureTransportConfig>>,
+    ) -> Self {
         Self {
             config: Arc::new(config),
             cert_resolver,
@@ -102,14 +105,22 @@ impl DoqServer {
         Ok(())
     }
 
+    /// Build the QUIC transport's TLS configuration (DoQ).
+    ///
+    /// Duplicates the two literals in `SecureDnsServerBase::create_tls_acceptor`
+    /// because QUIC needs a `quinn::QuicServerConfig` rather than a
+    /// `TlsAcceptor`, so it cannot share that base. Keep the two in step; the
+    /// guard
+    /// `encrypted_transport_error_contract_is_duplicated_consistently` fails if
+    /// they drift.
     fn create_tls_config(&self) -> Result<Arc<rustls::ServerConfig>, String> {
-        let resolver = self
+        let provider = self
             .cert_resolver
             .as_ref()
             .ok_or_else(|| "No TLS certificate resolver available".to_string())?;
 
-        let config = resolver
-            .build_server_config()
+        let config = provider
+            .server_config()
             .map_err(|e| format!("Failed to build TLS config: {}", e))?;
 
         Ok(config)

@@ -68,17 +68,22 @@ of these was a behavior or evidence change outside it:
    (F-1) and a GeoLocation block rule that silently allows traffic when no
    provider is configured (F-2).
 4. **Phase 134 — TLS provider inversion** — remove the `synvoid-tls` direct
-   edge. Proceed on the Phase 133 GO. Three call sites, not one: DoT/DoH share
-   `SecureDnsServerBase` and DoQ has its own QUIC copy of the same contract
-   (F-12), so all three must be converted together.
+   edge. **CLOSED QUALIFIED**
+   (`architecture/dns_provider_inversion_phase134_closeout.md`). Direct SynVoid
+   normal edges 4 → 3; expanded normal-tree lines 827 → 717. Three call sites,
+   not one: DoT/DoH share `SecureDnsServerBase` and DoQ has its own QUIC copy of
+   the same contract (F-12), all three converted together. `synvoid-tls` is gone
+   from DNS's normal closure entirely.
 5. **Phase 135 — GeoIP provider inversion** — remove the `synvoid-geoip`
    direct edge. Proceed on the Phase 133 GO, and **first** fix F-1 and F-2.
 6. **Phase 136 — Campaign qualification** — terminal dependency proof, parity
    re-run, documentation reconciliation, class decision.
 
-Each phase is a rollback and evidence boundary. Phases 134 and 135 are ordered
-so the smaller, single-method GeoIP seam follows the larger TLS surface; both
-are independent and either may be re-scoped if its evidence gate fails.
+Each phase is a rollback and evidence boundary. Phases 134 and 135 are
+independent and either may be re-scoped if its evidence gate fails. Phase 133
+corrected the sizing assumption: the GeoIP seam is two methods over one result
+type, and it also carries two high-severity findings (F-1, F-2) that are
+mandatory Phase 135 workstreams rather than inversion work.
 
 ## Campaign success criteria
 

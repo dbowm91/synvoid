@@ -143,7 +143,14 @@ impl UnifiedServerResources {
             // explicitly below. Cloned before the move, exactly like the TSIG
             // keys above.
             let configured_zones = runtime_cfg.zones.clone();
-            let mut dns_server = crate::dns::DnsServer::new(runtime_cfg, cert_resolver.clone());
+            // Phase 134: DNS receives a DNS-owned capability, not the concrete
+            // `CertResolver`. The adapter is the only place that knows how a
+            // certificate provider becomes a rustls `ServerConfig`, so this
+            // crate keeps no `synvoid-tls` edge.
+            let mut dns_server = crate::dns::DnsServer::new(
+                runtime_cfg,
+                crate::tls::dns_providers::as_transport(cert_resolver.clone()),
+            );
 
             // Phase 132: activate zones declared in `main.toml`.
             //

@@ -1534,3 +1534,54 @@ compiled-in `prefer-post-quantum` rustls feature, not from this setting.
 
 A DNS-owned trait in Phase 134 must therefore not be documented as honouring a
 post-quantum preference, because there is no preference to honour.
+
+## Phase 134 findings — TLS provider inversion
+
+Closeout: `architecture/dns_provider_inversion_phase134_closeout.md`. No new
+field-ownership findings; this phase changed structure, not the matrix.
+
+| Measure | Phase 133 | Phase 134 |
+|---|---|---|
+| Direct SynVoid normal edges | 4 | **3** |
+| Expanded `cargo tree -e normal` lines | 827 | **717** |
+
+The `synvoid-tls` edge left DNS's normal closure entirely rather than merely
+becoming indirect, because it transitively carried `instant-acme`, `rcgen`,
+`x509-parser`, `rsa`, `dashmap`, and `notify` — none of which are DNS concerns.
+
+### F-13: root depends on `rustls` again, for one use
+
+`SecureTransportConfig::server_config` returns
+`Result<Arc<rustls::ServerConfig>, String>`, and composition must name that type
+to satisfy the trait. Root therefore depends on `rustls` directly, reverting the
+Phase 31 removal — which was correct at the time, when root had 0 direct
+`rustls::` uses.
+
+Recorded rather than smoothed over, because a "removed" ledger row silently
+becoming "keep" is exactly the kind of change a dependency audit should catch.
+Defaults (aws-lc-rs + prefer-post-quantum + tls12, no `ring`) match the set
+`synvoid-tls` already pins, so the process keeps a single `CryptoProvider` and
+the change adds no supply-chain surface. The row in
+`architecture/root_dependency_ownership.md` now reads `composition_runtime` /
+consumer `tls` with the reason.
+
+### F-14: the F-12 duplication gate needed strengthening, not loosening
+
+Phase 133's `encrypted_transport_error_contract_is_duplicated_consistently`
+called `.build_server_config()`. After the inversion the same guard had to
+change, and the tempting fix was to update the string and stop there. Instead it
+also asserts that **neither** file calls the concrete method any more, so a
+partial revert — one copy inverted, the other not — fails the gate instead of
+silently giving DoQ different diagnostics from DoT and DoH.
+
+### F-15: a Phase 132 guard was coupled to rustfmt's line shape
+
+`composition_activates_configured_zones` located the constructor by matching
+`DnsServer::new(runtime_cfg` on one line. Adding a second argument made rustfmt
+wrap the call, and the guard failed while its actual invariant — zones cloned
+before the runtime config is moved — was still satisfied.
+
+It now anchors on `DnsServer::new(` and scans forward for the moved
+`runtime_cfg`. Recorded because the failure mode is a false positive, and the
+wrong response to a false positive is to weaken the real assertion rather than
+the brittle anchor.

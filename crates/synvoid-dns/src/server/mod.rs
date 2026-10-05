@@ -19,8 +19,8 @@ use super::edns::{parse_edns_options, EdnsOptions};
 use super::query_validator::DnsQueryValidator;
 use super::store::ZoneStore;
 use super::wire;
+use crate::secure_transport::{AcmeTxtChallenges, SecureTransportConfig};
 use crate::time::unix_timestamp_secs;
-use synvoid_tls::cert_resolver::CertResolver;
 
 pub use hickory_proto::rr::RecordType;
 
@@ -1591,7 +1591,7 @@ struct DnsHandlerState {
     update_handler: Option<super::update::DynamicUpdateHandler>,
     notify_handler: Option<super::notify::NotifyHandler>,
     query_coalescer: Option<Arc<super::query_coalesce::QueryCoalescer>>,
-    acme_dns_challenges: Option<Arc<synvoid_tls::AcmeDnsChallenge>>,
+    acme_dns_challenges: Option<Arc<dyn AcmeTxtChallenges>>,
     cookie_server: Option<Arc<crate::cookie::DnsCookieServer>>,
 }
 
@@ -1618,7 +1618,7 @@ pub struct QueryContext<'a> {
     pub notify_handler: Option<&'a super::notify::NotifyHandler>,
     pub query_coalescer: Option<&'a Arc<super::query_coalesce::QueryCoalescer>>,
     pub dns64_translator: Option<&'a super::dns64::Dns64Translator>,
-    pub acme_dns_challenges: Option<&'a Arc<synvoid_tls::AcmeDnsChallenge>>,
+    pub acme_dns_challenges: Option<&'a Arc<dyn AcmeTxtChallenges>>,
     pub cookie_server: Option<&'a Arc<crate::cookie::DnsCookieServer>>,
     #[cfg(feature = "mesh")]
     pub mesh_registry: Option<&'a Arc<crate::mesh_sync::MeshDnsRegistry>>,
@@ -1649,7 +1649,7 @@ pub struct DnsServer {
     dnssec: Option<Arc<RwLock<DnsSecKeyManager>>>,
     signer_name: Option<String>,
     rrl_enabled: bool,
-    cert_resolver: Option<Arc<CertResolver>>,
+    cert_resolver: Option<Arc<dyn SecureTransportConfig>>,
     dot_server: Option<DotServer>,
     doh_server: Option<DohServer>,
     doq_server: Option<DoqServer>,
@@ -1664,7 +1664,7 @@ pub struct DnsServer {
     anycast_manager: Option<Arc<super::anycast::AnycastSocketManager>>,
     recursive_server: Option<Arc<super::recursive::RecursiveDnsServer>>,
     dns64_translator: Option<super::dns64::Dns64Translator>,
-    pub(crate) acme_dns_challenges: Option<Arc<synvoid_tls::AcmeDnsChallenge>>,
+    pub(crate) acme_dns_challenges: Option<Arc<dyn AcmeTxtChallenges>>,
     cookie_server: Option<Arc<crate::cookie::DnsCookieServer>>,
     /// Health checker — reflects real runtime state via setter calls at
     /// listener startup, zone load/reload, recursive init, encrypted-transport
@@ -1764,7 +1764,7 @@ impl DnsServer {
     /// `src/server/dns_runtime_config.rs`.
     pub fn new(
         runtime: super::runtime_config::DnsRuntimeConfig,
-        cert_resolver: Option<Arc<CertResolver>>,
+        cert_resolver: Option<Arc<dyn SecureTransportConfig>>,
     ) -> Self {
         let super::runtime_config::DnsRuntimeConfig {
             authoritative,
@@ -2068,10 +2068,7 @@ impl DnsServer {
         server
     }
 
-    pub fn with_acme_dns_challenges(
-        mut self,
-        challenges: Arc<synvoid_tls::AcmeDnsChallenge>,
-    ) -> Self {
+    pub fn with_acme_dns_challenges(mut self, challenges: Arc<dyn AcmeTxtChallenges>) -> Self {
         self.acme_dns_challenges = Some(challenges);
         self
     }

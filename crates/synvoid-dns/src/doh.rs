@@ -16,8 +16,8 @@ use crate::runtime_config::DohRuntimeConfig;
 use crate::secure_server::{
     DnsServerConfig, SecureDnsServerBase, MAX_QUERY_SIZE, TLS_HANDSHAKE_TIMEOUT_SECS,
 };
+use crate::secure_transport::SecureTransportConfig;
 use crate::server::DnsServer;
-use synvoid_tls::cert_resolver::CertResolver;
 
 pub const DOH_MAX_QUERY_SIZE: usize = MAX_QUERY_SIZE;
 
@@ -36,7 +36,10 @@ pub struct DohServer {
 }
 
 impl DohServer {
-    pub fn new(config: DohRuntimeConfig, cert_resolver: Option<Arc<CertResolver>>) -> Self {
+    pub fn new(
+        config: DohRuntimeConfig,
+        cert_resolver: Option<Arc<dyn SecureTransportConfig>>,
+    ) -> Self {
         Self {
             base: SecureDnsServerBase::new(config, cert_resolver),
         }

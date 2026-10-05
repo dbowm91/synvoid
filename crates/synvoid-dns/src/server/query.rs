@@ -994,7 +994,7 @@ impl DnsServer {
                     let domain = qname_lower
                         .strip_prefix("_acme-challenge.")
                         .unwrap_or(&qname_lower);
-                    if let Some(txt_value) = acme_challenges.get_txt_value(domain) {
+                    if let Some(txt_value) = acme_challenges.txt_value(domain) {
                         tracing::debug!(
                             "Serving ACME DNS-01 challenge for {}: {}",
                             domain,

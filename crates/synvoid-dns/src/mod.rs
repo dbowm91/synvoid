@@ -43,6 +43,7 @@ pub mod resolver_global;
 pub mod rpz;
 pub mod runtime_config;
 pub mod secure_server;
+pub mod secure_transport;
 pub mod server;
 pub mod store;
 pub mod transfer;

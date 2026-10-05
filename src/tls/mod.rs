@@ -7,6 +7,11 @@
 
 pub mod server;
 
+// Composition-owned adapters bridging `synvoid-tls` providers to the
+// DNS-owned encrypted-transport capabilities (Phase 134).
+#[cfg(feature = "dns")]
+pub mod dns_providers;
+
 // Re-export from extracted crate for backwards compatibility
 pub use synvoid_tls::acme;
 #[cfg(feature = "dns")]

@@ -12,8 +12,8 @@ use crate::runtime_config::DotRuntimeConfig;
 use crate::secure_server::{
     DnsServerConfig, SecureDnsServerBase, MAX_QUERY_SIZE, TLS_HANDSHAKE_TIMEOUT_SECS,
 };
+use crate::secure_transport::SecureTransportConfig;
 use crate::server::DnsServer;
-use synvoid_tls::cert_resolver::CertResolver;
 
 pub const DOT_MAX_QUERY_SIZE: usize = MAX_QUERY_SIZE;
 
@@ -32,7 +32,10 @@ pub struct DotServer {
 }
 
 impl DotServer {
-    pub fn new(config: DotRuntimeConfig, cert_resolver: Option<Arc<CertResolver>>) -> Self {
+    pub fn new(
+        config: DotRuntimeConfig,
+        cert_resolver: Option<Arc<dyn SecureTransportConfig>>,
+    ) -> Self {
         Self {
             base: SecureDnsServerBase::new(config, cert_resolver),
         }

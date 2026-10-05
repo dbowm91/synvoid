@@ -134,6 +134,15 @@ chrono = { version = "0.4", features = ["serde"] }
 synvoid-cli = { path = "crates/synvoid-cli" , version = "0.1" }
 synvoid-config = { path = "crates/synvoid-config" , version = "0.1" }
 synvoid-dns = { path = "crates/synvoid-dns", optional = true , version = "0.1" }
+# Phase 134: `src/tls/dns_providers.rs` implements the DNS-owned
+# `SecureTransportConfig` capability, whose signature is
+# `Result<Arc<rustls::ServerConfig>, String>`. Composition must name that type
+# to satisfy the trait, so root depends on rustls directly again. Reverts the
+# Phase 31 removal (which was correct then: 0 root src uses) for one real use.
+# Defaults are aws-lc-rs + prefer-post-quantum + tls12 and deliberately exclude
+# `ring`, so the process still has a single CryptoProvider — the same feature
+# set `synvoid-tls` already pins, and no new supply-chain surface.
+rustls = "0.23"
 synvoid-icmp-filter = { path = "crates/synvoid-icmp-filter", optional = true , version = "0.1" }
 synvoid-honeypot = { path = "crates/synvoid-honeypot" , version = "0.1" }
 synvoid-upload = { path = "crates/synvoid-upload" , version = "0.1" }
