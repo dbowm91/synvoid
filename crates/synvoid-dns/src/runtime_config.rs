@@ -36,13 +36,43 @@ pub use hickory_proto::rr::RecordType;
 // ---------------------------------------------------------------------------
 
 /// Complete DNS-owned runtime configuration for one server instance.
+///
+/// This is the whole-DNS projection. [`AuthoritativeRuntimeConfig`] is the
+/// subset `DnsServer` consumes directly (Phase 126 cutover); the remaining
+/// sections are consumed by the recursive runtime (Phase 127), zone/DNSSEC/
+/// TSIG/HSM wiring (Phase 128), and the time/net helpers (Phase 129).
 #[derive(Debug, Clone)]
 pub struct DnsRuntimeConfig {
     /// Top-level activation gate (`dns.enabled`). Composition checks this
     /// before building a server at all.
     pub enabled: bool,
-    /// Authoritative UDP/TCP bind socket (`dns.bind_address` + `dns.port`),
-    /// parsed once at conversion time.
+    /// Authoritative server and encrypted-transport runtime.
+    pub authoritative: AuthoritativeRuntimeConfig,
+    /// Global DNSSEC policy and key custody wiring.
+    pub dnssec: DnssecRuntimeConfig,
+    /// Zone input specs (authoritative zone data).
+    pub zones: Vec<ZoneSpec>,
+    /// Runtime TSIG key material.
+    pub tsig_keys: Vec<TsigRuntimeKey>,
+    /// Recursive resolver runtime subtree.
+    pub recursive: RecursiveRuntimeConfig,
+}
+
+impl DnsRuntimeConfig {
+    /// Top-level authoritative runtime subset.
+    pub fn authoritative(&self) -> &AuthoritativeRuntimeConfig {
+        &self.authoritative
+    }
+}
+
+/// Authoritative server and encrypted-transport runtime configuration.
+///
+/// This is the canonical `DnsServer` input. Every value here has a real
+/// authoritative runtime consumer; nothing in this struct is read by the
+/// recursive runtime, and nothing in it is a persisted-schema passthrough.
+#[derive(Debug, Clone)]
+pub struct AuthoritativeRuntimeConfig {
+    /// Authoritative UDP/TCP bind socket, parsed once at conversion time.
     pub bind_address: SocketAddr,
     /// Response TTL policy.
     pub ttl: TtlRuntimeConfig,
@@ -74,17 +104,9 @@ pub struct DnsRuntimeConfig {
     pub zone_transfer: ZoneTransferRuntimeConfig,
     /// Anycast activation guard.
     pub anycast: AnycastRuntimeConfig,
-    /// Global DNSSEC policy and key custody wiring.
-    pub dnssec: DnssecRuntimeConfig,
-    /// Zone input specs (authoritative zone data).
-    pub zones: Vec<ZoneSpec>,
-    /// Runtime TSIG key material.
-    pub tsig_keys: Vec<TsigRuntimeKey>,
-    /// Recursive resolver runtime subtree.
-    pub recursive: RecursiveRuntimeConfig,
 }
 
-impl DnsRuntimeConfig {
+impl AuthoritativeRuntimeConfig {
     /// Health-derived transport flags. Mirrors the values the health checker
     /// is initialized with, so health state is a pure function of runtime
     /// configuration.
@@ -131,7 +153,7 @@ impl DnsRuntimeConfig {
     }
 }
 
-/// Which encrypted transport to inspect on [`DnsRuntimeConfig`].
+/// Which encrypted transport to inspect on [`AuthoritativeRuntimeConfig`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EncryptedTransport {
     Dot,
@@ -823,6 +845,54 @@ pub struct RecursiveRuntimeConfig {
     /// validation. Used to keep the "forwarder does not validate" warning
     /// truthful without re-deriving the mode.
     pub performs_local_dnssec_validation: bool,
+}
+
+// ---------------------------------------------------------------------------
+// Disabled-transport constructors
+// ---------------------------------------------------------------------------
+
+/// A disabled DoT runtime: no bind address is fabricated for a transport that
+/// will never bind.
+pub fn disabled_dot() -> DotRuntimeConfig {
+    DotRuntimeConfig {
+        enabled: false,
+        bind_address: None,
+    }
+}
+
+/// A disabled DoH runtime.
+pub fn disabled_doh() -> DohRuntimeConfig {
+    DohRuntimeConfig {
+        enabled: false,
+        bind_address: None,
+    }
+}
+
+/// Build a listener socket from a bare IP literal and a port.
+///
+/// Parses the address as an [`IpAddr`] first so an IPv6 literal such as `::1`
+/// produces a valid `SocketAddr` without requiring bracket notation from the
+/// operator. Returns `None` for an unparseable literal; the application adapter
+/// turns that into a typed rejection rather than a default.
+///
+/// Tests and programmatic construction should use this so IPv6 binds behave
+/// identically to the production conversion path.
+pub fn parse_bind_address(address: &str, port: u16) -> Option<SocketAddr> {
+    address
+        .trim()
+        .parse::<IpAddr>()
+        .ok()
+        .map(|ip| SocketAddr::from((ip, port)))
+}
+
+/// A disabled DoQ runtime. Stream and idle limits keep the shipped defaults.
+pub fn disabled_doq() -> DoqRuntimeConfig {
+    DoqRuntimeConfig {
+        enabled: false,
+        bind_address: None,
+        max_concurrent_streams: 100,
+        idle_timeout: Duration::from_secs(30),
+    }
 }
 
 // ---------------------------------------------------------------------------

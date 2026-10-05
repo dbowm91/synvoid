@@ -1,5 +1,7 @@
 #![allow(clippy::field_reassign_with_default)]
 
+mod support;
+
 use std::net::IpAddr;
 use std::sync::Arc;
 
@@ -13,6 +15,7 @@ use synvoid_dns::edns::EcsFilterConfig;
 use synvoid_dns::recursive::CircuitBreaker;
 use synvoid_dns::recursive_cache::DnssecValidationState;
 use synvoid_dns::recursive_cache::RecursiveDnsCache;
+use synvoid_dns::runtime_config::AuthoritativeRuntimeConfig;
 use synvoid_dns::server::RecordType;
 use synvoid_dns::server::{DnsServer, DnsZoneRecord, QueryContext, ShardedZoneStore, Zone};
 use synvoid_dns::zone_trie::ZoneTrie;
@@ -375,29 +378,14 @@ fn test_trust_anchor_config_validation() {
 /// `startup.rs:74-77`.
 #[test]
 fn test_anycast_requires_mesh_feature() {
-    let config = DnsConfig::default();
-    let _server = DnsServer::new(config, None);
+    // Anycast activation is represented by the runtime rejection signal: the
+    // persisted anycast settings have no runtime projection (absent by design),
+    // so enabling the guard is what must fail startup.
+    let mut authoritative = support::authoritative_runtime();
+    authoritative.bind_address = "127.0.0.1:5353".parse().unwrap();
+    authoritative.anycast = synvoid_dns::runtime_config::AnycastRuntimeConfig { enabled: true };
 
-    // Enable anycast on the server's config
-    // We need to create a server with anycast enabled
-    let mut anycast_config = DnsConfig::default();
-    anycast_config.enabled = true;
-    anycast_config.port = 5353;
-    anycast_config.anycast = DnsAnycastConfig {
-        enabled: true,
-        bind_addresses: vec!["10.0.0.1".to_string()],
-        port: 53,
-        use_pktinfo: true,
-        health_check_domain: "_healthcheck.local".to_string(),
-        health_check_interval_secs: 5,
-        capacity: 10000,
-        mesh_based_sync: true,
-        sync_interval_secs: 300,
-        geo: None,
-        sync_trigger_on_update: true,
-    };
-
-    let mut server = DnsServer::new(anycast_config, None);
+    let mut server = DnsServer::new(authoritative, support::deferred_config(), None);
 
     // Starting the server with anycast enabled should fail because mesh
     // feature is not compiled in (the extracted dns crate doesn't have mesh).
@@ -467,13 +455,13 @@ fn test_mesh_mode_requires_mesh_feature() {
 /// that the server is constructible with enabled=false.
 #[test]
 fn test_disabled_dns_skips_startup() {
-    let mut config = DnsConfig::default();
-    config.enabled = false;
-    config.bind_address = "127.0.0.1".to_string();
-    config.port = 5353;
-
-    // Server construction succeeds even when disabled
-    let server = DnsServer::new(config, None);
+    // Server construction succeeds even when the persisted top-level gate is
+    // disabled — `enabled` is a composition decision, not a server field.
+    let authoritative = AuthoritativeRuntimeConfig {
+        bind_address: "127.0.0.1:5353".parse().unwrap(),
+        ..support::authoritative_runtime()
+    };
+    let server = DnsServer::new(authoritative, support::deferred_config(), None);
 
     // The server's config indicates it's disabled
     // We can't directly access config.enabled on DnsServer, but we verified

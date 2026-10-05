@@ -1,6 +1,6 @@
 # Phase 126 Plan: DNS Authoritative and Encrypted-Transport Runtime Cutover
 
-Status: **PLANNED / READY** (2026-10-04). Unblocked by Phase 125, which closed
+Status: **CLOSED QUALIFIED** (2026-10-04). Unblocked by Phase 125, which closed
 QUALIFIED on 2026-10-04 with
 `architecture/dns_runtime_dto_phase125_closeout.md`.
 
@@ -11,6 +11,10 @@ Predecessor evidence: Phase 125 closeout
 (`architecture/dns_runtime_dto_phase125_closeout.md`) — the runtime DTO
 vocabulary, the root adapter, the exhaustive ownership ledger, and 43 parity
 fixtures exist, so the constructor cutover has its parity prerequisite.
+
+Closeout: `architecture/dns_runtime_dto_phase126_closeout.md`.
+
+Successor: Phase 127 is **unblocked / READY**.
 
 ## Goal
 
@@ -130,3 +134,27 @@ Reject implementation that:
 - moves certificate management into DNS;
 - silently changes listener/bind defaults;
 - changes protocol behavior while changing config ownership.
+
+
+## Closeout (2026-10-04)
+
+**CLOSED QUALIFIED.** See `architecture/dns_runtime_dto_phase126_closeout.md`
+for the full evidence table.
+
+Result summary:
+
+- `DnsServer::new(AuthoritativeRuntimeConfig, DeferredDnsConfig, CertResolver)`
+  is the canonical constructor; it no longer accepts a persistence DTO.
+- DoT/DoH/DoQ and `SecureDnsServerBase` consume parsed `SocketAddr` values.
+- Production `src/` names `synvoid_config::dns::DnsConfig` in exactly one file,
+  `runtime_config_deferred.rs`, which is the documented Phase 127/128
+  passthrough.
+- 46 test call sites migrated to runtime fixtures; 7 campaign guards green; the
+  Phase 125 parity fixtures pass unchanged.
+- The dead `DnsSettings` persistence bridge was removed.
+- Two fail-closed behavior changes recorded (DNS64 prefix rejection, DoQ bind
+  validation expressed as an absent address).
+- The `synvoid-config` normal edge is intentionally still present: Phase 128
+  owns its removal.
+
+Phase 127 is unblocked.

@@ -1,19 +1,18 @@
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
-use std::time::Duration;
 
 use metrics::{counter, gauge, histogram};
 use parking_lot::RwLock;
 use tokio::sync::oneshot;
 
+use crate::runtime_config::DoqRuntimeConfig;
 use crate::server::DnsServer;
-use synvoid_config::dns::DnsDoqConfig;
 use synvoid_tls::cert_resolver::CertResolver;
 
 const DOQ_MAX_QUERY_SIZE: usize = 65535;
 
 pub struct DoqServer {
-    config: Arc<DnsDoqConfig>,
+    config: Arc<DoqRuntimeConfig>,
     cert_resolver: Option<Arc<CertResolver>>,
     dns_server: Arc<RwLock<Option<DnsServer>>>,
     shutdown_tx: Option<oneshot::Sender<()>>,
@@ -21,7 +20,7 @@ pub struct DoqServer {
 }
 
 impl DoqServer {
-    pub fn new(config: DnsDoqConfig, cert_resolver: Option<Arc<CertResolver>>) -> Self {
+    pub fn new(config: DoqRuntimeConfig, cert_resolver: Option<Arc<CertResolver>>) -> Self {
         Self {
             config: Arc::new(config),
             cert_resolver,
@@ -39,34 +38,26 @@ impl DoqServer {
         self.dns_server.clone()
     }
 
-    pub fn config(&self) -> &DnsDoqConfig {
+    pub fn config(&self) -> &DoqRuntimeConfig {
         &self.config
     }
 
-    /// Resolve the DoQ socket address from config with the same validation
-    /// semantics as UDP/TCP/DoT/DoH (Phase 45 Workstream C): the address must
-    /// be explicit and parseable and the port non-zero, so misconfiguration
-    /// fails here — before QUIC endpoint creation — with a typed error.
-    /// `DnsConfig::validate()` rejects such configs even earlier at
+    /// Resolve the DoQ socket address from DNS-owned runtime configuration.
+    ///
+    /// The adapter already parsed the address, so the only remaining
+    /// fail-fast conditions are a disabled transport (no address) and a zero
+    /// port. `DnsConfig::validate()` rejects such configs even earlier at
     /// config-load time; this is defense in depth for programmatic use.
-    pub(crate) fn doq_bind_addr(config: &DnsDoqConfig) -> Result<SocketAddr, String> {
-        if config.bind_address.is_empty() {
-            return Err(
-                "Invalid DoQ bind address: bind_address must be set explicitly \
+    pub(crate) fn doq_bind_addr(config: &DoqRuntimeConfig) -> Result<SocketAddr, String> {
+        let bind_address = config.bind_address.ok_or_else(|| {
+            "Invalid DoQ bind address: bind_address must be set explicitly \
                  when DoQ is enabled (e.g. \"0.0.0.0\" or \"127.0.0.1\")"
-                    .to_string(),
-            );
-        }
-        if config.port == 0 {
+                .to_string()
+        })?;
+        if bind_address.port() == 0 {
             return Err("Invalid DoQ bind address: port cannot be zero".to_string());
         }
-        // Parse as IpAddr first so IPv6 literals (e.g. "::1") form a valid
-        // SocketAddr without requiring bracket notation from the operator.
-        let ip: IpAddr = config
-            .bind_address
-            .parse()
-            .map_err(|e| format!("Invalid DoQ bind address '{}': {}", config.bind_address, e))?;
-        Ok(SocketAddr::from((ip, config.port)))
+        Ok(bind_address)
     }
 
     pub async fn start(&mut self) -> Result<(), String> {
@@ -89,9 +80,8 @@ impl DoqServer {
         transport_config.max_concurrent_uni_streams(self.config.max_concurrent_streams.into());
         transport_config.max_concurrent_bidi_streams(self.config.max_concurrent_streams.into());
 
-        let idle_timeout =
-            quinn::IdleTimeout::try_from(Duration::from_secs(self.config.idle_timeout_secs))
-                .map_err(|e| format!("Failed to create idle timeout: {}", e))?;
+        let idle_timeout = quinn::IdleTimeout::try_from(self.config.idle_timeout)
+            .map_err(|e| format!("Failed to create idle timeout: {}", e))?;
         transport_config.max_idle_timeout(Some(idle_timeout));
 
         let endpoint = quinn::Endpoint::server(server_config, bind_addr)
@@ -128,7 +118,7 @@ impl DoqServer {
     async fn accept_loop(
         endpoint: quinn::Endpoint,
         dns_server: Arc<RwLock<Option<DnsServer>>>,
-        config: Arc<DnsDoqConfig>,
+        config: Arc<DoqRuntimeConfig>,
         mut shutdown_rx: oneshot::Receiver<()>,
     ) {
         loop {
@@ -164,7 +154,7 @@ impl DoqServer {
     async fn handle_connection(
         incoming: quinn::Incoming,
         dns_server: Arc<RwLock<Option<DnsServer>>>,
-        _config: Arc<DnsDoqConfig>,
+        _config: Arc<DoqRuntimeConfig>,
     ) -> Result<(), String> {
         let connection = match incoming.await {
             Ok(conn) => conn,
@@ -371,18 +361,14 @@ impl Clone for DoqServer {
 #[cfg(test)]
 mod tests {
     use super::DoqServer;
-    use synvoid_config::dns::DnsDoqConfig;
+    use crate::runtime_config::DoqRuntimeConfig;
 
-    fn doq_config(bind: &str, port: u16) -> DnsDoqConfig {
-        DnsDoqConfig {
+    fn doq_config(bind: &str, port: u16) -> DoqRuntimeConfig {
+        DoqRuntimeConfig {
             enabled: true,
-            port,
-            bind_address: bind.to_string(),
-            tls_cert_path: None,
-            tls_key_path: None,
-            use_system_cert_store: false,
+            bind_address: crate::runtime_config::parse_bind_address(bind, port),
             max_concurrent_streams: 100,
-            idle_timeout_secs: 30,
+            idle_timeout: std::time::Duration::from_secs(30),
         }
     }
 
@@ -402,18 +388,26 @@ mod tests {
         assert_eq!(addr.port(), 7853);
     }
 
-    /// Phase 45 Workstream C: invalid addresses fail before endpoint creation.
+    /// Phase 45 Workstream C: a transport with no parsed address fails fast
+    /// instead of producing a confusing QUIC endpoint error. An unparseable
+    /// address never reaches here — the adapter rejects it.
     #[test]
-    fn test_doq_bind_invalid_fails_fast() {
+    fn test_doq_bind_absent_fails_fast() {
         let err = DoqServer::doq_bind_addr(&doq_config("not-an-ip", 7853)).unwrap_err();
+        assert!(err.contains("must be set explicitly"), "got: {}", err);
         assert!(err.contains("Invalid DoQ bind address"), "got: {}", err);
     }
 
-    /// Phase 45 Workstream C: empty bind (the struct default) fails fast
-    /// instead of producing a confusing QUIC endpoint error.
+    /// A disabled transport carries no bind address and must fail fast.
     #[test]
-    fn test_doq_bind_empty_fails_fast() {
-        let err = DoqServer::doq_bind_addr(&doq_config("", 7853)).unwrap_err();
+    fn test_doq_bind_disabled_fails_fast() {
+        let config = DoqRuntimeConfig {
+            enabled: false,
+            bind_address: None,
+            max_concurrent_streams: 100,
+            idle_timeout: std::time::Duration::from_secs(30),
+        };
+        let err = DoqServer::doq_bind_addr(&config).unwrap_err();
         assert!(err.contains("must be set explicitly"), "got: {}", err);
     }
 
@@ -426,29 +420,25 @@ mod tests {
 
     #[test]
     fn test_doq_server_creation() {
-        let config = DnsDoqConfig {
-            enabled: true,
-            port: 7853,
-            bind_address: "127.0.0.1".to_string(),
-            tls_cert_path: None,
-            tls_key_path: None,
-            use_system_cert_store: false,
-            max_concurrent_streams: 100,
-            idle_timeout_secs: 30,
-        };
-
-        let server = DoqServer::new(config, None);
+        let server = DoqServer::new(doq_config("127.0.0.1", 7853), None);
 
         assert!(server.config().enabled);
-        assert_eq!(server.config().port, 7853);
+        assert_eq!(
+            server.config().bind_address,
+            Some("127.0.0.1:7853".parse().unwrap())
+        );
         assert_eq!(server.config().max_concurrent_streams, 100);
-        assert_eq!(server.config().idle_timeout_secs, 30);
+        assert_eq!(
+            server.config().idle_timeout,
+            std::time::Duration::from_secs(30)
+        );
     }
 
     #[test]
-    fn test_doq_config_defaults() {
-        // Serde defaults are applied during deserialization, not Default::default()
-        let config: DnsDoqConfig = serde_json::from_str("{}").unwrap();
+    fn test_doq_serde_defaults_remain_stable() {
+        // Persisted defaults are unchanged by the Phase 126 cutover; only the
+        // runtime projection is new.
+        let config: synvoid_config::dns::DnsDoqConfig = serde_json::from_str("{}").unwrap();
 
         assert_eq!(config.port, 853);
         assert_eq!(config.max_concurrent_streams, 100);

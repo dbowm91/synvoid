@@ -1,3 +1,5 @@
+mod support;
+
 use synvoid_config::dns::{
     DnsConfig, DnsDohConfig, DnsDoqConfig, DnsDotConfig, RecursiveDnsConfig,
 };
@@ -83,8 +85,11 @@ fn ed25519_test_key() -> ZoneSigningKey {
 fn successful_reload_swaps_zone_atomically() {
     use synvoid_dns::server::DnsServer;
 
-    let config = DnsConfig::default();
-    let server = DnsServer::new(config, None);
+    let server = DnsServer::new(
+        support::authoritative_runtime(),
+        support::deferred_config(),
+        None,
+    );
     let zones = server.get_zones();
 
     let mut initial = build_test_zone();
@@ -130,8 +135,11 @@ fn successful_reload_swaps_zone_atomically() {
 fn failed_reload_preserves_previous_active_zone() {
     use synvoid_dns::server::DnsServer;
 
-    let config = DnsConfig::default();
-    let server = DnsServer::new(config, None);
+    let server = DnsServer::new(
+        support::authoritative_runtime(),
+        support::deferred_config(),
+        None,
+    );
     let zones = server.get_zones();
 
     // Install a known-good active zone.
@@ -224,8 +232,11 @@ fn successful_reload_invalidates_cache_for_zone() {
     use synvoid_dns::cache::CacheKey;
     use synvoid_dns::server::DnsServer;
 
-    let config = DnsConfig::default();
-    let server = DnsServer::new(config, None);
+    let server = DnsServer::new(
+        support::authoritative_runtime(),
+        support::deferred_config(),
+        None,
+    );
     let initial = build_test_zone();
     server
         .replace_zone_with_validation(initial.clone())

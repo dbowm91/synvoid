@@ -38,18 +38,19 @@ use synvoid_config::dns::{
     TsigKeyConfig,
 };
 use synvoid_dns::runtime_config::{
-    AnycastRuntimeConfig, CacheRuntimeConfig, CircuitBreakerRuntimeConfig, CustomUpstreamEndpoint,
-    Dns64RuntimeConfig, DnsFirewallRuntimeConfig, DnsRateLimitModeRuntime,
-    DnsRateLimitRuntimeConfig, DnsRuntimeConfig, DnssecAlgorithmRuntime, DnssecDenialPolicyRuntime,
-    DnssecKeyTypeRuntime, DnssecRuntimeConfig, DohRuntimeConfig, DoqRuntimeConfig,
-    DotRuntimeConfig, DynamicUpdateRuntimeConfig, EcsRuntimeConfig, HsmProviderRuntime,
-    HsmRuntimeConfig, IpNetwork, LimitsRuntimeConfig, QueryCoalescingRuntimeConfig, RecordType,
-    RecursiveAclActionRuntime, RecursiveCacheRuntimeConfig, RecursiveClientAclRuntime,
-    RecursiveEcsPolicyRuntime, RecursiveEcsRuntimeConfig, RecursiveRuntimeConfig,
-    RecursiveUpstreamRuntime, RrlRuntimeConfig, ServeStaleRuntimeConfig, TsigAlgorithmRuntime,
-    TsigRuntimeKey, TtlRuntimeConfig, ZoneDnssecSpec, ZoneRecordSpec, ZoneSpec,
-    ZoneTransferRuntimeConfig,
+    AnycastRuntimeConfig, AuthoritativeRuntimeConfig, CacheRuntimeConfig,
+    CircuitBreakerRuntimeConfig, CustomUpstreamEndpoint, Dns64RuntimeConfig,
+    DnsFirewallRuntimeConfig, DnsRateLimitModeRuntime, DnsRateLimitRuntimeConfig, DnsRuntimeConfig,
+    DnssecAlgorithmRuntime, DnssecDenialPolicyRuntime, DnssecKeyTypeRuntime, DnssecRuntimeConfig,
+    DohRuntimeConfig, DoqRuntimeConfig, DotRuntimeConfig, DynamicUpdateRuntimeConfig,
+    EcsRuntimeConfig, HsmProviderRuntime, HsmRuntimeConfig, IpNetwork, LimitsRuntimeConfig,
+    QueryCoalescingRuntimeConfig, RecordType, RecursiveAclActionRuntime,
+    RecursiveCacheRuntimeConfig, RecursiveClientAclRuntime, RecursiveEcsPolicyRuntime,
+    RecursiveEcsRuntimeConfig, RecursiveRuntimeConfig, RecursiveUpstreamRuntime, RrlRuntimeConfig,
+    ServeStaleRuntimeConfig, TsigAlgorithmRuntime, TsigRuntimeKey, TtlRuntimeConfig,
+    ZoneDnssecSpec, ZoneRecordSpec, ZoneSpec, ZoneTransferRuntimeConfig,
 };
+use synvoid_dns::runtime_config_deferred::DeferredDnsConfig;
 
 /// Typed conversion failure. Every variant names the offending persisted
 /// path so operators get an actionable message. None of them embed secret
@@ -118,8 +119,7 @@ pub fn dns_runtime_config_from_persisted(config: &DnsConfig) -> Result<DnsRuntim
     // PIN.
     dnssec.hsm = hsm_runtime(&config.dnssec.hsm)?;
 
-    Ok(DnsRuntimeConfig {
-        enabled: config.enabled,
+    let authoritative = AuthoritativeRuntimeConfig {
         bind_address,
         ttl: TtlRuntimeConfig {
             default_ttl: config.settings.default_ttl,
@@ -157,11 +157,44 @@ pub fn dns_runtime_config_from_persisted(config: &DnsConfig) -> Result<DnsRuntim
         anycast: AnycastRuntimeConfig {
             enabled: config.anycast.enabled,
         },
+    };
+
+    Ok(DnsRuntimeConfig {
+        enabled: config.enabled,
+        authoritative,
         dnssec,
         zones: zone_specs(&config.zones.items)?,
         tsig_keys: tsig_keys(&config.dnssec.tsig_keys)?,
         recursive: recursive_runtime(&config.recursive)?,
     })
+}
+
+/// Phase 126 constructor input for `DnsServer`.
+///
+/// Produces the authoritative runtime values plus the deferred persisted
+/// sections that Phases 127/128 still own. This is the only conversion entry
+/// point production uses.
+pub fn dns_server_runtime_config_from_persisted(
+    config: &DnsConfig,
+) -> Result<DnsServerRuntimeConfig> {
+    let runtime = dns_runtime_config_from_persisted(config)?;
+    Ok(DnsServerRuntimeConfig {
+        authoritative: runtime.authoritative,
+        deferred: DeferredDnsConfig {
+            recursive: config.recursive.clone(),
+            dnssec: config.dnssec.clone(),
+            zones: config.zones.clone(),
+        },
+    })
+}
+
+/// Canonical Phase 126 `DnsServer` construction input.
+#[derive(Debug, Clone)]
+pub struct DnsServerRuntimeConfig {
+    /// Authoritative server and encrypted-transport runtime values.
+    pub authoritative: AuthoritativeRuntimeConfig,
+    /// Recursive/DNSSEC/HSM/zone sections still owned by Phases 127/128.
+    pub deferred: DeferredDnsConfig,
 }
 
 // ---------------------------------------------------------------------------

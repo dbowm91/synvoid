@@ -19,7 +19,7 @@ use super::edns::{parse_edns_options, EdnsOptions};
 use super::query_validator::DnsQueryValidator;
 use super::store::ZoneStore;
 use super::wire;
-use synvoid_config::dns::{DnsConfig, DnsRateLimitMode, DnsZoneEntry};
+use synvoid_config::dns::DnsZoneEntry;
 use synvoid_core::time::current_timestamp_secs;
 use synvoid_tls::cert_resolver::CertResolver;
 
@@ -1626,7 +1626,12 @@ pub struct QueryContext<'a> {
 }
 
 pub struct DnsServer {
-    config: Arc<DnsConfig>,
+    /// Canonical authoritative + encrypted-transport runtime values.
+    /// Phase 126 cutover: this replaces the persisted `DnsConfig`.
+    authoritative: Arc<super::runtime_config::AuthoritativeRuntimeConfig>,
+    /// Recursive / DNSSEC / HSM / zone sections still owned by Phases
+    /// 127-128. Deleted with the `synvoid-config` edge in Phase 128.
+    deferred: Arc<crate::runtime_config_deferred::DeferredDnsConfig>,
     zones: Arc<ShardedZoneStore>,
     zone_trie: Arc<RwLock<super::zone_trie::ZoneTrie>>,
     zone_index: Arc<RwLock<Vec<(String, String)>>>,
@@ -1672,7 +1677,8 @@ pub struct DnsServer {
 impl Clone for DnsServer {
     fn clone(&self) -> Self {
         Self {
-            config: self.config.clone(),
+            authoritative: self.authoritative.clone(),
+            deferred: self.deferred.clone(),
             zones: self.zones.clone(),
             zone_trie: self.zone_trie.clone(),
             zone_index: self.zone_index.clone(),
@@ -1749,44 +1755,55 @@ mod btree_tests {
 }
 
 impl DnsServer {
-    pub fn new(config: DnsConfig, cert_resolver: Option<Arc<CertResolver>>) -> Self {
-        let rate_limiter = match config.ratelimit.mode {
-            DnsRateLimitMode::Shared => None,
-            DnsRateLimitMode::Dedicated => Some(Arc::new(DnsRateLimiter::new(
-                config.ratelimit.per_second,
-                config.ratelimit.per_second * 2,
-            ))),
+    /// Canonical Phase 126 constructor.
+    ///
+    /// Takes DNS-owned runtime values only. The single persisted-config
+    /// conversion path is `src/server/dns_runtime_config.rs`.
+    pub fn new(
+        authoritative: super::runtime_config::AuthoritativeRuntimeConfig,
+        deferred: crate::runtime_config_deferred::DeferredDnsConfig,
+        cert_resolver: Option<Arc<CertResolver>>,
+    ) -> Self {
+        let rate_limiter = match authoritative.rate_limit.mode {
+            super::runtime_config::DnsRateLimitModeRuntime::Shared => None,
+            super::runtime_config::DnsRateLimitModeRuntime::Dedicated => {
+                Some(Arc::new(DnsRateLimiter::new(
+                    authoritative.rate_limit.per_second,
+                    authoritative.rate_limit.per_second * 2,
+                )))
+            }
         };
 
-        let cache = if config.settings.cache_enabled {
-            if config.settings.serve_stale.enabled {
-                Some(Arc::new(DnsCache::with_serve_stale(
-                    config.settings.cache_size,
-                    config.settings.cache_max_ttl,
-                    config.settings.cache_min_ttl,
+        let cache = if authoritative.cache.enabled {
+            match authoritative.cache.serve_stale {
+                Some(serve_stale) => Some(Arc::new(DnsCache::with_serve_stale(
+                    authoritative.cache.capacity,
+                    authoritative.cache.max_ttl.as_secs(),
+                    authoritative.cache.min_ttl.as_secs(),
                     true,
-                    config.settings.serve_stale.max_stale_secs,
-                    config.settings.serve_stale.max_stale_count as u64,
-                )))
-            } else {
-                Some(Arc::new(DnsCache::new(
-                    config.settings.cache_size,
-                    config.settings.cache_max_ttl,
-                    config.settings.cache_min_ttl,
-                )))
+                    serve_stale.max_stale.as_secs(),
+                    serve_stale.max_stale_count as u64,
+                ))),
+                None => Some(Arc::new(DnsCache::new(
+                    authoritative.cache.capacity,
+                    authoritative.cache.max_ttl.as_secs(),
+                    authoritative.cache.min_ttl.as_secs(),
+                ))),
             }
         } else {
             None
         };
 
-        let (dnssec, signer_name) = if config.dnssec.enabled {
-            let key_path = std::path::PathBuf::from(&config.dnssec.key_path);
+        // DNSSEC key custody and HSM establishment stay on the deferred
+        // persisted sections until Phase 128 converts them.
+        let (dnssec, signer_name) = if deferred.dnssec.enabled {
+            let key_path = std::path::PathBuf::from(&deferred.dnssec.key_path);
             let mut manager = DnsSecKeyManager::new(key_path.clone());
 
             let algorithm = super::dnssec::Algorithm::Ed25519;
 
             let key_type = super::dnssec::KeyType::KSK;
-            let key_name = format!("ksk.{}", config.dnssec.domain);
+            let key_name = format!("ksk.{}", deferred.dnssec.domain);
 
             if !key_path.exists() {
                 if let Err(e) = std::fs::create_dir_all(&key_path) {
@@ -1814,9 +1831,9 @@ impl DnsServer {
         // Phase 30: HSM establishment is fail-closed. A PKCS#11 failure
         // never falls back to software keys; zones requiring HSM must
         // refuse signed answers (callers check `is_available()`).
-        let hsm_manager = if config.dnssec.enabled || config.dnssec.hsm.enabled {
+        let hsm_manager = if deferred.dnssec.enabled || deferred.dnssec.hsm.enabled {
             let hsm = super::hsm::HsmManager::new();
-            let ks_config = super::hsm::keystore_config_from_dns(&config.dnssec.hsm);
+            let ks_config = super::hsm::keystore_config_from_dns(&deferred.dnssec.hsm);
             if let Err(e) = hsm.initialize(&ks_config) {
                 tracing::warn!("Failed to initialize HSM (fail-closed, no fallback): {}", e);
             }
@@ -1825,36 +1842,36 @@ impl DnsServer {
             None
         };
 
-        let query_coalescer = if config.settings.query_coalescing.enabled {
+        let query_coalescer = if authoritative.query_coalescing.enabled {
             Some(Arc::new(
                 super::query_coalesce::QueryCoalescer::with_config(
-                    config.settings.query_coalescing.max_wait_ms,
-                    config.settings.query_coalescing.max_entries,
-                    config.settings.query_coalescing.entry_ttl_secs,
+                    authoritative.query_coalescing.max_wait.as_millis() as u64,
+                    authoritative.query_coalescing.max_entries,
+                    authoritative.query_coalescing.entry_ttl.as_secs(),
                 ),
             ))
         } else {
             None
         };
 
-        let rrl_enabled = config.rrl.enabled;
+        let rrl_enabled = authoritative.rrl.enabled;
 
         let geoip_lookup = None;
 
         let query_validator = DnsQueryValidator::from_config(
-            config.limits.max_query_size,
+            authoritative.limits.max_query_size,
             16,
             63,
             255,
-            config.limits.max_records_per_response,
-            config.limits.max_response_size,
-            config.settings.cache_max_ttl as u32,
+            authoritative.limits.max_records_per_response,
+            authoritative.limits.max_response_size,
+            authoritative.cache.max_ttl_secs_u32(),
         );
 
-        let firewall = if config.firewall.enabled {
+        let firewall = if authoritative.firewall.enabled {
             let mut fw = super::firewall::DnsFirewall::new();
 
-            if config.firewall.block_internal_ips {
+            if authoritative.firewall.block_internal_ips {
                 let rule = super::firewall::DnsFirewallRule {
                     id: "block_internal_ips".to_string(),
                     rule_type: super::firewall::DnsFirewallRuleType::Subnet,
@@ -1952,7 +1969,7 @@ impl DnsServer {
                 let _ = fw.add_rule(rule8);
             }
 
-            if config.firewall.block_zone_transfers {
+            if authoritative.firewall.block_zone_transfers {
                 let rule = super::firewall::DnsFirewallRule {
                     id: "block_axfr".to_string(),
                     rule_type: super::firewall::DnsFirewallRuleType::Opcode,
@@ -1972,39 +1989,33 @@ impl DnsServer {
         };
 
         let connection_limits = Arc::new(super::limits::ConnectionLimits::new(
-            config.limits.max_tcp_connections,
-            config.limits.max_concurrent_queries,
-            config.limits.max_query_size,
-            config.limits.max_response_size,
-            config.limits.max_records_per_response,
-            config.limits.max_tcp_idle_time_secs,
-            config.limits.max_tcp_query_time_secs,
-            config.limits.enable_graceful_degradation,
+            authoritative.limits.max_tcp_connections,
+            authoritative.limits.max_concurrent_queries,
+            authoritative.limits.max_query_size,
+            authoritative.limits.max_response_size,
+            authoritative.limits.max_records_per_response,
+            authoritative.limits.max_tcp_idle_time.as_secs(),
+            authoritative.limits.max_tcp_query_time.as_secs(),
+            authoritative.limits.enable_graceful_degradation,
         ));
 
-        let ecs_filter_config =
-            super::edns::EcsFilterConfig::from_settings(&config.settings.ecs_filtering);
+        let ecs_filter_config = super::edns::EcsFilterConfig::from_runtime(&authoritative.ecs);
 
-        let dns64_translator = if config.dns64.enabled {
+        // The DNS64 prefix is already parsed and validated at conversion time,
+        // so no warn-and-default path remains here.
+        let dns64_translator = authoritative.dns64.map(|dns64| {
             let core_config = super::dns64::Dns64Config {
-                prefix: config.dns64.prefix.parse().unwrap_or_else(|_| {
-                    tracing::warn!(
-                        "Invalid DNS64 prefix '{}', using default",
-                        config.dns64.prefix
-                    );
-                    std::net::Ipv6Addr::new(0x0064, 0xff9b, 0, 0, 0, 0, 0, 0)
-                }),
+                prefix: dns64.prefix,
                 fallback_resolver: None,
                 enabled: true,
-                exclude_aaaa_synthesis: config.dns64.exclude_aaaa_synthesis,
+                exclude_aaaa_synthesis: dns64.exclude_aaaa_synthesis,
             };
-            Some(super::dns64::Dns64Translator::new(core_config))
-        } else {
-            None
-        };
+            super::dns64::Dns64Translator::new(core_config)
+        });
 
         let server = Self {
-            config: Arc::new(config),
+            authoritative: Arc::new(authoritative),
+            deferred: Arc::new(deferred),
             zones: Arc::new(ShardedZoneStore::new()),
             zone_trie: Arc::new(RwLock::new(super::zone_trie::ZoneTrie::new())),
             zone_index: Arc::new(RwLock::new(Vec::new())),
@@ -2073,16 +2084,17 @@ impl DnsServer {
         // Cache state: if cache_enabled is false, the cache is not created
         // and the server cannot serve cached responses.
         self.health
-            .set_cache_operational(self.config.settings.cache_enabled);
+            .set_cache_operational(self.authoritative.cache.enabled);
 
-        // DNSSEC signing state.
+        // DNSSEC signing state. Still read from the deferred persisted
+        // section until Phase 128 converts the DNSSEC policy.
         self.health
-            .set_dnssec_signing_enabled(self.config.dnssec.enabled);
+            .set_dnssec_signing_enabled(self.deferred.dnssec.enabled);
 
         // Encrypted transport state.
-        self.health.set_dot_enabled(self.config.dot.enabled);
-        self.health.set_doh_enabled(self.config.doh.enabled);
-        self.health.set_doq_enabled(self.config.doq.enabled);
+        self.health.set_dot_enabled(self.authoritative.dot.enabled);
+        self.health.set_doh_enabled(self.authoritative.doh.enabled);
+        self.health.set_doq_enabled(self.authoritative.doq.enabled);
 
         // Transfer / update state. AXFR/IXFR handlers are wired in transport;
         // the control-plane guards (TSIG require, allowlist) live in the
@@ -2090,14 +2102,14 @@ impl DnsServer {
         // decisions.
         self.health.set_axfr_enabled(true);
         self.health
-            .set_ixfr_enabled(self.config.settings.ixfr_enabled);
+            .set_ixfr_enabled(self.authoritative.zone_transfer.ixfr_enabled);
         self.health
-            .set_update_enabled(self.config.settings.dynamic_update.enabled);
+            .set_update_enabled(self.authoritative.dynamic_update.enabled);
         self.health
-            .set_tsig_required(self.config.settings.require_tsig);
+            .set_tsig_required(self.authoritative.zone_transfer.require_tsig);
 
         // Recursive state.
-        if self.config.recursive.enabled {
+        if self.deferred.recursive.enabled {
             // Optimistic — `start_recursive_server()` will downgrade to
             // Degraded if initialization fails or the circuit breaker opens.
             self.health.set_recursive_healthy();

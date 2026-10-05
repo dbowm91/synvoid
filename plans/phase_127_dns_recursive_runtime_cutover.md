@@ -1,9 +1,14 @@
 # Phase 127 Plan: DNS Recursive Resolver Runtime-Config Cutover
 
-Status: **PLANNED / READY AFTER PHASE 126** (2026-10-04).
+Status: **PLANNED / READY** (2026-10-04). Unblocked by Phase 126, which closed QUALIFIED on 2026-10-04 with `architecture/dns_runtime_dto_phase126_closeout.md`.
 
 Registered in: `plans/roadmap.md` and
 `plans/dns_runtime_dto_conversion_roadmap.md`.
+
+Predecessor evidence: Phase 126 closeout
+(`architecture/dns_runtime_dto_phase126_closeout.md`) — the authoritative side
+is clean and the residual persistence edge is concentrated in the recursive
+subtree plus `runtime_config_deferred.rs`.
 
 ## Goal
 

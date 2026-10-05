@@ -14,7 +14,6 @@
 pub mod anycast;
 pub mod cache;
 pub mod compression;
-pub mod config;
 pub mod cookie;
 pub mod crypto_rng;
 pub mod dns64;
@@ -43,6 +42,7 @@ pub mod resolver;
 pub mod resolver_global;
 pub mod rpz;
 pub mod runtime_config;
+pub mod runtime_config_deferred;
 pub mod secure_server;
 pub mod server;
 pub mod store;
@@ -69,7 +69,6 @@ pub use cache::{
     CacheKey, CacheMetricsSnapshot, CacheNamespace, CachePoisoningError, CacheStats,
     CachedResponse, DnsCache, InvalidationReason, SecureDnsCache, TransportClass,
 };
-pub use config::DnsSettings;
 pub use cookie::{build_cookie_option, DnsCookieServer};
 pub use dns64::{Dns64Config, Dns64Translator};
 pub use dnssec::{
@@ -130,6 +129,7 @@ pub use runtime_config::{
     RecursiveRuntimeConfig, RecursiveUpstreamRuntime, RrlRuntimeConfig, TsigAlgorithmRuntime,
     TsigRuntimeKey, ZoneDnssecSpec, ZoneRecordSpec, ZoneSpec,
 };
+pub use runtime_config_deferred::DeferredDnsConfig;
 pub use secure_server::{
     DnsServerConfig, SecureDnsServerBase, MAX_QUERY_SIZE, TLS_HANDSHAKE_TIMEOUT_SECS,
 };

@@ -40,7 +40,10 @@ pub mod startup_plan;
 pub mod waf_handler;
 
 #[cfg(feature = "dns")]
-pub use dns_runtime_config::{dns_runtime_config_from_persisted, DnsRuntimeConversionError};
+pub use dns_runtime_config::{
+    dns_runtime_config_from_persisted, dns_server_runtime_config_from_persisted,
+    DnsRuntimeConversionError, DnsServerRuntimeConfig,
+};
 
 pub use plugin_runtime::{PluginRuntimeOwner, PluginRuntimeReport};
 pub use resources::{UnifiedServerResourceError, UnifiedServerResources};

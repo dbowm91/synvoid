@@ -8,6 +8,8 @@
 //! - DoT/DoH/DoQ activation without an explicit bind address is rejected at
 //!   validation time, before listener startup.
 
+mod support;
+
 use std::time::Duration;
 
 use synvoid_config::dns::DnsConfig;
@@ -60,13 +62,13 @@ fn free_port() -> u16 {
 }
 
 async fn start_server(port: u16) -> DnsServer {
-    let config = DnsConfig {
-        enabled: true,
-        bind_address: "127.0.0.1".to_string(),
-        port,
-        ..Default::default()
-    };
-    let mut server = DnsServer::new(config, None);
+    let mut server = DnsServer::new(
+        support::AuthoritativeRuntimeBuilder::new()
+            .port(port)
+            .build(),
+        support::deferred_config(),
+        None,
+    );
     server.start().await.expect("server start");
     server
 }
@@ -128,14 +130,11 @@ async fn tcp_zero_length_frame_closes_connection() {
 #[tokio::test]
 async fn tcp_frame_beyond_max_query_size_is_rejected() {
     let port = free_port();
-    let mut config = DnsConfig {
-        enabled: true,
-        bind_address: "127.0.0.1".to_string(),
-        port,
-        ..Default::default()
-    };
-    config.limits.max_query_size = 512;
-    let mut server = DnsServer::new(config, None);
+    let mut authoritative = support::AuthoritativeRuntimeBuilder::new()
+        .port(port)
+        .build();
+    authoritative.limits.max_query_size = 512;
+    let mut server = DnsServer::new(authoritative, support::deferred_config(), None);
     server.start().await.expect("server start");
 
     let mut stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port))
@@ -168,11 +167,21 @@ async fn disabled_transports_do_not_bind() {
         port,
         ..Default::default()
     };
+    // The persisted config still governs whether a transport activates, and
+    // must remain valid.
     assert!(!config.dot.enabled);
     assert!(!config.doh.enabled);
     assert!(!config.doq.enabled);
     assert!(config.validate().is_ok());
-    let mut server = DnsServer::new(config, None);
+
+    let authoritative = support::AuthoritativeRuntimeBuilder::new()
+        .port(port)
+        .build();
+    assert!(!authoritative.dot.enabled);
+    assert!(!authoritative.doh.enabled);
+    assert!(!authoritative.doq.enabled);
+
+    let mut server = DnsServer::new(authoritative, support::deferred_config(), None);
     server.start().await.expect("server start");
     server.shutdown_runtime();
 }

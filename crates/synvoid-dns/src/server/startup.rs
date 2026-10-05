@@ -2,17 +2,18 @@ use super::*;
 use crate::cache::TransportClass;
 use crate::parsed_query::ParsedDnsQuery;
 
-/// Parse and validate the bind address from config.
-/// Returns `Err` immediately on invalid address instead of silently falling back.
-pub(crate) fn configured_bind_addr(config: &DnsConfig) -> Result<SocketAddr, String> {
-    let bind_ip: std::net::IpAddr = config
-        .bind_address
-        .parse()
-        .map_err(|e| format!("Invalid DNS bind_address '{}': {}", config.bind_address, e))?;
-    if config.port == 0 {
+/// Validate the authoritative bind socket from runtime configuration.
+///
+/// The address is already parsed by the application-owned adapter, so the only
+/// remaining fail-fast condition is a zero port (which cannot reach a
+/// listener). Startup returns `Err` instead of silently falling back.
+pub(crate) fn configured_bind_addr(
+    config: &crate::runtime_config::AuthoritativeRuntimeConfig,
+) -> Result<SocketAddr, String> {
+    if config.bind_address.port() == 0 {
         return Err("DNS port cannot be zero".to_string());
     }
-    Ok(SocketAddr::from((bind_ip, config.port)))
+    Ok(config.bind_address)
 }
 
 impl DnsServer {
@@ -25,8 +26,8 @@ impl DnsServer {
             query_validator: self.query_validator.clone(),
             firewall: self.firewall.clone(),
             connection_limits: self.connection_limits.clone(),
-            min_geo_ttl: self.config.settings.min_geo_ttl,
-            negative_cache_ttl: self.config.settings.negative_cache_ttl,
+            min_geo_ttl: self.authoritative.ttl.min_geo_ttl,
+            negative_cache_ttl: self.authoritative.ttl.negative_cache_ttl,
             cache: self.cache.clone(),
             dnssec: self.dnssec.clone(),
             signer_name: self.signer_name.clone(),
@@ -47,7 +48,7 @@ impl DnsServer {
     }
 
     pub async fn start(&mut self) -> Result<(), String> {
-        if self.config.dnssec.enabled {
+        if self.deferred.dnssec.enabled {
             if let Err(e) = self.initialize_dnssec() {
                 tracing::warn!("Failed to initialize DNSSEC: {}", e);
                 self.health.set_dnssec_signing_enabled(false);
@@ -58,7 +59,7 @@ impl DnsServer {
             }
         }
 
-        if self.config.recursive.enabled {
+        if self.deferred.recursive.enabled {
             if let Err(e) = self.start_recursive_server().await {
                 // Recursive init failed — server still functions as
                 // authoritative, but recursive subsystem is degraded.
@@ -73,12 +74,15 @@ impl DnsServer {
         if let Some(ref coalescer) = self.query_coalescer {
             Self::start_coalescer_cleanup_task(
                 Some(coalescer),
-                self.config.settings.query_coalescing.cleanup_interval_secs,
+                self.authoritative
+                    .query_coalescing
+                    .cleanup_interval
+                    .as_secs(),
                 shutdown_watcher_rx,
             );
         }
 
-        if self.config.anycast.enabled {
+        if self.authoritative.anycast.enabled {
             return Err(
                 "Anycast requires mesh feature (not available in extracted dns crate)".to_string(),
             );
@@ -106,15 +110,15 @@ impl DnsServer {
     async fn start_recursive_server(&mut self) -> Result<(), String> {
         tracing::info!(
             "Starting recursive DNS server on {}:{}",
-            self.config.recursive.bind_address,
-            self.config.recursive.port
+            self.deferred.recursive.bind_address,
+            self.deferred.recursive.port
         );
 
         let rate_limiter = self.rate_limiter.clone();
         let metrics = None;
 
         let recursive_server = crate::recursive::RecursiveDnsServer::new(
-            self.config.recursive.clone(),
+            self.deferred.recursive.clone(),
             rate_limiter,
             None,
             metrics,
@@ -140,7 +144,7 @@ impl DnsServer {
     }
 
     async fn start_standard_mode(&mut self) -> Result<(), String> {
-        let bind_addr = configured_bind_addr(&self.config)?;
+        let bind_addr = configured_bind_addr(&self.authoritative)?;
 
         let socket = UdpSocket::bind(bind_addr)
             .await
@@ -157,7 +161,7 @@ impl DnsServer {
 
         let state = self.build_handler_state();
         let geoip_lookup = self.geoip_lookup.clone();
-        let udp_buffer_size = self.config.limits.udp_buffer_size;
+        let udp_buffer_size = self.authoritative.limits.udp_buffer_size;
 
         let (tx_udp, mut rx_udp) = tokio::sync::oneshot::channel::<()>();
         let (tx_tcp, mut rx_tcp) = tokio::sync::oneshot::channel::<()>();
@@ -431,7 +435,7 @@ impl DnsServer {
 
         let tcp_state = state;
         let geoip_lookup_tcp = geoip_lookup;
-        let tcp_buffer_size = self.config.limits.udp_buffer_size;
+        let tcp_buffer_size = self.authoritative.limits.udp_buffer_size;
         let acme_dns_challenges_tcp = self.acme_dns_challenges.clone();
         let cookie_server_tcp = self.cookie_server.clone();
         let dns64_translator_tcp = self.dns64_translator.clone();
@@ -570,40 +574,52 @@ impl DnsServer {
             }
         });
 
-        if self.config.dot.enabled {
-            let mut dot = DotServer::new(self.config.dot.clone(), self.cert_resolver.clone());
+        if self.authoritative.dot.enabled {
+            let bind = self.authoritative.dot.bind_address;
+            let mut dot = DotServer::new(self.authoritative.dot, self.cert_resolver.clone());
             dot.set_dns_server(self.clone());
             if let Err(e) = dot.start().await {
                 tracing::warn!("Failed to start DoT server: {}", e);
                 self.health.set_cert_valid(false);
             } else {
-                tracing::info!("DoT server started on port {}", self.config.dot.port);
+                tracing::info!(
+                    "DoT server started on {}",
+                    bind.map(|a| a.port()).unwrap_or_default()
+                );
                 self.health.set_cert_valid(true);
             }
             self.dot_server = Some(dot);
         }
 
-        if self.config.doh.enabled {
-            let mut doh = DohServer::new(self.config.doh.clone(), self.cert_resolver.clone());
+        if self.authoritative.doh.enabled {
+            let bind = self.authoritative.doh.bind_address;
+            let mut doh = DohServer::new(self.authoritative.doh, self.cert_resolver.clone());
             doh.set_dns_server(self.clone());
             if let Err(e) = doh.start().await {
                 tracing::warn!("Failed to start DoH server: {}", e);
                 self.health.set_cert_valid(false);
             } else {
-                tracing::info!("DoH server started on port {}", self.config.doh.port);
+                tracing::info!(
+                    "DoH server started on {}",
+                    bind.map(|a| a.port()).unwrap_or_default()
+                );
                 self.health.set_cert_valid(true);
             }
             self.doh_server = Some(doh);
         }
 
-        if self.config.doq.enabled {
-            let mut doq = DoqServer::new(self.config.doq.clone(), self.cert_resolver.clone());
+        if self.authoritative.doq.enabled {
+            let bind = self.authoritative.doq.bind_address;
+            let mut doq = DoqServer::new(self.authoritative.doq, self.cert_resolver.clone());
             doq.set_dns_server(self.clone());
             if let Err(e) = doq.start().await {
                 tracing::warn!("Failed to start DoQ server: {}", e);
                 self.health.set_cert_valid(false);
             } else {
-                tracing::info!("DoQ server started on port {}", self.config.doq.port);
+                tracing::info!(
+                    "DoQ server started on {}",
+                    bind.map(|a| a.port()).unwrap_or_default()
+                );
                 self.health.set_cert_valid(true);
             }
             self.doq_server = Some(doq);
@@ -663,13 +679,105 @@ impl DnsServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime_config::AuthoritativeRuntimeConfig;
+    use crate::runtime_config_deferred::DeferredDnsConfig;
     use std::net::{Ipv4Addr, Ipv6Addr};
 
-    fn make_config(bind: &str, port: u16) -> DnsConfig {
-        DnsConfig {
-            bind_address: bind.to_string(),
-            port,
-            ..Default::default()
+    /// Minimal DNS-owned authoritative runtime for a loopback bind.
+    ///
+    /// The bind address arrives already parsed, so `make_config` only has to
+    /// assemble it. An unparseable literal is represented as an unreachable
+    /// case because the application adapter rejects it before construction.
+    fn make_config(bind: &str, port: u16) -> AuthoritativeRuntimeConfig {
+        AuthoritativeRuntimeConfig {
+            bind_address: crate::runtime_config::parse_bind_address(bind, port)
+                .unwrap_or_else(|| panic!("bind '{bind}' must be an IP literal")),
+            ..test_authoritative_runtime()
+        }
+    }
+
+    /// Defaults for the authoritative groups, matching the persisted defaults
+    /// the server previously read.
+    fn test_authoritative_runtime() -> AuthoritativeRuntimeConfig {
+        AuthoritativeRuntimeConfig {
+            bind_address: SocketAddr::from(([127, 0, 0, 1], 0)),
+            ttl: crate::runtime_config::TtlRuntimeConfig {
+                default_ttl: 300,
+                min_geo_ttl: 60,
+                negative_cache_ttl: 300,
+            },
+            cache: crate::runtime_config::CacheRuntimeConfig {
+                enabled: true,
+                capacity: 10_000,
+                max_ttl: std::time::Duration::from_secs(3600),
+                min_ttl: std::time::Duration::from_secs(0),
+                serve_stale: None,
+            },
+            limits: crate::runtime_config::LimitsRuntimeConfig {
+                max_tcp_connections: 100,
+                max_concurrent_queries: 1_000,
+                max_query_size: 65_535,
+                max_response_size: 65_535,
+                max_records_per_response: 100,
+                max_tcp_idle_time: std::time::Duration::from_secs(30),
+                max_tcp_query_time: std::time::Duration::from_secs(10),
+                enable_graceful_degradation: false,
+                udp_buffer_size: 65_535,
+            },
+            rate_limit: crate::runtime_config::DnsRateLimitRuntimeConfig {
+                mode: crate::runtime_config::DnsRateLimitModeRuntime::Shared,
+                per_second: 100,
+            },
+            rrl: crate::runtime_config::RrlRuntimeConfig { enabled: false },
+            firewall: crate::runtime_config::DnsFirewallRuntimeConfig {
+                enabled: false,
+                block_internal_ips: true,
+                block_zone_transfers: true,
+            },
+            ecs: crate::runtime_config::EcsRuntimeConfig {
+                enabled: false,
+                prefix_v4: 24,
+                prefix_v6: 48,
+                allow_private_prefix: false,
+            },
+            query_coalescing: crate::runtime_config::QueryCoalescingRuntimeConfig {
+                enabled: false,
+                max_wait: std::time::Duration::from_millis(5),
+                max_entries: 1_000,
+                entry_ttl: std::time::Duration::from_secs(30),
+                cleanup_interval: std::time::Duration::from_secs(60),
+            },
+            dns64: None,
+            dot: crate::runtime_config::disabled_dot(),
+            doh: crate::runtime_config::disabled_doh(),
+            doq: crate::runtime_config::disabled_doq(),
+            dynamic_update: crate::runtime_config::DynamicUpdateRuntimeConfig {
+                enabled: false,
+                allow_any: true,
+                require_tsig: false,
+                max_update_size: 65_535,
+            },
+            zone_transfer: crate::runtime_config::ZoneTransferRuntimeConfig {
+                allow_transfer: Vec::new(),
+                allow_wildcard_transfer: false,
+                wildcard_transfer_requires_tsig: true,
+                ixfr_enabled: true,
+                ixfr_fallback_to_axfr: true,
+                require_tsig: false,
+            },
+            anycast: crate::runtime_config::AnycastRuntimeConfig { enabled: false },
+        }
+    }
+
+    fn deferred() -> DeferredDnsConfig {
+        DeferredDnsConfig {
+            recursive: synvoid_config::dns::RecursiveDnsConfig {
+                bind_address: "127.0.0.1".to_string(),
+                port: 0,
+                ..Default::default()
+            },
+            dnssec: Default::default(),
+            zones: Default::default(),
         }
     }
 
@@ -697,17 +805,13 @@ mod tests {
         assert_eq!(addr.port(), 53);
     }
 
+    /// The adapter rejects an unparseable literal before any server exists, so
+    /// `configured_bind_addr` only has to guard the zero port.
     #[test]
-    fn configured_bind_addr_invalid_fails_fast() {
-        let config = make_config("not-an-ip", 53);
-        let result = configured_bind_addr(&config);
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(
-            err.contains("Invalid DNS bind_address"),
-            "Error should mention bind_address: {}",
-            err
-        );
+    fn configured_bind_addr_rejects_unparseable_literal_upstream() {
+        assert!(crate::runtime_config::parse_bind_address("not-an-ip", 53).is_none());
+        assert!(crate::runtime_config::parse_bind_address("127.0.0.1", 5353).is_some());
+        assert!(crate::runtime_config::parse_bind_address("::1", 5353).is_some());
     }
 
     #[test]
@@ -725,12 +829,8 @@ mod tests {
 
     #[test]
     fn shutdown_runtime_is_idempotent() {
-        let config = DnsConfig {
-            bind_address: "127.0.0.1".to_string(),
-            port: 5353,
-            ..Default::default()
-        };
-        let mut server = DnsServer::new(config, None);
+        let config = make_config("127.0.0.1", 5353);
+        let mut server = DnsServer::new(config, deferred(), None);
         // First call should send the signal
         server.shutdown_runtime();
         // Second call should not panic

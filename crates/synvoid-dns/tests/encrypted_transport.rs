@@ -1,3 +1,5 @@
+mod support;
+
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use synvoid_config::dns::DnsDohConfig;
@@ -7,42 +9,20 @@ use synvoid_dns::cache::TransportClass;
 use synvoid_dns::doh::DohServer;
 use synvoid_dns::doq::DoqServer;
 use synvoid_dns::dot::DotServer;
+use synvoid_dns::runtime_config::{DohRuntimeConfig, DoqRuntimeConfig, DotRuntimeConfig};
 
-fn default_dot_config() -> DnsDotConfig {
-    DnsDotConfig {
-        enabled: true,
-        port: 853,
-        bind_address: "127.0.0.1".to_string(),
-        tls_cert_path: Some("/tmp/cert.pem".to_string()),
-        tls_key_path: Some("/tmp/key.pem".to_string()),
-        use_system_cert_store: true,
-    }
+/// DoT runtime values. TLS material is composition/provider owned
+/// (`CertResolver`), so the runtime DTO carries only the parsed bind socket.
+fn dot_runtime() -> DotRuntimeConfig {
+    support::dot_on(853)
 }
 
-fn default_doh_config() -> DnsDohConfig {
-    DnsDohConfig {
-        enabled: true,
-        port: 443,
-        bind_address: "127.0.0.1".to_string(),
-        path: "/dns-query".to_string(),
-        json_path: String::new(),
-        tls_cert_path: Some("/tmp/cert.pem".to_string()),
-        tls_key_path: Some("/tmp/key.pem".to_string()),
-        use_system_cert_store: true,
-    }
+fn doh_runtime() -> DohRuntimeConfig {
+    support::doh_on(443)
 }
 
-fn default_doq_config() -> DnsDoqConfig {
-    DnsDoqConfig {
-        enabled: true,
-        port: 853,
-        bind_address: "127.0.0.1".to_string(),
-        tls_cert_path: Some("/tmp/cert.pem".to_string()),
-        tls_key_path: Some("/tmp/key.pem".to_string()),
-        use_system_cert_store: true,
-        max_concurrent_streams: 100,
-        idle_timeout_secs: 30,
-    }
+fn doq_runtime() -> DoqRuntimeConfig {
+    support::doq_on(853)
 }
 
 #[test]
@@ -109,24 +89,44 @@ fn doq_config_custom_concurrency() {
 
 #[test]
 fn dot_server_creation() {
-    let config = default_dot_config();
-    let _server = DotServer::new(config, None);
+    let _server = DotServer::new(dot_runtime(), None);
 }
 
 #[test]
 fn doh_server_creation() {
-    let config = default_doh_config();
-    let _server = DohServer::new(config, None);
+    let _server = DohServer::new(doh_runtime(), None);
 }
 
 #[test]
 fn doq_server_creation() {
-    let config = default_doq_config();
-    let server = DoqServer::new(config, None);
-    assert_eq!(server.config().port, 853);
-    assert_eq!(server.config().bind_address, "127.0.0.1");
+    let server = DoqServer::new(doq_runtime(), None);
+    // The bind socket is already parsed at conversion time.
+    assert_eq!(
+        server.config().bind_address,
+        Some("127.0.0.1:853".parse().unwrap())
+    );
+    assert!(server.config().enabled);
     assert_eq!(server.config().max_concurrent_streams, 100);
-    assert_eq!(server.config().idle_timeout_secs, 30);
+    assert_eq!(
+        server.config().idle_timeout,
+        std::time::Duration::from_secs(30)
+    );
+}
+
+#[test]
+fn disabled_transports_carry_no_bind_address() {
+    // A disabled transport must not fabricate a listener socket.
+    let dot = DotServer::new(support::disabled_dot(), None);
+    assert!(!dot.config().enabled);
+    assert_eq!(dot.config().bind_address, None);
+
+    let doh = DohServer::new(support::disabled_doh(), None);
+    assert!(!doh.config().enabled);
+    assert_eq!(doh.config().bind_address, None);
+
+    let doq = DoqServer::new(support::disabled_doq(), None);
+    assert!(!doq.config().enabled);
+    assert_eq!(doq.config().bind_address, None);
 }
 
 #[test]
@@ -218,52 +218,40 @@ fn doh_paths_rejected() {
 
 #[test]
 fn dot_server_shut_down_without_start() {
-    let config = default_dot_config();
-    let mut server = DotServer::new(config, None);
+    let mut server = DotServer::new(dot_runtime(), None);
     server.shutdown();
 }
 
 #[test]
 fn doh_server_shut_down_without_start() {
-    let config = default_doh_config();
-    let mut server = DohServer::new(config, None);
+    let mut server = DohServer::new(doh_runtime(), None);
     server.shutdown();
 }
 
 #[test]
 fn doq_server_shut_down_without_start() {
-    let config = default_doq_config();
-    let mut server = DoqServer::new(config, None);
+    let mut server = DoqServer::new(doq_runtime(), None);
     server.shutdown();
 }
 
 #[test]
 fn doq_bind_address_derivation() {
-    let config = DnsDoqConfig {
-        enabled: true,
-        port: 7853,
-        bind_address: "192.168.1.100".to_string(),
-        ..default_doq_config()
+    let config = DoqRuntimeConfig {
+        bind_address: Some("192.168.1.100:7853".parse().unwrap()),
+        ..support::doq_on(853)
     };
-
-    let expected: SocketAddr = "192.168.1.100:7853".parse().unwrap();
-    let actual: SocketAddr = format!("{}:{}", config.bind_address, config.port)
-        .parse()
-        .unwrap();
-    assert_eq!(actual, expected);
+    assert_eq!(
+        config.bind_address,
+        Some("192.168.1.100:7853".parse::<SocketAddr>().unwrap())
+    );
 }
 
 #[test]
 fn doq_bind_address_localhost() {
-    let config = DnsDoqConfig {
-        bind_address: "127.0.0.1".to_string(),
-        port: 8853,
-        ..default_doq_config()
-    };
-
-    let addr: SocketAddr = format!("{}:{}", config.bind_address, config.port)
-        .parse()
-        .unwrap();
+    let config = support::doq_on(8853);
+    let addr = config
+        .bind_address
+        .expect("enabled transport has a bind address");
     assert_eq!(addr.ip(), IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
     assert_eq!(addr.port(), 8853);
 }

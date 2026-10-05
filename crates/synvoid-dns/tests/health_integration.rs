@@ -5,29 +5,36 @@
 //! `DnsServer` with a specific config and asserts that the resulting
 //! `DnsHealthStatus` snapshot matches the intended operational state.
 
-use synvoid_config::dns::{DnsConfig, DnsMode, DnsSecConfig, RecursiveDnsConfig, ServeStaleConfig};
+mod support;
+
+use support::runtime_config::{
+    deferred_config, deferred_recursive_enabled, AuthoritativeRuntimeBuilder,
+};
 use synvoid_dns::health::{
     DnsHealthChecker, DnsHealthStatus, DnssecHealth, EncryptedTransportHealth, HealthState,
     RecursiveHealth, TransferUpdateHealth,
 };
 use synvoid_dns::server::DnsServer;
 
-fn default_config() -> DnsConfig {
-    DnsConfig {
-        enabled: true,
-        bind_address: "127.0.0.1".to_string(),
-        port: 0, // not relevant for these tests
-        mode: DnsMode::Standalone,
-        ..Default::default()
-    }
+/// Build a server from DNS-owned runtime values (Phase 126 cutover).
+fn server_with(
+    authoritative: synvoid_dns::runtime_config::AuthoritativeRuntimeConfig,
+) -> DnsServer {
+    DnsServer::new(authoritative, deferred_config(), None)
+}
+
+fn server_with_both(
+    authoritative: synvoid_dns::runtime_config::AuthoritativeRuntimeConfig,
+    deferred: synvoid_dns::runtime_config::DeferredDnsConfig,
+) -> DnsServer {
+    DnsServer::new(authoritative, deferred, None)
 }
 
 #[test]
 fn health_checker_field_is_wired_into_dns_server() {
     // The simplest possible check: the new `health` field exists and is
     // accessible. Before the wiring fix, this would not have compiled.
-    let cfg = default_config();
-    let server = DnsServer::new(cfg, None);
+    let server = server_with(AuthoritativeRuntimeBuilder::new().build());
     let _checker: std::sync::Arc<DnsHealthChecker> = server.health_checker();
 }
 
@@ -36,8 +43,7 @@ fn default_state_listener_not_bound() {
     // Freshly constructed server has no listener bound yet — liveness is
     // NotReady. The init_health_state() call sets config-derived flags but
     // does NOT mark the listener bound (that happens in start_standard_mode).
-    let cfg = default_config();
-    let server = DnsServer::new(cfg, None);
+    let server = server_with(AuthoritativeRuntimeBuilder::new().build());
     let status = server.health_checker().status();
     assert_eq!(status.liveness, HealthState::NotReady);
     assert!(!status.listener_bound);
@@ -48,10 +54,7 @@ fn default_state_listener_not_bound() {
 fn shutdown_clears_listener_bound() {
     // shutdown_runtime() must clear listener_bound. liveness returns to
     // NotReady.
-    let mut cfg = default_config();
-    cfg.bind_address = "127.0.0.1".to_string();
-    cfg.port = 5353;
-    let mut server = DnsServer::new(cfg, None);
+    let mut server = server_with(AuthoritativeRuntimeBuilder::new().port(5353).build());
 
     // Simulate listener bind without spawning a real socket.
     server.health.set_listener_bound(true);
@@ -67,9 +70,11 @@ fn shutdown_clears_listener_bound() {
 
 #[test]
 fn cache_disabled_marks_cache_not_operational() {
-    let mut cfg = default_config();
-    cfg.settings.cache_enabled = false;
-    let server = DnsServer::new(cfg, None);
+    let server = server_with(
+        AuthoritativeRuntimeBuilder::new()
+            .cache_enabled(false)
+            .build(),
+    );
     let checker = server.health_checker();
     checker.set_listener_bound(true);
     let status = checker.status();
@@ -80,16 +85,18 @@ fn cache_disabled_marks_cache_not_operational() {
 
 #[test]
 fn cache_enabled_marks_cache_operational() {
-    let cfg = default_config();
-    let server = DnsServer::new(cfg, None);
+    let server = server_with(
+        AuthoritativeRuntimeBuilder::new()
+            .cache_enabled(true)
+            .build(),
+    );
     let status = server.health_checker().status();
     assert!(status.cache_operational);
 }
 
 #[test]
 fn recursive_disabled_marks_recursive_disabled() {
-    let cfg = default_config();
-    let server = DnsServer::new(cfg, None);
+    let server = server_with(AuthoritativeRuntimeBuilder::new().build());
     let status = server.health_checker().status();
     assert!(matches!(status.recursive_state, RecursiveHealth::Disabled));
 }
@@ -98,12 +105,10 @@ fn recursive_disabled_marks_recursive_disabled() {
 fn recursive_enabled_marks_recursive_healthy_initially() {
     // With recursive.enabled = true and no actual recursive server
     // initialized, the optimistic default in init_health_state is Healthy.
-    let mut cfg = default_config();
-    cfg.recursive = RecursiveDnsConfig {
-        enabled: true,
-        ..RecursiveDnsConfig::default()
-    };
-    let server = DnsServer::new(cfg, None);
+    let server = server_with_both(
+        AuthoritativeRuntimeBuilder::new().build(),
+        deferred_recursive_enabled(0),
+    );
     let status = server.health_checker().status();
     assert!(matches!(status.recursive_state, RecursiveHealth::Healthy));
     assert!(!matches!(
@@ -114,12 +119,10 @@ fn recursive_enabled_marks_recursive_healthy_initially() {
 
 #[test]
 fn circuit_breaker_open_marks_recursive_degraded() {
-    let mut cfg = default_config();
-    cfg.recursive = RecursiveDnsConfig {
-        enabled: true,
-        ..RecursiveDnsConfig::default()
-    };
-    let server = DnsServer::new(cfg, None);
+    let server = server_with_both(
+        AuthoritativeRuntimeBuilder::new().build(),
+        deferred_recursive_enabled(0),
+    );
     let checker = server.health_checker();
     checker.set_recursive_healthy();
     checker.set_circuit_breaker_open(true);
@@ -136,11 +139,12 @@ fn circuit_breaker_open_marks_recursive_degraded() {
 
 #[test]
 fn encrypted_transport_flags_match_config() {
-    let mut cfg = default_config();
-    cfg.dot.enabled = true;
-    cfg.doh.enabled = true;
-    cfg.doq.enabled = false;
-    let server = DnsServer::new(cfg, None);
+    let server = server_with(
+        AuthoritativeRuntimeBuilder::new()
+            .dot(8853)
+            .doh(8443)
+            .build(),
+    );
     let status = server.health_checker().status();
     let et = &status.encrypted_transport_state;
     assert!(et.dot_enabled);
@@ -150,11 +154,13 @@ fn encrypted_transport_flags_match_config() {
 
 #[test]
 fn transfer_update_flags_match_config() {
-    let mut cfg = default_config();
-    cfg.settings.ixfr_enabled = true;
-    cfg.settings.require_tsig = true;
-    cfg.settings.dynamic_update.enabled = true;
-    let server = DnsServer::new(cfg, None);
+    let server = server_with(
+        AuthoritativeRuntimeBuilder::new()
+            .ixfr(true)
+            .require_tsig(true)
+            .update_enabled(true)
+            .build(),
+    );
     let status = server.health_checker().status();
     let tu = &status.transfer_update_state;
     assert!(tu.axfr_enabled);
@@ -165,11 +171,13 @@ fn transfer_update_flags_match_config() {
 
 #[test]
 fn transfer_update_disabled_reflected() {
-    let mut cfg = default_config();
-    cfg.settings.ixfr_enabled = false;
-    cfg.settings.require_tsig = false;
-    cfg.settings.dynamic_update.enabled = false;
-    let server = DnsServer::new(cfg, None);
+    let server = server_with(
+        AuthoritativeRuntimeBuilder::new()
+            .ixfr(false)
+            .require_tsig(false)
+            .update_enabled(false)
+            .build(),
+    );
     let status = server.health_checker().status();
     let tu = &status.transfer_update_state;
     assert!(!tu.ixfr_enabled);
@@ -179,8 +187,7 @@ fn transfer_update_disabled_reflected() {
 
 #[test]
 fn dnssec_disabled_initially() {
-    let cfg = default_config();
-    let server = DnsServer::new(cfg, None);
+    let server = server_with(AuthoritativeRuntimeBuilder::new().build());
     let status = server.health_checker().status();
     let ds = &status.dnssec_state;
     assert_eq!(ds.keys_loaded, 0);
@@ -190,20 +197,20 @@ fn dnssec_disabled_initially() {
 
 #[test]
 fn dnssec_enabled_reflected() {
-    let mut cfg = default_config();
-    cfg.dnssec = DnsSecConfig {
-        enabled: true,
-        ..DnsSecConfig::default()
-    };
-    let server = DnsServer::new(cfg, None);
+    let server = server_with_both(
+        AuthoritativeRuntimeBuilder::new().build(),
+        support::runtime_config::deferred_dnssec_enabled(
+            std::env::temp_dir().join("synvoid-health-test-keys"),
+            "example.com",
+        ),
+    );
     let status = server.health_checker().status();
     assert!(status.dnssec_state.signing_enabled);
 }
 
 #[test]
 fn zone_load_attempt_records_success_and_failure() {
-    let cfg = default_config();
-    let server = DnsServer::new(cfg, None);
+    let server = server_with(AuthoritativeRuntimeBuilder::new().build());
     let checker = server.health_checker();
     checker.record_zone_load_attempt(true, None);
     checker.record_zone_load_attempt(true, None);
@@ -217,8 +224,7 @@ fn zone_load_attempt_records_success_and_failure() {
 
 #[test]
 fn degraded_zone_load_marks_readiness_degraded() {
-    let cfg = default_config();
-    let server = DnsServer::new(cfg, None);
+    let server = server_with(AuthoritativeRuntimeBuilder::new().build());
     let checker = server.health_checker();
     checker.set_listener_bound(true);
     checker.record_zone_load_attempt(false, Some("invalid zone".to_string()));
@@ -229,8 +235,7 @@ fn degraded_zone_load_marks_readiness_degraded() {
 
 #[test]
 fn status_snapshot_serializes_as_json() {
-    let cfg = default_config();
-    let server = DnsServer::new(cfg, None);
+    let server = server_with(AuthoritativeRuntimeBuilder::new().build());
     let json = server.health_checker().status_json();
     let parsed: serde_json::Value = serde_json::from_str(&json).expect("status_json is valid JSON");
     assert!(parsed.get("liveness").is_some());
@@ -240,8 +245,7 @@ fn status_snapshot_serializes_as_json() {
 
 #[test]
 fn readiness_is_healthy_when_listening_and_no_failures() {
-    let cfg = default_config();
-    let server = DnsServer::new(cfg, None);
+    let server = server_with(AuthoritativeRuntimeBuilder::new().build());
     let checker = server.health_checker();
     checker.set_listener_bound(true);
     let status = checker.status();
@@ -253,22 +257,14 @@ fn readiness_is_healthy_when_listening_and_no_failures() {
 fn serve_stale_does_not_affect_health() {
     // Sanity: serve_stale config exists but does not feed into health
     // observability — it's a per-request behavior, not a health dimension.
-    let mut cfg = default_config();
-    cfg.settings.serve_stale = ServeStaleConfig {
-        enabled: true,
-        ..ServeStaleConfig::default()
-    };
-    let server = DnsServer::new(cfg, None);
+    let server = server_with(AuthoritativeRuntimeBuilder::new().serve_stale(true).build());
     let status = server.health_checker().status();
     assert!(status.cache_operational);
 }
 
 #[test]
 fn shutdown_is_idempotent_for_health() {
-    let mut cfg = default_config();
-    cfg.bind_address = "127.0.0.1".to_string();
-    cfg.port = 5354;
-    let mut server = DnsServer::new(cfg, None);
+    let mut server = server_with(AuthoritativeRuntimeBuilder::new().port(5354).build());
     server.health.set_listener_bound(true);
     server.shutdown_runtime();
     server.shutdown_runtime();

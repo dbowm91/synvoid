@@ -12,9 +12,14 @@ use synvoid_tls::cert_resolver::CertResolver;
 pub const TLS_HANDSHAKE_TIMEOUT_SECS: u64 = 10;
 pub const MAX_QUERY_SIZE: usize = 65535;
 
+/// Transport configuration consumed by the encrypted-DNS listeners.
+///
+/// Phase 126: implementations are DNS-owned runtime types, not persisted
+/// schema types. The bind socket is already parsed and validated at
+/// conversion time, so `bind_address` returns a typed `SocketAddr`.
 pub trait DnsServerConfig: Send + Sync + Clone + 'static {
-    fn bind_address(&self) -> &str;
-    fn port(&self) -> u16;
+    /// Parsed listener socket, or `None` when the transport is disabled.
+    fn bind_address(&self) -> Option<SocketAddr>;
     fn server_name(&self) -> &'static str;
 }
 
@@ -53,8 +58,7 @@ impl<C: DnsServerConfig> SecureDnsServerBase<C> {
 
     pub async fn start_server<F, Fut>(
         &mut self,
-        bind_address: &str,
-        port: u16,
+        bind_address: SocketAddr,
         server_name: &'static str,
         handle_connection: F,
     ) -> Result<(), String>
@@ -71,9 +75,14 @@ impl<C: DnsServerConfig> SecureDnsServerBase<C> {
             + 'static,
         Fut: std::future::Future<Output = Result<(), String>> + Send,
     {
-        let bind_addr = format!("{}:{}", bind_address, port)
-            .parse::<SocketAddr>()
-            .map_err(|e| format!("Invalid {} bind address: {}", server_name, e))?;
+        if bind_address.port() == 0 {
+            return Err(format!(
+                "Invalid {} bind address: port cannot be zero",
+                server_name
+            ));
+        }
+
+        let bind_addr = bind_address;
 
         let listener = TcpListener::bind(bind_addr)
             .await
@@ -177,12 +186,8 @@ mod tests {
     struct TestConfig;
 
     impl DnsServerConfig for TestConfig {
-        fn bind_address(&self) -> &str {
-            "127.0.0.1"
-        }
-
-        fn port(&self) -> u16 {
-            0
+        fn bind_address(&self) -> Option<SocketAddr> {
+            Some(SocketAddr::from(([127, 0, 0, 1], 0)))
         }
 
         fn server_name(&self) -> &'static str {
@@ -210,7 +215,11 @@ mod tests {
 
         let mut base = SecureDnsServerBase::new(TestConfig, None);
         let err = base
-            .start_server("127.0.0.1", port, "Test server", dummy_handler)
+            .start_server(
+                SocketAddr::from(([127, 0, 0, 1], port)),
+                "Test server",
+                dummy_handler,
+            )
             .await
             .expect_err("bind collision must fail");
         assert!(
@@ -220,14 +229,20 @@ mod tests {
         );
     }
 
-    /// Invalid bind addresses fail before any socket is created.
+    /// A zero port fails before any socket is created. An unparseable address
+    /// no longer reaches this layer — the application adapter rejects it with
+    /// a typed conversion error before any server is constructed.
     #[tokio::test]
-    async fn invalid_bind_address_fails_fast() {
+    async fn zero_port_bind_fails_fast() {
         let mut base = SecureDnsServerBase::new(TestConfig, None);
         let err = base
-            .start_server("not-an-ip", 853, "Test server", dummy_handler)
+            .start_server(
+                SocketAddr::from(([127, 0, 0, 1], 0)),
+                "Test server",
+                dummy_handler,
+            )
             .await
-            .expect_err("invalid bind must fail");
+            .expect_err("zero port must fail");
         assert!(
             err.contains("Invalid Test server bind address"),
             "got: {}",

@@ -27,11 +27,11 @@ impl DnsServer {
             let use_global = zone_dnssec.map(|z| !z.enabled).unwrap_or(true);
 
             if use_global {
-                zone.nsec3_enabled = self.config.dnssec.nsec3_enabled;
-                zone.nsec_enabled = self.config.dnssec.nsec_enabled;
-                zone.nsec3param = if self.config.dnssec.nsec3_enabled {
+                zone.nsec3_enabled = self.deferred.dnssec.nsec3_enabled;
+                zone.nsec_enabled = self.deferred.dnssec.nsec_enabled;
+                zone.nsec3param = if self.deferred.dnssec.nsec3_enabled {
                     Some(crate::dnssec::Nsec3Config::new(
-                        self.config.dnssec.nsec3_iterations,
+                        self.deferred.dnssec.nsec3_iterations,
                         Self::generate_random_salt().map_err(|e| e.to_string())?,
                     ))
                 } else {
@@ -43,7 +43,7 @@ impl DnsServer {
                 zone.nsec3param = if dnssec.nsec3_enabled {
                     let iterations = dnssec
                         .nsec3_iterations
-                        .unwrap_or(self.config.dnssec.nsec3_iterations);
+                        .unwrap_or(self.deferred.dnssec.nsec3_iterations);
                     Some(crate::dnssec::Nsec3Config::new(
                         iterations,
                         Self::generate_random_salt().map_err(|e| e.to_string())?,
@@ -147,7 +147,7 @@ impl DnsServer {
                     value: record_config.value.clone(),
                     ttl: record_config
                         .ttl
-                        .unwrap_or(self.config.settings.default_ttl),
+                        .unwrap_or(self.authoritative.ttl.default_ttl),
                     priority: record_config.priority,
                 };
 
@@ -449,8 +449,8 @@ impl DnsServer {
             zones: &self.zones,
             zone_trie: &self.zone_trie,
             geoip_lookup: self.geoip_lookup.as_ref(),
-            min_geo_ttl: self.config.settings.min_geo_ttl,
-            negative_cache_ttl: self.config.settings.negative_cache_ttl,
+            min_geo_ttl: self.authoritative.ttl.min_geo_ttl,
+            negative_cache_ttl: self.authoritative.ttl.negative_cache_ttl,
             cache: self.cache.as_ref(),
             dnssec: self.dnssec.as_ref(),
             signer_name: self.signer_name.as_ref(),

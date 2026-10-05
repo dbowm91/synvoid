@@ -94,7 +94,8 @@ The module is located at `crates/synvoid-dns/` and exports a rich set of submodu
 |-----------|------|----------------|
 | `cache.rs` | `crates/synvoid-dns/src/cache.rs` | `DnsCache` - authoritative server cache |
 | `compression.rs` | `crates/synvoid-dns/src/compression.rs` | DNS message compression |
-| `config.rs` | `crates/synvoid-dns/src/config.rs` | `DnsSettings` - DNS configuration wrapper with bind address and geoip |
+| `runtime_config.rs` | `crates/synvoid-dns/src/runtime_config.rs` | DNS-owned runtime configuration vocabulary (Phase 125+): authoritative, transports, DNSSEC, zones, TSIG, recursive. No persistence derives |
+| `runtime_config_deferred.rs` | `crates/synvoid-dns/src/runtime_config_deferred.rs` | **Temporary** persistence passthrough for Phases 127/128. Deleted with the `synvoid-config` edge in Phase 128 |
 | `edns.rs` | `crates/synvoid-dns/src/edns.rs` | EDNS(0) option parsing |
 | `messages.rs` | `crates/synvoid-dns/src/messages.rs` | Mesh DNS message types |
 | `mesh_dnssec.rs` | `crates/synvoid-dns/src/mesh_dnssec.rs` | Mesh DNSSEC validation - `MeshDnsSecValidator`, `MeshTrustAnchor` |
@@ -307,15 +308,39 @@ pub struct SecureDnsServerBase<C: DnsServerConfig> {
 }
 ```
 
-### 3.9 DnsSettings (config.rs:7)
+### 3.9 Authoritative runtime input (runtime_config.rs)
+
+`crates/synvoid-dns/src/config.rs` and its `DnsSettings` wrapper were **removed
+in Phase 126**. It was a persistence bridge (`Arc<DnsConfig>`) with zero
+consumers once the authoritative constructor moved to
+`AuthoritativeRuntimeConfig`, and keeping it would have left persisted schema
+in a public type.
 
 ```rust
-pub struct DnsSettings {
-    pub config: Arc<DnsConfig>,
-    pub geoip: Option<Arc<GeoIpManager>>,
+pub struct AuthoritativeRuntimeConfig {
     pub bind_address: SocketAddr,
+    pub ttl: TtlRuntimeConfig,
+    pub cache: CacheRuntimeConfig,
+    pub limits: LimitsRuntimeConfig,
+    pub rate_limit: DnsRateLimitRuntimeConfig,
+    pub rrl: RrlRuntimeConfig,
+    pub firewall: DnsFirewallRuntimeConfig,
+    pub ecs: EcsRuntimeConfig,
+    pub query_coalescing: QueryCoalescingRuntimeConfig,
+    pub dns64: Option<Dns64RuntimeConfig>,
+    pub dot: DotRuntimeConfig,
+    pub doh: DohRuntimeConfig,
+    pub doq: DoqRuntimeConfig,
+    pub dynamic_update: DynamicUpdateRuntimeConfig,
+    pub zone_transfer: ZoneTransferRuntimeConfig,
+    pub anycast: AnycastRuntimeConfig,
 }
 ```
+
+`DnsServer::new(AuthoritativeRuntimeConfig, DeferredDnsConfig, Option<Arc<CertResolver>>)`
+is the canonical constructor. The single persisted-to-runtime conversion lives
+in `src/server/dns_runtime_config.rs` (composition), never in the `src/dns/`
+facade.
 
 ### 3.10 AuthoritativeLookupOutcome (server/zone.rs)
 

@@ -8,22 +8,18 @@ use tokio::net::TcpStream;
 use tokio_rustls::TlsAcceptor;
 
 use crate::limits::MAX_TCP_QUERIES_PER_CONNECTION;
+use crate::runtime_config::DotRuntimeConfig;
 use crate::secure_server::{
     DnsServerConfig, SecureDnsServerBase, MAX_QUERY_SIZE, TLS_HANDSHAKE_TIMEOUT_SECS,
 };
 use crate::server::DnsServer;
-use synvoid_config::dns::DnsDotConfig;
 use synvoid_tls::cert_resolver::CertResolver;
 
 pub const DOT_MAX_QUERY_SIZE: usize = MAX_QUERY_SIZE;
 
-impl DnsServerConfig for DnsDotConfig {
-    fn bind_address(&self) -> &str {
-        &self.bind_address
-    }
-
-    fn port(&self) -> u16 {
-        self.port
+impl DnsServerConfig for DotRuntimeConfig {
+    fn bind_address(&self) -> Option<SocketAddr> {
+        self.bind_address
     }
 
     fn server_name(&self) -> &'static str {
@@ -32,14 +28,19 @@ impl DnsServerConfig for DnsDotConfig {
 }
 
 pub struct DotServer {
-    base: SecureDnsServerBase<DnsDotConfig>,
+    base: SecureDnsServerBase<DotRuntimeConfig>,
 }
 
 impl DotServer {
-    pub fn new(config: DnsDotConfig, cert_resolver: Option<Arc<CertResolver>>) -> Self {
+    pub fn new(config: DotRuntimeConfig, cert_resolver: Option<Arc<CertResolver>>) -> Self {
         Self {
             base: SecureDnsServerBase::new(config, cert_resolver),
         }
+    }
+
+    /// Borrowed runtime configuration.
+    pub fn config(&self) -> &DotRuntimeConfig {
+        &self.base.config
     }
 
     pub fn set_dns_server(&self, server: DnsServer) {
@@ -47,11 +48,14 @@ impl DotServer {
     }
 
     pub async fn start(&mut self) -> Result<(), String> {
-        let bind_address = self.base.config.bind_address.clone();
-        let port = self.base.config.port;
-        tracing::info!(bind_address = %bind_address, port = %port, "DoT server starting");
+        let bind_address = self
+            .base
+            .config
+            .bind_address
+            .ok_or_else(|| "DoT server is not enabled: no bind address".to_string())?;
+        tracing::info!(bind_address = %bind_address, "DoT server starting");
         self.base
-            .start_server(&bind_address, port, "DoT server", Self::handle_connection)
+            .start_server(bind_address, "DoT server", Self::handle_connection)
             .await
     }
 

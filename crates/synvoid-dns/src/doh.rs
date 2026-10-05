@@ -12,22 +12,18 @@ use metrics::{counter, gauge, histogram};
 use parking_lot::RwLock;
 use tokio_rustls::TlsAcceptor;
 
+use crate::runtime_config::DohRuntimeConfig;
 use crate::secure_server::{
     DnsServerConfig, SecureDnsServerBase, MAX_QUERY_SIZE, TLS_HANDSHAKE_TIMEOUT_SECS,
 };
 use crate::server::DnsServer;
-use synvoid_config::dns::DnsDohConfig;
 use synvoid_tls::cert_resolver::CertResolver;
 
 pub const DOH_MAX_QUERY_SIZE: usize = MAX_QUERY_SIZE;
 
-impl DnsServerConfig for DnsDohConfig {
-    fn bind_address(&self) -> &str {
-        &self.bind_address
-    }
-
-    fn port(&self) -> u16 {
-        self.port
+impl DnsServerConfig for DohRuntimeConfig {
+    fn bind_address(&self) -> Option<SocketAddr> {
+        self.bind_address
     }
 
     fn server_name(&self) -> &'static str {
@@ -36,14 +32,19 @@ impl DnsServerConfig for DnsDohConfig {
 }
 
 pub struct DohServer {
-    base: SecureDnsServerBase<DnsDohConfig>,
+    base: SecureDnsServerBase<DohRuntimeConfig>,
 }
 
 impl DohServer {
-    pub fn new(config: DnsDohConfig, cert_resolver: Option<Arc<CertResolver>>) -> Self {
+    pub fn new(config: DohRuntimeConfig, cert_resolver: Option<Arc<CertResolver>>) -> Self {
         Self {
             base: SecureDnsServerBase::new(config, cert_resolver),
         }
+    }
+
+    /// Borrowed runtime configuration.
+    pub fn config(&self) -> &DohRuntimeConfig {
+        &self.base.config
     }
 
     pub fn set_dns_server(&self, server: DnsServer) {
@@ -51,11 +52,14 @@ impl DohServer {
     }
 
     pub async fn start(&mut self) -> Result<(), String> {
-        let bind_address = self.base.config.bind_address.clone();
-        let port = self.base.config.port;
-        tracing::info!(bind_address = %bind_address, port = %port, "DoH server starting");
+        let bind_address = self
+            .base
+            .config
+            .bind_address
+            .ok_or_else(|| "DoH server is not enabled: no bind address".to_string())?;
+        tracing::info!(bind_address = %bind_address, "DoH server starting");
         self.base
-            .start_server(&bind_address, port, "DoH server", Self::handle_connection)
+            .start_server(bind_address, "DoH server", Self::handle_connection)
             .await
     }
 

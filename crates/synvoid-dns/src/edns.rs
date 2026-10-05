@@ -464,7 +464,8 @@ impl Default for EcsFilterConfig {
 }
 
 impl EcsFilterConfig {
-    pub fn from_settings(config: &synvoid_config::dns::EcsFilteringConfig) -> Self {
+    /// Build from the DNS-owned runtime ECS values (Phase 126).
+    pub fn from_runtime(config: &crate::runtime_config::EcsRuntimeConfig) -> Self {
         Self {
             enabled: config.enabled,
             prefix_v4: config.prefix_v4,

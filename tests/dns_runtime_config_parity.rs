@@ -77,67 +77,103 @@ fn defaults_project_exact_runtime_values() {
     let runtime = convert(&config);
 
     assert!(runtime.enabled);
-    assert_eq!(runtime.bind_address, SocketAddr::from(([0, 0, 0, 0], 53)));
-
-    assert_eq!(runtime.ttl.default_ttl, config.settings.default_ttl);
-    assert_eq!(runtime.ttl.min_geo_ttl, config.settings.min_geo_ttl);
     assert_eq!(
-        runtime.ttl.negative_cache_ttl,
+        runtime.authoritative.bind_address,
+        SocketAddr::from(([0, 0, 0, 0], 53))
+    );
+
+    assert_eq!(
+        runtime.authoritative.ttl.default_ttl,
+        config.settings.default_ttl
+    );
+    assert_eq!(
+        runtime.authoritative.ttl.min_geo_ttl,
+        config.settings.min_geo_ttl
+    );
+    assert_eq!(
+        runtime.authoritative.ttl.negative_cache_ttl,
         config.settings.negative_cache_ttl
     );
 
-    assert_eq!(runtime.cache.enabled, config.settings.cache_enabled);
-    assert_eq!(runtime.cache.capacity, config.settings.cache_size);
     assert_eq!(
-        runtime.cache.max_ttl,
+        runtime.authoritative.cache.enabled,
+        config.settings.cache_enabled
+    );
+    assert_eq!(
+        runtime.authoritative.cache.capacity,
+        config.settings.cache_size
+    );
+    assert_eq!(
+        runtime.authoritative.cache.max_ttl,
         Duration::from_secs(config.settings.cache_max_ttl)
     );
     assert_eq!(
-        runtime.cache.min_ttl,
+        runtime.authoritative.cache.min_ttl,
         Duration::from_secs(config.settings.cache_min_ttl)
     );
     assert!(
-        runtime.cache.serve_stale.is_none(),
+        runtime.authoritative.cache.serve_stale.is_none(),
         "serve-stale is off by default"
     );
 
-    assert_eq!(runtime.rate_limit.mode, rt::DnsRateLimitModeRuntime::Shared);
-    assert_eq!(runtime.rate_limit.per_second, config.ratelimit.per_second);
-    assert_eq!(runtime.rrl.enabled, config.rrl.enabled);
-    assert_eq!(runtime.firewall.enabled, config.firewall.enabled);
     assert_eq!(
-        runtime.firewall.block_internal_ips,
+        runtime.authoritative.rate_limit.mode,
+        rt::DnsRateLimitModeRuntime::Shared
+    );
+    assert_eq!(
+        runtime.authoritative.rate_limit.per_second,
+        config.ratelimit.per_second
+    );
+    assert_eq!(runtime.authoritative.rrl.enabled, config.rrl.enabled);
+    assert_eq!(
+        runtime.authoritative.firewall.enabled,
+        config.firewall.enabled
+    );
+    assert_eq!(
+        runtime.authoritative.firewall.block_internal_ips,
         config.firewall.block_internal_ips
     );
     assert_eq!(
-        runtime.firewall.block_zone_transfers,
+        runtime.authoritative.firewall.block_zone_transfers,
         config.firewall.block_zone_transfers
     );
 
-    assert!(runtime.dns64.is_none(), "DNS64 is off by default");
-    assert!(!runtime.dot.enabled);
-    assert!(!runtime.doh.enabled);
-    assert!(!runtime.doq.enabled);
+    assert!(
+        runtime.authoritative.dns64.is_none(),
+        "DNS64 is off by default"
+    );
+    assert!(!runtime.authoritative.dot.enabled);
+    assert!(!runtime.authoritative.doh.enabled);
+    assert!(!runtime.authoritative.doq.enabled);
     assert!(!runtime.dnssec.enabled);
     assert!(!runtime.recursive.enabled);
-    assert!(!runtime.anycast.enabled);
+    assert!(!runtime.authoritative.anycast.enabled);
     assert!(runtime.zones.is_empty());
     assert!(runtime.tsig_keys.is_empty());
     assert!(!runtime.dnssec.hsm.enabled);
-    assert!(runtime.is_axfr_enabled());
+    assert!(runtime.authoritative.is_axfr_enabled());
     // Health flags are a pure function of runtime config, so they mirror the
     // persisted values verbatim (IXFR ships enabled by default).
-    assert_eq!(runtime.is_ixfr_enabled(), config.settings.ixfr_enabled);
-    assert!(runtime.is_ixfr_enabled(), "IXFR ships enabled by default");
     assert_eq!(
-        runtime.is_ixfr_enabled(),
-        runtime.zone_transfer.ixfr_enabled
+        runtime.authoritative.is_ixfr_enabled(),
+        config.settings.ixfr_enabled
+    );
+    assert!(
+        runtime.authoritative.is_ixfr_enabled(),
+        "IXFR ships enabled by default"
     );
     assert_eq!(
-        runtime.is_update_enabled(),
+        runtime.authoritative.is_ixfr_enabled(),
+        runtime.authoritative.zone_transfer.ixfr_enabled
+    );
+    assert_eq!(
+        runtime.authoritative.is_update_enabled(),
         config.settings.dynamic_update.enabled
     );
-    assert_eq!(runtime.is_tsig_required(), config.settings.require_tsig);
+    assert_eq!(
+        runtime.authoritative.is_tsig_required(),
+        config.settings.require_tsig
+    );
 }
 
 #[test]
@@ -168,18 +204,24 @@ fn authoritative_bind_and_limits_project_exactly() {
 
     let runtime = convert(&config);
     assert_eq!(
-        runtime.bind_address,
+        runtime.authoritative.bind_address,
         SocketAddr::from(([127, 0, 0, 1], 5353))
     );
-    assert_eq!(runtime.limits.max_tcp_connections, 11);
-    assert_eq!(runtime.limits.max_concurrent_queries, 12);
-    assert_eq!(runtime.limits.max_query_size, 4096);
-    assert_eq!(runtime.limits.max_response_size, 8192);
-    assert_eq!(runtime.limits.max_records_per_response, 13);
-    assert_eq!(runtime.limits.max_tcp_idle_time, Duration::from_secs(14));
-    assert_eq!(runtime.limits.max_tcp_query_time, Duration::from_secs(15));
-    assert_eq!(runtime.limits.udp_buffer_size, 65535);
-    assert!(runtime.limits.enable_graceful_degradation);
+    assert_eq!(runtime.authoritative.limits.max_tcp_connections, 11);
+    assert_eq!(runtime.authoritative.limits.max_concurrent_queries, 12);
+    assert_eq!(runtime.authoritative.limits.max_query_size, 4096);
+    assert_eq!(runtime.authoritative.limits.max_response_size, 8192);
+    assert_eq!(runtime.authoritative.limits.max_records_per_response, 13);
+    assert_eq!(
+        runtime.authoritative.limits.max_tcp_idle_time,
+        Duration::from_secs(14)
+    );
+    assert_eq!(
+        runtime.authoritative.limits.max_tcp_query_time,
+        Duration::from_secs(15)
+    );
+    assert_eq!(runtime.authoritative.limits.udp_buffer_size, 65535);
+    assert!(runtime.authoritative.limits.enable_graceful_degradation);
 }
 
 #[test]
@@ -189,7 +231,7 @@ fn wildcard_authoritative_bind_is_accepted() {
     config.port = 53;
     let runtime = convert(&config);
     assert_eq!(
-        runtime.bind_address,
+        runtime.authoritative.bind_address,
         SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 0], 53))
     );
 }
@@ -201,10 +243,10 @@ fn dedicated_rate_limit_mode_projects() {
     config.ratelimit.per_second = 42;
     let runtime = convert(&config);
     assert_eq!(
-        runtime.rate_limit.mode,
+        runtime.authoritative.rate_limit.mode,
         rt::DnsRateLimitModeRuntime::Dedicated
     );
-    assert_eq!(runtime.rate_limit.per_second, 42);
+    assert_eq!(runtime.authoritative.rate_limit.per_second, 42);
 }
 
 #[test]
@@ -217,7 +259,7 @@ fn rrl_projects_only_the_activation_flag() {
     config.rrl.max_responses = 11;
     config.rrl.ttl = 13;
     let runtime = convert(&config);
-    assert!(runtime.rrl.enabled);
+    assert!(runtime.authoritative.rrl.enabled);
 }
 
 #[test]
@@ -247,9 +289,9 @@ fn implemented_firewall_controls_project() {
     config.firewall.block_internal_ips = false;
     config.firewall.block_zone_transfers = true;
     let runtime = convert(&config);
-    assert!(runtime.firewall.enabled);
-    assert!(!runtime.firewall.block_internal_ips);
-    assert!(runtime.firewall.block_zone_transfers);
+    assert!(runtime.authoritative.firewall.enabled);
+    assert!(!runtime.authoritative.firewall.block_internal_ips);
+    assert!(runtime.authoritative.firewall.block_zone_transfers);
 }
 
 #[test]
@@ -259,7 +301,11 @@ fn cache_serve_stale_projects_when_enabled() {
     config.settings.serve_stale.max_stale_secs = 120;
     config.settings.serve_stale.max_stale_count = 7;
     let runtime = convert(&config);
-    let serve_stale = runtime.cache.serve_stale.expect("serve-stale projects");
+    let serve_stale = runtime
+        .authoritative
+        .cache
+        .serve_stale
+        .expect("serve-stale projects");
     assert_eq!(serve_stale.max_stale, Duration::from_secs(120));
     assert_eq!(serve_stale.max_stale_count, 7);
 }
@@ -272,10 +318,10 @@ fn ecs_filtering_projects_exact_prefixes() {
     config.settings.ecs_filtering.prefix_v6 = 40;
     config.settings.ecs_filtering.allow_private_prefix = true;
     let runtime = convert(&config);
-    assert!(runtime.ecs.enabled);
-    assert_eq!(runtime.ecs.prefix_v4, 20);
-    assert_eq!(runtime.ecs.prefix_v6, 40);
-    assert!(runtime.ecs.allow_private_prefix);
+    assert!(runtime.authoritative.ecs.enabled);
+    assert_eq!(runtime.authoritative.ecs.prefix_v4, 20);
+    assert_eq!(runtime.authoritative.ecs.prefix_v6, 40);
+    assert!(runtime.authoritative.ecs.allow_private_prefix);
 }
 
 #[test]
@@ -285,7 +331,10 @@ fn dns64_projects_a_parsed_prefix() {
     config.dns64.prefix = "64:ff9b::1".to_string();
     config.dns64.exclude_aaaa_synthesis = true;
     let runtime = convert(&config);
-    let dns64 = runtime.dns64.expect("DNS64 projects when enabled");
+    let dns64 = runtime
+        .authoritative
+        .dns64
+        .expect("DNS64 projects when enabled");
     assert_eq!(
         dns64.prefix,
         "64:ff9b::1".parse::<std::net::Ipv6Addr>().unwrap()
@@ -302,12 +351,18 @@ fn query_coalescing_projects_durations() {
     config.settings.query_coalescing.entry_ttl_secs = 35;
     config.settings.query_coalescing.cleanup_interval_secs = 40;
     let runtime = convert(&config);
-    assert!(runtime.query_coalescing.enabled);
-    assert_eq!(runtime.query_coalescing.max_wait, Duration::from_millis(25));
-    assert_eq!(runtime.query_coalescing.max_entries, 30);
-    assert_eq!(runtime.query_coalescing.entry_ttl, Duration::from_secs(35));
+    assert!(runtime.authoritative.query_coalescing.enabled);
     assert_eq!(
-        runtime.query_coalescing.cleanup_interval,
+        runtime.authoritative.query_coalescing.max_wait,
+        Duration::from_millis(25)
+    );
+    assert_eq!(runtime.authoritative.query_coalescing.max_entries, 30);
+    assert_eq!(
+        runtime.authoritative.query_coalescing.entry_ttl,
+        Duration::from_secs(35)
+    );
+    assert_eq!(
+        runtime.authoritative.query_coalescing.cleanup_interval,
         Duration::from_secs(40)
     );
 }
@@ -319,9 +374,9 @@ fn ttl_group_projects_exact_values() {
     config.settings.min_geo_ttl = 222;
     config.settings.negative_cache_ttl = 333;
     let runtime = convert(&config);
-    assert_eq!(runtime.ttl.default_ttl, 111);
-    assert_eq!(runtime.ttl.min_geo_ttl, 222);
-    assert_eq!(runtime.ttl.negative_cache_ttl, 333);
+    assert_eq!(runtime.authoritative.ttl.default_ttl, 111);
+    assert_eq!(runtime.authoritative.ttl.min_geo_ttl, 222);
+    assert_eq!(runtime.authoritative.ttl.negative_cache_ttl, 333);
 }
 
 // ---------------------------------------------------------------------------
@@ -345,29 +400,37 @@ fn dot_doh_doq_project_typed_bind_addresses() {
 
     let runtime = convert(&config);
     assert_eq!(
-        runtime.dot.bind_address,
+        runtime.authoritative.dot.bind_address,
         Some(SocketAddr::from(([127, 0, 0, 1], 8853)))
     );
     assert_eq!(
-        runtime.doh.bind_address,
+        runtime.authoritative.doh.bind_address,
         Some(SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], 8443)))
     );
     assert_eq!(
-        runtime.doq.bind_address,
+        runtime.authoritative.doq.bind_address,
         Some(SocketAddr::from(([127, 0, 0, 2], 8854)))
     );
-    assert_eq!(runtime.doq.max_concurrent_streams, 55);
-    assert_eq!(runtime.doq.idle_timeout, Duration::from_secs(66));
-    assert!(runtime.is_dot_enabled() && runtime.is_doh_enabled() && runtime.is_doq_enabled());
+    assert_eq!(runtime.authoritative.doq.max_concurrent_streams, 55);
+    assert_eq!(
+        runtime.authoritative.doq.idle_timeout,
+        Duration::from_secs(66)
+    );
+    assert!(
+        runtime.authoritative.is_dot_enabled()
+            && runtime.authoritative.is_doh_enabled()
+            && runtime.authoritative.is_doq_enabled()
+    );
 }
 
 #[test]
 fn disabled_transports_carry_no_bind_address() {
     let runtime = convert(&authoritative());
-    assert!(runtime.dot.bind_address.is_none());
-    assert!(runtime.doh.bind_address.is_none());
-    assert!(runtime.doq.bind_address.is_none());
+    assert!(runtime.authoritative.dot.bind_address.is_none());
+    assert!(runtime.authoritative.doh.bind_address.is_none());
+    assert!(runtime.authoritative.doq.bind_address.is_none());
     assert!(runtime
+        .authoritative
         .transport_bind(rt::EncryptedTransport::Dot)
         .is_none());
 }
@@ -977,27 +1040,36 @@ struct ExampleDnsWrapper {
 fn shipped_authoritative_profile_projects_exactly() {
     let runtime = convert(&load_example("authoritative_public.toml"));
     assert!(runtime.enabled);
-    assert_eq!(runtime.bind_address, SocketAddr::from(([0, 0, 0, 0], 53)));
-    assert_eq!(runtime.ttl.default_ttl, 300);
-    assert_eq!(runtime.cache.capacity, 100_000);
-    assert_eq!(runtime.cache.max_ttl, Duration::from_secs(3600));
-    assert_eq!(runtime.cache.min_ttl, Duration::from_secs(60));
-    assert_eq!(runtime.ttl.negative_cache_ttl, 300);
-    assert_eq!(runtime.rate_limit.mode, rt::DnsRateLimitModeRuntime::Shared);
-    assert_eq!(runtime.rate_limit.per_second, 500);
-    assert!(runtime.rrl.enabled);
-    assert!(runtime.firewall.enabled);
-    assert!(runtime.firewall.block_internal_ips);
-    assert!(runtime.firewall.block_zone_transfers);
-    assert_eq!(runtime.limits.max_tcp_connections, 500);
-    assert_eq!(runtime.limits.max_concurrent_queries, 2500);
-    assert_eq!(runtime.limits.max_query_size, 65_535);
-    assert_eq!(runtime.limits.max_records_per_response, 1000);
+    assert_eq!(
+        runtime.authoritative.bind_address,
+        SocketAddr::from(([0, 0, 0, 0], 53))
+    );
+    assert_eq!(runtime.authoritative.ttl.default_ttl, 300);
+    assert_eq!(runtime.authoritative.cache.capacity, 100_000);
+    assert_eq!(
+        runtime.authoritative.cache.max_ttl,
+        Duration::from_secs(3600)
+    );
+    assert_eq!(runtime.authoritative.cache.min_ttl, Duration::from_secs(60));
+    assert_eq!(runtime.authoritative.ttl.negative_cache_ttl, 300);
+    assert_eq!(
+        runtime.authoritative.rate_limit.mode,
+        rt::DnsRateLimitModeRuntime::Shared
+    );
+    assert_eq!(runtime.authoritative.rate_limit.per_second, 500);
+    assert!(runtime.authoritative.rrl.enabled);
+    assert!(runtime.authoritative.firewall.enabled);
+    assert!(runtime.authoritative.firewall.block_internal_ips);
+    assert!(runtime.authoritative.firewall.block_zone_transfers);
+    assert_eq!(runtime.authoritative.limits.max_tcp_connections, 500);
+    assert_eq!(runtime.authoritative.limits.max_concurrent_queries, 2500);
+    assert_eq!(runtime.authoritative.limits.max_query_size, 65_535);
+    assert_eq!(runtime.authoritative.limits.max_records_per_response, 1000);
     assert_eq!(runtime.zones.len(), 1);
     assert_eq!(runtime.zones[0].origin, "example.com");
     assert!(runtime.zones[0].records.is_empty());
     assert!(!runtime.recursive.enabled);
-    assert!(!runtime.dot.enabled);
+    assert!(!runtime.authoritative.dot.enabled);
     assert!(!runtime.dnssec.enabled);
 }
 
@@ -1018,7 +1090,7 @@ fn shipped_dnssec_profile_projects_exactly() {
     assert_eq!(runtime.dnssec.denial.nsec3_iterations, 50);
     assert_eq!(runtime.dnssec.denial.nsec3_algorithm, 1);
     assert!(!runtime.dnssec.denial.nsec_enabled);
-    assert!(runtime.firewall.enabled);
+    assert!(runtime.authoritative.firewall.enabled);
     assert_eq!(runtime.zones.len(), 1);
     assert!(
         runtime.tsig_keys.is_empty(),
@@ -1030,27 +1102,27 @@ fn shipped_dnssec_profile_projects_exactly() {
 #[test]
 fn shipped_encrypted_transport_profile_projects_exactly() {
     let runtime = convert(&load_example("encrypted_dot_doh.toml"));
-    assert!(runtime.dot.enabled);
+    assert!(runtime.authoritative.dot.enabled);
     assert_eq!(
-        runtime.dot.bind_address,
+        runtime.authoritative.dot.bind_address,
         Some(SocketAddr::from(([0, 0, 0, 0], 853)))
     );
-    assert!(runtime.doh.enabled);
+    assert!(runtime.authoritative.doh.enabled);
     assert_eq!(
-        runtime.doh.bind_address,
+        runtime.authoritative.doh.bind_address,
         Some(SocketAddr::from(([0, 0, 0, 0], 443)))
     );
     // DoQ is commented out in the shipped profile.
-    assert!(!runtime.doq.enabled);
-    assert!(runtime.doq.bind_address.is_none());
+    assert!(!runtime.authoritative.doq.enabled);
+    assert!(runtime.authoritative.doq.bind_address.is_none());
     // TLS material is composition/provider owned: the runtime DTO carries
     // only the parsed bind socket, never certificate paths.
     assert_eq!(
-        runtime.dot.bind_address,
+        runtime.authoritative.dot.bind_address,
         Some(SocketAddr::from(([0, 0, 0, 0], 853)))
     );
     assert_eq!(
-        runtime.doh.bind_address,
+        runtime.authoritative.doh.bind_address,
         Some(SocketAddr::from(([0, 0, 0, 0], 443)))
     );
 }
@@ -1058,7 +1130,10 @@ fn shipped_encrypted_transport_profile_projects_exactly() {
 #[test]
 fn shipped_recursive_profile_projects_exactly() {
     let runtime = convert(&load_example("recursive_local.toml"));
-    assert_eq!(runtime.bind_address, SocketAddr::from(([127, 0, 0, 1], 53)));
+    assert_eq!(
+        runtime.authoritative.bind_address,
+        SocketAddr::from(([127, 0, 0, 1], 53))
+    );
     let recursive = &runtime.recursive;
     assert!(recursive.enabled);
     assert_eq!(
@@ -1082,8 +1157,8 @@ fn shipped_recursive_profile_projects_exactly() {
     assert_eq!(recursive.ecs.policy, rt::RecursiveEcsPolicyRuntime::Never);
     assert!(!recursive.ecs.include_scope_in_response);
     assert_eq!(recursive.cache.capacity, 1_000_000);
-    assert_eq!(runtime.limits.max_tcp_connections, 500);
-    assert_eq!(runtime.limits.max_concurrent_queries, 2500);
+    assert_eq!(runtime.authoritative.limits.max_tcp_connections, 500);
+    assert_eq!(runtime.authoritative.limits.max_concurrent_queries, 2500);
 }
 
 #[test]

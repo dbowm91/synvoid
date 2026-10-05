@@ -16,6 +16,7 @@
 //! | [`zone`] | Zone construction helpers (`build_test_zone`, `zone_with_soa`, `zone_with_records`) |
 //! | [`context`] | Test context setup (`setup`, `make_ctx`, `ephemeral_port`, `make_config`) |
 //! | [`response`] | Response wire-format parsers (`response_rcode`, `skip_wire_name`, etc.) |
+//! | [`runtime_config`] | DNS-owned runtime config fixtures (`AuthoritativeRuntimeBuilder`, `deferred_config`) — Phase 126+; `DnsServer::new` no longer accepts a persistence DTO |
 //!
 //! # Design principles
 //!
@@ -36,6 +37,7 @@
 pub mod context;
 pub mod query;
 pub mod response;
+pub mod runtime_config;
 pub mod zone;
 
 // Re-export the most commonly used items at crate level for convenience.
@@ -51,6 +53,12 @@ pub use query::{
 pub use response::{
     is_authoritative, is_recursion_available, is_response, parse_answer_types, response_ancount,
     response_arcount, response_flags, response_nscount, response_rcode, skip_name, skip_wire_name,
+};
+#[allow(unused_imports)]
+pub use runtime_config::{
+    authoritative_runtime, deferred_config, deferred_dnssec_enabled, deferred_recursive_enabled,
+    disabled_doh, disabled_doq, disabled_dot, doh_on, doq_on, dot_on, firewall_persisted,
+    recursive_persisted, AuthoritativeRuntimeBuilder, FIREWALL_MAX_RULES_SERDE_DEFAULT,
 };
 #[allow(unused_imports)]
 pub use zone::{build_test_zone, update_soa_value, zone_with_records, zone_with_soa};

@@ -126,12 +126,22 @@ impl UnifiedServerResources {
         #[cfg(feature = "dns")]
         let (dns_server, acme_manager) = if plan.dns_enabled {
             let dns_cfg = main_config.dns.clone();
-            let bind_addr: std::net::SocketAddr =
-                format!("{}:{}", dns_cfg.bind_address, dns_cfg.port)
-                    .parse::<std::net::SocketAddr>()
-                    .map_err(|e| UnifiedServerResourceError::Dns(e.to_string()))?;
 
-            let mut dns_server = crate::dns::DnsServer::new(dns_cfg.clone(), cert_resolver.clone());
+            // Phase 126: the canonical persisted-config -> runtime conversion.
+            // `DnsServer::new` takes DNS-owned runtime values only; this is the
+            // single place persisted DNS schema reaches the DNS crate.
+            let runtime_cfg =
+                crate::server::dns_runtime_config::dns_server_runtime_config_from_persisted(
+                    &dns_cfg,
+                )
+                .map_err(|e| UnifiedServerResourceError::Dns(e.to_string()))?;
+            let bind_addr = runtime_cfg.authoritative.bind_address;
+
+            let mut dns_server = crate::dns::DnsServer::new(
+                runtime_cfg.authoritative.clone(),
+                runtime_cfg.deferred.clone(),
+                cert_resolver.clone(),
+            );
 
             // Wire up zone transfer configuration
             if !dns_cfg.settings.allow_transfer.is_empty()
@@ -165,7 +175,7 @@ impl UnifiedServerResources {
             tracing::info!(
                 "DNS server configured on {} (IPv4{})",
                 bind_addr,
-                if dns_cfg.bind_address != "0.0.0.0" {
+                if !bind_addr.ip().is_unspecified() {
                     " + IPv6"
                 } else {
                     ""

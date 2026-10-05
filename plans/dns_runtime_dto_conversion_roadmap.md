@@ -1,7 +1,7 @@
 # DNS Runtime-DTO Conversion Roadmap — Phases 125–130
 
-Status: **ACTIVE** (2026-10-04). Phase 125 is **CLOSED QUALIFIED**; Phase 126
-is **READY**. Phases 127-130 remain sequenced behind it.
+Status: **ACTIVE** (2026-10-04). Phases 125 and 126 are **CLOSED QUALIFIED**;
+Phase 127 is **READY**. Phases 128-130 remain sequenced behind it.
 
 Registered in: `plans/roadmap.md`.
 
@@ -45,11 +45,13 @@ synvoid-dns
 The exact result must be proven by `cargo metadata` / `cargo tree`, not
 assumed from this roadmap.
 
-Phase 125 baseline re-measured on 2026-10-04: **7** direct SynVoid normal edges
-and **847** expanded `cargo tree -p synvoid-dns -e normal` lines (the Phase 123
-closeout recorded 7 / 838; the 9-line difference is pre-existing manifest
-drift, not a Phase 125 change). Phase 130 must re-measure rather than assume
-838 is still exact.
+Baseline re-measured 2026-10-04 (before and after Phase 126): **7** direct
+SynVoid normal edges and **847** expanded
+`cargo tree -p synvoid-dns -e normal` lines (the Phase 123 closeout recorded
+7 / 838; the 9-line difference is pre-existing manifest drift, not a campaign
+change). Phase 126 moved no manifest entries by design — Phase 128 owns the
+`synvoid-config` removal and Phase 129 the `synvoid-core`/`synvoid-utils`
+removal. Phase 130 must re-measure rather than assume 838 is still exact.
 
 ## Binding architecture
 
@@ -95,9 +97,10 @@ Rules:
    — **CLOSED QUALIFIED** (2026-10-04);
    `architecture/dns_runtime_dto_phase125_closeout.md`.
 2. **Phase 126 — Authoritative server and encrypted-transport runtime cutover**
-   — **READY** (unblocked by Phase 125).
-3. **Phase 127 — Recursive resolver runtime-config cutover** — PLANNED, gated
-   on Phase 126.
+   — **CLOSED QUALIFIED** (2026-10-04);
+   `architecture/dns_runtime_dto_phase126_closeout.md`.
+3. **Phase 127 — Recursive resolver runtime-config cutover** — **READY**
+   (unblocked by Phase 126).
 4. **Phase 128 — Zone/DNSSEC/TSIG/HSM conversion and synvoid-config removal** —
    PLANNED, gated on Phase 127.
 5. **Phase 129 — synvoid-core / synvoid-utils neutralization** — PLANNED, gated
