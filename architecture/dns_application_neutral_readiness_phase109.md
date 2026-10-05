@@ -138,3 +138,21 @@ This does **not** revise the extraction verdict. The edges are still present
 until Phases 134 and 135 land, `synvoid-dns` is still class 1, and mesh remains
 out of scope. What changed is that the last stated blocker is no longer
 "unproven" — it is "scheduled".
+
+## Terminal-status pointer (Phase 136, 2026-10-05)
+
+> **Supersedes the paragraph above** by pointer. Phases 134 and 135 have now
+> landed, so the edges it described as "still present" are gone:
+> `synvoid-tls` and `synvoid-geoip` are both **absent from `synvoid-dns`'s
+> normal closure**, and the crate stands at **2 direct SynVoid normal edges**
+> (`synvoid-dnssec-keystore` plus optional `synvoid-mesh`), down from 7.
+> See `architecture/dns_startup_truthfulness_and_provider_inversion_closeout.md`.
+
+The extraction verdict itself is **unchanged and still correct**:
+`synvoid-dns` remains class 1. Dependency reduction was necessary but not
+sufficient — the standalone contract in
+`architecture/public_crate_release_policy.md` is still unmet, because optional
+`synvoid-mesh` is a concrete edge reaching 8 types across DHT storage, routing,
+and signed provenance, and the crate cannot be packaged while sibling SynVoid
+crates are unpublished. This document's disposition is not revised by the
+inversion, and no publication or support claim follows from it.

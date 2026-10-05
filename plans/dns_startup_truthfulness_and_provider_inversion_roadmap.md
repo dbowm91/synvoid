@@ -1,6 +1,16 @@
 # DNS Startup Truthfulness and Provider-Inversion Roadmap
 
-Status: **ACTIVE** (2026-10-05). Phases 131–136.
+Status: **CLOSED QUALIFIED** (2026-10-05). Phases 131–136 all closed.
+
+Campaign closeout: `architecture/dns_startup_truthfulness_and_provider_inversion_closeout.md`.
+
+> Terminal state: the three carry-forward findings are all resolved; the two
+> narrow provider seams are inverted; `synvoid-dns` stands at **2 direct SynVoid
+> normal edges** (`synvoid-dnssec-keystore` + optional `synvoid-mesh`), down
+> from 7, with the default-feature normal closure at **552** lines (from 838).
+> `synvoid-dns` remains **class 1**. mesh inversion is the single remaining
+> blocker and is not registered here. The closure figures are default-feature
+> only — see **F-18** in the closeout.
 
 Umbrella for the three findings the DNS runtime-DTO campaign
 (Phases 125–130, all CLOSED QUALIFIED) explicitly carried forward rather than
@@ -15,6 +25,10 @@ of these was a behavior or evidence change outside it:
 
 ## Scope
 
+Items 1–3 below are stated as they were **registered**, in the present tense of
+the problem. All three are now **closed**; the resolution is noted on each, and
+the original wording is left as the record of what was carried forward.
+
 1. **Authoritative zone startup activation.** `DnsRuntimeConfig.zones` is
    converted field-by-field by the application adapter, reaches
    `DnsServer::new(..)`, and is dropped at
@@ -25,13 +39,25 @@ of these was a behavior or evidence change outside it:
    `transfer_primary.toml`, `encrypted_dot_doh.toml` — declare
    `[[dns.zones.items]]`, so an operator copying one gets an authoritative
    server that serves nothing for the zone it declares.
+   → **CLOSED, Phase 132.** Composition calls `load_zones` at
+   `src/server/resources.rs:169` and fails startup closed. Wiring it exposed two
+   hidden defects, both fixed: record names could never match, and all four
+   shipped examples declared a record-less zone (now rejected by `validate()`).
 2. **Provider inversion of the two narrow seams.** `synvoid-tls` and
    `synvoid-geoip` are inverted behind DNS-owned capabilities implemented in a
    composition root. `synvoid-dns` drops from 4 direct SynVoid normal edges to
    2 (`synvoid-dnssec-keystore` plus optional `synvoid-mesh`).
+   → **CLOSED, Phases 133–135.** GO at 133 for both, inverted at 134 (TLS) and
+   135 (GeoIP). 4 → 3 → 2 direct edges. The mesh edge remains and is heavier
+   than its arity suggests — see F-18.
 3. **Conformance determinism.** The `free_port()` reservation race is removed
    so the DNS conformance lane is a trustworthy evidence source for the phases
    above.
+   → **CLOSED, Phase 131.** The obvious remedy (hold the reservation until
+   bind) is structurally impossible, because `DnsServer::start` binds UDP and
+   TCP on the same port internally. The server now performs the real bind and
+   retries only on an observed lost race. 10/10 repeated parallel runs at
+   terminal qualification.
 
 ## Explicit non-goals
 

@@ -253,6 +253,17 @@ TLS ownership inside DNS.
 > runtime DTO, as this research concluded — they are provider inputs, not
 > runtime values.
 
+> **Phase 136 terminal update**
+> (`architecture/dns_startup_truthfulness_and_provider_inversion_closeout.md`):
+> Phase 134 inverted this seam as recommended. The seam is now
+> `SecureTransportConfig::server_config` in
+> `crates/synvoid-dns/src/secure_transport.rs`, implemented in composition at
+> `src/tls/dns_providers.rs`, and `synvoid-tls` is absent from `synvoid-dns`'s
+> normal closure. This research's "until the later provider-inversion phase"
+> deferral is discharged; the research above stands as written, and the rule it
+> states — that the conversion must not duplicate TLS ownership inside DNS —
+> is now enforced structurally, because DNS cannot name a TLS type at all.
+
 Hickory 0.26.3 supports library integration for authoritative/forwarding/
 recursive service and DoT/DoH/DoQ/DoH3. Its resolver configuration types such as
 `ResolverConfig`, `NameServerConfig` and `ResolverOpts` are
@@ -591,3 +602,15 @@ exhaustive field-ownership matrix before the constructor cutover.
 Implementation is now registered as Phases 125–130 under `plans/dns_runtime_dto_conversion_roadmap.md`. Phase 125 begins with the exhaustive field-ownership/projection matrix and adapter parity gate; Phases 126–129 perform the staged cutovers and dependency removals; Phase 130 qualifies the result and decides whether TLS/Geo/mesh provider inversion is ready for a separate successor plan. Provider inversion must not begin until the normal `synvoid-config`, `synvoid-core` and `synvoid-utils` edges are removed with parity proof.
 
 **That precondition is now met and proven.** The three edges are gone: `synvoid-dns` has 4 direct SynVoid normal edges (down from 7) and 827 expanded normal-tree lines. `synvoid-config` survives only transitively, through `synvoid-tls` and `synvoid-geoip`. Phase 130 nevertheless records **DEFER** on provider inversion, because the per-provider evidence its own gate requires (SNI/reload/ALPN for TLS, missing-DB and deterministic-fallback for GeoIP, provenance/freshness/authority for mesh) has not been produced. The prerequisite was necessary, not sufficient.
+
+> **Phase 136 terminal update**
+> (`architecture/dns_startup_truthfulness_and_provider_inversion_closeout.md`):
+> the sentence above is the Phase 130 state and both of its dependency claims
+> are now superseded. The evidence was produced (Phase 133: **GO** for TLS and
+> GeoIP), both seams were inverted (Phases 134/135), and `synvoid-dns` is at
+> **2 direct SynVoid normal edges** with a **552-line default-feature** closure.
+> `synvoid-config` no longer survives transitively at all in that closure — it
+> left with `synvoid-tls` and `synvoid-geoip`. It does return under
+> `--features mesh`, via `synvoid-mesh` (**F-18**), which is why the figure is
+> stated as a default-feature measurement. The mesh **DEFER** in the paragraph
+> above stands unchanged.

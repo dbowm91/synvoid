@@ -1647,3 +1647,36 @@ Wiring GeoIP is deliberately deferred: it activates country classification in
 production for the first time, which is a feature change needing its own phase and
 evidence. `geoip_provider_is_still_unwired_by_composition` is a tripwire that fails
 when a root file constructs a provider, so this state cannot change silently.
+
+## Phase 136 findings — terminal qualification
+
+Phase 136 inverted nothing and added no runtime DTO field, so the field-ownership
+ledger above is unchanged. The phase re-measured the terminal state and corrected
+how the earlier measurements must be stated.
+
+### F-18 (recorded, not fixed): the closure measurement is feature-conditional
+
+`synvoid-mesh` is `optional = true` in `crates/synvoid-dns/Cargo.toml`, so
+`cargo tree -p synvoid-dns -e normal` excludes it. Every closure figure in this
+campaign's history — 838 (Phase 123), 827 (Phase 130/133), 717 (Phase 134),
+552 (Phase 135) — is therefore the **default-feature** closure. With mesh on:
+
+| Closure | Lines | `synvoid-config` / `-core` / `-utils` / `-tls` / `-geoip` |
+|---|---|---|
+| default features | 552 | all five **absent** |
+| `--features mesh` | 2047 | all five **present**, each transitively via `synvoid-mesh` |
+
+None of the five becomes a **direct** edge again; the structural result of
+Phases 128/129/134/135 stands. What changes is the weight of the one remaining
+direct edge: mesh alone accounts for 1495 closure lines and the return of every
+dependency removed across four phases.
+
+This is why the campaign closeout, `AGENTS.md`, `architecture/dns.md`, and
+`architecture/overview.md` all say **default-feature** closure rather than
+"the closure", and why the phase-136 plan's own rejection criterion — do not
+describe `synvoid-config` as absent when it is still transitively present — was
+nearly violated by the claim the plan steered toward.
+
+Not fixed: making it true requires mesh inversion, which is out of scope by plan
+and needs its own design phase. Mesh is heavy, not marginal, and is the single
+remaining blocker to class 2.

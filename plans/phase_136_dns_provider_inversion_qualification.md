@@ -1,6 +1,22 @@
 # Phase 136 Plan: Campaign Qualification and Truthful Closeout
 
-Status: **PLANNED** (2026-10-05).
+Status: **CLOSED QUALIFIED** (2026-10-05).
+
+Closeout: `architecture/dns_provider_inversion_phase136_closeout.md`.
+Campaign closeout: `architecture/dns_startup_truthfulness_and_provider_inversion_closeout.md`.
+
+> **Outcome note.** Re-running the measurement rather than carrying Phase 135's
+> number forward produced **F-18**: `synvoid-mesh` is `optional`, so every
+> closure figure in this campaign (838 / 827 / 717 / 552) is the
+> **default-feature** closure. Under `--features mesh` the closure runs 2047
+> lines and all five dependencies removed across Phases 128/129/134/135 return
+> transitively through mesh. The direct-edge count of 2 is unaffected, and the
+> structural result stands, but Workstream A's unqualified "absent" framing below
+> is superseded — see the closeout. This also means Workstream A's own rejection
+> criterion ("do not describe `synvoid-config` as absent when it is still
+> transitively present") nearly fired on the claim this plan steered toward;
+> the plan under-enumerated the possible states, and the correction is recorded
+> rather than dropped.
 
 Campaign: `plans/dns_startup_truthfulness_and_provider_inversion_roadmap.md`.
 Predecessor: Phase 135.

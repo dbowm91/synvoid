@@ -342,13 +342,23 @@ constructor: the whole-DNS runtime projection plus a composition-owned
 `src/server/dns_runtime_config.rs` (composition), never in the `src/dns/`
 facade.
 
-`crates/synvoid-dns` depends only on genuine providers: `synvoid-tls`,
-`synvoid-geoip`, `synvoid-dnssec-keystore`, and optional `synvoid-mesh` — 4
-direct SynVoid normal edges. The `synvoid-config` edge (Phase 128) and the
-`synvoid-core` / `synvoid-utils` edges (Phase 129) are all gone, as is the
-temporary `runtime_config_deferred.rs` passthrough. Every edge is gated in
-`tools/synvoid-repo-guards/tests/dns_dependency_edges.rs`, by both a manifest
-gate and a source-level gate.
+**2 direct SynVoid normal edges**, down from 7 at the Phase 123 baseline:
+`synvoid-dnssec-keystore` (a deliberate security-custody leaf) and optional
+`synvoid-mesh`. The `synvoid-config` edge (Phase 128), the `synvoid-core` /
+`synvoid-utils` edges (Phase 129), and the `synvoid-tls` / `synvoid-geoip` edges
+(Phases 134/135) are all gone, as is the temporary `runtime_config_deferred.rs`
+passthrough. `synvoid-tls` and `synvoid-geoip` are not merely indirect in the
+default-feature closure — they are **absent from it entirely**. Every edge is
+gated in `tools/synvoid-repo-guards/tests/dns_dependency_edges.rs`, by both a
+manifest gate and a source-level gate.
+
+**That measurement is feature-conditional (Phase 136 F-18).** `synvoid-mesh` is
+`optional`, so a plain `cargo tree` excludes it. With `--features mesh` the
+normal closure runs **2047** lines instead of 552, and all five of
+`synvoid-config` / `synvoid-core` / `synvoid-utils` / `synvoid-tls` /
+`synvoid-geoip` return — each as a transitive dependency of `synvoid-mesh`. None
+becomes a direct DNS edge again, so the structural result stands; but the mesh
+edge is the single remaining blocker and it is heavy, not marginal.
 
 DNS-owned replacements for the removed helper crates live in this crate:
 
@@ -359,11 +369,22 @@ DNS-owned replacements for the removed helper crates live in this crate:
 | `lifecycle.rs` | `synvoid_utils::flags::{RunningFlag, DrainFlag}` | Acquire/Release ordering preserved; the drain check is what makes graceful shutdown query-boundary |
 | `runtime_config.rs::dns_ipv4_prefix_mask` | `synvoid_core::net::ipv4_prefix_mask()` | ECS truncation |
 
-**Known gap:** `[dns.zones]` is validated and converted into `ZoneSpec` values,
-but `DnsServer::new` discards them (`zones: _`) and `load_zones(Vec<ZoneSpec>)`
-has no production caller. Zones reach a running server only through
-`load_zones_from_store` (the SQLite zone store), not from `main.toml`. See
-`dns_runtime_dto_phase128_closeout.md` finding F-2.
+**`[dns.zones]` is activated, not discarded (Phase 132).** This was a
+startup-truthfulness gap recorded as `dns_runtime_dto_phase128_closeout.md`
+finding F-2: `DnsServer::new` destructured the converted `ZoneSpec` values as
+`zones: _` and `load_zones(Vec<ZoneSpec>)` had no production caller, so a
+config-declared zone parsed, validated, converted — and was thrown away. Zones
+reached a running server only through `load_zones_from_store` (the SQLite zone
+store), never from `main.toml`.
+
+Composition now captures the zones before the move and calls
+`load_zones` at startup, failing the process closed on an unactivatable zone
+(`src/server/resources.rs:169`). Wiring it exposed two further defects, both
+fixed: record names could never match, so a configured zone answered
+authoritative NXDOMAIN for every name it contained; and all four shipped
+examples declared a record-less zone. A `validate()` rule now rejects an empty-
+record zone outright. See
+`architecture/dns_provider_inversion_phase132_closeout.md`.
 
 ### 3.10 AuthoritativeLookupOutcome (server/zone.rs)
 
@@ -1305,8 +1326,12 @@ pub struct TrustAnchor { ... }
 
 ### 10.1 Provider seams (Phase 133)
 
-`synvoid-dns` still holds concrete `synvoid-tls` and `synvoid-geoip` types, but
-both seams are now narrow and evidenced, and both are approved for inversion:
+At the Phase 133 evidence gate `synvoid-dns` still held concrete `synvoid-tls`
+and `synvoid-geoip` types, but both seams were measured as narrow and evidenced,
+and both were approved for inversion. Both are now inverted: no `use`, path, or
+type reference to either provider appears anywhere in `crates/synvoid-dns/src`
+(the only mentions are prose in the two seam modules' doc comments, explaining
+why the seams exist).
 
 | Provider | Surface | Decision | State |
 |---|---|---|---|
