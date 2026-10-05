@@ -10,9 +10,9 @@
 //! `tests/dns_runtime_config_parity.rs`.
 
 use synvoid_config::dns::{
-    CircuitBreakerConfig, DnsAnycastConfig, DnsConfig, DnsDohConfig, DnsDoqConfig, DnsDotConfig,
-    DnsMode, RecursiveClientAcl, RecursiveDnsConfig, RecursiveEcsConfig, RecursiveUpstreamProvider,
-    TrustAnchorConfig,
+    CircuitBreakerConfig, DnsAnycastConfig, DnsConfig, DnsConfigError, DnsDohConfig, DnsDoqConfig,
+    DnsDotConfig, DnsMode, DnsRecordEntry, DnsRecordType, DnsZoneEntry, RecursiveClientAcl,
+    RecursiveDnsConfig, RecursiveEcsConfig, RecursiveUpstreamProvider, TrustAnchorConfig,
 };
 
 // Phase 128: the blocks moved here referenced these types through the
@@ -1439,4 +1439,100 @@ fn doq_config_custom_concurrency() {
     let config: DnsDoqConfig = serde_json::from_str(json).unwrap();
     assert_eq!(config.max_concurrent_streams, 256);
     assert_eq!(config.idle_timeout_secs, 60);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 132: zone activation contract.
+//
+// Config-declared zones are activated at server startup (Phase 132), and
+// `DnsServer::load_zones` rejects a zone with no SOA record. These tests pin
+// the validation rule that makes that failure surface at config-load time
+// instead, so `--configtest` points at the file rather than startup failing
+// later with a less specific message.
+// ---------------------------------------------------------------------------
+
+/// A zone entry with one SOA record, which is the minimum that can activate.
+fn zone_with_soa(origin: &str) -> DnsZoneEntry {
+    DnsZoneEntry {
+        zone: origin.to_string(),
+        records: vec![DnsRecordEntry {
+            name: origin.to_string(),
+            record_type: DnsRecordType::Soa,
+            value: "ns1.example.com. admin.example.com. 1 3600 900 604800 3600".to_string(),
+            ttl: None,
+            priority: None,
+        }],
+        dnssec: None,
+    }
+}
+
+#[test]
+fn default_config_has_no_zones_and_validates() {
+    let config = DnsConfig::default();
+    assert!(
+        config.zones.items.is_empty(),
+        "the default deployment must not declare zones"
+    );
+    assert!(config.validate().is_ok());
+}
+
+#[test]
+fn zone_with_soa_record_validates() {
+    let mut config = DnsConfig::default();
+    config.zones.items.push(zone_with_soa("example.com"));
+    assert!(config.validate().is_ok());
+}
+
+#[test]
+fn zone_without_records_is_rejected() {
+    let mut config = DnsConfig::default();
+    config.zones.items.push(DnsZoneEntry {
+        zone: "example.com".to_string(),
+        records: Vec::new(),
+        dnssec: None,
+    });
+
+    match config.validate() {
+        Err(DnsConfigError::InvalidZone(message)) => {
+            assert!(
+                message.contains("example.com"),
+                "the error must name the offending zone: {message}"
+            );
+            assert!(
+                message.contains("SOA"),
+                "the error must explain the SOA requirement: {message}"
+            );
+        }
+        other => panic!("expected InvalidZone, got {other:?}"),
+    }
+}
+
+#[test]
+fn empty_zone_origin_is_rejected() {
+    let mut config = DnsConfig::default();
+    config.zones.items.push(zone_with_soa("   "));
+
+    assert!(
+        matches!(config.validate(), Err(DnsConfigError::InvalidZone(_))),
+        "a blank zone origin cannot be activated"
+    );
+}
+
+#[test]
+fn invalid_zone_error_maps_to_the_zones_config_path() {
+    let mut config = DnsConfig::default();
+    config.zones.items.push(DnsZoneEntry {
+        zone: "example.com".to_string(),
+        records: Vec::new(),
+        dnssec: None,
+    });
+
+    let error: synvoid_config::validation::ConfigValidationError =
+        config.validate().unwrap_err().into();
+    assert_eq!(error.field, "dns.zones");
+    assert!(
+        error.message.contains("SOA"),
+        "operator-facing message must explain the requirement: {}",
+        error.message
+    );
 }

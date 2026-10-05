@@ -2170,16 +2170,30 @@ two narrow seams only.
    - No production code changed; `synvoid-dns` remains class 1.
 
 2. **Phase 132 — Authoritative Zone Startup Activation**
-   - Status: **PLANNED**.
+   - Status: **CLOSED QUALIFIED** (2026-10-05). Behavior change.
    - Plan: `plans/phase_132_dns_authoritative_zone_startup_activation.md`.
-   - Address: Phase 128 F-2 / matrix F-6. `[[dns.zones.items]]` is parsed,
-     validated, converted record-by-record, then dropped at
-     `crates/synvoid-dns/src/server/mod.rs:1775` (`zones: _`).
-     `DnsServer::load_zones` and `load_zones_from_store` have no production
-     caller, and four shipped examples declare zones, so a copied example
-     yields an authoritative server that serves nothing. This phase makes a
-     configured zone take effect at startup and fails closed on an invalid one.
-     It is a deliberate behavior change, sequenced as its own phase.
+   - Closeout: `architecture/dns_provider_inversion_phase132_closeout.md`.
+   - Address: Phase 128 F-2 / matrix F-6. `[[dns.zones.items]]` was parsed,
+     validated, converted record-by-record, then dropped at the `zones: _`
+     destructure; neither `load_zones` nor `load_zones_from_store` had a
+     production caller, and four shipped examples declared zones. Composition
+     now activates configured zones and fails startup closed on an
+     unactivatable one.
+   - Wiring the path exposed two defects it had been hiding, both fixed:
+     record names could never match, so a configured zone answered
+     **authoritative NXDOMAIN for every name it contained** (fail-wrong); and
+     all four shipped profiles declared a record-less zone, which cannot be
+     activated. The loader now normalizes record names to the origin-relative
+     form the query path keys by and rejects out-of-zone names; the examples
+     carry a valid SOA/NS/A set and a `validate()` rule rejects a record-less
+     zone at config load.
+   - Evidence: a new root suite starts a real server from the real adapter
+     output and asserts a served wire response (AA set, `rcode=0`, declared
+     rdata), driven from the shipped example. Parity ledger unchanged at 43/43;
+     `synvoid-dns` 615 lib tests (622 with mesh); `synvoid-config` 94; two new
+     repo guards; conformance 10/10.
+   - No persisted schema shape change; DNSSEC custody untouched;
+     `synvoid-dns` remains class 1.
 
 3. **Phase 133 — Provider-Inversion Evidence Gate (TLS + GeoIP)**
    - Status: **PLANNED**.

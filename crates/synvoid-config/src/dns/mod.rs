@@ -206,6 +206,13 @@ impl DnsConfig {
 
         self.anycast.validate()?;
 
+        // Phase 132: zones declared in config are activated at startup, and
+        // activation rejects a zone with no SOA record (RFC 1035 §3.3.13).
+        // Reject it here instead, so `--configtest` and config validation
+        // point at the file rather than letting startup fail later with a
+        // less specific message.
+        self.zones.validate()?;
+
         // Phase 45 fail-closed contract: deferred features must not be
         // activatable. A default/inactive value stays parseable, but any
         // non-default value that the runtime would silently ignore is
@@ -234,6 +241,11 @@ pub enum DnsConfigError {
     InvalidMesh(String),
     InvalidAnycast(String),
     InvalidRecursive(String),
+    /// Phase 132: a zone was declared with no records. Every authoritative
+    /// zone must carry at least one SOA record (RFC 1035 §3.3.13), so a
+    /// record-less entry can never be activated. `zone` is the declared
+    /// origin.
+    InvalidZone(String),
     /// Phase 45 fail-closed contract: the operator tried to activate a
     /// deferred/unsupported feature. `path` is the typed config path
     /// (e.g. `dns.rpz.enabled`); `reason` explains what to do instead.
@@ -256,6 +268,7 @@ impl std::fmt::Display for DnsConfigError {
             DnsConfigError::InvalidMesh(msg) => write!(f, "Invalid mesh: {}", msg),
             DnsConfigError::InvalidAnycast(msg) => write!(f, "Invalid anycast: {}", msg),
             DnsConfigError::InvalidRecursive(msg) => write!(f, "Invalid recursive DNS: {}", msg),
+            DnsConfigError::InvalidZone(msg) => write!(f, "Invalid DNS zone: {}", msg),
             DnsConfigError::Unsupported { path, reason } => {
                 write!(f, "Unsupported DNS feature at {}: {}", path, reason)
             }
@@ -278,6 +291,7 @@ impl From<DnsConfigError> for ConfigValidationError {
             DnsConfigError::InvalidMesh(_) => "dns.mesh".to_string(),
             DnsConfigError::InvalidAnycast(_) => "dns.anycast".to_string(),
             DnsConfigError::InvalidRecursive(_) => "dns.recursive".to_string(),
+            DnsConfigError::InvalidZone(_) => "dns.zones".to_string(),
             DnsConfigError::Unsupported { path, .. } => path.clone(),
         };
         ConfigValidationError { field, message }

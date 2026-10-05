@@ -1067,7 +1067,21 @@ fn shipped_authoritative_profile_projects_exactly() {
     assert_eq!(runtime.authoritative.limits.max_records_per_response, 1000);
     assert_eq!(runtime.zones.len(), 1);
     assert_eq!(runtime.zones[0].origin, "example.com");
-    assert!(runtime.zones[0].records.is_empty());
+    // Phase 132: the shipped examples previously declared a record-less zone,
+    // which cannot be activated (RFC 1035 3.3.13) and would fail startup. They
+    // now carry a valid SOA/NS/A set, and the adapter must project every record
+    // with its persisted spelling intact — normalization to the query path's
+    // origin-relative convention happens in the loader, not here.
+    let zone_records = &runtime.zones[0].records;
+    assert_eq!(zone_records.len(), 3);
+    assert_eq!(zone_records[0].name, "example.com");
+    assert_eq!(zone_records[0].record_type, HickoryRecordType::SOA);
+    assert!(zone_records[0].value.starts_with("ns1.example.com."));
+    assert_eq!(zone_records[1].name, "example.com");
+    assert_eq!(zone_records[1].record_type, HickoryRecordType::NS);
+    assert_eq!(zone_records[2].name, "www.example.com");
+    assert_eq!(zone_records[2].record_type, HickoryRecordType::A);
+    assert_eq!(zone_records[2].value, "192.0.2.1");
     assert!(!runtime.recursive.enabled);
     assert!(!runtime.authoritative.dot.enabled);
     assert!(!runtime.dnssec.enabled);

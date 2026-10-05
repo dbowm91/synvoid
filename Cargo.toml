@@ -437,6 +437,14 @@ required-features = ["mesh"]
 name = "dns_runtime_config_parity"
 required-features = ["dns"]
 
+# Phase 132: authoritative zone startup activation, proven end to end through
+# the application-owned adapter into a started, serving `DnsServer`. The parity
+# suite above stays a pure projection ledger, so this live-wire coverage lives
+# in its own target rather than changing that suite's character.
+[[test]]
+name = "dns_zone_startup_activation"
+required-features = ["dns"]
+
 # Phase 39 (temporary): Oxc/bumpalo resolver unblock. `minify-html 0.18.1`
 # (crates.io) pins Oxc 0.95 -> `oxc_allocator 0.95 =bumpalo 3.19.0`, which
 # conflicts with modern Wasmtime (bumpalo ^3.20) required by current YARA-X.

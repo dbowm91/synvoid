@@ -380,3 +380,111 @@ fn forwarder_modes_cannot_claim_local_dnssec_validation() {
     }
     violations.assert_ok("forwarder_modes_cannot_claim_local_dnssec_validation");
 }
+
+// ---------------------------------------------------------------------------
+// Phase 132: configured zones are activated, not silently discarded
+// ---------------------------------------------------------------------------
+
+/// `DnsServer::new` treats zones as caller-supplied input rather than
+/// constructor state, and composition is what activates them.
+///
+/// This guard exists because the failure it prevents is invisible: the runtime
+/// config carried the zones, the adapter converted every record, and the server
+/// dropped them at the `zones: _` destructure. Nothing failed, every projection
+/// test stayed green, and a shipped example advertised a zone that never loaded.
+#[test]
+fn composition_activates_configured_zones() {
+    let root = workspace_root();
+    let resources = read(&root.join("src/server/resources.rs"));
+
+    let mut violations = Violations::new();
+
+    if resources.is_empty() {
+        panic!("src/server/resources.rs is missing or unreadable; cannot verify zone activation");
+    }
+
+    // Composition must call `load_zones`.
+    if !resources.contains(".load_zones(") {
+        violations.push(
+            "src/server/resources.rs must activate configured zones via `load_zones`; \
+             without it, `[[dns.zones.items]]` is parsed, converted, and discarded"
+                .to_string(),
+        );
+    }
+
+    // Activation must fail startup rather than degrade to a warning: a zone the
+    // operator declared but that cannot be activated is a configuration error.
+    if !resources.contains("failed to activate") {
+        violations.push(
+            "src/server/resources.rs must surface zone activation failure as a typed \
+             resource error naming the zone count"
+                .to_string(),
+        );
+    }
+
+    // The runtime config is moved into `DnsServer::new`, so the zone list must
+    // be taken before that move rather than read afterwards.
+    let zones_clone = resources.find("runtime_cfg.zones.clone()");
+    let constructor = resources.find("DnsServer::new(runtime_cfg");
+    match (zones_clone, constructor) {
+        (Some(zones_at), Some(new_at)) if zones_at < new_at => {}
+        (Some(_), Some(_)) => violations.push(
+            "src/server/resources.rs must clone runtime_cfg.zones BEFORE moving runtime_cfg \
+             into DnsServer::new"
+                .to_string(),
+        ),
+        _ => violations.push(
+            "src/server/resources.rs must both clone runtime_cfg.zones and construct \
+             DnsServer::new(runtime_cfg, ...)"
+                .to_string(),
+        ),
+    }
+
+    violations.assert_ok("Phase 132 zone activation must stay wired in composition");
+}
+
+/// A shipped example that declares a zone must declare records for it.
+///
+/// A record-less zone cannot be activated (RFC 1035 section 3.3.13), so an
+/// example carrying one is a profile that would refuse to start. This is the
+/// textual half of the guarantee; `tests/dns_zone_startup_activation.rs` proves
+/// the behavioral half by actually starting a server from the example.
+#[test]
+fn shipped_dns_examples_declare_records_for_their_zones() {
+    let root = workspace_root();
+    let examples = root.join("examples/dns");
+
+    let mut violations = Violations::new();
+    let mut checked = 0usize;
+
+    let Ok(entries) = fs::read_dir(&examples) else {
+        panic!("examples/dns is unreadable");
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().is_none_or(|e| e != "toml") {
+            continue;
+        }
+        let text = read(&path);
+        if !text.contains("[[dns.zones.items]]") {
+            continue;
+        }
+        checked += 1;
+
+        let declares_records = text.contains("records = [");
+        if !declares_records {
+            violations.push(format!(
+                "{}: declares [[dns.zones.items]] but no records; a zone with no SOA \
+                 cannot be activated, so this profile would fail startup",
+                path.display()
+            ));
+        }
+    }
+
+    assert!(
+        checked > 0,
+        "expected at least one shipped example to declare a zone"
+    );
+    violations.assert_ok("shipped DNS examples must declare records for their zones");
+}

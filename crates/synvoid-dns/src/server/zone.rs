@@ -5,6 +5,55 @@ use crate::runtime_config::ZoneSpec;
 use crate::mesh_sync::MeshDnsRegistry;
 
 impl DnsServer {
+    /// Normalize a zone-record name to the **origin-relative** form the
+    /// authoritative query path looks records up by.
+    ///
+    /// The query path (`server/query.rs`) strips the zone origin off the qname
+    /// and looks the remainder up, mapping the apex to `"@"`. So a record must
+    /// be stored the same way or it is unreachable — the zone would answer an
+    /// authoritative NXDOMAIN for a name it contains, which is fail-wrong rather
+    /// than fail-closed.
+    ///
+    /// The operator-facing spelling is the natural FQDN, so it is accepted and
+    /// normalized here. The rule follows the zone-file convention:
+    ///
+    /// - `"@"` is the apex;
+    /// - a name containing a `.` is an FQDN: it must be inside the zone, and is
+    ///   reduced to its relative form;
+    /// - a name without a `.` is already origin-relative and is kept as-is.
+    ///
+    /// A name that is an FQDN outside the zone is rejected rather than stored
+    /// under a key nothing will ever query.
+    fn normalize_record_name(origin: &str, name: &str) -> Result<String, String> {
+        let origin = origin.trim().trim_end_matches('.').to_lowercase();
+        let name = name.trim().trim_end_matches('.').to_lowercase();
+
+        if name.is_empty() {
+            return Err("has an empty name".to_string());
+        }
+
+        if name == "@" {
+            return Ok("@".to_string());
+        }
+
+        // No dot: already relative to the origin.
+        if !name.contains('.') {
+            return Ok(name);
+        }
+
+        if name == origin {
+            return Ok("@".to_string());
+        }
+
+        match name.strip_suffix(&format!(".{origin}")) {
+            Some(relative) if !relative.is_empty() => Ok(relative.to_string()),
+            _ => Err(format!(
+                "is outside zone '{origin}'; a record name must be '@', a label, \
+                 or an FQDN inside the zone"
+            )),
+        }
+    }
+
     pub fn load_zones(&self, zone_configs: Vec<ZoneSpec>) -> Result<(), String> {
         let zone_origins: Vec<String> = zone_configs.iter().map(|zc| zc.origin.clone()).collect();
         let loaded_count = self.load_zones_inner(&zone_configs, &zone_origins)?;
@@ -123,8 +172,23 @@ impl DnsServer {
                     }
                 }
 
+                let stored_name =
+                    Self::normalize_record_name(&zone_config.origin, &record_config.name).map_err(
+                        |reason| {
+                            tracing::error!(
+                                zone = %zone_config.origin,
+                                name = %record_config.name,
+                                "Rejecting record: {reason}"
+                            );
+                            format!(
+                                "Zone {}: record name '{}' {reason}",
+                                zone_config.origin, record_config.name
+                            )
+                        },
+                    )?;
+
                 let record = DnsZoneRecord {
-                    name: record_config.name.clone(),
+                    name: stored_name.clone(),
                     record_type,
                     value: record_config.value.clone(),
                     ttl: record_config
@@ -137,7 +201,12 @@ impl DnsServer {
                     zone.serial = Self::parse_soa_serial(&record.value);
                 }
 
-                let key = (record_config.name.clone(), record.record_type);
+                // Phase 132: the key must be the *normalized* name. The query
+                // path strips the zone origin off the qname before looking a
+                // record up, so a record stored under the name as written
+                // (an FQDN) is unreachable and the zone answers authoritative
+                // NXDOMAIN for a name it contains.
+                let key = (stored_name, record.record_type);
                 zone.records.entry(key).or_default().push(record);
             }
 
@@ -543,5 +612,67 @@ impl DnsServer {
         } else {
             Err("DNSSEC not configured".to_string())
         }
+    }
+}
+
+#[cfg(test)]
+mod record_name_tests {
+    use super::DnsServer;
+
+    fn normalized(origin: &str, name: &str) -> Result<String, String> {
+        DnsServer::normalize_record_name(origin, name)
+    }
+
+    #[test]
+    fn fqdn_inside_the_zone_becomes_origin_relative() {
+        assert_eq!(normalized("example.com", "www.example.com").unwrap(), "www");
+        assert_eq!(
+            normalized("example.com", "_dmarc.example.com").unwrap(),
+            "_dmarc"
+        );
+        assert_eq!(normalized("example.com", "a.b.example.com").unwrap(), "a.b");
+    }
+
+    #[test]
+    fn the_apex_is_at() {
+        // Both spellings of the apex, since a config author may write either.
+        assert_eq!(normalized("example.com", "@").unwrap(), "@");
+        assert_eq!(normalized("example.com", "example.com").unwrap(), "@");
+        assert_eq!(normalized("example.com", "example.com.").unwrap(), "@");
+    }
+
+    #[test]
+    fn bare_labels_are_already_origin_relative() {
+        // Every pre-existing fixture in this repo uses this form.
+        assert_eq!(normalized("example.com", "www").unwrap(), "www");
+        assert_eq!(normalized("example.com", "ns1").unwrap(), "ns1");
+    }
+
+    #[test]
+    fn names_are_case_insensitive_and_trailing_dots_are_optional() {
+        assert_eq!(
+            normalized("EXAMPLE.com", "WWW.Example.COM.").unwrap(),
+            "www"
+        );
+        assert_eq!(normalized("example.com", "WWW").unwrap(), "www");
+    }
+
+    #[test]
+    fn a_sibling_zone_is_rejected_rather_than_silently_unreachable() {
+        // The failure this prevents is the important one: a record stored under
+        // a key nothing queries, so the zone answers authoritative NXDOMAIN.
+        let err = normalized("example.com", "www.other.net").unwrap_err();
+        assert!(err.contains("outside zone"), "unexpected error: {err}");
+
+        // A suffix trap: "notexample.com" must not be treated as inside
+        // "example.com".
+        let err = normalized("example.com", "www.notexample.com").unwrap_err();
+        assert!(err.contains("outside zone"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn an_empty_name_is_rejected() {
+        assert!(normalized("example.com", "  ").is_err());
+        assert!(normalized("example.com", "").is_err());
     }
 }

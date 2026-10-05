@@ -358,6 +358,40 @@ Transition `Failed → Loading` to trigger a zone reload. If the reload succeeds
 
 Both `load_zones` and `load_zones_from_store` now call `validate_zone_for_activation()` (previously called only `validate_single_soa()`).
 
+#### Record-name normalization (Phase 132)
+
+Records are **keyed by their origin-relative owner name**: the apex is `"@"`, and
+`www.example.com` in zone `example.com` is keyed `"www"`. That is the convention
+the query path uses — `server/query.rs` strips the origin off the qname before
+the lookup — so keying is not a free choice, it is dictated by the read path.
+
+Config-declared zones are therefore normalized at load, in
+`DnsServer::normalize_record_name` (`server/zone.rs`), before the activation gate
+sees them. The operator-facing spelling stays the natural FQDN; the loader
+follows the zone-file convention:
+
+| Written in config | Origin `example.com` | Stored key |
+|---|---|---|
+| `@` | `example.com` | `@` |
+| `example.com` / `example.com.` | `example.com` | `@` |
+| `www.example.com` | `example.com` | `www` |
+| `www` | `example.com` | `www` |
+| `WWW.Example.COM.` | `example.com` | `www` |
+| `www.other.net` | `example.com` | **error: outside zone** |
+| `www.notexample.com` | `example.com` | **error: outside zone** |
+
+This is normalization *and* a gate. Before Phase 132 an FQDN name passed the
+`NameOutsideZone` check — it genuinely is inside the zone — and was then stored
+under a key nothing queries, so the zone claimed authority and answered NXDOMAIN
+for a name its own configuration declared. Validation and keying used different
+conventions, and nothing noticed because the config path was unreachable.
+
+A name containing a `.` is treated as an FQDN and must be inside the zone; a name
+without one is already origin-relative. Comparison is case-insensitive and the
+trailing dot is optional. The suffix test is not a naive `ends_with`, so
+`notexample.com` is not mistaken for a subdomain of `example.com`.
+
+
 ### Activation Validation Rules (Tightening Follow-up)
 
 `validate_zone_for_activation()` was deepened to enforce record-level correctness at the activation gate. Invalid authoritative data cannot reach the active store through config, store, transfer, or update paths.

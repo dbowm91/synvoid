@@ -137,7 +137,34 @@ impl UnifiedServerResources {
 
             // TSIG keys are already decoded and length-checked by the adapter.
             let tsig_keys = runtime_cfg.tsig_keys.clone();
+            // Configured zones are *input* to the server, not constructor state:
+            // `DnsServer::new` deliberately does not consume them (see
+            // `synvoid-dns`'s `zones: _` destructure), so they are activated
+            // explicitly below. Cloned before the move, exactly like the TSIG
+            // keys above.
+            let configured_zones = runtime_cfg.zones.clone();
             let mut dns_server = crate::dns::DnsServer::new(runtime_cfg, cert_resolver.clone());
+
+            // Phase 132: activate zones declared in `main.toml`.
+            //
+            // These were previously validated, converted record-by-record, and
+            // then discarded, so an operator copying a shipped example got an
+            // authoritative server that served nothing for the zone it declared.
+            //
+            // Fail closed, and deliberately asymmetric with the TSIG wiring
+            // below: TSIG authorizes zone *transfers* and degrades to a warning
+            // because a missing verifier is survivable, whereas a zone the
+            // operator declared but that cannot be activated is a configuration
+            // error. Serving authoritative DNS without it is worse than
+            // refusing to start.
+            if !configured_zones.is_empty() {
+                let zone_count = configured_zones.len();
+                dns_server.load_zones(configured_zones).map_err(|e| {
+                    UnifiedServerResourceError::Dns(format!(
+                        "failed to activate {zone_count} configured zone(s): {e}"
+                    ))
+                })?;
+            }
 
             // Wire up zone transfer configuration
             if !dns_cfg.settings.allow_transfer.is_empty()

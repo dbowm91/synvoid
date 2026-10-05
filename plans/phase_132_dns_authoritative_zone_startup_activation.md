@@ -1,6 +1,28 @@
 # Phase 132 Plan: Authoritative Zone Startup Activation
 
-Status: **PLANNED** (2026-10-05).
+Status: **CLOSED QUALIFIED** (2026-10-05). Closeout:
+`architecture/dns_provider_inversion_phase132_closeout.md`. Behavior change.
+
+`src/server/resources.rs` now clones `runtime_cfg.zones` before the move and
+calls `load_zones`, failing startup closed on an unactivatable zone. A shipped
+example's zone is proven served end to end: AA set, `rcode=0`, declared rdata on
+the wire.
+
+Wiring the path exposed two further defects that the unreachable path had been
+hiding, both fixed here:
+
+- **F-1** — config-declared record names could never match. The query path keys
+  records origin-relative (`www`, apex `@`) while the loader stored the name as
+  written, so a configured zone answered **authoritative NXDOMAIN for every name
+  it contained**. Fail-wrong, not fail-closed. Fixed by normalizing in the loader
+  and rejecting out-of-zone names.
+- **F-2** — all four shipped profiles declared a record-less zone, which cannot
+  be activated. Examples now carry a valid SOA/NS/A set, a `validate()` rule
+  rejects a record-less zone at config load, and a false comment in
+  `authoritative_public.toml` is corrected.
+
+Parity ledger unchanged at 43/43; `synvoid-dns` 615 lib tests (622 with mesh);
+`synvoid-config` 94 schema-contract tests; two new repo guards; conformance 10/10.
 
 Campaign: `plans/dns_startup_truthfulness_and_provider_inversion_roadmap.md`.
 Predecessor: Phase 131.

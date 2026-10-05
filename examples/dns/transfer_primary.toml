@@ -68,6 +68,13 @@ secret_base64 = "<base64-encoded-secret>"
 
 [[dns.zones.items]]
 zone = "example.com"
+records = [
+  # RFC 1035 3.3.13 requires an SOA in every authoritative zone. All seven
+  # fields are required: mname rname serial refresh retry expire minimum.
+  { name = "example.com", record_type = "soa", value = "ns1.example.com. admin.example.com. 2026100501 3600 900 604800 3600" },
+  { name = "example.com", record_type = "ns", value = "ns1.example.com." },
+  { name = "www.example.com", record_type = "a", value = "192.0.2.1" },
+]
 
 # WARNING: Do NOT enable:
 #   - dns.recursive (open resolver risk)

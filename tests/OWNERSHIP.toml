@@ -298,6 +298,12 @@ owners = ["synvoid-dns", "synvoid-config"]
 reason = "validates the application-owned persisted-DNS-config -> runtime-DTO adapter and its exact effective runtime values (Phase 125 Workstream E)"
 
 [[test]]
+name = "dns_zone_startup_activation"
+class = "composition"
+owners = ["synvoid-dns", "synvoid-config"]
+reason = "validates that a zone declared in persisted config is activated on a started DnsServer and answered authoritatively, and that an unactivatable zone fails closed (Phase 132)"
+
+[[test]]
 name = "facade_disposition_guard"
 class = "static_policy"
 owners = []

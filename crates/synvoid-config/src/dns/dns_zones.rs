@@ -2,10 +2,45 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use super::DnsConfigError;
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema, ToSchema)]
 pub struct DnsZonesConfig {
     #[serde(default)]
     pub items: Vec<DnsZoneEntry>,
+}
+
+impl DnsZonesConfig {
+    /// Phase 132: a declared zone must be activatable.
+    ///
+    /// Config-declared zones are activated at server startup, and
+    /// `DnsServer::load_zones` rejects a zone carrying no SOA record
+    /// (RFC 1035 §3.3.13 requires at least one SOA per authoritative zone).
+    /// A record-less entry is therefore a configuration error rather than an
+    /// inert value: it can never do what it appears to declare.
+    ///
+    /// An **empty** `items` list stays valid — a server with no configured
+    /// zones is a legitimate recursive-only or empty-authoritative
+    /// deployment, and that is what the default config uses.
+    pub fn validate(&self) -> Result<(), DnsConfigError> {
+        for zone in &self.items {
+            if zone.zone.trim().is_empty() {
+                return Err(DnsConfigError::InvalidZone(
+                    "zone origin cannot be empty".to_string(),
+                ));
+            }
+
+            if zone.records.is_empty() {
+                return Err(DnsConfigError::InvalidZone(format!(
+                    "zone '{}' declares no records; an authoritative zone must \
+                     contain at least one SOA record (RFC 1035 section 3.3.13)",
+                    zone.zone
+                )));
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]

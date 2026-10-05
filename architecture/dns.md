@@ -428,15 +428,63 @@ pub struct PrefetchConfig {
 ### 4.1 DnsServer Factory
 
 ```rust
-// server/mod.rs:855
+// server/mod.rs
 impl DnsServer {
-    pub fn new(config: DnsConfig, cert_resolver: Option<Arc<CertResolver>>) -> Self
+    // Phases 126-128: DNS-owned runtime values only, never a persistence DTO.
+    pub fn new(
+        runtime: DnsRuntimeConfig,
+        cert_resolver: Option<Arc<CertResolver>>,
+    ) -> Self
+
     #[cfg(feature = "dns")]
     pub fn with_acme_dns_challenges(self, challenges: Arc<AcmeDnsChallenge>) -> Self
     #[cfg(feature = "dns")]
     pub fn with_cookie_server(self, cookie_server: Arc<DnsCookieServer>) -> Self
+
+    /// Activate authoritative zones (Phase 132).
+    pub fn load_zones(&self, zone_configs: Vec<ZoneSpec>) -> Result<(), String>
 }
 ```
+
+The single persisted-config conversion path is
+`src/server/dns_runtime_config.rs`; `src/dns/` stays a pure re-export facade.
+
+#### Zone activation (Phase 132)
+
+`DnsServer::new` treats zones as **caller-supplied input**, not constructor
+state: it destructures `zones: _` and does not consume them. Composition
+activates them explicitly, in `src/server/resources.rs`:
+
+```rust
+let configured_zones = runtime_cfg.zones.clone();   // before the move
+let mut dns_server = DnsServer::new(runtime_cfg, cert_resolver.clone());
+dns_server.load_zones(configured_zones)?;          // fails startup closed
+```
+
+Three consequences worth knowing:
+
+1. **Failure is fatal, not degraded.** A zone the operator declared but that
+   cannot be activated aborts startup through
+   `UnifiedServerResourceError::Dns`. This is deliberately asymmetric with the
+   TSIG wiring alongside it, which warns and degrades: TSIG authorizes zone
+   *transfers* and its absence is survivable, whereas an unactivatable declared
+   zone is a configuration error. Do not "fix" one to match the other.
+
+2. **Record names are normalized at load.** The query path strips the zone
+   origin off the qname before looking a record up (`www.example.com` -> `www`,
+   apex -> `@`), so `load_zones` normalizes record names to that
+   origin-relative form. An FQDN inside the zone is accepted and reduced; a name
+   outside the zone is a hard error. Without this, a config-declared zone claims
+   authority and answers NXDOMAIN for every name it contains.
+
+3. **A declared zone must carry at least one SOA record.** RFC 1035 section
+   3.3.13 requires one per authoritative zone. `DnsZonesConfig::validate`
+   rejects a record-less zone at config load, so `--configtest` points at the
+   file rather than startup failing later.
+
+`load_zones` is also the runtime-reload path for the admin/CLI zone APIs, so the
+same normalization and the same RFC 1035 requirement apply there.
+
 
 ### 4.2 RecursiveDnsServer
 

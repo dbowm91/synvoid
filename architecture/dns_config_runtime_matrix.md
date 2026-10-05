@@ -1262,6 +1262,13 @@ call `load_zones(runtime.zones)` explicitly, or drop `[dns.zones]` from the
 shipped schema and document that zones come from the zone store. Until then,
 `[dns.zones]` should be treated as non-functional in `architecture/dns.md`.
 
+**RESOLVED by Phase 132** (`architecture/dns_provider_inversion_phase132_closeout.md`).
+Composition now clones `runtime_cfg.zones` before the move and calls `load_zones`,
+failing startup closed on an unactivatable zone. Wiring it exposed two further
+defects that this entry never could have, because the path was unreachable:
+record names never matched (Phase 132 F-1) and every shipped example declared a
+record-less zone (F-2). `[dns.zones]` is functional; see `architecture/dns.md`.
+
 ### F-7: TSIG keys are discarded by the constructor by design
 
 Same `tsig_keys: _` destructuring, but wired: `src/server/resources.rs` reads
@@ -1362,3 +1369,119 @@ metrics listeners are bound by the test itself, so binding `:0` and reading the
 port back would remove those races exactly; the `listen_port` handed to the
 external binary as an argument cannot be fixed this way at all, because the
 binary would have to report the port it bound. Recorded, not smoothed over.
+
+## Phase 132 findings
+
+### F-1: config-declared record names could never match — authoritative NXDOMAIN for the whole zone
+
+The second defect that wiring zone activation exposed, and the more serious of
+the two, because the failure is **fail-wrong** rather than fail-closed.
+
+The authoritative query path (`crates/synvoid-dns/src/server/query.rs`) strips
+the zone origin off the qname and looks the remainder up, mapping the apex to
+`"@"`:
+
+```text
+qname "www.example.com", origin "example.com"
+  -> strip ".example.com" -> lookup_name "www"
+  -> zone.records.get(&("www", A))
+```
+
+`load_zones_inner` stored the record under the name **as written in config**, and
+the application adapter copied it verbatim (`src/server/dns_runtime_config.rs`).
+So a config-declared record was filed under `("www.example.com", A)`, a key
+nothing ever queries.
+
+The observable result, measured before the fix:
+
+```text
+PROBE rcode=3 flags=0x8503 ancount=0   # NXDOMAIN, AA set
+```
+
+The server claimed authority over `example.com` and answered NXDOMAIN for a name
+its own configuration declared. A zone that is silently inert still looks like a
+correctly configured authoritative server from outside.
+
+Every fixture in the repo used the origin-relative convention (`"@"`, `"www"`,
+`"ns1"`), so no test could have caught this: the convention mismatch was between
+the *persisted schema*, which reads naturally as an FQDN, and the internal
+storage convention, which nothing had ever bridged.
+
+**Fix:** `DnsServer::normalize_record_name` in
+`crates/synvoid-dns/src/server/zone.rs` normalizes at the loader, following the
+zone-file convention:
+
+- `"@"` and the origin itself are the apex;
+- a name containing a `.` is an FQDN and must be inside the zone, and is reduced
+  to its relative form;
+- a name without a `.` is already origin-relative and is kept, so every existing
+  fixture keeps working;
+- an FQDN outside the zone is a **hard error**, not a silently unreachable key.
+
+Normalization lives in the loader rather than the adapter deliberately: the
+runtime DTO keeps the operator's spelling, and the origin-relative convention
+stays an internal detail of how records are keyed.
+
+Names are compared case-insensitively with an optional trailing dot, and the
+suffix test is not a naive `ends_with` — `www.notexample.com` is correctly
+rejected for zone `example.com`.
+
+Pinned by six unit tests in `record_name_tests` and end to end by
+`tests/dns_zone_startup_activation.rs`.
+
+### F-2: all four shipped example profiles declared a zone that could never load
+
+`authoritative_public.toml`, `transfer_primary.toml`, `dnssec_signed.toml` and
+`encrypted_dot_doh.toml` each declared:
+
+```toml
+[[dns.zones.items]]
+zone = "example.com"
+```
+
+with **no records**. `load_zones` rejects a zone with no SOA record (RFC 1035
+section 3.3.13), so wiring activation turned all four shipped profiles into
+startup failures.
+
+`authoritative_public.toml` also carried a comment that was simply false:
+
+> NOTE: Zone loading from zone files is not supported via config; use the API or
+> CLI to load zones.
+
+Zone loading from config was not "unsupported" — it was never wired. The comment
+described a design decision where there was an absent one.
+
+**Fix:** all four now declare an apex SOA and one A record, the misleading
+comment is corrected to describe what actually happens, and a `validate()` rule
+(`DnsZonesConfig::validate`, new `DnsConfigError::InvalidZone`) rejects a
+record-less zone at config load so the error points at the file rather than
+failing later at startup. Guarded by
+`shipped_dns_examples_declare_records_for_their_zones`, and the shipped example
+is proven end to end by
+`shipped_example_zone_becomes_a_served_authoritative_zone`.
+
+### F-3: a public authoritative profile cannot be queried from loopback
+
+`authoritative_public.toml` enables the firewall with
+`block_internal_ips = true`, and that flag installs a `block_loopback` rule for
+`127.0.0.0/8` (`crates/synvoid-dns/src/server/mod.rs`). Correct for a profile
+aimed at the public internet, and it is why the served-answer test has to relax
+that one setting: it dials over loopback.
+
+Recorded because it is a real operational consequence rather than a test detail:
+an operator cannot verify a public profile locally with `dig @127.0.0.1` while
+that flag is set, and the failure is silence rather than a refusal. No change
+made — the blocking behavior is right for the profile — but a future local
+verification lane needs to know this.
+
+### F-4: zone activation is not atomic across a multi-zone batch
+
+`load_zones_inner` inserts each zone as it validates it and returns `Err` at the
+first failure, so a batch of three zones with a bad second entry leaves the first
+inserted. Harmless at startup, where the process is about to exit, but it means a
+**runtime** reload of a multi-zone batch can leave a partial zone set.
+
+Pre-existing and left unchanged: fixing it is a behavior change to the runtime
+reload path, which is outside this phase. Recorded so a future reload campaign
+knows the guarantee is "no partial activation" only by accident of where it is
+called, not by design.
