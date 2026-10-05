@@ -6,6 +6,25 @@ pub struct InternalTlsConfig {
     pub cert_path: Option<PathBuf>,
     pub key_path: Option<PathBuf>,
     pub watch_dir: Option<PathBuf>,
+    /// **Telemetry only — this selects nothing.**
+    ///
+    /// Setting it to `false` does not disable post-quantum key exchange, and
+    /// setting it to `true` does not enable it. Which key-exchange groups are
+    /// available is decided entirely by the compiled-in rustls
+    /// `prefer-post-quantum` cargo feature, which `synvoid-tls` always enables;
+    /// there is no second provider to select.
+    ///
+    /// The field is read in exactly one place, where it emits a debug log and a
+    /// counter. It is kept so existing operator configuration keeps parsing and
+    /// so the intent stays visible, not because it controls anything.
+    ///
+    /// Pinned by
+    /// `prefer_post_quantum_does_not_gate_the_hybrid_key_exchange`: a client
+    /// offering only `X25519MLKEM768` completes a handshake against a server
+    /// built with this flag off.
+    ///
+    /// Phase 140 recorded the gap between this field's name and its behaviour
+    /// (`architecture/dns_provider_inversion_phase140_closeout.md`).
     pub prefer_post_quantum: bool,
     pub tls_1_3_only: bool,
     pub enable_tls_12_fallback: bool,

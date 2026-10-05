@@ -217,6 +217,21 @@ compiled-in `prefer-post-quantum` rustls feature, not this setting, governs
 availability. Phase 134 must not describe its trait as "honouring a
 post-quantum preference" — there is no preference to honour.
 
+> **Resolved by Phase 140, with three corrections.** (1) "Emits a debug log and
+> a counter" understates the blast radius: there is a **second** read site at
+> `src/tls/server.rs:251`, and it was operator-facing — the HTTPS startup banner
+> interpolated `"with"` / `"without"` PQC from this field, directly beneath a
+> truthful `#[cfg(feature = "post-quantum")]` log. The same banner also hardcoded
+> `"TLS 1.3"` regardless of `tls_1_3_only`. Both claims are removed. (2) The gap
+> was not confined to the crate: `docs/CONFIGURATION.md` and the
+> `tls_termination` skill both told operators the flag "uses" hybrid PQ KEX,
+> "protects against" quantum attack, and needed a `--features post-quantum` build
+> — the last being wrong, since inbound PQ does not depend on that marker feature
+> at all. (3) The field is now classified `PERSISTURE` in the runtime matrix and
+> documented as telemetry at both definitions. The setting itself was deliberately
+> **kept** (option d). See
+> `architecture/dns_provider_inversion_phase140_closeout.md`.
+
 ### F-8 — the permissive version branch is not the default (severity: none, informational)
 
 `build_server_config` admits TLS 1.2 and 1.3 when neither version flag is set,

@@ -327,6 +327,14 @@ not presented as one.
    > `architecture/dns_provider_inversion_phase137_closeout.md`.
 4. **`prefer_post_quantum` is telemetry, not a gate** (F-7). It selects nothing;
    availability comes from the compiled-in rustls feature.
+   > **Resolved by Phase 140.** Documented as telemetry at both definitions and
+   > classified `PERSISTURE` in the runtime matrix; the setting is kept. The phase
+   > found this item understated: a second, operator-facing read site
+   > (`src/tls/server.rs:251`, the HTTPS startup banner) and wrong guidance in
+   > `docs/CONFIGURATION.md` and the `tls_termination` skill both had to be
+   > corrected — the guide's claim that the flag needs a `--features post-quantum`
+   > build is wrong for inbound TLS. See
+   > `architecture/dns_provider_inversion_phase140_closeout.md`.
 5. **Zone reload atomicity** (Phase 132 F-4) — a multi-zone batch can leave a
    partial set on a runtime reload. Harmless at startup, where the process is
    about to exit.

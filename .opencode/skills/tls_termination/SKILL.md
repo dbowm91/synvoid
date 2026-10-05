@@ -23,21 +23,27 @@ invert this). Full reference: `architecture/tls.md`,
 
 | File | Purpose |
 |------|---------|
-| `crates/synvoid-tls/src/cert_resolver.rs` | Cert resolver with hot-reload (`watch_for_cert_changes`); honors `prefer_post_quantum` |
+| `crates/synvoid-tls/src/cert_resolver.rs` | Cert resolver with hot-reload (`watch_for_cert_changes`); emits a debug log and counter for `prefer_post_quantum` and nothing else |
 | `crates/synvoid-tls/src/config.rs` | `TlsConfig` / `InternalTlsConfig` conversion |
 | `crates/synvoid-tls/src/sni_peek.rs` | SNI peeking for routing before termination |
 | `crates/synvoid-tls/src/acme.rs`, `acme_dns.rs` | ACME issuance (HTTP-01 / DNS-01) |
-| `src/tls/server.rs` | `HttpsServer` composition; logs PQ status at startup |
-| `crates/synvoid-config/src/tls.rs` | `TlsConfig` schema (`prefer_post_quantum` defaults true) |
+| `src/tls/server.rs` | `HttpsServer` composition; logs the real TLS profile at startup (`tls_profile_description`) |
+| `crates/synvoid-config/src/tls.rs` | `TlsConfig` schema (`prefer_post_quantum` defaults true; telemetry only) |
 
 ## Non-Negotiables
 
-1. **`prefer_post_quantum = true` is the config default but only takes
-   effect in `--features post-quantum` builds**; without the feature the
-   server logs "disabled (feature not enabled)". Never describe PQ as
-   unconditionally on.
+1. **`prefer_post_quantum` is telemetry and selects nothing.** Inbound hybrid PQ
+   key exchange is always available because `synvoid-tls` unconditionally enables
+   rustls's `prefer-post-quantum` feature — there is no configuration value and no
+   root cargo feature that turns it off. The root `post-quantum` feature is a
+   marker for http-client/admin **egress** only. Never describe the setting as a
+   switch, and never gate PQ behaviour on it.
+   *(Corrected in Phase 140; this entry previously told readers the flag "only
+   takes effect in `--features post-quantum` builds", which was wrong for inbound
+   TLS.)*
 2. **TLS 1.3-only by default** (`tls_1_3_only = true`); 1.2 fallback is
-   explicit opt-in (`enable_tls_12_fallback`).
+   explicit opt-in (`enable_tls_12_fallback`). The startup banner must describe
+   the range from those two fields, not hardcode "TLS 1.3".
 3. **Cert/key files follow the key-custody rules**: mode `0o600`, atomic
    write/rename; overly-permissive files are refused on load.
 4. JA4 wiring for bot detection lives in `src/tls/server.rs` — coordinate

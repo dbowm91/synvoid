@@ -18,6 +18,22 @@ pub struct TlsConfig {
     pub key_path: Option<String>,
     #[serde(default)]
     pub watch_dir: Option<String>,
+    /// **Telemetry only — this setting selects nothing.**
+    ///
+    /// It does not enable or disable post-quantum TLS key exchange. Availability
+    /// comes from the compiled-in rustls `prefer-post-quantum` cargo feature,
+    /// which `synvoid-tls` always enables — *not* from this key, and *not* from
+    /// the root `post-quantum` marker feature, which only wires outbound
+    /// http-client and admin egress. There is no configuration file value that
+    /// turns hybrid key exchange off.
+    ///
+    /// The default is `true`, so existing configuration parses unchanged; the
+    /// value is read only to emit a debug log and a counter. Do not document
+    /// this as a switch, and do not add a `validate()` rejection for it: it
+    /// defaults to `true`, so rejecting it would break every default config.
+    ///
+    /// Phase 140 recorded and documented the gap between the name and the
+    /// behaviour (`architecture/dns_provider_inversion_phase140_closeout.md`).
     #[serde(default = "default_prefer_post_quantum")]
     pub prefer_post_quantum: bool,
     #[serde(default = "default_tls_1_3_only")]

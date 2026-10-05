@@ -121,6 +121,41 @@ pub struct HttpsServer {
     upstream_client_registry: Arc<UpstreamClientRegistry>,
 }
 
+/// Describe the TLS profile this listener actually offers, for the startup banner.
+///
+/// Phase 140. The banner used to hardcode `"TLS 1.3"` and interpolate `"with"` /
+/// `"without"` from `config.prefer_post_quantum`. Both were over-claims:
+///
+/// - `prefer_post_quantum` is **telemetry** — it selects nothing. Hybrid key
+///   exchange is available because `synvoid-tls` unconditionally enables rustls's
+///   `prefer-post-quantum` cargo feature, so the meaningful fact is a compile-time
+///   one, not a per-listener setting.
+/// - the protocol range is chosen by `tls_1_3_only` /
+///   `enable_tls_12_fallback`, so printing "TLS 1.3" unconditionally was wrong on
+///   exactly the configurations that most needed a reader to know.
+///
+/// The PQC clause is therefore driven by `cfg!(feature = "post-quantum")` to match
+/// the adjacent `Post-quantum cryptography:` log. That root feature is a marker
+/// covering http-client and admin *egress*; inbound TLS takes the hybrid group from
+/// `synvoid-tls`'s own unconditional rustls features. The two can disagree, and where
+/// they do this banner now names the inbound truth while that log describes the
+/// egress marker.
+fn tls_profile_description(config: &InternalTlsConfig) -> String {
+    let protocols = if config.tls_1_3_only {
+        "TLS 1.3 only"
+    } else if config.enable_tls_12_fallback {
+        "TLS 1.3 + TLS 1.2 (fallback enabled)"
+    } else {
+        "TLS 1.3 + TLS 1.2 (compatibility mode)"
+    };
+    let pqc = if cfg!(feature = "post-quantum") {
+        "PQC marker feature on"
+    } else {
+        "PQC marker feature off"
+    };
+    format!("{protocols}, hybrid PQ key exchange compiled in; {pqc}")
+}
+
 impl HttpsServer {
     pub fn new(
         addr: SocketAddr,
@@ -246,13 +281,9 @@ impl HttpsServer {
         let std_listener = synvoid_platform::socket_bind::bind_tcp_reuse(self.addr)?;
         let listener = TcpListener::from_std(std_listener)?;
         tracing::info!(
-            "HTTPS server listening on {} (TLS 1.3 {} PQC) (HTTP/1.1 + HTTP/2) [SO_REUSEPORT]",
+            "HTTPS server listening on {} ({}) (HTTP/1.1 + HTTP/2) [SO_REUSEPORT]",
             self.addr,
-            if self.config.prefer_post_quantum {
-                "with"
-            } else {
-                "without"
-            }
+            tls_profile_description(&self.config),
         );
 
         if let Some(watch_dir) = &self.config.watch_dir {

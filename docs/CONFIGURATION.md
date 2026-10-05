@@ -291,22 +291,42 @@ prefer_post_quantum = true
 
 ### Post-Quantum TLS
 
-SynVoid supports hybrid post-quantum TLS key exchange for long-term security against quantum computers:
+SynVoid supports hybrid post-quantum TLS key exchange for long-term security
+against quantum computers, **and it is always available on inbound HTTPS**:
 
 ```toml
 [tls]
-prefer_post_quantum = true  # Use hybrid PQ KEX (config default: true; requires a --features post-quantum build to take effect)
+# Telemetry only — this value selects nothing. Present for compatibility and
+# intent visibility. See "Post-Quantum TLS" below.
+prefer_post_quantum = true
 ```
 
-> Note: `prefer_post_quantum = true` is the config default, but hybrid PQ key
-> exchange only activates in builds compiled with `--features post-quantum`.
-> Non-PQ builds log "disabled (feature not enabled)" at startup and negotiate
-> classical TLS regardless of this setting.
+**`prefer_post_quantum` does not control post-quantum key exchange.** Setting it
+to `false` will not disable it. Which key-exchange groups a listener offers is
+decided at compile time: `synvoid-tls` unconditionally enables rustls's
+`prefer-post-quantum` cargo feature, so a hybrid group such as `X25519MLKEM768`
+is available in every build, and a client that offers only that group will
+complete a handshake regardless of this setting.
+
+The field is read in exactly one place — a debug log and the
+`synvoid.tls.post_quantum` counter. It is kept so existing configuration keeps
+parsing and the intent stays visible, not because it has an effect.
+
+> **On the root `post-quantum` feature.** That feature is a marker covering
+> *outbound* http-client and admin TLS egress. It does **not** gate inbound TLS:
+> the hybrid key exchange described above is always compiled in. A build without
+> the marker feature still negotiates post-quantum inbound. Earlier wording here
+> said this setting "requires a `--features post-quantum` build to take effect"
+> and told operators to disable it for legacy-client interop; both were wrong,
+> and the guide's own examples did not match the shipped binary. Corrected in
+> Phase 140 (`architecture/dns_provider_inversion_phase140_closeout.md`).
 
 **Why these defaults:**
-- `prefer_post_quantum = true` protects against future quantum computers that could break classical key exchange; there is no performance penalty when clients also support PQ
-- PQ is disabled by default in other WAFs due to compatibility concerns, but SynVoid's implementation gracefully falls back if clients don't support it
-- Only disable if you encounter interoperability issues with legacy clients that don't support hybrid PQ key exchange
+- Hybrid PQ key exchange is on by default because there is no configuration cost
+  to it; clients that do not offer a hybrid group simply negotiate a classical
+  one through normal TLS 1.3 negotiation.
+- Only disable `prefer_post_quantum` if a downstream tool parses logs; it has no
+  effect on behaviour.
 
 ### 0-RTT (Early Data)
 

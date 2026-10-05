@@ -1,6 +1,27 @@
 # Phase 140 Plan: `prefer_post_quantum` Truthfulness
 
-Status: **REGISTERED** (2026-10-05). Not started.
+Status: **CLOSED QUALIFIED** (2026-10-05). Disposition: **(d) document as telemetry**.
+Closeout: `architecture/dns_provider_inversion_phase140_closeout.md`.
+
+> **Three corrections to this plan, recorded at closeout rather than retrofitted.**
+>
+> 1. **"Sole read site" was wrong.** There are **two**. `src/tls/server.rs:251` also
+>    read the field — for the operator-facing HTTPS startup banner, which interpolated
+>    `"with"` / `"without"` PQC directly beneath a truthful `#[cfg(feature =
+>    "post-quantum")]` log. That banner also hardcoded `"TLS 1.3"` regardless of
+>    `tls_1_3_only`. Both over-claims are fixed; see the closeout §2.1.
+> 2. **The class-3 semver premise was wrong.** This plan sized options (a)/(b) by
+>    asserting the field sits on a published class-3 type. `synvoid-tls` is **class 2** —
+>    Phase 47 promoted exactly one crate, `synvoid-rate-limit`
+>    (`architecture/public_crate_release_readiness_phase47.md` §1), and
+>    `public_crate_release_policy.md` is scoped to class 3. The "≥ 0.2.0" conclusion
+>    therefore did not apply. A rename was cheaper than assumed; the user still chose (d).
+> 3. **Workstream B was scoped too narrowly.** "One matrix/closeout correction plus a
+>    rustdoc sentence" missed that five documents carried functional claims, including
+>    `docs/CONFIGURATION.md` and the `tls_termination` skill, and that those documents
+>    were wrong *twice over*: the inert setting was described as functional, and the
+>    root `post-quantum` feature was wrongly described as gating inbound TLS when
+>    `architecture/networking_deep_dive.md:68` says it does not.
 
 Campaign: `plans/dns_encrypted_transport_truthfulness_roadmap.md`.
 Predecessor: Phase 139.

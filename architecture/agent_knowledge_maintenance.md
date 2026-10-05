@@ -208,8 +208,10 @@ skills/architecture/docs refresh 2026-09-22).
 7. Operator docs vs config validation: rate-limit modes (`shared`|`isolated`
    in `crates/synvoid-config/src/site/ratelimit.rs`), health path (`/health`,
    no `/api` prefix), shipped worker count (`config/main.toml`), and
-   feature-gated config defaults (`prefer_post_quantum` needs the
-   `post-quantum` feature at build).
+   config defaults that look feature-gated but are not
+   (`prefer_post_quantum` is telemetry and does **not** need the
+   `post-quantum` feature — inbound PQ KEX is always compiled in;
+   corrected in Phase 140, which is how this stale item was found).
 8. Wasmtime versions vs `Cargo.lock`: `rg -n '42\.0\.2|wasmtime.*42' AGENTS.md
    SECURITY.md deny.toml .cargo/audit.toml architecture/dependency_security_baseline_phase25.md
    .opencode/skills/` — any direct-42 reference outside historical

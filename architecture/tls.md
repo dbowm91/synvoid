@@ -84,7 +84,9 @@ crates/synvoid-tls/src/  (canonical)
 - `load_certs_from_dir()` — Scans a directory for `domain.pem` + `domain.key` pairs, enabling multi-domain certificates from a directory.
 - `build_server_config()` — Constructs a `rustls::ServerConfig` with:
   - TLS 1.3 only, or TLS 1.2+1.3 fallback (with optional BEAST attack warning)
-  - Post-quantum hybrid KEM if `prefer_post_quantum` is set
+  - Hybrid post-quantum key exchange, always (from the compiled-in rustls
+    `prefer-post-quantum` feature). `prefer_post_quantum` does **not** control
+    this — it is telemetry only (Phase 140).
   - mTLS verifier if client auth is enabled
 - `watch_for_cert_changes()` — Free function (not a method) that spawns a `notify`-based file watcher that debounces certificate directory changes, sleeps 500ms to coalesce multiple file events, and calls `load_certificates()`.
 
@@ -111,7 +113,7 @@ pub struct InternalTlsConfig {
     pub cert_path: Option<PathBuf>,
     pub key_path: Option<PathBuf>,
     pub watch_dir: Option<PathBuf>,
-    pub prefer_post_quantum: bool,      // Default: true
+    pub prefer_post_quantum: bool,      // Default: true. Telemetry only — selects nothing
     pub tls_1_3_only: bool,            // Default: true
     pub enable_tls_12_fallback: bool,  // Default: false
     pub ocsp_stapling_enabled: bool,   // Default: true
@@ -400,7 +402,7 @@ request_certificate(domain)
 | TLS 1.3 only (default) | `tls_1_3_only = true`; can be relaxed via `enable_tls_12_fallback` |
 | Key strength validation | RSA < 2048 bits rejected; < 3072 bits warned |
 | Certificate validity | Parses `not_before` and `not_after`, rejects expired/not-yet-valid certs |
-| Post-quantum KEM | Hybrid key exchange via `prefer_post_quantum` (TLS 1.3 only) |
+| Post-quantum KEM | Hybrid key exchange (TLS 1.3), always compiled in; **not** governed by `prefer_post_quantum`, which is telemetry |
 | mTLS | `WebPkiClientVerifier` built from CA certificates |
 | ACME credentials | Saved with `0o600` permissions on Unix |
 | File watcher | Debounced (500ms) to avoid repeated reloads |

@@ -1,7 +1,7 @@
 # DNS Residual Truthfulness Roadmap — Phases 137–140
 
-Status: **ACTIVE** (2026-10-05). Phases 137, 138 and 139 **CLOSED QUALIFIED**; Phase
-140 REGISTERED, not started.
+Status: **ACTIVE — campaign COMPLETE** (2026-10-05). All four phases (137, 138, 139, 140)
+**CLOSED QUALIFIED**. No phase remains registered.
 
 Predecessor: `plans/dns_startup_truthfulness_and_provider_inversion_roadmap.md`
 (**CLOSED QUALIFIED**). That campaign closed with six residuals it deliberately
@@ -36,7 +36,7 @@ historical closeouts **by pointer only**; no historical record is rewritten.
 | **137** — ALPN for DoT and DoH | advertise `h2` on DoH, keep DoT and DoQ unchanged | none; **done first**, it is the cheapest and corrects a live over-claim |
 | **138** — Wire `[geoip]` in composition | construct and thread a real geo provider; replace the tripwire guard | **done** — needed an authorised `[geoip]` config section, which did not exist |
 | **139** — Mesh coupling disposition and inversion | decide wire-or-delete first; invert only if wired | **done — disposition WIRE**; inverted, wired, and the late-binding cell that made wiring possible was built here |
-| **140** — `prefer_post_quantum` truthfulness | document the setting as telemetry; optionally rename | none; smallest item |
+| **140** — `prefer_post_quantum` truthfulness | document the setting as telemetry | **done — disposition (d)**, no rename; scope was larger than planned (5 documents + an operator-facing log) |
 
 Phases 137, 138 and 140 are independent. Phase 139 was gated internally on its own
 Workstream A disposition.
@@ -52,6 +52,27 @@ and composition holds it as an `Arc` with no setter; that repaired two shipped d
 `mesh_registry: None`) and armed a third, which was fixed before commit
 (`query_anycast_from_dht` asserted `authenticated: true` for DHT-sourced nodes).
 Closeout: `architecture/dns_provider_inversion_phase139_closeout.md`.
+
+Phase 140 outcome: `prefer_post_quantum` is **telemetry only** and is now documented that way
+at both definitions and classified `PERSISTURE` in the runtime matrix. The setting is **kept**
+(option d). The phase found the gap was operator-facing rather than a rustdoc nit: a second
+read site (`src/tls/server.rs:251`, the HTTPS startup banner) interpolated "with"/"without" PQC
+from the inert field — and the same banner hardcoded "TLS 1.3" regardless of `tls_1_3_only`.
+Five documents told operators the flag was functional, including `docs/CONFIGURATION.md` and the
+`tls_termination` skill, and three of those also claimed PQ needs a `--features post-quantum`
+build, which is wrong for inbound TLS. The existing handshake pin is unmodified and green.
+Closeout: `architecture/dns_provider_inversion_phase140_closeout.md`.
+
+## Campaign closure
+
+All four phases are CLOSED QUALIFIED. Residuals left registered and deliberately unclosed:
+
+1. `synvoid-mesh`'s `dns = []` feature — 20 compile errors, unfixable without a dependency
+   cycle (carried from Phase 139).
+2. The anycast broadcast cluster — `crates/synvoid-dns/src/anycast_sync.rs`, coupled and dead,
+   pinned as the named residual by `mesh_anycast_cluster_remains_the_only_named_residual`.
+3. Unrelated to this campaign: the pre-existing `metrics_wiring.rs` parallel-execution race,
+   which needs its own dedicated commit.
 
 Phase 137 outcome: DoH advertises `h2`, and DoT and DoQ are unchanged. ALPN lives
 at the DNS call sites rather than in the provider, so the two `synvoid-tls`

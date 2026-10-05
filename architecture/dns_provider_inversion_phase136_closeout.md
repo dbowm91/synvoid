@@ -269,6 +269,11 @@ Unchanged from the campaign closeout, and none of it authorized by this phase:
 3. **ALPN for the encrypted transports** (Phase 133 F-6) — a protocol behavior
    change, not a refactor.
 4. **`prefer_post_quantum` is telemetry, not a gate** (Phase 133 F-7).
+   > **Resolved by Phase 140** — documented as telemetry, classified `PERSISTURE`,
+   > operator-facing claims in `docs/CONFIGURATION.md`, `docs/HTTP3.md`,
+   > `architecture/tls.md`, `architecture/config.md` and the `tls_termination`
+   > skill corrected, and the misleading HTTPS startup banner removed. See
+   > `architecture/dns_provider_inversion_phase140_closeout.md`.
 5. **Zone reload atomicity** (Phase 132 F-4) — harmless at startup.
 6. **Public authoritative profile not queryable over loopback** (Phase 132 F-3).
 

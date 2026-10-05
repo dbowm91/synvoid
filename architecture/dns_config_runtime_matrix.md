@@ -1750,3 +1750,49 @@ The `[geoip]` section added in Phase 138 remains the most recent persisted-schem
 change in this campaign.
 
 > Full record: `architecture/dns_provider_inversion_phase139_closeout.md`.
+
+---
+
+## Phase 140 — `tls.prefer_post_quantum` is PERSISTURE (telemetry)
+
+Reclassified from implied-functional to **`PERSISTURE`**, following the
+`doh.path` / `doh.json_path` precedent (F-2 above). The field parses, defaults to
+`true`, is carried into the runtime config, and **gates nothing**.
+
+| Field | Owner | Runtime consumer | Classification |
+|-------|-------|------------------|----------------|
+| `tls.prefer_post_quantum` | `synvoid-config` (`TlsConfig`) | `synvoid-tls::InternalTlsConfig` | **PERSISTURE** — telemetry only |
+
+Evidence that it is inert, measured on the Phase 140 head:
+
+| Claim | Evidence |
+|-------|----------|
+| Availability does not come from this field | `synvoid-tls` unconditionally enables rustls `prefer-post-quantum` + `aws-lc-rs` (`architecture/networking_deep_dive.md:68`) |
+| A client offering only the hybrid group still connects with the field off | `prefer_post_quantum_does_not_gate_the_hybrid_key_exchange` (`crates/synvoid-tls/tests/cert_resolver_provider_evidence.rs:713`), a real handshake, unmodified by Phase 140 |
+| The field selects no key-exchange groups | `build_server_config` (`cert_resolver.rs:267`) takes `default_provider()` unconditionally; the field is never consulted again |
+
+**Read sites — two, not one.** Phase 140's plan recorded a single site. Both are
+inert, and the second was operator-facing:
+
+| Site | Use |
+|------|-----|
+| `crates/synvoid-tls/src/cert_resolver.rs:269` | `tracing::debug!` + `counter!("synvoid.tls.post_quantum")` |
+| `src/tls/server.rs:251` | the HTTPS startup banner, which interpolated `"with"` / `"without"` PQC — removed in Phase 140 |
+
+**Why it is not removed.** `TlsConfig` has no `deny_unknown_fields`, so leftover
+operator TOML would keep parsing, but removal is a public API change on a published
+crate and buys nothing a correct docstring does not. Phase 140's plan also assessed
+the semver cost via `architecture/public_crate_release_policy.md`, on the premise
+that `synvoid-tls` is class 3. **That premise is wrong** — Phase 47 promoted exactly
+one crate, `synvoid-rate-limit` (§1 of
+`architecture/public_crate_release_readiness_phase47.md`), and that policy is scoped
+to class 3. `synvoid-tls` is class 2, so the class-3 binding policy does not apply
+and the real cost of a rename is source-level churn rather than a promised semver
+consequence. The user still chose documentation over renaming (option d).
+
+**Why there is no `validate()` rejection.** The field defaults to `true`, so a
+rejection would fail every default-true configuration. Phase 41's reduced-feature
+rejection concerns capability-bearing **sections**, not an inert boolean in a full
+build.
+
+Full record: `architecture/dns_provider_inversion_phase140_closeout.md`.

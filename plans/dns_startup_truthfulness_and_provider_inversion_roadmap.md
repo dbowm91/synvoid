@@ -171,7 +171,11 @@ rather than carried forward from this plan's wording:
 - **138 GeoIP wiring** — CLOSED QUALIFIED, `architecture/dns_provider_inversion_phase138_closeout.md`
 - **139 mesh coupling** — CLOSED QUALIFIED, disposition WIRE,
   `architecture/dns_provider_inversion_phase139_closeout.md`
-- **140 `prefer_post_quantum`** — REGISTERED, not started
+- **140 `prefer_post_quantum`** — CLOSED QUALIFIED, disposition (d) documented as
+  telemetry, `architecture/dns_provider_inversion_phase140_closeout.md`
+
+**The successor campaign (Phases 137–140) is complete.** All four phases are closed
+qualified; no phase remains registered on that line.
 
 `synvoid-dns` remains **class 1** after 139. The class-1 argument is now narrower
 but not closed: mesh coupling dropped from 7 types across 6 files to 3 types in 1

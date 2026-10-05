@@ -37,7 +37,7 @@ enabled = true
 cert_path = "/etc/synvoid/certs/server.crt"
 key_path = "/etc/synvoid/certs/server.key"
 port = 443
-prefer_post_quantum = true  # Enable post-quantum key exchange
+prefer_post_quantum = true  # Telemetry only; post-quantum KEX is always compiled in
 
 [http3]
 enabled = true
@@ -55,7 +55,7 @@ alt_svc_max_age = 86400
 | `host_v6` | - | IPv6 bind address |
 | `alt_svc_max_age` | `86400` | Alt-Svc header max-age (seconds) |
 | `quic_enable_0rtt` | `false` | Enable 0-RTT connection resumption. **Security note**: 0-RTT has replay attack risks and should be disabled in high-security environments |
-| `prefer_post_quantum` | `false` | Use post-quantum key exchange (CRYSTALS-Kyber) for TLS. **Recommended**: Enable for long-term security against quantum computing threats. Protected traffic cannot be decrypted by quantum adversaries even if captured today |
+| `prefer_post_quantum` | `true` | Telemetry only — this selects nothing. HTTP/3 listeners negotiate a hybrid PQ key exchange because `synvoid-tls` always compiles in rustls `prefer-post-quantum`; no setting turns it off. **Do not tune this.** (Corrected in Phase 140; this table previously gave the default as `false` and presented the field as a control for PQ key exchange.) |
 
 ## Per-Site HTTP/3
 

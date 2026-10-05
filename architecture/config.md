@@ -494,7 +494,7 @@ Defaults:
 ```rust
 pub struct TlsConfig {
     #[serde(default)]
-    pub prefer_post_quantum: bool,       // Use hybrid post-quantum KEX
+    pub prefer_post_quantum: bool,       // Telemetry only; hybrid PQ KEX is always compiled in
     #[serde(default = "default_tls_1_3_only")]
     pub tls_1_3_only: bool,              // TLS 1.3 only (no 1.2)
     #[serde(default)]
