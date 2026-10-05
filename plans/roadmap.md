@@ -2152,13 +2152,22 @@ successor; this campaign is that separately registered successor, scoped to the
 two narrow seams only.
 
 1. **Phase 131 — DNS Conformance Determinism (`free_port()` TOCTOU)**
-   - Status: **PLANNED**.
+   - Status: **CLOSED QUALIFIED** (2026-10-05).
    - Plan: `plans/phase_131_dns_conformance_determinism_free_port.md`.
-   - Address: Phase 130 F-3. The reservation helper releases its socket before
-     the caller's bind, so a concurrently starting test can claim the port.
-     Remediation holds the reservation until bind; no sleeps, no retries, no
-     whole-suite serialization. Root-suite occurrences are recorded rather than
-     left as identical latent races.
+   - Closeout: `architecture/dns_provider_inversion_phase131_closeout.md`.
+   - Address: Phase 130 F-3. The Phase 130 recommended remedy proved
+     structurally impossible — `DnsServer::start` binds UDP and TCP on the same
+     port internally, so a held reservation occupies the port the server needs.
+     The assumption was removed instead of the window narrowed: the server
+     performs the real bind and a new port is taken only when that bind is
+     observed to have lost a race, with a conflict-gated retry and no sleeps.
+     The duplicate `context::ephemeral_port()` was deleted. Evidence: 10/10
+     repeated parallel `nextest` runs, new 5-test `bind_determinism` suite, and
+     `scripts/dns/conformance.sh` 10/10 twice (was 9/9).
+   - Residual recorded, not fixed: the two `#[ignore]`d Eggbench live-proof
+     suites still predict ports and require a built binary, so they cannot be
+     executed as evidence here.
+   - No production code changed; `synvoid-dns` remains class 1.
 
 2. **Phase 132 — Authoritative Zone Startup Activation**
    - Status: **PLANNED**.

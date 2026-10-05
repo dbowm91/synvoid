@@ -1312,3 +1312,53 @@ pub fn current_timestamp() -> u64 { safe_unix_timestamp() }
 So the eight mesh-gated files were already on identical semantics despite
 using two different names. Both map to `unix_timestamp_secs()` with no
 per-site judgment.
+
+## Phase 131 findings
+
+### F-11: the `free_port()` reservation race, and why it cannot be reserved
+
+Phase 130 F-3 recorded the DNS conformance lane as intermittently red and
+attributed it to the TOCTOU race in `free_port()`
+(`crates/synvoid-dns/tests/support/runtime_config.rs`): it bound an ephemeral
+port, read the number, and released the socket, so a concurrently starting test
+could claim the port before the caller's own bind.
+
+Phase 131 first attempted the obvious remedy — hold the reservation until the
+listener binds — and that turns out to be **impossible**, not merely awkward.
+`DnsServer::start` calls `start_standard_mode`, which binds the authoritative
+UDP socket and then the TCP socket on the same address, both internally:
+
+```text
+crates/synvoid-dns/src/server/startup.rs
+  let socket       = UdpSocket::bind(bind_addr)        // released only on drop
+  let tcp_listener = tokio::net::TcpListener::bind(bind_addr)
+```
+
+A reservation cannot be held across that call, because the reservation *is* the
+port the server needs. Holding it means the server cannot bind; releasing it
+means the race returns. A UDP-only reservation is no better: UDP and TCP port
+spaces are independent, so reserving UDP does not constrain the TCP bind.
+
+The remediation therefore removes the assumption instead of the window.
+`start_bound_dns_server` proposes a port, lets the server perform the real bind,
+and takes a new port **only** when the bind actually lost a race. Nothing
+sleeps, and the retry discriminates a lost bind from every other startup error,
+so a genuine failure still fails for its own reason.
+
+`free_port()` survives as a documented *prediction* for callers that never bind
+(its own doc comment previously described the race and then hand-waved it as
+"rare in practice"). The duplicate `context::ephemeral_port()` was deleted: it
+was the same anti-pattern in a second place, and its removal is what stops the
+pattern from being reintroduced by a future test.
+
+Consequence recorded for the record: the two root live-proof suites,
+`tests/eggbench_qualification_live_proof.rs` and
+`tests/eggbench_m003_telemetry_live_proof.rs`, still predict ports with a
+local `free_port()`. They are **not** fixed here. Both are `#[ignore]`d
+opt-in tests that require a separately built binary, so they cannot be
+executed as evidence in this phase, and changing untested code would violate
+the phase's own evidence rule. Their residual is precise: the origin and
+metrics listeners are bound by the test itself, so binding `:0` and reading the
+port back would remove those races exactly; the `listen_port` handed to the
+external binary as an argument cannot be fixed this way at all, because the
+binary would have to report the port it bound. Recorded, not smoothed over.

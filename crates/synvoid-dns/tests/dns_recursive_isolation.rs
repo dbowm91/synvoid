@@ -285,7 +285,11 @@ fn test_anycast_requires_mesh_feature() {
     // Anycast activation is represented by the runtime rejection signal: the
     // persisted anycast settings have no runtime projection (absent by design),
     // so enabling the guard is what must fail startup.
-    let mut runtime = support::dns_runtime_on(support::free_port());
+    //
+    // `DnsServer::start` rejects anycast before it binds a listener, so no port
+    // is ever taken here and none needs reserving: the value only has to be
+    // non-zero, because a zero port is rejected too.
+    let mut runtime = support::dns_runtime_on(support::UNBOUND_TEST_PORT);
     runtime.authoritative.anycast =
         synvoid_dns::runtime_config::AnycastRuntimeConfig { enabled: true };
 

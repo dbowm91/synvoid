@@ -12,7 +12,6 @@ mod support;
 
 use std::time::Duration;
 
-use synvoid_dns::server::DnsServer;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 fn build_a_query(id: u16, name: &str) -> Vec<u8> {
@@ -52,17 +51,11 @@ async fn read_frame(stream: &mut tokio::net::TcpStream) -> Vec<u8> {
     buf
 }
 
-async fn start_server(port: u16) -> DnsServer {
-    let mut server = DnsServer::new(support::dns_runtime_on(port), None);
-    server.start().await.expect("server start");
-    server
-}
-
 /// A single TCP connection serves two sequential queries and echoes both IDs.
 #[tokio::test]
 async fn tcp_connection_serves_multiple_sequential_queries() {
-    let port = support::free_port();
-    let mut server = start_server(port).await;
+    let mut bound = support::start_bound_dns_server(|_| {}).await;
+    let port = bound.port;
 
     let mut stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port))
         .await
@@ -77,15 +70,15 @@ async fn tcp_connection_serves_multiple_sequential_queries() {
         assert_eq!(resp_id, id, "response ID must echo query ID");
     }
 
-    server.shutdown_runtime();
+    bound.server.shutdown_runtime();
 }
 
 /// A zero-length frame is a framing violation: the server closes the
 /// connection instead of allocating or responding.
 #[tokio::test]
 async fn tcp_zero_length_frame_closes_connection() {
-    let port = support::free_port();
-    let mut server = start_server(port).await;
+    let mut bound = support::start_bound_dns_server(|_| {}).await;
+    let port = bound.port;
 
     let mut stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port))
         .await
@@ -105,7 +98,7 @@ async fn tcp_zero_length_frame_closes_connection() {
         Err(_) => panic!("server did not close connection after zero-length frame"),
     }
 
-    server.shutdown_runtime();
+    bound.server.shutdown_runtime();
 }
 
 /// Oversize length prefix (beyond the 16-bit framing bound is impossible;
@@ -114,11 +107,11 @@ async fn tcp_zero_length_frame_closes_connection() {
 /// via a tight custom limit instead.
 #[tokio::test]
 async fn tcp_frame_beyond_max_query_size_is_rejected() {
-    let port = support::free_port();
-    let mut runtime = support::dns_runtime_on(port);
-    runtime.authoritative.limits.max_query_size = 512;
-    let mut server = DnsServer::new(runtime, None);
-    server.start().await.expect("server start");
+    let mut bound = support::start_bound_dns_server(|runtime| {
+        runtime.authoritative.limits.max_query_size = 512;
+    })
+    .await;
+    let port = bound.port;
 
     let mut stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port))
         .await
@@ -136,22 +129,20 @@ async fn tcp_frame_beyond_max_query_size_is_rejected() {
         Err(_) => panic!("server did not close connection after oversize frame"),
     }
 
-    server.shutdown_runtime();
+    bound.server.shutdown_runtime();
 }
 
 /// Disabled DoQ does not bind: a server with `doq.enabled = false` starts
 /// without requiring any DoQ address material.
 #[tokio::test]
 async fn disabled_transports_do_not_bind() {
-    let port = support::free_port();
+    let mut bound = support::start_bound_dns_server(|_| {}).await;
     let authoritative = support::AuthoritativeRuntimeBuilder::new()
-        .port(port)
+        .port(bound.port)
         .build();
     assert!(!authoritative.dot.enabled);
     assert!(!authoritative.doh.enabled);
     assert!(!authoritative.doq.enabled);
 
-    let mut server = DnsServer::new(support::dns_runtime_on(port), None);
-    server.start().await.expect("server start");
-    server.shutdown_runtime();
+    bound.server.shutdown_runtime();
 }

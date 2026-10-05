@@ -1,6 +1,19 @@
 # Phase 131 Plan: DNS Conformance Determinism — `free_port()` TOCTOU Remediation
 
-Status: **PLANNED** (2026-10-05).
+Status: **CLOSED QUALIFIED** (2026-10-05). Closeout:
+`architecture/dns_provider_inversion_phase131_closeout.md`.
+
+The suggested remedy in Phase 130 F-3 turned out to be structurally
+impossible: `DnsServer::start` binds UDP and TCP on the same port internally, so
+a held reservation occupies the port the server needs. The assumption was
+removed instead of the window narrowed — the server performs the real bind and a
+new port is taken only when that bind is observed to have lost a race. Evidence:
+10/10 repeated parallel `nextest` runs, conformance 10/10 twice, new 5-test
+`bind_determinism` suite. Matrix F-11 records the finding; the Phase 130 closeout
+carries a supersession pointer.
+
+Residual recorded, not fixed: the two `#[ignore]`d Eggbench live-proof suites
+still predict ports and cannot be executed as evidence in this phase.
 
 Campaign: `plans/dns_startup_truthfulness_and_provider_inversion_roadmap.md`.
 Predecessor: Phase 130 `CLOSED QUALIFIED`

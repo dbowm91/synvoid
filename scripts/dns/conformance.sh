@@ -105,6 +105,11 @@ run_internal "dns_phase45_contract" "dns_phase45_contract"
 # home rather than being dropped from the suite.
 run_internal_pkg "synvoid-config" "example_configs_parse" "example_configs_parse"
 run_internal_pkg "synvoid-config" "encrypted_transport_schema" "encrypted_transport_schema"
+# Phase 131: the bind-determinism evidence that replaced the `free_port()`
+# TOCTOU reservation. It runs here because it is what makes the listener
+# lanes above trustworthy, so it belongs in the same lane as the thing it
+# protects rather than only in the crate suite.
+run_internal "bind_determinism" "bind_determinism"
 
 INTERNAL_TOTAL=$((INTERNAL_PASSED + INTERNAL_FAILED))
 

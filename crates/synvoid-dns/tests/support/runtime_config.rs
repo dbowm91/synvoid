@@ -454,9 +454,17 @@ pub fn dns_runtime() -> synvoid_dns::runtime_config::DnsRuntimeConfig {
     }
 }
 
-/// Reserve an ephemeral loopback port by binding and immediately releasing
-/// it. Callers that actually start a listener must use this, because
-/// [`dns_runtime`] binds port 0 and `DnsServer::start` rejects a zero port.
+/// Ask the OS for an ephemeral loopback UDP port and report the number.
+///
+/// **This is a prediction, not a reservation.** The socket is released before
+/// this function returns, so the port may already be taken by the time a
+/// caller binds it. Code that actually starts a listener must use
+/// [`start_bound_dns_server`], which verifies the bind instead of trusting
+/// this number.
+///
+/// The prediction is still useful as a starting point, and it is correct for
+/// callers that never bind at all (for example a test asserting that startup
+/// fails validation before any listener is created).
 pub fn free_port() -> u16 {
     std::net::UdpSocket::bind("127.0.0.1:0")
         .expect("bind ephemeral")
@@ -464,6 +472,98 @@ pub fn free_port() -> u16 {
         .expect("local addr")
         .port()
 }
+
+/// `DnsServer::start` prefix for a failed authoritative UDP bind.
+pub(crate) const BIND_UDP_PREFIX: &str = "Failed to bind DNS UDP socket:";
+
+/// `DnsServer::start` prefix for a failed authoritative TCP bind.
+pub(crate) const BIND_TCP_PREFIX: &str = "Failed to bind DNS TCP socket:";
+
+/// `std::io::Error`'s `AddrInUse` display, on every supported platform:
+/// "Address already in use (os error N)".
+const ADDR_IN_USE_TEXT: &str = "in use";
+
+/// Attempts allowed before a test reports that it could not win a loopback
+/// port. Each attempt asks the OS for a fresh ephemeral port, so eight
+/// attempts means eight genuinely different numbers, not one number retried.
+const BIND_ATTEMPTS: usize = 8;
+
+/// True when a `DnsServer::start` failure is a lost bind race rather than a
+/// real configuration or runtime error.
+///
+/// `DnsServer::start` reports bind failures as
+/// `"Failed to bind DNS {UDP,TCP} socket: {io_error}"`, so a port conflict is
+/// the only failure that both carries one of those two prefixes and mentions
+/// `AddrInUse`. Every other failure — zero port, unparseable bind address,
+/// anycast rejection, recursive init failure — must propagate so a real error
+/// is never masked by a retry.
+pub(crate) fn is_bind_conflict(message: &str) -> bool {
+    let is_bind_failure =
+        message.starts_with(BIND_UDP_PREFIX) || message.starts_with(BIND_TCP_PREFIX);
+    is_bind_failure && message.contains(ADDR_IN_USE_TEXT)
+}
+
+/// A started `DnsServer` together with the loopback port it actually holds.
+pub struct BoundServer {
+    /// The running server. Call `shutdown_runtime()` when the test is done.
+    pub server: synvoid_dns::server::DnsServer,
+    /// The port the server is listening on. Dial this, not a predicted one.
+    pub port: u16,
+}
+
+/// Start a `DnsServer` on a loopback ephemeral port without assuming any port
+/// is free.
+///
+/// `DnsServer::start` binds the authoritative UDP *and* TCP sockets itself, so
+/// a held reservation cannot protect the port — releasing it to let the server
+/// bind is exactly the race that made the DNS conformance lane intermittently
+/// red (Phase 130 F-3). Instead this helper removes the assumption:
+///
+/// 1. ask the OS for a candidate port ([`free_port`]);
+/// 2. let the server perform the real bind;
+/// 3. if that bind lost a race with another process, take a new candidate.
+///
+/// Nothing sleeps, and a conflict is distinguished from a genuine startup error,
+/// so a failing test still fails for its own reason. `configure` adjusts the
+/// runtime before the bind and is re-applied to every attempt, because the
+/// candidate port differs per attempt.
+pub async fn start_bound_dns_server<F>(mut configure: F) -> BoundServer
+where
+    F: FnMut(&mut synvoid_dns::runtime_config::DnsRuntimeConfig),
+{
+    let mut last_conflict = String::new();
+
+    for _ in 0..BIND_ATTEMPTS {
+        let port = free_port();
+        let mut runtime = dns_runtime_on(port);
+        configure(&mut runtime);
+
+        let mut server = synvoid_dns::server::DnsServer::new(runtime, None);
+        match server.start().await {
+            Ok(()) => {
+                return BoundServer { server, port };
+            }
+            Err(error) if is_bind_conflict(&error) => {
+                // Another process owns this port. Nothing was spawned, so the
+                // partially bound socket is already closed; take a new one.
+                last_conflict = error;
+            }
+            Err(error) => panic!("DNS server start failed: {error}"),
+        }
+    }
+
+    panic!(
+        "DNS server could not bind a loopback port in {BIND_ATTEMPTS} attempts: {last_conflict}"
+    );
+}
+
+/// A non-zero authoritative port for tests that never bind a listener.
+///
+/// `DnsServer::start` rejects port 0 and a server that is never started never
+/// binds, so predicting an ephemeral port for such a test buys nothing and
+/// reintroduces the assumption Phase 131 removed. 59999 is in the dynamic range
+/// and is used only as a value the server must not act on.
+pub const UNBOUND_TEST_PORT: u16 = 59999;
 
 /// A whole-DNS runtime bound to a concrete loopback port, for tests that call
 /// `DnsServer::start` and then dial the server.

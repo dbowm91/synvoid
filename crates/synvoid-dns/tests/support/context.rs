@@ -91,17 +91,6 @@ pub fn make_ctx<'a>(
     }
 }
 
-/// Find an available ephemeral port by binding to port 0.
-///
-/// Returns the port number.  The bound socket is dropped immediately,
-/// releasing the port.  There is an inherent TOCTOU race — another
-/// process may claim the port between drop and the server's bind.  In
-/// practice this is rare for ephemeral ports.
-pub fn ephemeral_port() -> u16 {
-    let socket = std::net::UdpSocket::bind("127.0.0.1:0").expect("bind ephemeral");
-    socket.local_addr().unwrap().port()
-}
-
 /// Create a `DnsConfig` for `127.0.0.1` on the given port.
 ///
 /// The returned config has default settings with `cache_enabled` left

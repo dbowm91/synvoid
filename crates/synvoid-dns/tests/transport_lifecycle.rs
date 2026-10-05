@@ -16,29 +16,28 @@ fn make_config(bind: &str, port: u16) -> DnsRuntimeConfig {
     config
 }
 
-/// Find an available ephemeral port by binding to port 0, reading the assigned
-/// port, and immediately dropping the socket.
+/// Start a cache-free server on a verified loopback port.
 ///
-/// Note: There is an inherent TOCTOU race — another process may claim the port
-/// between drop and the server's bind. In practice this is rare for ephemeral
-/// ports.
-fn ephemeral_port() -> u16 {
-    support::free_port()
+/// Phase 131: the previous `ephemeral_port()` helper released its socket before
+/// `DnsServer::start` bound the port, so a concurrently starting test could win
+/// the race. `start_bound_dns_server` lets the server perform the real bind and
+/// returns the port it actually holds.
+async fn start_lifecycle_server() -> support::BoundServer {
+    support::start_bound_dns_server(|runtime| {
+        runtime.authoritative.cache.enabled = false;
+    })
+    .await
 }
 
 #[tokio::test]
 async fn start_stop_ephemeral_port() {
-    let port = ephemeral_port();
-    let config = make_config("127.0.0.1", port);
-
-    let mut server = DnsServer::new(config, None);
-    server.start().await.expect("start should succeed");
+    let mut bound = start_lifecycle_server().await;
 
     // Give the UDP/TCP tasks a moment to bind
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Shutdown should signal cleanly
-    server.shutdown_runtime();
+    bound.server.shutdown_runtime();
 
     // Give tasks time to observe shutdown and exit
     tokio::time::sleep(Duration::from_millis(200)).await;
@@ -46,22 +45,24 @@ async fn start_stop_ephemeral_port() {
 
 #[tokio::test]
 async fn udp_port_reusable_after_shutdown() {
-    let port = ephemeral_port();
-    let config = make_config("127.0.0.1", port);
+    // First lifecycle: the helper hands back a port the server genuinely bound,
+    // so the rebind below proves this server released it.
+    let mut bound = start_lifecycle_server().await;
+    let port = bound.port;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    bound.server.shutdown_runtime();
+    tokio::time::sleep(Duration::from_millis(200)).await;
 
-    // First lifecycle: start and shutdown
-    {
-        let mut server = DnsServer::new(config.clone(), None);
-        server.start().await.expect("first start should succeed");
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        server.shutdown_runtime();
-        tokio::time::sleep(Duration::from_millis(200)).await;
-    }
+    let config = make_config("127.0.0.1", port);
 
     // Give OS time to release the port
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    // Second lifecycle: the same port must be bindable
+    // Second lifecycle: the same port must be bindable.
+    //
+    // This rebind deliberately is *not* retried on conflict. Reusing the exact
+    // port is the behavior under test, so taking a different port would turn a
+    // real failure into a pass.
     {
         let mut server = DnsServer::new(config.clone(), None);
         server.start().await.expect("second start should succeed");
@@ -73,17 +74,14 @@ async fn udp_port_reusable_after_shutdown() {
 
 #[tokio::test]
 async fn tcp_port_reusable_after_shutdown() {
-    let port = ephemeral_port();
-    let config = make_config("127.0.0.1", port);
+    // First lifecycle, on a port the helper verified the server could bind.
+    let mut bound = start_lifecycle_server().await;
+    let port = bound.port;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    bound.server.shutdown_runtime();
+    tokio::time::sleep(Duration::from_millis(200)).await;
 
-    // First lifecycle
-    {
-        let mut server = DnsServer::new(config.clone(), None);
-        server.start().await.expect("first start should succeed");
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        server.shutdown_runtime();
-        tokio::time::sleep(Duration::from_millis(200)).await;
-    }
+    let config = make_config("127.0.0.1", port);
 
     tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -107,24 +105,22 @@ async fn tcp_port_reusable_after_shutdown() {
 
 #[tokio::test]
 async fn shutdown_idempotent_under_load() {
-    let port = ephemeral_port();
-    let config = make_config("127.0.0.1", port);
-
-    let mut server = DnsServer::new(config, None);
-    server.start().await.expect("start should succeed");
+    let mut bound = start_lifecycle_server().await;
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     // Multiple shutdowns in quick succession must not panic
-    server.shutdown_runtime();
-    server.shutdown_runtime();
-    server.shutdown_runtime();
+    bound.server.shutdown_runtime();
+    bound.server.shutdown_runtime();
+    bound.server.shutdown_runtime();
 
     tokio::time::sleep(Duration::from_millis(200)).await;
 }
 
 #[tokio::test]
 async fn shutdown_before_start_is_safe() {
-    let config = make_config("127.0.0.1", ephemeral_port());
+    // Never started, so nothing binds and no port needs reserving: the
+    // authoritative port only has to be non-zero.
+    let config = make_config("127.0.0.1", support::UNBOUND_TEST_PORT);
 
     let mut server = DnsServer::new(config, None);
     // Shutdown on a server that was never started — must not panic
@@ -191,7 +187,7 @@ fn recursive_server_handle_is_not_leaked() {
     // - Dropping the DnsServer drops the shutdown_tx, causing receivers to error
     // - Tasks exit gracefully on channel closure
 
-    let config = make_config("127.0.0.1", ephemeral_port());
+    let config = make_config("127.0.0.1", support::UNBOUND_TEST_PORT);
 
     let server = DnsServer::new(config, None);
 

@@ -297,6 +297,13 @@ intermittently red, so it is recorded rather than smoothed over. A successor
 should either hold the reservation socket open until the server binds, or
 serialize the listener tests.
 
+**Resolved by Phase 131** (`architecture/dns_provider_inversion_phase131_closeout.md`).
+The first suggested remedy turned out to be impossible: `DnsServer::start`
+binds UDP and TCP on the same port internally, so a held reservation cannot
+protect it. Phase 131 removed the assumption instead — the server performs the
+real bind and a new port is taken only when that bind is observed to have lost a
+race. See matrix F-11.
+
 ## Campaign closeout
 
 | Phase | Disposition | Closeout |
