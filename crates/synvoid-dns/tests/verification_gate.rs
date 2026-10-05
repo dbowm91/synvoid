@@ -87,6 +87,7 @@ fn successful_reload_swaps_zone_atomically() {
 
     let server = DnsServer::new(
         support::authoritative_runtime(),
+        support::recursive_disabled(),
         support::deferred_config(),
         None,
     );
@@ -137,6 +138,7 @@ fn failed_reload_preserves_previous_active_zone() {
 
     let server = DnsServer::new(
         support::authoritative_runtime(),
+        support::recursive_disabled(),
         support::deferred_config(),
         None,
     );
@@ -234,6 +236,7 @@ fn successful_reload_invalidates_cache_for_zone() {
 
     let server = DnsServer::new(
         support::authoritative_runtime(),
+        support::recursive_disabled(),
         support::deferred_config(),
         None,
     );
@@ -689,9 +692,7 @@ fn recursive_cache_key_shape_isolation() {
 /// validation state, which must not be confused with Secure or Bogus.
 #[test]
 fn dnssec_validation_state_cache_separation() {
-    use synvoid_config::dns::RecursiveCacheConfig;
-
-    let config = RecursiveCacheConfig::default();
+    let config = support::recursive_cache_runtime(1_000_000, 300, 86_400, 86_400, 0);
     let cache = RecursiveDnsCache::new(1000, &config);
 
     let key = RecursiveCacheKey::new(b"secure.example.com", 1, None);
@@ -900,10 +901,8 @@ fn cache_invalidation_by_name_comprehensive() {
 /// Inserting into one must not affect lookups in the other.
 #[test]
 fn recursive_cache_independent_from_authoritative() {
-    use synvoid_config::dns::RecursiveCacheConfig;
-
     let auth_cache = DnsCache::new(100, 300, 10);
-    let rec_config = RecursiveCacheConfig::default();
+    let rec_config = support::recursive_cache_runtime(1_000_000, 300, 86_400, 86_400, 0);
     let rec_cache = RecursiveDnsCache::new(1000, &rec_config);
 
     // Insert into authoritative cache

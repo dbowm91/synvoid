@@ -56,9 +56,11 @@ pub use response::{
 };
 #[allow(unused_imports)]
 pub use runtime_config::{
-    authoritative_runtime, deferred_config, deferred_dnssec_enabled, deferred_recursive_enabled,
+    authoritative_runtime, circuit_breaker_runtime, deferred_config, deferred_dnssec_enabled,
     disabled_doh, disabled_doq, disabled_dot, doh_on, doq_on, dot_on, firewall_persisted,
-    recursive_persisted, AuthoritativeRuntimeBuilder, FIREWALL_MAX_RULES_SERDE_DEFAULT,
+    recursive_cache_runtime, recursive_disabled, recursive_runtime, recursive_runtime_on,
+    recursive_with_acl, recursive_with_upstreams, AuthoritativeRuntimeBuilder,
+    FIREWALL_MAX_RULES_SERDE_DEFAULT,
 };
 #[allow(unused_imports)]
 pub use zone::{build_test_zone, update_soa_value, zone_with_records, zone_with_soa};

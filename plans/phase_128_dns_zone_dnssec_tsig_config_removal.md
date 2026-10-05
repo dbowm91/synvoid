@@ -1,9 +1,14 @@
 # Phase 128 Plan: DNS Zone, DNSSEC, TSIG/HSM Conversion and synvoid-config Removal
 
-Status: **PLANNED / READY AFTER PHASE 127** (2026-10-04).
+Status: **PLANNED / READY** (2026-10-04). Unblocked by Phase 127, which closed QUALIFIED on 2026-10-04 with `architecture/dns_runtime_dto_phase127_closeout.md`.
 
 Registered in: `plans/roadmap.md` and
 `plans/dns_runtime_dto_conversion_roadmap.md`.
+
+Predecessor evidence: Phase 127 closeout
+(`architecture/dns_runtime_dto_phase127_closeout.md`) — its persisted-type
+table enumerates this phase's exact remaining scope, and finding F-1 asks this
+phase to ratify deleting the dead `check_rebinding_protection`.
 
 ## Goal
 

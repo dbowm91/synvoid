@@ -1629,8 +1629,10 @@ pub struct DnsServer {
     /// Canonical authoritative + encrypted-transport runtime values.
     /// Phase 126 cutover: this replaces the persisted `DnsConfig`.
     authoritative: Arc<super::runtime_config::AuthoritativeRuntimeConfig>,
-    /// Recursive / DNSSEC / HSM / zone sections still owned by Phases
-    /// 127-128. Deleted with the `synvoid-config` edge in Phase 128.
+    /// Recursive resolver runtime (Phase 127 cutover).
+    recursive: Arc<super::runtime_config::RecursiveRuntimeConfig>,
+    /// DNSSEC / HSM / zone sections still owned by Phase 128. Deleted with the
+    /// `synvoid-config` edge in Phase 128.
     deferred: Arc<crate::runtime_config_deferred::DeferredDnsConfig>,
     zones: Arc<ShardedZoneStore>,
     zone_trie: Arc<RwLock<super::zone_trie::ZoneTrie>>,
@@ -1678,6 +1680,7 @@ impl Clone for DnsServer {
     fn clone(&self) -> Self {
         Self {
             authoritative: self.authoritative.clone(),
+            recursive: self.recursive.clone(),
             deferred: self.deferred.clone(),
             zones: self.zones.clone(),
             zone_trie: self.zone_trie.clone(),
@@ -1761,6 +1764,7 @@ impl DnsServer {
     /// conversion path is `src/server/dns_runtime_config.rs`.
     pub fn new(
         authoritative: super::runtime_config::AuthoritativeRuntimeConfig,
+        recursive: super::runtime_config::RecursiveRuntimeConfig,
         deferred: crate::runtime_config_deferred::DeferredDnsConfig,
         cert_resolver: Option<Arc<CertResolver>>,
     ) -> Self {
@@ -2015,6 +2019,7 @@ impl DnsServer {
 
         let server = Self {
             authoritative: Arc::new(authoritative),
+            recursive: Arc::new(recursive),
             deferred: Arc::new(deferred),
             zones: Arc::new(ShardedZoneStore::new()),
             zone_trie: Arc::new(RwLock::new(super::zone_trie::ZoneTrie::new())),
@@ -2109,7 +2114,7 @@ impl DnsServer {
             .set_tsig_required(self.authoritative.zone_transfer.require_tsig);
 
         // Recursive state.
-        if self.deferred.recursive.enabled {
+        if self.recursive.enabled {
             // Optimistic — `start_recursive_server()` will downgrade to
             // Degraded if initialization fails or the circuit breaker opens.
             self.health.set_recursive_healthy();

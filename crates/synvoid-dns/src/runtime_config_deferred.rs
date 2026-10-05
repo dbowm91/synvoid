@@ -11,9 +11,11 @@
 //!
 //! | Field | Owning phase |
 //! |---|---|
-//! | `recursive` | Phase 127 — recursive runtime cutover |
 //! | `dnssec` (incl. HSM + TSIG) | Phase 128 — DNSSEC/TSIG/HSM conversion |
 //! | `zones` | Phase 128 — zone conversion |
+//!
+//! `recursive` was removed here in Phase 127, when the recursive runtime
+//! acquired its own `RecursiveRuntimeConfig`.
 //!
 //! **Phase 128 deletes this module together with the `synvoid-config`
 //! dependency edge.** Nothing in the authoritative request path reads these
@@ -23,8 +25,6 @@
 /// the campaign.
 #[derive(Debug, Clone)]
 pub struct DeferredDnsConfig {
-    /// Recursive resolver subtree — converted in Phase 127.
-    pub recursive: synvoid_config::dns::RecursiveDnsConfig,
     /// Global DNSSEC policy, HSM settings, and zone data — converted in
     /// Phase 128.
     pub dnssec: synvoid_config::dns::DnsSecConfig,
@@ -33,11 +33,6 @@ pub struct DeferredDnsConfig {
 }
 
 impl DeferredDnsConfig {
-    /// Whether the recursive subsystem is requested.
-    pub fn recursive_enabled(&self) -> bool {
-        self.recursive.enabled
-    }
-
     /// Whether DNSSEC signing is requested.
     pub fn dnssec_enabled(&self) -> bool {
         self.dnssec.enabled

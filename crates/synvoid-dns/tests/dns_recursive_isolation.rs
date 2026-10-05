@@ -7,15 +7,14 @@ use std::sync::Arc;
 
 use parking_lot::RwLock;
 use synvoid_config::dns::{
-    CircuitBreakerConfig, DnsAnycastConfig, DnsConfig, DnsMode, EcsForwardingPolicy,
-    RecursiveClientAcl, RecursiveDnsConfig, RecursiveEcsConfig, RecursiveUpstreamProvider,
-    TrustAnchorConfig,
+    CircuitBreakerConfig, DnsAnycastConfig, DnsConfig, DnsMode, RecursiveClientAcl,
+    RecursiveDnsConfig, RecursiveEcsConfig, RecursiveUpstreamProvider, TrustAnchorConfig,
 };
 use synvoid_dns::edns::EcsFilterConfig;
 use synvoid_dns::recursive::CircuitBreaker;
 use synvoid_dns::recursive_cache::DnssecValidationState;
 use synvoid_dns::recursive_cache::RecursiveDnsCache;
-use synvoid_dns::runtime_config::AuthoritativeRuntimeConfig;
+use synvoid_dns::runtime_config::{AuthoritativeRuntimeConfig, RecursiveEcsPolicyRuntime};
 use synvoid_dns::server::RecordType;
 use synvoid_dns::server::{DnsServer, DnsZoneRecord, QueryContext, ShardedZoneStore, Zone};
 use synvoid_dns::zone_trie::ZoneTrie;
@@ -260,10 +259,10 @@ fn test_recursive_mode_different_bind_address() {
 /// server uses DnsCache. Inserting into one does not affect the other.
 #[test]
 fn test_recursive_cache_independent() {
-    use synvoid_config::dns::RecursiveCacheConfig;
     use synvoid_dns::recursive_cache::RecursiveCacheKey;
 
-    let recursive_cache_config = RecursiveCacheConfig::default();
+    let recursive_cache_config =
+        support::recursive_cache_runtime(1_000_000, 300, 86_400, 86_400, 0);
     let recursive_cache = RecursiveDnsCache::new(1000, &recursive_cache_config);
 
     // Insert a record into the recursive cache
@@ -385,7 +384,12 @@ fn test_anycast_requires_mesh_feature() {
     authoritative.bind_address = "127.0.0.1:5353".parse().unwrap();
     authoritative.anycast = synvoid_dns::runtime_config::AnycastRuntimeConfig { enabled: true };
 
-    let mut server = DnsServer::new(authoritative, support::deferred_config(), None);
+    let mut server = DnsServer::new(
+        authoritative,
+        support::recursive_disabled(),
+        support::deferred_config(),
+        None,
+    );
 
     // Starting the server with anycast enabled should fail because mesh
     // feature is not compiled in (the extracted dns crate doesn't have mesh).
@@ -461,7 +465,12 @@ fn test_disabled_dns_skips_startup() {
         bind_address: "127.0.0.1:5353".parse().unwrap(),
         ..support::authoritative_runtime()
     };
-    let server = DnsServer::new(authoritative, support::deferred_config(), None);
+    let server = DnsServer::new(
+        authoritative,
+        support::recursive_disabled(),
+        support::deferred_config(),
+        None,
+    );
 
     // The server's config indicates it's disabled
     // We can't directly access config.enabled on DnsServer, but we verified
@@ -1317,11 +1326,7 @@ fn test_circuit_breaker_config_validation_success_threshold_zero() {
 
 #[test]
 fn test_circuit_breaker_opens_after_failures() {
-    let config = CircuitBreakerConfig {
-        failure_threshold: 3,
-        recovery_timeout_secs: 60,
-        success_threshold: 1,
-    };
+    let config = support::circuit_breaker_runtime(3, 1, 60);
     let cb = CircuitBreaker::new(&config);
 
     assert!(!cb.is_open(), "circuit should start closed");
@@ -1338,11 +1343,7 @@ fn test_circuit_breaker_opens_after_failures() {
 
 #[test]
 fn test_circuit_breaker_resets_after_successes() {
-    let config = CircuitBreakerConfig {
-        failure_threshold: 2,
-        recovery_timeout_secs: 60,
-        success_threshold: 2,
-    };
+    let config = support::circuit_breaker_runtime(2, 2, 60);
     let cb = CircuitBreaker::new(&config);
 
     cb.record_failure();
@@ -1361,11 +1362,7 @@ fn test_circuit_breaker_resets_after_successes() {
 
 #[test]
 fn test_circuit_breaker_recovery_timeout() {
-    let config = CircuitBreakerConfig {
-        failure_threshold: 1,
-        recovery_timeout_secs: 0,
-        success_threshold: 1,
-    };
+    let config = support::circuit_breaker_runtime(1, 1, 0);
     let cb = CircuitBreaker::new(&config);
 
     cb.record_failure();
@@ -1674,7 +1671,7 @@ fn test_response_header_roundtrip_cd_bit() {
 fn test_recursive_cache_key_dnssec_ok_separation() {
     use synvoid_dns::recursive_cache::RecursiveCacheKey;
 
-    let config = synvoid_config::dns::RecursiveCacheConfig::default();
+    let config = support::recursive_cache_runtime(1_000_000, 300, 86_400, 86_400, 0);
     let cache = RecursiveDnsCache::new(1000, &config);
 
     let key_do0 = RecursiveCacheKey::new_with_dnssec(b"dosep.test", 1, None, false);
@@ -1701,7 +1698,7 @@ fn test_recursive_cache_key_dnssec_ok_separation() {
 fn test_dnssec_validation_state_secure() {
     use synvoid_dns::recursive_cache::RecursiveCacheKey;
 
-    let config = synvoid_config::dns::RecursiveCacheConfig::default();
+    let config = support::recursive_cache_runtime(1_000_000, 300, 86_400, 86_400, 0);
     let cache = RecursiveDnsCache::new(1000, &config);
 
     let key = RecursiveCacheKey::new(b"secure.test", 1, None);
@@ -1721,7 +1718,7 @@ fn test_dnssec_validation_state_secure() {
 fn test_dnssec_validation_state_bogus() {
     use synvoid_dns::recursive_cache::RecursiveCacheKey;
 
-    let config = synvoid_config::dns::RecursiveCacheConfig::default();
+    let config = support::recursive_cache_runtime(1_000_000, 300, 86_400, 86_400, 0);
     let cache = RecursiveDnsCache::new(1000, &config);
 
     let key = RecursiveCacheKey::new(b"bogus.test", 1, None);
@@ -1741,7 +1738,7 @@ fn test_dnssec_validation_state_bogus() {
 fn test_dnssec_validation_state_unchecked() {
     use synvoid_dns::recursive_cache::RecursiveCacheKey;
 
-    let config = synvoid_config::dns::RecursiveCacheConfig::default();
+    let config = support::recursive_cache_runtime(1_000_000, 300, 86_400, 86_400, 0);
     let cache = RecursiveDnsCache::new(1000, &config);
 
     let key = RecursiveCacheKey::new(b"unchecked.test", 1, None);
@@ -1761,7 +1758,7 @@ fn test_dnssec_validation_state_unchecked() {
 fn test_dnssec_validation_state_insecure() {
     use synvoid_dns::recursive_cache::RecursiveCacheKey;
 
-    let config = synvoid_config::dns::RecursiveCacheConfig::default();
+    let config = support::recursive_cache_runtime(1_000_000, 300, 86_400, 86_400, 0);
     let cache = RecursiveDnsCache::new(1000, &config);
 
     let key = RecursiveCacheKey::new(b"insecure.test", 1, None);
@@ -1781,7 +1778,7 @@ fn test_dnssec_validation_state_insecure() {
 fn test_cache_dnssec_ok_false_does_not_return_dnssec_entry() {
     use synvoid_dns::recursive_cache::RecursiveCacheKey;
 
-    let config = synvoid_config::dns::RecursiveCacheConfig::default();
+    let config = support::recursive_cache_runtime(1_000_000, 300, 86_400, 86_400, 0);
     let cache = RecursiveDnsCache::new(1000, &config);
 
     let key_do1 = RecursiveCacheKey::new_with_dnssec(b"return.test", 1, None, true);
@@ -2004,22 +2001,41 @@ fn test_bailiwick_violations_metric_increment() {
 
 #[test]
 fn test_ecs_forwarding_policy_default_is_never() {
+    // Persisted default stays owned by `synvoid-config`.
+    use synvoid_config::dns::EcsForwardingPolicy;
     assert_eq!(EcsForwardingPolicy::default(), EcsForwardingPolicy::Never);
+    // The runtime projection defaults to the same policy.
+    assert_eq!(
+        support::recursive_runtime().ecs.policy,
+        RecursiveEcsPolicyRuntime::Never
+    );
 }
 
 #[test]
 fn test_ecs_config_defaults() {
     let config = RecursiveEcsConfig::default();
-    assert_eq!(config.forwarding_policy, EcsForwardingPolicy::Never);
+    assert_eq!(
+        config.forwarding_policy,
+        synvoid_config::dns::EcsForwardingPolicy::Never
+    );
     assert_eq!(config.prefix_v4, 24);
     assert_eq!(config.prefix_v6, 56);
     assert!(!config.include_scope_in_response);
+
+    // The runtime projection carries the same values.
+    let runtime = support::recursive_runtime().ecs;
+    assert_eq!(runtime.prefix_v4, 24);
+    assert_eq!(runtime.prefix_v6, 56);
+    assert!(!runtime.include_scope_in_response);
 }
 
 #[test]
 fn test_ecs_recursive_config_includes_ecs_field() {
     let config = RecursiveDnsConfig::default();
-    assert_eq!(config.ecs.forwarding_policy, EcsForwardingPolicy::Never);
+    assert_eq!(
+        config.ecs.forwarding_policy,
+        synvoid_config::dns::EcsForwardingPolicy::Never
+    );
     assert_eq!(config.ecs.prefix_v4, 24);
     assert_eq!(config.ecs.prefix_v6, 56);
 }
@@ -2088,7 +2104,7 @@ fn test_ecs_policy_never_strips_ecs() {
         prefix_len: 24,
     });
     let result = synvoid_dns::recursive::evaluate_ecs_forwarding_policy(
-        &EcsForwardingPolicy::Never,
+        &RecursiveEcsPolicyRuntime::Never,
         &subnet,
     );
     assert!(result.is_none());
@@ -2104,7 +2120,7 @@ fn test_ecs_policy_always_forwards_ecs() {
         prefix_len: 24,
     });
     let result = synvoid_dns::recursive::evaluate_ecs_forwarding_policy(
-        &EcsForwardingPolicy::Always,
+        &RecursiveEcsPolicyRuntime::Always,
         &subnet,
     );
     assert!(result.is_some());
@@ -2115,7 +2131,7 @@ fn test_ecs_policy_always_forwards_ecs() {
 fn test_ecs_policy_always_without_ecs_returns_none() {
     let subnet: Option<synvoid_dns::edns::ClientSubnet> = None;
     let result = synvoid_dns::recursive::evaluate_ecs_forwarding_policy(
-        &EcsForwardingPolicy::Always,
+        &RecursiveEcsPolicyRuntime::Always,
         &subnet,
     );
     assert!(result.is_none());
@@ -2131,7 +2147,7 @@ fn test_ecs_policy_if_present_with_ecs() {
         prefix_len: 24,
     });
     let result = synvoid_dns::recursive::evaluate_ecs_forwarding_policy(
-        &EcsForwardingPolicy::IfPresent,
+        &RecursiveEcsPolicyRuntime::IfPresent,
         &subnet,
     );
     assert!(result.is_some());
@@ -2141,7 +2157,7 @@ fn test_ecs_policy_if_present_with_ecs() {
 fn test_ecs_policy_if_present_without_ecs() {
     let subnet: Option<synvoid_dns::edns::ClientSubnet> = None;
     let result = synvoid_dns::recursive::evaluate_ecs_forwarding_policy(
-        &EcsForwardingPolicy::IfPresent,
+        &RecursiveEcsPolicyRuntime::IfPresent,
         &subnet,
     );
     assert!(result.is_none());
@@ -2157,7 +2173,7 @@ fn test_ecs_policy_cdn_only_returns_none() {
         prefix_len: 24,
     });
     let result = synvoid_dns::recursive::evaluate_ecs_forwarding_policy(
-        &EcsForwardingPolicy::CdnOnly,
+        &RecursiveEcsPolicyRuntime::CdnOnly,
         &subnet,
     );
     assert!(result.is_none());
@@ -2166,14 +2182,17 @@ fn test_ecs_policy_cdn_only_returns_none() {
 #[test]
 fn test_ecs_config_serde_roundtrip() {
     let config = RecursiveEcsConfig {
-        forwarding_policy: EcsForwardingPolicy::Always,
+        forwarding_policy: synvoid_config::dns::EcsForwardingPolicy::Always,
         prefix_v4: 16,
         prefix_v6: 48,
         include_scope_in_response: true,
     };
     let json = serde_json::to_string(&config).unwrap();
     let deserialized: RecursiveEcsConfig = serde_json::from_str(&json).unwrap();
-    assert_eq!(deserialized.forwarding_policy, EcsForwardingPolicy::Always);
+    assert_eq!(
+        deserialized.forwarding_policy,
+        synvoid_config::dns::EcsForwardingPolicy::Always
+    );
     assert_eq!(deserialized.prefix_v4, 16);
     assert_eq!(deserialized.prefix_v6, 48);
     assert!(deserialized.include_scope_in_response);
@@ -2183,12 +2202,17 @@ fn test_ecs_config_serde_roundtrip() {
 fn test_ecs_config_serde_default_policy() {
     let json = r#"{"prefix_v4": 16}"#;
     let config: RecursiveEcsConfig = serde_json::from_str(json).unwrap();
-    assert_eq!(config.forwarding_policy, EcsForwardingPolicy::Never);
+    assert_eq!(
+        config.forwarding_policy,
+        synvoid_config::dns::EcsForwardingPolicy::Never
+    );
     assert_eq!(config.prefix_v4, 16);
 }
 
 #[test]
 fn test_ecs_config_serde_snake_case_variants() {
+    use synvoid_config::dns::EcsForwardingPolicy;
+
     let json = r#"{"forwarding_policy": "if_present"}"#;
     let config: RecursiveEcsConfig = serde_json::from_str(json).unwrap();
     assert_eq!(config.forwarding_policy, EcsForwardingPolicy::IfPresent);

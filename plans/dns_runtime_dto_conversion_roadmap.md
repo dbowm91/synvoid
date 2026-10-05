@@ -1,7 +1,7 @@
 # DNS Runtime-DTO Conversion Roadmap — Phases 125–130
 
-Status: **ACTIVE** (2026-10-04). Phases 125 and 126 are **CLOSED QUALIFIED**;
-Phase 127 is **READY**. Phases 128-130 remain sequenced behind it.
+Status: **ACTIVE** (2026-10-04). Phases 125-127 are **CLOSED QUALIFIED**;
+Phase 128 is **READY**. Phases 129-130 remain sequenced behind it.
 
 Registered in: `plans/roadmap.md`.
 
@@ -99,10 +99,11 @@ Rules:
 2. **Phase 126 — Authoritative server and encrypted-transport runtime cutover**
    — **CLOSED QUALIFIED** (2026-10-04);
    `architecture/dns_runtime_dto_phase126_closeout.md`.
-3. **Phase 127 — Recursive resolver runtime-config cutover** — **READY**
-   (unblocked by Phase 126).
+3. **Phase 127 — Recursive resolver runtime-config cutover** — **CLOSED
+   QUALIFIED** (2026-10-04);
+   `architecture/dns_runtime_dto_phase127_closeout.md`.
 4. **Phase 128 — Zone/DNSSEC/TSIG/HSM conversion and synvoid-config removal** —
-   PLANNED, gated on Phase 127.
+   **READY** (unblocked by Phase 127).
 5. **Phase 129 — synvoid-core / synvoid-utils neutralization** — PLANNED, gated
    on Phase 128.
 6. **Phase 130 — Campaign qualification and provider-inversion readiness gate** —

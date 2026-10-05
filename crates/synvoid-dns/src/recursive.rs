@@ -20,8 +20,10 @@ use tracing::{debug, error, info, warn};
 use crate::firewall::DnsFirewall;
 use crate::metrics::DnsMetrics;
 use crate::parsed_query::ParsedDnsQuery;
+use crate::runtime_config::{
+    RecursiveEcsPolicyRuntime, RecursiveRuntimeConfig, RecursiveUpstreamRuntime,
+};
 use parking_lot::RwLock;
-use synvoid_config::dns::RecursiveDnsConfig;
 
 use super::recursive_cache::{
     CachedRecord, DnssecValidationState, RecursiveCacheKey, RecursiveDnsCache,
@@ -59,6 +61,12 @@ pub enum RecursiveDnsError {
 
 pub type RecursiveDnsResult<T> = Result<T, RecursiveDnsError>;
 
+/// The Hickory resolver constructors take whole seconds; runtime values are
+/// `Duration`s. Saturate rather than wrap.
+fn duration_secs(duration: std::time::Duration) -> u64 {
+    duration.as_secs()
+}
+
 pub struct CircuitBreaker {
     failure_count: AtomicU32,
     success_count: AtomicU32,
@@ -69,13 +77,13 @@ pub struct CircuitBreaker {
 }
 
 impl CircuitBreaker {
-    pub fn new(config: &synvoid_config::dns::CircuitBreakerConfig) -> Self {
+    pub fn new(config: &crate::runtime_config::CircuitBreakerRuntimeConfig) -> Self {
         Self {
             failure_count: AtomicU32::new(0),
             success_count: AtomicU32::new(0),
             last_failure_time: AtomicU64::new(0),
             failure_threshold: config.failure_threshold,
-            recovery_timeout_secs: config.recovery_timeout_secs,
+            recovery_timeout_secs: config.recovery_timeout.as_secs(),
             success_threshold: config.success_threshold,
         }
     }
@@ -117,7 +125,7 @@ impl CircuitBreaker {
 }
 
 pub struct RecursiveDnsServer {
-    config: RecursiveDnsConfig,
+    config: RecursiveRuntimeConfig,
     resolver: Arc<dyn DnsResolver>,
     cache: RecursiveDnsCache,
     rate_limiter: Option<Arc<DnsRateLimiter>>,
@@ -152,7 +160,7 @@ impl RecursiveDnsServer {
     }
 
     pub async fn new(
-        config: RecursiveDnsConfig,
+        config: RecursiveRuntimeConfig,
         rate_limiter: Option<Arc<DnsRateLimiter>>,
         firewall: Option<Arc<RwLock<DnsFirewall>>>,
         metrics: Option<Arc<DnsMetrics>>,
@@ -161,7 +169,7 @@ impl RecursiveDnsServer {
     }
 
     pub async fn new_with_global_nodes(
-        config: RecursiveDnsConfig,
+        config: RecursiveRuntimeConfig,
         rate_limiter: Option<Arc<DnsRateLimiter>>,
         firewall: Option<Arc<RwLock<DnsFirewall>>>,
         metrics: Option<Arc<DnsMetrics>>,
@@ -187,26 +195,29 @@ impl RecursiveDnsServer {
     }
 
     fn create_resolver(
-        config: &RecursiveDnsConfig,
+        config: &RecursiveRuntimeConfig,
         global_node_ips: &[IpAddr],
     ) -> RecursiveDnsResult<Arc<dyn DnsResolver>> {
-        let resolver: Arc<dyn DnsResolver> = match config.upstream_provider {
-            synvoid_config::dns::RecursiveUpstreamProvider::Recursive => {
+        let resolver: Arc<dyn DnsResolver> = match &config.upstream {
+            RecursiveUpstreamRuntime::Recursive {
+                root_hints,
+                trust_anchor,
+            } => {
                 tracing::info!(
                     "Configuring true recursive resolver with root hints: {}, trust anchor: {}",
-                    config.root_hints_path,
-                    config.trust_anchor_path
+                    root_hints.display(),
+                    trust_anchor.display()
                 );
                 Arc::new(
                     HickoryRecursor::new(
-                        &config.root_hints_path,
-                        &config.trust_anchor_path,
+                        &root_hints.to_string_lossy(),
+                        &trust_anchor.to_string_lossy(),
                         config.dnssec_validation,
                     )
                     .map_err(|e| RecursiveDnsError::UpstreamFailed(e.to_string()))?,
                 )
             }
-            synvoid_config::dns::RecursiveUpstreamProvider::GlobalNodes => {
+            RecursiveUpstreamRuntime::GlobalNodes => {
                 tracing::info!(
                     "Configuring GlobalNodes resolver with {} node IPs",
                     global_node_ips.len()
@@ -216,28 +227,27 @@ impl RecursiveDnsServer {
                         .map_err(|e| RecursiveDnsError::UpstreamFailed(e.to_string()))?,
                 )
             }
-            synvoid_config::dns::RecursiveUpstreamProvider::Google => {
+            RecursiveUpstreamRuntime::Google => {
                 tracing::warn!(
                     "Using Google DNS as upstream provider - DNSSEC validation is NOT performed. \
                      Set upstream_provider='Recursive' to enable DNSSEC validation."
                 );
                 Arc::new(
-                    HickoryResolver::with_google(config.query_timeout_secs)
+                    HickoryResolver::with_google(duration_secs(config.query_timeout))
                         .map_err(|e| RecursiveDnsError::UpstreamFailed(e.to_string()))?,
                 )
             }
-            synvoid_config::dns::RecursiveUpstreamProvider::Cloudflare => {
+            RecursiveUpstreamRuntime::Cloudflare => {
                 tracing::warn!(
                     "Using Cloudflare DNS as upstream provider - DNSSEC validation is NOT performed. \
                      Set upstream_provider='Recursive' to enable DNSSEC validation."
                 );
                 Arc::new(
-                    HickoryResolver::with_cloudflare(config.query_timeout_secs)
+                    HickoryResolver::with_cloudflare(duration_secs(config.query_timeout))
                         .map_err(|e| RecursiveDnsError::UpstreamFailed(e.to_string()))?,
                 )
             }
-            synvoid_config::dns::RecursiveUpstreamProvider::System
-            | synvoid_config::dns::RecursiveUpstreamProvider::Custom => {
+            RecursiveUpstreamRuntime::System | RecursiveUpstreamRuntime::CustomEndpoints(_) => {
                 let upstream_ips = config.upstream_ips();
                 if upstream_ips.is_empty() {
                     Arc::new(
@@ -248,7 +258,7 @@ impl RecursiveDnsServer {
                     Arc::new(
                         HickoryResolver::with_qname_minimization(
                             &upstream_ips,
-                            config.query_timeout_secs,
+                            duration_secs(config.query_timeout),
                         )
                         .map_err(|e| RecursiveDnsError::UpstreamFailed(e.to_string()))?,
                     )
@@ -256,7 +266,7 @@ impl RecursiveDnsServer {
                     Arc::new(
                         HickoryResolver::with_upstream_servers(
                             &upstream_ips,
-                            config.query_timeout_secs,
+                            duration_secs(config.query_timeout),
                         )
                         .map_err(|e| RecursiveDnsError::UpstreamFailed(e.to_string()))?,
                     )
@@ -276,29 +286,27 @@ impl RecursiveDnsServer {
             *running = true;
         }
 
-        let socket = UdpSocket::bind(format!("{}:{}", self.config.bind_address, self.config.port))
+        let socket = UdpSocket::bind(self.config.bind_address)
             .await
             .map_err(|e| {
                 RecursiveDnsError::UpstreamFailed(format!("Failed to bind socket: {}", e))
             })?;
 
         info!(
-            "Starting recursive DNS server on {}:{}",
-            self.config.bind_address, self.config.port
+            "Starting recursive DNS server on {}",
+            self.config.bind_address
         );
 
-        // Warn about DNSSEC limitations in forwarder mode
-        if !matches!(
-            self.config.upstream_provider,
-            synvoid_config::dns::RecursiveUpstreamProvider::Recursive
-        ) && self.config.dnssec_validation
-        {
+        // Forwarder-mode truthfulness: only true recursion performs local DNSSEC
+        // validation. The runtime projection records that fact, so the warning
+        // cannot drift away from the resolver that was actually built.
+        if self.config.dnssec_validation && !self.config.performs_local_dnssec_validation {
             tracing::warn!(
-                    "DNSSEC validation is enabled but forwarder mode ({:?}) does not perform validation. \
-                    Upstream servers are trusted to validate DNSSEC. For validated lookups, \
-                    configure 'recursive' as the upstream provider.",
-                    self.config.upstream_provider
-                );
+                "DNSSEC validation is enabled but forwarder mode ({:?}) does not perform validation. \
+                Upstream servers are trusted to validate DNSSEC. For validated lookups, \
+                configure 'recursive' as the upstream provider.",
+                self.config.upstream
+            );
         }
 
         let server = self.clone();
@@ -339,9 +347,9 @@ impl RecursiveDnsServer {
         });
 
         let tcp_server = self.clone();
-        let tcp_addr = format!("{}:{}", self.config.bind_address, self.config.port);
+        let tcp_addr = self.config.bind_address;
         tokio::spawn(async move {
-            if let Err(e) = tcp_server.start_tcp_listener(&tcp_addr).await {
+            if let Err(e) = tcp_server.start_tcp_listener(tcp_addr).await {
                 error!("TCP listener error: {}", e);
             }
         });
@@ -349,7 +357,7 @@ impl RecursiveDnsServer {
         Ok(())
     }
 
-    async fn start_tcp_listener(&self, addr: &str) -> RecursiveDnsResult<()> {
+    async fn start_tcp_listener(&self, addr: SocketAddr) -> RecursiveDnsResult<()> {
         let listener = TcpListener::bind(addr).await.map_err(|e| {
             RecursiveDnsError::UpstreamFailed(format!("Failed to bind TCP socket: {}", e))
         })?;
@@ -396,10 +404,10 @@ impl RecursiveDnsServer {
             metrics.record_recursive_query();
         }
 
-        let max_per_client = self.config.max_per_client_queries;
+        let max_per_client = self.config.max_per_client_queries as usize;
         let client_sem = if max_per_client > 0 {
             Some(
-                self.client_semaphore(client_addr.ip(), max_per_client as usize)
+                self.client_semaphore(client_addr.ip(), max_per_client)
                     .ok_or(RecursiveDnsError::RateLimited)?,
             )
         } else {
@@ -566,10 +574,10 @@ impl RecursiveDnsServer {
             metrics.record_recursive_query();
         }
 
-        let max_per_client = self.config.max_per_client_queries;
+        let max_per_client = self.config.max_per_client_queries as usize;
         if max_per_client > 0 {
             let sem = self
-                .client_semaphore(client_addr.ip(), max_per_client as usize)
+                .client_semaphore(client_addr.ip(), max_per_client)
                 .ok_or(RecursiveDnsError::RateLimited)?;
             let _client_permit = tokio::time::timeout(Duration::from_secs(1), sem.acquire())
                 .await
@@ -996,7 +1004,7 @@ impl RecursiveDnsServer {
             self.cache.insert_negative(
                 cache_key,
                 true,
-                self.config.cache.negative_ttl_secs as u32,
+                u32::try_from(self.config.cache.negative_ttl.as_secs()).unwrap_or(u32::MAX),
                 validation_state,
             );
 
@@ -1301,20 +1309,23 @@ pub fn truncate_ecs_prefix(
 }
 
 pub fn evaluate_ecs_forwarding_policy(
-    policy: &synvoid_config::dns::EcsForwardingPolicy,
+    policy: &RecursiveEcsPolicyRuntime,
     client_subnet: &Option<crate::edns::ClientSubnet>,
 ) -> Option<crate::edns::ClientSubnet> {
     match policy {
-        synvoid_config::dns::EcsForwardingPolicy::Never => None,
-        synvoid_config::dns::EcsForwardingPolicy::Always => client_subnet.clone(),
-        synvoid_config::dns::EcsForwardingPolicy::IfPresent => {
+        RecursiveEcsPolicyRuntime::Never => None,
+        RecursiveEcsPolicyRuntime::Always => client_subnet.clone(),
+        RecursiveEcsPolicyRuntime::IfPresent => {
             if client_subnet.is_some() {
                 client_subnet.clone()
             } else {
                 None
             }
         }
-        synvoid_config::dns::EcsForwardingPolicy::CdnOnly => None,
+        // CDN-range detection is not implemented, so the policy is absent by
+        // design rather than silently forwarding (or silently dropping) a
+        // client subnet.
+        RecursiveEcsPolicyRuntime::CdnOnly => None,
     }
 }
 
@@ -1322,10 +1333,9 @@ pub fn evaluate_ecs_forwarding_policy(
 mod tests {
     use super::*;
     use crate::recursive_cache::RecursiveRecordType;
-    use synvoid_config::dns::RecursiveCacheConfig;
 
     fn create_test_cache() -> RecursiveDnsCache {
-        let config = RecursiveCacheConfig::default();
+        let config = crate::runtime_config::test_fixtures::recursive_cache_runtime();
         RecursiveDnsCache::new(1000, &config)
     }
 
@@ -1659,29 +1669,12 @@ mod tests {
 
         let upstream_ip: IpAddr = "8.8.8.8".parse().unwrap();
 
+        let mut config = crate::runtime_config::test_fixtures::recursive_runtime();
+        config.query_timeout = std::time::Duration::from_secs(5);
+        config.max_concurrent_queries = 100;
+
         RecursiveDnsServer {
-            config: RecursiveDnsConfig {
-                enabled: true,
-                bind_address: "127.0.0.1".to_string(),
-                port: 0,
-                upstream_provider: synvoid_config::dns::RecursiveUpstreamProvider::System,
-                upstream_servers: vec![],
-                cache: RecursiveCacheConfig::default(),
-                dnssec_validation: false,
-                qname_minimization: false,
-                query_timeout_secs: 5,
-                max_concurrent_queries: 100,
-                ratelimit: synvoid_config::dns::DnsRateLimitConfig::default(),
-                firewall: synvoid_config::dns::DnsFirewallConfig::default(),
-                root_hints_path: "".to_string(),
-                trust_anchor_path: "".to_string(),
-                client_acl: None,
-                max_cname_depth: 10,
-                max_recursion_depth: 16,
-                max_per_client_queries: 100,
-                circuit_breaker: synvoid_config::dns::CircuitBreakerConfig::default(),
-                ecs: synvoid_config::dns::RecursiveEcsConfig::default(),
-            },
+            config,
             resolver: Arc::new(HickoryResolver::with_upstream_servers(&[upstream_ip], 5).unwrap()),
             cache: create_test_cache(),
             rate_limiter: None,
@@ -1690,7 +1683,7 @@ mod tests {
             query_semaphore: Arc::new(Semaphore::new(100)),
             running: Arc::new(tokio::sync::RwLock::new(false)),
             circuit_breaker: Arc::new(CircuitBreaker::new(
-                &synvoid_config::dns::CircuitBreakerConfig::default(),
+                &crate::runtime_config::test_fixtures::circuit_breaker_runtime(),
             )),
             client_semaphores: Arc::new(parking_lot::Mutex::new(HashMap::new())),
         }

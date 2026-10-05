@@ -192,10 +192,13 @@ struct CacheConfig {
 }
 
 impl RecursiveDnsCache {
-    pub fn new(capacity: usize, cache_config: &synvoid_config::dns::RecursiveCacheConfig) -> Self {
+    pub fn new(
+        capacity: usize,
+        cache_config: &crate::runtime_config::RecursiveCacheRuntimeConfig,
+    ) -> Self {
         let positive_cache = Cache::builder()
             .max_capacity(capacity as u64)
-            .time_to_live(Duration::from_secs(cache_config.max_ttl_secs))
+            .time_to_live(cache_config.max_ttl)
             .weigher(|_key: &RecursiveCacheKey, value: &PositiveCacheEntry| {
                 u32::try_from(value.records.iter().map(|r| r.data.len()).sum::<usize>())
                     .unwrap_or(u32::MAX)
@@ -204,7 +207,7 @@ impl RecursiveDnsCache {
 
         let negative_cache = Cache::builder()
             .max_capacity((capacity / 10) as u64)
-            .time_to_live(Duration::from_secs(cache_config.negative_ttl_secs))
+            .time_to_live(cache_config.negative_ttl)
             .weigher(|_key: &RecursiveCacheKey, _value: &NegativeCacheEntry| 1)
             .build();
 
@@ -213,10 +216,10 @@ impl RecursiveDnsCache {
                 positive_cache,
                 negative_cache,
                 config: CacheConfig {
-                    negative_ttl: Duration::from_secs(cache_config.negative_ttl_secs),
-                    stale_ttl: Duration::from_secs(cache_config.stale_ttl_secs),
-                    max_ttl: Duration::from_secs(cache_config.max_ttl_secs),
-                    min_ttl: Duration::from_secs(cache_config.min_ttl_secs),
+                    negative_ttl: cache_config.negative_ttl,
+                    stale_ttl: cache_config.stale_ttl,
+                    max_ttl: cache_config.max_ttl,
+                    min_ttl: cache_config.min_ttl,
                 },
                 stats: RwLock::new(RecursiveCacheStats::default()),
             }),
@@ -396,7 +399,7 @@ mod tests {
 
     #[test]
     fn test_positive_cache_insert_and_get() {
-        let config = synvoid_config::dns::RecursiveCacheConfig::default();
+        let config = crate::runtime_config::test_fixtures::recursive_cache_runtime();
         let cache = RecursiveDnsCache::new(1000, &config);
 
         let key = RecursiveCacheKey::new(b"example.com", 1, None);
@@ -422,7 +425,7 @@ mod tests {
 
     #[test]
     fn test_negative_cache() {
-        let config = synvoid_config::dns::RecursiveCacheConfig::default();
+        let config = crate::runtime_config::test_fixtures::recursive_cache_runtime();
         let cache = RecursiveDnsCache::new(1000, &config);
 
         let key = RecursiveCacheKey::new(b"nonexistent.com", 1, None);
@@ -436,7 +439,7 @@ mod tests {
 
     #[test]
     fn test_cache_stats() {
-        let config = synvoid_config::dns::RecursiveCacheConfig::default();
+        let config = crate::runtime_config::test_fixtures::recursive_cache_runtime();
         let cache = RecursiveDnsCache::new(1000, &config);
 
         let key = RecursiveCacheKey::new(b"example.com", 1, None);
@@ -463,12 +466,11 @@ mod tests {
 
     #[test]
     fn test_negative_stale_returns_stale_flag() {
-        let config = synvoid_config::dns::RecursiveCacheConfig {
-            negative_ttl_secs: 300,
-            stale_ttl_secs: 60,
-            max_ttl_secs: 300,
-            ..Default::default()
-        };
+        let config = crate::runtime_config::test_fixtures::RecursiveCacheBuilder::new()
+            .negative_ttl_secs(300)
+            .stale_ttl_secs(60)
+            .max_ttl_secs(300)
+            .build();
         let cache = RecursiveDnsCache::new(1000, &config);
 
         let key = RecursiveCacheKey::new(b"nxd-stale.test", 1, None);
@@ -489,11 +491,10 @@ mod tests {
 
     #[test]
     fn test_positive_stale_returns_records() {
-        let config = synvoid_config::dns::RecursiveCacheConfig {
-            max_ttl_secs: 300,
-            stale_ttl_secs: 60,
-            ..Default::default()
-        };
+        let config = crate::runtime_config::test_fixtures::RecursiveCacheBuilder::new()
+            .max_ttl_secs(300)
+            .stale_ttl_secs(60)
+            .build();
         let cache = RecursiveDnsCache::new(1000, &config);
 
         let key = RecursiveCacheKey::new(b"pos-stale.test", 1, None);
@@ -543,11 +544,10 @@ mod tests {
 
     #[test]
     fn test_ttl_clamping() {
-        let config = synvoid_config::dns::RecursiveCacheConfig {
-            max_ttl_secs: 100,
-            min_ttl_secs: 10,
-            ..Default::default()
-        };
+        let config = crate::runtime_config::test_fixtures::RecursiveCacheBuilder::new()
+            .max_ttl_secs(100)
+            .min_ttl_secs(10)
+            .build();
         let cache = RecursiveDnsCache::new(1000, &config);
 
         let key = RecursiveCacheKey::new(b"clamp.test", 1, None);
@@ -586,10 +586,9 @@ mod tests {
 
     #[test]
     fn test_negative_ttl_clamping() {
-        let config = synvoid_config::dns::RecursiveCacheConfig {
-            negative_ttl_secs: 30,
-            ..Default::default()
-        };
+        let config = crate::runtime_config::test_fixtures::RecursiveCacheBuilder::new()
+            .negative_ttl_secs(30)
+            .build();
         let cache = RecursiveDnsCache::new(1000, &config);
 
         let key = RecursiveCacheKey::new(b"neg-clamp.test", 1, None);
@@ -604,7 +603,7 @@ mod tests {
 
     #[test]
     fn test_invalidation_increments_stats() {
-        let config = synvoid_config::dns::RecursiveCacheConfig::default();
+        let config = crate::runtime_config::test_fixtures::recursive_cache_runtime();
         let cache = RecursiveDnsCache::new(1000, &config);
 
         let key = RecursiveCacheKey::new(b"inv-stats.test", 1, None);
@@ -622,11 +621,10 @@ mod tests {
 
     #[test]
     fn test_ttl_clamping_boundary_values() {
-        let config = synvoid_config::dns::RecursiveCacheConfig {
-            max_ttl_secs: 100,
-            min_ttl_secs: 10,
-            ..Default::default()
-        };
+        let config = crate::runtime_config::test_fixtures::RecursiveCacheBuilder::new()
+            .max_ttl_secs(100)
+            .min_ttl_secs(10)
+            .build();
         let cache = RecursiveDnsCache::new(1000, &config);
 
         let key = RecursiveCacheKey::new(b"boundary.test", 1, None);
@@ -647,11 +645,10 @@ mod tests {
 
     #[test]
     fn test_ttl_clamping_min_boundary() {
-        let config = synvoid_config::dns::RecursiveCacheConfig {
-            max_ttl_secs: 100,
-            min_ttl_secs: 10,
-            ..Default::default()
-        };
+        let config = crate::runtime_config::test_fixtures::RecursiveCacheBuilder::new()
+            .max_ttl_secs(100)
+            .min_ttl_secs(10)
+            .build();
         let cache = RecursiveDnsCache::new(1000, &config);
 
         let key = RecursiveCacheKey::new(b"min-boundary.test", 1, None);
@@ -672,10 +669,9 @@ mod tests {
 
     #[test]
     fn test_negative_nxdomain_ttl_from_soa() {
-        let config = synvoid_config::dns::RecursiveCacheConfig {
-            negative_ttl_secs: 300,
-            ..Default::default()
-        };
+        let config = crate::runtime_config::test_fixtures::RecursiveCacheBuilder::new()
+            .negative_ttl_secs(300)
+            .build();
         let cache = RecursiveDnsCache::new(1000, &config);
 
         let key = RecursiveCacheKey::new(b"nxd-soa.test", 1, None);
@@ -688,10 +684,9 @@ mod tests {
 
     #[test]
     fn test_negative_nodata_ttl_from_soa() {
-        let config = synvoid_config::dns::RecursiveCacheConfig {
-            negative_ttl_secs: 300,
-            ..Default::default()
-        };
+        let config = crate::runtime_config::test_fixtures::RecursiveCacheBuilder::new()
+            .negative_ttl_secs(300)
+            .build();
         let cache = RecursiveDnsCache::new(1000, &config);
 
         let key = RecursiveCacheKey::new(b"nodata-soa.test", 28, None);
@@ -704,7 +699,7 @@ mod tests {
 
     #[test]
     fn test_invalidation_by_qname_removes_all_types() {
-        let config = synvoid_config::dns::RecursiveCacheConfig::default();
+        let config = crate::runtime_config::test_fixtures::recursive_cache_runtime();
         let cache = RecursiveDnsCache::new(1000, &config);
 
         let a_key = RecursiveCacheKey::new(b"multi.test", 1, None);
@@ -745,11 +740,10 @@ mod tests {
 
     #[test]
     fn test_disabled_serve_stale_returns_miss() {
-        let config = synvoid_config::dns::RecursiveCacheConfig {
-            stale_ttl_secs: 0,
-            max_ttl_secs: 300,
-            ..Default::default()
-        };
+        let config = crate::runtime_config::test_fixtures::RecursiveCacheBuilder::new()
+            .stale_ttl_secs(0)
+            .max_ttl_secs(300)
+            .build();
         let cache = RecursiveDnsCache::new(1000, &config);
 
         let key = RecursiveCacheKey::new(b"no-stale.test", 1, None);
@@ -776,11 +770,10 @@ mod tests {
 
     #[test]
     fn test_stale_beyond_max_window_returns_miss() {
-        let config = synvoid_config::dns::RecursiveCacheConfig {
-            stale_ttl_secs: 2,
-            max_ttl_secs: 300,
-            ..Default::default()
-        };
+        let config = crate::runtime_config::test_fixtures::RecursiveCacheBuilder::new()
+            .stale_ttl_secs(2)
+            .max_ttl_secs(300)
+            .build();
         let cache = RecursiveDnsCache::new(1000, &config);
 
         let key = RecursiveCacheKey::new(b"stale-window.test", 1, None);
@@ -804,10 +797,9 @@ mod tests {
 
     #[test]
     fn test_stats_tracks_evictions() {
-        let config = synvoid_config::dns::RecursiveCacheConfig {
-            max_ttl_secs: 300,
-            ..Default::default()
-        };
+        let config = crate::runtime_config::test_fixtures::RecursiveCacheBuilder::new()
+            .max_ttl_secs(300)
+            .build();
         let cache = RecursiveDnsCache::new(2, &config);
 
         for i in 0..10u8 {
@@ -827,7 +819,7 @@ mod tests {
 
     #[test]
     fn test_dnssec_validation_state_secure() {
-        let config = synvoid_config::dns::RecursiveCacheConfig::default();
+        let config = crate::runtime_config::test_fixtures::recursive_cache_runtime();
         let cache = RecursiveDnsCache::new(1000, &config);
 
         let key = RecursiveCacheKey::new(b"secure.test", 1, None);
@@ -845,7 +837,7 @@ mod tests {
 
     #[test]
     fn test_dnssec_validation_state_bogus() {
-        let config = synvoid_config::dns::RecursiveCacheConfig::default();
+        let config = crate::runtime_config::test_fixtures::recursive_cache_runtime();
         let cache = RecursiveDnsCache::new(1000, &config);
 
         let key = RecursiveCacheKey::new(b"bogus.test", 1, None);
@@ -863,7 +855,7 @@ mod tests {
 
     #[test]
     fn test_dnssec_validation_state_unchecked() {
-        let config = synvoid_config::dns::RecursiveCacheConfig::default();
+        let config = crate::runtime_config::test_fixtures::recursive_cache_runtime();
         let cache = RecursiveDnsCache::new(1000, &config);
 
         let key = RecursiveCacheKey::new(b"unchecked.test", 1, None);
@@ -881,7 +873,7 @@ mod tests {
 
     #[test]
     fn test_dnssec_validation_state_insecure() {
-        let config = synvoid_config::dns::RecursiveCacheConfig::default();
+        let config = crate::runtime_config::test_fixtures::recursive_cache_runtime();
         let cache = RecursiveDnsCache::new(1000, &config);
 
         let key = RecursiveCacheKey::new(b"insecure.test", 1, None);
@@ -899,7 +891,7 @@ mod tests {
 
     #[test]
     fn test_recursive_cache_key_dnssec_ok_separation() {
-        let config = synvoid_config::dns::RecursiveCacheConfig::default();
+        let config = crate::runtime_config::test_fixtures::recursive_cache_runtime();
         let cache = RecursiveDnsCache::new(1000, &config);
 
         let key_do0 = RecursiveCacheKey::new_with_dnssec(b"dosep.test", 1, None, false);
@@ -924,7 +916,7 @@ mod tests {
 
     #[test]
     fn test_cache_dnssec_ok_false_does_not_return_dnssec_entry() {
-        let config = synvoid_config::dns::RecursiveCacheConfig::default();
+        let config = crate::runtime_config::test_fixtures::recursive_cache_runtime();
         let cache = RecursiveDnsCache::new(1000, &config);
 
         let key_do1 = RecursiveCacheKey::new_with_dnssec(b"return.test", 1, None, true);

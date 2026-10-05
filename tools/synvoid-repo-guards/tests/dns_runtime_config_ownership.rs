@@ -66,9 +66,9 @@ fn dns_facade_gains_no_adapter_implementation() {
 }
 
 /// The persistence sections that are allowed to pass through untouched until
-/// their owning phase converts them. Phase 127 removes `recursive`; Phase 128
+/// their owning phase converts them. Phase 127 removed `recursive`; Phase 128
 /// removes `dnssec` and `zones` and deletes the module.
-const ALLOWED_DEFERRED_FIELDS: &[&str] = &["recursive", "dnssec", "zones"];
+const ALLOWED_DEFERRED_FIELDS: &[&str] = &["dnssec", "zones"];
 
 // ---------------------------------------------------------------------------
 // 2. The runtime DTO must stay persistence-free
@@ -166,7 +166,7 @@ fn deferred_module_is_documented_as_temporary() {
     let root = workspace_root();
     let text = read(&root.join("crates/synvoid-dns/src/runtime_config_deferred.rs"));
     let mut violations = Violations::new();
-    for required in ["Phase 127", "Phase 128", "NOT runtime DTO"] {
+    for required in ["Phase 128", "NOT runtime DTO"] {
         if !text.contains(required) {
             violations.push(format!(
                 "runtime_config_deferred.rs must document `{required}` so the \
@@ -294,4 +294,110 @@ fn dns_server_constructor_takes_runtime_values() {
         violations.push("DnsServer::new must not accept a persistence DTO parameter".to_string());
     }
     violations.assert_ok("dns_server_constructor_takes_runtime_values");
+}
+
+// ---------------------------------------------------------------------------
+// 5. Phase 127 gate: the recursive runtime is persistence-free
+// ---------------------------------------------------------------------------
+
+#[test]
+fn recursive_runtime_module_has_no_persistence_dependency() {
+    // Regression gate for the Phase 127 acceptance criterion: recursive
+    // upstream/cache/ACL/circuit-breaker/depth/ECS policy must live in
+    // DNS-owned runtime values.
+    let root = workspace_root();
+    let module = root.join("crates/synvoid-dns/src/runtime_config.rs");
+    let text = read(&module);
+
+    let mut violations = Violations::new();
+    for (index, line) in text.lines().enumerate() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("//") {
+            continue;
+        }
+        // Whole-token match so `RecursiveClientAclRuntime` (the DNS-owned
+        // type) does not trip the gate on `RecursiveClientAcl`.
+        let tokens: Vec<&str> = trimmed
+            .split(|c: char| !c.is_alphanumeric() && c != '_')
+            .collect();
+        for forbidden in [
+            "RecursiveDnsConfig",
+            "RecursiveCacheConfig",
+            "CircuitBreakerConfig",
+            "RecursiveEcsConfig",
+            "RecursiveUpstreamProvider",
+            "RecursiveClientAcl",
+            "EcsForwardingPolicy",
+        ] {
+            if tokens.contains(&forbidden) {
+                violations.push(format!(
+                    "runtime_config.rs:{} references `{forbidden}`; the recursive \
+                     runtime vocabulary must be DNS-owned",
+                    index + 1
+                ));
+            }
+        }
+    }
+    violations.assert_ok("recursive_runtime_module_has_no_persistence_dependency");
+}
+
+#[test]
+fn recursive_server_takes_runtime_config() {
+    let root = workspace_root();
+    let text = read(&root.join("crates/synvoid-dns/src/recursive.rs"));
+
+    let mut violations = Violations::new();
+    for signature in [
+        "pub async fn new(\n        config: RecursiveRuntimeConfig,",
+        "pub async fn new_with_global_nodes(\n        config: RecursiveRuntimeConfig,",
+        "fn create_resolver(\n        config: &RecursiveRuntimeConfig,",
+    ] {
+        if !text.contains(signature) {
+            violations.push(format!(
+                "recursive.rs must declare `{signature}` so the recursive runtime \
+                 cannot regress to a persistence DTO"
+            ));
+        }
+    }
+    if text.contains("synvoid_config::dns::RecursiveUpstreamProvider") {
+        violations.push(
+            "recursive.rs must not match on the persisted upstream-provider enum".to_string(),
+        );
+    }
+    violations.assert_ok("recursive_server_takes_runtime_config");
+}
+
+#[test]
+fn recursive_cache_takes_runtime_config() {
+    let root = workspace_root();
+    let text = read(&root.join("crates/synvoid-dns/src/recursive_cache.rs"));
+    let mut violations = Violations::new();
+    if !text.contains("cache_config: &crate::runtime_config::RecursiveCacheRuntimeConfig") {
+        violations
+            .push("RecursiveDnsCache::new must take &RecursiveCacheRuntimeConfig".to_string());
+    }
+    violations.assert_ok("recursive_cache_takes_runtime_config");
+}
+
+#[test]
+fn forwarder_modes_cannot_claim_local_dnssec_validation() {
+    // The truthfulness signal is part of the runtime contract: only true
+    // recursion may claim local DNSSEC validation.
+    let root = workspace_root();
+    let module = root.join("crates/synvoid-dns/src/runtime_config.rs");
+    let text = read(&module);
+
+    let mut violations = Violations::new();
+    if !text.contains("performs_local_dnssec_validation: bool") {
+        violations
+            .push("RecursiveRuntimeConfig must carry performs_local_dnssec_validation".to_string());
+    }
+    if !text.contains("pub fn upstream_ips(&self) -> Vec<IpAddr>") {
+        violations.push(
+            "RecursiveRuntimeConfig must own upstream_ips(); the resolver build path \
+             must not call a persistence helper"
+                .to_string(),
+        );
+    }
+    violations.assert_ok("forwarder_modes_cannot_claim_local_dnssec_validation");
 }

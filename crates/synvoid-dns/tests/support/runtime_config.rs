@@ -20,11 +20,15 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use synvoid_dns::runtime_config::{
-    AnycastRuntimeConfig, AuthoritativeRuntimeConfig, CacheRuntimeConfig, DeferredDnsConfig,
+    AnycastRuntimeConfig, AuthoritativeRuntimeConfig, CacheRuntimeConfig,
+    CircuitBreakerRuntimeConfig, CustomUpstreamEndpoint, DnsFirewallRuntimeConfig,
     DnsRateLimitModeRuntime, DnsRateLimitRuntimeConfig, DohRuntimeConfig, DoqRuntimeConfig,
     DotRuntimeConfig, DynamicUpdateRuntimeConfig, EcsRuntimeConfig, LimitsRuntimeConfig,
-    QueryCoalescingRuntimeConfig, RrlRuntimeConfig, ZoneTransferRuntimeConfig,
+    QueryCoalescingRuntimeConfig, RecursiveCacheRuntimeConfig, RecursiveClientAclRuntime,
+    RecursiveEcsPolicyRuntime, RecursiveEcsRuntimeConfig, RecursiveRuntimeConfig,
+    RecursiveUpstreamRuntime, RrlRuntimeConfig, ZoneTransferRuntimeConfig,
 };
+use synvoid_dns::runtime_config_deferred::DeferredDnsConfig;
 
 /// Serde default for `dns.firewall.max_rules`. See the Phase 125 closeout
 /// finding F-1: the derived Rust `Default` disagrees with the serde default.
@@ -302,16 +306,11 @@ impl AuthoritativeRuntimeBuilder {
     }
 }
 
-/// Persisted sections still owned by Phases 127/128, with defaults.
+/// Persisted sections still owned by Phase 128, with defaults.
 ///
 /// Delete this fixture (and `DeferredDnsConfig`) in Phase 128.
 pub fn deferred_config() -> DeferredDnsConfig {
     DeferredDnsConfig {
-        recursive: synvoid_config::dns::RecursiveDnsConfig {
-            bind_address: "127.0.0.1".to_string(),
-            port: 0,
-            ..Default::default()
-        },
         dnssec: synvoid_config::dns::DnsSecConfig::default(),
         zones: synvoid_config::dns::DnsZonesConfig::default(),
     }
@@ -329,28 +328,120 @@ pub fn deferred_dnssec_enabled(key_path: std::path::PathBuf, domain: &str) -> De
     deferred
 }
 
-/// Deferred fixture with the recursive subsystem requested.
+/// Recursive runtime for a loopback bind.
 ///
-/// Phase 127 converts this to a DNS-owned runtime type; keeping it persisted
-/// here is what makes that phase's residual edge explicit.
-pub fn deferred_recursive_enabled(port: u16) -> DeferredDnsConfig {
-    let mut deferred = deferred_config();
-    deferred.recursive = synvoid_config::dns::RecursiveDnsConfig {
+/// Mirrors `RecursiveDnsConfig::default()` for every value the recursive
+/// runtime reads, so a fixture with no overrides behaves like a default
+/// recursive server.
+pub fn recursive_runtime() -> RecursiveRuntimeConfig {
+    RecursiveRuntimeConfig {
         enabled: true,
-        bind_address: "127.0.0.1".to_string(),
-        port,
-        ..Default::default()
-    };
-    deferred
+        bind_address: SocketAddr::from(([127, 0, 0, 1], 0)),
+        upstream: RecursiveUpstreamRuntime::System,
+        cache: RecursiveCacheRuntimeConfig {
+            capacity: 1_000_000,
+            negative_ttl: Duration::from_secs(300),
+            stale_ttl: Duration::from_secs(86_400),
+            max_ttl: Duration::from_secs(86_400),
+            min_ttl: Duration::from_secs(0),
+        },
+        dnssec_validation: true,
+        qname_minimization: true,
+        query_timeout: Duration::from_secs(5),
+        max_concurrent_queries: 10_000,
+        rate_limit: DnsRateLimitRuntimeConfig {
+            mode: DnsRateLimitModeRuntime::Shared,
+            per_second: 100,
+        },
+        firewall: DnsFirewallRuntimeConfig {
+            enabled: false,
+            block_internal_ips: true,
+            block_zone_transfers: true,
+        },
+        client_acl: None,
+        max_cname_depth: 10,
+        max_recursion_depth: 16,
+        max_per_client_queries: 100,
+        circuit_breaker: CircuitBreakerRuntimeConfig {
+            failure_threshold: 5,
+            recovery_timeout: Duration::from_secs(30),
+            success_threshold: 2,
+        },
+        ecs: RecursiveEcsRuntimeConfig {
+            policy: RecursiveEcsPolicyRuntime::Never,
+            prefix_v4: 24,
+            prefix_v6: 56,
+            include_scope_in_response: false,
+        },
+        performs_local_dnssec_validation: false,
+    }
 }
 
-/// Persisted recursive config for tests that drive
-/// `RecursiveDnsServer` directly (Phase 127 converts this too).
-pub fn recursive_persisted(port: u16) -> synvoid_config::dns::RecursiveDnsConfig {
-    synvoid_config::dns::RecursiveDnsConfig {
-        bind_address: "127.0.0.1".to_string(),
-        port,
-        ..Default::default()
+/// Recursive runtime with a concrete loopback port.
+pub fn recursive_runtime_on(port: u16) -> RecursiveRuntimeConfig {
+    RecursiveRuntimeConfig {
+        bind_address: SocketAddr::from(([127, 0, 0, 1], port)),
+        ..recursive_runtime()
+    }
+}
+
+/// Recursive runtime with the recursive subsystem disabled.
+pub fn recursive_disabled() -> RecursiveRuntimeConfig {
+    RecursiveRuntimeConfig {
+        enabled: false,
+        ..recursive_runtime()
+    }
+}
+
+/// Recursive runtime with an explicit parsed client ACL.
+pub fn recursive_with_acl(
+    allowed: Vec<synvoid_dns::runtime_config::IpNetwork>,
+    action: synvoid_dns::runtime_config::RecursiveAclActionRuntime,
+) -> RecursiveRuntimeConfig {
+    RecursiveRuntimeConfig {
+        client_acl: Some(RecursiveClientAclRuntime {
+            allowed_clients: allowed,
+            action,
+        }),
+        ..recursive_runtime()
+    }
+}
+
+/// Recursive runtime with custom literal upstream endpoints.
+pub fn recursive_with_upstreams(endpoints: Vec<CustomUpstreamEndpoint>) -> RecursiveRuntimeConfig {
+    RecursiveRuntimeConfig {
+        upstream: RecursiveUpstreamRuntime::CustomEndpoints(endpoints),
+        ..recursive_runtime()
+    }
+}
+
+/// Recursive cache runtime with overrides.
+pub fn recursive_cache_runtime(
+    capacity: usize,
+    negative_ttl_secs: u64,
+    stale_ttl_secs: u64,
+    max_ttl_secs: u64,
+    min_ttl_secs: u64,
+) -> RecursiveCacheRuntimeConfig {
+    RecursiveCacheRuntimeConfig {
+        capacity,
+        negative_ttl: Duration::from_secs(negative_ttl_secs),
+        stale_ttl: Duration::from_secs(stale_ttl_secs),
+        max_ttl: Duration::from_secs(max_ttl_secs),
+        min_ttl: Duration::from_secs(min_ttl_secs),
+    }
+}
+
+/// Circuit-breaker runtime with overrides.
+pub fn circuit_breaker_runtime(
+    failure_threshold: u32,
+    success_threshold: u32,
+    recovery_timeout_secs: u64,
+) -> CircuitBreakerRuntimeConfig {
+    CircuitBreakerRuntimeConfig {
+        failure_threshold,
+        success_threshold,
+        recovery_timeout: Duration::from_secs(recovery_timeout_secs),
     }
 }
 

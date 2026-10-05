@@ -59,7 +59,7 @@ impl DnsServer {
             }
         }
 
-        if self.deferred.recursive.enabled {
+        if self.recursive.enabled {
             if let Err(e) = self.start_recursive_server().await {
                 // Recursive init failed — server still functions as
                 // authoritative, but recursive subsystem is degraded.
@@ -109,16 +109,15 @@ impl DnsServer {
 
     async fn start_recursive_server(&mut self) -> Result<(), String> {
         tracing::info!(
-            "Starting recursive DNS server on {}:{}",
-            self.deferred.recursive.bind_address,
-            self.deferred.recursive.port
+            "Starting recursive DNS server on {}",
+            self.recursive.bind_address
         );
 
         let rate_limiter = self.rate_limiter.clone();
         let metrics = None;
 
         let recursive_server = crate::recursive::RecursiveDnsServer::new(
-            self.deferred.recursive.clone(),
+            (*self.recursive).clone(),
             rate_limiter,
             None,
             metrics,
@@ -771,11 +770,6 @@ mod tests {
 
     fn deferred() -> DeferredDnsConfig {
         DeferredDnsConfig {
-            recursive: synvoid_config::dns::RecursiveDnsConfig {
-                bind_address: "127.0.0.1".to_string(),
-                port: 0,
-                ..Default::default()
-            },
             dnssec: Default::default(),
             zones: Default::default(),
         }
@@ -830,7 +824,12 @@ mod tests {
     #[test]
     fn shutdown_runtime_is_idempotent() {
         let config = make_config("127.0.0.1", 5353);
-        let mut server = DnsServer::new(config, deferred(), None);
+        let mut server = DnsServer::new(
+            config,
+            crate::runtime_config::test_fixtures::recursive_runtime(),
+            deferred(),
+            None,
+        );
         // First call should send the signal
         server.shutdown_runtime();
         // Second call should not panic

@@ -1,4 +1,5 @@
-use synvoid_config::dns::{RecursiveCacheConfig, RecursiveDnsConfig};
+mod support;
+
 use synvoid_dns::firewall::{DnsFirewall, DnsFirewallAction, DnsFirewallRule, DnsFirewallRuleType};
 use synvoid_dns::parsed_query::ParsedDnsQuery;
 use synvoid_dns::recursive_cache::{
@@ -36,7 +37,7 @@ fn build_full_query(name: &str, qtype: u16) -> Vec<u8> {
 // ── Cache Tests ──────────────────────────────────────────────────
 
 fn create_cache(capacity: usize) -> RecursiveDnsCache {
-    let config = RecursiveCacheConfig::default();
+    let config = support::recursive_cache_runtime(1_000_000, 300, 86_400, 86_400, 0);
     RecursiveDnsCache::new(capacity, &config)
 }
 
@@ -437,25 +438,31 @@ fn test_error_response_is_response_flag() {
 // ── Config Tests ─────────────────────────────────────────────────
 
 #[test]
-fn test_recursive_cache_config_defaults() {
-    let config = RecursiveCacheConfig::default();
+fn test_recursive_cache_runtime_defaults() {
+    // The persisted defaults stay owned by `synvoid-config`; this asserts the
+    // DNS-owned runtime projection of them.
+    let config = support::recursive_runtime().cache;
     assert_eq!(config.capacity, 1_000_000);
-    assert_eq!(config.negative_ttl_secs, 300);
-    assert_eq!(config.stale_ttl_secs, 86400);
-    assert_eq!(config.max_ttl_secs, 86400);
-    assert_eq!(config.min_ttl_secs, 0);
+    assert_eq!(config.negative_ttl, std::time::Duration::from_secs(300));
+    assert_eq!(config.stale_ttl, std::time::Duration::from_secs(86_400));
+    assert_eq!(config.max_ttl, std::time::Duration::from_secs(86_400));
+    assert_eq!(config.min_ttl, std::time::Duration::from_secs(0));
 }
 
 #[test]
-fn test_recursive_dns_config_defaults() {
-    let config = RecursiveDnsConfig::default();
-    assert!(!config.enabled);
-    assert_eq!(config.bind_address, "127.0.0.1");
-    assert_eq!(config.port, 1053);
+fn test_recursive_runtime_defaults() {
+    let config = support::recursive_runtime();
+    assert!(config.enabled);
+    assert_eq!(
+        config.bind_address,
+        "127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap()
+    );
     assert!(config.dnssec_validation);
     assert!(config.qname_minimization);
-    assert_eq!(config.query_timeout_secs, 5);
+    assert_eq!(config.query_timeout, std::time::Duration::from_secs(5));
     assert_eq!(config.max_concurrent_queries, 10000);
+    // A forwarder mode must not claim local DNSSEC validation.
+    assert!(!config.performs_local_dnssec_validation);
 }
 
 #[test]

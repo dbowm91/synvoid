@@ -66,6 +66,7 @@ async fn start_server(port: u16) -> DnsServer {
         support::AuthoritativeRuntimeBuilder::new()
             .port(port)
             .build(),
+        support::recursive_disabled(),
         support::deferred_config(),
         None,
     );
@@ -134,7 +135,12 @@ async fn tcp_frame_beyond_max_query_size_is_rejected() {
         .port(port)
         .build();
     authoritative.limits.max_query_size = 512;
-    let mut server = DnsServer::new(authoritative, support::deferred_config(), None);
+    let mut server = DnsServer::new(
+        authoritative,
+        support::recursive_disabled(),
+        support::deferred_config(),
+        None,
+    );
     server.start().await.expect("server start");
 
     let mut stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port))
@@ -181,7 +187,12 @@ async fn disabled_transports_do_not_bind() {
     assert!(!authoritative.doh.enabled);
     assert!(!authoritative.doq.enabled);
 
-    let mut server = DnsServer::new(authoritative, support::deferred_config(), None);
+    let mut server = DnsServer::new(
+        authoritative,
+        support::recursive_disabled(),
+        support::deferred_config(),
+        None,
+    );
     server.start().await.expect("server start");
     server.shutdown_runtime();
 }

@@ -847,6 +847,31 @@ pub struct RecursiveRuntimeConfig {
     pub performs_local_dnssec_validation: bool,
 }
 
+impl RecursiveRuntimeConfig {
+    /// Literal upstream addresses for a forwarder.
+    ///
+    /// Preserves the pre-Phase-127 semantics exactly: only endpoints with a
+    /// literal address contribute, and an endpoint list containing hostnames
+    /// only yields an empty result (which makes resolver creation fall back to
+    /// the host resolver configuration). Google/Cloudflare addresses are not
+    /// produced here because those modes construct their own resolver.
+    ///
+    /// See the Phase 127 closeout finding on hostname-only upstream lists.
+    pub fn upstream_ips(&self) -> Vec<IpAddr> {
+        match &self.upstream {
+            RecursiveUpstreamRuntime::CustomEndpoints(endpoints) => endpoints
+                .iter()
+                .filter_map(|endpoint| match endpoint {
+                    CustomUpstreamEndpoint::Literal { ip, .. } => Some(*ip),
+                    // Hostname endpoints were never resolved to literals here.
+                    CustomUpstreamEndpoint::Hostname { .. } => None,
+                })
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Disabled-transport constructors
 // ---------------------------------------------------------------------------
@@ -1013,5 +1038,122 @@ mod tests {
             "debug output must not contain secret bytes"
         );
         assert!(rendered.contains("redacted"));
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod test_fixtures {
+    //! Runtime configuration fixtures for in-crate unit tests.
+    //!
+    //! Integration tests use the equivalent builders in
+    //! `tests/support/runtime_config.rs`; both mirror
+    //! `synvoid_config::dns::DnsConfig::default()` for every value they cover,
+    //! so a fixture with no overrides behaves like a default server.
+
+    use super::*;
+
+    /// Default recursive runtime: system resolver, loopback bind, cache on.
+    pub fn recursive_runtime() -> RecursiveRuntimeConfig {
+        RecursiveRuntimeConfig {
+            enabled: true,
+            bind_address: SocketAddr::from(([127, 0, 0, 1], 0)),
+            upstream: RecursiveUpstreamRuntime::System,
+            cache: RecursiveCacheRuntimeConfig {
+                capacity: 1_000_000,
+                negative_ttl: Duration::from_secs(300),
+                stale_ttl: Duration::from_secs(86_400),
+                max_ttl: Duration::from_secs(86_400),
+                min_ttl: Duration::from_secs(0),
+            },
+            dnssec_validation: true,
+            qname_minimization: true,
+            query_timeout: Duration::from_secs(5),
+            max_concurrent_queries: 10_000,
+            rate_limit: DnsRateLimitRuntimeConfig {
+                mode: DnsRateLimitModeRuntime::Shared,
+                per_second: 100,
+            },
+            firewall: DnsFirewallRuntimeConfig {
+                enabled: false,
+                block_internal_ips: true,
+                block_zone_transfers: true,
+            },
+            client_acl: None,
+            max_cname_depth: 10,
+            max_recursion_depth: 16,
+            max_per_client_queries: 100,
+            circuit_breaker: CircuitBreakerRuntimeConfig {
+                failure_threshold: 5,
+                recovery_timeout: Duration::from_secs(30),
+                success_threshold: 2,
+            },
+            ecs: RecursiveEcsRuntimeConfig {
+                policy: RecursiveEcsPolicyRuntime::Never,
+                prefix_v4: 24,
+                prefix_v6: 56,
+                include_scope_in_response: false,
+            },
+            performs_local_dnssec_validation: false,
+        }
+    }
+
+    /// Default recursive cache runtime.
+    pub fn recursive_cache_runtime() -> RecursiveCacheRuntimeConfig {
+        recursive_runtime().cache
+    }
+
+    /// Default circuit-breaker runtime.
+    pub fn circuit_breaker_runtime() -> CircuitBreakerRuntimeConfig {
+        recursive_runtime().circuit_breaker
+    }
+
+    /// Fluent overrides over [`recursive_cache_runtime`].
+    #[derive(Debug, Clone)]
+    pub struct RecursiveCacheBuilder {
+        config: RecursiveCacheRuntimeConfig,
+    }
+
+    impl Default for RecursiveCacheBuilder {
+        fn default() -> Self {
+            Self {
+                config: recursive_cache_runtime(),
+            }
+        }
+    }
+
+    impl RecursiveCacheBuilder {
+        pub fn new() -> Self {
+            Self::default()
+        }
+
+        #[allow(dead_code)]
+        pub fn capacity(mut self, capacity: usize) -> Self {
+            self.config.capacity = capacity;
+            self
+        }
+
+        pub fn negative_ttl_secs(mut self, secs: u64) -> Self {
+            self.config.negative_ttl = Duration::from_secs(secs);
+            self
+        }
+
+        pub fn stale_ttl_secs(mut self, secs: u64) -> Self {
+            self.config.stale_ttl = Duration::from_secs(secs);
+            self
+        }
+
+        pub fn max_ttl_secs(mut self, secs: u64) -> Self {
+            self.config.max_ttl = Duration::from_secs(secs);
+            self
+        }
+
+        pub fn min_ttl_secs(mut self, secs: u64) -> Self {
+            self.config.min_ttl = Duration::from_secs(secs);
+            self
+        }
+
+        pub fn build(self) -> RecursiveCacheRuntimeConfig {
+            self.config
+        }
     }
 }

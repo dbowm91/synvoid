@@ -139,6 +139,7 @@ impl UnifiedServerResources {
 
             let mut dns_server = crate::dns::DnsServer::new(
                 runtime_cfg.authoritative.clone(),
+                runtime_cfg.recursive.clone(),
                 runtime_cfg.deferred.clone(),
                 cert_resolver.clone(),
             );

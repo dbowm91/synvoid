@@ -1,6 +1,12 @@
 # Phase 127 Plan: DNS Recursive Resolver Runtime-Config Cutover
 
-Status: **PLANNED / READY** (2026-10-04). Unblocked by Phase 126, which closed QUALIFIED on 2026-10-04 with `architecture/dns_runtime_dto_phase126_closeout.md`.
+Status: **CLOSED QUALIFIED** (2026-10-04). Unblocked by Phase 126, which closed
+QUALIFIED on 2026-10-04 with
+`architecture/dns_runtime_dto_phase126_closeout.md`.
+
+Closeout: `architecture/dns_runtime_dto_phase127_closeout.md`.
+
+Successor: Phase 128 is **unblocked / READY**.
 
 Registered in: `plans/roadmap.md` and
 `plans/dns_runtime_dto_conversion_roadmap.md`.
@@ -136,3 +142,42 @@ Reject implementation that:
 - represents ACL action as unchecked string runtime state;
 - claims DNSSEC validation for forwarder modes that do not perform it;
 - merges authoritative and recursive state while refactoring.
+
+
+## Closeout (2026-10-04)
+
+**CLOSED QUALIFIED.** See `architecture/dns_runtime_dto_phase127_closeout.md`
+for the full evidence table.
+
+Result summary:
+
+- recursive upstream strategy, cache policy, client ACL, circuit breaker,
+  depth limits, timeouts, and ECS forwarding policy are all DNS-owned runtime
+  types; `recursive.rs` and `recursive_cache.rs` now have zero persistence
+  references (21 and 23 before).
+- the forwarder-mode "DNSSEC validation is not performed" warning is driven by
+  `performs_local_dnssec_validation` instead of re-deriving the mode, so the
+  message cannot drift away from the resolver that was built.
+- both recursive listeners bind a typed `SocketAddr`.
+- `DeferredDnsConfig` shrinks to `{dnssec, zones}`; 11 campaign gates green.
+- the Phase 125 parity fixtures (43) and absent-by-design tests (15) pass
+  unchanged, including the recursive upstream-normalization table, ACL parsing,
+  DNSSEC-provider truthfulness, and the shipped `recursive_local.toml` profile.
+- the `synvoid-config` normal edge is intentionally still present: Phase 128
+  owns its removal.
+
+Findings carried forward:
+
+- **F-1** — `check_rebinding_protection` in `firewall.rs` has zero callers and
+  takes a `RebindingProtectionConfig` parameter. Phase 128 should delete it
+  rather than convert it, since the setting it reads is fail-closed with no
+  planned runtime consumer.
+- **F-2** — a `custom` recursive upstream list containing only hostnames yields
+  no literal addresses and silently falls back to the system resolver.
+  Preserved for parity; needs its own plan (resolve at startup, or reject at
+  validation).
+- **F-3** — `CdnOnly` recursive ECS forwarding is a documented no-op
+  (`CdnOnly` behaves as `Never`).
+
+Phase 128 is unblocked, with its scope precisely enumerated by the persisted
+type table in the closeout.

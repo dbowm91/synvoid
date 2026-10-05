@@ -1,5 +1,7 @@
 #![allow(clippy::field_reassign_with_default)]
 
+mod support;
+
 #[cfg(test)]
 mod dns_config_tests {
     #[test]
@@ -38,15 +40,23 @@ mod dns_config_tests {
 
     #[test]
     fn test_recursive_cache_config_defaults() {
+        // The persisted defaults remain owned by `synvoid-config`; assert both
+        // the persisted shape and the DNS-owned runtime projection of it.
         use synvoid_config::dns::RecursiveCacheConfig;
 
-        let config = RecursiveCacheConfig::default();
+        let persisted = RecursiveCacheConfig::default();
+        assert_eq!(persisted.capacity, 1_000_000);
+        assert_eq!(persisted.negative_ttl_secs, 300);
+        assert_eq!(persisted.stale_ttl_secs, 86400);
+        assert_eq!(persisted.max_ttl_secs, 86400);
+        assert_eq!(persisted.min_ttl_secs, 0);
 
-        assert_eq!(config.capacity, 1_000_000);
-        assert_eq!(config.negative_ttl_secs, 300);
-        assert_eq!(config.stale_ttl_secs, 86400);
-        assert_eq!(config.max_ttl_secs, 86400);
-        assert_eq!(config.min_ttl_secs, 0);
+        let runtime = crate::support::recursive_runtime().cache;
+        assert_eq!(runtime.capacity, 1_000_000);
+        assert_eq!(runtime.negative_ttl, std::time::Duration::from_secs(300));
+        assert_eq!(runtime.stale_ttl, std::time::Duration::from_secs(86_400));
+        assert_eq!(runtime.max_ttl, std::time::Duration::from_secs(86_400));
+        assert_eq!(runtime.min_ttl, std::time::Duration::from_secs(0));
     }
 
     #[test]
@@ -193,10 +203,9 @@ mod dns_config_tests {
 
     #[tokio::test]
     async fn test_recursive_cache_insert_and_retrieve() {
-        use synvoid_config::dns::RecursiveCacheConfig;
         use synvoid_dns::recursive_cache::{CachedRecord, RecursiveCacheKey, RecursiveDnsCache};
 
-        let config = RecursiveCacheConfig::default();
+        let config = crate::support::recursive_cache_runtime(1_000_000, 300, 86_400, 86_400, 0);
         let cache = RecursiveDnsCache::new(1000, &config);
 
         let key = RecursiveCacheKey::new(b"example.com", 1, None);
@@ -223,10 +232,9 @@ mod dns_config_tests {
 
     #[tokio::test]
     async fn test_recursive_cache_negative() {
-        use synvoid_config::dns::RecursiveCacheConfig;
         use synvoid_dns::recursive_cache::{RecursiveCacheKey, RecursiveDnsCache};
 
-        let config = RecursiveCacheConfig::default();
+        let config = crate::support::recursive_cache_runtime(1_000_000, 300, 86_400, 86_400, 0);
         let cache = RecursiveDnsCache::new(1000, &config);
 
         let key = RecursiveCacheKey::new(b"nonexistent.com", 1, None);
@@ -246,10 +254,9 @@ mod dns_config_tests {
 
     #[tokio::test]
     async fn test_recursive_cache_stats() {
-        use synvoid_config::dns::RecursiveCacheConfig;
         use synvoid_dns::recursive_cache::{CachedRecord, RecursiveCacheKey, RecursiveDnsCache};
 
-        let config = RecursiveCacheConfig::default();
+        let config = crate::support::recursive_cache_runtime(1_000_000, 300, 86_400, 86_400, 0);
         let cache = RecursiveDnsCache::new(1000, &config);
 
         let key = RecursiveCacheKey::new(b"example.com", 1, None);
@@ -278,10 +285,9 @@ mod dns_config_tests {
 
     #[tokio::test]
     async fn test_recursive_cache_invalidation() {
-        use synvoid_config::dns::RecursiveCacheConfig;
         use synvoid_dns::recursive_cache::{CachedRecord, RecursiveCacheKey, RecursiveDnsCache};
 
-        let config = RecursiveCacheConfig::default();
+        let config = crate::support::recursive_cache_runtime(1_000_000, 300, 86_400, 86_400, 0);
         let cache = RecursiveDnsCache::new(1000, &config);
 
         let key = RecursiveCacheKey::new(b"example.com", 1, None);
@@ -765,10 +771,9 @@ mod dns_config_tests {
 
     #[test]
     fn test_recursive_cache_stats_tracking() {
-        use synvoid_config::dns::RecursiveCacheConfig;
         use synvoid_dns::recursive_cache::{CachedRecord, RecursiveCacheKey, RecursiveDnsCache};
 
-        let config = RecursiveCacheConfig::default();
+        let config = crate::support::recursive_cache_runtime(1_000_000, 300, 86_400, 86_400, 0);
         let cache = RecursiveDnsCache::new(100, &config);
 
         let stats = cache.stats();
@@ -798,27 +803,15 @@ mod dns_config_tests {
 
     #[tokio::test]
     async fn test_recursive_server_creation() {
-        use synvoid_config::dns::{
-            RecursiveCacheConfig, RecursiveDnsConfig, RecursiveUpstreamProvider,
-        };
         use synvoid_dns::recursive::RecursiveDnsServer;
+        use synvoid_dns::runtime_config::RecursiveRuntimeConfig;
 
-        let config = RecursiveDnsConfig {
-            enabled: true,
-            bind_address: "127.0.0.1".to_string(),
-            port: 0,
-            upstream_provider: RecursiveUpstreamProvider::System,
-            upstream_servers: vec![],
-            cache: RecursiveCacheConfig::default(),
+        let config = RecursiveRuntimeConfig {
             dnssec_validation: false,
             qname_minimization: false,
-            query_timeout_secs: 5,
+            query_timeout: std::time::Duration::from_secs(5),
             max_concurrent_queries: 100,
-            ratelimit: Default::default(),
-            firewall: Default::default(),
-            root_hints_path: String::new(),
-            trust_anchor_path: String::new(),
-            ..Default::default()
+            ..crate::support::recursive_runtime()
         };
 
         let server = RecursiveDnsServer::new(config, None, None, None)
@@ -870,10 +863,9 @@ mod dns_config_tests {
 
     #[test]
     fn test_recursive_cache_invalidation_by_name() {
-        use synvoid_config::dns::RecursiveCacheConfig;
         use synvoid_dns::recursive_cache::{CachedRecord, RecursiveCacheKey, RecursiveDnsCache};
 
-        let config = RecursiveCacheConfig::default();
+        let config = crate::support::recursive_cache_runtime(1_000_000, 300, 86_400, 86_400, 0);
         let cache = RecursiveDnsCache::new(100, &config);
 
         let key_a = RecursiveCacheKey::new(b"example.com", 1, None);
@@ -916,10 +908,9 @@ mod dns_config_tests {
 
     #[test]
     fn test_recursive_cache_len_operations() {
-        use synvoid_config::dns::RecursiveCacheConfig;
         use synvoid_dns::recursive_cache::{CachedRecord, RecursiveCacheKey, RecursiveDnsCache};
 
-        let config = RecursiveCacheConfig::default();
+        let config = crate::support::recursive_cache_runtime(1_000_000, 300, 86_400, 86_400, 0);
         let cache = RecursiveDnsCache::new(100, &config);
 
         assert!(cache.is_empty());

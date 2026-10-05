@@ -31,7 +31,12 @@ async fn start_stop_ephemeral_port() {
     let port = ephemeral_port();
     let config = make_config("127.0.0.1", port);
 
-    let mut server = DnsServer::new(config, support::deferred_config(), None);
+    let mut server = DnsServer::new(
+        config,
+        support::recursive_disabled(),
+        support::deferred_config(),
+        None,
+    );
     server.start().await.expect("start should succeed");
 
     // Give the UDP/TCP tasks a moment to bind
@@ -51,7 +56,12 @@ async fn udp_port_reusable_after_shutdown() {
 
     // First lifecycle: start and shutdown
     {
-        let mut server = DnsServer::new(config.clone(), support::deferred_config(), None);
+        let mut server = DnsServer::new(
+            config.clone(),
+            support::recursive_disabled(),
+            support::deferred_config(),
+            None,
+        );
         server.start().await.expect("first start should succeed");
         tokio::time::sleep(Duration::from_millis(100)).await;
         server.shutdown_runtime();
@@ -63,7 +73,12 @@ async fn udp_port_reusable_after_shutdown() {
 
     // Second lifecycle: the same port must be bindable
     {
-        let mut server = DnsServer::new(config, support::deferred_config(), None);
+        let mut server = DnsServer::new(
+            config,
+            support::recursive_disabled(),
+            support::deferred_config(),
+            None,
+        );
         server.start().await.expect("second start should succeed");
         tokio::time::sleep(Duration::from_millis(100)).await;
         server.shutdown_runtime();
@@ -78,7 +93,12 @@ async fn tcp_port_reusable_after_shutdown() {
 
     // First lifecycle
     {
-        let mut server = DnsServer::new(config.clone(), support::deferred_config(), None);
+        let mut server = DnsServer::new(
+            config.clone(),
+            support::recursive_disabled(),
+            support::deferred_config(),
+            None,
+        );
         server.start().await.expect("first start should succeed");
         tokio::time::sleep(Duration::from_millis(100)).await;
         server.shutdown_runtime();
@@ -89,7 +109,12 @@ async fn tcp_port_reusable_after_shutdown() {
 
     // Verify TCP port is reusable
     {
-        let mut server = DnsServer::new(config, support::deferred_config(), None);
+        let mut server = DnsServer::new(
+            config,
+            support::recursive_disabled(),
+            support::deferred_config(),
+            None,
+        );
         server.start().await.expect("second start should succeed");
         tokio::time::sleep(Duration::from_millis(100)).await;
         server.shutdown_runtime();
@@ -110,7 +135,12 @@ async fn shutdown_idempotent_under_load() {
     let port = ephemeral_port();
     let config = make_config("127.0.0.1", port);
 
-    let mut server = DnsServer::new(config, support::deferred_config(), None);
+    let mut server = DnsServer::new(
+        config,
+        support::recursive_disabled(),
+        support::deferred_config(),
+        None,
+    );
     server.start().await.expect("start should succeed");
     tokio::time::sleep(Duration::from_millis(50)).await;
 
@@ -126,7 +156,12 @@ async fn shutdown_idempotent_under_load() {
 async fn shutdown_before_start_is_safe() {
     let config = make_config("127.0.0.1", ephemeral_port());
 
-    let mut server = DnsServer::new(config, support::deferred_config(), None);
+    let mut server = DnsServer::new(
+        config,
+        support::recursive_disabled(),
+        support::deferred_config(),
+        None,
+    );
     // Shutdown on a server that was never started — must not panic
     server.shutdown_runtime();
     server.shutdown_runtime();
@@ -193,7 +228,12 @@ fn recursive_server_handle_is_not_leaked() {
 
     let config = make_config("127.0.0.1", ephemeral_port());
 
-    let server = DnsServer::new(config, support::deferred_config(), None);
+    let server = DnsServer::new(
+        config,
+        support::recursive_disabled(),
+        support::deferred_config(),
+        None,
+    );
 
     // Verify server can be dropped without issues (no join handle leaks)
     drop(server);

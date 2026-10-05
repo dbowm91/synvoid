@@ -180,8 +180,8 @@ pub fn dns_server_runtime_config_from_persisted(
     let runtime = dns_runtime_config_from_persisted(config)?;
     Ok(DnsServerRuntimeConfig {
         authoritative: runtime.authoritative,
+        recursive: runtime.recursive,
         deferred: DeferredDnsConfig {
-            recursive: config.recursive.clone(),
             dnssec: config.dnssec.clone(),
             zones: config.zones.clone(),
         },
@@ -193,7 +193,9 @@ pub fn dns_server_runtime_config_from_persisted(
 pub struct DnsServerRuntimeConfig {
     /// Authoritative server and encrypted-transport runtime values.
     pub authoritative: AuthoritativeRuntimeConfig,
-    /// Recursive/DNSSEC/HSM/zone sections still owned by Phases 127/128.
+    /// Recursive resolver runtime values (Phase 127).
+    pub recursive: RecursiveRuntimeConfig,
+    /// DNSSEC/HSM/zone sections still owned by Phase 128.
     pub deferred: DeferredDnsConfig,
 }
 
