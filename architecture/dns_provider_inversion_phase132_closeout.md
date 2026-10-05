@@ -125,6 +125,7 @@ so `--configtest` points at the file instead of startup failing later.
 | `tests/dns_zone_startup_activation.rs` (new) | pass — 4/4 |
 | `cargo test -p synvoid-repo-guards --profile ci` | pass, including 2 new Phase 132 guards |
 | `scripts/dns/conformance.sh` | **10/10** internal, external 5 runnable / 5 skipped |
+| `cargo xtask verify` | **10/10** (582.1s) |
 
 ### Proof that a configured zone is actually served
 
