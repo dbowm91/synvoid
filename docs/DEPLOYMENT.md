@@ -33,28 +33,37 @@ Generate a secure random token using the built-in CLI command:
 Alternatively, generate manually:
 
 ```bash
-# Using openssl
+# Using openssl — 32 random bytes rendered as 64 hex characters
 openssl rand -hex 32
 
 # Using /dev/urandom
 head -c 32 /dev/urandom | xxd -p
 
-# Add to config/main.toml manually
+# Add to config/main.toml manually. The token must be at least 32 characters
+# and must not match the weak-token patterns AdminConfig::validate() rejects.
 [admin]
-token = "your-generated-token-here"
+token = "<64-hex-char-token-from-the-command-above>"
 ```
+
+Prefer `token_env_var` for production deployments (the shipped
+`config/main.toml` uses `SYNVOID_ADMIN_TOKEN`) so the secret never lands in a
+config file.
 
 ### 2. Network Security
 
 Restrict access to admin and metrics ports:
 
 ```bash
-# iptables rules
+# iptables rules — admin API (8081). Default bind is 127.0.0.1:8081;
+# widen it with [admin] bind_address only if you need remote access.
 iptables -A INPUT -p tcp --dport 8081 -s 10.0.0.0/8 -j ACCEPT
 iptables -A INPUT -p tcp --dport 8081 -j DROP
 
-iptables -A INPUT -p tcp --dport 9090 -s 10.0.0.0/8 -j ACCEPT
-iptables -A INPUT -p tcp --dport 9090 -j DROP
+# The Prometheus exporter port (9090) CANNOT be exposed off-host:
+# `MetricsConfig::validate()` rejects any [metrics] bind_address that is not
+# loopback (127.0.0.1 / ::1 / localhost), so startup fails rather than
+# publishing metrics. Run the scraper as a host-local agent or sidecar, or
+# tunnel over SSH — do not add a firewall rule expecting remote scrapes.
 ```
 
 ### 3. File Permissions
@@ -143,8 +152,9 @@ Tune rate limiting memory based on expected traffic:
 
 ```toml
 [rate_limit_memory]
-max_ips = 1000000           # 1M unique IPs tracked
+max_ip_entries = 1000000    # 1M unique IPs tracked
 cleanup_interval_secs = 60   # Cleanup frequency
+num_shards = 256             # Shard count (default)
 
 [blocklist_limits]
 max_entries = 100000        # Max blocked IPs
@@ -162,9 +172,10 @@ Memory calculation:
 Use a load balancer (HAProxy, nginx, cloud LB) with health checks:
 
 ```yaml
-# HAProxy example
+# HAProxy example. The data-plane listener has no `/health` route; use the
+# internal liveness path that the frontdoor classifies before WAF routing.
 backend synvoid
-    option httpchk GET /health
+    option httpchk GET /__internal__/health
     http-check expect status 200
     server waf1 10.0.1.10:8080 check
     server waf2 10.0.1.11:8080 check backup
@@ -190,20 +201,20 @@ groups:
   - name: synvoid
     rules:
       - alert: synvoidHighAttackRate
-        expr: rate(synvoid_attack_detected_total[5m]) > 100
+        expr: rate(synvoid_request_enforcement_source_total{source="attack_detection"}[5m]) > 100
         for: 2m
         labels:
           severity: warning
         annotations:
           summary: "High attack detection rate"
 
-      - alert: synvoidBlackholeActive
-        expr: synvoid_blackhole_active == 1
+      - alert: synvoidBlackholeDrops
+        expr: rate(synvoid_http_blackhole_drop_total[5m]) > 1
         for: 1m
         labels:
           severity: critical
         annotations:
-          summary: "WAF in blackhole mode - possible DDoS"
+          summary: "Requests silently dropped by the WAF - possible DDoS"
 
       - alert: synvoidHighErrorRate
         expr: rate(synvoid_requests_upstream_error_total[5m]) / rate(synvoid_requests_proxied_total[5m]) > 0.1
@@ -290,7 +301,7 @@ output.elasticsearch:
 ```
 Rate Limiting Memory:
   Per IP tracking: ~100 bytes
-  Formula: max_ips × 100 bytes = memory for rate limiting
+  Formula: max_ip_entries × 100 bytes = memory for rate limiting
 
   Example: 1,000,000 IPs × 100 bytes = 100 MB
 
@@ -367,7 +378,7 @@ Step 4: Configure limits
 ### Scaling Guidelines
 
 1. **CPU-bound**: Add more cores or instances
-2. **Memory-bound**: Increase rate_limit_memory.max_ips
+2. **Memory-bound**: Increase `rate_limit_memory.max_ip_entries`
 3. **Connection-bound**: Tune kernel parameters and increase max_connections
 4. **Upstream latency**: Add more backend servers
 
@@ -431,7 +442,9 @@ curl -X POST -H "Authorization: Bearer $TOKEN" http://localhost:8081/api/config/
 # Backup configuration
 tar -czvf synvoid-config-$(date +%Y%m%d).tar.gz /etc/synvoid/
 
-# Backup blocklist (stored in data directory)
+# Backup blocklist. The filename comes from the configured persistence
+# directory: BlockStore writes `<data_dir>/blocks.json`, so with the shipped
+# `[defaults.persistence] data_dir = "/var/lib/synvoid"` that is:
 cp /var/lib/synvoid/blocks.json blocks-backup-$(date +%Y%m%d).json
 ```
 
@@ -475,19 +488,22 @@ systemctl restart synvoid
 
 ### Basic Docker Run
 
-```bash
-# Pull or build image
-docker pull synvoid/synvoid:latest
+> **Unverified:** this repository contains no `Dockerfile` and its CI workflow
+> builds no image, so `synvoid/synvoid:latest` cannot be confirmed to exist.
+> Build your own from the release binary (see `RELEASE.md`) and substitute that
+> image name everywhere below.
 
-# Run with basic config
+```bash
+# Run with basic config. `--config-path` takes the DIRECTORY that holds
+# main.toml + sites/, not the toml file. Without it SynVoid looks for ./config
+# relative to the working directory.
 docker run -d \
   --name synvoid \
   -p 80:8080 \
-  -p 443:8443 \
+  -p 443:443 \
   -p 8081:8081 \
   -v /path/to/config:/etc/synvoid \
-  -e RUST_LOG=info \
-  synvoid/synvoid:latest
+  synvoid/synvoid:latest --config-path /etc/synvoid
 ```
 
 ### Docker Compose
@@ -500,20 +516,22 @@ services:
   synvoid:
     image: synvoid/synvoid:latest
     container_name: synvoid
+    # --config-path is the config DIRECTORY (main.toml + sites/), not the file
+    command: ["synvoid", "--config-path", "/etc/synvoid"]
     ports:
       - "80:8080"
-      - "443:8443"
+      - "443:443"
       - "8081:8081"
-      - "9090:9090"
     volumes:
       - ./config:/etc/synvoid
       - ./certs:/etc/synvoid/certs
       - ./logs:/var/log/synvoid
     environment:
       - RUST_LOG=info
-      - SYNVOID_CONFIG_DIR=/etc/synvoid
     restart: unless-stopped
     healthcheck:
+      # The admin API serves /health (public, unauthenticated). There is no
+      # /api/health route.
       test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
       interval: 30s
       timeout: 10s
@@ -538,11 +556,16 @@ networks:
 docker run -d \
   --name synvoid \
   -p 80:8080 \
-  -p 443:8443 \
+  -p 443:443 \
+  -e RUST_LOG=info \
   -e SYNVOID_ADMIN_TOKEN=${SYNVOID_ADMIN_TOKEN} \
-  -e SYNVOID_IPC_KEY=${SYNVOID_IPC_KEY} \
-  synvoid/synvoid:latest
+  synvoid/synvoid:latest --config-path /etc/synvoid
 ```
+
+`SYNVOID_ADMIN_TOKEN` is only consulted when the config opts in via
+`[admin] token_env_var = "SYNVOID_ADMIN_TOKEN"` (the shipped `config/main.toml`
+already sets it). `SYNVOID_IPC_KEY` is generated and passed to worker/jail
+children by the Supervisor itself — do not set it by hand.
 
 ## Kubernetes Deployment
 
@@ -569,10 +592,12 @@ spec:
       containers:
       - name: synvoid
         image: synvoid/synvoid:latest
+        # --config-path takes the config DIRECTORY
+        args: ["--config-path", "/etc/synvoid"]
         ports:
         - containerPort: 8080
           name: http
-        - containerPort: 8443
+        - containerPort: 443
           name: https
         - containerPort: 8081
           name: admin
@@ -598,13 +623,14 @@ spec:
             cpu: "500m"
         livenessProbe:
           httpGet:
-            path: /api/health
+            # Public admin liveness route; it is /health, not /api/health.
+            path: /health
             port: 8081
           initialDelaySeconds: 30
           periodSeconds: 10
         readinessProbe:
           httpGet:
-            path: /api/health
+            path: /health
             port: 8081
           initialDelaySeconds: 5
           periodSeconds: 5
@@ -635,7 +661,7 @@ spec:
     targetPort: 8080
   - name: https
     port: 443
-    targetPort: 8443
+    targetPort: 443
 ```
 
 ### ConfigMap

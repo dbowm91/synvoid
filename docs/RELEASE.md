@@ -85,10 +85,19 @@ SynVoid defines five compilation profiles. All five must compile and pass tests 
 | Profile | Command | Use Case |
 |---------|---------|----------|
 | **Default** | `cargo build --release` | General-purpose deployment with all standard features |
-| **Core** | `cargo build --release --no-default-features` | Minimal footprint; no DNS, no mesh |
+| **Core** | `cargo build --release --no-default-features` | Minimal footprint: no `dns`, no `mesh`, no `socket-handoff`, no `swagger-ui` |
 | **Mesh** | `cargo build --release --no-default-features --features mesh` | Mesh networking without DNS |
 | **DNS** | `cargo build --release --no-default-features --features dns` | DNS server without mesh |
 | **Full** | `cargo build --release --no-default-features --features mesh,dns` | All supported features |
+
+The `icmp-filter` lane is compiled as a separate check
+(`--features icmp-filter`, `--features mesh,dns,icmp-filter`) rather than as a
+sixth release profile.
+
+> **Fail-closed configuration:** a reduced-feature binary **rejects**
+> capability-bearing sections it was not built with — `[dns]`, `[mesh]`,
+> `[tunnel.mesh]`, `[icmp_filter]` — even when `enabled = false`. Do not ship a
+> `Core` binary against a full `main.toml`.
 
 ### Default features
 
@@ -101,8 +110,9 @@ Beta features are functional and compile cleanly but have limited real-world val
 | Feature | Platform Requirement | Runtime Constraints |
 |---------|---------------------|---------------------|
 | `icmp-ebpf` | Linux only | Requires kernel BTF, CAP_NET_ADMIN or root, precompiled eBPF object. Falls back to nftables when unavailable |
-| `post-quantum` | Any | Experimental TLS key exchange |
+| `post-quantum` | Any | **Marker feature only** — wires `synvoid-http-client/post-quantum` and `synvoid-admin/post-quantum` for *outbound* egress. It is not an inbound TLS switch: `synvoid-tls` unconditionally enables rustls `prefer-post-quantum`, so inbound hybrid PQ key exchange is always available regardless of this flag. |
 | `verify-pq` | Any | Post-quantum verification |
+| `flood-ebpf` | Linux only | **Unreachable.** `ebpf-flood/` is not a workspace member, this is not a default feature, and `EbpfFlood` has no construction site. Do not advertise eBPF/XDP flood protection as a working capability. |
 
 To build with a Beta feature:
 
@@ -118,18 +128,18 @@ Full details in [`docs/PLATFORM_SUPPORT.md`](PLATFORM_SUPPORT.md).
 
 | Platform | Support Level | Notes |
 |----------|--------------|-------|
-| Linux x86_64 (glibc) | Primary | CPU pinning, Landlock sandboxing. Routinely verified in CI. |
+| Linux x86_64 (glibc) | Primary | CPU pinning, Landlock + seccomp sandboxing. Routinely verified in CI. |
 | Linux x86_64 (musl/Alpine) | Primary | Full feature support. CI runs ubuntu-latest only — musl coverage is aspirational; verify locally before claiming. |
-| macOS x86_64/aarch64 | Best effort | Full socket support, SO_REUSEPORT. Manually verified. |
-| Windows x86_64 (10+) | Best effort | Named pipe IPC, Windows Service support. Manually verified. |
-| FreeBSD x86_64 | Best effort | SO_REUSEPORT_LB kernel distribution. Manually verified. |
+| macOS x86_64/aarch64 | Best effort | Full socket support, SO_REUSEPORT. Sandboxing is the experimental deprecated `sandbox_init` SBPL path — not Apple App Sandbox. Manually verified. |
+| Windows x86_64 (10+) | Best effort | Named pipe IPC, Windows Service support, process-limits-only sandboxing (no AppContainer). Manually verified. |
+| FreeBSD x86_64 | Best effort | `SO_REUSEPORT` via the shared socket-bind helpers (no separate `SO_REUSEPORT_LB` path). Manually verified. |
 
 ### Feature availability by platform
 
 | Feature | Linux | macOS | FreeBSD | Windows |
 |---------|-------|-------|---------|---------|
 | `SO_REUSEPORT` | Yes | Yes | Yes | Yes |
-| CPU Core Pinning | Yes | No | Yes | No |
+| CPU Core Pinning (`sched_setaffinity`) | Yes | No | No | No |
 | Landlock/Seccomp sandboxing | Yes | No | No | No |
 | eBPF ICMP filter (`icmp-ebpf`) | Yes (Beta) | No | No | No |
 | WireGuard tunnel | Yes | Yes | Yes | Yes |
@@ -252,12 +262,13 @@ The following items are known limitations or tracked exceptions that operators s
 
 | Item | Classification | Impact | Notes |
 |------|---------------|--------|-------|
+| `flood-ebpf` eBPF/XDP flood protection | **Unreachable** | Advertised feature that is not built or constructed | `ebpf-flood/` is not a workspace member, `flood-ebpf` is not a default feature, and `EbpfFlood` has no construction site. Do not list it as a capability. |
 | `icmp-ebpf` eBPF ICMP filter | **Beta** | Feature-gated, not in default profile | Requires Linux with kernel BTF, CAP_NET_ADMIN or root, precompiled eBPF object. Falls back to nftables when unavailable |
 | `--all-features` workspace check | **Tracked exception** | Does not pass `cargo check --all-features` | `synvoid-icmp-filter` eBPF dependency resolution fails in `--all-features` mode. Individual crate checks pass. Not in default profile |
-| wasmtime 48.0.3 (via yara-x 1.20 compat fork); direct 36.0.16 LTS | **Tracked** | 2 advisory ignores in `deny.toml` (mirrored in `.cargo/audit.toml`) | YARA compilation only for the transitive line; both lines version-patched (direct 36.0.16 LTS for RUSTSEC-2026-0269 + -0316; transitive 48.0.3 for 0222/0269/0315/0316 + 2026-04 batch). Remaining ignores: `rsa` 0071 (no upstream fix; Marvin decrypt unreachable across all four resolve paths — re-triaged Phase 103), `rkyv` 0235 (minifier-internal sourcemaps only). Reviewed: 2026-10-01; Re-audit: 2026-11-01. See `architecture/dependency_security_baseline_phase25.md` §11/§12 |
-| Email alerting (`src/admin/alerting/mod.rs:349`) | **Stub** | Logs and returns Ok, no actual sending | Not production-ready; implementation deferred |
-| `spin` idle instance eviction | **Known gap** | Old UUID entries are never cleaned up | Tracked as plan DOC-L7 |
-| Archive inspection | **Limitation** | ZIP-only, non-recursive | Does not inspect nested archives or non-ZIP formats |
+| wasmtime 48.0.5 (via yara-x 1.20 compat fork); direct 36.0.16 LTS | **Tracked** | 2 advisory ignores in `deny.toml` (mirrored in `.cargo/audit.toml`) | YARA compilation only for the transitive line; both lines version-patched (direct 36.0.16 LTS for RUSTSEC-2026-0269 + -0316; transitive 48.0.5 for 0222/0269/0315/0316 + 2026-04 batch, advanced from 48.0.3 for RUSTSEC-2026-0326/-0327). Remaining ignores: `rsa` 0071 (no upstream fix; Marvin decrypt unreachable across all four resolve paths — re-triaged Phase 103), `rkyv` 0235 (minifier-internal sourcemaps only). Reviewed: 2026-10-01; Re-audit: 2026-11-01. See `architecture/dependency_security_baseline_phase25.md` §11/§12 |
+| Email alerting | **Not implemented** | No such channel exists | `src/admin/alerting/mod.rs` implements **webhook delivery only** (`send_webhook_internal`, `pending_webhooks`). There is no SMTP/email transport and no email config key — the previously cited "stub at mod.rs:349" no longer matches the file. Use a webhook receiver. |
+| `spin` idle instance eviction | **Closed** | Idle instances are evicted | `SpinRuntime` performs lazy eviction of idle instances from both the instance and cache maps before each insert (`crates/synvoid-plugin-runtime/src/spin/runtime.rs`, `is_idle` + `retain`). The old "old UUID entries are never cleaned up" gap no longer applies. |
+| Archive inspection | **Limitation** | ZIP-only, non-recursive | `inspect_zip_archive` scans entries of a single ZIP; a nested archive is *detected and reported*, not descended into |
 | AI responder (honeypot) | **Disabled by default** | Requires explicit opt-in | External providers require configuration; no accidental activation |
 | Mesh propagation | **Disabled by default** | Requires threshold configuration | Threat-intel sharing requires action class, confidence, and event count thresholds |
 

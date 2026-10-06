@@ -2,35 +2,22 @@
 
 **A multi-process Web Application Firewall and reverse proxy written in Rust.**
 
-SynVoid is a security gateway for placing in front of web applications and services. It combines reverse proxying, streaming WAF inspection, rate limiting and bot controls, operator-facing administration, and feature-gated distributed services in one Rust workspace.
+SynVoid sits in front of web applications and services. It combines reverse proxying, streaming WAF inspection, rate limiting, bot controls, an operator admin API and UI, and feature-gated DNS and mesh services — in one Rust workspace.
 
-The default build includes the WAF/proxy data plane plus mesh networking, DNS, socket handoff, the erased HTTP client pool, and Swagger UI support. Linux is the primary deployment target; the codebase contains platform abstractions for other operating systems, but kernel-specific features and service behavior are not equivalent across platforms.
+Linux is the primary deployment target.
 
-## What SynVoid provides
+## Quick start
 
-- **Reverse proxy and modern HTTP transport** — HTTP/1.1 and HTTP/2 handling, HTTP/3 over QUIC, TLS, upstream routing, streaming proxying, static-file delivery, FastCGI, and application-handler paths.
-- **Web application firewall** — request inspection for SQL injection, XSS, path traversal, RFI, SSRF, SSTI, command injection, XXE, JWT abuse, request smuggling, LDAP injection, XPath injection, and open redirects.
-- **Abuse and bot controls** — rate limiting, blocked-path rules, threat levels, CSS and proof-of-work challenges, bot classification, honeypot endpoints, tarpitting, and deception listeners.
-- **Administration and observability** — a browser admin UI, authenticated REST API, WebSocket-backed live state, request/system logs, Prometheus-oriented metrics, site and upstream management, alert webhooks, and OpenAPI discovery.
-- **Distributed security services** — the `mesh` feature provides DHT/Raft-backed coordination and threat-intelligence distribution (authority/partition contract in `architecture/distributed_state_contract.md`: canonical Raft state vs advisory DHT, fail-closed quorum behavior, freshness-classified reads). The `dns` feature provides the DNS subsystem, including DNSSEC and encrypted DNS transports. DNSSEC private keys live behind a dedicated custody boundary (`crates/synvoid-dnssec-keystore`, see `architecture/dnssec_keystore.md`); HSM/PKCS#11 backing is opt-in via `dns-hsm` and fails closed.
-- **Extensibility and auxiliary services** — sandboxed WASM plugins, serverless/app handlers, tunnel/VPN components, YARA integration, and bounded CPU-worker execution paths are present in the workspace and can be enabled/configured as required.
+### 1. Prerequisites
 
-## Runtime model
-
-A normal `synvoid` invocation starts the **Supervisor**. The Supervisor loads the selected configuration directory, owns process lifecycle and control-plane state, and starts the configured number of `UnifiedServerWorker` data-plane processes. Those workers keep connection handling, HTTP/TLS processing, WAF evaluation, routing, and proxy streaming on the request path. Dedicated CPU-worker and sandbox modes exist for work that should not run directly on the latency-sensitive path. Sandboxed WASM/YARA execution runs in dedicated `synvoid-wasm-jail` / `synvoid-yara-jail` child binaries (from the `synvoid-jail-runtime` crate, resolved beside the main executable with no `PATH`/working-directory search); release packages must ship all three binaries together atomically (see `docs/releasing.md` §4a).
-
-With the default `mesh` feature enabled, the Supervisor also owns the gRPC control API used by operational commands and mesh coordination.
-
-## Build from source
-
-A Rust toolchain with Cargo is required. The default feature set includes
-`mesh`, which triggers protobuf codegen at build time — install
-`protobuf-compiler` (`protoc`) first or the build fails:
+A Rust toolchain. The default feature set includes `mesh`, which runs protobuf codegen at build time, so `protoc` is required:
 
 ```bash
-# Debian/Ubuntu (CI does this); use the equivalent on other platforms.
+# Debian/Ubuntu; use the equivalent elsewhere.
 sudo apt-get install -y protobuf-compiler
 ```
+
+### 2. Build
 
 ```bash
 git clone https://github.com/dbowm91/synvoid.git
@@ -38,186 +25,180 @@ cd synvoid
 cargo build --release
 ```
 
-The default Cargo feature set is:
+The binary is `./target/release/synvoid`.
 
-```text
-socket-handoff, mesh, dns, erased_pool, swagger-ui
-```
-
-For a smaller build without default feature-gated services:
-
-```bash
-cargo build --release --no-default-features
-```
-
-The `--no-default-features` build is the supported hardened/minimal profile
-(Phase 31): core WAF/proxy data plane only, with no mesh (DHT/Raft/gRPC),
-no DNS (hickory/DNSSEC), no socket-handoff FD passing, and no Swagger UI.
-It is continuously compiled and tested (`cargo xtask verify-full` covers
-`minimal`, `mesh`, `dns`, `icmp-filter`, and `mesh,dns`; mesh/DNS absence
-branches execute honestly). Prefer it for single-node deployments that do
-not need distributed coordination or DNS serving.
-
-Mesh-only and DNS-only examples:
-
-```bash
-cargo build --release --no-default-features --features mesh
-cargo build --release --no-default-features --features dns
-```
-
-Fail-closed configuration (Phase 41): a reduced-feature binary rejects
-capability-bearing sections it was not built with (`[dns]`, `[mesh]`,
-`[tunnel.mesh]`, `[icmp_filter]` — even inert `enabled = false` tables)
-instead of silently ignoring them. Rebuild with the named feature or remove
-the unsupported section. Process/supervisor counts are validated
-(`unified_server_workers 1..=256`, legacy `min/max_workers 1..=1024`,
-warm/pre-spawn `<= max_workers`); mesh `restart_enabled = true` and
-non-default restart tuning are rejected before startup. See
-`architecture/config_feature_contract.md`.
-
-The default feature set stays full-featured (`socket-handoff, mesh, dns,
-erased_pool, swagger-ui`) for operator compatibility: changing defaults
-would silently remove mesh coordination, DNS serving, and the admin API
-docs from existing deployments. Defaults are not changed to shrink
-`cargo tree`; use the minimal profile explicitly where attack surface
-matters.
-
-Additional opt-in feature flags currently include `wireguard`, `icmp-filter`, `flood-ebpf`, `origin_key_exchange`, `audit`, `post-quantum`, `verify-pq`, `tun-rs`, `macos-sandbox`, `fastcgi_streaming`, `dns-hsm` (PKCS#11/HSM backing for DNSSEC via the keystore custody boundary; off by default, fails closed), and `unsafe-native-extensions` (in-process native plugin loading; off by default — the sandboxed WASM runtime needs no feature flag). See `Cargo.toml` for the complete current feature surface. Prefer enabling only the features required by a deployment rather than treating `--all-features` as a deployment profile; several opt-ins are platform- or environment-specific.
-
-## Quick start
-
-The repository contains a working configuration tree under `config/`. Before starting SynVoid, review `config/main.toml` and the files in `config/sites/`: the tracked configuration binds the public data plane to `0.0.0.0:8080` and includes Linux-oriented logging/persistence settings and example sites.
-
-Generate an admin token and a stable IPC signing key for the current shell:
+### 3. Generate secrets
 
 ```bash
 export SYNVOID_ADMIN_TOKEN="$(./target/release/synvoid --generatetoken)"
 export SYNVOID_IPC_KEY="$(openssl rand -hex 32)"
 ```
 
-Then start the Supervisor in the foreground:
+The admin token must be **at least 32 characters** and must not contain obvious placeholder words; anything shorter is rejected at config validation. `--generatetoken` prints a 64-character hex token.
 
-```bash
-./target/release/synvoid --foreground
+### 4. Write a configuration tree
+
+`main.toml` — global policy. Six sections are required (`server`, `fallback`, `admin`, `logging`, `metrics`, `defaults`); the rest are optional:
+
+```toml
+[server]
+host = "127.0.0.1"   # data plane bind address
+port = 8080
+
+[fallback]
+mode = "return_404"  # response for a Host that matches no site
+
+[admin]
+enabled = true
+port = 8081
+token_env_var = "SYNVOID_ADMIN_TOKEN"
+
+[logging]
+level = "info"
+
+[metrics]
+enabled = true
+port = 9090
+
+[http]
+strict_protocol_validation = true
+
+[defaults.ratelimit]
+mode = "shared"
+
+[defaults.ratelimit.ip]
+per_second = 10
+per_minute = 60
+
+[defaults.ratelimit.global]
+per_second = 500
+per_minute = 5000
+max_connections = 1000
 ```
 
-`--foreground` is recommended while testing or running under an external service manager. Without it, the normal Supervisor path daemonizes itself.
-
-With the tracked configuration and source defaults, the principal local endpoints are:
-
-| Service | Default/Example endpoint | Notes |
-|---|---|---|
-| HTTP data plane | `0.0.0.0:8080` | From `config/main.toml`; change for your deployment |
-| Admin UI/API | `127.0.0.1:8081` | Admin bind defaults to loopback |
-| Metrics | port `9090` | When metrics are enabled |
-
-To use another configuration tree, pass the **directory** containing `main.toml` and `sites/`:
-
-```bash
-./target/release/synvoid --foreground --config-path /etc/synvoid
-```
-
-`--config-path` is a directory path, not a path to `main.toml` itself.
-
-## Configure a protected site
-
-Per-site TOML files live under `config/sites/`. A minimal reverse-proxy site looks like this:
+`sites/example.com.toml` — one file per site:
 
 ```toml
 [site]
 domains = ["example.com", "www.example.com"]
 
 [site.upstream]
-default = "http://127.0.0.1:3000"
+default = "http://127.0.0.1:8000"
+
+[attack_detection]
+enabled = true
+paranoia_level = 2
+action = "block"
 ```
 
-Global defaults in `main.toml` supply WAF, rate-limit, bot, challenge, worker-pool, persistence, and other policy unless a site overrides them. The repository ships example site files; replace or remove them when preparing a real deployment.
-
-See `config/main.toml.example`, `config/sites/example.com.toml`, and `docs/CONFIGURATION.md` for the broader configuration surface.
-
-## Admin UI and API
-
-The admin service is enabled by the tracked configuration and defaults to `127.0.0.1:8081`. Browser login exchanges the configured admin bearer token for an HttpOnly session cookie; subsequent browser mutations use CSRF protection rather than persisting the long-lived bearer token in browser storage.
-
-The source tree includes built browser assets in `admin-ui/dist`. At runtime SynVoid resolves the admin UI assets in this order:
-
-1. `SYNVOID_ADMIN_UI_DIR`
-2. `admin-ui/dist` beside the running executable
-3. `admin-ui/dist` under the compile-time repository root
-4. `./admin-ui/dist` relative to the current working directory
-
-If you install or copy only the binary, also install the admin UI assets or set `SYNVOID_ADMIN_UI_DIR` to their location.
-
-The API specification can be exported without starting the server:
+### 5. Validate before starting
 
 ```bash
-./target/release/synvoid --export-api-spec > synvoid-admin-openapi.json
+./target/release/synvoid --configtest --config-path ./config
 ```
 
-See `docs/ADMIN_UI.md` and `docs/API_REFERENCE.md` for the operator interface and API details. Frontend/backend drift is guarded mechanically: `tests/admin_route_contract.rs` checks every UI-consumed endpoint against backend path + method, and `tests/admin_router_composition.rs` checks capabilities, discovery/OpenAPI, and auth classification (bounded feature matrix: minimal, `mesh`, `dns`, `icmp-filter`, `mesh,dns`).
+`--config-path` takes the **directory** holding `main.toml` and `sites/` — not the TOML file. It defaults to `./config/` relative to the current directory.
 
-## Operational CLI
+### 6. Run
 
-SynVoid currently uses flags rather than positional subcommands. Common operations are:
+```bash
+./target/release/synvoid --foreground --config-path ./config
+```
+
+`--foreground` keeps the Supervisor attached to your terminal; without it the Supervisor daemonizes itself. The Supervisor starts the data-plane worker processes, which own HTTP/TLS, WAF evaluation, routing, and proxy streaming.
+
+### 7. Verify it works
+
+With an upstream listening on `127.0.0.1:8000`:
+
+```bash
+UA="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+
+# Proxied to your upstream -> 200
+curl -A "$UA" -H "Host: example.com" http://127.0.0.1:8080/
+
+# SQL injection -> 403 "Attack Detected"
+curl -A "$UA" -H "Host: example.com" \
+  'http://127.0.0.1:8080/?id=1%20OR%201=1%20UNION%20SELECT%20u,p,3%20FROM%20users--'
+
+# XSS -> 403
+curl -A "$UA" -H "Host: example.com" \
+  'http://127.0.0.1:8080/?q=%3Cscript%3Ealert(1)%3C/script%3E'
+
+# Host matching no site -> 404 from [fallback]
+curl -A "$UA" -H "Host: nope.invalid" http://127.0.0.1:8080/
+
+# Prometheus metrics -> 200
+curl http://127.0.0.1:9090/metrics
+```
+
+> **Send a browser-like `User-Agent`.** The default bot `scraper_patterns` include `curl`, so a plain `curl` is tarpitted and you will get HTTP 200 with the body `Tarpit active` instead of your upstream's response.
+
+### Default endpoints
+
+| Service | Default bind | Notes |
+|---|---|---|
+| HTTP data plane | `127.0.0.1:8080` (configurable) | The proxy/WAF listener |
+| Admin UI/API | `127.0.0.1:8081` | Defaults to loopback |
+| Prometheus metrics | `127.0.0.1:9090` | A non-loopback metrics bind is **rejected** at config load |
+
+## Common commands
+
+SynVoid uses flags, not subcommands. `synvoid --help` lists everything.
 
 | Command | Purpose |
 |---|---|
+| `synvoid --foreground` | Run the Supervisor in the foreground |
 | `synvoid --status` | Query a running Supervisor |
-| `synvoid --rehash` | Reload configuration and propagate it to workers |
-| `synvoid --restart` | Stop the running instance, then launch the Supervisor again |
+| `synvoid --rehash` | Reload config and propagate it to workers |
+| `synvoid --restart` | Stop the running instance, then start again |
 | `synvoid --stop` | Stop a running instance |
-| `synvoid --configtest` | Validate `main.toml` and site TOML files |
-| `synvoid --generatetoken` | Generate and print an admin token without saving it |
-| `synvoid --generatenewtoken` | Generate an admin token and write it into `main.toml` |
-| `synvoid --hash-token TOKEN` | Generate a bcrypt hash for an admin token |
-| `synvoid --checkregex PATTERN` | Run the built-in ReDoS safety check against a regex |
-| `synvoid --export-api-spec` | Print the admin OpenAPI specification as JSON |
-| `synvoid --genesis` | Generate a mesh genesis key (`mesh` build required) |
-| `synvoid --show-node-info` | Show mesh node identity information (`mesh` build required) |
+| `synvoid --configtest` | Validate `main.toml` and site files, then exit |
+| `synvoid --generatetoken` | Print an admin token without saving it |
+| `synvoid --generatenewtoken` | Generate a token and write it into `main.toml` |
+| `synvoid --hash-token TOKEN` | bcrypt-hash an admin token |
+| `synvoid --checkregex PATTERN` | Run the built-in ReDoS safety check |
+| `synvoid --export-api-spec` | Print the admin OpenAPI spec as JSON |
 
-Use `synvoid --help` for the complete current flag set, including internal worker/sandbox modes and control-API overrides.
+The sandboxed WASM/YARA jails (`synvoid-wasm-jail`, `synvoid-yara-jail`) are separate binaries resolved beside the main executable. A release package must ship all three together.
 
-### Configuration-test path caveat
+## Build profiles
 
-`--configtest` validates `<dir>/main.toml` and `<dir>/sites/*.toml`, where `<dir>` is `--config-path` when given and `./config/` relative to CWD otherwise. A passing test covers only the validated directory.
+Defaults are `socket-handoff, mesh, dns, erased_pool, swagger-ui`. `--no-default-features` is the supported minimal profile (WAF/proxy data plane only). A reduced-feature binary **rejects** capability-bearing config sections it lacks — `[dns]`, `[mesh]`, `[tunnel.mesh]`, `[icmp_filter]` — rather than ignoring them, and it refuses to start on them even when they say `enabled = false`.
 
-## Security and deployment notes
-
-The shipped configuration is a starting point, not a universal production policy. In particular:
-
-- Keep the admin service on loopback or a restricted management network unless you have deliberately secured remote access.
-- Prefer `SYNVOID_ADMIN_TOKEN` or another secrets-management mechanism over committing an admin token. `--generatenewtoken` intentionally stores the generated token in plaintext in `main.toml` (and restricts the file to mode `0600` on Unix where possible).
-- The tracked config enables signed IPC and names `SYNVOID_IPC_KEY` as the session-key environment variable. Use a stable 32-byte key encoded as 64 hexadecimal characters when workers must survive/reconnect predictably across restarts.
-- Supervisor startup currently logs a warning and falls back to built-in defaults if `main.toml` cannot be loaded. Treat configuration-load warnings as operational failures and validate configuration before deployment.
-- Linux provides the broadest networking/kernel feature coverage and is the production recommendation for strict sandbox isolation (Landlock). macOS Seatbelt is an opt-in experimental backend using deprecated `sandbox_init` (not Apple App Sandbox); Windows sandboxing is process limits only. See `docs/SANDBOXING.md` for the per-platform support tiers.
-- Restrict admin and metrics exposure with host firewalling or equivalent network policy. Do not expose management surfaces merely because the data plane is internet-facing.
-- Authentication is CPU-isolated and fail-closed: password/admin-token bcrypt runs behind a bounded async executor (overload authenticates nobody), the auth store persists atomically (`0600`/`0700`) and a corrupt store fails startup instead of starting empty, and login audit retention is bounded. See `architecture/auth.md`.
+See [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md) for build profiles and the full feature-flag inventory, and [`docs/FEATURE_STATUS.md`](docs/FEATURE_STATUS.md) for which capabilities are live, partial, or deliberately unreachable.
 
 ## Documentation
 
-Useful user/operator references include:
+Start at [`docs/README.md`](docs/README.md) for the full index.
 
-- [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) — full configuration reference
-- [`docs/ADMIN_UI.md`](docs/ADMIN_UI.md) — browser administration
-- [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md) — admin API
-- [`docs/ATTACK_DETECTION.md`](docs/ATTACK_DETECTION.md) — WAF detection behavior
-- [`docs/BOT_PROTECTION.md`](docs/BOT_PROTECTION.md) — bot controls and challenges
-- [`docs/HTTP3.md`](docs/HTTP3.md) — HTTP/3/QUIC
-- [`docs/HONEYPOT.md`](docs/HONEYPOT.md) — deception listeners and storage
-- [`docs/TARPIT.md`](docs/TARPIT.md) — anti-scraping tarpit behavior
-- [`docs/TUNNELS.md`](docs/TUNNELS.md) — tunnel routing
-- [`SECURITY.md`](SECURITY.md) — security policy and model
-- [`CHANGELOG.md`](CHANGELOG.md) — notable changes
+| I want to… | Read |
+|---|---|
+| Get running | [GETTING_STARTED.md](docs/GETTING_STARTED.md) |
+| Configure a deployment | [CONFIGURATION.md](docs/CONFIGURATION.md) |
+| Deploy to production | [DEPLOYMENT.md](docs/DEPLOYMENT.md) |
+| Use the admin UI | [ADMIN_UI.md](docs/ADMIN_UI.md) |
+| Call the admin API | [API_REFERENCE.md](docs/API_REFERENCE.md) |
+| Understand WAF detection | [ATTACK_DETECTION.md](docs/ATTACK_DETECTION.md) |
+| Understand the architecture | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| Develop or contribute | [DEVELOPER.md](docs/DEVELOPER.md) |
+| Check a capability's status | [FEATURE_STATUS.md](docs/FEATURE_STATUS.md) |
+| Harden a deployment | [SECURITY.md](docs/SECURITY.md) |
+| Debug a problem | [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) |
 
-Internal architecture records and implementation plans remain in `architecture/` and `plans/`; they are development artifacts rather than the primary user documentation.
-The Phase 41–48 runtime-truthfulness, security, and publication campaign is closed; its evidence and intentional residuals are recorded in [`architecture/runtime_truthfulness_security_publication_closeout.md`](architecture/runtime_truthfulness_security_publication_closeout.md).
-The Phases 49–55 performance-optimization campaign and its Phases 56–57 corrective runtime/evidence closure are complete; see [`architecture/performance_optimization_closeout.md`](architecture/performance_optimization_closeout.md) and [`architecture/performance_optimization_corrective_closeout.md`](architecture/performance_optimization_corrective_closeout.md) (tuning guidance in [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md)).
-Upstream egress runs on the eggfetch 0.2 lane (Phases 58–64 closed; Phase 64 docs/evidence-truth correction only); the reproducible transport comparison harness lives in [`benchmarks/http_transport/`](benchmarks/http_transport/) (manual-only, never CI) and final performance evidence — including one accepted tail residual under synchronized concurrent streaming — is recorded in [`architecture/eggfetch_0_2_transport_performance_requalification.md`](architecture/eggfetch_0_2_transport_performance_requalification.md).
+Binding design records live in [`architecture/`](architecture/overview.md); [`SECURITY.md`](SECURITY.md) covers the security policy and threat model.
 
-## Reusable libraries
+## Before deploying
 
-One workspace crate is externally supported: **`synvoid-rate-limit`** (lock-free sliding-window rate-limit primitives, std-only, MSRV 1.81) — see its crate README and `architecture/public_crate_release_policy.md` for the semver/support contract. Every other `synvoid-*` crate is application-internal or a workspace-only reusable library with no external support promise, however publishable its tarball looks. Do not depend on non-promoted crates from outside this repository. Publication is manual (`cargo publish` only); see `docs/releasing.md` §1a for the externally supported order.
+The configuration above is a working starting point, not a production policy.
+
+- Keep the admin service on loopback or a restricted management network.
+- Supply the admin token via `SYNVOID_ADMIN_TOKEN` or a secrets manager. `--generatenewtoken` deliberately writes the token **in plaintext** into `main.toml` (restricted to `0600` on Unix).
+- Use a stable 32-byte `SYNVOID_IPC_KEY` (64 hex characters) so workers reconnect predictably across restarts.
+- Treat configuration-load warnings as failures and validate before deploying.
+- Linux gives the strictest sandbox isolation (Landlock). macOS Seatbelt is experimental and deprecated; Windows sandboxing is process-limits-only. See [SANDBOXING.md](docs/SANDBOXING.md).
+- Authentication is CPU-isolated and fails closed: the auth store persists atomically and a corrupt store fails startup rather than starting empty.
 
 ## License
 
-SynVoid is licensed under the MIT License. See [`LICENSE`](LICENSE).
+MIT. See [`LICENSE`](LICENSE).

@@ -21,73 +21,89 @@ SynVoid supports direct FastCGI protocol proxying, providing better performance 
 [site]
 domains = ["example.com", "www.example.com"]
 
-[site.upstream]
-default = "http://127.0.0.1:8000"
+[site.proxy.upstream]
+servers = ["http://127.0.0.1:8000"]
 
-[site.fastcgi]
-enabled = true
+[site.proxy.fastcgi]
 socket = "/var/run/php/php-fpm.sock"
 
-[site.fastcgi.params]
-SCRIPT_FILENAME = "$document_root$fastcgi_script_name"
-SCRIPT_NAME = "$fastcgi_script_name"
+[site.proxy.fastcgi.params]
+SCRIPT_FILENAME = "/var/www/html/index.php"
+SCRIPT_NAME = "/index.php"
 ```
+
+The FastCGI block lives under `[site.proxy]` — there is no top-level `[site.fastcgi]`
+section, and there is no `enabled` flag: the handler is selected because `socket` is set.
+`[site.upstream]` and `default = ...` do not exist; upstreams are `[site.proxy.upstream]`
+with a `servers` array.
 
 ### TCP Connection
 
 ```toml
-[site.fastcgi]
-enabled = true
+[site.proxy.fastcgi]
 socket = "127.0.0.1:9000"
 ```
 
-### With Path Routing
+### With a Separate HTTP Upstream
+
+FastCGI is one backend inside `[site.proxy]`; the HTTP upstreams are configured on the
+same section:
 
 ```toml
-[site.upstream]
-default = "http://127.0.0.1:8000"
+[site.proxy.upstream]
+servers = ["http://127.0.0.1:8000"]
+backup_servers = ["http://127.0.0.1:8001"]
 
-[site.upstream.routes]
-"/api" = "http://api.internal:9000"
-"/wordpress" = "http://wp.internal:9000"
-
-[site.fastcgi]
-enabled = true
+[site.proxy.fastcgi]
 socket = "/var/run/php/php-fpm.sock"
-document_root = "/var/www/html"
+script_filename = "/var/www/html/index.php"
+index = "index.php"
 ```
+
+There is no `[site.upstream.routes]` or path-prefix routing table; per-path routing is
+done with `[site.proxy.locations]`, each of which may carry its own `fastcgi` block.
 
 ## Configuration Options
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `enabled` | `false` | Enable FastCGI proxy |
-| `socket` | - | Unix socket or TCP address |
-| `document_root` | - | Document root path |
-| `index` | `"index.php"` | Default index file |
+| `socket` | - | Unix socket path or `host:port` (required; selects FastCGI) |
+| `script_filename` | - | Script passed to PHP-FPM |
+| `index` | - | Default index file |
+| `params` | - | Extra FastCGI params (map) |
+| `env_vars` | - | Environment variables (map) |
+| `split_path_info` | - | Regex used to split `PATH_INFO` from the script name |
+| `try_files` | - | Fallback file list |
+| `connect_timeout` / `send_timeout` / `read_timeout` | - | Per-hop timeouts (seconds) |
+| `max_connections` | - | Connection cap for this backend |
+
+There is no `enabled`, `document_root`, `document_roots`, `timeout_secs`, or `keep_alive`
+key — unknown keys are ignored, so a block written with them silently does nothing.
 
 ### FastCGI Parameters
 
-These are passed to the FastCGI application:
+`[site.proxy.fastcgi.params]` is a plain `HashMap<String, String>` that is passed through
+to the FastCGI params record. **SynVoid does not expand variables** such as
+`$document_root` or `$fastcgi_script_name` — no expansion exists in the request path, so
+those strings would be sent to PHP-FPM verbatim. Use literal values (or values your
+upstream resolves).
 
 | Parameter | Example | Description |
 |-----------|---------|-------------|
-| `SCRIPT_FILENAME` | `$document_root$fastcgi_script_name` | Full script path |
-| `SCRIPT_NAME` | `$fastcgi_script_name` | Script name |
+| `SCRIPT_FILENAME` | `/var/www/html/index.php` | Full script path |
+| `SCRIPT_NAME` | `/index.php` | Script name |
 | `REQUEST_METHOD` | `GET/POST` | HTTP method |
 | `QUERY_STRING` | `?foo=bar` | Query string |
 | `CONTENT_TYPE` | `application/x-www-form-urlencoded` | Content type |
 | `CONTENT_LENGTH` | `123` | Content length |
 | `REQUEST_URI` | `/path` | Full request URI |
-| `DOCUMENT_ROOT` | `/var/www` | Document root |
-| `GATEWAY_INTERFACE` | `CGI/1.1` | Gateway interface |
-| `SERVER_SOFTWARE` | `SynVoid` | Server software |
 | `REMOTE_ADDR` | `192.168.1.1` | Client IP |
-| `REMOTE_PORT` | `12345` | Client port |
-| `SERVER_ADDR` | `10.0.0.1` | Server IP |
-| `SERVER_PORT` | `80` | Server port |
 | `SERVER_NAME` | `example.com` | Server name |
-| `HTTPS` | `on/off` | HTTPS status |
+| `SERVER_PORT` | `80` | Server port |
+
+Parameters such as `DOCUMENT_ROOT`, `GATEWAY_INTERFACE`, and `SERVER_SOFTWARE` are not
+populated automatically — declare them explicitly in `params` if your application needs
+them.
 
 ## PHP-FPM Configuration
 
@@ -114,11 +130,12 @@ request_slowlog_timeout = 10s
 ### Environment Variables
 
 ```toml
-[site.fastcgi.params]
-SCRIPT_FILENAME = "$document_root$fastcgi_script_name"
-SCRIPT_NAME = "$fastcgi_script_name"
+[site.proxy.fastcgi.params]
+SCRIPT_FILENAME = "/var/www/html/index.php"
+SCRIPT_NAME = "/index.php"
 
-# Custom environment
+# Custom environment (goes in env_vars, not params)
+[site.proxy.fastcgi.env_vars]
 MY_CUSTOM_VAR = "value"
 APP_ENV = "production"
 ```
@@ -128,16 +145,14 @@ APP_ENV = "production"
 ### PHP 7.4
 
 ```toml
-[site.fastcgi]
-enabled = true
+[site.proxy.fastcgi]
 socket = "/var/run/php74/php-fpm.sock"
 ```
 
 ### PHP 8.x
 
 ```toml
-[site.fastcgi]
-enabled = true
+[site.proxy.fastcgi]
 socket = "/var/run/php80/php-fpm.sock"
 ```
 
@@ -153,11 +168,10 @@ socket = "/var/run/php80/php-fpm.sock"
 ```
 
 ```toml
-[site.fastcgi]
-enabled = true
+[site.proxy.fastcgi]
 socket = "/var/run/php/php-fpm.sock"
-document_root = "/var/www/html"
-index = "index.php index.html"
+script_filename = "/var/www/html/index.php"
+index = "index.php"
 ```
 
 ### Multiple Applications
@@ -170,31 +184,38 @@ index = "index.php index.html"
     └── index.php
 ```
 
-```toml
-[site.fastcgi]
-enabled = true
-socket = "/var/run/php/php-fpm.sock"
+Multiple applications are served with `[[proxy.locations]]`, each pointing at its own
+FastCGI handler. Per-location FastCGI settings go **inside** the element as an inline table.
 
-[site.fastcgi.document_roots]
-"/app1" = "/var/www/app1"
-"/app2" = "/var/www/app2"
+> The array-index sub-table form (`[[proxy.locations]]` followed by
+> `[proxy.locations[0].fastcgi]`) is **rejected by SynVoid's TOML parser**, and the table path
+> is top-level `proxy`, not `site.proxy`. There is no `[site.fastcgi.document_roots]` mapping
+> table and no `root` key on a location.
+
+```toml
+[[proxy.locations]]
+path = "/app1/"
+fastcgi = { socket = "/var/run/php/php-fpm.sock", script_filename = "/var/www/app1/index.php" }
+
+[[proxy.locations]]
+path = "/app2/"
 ```
 
 ### Front Controller Pattern (Laravel/Symfony)
 
 ```toml
-[site.fastcgi]
-enabled = true
+[site.proxy.fastcgi]
 socket = "/var/run/php/php-fpm.sock"
-document_root = "/var/www/current/public"
+script_filename = "/var/www/current/public/index.php"
 index = "index.php"
+split_path_info = "^/var/www/current/public/(.+)\\.php$"
 
-[site.fastcgi.params]
-SCRIPT_FILENAME = "$document_root$fastcgi_script_name"
-SCRIPT_NAME = "$fastcgi_script_name"
-PATH_INFO = "$fastcgi_path_info"
+[site.proxy.fastcgi.params]
+SCRIPT_FILENAME = "/var/www/current/public/index.php"
+SCRIPT_NAME = "/index.php"
 
 # Laravel-specific
+[site.proxy.fastcgi.env_vars]
 LARAVEL_ENV = "production"
 ```
 
@@ -203,14 +224,17 @@ LARAVEL_ENV = "production"
 ### HTTP Proxy
 ```
 Client -> WAF (HTTP) -> PHP-FPM (via HTTP) -> Response
-         ~30ms overhead
 ```
 
 ### FastCGI
 ```
 Client -> WAF (FastCGI) -> PHP-FPM -> Response
-         ~5ms overhead
 ```
+
+The protocol difference is real (a persistent FastCGI connection avoids per-request
+protocol overhead), but SynVoid ships no latency benchmark for either path, so treat
+the expected win as directional, not quantified. Measure on your own hardware before
+committing to a migration.
 
 ## Troubleshooting
 
@@ -292,20 +316,26 @@ pm.process_idle_timeout = 10s
 pm.max_requests = 500
 ```
 
-### WAF FastCGI Tuning
+### FastCGI Tuning
 
 ```toml
-[site.fastcgi]
-timeout_secs = 60
-keep_alive = true
+[site.proxy.fastcgi]
+connect_timeout = 5
+send_timeout = 60
+read_timeout = 60
+max_connections = 256
 ```
+
+There is no `timeout_secs` or `keep_alive` key on the FastCGI block; unknown keys are
+ignored silently.
 
 ## Metrics
 
+No `synvoid_fastcgi_*` metric family is registered. FastCGI outcomes are visible through
+the admin metrics API and the error-page/status handling (502 / 504 responses).
+
 ```bash
-synvoid_fastcgi_requests_total     # Total FastCGI requests
-synvoid_fastcgi_duration_seconds   # Request duration
-synvoid_fastcgi_errors             # Errors
+curl -H "Authorization: Bearer <token>" http://127.0.0.1:8081/api/metrics
 ```
 
 ## See Also

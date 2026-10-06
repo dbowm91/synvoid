@@ -4,7 +4,13 @@ SynVoid continuously monitors the health of your upstream servers and automatica
 
 ## Overview
 
-Health checking ensures that traffic is only routed to working upstream servers:
+SynVoid does **not** run active health probes against `[site.proxy.upstream]` backends.
+`ProxyUpstreamConfig` (`crates/synvoid-config/src/site/proxy.rs`) has no health-check
+fields at all — no `health_check_path`, `health_check_method`, `health_check_failures`,
+or `health_check_expected_status`. Upstream health is instead **derived from live
+request outcomes**, and active polling exists only for the features that genuinely
+probe: `[app_server]` health checking, `[grpc] health_check_enabled`, and the supervised
+processes in `[processes]` / `[upgrade]`.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -12,86 +18,80 @@ Health checking ensures that traffic is only routed to working upstream servers:
 │                                                              │
 │   ┌─────────────┐   ┌─────────────┐   ┌─────────────┐      │
 │   │  Backend A  │   │  Backend B  │   │  Backend C  │      │
-│   │  ✓ Healthy  │   │  ✗ Failed   │   │  ✓ Healthy  │      │
+│   │  ✓ Healthy  │   │  ✗ Unhealthy│   │  ? Unknown  │      │
 │   └─────────────┘   └─────────────┘   └─────────────┘      │
 │                                                              │
-│   Health checks run every 30s                                │
-│   Backend B removed from pool                                │
+│   State derived from request outcomes:                      │
+│   successes > 0                        → Healthy            │
+│   failures > 0 && successes == 0       → Unhealthy          │
+│   no traffic yet                       → Unknown            │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ## Configuration
 
-### Basic Health Check
+### Upstream Selection
 
 ```toml
-[site.upstream]
-default = "http://127.0.0.1:8000"
-
-# Health check settings
-health_check_path = "/health"
-health_check_interval_secs = 30
-health_check_timeout_secs = 5
+[site.proxy.upstream]
+servers = ["http://127.0.0.1:8000"]
+backup_servers = ["http://127.0.0.1:8001"]   # used when servers are unavailable
 ```
 
-### Advanced Configuration
+### Active Health Checking (where it really exists)
 
 ```toml
-[site.upstream]
-default = "http://127.0.0.1:8000"
-
-# Check settings
-health_check_path = "/health"
-health_check_method = "HEAD"  # HEAD, GET, or TCP
-health_check_interval_secs = 30
+[site.app_server]
+health_check_path = "/"                # polled path
+health_check_interval_secs = 10
 health_check_timeout_secs = 5
-health_check_port = 8000  # Optional: different port for health checks
 
-# Failure thresholds
-health_check_failures = 3  # Consecutive failures before marking unhealthy
-health_check_successes = 2  # Consecutive successes before marking healthy
-
-# What to check
-health_check_expected_status = 200  # Expected HTTP status code
+[grpc]
+health_check_enabled = true
 ```
+
+```toml
+# Supervised processes (main config)
+[processes.upgrade]
+health_check_interval_secs = 5
+```
+
+There are no `health_check_port`, `health_check_failures`, or
+`health_check_successes` keys — unknown keys are silently ignored, so a block written
+with them looks configured but probes nothing.
 
 ## Health Check Methods
 
-### HTTP HEAD (Default)
+Active probing is configured per capability, not per upstream pool.
 
-The most efficient method - sends a HEAD request and checks for successful response:
-
-```toml
-health_check_method = "HEAD"
-health_check_path = "/health"
-health_check_expected_status = 200
-```
-
-**Pros:** Lightweight, no response body transferred
-**Cons:** Requires health endpoint on upstream
-
-### HTTP GET
-
-Similar to HEAD but gets the full response:
+### `[app_server]` HTTP Polling (the main use case)
 
 ```toml
-health_check_method = "GET"
-health_check_path = "/healthz"
+[site.app_server]
+health_check_path = "/"
+health_check_interval_secs = 10
+health_check_timeout_secs = 5
 ```
 
-**Pros:** Can validate response body
-**Cons:** Slightly more resource intensive
+**Pros:** Detects a dead app-server independently of inbound traffic
+**Cons:** Only applies when the site uses an `app_server` backend
 
-### TCP Connect
-
-Only tests if the port is reachable:
+### `[grpc]` gRPC Health Checking
 
 ```toml
-health_check_method = "TCP"
+[grpc]
+enabled = true
+upstream = "http://127.0.0.1:50051"
+health_check_enabled = true
 ```
 
-**Pros:** Works for any TCP service
-**Cons:** Doesn't validate application health
+**Pros:** Uses the standard gRPC health protocol
+**Cons:** gRPC only
+
+### Outcome-Derived State (proxy upstreams)
+
+For `[site.proxy.upstream]` there is no method selector — `servers` traffic itself
+supplies the signal. There is no `health_check_method = "HEAD" | "GET" | "TCP"` key.
 
 ## How Health Checking Works
 
@@ -99,73 +99,62 @@ health_check_method = "TCP"
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    Health Check Flow                         │
+│              Outcome-Derived Health State                    │
 └─────────────────────────────────────────────────────────────┘
 
-                    ┌──────────────────┐
-                    │   Initial State  │
-                    │    "Healthy"     │
-                    └────────┬─────────┘
-                             │
-                    ┌────────▼─────────┐
-                    │  Run Health     │
-                    │     Check       │
-                    └────────┬─────────┘
-                             │
-              ┌──────────────┼──────────────┐
-              │              │              │
-              ▼              ▼              ▼
-       ┌──────────┐   ┌──────────┐   ┌──────────┐
-       │ Success  │   │  Timeout │   │  Error   │
-       └────┬─────┘   └────┬─────┘   └────┬─────┘
-            │              │              │
-            ▼              ▼              ▼
-     ┌───────────┐  ┌───────────┐  ┌───────────┐
-     │successes++│  │failures++ │  │failures++ │
-     └─────┬─────┘  └─────┬─────┘  └─────┬─────┘
-           │              │              │
-           ▼              ▼              ▼
-     ┌───────────┐  ┌───────────┐  ┌───────────┐
-     │   >= 2   │  │    >= 3   │  │    >= 3   │
-     │successes?│  │failures? │  │failures? │
-     └─────┬─────┘  └────┬──────┘  └────┬──────┘
-           │             │               │
-           ▼             ▼               ▼
-      ┌────────┐   ┌──────────┐   ┌─────────────┐
-      │Healthy │   │Unhealthy │   │ Remove from │
-      │        │   │          │   │   Pool     │
-      └────────┘   └──────────┘   └─────────────┘
+        ┌──────────────┐
+        │   No traffic │  successes == 0 && failures == 0
+        └───────┬──────┘
+                │
+                ▼
+        ┌──────────────┐
+        │    Unknown   │  reported by the metrics payload
+        └───────┬──────┘
+                │ a request succeeds
+                ▼
+        ┌──────────────┐
+        │   Healthy    │  successes > 0
+        └───────┬──────┘
+                │ failures > 0 && successes == 0
+                ▼
+        ┌──────────────┐
+        │  Unhealthy   │
+        └──────────────┘
 ```
+
+The rule is implemented in `crates/synvoid-metrics/src/types.rs`
+(`upstream_healthy` derivation): a site is only marked `Unhealthy` when it has recorded
+at least one failure and **zero** successes. One success restores `Healthy`.
 
 ### Default Behavior
 
-| Scenario | Consecutive Failures | Action |
-|----------|---------------------|--------|
-| Backend fails health check 3 times | 3 | Mark as unhealthy |
-| Backend passes health check 2 times | 0 | Mark as healthy |
-| All backends unhealthy | - | Use all (degraded) |
+| Scenario | Recorded state | Reported status |
+|----------|----------------|-----------------|
+| Backend has served at least one request | `successes > 0` | Healthy |
+| Backend has failed and never succeeded | `failures > 0`, `successes == 0` | Unhealthy |
+| No traffic recorded yet | both counters 0 | Unknown |
+| All backends failing | `failures > 0`, `successes == 0` | Unhealthy (traffic still attempted) |
+
+Note the consequence: **there is no consecutive-failure threshold and no automatic
+removal from a pool.** Unhealthy backends are still selected; resilience comes from
+`servers` / `backup_servers` ordering and retry, not from an ejection list.
 
 ## Per-Backend Configuration
 
-You can configure health checks per upstream:
+There is no `[site.upstream.backends.<name>]` table and no per-backend `weight` or
+`[...health_check]` block. Backends are a flat list of URLs:
 
 ```toml
-[site.upstream.backends.backend1]
-url = "http://10.0.0.1:8000"
-weight = 100
-
-[site.upstream.backends.backend1.health_check]
-enabled = true
-path = "/health"
-interval = 30
-
-[site.upstream.backends.backend2]
-url = "http://10.0.0.2:8000"
-weight = 100
-
-[site.upstream.backends.backend2.health_check]
-enabled = false  # Disable health check for this backend
+[site.proxy.upstream]
+servers = [
+    "http://10.0.0.1:8000",
+    "http://10.0.0.2:8000",
+]
+backup_servers = ["http://10.0.0.3:8000"]
 ```
+
+Per-path behaviour belongs in `[site.proxy.locations]`, each of which may target its own
+upstream.
 
 ## Health Check Endpoint Requirements
 
@@ -208,105 +197,91 @@ def health():
 
 ## Integration with Load Balancing
 
-Health checking works with all load balancing methods:
-
-### Round Robin
-
-```toml
-[site.upstream]
-load_balancing = "round_robin"
-health_check_path = "/health"
-```
-
-### Least Connections
+`ProxyUpstreamConfig` has **no `load_balancing` key** — there is no `round_robin`,
+`least_conn`, or `ip_hash` selector to configure, and no pool that excludes unhealthy
+backends. Selection is driven by the `servers` list plus `backup_servers` failover and
+the `[site.proxy.upstream] retry` settings:
 
 ```toml
-[site.upstream]
-load_balancing = "least_conn"
-health_check_path = "/health"
+[site.proxy.upstream]
+servers = ["http://10.0.0.1:8000", "http://10.0.0.2:8000"]
+backup_servers = ["http://10.0.0.3:8000"]
 ```
-
-### IP Hash
-
-```toml
-[site.upstream]
-load_balancing = "ip_hash"
-health_check_path = "/health"
-```
-
-Unhealthy backends are excluded from all methods.
 
 ## Monitoring
 
-### Prometheus Metrics
+### Health Metrics
+
+There is no `synvoid_upstream_health_status` or `synvoid_upstream_rerequests_total`
+Prometheus metric. Health is reported as the `upstream_healthy` field of the admin
+metrics payload, with the values `healthy` / `unhealthy` / `unknown`:
 
 ```bash
-# View upstream health metrics
-curl http://localhost:9090/metrics | grep upstream
+# View upstream health via the admin metrics API
+curl -H "Authorization: Bearer <token>" http://127.0.0.1:8081/api/metrics
 
-# Key metrics:
-synvoid_upstream_health_status{backend="http://10.0.0.1:8000"}  # 1 = healthy
-synvoid_upstream_rerequests_total  # Requests retried due to unhealthy backend
+# Prometheus scrape (metrics listener, port 9090 in config/main.toml)
+curl http://localhost:9090/metrics | grep -i upstream
 ```
+
+Field definitions live in `crates/synvoid-metrics/src/payloads.rs`.
 
 ### Admin API
 
-```bash
-# Get upstream status
-curl -H "Authorization: Bearer <token>" \
-  http://localhost:8081/api/upstreams
+Upstream inspection and on-demand checks are exposed under `/api/upstreams`
+(`src/admin/routes.rs`):
 
-# Response:
-{
-  "backends": [
-    {
-      "url": "http://10.0.0.1:8000",
-      "healthy": true,
-      "consecutive_failures": 0,
-      "consecutive_successes": 5
-    },
-    {
-      "url": "10.0.0.2:8000",
-      "healthy": false,
-      "consecutive_failures": 3,
-      "consecutive_successes": 0
-    }
-  ]
-}
+| Route | Method | Purpose |
+|-------|--------|---------|
+| `/api/upstreams` | GET | List upstreams across sites |
+| `/api/upstreams/{site_id}` | GET | Upstreams for one site |
+| `/api/upstreams/{site_id}/check` | POST | Trigger a health check for a site |
+
+```bash
+curl -H "Authorization: Bearer <token>" http://localhost:8081/api/upstreams
 ```
+
+Mutating endpoints return typed results, not `{"success": true}` — see
+[admin_control_plane_authority.md](../architecture/admin_control_plane_authority.md).
 
 ## Troubleshooting
 
-### Backend Marked Unhealthy But Works
+### Backend Reported Unhealthy But Works
 
-1. **Check health endpoint** - Ensure it returns expected status
-2. **Increase timeout** - Backend might be slow to respond
-3. **Check firewall** - Ensure WAF can reach backend port
+1. **Remember the rule** — `Unhealthy` means `failures > 0 && successes == 0`; a single
+   successful proxied request flips it back to `Healthy`
+2. **Check upstream errors** — some early requests failed (cold start, slow dependency)
+3. **Increase timeouts** — the request may be timing out before the backend replies:
 
 ```toml
-health_check_timeout_secs = 10  # Increase from default 5s
+[site.proxy.upstream]
+connect_timeout = "10s"
+read_timeout = "30s"
+send_timeout = "30s"
 ```
 
 ### Too Many False Positives
 
-1. **Increase failure threshold** - Require more consecutive failures
-2. **Decrease check interval** - More frequent checks catch issues faster
-3. **Use TCP check** - If HTTP overhead is causing issues
+For `[app_server]` polling, the interval and timeout are configurable. There is no
+failure-count threshold to raise, and no TCP-only check mode:
 
 ```toml
-health_check_failures = 5  # Require 5 failures
-health_check_interval_secs = 10  # Check every 10 seconds
+[site.app_server]
+health_check_path = "/health"
+health_check_interval_secs = 30
+health_check_timeout_secs = 10
 ```
 
 ### Health Check Not Running
 
-1. Verify health check is enabled
-2. Check that backend URL is correct
+1. Confirm the feature you expect to probe is actually configured — proxy upstreams
+   never probe, so a missing `[app_server]`/`[grpc]` block is the usual cause
+2. Check the backend URL is correct
 3. Review logs for health check errors
 
 ```bash
-# Enable debug logging
-RUST_LOG=debug ./synvoid
+# Enable debug logging (binary is ./target/release/synvoid after a release build)
+RUST_LOG=debug ./target/release/synvoid
 
 # Look for health check messages
 tail -f /var/log/synvoid.log | grep -i health
@@ -314,16 +289,16 @@ tail -f /var/log/synvoid.log | grep -i health
 
 ### All Backends Unhealthy
 
-When all backends are unhealthy, SynVoid will:
-1. Continue routing to backends (degraded mode)
-2. Log warnings
-3. Attempt to recover connections periodically
+There is no ejection state to escape: traffic is still attempted against `servers` and
+then `backup_servers`. Operations resolve the fault by fixing the backends, and status
+returns to `Healthy` on the next successful request.
 
 ## Best Practices
 
-1. **Implement health endpoints** - Add `/health` to all upstreams
+1. **Implement health endpoints** - Add `/health` to app-server backends
 2. **Return 200 for healthy** - Simple and clear
-3. **Return 503 for degraded** - SynVoid can optionally use this
+3. **Treat 5xx as unhealthy yourself** - there is no `health_check_expected_status`; only
+   an unreachable/non-2xx app-server response counts as a probe failure
 4. **Keep it fast** - Health checks should respond in <1 second
 5. **Don't require auth** - Health endpoints should be unauthenticated
 6. **Separate from liveness** - Consider `/health` (app) vs `/live` (process)
@@ -331,36 +306,32 @@ When all backends are unhealthy, SynVoid will:
 ## Example: Complete Upstream Configuration
 
 ```toml
-[site.upstream]
-default = "http://127.0.0.1:8000"
+[site.proxy.upstream]
+servers = [
+    "http://10.0.0.1:8000",
+    "http://10.0.0.2:8000",
+]
+backup_servers = ["http://10.0.0.3:8000"]
 
-# Load balancing
-load_balancing = "least_conn"
+keepalive = 32
+connect_timeout = "5s"
+send_timeout = "30s"
+read_timeout = "30s"
+buffering = true
+```
 
-# Health checking
+Active probing, where you need it:
+
+```toml
+[site.app_server]
 health_check_path = "/health"
-health_check_method = "HEAD"
 health_check_interval_secs = 30
 health_check_timeout_secs = 5
-health_check_failures = 3
-health_check_successes = 2
-health_check_expected_status = 200
 
-# Retry configuration
-max_retries = 3
-retry_timeout_secs = 10
-
-[site.upstream.backends.backend1]
-url = "http://10.0.0.1:8000"
-weight = 100
-
-[site.upstream.backends.backend2]
-url = "http://10.0.0.2:8000"
-weight = 100
-
-[site.upstream.backends.backend3]
-url = "http://10.0.0.3:8000"
-weight = 50  # Lower weight - older/smaller instance
+[grpc]
+enabled = true
+upstream = "http://127.0.0.1:50051"
+health_check_enabled = true
 ```
 
 ## See Also

@@ -27,7 +27,10 @@ Traditionally, DNSSEC required operators to manually update trust anchors whenev
 - **Validation via CDS/CDNSKEY records** published by the zone itself
 - **Time-based observation periods** to detect key compromises
 
-SynVoid implements RFC 5011 for the root zone by default, enabling automatic key management for DNSSEC validation.
+SynVoid ships an RFC 5011 state machine (`crates/synvoid-dns/src/trust_anchor.rs`)
+for the root zone. It is **off by default**: `trust_anchors.enabled` defaults to
+`false`, and setting it to `true` is currently rejected by config validation (see
+the note under [Configuration Options](#configuration-options)).
 
 ## Trust Anchor State Machine
 
@@ -93,17 +96,31 @@ SynVoid only accepts modern DNSSEC algorithms. Deprecated algorithms are rejecte
 | 5 | RSASHA1 | Rejected |
 | 6 | DSA-NSEC3-SHA1 | Rejected |
 | 8 | RSASHA256 | Accepted |
-| 13 | ECDSAP256SHA256 | **Not implemented** |
-| 14 | ECDSAP384SHA384 | **Not implemented** |
+| 13 | ECDSAP256SHA256 | Accepted |
+| 14 | ECDSAP384SHA384 | Accepted |
 | 15 | ED25519 | Accepted |
-| 16 | ED448 | **Not implemented** |
+| 16 | ED448 | Accepted |
+
+`TrustAnchorManager::observe_dnskey_at_root` rejects only algorithms
+`0 | 3 | 5 | 6` (`matches!(algorithm, 0 | 3 | 5 | 6)`); every other algorithm
+number is admitted.
 
 ## Configuration Options
 
-Trust anchor behavior is controlled via the `TrustAnchorConfig` struct:
+Trust anchor behavior is controlled via the `TrustAnchorConfig` struct, which
+lives at **`[dns.trust_anchors]`** — a direct child of `[dns]`, sibling to
+`[dns.recursive]`. It is *not* `[dns.recursive.trust_anchors]`.
+
+> **Currently unreachable (Phase 45, fail-closed).** `TrustAnchorConfig::validate`
+> returns a typed `Unsupported` error whenever `enabled = true`, because no
+> custom trust-anchor manager is wired to the runtime resolver. Activation is
+> **rejected at config-load time**, so the examples below do not start. The state
+> machine in `crates/synvoid-dns/src/trust_anchor.rs` is real and unit-tested, but
+> it has no live runtime consumer. See
+> `architecture/dns_config_runtime_matrix.md` (Phase 45 section).
 
 ```toml
-[dns.recursive.trust_anchors]
+[dns.trust_anchors]
 enabled = true
 anchor_file_path = "/var/lib/synvoid/dns/trusted-key.key"
 db_path = "/var/lib/synvoid/dns/trust_anchors.db"
@@ -136,7 +153,7 @@ allow_key_rotation = true
 upstream_provider = "Recursive"
 dnssec_validation = true
 
-[dns.recursive.trust_anchors]
+[dns.trust_anchors]
 enabled = true
 anchor_file_path = "/var/lib/synvoid/dns/trusted-key.key"
 db_path = "/var/lib/synvoid/dns/trust_anchors.db"
@@ -342,7 +359,7 @@ To enable RFC 5011 trust anchor management:
 upstream_provider = "Recursive"  # Required for DNSSEC validation
 dnssec_validation = true          # Enable DNSSEC validation
 
-[dns.recursive.trust_anchors]
+[dns.trust_anchors]
 enabled = true                     # Enable RFC 5011 management
 ```
 
@@ -360,7 +377,11 @@ The anchor file should contain DNSKEY records in standard zone file format:
 - Algorithm can be 8 (RSASHA256), 13 (ECDSAP256SHA256), 15 (ED25519), or 16 (ED448)
 - Multiple keys can be defined (for algorithm rollover)
 
-SynVoid provides bundled default anchors for the root zone that are updated with each release.
+A root-zone `trusted-key.key` (IANA root KSK, sourced from
+`https://data.iana.org/root-anchors/root-anchors.xml`) is present at the
+repository root as an operator reference. It is **not** compiled into the binary
+and is not read automatically; point `anchor_file_path` at it yourself if you
+want to seed anchors.
 
 ## See Also
 

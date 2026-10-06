@@ -27,7 +27,7 @@ SynVoid generates NSEC3 records for authoritative zones it serves. Supported has
 | 1 (SHA-1) | 20 bytes | Fully supported |
 | 2 (SHA-256) | 32 bytes | Implemented but base32 encoding is non-standard for non-20-byte outputs |
 
-The custom `base32_encode` function in `crates/synvoid-dns/src/dnssec_signing.rs:266` produces RFC 4648 output without padding. For SHA-1 (20 bytes) this matches the expected NSEC3 owner name format per RFC 5155. For SHA-256 the encoding works in practice but is not rigorously tested against RFC 5155 test vectors. SHA-1 is the default (`Nsec3Config::default()` uses algorithm 1).
+The custom `base32_encode` function in `crates/synvoid-dns/src/dnssec_signing.rs:248` produces RFC 4648 output without padding. For SHA-1 (20 bytes) this matches the expected NSEC3 owner name format per RFC 5155. For SHA-256 the encoding works in practice but is not rigorously tested against RFC 5155 test vectors. SHA-1 is the default (`Nsec3Config::default()` uses algorithm 1).
 
 ### NSEC3 Parameters
 
@@ -51,7 +51,16 @@ Removed    → [extended_removal_days]    → Purged
 Valid      → [absent retention_days]    → Missing
 ```
 
-Key state transitions are driven by `process_rfc5011_updates()` which runs periodically. Configuration is via `TrustAnchorConfig` — see `crates/synvoid-dns/src/trust_anchor.rs` for field definitions.
+Key state transitions are driven by `process_rfc5011_updates()` which runs
+periodically. The runtime struct `TrustAnchorConfig` lives in
+`crates/synvoid-dns/src/trust_anchor.rs`; the TOML-facing struct of the same
+name is in `crates/synvoid-config/src/dns/dns_dnssec.rs` and is configured at
+**`[dns.trust_anchors]`** (a child of `[dns]`, sibling of `[dns.recursive]`).
+
+Note that `trust_anchors.enabled = true` is currently **rejected** by
+`TrustAnchorConfig::validate` with a typed `Unsupported` error — no custom
+trust-anchor manager is wired to the runtime resolver (Phase 45). The state
+machine is real but has no live runtime consumer.
 
 For detailed RFC 5011 documentation including state machine diagrams, configuration options, and implementation notes, see [`/docs/RFC5011_TRUST_ANCHOR.md`](./RFC5011_TRUST_ANCHOR.md).
 
@@ -80,5 +89,4 @@ no silent software fallback. Details: `architecture/dnssec_keystore.md`.
 - `crates/synvoid-dns/src/dnssec_signing.rs` — sealed signing entry, NSEC3 generation, base32 encoding
 - `crates/synvoid-dns/src/dnssec_validation.rs` — key tag calculation, DS digests, canonicalization
 - `crates/synvoid-dns/src/trust_anchor.rs` — RFC 5011 state machine
-- `crates/synvoid-dns/src/server/dnssec_impl.rs` — DNSSEC response assembly
-- `crates/synvoid-dns/src/server/dnssec_impl.rs` — Server-side NSEC3 synthesis
+- `crates/synvoid-dns/src/server/dnssec_impl.rs` — DNSSEC response assembly and server-side NSEC3 synthesis

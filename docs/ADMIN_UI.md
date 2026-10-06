@@ -16,8 +16,14 @@ You will be prompted for the admin token configured in `main.toml`:
 [admin]
 enabled = true
 port = 8081
-token = "your-secure-token"
+bind_address = "127.0.0.1"  # Default: loopback only
+token = "<64 hex characters from `synvoid --generatetoken`>"
 ```
+
+`admin.token` must be **at least 32 characters** and must not contain weak
+patterns (`changeme`, `password`, `admin`, `123456`, …); a short placeholder is
+**rejected at config load**. `synvoid --generatenewtoken` writes the token as
+plaintext into `main.toml` (`0600` on Unix) — it is not hashed at rest.
 
 ## Pages Overview
 
@@ -403,14 +409,20 @@ trunk build
 trunk serve
 ```
 
-The built assets are embedded in the SynVoid binary.
+The built assets are **not** embedded in the binary. They are resolved at
+runtime, in this order (`src/admin/mod.rs`):
+
+1. `SYNVOID_ADMIN_UI_DIR` environment variable
+2. `admin-ui/dist` beside the executable
+3. the compile-time repository root (`CARGO_MANIFEST_DIR`)
+4. `./admin-ui/dist` relative to the current working directory
 
 ## Technology Stack
 
-- **Framework**: Yew 0.22 (Rust WebAssembly)
-- **Styling**: Tailwind CSS 2.2
-- **Routing**: yew-router
-- **HTTP/WebSocket**: gloo
+- **Framework**: Yew 0.23 (Rust WebAssembly)
+- **Styling**: Tailwind CSS 3.4
+- **Routing**: yew-router 0.20
+- **HTTP/WebSocket**: gloo 0.12
 - **Build Tool**: Trunk
 - **Fonts**: Inter (UI), JetBrains Mono (code)
 

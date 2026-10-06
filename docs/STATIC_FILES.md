@@ -40,7 +40,7 @@ compression_min_size = 256
 gzip_on_the_fly = true
 gzip_level = 5
 gzip_min_size = 256
-gzip_types = ["text/html", "text/css", "application/javascript", ...]
+gzip_types = ["text/html", "text/css", "application/javascript", "application/json"]
 enable_brotli = true
 brotli_level = 11
 enable_svg_compression = true
@@ -77,6 +77,12 @@ cache_ttl = 86400
 
 ### Per-Location Configuration
 
+Per-location theme settings go **inside** the `[[site.static.locations]]` element as an inline
+table.
+
+> The array-index sub-table form (`[site.static.locations[0].theme]`) is **rejected by
+> SynVoid's TOML parser**.
+
 ```toml
 [[site.static.locations]]
 path = "/api/static"
@@ -84,14 +90,12 @@ root = "/var/www/api_static"
 index = "index.html"
 try_files = ["{path}", "{path}/index.html", "/404.html"]
 cache_ttl = 3600
+theme = { preset = "dark" }
 
 [[site.static.locations]]
 path = "/images"
 root = "/var/www/images"
 cache_ttl = 86400
-
-[site.static.locations[0].theme]
-preset = "dark"
 ```
 
 ## Directory Listing Theme
@@ -112,45 +116,52 @@ directory_template_path = "/etc/synvoid/templates/directory.html"
 - `{{url_path}}` - current URL path
 - `{{parent_link}}` - parent directory link
 - `{{rows}}` - file/folder entries
-- `{{site_name}}` - site name (synvoid)
 - `{{title}}` - page title ("Index of {url_path}")
 
 ## Minification
 
 ### Worker Architecture
 
-SynVoid uses a dedicated worker process for static file minification to avoid impacting request-handling performance:
+Minification is CPU-bound, so it is offloaded to the CPU worker process
+(`--cpu-worker`) rather than executed on the unified worker's event loop. The
+minifier itself lives in the `synvoid-static-files` crate (`src/static_files/`
+re-exports it as a facade):
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                    UNIFIED WORKER (HTTP/HTTPS)                    │
 │  - Handles incoming requests                                      │
-│  - Serves minified files from cache                              │
+│  - Serves minified files from the file cache                      │
 └─────────────────────────────────────────────────────────────────┘
                               │
-                              │ IPC (Unix socket)
+                              │ IPC (CPU task offload)
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                    STATIC FILE WORKER                            │
-│  - Runs minification in separate process                         │
-│  - Offloads CPU-intensive work from main worker                 │
-│  - Results cached in shared memory                               │
+│                    CPU WORKER                                     │
+│  - Runs minification off the request event loop                   │
+│  - Returns minified content to the unified worker                │
+│  - The unified worker owns the in-process file cache              │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-**Why separate workers:**
+**Why it is offloaded:**
 - Minification (HTML, CSS, JS) is CPU-intensive and would block the main event loop
-- Running in a separate worker allows the main HTTP worker to remain responsive
-- Shared memory cache avoids copying minified content between processes
+- The CPU worker keeps the HTTP worker responsive under load
+- Results are returned to the unified worker, which owns the file cache
+
+Note: there is **no** separate "static file worker" process, and the minified content
+is not held in a cross-process shared-memory cache. Offload progress is visible as the
+`cpu_offload_queued_minify` / `cpu_offload_active_minify` / `cpu_offload_completed_minify`
+counters in `CacheStats`.
 
 ### How It Works
 
 1. When a static file is first requested, the unified worker checks if minification is enabled
 2. If enabled and the file type matches (`text/html`, `text/css`, `application/javascript`), the worker:
-   - Sends the file content to the static file worker via IPC
-   - The static file worker minifies the content and caches it
-   - Returns the minified content through the shared cache
-3. Subsequent requests serve directly from cache (no IPC round-trip)
+   - Offloads the file content to the CPU worker
+   - The CPU worker minifies the content
+   - The unified worker stores the result in its file cache
+3. Subsequent requests serve directly from cache (no offload round-trip)
 
 ### Cache Behavior
 
@@ -160,10 +171,12 @@ SynVoid uses a dedicated worker process for static file minification to avoid im
 
 ### Performance Notes
 
-- **First request**: Slight delay (one IPC round-trip) for minification
+- **First request**: Slight delay (one CPU offload round-trip) for minification
 - **Subsequent requests**: No overhead (served from cache)
 - **File changes**: Next request triggers re-minification, then cached again
 - For highest traffic files, consider pre-minifying at build time instead
+- `minified_dir` (site) / `minified_base_dir` (main `[static]`) set where minified
+  artifacts are written
 
 ## Compression
 
@@ -225,12 +238,15 @@ SynVoid automatically sets appropriate cache headers:
 
 ### Path Traversal Protection
 
-SynVoid automatically blocks path traversal attempts:
+Traversal attempts are blocked by the WAF path-traversal detector, not by a static-handler
+check. With `[attack_detection] action = "block"` the response is HTTP 403 with the body
+`Attack Detected`. Send a browser-like `User-Agent` — a default curl request is matched by
+the bot scraper patterns and TARPITTED first (HTTP 200, body `Tarpit active`):
 
 ```bash
-# This will be blocked
-curl "http://localhost/../../etc/passwd"
-# Returns: 403 Forbidden
+# This will be blocked by [attack_detection.path_traversal]
+curl -A "Mozilla/5.0" "http://localhost/../../etc/passwd"
+# Returns: 403 Forbidden, body "Attack Detected"
 ```
 
 ### Forbidden Files
@@ -247,16 +263,21 @@ block_hidden_files = true  # Blocks .htaccess, .git, .env, etc.
 ### Metrics
 
 ```bash
-# View static file metrics
-curl http://localhost:9090/metrics | grep synvoid_static
+# View static file metrics via the admin metrics API
+curl -H "Authorization: Bearer <token>" http://127.0.0.1:8081/api/metrics
 
-# Key metrics
-synvoid_static_requests_total    # Total requests
-synvoid_static_bytes_served      # Bytes served
-synvoid_static_cache_hits       # Cache hits
-synvoid_static_cache_misses      # Cache misses
-synvoid_static_compression_saved # Bytes saved by compression
+# Prometheus scrape (metrics listener, port 9090 in config/main.toml)
+curl http://localhost:9090/metrics | grep -i static
 ```
+
+There is no `synvoid_static_*` Prometheus metric family. Static counters are fields of
+the admin metrics payload (`crates/synvoid-metrics/src/payloads.rs`):
+
+| Field | Description |
+|-------|-------------|
+| `static_cache_hits` | File cache hits |
+| `static_cache_misses` | File cache misses |
+| `bytes_sent` | Bytes served |
 
 ## Performance Tuning
 

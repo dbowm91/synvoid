@@ -18,7 +18,8 @@ Before configuring protection, it's helpful to understand the types of floods:
 Tracks half-open connections to detect and mitigate SYN floods:
 
 ```toml
-[defaults.flood]
+[defaults.tcp]
+enabled = true
 syn_rate_per_ip = 50         # SYN packets per second per IP
 syn_rate_global = 10000     # Global SYN rate limit
 half_open_max = 1000        # Max half-open connections
@@ -54,7 +55,8 @@ When a client initiates a TCP connection, it sends a SYN packet. The server resp
 Prevents connection exhaustion:
 
 ```toml
-[defaults.flood]
+[defaults.tcp]
+enabled = true
 connection_rate_per_ip = 100    # Connections per second per IP
 connection_rate_global = 20000  # Global connection rate
 ```
@@ -80,10 +82,14 @@ Start with defaults and adjust based on your legitimate traffic patterns.
 Rate limits UDP traffic with per-port granularity:
 
 ```toml
-[defaults.flood]
-udp_rate_per_ip = 1000      # UDP packets per second per IP
-udp_rate_global = 100000    # Global UDP rate
+[defaults.udp]
+enabled = true
+rate_per_ip = 1000      # UDP packets per second per IP
+rate_global = 100000    # Global UDP rate
 ```
+
+The keys are `rate_per_ip` / `rate_global` (not `udp_rate_per_ip` / `udp_rate_global`), and
+they live under `[defaults.udp]`.
 
 ### When to Use UDP Protection
 
@@ -103,13 +109,26 @@ UDP flood protection is essential if you:
 
 ## Blackhole Mode
 
-Automatic traffic filtering during sustained attacks:
+Automatic traffic filtering during sustained attacks.
+
+Blackhole mode is **not operator-configurable**. There is no `blackhole_threshold` or
+`blackhole_duration_secs` key in `main.toml`; both are internal fields of
+`GlobalRateLimitConfig` (`src/waf/ratelimit/core.rs`) that are never populated from config.
+It is triggered automatically by the global rate limiter:
 
 ```toml
-[defaults.flood]
-blackhole_threshold = 0.9      # Enter blackhole at 90% capacity
-blackhole_duration_secs = 60   # Blackhole duration
+# The only knob that affects blackholing is the global per-second limit:
+[defaults.ratelimit.global]
+per_second = 500
 ```
+
+| Internal field | Default | Meaning |
+|----------------|---------|---------|
+| `blackhole_entry_threshold` | `1.0` | Enter blackhole when `second_count > per_second * threshold` |
+| `blackhole_exit_threshold` | `0.7` | Exit when the estimated rate falls below `per_second * threshold` |
+| `blackhole_exit_samples` | `3` | Consecutive low samples required to exit |
+| `blackhole_sample_rate` | `1000` | Probe interval while blackholed |
+| `blackhole_max_backoff_secs` | `30` | Ceiling on the probe backoff |
 
 ### When to Use Blackhole Mode
 
@@ -118,17 +137,20 @@ Blackhole mode is a **last resort** when under heavy attack:
 - Accepts that some legitimate traffic will be dropped
 - Buys time for upstream defenses to activate
 
-**Recommended settings**:
-- Lower threshold (0.5-0.7) for critical services
-- Higher threshold (0.8-0.9) for non-critical services
+To make SynVoid enter blackhole sooner, lower `[defaults.ratelimit.global] per_second`.
 
 ### Behavior
 
-When capacity exceeds threshold:
-1. New connections are silently dropped
-2. Existing connections continue normally
-3. After duration expires, gradual restoration
-4. Automatic reactivation if attack resumes
+When the global per-second limit is exceeded:
+1. The limiter enters blackhole and subsequent requests are silently dropped
+2. Only `1 / blackhole_sample_rate` of requests are probed, so the limiter measures the
+   real inbound rate without amplifying load
+3. The probe interval backs off exponentially (1s → `blackhole_max_backoff_secs`)
+4. After `blackhole_exit_samples` consecutive low-rate probes, blackhole mode exits
+5. Automatic re-entry if the attack resumes
+
+There is no time-based exit — the limiter leaves blackhole on sampled evidence of recovery,
+not after a fixed `blackhole_duration_secs`.
 
 ## Rate Limiting
 
@@ -181,13 +203,19 @@ synvoid.flood.syn_limited                    # SYN flood limited
 synvoid.flood.connection_limited             # Connection rate limited
 synvoid.flood.udp_limited                   # UDP flood limited
 synvoid.syn_flood.half_open_count           # Current half-open connections
+synvoid.syn_flood.global_limited            # Global SYN rate exceeded
+synvoid.syn_flood.ip_limited                # Per-IP SYN rate exceeded
+synvoid.syn_flood.half_open_exceeded        # Half-open cap exceeded
+synvoid.syn_flood.half_open_map_full        # Half-open table full
 synvoid.connection_limiter.active          # Active connections
 synvoid.connection_limiter.global_limited  # Global connection limit
 synvoid.connection_limiter.ip_limited       # Per-IP connection limit
-synvoid.ratelimit.blackhole_drop            # Blackholed requests
-synvoid.ratelimit.blackhole_active          # Blackhole mode active
+synvoid.connection_limiter.max_reached     # Connection cap reached
+synvoid.ratelimit.blackholed                # Blackholed requests
 synvoid.ratelimit.global_limited            # Global rate limited
-synvoid.ratelimit.ip_limited                # Per-IP rate limited
+synvoid.tcp.blackhole_drop                  # TCP connections dropped in blackhole
+synvoid.http.flood_blackhole                # HTTP requests dropped in flood blackhole
+synvoid.http.flood_limited                  # HTTP requests flood limited
 ```
 
 ## Tuning Guidelines
@@ -195,7 +223,8 @@ synvoid.ratelimit.ip_limited                # Per-IP rate limited
 ### High Traffic Sites
 
 ```toml
-[defaults.flood]
+[defaults.tcp]
+enabled = true
 syn_rate_global = 50000
 connection_rate_global = 100000
 half_open_max = 5000
@@ -208,7 +237,8 @@ max_connections = 50000
 ### Low Traffic Sites
 
 ```toml
-[defaults.flood]
+[defaults.tcp]
+enabled = true
 syn_rate_global = 5000
 connection_rate_global = 5000
 half_open_max = 500
@@ -223,15 +253,18 @@ max_connections = 1000
 For sites requiring DDoS protection:
 
 ```toml
-[defaults.flood]
+[defaults.tcp]
+enabled = true
 syn_rate_per_ip = 10
 syn_rate_global = 5000
 connection_rate_per_ip = 10
 connection_rate_global = 5000
 half_open_max = 100
 half_open_per_ip_max = 2
-blackhole_threshold = 0.5
-blackhole_duration_secs = 300
+
+# Blackhole mode follows the global per-second limit automatically
+[defaults.ratelimit.global]
+per_second = 200
 ```
 
 

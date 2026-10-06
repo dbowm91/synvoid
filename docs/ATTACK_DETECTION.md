@@ -101,21 +101,25 @@ Use this guide to choose the appropriate action for your scenario:
 
 **Standard Website:**
 ```toml
-[defaults.attack_detection]
+[attack_detection]
 action = "block"  # Clear feedback, easy to debug
 ```
 
 **High-Security / Honeypot:**
 ```toml
-[defaults.attack_detection]
+[attack_detection]
 action = "stall"  # Don't reveal anything
 ```
 
 **Anti-Scraping:**
 ```toml
-[defaults.attack_detection]
-action = "tarpit"  # Waste scraper time
+[attack_detection]
+action = "stall"  # Hold attack payloads; tarpit scrapers via [bot]/[tarpit]
 ```
+
+`action` accepts only `"stall"`, `"block"`, or `"log"`. `"tarpit"` is rejected by
+`SiteAttackDetectionConfig::validate()`; tarpitting is configured separately under
+`[bot]` and `[tarpit]` (see [TARPIT.md](./TARPIT.md)).
 
 ## Detection Methods
 
@@ -266,7 +270,7 @@ Validates incoming HTTP headers:
 Configure detection sensitivity:
 
 ```toml
-[defaults.attack_detection]
+[attack_detection]
 paranoia_level = 2  # 1=low, 2=medium, 3=high
 ```
 
@@ -287,7 +291,7 @@ paranoia_level = 2  # 1=low, 2=medium, 3=high
 Configure response to detected attacks:
 
 ```toml
-[defaults.attack_detection]
+[attack_detection]
 action = "stall"  # "stall", "block", or "log"
 ```
 
@@ -295,27 +299,36 @@ action = "stall"  # "stall", "block", or "log"
 - **block**: Return error response
 - **log**: Log but allow request
 
+With `action = "block"`, a detected SQLi, XSS, or path-traversal payload returns
+**HTTP 403** with the body `Attack Detected`; a clean request is forwarded upstream
+and returns its normal response.
+
 ### Custom Patterns
 
-Add site-specific detection patterns:
+Add site-specific detection patterns to the detectors that support them.
+`custom_patterns` exists on `path_traversal`, `rfi`, and `ssrf`; the `sqli` and `xss`
+tables only carry an `enabled` toggle:
 
 ```toml
-[defaults.attack_detection]
-custom_sqli_patterns = ["union.*select", "sleep\\("]
-custom_xss_patterns = ["<script", "javascript:"]
-custom_rce_patterns = ["nmap", "nc "]
+[attack_detection.path_traversal]
+custom_patterns = ["etc/passwd"]
+
+[attack_detection.rfi]
+custom_patterns = ["nmap", "nc "]
+
+[attack_detection.ssrf]
+custom_patterns = ["metadata.google"]
 ```
 
 ### Domain Allowlists
 
-For SSRF and open redirect detection:
+`allowed_domains` is an SSRF-only option. The open redirect detector has no per-site
+allowlist key:
 
 ```toml
-[defaults.attack_detection.ssrf]
+[attack_detection.ssrf]
 allowed_domains = ["api.stripe.com", "api.github.com"]
-
-[defaults.attack_detection.open_redirect]
-allowed_domains = ["example.com", "trusted-site.com"]
+block_private_ips = true
 ```
 
 ## Debugging Detection Issues
@@ -334,19 +347,21 @@ curl -X PUT -H "Authorization: Bearer <token>" \
 
 ### Testing Detection
 
-Use curl to test specific payloads:
+Use curl to test specific payloads. **Send a browser-like `User-Agent`** — the default
+bot `scraper_patterns` include `curl`, so a default curl request is TARPITTED and
+returns HTTP 200 with the body `Tarpit active` before attack detection ever runs:
 
 ```bash
 # Test SQL injection
-curl -v -H "Host: example.com" \
+curl -v -A "Mozilla/5.0" -H "Host: example.com" \
   "http://localhost/search?term=1'%20OR%20'1'='1"
 
 # Test XSS
-curl -v -H "Host: example.com" \
+curl -v -A "Mozilla/5.0" -H "Host: example.com" \
   "http://localhost/comment?text=<script>alert(1)</script>"
 
 # Test path traversal
-curl -v -H "Host: example.com" \
+curl -v -A "Mozilla/5.0" -H "Host: example.com" \
   "http://localhost/file?path=../../etc/passwd"
 ```
 
@@ -392,11 +407,11 @@ tail -f /var/log/synvoid/access.log | grep WAF
 Look at the actual request that triggered detection:
 
 ```bash
-# Enable debug logging and reproduce
-RUST_LOG=debug ./synvoid -f
+# Enable debug logging and reproduce (binary is ./target/release/synvoid after a release build)
+RUST_LOG=debug ./target/release/synvoid -f
 
 # Make the request again
-curl -H "Host: example.com" "http://localhost/path?param=value"
+curl -A "Mozilla/5.0" -H "Host: example.com" "http://localhost/path?param=value"
 ```
 
 **Step 3: Determine the Fix**
@@ -418,7 +433,7 @@ PHP applications often use:
 
 **Recommended settings:**
 ```toml
-[site.attack_detection]
+[attack_detection]
 paranoia_level = 2
 ```
 
@@ -431,7 +446,7 @@ REST APIs frequently use:
 
 **Recommended settings:**
 ```toml
-[site.attack_detection]
+[attack_detection]
 paranoia_level = 2
 action = "log"  # Start with logging, then switch to block
 ```
@@ -445,14 +460,14 @@ SPAs typically have:
 
 **Recommended settings:**
 ```toml
-[site.attack_detection]
+[attack_detection]
 paranoia_level = 2
 
 # API-only, so focus on SQLi and XSS
-[site.attack_detection.xss]
+[attack_detection.xss]
 enabled = true
 
-[site.attack_detection.sqli]
+[attack_detection.sqli]
 enabled = true
 ```
 
@@ -465,44 +480,40 @@ CMS platforms like WordPress use:
 
 **Recommended settings:**
 ```toml
-[site.attack_detection]
+[attack_detection]
 paranoia_level = 2
 action = "stall"  # Silent blocking for CMS
 ```
 
 ## Metrics
 
-Attack detection is tracked via Prometheus metrics:
-
-```
-synvoid_attack_detected{type="sqli"}
-synvoid_attack_detected{type="xss"}
-synvoid_attack_detected{type="ssrf"}
-# ... etc
-```
+Attack detection results are surfaced through the admin/metrics interfaces rather than
+a dedicated `synvoid_attack_detected` Prometheus family — no such metric is registered.
 
 ### Key Metrics
 
-| Metric | Description |
+Attack detection counts reach operators through the admin metrics API
+(`/api/metrics`), which reports aggregate counters such as:
+
+| Field | Description |
 |--------|-------------|
-| `synvoid_attack_detected_total` | Counter of all detected attacks by type |
-| `synvoid_waf_decision_total` | Decisions made (pass/block/challenge) |
-| `synvoid_blocklist_size` | Number of blocked IPs |
-| `synvoid_rate_limit_exceeded` | Rate limit violations |
+| `waf_decisions` / per-decision counters | Decisions made (pass/block/challenge) |
+| `blocks` | Number of blocked clients/requests |
+| `rate_limit_hits` | Rate limit violations |
+| `upstream_healthy` | Upstream health state |
 
 ### Query Examples
 
-```promql
-# Attack rate over time
-rate(synvoid_attack_detected_total[5m])
+```bash
+# Attack/WAF counters from the admin metrics API
+curl -H "Authorization: Bearer <token>" http://127.0.0.1:8081/api/metrics
 
-# Top attack types
-topk(10, synvoid_attack_detected_total)
-
-# Blocked request percentage
-sum(rate(synvoid_waf_decision_total{decision="block"}[5m]))
-/ sum(rate(synvoid_waf_decision_total[5m])) * 100
+# Prometheus scrape (metrics listener, port 9090 in config/main.toml)
+curl http://localhost:9090/metrics | grep -i -E "waf|block|rate_limit"
 ```
+
+Metric field names are defined in `crates/synvoid-metrics/src/payloads.rs`; check that
+file for the exact set rather than assuming a `synvoid_*` name.
 
 ## See Also
 

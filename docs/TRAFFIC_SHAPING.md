@@ -5,10 +5,12 @@ SynVoid provides token bucket-based traffic shaping to control bandwidth allocat
 ## Overview
 
 Traffic shaping uses token bucket algorithms to:
-- **Limit bandwidth** per site or IP
-- **Control burst traffic** 
-- **Prioritize traffic** based on rules
+- **Limit bandwidth** per site
+- **Control burst traffic**
+- **Cap concurrent connections**
 - **Prevent DoS** through bandwidth limits
+
+There is no per-traffic-class priority mechanism in the shaper.
 
 ## How It Works
 
@@ -20,14 +22,14 @@ Traffic shaping uses token bucket algorithms to:
 │                                                        │
 │    Tokens added at rate:                               │
 │    ┌──────────────┐                                    │
-│    │   refill     │  rate = max_rate_mbps             │
-│    │   rate       │  burst = burst_mbps               │
+│    │   refill     │  rate = ingress_max_mb_s           │
+│    │   rate       │  burst = burst_allowance_mb         │
 │    └──────────────┘                                    │
 │         │                                               │
 │         v                                               │
 │    ┌─────────────────────────────────────────────┐     │
 │    │              Bucket (tokens)                │     │
-│    │   Capacity: burst_mbps                      │     │
+│    │   Capacity: burst_allowance_mb              │     │
 │    │   Current: tokens available                │     │
 │    └─────────────────────────────────────────────┘     │
 │         │                                               │
@@ -52,14 +54,24 @@ enabled = true
 
 # Global limits apply to all traffic
 [traffic_shaping.global]
-max_rate_mbps = 1000      # Maximum rate in Mbps
-burst_mbps = 1500         # Burst allowance in Mbps
+ingress_max_mb_s = 1000        # Maximum ingress rate in MB/s
+egress_max_mb_s = 1000         # Maximum egress rate in MB/s
+burst_allowance_mb = 100       # Burst allowance in MB
+burst_refill_ms = 100          # Burst refill interval
+attack_mode_multiplier = 0.5   # Limits scale by this while under attack
 
-# Per-IP limits
-[traffic_shaping.per_ip]
-max_rate_mbps = 100       # Per-IP limit
-burst_mbps = 150
+# Connection limits
+[traffic_shaping.connection_limits]
+max_connections = 1000
+max_connections_per_ip = 10
+connection_queue_size = 100
+connection_queue_timeout_ms = 60000
+connection_burst = 5
 ```
+
+There is no `[traffic_shaping.per_ip]` section. Per-IP bandwidth limits are enforced by
+the rate limiter and flood protector (see [FLOOD_PROTECTION.md](./FLOOD_PROTECTION.md) and
+[RATE_LIMITING.md](./RATE_LIMITING.md)), not by the traffic shaper.
 
 ### Per-Site Traffic Shaping
 
@@ -67,18 +79,21 @@ burst_mbps = 150
 # config/sites/example.com.toml
 [site.traffic_shaping]
 enabled = true
-max_rate_mbps = 100       # Site-specific limit
-burst_mbps = 150
+ingress_max_mb_s = 100         # Site-specific ingress limit
+egress_max_mb_s = 100          # Site-specific egress limit
+burst_allowance_mb = 10
+inherit = true
 ```
 
-### Site-Specific Overrides
+### Site-Specific Connection Overrides
 
 ```toml
 # config/sites/high-traffic.com.toml
-[site.traffic_shaping]
-enabled = true
-max_rate_mbps = 500       # Higher limit for this site
-burst_mbps = 750
+[site.traffic_shaping.connection]
+max_connections = 5000
+max_connections_per_ip = 50
+connection_queue_size = 500
+connection_burst = 10
 ```
 
 ## Configuration Options
@@ -87,25 +102,36 @@ burst_mbps = 750
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `enabled` | `false` | Enable traffic shaping |
-| `max_rate_mbps` | `0` (unlimited) | Maximum rate in Mbps |
-| `burst_mbps` | `0` (no burst) | Burst allowance in Mbps |
+| `enabled` | `true` | Enable traffic shaping |
+| `global.ingress_max_mb_s` | `128` | Maximum ingress rate in MB/s |
+| `global.egress_max_mb_s` | `128` | Maximum egress rate in MB/s |
+| `global.burst_allowance_mb` | `10` | Burst allowance in MB |
+| `global.burst_refill_ms` | `100` | Burst refill interval |
+| `global.attack_mode_multiplier` | `0.5` | Limit scale factor while under attack |
 
-### Per-IP Options
+### Connection Limit Options
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `enabled` | `false` | Enable per-IP shaping |
-| `max_rate_mbps` | `100` | Per-IP maximum rate |
-| `burst_mbps` | `150` | Per-IP burst allowance |
+| `connection_limits.max_connections` | `1000` | Global concurrent connection cap |
+| `connection_limits.max_connections_per_ip` | `10` | Concurrent connections per IP |
+| `connection_limits.connection_queue_size` | `100` | Connection queue depth |
+| `connection_limits.connection_queue_timeout_ms` | `60000` | Queue wait timeout |
+| `connection_limits.connection_burst` | `5` | Connection burst allowance |
 
 ### Per-Site Options
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `enabled` | `false` | Enable site shaping |
-| `max_rate_mbps` | `100` | Site maximum rate |
-| `burst_mbps` | `150` | Site burst allowance |
+| `enabled` | inherit | Enable site shaping |
+| `inherit` | `true` | Inherit global shaping values |
+| `ingress_max_mb_s` | inherit | Site ingress rate limit |
+| `egress_max_mb_s` | inherit | Site egress rate limit |
+| `burst_allowance_mb` | inherit | Site burst allowance |
+| `connection.max_connections` | inherit | Site connection cap |
+| `connection.max_connections_per_ip` | inherit | Site per-IP connection cap |
+| `connection.connection_queue_size` | inherit | Site queue depth |
+| `connection.connection_burst` | inherit | Site burst allowance |
 
 ## Use Cases
 
@@ -117,38 +143,45 @@ Limit a single site from consuming all bandwidth:
 # Default for all sites
 [defaults.traffic_shaping]
 enabled = true
-max_rate_mbps = 100
-burst_mbps = 150
+ingress_max_mb_s = 100
+egress_max_mb_s = 100
+burst_allowance_mb = 10
 
 # Exception for API site
 [site.traffic_shaping]
 enabled = true
-max_rate_mbps = 500
-burst_mbps = 750
+ingress_max_mb_s = 500
+egress_max_mb_s = 500
+burst_allowance_mb = 50
 ```
 
 ### Use Case 2: Per-Client Limits
 
-Prevent individual clients from overwhelming the system:
+The traffic shaper has no per-IP bandwidth section. Use connection limits instead:
 
 ```toml
-[traffic_shaping.per_ip]
-enabled = true
-max_rate_mbps = 10
-burst_mbps = 20
+[traffic_shaping.connection_limits]
+max_connections_per_ip = 5
+connection_burst = 2
 ```
 
-### Use Case 3: Priority Traffic
+For per-IP *request* rates see [RATE_LIMITING.md](./RATE_LIMITING.md).
 
-Give certain traffic priority:
+### Use Case 3: Bandwidth Accounting
+
+Account monthly transfer and act when the cap is reached:
 
 ```toml
-# Higher priority for API endpoints
-[site.traffic_shaping]
-enabled = true
-priority = "high"
-max_rate_mbps = 500
-burst_mbps = 750
+[traffic_shaping.bandwidth]
+monthly_cap_ingress_gb = 500
+monthly_cap_egress_gb = 1000
+action_on_limit = "block"     # "block" or "throttle"
+retention_days = 365
+mesh_excluded_from_total = false
+
+[traffic_shaping.bandwidth.monthly_reset]
+mode = "rolling30days"        # or "fixed_day"
+fixed_day = 1
 ```
 
 ### Use Case 4: Global Rate Limiting
@@ -157,9 +190,8 @@ Protect upstream servers:
 
 ```toml
 [traffic_shaping.global]
-enabled = true
-max_rate_mbps = 1000  # Cap total throughput
-burst_mbps = 1500
+ingress_max_mb_s = 1000  # Cap total ingress
+egress_max_mb_s = 1000
 ```
 
 ## Traffic Shaping vs Rate Limiting
@@ -172,25 +204,26 @@ burst_mbps = 1500
 | **Granularity** | Bandwidth (Mbps) | Requests per second |
 | **Use Case** | Protect bandwidth | Protect resources |
 
-## Prometheus Metrics
+## Metrics
+
+The traffic shaper exports no dedicated Prometheus series. Enforcement outcomes are counted
+on the internal metrics registry:
 
 ```bash
-synvoid_traffic_shaper_packets_total     # Total packets processed
-synvoid_traffic_shaper_packets_dropped   # Dropped packets
-synvoid_traffic_shaper_packets_queued    # Queued packets
-synvoid_traffic_shaper_tokens_available  # Available tokens
-synvoid_traffic_shaper_bucket_empty_total # Bucket empty events
-synvoid_traffic_shaper_wait_seconds      # Wait time in queue
+synvoid.traffic.connection_limited   # Requests rejected by the connection limiter
+synvoid.bandwidth.limit_exceeded     # Requests rejected by the bandwidth limiter
 ```
+
+Bandwidth and cache counters are also aggregated to the admin API (`GET /api/stats`) as
+`proxy_cache_hits` / `proxy_cache_misses` and `static_cache_hits` / `static_cache_misses`.
 
 ## Monitoring
 
 ### Check Current Shaping Status
 
 ```bash
-# Via Prometheus
-synvoid_traffic_shaper_packets_dropped
-synvoid_traffic_shaper_packets_queued
+synvoid.traffic.connection_limited
+synvoid.bandwidth.limit_exceeded
 ```
 
 ### Identify Issues
@@ -209,13 +242,15 @@ synvoid_traffic_shaper_packets_queued
 
 ### Recommended Settings
 
-| Scenario | Max Rate | Burst |
-|----------|----------|-------|
-| Development | 10 Mbps | 15 Mbps |
-| Small Site | 50 Mbps | 75 Mbps |
-| Medium Site | 100 Mbps | 150 Mbps |
-| Large Site | 500 Mbps | 750 Mbps |
-| Enterprise | 1000 Mbps | 1500 Mbps |
+| Scenario | Ingress/Egress | Burst |
+|----------|----------------|-------|
+| Development | 10 MB/s | 2 MB |
+| Small Site | 50 MB/s | 5 MB |
+| Medium Site | 100 MB/s | 10 MB |
+| Large Site | 500 MB/s | 50 MB |
+| Enterprise | 1000 MB/s | 100 MB |
+
+Note the units: the config keys are **megabytes per second**, not megabits per second.
 
 ## Troubleshooting
 
@@ -224,20 +259,20 @@ synvoid_traffic_shaper_packets_queued
 If clients experience high latency:
 
 1. Check for shaping bottleneck
-2. Increase `max_rate_mbps`
+2. Increase `ingress_max_mb_s` / `egress_max_mb_s`
 3. Consider upgrading upstream
 
 ### Requests Being Dropped
 
 If legitimate traffic is dropped:
 
-1. Increase burst allowance
-2. Check per-IP limits
+1. Increase `burst_allowance_mb`
+2. Check connection limits
 3. Review traffic patterns
 
 ### Not Working
 
-1. Ensure shaping is enabled
+1. Ensure `[traffic_shaping] enabled = true` (this defaults to `true`)
 2. Verify limits are set (not 0)
 3. Check metrics are incrementing
 
@@ -251,11 +286,12 @@ Use both for comprehensive protection:
 # Traffic shaping (bandwidth)
 [traffic_shaping]
 enabled = true
-max_rate_mbps = 100
+[traffic_shaping.global]
+ingress_max_mb_s = 100
 
 # Rate limiting (requests)
 [defaults.ratelimit]
-enabled = true
+mode = "shared"
 [defaults.ratelimit.ip]
 per_second = 10
 ```
@@ -265,33 +301,35 @@ per_second = 10
 Traffic shaping works with caching:
 
 ```toml
-[proxy_cache]
-enabled = true
+[site.proxy.cache]
+enable = true
 
 [traffic_shaping]
 enabled = true
-max_rate_mbps = 100
+[traffic_shaping.global]
+ingress_max_mb_s = 100
 ```
 
 Cached responses don't count against shaping limits.
 
 ## Advanced Configuration
 
-### Site Priority
+### Tighten Under Attack
+
+The shaper scales its limits down while the threat level is elevated, using
+`attack_mode_multiplier`:
 
 ```toml
-[site.traffic_shaping]
-enabled = true
-priority = "high"  # high, medium, low
-max_rate_mbps = 500
+[traffic_shaping.global]
+attack_mode_multiplier = 0.25   # Quarter the limits during an attack
 ```
 
 ### Queue Management
 
 ```toml
-[traffic_shaping.queue]
-max_size = 1000
-timeout_secs = 30
+[traffic_shaping.connection_limits]
+connection_queue_size = 1000
+connection_queue_timeout_ms = 30000
 ```
 
 ## Best Practices

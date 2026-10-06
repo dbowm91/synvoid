@@ -229,6 +229,10 @@ manifest_sha256 = "..."
 - `Disabled`: load is always rejected
 - Production mode: signing not enforced for any tier when `is_production = false`
 
+Enforcement of tier/signature rules happens in
+`crates/synvoid-plugin-runtime/src/sandbox/types.rs`
+(`PluginTrustTier`, `strict tier` prefix rejection).
+
 ---
 
 ## 5. Capability Model
@@ -472,21 +476,37 @@ Hot reload gates:
 
 ---
 
-## 9. Migration: `native_plugins_compat`
+## 9. Migration: deprecated `native_plugins` keys
 
-The deprecated `[plugins.native_plugins]` config key maps to `[plugins.unsafe_native]`.
+The **replacement** is `[plugins.unsafe_native]`. Two older spellings are still accepted and
+are migrated into it at startup:
+
+| Key | Status |
+|---|---|
+| `[plugins.unsafe_native]` | **Current — use this** |
+| `[plugins.native_plugins]` | Deprecated alias, migrated with a warning |
+| `[plugins.native_plugins_compat]` | Deprecated alias (the Rust *field* name), migrated with a warning |
 
 ### Behavior
 
-1. If `[native_plugins]` is present, its value is migrated to `[unsafe_native]`
-2. A deprecation warning is logged at startup
-3. Migration only overwrites `[unsafe_native]` if it is at defaults (not explicitly configured)
-4. If both keys are present and `[unsafe_native]` was explicitly set, the explicit value wins
+1. If either deprecated key is present, its value is migrated to `[plugins.unsafe_native]`
+   (`PluginConfig::native_plugins_compat`, declared
+   `#[serde(default, alias = "native_plugins")]`)
+2. A deprecation warning naming `[plugins.native_plugins]` is logged at startup
+3. Migration only overwrites `[plugins.unsafe_native]` if it is at defaults (not explicitly configured)
+4. If both the deprecated key and an explicit `[plugins.unsafe_native]` are present, the
+   explicit value wins
+
+Source: `crates/synvoid-config/src/plugins.rs` — `PluginConfig::native_plugins_compat` and
+`PluginConfig::migrate_deprecated_native_plugins`.
+
+> Native extensions require the opt-in `unsafe-native-extensions` compile feature and are
+> **not** sandboxed. The sandboxed WASM runtime needs no feature flag.
 
 ### Before (deprecated)
 
 ```toml
-[plugins.native_plugins]
+[plugins.native_plugins_compat]
 enabled = true
 allow_in_production = true
 risk_acknowledgement = "I understand the risks"

@@ -49,17 +49,32 @@ The honeypot is **disabled by default**. No ports are opened, no resources consu
 
 ```toml
 [honeypot_port]
-enabled = true
-bind_address = "0.0.0.0"   # All interfaces (default)
+enabled = false            # default: false
+ports = [10022, 103306]    # explicit port list (see below)
+protocols = ["tcp"]
+site_scope = "global"      # default: "global"
 ```
 
-When `enabled = false` (the default), the entire honeypot subsystem is skipped during startup. No storage database is created, no listeners are bound, and no background tasks are spawned.
+When `enabled = false` (the default), the entire honeypot subsystem is skipped during startup. No storage database is created, no listeners are bound, and no background tasks are spawned (`src/worker/unified_server/init_waf.rs:97` returns `None` before any runner is built).
+
+### What `[honeypot_port]` actually exposes
+
+`MainConfig::honeypot_port` is `HoneypotPortConfig` (`crates/synvoid-config-model/src/honeypot_port.rs`), which has exactly **four** fields:
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `enabled` | bool | `true` in the struct default | Enable the honeypot |
+| `ports` | `Vec<u16>` | `[8080, 8443, 9090]` | Explicit honeypot ports |
+| `protocols` | `Vec<String>` | `["tcp", "udp"]` | Requested transports; the runtime serves **TCP only** |
+| `site_scope` | String | `"global"` | Site scope for mesh propagation |
+
+Every other setting in this guide — `bind_address`, `min_port`, `max_port`, `num_honeypot_ports`, rotation intervals, timeouts, payload size, connection limits, `stable_ports`, `services`, `response_mode`, `storage`, `ai_config`, and `threat_intel` — lives on the **runtime** struct `PortHoneypotConfig` (`crates/synvoid-honeypot/src/config.rs`) and is **not reachable from `main.toml`**. `runtime_config_from_persisted` (`src/honeypot_port/mod.rs:12`) starts from `PortHoneypotConfig::default()` and copies only the four persisted fields, mapping `ports` onto the runtime range as `min_port = min(ports)`, `max_port = max(ports)`, `num_honeypot_ports = ports.len()`.
+
+> **Note:** `HoneypotPortConfig::default()` sets `enabled: true`, and the shipped `config/main.toml` contains no `[honeypot_port]` section, so a default install **does** load the honeypot as enabled on ports `[8080, 8443, 9090]`. Set `enabled = false` explicitly to turn it off. The values in the tables below are `PortHoneypotConfig` defaults that apply only if the runtime struct is built directly (tests, or the admin `PUT /api/honeypot/config` path re-running the same 4-field translation).
 
 ### Bind address
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `bind_address` | `0.0.0.0` | IP address to bind honeypot listeners to |
+The runtime default is `bind_address = 0.0.0.0` (`IpAddr::from([0, 0, 0, 0])`). It is not operator-configurable through `main.toml` or the admin honeypot config endpoint.
 
 Binding to `0.0.0.0` exposes the honeypot on all network interfaces. For internal-only deception, bind to a specific interface or `127.0.0.1`.
 
@@ -73,13 +88,13 @@ The honeypot uses a range-based port selection system with configurable rotation
 
 ### Port range and count
 
-| Setting | Default | Description |
-|---------|---------|-------------|
+| Setting | Runtime default | Description |
+|---------|------------------|-------------|
 | `min_port` | `10000` | Start of the port range |
 | `max_port` | `60000` | End of the port range |
 | `num_honeypot_ports` | `3` | Number of simultaneous fake ports |
 
-Ports are selected randomly from within the range `[min_port, max_port]`. The number of simultaneously active ports is controlled by `num_honeypot_ports`.
+Ports are selected randomly from within the range `[min_port, max_port]`. The number of simultaneously active ports is controlled by `num_honeypot_ports`. Through `main.toml` you set `ports = [...]` instead; the runtime derives min/max/count from that list.
 
 ### Port rotation
 
@@ -95,23 +110,21 @@ The actual rotation interval is randomized between `min_rotation_interval_secs` 
 
 You can pin specific ports to specific services using `stable_ports`:
 
-```toml
-[[honeypot_port.stable_ports]]
-port = 10022
-service = "ssh"
-responder = "vulnerable"
-
-[[honeypot_port.stable_ports]]
-port = 103306
-service = "mysql"
-responder = "template"
+```rust
+// runtime struct only — not settable from main.toml
+config.stable_ports = vec![
+    StablePortConfig { port: 10022, service: "ssh".into(), responder: "vulnerable".into() },
+    StablePortConfig { port: 3306,  service: "mysql".into(), responder: "template".into() },
+];
 ```
 
 Stable ports are **not rotated** and always serve the specified service. Use this for predictable deception on known scanner targets.
 
+(The `103306` value in the earlier revision of this guide was not a valid port number; `StablePortConfig.port` is a `u16`.)
+
 ### Default services (11)
 
-The honeypot ships with 11 pre-configured service banners:
+The honeypot ships with 11 pre-configured service banners (`default_services()`, `crates/synvoid-honeypot/src/config.rs:498`). Ports in this table are the ports each service responds on, not the honeypot bind ports:
 
 | Service | Protocol | Ports | Banner |
 |---------|----------|-------|--------|

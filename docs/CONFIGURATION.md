@@ -13,24 +13,31 @@ Complete configuration reference for SynVoid.
 - [HTTP Settings](#http-settings)
 - [Fallback Mode](#fallback-mode)
 - [Attack Detection](#attack-detection-configuration)
-- [Bot Protection](#bot-protection)
-- [Rate Limiting](#rate-limiting)
-- [Upstream](#upstream-configuration)
+- [Bot Protection](#bot-protection-configuration)
+- [Rate Limiting](#rate-limiting-configuration)
+- [Upstream](#site-configuration-configsitesexamplecomtoml)
 - [TLS/SSL](#tlsssl-configuration)
 - [HTTP/3](#http3-configuration)
-- [Static Files](#static-file-serving)
 - [FastCGI](#fastcgi-configuration)
-- [App Server](#app-server-configuration)
 - [WAF Mesh](#waf-mesh-configuration)
 - [Process Management](#process-management)
 - [CPU Offload IPC Pool Environment Overrides](#cpu-offload-ipc-pool-environment-overrides)
-- [Security](#security-configuration)
 - [Tarpit System](#tarpit-system)
 - [Honeypot Port Deception Layer](#honeypot-port-deception-layer)
 
 ## Main Configuration (`config/main.toml`)
 
 ### Server Settings
+
+> **Before editing:** the shipped `config/main.toml` does **not** validate on a
+> clean machine. `synvoid --configtest` fails with
+> `main.toml: logging.access_log_dir: Access log directory not found: /var/log/synvoid`
+> (exit 1). Create the directory (or repoint `access_log_dir`) before trusting the
+> rest of the file.
+>
+> These six top-level sections have **no serde default** and are therefore
+> required: `server`, `fallback`, `admin`, `logging`, `metrics`, `defaults`.
+> A config that omits `fallback` fails with `missing field 'fallback'`.
 
 ```toml
 [server]
@@ -52,14 +59,23 @@ trusted_proxies = ["127.0.0.1", "::1"]
 [admin]
 enabled = true
 port = 8081
-token = "your-secure-random-token-here"
+bind_address = "127.0.0.1"  # Default: loopback only
+token = "<64 hex characters from `synvoid --generatetoken`>"
 ```
 
 **Why these defaults:**
 - Admin API is enabled by default because it's essential for operational management
 - Port 8081 is used (instead of 8080) to separate it from traffic serving and reduce attack surface
-- No default token—operators must set a secure token to prevent unauthorized admin access
-- Always use `token_env_var` or a secure token in production; short or default tokens expose the admin API
+- `bind_address` defaults to `127.0.0.1`; widen it only behind a trusted network boundary
+- If `token` is omitted entirely, the serde default generates a **random 32-character
+  alphanumeric token at each config load** — not a usable stable secret, and it changes
+  on restart. Always set it explicitly or use `token_env_var`.
+- A configured token must be **at least 32 characters** and must not contain a weak
+  pattern (`changeme`, `password`, `admin`, `123456`, …). A short placeholder such as
+  `"your-secure-token"` is **rejected at config load**, not warned about.
+- Generate a token with `synvoid --generatetoken` (prints 64 hex characters, does not
+  save). `synvoid --generatenewtoken` writes a **plaintext** token into `main.toml`
+  (`0600` on Unix) — it is not hashed at rest.
 
 ### Logging
 
@@ -77,6 +93,8 @@ retention_days = 5
 - Access logging is enabled by default because it's critical for audit trails and attack analysis
 - JSON format is the default for machine parsing; operators can switch to `text` for human readability
 - 5-day retention balances storage costs with the ability to investigate incidents that span several days
+- `access_log_dir` must exist on disk. The shipped `/var/log/synvoid` normally does
+  not, and its absence is a hard `--configtest` failure.
 
 ### Metrics
 
@@ -84,11 +102,15 @@ retention_days = 5
 [metrics]
 enabled = true
 port = 9090
+bind_address = "127.0.0.1"  # Default: loopback only
 ```
 
 **Why these defaults:**
 - Metrics are enabled by default to support observability and alerting in production environments
 - Port 9090 follows Prometheus conventions, making it easy to integrate with standard monitoring stacks
+- `bind_address` defaults to `127.0.0.1`, and a **non-loopback metrics bind is rejected
+  at config-load time** (`MetricsConfig::validate`), not merely warned about. Expose
+  metrics through a loopback-side collector or a tunnel.
 - Disable if you don't have a metrics collector (increases attack surface slightly)
 
 ### MIME Types
@@ -166,8 +188,15 @@ mode = "return_404"  # or "proxy" with upstream setting
 
 ## Attack Detection Configuration
 
+Attack detection is configured **per site** (`config/sites/<domain>.toml`), under
+`[attack_detection]`. There is **no `[defaults.attack_detection]` section** —
+`DefaultsConfig` has no `attack_detection` field, so a `[defaults.attack_detection]`
+block (including the one in `config/main.toml.example`) is silently ignored: the
+config crate does not use `deny_unknown_fields`.
+
 ```toml
-[defaults.attack_detection]
+# config/sites/example.com.toml
+[attack_detection]
 enabled = true
 paranoia_level = 2  # 1=low, 2=medium, 3=high
 action = "stall"    # "stall", "block", or "log"
@@ -180,36 +209,71 @@ action = "stall"    # "stall", "block", or "log"
 
 ## Flood Protection Configuration
 
+Flood limits live under the top-level **`[tcp]`** section (`TcpDefaults`), not
+under `[defaults.flood]`, which does not exist. The keys below are the real
+`[tcp]` fields:
+
 ```toml
-[defaults.flood]
+[tcp]
+enabled = true
+worker_pool_size = 4
 syn_rate_per_ip = 50           # SYN packets per second per IP
 syn_rate_global = 10000        # Global SYN rate limit
 connection_rate_per_ip = 100   # Connections per second per IP
 connection_rate_global = 20000 # Global connection rate
 half_open_max = 1000          # Max half-open connections
 half_open_per_ip_max = 10     # Max half-open per IP
-udp_rate_per_ip = 1000        # UDP packets per second per IP
-udp_rate_global = 100000       # Global UDP rate
-blackhole_threshold = 0.9       # Enter blackhole at 90% capacity
-blackhole_duration_secs = 60   # Blackhole duration
+
+[udp]
+enabled = true
+rate_per_ip = 1000       # UDP packets per second per IP
+rate_global = 100000     # Global UDP rate
 ```
+
+**There is no `blackhole_threshold` or `blackhole_duration_secs` config key.**
+No `[tcp]`, `[udp]`, or `[defaults]` field by those names exists anywhere in
+`synvoid-config`; do not add them expecting blackhole behaviour.
 
 **Why these defaults:**
 - Per-IP limits (50 SYN/sec, 100 connections/sec) allow legitimate traffic bursts while blocking abuse scripts
 - Global limits (10000 SYN/sec, 20000 connections/sec) protect the system from distributed floods
 - `half_open_max = 1000` limits incomplete connection state to prevent memory exhaustion; SYN cookies help, but state still matters
-- `blackhole_threshold = 0.9` (90%) triggers blackholing before exhaustion—gives headroom for legitimate traffic during attacks
-- `blackhole_duration_secs = 60` is long enough to disrupt attackers but short enough to recover quickly if misconfigured
 
 ## Rate Limiting Configuration
 
 ```toml
 [defaults.ratelimit]
 mode = "shared"  # "shared" or "isolated" per site
+
+# REQUIRED IN PRACTICE — see the warning below.
+[defaults.ratelimit.ip]
+per_second = 10
+per_minute = 60
+
+[defaults.ratelimit.global]
+per_second = 500
+per_minute = 5000
 ```
+
+> **[`defaults.ratelimit.ip]` is effectively required, not optional.**
+> `DefaultsConfig` carries a struct-level `#[serde(default)]`, so a `main.toml`
+> that omits `[defaults.ratelimit.ip]` falls through to the hand-written
+> `impl Default for RateLimitDefaults`, which calls the **derived**
+> `IpRateLimitConfig::default()` — all zeros — instead of the serde field
+> defaults (`default_ip_per_second() = 10`). The site check is then
+> `if ip_state.per_second.len() >= self.state.config.ip.per_second as usize`
+> (`src/waf/ratelimit.rs`), i.e. `len() >= 0`, which is always true, so
+> **100% of requests are answered with HTTP 429**.
+>
+> Verified live: a config with an absent/empty `[defaults.ratelimit.ip]` returns
+> 429 on the very first request; adding `[defaults.ratelimit.ip] per_second = 10`
+> fixes it. Write the IP limits explicitly in every config. Note the values
+> quoted as "defaults" below are the *serde* field defaults, which only apply
+> when the field is present but the individual key is omitted.
 
 **Why these defaults:**
 - `mode = "shared"` uses a global rate limit pool, protecting the system as a whole rather than per-site; use `isolated` when you want each site to have its own independent limit bucket
+- `mode` accepts only `shared` or `isolated`; anything else fails `RateLimitDefaults::validate`. In particular `token_bucket` is **not** a valid value.
 - Default limits (10/sec, 60/min) are conservative for most applications—legitimate users won't notice, but automated scanners will be throttled
 - `burst = 20` allows brief traffic spikes without blocking, while sustained abuse triggers limits
 - Global limits (500/sec, 5000/min) protect the WAF itself from being overwhelmed
@@ -244,7 +308,7 @@ default = "http://127.0.0.1:8000"
 "/static" = "http://cdn.internal:8002"
 
 [ratelimit]
-mode = "isolated"
+mode = "isolated"   # "isolated" or "shared" — "token_bucket" is invalid
 
 [ratelimit.ip]
 per_second = 20
@@ -264,6 +328,11 @@ block_ai_crawlers = true
 enabled = true
 paranoia_level = 2
 ```
+
+Site-level sections are written **without** the `site.` prefix inside
+`config/sites/*.toml`; the prefix shown in `[site.upstream]` above applies to the
+nested tables. `SiteRateLimitConfig::validate` accepts only `shared` and
+`isolated`.
 
 ## HTTP/3 Configuration
 
@@ -400,10 +469,11 @@ host = "example.com"
 port = 443
 tls_passthrough = true
 
-[site.ratelimit]
-mode = "token_bucket"
+# config/sites/example.com.toml
+[ratelimit]
+mode = "isolated"   # "shared" | "isolated" — "token_bucket" is invalid
 
-[site.ratelimit.ip]
+[ratelimit.ip]
 per_second = 10
 per_minute = 100
 ```
@@ -437,64 +507,70 @@ ca_cert_path = "/etc/synvoid/certs/ca.crt"
 
 ## Traffic Shaping
 
+Global traffic shaping is a **top-level `[traffic_shaping]`** section. The
+`[defaults.traffic_shaping]` section that also exists only carries `enabled` and
+a `site` sub-table — it has no `global` block, so the `max_rate_mbps` /
+`burst_mbps` keys shown below were never real.
+
 ```toml
-[defaults.traffic_shaping]
+[traffic_shaping]
 enabled = true
 
-[defaults.traffic_shaping.global]
-max_rate_mbps = 1000
-burst_mbps = 1500
+[traffic_shaping.global]
+ingress_max_mb_s = 128
+egress_max_mb_s = 128
+burst_allowance_mb = 10
+burst_refill_ms = 1000
+attack_mode_multiplier = 2.0
 ```
 
 **Why these defaults:**
 - Traffic shaping is enabled by default to prevent any single site or client from consuming all bandwidth
-- `max_rate_mbps = 1000` (1 Gbps) suits most deployments; adjust based on your network capacity
-- `burst_mbps = 1500` allows brief bursts above the limit to handle transient traffic spikes
-- Per-site overrides allow differential treatment (e.g., premium vs. standard tier)
+- `ingress_max_mb_s` / `egress_max_mb_s` (128 MB/s each by default) suit most deployments; adjust based on your network capacity
+- `burst_allowance_mb = 10` allows brief bursts above the limit to handle transient traffic spikes
 
-Per-site:
+Per-site overrides use the same key names:
 ```toml
-[site.traffic_shaping]
-enabled = true
-max_rate_mbps = 100
-burst_mbps = 150
+# config/sites/example.com.toml
+[traffic_shaping]
+inherit = true
+ingress_max_mb_s = 100
+egress_max_mb_s = 100
+burst_allowance_mb = 15
 ```
 
 ## Proxy Cache
 
+Proxy cache is configured **per upstream**, under `[proxy.cache]` in a site file
+(`ProxyCacheConfig` lives in `crates/synvoid-config/src/site/proxy.rs`). There is
+no top-level `[defaults.proxy_cache]` section.
+
 ```toml
-[defaults.proxy_cache]
+# config/sites/example.com.toml
+[proxy.cache]
 enabled = true
 max_entries = 10000
 max_size_mb = 512
 ttl_secs = 300
 
-[defaults.proxy_cache.vary]
+[proxy.cache.vary]
 enabled = true
 headers = ["Accept-Encoding", "Accept-Language"]
 ```
-
-**Why these defaults:**
-- Proxy cache is enabled by default to reduce upstream load and improve response times for repeated requests
-- `max_entries = 10000` and `max_size_mb = 512` balance memory usage with cache hit rates—tune based on your workload
-- `ttl_secs = 300` (5 minutes) provides reasonable freshness for most content while reducing upstream requests
-- Vary headers enabled for Accept-Encoding and Accept-Language ensure different renditions aren't served to wrong clients
 
 ## Upload Validation
 
 ```toml
 [defaults.upload]
 enabled = true
-max_size_mb = 10
+max_size = "10MB"        # String size, not `max_size_mb`
+scan_with_yara = true     # Flat bool, not a `[scan_with_yara]` table
+quarantine_dir = "/var/lib/synvoid/quarantine"
+yara_rules_dir = "rules/"
 
 [defaults.upload.allowed_types]
-mode = "whitelist"
-types = ["image/jpeg", "image/png", "image/gif", "application/pdf"]
-
-[defaults.upload.scan_with_yara]
-enabled = true
-rules_dir = "rules/"
-quarantine_dir = "/var/lib/synvoid/quarantine"
+mode = "allowlist"
+mime_types = ["image/jpeg", "image/png", "image/gif", "application/pdf"]
 
 # Large file scanning
 yara_large_file_scan_mode = "windowed"  # "full", "windowed", or "header_only"
@@ -505,20 +581,23 @@ yara_magic_scan_limit_bytes = 16777216  # 16MB magic scan region
 
 **Why these defaults:**
 - Upload validation is enabled by default because file uploads are a common attack vector (malware, webshells)
-- `max_size_mb = 10` suits most image/document uploads; larger files should use dedicated upload services with their own scanning
-- Whitelist mode ensures only expected file types are accepted—more secure than blacklist mode
+- `max_size` is a **string** (e.g. `"10MB"`), not a `max_size_mb` number, and `allowed_types` uses `mime_types`, not `types`. `mode` defaults to `"allowlist"`.
 - YARA scanning is enabled by default to detect malware in uploaded files
 - `windowed` scan mode provides good coverage without excessive memory usage for large files
 
 ## FastCGI Configuration
 
+FastCGI is configured **per site** under `[proxy.fastcgi]` (`FastCgiConfig`,
+`Option<...>` on the site proxy config), not under a top-level `[site.fastcgi]`:
+
 ```toml
-[site.fastcgi]
+# config/sites/example.com.toml
+[proxy.fastcgi]
 enabled = true
 socket = "/var/run/php/php-fpm.sock"
 # or TCP: socket = "127.0.0.1:9000"
 
-[site.fastcgi.params]
+[proxy.fastcgi.params]
 SCRIPT_FILENAME = "$document_root$fastcgi_script_name"
 SCRIPT_NAME = "$fastcgi_script_name"
 ```
@@ -564,6 +643,7 @@ max_permanent_blocks = 100000
 ## TCP Protocol Filtering
 
 ```toml
+# Top-level [tcp] (also documented above under Flood Protection)
 [tcp]
 enabled = true
 worker_pool_size = 4
@@ -676,120 +756,88 @@ Operational guidance:
 
 Anti-scraping tarpit that traps automated crawlers by serving infinitely expanding pages with randomized delays, fingerprint-resistant response variation, and configurable resource budgets.
 
+The tarpit is a **flat top-level `[tarpit]`** section (`TarpitDefaults`). There
+are no `[tarpit.admission]`, `[tarpit.budget]`, `[tarpit.fingerprint]`, or
+`[tarpit.redirect_policy]` sub-tables, and the scraper list key is
+`scraper_user_agents`, not `scraper_patterns`. Tarpit is **enabled by default**
+(`default_tarpit_enabled() == true`).
+
 ```toml
 [tarpit]
 enabled = true
 max_depth = 10                       # Maximum crawl depth before loop
 links_per_page = 50                  # Fake links generated per page
 response_delay_ms = 100              # Delay between chunks (ms)
-scraper_patterns = [                 # User-agent patterns that trigger tarpitting
+scraper_user_agents = [              # User-agent patterns that trigger tarpitting
   "scrapy", "curl", "wget", "python-requests",
   "python-urllib", "aiohttp", "httpx"
 ]
+content_templates = []               # Optional response body templates
 
-[tarpit.admission]
-max_concurrent = 256                 # Global concurrent tarpit sessions
-max_per_ip = 4                       # Per-IP concurrent session limit
-
-[tarpit.budget]
+# Budget / admission limits (flat keys, not a [tarpit.budget] table)
+max_concurrent_sessions = 256        # Global concurrent tarpit sessions
+max_sessions_per_ip = 4              # Per-IP concurrent session limit
 max_duration_secs = 600              # Max connection duration (10 min)
 max_chunks = 500                     # Max HTML segments sent per response
 max_bytes = 52428800                 # Max total bytes sent (50 MB)
 max_idle_secs = 30                   # Idle timeout (no client activity)
 write_timeout_ms = 5000              # Per-chunk write timeout (ms)
 
-[tarpit.fingerprint]
+# Fingerprint resistance (flat keys, not a [tarpit.fingerprint] table)
 min_chunk_delay_ms = 5               # Min delay between chunks (randomized)
 max_chunk_delay_ms = 30              # Max delay between chunks (randomized)
-vary_content_type = true             # Vary Content-Type across responses
-vary_status_code = true              # Vary HTTP status codes across responses
-
-[tarpit.redirect_policy]
-policy = "RelativeOnly"              # RelativeOnly | AllowList | AllowAll
-allow_list = []                      # Hostnames for AllowList policy
 ```
 
 ## Honeypot Port Deception Layer
 
-The port honeypot creates fake listening services (SSH, MySQL, Redis, FTP, etc.) on configurable port ranges to detect unauthorized internal port scanning, lateral movement, and reconnaissance. Disabled by default — enable when you want to detect attackers already inside your network. AI responses are disabled by default; raw payloads are truncated by default (only SHA-256 hashes stored).
+The port honeypot creates fake listening services (SSH, MySQL, Redis, FTP, etc.) on configurable ports to detect unauthorized internal port scanning, lateral movement, and reconnaissance.
+
+The config surface is the **top-level `[honeypot_port]`** section, with exactly **four**
+fields (`synvoid_config_model::honeypot_port::HoneypotPortConfig`, which is what
+`MainConfig::honeypot_port` uses):
+
+| Field | Type | Default |
+|---|---|---|
+| `enabled` | bool | **`true`** |
+| `ports` | `Vec<u16>` | `[8080, 8443, 9090]` |
+| `protocols` | `Vec<String>` | `["tcp", "udp"]` |
+| `site_scope` | String | `"global"` |
+
+> **The port honeypot is enabled by default.** A stock install therefore attempts to bind
+> deception listeners on **8080, 8443 and 9090** — 8080 being the default HTTP data plane
+> port and 9090 the default metrics port. On an unprivileged process the bind fails and
+> SynVoid logs `Failed to initialize port honeypot runner: Permission denied` and continues;
+> as root it can succeed and contend with those ports. If you do not want this, set
+> `enabled = false` explicitly.
 
 ```toml
-[honeypot]
-enabled = false                              # Enable port honeypot deception layer
-bind_address = "0.0.0.0"                     # Bind address for honeypot ports
-min_port = 10000                             # Minimum port number in range
-max_port = 60000                             # Maximum port number in range
-num_honeypot_ports = 3                       # Number of simultaneous fake ports
-rotation_interval_secs = 1800                # Port rotation interval (seconds)
-min_rotation_interval_secs = 600             # Minimum rotation interval (randomized)
-max_rotation_interval_secs = 3600            # Maximum rotation interval (randomized)
-connection_timeout_ms = 5000                 # Initial connection timeout (ms)
-read_timeout_ms = 10000                      # Subsequent read timeout (ms)
-max_payload_size = 8192                      # Max bytes to read per connection
-max_concurrent_connections = 256             # Global concurrent connection limit
-max_connections_per_ip = 10                  # Per-IP concurrent connection limit
-site_scope = "global"                        # Site scope for multi-tenant isolation
-
-[honeypot.storage]
-database_path = "/var/lib/synvoid/honeypot.db"  # SQLite database path
-max_records = 1000000                        # Max records before pruning (oldest deleted)
-retention_days = 90                          # Days to retain records
-flush_interval_secs = 60                     # Storage flush interval
-
-[honeypot.storage.writer]
-queue_capacity = 4096                        # Bounded channel capacity between listener and writer
-batch_size = 64                              # Records per batch flush
-flush_interval_ms = 1000                     # Periodic flush interval (ms)
-write_timeout_ms = 500                       # Per-record write timeout (ms)
-payload_retention_mode = "Truncated"         # None | HashOnly | Truncated | Full
-max_stored_payload_bytes = 256               # Max payload bytes stored (Truncated mode)
-max_stored_payload_hex_bytes = 512           # Max payload hex bytes stored (Truncated mode)
-
-[honeypot.response_mode]
-mode = "cycling"                             # Response cycling mode
-responder_type = "vulnerable"                # Default responder type
-
-[honeypot.ai]
-mode = "Disabled"                            # Disabled | TemplateOnly | LocalModelOnly | ExternalProvider
-provider = "ollama"                          # AI provider name
-model = "llama3"                             # Model identifier
-timeout_secs = 30                            # Provider request timeout
-
-[honeypot.ai.budget]
-max_prompt_bytes = 4096                      # Max prompt bytes sent to provider
-max_response_bytes = 2048                    # Max response bytes from provider
-max_generation_duration_secs = 10            # Max generation time
-max_turns_per_connection = 5                 # Max AI turns per connection
-max_concurrent_requests = 4                  # Max concurrent AI requests
-max_provider_failures = 3                    # Circuit breaker failure threshold
-
-[honeypot.threat_intel]
-enabled = true                               # Enable threat intel extraction
-mesh_enabled = false                         # Enable mesh propagation (requires minimum confidence/events)
-
-[honeypot.threat_intel.scoring]
-base_score_protocol_probe = 0.1              # Base score for protocol probes
-base_score_attack_pattern = 0.5              # Base score for known attack patterns
-base_score_exploit_payload = 0.7             # Base score for exploit payloads
-base_score_credential_attempt = 0.6          # Base score for credential attempts
-base_score_scanner_fingerprint = 0.3         # Base score for scanner fingerprints
-repeat_bonus_factor = 0.1                    # Bonus per repeat event
-repeat_max_bonus = 0.3                       # Maximum repeat bonus
-threshold_rate_limit = 0.3                   # Score threshold for rate-limit candidate
-threshold_local_block = 0.6                  # Score threshold for local block candidate
-threshold_mesh_share = 0.75                  # Score threshold for mesh share candidate
-threshold_mesh_block = 0.9                   # Score threshold for mesh block candidate
-min_events_for_mesh = 3                      # Minimum events before mesh propagation
-min_confidence_for_mesh = "Medium"           # Minimum confidence for mesh propagation
-mesh_ttl_secs = 86400                        # Mesh indicator TTL (24 hours)
-decay_half_life_secs = 3600                  # Score decay half-life (1 hour)
+[honeypot_port]
+enabled = false                # disable the port deception layer explicitly
+ports = [22, 3306, 6379, 21]   # override the default port list
+protocols = ["tcp"]
+site_scope = "global"
 ```
 
-**Safety notes:**
-- `mode = "Disabled"` (default) means no AI provider calls are made — only deterministic protocol banners and template responses
-- `payload_retention_mode = "Truncated"` (default) stores only truncated payload bytes; `"HashOnly"` stores SHA-256 hashes with zero raw content
-- `mesh_enabled = false` (default) prevents any honeypot signals from being shared across the mesh network
-- `max_concurrent_connections = 256` and `max_connections_per_ip = 10` prevent resource exhaustion from legitimate or malicious connection storms
+There is **no** `[honeypot]` section, and none of `bind_address`, `min_port`, `max_port`,
+`num_honeypot_ports`, or `rotation_interval_secs` is a config key — those were never
+configurable and are silently ignored. Runtime-only settings such as `[honeypot.storage]`,
+`[honeypot.response_mode]`, `[honeypot.ai]`, and `[honeypot.threat_intel.scoring]` are
+constructed in code, not read from TOML.
+
+The related URL-based honeypot defaults live under `[defaults.honeypot]` and
+`[defaults.honeypot.block]` (values shown are the code defaults):
+
+```toml
+[defaults.honeypot]
+endpoints_file = "config/honeypot_endpoints.txt"
+paths_per_ip = 5
+ttl_secs = 86400
+
+[defaults.honeypot.block]
+enabled = true
+ban_duration = "24h"
+```
+
 
 ## WAF Mesh Configuration
 
@@ -883,12 +931,7 @@ port = 80
 [admin]
 enabled = true
 port = 8081
-token = "generate-a-secure-token"
-
-[defaults.attack_detection]
-enabled = true
-paranoia_level = 1
-action = "block"
+token = "<64 hex characters from `synvoid --generatetoken`>"
 
 [defaults.ratelimit]
 mode = "shared"
@@ -911,14 +954,16 @@ port = 80
 [admin]
 enabled = true
 port = 8081
-token = "generate-a-secure-token"
+token = "<64 hex characters from `synvoid --generatetoken`>"
 
-[defaults.attack_detection]
+# Attack detection is site-scoped — set it in config/sites/<domain>.toml:
+#   [attack_detection]
+#   enabled = true
+#   paranoia_level = 2
+#   action = "block"
+
+[tcp]
 enabled = true
-paranoia_level = 2
-action = "block"
-
-[defaults.flood]
 syn_rate_per_ip = 20
 connection_rate_per_ip = 50
 
@@ -931,7 +976,6 @@ per_minute = 100
 per_hour = 500
 
 [defaults.bot]
-enabled = true
 block_ai_crawlers = true
 enable_css_honeypot = true
 ```
@@ -948,11 +992,13 @@ port = 80
 [admin]
 enabled = true
 port = 8081
+token = "<64 hex characters from `synvoid --generatetoken`>"
 
-[defaults.attack_detection]
-enabled = true
-paranoia_level = 2
-action = "stall"
+# Attack detection is site-scoped — set it in config/sites/<domain>.toml:
+#   [attack_detection]
+#   enabled = true
+#   paranoia_level = 2
+#   action = "stall"
 
 [defaults.ratelimit]
 mode = "isolated"
@@ -965,13 +1011,12 @@ per_hour = 5000
 [defaults.ratelimit.global]
 per_second = 10000
 
-# API-specific: stricter limits
-[site.ratelimit]
-mode = "isolated"
-
-[site.ratelimit.ip]
-per_second = 10
-per_minute = 100
+# API-specific: stricter limits go in config/sites/newapp.com.toml
+# [ratelimit]
+# mode = "isolated"
+# [ratelimit.ip]
+# per_second = 10
+# per_minute = 100
 ```
 
 ### DDoS-Protected Service
@@ -983,20 +1028,20 @@ A service requiring aggressive DDoS protection:
 host = "0.0.0.0"
 port = 80
 
-[defaults.attack_detection]
-enabled = true
-paranoia_level = 3
-action = "stall"
+# Attack detection is site-scoped — set it in config/sites/<domain>.toml:
+#   [attack_detection]
+#   enabled = true
+#   paranoia_level = 3
+#   action = "stall"
 
-[defaults.flood]
+[tcp]
+enabled = true
 syn_rate_per_ip = 10
 syn_rate_global = 5000
 connection_rate_per_ip = 10
 connection_rate_global = 5000
 half_open_max = 100
 half_open_per_ip_max = 2
-blackhole_threshold = 0.5
-blackhole_duration_secs = 300
 
 [defaults.ratelimit]
 mode = "shared"
@@ -1007,7 +1052,6 @@ per_minute = 20
 per_hour = 50
 
 [threat_level]
-enabled = true
 initial = 1
 auto_scale = true
 ```
@@ -1034,8 +1078,12 @@ per_minute = 100
 
 ## File Structure
 
+`--config-path` takes the **directory** containing `main.toml` and `sites/` — not
+the TOML file itself. Without the flag it defaults to the CWD-relative `./config/`.
+`synvoid --configtest <dir>` validates `<dir>/main.toml` plus `<dir>/sites/*.toml`.
+
 ```
-/etc/synvoid/
+<config-dir>/                 # the directory passed to --config-path
 ├── main.toml                 # Main configuration
 ├── sites/
 │   ├── example.com.toml     # Site-specific config
@@ -1048,15 +1096,24 @@ per_minute = 100
 │   └── 503.html
 ├── rules/                   # YARA rules
 ├── static/                  # Static files
-├── cache/                  # Proxy cache
+├── cache/                   # Proxy cache
 ├── db/                     # SQLite database
 └── certs/                  # TLS certificates
 ```
+
+The repository's shipped `config/` directory matches this layout.
 
 ## Common Configuration Mistakes
 
 | Mistake | Problem | Solution |
 |---------|---------|----------|
+| Passing the TOML file to `--config-path` | `--config-path` takes the **directory** holding `main.toml` + `sites/`, not the file | Pass the directory, e.g. `--config-path /etc/synvoid` |
+| Omitting `[defaults.ratelimit.ip]` | Struct-level `#[serde(default)]` falls back to the derived all-zero `IpRateLimitConfig::default()`, so `len() >= per_second(0)` is always true and **every request gets 429** | Write `[defaults.ratelimit.ip]` explicitly with `per_second` |
+| Using a placeholder admin token | Tokens must be ≥ 32 chars and free of weak patterns; short placeholders are **rejected at config load** | `synvoid --generatetoken` (64 hex chars) |
+| Short/placeholder `access_log_dir` | A missing access-log directory is a hard `--configtest` failure (the shipped `/var/log/synvoid` usually does not exist) | Create the directory or repoint the key |
+| Binding metrics off-loopback | Non-loopback `metrics.bind_address` is **rejected at config-load time**, not warned | Keep `127.0.0.1`; scrape through a local collector |
+| `mode = "token_bucket"` in `[ratelimit]` | Only `shared` and `isolated` validate | Use one of those two |
+| Setting `[defaults.attack_detection]` | No such field exists; the block is silently ignored | Configure `[attack_detection]` in the site file |
 | TLS Passthrough bypassing WAF | When `tls_passthrough = true`, all L7 WAF inspection (SQLi, XSS, etc.) is bypassed unless enforcement is enabled | Keep `tls_passthrough_enforce_waf` unset or set it to `true`; set it to `false` only when bypass is intentional |
 | Port conflicts | Default ports 8080, 8081, 9090 may be in use | Check ports are available before starting SynVoid |
 | Trusted proxies misconfiguration | X-Forwarded-For header not working | Ensure client IP is in `trusted_proxies` list |

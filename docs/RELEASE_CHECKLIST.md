@@ -68,9 +68,13 @@ Publish crates in this exact order (see `docs/releasing.md` for the full table):
 cargo publish -p pqc
 cargo publish -p synvoid-utils
 cargo publish -p synvoid-platform
+# synvoid-rate-limit (2a) and synvoid-dnssec-keystore (2b) sit after these
+# and before synvoid-core in docs/releasing.md — do not skip them.
 cargo publish -p synvoid-core
-# ... (see docs/releasing.md for the complete list)
+# ... (see docs/releasing.md for the complete list; synvoid-wasm-pow is
+# published AFTER the root `synvoid` crate)
 cargo publish -p synvoid
+cargo publish -p synvoid-wasm-pow
 ```
 
 After each crate, verify it resolves from crates.io before publishing dependents.

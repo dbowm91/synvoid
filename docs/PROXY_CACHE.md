@@ -14,57 +14,64 @@ The proxy cache:
 
 ### Basic Configuration
 
+The cache is configured under `[site.proxy.cache]`. There are no `proxy_cache_*` keys
+directly in `[site.proxy]` — the implementation is the `synvoid-proxy-cache` crate.
+
 ```toml
-[site.proxy]
-proxy_cache_enable = true
+[site.proxy.cache]
+enable = true
 ```
 
 ### Full Configuration
 
 ```toml
-[site.proxy]
-proxy_cache_enable = true
+[site.proxy.cache]
+enable = true
 
 # Storage
-proxy_cache_path = "/var/cache/synvoid/proxy"
-proxy_cache_max_size = "1G"
-proxy_cache_memory_max = "256M"
-proxy_cache_disk_max = "1G"
+path = "/var/cache/synvoid/proxy"
+max_size = "1G"
+memory_max = "256M"
+disk_max = "1G"
 
 # Time-to-live
-proxy_cache_inactive = 3600
-proxy_cache_valid_status = [200, 301, 302, 304]
-proxy_cache_methods = ["GET", "HEAD"]
-proxy_cache_min_uses = 1
+inactive = 3600
+valid_status = [200, 301, 302, 304]
+methods = ["GET", "HEAD"]
+min_uses = 1
 
 # Cache key
-proxy_cache_key = "$scheme$request_method$host$uri"
-proxy_cache_vary_by = ["Accept-Encoding", "Accept-Language"]
+key = "$scheme$request_method$host$uri"
+vary_by = ["Accept-Encoding", "Accept-Language"]
 
 # Stale-while-revalidate
-proxy_cache_stale_while_revalidate = 60
-proxy_cache_stale_if_error = 60
+stale_while_revalidate = 60
+stale_if_error = 60
 
 # Options
-proxy_cache_use_temp_file = true
-proxy_cache_use_stale = ["error", "timeout", "updating"]
+use_temp_file = true
+use_stale = ["error", "timeout", "updating"]
 ```
 
 ### Configuration Options
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `proxy_cache_enable` | `false` | Enable proxy cache |
-| `proxy_cache_path` | - | Cache directory path |
-| `proxy_cache_max_size` | - | Maximum cache size (e.g., "1G") |
-| `proxy_cache_inactive` | `3600` | Time to keep inactive cache entries |
-| `proxy_cache_valid_status` | `[200, 301, 302, 304]` | Status codes to cache |
-| `proxy_cache_methods` | `["GET", "HEAD"]` | HTTP methods to cache |
-| `proxy_cache_min_uses` | `1` | Minimum requests before caching |
-| `proxy_cache_key` | - | Custom cache key format |
-| `proxy_cache_vary_by` | `[]` | Headers to vary on |
-| `proxy_cache_stale_while_revalidate` | - | Serve stale while revalidating |
-| `proxy_cache_stale_if_error` | - | Serve stale on upstream errors |
+| `enable` | - | Enable proxy cache (off unless set) |
+| `path` | - | Cache directory path |
+| `max_size` | - | Maximum cache size (e.g., "1G") |
+| `inactive` | `3600` | Time to keep inactive cache entries |
+| `valid_status` | `[200, 301, 302, 304]` | Status codes to cache |
+| `methods` | `["GET", "HEAD"]` | HTTP methods to cache |
+| `min_uses` | `1` | Minimum requests before caching |
+| `key` | - | Custom cache key format |
+| `vary_by` | `[]` | Headers to vary on |
+| `stale_while_revalidate` | - | Serve stale while revalidating |
+| `stale_if_error` | - | Serve stale on upstream errors |
+| `memory_max` | - | In-memory size limit |
+| `disk_max` | - | On-disk size limit |
+| `use_temp_file` | - | Write entries through a temp file |
+| `use_stale` | `[]` | Conditions under which a stale entry is served |
 
 ## How It Works
 
@@ -106,7 +113,8 @@ $scheme, $request_method, $host, $uri, $args
 
 Example:
 ```
-proxy_cache_key = "$scheme$host$uri$args";
+[site.proxy.cache]
+key = "$scheme$host$uri$args";
 ```
 
 ## Vary Header Support
@@ -114,7 +122,8 @@ proxy_cache_key = "$scheme$host$uri$args";
 When Vary is enabled, SynVoid stores separate cache entries for different header combinations:
 
 ```toml
-proxy_cache_vary_by = ["Accept-Encoding", "Accept-Language"]
+[site.proxy.cache]
+vary_by = ["Accept-Encoding", "Accept-Language"]
 ```
 
 ```
@@ -143,20 +152,27 @@ Cache invalidation is handled via configuration reload or site restart.
 
 ## Admin API
 
-Cache statistics are available through Prometheus metrics:
+Cache statistics are available through the admin metrics API:
 
 ```bash
 # View cache metrics
-curl http://localhost:9090/metrics | grep synvoid_cache
+curl -H "Authorization: Bearer <token>" http://127.0.0.1:8081/api/metrics
 ```
 
-### Prometheus Metrics
+### Cache Metrics
 
-```bash
-synvoid.proxy.cache.hit                   # Cache hits
-synvoid.proxy.cache.miss                  # Cache misses
-synvoid.proxy.cache.stale_while_revalidate # Stale-while-revalidate served
-```
+There is no `synvoid_cache*` Prometheus metric family. Cache counters are exposed as
+fields of the admin metrics payload (`crates/synvoid-metrics/src/payloads.rs`):
+
+| Field | Description |
+|-------|-------------|
+| `proxy_cache_hits` | Cache hits |
+| `proxy_cache_misses` | Cache misses |
+| `cache_hit_rate` | Derived hit ratio |
+
+Cache-level queueing/revalidation counters are reported per cache in the `CacheStats`
+structure (`cpu_offload_queued_minify`, `cpu_offload_active_minify`,
+`cpu_offload_completed_minify` and peers).
 
 ## Use Cases
 
@@ -165,10 +181,10 @@ synvoid.proxy.cache.stale_while_revalidate # Stale-while-revalidate served
 Cache static assets aggressively:
 
 ```toml
-[site.proxy]
-proxy_cache_enable = true
-proxy_cache_inactive = 86400
-proxy_cache_valid_status = [200, 304]
+[site.proxy.cache]
+enable = true
+inactive = 86400
+valid_status = [200, 304]
 ```
 
 ### API Responses
@@ -176,11 +192,11 @@ proxy_cache_valid_status = [200, 304]
 Cache API responses with shorter TTL:
 
 ```toml
-[site.proxy]
-proxy_cache_enable = true
-proxy_cache_inactive = 60
-proxy_cache_valid_status = [200]
-proxy_cache_min_uses = 3
+[site.proxy.cache]
+enable = true
+inactive = 60
+valid_status = [200]
+min_uses = 3
 ```
 
 ### User-Specific Content
@@ -188,10 +204,10 @@ proxy_cache_min_uses = 3
 Use Vary for user-specific caching:
 
 ```toml
-[site.proxy]
-proxy_cache_enable = true
-proxy_cache_vary_by = ["Accept-Language"]
-proxy_cache_valid_status = [200]
+[site.proxy.cache]
+enable = true
+vary_by = ["Accept-Language"]
+valid_status = [200]
 ```
 
 ## Performance Considerations
@@ -199,15 +215,15 @@ proxy_cache_valid_status = [200]
 ### Memory vs Disk
 
 The cache can use both memory and disk:
-- **Memory**: Faster but limited by `proxy_cache_memory_max`
-- **Disk**: Larger storage via `proxy_cache_disk_max`
+- **Memory**: Faster but limited by `memory_max`
+- **Disk**: Larger storage via `disk_max`
 
 ### Hit Rate Optimization
 
 1. **Use appropriate TTLs** - Static = long TTL, Dynamic = short
 2. **Minimize Vary headers** - Each header creates separate entries
-3. **Set `proxy_cache_min_uses`** - Avoid caching one-off requests
-4. **Monitor eviction rate** - Adjust max_size if too high
+3. **Set `min_uses`** - Avoid caching one-off requests
+4. **Monitor eviction rate** - Adjust `max_size` if too high
 
 ## Best Practices
 

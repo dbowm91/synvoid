@@ -178,13 +178,14 @@ Strict requires a read allowlist, so Strict on Windows always fails closed. Jail
 
 ## Configuration
 
-```toml
-[worker]
-sandbox_level = "strict"  # off, basic, or strict
-sandbox_read_paths = ["/var/lib/synvoid", "/etc/synvoid"]
-sandbox_write_paths = ["/var/lib/synvoid", "/var/log/synvoid"]
-sandbox_no_access_paths = ["/etc/passwd", "/etc/shadow"]
-```
+There is no sandbox section in `main.toml` or site config. `[worker] sandbox_level`, `sandbox_read_paths`, `sandbox_write_paths`, and `sandbox_no_access_paths` do not exist as config keys — `MainConfig` has no `worker` section, so those lines are silently ignored (and the section itself is rejected only for the missing required `[server]` block).
+
+Sandbox selection is made in composition code, not by operators, through two surfaces:
+
+- **Jail children**: `synvoid_platform::sandbox::jail_guarantee_request()` (`crates/synvoid-platform/src/sandbox.rs:2738`) constructs the fixed guarantee set the jail uses — ambient-filesystem deny, read allowlist, inherited IPC usable, descendants confined, plus `NetworkDenied` / `ChildCreationDenied` / `ExecDenied`, scoped to `CurrentThreadPlusDescendants` with three preopened resources (`stdin-ipc`, `stdout-ipc`, `stderr-log`).
+- **Legacy adapter**: `SandboxLevel` (`Off` / `Basic` / `Strict`) is selected at the call site in Rust, `as_str()` values being `"off"` / `"basic"` / `"strict"`.
+
+Whether isolation is *demanded* per jail is decided by `synvoid_ipc::IsolationPolicy`; `IsolationPolicy::Required` fails closed when the guarantees cannot be enforced.
 
 ## Usage Example
 

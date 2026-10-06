@@ -47,9 +47,11 @@ Version 1.0+ requires explicit configuration for some features that were optiona
 [server]
 trusted_proxies = ["10.0.0.0/8", "172.16.0.0/12"]
 
-# Required: Admin token
+# Required: Admin token. Must be >= 32 characters and must not match the
+# weak-token patterns AdminConfig::validate() rejects. Generate one with
+# `synvoid --generatetoken` (64 hex chars), or prefer the env indirection:
 [admin]
-token = "generate-a-secure-token"
+token_env_var = "SYNVOID_ADMIN_TOKEN"
 ```
 
 ### New Features That May Require Attention
@@ -72,12 +74,23 @@ token = "generate-a-secure-token"
 
 ## Deprecation Notices
 
-The following features are deprecated and will be removed in future versions:
+The following legacy surface is still accepted but deprecated. None of it is
+scheduled for removal in a pinned future release, and none of the identifiers
+below is a `main.toml` key in the current codebase — treat them as
+CLI/protocol-level notices only.
 
-| Feature | Deprecated In | Will Be Removed | Replacement |
-|---------|--------------|-----------------|-------------|
-| `old_logging_format` | 1.0.0 | 1.1.0 | Structured JSON logging |
-| HTTP/1.0 fallback | 1.0.0 | 1.2.0 | HTTP/1.1 minimum |
+| Feature | Deprecated In | Removal | Replacement |
+|---------|--------------|---------|-------------|
+| `--worker` (worker-process mode) | 1.0.0 | not scheduled | No dispatch branch — the flag falls through to the Supervisor. HTTP serving is `--unified-server-worker` / `--cpu-worker`. |
+| HTTP/1.0 requests on the data plane | 1.0.0 | not scheduled | HTTP/1.1 or later |
+
+Configuration-level deprecations that *are* real today:
+
+| Key | Status | Note |
+|-----|--------|------|
+| `tls.prefer_post_quantum` | Telemetry only, never a switch | Inbound hybrid PQ key exchange is always available (`synvoid-tls` always enables rustls `prefer-post-quantum`). This key gates nothing. |
+| `admin.token` | Superseded | Prefer `admin.token_env_var` so the secret is not stored on disk. |
+| `logging.access_log_format` | Live (`json` \| `text`) | Not deprecated; both values validate. Body/verbose verbosity lives in `[logging.request_body_logging]` and `[logging.verbose_request_logging]`. |
 
 ## Known Issues After Upgrade
 
@@ -128,17 +141,18 @@ performed manually:
 4. Monitor logs for errors
 
 ```bash
-# Validate configuration first (note: validates ./config/ relative to CWD)
-./synvoid --configtest
+# Validate configuration first (without --config-path this checks ./config/
+# relative to the current working directory)
+synvoid --configtest
 
 # Stop gracefully
-./synvoid --stop
+synvoid --stop
 
 # Replace binary
 cp /path/to/new/synvoid /usr/local/bin/synvoid
 
 # Start (--config-path takes the DIRECTORY containing main.toml and sites/)
-./synvoid --foreground --config-path /etc/synvoid/
+synvoid --foreground --config-path /etc/synvoid/
 ```
 
 Rollback is the same procedure in reverse: stop, restore the previous binary, start.
@@ -153,6 +167,6 @@ Rollback is the same procedure in reverse: stop, restore the previous binary, st
 
 If you encounter issues during upgrade:
 
-1. Check logs: `RUST_LOG=debug ./synvoid`
-2. Verify configuration: `./synvoid --configtest`
+1. Check logs: `RUST_LOG=debug synvoid`
+2. Verify configuration: `synvoid --configtest`
 3. Report issues at: https://github.com/dbowm91/synvoid/issues

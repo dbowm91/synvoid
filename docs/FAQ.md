@@ -20,8 +20,8 @@ SynVoid is a high-performance Web Application Firewall (WAF) and reverse proxy w
 
 ### What's the difference between Stall, Block, and Tarpit?
 
-- **Block**: Returns 403 Forbidden. Users know they've been blocked.
-- **Stall**: Holds connection open indefinitely. Attacker can't tell if server exists.
+- **Block**: Returns an error response immediately (403 by default). Users know they've been blocked.
+- **Stall**: Sleeps ~30 seconds before answering, then returns **408 Request Timeout**. The attacker can't tell whether the server exists, but the request is *not* held open indefinitely — and if the bounded stalled-request permit pool is exhausted the response is **429** instead.
 - **Tarpit**: Sends fake responses to waste attacker time.
 
 See [ATTACK_DETECTION.md](./ATTACK_DETECTION.md#when-to-use-each-decision-type) for detailed guidance.
@@ -37,14 +37,19 @@ Add the service's IP range to trusted proxies:
 trusted_proxies = ["127.0.0.1", "::1", "10.0.0.0/8"]  # Add your monitoring IPs
 ```
 
-Or disable bot protection for specific IPs:
+Or exclude specific clients from bot protection per site. `BotDefaults` has no
+`enabled` or `whitelist` key — bot toggles live on the individual fields, and IP
+exclusions live in the site's whitelist:
 
 ```toml
+# config/sites/<site>.toml
 [defaults.bot]
-enabled = true
+block_ai_crawlers = false   # toggles the individual bot policies
+enable_js_challenge = false
 
-[defaults.bot.whitelist]
-ip_ranges = ["203.0.113.0/24"]  # Your monitoring service
+[whitelist]
+networks = ["203.0.113.0/24"]  # Your monitoring service
+ips = ["198.51.100.7"]
 ```
 
 ### How do I allow Googlebot?
@@ -81,9 +86,15 @@ Start at Level 2 and adjust based on your observations.
 
 ### How many requests can SynVoid handle?
 
-Performance depends on your hardware, but SynVoid is designed for high throughput:
-- Single instance: 10,000+ req/s on modern hardware
-- With worker scaling: Scales to available CPU cores
+Performance depends entirely on your hardware, rule set, and body sizes — the
+repository ships no throughput benchmark to quote. Measure on your own workload;
+`cargo xtask verify` never gates performance, and the transport benchmarks in
+`benchmarks/http_transport/` are manual-only and explicitly not comparable across
+hosts.
+
+Scaling levers, in the order worth trying: `[http3]`/HTTP keep-alive tuning,
+upstream connection pool size (`[proxy_limits] connection_pool_size`), and the
+size of `rate_limit_memory.max_ip_entries`.
 
 See [PERFORMANCE.md](./PERFORMANCE.md) for tuning tips.
 
@@ -142,9 +153,11 @@ Generate a key with: `xxd -l 32 -p /dev/urandom`
 
 ### Requests are being blocked but they're legitimate
 
-1. Lower paranoia level:
+1. Lower paranoia level. Attack detection is configured **per site** — there is
+   no `[defaults.attack_detection]` section:
 ```toml
-[defaults.attack_detection]
+# config/sites/<site>.toml
+[attack_detection]
 paranoia_level = 1
 ```
 
@@ -153,13 +166,13 @@ paranoia_level = 1
 tail -f /var/log/synvoid/access.log | grep WAF
 ```
 
-3. Add exceptions for specific paths:
+3. Add exceptions. There is no `attack_detection.whitelist` table; use the site's
+   whitelist (IPs, networks, and user agents — not paths) or the endpoint policy:
 ```toml
-[site.attack_detection]
-enabled = true
-
-[site.attack_detection.whitelist]
-paths = ["/api/webhook", "/admin/search"]
+# config/sites/<site>.toml
+[whitelist]
+networks = ["203.0.113.0/24"]
+user_agents = ["MyMonitor/1.0"]
 ```
 
 ### WAF won't start - address already in use

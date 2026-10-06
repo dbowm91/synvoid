@@ -18,7 +18,6 @@ Apply rate limiting to all sites:
 
 ```toml
 [defaults.ratelimit]
-enabled = true
 mode = "shared"  # "shared" (global state) or "isolated" (per-worker)
 
 [defaults.ratelimit.ip]
@@ -34,7 +33,6 @@ Override for specific sites:
 
 ```toml
 [site.ratelimit]
-enabled = true
 mode = "isolated"
 
 [site.ratelimit.ip]
@@ -46,26 +44,48 @@ burst = 10
 
 ### Endpoint-Specific
 
-Different limits for specific paths:
+Different limits for specific paths. `endpoints` is an **array of tables**, each entry
+carrying its own `path_pattern`:
 
 ```toml
-[site.ratelimit.endpoints]
-"/api/auth/login" = { per_minute = 5, burst = 1 }
-"/api/auth/register" = { per_minute = 3, burst = 1 }
-"/api/search" = { per_minute = 30, burst = 5 }
+[[site.ratelimit.endpoints]]
+path_pattern = "/api/auth/login"
+per_minute = 5
+burst = 1
+
+[[site.ratelimit.endpoints]]
+path_pattern = "/api/auth/register"
+per_minute = 3
+burst = 1
+
+[[site.ratelimit.endpoints]]
+path_pattern = "/api/search"
+per_minute = 30
+burst = 5
 ```
 
-### Authenticated Users
-
-Different limits for logged-in users:
+### Global Override Per Site
 
 ```toml
-[site.ratelimit.authenticated]
-per_second = 100
-per_minute = 1000
-per_hour = 10000
-burst = 50
+[site.ratelimit.global]
+per_second = 500
+per_minute = 5000
+per_5min = 25000
+max_connections = 10000
 ```
+
+### Trusted Clients
+
+Rate-limit exemptions are configured with the site whitelist, not under `[site.ratelimit]`:
+
+```toml
+[site.whitelist]
+ips = ["10.0.0.1"]
+networks = ["10.0.0.0/8"]
+```
+
+There is no `[site.ratelimit.authenticated]` section: SynVoid does not vary rate limits by
+whether a request is authenticated.
 
 ## Rate Limit Modes
 
@@ -95,20 +115,21 @@ mode = "isolated"
 
 ## Rate Limit Response
 
-Configure how rate-limited requests are handled:
+The rate-limited response is **fixed in code** — it is not configurable. When a limit is
+exceeded the request path returns `WafDecision::Block(429, "Too Many Requests")`
+(`src/waf/mod.rs`).
 
 ```toml
-[site.ratelimit]
-response_code = 429
-response_message = "Rate limit exceeded. Please try again later."
-retry_after_header = true
+# No such keys exist:
+# [site.ratelimit]
+# response_code = 429
+# response_message = "Rate limit exceeded. Please try again later."
+# retry_after_header = true
 ```
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `response_code` | 429 | HTTP status code to return |
-| `response_message` | "Rate limit exceeded" | Response body |
-| `retry_after_header` | true | Include `Retry-After` header |
+There is no `response_code`, `response_message` or `retry_after_header` key on
+`[site.ratelimit]`, and the data-plane 429 does not carry a `Retry-After` header.
+(`Retry-After` is emitted only by the admin API limiter, not by the site request path.)
 
 ## Memory Management
 
@@ -116,14 +137,16 @@ Rate limiting tracks IPs in memory. Configure limits:
 
 ```toml
 [defaults.rate_limit_memory]
-max_ips = 100000
+max_ip_entries = 100000
 cleanup_interval_secs = 60
+num_shards = 256
 ```
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `max_ips` | 100000 | Maximum IPs to track |
+| `max_ip_entries` | 100000 | Maximum IP entries to track |
 | `cleanup_interval_secs` | 60 | How often to clean up stale entries |
+| `num_shards` | 256 | Number of internal shards |
 
 ## Use Cases
 
@@ -144,23 +167,27 @@ burst = 20
 Prevent brute force attacks on login endpoints:
 
 ```toml
-[site.ratelimit.endpoints]
-"/api/auth/login" = { per_minute = 5, burst = 3 }
-"/api/auth/password-reset" = { per_minute = 3, burst = 1 }
+[[site.ratelimit.endpoints]]
+path_pattern = "/api/auth/login"
+per_minute = 5
+burst = 3
+
+[[site.ratelimit.endpoints]]
+path_pattern = "/api/auth/password-reset"
+per_minute = 3
+burst = 1
 ```
 
 ### Heavy Users
 
-Allow higher limits for authenticated users:
+There is no authenticated-user tier. To give a trusted set of clients higher limits, either
+whitelist them:
 
 ```toml
-[site.ratelimit]
-enabled = true
+[site.whitelist]
+networks = ["10.0.0.0/8"]
 
 [site.ratelimit.ip]
-per_minute = 60
-
-[site.ratelimit.authenticated]
 per_minute = 1000
 ```
 
@@ -204,9 +231,12 @@ per_minute = 200  # Increase from default
 
 2. Add IP to whitelist:
 ```toml
-[defaults.ratelimit.whitelist]
-ip_ranges = ["YOUR_IP/32"]
+[site.whitelist]
+ips = ["YOUR_IP"]
+networks = ["YOUR_IP/32"]
 ```
+
+There is no global `[defaults.whitelist]`; whitelist entries are configured per site.
 
 ### High Memory Usage
 
@@ -214,44 +244,36 @@ Reduce the number of tracked IPs:
 
 ```toml
 [defaults.rate_limit_memory]
-max_ips = 50000
+max_ip_entries = 50000
 ```
 
 ### Rate Limiting Not Working
 
-1. Verify it's enabled:
-```toml
-[defaults.ratelimit]
-enabled = true
-```
-
+1. Verify `[defaults.ratelimit]` (or `[site.ratelimit]`) is present — there is no `enabled`
+   key to set
 2. Check mode matches your use case
 3. Ensure burst allowance isn't too high
 
 ## Integration with Threat Level
 
-Rate limiting integrates with the adaptive threat level system:
-
-```toml
-[threat_level]
-enabled = true
-
-[threat_level.rate_limit_weight]
-baseline = 1.0
-```
-
-When threat level increases, rate limits are automatically tightened.
+Rate limits contribute to the threat score (weight `1.5`, fixed in code) and a rate-limit
+violation can escalate the threat level into a ban via `[threat_level.escalation]`. There is
+no `[threat_level.rate_limit_weight]` section and rate limits are **not** automatically
+tightened when the level rises; use `[threat_level.global_limits]` and
+`[threat_level.ban_durations]` to set the per-level rate-limit and ban behavior.
 
 ## Metrics
 
-Track rate limiting via Prometheus:
+Rate limiting exports these counters on the internal metrics registry:
 
 ```
-synvoid_ratelimit_exceeded_total          # Total rate limit hits
-synvoid_ratelimit_exceeded{limit="ip"}    # Per-IP limits
-synvoid_ratelimit_exceeded{limit="global"} # Global limits
-synvoid_ratelimit_active                  # Currently rate-limited IPs
+synvoid.ratelimit.global_limited   # Global rate limit hits
+synvoid.ratelimit.blackholed       # Requests dropped by blackhole mode
 ```
+
+TCP-level enforcement adds `synvoid.tcp.ip_rate_limited`, `synvoid.tcp.rate_limited` and
+`synvoid.tcp.blackhole_drop`. There are no per-IP or `active` counters; read live limiter
+statistics from the admin API instead.
 
 ## See Also
 

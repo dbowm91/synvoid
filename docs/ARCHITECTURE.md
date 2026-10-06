@@ -64,8 +64,10 @@ The reverse proxy layer is heavily inspired by nginx's event-driven architecture
 
 - **Tokio** - Asynchronous runtime for efficient I/O handling
 - **EggServe** - direct HTTP/1.1 server runtime for inbound plaintext and
-  TLS-ALPN H1 (exact-pinned; parser/framing, driver and graceful close).
-  See `architecture/eggserve_0_3_h1_adoption_closeout.md`.
+  TLS-ALPN H1 (exact-pinned to `eggserve-server =0.4.0`;
+  `eggserve-primitives =0.2.2`; parser/framing, driver and graceful close).
+  See `architecture/eggserve_0_4_0_trailer_head_addendum.md`, which supersedes
+  the exact-version identity in `architecture/eggserve_0_3_h1_adoption_closeout.md`.
 - **Hyper** - HTTP/1.1 and HTTP/2 protocol implementation (inbound H2,
   egress/upstream client, and test-only H1 comparison lanes)
 - **Quinn** - QUIC/HTTP3 support
@@ -268,11 +270,13 @@ See `README.md` (quick start) and `docs/GETTING_STARTED.md` (full guide) —
 the short version:
 
 ```bash
-# Start SynVoid (Supervisor + Workers)
-./synvoid --config-path ./config
+# Build, then start the Supervisor + workers from the release binary.
+# `--config-path` takes the DIRECTORY holding main.toml + sites/.
+cargo build --release
+./target/release/synvoid --config-path ./config
 
 # Reload configuration (propagates to workers)
-./synvoid --rehash
+./target/release/synvoid --rehash
 ```
 
 Mesh participation (peers, seeds, trust) is configured in `main.toml` under the mesh

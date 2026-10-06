@@ -72,9 +72,12 @@ Configuration management has been moved to the `synvoid-config` crate, providing
 
 ## High Availability Design
 
-### Supervisor Election
+### Leader Election
 
-Uses Raft consensus algorithm among Supervisor nodes:
+Mesh nodes elect a leader with Raft (`crates/synvoid-mesh/src/mesh/raft/`;
+`RaftInstance`, `consensus`, `edge_replica`, `state_machine`). The election runs
+**between mesh nodes** — it is not a quorum of local Supervisor processes, which
+are independent per host.
 
 ```mermaid
 stateDiagram-v2
@@ -87,10 +90,10 @@ stateDiagram-v2
 
 ### Failover Process
 
-1. Supervisor cluster detects leader failure.
+1. Mesh cluster detects leader failure.
 2. New leader elected via Raft.
-3. Mesh routes updated to reflect the new control plane hub.
-4. Workers continue handling traffic uninterrupted thanks to their isolated nature.
+3. Mesh routing/global-node records are updated to reflect the new control plane hub.
+4. Local workers keep serving traffic; they are isolated from mesh leadership.
 
 ### Configuration Sync
 
@@ -132,10 +135,21 @@ net.ipv4.tcp_fin_timeout = 15
 ### Worker Configuration
 
 ```toml
-[server]
-worker_threads = 0
+# [tokio] holds worker_threads (a bare number, or the string "auto"; a legacy
+# { worker_threads = N } table is also accepted)
+[tokio]
+worker_threads = "auto"
+
+# [process_manager] holds unified_server_workers. Note the Supervisor reads the
+# live value from [defaults.worker_pool] workers, so that is the key to tune.
+[process_manager]
 unified_server_workers = 1
 
+[defaults.worker_pool]
+mode = "shared"
+workers = 1     # <- the effective UnifiedServerWorker process count
+
+# Top-level [tcp] listener pool
 [tcp]
 worker_pool_size = 4
 ```
@@ -144,19 +158,35 @@ worker_pool_size = 4
 
 ### Prometheus Metrics
 
-Metrics are aggregated by the Supervisor from all workers:
+Metrics are aggregated by the Supervisor from all workers and exported by the
+supervisor-side telemetry bridge on `[metrics] bind_address:port`
+(`127.0.0.1:9090` by default — `MetricsConfig::validate()` rejects any
+non-loopback bind). The bridge additionally publishes worker heartbeat gauges
+under the `synvoid.eggbench-telemetry.v2` contract.
 
 ```bash
-# WAF metrics
-synvoid_waf_blocked_total
-synvoid_attack_sqli_total
+# WAF / enforcement metrics (dotted names are sanitized to underscores,
+# counters gain a _total suffix)
+synvoid_request_enforcement_source_total{source="attack_detection"}
+synvoid_request_enforcement_reason_total
+synvoid.requests.blocked
+synvoid.requests.proxied
+synvoid.requests.upstream_error
 
 # Data-plane metrics
-synvoid_worker_connections_active
-synvoid_http_request_latency_ms
+synvoid.http.stalled
+synvoid.http.blackhole_drop
+synvoid.ratelimit.global_limited
 synvoid.static.cpu_offload.queue_depth
 synvoid.static.cpu_offload.active_tasks
 synvoid.static.cpu_offload.task_timeouts
+
+# Supervisor telemetry bridge (synvoid_subject_* gauges/counters)
+synvoid_subject_event_loop_lag_ms
+synvoid_subject_request_queue_p95_ms
+synvoid_subject_active_connections
+synvoid_subject_worker_memory_bytes
+synvoid_subject_cpu_worker_rss_bytes
 
 # Worker heartbeat payloads include `event_loop_lag_ms`, `request_queue_time_ms`,
 # `active_connections`, `offload_submissions_total`, `offload_timeouts_total`,
@@ -172,9 +202,8 @@ synvoid.static.cpu_offload.task_timeouts
 
 ### Production Checklist
 
-- [ ] Enable TLS for gRPC control plane (`--control-api-tls`; serves `127.0.0.1:9443` loopback by default).
-- [ ] Configure mTLS for Supervisor-to-Supervisor communication.
-- [ ] Size `unified_server_workers` deliberately (shipped `config/main.toml` sets 4; code default is 1) — more workers add throughput, not isolation.
+- [ ] Enable TLS for the gRPC control plane. The listener is `127.0.0.1:50051` by default (`[supervisor] control_api_addr`), not 9443. TLS is **server-authenticated only** — `src/supervisor/api.rs` sets `ServerTlsConfig::new().identity(...)` and never requests client certs, so there is no mTLS option today.
+- [ ] Size the worker pool deliberately (`[defaults.worker_pool] workers`; shipped `config/main.toml` sets 4, code default is 1) — more workers add throughput, not isolation.
 - [ ] Enable Landlock sandboxing on Linux for workers.
 
 ## Troubleshooting
@@ -182,7 +211,7 @@ synvoid.static.cpu_offload.task_timeouts
 ### Debug Mode
 
 ```bash
-RUST_LOG=debug ./synvoid
+RUST_LOG=debug cargo run --release
 ```
 
 ### Common Issues

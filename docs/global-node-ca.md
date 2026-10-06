@@ -18,7 +18,15 @@ Global nodes are the root of trust for the entire SynVoid mesh network. They fun
 
 ## Graduated Trust
 
-Trust is based on hardware attestation. Nodes are assigned a **Trust Level** (1-3) based on their environment (Software, TPM, or TEE). Sensitive operations like signing Organizational Tier Keys require a minimum trust level of 2 or 3.
+Trust level is assigned at admission from the presence of an **attestation
+report**: `trust_level = 2` when `attestation_report.is_some()`, otherwise `1`
+(`crates/synvoid-mesh/src/mesh/transport_peer.rs`). Nodes that are not yet
+authorized are recorded with `trust_level = 0`.
+
+The documented **1-3 (Software / TPM / TEE) scale is not what the code
+implements** — only the two branches above exist, and there is no TPM or TEE
+detection anywhere in `synvoid-mesh`. Treat any minimum trust level of "2 or 3"
+as unverified.
 
 ## Certificate Distribution
 

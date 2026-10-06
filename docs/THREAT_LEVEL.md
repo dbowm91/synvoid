@@ -26,18 +26,15 @@ The threat level system:
 
 ```toml
 [threat_level]
-enabled = true
 initial = 1
 auto_scale = true
-cooldown_secs = 300
+cooldown_secs = 60
 
 [threat_level.escalation]
 enabled = true
-violations_before_block = 10
-violation_window_secs = 60
-
-[threat_level.escalation.excluded_ips]
- = ["10.0.0.1", "10.0.0.2"]
+violations_before_block = 3
+violation_window_secs = 300
+excluded_ips = ["10.0.0.1", "10.0.0.2"]
 ```
 
 ### Advanced Configuration
@@ -45,56 +42,76 @@ violation_window_secs = 60
 ```toml
 [threat_level]
 initial = 1
+auto_scale = true
 
-# Learning period (baseline learning)
-learning_enabled = true
-learning_duration_secs = 600
+# Auto-scaling windows
+scale_up_attacks_per_min = 50
+scale_up_window_secs = 60
+scale_down_attacks_per_min = 10
+scale_down_window_secs = 300
+cooldown_secs = 60
 
-# Scaling parameters
-sigma_scale_up = 2.0
-sigma_scale_down = 0.5
-
-# Weight configuration
-attack_weight = 2.0
-rate_limit_weight = 1.5
-
-# History settings
-history_retention_days = 365
-history_flush_interval_secs = 60
-
-# SQLite storage
-use_sqlite_history = true
-
-[threat_level.persistence]
-baseline_persist_path = "/var/lib/synvoid/baseline.json"
+# Persistence cadence
+persist_interval_normal_secs = 60
+persist_interval_attack_secs = 15
+auto_deescalate_timeout_mins = 15
 ```
+
+### Fixed Runtime Parameters
+
+The following are **not** operator-configurable. They are compile-time constants in
+`src/waf/threat_level/mod.rs` (`ThreatLevelConfigExtended::from`) and are listed here so
+the numbers in this document can be checked against the code:
+
+| Parameter | Fixed value | Description |
+|-----------|-------------|-------------|
+| `learning_enabled` | `true` | Baseline learning is always on |
+| `learning_duration_secs` | `600` | Learning period duration |
+| `sigma_scale_up` | `2.0` | Standard deviations for scale up |
+| `sigma_scale_down` | `0.5` | Standard deviations for scale down |
+| `attack_weight` | `2.0` | Weight applied to the attack score |
+| `rate_limit_weight` | `1.5` | Weight applied to the rate-limit score |
+| `history_retention_days` | `365` | History retention |
+| `history_flush_interval_secs` | `60` | History flush cadence |
+| `use_sqlite_history` | `true` | SQLite history storage |
 
 ### Configuration Options
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `enabled` | `true` | Enable threat level system |
 | `initial` | `1` | Starting threat level (1-5) |
 | `auto_scale` | `true` | Enable auto-scaling |
-| `cooldown_secs` | `300` | Cooldown between level changes |
+| `scale_up_attacks_per_min` | `50` | Attacks/minute required to escalate |
+| `scale_up_window_secs` | `60` | Observation window for escalation |
+| `scale_down_attacks_per_min` | `10` | Attacks/minute required to de-escalate |
+| `scale_down_window_secs` | `300` | Observation window for de-escalation |
+| `cooldown_secs` | `60` | Cooldown between level changes |
+| `persist_interval_normal_secs` | `60` | Persist cadence under normal traffic |
+| `persist_interval_attack_secs` | `15` | Persist cadence under attack |
+| `auto_deescalate_timeout_mins` | `15` | Idle time before automatic de-escalation |
+
+There is no `enabled` key: the manager is constructed when the `[threat_level]` section
+is present, and `GET /api/threat-level` returns `404` when no manager was built.
 
 ### Escalation Options
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `enabled` | `true` | Enable automatic escalation |
-| `violations_before_block` | `10` | Violations before level increase |
-| `violation_window_secs` | `60` | Time window for violations |
-| `excluded_ips` | `[]` | IPs excluded from escalation |
+| `violations_before_block` | `3` | Violations before level increase |
+| `violation_window_secs` | `300` | Time window for violations |
+| `excluded_ips` | `["127.0.0.1", "::1"]` | IPs excluded from escalation |
+
+`excluded_ips` is a plain list key (`excluded_ips = [...]`), not a sub-table.
 
 ### Learning Options
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `learning_enabled` | `true` | Enable baseline learning |
-| `learning_duration_secs` | `600` | Learning period duration |
-| `sigma_scale_up` | `2.0` | Standard deviations for scale up |
-| `sigma_scale_down` | `0.5` | Standard deviations for scale down |
+| `learning_enabled` | `true` | Enable baseline learning (fixed, see above) |
+| `learning_duration_secs` | `600` | Learning period duration (fixed, see above) |
+| `sigma_scale_up` | `2.0` | Standard deviations for scale up (fixed, see above) |
+| `sigma_scale_down` | `0.5` | Standard deviations for scale down (fixed, see above) |
 
 ## How It Works
 
@@ -164,12 +181,19 @@ Response:
 ```json
 {
   "level": 2,
-  "status": "auto",
   "score": 15.5,
-  "baseline_score": 10.0,
-  "attack_rate": 0.5,
-  "rate_limit_rate": 2.0,
-  "last_changed": "2024-01-15T10:30:00Z"
+  "request_score": 12.0,
+  "attack_score": 9.0,
+  "rate_limit_score": 4.5,
+  "throttling_multiplier": 1.5,
+  "is_learning": false,
+  "learning_progress": 100.0,
+  "has_baseline": true,
+  "requests_per_second": 120.0,
+  "requests_per_minute": 7200.0,
+  "attacks_per_minute": 0.5,
+  "rate_limit_hits": 2,
+  "blocked": false
 }
 ```
 
@@ -198,14 +222,24 @@ curl -H "Authorization: Bearer <token>" \
 Response:
 ```json
 {
-  "learning": false,
-  "learning_progress": 100,
-  "samples_collected": 5000,
-  "baseline_attack_rate": 0.3,
-  "baseline_rate_limit_rate": 1.2,
-  "std_deviation": 2.5
+  "baselines": [
+    {
+      "metric_name": "attack_rate",
+      "mean": 0.3,
+      "std_dev": 2.5,
+      "min_value": 0.0,
+      "max_value": 12.0,
+      "samples": 5000,
+      "computed_at": 1705314600
+    }
+  ]
 }
 ```
+
+`GET /api/threat-level/baseline` returns a `baselines` array, one entry per tracked metric,
+with `metric_name`, `mean`, `std_dev`, `min_value`, `max_value`, `samples` and `computed_at`.
+Learning progress is reported by `GET /api/threat-level` as `is_learning` /
+`learning_progress`.
 
 ### Reset and Relearn
 
@@ -237,21 +271,15 @@ curl -H "Authorization: Bearer <token>" \
 curl -X POST -H "Authorization: Bearer <token>" \
   "http://localhost:8081/api/threat-level/history/prune?days=90"
 
-# Delete backup
+# Delete backup (the backup path is a query parameter)
 curl -X DELETE -H "Authorization: Bearer <token>" \
-  http://localhost:8081/api/threat-level/history/backups/backup_2024_01_01
+  "http://localhost:8081/api/threat-level/history/backups?path=<backup_path>"
 ```
 
-## Prometheus Metrics
+## Metrics
 
-```bash
-synvoid_threat_level_current      # Current threat level (1-5)
-synvoid_threat_level_score        # Current threat score
-synvoid_threat_level_baseline     # Baseline score
-synvoid_threat_level_samples      # Samples collected
-synvoid_threat_escalations_total  # Total escalations
-synvoid_threat_deescalations_total # Total de-escalations
-```
+The threat level subsystem does **not** export Prometheus series. Use the admin API
+(`GET /api/threat-level`, `GET /api/threat-level/baseline`, `GET /api/threat-level/history/stats`) instead.
 
 ## Threat Level Actions
 
@@ -290,23 +318,29 @@ Level:    1    2    3    4    5
 
 ```toml
 [threat_level]
-sigma_scale_up = 3.0  # Increase threshold
-attack_weight = 1.5   # Reduce attack weight
+scale_up_attacks_per_min = 100  # Require more attacks/minute to escalate
+cooldown_secs = 300             # Longer cooldown between level changes
+
+[threat_level.escalation]
+violations_before_block = 10
 ```
 
 ### Not Escalating
 
 ```toml
 [threat_level]
-sigma_scale_up = 1.5  # Decrease threshold
-attack_weight = 3.0   # Increase attack weight
+scale_up_attacks_per_min = 20  # Escalate on fewer attacks/minute
+cooldown_secs = 30             # Shorter cooldown between level changes
+
+[threat_level.escalation]
+violations_before_block = 2
 ```
 
 ### Baseline Not Learning
 
-1. Check learning is enabled
-2. Verify sufficient traffic
-3. Check persistence path is writable
+1. Baseline learning is always enabled — there is no key to turn it off
+2. Verify sufficient traffic (the learning period is a fixed 600 seconds)
+3. Check the data directory passed to the threat level manager is writable
 
 ### High Memory Usage
 
@@ -334,18 +368,13 @@ E-commerce sites face varied traffic patterns with seasonal spikes (Black Friday
 
 ```toml
 [threat_level]
-enabled = true
 initial = 1
 auto_scale = true
 cooldown_secs = 600  # Longer cooldown to prevent flapping during traffic spikes
 
-# Allow higher baseline variance during normal operations
-sigma_scale_up = 2.5
-sigma_scale_down = 0.5
-
-# Longer learning period for traffic patterns
-learning_enabled = true
-learning_duration_secs = 1800  # 30 minutes
+# Require a higher sustained attack rate before escalating
+scale_up_attacks_per_min = 100
+scale_up_window_secs = 300
 
 # More aggressive during attacks
 [threat_level.escalation]
@@ -361,17 +390,17 @@ APIs typically have consistent traffic with sudden attack spikes:
 
 ```toml
 [threat_level]
-enabled = true
 initial = 1
 auto_scale = true
 cooldown_secs = 300
 
 # Faster response to attacks
-sigma_scale_up = 1.5  # Lower threshold = faster escalation
-attack_weight = 3.0  # Weight attacks more heavily
+scale_up_attacks_per_min = 20
+scale_up_window_secs = 30
 
-# Quick de-escalation when attack stops
-sigma_scale_down = 0.3
+# Quick de-escalation when the attack stops
+scale_down_attacks_per_min = 20
+scale_down_window_secs = 120
 
 # Faster window for API attacks
 [threat_level.escalation]
@@ -379,7 +408,7 @@ violations_before_block = 2
 violation_window_secs = 30  # Very responsive to attacks
 ```
 
-**Why:** APIs need fast response to attacks. Shorter violation windows and lower sigma thresholds mean faster escalation when under attack.
+**Why:** APIs need fast response to attacks. Shorter scaling and violation windows mean faster escalation when under attack.
 
 ### Blog or Content Site
 
@@ -387,23 +416,18 @@ Content sites have more predictable traffic with lower risk tolerance:
 
 ```toml
 [threat_level]
-enabled = true
 initial = 1
 auto_scale = true
 cooldown_secs = 900  # Very stable - don't change levels frequently
 
 # Conservative scaling
-sigma_scale_up = 3.0
-sigma_scale_down = 0.5
+scale_up_attacks_per_min = 200
+scale_up_window_secs = 600
 
 # Focus on logging rather than blocking initially
 [threat_level.escalation]
 violations_before_block = 10  # Many violations before blocking
 violation_window_secs = 300
-
-# Longer learning for consistent traffic
-learning_enabled = true
-learning_duration_secs = 3600  # 1 hour
 ```
 
 **Why:** Content sites prioritize availability. Higher thresholds and more violations before blocking reduce false positives that could block legitimate users.
@@ -414,15 +438,13 @@ If you're currently under attack and need immediate response:
 
 ```toml
 [threat_level]
-enabled = true
 initial = 3  # Start at level 3
 auto_scale = true
 cooldown_secs = 60  # Fast changes
 
 # Very sensitive
-sigma_scale_up = 1.0
-attack_weight = 5.0
-rate_limit_weight = 3.0
+scale_up_attacks_per_min = 5
+scale_up_window_secs = 10
 
 # Immediate escalation
 [threat_level.escalation]
@@ -442,10 +464,13 @@ score = (attacks_detected * attack_weight) + (rate_limits_triggered * rate_limit
 
 ### Score Components
 
-| Component | Weight Range | Description |
+| Component | Fixed weight | Description |
 |-----------|--------------|-------------|
-| Attack Detection | 1.0 - 5.0 | Each attack detection adds to score |
-| Rate Limiting | 0.5 - 3.0 | Rate limit violations add to score |
+| Attack Detection | `2.0` | Each attack detection adds `2.0` to the score |
+| Rate Limiting | `1.5` | Each rate limit trigger adds `1.5` to the score |
+
+Both weights are compile-time constants (`attack_weight: 2.0`, `rate_limit_weight: 1.5` in
+`src/waf/threat_level/mod.rs`); they cannot be set from `main.toml`.
 
 ### Example Scenarios
 
@@ -466,18 +491,22 @@ score = (attacks_detected * attack_weight) + (rate_limits_triggered * rate_limit
 
 ## Monitoring the Score
 
-Watch these metrics to understand your baseline:
+There is no Prometheus series for threat level or score. Read them from the admin API:
 
 ```bash
-# Current threat level
-curl -s http://localhost:9090/metrics | grep synvoid_threat_level_current
+# Current threat level and score
+curl -s -H "Authorization: Bearer <token>" \
+  http://localhost:8081/api/threat-level
 
-# Current score vs baseline
-curl -s http://localhost:9090/metrics | grep synvoid_threat_level_score
-
-# Escalation rate
-curl -s http://localhost:9090/metrics | grep synvoid_threat_escalations
+# Baseline metrics (mean / std_dev / min / max / samples)
+curl -s -H "Authorization: Bearer <token>" \
+  http://localhost:8081/api/threat-level/baseline
 ```
+
+`GET /api/threat-level` returns `level`, `score`, `request_score`, `attack_score`,
+`rate_limit_score`, `throttling_multiplier`, `is_learning`, `learning_progress`,
+`has_baseline`, `requests_per_second`, `requests_per_minute`, `attacks_per_minute`,
+`rate_limit_hits` and `blocked`.
 
 Set up alerts for:
 - Threat level changes (level 2+)

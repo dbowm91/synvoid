@@ -29,20 +29,23 @@ SynVoid automatically removes hop-by-hop headers that should not be forwarded to
 
 ### Response Headers
 
-Outgoing responses are also sanitized to prevent information leakage:
+Outgoing responses are sanitized to prevent information leakage. The main config's
+`[security]` section controls this (`MainSecurityConfig`); there is no
+`remove_server_header` or `remove_powered_by_header` key:
 
 ```toml
-[defaults.security]
-remove_server_header = true      # Remove Server header
-remove_powered_by_header = true   # Remove X-Powered-By header
+[security]
+global_security_headers = true   # Add the standard hardening response headers
+
+# Optional: additional response headers to clear
+more_clear_headers = ["Server", "X-Powered-By", "X-AspNet-Version", "X-AspNetMvc-Version"]
 ```
 
 ### Headers Removed by Default
 
-- `Server` - Reveals server type/version
-- `X-Powered-By` - Reveals application framework
-- `X-AspNet-Version` - Reveals ASP.NET version
-- `X-AspNetMvc-Version` - Reveals MVC version
+`Server`, `X-Powered-By`, `X-AspNet-Version`, and `X-AspNetMvc-Version` are not stripped
+automatically. List them in `more_clear_headers` (see above) to have them cleared.
+Per-site response hardening is configured under `[security_headers]`.
 
 ## Path Sanitization
 
@@ -58,14 +61,14 @@ SynVoid normalizes request paths before processing:
 ### Configuration
 
 ```toml
-[defaults.security]
-normalize_path = true
-block_path_traversal = true
-
-[defaults.security.path_traversal]
+[attack_detection.path_traversal]
 enabled = true
 custom_patterns = []
 ```
+
+Path normalization is not a `[security]` toggle — detection runs through the site's
+`[attack_detection]` section, and detection runs inline on the borrowed request
+(`check_request_sync`), not as per-request spawned tasks.
 
 ## Trusted Proxy Handling
 
@@ -82,7 +85,7 @@ trusted_proxies = [
     "127.0.0.1",       # Localhost
 ]
 
-[defaults.security]
+[security]
 sanitize_forwarded_headers = true
 ```
 
@@ -126,7 +129,7 @@ When `sanitize_forwarded_headers = true`:
 3. **Validation** - Only the first (original) client IP is used
 
 ```toml
-[defaults.security]
+[security]
 sanitize_forwarded_headers = true
 ```
 
@@ -136,57 +139,53 @@ sanitize_forwarded_headers = true
 
 ```toml
 [http]
-max_request_size = 1048576  # 1MB default
+max_request_size = 1048576
 ```
 
 ### Content-Type Validation
 
-SynVoid can validate Content-Type headers:
+There is no `strict_content_type` / `allowed_content_types` configuration in SynVoid;
+content-type checks are performed by the protocol parsing layer and are not
+operator-tunable today. Header and body volume are bounded by the `[http]` limits:
 
 ```toml
-[defaults.security]
-strict_content_type = true
-allowed_content_types = [
-    "application/json",
-    "application/x-www-form-urlencoded",
-    "multipart/form-data",
-]
+[http]
+max_request_size = 1048576
+max_header_size_ingress = 8192
+max_header_size_egress = 8192
+max_request_line_size = 8192
+max_headers = 100
 ```
 
 ### Request Smuggling Prevention
 
-SynVoid detects HTTP request smuggling attacks:
+SynVoid detects HTTP request smuggling attacks (CL/TE conflicts, H2 pseudo-header
+conflicts, response queue poisoning). The detector has **no per-site configuration
+key** — it is not wired to a `[attack_detection.request_smuggling]` table, and adding
+one will not change behavior:
 
 ```toml
-[defaults.attack_detection.request_smuggling]
+# There is no request_smuggling table under [attack_detection]; the only
+# per-detector tables are sqli, xss, path_traversal, rfi, and ssrf.
+[attack_detection]
 enabled = true
 ```
-
-This detects:
-- Content-Length vs Transfer-Encoding conflicts
-- HTTP/2 pseudo-header conflicts
-- Response queue poisoning attempts
 
 ## Configuration Options
 
 ### Security Defaults
 
 ```toml
-[defaults.security]
-# Header sanitization
-remove_server_header = true
-remove_powered_by_header = true
-
-# Path sanitization
-normalize_path = true
-block_path_traversal = true
+[security]
+# Response hardening
+global_security_headers = true
+more_clear_headers = ["Server", "X-Powered-By"]
 
 # Proxy sanitization
 sanitize_forwarded_headers = true
 
-# Request limits
-max_request_size = 1048576
-max_header_size = 4096
+# Request limits (main [http] section)
+# max_request_size, max_header_size_ingress, max_header_size_egress
 ```
 
 ### Server-Level
@@ -204,7 +203,7 @@ If sanitization is blocking legitimate requests:
 
 1. **Check path encoding** - Ensure URLs are properly encoded
 2. **Verify trusted proxies** - Add your CDN/load balancer to trusted_proxies
-3. **Disable specific checks** - If needed, disable path_traversal for specific paths
+3. **Disable specific checks** - If needed, disable path_traversal for a site
 
 ### Incorrect Client IP Detection
 
@@ -216,18 +215,22 @@ If client IPs appear as proxy IPs:
 
 ### Request Smuggling False Positives
 
-Some legitimate proxies may trigger smuggling detection:
+Some legitimate proxies may trigger smuggling detection. Because the request-smuggling
+detector has no per-site toggle, it cannot be disabled from config — reduce false
+positives at the proxy instead (for example, avoid emitting both `Content-Length` and
+`Transfer-Encoding`, and use the comma-separated `TE` form SynVoid expects):
 
 ```toml
-[defaults.attack_detection.request_smuggling]
-enabled = false  # Disable if causing issues
+# No [attack_detection.request_smuggling] table exists; this block has no effect.
+# [attack_detection.path_traversal]
+# enabled = false
 ```
 
 ## Best Practices
 
 1. **Always use trusted_proxies** - Add your CDN, load balancer, or reverse proxy
 2. **Enable sanitize_forwarded_headers** - Prevents header injection
-3. **Remove information headers** - Set `remove_server_header = true`
+3. **Remove information headers** - Add `Server` / `X-Powered-By` to `security.more_clear_headers`
 4. **Configure size limits** - Prevent resource exhaustion
 5. **Monitor blocked requests** - Watch for false positives
 

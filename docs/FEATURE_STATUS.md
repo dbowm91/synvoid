@@ -74,7 +74,7 @@ These features compile cleanly but have limited real-world validation or hard ru
 | Feature | Flag | Platform Requirement | Runtime Constraints | Known Gaps |
 |---------|------|---------------------|---------------------|------------|
 | eBPF ICMP Filter | `icmp-ebpf` | Linux only | Requires kernel BTF, CAP_NET_ADMIN or root, precompiled eBPF object | Falls back to nftables when unavailable; integration tests require BTF-capable kernel |
-| Post-Quantum TLS | `post-quantum` | Any | Experimental TLS key exchange | Limited real-world validation |
+| Post-Quantum TLS | `post-quantum` | Any | Marker feature for **outbound** http-client/admin TLS egress. Inbound hybrid PQ key exchange is **always available** regardless of this flag (`synvoid-tls` unconditionally enables rustls `prefer-post-quantum`) | Limited real-world validation of the egress path |
 | Post-Quantum Verify | `verify-pq` | Any | Post-quantum signature verification | Limited real-world validation |
 | macOS Sandbox | `macos-sandbox` | macOS only | Seatbelt via deprecated `sandbox_init` (opt-in experimental; not App Sandbox; Linux is production strict-isolation target) | Native child-process tests on macOS host only; cross-compile is not enforcement evidence |
 
@@ -109,8 +109,19 @@ cargo build --release --features verify-pq
 
 - **Platform**: All supported platforms
 - **Status**: Functional but limited real-world validation
-- **TLS**: Hybrid ML-KEM-768 + Ed25519 key exchange via `aws-lc-rs`
-- **Verification**: ML-DSA-65/87 signature verification via `libcrux-ml-dsa`
+- **Inbound TLS**: hybrid post-quantum key exchange (e.g. `X25519MLKEM768`) is
+  compiled into **every** build — `synvoid-tls` unconditionally enables rustls's
+  `prefer-post-quantum` cargo feature. This is **not** gated by the root
+  `post-quantum` feature, and `tls.prefer_post_quantum` is telemetry only
+  (classified `PERSISTURE` in `architecture/dns_config_runtime_matrix.md`).
+  Never describe it as a switch.
+- **Outbound**: the root `post-quantum` feature is a marker covering
+  http-client and admin TLS **egress** only
+- **Verification** (`verify-pq`): post-quantum signature verification
+
+Promoted by Phase 140 (`architecture/dns_provider_inversion_phase140_closeout.md`);
+the inbound truthfulness is pinned by the unmodified handshake test
+`prefer_post_quantum_does_not_gate_the_hybrid_key_exchange`.
 
 ## Promotion Criteria
 

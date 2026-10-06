@@ -137,7 +137,7 @@ Examples:
 - `threat_indicator:10.0.0.1:RateLimitViolation`
 - `threat_indicator:192.168.1.100:SuspiciousActivity`
 
-The `make_indicator_key()` function in `crates/synvoid-mesh/src/mesh/threat_intel.rs:25-27` creates these keys.
+The `make_indicator_key()` function in `crates/synvoid-mesh/src/mesh/threat_intel.rs:34` creates these keys (the publishing path uses `DhtKey::threat_indicator` with the same `format!("{:?}", threat_type)` rendering).
 
 ### Local Announcements
 
@@ -198,15 +198,22 @@ YARA rules follow a content-addressed distribution model:
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  DHT Record (24h TTL)                                               │
+│  DHT Record (86400s / 24h TTL)                                      │
 │                                                                       │
 │  Key: yara_rule:{sha256_of_rules}                                    │
-│  Value: JSON with rules content + metadata + signature                │
+│  Value: postcard-serialized YaraRuleContentRecord                     │
+│         (version, rules, content_hash, node_id, timestamp, signature)│
 │                                                                       │
 │  Key: yara_rules_manifest:{node_id}                                  │
-│  Value: JSON with version + content_hash + signature                 │
+│  Value: postcard-serialized YaraRuleManifestRecord                   │
+│         (version, content_hash, node_id, timestamp, signature)       │
+│                                                                       │
+│  Key: yara_chunk:{content_hash}:{index}   (rulesets > 32 KiB)       │
+│  Value: postcard-serialized YaraRuleChunkRecord                       │
 └─────────────────────────────────────────────────────────────────────┘
 ```
+
+Record values are serialized with **postcard**, not JSON (`synvoid_utils::serialization::serialize`), into typed rkyv-backed records — never `serde_json::Value`.
 
 ### File Upload Scanning
 
@@ -325,9 +332,10 @@ pub fn publish_indicator_to_dht(&self, indicator: &ThreatIndicator) {
 
 | Data Type | Default TTL | Behavior |
 |-----------|-------------|----------|
-| Threat Indicators | `ttl_seconds` field (min 60s) | Expires after TTL |
-| YARA Rules | 24 hours | Requires re-announcement |
-| YARA Manifest | 24 hours | Requires re-announcement |
+| Threat Indicators | `max(indicator.ttl_seconds, min_ttl_seconds)` | Expires after TTL |
+| YARA Rule Content | 86400s (24 hours) | Requires re-announcement |
+| YARA Manifest | 86400s (24 hours) | Requires re-announcement |
+| YARA Chunks | 86400s (24 hours) | Requires re-announcement |
 
 Expired indicators are cleaned up by `cleanup_expired()` which runs periodically.
 
@@ -335,23 +343,17 @@ Expired indicators are cleaned up by `cleanup_expired()` which runs periodically
 
 Global nodes periodically re-announce indicators:
 
-- **Interval**: `re_announce_interval_secs` (default: 300 seconds)
+- **Interval**: 300 seconds, hardcoded in the mesh crate (`DEFAULT_RE_ANNOUNCE_INTERVAL_SECS`) — not reachable from TOML (see [ThreatIntel Configuration](#threatintel-configuration))
 - **Scope**: ALL non-expired indicators are re-announced (not just local_origin)
-- **Behavior**: Respects `hub_only_mode` (non-global nodes do not re-announce)
+- **Behavior**: gated on global role **and** `hub_only_mode` — `re_announce_local_indicators()` returns early if the node is not global or `hub_only_mode` is set
 
 ```rust
-// Background task for re-announcement
-async fn re_announce_loop(&self) {
-    let mut ticker = tokio::time::interval(Duration::from_secs(
-        self.config.re_announce_interval_secs
-    ));
-    loop {
-        ticker.tick().await;
-        if self.node_role.is_global() {
-            self.re_announce_local_indicators();
-        }
-    }
-}
+// Background task for re-announcement (start_background_tasks)
+let ticker = tokio::time::interval(Duration::from_secs(
+    DEFAULT_RE_ANNOUNCE_INTERVAL_SECS
+));
+// on each tick:
+threat_intel.re_announce_local_indicators().await;
 ```
 
 ## Global Node vs Edge Behavior
@@ -360,10 +362,10 @@ async fn re_announce_loop(&self) {
 
 | Action | Behavior |
 |--------|----------|
-| Publish indicators | Yes - announces to DHT and broadcasts to peers |
+| Publish indicators | Yes - announces to DHT and broadcasts to peers (requires a signer) |
 | Sync indicators | Yes - syncs from DHT periodically |
 | Publish YARA rules | Yes - publishes manifest and rule content to DHT |
-| Re-announce indicators | Yes - every `re_announce_interval_secs` |
+| Re-announce indicators | Yes - every 300s (not operator-configurable) |
 | Accept edge submissions | Yes - stores pending submissions for approval |
 | Critical threat propagation | Uses `store_and_announce_critical()` for faster spread |
 
@@ -613,38 +615,36 @@ The private helpers `apply_rate_limit_mesh_action_after_policy_permit` and `appl
 ### ThreatIntel Configuration
 
 ```toml
-[mesh.threat_intel]
-enabled = true
-push_enabled = true                    # Broadcast threats to peers
-sync_enabled = true                    # Sync from DHT
-sync_interval_secs = 300               # How often to sync (seconds)
-threat_sync_interval_secs = 60         # Internal sync interval
-push_severity_threshold = "medium"     # Minimum severity to push
-min_ttl_seconds = 60                   # Minimum TTL for indicators
-max_indicators_per_message = 50        # Max indicators per sync
-hub_only_mode = false                  # Only global nodes distribute
-re_announce_interval_secs = 300        # Re-announce interval (seconds)
-
-[mesh.threat_intel.reputation]
-enabled = true
-initial_score = 50
- decay_interval_secs = 3600
- min_score = 0
- max_score = 100
+[tunnel.mesh.threat_intel]
+enabled = false                        # default: false
+push_enabled = false                   # Broadcast threats to peers (default: false)
+sync_enabled = false                   # Sync from DHT (default: false)
+sync_interval_secs = 300               # How often to sync (default: 300)
+threat_sync_interval_secs = 3600       # Internal sync interval (default: 3600)
+push_severity_threshold = "high"       # Minimum severity to push (default: "high")
+min_ttl_seconds = 60                   # Minimum TTL for indicators (default: 60)
+max_indicators_per_message = 100       # Max indicators per sync (default: 100)
+hub_only_mode = false                  # Only global nodes distribute (default: false)
 ```
+
+Two claims this document previously made about `[mesh.threat_intel]` do not hold:
+
+- **`re_announce_interval_secs` is not operator-configurable.** `synvoid_config`'s `ThreatIntelligenceConfig` (`crates/synvoid-config/src/protection.rs:393`) has no such field, and `realize_mesh_runtime_config` (`src/supervisor/mesh.rs:24`) converts the config DTO to JSON and deserializes it into the mesh-crate type — so the field never survives the hop. The runtime uses `synvoid_mesh`'s own `DEFAULT_RE_ANNOUNCE_INTERVAL_SECS` of 300s.
+- **`[mesh.threat_intel.reputation]` does not exist.** `ReputationConfig` (`crates/synvoid-mesh/src/mesh/reputation.rs:67`) lives on the mesh-crate `ThreatIntelligenceConfig`, which is likewise reconstructed from the config DTO and therefore always takes `ReputationConfig::default()`. Its fields are `enabled`, `min_reputation_for_acceptance`, `global_node_trust_threshold`, `decay_enabled`, `decay_interval_secs`, `threat_accepted_bonus`, `threat_rejected_penalty`, `false_positive_penalty`, `performance_penalty`, `hub_only_mode` — not `initial_score` / `min_score` / `max_score`.
 
 ### YARA Rules Configuration
 
 ```toml
-[mesh.yara_rules]
-enabled = true
-sync_interval_secs = 3600              # How often to sync from DHT
-re_announce_interval_secs = 300        # Re-publish interval for global
-allow_edge_submissions = false          # Allow edge nodes to submit rules
-require_global_approval = true          # Submissions need approval
-require_signature = true                # Reject unsigned rules
-max_rules_size_kb = 1024               # Maximum rule size (KB)
-trusted_signers = []                   # Ed25519 public keys that can sign
+[tunnel.mesh.yara_rules]
+enabled = false                         # default: false
+sync_interval_secs = 300               # How often to sync from DHT (default: 300)
+re_announce_interval_secs = 3600        # Re-publish interval for global (default: 3600)
+allow_edge_submissions = false          # Allow edge nodes to submit rules (default: false)
+require_global_approval = true          # Submissions need approval (default: true)
+require_signature = true                # Reject unsigned rules (default: true)
+max_rules_size_kb = 1024               # Maximum rule size (KB) (default: 1024)
+trusted_signers = []                   # Ed25519 public keys that can sign (default: [])
+hub_only_mode = false                  # default: false
 ```
 
 ### Trusted Signers
@@ -652,12 +652,14 @@ trusted_signers = []                   # Ed25519 public keys that can sign
 When `trusted_signers` is configured, only rules signed by keys in the list are accepted:
 
 ```toml
-[mesh.yara_rules]
+[tunnel.mesh.yara_rules]
 trusted_signers = [
     "base64_encoded_ed25519_pubkey_1",
     "base64_encoded_ed25519_pubkey_2"
 ]
 ```
+
+A multi-signature manifest must reach a 2/3 threshold of `trusted_signers` to be accepted.
 
 ## Troubleshooting
 
@@ -686,9 +688,9 @@ trusted_signers = [
 
 ### High Memory Usage
 
-- `MAX_PENDING_INDICATORS = 10000` limits indicator queue
-- `VecDeque` automatically evicts oldest entries when full
-- Consider reducing `max_indicators_per_message` if memory pressure
+- `MAX_PENDING_INDICATORS = 10000` bounds the pending-announce `VecDeque`; the oldest entry is dropped once the cap is reached (`threat_intel.rs:1104`)
+- The active indicator store is a map, not a queue, so it is bounded by TTL-driven `cleanup_expired()` rather than by a size cap
+- Consider reducing `max_indicators_per_message` (config default 100) if memory pressure
 
 ### DHT Lookup Misses
 
@@ -701,16 +703,20 @@ trusted_signers = [
 
 The system records metrics for monitoring:
 
-| Metric | Description |
+These are in-process atomic counters in `crates/synvoid-metrics/src/collection.rs` with record/get accessor pairs, not Prometheus series:
+
+| Counter | Description |
 |--------|-------------|
-| `threat_intel_dht_publish` | Successful DHT publishes |
-| `threat_intel_dht_publish_failed` | Failed DHT publishes |
-| `threat_intel_dht_lookup_hit` | DHT lookup cache hits |
-| `threat_intel_dht_lookup_miss` | DHT lookup cache misses |
-| `threat_intel_dht_sync` | DHT sync attempts |
-| `threat_intel_dht_sync_success` | Successful DHT syncs |
-| `threat_intel_dht_sync_added` | Indicators added during sync |
-| `threat_intel_dht_sync_removed` | Indicators removed during sync |
+| `record_threat_intel_dht_publish()` / `get_threat_intel_dht_publish_total()` | Successful DHT publishes |
+| `record_threat_intel_dht_publish_failed()` | Failed DHT publishes |
+| `record_threat_intel_dht_lookup_hit()` / `_miss()` | DHT lookup cache hits / misses |
+| `record_threat_intel_dht_sync()` / `get_threat_intel_dht_sync_total()` | DHT sync attempts |
+| `record_threat_intel_dht_sync_success()` / `_failed()` | Successful / failed DHT syncs |
+| `record_threat_intel_dht_sync_added()` / `_removed()` | Indicators added / removed during sync |
+| `record_threat_intel_enforcement_permitted()` | Enforcement permitted after the policy gate |
+| `record_threat_intel_enforcement_suppressed_*()` | Suppression, keyed by policy outcome |
+
+Because they are not exported as Prometheus metrics, there is no `synvoid_threat_intel_*` series to scrape. `synvoid-mesh` calls these through `crate::stubs::metrics` (`crates/synvoid-mesh/src/stubs.rs:5`), which is a no-op mirror of the real recorder in `synvoid-metrics` — so these counters are real in the metrics crate but the mesh crate never routes to it on its own.
 
 ## Related Documentation
 

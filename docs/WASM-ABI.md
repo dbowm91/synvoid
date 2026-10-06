@@ -28,10 +28,10 @@ SynVoid supports WASM-based request filtering and response transformation plugin
 
 ### Memory Allocation
 
-- **Guest-provided allocation**: Plugins may export `guest_alloc(size) -> ptr` to request memory from the host
-- **Host-provided fallback**: If `guest_alloc` is not exported, the host uses offset `1024` (1KB reserved area)
-- **Maximum data size**: 1MB (1,048,576 bytes) per single data transfer
-- **Memory growth**: Plugins can grow memory up to `max_memory_mb` limit
+- **Guest-provided allocation**: Plugins export `guest_alloc(size) -> ptr` to request memory from the host; production trust tiers require it
+- **Host-provided fallback**: A 1KB reserved area at the base of guest memory is used when a module has no allocator (development tier only)
+- **Maximum data size**: 1 MiB (1,048,576 bytes) per single data transfer (`MAX_WASM_DATA_SIZE`)
+- **Memory growth**: Plugins can grow memory up to `max_memory_mb` (`limits.max_memory_mb * 1024 * 1024`, capped at `max_pages`)
 
 ### String Encoding
 
@@ -95,13 +95,16 @@ All strings (method, URI, headers) are passed as pointer/length pairs using UTF-
 
 ```wat
 (transform_response
-  (param $status_code i32)   ;; HTTP status code
+  (param $status_ptr i32)   ;; Response status code pointer (canonical frame bytes)
+  (param $status_len i32)   ;; Response status length
   (param $body_ptr i32)      ;; Response body pointer
   (param $body_len i32)      ;; Response body length
   (param $out_ptr i32)       ;; Output buffer pointer
   (param $out_max i32)       ;; Output buffer max size
   (result i32))              ;; New body length, or -1 on error
 ```
+
+Signature type in the runtime is `TransformResponseFn = TypedFunc<(i32, i32, i32, i32, i32), i32>` — six i32 parameters, where the first two are the **status pointer and length**, not a bare `status_code` integer (`crates/synvoid-plugin-runtime/src/wasm_runtime.rs:262`).
 
 **Purpose**: Transform an upstream response before sending to client.
 
@@ -115,21 +118,16 @@ All strings (method, URI, headers) are passed as pointer/length pairs using UTF-
 **Example**:
 ```wat
 (func (export "transform_response")
-  (param $status_code i32)
+  (param $status_ptr i32) (param $status_len i32)
   (param $body_ptr i32) (param $body_len i32)
   (param $out_ptr i32) (param $out_max i32)
   (result i32)
-  
-  ;; Add security header to all responses
-  local.get $out_ptr
-  i32.const 0
-  i32.const 18
-  memory.fill  ;; Clear output buffer
-  
-  ;; Write "Strict-Transport-Security: max-age=31536000"
+
+  ;; Copy the upstream body into the output buffer, then rewrite headers
+  ;; via the response frame policy (status 100-599 enforced host-side).
   ;; ... (implementation details)
-  
-  i32.const 18  ;; Return header length
+
+  local.get $body_len  ;; Return new body length
 )
 ```
 
@@ -184,11 +182,13 @@ All strings (method, URI, headers) are passed as pointer/length pairs using UTF-
 
 **Purpose**: Free previously allocated memory.
 
-**Note**: Optional. If not exported, the host cannot reclaim memory.
+**Note**: Required in production. `SignedSandboxed` / `LocalSandboxed` trust tiers require **both** `guest_alloc` and `guest_free`; only development tier builds accept an alloc-only module (`DevelopmentAllowMissingFree`). Every guest pointer is range-checked with `checked_guest_range` before dereference.
 
-## Host Functions (env namespace)
+## Host Functions (`env` namespace)
 
-These functions are provided by the host and callable from the guest:
+These functions are provided by the host and callable from the guest. All are registered on the `env` namespace in `create_linker` (`crates/synvoid-plugin-runtime/src/wasm_runtime.rs:2515`).
+
+A separate `host` namespace also exists with kebab-case names (`log`, `get-header`, `set-header`, `get-method`, `get-uri`, `get-body`, `set-body`, `set-status`, `get-env`, `check-timeout`, `mesh-query-dht`, `mesh-check-threat`, `mesh-emit-event`, `guest-alloc`, `guest-free`). Those are compatibility stubs that return fixed placeholder values; the `env` names below are the implemented surface.
 
 ### `abort`
 
@@ -270,6 +270,8 @@ Check if an IP address is blocked or marked as a threat in the mesh threat intel
 
 **Return**: 1 if IP is threatened/blocked, 0 if clean, -1 on error.
 
+**Capability gate**: requires both `PluginCapability::Mesh` and `mesh_policy.allow_threat_check`; otherwise the call is denied, a `CapabilityDenied` host-call failure is recorded, and `ABI_ERR_CAPABILITY_DENIED` is returned. `mesh_query_dht` likewise requires `Mesh` plus a key matching `mesh_policy.dht_read_prefixes`, and `mesh_emit_event` requires `Mesh` plus a topic listed in `mesh_policy.event_emit_topics`.
+
 **Example**:
 ```wat
 ;; Check if client IP is a known threat
@@ -281,6 +283,17 @@ if
   ;; IP is clean, proceed
 end
 ```
+
+### `synvoid_read_body_chunk`
+
+```wat
+(import "env" "synvoid_read_body_chunk"
+  (func $synvoid_read_body_chunk
+    (param $out_ptr i32) (param $out_max i32)
+    (result i32)))
+```
+
+Read the next chunk of upstream body data. Returns bytes written, `0` at end of body, or `ABI_ERR_TIMEOUT` (-3) when `body_chunk_timeout` elapses with no data. Chunks are clamped to `max_body_chunk_bytes` (64 KiB).
 
 ### `mesh_emit_event`
 
@@ -334,12 +347,29 @@ Headers are serialized into a compact binary format:
 
 ## Resource Limits
 
+Config-side defaults (`WasmPluginGlobalConfig`, `crates/synvoid-config/src/plugins.rs`):
+
 | Limit | Default | Description |
 |-------|---------|-------------|
-| `max_memory_mb` | 64 MB | Maximum linear memory size |
-| `max_cpu_fuel` | 1,000,000 | CPU fuel units (0 = unlimited) |
+| `max_memory_mb` | 64 MB | Maximum linear memory size (`limits.max_memory_mb * 1024 * 1024`) |
+| `max_cpu_fuel` | 1,000,000 | Wasmtime fuel units per execution |
 | `timeout_seconds` | 30 | Request processing timeout |
-| `max_instances` | 1 | Maximum concurrent instances per plugin |
+| `max_instances` | 1 | Maximum concurrent instances per plugin (`WasmResourceLimits::max_instances`, `.max(1)` at use) |
+
+Per-invocation manifest limits are a separate struct, `PluginLimits` (`crates/synvoid-plugin-runtime/src/sandbox/types.rs:726`), with its own defaults: `timeout_ms` 50, `max_input_bytes` 262144, `max_output_bytes` 262144, `max_concurrency` 4, `memory_pages` and `fuel` unset.
+
+Additional host-side bounds: `MAX_WASM_DATA_SIZE` = 1 MiB per single data transfer; `max_body_chunk_bytes` 64 KiB, `max_env_value_bytes` 4 KiB, `max_mesh_key_bytes` 1 KiB, `max_mesh_value_bytes` 64 KiB.
+
+ABI error codes returned by host functions (`wasm_runtime.rs:245`):
+
+| Code | Constant | Meaning |
+|------|----------|---------|
+| -1 | `ABI_ERR_CAPABILITY_DENIED` | Capability/sub-capability check failed |
+| -2 | `ABI_ERR_INVALID_POINTER` | Pointer/length outside guest memory |
+| -3 | `ABI_ERR_TIMEOUT` | Host call budget exceeded |
+| -4 | `ABI_ERR_INPUT_TOO_LARGE` | Payload exceeds the bound |
+| -5 | `ABI_ERR_UNAVAILABLE` | Capability present but backend unavailable |
+| -6 | `ABI_ERR_INTERNAL` | Internal host error |
 
 ### Fuel Consumption
 
@@ -384,8 +414,9 @@ Host calls filter_request()
 
 ### Error Handling
 
-- Return codes < -1 indicate fatal errors; the plugin is disabled
-- Plugin errors can be configured to fail-open or fail-closed per-site
+- `-1` from `filter_request` is treated as a plugin error. Whether that fails open or closed is a per-instance decision: `[[plugins.wasm.plugins]] on_error = "fail_closed"` selects fail-closed, and the default (`WasmOnError::FailOpen`) lets the request through (`crates/synvoid-http/src/wasm_filter_dispatch.rs:122`).
+- Host functions never return a positive "error" code — they return the negative `ABI_ERR_*` constants above.
+- Return codes < -1 from host calls indicate fatal host-side conditions; the plugin is not disabled by the runtime for these, the call simply fails.
 
 ## Example WASM Module
 
@@ -414,8 +445,11 @@ pub extern "C" fn filter_request(
 
 Compiled with:
 ```bash
-cargo build --target wasm32-wasi
+rustup target add wasm32-wasip1
+cargo build --target wasm32-wasip1
 ```
+
+The WASI preview-1 target is `wasm32-wasip1` on Rust 1.98.1 (the pinned toolchain); the legacy `wasm32-wasi` target name was renamed upstream and will not resolve.
 
 ## Debugging
 
@@ -426,12 +460,15 @@ Enable WASM plugin debugging:
 level = "debug"  # Shows filter decisions, memory operations
 ```
 
-Metrics available:
-- `synvoid_wasm_invocations_total` - Total plugin calls
-- `synvoid_wasm_decisions_total{decision="pass|block|challenge"}` - Decision counts
-- `synvoid_wasm_errors_total` - Error counts
-- `synvoid_wasm_duration_seconds` - Execution time histogram
-- `synvoid_wasm_fuel_consumed_total` - Fuel usage
+Metrics available (see [PLUGINS.md](./PLUGINS.md#metrics) for the full labelled tables):
+
+- `synvoid_plugin_invoke_total{plugin,capability,status}` - Total plugin calls, labelled by capability (`filter_request`, `transform_response`, `serverless`, `serverless_streaming`)
+- `synvoid_plugin_capability_violation_total{capability}` - Capability check denials
+- `synvoid_plugin_host_call_failure_total{plugin,host_function,failure_class}` - Host call failures (timeout, capability denied, etc.)
+- `synvoid_plugin_serialization_rejection_total{plugin,hook,failure_class,trust_tier}` - ABI frame rejections
+- `synvoid_plugin_pool_hit_total` / `pool_miss_total` / `pool_dropped_total` / `concurrency_limit_exceeded_total` - Instance pool behavior
+
+There are no `synvoid_wasm_*` metrics; the plugin runtime emits `synvoid_plugin_*` names.
 
 ## Version History
 

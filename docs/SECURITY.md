@@ -16,7 +16,7 @@ port = 8080
 
 [admin]
 enabled = true
-host = "127.0.0.1"  # Admin API on localhost only
+bind_address = "127.0.0.1"  # Admin API on localhost only (field: bind_address)
 port = 8081
 ```
 
@@ -40,6 +40,8 @@ trusted_proxies = [
 iptables -A INPUT -p tcp --dport 80 -s 0.0.0.0/0 -j ACCEPT
 iptables -A INPUT -p tcp --dport 443 -s 0.0.0.0/0 -j ACCEPT
 iptables -A INPUT -p tcp --dport 8081 -s 127.0.0.1 -j ACCEPT  # Admin local only
+# Port 9090 (Prometheus) needs no rule: [metrics].bind_address is validated to
+# be loopback, so the exporter is unreachable off-host by construction.
 ```
 
 ## Admin API Security
@@ -56,7 +58,7 @@ token_env_var = "SYNVOID_ADMIN_TOKEN"  # Don't store in config file
 ### Generate Strong Tokens
 
 ```bash
-./synvoid --generatetoken
+synvoid --generatetoken
 # Output: a1b2c3d4e5f6... (64 character hex string)
 ```
 
@@ -65,7 +67,7 @@ token_env_var = "SYNVOID_ADMIN_TOKEN"  # Don't store in config file
 ```toml
 [admin]
 enabled = true
-host = "127.0.0.1"  # Localhost only
+bind_address = "127.0.0.1"  # Localhost only (the field is `bind_address`, not `host`)
 port = 8081
 ```
 
@@ -103,32 +105,33 @@ nonce replay validation.
 
 ## TLS Configuration
 
-### Use Strong Ciphers
+### Protocol Floor
+
+SynVoid has **no** `min_version`, `ciphers`, or `prefer_server_ciphers` keys. The
+protocol floor is expressed by two booleans:
 
 ```toml
 [tls]
 enabled = true
 port = 443
-min_version = "1.2"
-ciphers = "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384"
-prefer_server_ciphers = true
+tls_1_3_only = true            # DEFAULT — TLS 1.3 only
+enable_tls_12_fallback = false # opt back in to TLS 1.2 explicitly
 ```
+
+Cipher selection is delegated to rustls (`synvoid-tls` always enables the
+`prefer-post-quantum` feature), so inbound hybrid post-quantum key exchange is
+always available. `prefer_post_quantum` exists in the config for telemetry only
+and gates nothing.
 
 ### Enable HSTS
 
+HSTS is set per site through the security-headers table, not a `[hsts]` section:
+
 ```toml
-[site.hsts]
+# config/sites/<site>.toml
+[security_headers]
 enabled = true
-max_age = 31536000
-include_subdomains = true
-preload = true
-```
-
-### Disable Weak Protocols
-
-```toml
-[tls]
-min_version = "1.2"  # Disable SSLv3, TLS 1.0, 1.1
+strict_transport_security = "max-age=31536000; includeSubDomains; preload"
 ```
 
 ### Enforce TLS Passthrough Policy
@@ -144,26 +147,31 @@ strict_tls_passthrough_policy = true  # Default: false
 
 When enabled, worker validation **fails** at startup if any site explicitly disables TLS passthrough WAF enforcement (`tls_passthrough_enforce_waf = false`) and lacks rate limiting. WAF enforcement is on by default.
 
-**Remediation per site:**
+**Remediation per site** — `config/sites/<site>.toml`. `[proxy]` is a single
+table, not an array, and `tls_passthrough*` are fields of it. Pick one option:
+
+Option A — WAF inspects L7 traffic despite passthrough:
 
 ```toml
-# Option A: WAF inspects L7 traffic despite passthrough
-[[site.proxy]]
-host = "example.com"
-port = 443
+[proxy]
 tls_passthrough = true
 tls_passthrough_enforce_waf = true
 
-# Option B: Rate limiting compensates for lack of L7 inspection
-[[site.proxy]]
-host = "api.example.com"
-port = 443
+[proxy.upstream]
+servers = ["127.0.0.1:8443"]
+```
+
+Option B — rate limiting compensates for the lack of L7 inspection:
+
+```toml
+[proxy]
 tls_passthrough = true
 
-[site.ratelimit]
-mode = "token_bucket"
+[ratelimit]
+# "shared" or "isolated" — "token_bucket" is rejected by validate()
+mode = "shared"
 
-[site.ratelimit.ip]
+[ratelimit.ip]
 per_second = 10
 per_minute = 100
 ```
@@ -172,31 +180,43 @@ per_minute = 100
 
 ### Enable Comprehensive Detection
 
+Attack detection is configured **per site** — there is no
+`[defaults.attack_detection]` section in `main.toml`, and `cmd_injection` is
+not a sub-table:
+
 ```toml
-[defaults.attack_detection]
+# config/sites/<site>.toml
+[attack_detection]
 enabled = true
-paranoia_level = 2
-action = "block"
+paranoia_level = 2      # 1-3; out-of-range fails validate()
+action = "block"        # "stall" | "block" | "log"
 
-[defaults.attack_detection.sqli]
-enabled = true
-
-[defaults.attack_detection.xss]
+[attack_detection.sqli]
 enabled = true
 
-[defaults.attack_detection.ssrf]
+[attack_detection.xss]
 enabled = true
 
-[defaults.attack_detection.cmd_injection]
+[attack_detection.ssrf]
+enabled = true
+
+[attack_detection.rfi]
+enabled = true
+
+[attack_detection.path_traversal]
 enabled = true
 ```
 
+The code default for `action` is `stall`, not `block`.
+
 ### Configure Rate Limiting
+
+`RateLimitDefaults` has no `enabled` flag — it is always on, and the site-level
+`[ratelimit]` table is what scopes it:
 
 ```toml
 [defaults.ratelimit]
-enabled = true
-mode = "shared"
+mode = "shared"  # "shared" or "isolated"
 
 [defaults.ratelimit.ip]
 per_second = 10
@@ -206,32 +226,38 @@ burst = 20
 
 ### Enable Bot Protection
 
+`BotDefaults` has no `enabled` flag either; individual policies toggle it:
+
 ```toml
 [defaults.bot]
-enabled = true
 block_ai_crawlers = true
+enable_css_honeypot = true
+enable_js_challenge = false
 ```
 
 ## Information Leakage Prevention
 
 ### Remove Server Headers
 
-```toml
-[server]
-remove_server_header = true
-```
-
-### Disable Version Disclosure
+There is no `[server] remove_server_header` or `[server] server_tokens` key —
+`ServerConfig` only holds `host`, `port`, `host_v6`, and `trusted_proxies`. Both
+concerns are handled per site by the security-headers table:
 
 ```toml
-[server]
-server_tokens = false
+# config/sites/<site>.toml
+[security_headers]
+enabled = true
+# The Server header is emitted only when `server_token` is set. Omitting the
+# key (or leaving it unset) sends no Server header; setting it to "" would send
+# an empty one, so leave it out entirely.
+# server_token = "my-waf"
 ```
 
 ### Silent Mode (Optional)
 
 ```toml
-[defaults.attack_detection]
+# config/sites/<site>.toml
+[attack_detection]
 action = "stall"  # Don't reveal blocked requests
 ```
 
@@ -293,10 +319,12 @@ enabled = true
 port = 9090
 ```
 
-Prometheus metrics to monitor:
-- `synvoid_attack_detected_total` - Attack frequency
-- `synvoid_ratelimit_exceeded_total` - Rate limit hits
-- `synvoid_waf_decision_total` - Block/challenge decisions
+Prometheus metrics to monitor (dotted metric names are sanitized to
+underscores and counters gain a `_total` suffix by the exporter):
+- `synvoid_request_enforcement_source_total{source="attack_detection"}` - attack frequency
+- `synvoid_request_enforcement_reason_total` - block/challenge/stall/drop decisions by bounded reason code
+- `synvoid.requests.upstream_error` / `synvoid.requests.proxied` - upstream health ratio
+- `synvoid.ratelimit.global_limited` - global rate limiter hits
 
 ## Docker Security
 
@@ -318,12 +346,15 @@ services:
 services:
   synvoid:
     environment:
+      # Only consulted because [admin] token_env_var names this variable.
       - SYNVOID_ADMIN_TOKEN=${ADMIN_TOKEN}
-      - SYNVOID_IPC_KEY=${IPC_KEY}
     secrets:
       - admin_token
-      - ipc_key
 ```
+
+`SYNVOID_IPC_KEY` is generated and injected into worker/jail children by the
+Supervisor itself at spawn time; it is not an operator-supplied environment
+variable. Leave it unset.
 
 ## Regular Maintenance
 
@@ -354,9 +385,9 @@ Regularly check and clean up stale IP blocklist entries.
 Before production deployment:
 
 - [ ] Admin API bound to localhost or behind VPN
-- [ ] Strong admin token (environment variable)
+- [ ] Strong admin token (environment variable, ≥ 32 characters)
 - [ ] IPC signing enabled
-- [ ] TLS 1.2+ only with strong ciphers
+- [ ] TLS 1.3 only (`[tls] tls_1_3_only = true`, the default); hybrid post-quantum key exchange is always offered
 - [ ] Trusted proxies configured correctly
 - [ ] Rate limiting enabled
 - [ ] Attack detection enabled

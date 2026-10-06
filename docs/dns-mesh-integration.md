@@ -12,7 +12,11 @@ The DNS mesh operates across three node types:
 | **Origin** | Primary DNS for a zone, signs records, distributes to edges |
 | **Edge** | Serves queries from cache, forwards to origin for misses |
 
-Global nodes are configured explicitly — they are never elected. Origins register with a global node and edges register with an origin.
+`Global` is a **mesh** role (`synvoid_config::mesh::MeshNodeRole::GLOBAL`); the
+DNS-owned role enum `DnsNodeRole` has exactly two variants, `Edge` and `Origin`
+(`crates/synvoid-dns/src/messages.rs`). Global nodes are configured explicitly —
+they are never elected. Origins register with a global node and edges register
+with an origin.
 
 ## Registration Flow
 
@@ -50,6 +54,7 @@ SynVoid supports multiple DNS resolver modes:
 | **Cloudflare** | Trust propagation | Forwards to Cloudflare DNS |
 | **System** | None | Uses system resolver |
 | **Custom** | None | Custom upstream IPs |
+| **GlobalNodes** | None | Upstream servers supplied by mesh global nodes |
 
 ### Recursive Resolver with DNSSEC
 
@@ -57,11 +62,15 @@ SynVoid supports multiple DNS resolver modes:
 [dns.recursive]
 upstream_provider = "Recursive"
 dnssec_validation = true
-trust_anchors.enabled = true
 trust_anchor_path = "trusted-key.key"
 ```
 
-DNSSEC validation uses RFC 5011 trust anchor management for automated key rollover.
+`trust_anchor_path` is a real `[dns.recursive]` field (default
+`"trusted-key.key"`). The RFC 5011 manager lives at `[dns.trust_anchors]` and is
+**currently rejected when enabled** — `TrustAnchorConfig::validate` returns a
+typed `Unsupported` error for `enabled = true`, because no custom trust-anchor
+manager is wired to the runtime resolver. See
+[`RFC5011_TRUST_ANCHOR.md`](./RFC5011_TRUST_ANCHOR.md).
 
 ## DHT Sync
 
@@ -73,22 +82,29 @@ Zone and peer state is replicated via a Kademlia-style DHT over the mesh QUIC tr
 - Lookups use XOR distance over a 256-bit node ID space
 - Values are signed by the originating node's mesh key
 
-Replication factor is configurable (default: k=3).
+Replication factor is configurable (`RecordStoreConfig::replication_factor`, default **20** via `DEFAULT_REPLICATION_FACTOR` in `crates/synvoid-mesh/src/mesh/dht/record_store.rs`; it is not k=3).
 
 ## Mesh Signing Key Derivation
 
-Each mesh session derives a per-node signing key from the QUIC session key via HKDF:
+Certificate-distribution keys are derived with HKDF over the QUIC session key:
 
 ```
-signing_key = HKDF-SHA256(
+site_key = HKDF-SHA256(
     ikm  = quic_session_key,
-    salt = node_id || peer_id,
-    info = "synvoid-mesh-signing-v1",
+    salt = site_id,
+    info = "synvoid-cert-dist" || 0x00 || site_id,
     len  = 32
 )
 ```
 
-This key is used to sign DHT values and mesh protocol messages. It is never exported or persisted — it lives only for the duration of the QUIC session.
+`HKDF_INFO = b"synvoid-cert-dist"` is defined in
+`crates/synvoid-mesh/src/mesh/cert_dist.rs`. A separate `"synvoid-tier-key-root"`
+HKDF expansion exists in `mesh/transport.rs` for tier-key roots.
+
+The per-node session signing key described by the older
+`synvoid-mesh-signing-v1` formula **is not present in the code** — no such HKDF
+info string exists anywhere in the repository. Treat that derivation as
+undocumented rather than as specified behaviour.
 
 ## TLS Certificate Distribution
 

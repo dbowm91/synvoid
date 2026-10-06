@@ -1,6 +1,6 @@
 # Tunnel Support
 
-> **Note:** WireGuard support is feature-gated (`wireguard` feature) but currently stubbed. The kernel WireGuard backend requires `wireguard-control` which has an incompatible API, and the userspace backend (boringtun) is compiled but packet handling is incomplete. QUIC Tunnels are the primary production transport for site-to-site connectivity.
+> **Note:** WireGuard support is feature-gated (`wireguard` feature). The kernel backend is stubbed (`is_kernel_wireguard_available()` hardcodes `false`, and no `wireguard-control` dependency exists); the userspace boringtun backend is implemented but only reachable when a TUN device is present. QUIC Tunnels are the primary production transport for site-to-site connectivity.
 
 SynVoid supports multiple tunnel types for site-to-site connectivity and WAF clustering:
 
@@ -35,16 +35,21 @@ max_concurrent_streams = 100
 # TLS certificates
 cert_path = "/etc/synvoid/certs/tunnel.crt"
 key_path = "/etc/synvoid/certs/tunnel.key"
-auto_generate_certs = true
+auto_generate_certs = false          # default: false
 cert_domain = "tunnel.synvoid.local"
 
 [tunnel.quic.server]
 enabled = true
 auth_token = "server-auth-token"
 
+# Mappings are `name -> PortMappingConfig`, which uses `port` (not
+# `listen_port`), `protocol`, `upstream_host`, and `upstream_port`
+# (not a single `upstream` string).
 [tunnel.quic.server.mappings.web1]
-listen_port = 8081
-upstream = "10.0.1.10:80"
+port = 8081
+protocol = "tcp"
+upstream_host = "10.0.1.10"
+upstream_port = 80
 ```
 
 ### Client Configuration
@@ -55,14 +60,22 @@ enabled = true
 
 [tunnel.quic.client]
 enabled = true
+client_id = "edge-a"
 auth_token = "client-auth-token"
 
-[tunnel.quic.client.connections.web1]
+# Peers are `name -> TunnelQuicPeerConfig`; the key is `peers`, not
+# `connections`.
+[tunnel.quic.client.peers.web1]
 address = "tunnel.example.com:51821"
-upstream = "10.0.1.10:80"
+auth_token = "client-auth-token"
+enabled = true
+upstream_host = "10.0.1.10"
+upstream_port = 80
 ```
 
 ### Configuration Options
+
+`TunnelQuicConfig` (`crates/synvoid-config/src/tunnel.rs:121`):
 
 | Option | Default | Description |
 |--------|---------|-------------|
@@ -72,38 +85,78 @@ upstream = "10.0.1.10:80"
 | `max_idle_timeout_secs` | `300` | Connection idle timeout |
 | `keepalive_interval_secs` | `25` | Keep-alive interval |
 | `dedicated_worker` | `true` | Use dedicated worker |
-| `max_concurrent_streams` | `100` | Max concurrent streams |
-| `cert_path` | - | TLS certificate path |
-| `key_path` | - | TLS key path |
+| `max_concurrent_streams` | `100` | Max concurrent streams (must be > 0; validated) |
+| `cert_path` | none | TLS certificate path |
+| `key_path` | none | TLS key path |
 | `auto_generate_certs` | `false` | Auto-generate certificates |
+| `cert_domain` | none | Domain for auto-generated certificates |
+| `client_ca` | none | Client CA for mutual TLS |
+| `whitelist` | `[]` | Allowed peer addresses |
+| `congestion_control` | `"bbr"` | One of `bbr`, `cubic`, `new_reno` (validated) |
+| `initial_congestion_window` | `32` | Initial congestion window |
+| `stream_receive_window` / `connection_receive_window` | see `default_stream_receive_window` / `default_connection_receive_window` | Flow-control windows |
+| `max_stream_buffer_size` / `max_message_size` | `1048576` each | Stream buffer / message size caps |
+| `udp_tunnel_timeout_secs` | `60` | UDP tunnel idle timeout |
+| `udp_max_datagram_size` | `1200` | Max UDP datagram size |
+| `high_throughput_mode` | `false` | High-throughput tuning |
+| `tls_passthrough` | `false` | Passthrough mode |
+
+Server sub-config (`TunnelQuicServerConfig`) also carries `mappings`, `clients`, `vpn_access`, `require_client_cert`, `allow_unauthenticated`, `allow_unauthenticated_confirmation`, `max_connections`, and `auth_rate_limit_max_attempts`.
 
 ## Prometheus Metrics
 
 ### QUIC Tunnel Metrics
+
+The runtime emits dotted `metrics`-crate names; the Prometheus exporter sanitizes `.` to `_`.
+
 ```bash
-synvoid_tunnel_quic_server_enabled    # Server status
-synvoid_tunnel_quic_server_connections # Active connections
-synvoid_tunnel_quic_client_connections  # Client connections
-synvoid_tunnel_quic_health_rtt          # Round-trip time
+synvoid_tunnel_quic_enabled
+synvoid_tunnel_quic_server_enabled
+synvoid_tunnel_quic_server_connections
+synvoid_tunnel_quic_server_active_sessions
+synvoid_tunnel_quic_server_auth_failures
+synvoid_tunnel_quic_server_access_denied
+synvoid_tunnel_quic_client_enabled
+synvoid_tunnel_quic_client_connected
+synvoid_tunnel_quic_client_connections
+synvoid_tunnel_quic_client_sessions
+synvoid_tunnel_quic_client_peers
+synvoid_tunnel_quic_health_rtt
 synvoid_tunnel_quic_health_monitored_connections
-synvoid_tunnel_quic_health_recovered    # Recovered connections
-synvoid_tunnel_quic_health_failures     # Connection failures
-synvoid_tunnel_quic_sessions            # Active sessions
+synvoid_tunnel_quic_health_recovered
+synvoid_tunnel_quic_health_failures
+
+# Stream / datagram / UDP
+synvoid_tunnel_quic_client_streams_opened
+synvoid_tunnel_quic_client_streams_closed
+synvoid_tunnel_quic_client_streams_proxied
+synvoid_tunnel_quic_client_udp_tunnels_opened
+synvoid_tunnel_quic_datagrams_sent
+synvoid_tunnel_quic_datagrams_received
+synvoid_tunnel_udp_tunnels_active
 
 # TCP tunnel metrics
 synvoid_tcp_quic_tunnel_streams_opened
 synvoid_tcp_quic_tunnel_streams_closed
+
+# WireGuard (stubbed backend — metrics exist, functionality does not)
+synvoid_tunnel_wireguard_running
+synvoid_tunnel_wireguard_server_enabled
 ```
+
+Note the earlier `synvoid_tunnel_quic_sessions` name does not exist; the session gauges are `synvoid_tunnel_quic_server_active_sessions` and `synvoid_tunnel_quic_client_sessions`.
 
 ## WireGuard (Feature-Gated, Stubbed)
 
-WireGuard support is behind the `wireguard` Cargo feature. Currently **stubbed** — the feature compiles but does not provide functional WireGuard tunnels:
+WireGuard support is behind the `wireguard` Cargo feature (which pulls in `defguard_boringtun`; `wireguard-control` is **not** a dependency in the current manifest). The kernel backend is stubbed; the userspace backend is implemented but gated on TUN availability:
 
-- **Kernel backend** (`wireguard/kernel.rs`): Requires `wireguard-control` crate (netlink). The crate's v2.0.0 API is incompatible with the current code. `is_kernel_wireguard_available()` always returns `false`.
-- **Userspace backend** (`wireguard/userspace.rs`): Uses `defguard_boringtun` for Noise protocol framing, but packet handler is disabled pending TUN device integration.
-- **TUN device** (`tun.rs`): Platform stubs return `io::ErrorKind::Unsupported`. The `tun-rs` feature is a no-op.
+- **Kernel backend** (`wireguard/kernel.rs`): `is_kernel_wireguard_available()` returns a hardcoded `false`, and `get_wireguard_stats` returns an error. No `wireguard-control` / netlink dependency exists.
+- **Userspace backend** (`wireguard/userspace.rs`): Uses `defguard_boringtun` for Noise framing with a working `start_boringtun()` path. It is selected only when `is_userspace_available()` is true, which requires both the `wireguard` feature and a TUN device node (`/dev/net/tun` on Linux, `/dev/tun` on macOS/BSD; always false on other platforms).
+- **TUN device** (`wireguard/tun.rs`): Linux/BSD/macOS paths attempt a real TUN open; the remaining platforms return `io::ErrorKind::Unsupported` / `Unsupported` errors with "TUN support requires platform-specific dependencies (not yet available)".
 
-To compile with WireGuard stubs: `cargo check -p synvoid-tunnel --features wireguard`
+So on a Linux host with `/dev/net/tun` and `--features wireguard`, the userspace backend is reachable; on a host without a TUN node, or without the feature, WireGuard remains unavailable.
+
+To compile with the WireGuard feature: `cargo check -p synvoid-tunnel --features wireguard`
 
 ## Use Cases
 
@@ -135,9 +188,11 @@ Internet ---> [WAF Front] ----QUIC Tunnel----> [WAF Backend]
 ### Peer Connection Issues
 
 ```bash
-# Check peer status via admin API
-curl -H "Authorization: Bearer <token>" http://localhost:8081/api/probes
+# Check mesh peer status via admin API
+curl -H "Authorization: Bearer <token>" http://localhost:8081/api/mesh/nodes
 ```
+
+(`/api/probes` lists honeypot probe records, not tunnel peers.)
 
 ### QUIC Tunnel Not Connecting
 

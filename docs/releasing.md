@@ -73,7 +73,7 @@ Crates must be published in this exact order. Each crate's path dependencies mus
 | 30 | `synvoid-admin` | synvoid-core, synvoid-config, synvoid-ipc, synvoid-waf, synvoid-metrics, synvoid-static-files, synvoid-app-server |
 | 31 | `synvoid-http` | synvoid-core, synvoid-config, synvoid-metrics, synvoid-waf, synvoid-challenge, synvoid-http-client, synvoid-upstream, synvoid-app-server, synvoid-app-handlers, synvoid-proxy, synvoid-upload, synvoid-plugin-runtime, synvoid-utils, synvoid-mesh, synvoid-serverless, synvoid-static-files, synvoid-ipc |
 | 32 | `synvoid-http3` | synvoid-core, synvoid-config, synvoid-http, synvoid-http-client, synvoid-proxy, synvoid-waf, synvoid-metrics, synvoid-platform |
-| 33 | `synvoid-dns` | synvoid-core, synvoid-config, synvoid-mesh (optional), synvoid-tls, synvoid-utils, synvoid-geoip, synvoid-dnssec-keystore (unused `synvoid-platform` edge removed in Phase 109; extraction DEFER) |
+| 33 | `synvoid-dns` | synvoid-dnssec-keystore, synvoid-mesh (optional) — **2 direct SynVoid normal edges only**. `synvoid-config`, `synvoid-core`, `synvoid-utils`, `synvoid-tls` and `synvoid-geoip` are all absent from the default-feature closure (extraction DEFER; `runtime_config_deferred.rs` deleted) |
 | 34 | `synvoid-icmp-filter` | *(none)* |
 | 35 | `synvoid-tarpit` | *(none)* |
 | 36 | `synvoid-vpn-client` | synvoid-config, synvoid-tunnel, synvoid-platform, synvoid-utils |

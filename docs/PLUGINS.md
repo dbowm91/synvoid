@@ -44,11 +44,11 @@ timeout_seconds = 30
 [[plugins.wasm.plugins]]
 name = "my_plugin"
 path = "/etc/synvoid/plugins/my_plugin.wasm"
-memory_mb = 128          # optional override
-cpu_fuel = 500000        # optional override
+max_memory_mb = 128      # optional override
+max_cpu_fuel = 500000    # optional override
 timeout_seconds = 10     # optional override
-priority = 100           # optional execution order
-on_error = "block"       # optional: "pass" or "block"
+priority = 100           # optional execution order (lower runs first)
+on_error = "fail_closed" # optional: "fail_open" (default) or "fail_closed"
 allowed_dht_prefixes = ["site:example.com"]  # optional DHT scoping
 ```
 
@@ -68,12 +68,14 @@ allowed_dht_prefixes = ["site:example.com"]  # optional DHT scoping
 |--------|---------|-------------|
 | `name` | *(required)* | Plugin name (must be unique) |
 | `path` | *(required)* | Path to `.wasm` file |
-| `memory_mb` | `None` | Override global memory limit |
-| `cpu_fuel` | `None` | Override global fuel budget |
+| `max_memory_mb` | `None` | Override global memory limit |
+| `max_cpu_fuel` | `None` | Override global fuel budget |
 | `timeout_seconds` | `None` | Override global timeout |
 | `priority` | `None` | Execution order (lower runs first) |
-| `on_error` | `None` | `"pass"` or `"block"` on plugin error |
-| `allowed_dht_prefixes` | `None` | Restrict DHT access to these prefixes |
+| `on_error` | `None` | `"fail_open"` or `"fail_closed"` on plugin error (`WasmOnError`, snake_case) |
+| `allowed_dht_prefixes` | `[]` | Restrict DHT access to these prefixes |
+
+There is no `[plugins] wasm_enabled` toggle. `PluginConfig` has exactly three fields — `wasm`, `unsafe_native`, and the deprecated alias `native_plugins_compat`. A plugin runs because it is listed in `[[plugins.wasm.plugins]]`; the per-site `[proxy] wasm_plugins` list is what selects which of those run for a given site.
 
 ## Writing a Plugin
 
@@ -117,16 +119,24 @@ Your WASM module must export:
 ```rust
 // Required: Memory allocator (production requires both; development allows alloc-only)
 export fn guest_alloc(len: i32) -> i32;
-export fn guest_free(ptr: i32);
+export fn guest_free(ptr: i32, len: i32);   // BOTH args — GuestFreeFn = TypedFunc<(i32, i32), ()>
 
 // Required: Filter incoming requests
+// Signature: (method_ptr, method_len, uri_ptr, uri_len,
+//             headers_ptr, headers_len, body_ptr, body_len) -> i32
 // Returns: 0 = Pass, 1 = Block, 2 = Challenge
-export fn filter_request(method: i32, uri: *const u8, uri_len: i32) -> i32;
+export fn filter_request(m: i32, m_len: i32, u: i32, u_len: i32,
+                         h: i32, h_len: i32, b: i32, b_len: i32) -> i32;
 
 // Optional: Transform response
-// Returns: 0 = Pass, 1 = Modified
-export fn transform_response(status_code: i32, body: *const u8, body_len: i32) -> i32;
+// Signature: (status_ptr, status_len, body_ptr, body_len,
+//             out_ptr, out_max) -> i32
+// Returns: new body length, or -1 on error
+export fn transform_response(s: i32, s_len: i32, b: i32, b_len: i32,
+                             out: i32, out_max: i32) -> i32;
 ```
+
+**Pointer safety:** the host never trusts a guest pointer. Frames are serialized only through `abi_frame::serialize_headers_canonical` and `abi_frame::build_request_frame`, and every guest pointer range is checked with `checked_guest_range` before use.
 
 **Production requirements:**
 - Both `guest_alloc` and `guest_free` exports are **required** in production (`SignedSandboxed` / `LocalSandboxed` tiers).
@@ -138,20 +148,21 @@ export fn transform_response(status_code: i32, body: *const u8, body_len: i32) -
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
-pub fn filter_request(method: i32, uri: ptr, uri_len: i32) -> i32 {
+pub fn filter_request(m_ptr: i32, m_len: i32, u_ptr: i32, u_len: i32,
+                      _h_ptr: i32, _h_len: i32, _b_ptr: i32, _b_len: i32) -> i32 {
     // 0 = Pass, 1 = Block, 2 = Challenge
-    
-    // Read URI from WASM memory
-    let uri = unsafe {
-        std::str::from_utf8(std::slice::from_raw_parts(uri, uri_len as usize))
-            .unwrap_or("")
+
+    let read = |ptr: i32, len: i32| -> String {
+        if len <= 0 || ptr <= 0 { return String::new(); }
+        unsafe { String::from_utf8_lossy(std::slice::from_raw_parts(ptr as *const u8, len as usize)).into_owned() }
     };
-    
+    let (method, uri) = (read(m_ptr, m_len), read(u_ptr, u_len));
+
     // Custom blocking logic
-    if uri.contains("/admin") && method != 0 {
+    if uri.contains("/admin") && method != "GET" {
         return 1; // Block
     }
-    
+
     0 // Pass
 }
 ```
@@ -174,9 +185,12 @@ wasm-bindgen = "0.2"
 
 ```bash
 cd plugin
-cargo build --release --target wasm32-wasi
-cp target/wasm32-wasi/release/my_waf_plugin.wasm /etc/synvoid/plugins/
+rustup target add wasm32-wasip1
+cargo build --release --target wasm32-wasip1
+cp target/wasm32-wasip1/release/my_waf_plugin.wasm /etc/synvoid/plugins/
 ```
+
+The WASI preview-1 target is `wasm32-wasip1` on Rust 1.98.1 (the pinned toolchain); the legacy `wasm32-wasi` target name was renamed upstream and will not resolve.
 
 ## Plugin API
 
@@ -237,25 +251,33 @@ Place `.wasm` files in plugins directory:
 
 ### Per-Site Plugins
 
+There is no `[site.plugins]` section. A site selects plugins by **name** through `[proxy] wasm_plugins` in its site file (`SiteProxyConfig::wasm_plugins`), which matches against the names declared in `[[plugins.wasm.plugins]]`:
+
 ```toml
 # config/sites/example.com.toml
-[site.plugins]
-enabled = true
-
-[site.plugins.load]
-- "auth_plugin.wasm"
-- "rate_limit.wasm"
+[proxy]
+wasm_plugins = ["auth_plugin", "rate_limit_plugin"]
 ```
 
 ### Plugin Order
 
-Plugins execute in order defined in config:
+Order comes from the `priority` field on each `[[plugins.wasm.plugins]]` entry (lower runs first), not from a separate list:
 
 ```toml
-[site.plugins.load]
-- "ip_check.wasm"     # Runs first
-- "auth.wasm"         # Runs second
-- "rate_limit.wasm"   # Runs third
+[[plugins.wasm.plugins]]
+name = "ip_check"     # Runs first
+path = "/etc/synvoid/plugins/ip_check.wasm"
+priority = 10
+
+[[plugins.wasm.plugins]]
+name = "auth"         # Runs second
+path = "/etc/synvoid/plugins/auth.wasm"
+priority = 20
+
+[[plugins.wasm.plugins]]
+name = "rate_limit"   # Runs third
+path = "/etc/synvoid/plugins/rate_limit.wasm"
+priority = 30
 ```
 
 ## Security
@@ -274,6 +296,8 @@ WASM plugins run in a sandboxed environment:
 ### Signed Plugins
 
 Plugin signing is managed through manifest trust tiers (`SignedSandboxed`, `LocalSandboxed`, `Development`) rather than a global config toggle. See `architecture/plugin_runtime_sandbox.md` for trust tier details and `HotReloadConfig.require_signed_wasm` for hot-reload signature enforcement.
+
+`verify_plugin_signature` (`crates/synvoid-plugin-runtime/src/sandbox/types.rs:1550`) rejects an **empty** `binary_sha256` or `manifest_sha256` in the signature block outright — an empty hash is a `BinaryHashMismatch` / `ManifestHashMismatch`, never a bypass. The manifest hash is computed over the manifest itself, so editing the manifest after signing breaks verification.
 
 ## ABI Frame Serialization
 
@@ -294,15 +318,19 @@ Request data is serialized as:
 
 ### Policy Bounds
 
-All fields are bounded by `RequestFramePolicy` derived from plugin limits:
+All fields are bounded by `RequestFramePolicy` (`abi_frame.rs:134`). Defaults:
+
 - Method: max 256 bytes
 - URI: max 8192 bytes
+- Authority: max 256 bytes
 - Header count: max 128
 - Header name: max 256 bytes
 - Header value: max 8192 bytes
-- Total serialized headers: max 64KB
-- Body: max 256KB (from `max_input_bytes`)
-- Total frame: max 1MB (from `max_input_bytes`)
+- Total serialized headers: max 65536 bytes (64 KiB)
+- Body: max 262144 bytes (256 KiB)
+- Total frame: max 1048576 bytes (1 MiB)
+
+`request_frame_policy_from_limits(max_input_bytes)` overrides only three of these: body and total frame become `max_input_bytes`, and total serialized headers becomes `max(max_input_bytes / 2, 4096)`. The method/URI/authority/count/name/value bounds are not scaled. `ResponseFramePolicy` mirrors the same numbers, with status codes constrained to 100-599.
 
 Exceeding any bound causes a rejection — metadata is never silently truncated.
 
@@ -442,15 +470,16 @@ without the feature fails closed: startup logs an explicit error and every
 load reports `Unsupported`.
 
 ```toml
-[plugins]
-wasm_enabled = true
-unsafe_native_enabled = false
-
+# There is no [plugins] `wasm_enabled` / `unsafe_native_enabled` toggle.
+# `PluginConfig` holds `wasm`, `unsafe_native`, and the deprecated alias
+# `native_plugins_compat` only.
 [plugins.unsafe_native]
 enabled = false
 allow_in_production = false
 hot_reload_enabled = false
 allowed_dirs = ["/opt/synvoid/native-extensions"]
+# Required verbatim in production:
+# risk_acknowledgement = "I understand native extensions run with full Synvoid process authority"
 
 # Optional: explicit library allowlist with hash verification
 [[plugins.unsafe_native.allowed_libraries]]
@@ -463,7 +492,7 @@ sha256 = "abc123..."
 In production mode, all of the following must be true:
 - `enabled = true`
 - `allow_in_production = true`
-- `risk_acknowledgement` set to the required acknowledgement string
+- `risk_acknowledgement` set to exactly `"I understand native extensions run with full Synvoid process authority"` (the `RISK_ACKNOWLEDGEMENT` constant, `crates/synvoid-native-extension/src/loader.rs:17`)
 - Non-empty `allowed_dirs` configured
 
 ### Security Validations
@@ -649,22 +678,17 @@ Plugin pool metrics use distinct counters with precise semantics:
 
 `pool_miss` and `concurrency_limit_exceeded` are semantically separate: a miss means no warm instance was available but execution continued successfully; a limit exceeded means execution was denied due to backpressure.
 
-### CI Guardrails
+### Guardrails
 
-Plugin runtime changes are validated by the `plugin-runtime-guardrails` CI job:
+There is no `plugin-runtime-guardrails` CI job — `.github/workflows/ci.yml` has no plugin-specific job. Plugin boundary tests live in the root integration suite and in `tools/synvoid-repo-guards`:
 
 ```bash
-# Local verification (mirrors CI steps)
-cargo fmt --all -- --check
+# Local verification
 cargo clippy -p synvoid-plugin-runtime --all-targets -- -D warnings
 cargo test -p synvoid-plugin-runtime
-cargo test --test abi_memory_boundary_guard
-cargo test --test plugin_capability_boundary_guard
-cargo test --test plugin_failure_does_not_poison_manager
-cargo test --test plugin_signature_policy_guard
-cargo test --test manifest_authority_wiring
-cargo test --test manifest_authority_load_path_guard
-cargo test --test plugin_lifecycle_guard
+cargo test --test abi_memory_boundary_guard     # root guard suite
+cargo test --test plugin_guard                  # root guard suite
+cargo test --test admin_plugin_boundary_guard   # root guard suite
 ```
 
 ## See Also

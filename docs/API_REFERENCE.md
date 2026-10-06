@@ -45,12 +45,17 @@ curl -H "Authorization: Bearer your-admin-token" \
 ### Generating Tokens
 
 ```bash
-# Generate and print a new token (does not save it)
+# Generate and print a new token (does not save it). Prints 64 hex characters.
 ./synvoid --generatetoken
 
-# Generate and save to config
+# Generate and write a new token into the config (see note below)
 ./synvoid --generatenewtoken
 ```
+
+`--generatenewtoken` writes the token as **plaintext** into `main.toml` under
+`[admin] token` (the file is created `0600` on Unix). It is not hashed at rest —
+the admin token is compared directly, unlike the bcrypt-hashed password store.
+Protect the config file accordingly.
 
 ### Session Endpoints
 
@@ -92,6 +97,20 @@ Error bodies are capped at 512 bytes. The frontend treats 401/403 as session exp
 }
 ```
 
+**Mutating endpoints do not use this shape.** Control-plane mutations
+(site, mesh ban, unban, block/unblock, threat-level set, …) return a typed
+`AdminMutationResult`, never a bare `{"success": true}`:
+
+- `AdminMutationAuthority` / `AdminMutationStatus` describe the outcome
+- `PropagationStatus::QuorumUnavailable` is returned when Raft quorum is lost —
+  never a success status
+- mesh propagation is best-effort and reported as `QueuedBestEffort`
+- block/unblock mutations emit an `AdminAuditEvent`
+
+The vocabulary is defined in `crates/synvoid-core/src/admin_mutation.rs`; there
+is no `src/admin/authority.rs`. See
+`architecture/admin_control_plane_authority.md`.
+
 ### Error Response
 ```json
 {
@@ -113,8 +132,10 @@ Error bodies are capped at 512 bytes. The frontend treats 401/403 as session exp
 |------|-------------|
 | 200 | Success |
 | 400 | Bad Request - Invalid parameters |
-| 401 | Unauthorized - Missing or invalid token |
+| 401 | Unauthorized - Missing or invalid token/session |
+| 403 | Forbidden - CSRF token missing or invalid (bearer auth bypasses CSRF) |
 | 404 | Not Found - Resource doesn't exist |
+| 503 | Service Unavailable - auth backend busy (fail-closed overload) |
 | 500 | Internal Server Error |
 
 ---
@@ -535,7 +556,7 @@ curl -H "Authorization: Bearer your-admin-token" \
 | `/api/plugins/metrics` | GET | Get all plugins metrics |
 | `/api/plugins/{plugin_name}/metrics` | GET | Get specific plugin metrics |
 | `/api/plugins/{plugin_name}/reload` | POST | Reload a plugin |
-| `/api/plugins/mesh/modules` | GET | Get mesh WASM modules |
+| `/api/plugins/mesh/wasm-modules` | GET | Get mesh WASM modules |
 
 ### Get Plugins Status
 
@@ -558,15 +579,15 @@ curl -X POST \
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/alerting/config` | GET | Get alerting configuration |
-| `/api/alerting/config` | PUT | Update alerting configuration |
-| `/api/alerting/test-webhook` | POST | Send test webhook |
+| `/api/alerts/config` | GET | Get alerting configuration |
+| `/api/alerts/config` | PUT | Update alerting configuration |
+| `/api/alerts/test-webhook` | POST | Send test webhook |
 
 ### Get Alerting Config
 
 ```bash
 curl -H "Authorization: Bearer your-admin-token" \
-  http://127.0.0.1:8081/api/alerting/config
+  http://127.0.0.1:8081/api/alerts/config
 ```
 
 ### Update Alerting Config
@@ -581,7 +602,7 @@ curl -X PUT \
       "webhook_urls": ["https://example.com/webhook"]
     }
   }' \
-  http://127.0.0.1:8081/api/alerting/config
+  http://127.0.0.1:8081/api/alerts/config
 ```
 
 ---
@@ -620,7 +641,7 @@ OpenAPI (`/api/openapi.json`, public) documents operator-facing REST endpoints o
 | `honeypot` | `/api/honeypot/*` | always on |
 | `process_manager` | `/api/system/workers*`, `/api/config/process-manager` | always on |
 
-Removed paths that must stay absent: `/api/system/master`, `/api/system/overseer`, `/api/config/overseer`, `/api/system/worker/{id}/restart` (singular), `/api/logs/realtime` (use `/api/ws/logs`).
+Removed paths that must stay absent (guard-pinned negative tests, not errors): `/api/system/master`, `/api/system/overseer`, `/api/config/overseer`, `/api/system/worker/{id}/restart` (singular), `/api/logs/realtime` (use `/api/ws/logs`).
 
 ---
 
@@ -633,7 +654,8 @@ Removed paths that must stay absent: `/api/system/master`, `/api/system/overseer
 TOKEN="your-admin-token"
 ADMIN_URL="http://127.0.0.1:8081/api"
 
-HEALTH=$(curl -s -H "Authorization: Bearer $TOKEN" $ADMIN_URL/health | jq -r '.status')
+# /health is at the server root, NOT under /api — there is no /api/health route.
+HEALTH=$(curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8081/health | jq -r '.status')
 if [ "$HEALTH" != "ok" ]; then
   echo "WAF unhealthy: $HEALTH"
   exit 1

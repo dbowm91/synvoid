@@ -17,12 +17,13 @@ SynVoid provides comprehensive file upload validation with optional YARA-based m
 ```toml
 [defaults.upload]
 enabled = true
-max_size_mb = 10
+max_size = "10MB"         # SIZE STRING, not max_size_mb
+memory_threshold = "10MB"  # below this the file is scanned in memory
 
-# Allowed MIME types (whitelist mode)
+# Allowed MIME types (allowlist mode)
 [defaults.upload.allowed_types]
-mode = "whitelist"  # or "blacklist"
-types = [
+mode = "allowlist"  # "allowlist" or "blocklist"
+mime_types = [      # the key is mime_types, not types
     "image/jpeg",
     "image/png",
     "image/gif",
@@ -32,6 +33,8 @@ types = [
 ]
 ```
 
+`UploadDefaults::max_size` is a parsed size **string** (`parse_size_string`, e.g. `"100MB"`, `"1GB"`), not a megabyte integer — `max_size_mb` does not exist. Likewise the MIME list key is `mime_types` (`UploadAllowedTypesDefaults::mime_types`), not `types`, and the mode values are `allowlist` / `blocklist` (`AllowedTypesMode`, `#[serde(rename_all = "lowercase")]`), not `whitelist` / `blacklist`.
+
 ### YARA Malware Scanning
 
 ```toml
@@ -40,12 +43,14 @@ scan_with_yara = true
 yara_failure_policy = "quarantine_on_error"  # default
 # Other options: "fail_closed", "fail_open" (unsafe, opt-in only)
 
-yara_rules_dir = "rules/"
+yara_rules_dir = "rules/"            # must exist; validate() fails if the path is missing
 quarantine_dir = "/var/lib/synvoid/quarantine"
 yara_timeout_ms = 30000
+sandbox_enabled = true
+sandbox_dir = "/var/lib/synvoid/sandbox"
 
 # Large file scanning (for sandbox-backed streaming uploads)
-yara_large_file_scan_mode = "windowed"  # "full", "windowed", or "header_only"
+yara_large_file_scan_mode = "windowed"  # "full" (default), "windowed", or "header_only"
 yara_window_size_bytes = 1048576        # 1MB per window
 yara_max_window_count = 8               # Maximum windows to scan
 yara_magic_scan_limit_bytes = 16777216  # 16MB magic scan region
@@ -58,15 +63,17 @@ yara_allow_rule_symlinks = false        # Reject symlinks by default
 
 ### Per-Site Configuration
 
+Site upload config lives under `[upload]` at the site file's top level (`SiteConfig.upload`), not under `[site.upload]`:
+
 ```toml
 # config/sites/example.com.toml
-[site.upload]
+[upload]
 enabled = true
-max_size_mb = 25  # Override default for this site
+max_size = "25MB"  # size string; overrides the default for this site
 
-[site.upload.allowed_types]
-mode = "whitelist"
-types = [
+[upload.allowed_types]
+mode = "allowlist"
+mime_types = [
     "image/jpeg",
     "image/png",
     "application/pdf",
@@ -77,17 +84,28 @@ types = [
 
 ## Configuration Options
 
+`UploadDefaults` (`crates/synvoid-config/src/upload.rs`) defaults:
+
 | Option | Default | Description |
 |--------|---------|-------------|
-| `enabled` | `false` | Enable upload validation |
-| `max_size_mb` | `10` | Maximum upload size in MB |
+| `enabled` | `true` | Enable upload validation |
+| `max_size` | `"100MB"` | Maximum upload size (size string) |
+| `memory_threshold` | `"10MB"` | Below this size the file is scanned in memory rather than streamed |
+| `scan_with_yara` | `true` | Enable YARA scanning |
+| `yara_failure_policy` | `"quarantine_on_error"` | Scan-error handling policy |
+| `sandbox_enabled` | `true` | Use the sandbox directory for streaming scans |
+| `sandbox_dir` | `"/var/lib/synvoid/sandbox"` | Sandbox scratch directory |
+| `quarantine_dir` | `"/var/lib/synvoid/quarantine"` | Quarantine directory |
+| `yara_timeout_ms` | `30000` | Scan timeout in milliseconds |
 
 ### Allowed Types Options
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `mode` | `"whitelist"` | `"whitelist"` or `"blacklist"` |
-| `types` | `[]` | List of allowed/blocked MIME types |
+| `mode` | `"allowlist"` | `"allowlist"` or `"blocklist"` |
+| `mime_types` | image/video/audio set | List of allowed/blocked MIME types |
+
+An empty `mime_types` list permits everything in both modes (`AllowedTypesConfig::is_allowed` returns `true` when the list is empty). MIME comparison goes through the global registry's `normalize_mime` first.
 
 ### YARA Scanning Options
 
@@ -226,18 +244,21 @@ Each validation result includes coverage metadata for audit trails:
 
 ### Per-Path Configuration
 
-Override scan mode per path pattern:
+Per-path overrides exist **per site only**, under `[upload.paths]` as an array of tables (`Vec<SitePathUploadConfig>`). There is no `[defaults.upload.paths]` — `UploadDefaults` has no `paths` field:
 
 ```toml
-[defaults.upload.paths]
+# config/sites/example.com.toml
+[[upload.paths]]
 pattern = "^/api/uploads/documents/.*"
 yara_large_file_scan_mode = "full"
 yara_max_window_count = 12
 
-[defaults.upload.paths]
+[[upload.paths]]
 pattern = "^/api/uploads/images/.*"
 yara_large_file_scan_mode = "header_only"
 ```
+
+A path entry only overrides a global default when it declares its own `allowed_types`; otherwise the site's `[upload.allowed_types]` applies (`crates/synvoid-upload/src/config.rs:464`). An empty `pattern` is a validation error.
 
 ## Admin API
 
@@ -299,8 +320,8 @@ ZIP uploads are inspected in-memory without disk extraction. Entry contents are 
 ### Configuration Options
 
 ```toml
-[site.upload]
-archive_inspection_enabled = true   # Enable archive inspection (default: true)
+[defaults.upload]
+archive_inspection_enabled = true   # Enable archive inspection (default: false)
 archive_max_depth = 3               # Reserved for future recursive inspection (default: 3)
 archive_max_entries = 1000          # Max entries per archive (default: 1000)
 archive_max_total_uncompressed_bytes = 536870912  # 512 MB total (default)
@@ -308,6 +329,8 @@ archive_max_entry_uncompressed_bytes = 104857600  # 100 MB per entry (default)
 archive_max_compression_ratio = 100.0             # Max compression ratio (default)
 archive_max_nested_archives = 5     # Max nested archive entries (default: 5)
 ```
+
+These are `UploadDefaults` fields, configured under `[defaults.upload]` in `main.toml`. `SiteUploadConfig` has no `archive_*` fields, so there is no per-site archive override.
 
 > **Note**: `archive_max_depth` is reserved for future recursive nested inspection. Nested archives are detected and counted but not recursively opened.
 

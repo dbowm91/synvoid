@@ -11,15 +11,21 @@ Common issues and solutions for SynVoid.
 - [Attack Detection Issues](#attack-detection-issues)
   - [False Positives](#false-positives)
   - [False Negatives](#false-negatives)
+  - [431 Request Header Fields Too Large](#431-request-header-fields-too-large)
 - [Performance Issues](#performance-issues)
   - [High Memory Usage](#high-memory-usage)
   - [High CPU Usage](#high-cpu-usage)
+  - [Connection Limit Reached](#connection-limit-reached)
 - [Configuration Issues](#configuration-issues)
-  - [Config Validation Failures](#config-validation-failures)
-  - [Site Not Loading](#site-not-loading)
+  - [Token Authentication Failed](#token-authentication-failed)
+  - [Config Not Reloading](#config-not-reloading)
 - [Logging Issues](#logging-issues)
-  - [Logs Not Appearing](#logs-not-appearing)
-- [Mesh Network Issues](#meshwaf-clustering-issues)
+  - [Logs Not Writing](#logs-not-writing)
+  - [Log Level Too Verbose](#log-level-too-verbose)
+- [Metrics Issues](#metrics-issues)
+- [SSL/TLS Issues](#ssltls-issues)
+- [Debugging Steps](#debugging-steps)
+- [Mesh/WAF Clustering Issues](#meshwaf-clustering-issues)
 
 ## Connection Issues
 
@@ -67,21 +73,25 @@ pipeline_limit = 32
 **Symptom**: Legitimate requests blocked
 
 **Solutions**:
-1. Lower paranoia level:
+1. Lower paranoia level. Attack detection is configured **per site** (there is
+   no `[defaults.attack_detection]` section), so edit the affected site's file:
 ```toml
-[defaults.attack_detection]
+# config/sites/<site>.toml
+[attack_detection]
 paranoia_level = 1
 ```
 
 2. Disable specific detection:
 ```toml
-[defaults.attack_detection.ssrf]
+# config/sites/<site>.toml
+[attack_detection.ssrf]
 enabled = false
 ```
 
 3. Add domain to allowlist:
 ```toml
-[defaults.attack_detection.ssrf]
+# config/sites/<site>.toml
+[attack_detection.ssrf]
 allowed_domains = ["api.yourdomain.com"]
 ```
 
@@ -90,24 +100,27 @@ allowed_domains = ["api.yourdomain.com"]
 **Symptom**: Attacks not detected
 
 **Solutions**:
-1. Increase paranoia level:
+1. Increase paranoia level (1–3; out-of-range values fail `validate()`):
 ```toml
-[defaults.attack_detection]
+# config/sites/<site>.toml
+[attack_detection]
 paranoia_level = 3
 ```
 
 2. Enable additional detection:
 ```toml
-[defaults.attack_detection]
+# config/sites/<site>.toml
+[attack_detection]
 enabled = true
 
-[defaults.attack_detection.sqli]
+[attack_detection.sqli]
 enabled = true
 ```
 
 3. Add custom patterns:
 ```toml
-[defaults.attack_detection.path_traversal]
+# config/sites/<site>.toml
+[attack_detection.path_traversal]
 custom_patterns = ["/etc/passwd", "boot.ini"]
 ```
 
@@ -138,15 +151,25 @@ max_header_size_ingress = 8192
 
 **Solutions**:
 ```toml
-[defaults.rate_limit_memory]
-max_ips = 100000
+# `rate_limit_memory` is a top-level main.toml section (it also exists under
+# [defaults]); the tracked-IP cap is `max_ip_entries`, not `max_ips`.
+[rate_limit_memory]
+max_ip_entries = 100000
 cleanup_interval_secs = 30
 ```
 
+Proxy cache is configured per site, not under [defaults]. To disable it for one
+site:
 ```toml
-[defaults.proxy_cache]
-enabled = false
+# config/sites/<site>.toml
+[proxy.cache]
+enable = false
 ```
+
+Reduce the tracked-IP cap instead of scaling memory when a site is under attack;
+the limiter also emits `synvoid.ratelimit.global_limited` and
+`synvoid.ratelimit.blackholed`, which are visible through the admin API at
+`/api/stats/summary`.
 
 ### High CPU Usage
 
@@ -181,15 +204,17 @@ max_connections = 10000
 
 **Symptom**: 401 Unauthorized responses
 
-**Solution**: Verify token in header:
+**Solution**: Verify token in header. Note that `/health` is the public,
+unauthenticated liveness route — probing it will succeed even with a bad token,
+so test an authenticated route instead:
 ```bash
 curl -H "Authorization: Bearer <token>" \
-  http://127.0.0.1:8081/api/health
+  http://127.0.0.1:8081/api/stats/summary
 ```
 
 Generate new token:
 ```bash
-./synvoid --generatenewtoken
+synvoid --generatenewtoken
 ```
 
 ### Config Not Reloading
@@ -233,16 +258,18 @@ curl -X PUT -H "Authorization: Bearer <token>" \
 
 Or set in environment:
 ```bash
-RUST_LOG=warn ./synvoid
+RUST_LOG=warn synvoid
 ```
 
 ## Metrics Issues
 
 ### Prometheus Not Scraping
 
-**Verify metrics endpoint**:
+**Verify metrics endpoint**. The exporter binds loopback-only —
+`MetricsConfig::validate()` rejects a non-loopback `bind_address`, so the port
+is never reachable from another host:
 ```bash
-curl http://localhost:9090/metrics
+curl http://127.0.0.1:9090/metrics
 ```
 
 **Check configuration**:
@@ -250,7 +277,11 @@ curl http://localhost:9090/metrics
 [metrics]
 enabled = true
 port = 9090
+bind_address = "127.0.0.1"  # loopback only; anything else fails validation
 ```
+
+To scrape from a central Prometheus, run a host-local agent/sidecar or tunnel
+over SSH. Do not widen `bind_address` — startup will fail rather than publish.
 
 ## SSL/TLS Issues
 
@@ -278,7 +309,7 @@ key_path = "/etc/synvoid/certs/tls.key"
 ### Enable Debug Logging
 
 ```bash
-RUST_LOG=debug ./synvoid
+RUST_LOG=debug synvoid
 ```
 
 ### Check System Status
@@ -321,14 +352,18 @@ If issues persist:
 **Symptom**: Mesh peers not establishing connections
 
 **Solutions**:
-1. Check firewall allows UDP port 51820:
+1. Check firewall allows the mesh listener. The mesh/control listener defaults to
+   **TCP 50051** (`[mesh] port`, default `50051`); QUIC runs on `[mesh]
+   quic_port` when set. Port 51820 is the WireGuard VPN default
+   (`synvoid-tunnel`), not a mesh port:
    ```bash
-   sudo ufw allow 51820/udp
+   sudo ufw allow 50051/tcp
+   # if [mesh] quic_port is configured, allow that UDP port too
    ```
 
 2. Verify network connectivity:
    ```bash
-   nc -zvu peer.example.com 51820
+   nc -zv peer.example.com 50051
    ```
 
 3. Check time synchronization:
@@ -347,22 +382,25 @@ If issues persist:
 **Symptom**: Blocklists not synchronizing between nodes
 
 **Solutions**:
-1. Enable sync in configuration:
+1. Enable threat-intel sync. There is no `[tunnel.mesh.sync]` section — sync
+   knobs live on `MeshConfig.threat_intel`:
    ```toml
-   [tunnel.mesh.sync]
-   share_ip_reputation = true
-   share_blocklists = true
+   [tunnel.mesh.threat_intel]
+   enabled = true
+   push_enabled = true
+   sync_enabled = true
    ```
 
-2. Check sync interval:
+2. Check sync interval (seconds, not a duration string):
    ```toml
-   [tunnel.mesh.sync]
-   sync_interval = "5s"
+   [tunnel.mesh.threat_intel]
+   sync_interval_secs = 300
+   threat_sync_interval_secs = 3600
    ```
 
 3. Review mesh logs:
    ```bash
-   RUST_LOG=debug ./synvoid 2>&1 | grep mesh
+   RUST_LOG=debug synvoid 2>&1 | grep mesh
    ```
 
 ### High Memory Usage with Mesh
@@ -374,19 +412,23 @@ If issues persist:
    ```toml
    [tunnel.mesh.connection]
    max_peer_connections = 10
+   min_peer_connections = 2
    ```
 
-2. Reduce sync frequency:
+2. Bound per-peer streaming concurrency (the `MeshConnectionConfig` knobs that
+   actually cap memory-per-peer):
    ```toml
-   [tunnel.mesh.sync]
-   sync_interval = "30s"
-   full_sync_interval = "10m"
+   [tunnel.mesh.connection]
+   max_concurrent_peer_streams = 32
+   max_concurrent_datagram_handlers = 64
+   peer_message_timeout_secs = 30
    ```
 
-3. Limit bandwidth:
+3. Reduce threat-intel sync frequency:
    ```toml
-   [tunnel.mesh.limits]
-   max_bandwidth_mbps = 50
+   [tunnel.mesh.threat_intel]
+   max_indicators_per_message = 50
+   sync_interval_secs = 900
    ```
 
 

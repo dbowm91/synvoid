@@ -215,7 +215,7 @@ The `synvoid.requests.tarpitted` counter (in the worker pool) tracks total reque
 ## 11. Configuration Reference
 
 ```toml
-[tarpit]
+[defaults.tarpit]
 # Enable/disable the tarpit (default: true)
 enabled = true
 
@@ -234,37 +234,49 @@ scraper_user_agents = [
     "python-urllib", "aiohttp", "httpx",
 ]
 
-# Redirect policy: "relative_only" | "allow_list" | "allow_all"
-redirect_policy = "relative_only"
-
-# [tarpit.admission]
 # Maximum concurrent sessions globally (default: 256)
-max_concurrent = 256
-# Maximum concurrent sessions per IP (default: 4)
-max_per_ip = 4
+max_concurrent_sessions = 256
 
-# [tarpit.budget]
+# Maximum concurrent sessions per IP (default: 4)
+max_sessions_per_ip = 4
+
 # Maximum session duration in seconds (default: 600)
 max_duration_secs = 600
+
 # Maximum chunks per session (default: 500)
 max_chunks = 500
+
 # Maximum bytes per session (default: 52428800 = 50MB)
 max_bytes = 52428800
+
 # Maximum idle time in seconds (default: 30)
 max_idle_secs = 30
+
 # Per-chunk write timeout in ms (default: 5000)
 write_timeout_ms = 5000
 
-# [tarpit.fingerprint]
 # Minimum delay between chunks in ms (default: 5)
 min_chunk_delay_ms = 5
+
 # Maximum delay between chunks in ms (default: 30)
 max_chunk_delay_ms = 30
-# Randomly vary Content-Type header (default: true)
-vary_content_type = true
-# Randomly vary HTTP status codes (default: true)
-vary_status_code = true
 ```
+
+`[defaults.tarpit]` is a **flat** section — there are no `[tarpit.admission]`,
+`[tarpit.budget]` or `[tarpit.fingerprint]` sub-tables. The admission keys are
+`max_concurrent_sessions` and `max_sessions_per_ip`.
+
+Three `synvoid-tarpit` handler settings are **not** operator-configurable; composition
+hard-codes them in `src/waf/mod.rs` (`stream_tarpit`):
+
+| Setting | Hard-coded value | Meaning |
+|---------|------------------|---------|
+| `redirect_policy` | `RedirectPolicy::RelativeOnly` | Only relative redirects are emitted |
+| `vary_content_type` | `true` | `Content-Type` is varied randomly |
+| `vary_status_code` | `true` | HTTP status codes are varied randomly |
+
+Per-site overrides live at `[site.tarpit]` and accept a subset of the same keys
+(`enabled`, `inherit`, `max_depth`, `links_per_page`, `response_delay_ms`).
 
 ## 12. Known Limitations
 
@@ -274,3 +286,4 @@ vary_status_code = true
 - **Unused manager**: `TarpitManager` exists but is not used by the handler — `TarpitHandler` manages its own `MarkovChain` instance directly
 - **No integration tests**: The `synvoid-tarpit` crate has unit tests only; the handler integration is not covered by integration tests
 - **Idle tracking**: `is_idle()` checks `last_activity` but activity is only updated on `record_chunk()` calls — if the client stalls between chunks, idle detection may be delayed
+- **Fingerprint knobs are fixed at the call site**: `redirect_policy`, `vary_content_type` and `vary_status_code` exist in `synvoid-tarpit`'s `TarpitConfig` but cannot be set from `main.toml`

@@ -6,15 +6,19 @@ SynVoid supports peer-to-peer mesh networking for distributed DDoS mitigation, t
 
 **Mesh networking is disabled by default.** A standalone SynVoid instance operates completely independently without any WAF-to-WAF, server-WAF, or VPN-WAF connections. (The `mesh` Cargo feature is compiled in by default, but runtime participation requires `enabled = true` below — `MeshConfig::enabled` defaults to `false`.)
 
+> **Section location:** the mesh runtime is initialized from the nested `[tunnel.mesh]` section (`MainConfig::tunnel.mesh`, read by `init_mesh_control_plane`, the worker's `init_mesh_and_threat_intel`, and `--mesh-agent`). A top-level `[mesh]` section is also accepted by the parser and is what the HTTP server uses for mesh proxy config, but it does **not** by itself start the mesh subsystem. Write every example below under `[tunnel.mesh]`.
+
 To enable mesh networking:
 
 ```toml
-[mesh]
+[tunnel.mesh]
 enabled = true
-role = "edge"  # or "global" for directory nodes
+# `role` is a numeric bitmask, not a string: EDGE=1, GLOBAL=2, ORIGIN=4,
+# GLOBAL|EDGE=3. String values such as `role = "edge"` fail to parse.
+role = 1  # or 2 for global/directory nodes
 
 # Optional: customize connection settings
-[mesh.connection]
+[tunnel.mesh.connection]
 min_peer_connections = 3
 max_peer_connections = 20
 ```
@@ -56,24 +60,33 @@ The WAF mesh enables multiple SynVoid instances to communicate directly using QU
 When one node detects an attack, all nodes benefit:
 
 ```toml
-[mesh]
+[tunnel.mesh]
 enabled = true
 bind_address = "0.0.0.0"
-port = 5001
+port = 50051  # MeshConfig default is 50051
 
-# Connect to peers
-[mesh.seeds]
-"waf-2.internal" = "10.0.1.20:5001"
-"waf-3.internal" = "10.0.1.30:5001"
+# Connect to peers (seeds are a LIST of tables, not a key/value map)
+[[tunnel.mesh.seeds]]
+address = "waf-2.internal:50051"
+public_key = "base64-encoded-global-node-public-key"
 
-# Share threat intelligence
-[mesh.sync]
-ip_reputation = true
-blocklists = true
-bot_signatures = true
+[[tunnel.mesh.seeds]]
+address = "waf-3.internal:50051"
+public_key = "base64-encoded-global-node-public-key"
+
+# Share threat intelligence (opt-in; both default to `enabled = false`)
+[tunnel.mesh.threat_intel]
+enabled = true
+push_enabled = true
+sync_enabled = true
+
+[tunnel.mesh.yara_rules]
+enabled = true
 ```
 
 ### 2. Threat Intelligence Sharing
+
+> **Authority split:** Raft is the canonical, authoritative replicated state (node admission, revocations, org/tier keys). The DHT is **advisory** — it distributes indicators, YARA manifests, and route hints, but it is never zone authority and never a resolution fallback. A write that cannot reach quorum reports `PropagationStatus::QuorumUnavailable`; mesh propagation is best-effort (`QueuedBestEffort`) and never silently reports success. See `architecture/distributed_state_contract.md`.
 
 Attack information propagates across the mesh in real-time:
 
@@ -173,10 +186,13 @@ Global nodes publish signed YARA rules to the DHT:
 
 | DHT Key Pattern | Purpose | TTL |
 |-----------------|---------|-----|
-| `yara_rule:{content_hash}` | Actual rule content (content-addressed) | 24 hours |
-| `yara_rules_manifest:{node_id}` | Global node's current ruleset metadata | 24 hours |
+| `yara_rule:{content_hash}` | Actual rule content (content-addressed) | 24 hours (86400s) |
+| `yara_rules_manifest:{node_id}` | Global node's current ruleset metadata | 24 hours (86400s) |
+| `yara_chunk:{content_hash}:{index}` | Gzip-compressed chunk, used when the ruleset exceeds 32 KiB (`YARA_RULE_CHUNK_SIZE`) | 24 hours (86400s) |
 
-**Signature Verification:** YARA rules are signed using Ed25519. Both manifest and rule content signatures are verified during DHT sync before acceptance.
+Only **source text** is distributed. Compiled YARA artifacts are never published or fetched: a legacy `compiled_hash` on an inbound manifest is ignored, and `YaraCompiledRuleContentRecord` is retained for wire compatibility only (`crates/synvoid-mesh/src/mesh/yara_rules.rs`, "Phase 26: no compiled-blob publication").
+
+**Signature Verification:** YARA rules are signed using Ed25519. Both manifest and rule content signatures are verified during DHT sync before acceptance. Manifests beyond the freshness window (`YARA_TIMESTAMP_PAST_BOUND_SECS` = 24h, `YARA_TIMESTAMP_FUTURE_BOUND_SECS` = 60s) are skipped, and multi-signature manifests must meet a 2/3 threshold of `trusted_signers`.
 
 #### Threat Intelligence Distribution
 
@@ -212,100 +228,129 @@ Threat indicators use composite DHT keys for type-specific lookups:
 #### Re-announcement
 
 Global nodes periodically re-announce active indicators:
-- YARA rules: Every `re_announce_interval_secs` (default: 300s)
-- ThreatIntel: Every `re_announce_interval_secs` (default: 300s)
+- YARA rules: every `yara_rules.re_announce_interval_secs` (default: 3600s)
+- ThreatIntel: re-announce runs every 300s internally (`DEFAULT_RE_ANNOUNCE_INTERVAL_SECS`). This interval is **not** operator-configurable — `synvoid_config`'s `[mesh.threat_intel]` DTO has no `re_announce_interval_secs` field, so setting it in TOML is silently ignored.
 
-Non-global nodes do not re-announce (respects `hub_only_mode`).
+Non-global nodes do not re-announce: both `publish_rules_to_dht()` and `re_announce_local_indicators()` return early for a non-global role, and both additionally skip while `hub_only_mode` is set.
 
 #### Configuration
 
 ```toml
-[mesh.yara_rules]
+[tunnel.mesh.yara_rules]
 enabled = true
 sync_interval_secs = 3600
-re_announce_interval_secs = 300
+re_announce_interval_secs = 3600
 require_signature = true  # Verify Ed25519 signatures (default: true)
+trusted_signers = ["base64-encoded-global-node-public-key-..."]
+max_rules_size_kb = 1024
+hub_only_mode = false
 ```
 
 ```toml
-[mesh.threat_intel]
+[tunnel.mesh.threat_intel]
 enabled = true
+push_enabled = true
+sync_enabled = true
 sync_interval_secs = 300
-re_announce_interval_secs = 300
-require_signature = true   # Verify threat indicator signatures
+threat_sync_interval_secs = 3600
+push_severity_threshold = "high"
+min_ttl_seconds = 60
+max_indicators_per_message = 100
+hub_only_mode = false
 ```
+
+Threat-indicator signatures are gated by `trusted_signers` (the Ed25519 public keys accepted from peers); there is no `require_signature` toggle on `[mesh.threat_intel]`.
 
 ## Configuration
 
 ### Basic Mesh Setup
 
 ```toml
-[mesh]
+[tunnel.mesh]
 enabled = true
 bind_address = "0.0.0.0"
-port = 5001
-role = "edge"
+port = 50051          # default: 50051
+role = 1              # EDGE; GLOBAL=2, ORIGIN=4, GLOBAL|EDGE=3
 
-[mesh.seeds]
-# Using DNS names (resolved at startup)
-"waf-2.internal" = "10.0.1.20:5001"
-"waf-3.internal" = "10.0.1.30:5001"
+# Optional: human-readable node identity
+# node_id = "edge-us-east-1"
+# network_id = "production"
 
-# Connection settings
-[mesh.connection]
-keepalive = 30
-reconnect_interval = 5
-max_reconnect_attempts = 10
+# Seeds are a LIST of tables (MeshSeedNode), not a key/value map.
+# `public_key` supplies the authorized global-node key used for discovery.
+[[tunnel.mesh.seeds]]
+address = "global-1.example.com:50051"
+public_key = "base64-encoded-global-node-public-key"
+node_id = "global-1"
+network_id = "production"
+
+# Connection settings (MeshConnectionConfig)
+[tunnel.mesh.connection]
+keepalive_interval_secs = 10     # default: 10
+announce_interval_secs = 30      # default: 30
+health_check_interval_secs = 30  # default: 30
+min_peer_connections = 3         # default: 3
+max_peer_connections = 20        # default: 20
 ```
 
-### Synchronization Settings
+There is no `[mesh.sync]` or `[mesh.limits]` section. `MeshConfig` has no `sync`, `limits`, or bandwidth-cap fields; unknown TOML keys are silently ignored, so those examples were inert. Synchronization is configured per subsystem (`[tunnel.mesh.threat_intel]`, `[tunnel.mesh.yara_rules]`) and peer counts are bounded by `[tunnel.mesh.connection]`. Bandwidth sampling interval is `bandwidth_report_interval_secs` (default 60s).
+
+### Routing Settings
 
 ```toml
-[mesh.sync]
-# What to share with peers
-share_ip_reputation = true
-share_blocklists = true
-share_bot_signatures = true
-
-# How often to sync
-sync_interval = "5s"
-full_sync_interval = "5m"
-```
-
-### Bandwidth Limits
-
-```toml
-[mesh.limits]
-# Limit mesh traffic to preserve production bandwidth
-max_bandwidth_mbps = 100
-max_peers = 20
+[tunnel.mesh.routing]
+enabled = true             # default: true
+max_hops = 3               # default: 3
+query_timeout_ms = 5000    # default: 5000
+retry_attempts = 2         # default: 2
+peer_query_count = 3       # default: 3
+allow_all_services = true  # default: true
+route_queries_per_minute = 6000     # default: 6000
+mesh_messages_per_sec = 10000       # default: 10000
 ```
 
 ## Security
 
 ### Encryption
 
-All mesh traffic is encrypted via QUIC with TLS 1.3:
+Mesh traffic runs over QUIC. `MeshTlsConfig` enforces mutual TLS by default and pins the minimum version to TLS 1.3; `strict_certificate_validation` and `enforce_mutual_tls` both default to `true`:
 
 ```toml
-[mesh.tls]
-# Certificate verification
-verify_certificates = true
-
-# Post-quantum key exchange (recommended for long-term security)
-enable_post_quantum = true
+[tunnel.mesh.tls]
+cert_path = "/etc/synvoid/certs/mesh.crt"
+key_path = "/etc/synvoid/certs/mesh.key"
+ca_path = "/etc/synvoid/certs/ca.crt"
+auto_generate_certs = false   # default: false
+ca_mode = false
+min_tls_version = "1.3"       # default: "1.3"
+enforce_mutual_tls = true     # default: true
+strict_certificate_validation = true  # default: true
+auto_monitor_expiration = true        # default: true
+certificate_pin_public_keys = ["base64-encoded-spki-pin-..."]
 ```
+
+There is no `verify_certificates` or `enable_post_quantum` field on `[mesh.tls]`. Certificate verification is not optional — it is `strict_certificate_validation` (default `true`); disabling it is an explicit operator downgrade.
 
 ### TLS Passthrough and WAF Enforcement
 
 By default, enabling `tls_passthrough = true` keeps L7 WAF inspection enabled. Set `tls_passthrough_enforce_waf = false` only for an intentional bypass; encrypted traffic is then forwarded directly to the origin without inspection.
 
-To force WAF L7 inspection even with TLS passthrough enabled, use `tls_passthrough_enforce_waf`:
+To force WAF L7 inspection even with TLS passthrough enabled, use `tls_passthrough_enforce_waf`. These keys live in the site file's top-level `[proxy]` section (`SiteConfig.proxy`), not in `main.toml`; the site is identified by `[site] domains` and listens via `[[site.listen]]`:
 
 ```toml
-[[site.proxy]]
-host = "example.com"
+# config/sites/example.com.toml
+[site]
+domains = ["example.com"]
+
+[site.upstream]
+default = "http://127.0.0.1:8000"
+
+[[site.listen]]
+address = "0.0.0.0"
 port = 443
+ssl = true
+
+[proxy]
 tls_passthrough = true
 
 # Force WAF L7 inspection despite TLS passthrough
@@ -330,16 +375,29 @@ When enabled, `validate_tls_passthrough_waf_policy()` returns an error for any T
 SynVoid has transitioned from a shared-secret model to **Decentralized Admission (Consensus-Gated PKI)**. Nodes no longer derive their identity from a shared genesis key; instead, they generate unique local keys and request admission to the mesh.
 
 ```toml
-[mesh.node_identity]
-# Optional: Legacy genesis key (deprecated)
-# genesis_key_base64 = "your-genesis-key-here"
+[tunnel.mesh.node_identity]
+# Local node identity material (file-backed keys; see below)
+private_key_path = "/etc/synvoid/mesh/node.key"
+encryption_passphrase_path = "/etc/synvoid/mesh/passphrase"
+is_trusted = false
+genesis_org_id = "org-1"
 
-# Authorized public keys of global nodes (seeds)
-authorized_global_pubkeys = ["base64-encoded-public-key-..."]
+# Legacy genesis key — still honored (has_genesis_key()), but not the
+# admission path: see the Decentralized Admission Workflow below.
+genesis_key_base64 = "base64-encoded-32-byte-genesis-key"
 
-# Invite tokens for new global nodes (used during JoinRequest)
+[tunnel.mesh.global_node]
+# Invite tokens validated (constant-time) against an inbound JoinRequest.
+# This lives under [mesh.global_node], NOT [mesh.node_identity].
 invite_tokens = ["secure-one-time-token-1", "secure-one-time-token-2"]
+
+# Optional key exchange material for global nodes
+# x25519_private_key_base64 = "..."
+# ed25519_private_key_base64 = "..."
+key_exchange_enabled = false
 ```
+
+There is no `authorized_global_pubkeys` config key. Authorized global-node keys are collected from the seeds themselves: `MeshDiscovery::get_authorized_global_pubkeys()` projects `seeds[].public_key`, so authorization is declared per seed via `[[mesh.seeds]] public_key = ...`.
 
 ### Decentralized Admission Workflow
 
@@ -350,15 +408,15 @@ invite_tokens = ["secure-one-time-token-1", "secure-one-time-token-2"]
 
 ### Graduated Trust Levels
 
-Trust is no longer binary. Nodes are assigned a `trust_level` based on their hardware and attestation:
+Admitted nodes carry a `trust_level` recorded in the Raft `authorized_global_nodes` registry. The JoinRequest handler assigns exactly two values today (`handle_join_request` in `crates/synvoid-mesh/src/mesh/transport_peer.rs`):
 
-| Level | Type | Description |
-|-------|------|-------------|
-| **1** | Software | Standard OS security. Default for all nodes. |
-| **2** | TPM/HSM | Keys are bound to hardware (TPM 2.0). |
-| **3** | TEE | Execution within a Secure Enclave (SGX, Nitro, SEV). |
+| Level | Assigned when | Description |
+|-------|---------------|-------------|
+| **0** | Admission rejected | No trust. Returned in `JoinResponse` for an invalid invite token or a failed Raft proposal. |
+| **1** | Admission granted, no `attestation_report` | Software-only admission. This is also the DHT node default (`trust_level: 1`). |
+| **2** | Admission granted with an `attestation_report` | The client presented an attestation report. |
 
-Sensitive operations (e.g., signing Organization Tier Keys) can be gated to require a specific minimum trust level.
+Higher levels (hardware-bound TPM/HSM keys, TEE enclaves such as SGX/Nitro/SEV) are **not** assigned by any current code path, and no operation is gated on a minimum `trust_level` — including Organization Tier Key signing. Treat level 2 as "an attestation report was supplied", not as verified hardware binding.
 
 ### Key Hierarchy (Updated)
 
@@ -367,12 +425,12 @@ Node Public Key (Ed25519)
     │
     ├──► Raft Admission (Authorized via Consensus)
     │        │
-    │        └──► Global Node Status
+    │        └──► Global Node Status (trust_level recorded)
     │
-    └──► Capability Gating (based on Trust Level)
+    └──► Discovery trust set (from seeds[].public_key)
 ```
 
-> **Note:** The legacy `genesis_key_base64` derivation is **deprecated** and will be removed in a future version. Operators are encouraged to migrate to the `JoinRequest` protocol.
+> **Note:** `genesis_key_base64` is still a live configuration path (`MeshConfig::has_genesis_key()` reports it to `/api/mesh/status`), but it is the legacy identity model — the `JoinRequest` protocol is the admission path. The source does not mark the field deprecated, so no removal timeline is claimed here.
 
 
 ### 0-RTT Configuration
@@ -380,9 +438,11 @@ Node Public Key (Ed25519)
 QUIC 0-RTT allows clients to send data before the TLS handshake completes:
 
 ```toml
-[mesh.tls]
+[tunnel.mesh.tls]
 quic_enable_0rtt = false  # Default: false (disabled for security)
 ```
+
+When enabled, `/api/mesh/status` also returns a `quic_0rtt_warning` string alongside `quic_0rtt_enabled`.
 
 **Warning:** 0-RTT has replay attack risks. Only enable when:
 - The application handles replay detection
@@ -402,14 +462,18 @@ Global nodes maintain a complete view of the entire mesh network and serve as:
 - **Certificate Authority** for signing node identities
 
 ```toml
-[mesh]
+[tunnel.mesh]
 enabled = true
-role = "global"
+role = 2       # GLOBAL (EDGE=1, ORIGIN=4, GLOBAL|EDGE=3)
 bind_address = "0.0.0.0"
-port = 5001
+port = 50051
 
-[mesh.node_identity]
-genesis_key_base64 = "your-secret-genesis-key"
+[tunnel.mesh.node_identity]
+genesis_key_base64 = "base64-encoded-32-byte-genesis-key"
+
+# Invite tokens this global node will validate on inbound JoinRequests
+[tunnel.mesh.global_node]
+invite_tokens = ["secure-one-time-token-1"]
 ```
 
 ### Edge Nodes
@@ -420,13 +484,15 @@ Edge nodes are typical WAF instances that:
 - Participate in traffic routing
 
 ```toml
-[mesh]
+[tunnel.mesh]
 enabled = true
-role = "edge"
+role = 1       # EDGE
 
-[mesh.seeds]
-- address = "global-1.mesh.example.com:5001"
-  global_node_key = "your-genesis-key"
+[[tunnel.mesh.seeds]]
+address = "global-1.mesh.example.com:50051"
+public_key = "base64-encoded-global-node-public-key"
+# Optional per-seed fields: node_id, network_id, quic_port,
+# pinned_cert_fingerprint, global_node_key
 ```
 
 ### Origin Nodes
@@ -436,35 +502,49 @@ Origin nodes are WAFs with direct upstream server connections:
 - Preferred routing targets for traffic
 
 ```toml
-[mesh]
+[tunnel.mesh]
 enabled = true
-role = "origin"
+role = 4       # ORIGIN
+
+# Announced upstreams are declared explicitly; `peered_wafs` is the
+# authorization list, so an unlisted node receives "route not found"
+# rather than the real origin URL.
+[tunnel.mesh.local_upstreams.web]
+upstream_url = "http://10.0.1.10:8080"
+priority_tier = 0
+allowed_protocols = ["http"]
+
+[[tunnel.mesh.local_upstreams.web.peered_wafs]]
+node_id = "edge-us-east-1"
+allowed = true
 ```
+
+`MeshNodeRole` is a bitmask, not an enum, so `GLOBAL | EDGE` (3) and the other combinations in `MeshNodeRole` are also valid values.
 
 ## Network Isolation
 
 ### Network IDs
 
-Multiple isolated mesh networks can coexist using `network_id`:
+Multiple isolated mesh networks can coexist using `network_id` (set on both the node and each seed):
 
 ```toml
 # Production network
-[mesh]
+[tunnel.mesh]
 network_id = "production"
 
-[mesh.seeds]
-- address = "global-1.mycompany.com:5001"
-  network_id = "production"
+[[tunnel.mesh.seeds]]
+address = "global-1.mycompany.com:50051"
+network_id = "production"
 ```
 
 ```toml
 # Staging network (separate from production)
-[mesh]
+[tunnel.mesh]
 network_id = "staging"
 
-[mesh.seeds]
-- address = "staging-global.mycompany.com:5001"
-  network_id = "staging"
+[[tunnel.mesh.seeds]]
+address = "staging-global.mycompany.com:50051"
+network_id = "staging"
 ```
 
 Nodes with different `network_id` values will not connect to each other, even if addresses are reachable.
@@ -486,6 +566,8 @@ The mesh provides the following admin API endpoints:
 | `/api/mesh/ban` | DELETE | Unban an IP or mesh ID |
 | `/api/mesh/derive-signing-key` | POST | Derive signing key from genesis key |
 | `/api/mesh/audit/report` | POST | Submit client audit report |
+
+The mutating endpoints (`ban/ip`, `ban/mesh-id`, `ban`, `derive-signing-key`) return a typed `AdminMutationResult` — never a generic `{"success": true}`. A block or unblock emits an `AdminAuditEvent`, quorum loss is reported as `PropagationStatus::QuorumUnavailable` rather than a silent success, and mesh propagation is best-effort `QueuedBestEffort`. Raw session tokens are never stored; `AdminActor.session_id_hash` holds a hash. Details: `architecture/admin_control_plane_authority.md`.
 
 ### Get Mesh Status
 
@@ -520,6 +602,8 @@ curl -H "Authorization: Bearer your-admin-token" \
 
 ### Ban an IP
 
+`BanIpRequest` fields: `ip` (required), `reason` (required; empty becomes `manual_admin_ban`), `duration_seconds`, `site_scope` (defaults to `global`). The write goes through `block_ip_with_provenance` with `BlockProvenanceKind::AdminManual`.
+
 ```bash
 curl -X POST \
   -H "Authorization: Bearer your-admin-token" \
@@ -535,12 +619,14 @@ curl -X POST \
 
 ### Derive Signing Key
 
+`genesis_key_base64` is decoded with `URL_SAFE_NO_PAD` (not standard base64 with padding) and must decode to exactly 32 bytes; otherwise the endpoint returns `AdminMutationStatus::InvalidRejected` with `Genesis key must be 32 bytes`.
+
 ```bash
 curl -X POST \
   -H "Authorization: Bearer your-admin-token" \
   -H "Content-Type: application/json" \
   -d '{
-    "genesis_key_base64": "YWJjZDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDEyMzQ1Ng=="
+    "genesis_key_base64": "YWJjZDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDEyMzQ1Ng"
   }' \
   http://127.0.0.1:8081/api/mesh/derive-signing-key
 ```
@@ -556,7 +642,7 @@ When using mesh proxying to route traffic through other WAF nodes, bandwidth is 
 | `mesh_bytes_sent` | Request bytes sent to mesh peers |
 | `mesh_bytes_received` | Response bytes received from mesh peers |
 
-This is distinct from direct proxy bandwidth (`proxied_bytes_sent`/`proxied_bytes_received`) where the WAF connects directly to the origin server.
+This is distinct from direct proxy bandwidth (`proxied_bytes_sent`/`proxied_bytes_received`) where the WAF connects directly to the origin server. Both pairs are `u64` fields on `SiteMetrics` (`crates/synvoid-admin/src/handlers/stats.rs:66`) and are exposed through the admin stats handlers.
 
 ---
 
@@ -569,7 +655,7 @@ Choose the right architecture for your deployment:
 | **Complexity** | Low (centralized) | Medium (distributed) |
 | **Use Case** | Scale single WAF instance | Distribute across regions |
 | **Threat Sharing** | No | Yes (blocklists, patterns) |
-| **Origin Lookup** | Per-instance | Global across mesh |
+| **Origin Lookup** | Per-instance | Routed through the mesh routing layer (`[tunnel.mesh.routing]`, `local_upstreams`, `peered_wafs`) |
 | **Setup Effort** | Minutes | Hours |
 
 ### Use Supervisor-Worker Clustering When:

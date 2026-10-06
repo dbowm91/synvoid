@@ -77,74 +77,79 @@ This document describes the design for automatic WAF rule updates using a signed
 ### Signature
 
 - Algorithm: Ed25519 (Edwards-curve Digital Signature Algorithm)
-- Signature covers: entire JSON payload (excluding signature field)
-- Public key: embedded in binary at compile time
+- Signature covers: entire JSON payload (excluding the `signature` field)
+- Public key: supplied in config as `rule_feed.public_key` (base64, 32-byte verifying key). The default is `None`; without it the manager refuses to construct.
 
 ## Configuration
 
 ```toml
 [rule_feed]
-enabled = true
-url = "https://rules.example.com/api/v1/rules"
-update_interval_hours = 24
-auto_apply = true
-allow_downgrade = false
+enabled = false                       # default: false
+url = "https://rules.example.com/api/v1/rules"   # default: this placeholder URL
+update_interval_hours = 24            # default: 24
+auto_apply = true                     # default: true
+allow_downgrade = false               # default: false
 
-# Optional: custom public key (defaults to embedded)
+# REQUIRED when the feed is enabled: base64 Ed25519 public key.
 # public_key = "BASE64_ED25519_PUBLIC_KEY"
+
+# Optional: directory for local rule persistence. `save_to_disk` / `load_from_disk`
+# are no-ops when this is unset, so nothing persists across restarts.
+# storage_dir = "/var/lib/synvoid/rules"
 ```
+
+`RuleFeedConfig` (`crates/synvoid-config/src/protection.rs:285`) carries two fields this document previously omitted: `public_key` and `storage_dir`. The section is `[rule_feed]` at the top level of `main.toml` (`MainConfig::rule_feed`); the error text inside `RuleFeedManager::new` refers to it as `[waf.rule_feed.public_key]`, which is stale wording — there is no `[waf]` section in `MainConfig`.
+
+There is **no compiled-in fallback key**: `RuleFeedManager::new` returns `Err("RULE FEED SECURITY VIOLATION: No rule feed public key configured...")` when `public_key` is absent or empty. The feature is disabled by default and its default `url` is a non-functional placeholder, so an enabled feed requires both an explicit key and a real URL.
 
 ## Components
 
-### 1. Rule Feed Client (`src/waf/rule_feed.rs`)
+### 1. Rule Feed Manager (`src/waf/rule_feed.rs`)
 
-- `RuleFeedClient` - Main client, fetch/verify/apply logic
-- Rule feed JSON structures (types module)
+- `RuleFeedManager` — fetch / verify / apply logic (there is no `RuleFeedClient` type); `new(config)` returns `Result<Arc<Self>, String>`
+- Rule feed JSON structures: `RuleFeedResponse`, `RuleSet`, `RuleCategory`, `ChangelogEntry`, `ParsedRules`
+- Pattern application surface: `get_global_patterns()`, `get_site_patterns(site_id)`, `update_from_rule_set()`, `clear_global_patterns()`
 - Ed25519 signature verification
-- Local rule persistence
+- Local rule persistence: `save_to_disk()` / `load_from_disk()` (both require `storage_dir`)
 
-### 2. Configuration (`crates/synvoid-config/src/`)
+### 2. Configuration (`crates/synvoid-config/src/protection.rs`)
 
-- Add `RuleFeedConfig` to main config
-- Add to defaults
+- `RuleFeedConfig`, exposed as `MainConfig::rule_feed` (`MainRuleFeedConfig` alias)
 
 ### 3. Admin API (`src/admin/`)
 
-- `GET /api/rules/status` - Current rule version, last update
-- `POST /api/rules/check` - Check for updates (manual trigger)
-- `POST /api/rules/apply` - Apply downloaded rules
-- `POST /api/rules/rollback` - Rollback to previous version
+Registered in `infra_probes_threat_rules_routes()` (`src/admin/routes.rs:409`):
 
-## Implementation Priority
+- `GET /api/rules/status` — current rule version, last update
+- `POST /api/rules/check` — check for updates (manual trigger)
+- `POST /api/rules/apply` — apply pending rules
+- `POST /api/rules/discard` — discard pending rules
 
-1. **Phase 1**: Core infrastructure
-   - Add `RuleFeedConfig` struct
-   - Create `RuleFeedManager` with fetch/verify
-   - Add Ed25519 signature verification
-   - Add to main config
+There is **no** `POST /api/rules/rollback` endpoint, and no `rollback` symbol in `src/waf/rule_feed.rs`. The rollback goal in the Goals section is unimplemented; the closest available action is `discard` of a pending update.
 
-2. **Phase 2**: Rule application
-   - Integrate with `DefaultPatterns` 
-   - Support hot-reload of rules (no restart required)
-   - Add version tracking
+## Implementation Status
 
-3. **Phase 3**: Admin API
-   - Status endpoint
-   - Manual trigger endpoints
-   - Rollback support
+This document was written as a design record. Phases 1–3 are **implemented**: `RuleFeedConfig` exists in `crates/synvoid-config`, `RuleFeedManager` in `src/waf/rule_feed.rs` performs fetch/verify/apply, patterns are applied without restart (`start_background_fetching` + `set_on_apply_callback`), and the four admin endpoints above are registered.
 
-4. **Phase 4**: Delta updates (optional optimization)
-   - Track rule hashes
-   - Only download changed rules
+Still unimplemented:
+
+- **Rollback** — no rollback manager method, no `/api/rules/rollback` route.
+- **Delta updates** — the client fetches the full feed; there is no per-category hash tracking and no `?current_version=` negotiation.
+- **Changelog surfacing** — `ChangelogEntry` is part of the wire format, but there is no admin surface that returns it.
+
+Treat the "Implementation Priority" list below as the original plan, not as a description of current state.
 
 ## Security Considerations
 
-1. **Key Management**: Public key embedded in binary; private key kept offline
+1. **Key Management**: Public key supplied via `rule_feed.public_key` (base64 Ed25519 verifying key) — there is no embedded fallback, and `new()` fails closed without it; private key kept offline
 2. **HTTPS Required**: Only fetch over HTTPS
 3. **Fail-Secure**: If verification fails, don't apply rules, log error
 4. **Audit Logging**: Log all rule updates with version info
+5. **Downgrade guard**: `allow_downgrade` defaults to `false`, so a feed publishing a lower version is rejected unless explicitly permitted
 
 ## Example Rule Provider API
+
+The client issues a plain `GET` against `rule_feed.url`. The three endpoint shapes below describe the intended provider contract:
 
 ### GET /api/v1/rules
 
@@ -152,11 +157,11 @@ Returns latest rules with signature.
 
 ### GET /api/v1/rules?current_version=1.2.3
 
-Returns delta or full rules depending on version difference.
+Intended to return a delta or full rules depending on version difference — **not implemented**; the client always requests the full feed.
 
 ### GET /api/v1/rules/{version}
 
-Returns specific version (for rollback).
+Intended to return a specific version for rollback — **not implemented**.
 
 ## Future Enhancements
 
