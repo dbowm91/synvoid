@@ -55,6 +55,17 @@ No production Rust, dependency, feature, MSRV, crate classification,
 publication, or broad README rollback is authorized. Phase 47 remains closed;
 this corrective repairs documentation drift against its still-binding policy.
 
+Workstream A applied (2026-10-06): the root README carries a `Library crates`
+section restoring the boundary — only `synvoid-rate-limit` is externally
+supported, other `synvoid-*` crates stay class 1/2 absent explicit promotion, and
+consumers are pointed at `architecture/public_crate_release_policy.md` plus
+`docs/releasing.md` §1a. It was implemented in `cd79ffe5`, an unrelated config
+corrective that had independently hit the same guard failure and restored the
+missing contract. `cargo xtask verify` is green on that head (10/10 steps, 163/163
+repo guards). The guard itself is unchanged, per §6 of the plan. Closure still
+requires exact-head hosted CI green per boundary item 5; this note does not claim
+it.
+
 ## Current Architectural Position
 
 SynVoid has completed the initial 10-phase architecture-hardening track and the six-phase post-hardening closure track. The repo now has typed startup/resource/runtime ownership for `UnifiedServer`, supervisor task ownership, request-path capability boundaries, blocklist convergence hardening, admin mutation authority types, plugin sandbox capability types, CI/fuzz/failure-injection scaffolding, security observability artifacts, final surface/release-hardening reports, a first root-module burn-down pass, and an operator deployment drill.

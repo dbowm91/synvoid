@@ -2,6 +2,20 @@
 
 Status: **READY**.
 
+> **Workstream A applied (2026-10-06).** The root README now carries a
+> `Library crates` section satisfying §4: it names `synvoid-rate-limit` as the only
+> **externally supported** library, states that other `synvoid-*` crates carry no
+> support promise absent explicit promotion, and points at
+> `architecture/public_crate_release_policy.md` and `docs/releasing.md` §1a. No
+> class-1/class-2 crate is promoted. Implemented in `cd79ffe5`, an unrelated
+> config-corrective commit that independently hit the same guard failure; the
+> guard was left unchanged per §6, and `cargo xtask verify` is green on that head
+> (10/10 steps, 163/163 repo guards).
+>
+> The status stays **READY** rather than CLOSED because §7 boundary item 5
+> requires exact-head hosted CI green before closure, which has not run on
+> `cd79ffe5`.
+
 Registered in: `plans/roadmap.md`.
 
 Corrective baseline:

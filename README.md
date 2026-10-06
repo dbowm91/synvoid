@@ -201,13 +201,20 @@ The configuration above is a working starting point, not a production policy.
 
 ### Library crates
 
-Most of the workspace is internal and carries no external support commitment. Of the
-crates published as libraries, only **`synvoid-rate-limit`** is an **externally supported**
-release (Phase 47, class 3). The remaining published crates — including honeypot,
-DNSSEC keystore and mesh protocol — are unsupported class 2 with
-`external_support = false`, and DNS and mesh extraction were deferred. See
-[`architecture/public_crate_release_policy.md`](architecture/public_crate_release_policy.md)
-and [`architecture/public_crate_release_readiness_phase47.md`](architecture/public_crate_release_readiness_phase47.md).
+Most of the workspace is internal. Being reusable, packageable, or independently
+buildable is not an external support promise: only **`synvoid-rate-limit`** is an
+**externally supported** release (Phase 47, class 3), and it alone carries the
+semver/MSRV support promise. Every other `synvoid-*` crate stays class 1 or
+class 2 — including honeypot, DNSSEC keystore, mesh protocol, DNS and
+http-client — and carries no external support promise unless a later policy
+decision explicitly promotes it. The standalone-crate campaign promoted nothing
+further.
+
+The binding support/semver policy is
+[`architecture/public_crate_release_policy.md`](architecture/public_crate_release_policy.md).
+Release order and publishing guidance are in
+[`docs/releasing.md`](docs/releasing.md) §1a; publication remains manual via
+`cargo publish`.
 
 ## License
 
