@@ -439,31 +439,151 @@ fn geo_location_is_dns_owned_and_holds_only_primitives() {
     assert!(bare.asn.is_none());
 }
 
-/// Phase 133 F-3: `GeoLocation::from_str` cannot fail, so a misspelled target
-/// becomes a country code that matches nothing, and an unparseable ASN is
-/// silently dropped. A typo still degrades a security rule into a rule that
-/// matches nothing — but it no longer degrades into a rule that silently allows
-/// everything, because the rule is now evaluated against a real provider.
+/// F-3 closed (`plans/dns_geo_firewall_residual_closure.md`, Workstream A).
+///
+/// This test **used to assert the opposite**. It was
+/// `geo_location_parsing_cannot_fail_and_typos_still_never_match`, and it pinned
+/// two defects as intended behavior:
+///
+/// 1. `assert!("".parse::<GeoLocation>().is_ok(), "empty target parses")` — the
+///    parser could not fail, so a spec with no country became a rule matching
+///    nothing.
+/// 2. `"RU, , , notanumber"` → `asn: None`, "an unparseable ASN is silently
+///    dropped rather than rejected". This is the more dangerous half: an
+///    ASN-scoped rule silently **widened** to country-only, so for an `Allow`
+///    action a typo widened the grant.
+///
+/// Both are now rejected. The surviving truth in the old test is kept below: a
+/// *valid* spec whose country is merely misspelled still parses, and still never
+/// matches — a typo that is well-formed is a no-match, not a parse failure.
 #[test]
-fn geo_location_parsing_cannot_fail_and_typos_still_never_match() {
-    assert!("".parse::<GeoLocation>().is_ok(), "empty target parses");
-    assert!(
-        "  ,  ,  , notanumber".parse::<GeoLocation>().is_ok(),
-        "garbage target parses"
-    );
-
+fn a_well_formed_typo_still_parses_and_still_never_matches() {
     let lookup = StubLookup::answering("RU");
-    let typo: GeoLocation = "RUUU".parse().expect("parses");
+    let typo: GeoLocation = "RUUU".parse().expect("a well-formed typo still parses");
     assert_eq!(
         typo.matches_ip(client_ip(), Some(&lookup)),
         GeoMatch::No,
         "a typo must never match a real country code"
     );
+}
 
-    let bad_asn: GeoLocation = "RU, , , notanumber".parse().expect("parses");
+/// A spec with no country cannot describe a location, so it is rejected instead
+/// of becoming a rule that matches nothing with no diagnostic.
+#[test]
+fn a_missing_country_is_rejected_rather_than_matching_nothing() {
+    for target in ["", "   ", ",", ",,,", " , , , "] {
+        let error = target
+            .parse::<GeoLocation>()
+            .expect_err("a spec with no country must not parse");
+        assert!(
+            error.contains("country"),
+            "the error must say the country is required, got: {error}"
+        );
+    }
+}
+
+/// The unparseable-ASN half of the old defect. A non-empty ASN field that is
+/// not a number is a typo, and it is now an error instead of a silently dropped
+/// constraint that widened the rule.
+#[test]
+fn a_malformed_asn_is_rejected_rather_than_silently_broadening_the_rule() {
+    for target in [
+        "RU, , , notanumber",
+        "RU, , , 99999999999", // beyond u32
+        "RU, , , -1",
+        "RU, , , 64500x",
+    ] {
+        let error = target
+            .parse::<GeoLocation>()
+            .expect_err("a malformed ASN must not parse");
+        assert!(
+            error.contains("ASN"),
+            "the error must name the ASN field, got: {error}"
+        );
+    }
+}
+
+/// Phase 135 F-16 must survive the tightening: an **empty** ASN field is a
+/// placeholder, not a typo. Treating empty as an error would have been a
+/// regression of the opposite kind, breaking a spec shape that F-16 deliberately
+/// supports.
+#[test]
+fn an_empty_asn_field_stays_a_placeholder() {
+    for target in ["RU, , , ", "RU, , ,", "RU, ,"] {
+        let geo: GeoLocation = target.parse().expect("a placeholder ASN still parses");
+        assert_eq!(geo.country, "RU");
+        assert_eq!(
+            geo.asn, None,
+            "an empty ASN field is a placeholder, got {target:?}"
+        );
+    }
+}
+
+/// The arm at `firewall.rs` that handles a parse failure was described from
+/// Phase 133 onward as defensive-only, kept "because a future validator would
+/// land here". That validator is the parser, so the arm is now live — and a
+/// restrictive rule with a malformed target must take the same fail-closed
+/// posture as any other unevaluable geo rule rather than passing traffic.
+#[test]
+fn a_restrictive_rule_with_a_malformed_target_fails_closed() {
+    let mut firewall = DnsFirewall::new().with_country_lookup(StubLookup::answering("RU"));
+    firewall
+        .add_rule(rule(
+            "geo-typo",
+            DnsFirewallRuleType::GeoLocation,
+            "RU, , , notanumber",
+            DnsFirewallAction::Block,
+        ))
+        .expect("the firewall stores a rule verbatim; it validates at evaluation");
+
+    let query = example_query();
+    let decision = firewall
+        .evaluate_query(&parse(&query), client_ip(), "example.com")
+        .expect("evaluation succeeds");
+
     assert_eq!(
-        bad_asn.asn, None,
-        "an unparseable ASN is silently dropped rather than rejected"
+        decision.action,
+        DnsFirewallAction::Block,
+        "a malformed geo target must not silently pass traffic"
+    );
+    assert_eq!(decision.rule_id, "geo-typo");
+    assert!(
+        decision
+            .reason
+            .contains(RuleIndeterminate::UnparseableTarget.as_str()),
+        "the reason must name the unparseable target, got: {}",
+        decision.reason
+    );
+}
+
+/// The permissive counterpart: a malformed target on an `Allow` rule is skipped
+/// rather than applied. Granting access from a rule nobody could scope is the
+/// same hazard the no-provider case already pins.
+#[test]
+fn a_permissive_rule_with_a_malformed_target_is_skipped() {
+    let mut firewall = DnsFirewall::new().with_country_lookup(StubLookup::answering("RU"));
+    firewall
+        .add_rule(rule(
+            "geo-typo-allow",
+            DnsFirewallRuleType::GeoLocation,
+            "notanumber",
+            DnsFirewallAction::Allow,
+        ))
+        .expect("the firewall stores a rule verbatim; it validates at evaluation");
+
+    let query = example_query();
+    let decision = firewall
+        .evaluate_query(&parse(&query), client_ip(), "example.com")
+        .expect("evaluation succeeds");
+
+    assert_eq!(
+        decision.action,
+        DnsFirewallAction::Allow,
+        "the default posture applies and the malformed allow rule is skipped"
+    );
+    assert_ne!(
+        decision.rule_id, "geo-typo-allow",
+        "a malformed allow rule must not be the deciding rule"
     );
 }
 

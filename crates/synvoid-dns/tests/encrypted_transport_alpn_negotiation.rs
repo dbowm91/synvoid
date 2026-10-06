@@ -98,7 +98,7 @@ struct StubProvider {
 }
 
 impl StubProvider {
-    fn new(certificate: &TestCertificate) -> Arc<dyn SecureTransportConfig> {
+    fn from_certificate(certificate: &TestCertificate) -> Arc<dyn SecureTransportConfig> {
         let config = ServerConfig::builder_with_provider(provider())
             .with_protocol_versions(&[&rustls::version::TLS13])
             .expect("TLS 1.3 is supported")
@@ -277,7 +277,7 @@ async fn start_doh(provider: Arc<dyn SecureTransportConfig>) -> (DohServer, Sock
 #[tokio::test]
 async fn doh_negotiates_h2_for_a_client_that_offers_only_h2() {
     let certificate = test_certificate();
-    let (_server, addr) = start_doh(StubProvider::new(&certificate)).await;
+    let (_server, addr) = start_doh(StubProvider::from_certificate(&certificate)).await;
 
     let negotiated = handshake_stream(addr, &[b"h2"])
         .await
@@ -296,7 +296,7 @@ async fn doh_negotiates_h2_for_a_client_that_offers_only_h2() {
 #[tokio::test]
 async fn doh_negotiates_h2_over_a_mixed_offer() {
     let certificate = test_certificate();
-    let (_server, addr) = start_doh(StubProvider::new(&certificate)).await;
+    let (_server, addr) = start_doh(StubProvider::from_certificate(&certificate)).await;
 
     let negotiated = handshake_stream(addr, &[b"doq", b"h2"])
         .await
@@ -315,7 +315,7 @@ async fn doh_negotiates_h2_over_a_mixed_offer() {
 #[tokio::test]
 async fn doh_rejects_a_client_that_offers_no_shared_protocol() {
     let certificate = test_certificate();
-    let (_server, addr) = start_doh(StubProvider::new(&certificate)).await;
+    let (_server, addr) = start_doh(StubProvider::from_certificate(&certificate)).await;
 
     let outcome = handshake_stream(addr, &[b"dot"]).await;
 
@@ -336,7 +336,7 @@ async fn doh_rejects_a_client_that_offers_no_shared_protocol() {
 #[tokio::test]
 async fn dot_completes_a_handshake_from_a_client_that_offers_no_alpn() {
     let certificate = test_certificate();
-    let (_server, addr) = start_dot(StubProvider::new(&certificate)).await;
+    let (_server, addr) = start_dot(StubProvider::from_certificate(&certificate)).await;
 
     let negotiated = handshake_stream(addr, &[])
         .await
@@ -359,7 +359,7 @@ async fn dot_completes_a_handshake_from_a_client_that_offers_no_alpn() {
 #[tokio::test]
 async fn dot_ignores_an_alpn_offer_rather_than_rejecting_it() {
     let certificate = test_certificate();
-    let (_server, addr) = start_dot(StubProvider::new(&certificate)).await;
+    let (_server, addr) = start_dot(StubProvider::from_certificate(&certificate)).await;
 
     let outcome = handshake_stream(addr, &[b"h2"]).await;
 
@@ -381,7 +381,7 @@ async fn dot_ignores_an_alpn_offer_rather_than_rejecting_it() {
 #[tokio::test]
 async fn the_shared_builder_does_not_make_dot_and_doh_agree() {
     let certificate = test_certificate();
-    let provider = StubProvider::new(&certificate);
+    let provider = StubProvider::from_certificate(&certificate);
 
     let (_dot, dot_addr) = start_dot(Arc::clone(&provider)).await;
     let (_doh, doh_addr) = start_doh(Arc::clone(&provider)).await;
@@ -417,7 +417,7 @@ async fn the_shared_builder_does_not_make_dot_and_doh_agree() {
 #[tokio::test]
 async fn doq_still_negotiates_doq() {
     let certificate = test_certificate();
-    let provider = StubProvider::new(&certificate);
+    let provider = StubProvider::from_certificate(&certificate);
 
     let mut observed: Option<Option<Vec<u8>>> = None;
     let mut task = None;
@@ -505,7 +505,7 @@ async fn quic_alpn(addr: SocketAddr, offer: &[u8]) -> Result<Option<Vec<u8>>, St
 #[test]
 fn the_provider_supplies_no_alpn_of_its_own() {
     let certificate = test_certificate();
-    let provider = StubProvider::new(&certificate);
+    let provider = StubProvider::from_certificate(&certificate);
 
     let config = provider
         .server_config()

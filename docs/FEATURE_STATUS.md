@@ -33,6 +33,40 @@ These features are supported but not in the default profile. Enable them via fea
 | GeoIP | none (config-gated) | `[geoip]` section in `main.toml`, default-disabled. Composition builds the provider and threads it into the DNS construction path as of Phase 138. **No DNS firewall rule can be declared yet** — `DnsFirewallConfig` has no `rules` field — so the capability is present but not yet consumed by any rule. Enabled with no usable database logs a warning rather than refusing to start | All |
 | Unsafe Native Extensions | `unsafe-native-extensions` | Opt-in in-process native extensions (compile gate PLUS runtime gates: disabled by default, risk acknowledgement + path allowlist; NOT sandboxed) | All |
 
+### DNS Firewall: Internal-Client Blocking
+
+`[dns.firewall] block_internal_ips = true` installs **8** `Subnet`/`Block` rules:
+
+| id | target |
+|----|--------|
+| `block_internal_ips` | `10.0.0.0/8` |
+| `block_private_172` | `172.16.0.0/12` |
+| `block_private_192` | `192.168.0.0/16` |
+| `block_loopback` | `127.0.0.0/8` |
+| `block_linklocal` | `169.254.0.0/16` |
+| `block_ipv6_loopback` | `::1/128` |
+| `block_ipv6_ula` | `fc00::/7` |
+| `block_ipv6_linklocal` | `fe80::/10` |
+
+This is correct for the shipped public authoritative profile
+(`examples/dns/authoritative_public.toml`), but three things are worth knowing:
+
+- **Loopback is included and is not separately controllable.** There is no knob
+  to exempt `127.0.0.0/8` or `::1/128`; they are inseparable from the other seven.
+  One flag governs all eight.
+- **The failure mode is silence.** The block happens at firewall admission, so a
+  refused client sees **no SERVFAIL and no REFUSED** — just no answer at all. A
+  timeout or an empty response is the expected symptom.
+- **Local verification needs an in-memory override, not a config flag.** Any
+  harness that queries over loopback must override `block_internal_ips` to
+  `false` in the parsed `DnsConfig` value while leaving the shipped file and its
+  zone data unchanged. `tests/dns_zone_startup_activation.rs` does exactly this
+  and asserts both directions.
+
+`[dns.firewall] block_zone_transfers = true` is separate and installs a ninth
+rule, `block_axfr` (opcode `0x2`). These nine rules are defined in exactly one
+place, `DnsServer::new`; there is no separate "default rules" list.
+
 ## Beta Features
 
 These features compile cleanly but have limited real-world validation or hard runtime constraints. They are **not** in the default build profile.

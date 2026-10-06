@@ -180,12 +180,12 @@ async fn query(server_port: u16, id: u16, name: &str) -> Vec<u8> {
     read_frame(&mut stream).await
 }
 
-/// A shipped example's declared zone becomes a served authoritative zone.
+/// Parse the shipped public authoritative profile, unmodified and validated.
 ///
-/// Driven from the example profile rather than a hand-built config, so the
-/// shipped file cannot drift back into advertising a zone that never loads.
-#[tokio::test]
-async fn shipped_example_zone_becomes_a_served_authoritative_zone() {
+/// Returned exactly as the file declares it. Tests that need to query over
+/// loopback must override the firewall on the returned value rather than editing
+/// the shipped file — the file is the artifact under test, so it stays untouched.
+fn shipped_public_dns_config() -> DnsConfig {
     // CARGO_MANIFEST_DIR is the repository root for the root crate.
     let path = format!(
         "{}/examples/dns/authoritative_public.toml",
@@ -193,9 +193,19 @@ async fn shipped_example_zone_becomes_a_served_authoritative_zone() {
     );
     let text = std::fs::read_to_string(&path).expect("shipped example is readable");
     // The example is a full configuration file, so `[dns]` is unwrapped first.
-    let config: DnsSectionWrapper = toml::from_str(&text).expect("shipped example parses");
-    let config = config.dns;
+    let wrapper: DnsSectionWrapper = toml::from_str(&text).expect("shipped example parses");
+    let config = wrapper.dns;
     config.validate().expect("shipped example validates");
+    config
+}
+
+/// A shipped example's declared zone becomes a served authoritative zone.
+///
+/// Driven from the example profile rather than a hand-built config, so the
+/// shipped file cannot drift back into advertising a zone that never loads.
+#[tokio::test]
+async fn shipped_example_zone_becomes_a_served_authoritative_zone() {
+    let config = shipped_public_dns_config();
 
     // A public authoritative profile blocks internal clients, and the firewall's
     // `block_internal_ips` includes `127.0.0.0/8` (see `server/mod.rs`). That is
@@ -264,6 +274,87 @@ async fn shipped_example_zone_becomes_a_served_authoritative_zone() {
     );
 
     server.shutdown_runtime();
+}
+
+/// P-2: the shipped public profile blocks loopback, and the symptom is *silence*.
+///
+/// `block_internal_ips = true` installs 8 `Subnet`/`Block` rules, two of which are
+/// `block_loopback` (`127.0.0.0/8`) and `block_ipv6_loopback` (`::1/128`). On a
+/// `Block` decision the TCP handler `continue`s **before writing anything**
+/// (`crates/synvoid-dns/src/server/query.rs`), so the client is not refused — it
+/// is left waiting. An operator sees a timeout, not a SERVFAIL. This is the
+/// operator-visible consequence the residual recorded, and the reason a doc note
+/// is the right remedy rather than a config knob.
+#[tokio::test]
+async fn the_public_profile_refuses_loopback_without_writing_a_response() {
+    let config = shipped_public_dns_config();
+
+    // Non-vacuity: both halves of this test depend on the shipped profile really
+    // enabling the firewall. If the file drifts to `false`, the "blocked"
+    // assertion below would stop testing anything.
+    assert!(
+        config.firewall.enabled,
+        "the shipped public profile must enable the DNS firewall"
+    );
+    assert!(
+        config.firewall.block_internal_ips,
+        "the shipped public profile must enable internal-client blocking, \
+         otherwise this test proves nothing"
+    );
+
+    let (mut server, port) = start_with_zones(&config).await;
+
+    // Non-vacuity, second axis: the server really did load the zone. The block
+    // below must come from the firewall, not from a server serving nothing.
+    assert!(
+        server.get_zones().contains_key("example.com"),
+        "the shipped profile's zone must activate before its firewall can be \
+         blamed for the silence, got {:?}",
+        server.get_zones().keys()
+    );
+
+    // The blocked direction: no frame arrives at all within the window.
+    let answered = tokio::time::timeout(
+        Duration::from_millis(1_500),
+        query(port, 0x2b2b, "www.example.com"),
+    )
+    .await;
+    assert!(
+        answered.is_err(),
+        "a loopback client must be dropped at firewall admission without a \
+         response; the handler writes nothing on Block, so any reply here means \
+         the internal-IP block did not apply"
+    );
+
+    server.shutdown_runtime();
+
+    // The paired direction: the *same* profile and the *same* zone data, with
+    // only an in-memory `block_internal_ips` override, answers normally. This is
+    // the pattern `docs/FEATURE_STATUS.md` documents for local verification, and
+    // it is what makes the assertion above attributable to the firewall.
+    let relaxed = DnsConfig {
+        firewall: DnsFirewallConfig {
+            block_internal_ips: false,
+            ..config.firewall
+        },
+        ..config
+    };
+    let (mut relaxed_server, relaxed_port) = start_with_zones(&relaxed).await;
+    let response = query(relaxed_port, 0x2c2c, "www.example.com").await;
+
+    let flags = u16::from_be_bytes([response[2], response[3]]);
+    assert_eq!(
+        flags & 0x000f,
+        0,
+        "the relaxed profile must answer without an error rcode, got flags {flags:#06x}"
+    );
+    let ancount = u16::from_be_bytes([response[6], response[7]]);
+    assert!(
+        ancount >= 1,
+        "the relaxed profile must answer the declared A record, ancount={ancount}"
+    );
+
+    relaxed_server.shutdown_runtime();
 }
 
 /// A zone with no records is rejected by config validation, before it can ever

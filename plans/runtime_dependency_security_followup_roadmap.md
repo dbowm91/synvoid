@@ -1,7 +1,10 @@
 # Post-Phase-35 Runtime and Dependency Security Roadmap
 
 Status: Phase 36 complete; Phase 37 complete (2026-09-17, direct runtime on
-Wasmtime 36.0.15 LTS, git patch removed); Phase 38 pending.
+Wasmtime 36.0.15 LTS, git patch removed); Phase 38 complete (closeout
+`plans/phase_38_runtime_dependency_security_closeout.md`; `deny.toml` re-audited
+2026-10-01 and carrying exactly the two sanctioned ignores, `RUSTSEC-2023-0071`
+and `RUSTSEC-2026-0235`).
 
 This roadmap follows the crate-boundary closeout in Phase 35. The next work is deliberately security- and evidence-driven rather than another decomposition pass.
 

@@ -271,10 +271,15 @@ impl DnsFirewall {
                             applied: rule.action.fails_closed_when_indeterminate(),
                         },
                     },
-                    // Phase 133 F-3: `GeoLocation::from_str` is infallible in
-                    // practice, so this arm is defensive only. It is kept
-                    // because a future validator would land here.
-                    Err(_) => RuleEvaluation::Indeterminate {
+                    // F-3: `GeoLocation::from_str` can now actually fail, so this
+                    // arm is live rather than defensive — it is the path a
+                    // mistyped geo target takes. Phase 133 built it "because a
+                    // future validator would land here"; that validator is the
+                    // parser. The parse error string is deliberately not
+                    // surfaced here: this runs per query, and the decision the
+                    // operator needs is the fail-closed/skip posture, which
+                    // `RuleIndeterminate::as_str` already names.
+                    Err(_reason) => RuleEvaluation::Indeterminate {
                         reason: RuleIndeterminate::UnparseableTarget,
                         applied: rule.action.fails_closed_when_indeterminate(),
                     },
@@ -569,14 +574,39 @@ impl std::str::FromStr for GeoLocation {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let parts: Vec<&str> = s.split(',').map(|p| p.trim()).collect();
-        if parts.is_empty() {
-            return Err("Invalid geo location format".to_string());
+
+        // F-3 (`plans/dns_geo_firewall_residual_closure.md`, Workstream A):
+        // this parser used to be infallible. `"".split(',')` always yields one
+        // element, so the `parts.is_empty()` guard below could never fire, and a
+        // spec with no country parsed into a rule that matched nothing — a typo
+        // with no diagnostic. A parser that cannot fail cannot report a typo,
+        // so a missing country is now rejected.
+        let country = parts[0];
+        if country.is_empty() {
+            return Err(
+                "Invalid geo location format: a country code is required, expected \
+                 `country[,region][,city][,asn]`"
+                    .to_string(),
+            );
         }
 
-        let asn = if parts.len() > 3 {
-            parts[3].parse::<u32>().ok()
-        } else {
-            None
+        // F-3: the ASN was parsed with `.parse::<u32>().ok()`, which *discards*
+        // the error. A typo'd or out-of-range ASN therefore produced `None` and
+        // silently broadened an ASN-scoped rule to country-only — for an `Allow`
+        // action, a silent widening of the grant.
+
+        // Phase 135 F-16 stands: an empty field is a *placeholder*, not a
+        // value, so `"RU, , , 64500"` and a trailing `"RU, , , "` must both keep
+        // parsing. Empty stays lenient; a non-empty field that is not a number
+        // is an error.
+        let asn = match parts.get(3).copied() {
+            None | Some("") => None,
+            Some(raw) => Some(raw.parse::<u32>().map_err(|_| {
+                format!(
+                    "Invalid geo location ASN `{raw}`: expected a u32 ASN number, \
+                     e.g. \"US, , , 64500\""
+                )
+            })?),
         };
 
         // Phase 135 F-16: an empty field is a *placeholder*, not a value. The
@@ -594,7 +624,7 @@ impl std::str::FromStr for GeoLocation {
         };
 
         Ok(GeoLocation {
-            country: parts[0].to_string(),
+            country: country.to_string(),
             region: optional(1),
             city: optional(2),
             asn,
@@ -623,98 +653,28 @@ impl std::str::FromStr for TimeWindow {
     }
 }
 
-pub fn create_default_firewall_rules() -> Vec<DnsFirewallRule> {
-    vec![
-        DnsFirewallRule {
-            id: "block_internal_ips".to_string(),
-            rule_type: DnsFirewallRuleType::Subnet,
-            action: DnsFirewallAction::Block,
-            target: "10.0.0.0/8".to_string(),
-            ttl: 300,
-            created_at: unix_timestamp_secs(),
-            expires_at: None,
-            enabled: true,
-        },
-        DnsFirewallRule {
-            id: "block_multicast".to_string(),
-            rule_type: DnsFirewallRuleType::Subnet,
-            action: DnsFirewallAction::Block,
-            target: "224.0.0.0/4".to_string(),
-            ttl: 300,
-            created_at: unix_timestamp_secs(),
-            expires_at: None,
-            enabled: true,
-        },
-        DnsFirewallRule {
-            id: "block_reserved_domains".to_string(),
-            rule_type: DnsFirewallRuleType::Domain,
-            action: DnsFirewallAction::Block,
-            target: "localhost".to_string(),
-            ttl: 300,
-            created_at: unix_timestamp_secs(),
-            expires_at: None,
-            enabled: true,
-        },
-        DnsFirewallRule {
-            id: "block_example_domains".to_string(),
-            rule_type: DnsFirewallRuleType::Domain,
-            action: DnsFirewallAction::Block,
-            target: "example.com".to_string(),
-            ttl: 300,
-            created_at: unix_timestamp_secs(),
-            expires_at: None,
-            enabled: true,
-        },
-        DnsFirewallRule {
-            id: "block_zone_transfer".to_string(),
-            rule_type: DnsFirewallRuleType::QueryType,
-            action: DnsFirewallAction::Block,
-            target: "0xfc".to_string(), // AXFR query type (252)
-            ttl: 300,
-            created_at: unix_timestamp_secs(),
-            expires_at: None,
-            enabled: true,
-        },
-        DnsFirewallRule {
-            id: "block_ixfr".to_string(),
-            rule_type: DnsFirewallRuleType::QueryType,
-            action: DnsFirewallAction::Block,
-            target: "0xfb".to_string(), // IXFR query type (251)
-            ttl: 300,
-            created_at: unix_timestamp_secs(),
-            expires_at: None,
-            enabled: true,
-        },
-    ]
-}
-
-pub fn create_rate_limit_rules() -> Vec<DnsFirewallRule> {
-    vec![
-        DnsFirewallRule {
-            id: "rate_limit_per_domain".to_string(),
-            rule_type: DnsFirewallRuleType::Domain,
-            action: DnsFirewallAction::RateLimit {
-                limit: 100,
-                window: Duration::from_secs(60),
-            },
-            target: "*".to_string(), // All domains
-            ttl: 60,
-            created_at: unix_timestamp_secs(),
-            expires_at: None,
-            enabled: true,
-        },
-        DnsFirewallRule {
-            id: "rate_limit_per_ip".to_string(),
-            rule_type: DnsFirewallRuleType::IpAddress,
-            action: DnsFirewallAction::RateLimit {
-                limit: 500,
-                window: Duration::from_secs(60),
-            },
-            target: "*".to_string(), // All IPs
-            ttl: 60,
-            created_at: unix_timestamp_secs(),
-            expires_at: None,
-            enabled: true,
-        },
-    ]
-}
+// F-3 / P-2 (`plans/dns_geo_firewall_residual_closure.md`, Workstream B):
+// `create_default_firewall_rules` and `create_rate_limit_rules` used to live
+// here. Both had zero callers anywhere in `src/`, `crates/`, `tests/`, or
+// `tools/`, and both described behavior the live path does not implement.
+//
+// `create_default_firewall_rules` shipped 6 rules that are *not* a stale copy of
+// the live internal-IP set. It included `block_multicast`,
+// `block_reserved_domains`, `block_example_domains`, `block_zone_transfer`, and
+// `block_ixfr` — none of which the live path installs — while omitting
+// `block_loopback`, `block_linklocal`, `block_ipv6_loopback`, `block_ipv6_ula`,
+// `block_ipv6_linklocal`, `block_private_172`, and `block_private_192`. A
+// reader who trusted it would conclude that multicast, reserved domains, and
+// IXFR are blocked in production and that loopback is not. Every one of those
+// conclusions is wrong.
+//
+// `create_rate_limit_rules` described per-domain and per-IP limiting as firewall
+// `RateLimit` rules. Production rate limiting is a separate `[dns.rrl]`
+// mechanism, not firewall rules.
+//
+// Deleting rather than correcting: a second copy of the internal-IP rule set
+// would need manual synchronisation forever and would be a subtler trap than
+// the divergent one it replaces. The live, config-driven rules are defined in
+// exactly one place — `DnsServer::new`
+// (`crates/synvoid-dns/src/server/mod.rs`) — and that stays the single source
+// of truth.
