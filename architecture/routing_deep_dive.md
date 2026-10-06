@@ -47,7 +47,7 @@ The router resolves the request to one of several **Backend Types**:
 - **Spin:** Fermyon Spin framework WASM execution.
 - **Serverless (WASM):** Execution of a WASM function.
 - **Mesh:** Routing the request through the WAF Mesh to a remote peer.
-- **QuicTunnel:** Proxying through a specialized QUIC tunnel. URL parsing is unified via `Router::parse_quictunnel_url()` at `crates/synvoid-proxy/src/router.rs:510` at both location and site levels.
+- **QuicTunnel:** Proxying through a specialized QUIC tunnel. URL parsing is unified via `Router::parse_quictunnel_url()` at `crates/synvoid-proxy/src/router.rs:531` at both location and site levels.
 
 ---
 

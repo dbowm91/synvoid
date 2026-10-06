@@ -492,10 +492,10 @@ Submodules gated on features are conditionally compiled:
 
 | Feature | Effect |
 |---------|--------|
-| `pqc-mesh` | Enables ML-DSA-44 signing for mesh messages (`MeshMlDsaSigner` usage in `MeshMessageSigner`). |
-| `post-quantum` | Enables `rustls-post-quantum` TLS provider. |
-| `verify-pq` | Runs post-quantum TLS verification at startup (`verify_post_quantum_tls()` in `cert.rs`). |
-| `mesh` | Enables `openraft` dependency for Raft consensus. |
+| ~~`pqc-mesh`~~ | **No such feature exists** in the root or `synvoid-mesh` `Cargo.toml`. ML-DSA-44 mesh signing is unconditional — `synvoid-mesh` depends on `pqc` and `mesh/ml_dsa.rs` has no `cfg(feature)` gate. Do not add a `pqc-mesh` snippet. |
+| `post-quantum` | **Marker only**, and NOT in `synvoid-mesh`. The root feature wires `synvoid-http-client/post-quantum` + `synvoid-admin/post-quantum` for **http-client/admin egress**. It does not enable a TLS provider: rustls `prefer-post-quantum` is unconditionally enabled in `synvoid-tls`/`synvoid-http-client`. |
+| `verify-pq` | Off by default; gates no request-path behavior. Its single use site is the mesh QUIC transport startup self-check `cert_manager.read().verify_post_quantum()` (`mesh/transports/quic.rs`), and `verify_post_quantum_tls()` lives in `cert.rs:110`. |
+| `mesh` | Maps to `synvoid-serverless/mesh` in `synvoid-mesh/Cargo.toml:15` — it is **not** what enables Raft. `openraft` is an unconditional dependency (comment: "always available so the crate compiles under every feature profile"). |
 
 ---
 
@@ -720,7 +720,7 @@ crates/synvoid-mesh/src/mesh/
 | Module | Relationship |
 |--------|-------------|
 | `src/proxy/` | `MeshProxy` wraps `MeshTransport` and uses it to forward requests between peers. The proxy's `BackendType` enum includes `Mesh` variant for mesh-based routing. |
-| `crates/synvoid-dns/` | The `dns` feature enables `MeshDnsRegistry` and `transport_dns.rs` for DNS over mesh. DHT stores DNS records. `DnsConfig.validate()` is called from `MainConfig::validate()`. |
+| `crates/synvoid-dns/` | DNS declares an **optional, one-way** `synvoid-mesh` edge (`mesh` feature). Since Phase 139 the DHT seam is inverted: DNS owns `DhtRecordStore` / `DhtGlobalLocator` (`crates/synvoid-dns/src/mesh_sync/dht_capability.rs`) and composition implements them in `src/worker/unified_server/mesh_dht_capability.rs`. DNS consumes advertised DNS state as **advisory only** under `architecture/distributed_state_contract.md` §3e (DHT-A1..A7) — never zone authority, never a resolution fallback. `DnsConfig.validate()` is called from `MainConfig::validate()`. Note the reverse feature `synvoid-mesh`'s empty `dns = []` does not compile and is recorded, not fixed. |
 | `src/config/` | `MeshConfig` lives here; `ConfigManager` in `crates/synvoid-config/src/lib.rs`. |
 | `src/supervisor/` | Supervisor manages `UnifiedServerWorker` which uses mesh transport for inter-node communication. |
 | `src/platform/` | Platform layer provides sandboxing, TUN device, and OS-level primitives used by mesh transport. |

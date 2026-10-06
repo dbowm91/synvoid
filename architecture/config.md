@@ -54,6 +54,7 @@ The `synvoid-config` crate (`crates/synvoid-config/`) owns configuration loading
 | **http** | `http.rs` | HTTP server settings, HTTP/3, Tokio runtime |
 | **tls** | `tls.rs` | TLS/SSL settings, ACME, client authentication |
 | **logging** | `logging.rs` | Logging exporters (Elasticsearch, Loki), request body logging |
+| **geoip** | `geoip.rs` | `GeoIpConfig` — GeoIP database path and country allow/block settings |
 
 ### Networking Modules
 
@@ -119,6 +120,7 @@ pub struct MainConfig {
     pub persistence: PersistenceConfig, // DHT persistence settings
     pub traffic_shaping: TrafficShapingConfig,
     pub security: MainSecurityConfig,   // IPC signing, security headers
+    pub geoip: GeoIpConfig,             // GeoIP database + country allow/block (Phase 138; `enabled` defaults false)
     pub static_config: Option<MainStaticConfig>,
     pub tunnel: TunnelConfig,           // WireGuard + QUIC tunnel
     pub plugins: PluginConfig,          // WASM plugin configuration
@@ -197,9 +199,9 @@ impl ConfigManager {
 
 | Enum | Location | Variants |
 |------|----------|----------|
-| `MeshNodeRole` | `mesh.rs:223` | Bitmask struct (not enum): `GLOBAL(0b010)`, `EDGE(0b001)`, `ORIGIN(0b100)`, `GLOBAL_EDGE(0b011)`, `GLOBAL_ORIGIN(0b110)`, `EDGE_ORIGIN(0b101)`, `ALL(0b111)`, `SERVERLESS_ORIGIN(0b1000)` — use `contains()` not `match` |
-| `VpnAccessLevel` | `tunnel.rs:235` | `General`, `Admin` |
-| `AcmeChallengeType` | `tls.rs:179` | `Http01`, `Dns01` |
+| `MeshNodeRole` | `mesh.rs:77` | Bitmask struct (not enum): `GLOBAL(0b010)`, `EDGE(0b001)`, `ORIGIN(0b100)`, `GLOBAL_EDGE(0b011)`, `GLOBAL_ORIGIN(0b110)`, `EDGE_ORIGIN(0b101)`, `ALL(0b111)`, `SERVERLESS_ORIGIN(0b1000)` — use `contains()` not `match` |
+| `VpnAccessLevel` | `tunnel.rs:242` | `General`, `Admin` |
+| `AcmeChallengeType` | `tls.rs:199` | `Http01`, `Dns01` |
 | `DnsMode` | `dns/mod.rs:39` | `Standalone`, `Mesh` |
 | `BandwidthLimitAction` | `traffic.rs:24` | `Block`, `Throttle` |
 
@@ -222,6 +224,14 @@ ConfigManager::new(config_dir: PathBuf) -> ConfigManager
 // Discover and load all sites from sites directory
 config_manager.discover_sites() -> Vec<(String, Result<SiteConfig, String>)>
 ```
+
+### CLI Configuration Flags
+
+| Flag | Declared | Semantics |
+|------|----------|-----------|
+| `--config-path <PATH>` | `crates/synvoid-cli/src/lib.rs:44` | The **directory** containing `main.toml` and `sites/` — NOT the TOML file. Call sites do `config_dir.join("main.toml")` (`src/supervisor/process.rs:601`, `src/supervisor/mesh.rs:67`). Defaults to CWD-relative `config`. |
+| `--configtest` | `crates/synvoid-cli/src/lib.rs:105` | Validate configuration files and exit: `MainConfig::from_file(<dir>/main.toml)`, then every `<dir>/sites/*.toml` when `sites/` exists (`src/commands/one_shot.rs:215`). A missing `main.toml` is an error; a missing `sites/` directory is not. |
+| `--rehash` | `crates/synvoid-cli/src/lib.rs:116` | Ask the running supervisor to reload configuration and propagate to workers. There is no `synvoid reload` subcommand. |
 
 ### Configuration Validation
 
@@ -660,11 +670,11 @@ pub type ConfigHandle = Arc<MainConfig>;  // Thread-safe shared config
 | Constant | Value | Location |
 |----------|-------|----------|
 | `MIN_TOKEN_LENGTH` | 32 | `admin.rs:7` |
-| `default_mesh_port` | 50051 | `mesh.rs:563` |
-| `default_tls_port` | 443 | `tls.rs:61` |
+| `default_mesh_port` | 50051 | `mesh.rs:575` |
+| `default_tls_port` | 443 | `tls.rs:77` |
 | `default_dns_port` | 53 | `dns/mod.rs:144` |
-| `default_wg_port` | 51820 | `tunnel.rs:87` |
-| `default_quic_port` | 51821 | `tunnel.rs:209` |
+| `default_wg_port` | 51820 | `tunnel.rs:93` |
+| `default_quic_port` | 51821 | `tunnel.rs:216` |
 
 ---
 

@@ -32,11 +32,13 @@ impl UpstreamPool {
 ## Health Checking
 
 ```rust
+// health.rs:11-16 — thresholds live in the config, not on the checker
 pub struct HealthChecker {
-    interval: Duration,      // Default 10s
-    timeout: Duration,       // Default 5s
-    failure_threshold: u32,  // Default 3
-    recovery_threshold: u32, // Default 2
+    pools: Arc<RwLock<Vec<Arc<UpstreamPool>>>>, // Registered pools to check
+    config: HealthCheckConfig,                  // interval 10s, timeout 5s,
+                                                 // failure_threshold 3, recovery_threshold 2
+    shutdown_tx: broadcast::Sender<()>,         // Graceful shutdown
+    client: EggfetchUpstreamClient,             // Egress lane for HTTP checks
 }
 
 pub enum HealthCheckMethod {

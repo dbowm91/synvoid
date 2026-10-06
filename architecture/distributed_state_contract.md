@@ -137,6 +137,13 @@ Raft transport notes: `RaftCommand::{Set, Delete}` are WAL-logged with `(term, i
 | DHT-A6 | Composition owns the binding. `synvoid-dns` holds `Arc<dyn DhtRecordStore>`; a concrete `synvoid-mesh` type is named only in `src/worker/unified_server/mesh_dht_capability.rs`. |
 | DHT-A7 | Writing is not authorized by this amendment. `DhtRecordStore`'s write methods exist because the provider API does, and they pass through the provider's own acceptance decision; DNS does not derive admission rules from them and does not treat a `true` as authority. |
 
+**Name collision, disambiguated.** `DhtRecordStore` names two unrelated
+things: the DNS-owned capability **trait** in
+`crates/synvoid-dns/src/mesh_sync/dht_capability.rs` (the seam this amendment
+governs), and a legacy in-memory **struct** in
+`crates/synvoid-mesh/src/mesh/dht/store.rs` (advisory storage, not a seam).
+Rules DHT-A1..A7 refer only to the trait.
+
 **Residual, not closed by this amendment.** The anycast broadcast cluster (`crates/synvoid-dns/src/anycast_sync.rs`) still names `MeshMessage`, `MeshTransport` and `MeshNodeRole` directly, and the mesh-side consumer `synvoid_mesh::dht::…DnsNodeShutdown` is gated behind `synvoid-mesh`'s `dns` feature, which does not compile. That cluster stays coupled, stays dead, and is recorded in `architecture/dns_provider_inversion_phase139_closeout.md`. The amendment above does not cover it and must not be read as covering it.
 
 ---

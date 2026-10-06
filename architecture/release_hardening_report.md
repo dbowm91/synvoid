@@ -24,6 +24,11 @@ All profile checks pass with zero errors.
 
 All 27 guard tests pass.
 
+> **Naming note:** the `security_observability_guard` suite below was
+> consolidated into `tests/security_guard.rs`; the test file header records the
+> rename. Use `cargo test --test security_guard` for that row. The counts in this
+> section are the Phase 10 historical snapshot, not a current re-measurement.
+
 | Guard | Tests | Status |
 |-------|-------|--------|
 | `root_facade_boundary_guard` | 1/1 | PASS |
@@ -42,7 +47,7 @@ All 27 guard tests pass.
 | `plugin_capability_boundary_guard` | 8/8 | PASS |
 | `plugin_signature_policy_guard` | 10/10 | PASS |
 | `docs_path_reference_guard` | 1/1 | PASS |
-| `security_observability_guard` | 22/22 | PASS |
+| `security_guard` (was `security_observability_guard`) | 22/22 | PASS |
 | `background_task_ownership_guard` | 38/38 | PASS |
 | `cli_command_dispatch_guard` | 39/39 | PASS |
 | `manual_enforcement_provenance_guard` | 12/12 | PASS |
@@ -75,7 +80,7 @@ All 27 guard tests pass.
 - [x] Threat-intel consumer actionability enforced (7 rules, `threat_intel_consumer_actionability_guard`)
 - [x] Mesh-ID blocks are admin-only (`mesh_id_boundary_guard`)
 - [x] Manual enforcement uses provenance (`manual_enforcement_provenance_guard`)
-- [x] Security observability signals present (`security_observability_guard`)
+- [x] Security observability signals present (`security_guard`; formerly `security_observability_guard`)
 
 ### Documentation
 
@@ -187,7 +192,7 @@ cargo test --test threat_intel_consumer_actionability_guard --features mesh,dns
 cargo test --test admin_mutation_response_guard
 cargo test --test plugin_capability_boundary_guard
 cargo test --test docs_path_reference_guard
-cargo test --test security_observability_guard
+cargo test --test security_guard
 cargo test --test admin_mutation_blocklist
 cargo test --test admin_auth_boundary
 cargo test --test mesh_admin_edge_cases

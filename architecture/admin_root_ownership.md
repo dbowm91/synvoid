@@ -36,6 +36,7 @@ typed handles.
 | Submodule | Classification | Owner | Notes |
 |-----------|---------------|-------|-------|
 | `mod.rs` (router, CORS, SPA fallback, asset resolution) | HTTP transport/router composition | root app | Route registration, middleware ordering, `resolve_admin_ui_assets()`; feature-gated mesh/DNS/ICMP branches |
+| `routes.rs` (Phase 04 family builders) | HTTP transport/router composition | root app | Eleven `*_routes()` families (`observability`, `stats`, `sites_upstreams`, `config`, `infra_probes_threat_rules`, `system_process`, `honeypot` always available, plus feature-gated `dns`, `mesh_config`, `icmp`, `mesh`) merged by `build_router_from_state()`; owns the authoritative path+method registration list |
 | `state.rs` (`AdminState`, session/CSRF stores, metrics/request-log stores) | transport composition + session container | root app | Explicit typed handles (`MetricsState`, `WafTrackingState`, `SecurityState`, `MeshState`, `HoneypotState`, `ProcessState`, `PluginsState`); implements `synvoid_admin::handlers::state::AdminStateProvider` so crate handlers consume it through a narrow trait |
 | `audit.rs` (`AuditState`, `ConfigVersionManager`, `log_audit_event` bridge) | runtime service adapter + DTO | root app | Mutation/audit DTOs canonical in `synvoid-core::admin_mutation`; this file adapts them to the file+memory audit log |
 | `auth.rs` | compatibility facade | `synvoid-admin` | `pub use synvoid_admin::auth::{hash_admin_token, ...}` — token cryptography lives in the crate |
@@ -44,7 +45,7 @@ typed handles.
 | `middleware.rs`, `middleware/yara_rate_limit.rs` | transport middleware | root app | Client-IP extraction, auth/CSRF, security headers, per-op YARA limits |
 | `metrics.rs`, `metrics_events.rs`, `prometheus_exporter.rs` | transport observability | root app | Formatting/export; collection stays in `synvoid-metrics` |
 | `openapi.rs` | DTO/schema composition | root app | OpenAPI document over the root route tree |
-| `ws/` (broadcaster, handlers) | transport | root app | Session-authenticated upgrade; no blanket middleware |
+| `ws/` (`broadcaster.rs`, `mod.rs`) | transport | root app | Canonical path constants (`WS_METRICS_PATH`, `WS_LOGS_PATH`) + upgrade handlers; session/bearer authenticated per connection, no blanket middleware |
 | `alerting/` (`AlertManager`) | runtime service adapter | root app | Owned via `AdminState.process.alert_manager`; SSRF-safe delivery |
 
 ## B. Admin handler inventory (`src/admin/handlers/`)

@@ -51,6 +51,10 @@ cargo tree -i eggfetch-core --workspace   # no such package (retained http-clien
   `pqc`, `admin-ui`, 2 examples, `fuzz`, `tools/{xtask,synvoid-repo-guards}`).
 - `synvoid-*` under `crates/`: 43 (Phase 33 adds `synvoid-rate-limit`; no
   crate created/removed in Phase 35).
+  > Superseded count (re-measured 2026-10-06): **53 members = 47 `synvoid-*` +
+  > 6 non-`synvoid-*`** (root app `synvoid`, `pqc`, `admin-ui`, two examples,
+  > `xtask`; note `synvoid-fuzz` and `synvoid-repo-guards` are themselves
+  > `synvoid-*` packages, so the 51/43/8 split above is stale).
 - LOC recomputed via `wc -l` over each crate `src/` (see
   `architecture/crate_granularity_audit.md` Phase 35 deltas for the full table;
   notable: `synvoid-platform` 5408, `synvoid-rate-limit` 732,

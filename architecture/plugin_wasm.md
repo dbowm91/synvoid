@@ -585,12 +585,19 @@ type HandleRequestFn = TypedFunc<(i32, i32, i32, i32, i32, i32, i32, i32, i32, i
 
 ### Header Serialization Format
 
-Headers are serialized to a compact binary format (`wasm_runtime.rs:1238-1256`):
+Headers are serialized to a compact binary format by the single authoritative
+encoder `abi_frame::serialize_headers_canonical()`
+(`crates/synvoid-plugin-runtime/src/abi_frame.rs`). All lengths are
+little-endian:
 
 ```
 [header_count: u16]
 [for each header: [name_len: u16][name bytes][value_len: u16][value bytes]]
 ```
+
+The internal `RequestContext::serialize_headers` helper is a thin delegate that
+builds a `RequestFramePolicy` and calls `serialize_headers_canonical`; it is not
+a second encoder, and ad-hoc encoding is forbidden.
 
 ---
 
@@ -777,20 +784,30 @@ The plugin module has minimal feature gating. Most functionality is always avail
 
 ### `mesh` Feature Gate
 
-Only three locations use `#[cfg(feature = "mesh")]`:
+The three mesh host functions are always linked, but they resolve their backing
+capability through a provider seam (`crates/synvoid-plugin-runtime/src/mesh_callbacks.rs`):
+the `MeshDhtProvider` trait (`get_record`, `check_threat`, `store_event`) is
+implemented by the root crate and injected once at startup via `set_mesh_provider`
+(`OnceLock`). `wasm_runtime.rs` contains no `cfg(feature = "mesh")` gate on these
+functions; the seam is provider presence, not a compile-time branch.
 
-| Location | Purpose |
-|----------|---------|
-| `mod.rs:66` | `load_wasm_plugin` tries mesh WASM dist manager first |
-| `wasm_runtime.rs:874` | `mesh_query_dht` actual DHT lookup |
-| `wasm_runtime.rs:936` | `mesh_check_threat` actual threat lookup |
-| `wasm_runtime.rs:998` | `mesh_emit_event` actual event publishing |
+| Host function | Location | Backing capability |
+|---------------|----------|--------------------|
+| `mesh_query_dht` | `wasm_runtime.rs` (`linker.func_wrap("env", "mesh_query_dht", …)`) | `MeshDhtProvider::get_record` |
+| `mesh_check_threat` | `wasm_runtime.rs` (`linker.func_wrap("env", "mesh_check_threat", …)`) | `MeshDhtProvider::check_threat` |
+| `mesh_emit_event` | `wasm_runtime.rs` (`linker.func_wrap("env", "mesh_emit_event", …)`) | `MeshDhtProvider::store_event` |
 
-When `mesh` is disabled:
+`load_wasm_plugin` (root `src/plugin/mod.rs`) additionally consults the mesh WASM
+distribution manager first; it is separately `cfg`-gated in the root crate.
+
+When no mesh provider is registered:
 - `load_wasm_plugin` skips mesh lookup, loads directly from file
 - `mesh_query_dht` returns 0 (empty/not found)
 - `mesh_check_threat` returns 0 (clean)
 - `mesh_emit_event` does nothing
+
+All three additionally require the plugin's declared mesh sub-capability; without
+it the call is denied (`CapabilityDenied`) regardless of provider presence.
 
 ### WASM Support
 
@@ -798,7 +815,7 @@ WASM plugin support is enabled by default (no feature gate). The `wasmtime` depe
 
 ```toml
 # crates/synvoid-plugin-runtime/Cargo.toml (Phase 37: Wasmtime 36 LTS, crates.io, no git patch)
-wasmtime = { version = "36.0.15", features = ["component-model"] }
+wasmtime = { version = "36.0.16", features = ["component-model"] }
 ```
 
 ### Native Extension Loading (Phase 28 capability isolation)

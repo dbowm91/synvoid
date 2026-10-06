@@ -101,12 +101,17 @@ and `wireguard: Option<WireGuardClientTransportConfig>` (private key, peer publi
 allowed IPs — convertible via `to_wireguard_config()`). `to_quic_config()` (`:191`) maps to the
 tunnel QUIC config (BBR, 300s idle timeout, 16MB stream window).
 
-### CLI and Dashboard (`src/bin/synvoid-vpn.rs`, `src/bin/server.rs`)
+### CLI and Dashboard (workspace-root `src/bin/synvoid-vpn.rs`, `src/bin/server.rs`)
 
-- `synvoid-vpn` subcommands: `connect` (server/port/client-id/token, `--tcp`/`--udp` `local:remote`
+Both binaries live at the **workspace root** (`Cargo.toml:16-23`), not inside `crates/synvoid-vpn-client/`;
+the crate itself ships only the library modules listed above.
+
+- `synvoid-vpn` (`src/bin/synvoid-vpn.rs`) subcommands: `connect` (server/port/client-id/token, `--tcp`/`--udp` `local:remote`
   mappings parsed by `parse_port_mapping`, `--reconnect`, `--max-retries`), `connect-config`,
   `generate-config` (writes a TOML template), `serve` (dashboard mode).
-- `server` binary: axum dashboard with `GET /api/status` (connected, server, transport, mappings,
-  byte/packet counters, duration), `POST /api/connect`, `POST /api/disconnect`,
-  `POST /api/mapping/{add,remove}`. API-key auth uses constant-time comparison
-  (`subtle::ConstantTimeEq` in `check_auth`).
+- `server` binary (`src/bin/server.rs`): **reserved, not a primary entry point.** Its own header states
+  "reserved for future standalone VPN client binary" (`src/bin/server.rs:2`). It implements an axum
+  dashboard with `GET /api/status` (connected, server, transport, mappings, byte/packet counters,
+  duration), `POST /api/connect`, `POST /api/disconnect`, `POST /api/mapping/add`,
+  `POST /api/mapping/remove` (`:654-659`). API-key auth uses constant-time comparison
+  (`subtle::ConstantTimeEq` in `check_auth`, `:105`).

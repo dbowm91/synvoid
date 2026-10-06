@@ -41,6 +41,10 @@ No new plan-status lint framework was added (no suitable seam existed).
   `deny.toml` comments corrected accordingly.
 - `.cargo/audit.toml` and `deny.toml` advisory sets synchronized (16/16 both
   directions; guard now checks both ways).
+  > Superseded: 16/16 was the 2026-09-13 state. Both files now carry exactly
+  > **two** ignores (`RUSTSEC-2023-0071`, `RUSTSEC-2026-0235`) and remain
+  > synchronized 2/2; the bidirectional guard is unchanged. See
+  > `architecture/dependency_security_baseline_phase25.md`.
 - Upstream blockers unchanged (no silent extensions): wasmtime ≥46.0.3 blocked
   by the `bumpalo` =3.19.0 vs ^3.20.2 conflict; yara-x still on wasmtime 40.x;
   rkyv 0.7 via parcel_sourcemap. Next re-audit: 2026-10-01.

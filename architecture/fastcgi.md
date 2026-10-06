@@ -7,9 +7,16 @@ The FastCGI module (`crates/synvoid-app-handlers/src/fastcgi/`, re-exported by t
 **Core Responsibilities:**
 - FastCGI protocol implementation
 - Connection pooling with health checks
-- Streaming response support
+- Streaming response support (opt-in, see §5)
 - Drain and reload support
 - Global pool registry
+
+> **Feature gate:** the streaming client (`fastcgi/streaming.rs`) is compiled only under the additive,
+> opt-in `fastcgi_streaming` feature (`crates/synvoid-app-handlers/Cargo.toml:37`, declared as
+> `fastcgi_streaming = ["synvoid-app-handlers/fastcgi_streaming"]` at `Cargo.toml:47`). It is **not**
+> part of the default feature set, and `pub mod streaming;` is itself gated by
+> `#[cfg(feature = "fastcgi_streaming")]` (`crates/synvoid-app-handlers/src/fastcgi/mod.rs:2-3`).
+> Everything else in this document is always compiled.
 
 ---
 
@@ -39,8 +46,8 @@ pub struct FastCgiPoolConfig {
     pub socket: String,
 }
 
-pub struct StreamingFastCgiClient { /* FCGI record-level streaming */ }
-pub struct FastCgiResponseStream { /* futures::Stream impl */ }
+pub struct StreamingFastCgiClient { /* FCGI record-level streaming; requires `fastcgi_streaming` */ }
+pub struct FastCgiResponseStream { /* futures::Stream impl; requires `fastcgi_streaming` */ }
 
 pub struct FastCgiPoolStatus {
     pub total_connections: usize,
@@ -60,7 +67,7 @@ pub struct FastCgiPoolStatus {
 | `close_all_pools()` | Close all pools |
 | `drain_and_reload_pool(socket, timeout).await` | Drain with timeout |
 | `FastCgiPool::execute()` | Execute request |
-| `execute_stream().await` | Streaming execution |
+| `execute_stream().await` | Streaming execution (requires `fastcgi_streaming`) |
 | `drain_with_timeout().await` | Drain pool |
 | `parse_socket_address(socket)` | Unix/TCP detection |
 
@@ -80,5 +87,5 @@ pub struct FastCgiPoolStatus {
 - **Protocol**: Full FastCGI record framing
 - **Connection Pool**: Semaphore-based concurrency control
 - **Health Checks**: Periodic connection health validation (socket-format-only — checks TCP/Unix socket connectivity, not FastCGI protocol health; returns `false` on non-Unix platforms for Unix sockets)
-- **Streaming**: Custom FCGI record-level streaming (not HTTP chunked)
+- **Streaming**: Custom FCGI record-level streaming (not HTTP chunked), available only under the opt-in `fastcgi_streaming` feature
 - **Global Registry**: Singleton pool manager via `LazyLock`

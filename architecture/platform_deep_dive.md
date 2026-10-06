@@ -40,13 +40,21 @@ pub enum Platform {
 platform().supports_socket_fd_passing()  // Unix only
 platform().supports_signals()            // Unix only
 platform().supports_sandbox()            // Linux/FreeBSD/OpenBSD only
-platform().supports_reuse_port()         // Linux/Macos/FreeBSD
+platform().supports_reuse_port()         // Linux, LinuxMusl, macOS, FreeBSD only (lib.rs:141-146)
 platform().supports_ebpf()               // Linux only
 platform().supports_nftables()           // Linux only
 platform().supports_pf()                 // macOS/FreeBSD/OpenBSD/NetBSD
 platform().supports_tun()                // Most platforms
 platform().supports_wireguard_kernel()   // Linux only
 ```
+
+> **Two distinct reuse-port probes — do not conflate them.** `Platform::supports_reuse_port()`
+> (`lib.rs:141-146`) is the runtime capability query and returns `true` for **4** `Platform`
+> variants: `Linux`, `LinuxMusl`, `Macos`, `FreeBSD`. Separately, `socket_bind.rs` has a private
+> compile-time `reuse_port_supported()` whose `cfg(target_os = ...)` list spans **9** targets
+> (linux, android, macos, freebsd, netbsd, openbsd, dragonfly, illumos, solaris). The two lists
+> genuinely differ — OpenBSD/NetBSD/DragonFly/illumos/solaris are in the `cfg` set but not the
+> `Platform` match. Cite the one you actually mean.
 
 ### Key Traits
 
@@ -66,22 +74,26 @@ platform().supports_wireguard_kernel()   // Linux only
 | Platform | Backend | Key Capabilities |
 |---------|---------|-----------------|
 | Linux (5.13+) | **Landlock** | Read/write path allowlists, filesystem restrictions |
-| FreeBSD | **Capsicum** | FD rights limiting, process limits |
-| OpenBSD | **Pledge + Unveil** | Promise-based syscall filtering, path permissions |
+| FreeBSD | **Capsicum** | FD rights limiting (capability mode, no path allowlists); `network_restrictions` and `child_process_restrictions` true; **no numeric process limits** |
+| OpenBSD | **Pledge + Unveil** | Promise-based syscall filtering, unveil for paths |
 | macOS | **Seatbelt** (experimental, deprecated `sandbox_init`) | SBPL Basic allow-default / Strict deny-default; feature + runtime probe; native child-process tests |
-| Windows | **Job Objects** (limited) | Process memory limits only; DACL touches are hardening not allowlists; DEP/ASLR mitigations |
+| Windows | **Job Objects** (limited) | Process memory limits only; **no DACL mutation** (host-global ACL changes were removed — `sandbox.rs:32`); DEP/ASLR structures |
+
+These rows match the authoritative matrix in `architecture/platform.md` §2.6 and the backend `capabilities()` values in `crates/synvoid-platform/src/sandbox.rs`. `process_limits` means numeric resource bounds, not generic syscall filtering, so Capsicum reports `false`.
 
 **Note:** Seatbelt is an opt-in experimental backend (deprecated `sandbox_init`, not App Sandbox entitlements). No `supports_seatbelt()` query — use per-backend `is_supported()` (feature + `dlsym` probe). `Platform::supports_sandbox()` is a coarse Linux/BSD gate only. Linux is the production recommendation for strict isolation.
 
 ---
 
-## 2. Process Module (`src/process/`)
+## 2. Process Module (`crates/synvoid-ipc/src/` canonical; `src/process/` is a pure re-export facade)
 
 ### Purpose
 
-IPC primitives, process management, socket FD passing, message framing, worker lifecycle, and signed communication.
+IPC primitives, process management, message framing, worker lifecycle, and signed communication. Socket FD passing itself is **not** owned here — the `SocketFDPassing` trait and its backends live in `crates/synvoid-platform/src/socket.rs`, `unix.rs`, and `windows_impl.rs`; `synvoid-ipc` re-exports the platform capability queries (`is_socket_fd_passing_supported`, `platform`, `Platform`) rather than reimplementing them.
 
-### Key Files
+> **Note:** `src/process/mod.rs` is 6 lines of `pub use synvoid_ipc::*;` plus a doc comment. It contains no implementations. New code must import `synvoid_ipc` directly.
+
+### Key Files (`crates/synvoid-ipc/src/`)
 
 | File | Purpose |
 |------|---------|
@@ -91,7 +103,7 @@ IPC primitives, process management, socket FD passing, message framing, worker l
 | `ipc_transport.rs` | Async IPC transport (`IpcStream`, `IpcListener`, `IpcEndpoint`) |
 | `ipc_pool.rs` | Connection pooling per endpoint with statistics |
 | `ipc_rate_limit.rs` | Token bucket rate limiting (global + per-worker) |
-| `socket_fd.rs` | Unix FD passing via `SCM_Rights`, `SocketHolder` for batch handoff |
+| `socket_fd.rs` | **Does not exist** — FD passing is owned by `synvoid-platform` (`socket.rs`, `unix.rs`, `windows_impl.rs`); this crate only re-exports the platform capability queries |
 | `manager.rs` | `ProcessManager` - spawn/monitor/restart workers |
 | `worker.rs` | Worker process structs (`BaseWorkerProcess`, `WorkerProcess`, `StaticWorkerProcess` / `CpuWorkerProcess`, `UnifiedServerWorkerProcess`) |
 | `pidfile.rs` | PID file management, supervisor lock file |
@@ -130,7 +142,7 @@ MAX_MESSAGE_SIZE: 1 MiB
 ```
 
 **Unix IPC Transport Note:**
-The `UnixIpcStream` (`src/platform/unix.rs`) provides an explicit IPC transport implementation for Unix domain sockets. It wraps raw socket operations with the framing protocol and provides:
+The `UnixIpcStream` (`crates/synvoid-platform/src/unix.rs:279`) provides an explicit IPC transport implementation for Unix domain sockets. It wraps raw socket operations with the framing protocol and provides:
 - `send()` / `recv()` for message-based communication
 - `send_vectored()` / `recv_vectored()` for scatter-gather I/O
 - `peer_pid()` for peer process identification (see limitations above)
@@ -163,10 +175,12 @@ On Unix platforms, `peer_pid()` can be used to detect the PID of the connected p
 
 ### Socket FD Passing (Unix)
 
-- Uses `SCM_Rights` control messages over Unix domain sockets
-- `SocketFDPassing::send_fds()` / `recv_fds()` 
-- `MAX_FDS_PER_MESSAGE`: 254 (Linux kernel limit)
-- `SocketHolder` batches multiple sockets for handoff
+Owned by `synvoid-platform`, not by `synvoid-ipc`:
+
+- `crates/synvoid-platform/src/socket.rs:248` — `SocketFDPassing` trait with `send_sockets(&[Self::Handle])` / `recv_sockets(max_count)`
+- `crates/synvoid-platform/src/unix.rs` — `UnixSocketFDPassing` / `UnixSocketHandle`; `SCM_Rights` control messages over Unix domain sockets via `sendmsg` (`unix.rs:106`)
+- `MAX_FDS_PER_MESSAGE`: 254 (Linux kernel limit; `unix.rs:16`)
+- `SocketHolder` does not exist; batching is done by the caller passing a slice of handles
 
 ---
 

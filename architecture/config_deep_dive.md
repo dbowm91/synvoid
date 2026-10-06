@@ -364,22 +364,26 @@ upstream.default = "http://127.0.0.1:8000"
 
 **Via CLI:**
 ```bash
-synvoid reload --site example.com    # Reload single site
-synvoid reload --all                  # Reload all sites
+synvoid --rehash                     # Ask the supervisor to reload config and propagate to workers
 ```
+
+There is no `synvoid reload` subcommand; `--rehash` (declared in
+`crates/synvoid-cli/src/lib.rs`) is the only CLI-side configuration reload
+entry point. There are also no per-site admin reload endpoints.
 
 **Via Admin API:**
 ```bash
-# Reload single site
+# Reload configuration (the only reload endpoint)
 curl -X POST -H "Authorization: Bearer <token>" \
-  http://127.0.0.1:8081/api/sites/example.com/reload
-
-# Reload all sites
-curl -X POST -H "Authorization: Bearer <token>" \
-  http://127.0.0.1:8081/api/sites/reload-all
+  http://127.0.0.1:8081/config/reload
 ```
 
-**Hot reload behavior:**
+`POST /config/reload` is registered in `src/admin/routes.rs:116` and handled
+by `handlers::config::reload_config`. On mesh builds it **refuses** when
+`[mesh]` is enabled, returning a typed `AdminMutationResult` explaining that
+mesh, YARA, threat-intel, and honeypot changes require a full worker restart.
+
+**Hot reload behavior (library level):**
 - `reload_site()` looks up the source file path via `site_filenames` HashMap
 - File is re-parsed and validated
 - Only the specified site's config is replaced
@@ -391,6 +395,26 @@ curl -X POST -H "Authorization: Bearer <token>" \
 5. **Tiered Buffer Pool**: Multi-level caching (TLS → Shard Arena → Fresh Allocation) with memory limits.
 
 6. **Sharded Concurrency**: Buffer pool uses 8 shards to reduce lock contention across threads.
+
+### Config Path Selection
+
+```bash
+synvoid --config-path /etc/synvoid            # directory, NOT the TOML file
+synvoid --config-path /etc/synvoid --configtest
+```
+
+`--config-path` (`crates/synvoid-cli/src/lib.rs:44`) names the **directory**
+holding `main.toml` and `sites/`. Call sites join it: `config_dir.join("main.toml")`
+(`src/supervisor/process.rs:601`, `src/supervisor/mesh.rs:67`,
+`src/commands/one_shot.rs:217`). Passing the TOML file itself makes the process
+look for `<file>/main.toml`.
+
+`--configtest` (`crates/synvoid-cli/src/lib.rs:105`, help text "Validate config
+files and exit") validates that directory: `MainConfig::from_file(<dir>/main.toml)`
+first, then every `<dir>/sites/*.toml` when `sites/` exists
+(`src/commands/one_shot.rs:215-256`). With no `--config-path` it defaults to the
+CWD-relative `./config/`. A missing `main.toml` is an error; a missing `sites/`
+directory is not.
 
 ---
 

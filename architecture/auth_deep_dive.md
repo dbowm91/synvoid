@@ -25,9 +25,17 @@ login audit is bounded (`MAX_LOGIN_LOGS = 1000`).
 
 ### Token Management
 
-- **Storage**: Tokens stored as bcrypt hashes (default cost via `DEFAULT_COST`)
+- **Storage**: bcrypt (`PASSWORD_BCRYPT_COST` = 12) applies to **user passwords**
+  (`User.password_hash`), not to session tokens. `AuthStore.sessions` is a plain
+  `HashMap<String, Session>` holding session records verbatim, keyed by session
+  ID; the persisted store is protected by its `0600`/`0700` file permissions
+  rather than by hashing.
 - **Comparison**: Constant-time via `subtle::ConstantTimeEq`
-- **Generation**: Cryptographically random 32-byte tokens
+- **Generation**: `Uuid::new_v4().to_string()` for both the session ID and the
+  CSRF token (`crates/synvoid-auth/src/lib.rs`) — i.e. a random v4 UUID
+  (122 bits of entropy) rendered as a 36-character hyphenated string, **not** a
+  32-byte random token. All session-ID and CSRF-token creation sites use this
+  one mechanism, including session refresh and rotation.
 
 ### Session Management
 
@@ -46,6 +54,29 @@ pub struct Session {
 
 Sessions are stored in-memory with TTL-based expiration.
 
+### Session Cookie Flags
+
+The browser session cookie is emitted by the admin handler
+(`src/admin/handlers/auth.rs`), not by `synvoid-auth`:
+
+```rust
+format!("{}={}; Path=/; HttpOnly; SameSite=Strict; Max-Age=3600", SESSION_COOKIE_NAME, session_id)
+// then, only if state.secure_cookie:
+format!("{}; Secure", cookie)
+```
+
+- **Name**: `synvoid_session` (`SESSION_COOKIE_NAME`)
+- **`HttpOnly`**: always set
+- **`Path`**: `/`
+- **`SameSite`**: `Strict`
+- **`Max-Age`**: `3600`
+- **`Secure`**: **conditional**, appended only when `AdminState::secure_cookie`
+  is true. It is populated from `MainConfig.admin.secure_cookie`
+  (`src/admin/mod.rs`) and defaults to true, so it is operator-settable and can
+  be turned off.
+- The CSRF token is returned in the `X-CSRF-Token` response header; no
+  separate CSRF cookie is set by the admin login handler.
+
 ## Brute-Force Protection
 
 ### Rate Limiting
@@ -55,14 +86,15 @@ The `AuthManager` (`crates/synvoid-auth/src/lib.rs`) handles brute-force protect
 - **Max failed attempts**: Configurable (production default 3, see `assemble_auth_manager` in `src/waf/assembly.rs`)
 - **Lockout duration**: Configurable (default 300 seconds / 5 minutes)
 - **Min password length**: 8 characters
-- Per-IP lockout via `max_failed_attempts` and `lockout_duration_secs`
+- Per-account lockout via `max_failed_attempts` and `lockout_duration_secs`
+  (state lives on the `User` record as `failed_attempts` / `locked_until`, not per-IP)
 
 ### Lockout Behavior
 
-1. First 3 failed attempts within 5 minutes → lockout (production default)
-2. Lockout duration: 5 minutes from first failure
-3. Successful attempt resets counter
-4. Lockout applies per-IP
+1. First 3 failed attempts → lockout (production default)
+2. Lockout duration: 5 minutes, measured from the failure that reaches the threshold
+3. Successful attempt resets counter and lock
+4. Lockout applies per account (username), not per IP
 
 ## CSRF Protection
 
@@ -76,7 +108,7 @@ The `AuthManager` (`crates/synvoid-auth/src/lib.rs`) handles brute-force protect
 ### Validation
 
 ```rust
-fn validate_csrf_token(session: &Session, provided_token: &str) -> bool {
+async fn validate_csrf_token(&self, session_id: &str, csrf_token: &str) -> bool {
     let expected = session.csrf_token.as_bytes();
     let provided = provided_token.as_bytes();
     
@@ -111,7 +143,7 @@ For programmatic access (CLI, mesh agents), the admin API supports token-based a
 ### Password Policy
 
 - Minimum 8 characters (configurable via `min_password_length`)
-- Configurable via `AdminConfig.password_policy`
+- Not operator-configurable; the constant is private to `synvoid-auth`
 
 ## Integration Points
 

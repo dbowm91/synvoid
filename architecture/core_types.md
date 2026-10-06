@@ -13,9 +13,11 @@ It is the most-depended-on domain crate after `synvoid-config` (13 direct depend
 | `admin_mutation` | `AdminMutationResult`, `AdminMutationAuthority` — typed results for all mutating admin endpoints; compat paths use `CompatibilityLegacy` |
 | `block_store` | Shared block-store types: `BlockProvenanceKind`, provenance records consumed by `synvoid-block-store` |
 | `drain` | Drain-state primitives shared between supervisor and workers |
+| `enforcement` | Canonical request-enforcement decision contract: `EnforcementClass`, `EnforcementSource`, `EnforcementReason`, `EnforcementCandidate`, `reduce()` / `reduce_all()` |
 | `error` | Common error type |
 | `ids` | Identifier types (site ID, worker ID) |
 | `metrics` | Metric type contracts shared across crates |
+| `mitigation` | `MitigationProvider` trait — application-neutral `block_ip` / `unblock_ip` / `name` contract for IP mitigation providers |
 | `net` | Network address/parsing helpers |
 | `request` | Minimal request-context types for trait signatures |
 | `routing` | Routing types shared by proxy/router consumers |
@@ -29,6 +31,8 @@ It is the most-depended-on domain crate after `synvoid-config` (13 direct depend
 - **Trait payload types**: Narrow traits in `synvoid-waf::traits` and composition roots exchange these types across crate boundaries.
 - **Admin authority**: `admin_mutation.rs` (~500 lines) is the authority model referenced by the guard-enforced rule "mutating endpoints return typed `AdminMutationResult`" (see [`admin_control_plane_authority.md`](./admin_control_plane_authority.md)).
 - **Provenance**: `BlockProvenanceKind` (`LegacyUnknown` only for compat/tests/mocks) lives here so both WAF-side traits and the block store agree on provenance semantics (see [`blocklist_provenance_preservation.md`](./blocklist_provenance_preservation.md)).
+- **Enforcement decision**: `enforcement.rs` is the single shared vocabulary in which independent detectors compose into one deterministic request disposition (see [`enforcement_decision_contract.md`](./enforcement_decision_contract.md)).
+- **Mitigation**: `mitigation.rs` holds only the narrow `MitigationProvider` trait — no concrete provider type or I/O implementation.
 - **Time**: All u64 Unix timestamps should come from here or `synvoid_utils::ip_utils` — never hand-rolled `SystemTime` math.
 
 ## 4. Boundaries

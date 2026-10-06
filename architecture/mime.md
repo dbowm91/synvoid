@@ -65,6 +65,9 @@ static MIME_REGISTRY: LazyLock<RwLock<MimeRegistry>> = LazyLock::new(|| {
 | `detect_from_bytes_with_fallback(data, fallback_ext)` | Detection with fallback |
 | `init_mimes_from_file(path)` | Load from nginx-format file |
 | `reload_mimes_from_file(path)` | Reload from file |
+| `reload_mimes_from_path(path: Option<&Path>)` | Reload only when a path is supplied |
+| `global_registry()` | Borrow the global `&'static RwLock<MimeRegistry>` |
+| `MimeTypeInfo::primary_extension()` | First extension, if any |
 
 ---
 

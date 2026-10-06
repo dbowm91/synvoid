@@ -10,11 +10,14 @@ This document covers SynVoid's DNS server with DNSSEC support, tunnel protocols 
 
 ### Overview
 
-SynVoid's DNS module provides an **authoritative DNS server** with DNSSEC signing, recursive resolver capabilities, and support for encrypted DNS protocols (DoT, DoH, DoQ). Dynamic updates (RFC 2136), zone transfers (AXFR/IXFR), and mesh-based anycast have handler stubs and config fields but are **deferred** (not wired to runtime).
+SynVoid's DNS module provides an **authoritative DNS server** with DNSSEC signing, recursive resolver capabilities, and support for encrypted DNS protocols (DoT, DoH, DoQ). Dynamic updates (RFC 2136), zone transfers (AXFR/IXFR), and mesh-based anycast have real handler implementations and config fields but are **deferred**: `DnsServer::new` hardcodes `update_handler` / `notify_handler` / `zone_transfer` to `None`, so those code paths answer NOTIMP. Activation is not merely inert — `DnsConfig::validate()` **rejects** those fields with a typed `DnsConfigError::Unsupported { path, reason }` (Phase 45), so an operator cannot enable a feature that does nothing. Zone *activation* is the exception: `[dns.zones]` is genuinely loaded at startup (Phase 132).
 
 ### Feature-Gated
 
-The DNS module is gated by the `dns` feature in `Cargo.toml`.
+`synvoid-dns` itself declares only two features: `mesh` (the optional
+`synvoid-mesh` edge) and `hsm` (the opt-in PKCS#11 path via
+`synvoid-dnssec-keystore/pkcs11`). `default = []`. The `dns` feature that gates
+this module is a **root-crate** feature (`dns = [..., "synvoid-dns", "synvoid-dns/mesh", ...]`).
 
 ### Key Files
 
@@ -88,14 +91,17 @@ Production-safe transport handling with fail-fast startup, enforced limits, and 
 - EDNS UDP payload size (default 512) controls truncation threshold; responses exceeding it get TC bit set.
 - Structured tracing fields (`transport`, `client`, `response_len`) on all UDP/TCP paths.
 
-**TCP Lifecycle**:
-- **One-query-per-connection** (RFC 7766 §4): `handle_tcp_query` reads one query via 2-byte length prefix, processes it, and returns. Connection closes after response.
+**TCP Lifecycle** (Phase 45, RFC 7766 §4 connection reuse):
+- **Persistent sequential**, not one-query-per-connection: `handle_tcp_query` runs a bounded loop over length-prefixed messages on one stream, one outstanding query at a time (**no pipelining**).
+- Bounds: pre-allocation frame cap (`max_query_size`, enforced *before* allocating the buffer), idle timeout (`max_tcp_idle_time_secs`), per-query body timeout (`max_tcp_query_time_secs`), and `MAX_TCP_QUERIES_PER_CONNECTION` = 1000 (`limits.rs`). The permit is held for the full connection lifetime and the loop drains gracefully at a query boundary.
+- Zero-length and oversize frames fail closed (close). EOF or idle ends `Ok`.
 - **Exception**: AXFR/IXFR use multi-message chunking (multiple queries over one connection).
+- DoT (`dot.rs`) shares the same bounded lifecycle after its TLS handshake. Recursive TCP (`recursive.rs::handle_tcp_connection`) is still one-query-per-connection.
 - Connection count guarded by `ConnectionLimits` RAII guard for entire connection lifetime.
 
 **Transport Response-Size Limits**:
 - **UDP**: Truncation via EDNS buffer size in `build_response()`. Responses exceeding `udp_payload_size` get TC flag + question-only fallback.
-- **TCP**: `validate_response_size()` enforced (not advisory). Responses exceeding `max_response_size` (default 65535) return SERVFAIL and close connection.
+- **TCP**: `validate_response_size()` enforced (not advisory). Responses exceeding `max_response_size` (default 65535) return SERVFAIL with the question echoed, RA=0, AD=0, RD echoed, RCODE=2; the SERVFAIL itself is validated to fit within the hard limit, and the connection closes.
 - AXFR/IXFR responses use chunked encoding to stay within limits.
 
 **Shutdown and Background Tasks**:
@@ -140,7 +146,7 @@ Production-safe transport handling with fail-fast startup, enforced limits, and 
 
 **Key Management** (`synvoid-dnssec-keystore`; Phase 30 extraction, see `dnssec_keystore.md`):
 - KSK (Key Signing Key) / ZSK (Zone Signing Key) separation behind opaque `SealedSigningKey` handles
-- Automatic key rotation with configurable intervals (KSK: 30d, ZSK: 7d)
+- Automatic key rotation via `DnssecKeystore::check_and_rotate(KeyRotationConfig)`. The keystore default is **KSK 30d / ZSK 7d** (grace period 2d, key expiration 365d); each threshold is reduced by the grace period before the age comparison. The persisted `dns.dnssec.rollover_interval_days` field defaults to 30 and feeds this config — there is no separate persisted ZSK interval field.
 - HSM support via `HsmManager` (PKCS#11 backend opt-in via `hsm`/`dns-hsm`, fail-closed, no silent fallback)
 
 **Trust Anchors** (`trust_anchor.rs`):

@@ -80,8 +80,11 @@ cargo publish -p <crate> --dry-run
 
 Plus the packaged-tarball MSRV build/test on the declared toolchain, and
 `cargo deny check` / `cargo audit` for security-sensitive crates. Routine CI
-stays proportional (`cargo xtask verify` + repo guards); full publication
-qualification lives in `cargo xtask verify-release`, which never publishes.
+stays proportional: the blocking `ci` job runs `cargo xtask verify` (which
+includes `cargo deny check` as its dependency-policy step) and the blocking
+`dependency-security` job runs `cargo deny check` + `cargo audit`; full
+publication qualification lives in `cargo xtask verify-release`, which never
+publishes.
 
 ## 6. Release ordering
 

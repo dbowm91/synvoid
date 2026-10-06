@@ -18,8 +18,8 @@ SynVoid has two layers of hybrid signature support:
 
 | Type | Location | Purpose |
 |------|----------|---------|
-| **`HybridSigner`** trait | `crates/synvoid-mesh/src/mesh/hybrid_signature.rs:190` | Generic trait for any hybrid signer implementing `sign_hybrid()` / `verify_hybrid()` |
-| **`HybridSignature`** struct | `crates/synvoid-mesh/src/mesh/hybrid_signature.rs:17-22` | Generic signature containing `ed25519_signature` (Vec<u8>), `ml_dsa_signature` (Vec<u8>), `ed25519_public_key` (String), and `ml_dsa_public_key` (Option<String>) |
+| **`HybridSigner`** trait | `crates/synvoid-mesh/src/mesh/hybrid_signature.rs:18` | Generic trait for any hybrid signer implementing `sign_hybrid()` / `verify_hybrid()` / `has_ml_dsa()` / `public_key()` |
+| **`HybridSignature`** struct | `synvoid-mesh-protocol` (`crates/synvoid-mesh-protocol/src/hybrid.rs:14`), re-exported at `crates/synvoid-mesh/src/mesh/hybrid_signature.rs:15` | Generic signature containing `ed25519_signature` (Vec<u8>), `ml_dsa_signature` (Vec<u8>), `ed25519_public_key` (String), and `ml_dsa_public_key` (Option<String>). Since Phase 27 this value type is canonically owned by `synvoid-mesh-protocol`; the mesh module only re-exports it. |
 | **`MeshHybridSigner`** | `crates/synvoid-mesh/src/mesh/ml_dsa.rs:122` | Concrete mesh-specific signer that uses Ed25519 + ML-DSA-44 for DHT/mesh messages |
 
 The generic `HybridSigner` trait provides a consistent interface; `MeshHybridSigner` is the concrete implementation for mesh control plane messages. The `HybridSignature` struct stores the raw signature bytes for serialization.
@@ -177,7 +177,7 @@ Hybrid signatures (Ed25519 + ML-DSA-44) have significant size overhead:
 - Wire transmission: ~39x larger than Ed25519 alone
 - Verification time: ML-DSA ~3-5x slower than Ed25519 on same hardware
 - DHT storage: Higher memory/disk usage for signed records
-- **Mitigation**: Fallback to Ed25519-only when PQ not required (`pqc-mesh` feature flag)
+- **Mitigation**: `verify_hybrid()` degrades to Ed25519-only verification when `has_ml_dsa()` is false (see BUG-L1 above). Note there is **no `pqc-mesh` feature flag** — ML-DSA support is unconditional: `synvoid-mesh` depends on the `pqc` crate (`features = ["async"]`) with no `cfg(feature)` gate in `mesh/ml_dsa.rs`, so Ed25519-only fallback is a runtime data condition, not a build-time switch.
 
 ### Raft Consensus Quorum Behavior (L35-9, MESH-15 CLOSED)
 

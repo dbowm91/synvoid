@@ -87,7 +87,13 @@ The primary method for processing requests through the WAF pipeline
 5. Check flood protection
 6. Run attack detection (inline, borrowed inputs)
 
-### 2.2 `attack_detection/` - Attack Detection Engine
+> **Path attribution for §2.** Sections marked *(crate)* live in
+> `crates/synvoid-waf/src/` and own the detector logic. Sections marked *(root)*
+> live in `src/waf/` and own composition, wiring, and process-level state only.
+> `src/waf/attack_detection/mod.rs` and `src/waf/ratelimit/` are compatibility
+> facades that re-export the crate; they hold no detector implementation.
+
+### 2.2 `attack_detection/` - Attack Detection Engine *(crate:* `crates/synvoid-waf/src/attack_detection/`*)*
 
 Comprehensive attack detection with 13 policy detectors (+ `HeaderValidator` and behavioral engine).
 
@@ -116,7 +122,15 @@ Comprehensive attack detection with 13 policy detectors (+ `HeaderValidator` and
 | Open Redirect | `open_redirect.rs` | Open redirect exploitation |
 
 **Architecture:**
-- **Fast-path pre-screening**: RegexSet with 50+ patterns for quick rejection
+- **Fast-path pre-screening**: a 59-pattern `regex::RegexSet` for quick rejection
+- **Per-detector literal prefilter**: 11 of the 13 policy detectors implement the
+  `PatternDetector` trait (`crates/synvoid-waf/src/attack_detection/detector_common.rs`),
+  each holding its literals as a compiled `AhoCorasick` exposed via
+  `patterns()`. This is a *separate* mechanism from the fast-path `RegexSet`:
+  the `RegexSet` is one shared coarse gate over normalized inputs, while the
+  Aho-Corasick automata are per-detector. The 13th and 12th detectors — JWT and
+  request smuggling — do not use the `PatternDetector` trait. SQLi and XSS pair
+  their prefilter with libinjection's lexical analysis (`libinjection.rs`).
 - **Input normalization**: Multi-pass URL decoding, HTML entity decoding, Unicode normalization
 - **Inline detection** (Phase 50): synchronous detectors evaluate inline on
   borrowed inputs via `check_request_sync` — no per-request `JoinSet` fanout,
@@ -130,7 +144,7 @@ Comprehensive attack detection with 13 policy detectors (+ `HeaderValidator` and
 - When `mesh` feature enabled: `BehavioralIntelligenceManager` for collaborative threat intel
 - Features: URL entropy, timing variance, header analysis, body/header ratio
 
-### 2.3 `bot.rs` - Bot Detection (494 lines)
+### 2.3 `bot.rs` - Bot Detection *(crate:* `crates/synvoid-waf/src/bot.rs`*, 510 lines)*
 
 Detects and manages bot traffic with multiple fingerprinting methods.
 
@@ -163,7 +177,7 @@ pub enum BotDetectionResult {
 }
 ```
 
-### 2.4 `ratelimit.rs` - Rate Limiting
+### 2.4 `ratelimit.rs` - Rate Limiting *(root:* `src/waf/ratelimit.rs`*, window primitives from `crates/synvoid-rate-limit/`)*
 
 Hierarchical rate limiting with site isolation.
 
@@ -227,7 +241,7 @@ pub enum ConnectionLimitError {
 }
 ```
 
-### 2.6 `threat_level/` - Threat Level Management
+### 2.6 `threat_level/` - Threat Level Management *(root:* `src/waf/threat_level/`*)*
 
 Manages threat escalation based on violation tracking:
 - Tracks attack frequency and severity
@@ -235,7 +249,7 @@ Manages threat escalation based on violation tracking:
 - Provides throttling multipliers for traffic shaping
 - Persists violation history for pattern analysis
 
-### 2.7 `violation_tracker.rs` - Violation Tracking
+### 2.7 `violation_tracker.rs` - Violation Tracking *(root:* `src/waf/violation_tracker.rs`*; canonical type re-exported from the crate)*
 
 Records and tracks security violations:
 - Stores per-IP violation history
@@ -243,54 +257,72 @@ Records and tracks security violations:
 - Triggers automatic blocking after threshold violations
 - Supports normal and attack-mode persistence intervals
 
-### 2.8 `ip_feed.rs` - IP Feed Management
+### 2.8 `ip_feed.rs` - IP Feed Management *(root:* `src/waf/ip_feed.rs`*)*
 
 Manages external IP block feeds:
 - Background feed fetching
 - Automatic feed refresh
 - Integration with block store for immediate enforcement
 
-### 2.9 `asn_tracker.rs` - ASN-based Tracking
+### 2.9 `asn_tracker.rs` - ASN-based Tracking *(root:* `src/waf/asn_tracker.rs`*)*
 
 Tracks and blocks traffic by Autonomous System Number:
 - ASN-based rate limiting
 - Scraping detection per ASN
 - Integration with GeoIP for ASN resolution
 
-### 2.10 `probe_tracker.rs` - Honeypot Probe Tracking
+### 2.10 `probe_tracker.rs` - Honeypot Probe Tracking *(root:* `src/waf/probe_tracker.rs`*, tracking logic in `crates/synvoid-waf/src/probe_tracker.rs`)*
 
 Tracks access to honeypot endpoints:
 - Records endpoint access patterns
 - Automatic IP blocking for honeypot hits
 - Configurable thresholds and ban durations
 
-### 2.11 `endpoints.rs` - Endpoint Protection
+### 2.11 `endpoints.rs` - Endpoint Protection *(root:* `src/waf/endpoints.rs`*; re-exports the managers from `crates/synvoid-waf/src/endpoints/` and adds the root-owned `ErrorPageManager`)*
 
 Manages endpoint blocking and sensitive path protection:
 - `EndpointBlockerManager` - Blocks paths by regex or exact match
 - `SensitiveEndpointManager` - Honeypot endpoint detection
 - `ErrorPageManager` - Custom error page serving
 
-### 2.12 `flood/` - Flood Protection
+### 2.12 `flood/` - Flood Protection *(crate:* `crates/synvoid-waf/src/flood/`*; root `src/waf/flood/ebpf_flood.rs` is the Linux eBPF backend)*
 
 TCP flood protection (requires `flood-ebpf` feature on Linux):
 - eBPF-based SYN flood detection
 - Mitigation providers for different attack scenarios
 - Connection tracking and rate limiting
 
-### 2.13 `threat_intel/` - Threat Intelligence (Mesh-only)
+### 2.13 `threat_intel/` - Threat Intelligence (Mesh-only) *(root:* `src/waf/threat_intel/`*)*
 
-Distributed threat intelligence via DHT:
-- `ThreatFeedClient` - Subscribes to threat feeds
-- `ThreatFeedIndicator` - Individual threat indicators
-- Collaborative threat sharing across mesh nodes
+`#![cfg(feature = "mesh")]`. Wires an HTTP-polled threat feed into the
+composition-owned `ThreatIntelligenceManager` (via
+`src/waf/threat_intel/feed_client.rs`):
+- `ThreatFeedClient` — polls a configured feed URL with
+  `crate::http_client::EggfetchUpstreamClient` on an interval, then pushes
+  indicators into the manager; it is a fetcher, **not** a DHT subscriber
+- `ThreatFeedIndicator` — one fetched indicator (`threat_type`,
+  `indicator_value`, `severity`, `reason`, `ttl_seconds`, `source_node_id`,
+  `site_scope`, rate-limit and suspicious-pattern fields)
+- `ThreatFeedConfig` / `ThreatFeedPayload` — feed configuration and wire payload
+- Collaborative threat sharing across mesh nodes happens through the manager and
+  the mesh plumbing, not through this module's transport
 
-### 2.14 `rule_feed.rs` - Rule Feed Management
+### 2.14 `rule_feed.rs` - Rule Feed Management *(root:* `src/waf/rule_feed.rs`*)*
 
-Manages external rule feeds:
-- YARA rule compilation and matching
-- Rule feed fetching and updates
-- Integration with attack detection
+Fetches **regex** rule feeds and republishes them to the WAF detectors as custom
+patterns. There is **no YARA compilation or matching in this file** — YARA
+scanning lives in `crates/synvoid-yara/` and in `src/waf/yara_snapshot.rs`.
+- `RuleFeedManager` — fetches a signed feed over `operator_lane_client` /
+  `EggfetchUpstreamClient`, verifies it against an Ed25519 `VerifyingKey`
+  (canonical `URL_SAFE_NO_PAD` base64, `STANDARD` accepted with a warning for
+  older producers), and holds `ParsedRules` / `RuleSet` / `RuleCategory`
+- `GlobalRulePatterns` + `get_global_patterns()` / `get_site_patterns()` /
+  `get_merged_patterns()` — a process-global `DashMap` store of per-category
+  patterns, read by detectors via `PatternDetector::patterns()`
+- `update_patterns_for_category()` / `update_site_patterns_for_category()` —
+  publish into that store; `clear_global_patterns()` clears it
+- `RuleFeedManagerForWaf` — the WAF-facing adapter, with an `on_apply` callback
+  that publishes rule pattern data to workers over IPC
 
 ## 3. Major Data Structures and Types
 
@@ -371,7 +403,6 @@ pub struct WafCoreConfig {
     pub endpoint_config: BlockedDefaults,
     pub waf_config: WafConfig,
     pub whitelist: Vec<String>,
-    pub block_store: Option<Arc<BlockStore>>,
     pub attack_detection_config: Option<AttackDetectionConfig>,
     pub auth_manager: Option<Arc<AuthManager>>,
     pub threat_level_config: Option<ThreatLevelConfig>,
@@ -678,7 +709,7 @@ Worker admission (block-store check, before WAF)
 ### Hot Path Optimizations
 
 1. **Atomic-free hot path**: `RequestServices` threaded through context
-2. **Fast-path pre-screening**: 50+ regex patterns reject non-threatening requests quickly
+2. **Fast-path pre-screening**: a 59-pattern `RegexSet` rejects non-threatening requests quickly
 3. **Inline detection** (Phase 50): borrowed synchronous evaluation replaced
    per-request `JoinSet` fanout; small-request latency improved ~4-5× with
    better concurrent tail behavior (see

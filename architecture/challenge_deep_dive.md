@@ -107,21 +107,39 @@ Request ──► WAF Decision: Challenge
                 └── CSS: Check all valid assets requested
                 │
                 ▼
-        Set verification cookie
-        └── sv_trust=<signed_token>
-                │
-                ▼
-        Subsequent requests bypass WAF (trust cookie)
+        (no verification cookie is issued — see "Trust Cookie")
 ```
 
-## Trust Cookie
+## Trust Cookie (verification only; issuance is unimplemented)
 
-The trust cookie (`sv_trust`) carries a signed token after successful challenge verification:
+The `sv_trust` cookie is **read and verified** in-tree, but **never issued**.
+Split the two halves honestly:
 
-- **Cookie name**: `sv_trust`
-- **Flags**: `Secure; SameSite=Strict; HttpOnly`
-- **TTL**: Configurable (default 1 hour)
-- **Verification**: Constant-time signature check
+**Implemented (verification side):**
+- **Cookie name**: `sv_trust`, parsed by
+  `synvoid_http::request_parse::extract_trust_token`
+- **Verification**: `should_skip_waf_from_trust_cookie` calls the
+  `EarlyWafHooks::verify_trust_token` hook; the production implementation is
+  `WafCore::verify_trust_token` (`src/waf/mod.rs`), which recomputes
+  `generate_trust_token(client_ip)` — HMAC-SHA256 over the client IP keyed by a
+  per-process 32-byte `trust_token_key` (`src/waf/assembly.rs`) — and compares
+  the 64 hex chars with `subtle::ConstantTimeEq`
+- **Binding**: the token is bound to the client IP, not to a session or a user
+
+**Not implemented (issuance side):**
+- No code path anywhere in the tree constructs an `sv_trust` `Set-Cookie`
+  header. `generate_trust_token` has exactly one caller — the `verify_trust_token`
+  body itself, where it produces the *expected* value to compare against.
+- Consequently a successful challenge verification does **not** mint a trust
+  cookie, and the "subsequent requests bypass WAF" outcome above is
+  unreachable in a running deployment. Every real client fails the comparison
+  because no valid token is ever delivered to it.
+- Do not read the verification code as evidence that challenge success is
+  remembered across requests. It is a seam awaiting its issuer.
+
+Because issuance is absent, the flags and TTL previously documented here
+(`Secure; SameSite=Strict; HttpOnly`, 1 hour) have no producer and are not
+verifiable from source; they are omitted rather than asserted.
 
 ## Adaptive Difficulty
 

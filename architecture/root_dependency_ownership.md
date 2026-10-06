@@ -128,7 +128,7 @@ reference fails the guard until the row is reclassified with a reason.
 | synvoid-http | http | composition_runtime | default | Canonical HTTP parsing/normalization/body-policy/dispatch; root `http` is application composition over it (Phase 20); root `http_client` shim re-exports the Phase 34 WAF-body owner (Phase 34) | keep | http, http_client, listener, server, tls, waf, worker |
 | synvoid-http3 | http3, waf | composition_runtime | default | HTTP/3 QUIC server; root WAF adapter implements the crate-owned narrow service trait | keep | http3, waf |
 | synvoid-serverless | serverless | composition_runtime | default | Serverless WASM function runtime | keep | serverless, worker |
-| synvoid-geoip | geoip | composition_runtime | default | GeoIP database lookups; `geo` holds the adapter that presents the provider as the DNS-owned `CountryLookup` capability (Phase 135). **F-17: no composition path constructs a `GeoIpManager`** — see `geoip_provider_is_still_unwired_by_composition` | keep | admin, geo, lib |
+| synvoid-geoip | geoip | composition_runtime | default | GeoIP database lookups; `geo` holds the adapter that presents the provider as the DNS-owned `CountryLookup` capability (Phase 135). **Phase 138: composition builds the `GeoIpManager` from `[geoip]`** via `crate::geo::country_lookup_from_config`, so the capability is wired end-to-end | keep | admin, geo, lib |
 | synvoid-integrity | — | migration_blocker | default | No direct root consumer in src/ (measured 2026-09-12); retained for origin_key_exchange feature-surface wiring (synvoid-integrity/origin_key_exchange) | Phase 31 removal audit | — |
 | synvoid-mesh | mesh | composition_runtime | mesh | Mesh networking, DHT, transport, Raft; Phase 110 retained internally because no one-way application-service-free seam qualified | keep | admin, http, mesh, supervisor, worker |
 | synvoid-mesh-protocol | waf | composition_runtime | mesh | Low-capability wire/identity verification vocabulary (Phase 27); feed signature + threat value types without DHT/Raft/SQLite/YARA | keep | waf |
@@ -174,6 +174,8 @@ reference fails the guard until the row is reclassified with a reason.
 | async-stream | http_client, mesh | composition_runtime | default | Async stream macro | keep | tarpit |
 
 ## Build Dependencies
+
+> Phase 138 note: the tripwire guard `geoip_provider_is_still_unwired_by_composition` was deleted and replaced by the positive gate `geoip_capability_is_wired_through_composition` (`tools/synvoid-repo-guards/tests/dns_dependency_edges.rs`). The deleted guard exempted `src/geo/`, so it would never have fired for legitimate wiring.
 
 | Dependency | Root owner module(s) | Classification | Feature gate | Reason | Next action | Allowed root paths |
 |------------|----------------------|----------------|--------------|--------|-------------|--------------------|

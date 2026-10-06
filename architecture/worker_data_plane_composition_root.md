@@ -31,12 +31,15 @@ These files construct and wire concrete infrastructure:
 | `src/worker/unified_server/supervision_loop.rs` | Supervision select loop (lifecycle events, task exits, mesh decisions) |
 | `src/worker/unified_server/shutdown_executor.rs` | Ordered shutdown procedure + `WorkerShutdownPlan` outcome mapping (Iteration 94) |
 | `src/worker/unified_server/supervisor_notify.rs` | Supervisor IPC notification and exit-code mapping |
+| `src/worker/unified_server/mesh_dht_capability.rs` | `dyn DhtRecordStore` / `dyn DhtGlobalLocator` adapter implementations over the mesh registry (no `synvoid-mesh` type in any DNS/DHT-owned signature) |
+| `src/worker/unified_server/passthrough_validation.rs` | Validation of the request-path pass-through handles threaded from the composition root |
 | `src/worker/connection.rs` | Legacy worker WAF init |
 | `src/worker/task_registry.rs` | Task lifecycle management (CriticalService, RestartableBackground, etc.) |
 | `src/worker/cpu_task/mod.rs` | CPU offload worker composition |
 | `src/supervisor/process.rs` | Supervisor process composition |
 | `src/supervisor/mesh.rs` | Mesh agent composition |
 | `src/server/mod.rs` | UnifiedServer struct (holds block_store) |
+| `src/server/dns_runtime_config.rs` | DNS conversion adapter (persisted config → `DnsRuntimeConfig` + `CertResolver`); composition-owned, never in the `src/dns/` facade |
 | `src/main.rs` | Process dispatcher |
 
 ## Request-Path Modules

@@ -47,7 +47,7 @@ synvoid/
 ├── config/                 # Default configuration (main.toml + sites/)
 ├── rules/                  # YARA rules (default.yar)
 ├── benches/ benchmarks/    # Criterion hot-path benches (16 files) + historical results
-├── architecture/           # This documentation tree (~150 docs)
+├── architecture/           # This documentation tree (223 docs)
 ├── .opencode/skills/       # Per-subsystem skill guides (48)
 ├── docs/                   # User/operator docs, testing contracts, releasing
 ├── plans/                  # Implementation tracking artifacts
@@ -326,7 +326,9 @@ These are discrete review surfaces in their own right — build/verify tooling, 
 
 ## Key Integration Patterns
 
-### IPC Message Categories (60+ types)
+### IPC Message Categories (125 message types, 18 categories)
+
+`synvoid-ipc`'s `Message` enum (`crates/synvoid-ipc/src/ipc.rs`) carries 125 top-level variants, tagged by an 18-arm `MessageCategory` enum (`WorkerLifecycle`, `SupervisorCommand`, `CpuWorker`, `ThreatIntel`, `BlocklistRules`, `StaticContent`, `AppServer`, `UnifiedServer`, `WorkerDrain`, `Upgrade`, `Supervisor`, `MasterDrain`, `DrainProtocol`, `SocketHandoff`, `WorkerRestart`, `Plugin`, `MeshControl`, `Upstream`). Representative groups:
 
 | Category | Examples | Direction |
 |----------|----------|-----------|

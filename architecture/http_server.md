@@ -29,6 +29,7 @@ Summary by class:
 |-------|---------|
 | **Thin facades** (pure re-exports over `synvoid-http`) | `app_server_backend_dispatch`, `early_parse`, `headers`, `internal_endpoint_dispatch`, `internal_handlers`, `mesh_backend_dispatch`, `request_parse`, `response_builder`, `response_helpers`, `response_transform`, `serverless_backend_dispatch`, `shared_handler`, `special_request_paths`, `spin_backend_dispatch`, `static_backend_dispatch`, `streaming_waf_decision`, `upload_validation_dispatch`, `upstream_buffered_dispatch`, `upstream_proxy_dispatch`, `upstream_proxy_dispatch_plan`, `upstream_response_transform`, `upstream_streaming_dispatch`, `validation_helpers`, `waf_decision` |
 | **Root adapters** (narrow root services to crate traits) | `axum_dynamic_dispatch`, `body_policy`, `buffered_request_waf_dispatch`, `cgi_backend_dispatch`, `challenge_paths`, `fastcgi_php_backend_dispatch`, `streaming_request_fast_path`, `streaming_waf_upstream_dispatch`, `wasm_filter_dispatch`, `websocket_dispatch`, `websocket_upgrade_dispatch` |
+| **Transport lane** (root-owned; Phase 75/76) | `eggserve_h1` (EggServe H1 projector + adapter), `service_core` (`NeutralServiceContext` + `handle_neutral_request`, shared by both H1 lanes), `h1_policy` (`configure_h1_builder`, the single `HttpConfig`→H1-builder mapping authority for the test-only Hyper comparison lanes) |
 | **Application handlers** (root-owned) | `directory_viewer`, `file_manager`, `file_manager_ui`, `webdav` |
 | **Composition root** (root-owned) | `server` (+ `server/`: `accept_loop`, `connection_types`, `observability`) — listener/socket lifecycle, `HttpServerRuntime` service bundle, request task ownership/drain |
 | **Other** | `image_rights` (facade over `synvoid-static-files`), `image_poisoning` (deprecated alias, do not use) |
@@ -111,9 +112,9 @@ Differentiates metrics counters for HTTP vs HTTPS streaming body events.
 
 ### WafStreamedBody<B>
 ```rust
-pub struct WafStreamedBody<B> {
+pub struct WafStreamedBody<B, S> {
     inner: B,
-    streaming_waf: Option<StreamingWafCore>,
+    streaming_waf: Option<S>,
     client_ip: IpAddr,
     protocol: BodyCollectionProtocol,
     max_body_size: usize,
@@ -261,8 +262,8 @@ Log via IPC if verbose logging enabled with rate limiting.
 ### Static Response Body Types
 ```rust
 pub enum StaticResponseBody {
-    InMemory(Vec<u8>),    // Small files fully loaded
-    Buffered(PathBuf),    // Larger files streamed via spawn_blocking
+    InMemory(Bytes),      // Small files fully loaded
+    Buffered(Bytes),      // Larger files read (spawn_blocking) into a byte buffer
 }
 ```
 
@@ -450,9 +451,11 @@ Automatic release on drop with acquire semantics for per-site upgrades.
 
 ### Request-Admission Semaphore (Phase 71)
 
-`http.max_connections` sizes a semaphore acquired **per request** in
-`HttpServer::handle_request` / `HttpsServer::handle_request_with_cache` and
-held for request lifetime: it bounds concurrent HTTP request admission, not
+`http.max_connections` sizes a semaphore acquired **per request** in the
+transport-neutral lane (`src/http/service_core.rs` for both H1 transports;
+`src/tls/server.rs` for TLS) and held for request lifetime. The former
+`HttpServer::handle_request` / `HttpsServer::handle_request_with_cache` pair
+was removed in Phase 76: it bounds concurrent HTTP request admission, not
 accepted TCP connections. Full semantics:
 `architecture/http_config_runtime_semantics_matrix.md`.
 

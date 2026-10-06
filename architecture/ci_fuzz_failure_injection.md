@@ -35,12 +35,16 @@ Architecture doc for Phase 8: profile CI matrix, fuzz target inventory, and fail
 - **Compilation**: Fuzz targets require nightly + ASAN; initial compilation is slow for large workspace.
 - **CI integration**: Fuzz smoke tests are **manual only** (bounded
   `cargo +nightly fuzz run <target> -- -runs=1000`; see
-  `docs/testing/verification-contract.md` §10). The routine CI workflow
-  (`.github/workflows/ci.yml`) is a single Ubuntu job running
-  `cargo xtask verify` and contains no `fuzz-smoke` job. Historical
-  `fuzz-smoke` / dedicated tarpit/mesh CI jobs described in earlier
-  revisions of this doc and in `architecture/phase_14_fuzz_execution_report.md`
-  were removed during CI simplification and no longer exist.
+  `docs/testing/verification-contract.md` §10). The workflow
+  (`.github/workflows/ci.yml`) declares four jobs — `ci`,
+  `dependency-security`, `sandbox-native-qualification`, and
+  `icmp-native-qualification` — and **none** of them runs fuzzing: there is no
+  `fuzz-smoke` job. Historical `fuzz-smoke` / dedicated tarpit/mesh CI jobs
+  described in earlier revisions of this doc and in
+  `architecture/phase_14_fuzz_execution_report.md` were removed during CI
+  simplification and no longer exist. The two native qualification jobs are
+  `workflow_dispatch`-gated boolean inputs, so a push/PR run executes exactly
+  `ci` + `dependency-security`.
 - **Smoke command**: `cargo +nightly fuzz run <target> -- -runs=1000` for bounded smoke.
 
 ### High-Value Targets Not Yet Implemented

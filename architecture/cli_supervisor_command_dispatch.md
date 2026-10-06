@@ -32,6 +32,22 @@ The `plan_command()` function is pure — it validates mutual exclusivity of wor
 
 `--restart` is a typed pre-action (`CommandPreAction::RestartSupervisor`), not a standalone supervisor-control command. It preserves the control address and TLS setting from CLI args, executing a stop before the normal runtime launch.
 
+> **Gotcha — the legacy `--worker` flag has no dispatch branch.** `args.worker`
+> appears in exactly two places in `plan.rs`: the mutual-exclusivity counter
+> (`plan.rs:156-169`) and the `MultipleWorkerModes` error text. There is **no**
+> `else if args.worker` arm in the classification chain (`plan.rs:176-261`), so
+> `--worker` falls through the final `else` to
+> `Runtime(RuntimeCommand::Supervisor)`. The flag's own help string is accurate —
+> "Run as worker process (alias for supervisor; compat only)" — but the behavior
+> is a *default*, not a branch. HTTP serving requires
+> `--unified-server-worker`; CPU offload requires `--cpu-worker`.
+>
+> `args.worker_id`, `args.port` and `args.supervisor_socket` are parsed by Clap but
+> are **not** carried on `CommandPlan` (`plan.rs:129-147`), so they cannot reach a
+> runtime launch through this path. The supervisor passes `--worker-id` to spawned
+> unified-server workers (`manager.rs`, worker arg list), and the worker reads it
+> via the `UnifiedServerWorkerArgs` builder, not through `--unified-worker-id`.
+
 ### Supervisor Control Adapter Layer
 
 Owned by: `src/commands/supervisor_control.rs`
@@ -112,6 +128,10 @@ Introduced in Iteration 107 to provide a typed result/error boundary for one-sho
   - `TokenHash(String)` — bcrypt hashing failed
   - `RegexUnsafe(String)` — regex check error
   - `Unknown(String)` — unclassified error
+
+Both execution-layer guards live in `tests/cli_admin_guard.rs`
+(`execute_rs_does_not_build_runtimes_or_worker_args` at `:491` and
+`execute_rs_does_not_contain_one_shot_implementation_details` at `:670`).
 
 The guard test `execute_rs_does_not_contain_one_shot_implementation_details` ensures `execute.rs` does not contain one-shot implementation details (`schema_for!`, `synvoidOpenApi::openapi_json`, `hash_admin_token_with_cost`, `check_regex_complexity`, `GenesisKeyConfig::generate`).
 
@@ -199,6 +219,7 @@ Complete mapping of all CLI flags to their plan categories and behavior.
 | `--mesh-agent` | Runtime(MeshAgent) | none | mesh | 0 |
 | `--wasm-jail` | Runtime(WasmJail) | none (compat shim; production spawns dedicated `synvoid-wasm-jail` with piped stdio and empty argv via exe-dir lookup; no secret/payload argv) | none | 0 (clean shutdown/EOF) / 1 (fail-closed) |
 | `--yara-jail` | Runtime(YaraJail) | none (compat shim; production spawns dedicated `synvoid-yara-jail` with piped stdio and empty argv) | none | 0 (clean shutdown/EOF) / 1 (fail-closed) |
+| `--worker` | Runtime(Supervisor) — **no dispatch branch**, falls through the default | none | none | 0 (runs a supervisor) |
 
 ### Modifier Flags
 
@@ -217,7 +238,14 @@ Complete mapping of all CLI flags to their plan categories and behavior.
 | `--hash-cost <n>` | Hash token: bcrypt cost (4-31, default 12) | --hash-token | none |
 | `--cpu-worker-id <id>` | CPU worker: worker ID | --cpu-worker | none |
 | `--unified-worker-id <id>` | Unified worker: worker ID | --unified-server-worker | none |
-| `--worker-threads <n>` | Unified worker: Tokio threads | --unified-server-worker | none |
+| `--worker-threads <n>` | Unified worker: Tokio threads (also sizes the worker process's Tokio runtime, `runtime_launch.rs`) | --unified-server-worker | none |
+| `--worker-id <n>` | Worker identity; **not** on `CommandPlan` — the supervisor passes it to spawned workers | --unified-server-worker | none |
+| `--port <n>` | Parsed only; not on `CommandPlan` | --worker (compat) | none |
+| `--supervisor-socket <path>` | Parsed only; not on `CommandPlan` | --worker (compat) | none |
+| `--static-worker` / `--static-worker-id` | Aliases of `--cpu-worker` / `--cpu-worker-id` (`synvoid-cli/src/lib.rs:55`, `:62`) | --cpu-worker | none |
+| `--reuse-port` | Hidden internal flag: shared-port startup for supervisor-spawned workers | --unified-server-worker | none |
+| `--total-workers <n>` | Pool size hint passed to the worker | --unified-server-worker | none |
+| `--cpu-affinity <core>` | CPU core pin hint passed to the worker | --unified-server-worker | none |
 | `--cpu-affinity <core>` | Unified worker: pin to CPU core | --unified-server-worker | none |
 | `--total-workers <n>` | Unified worker: pool size | --unified-server-worker | none |
 | `--reuse-port` | Unified worker: shared port (hidden) | --unified-server-worker | none |
@@ -354,6 +382,7 @@ Output contract tests are in `src/commands/one_shot.rs` under the `#[cfg(test)]`
 - `new_token_generated_first_line_is_token` — validates token-first-line for `--generatenewtoken`
 - `regex_safe_display_contains_safe_label` / `regex_unsafe_display_contains_unsafe_label` — shape tests for regex output
 - `regex_exit_codes_are_correct` — validates exit code contract for `--checkregex`
+  (a unit test in `src/commands/one_shot.rs:996`, not a guard in `tests/cli_admin_guard.rs`)
 - `config_valid_exit_code_is_zero_and_no_contamination` — validates configtest output is not JSON/token/hash
 - `genesis_key_generated_shape` / `node_info_shape` — shape tests for mesh-gated human commands
 

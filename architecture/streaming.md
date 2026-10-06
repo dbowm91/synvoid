@@ -36,6 +36,7 @@ pub enum ProxyError {
 | `copy_bidirectional_with_config(..., config).await` | With WAF scanning and buffering |
 | `copy_bidirectional_native(client, upstream).await` | Thin wrapper over tokio |
 | `copy_bidirectional_auto(..., config).await` | Auto-select best method |
+| `copy_bidirectional_zero_copy(..., config).await` | Zero-copy variant (`bidirectional.rs:357`) |
 
 ---
 

@@ -46,19 +46,35 @@ pub enum DownloadSource {
 }
 ```
 
+### Construction and failure posture
+
+`GeoIpManager::new(config, site_configs, alert_manager) -> Option<Self>`
+(`manager.rs`) returns `None` only when `config.enabled` is false. **It never
+reports a database load failure**: an unreadable or missing path falls back to
+`GeoIpLookup { reader: None }` with a warning, and `GeoIpLookup::new` returns
+`Ok(reader: None)` — not an error — for an empty or nonexistent path. Callers
+that need to distinguish "unset" from "typo" from "corrupt" must ask
+`database_loaded()`; nothing infers that for them.
+
 ## Integration Points
 
-- Used by WAF for geo-based blocking rules
-- Used by proxy for geo-based routing
-- Used by mesh for regional routing decisions
+- Used by the WAF for geo-based blocking rules (`src/waf/`)
+- Used by mesh DHT contact routing, which converts `GeoLocationInfo` into `GeoInfo`
+  (`crates/synvoid-mesh/src/mesh/dht/routing/contact.rs`)
+- Used by DNS through an **inverted seam**: DNS owns the narrow `CountryLookup`
+  trait (`crates/synvoid-dns/src/geo.rs`, exactly two methods) and composition
+  adapts `Arc<GeoIpManager>` in `src/geo/dns_provider.rs`. `synvoid-dns` has no
+  `synvoid-geoip` edge
+- **Not** used by the proxy — no `synvoid-geoip` reference exists in
+  `crates/synvoid-proxy/src/` or `src/proxy/`
 - Metrics for geo-distribution logging
 
 ## Key Types
 
 | Type | Location | Purpose |
 |------|----------|---------|
-| `GeoIpLookup` | `crates/synvoid-geoip/src/lookup.rs` | Main lookup interface |
+| `GeoIpLookup` | `crates/synvoid-geoip/src/lookup.rs` | Main lookup interface (single `Option<Reader<Vec<u8>>>`) |
 | `GeoIpManager` | `crates/synvoid-geoip/src/manager.rs` | Database lifecycle |
-| `GeoIpUpdater` | `crates/synvoid-geoip/src/updater.rs` | Auto-download |
-| `CountryInfo` | `crates/synvoid-geoip/src/types.rs` | Country lookup result |
+| `GeoIpUpdater` | `crates/synvoid-geoip/src/updater.rs` | Auto-download (`DownloadSource`, `DatabaseEdition`) |
+| `CountryInfo` | `crates/synvoid-geoip/src/types.rs` | Country lookup result (`code`, `name`, `subdivision`, `city`) |
 | `GeoLocationInfo` | `crates/synvoid-geoip/src/lookup.rs` | Combined geo result |

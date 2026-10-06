@@ -11,7 +11,8 @@ The Tarpit module (`crates/synvoid-tarpit/`) provides an **anti-scraping tarpit*
 - Input escaping for all attacker-controlled values before HTML interpolation
 - Concurrent session admission control (global + per-IP)
 - Per-session resource budgets (chunks, bytes, duration, idle)
-- Fingerprint-resistant content variation (delay ranges, status codes, content types)
+- Fingerprint-resistant content variation (delay ranges, content types; the
+  `vary_status_code` config flag has no consumer and changes nothing)
 - Safe redirect generation with CRLF/injection prevention
 
 ---
@@ -52,7 +53,8 @@ pub struct SessionBudget {
     last_activity: Mutex<Instant>,
 }
 
-// Redirect policy: synvoid-tarpit::redirect
+// Redirect policy: synvoid-tarpit::config (there is no `redirect` module;
+// `RedirectRejection` + sanitize_redirect_target live in `escaping`)
 pub enum RedirectPolicy {
     RelativeOnly,
     AllowList(Vec<String>),

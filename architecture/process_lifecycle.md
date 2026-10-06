@@ -14,12 +14,12 @@ The Supervisor is the top-level process that manages worker lifecycle, upgrades,
   - **Process Management:** Spawns and monitors Worker processes via ProcessManager.
   - **Health Monitoring:** Monitors child process heartbeats and restarts failed processes.
   - **Zero-Downtime Upgrades:** Coordinating worker rotations and hot-reloads.
-  - **Drain Coordination:** Provides staged worker draining via `DrainManager` (`src/supervisor/drain_manager.rs`) during upgrades. The `drain_aware_shutdown()` method at `src/supervisor/process.rs:269-356` coordinates the full drain protocol.
+  - **Drain Coordination:** Provides staged worker draining via `DrainManager` (`src/supervisor/drain_manager.rs`) during upgrades. The `drain_aware_shutdown()` method at `src/supervisor/process.rs:363-460` coordinates the full drain protocol.
   - **Control Plane Coordination:** Handles Raft consensus, DHT routing, and Mesh transport.
   - **Configuration:** Loads and validates configuration using the `synvoid-config` crate.
   - **gRPC API:** Hosts the formal Control Plane API (`proto/control.proto`) for remote management. (Mesh-gated: `src/supervisor/api.rs` is `#[cfg(feature = "mesh")]`; without `mesh` there is no control-plane listener.)
 - **Key Logic:** `src/supervisor/`.
-- **Entry Point:** `run_supervisor_mode()` (`src/supervisor/process.rs:460`).
+- **Entry Point:** `run_supervisor_mode()` (`src/supervisor/process.rs:588`), called from `src/commands/runtime_launch.rs:194`.
 - **IPC Role:** Acts as the central hub for worker coordination.
 
 ### 2. Jail Processes (Sandboxed Execution Plane, Phase 22 Operational, Phase 29 Packaged)
@@ -63,7 +63,7 @@ Workers are request-handling engines managed by the Supervisor. SynVoid uses a u
 
 - **Isolation:** Worker process boundaries isolate failure domains and lifecycle operations.
 - **Kernel Load Balancing:** `SO_REUSEPORT` can be used in advanced multi-unified-worker mode and upgrade overlap flows.
-- **CPU Pinning:** On Linux, workers can be assigned CPU affinity based on worker ID via the `--cpu-affinity` flag. Not supported on macOS/BSD (logs warning).
+- **CPU Pinning:** Workers accept an optional `--cpu-affinity <CORE>` flag, which the supervisor passes through to each spawned worker (`manager.rs`, worker arg list). The macOS/BSD "logs a warning" behavior was **not confirmed** — the affinity handling under `src/startup/worker.rs` was not traced to a platform-conditional warning.
 - **Minimal Intelligence:** Workers focus strictly on request handling (WAF pipeline, proxying). They receive threat intelligence and configuration updates from the Supervisor.
 - **Key Logic:** `src/worker/`.
 
@@ -73,7 +73,7 @@ Workers are request-handling engines managed by the Supervisor. SynVoid uses a u
 
 SynVoid utilizes a tiered communication strategy:
 
-1.  **External Management (gRPC, mesh-gated):** The CLI (`CommandClient`) and remote managers communicate with the Supervisor via gRPC (localhost only for local IPC) when the `mesh` feature enables the control-plane listener.
+1.  **External Management (gRPC, mesh-gated):** The tonic `ControlPlane` gRPC service binds localhost by default (`127.0.0.1:50051`) and only exists with the `mesh` feature. The operator CLI does **not** use it: `CommandClient` selects a Unix socket / named pipe by default and its gRPC transport is a stub that returns `CommandError::ConnectionFailed("gRPC support requires root crate")` (`crates/synvoid-ipc/src/command.rs`). See `architecture/supervisor.md` §4.6.
 2.  **Internal Coordination (IPC):** The Supervisor communicates with Workers using a high-speed, binary IPC protocol over Unix domain sockets or Windows named pipes.
 3.  **Mesh Network:** Supervisors communicate with other Supervisors via the Mesh transport (QUIC) to maintain global state (Raft/DHT).
 
@@ -93,12 +93,25 @@ Inline work stays on the unified worker when it is small, bounded, and predictab
 
 ## Zero-Downtime Upgrades
 
-Upgrades are coordinated by the Supervisor:
+Worker rotation is coordinated by the Supervisor's staged drain protocol, and
+versioned socket paths exist to support an overlap window:
 
-1.  A new Supervisor process can be started to replace the old one.
-2.  The new Supervisor takes over the gRPC management interface.
-3.  Workers are rotated: new workers are spawned by the new Supervisor, and old workers are signaled to drain.
-4.  When enabled for advanced overlap mode, `SO_REUSEPORT` allows old and new workers to coexist during transition.
+1.  The Supervisor signals existing workers to drain and waits for
+    `DrainComplete` (bounded by the drain timeout, `drain_manager.rs`).
+2.  New workers are spawned by `spawn_unified_server_workers`; `SO_REUSEPORT` can
+    be requested for the overlap window (`--reuse-port`, an internal hidden flag).
+3.  Versioned supervisor sockets are available via
+    `get_versioned_supervisor_socket_path(gen)` (`socket_path.rs`) so a replacement
+    Supervisor can bind beside a running one.
+4.  The `--restart` CLI flag is **stop-then-start**, not a handover: `plan.rs:263-270`
+    emits `CommandPreAction::RestartSupervisor`, which issues `SupervisorCommand::Stop`
+    and only then launches the new runtime.
+
+> **Not verified in code:** no supervisor-to-supervisor gRPC management handover or
+> automatic worker-rotation orchestration was found. Steps 1–2 describe mechanisms
+> that exist (`DrainProtocol`, `spawn_unified_server_workers`, `SO_REUSEPORT`); the
+> "new supervisor takes over the management interface" step has no implementation
+> to point at and is retained here as a design intent, not a shipped behavior.
 
 ---
 
@@ -108,4 +121,4 @@ The Supervisor provides a unified view of the system health:
 
 - **Worker Monitoring:** The Supervisor monitors worker process exits and heartbeats.
 - **Self-Healing:** If a worker fails, the Supervisor immediately spawns a replacement and pins it to the correct core.
-- **gRPC Status:** The `CommandClient` queries the Supervisor via gRPC (mesh-gated) to retrieve detailed health and performance metrics.
+- **Status Retrieval:** The `CommandClient` queries the Supervisor over the **IPC command socket** (named pipe on Windows), sending `SupervisorCommand::Status` and reading `SupervisorStatus`; the mesh-gated gRPC `ControlPlane.GetStatus` serves a different, proto-shaped caller.

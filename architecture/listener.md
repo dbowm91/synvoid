@@ -105,6 +105,22 @@ struct UdpListenerInstance {
 ## 5. Key Implementation Details
 
 - **Shared Context**: `ConnectionContext` is the only type exported from `src/listener/`
+- **Raw Listener Pools**: `TcpListenerPool` (`src/tcp/listener.rs`) and `UdpListenerPool`
+  (`src/udp/listener.rs`) each hold many per-port `*ListenerInstance`s and spawn an accept loop per
+  instance; `TcpListenerPool::new(pool_config, filter_config)` takes a `FilterConfig`.
+- **`SO_REUSEPORT`**: `reuse_port` defaults to `true`; `set_reuse_port(true)` is applied at bind when the
+  platform supports it (`src/tcp/listener.rs:115-124`, gated by `synvoid-platform`). Support is
+  **not universal** — `Platform::supports_reuse_port()` (`crates/synvoid-platform/src/lib.rs:141-146`)
+  returns `true` only for `Linux`, `LinuxMusl`, `Macos`, and `FreeBSD`. OpenBSD, NetBSD, and Windows
+  return `false`, so `SO_REUSEPORT` is silently skipped there. `reuse_port_ebpf` (default `false`)
+  additionally requests eBPF acceleration on Linux only.
+- **Protocol Detection & Filtering**: each accepted connection is rate-limited, then protocol-detected
+  (`ProtocolDetector::detect_peek`), then checked by `ProtocolFilter::check()` against the listener's
+  `expected_protocol` **before** it is proxied upstream (`src/tcp/listener.rs:531-580`). The result is a
+  `FilterAction` of `Allow`, `Drop`, or `Stall`; `Drop`/`Stall` return without proxying (and `Stall`
+  deliberately stalls the socket rather than closing it, so the client times out). `block_unknown_ports`
+  escalates `Protocol::Unknown` to `Stall`, and `check_upstream()` additionally enforces each upstream's
+  `allowed_protocols` (`src/tcp/filter.rs:103-128`).
 - **Default Buffer Sizes**: 262KB send/recv TCP buffers for high throughput
 - **Protocol Awareness**: Each listener declares expected protocol as a `String` (e.g., "smtp", "dns")
 - **Filter Integration**: Filter enabled via `filter_enabled: bool` and `strict_mode: bool` fields directly on listener configs

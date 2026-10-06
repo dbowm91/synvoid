@@ -22,16 +22,23 @@ pub struct SupervisorProcess {
 ### Main Event Loop
 
 ```rust
+// src/supervisor/process.rs:276-330 (pseudocode)
+let mut shutdown_cause = SupervisorShutdownCause::Requested;
 loop {
     tokio::select! {
-        _ = heartbeat.tick() => {
-            // Reap zombies, check worker health, poll tasks
+        _ = tokio::time::sleep(Duration::from_secs(5)) => {
+            // Periodic tick: reap zombies + check worker health.
+            // A plain sleep, not an interval handle.
         }
-        event = process_manager.recv() => {
-            // Handle worker lifecycle events
+        event = self.event_rx.recv() => {           // ProcessManager event channel
+            // Worker lifecycle events; None => ProcessManagerFailed
+        }
+        res = self.supervisor_tasks.join_one_finished() => {
+            // Registered task finished; a Failed outcome sets TaskFailed
         }
         _ = shutdown_rx.recv() => {
-            // Initiate coordinated shutdown
+            shutdown_cause = SupervisorShutdownCause::Requested;
+            break;
         }
     }
 }
@@ -41,10 +48,14 @@ loop {
 
 | Task Class | Policy | Examples |
 |------------|--------|----------|
-| `CriticalControlPlane` | Fatal if exits | gRPC API, IPC accept loop |
-| `RestartableControlPlane` | Logged, optionally restarted | Health monitor |
-| `BestEffortMaintenance` | Drained during shutdown | Metrics flush |
-| `ShutdownOnly` | Only joined during shutdown | Log rotation |
+| `CriticalControlPlane` | Fatal if exits | `supervisor_grpc_control_api`, `supervisor_ipc_accept` |
+| `RestartableControlPlane` | Fatal if exits (**not** auto-restarted) | *none — declared but unused* |
+| `BestEffortMaintenance` | Drained during shutdown | `supervisor_eggbench_telemetry_exporter`, `supervisor_eggbench_telemetry_bridge` |
+| `ShutdownOnly` | Only joined during shutdown | *none — declared but unused* |
+
+There is **no** health-monitor or log-rotation supervisor task, and no automatic
+task restart: a `TaskOutcome::Failed` breaks the main loop and escalates to
+`SupervisorShutdownCause::TaskFailed`.
 
 Critical task failures trigger `SupervisorShutdownCause::TaskFailed`.
 
@@ -58,8 +69,11 @@ Supervisor
     ├── spawn_unified_server_workers(count)
     │   ├── Fork + exec worker process
     │   ├── Pass: worker_id, config_path, supervisor_socket
-    │   ├── Pass: IPC session key (env var)
-    │   └── Optional: CPU affinity, reuse-port
+    │   ├── Pass: IPC session key via a 0600 temp file
+    │   │   (SYNVOID_IPC_KEY_FILE points at it; SYNVOID_IPC_KEY env is
+    │   │    only a warned fallback when allow_insecure_ipc_key is set)
+    │   └── Pass: --worker-id, --worker-threads, --total-workers,
+    │       optional --cpu-affinity, internal --reuse-port
     │
     └── spawn_cpu_worker()
         ├── Fork + exec CPU worker process
@@ -88,11 +102,14 @@ pub struct ProcessManager {
 
 ```rust
 impl DrainProtocol {
+    // Actual signature (drain_manager.rs)
     pub async fn drain_worker_with_confirmation(
         &self,
+        ipc: &mut IpcStream,
         worker_id: WorkerId,
-        timeout_secs: u64,
-    ) -> Result<DrainReport> {
+        drain_timeout_secs: u64,
+        poll_interval_ms: u64,
+    ) -> std::io::Result<bool> {   // Ok(true) = drained within budget
         // 1. Send DrainRequest
         self.send_drain_request(worker_id, timeout_secs).await?;
         
@@ -118,7 +135,7 @@ impl DrainProtocol {
 
 ```rust
 // On receiving DrainRequest
-async fn handle_drain_request(&self, timeout_secs: u64, drain_id: Uuid) {
+async fn handle_drain_request(&self, timeout_secs: u64, drain_id: u64) {
     // 1. Store drain ID (reject duplicates)
     self.drain_state.set_drain_id(drain_id);
     
@@ -128,8 +145,8 @@ async fn handle_drain_request(&self, timeout_secs: u64, drain_id: Uuid) {
     // 3. Wait for active connections to drain
     let drained = self.drain_state.wait_for_drain(timeout_secs).await;
     
-    // 4. Stop Granian supervisors
-    self.stop_granian_supervisors().await;
+    // 4. Reply on the status poll
+    //    (drain_id is a u64 counter, not a Uuid)
     
     // 5. Send ack
     self.send_drained(drained).await;
@@ -169,30 +186,38 @@ service ControlPlane {
 ### Implementation
 
 ```rust
+// src/supervisor/api.rs — every RPC takes a tonic Request wrapper and
+// returns Result<Response<T>, Status>. Field-level values below are
+// abbreviated; the signatures and the block_ip call are exact.
 impl ControlPlane for ControlPlaneService {
-    async fn get_status(&self) -> StatusResponse {
-        StatusResponse {
-            pid: std::process::id(),
-            uptime: self.start_time.elapsed().as_secs(),
-            version: env!("CARGO_PKG_VERSION"),
-            workers: self.process_manager.worker_status(),
-            request_stats: self.state.request_stats(),
-        }
+    async fn get_status(
+        &self,
+        _request: Request<StatusRequest>,
+    ) -> Result<Response<StatusResponse>, Status> {
+        Ok(Response::new(StatusResponse { /* pid, uptime, version,
+            workers, stats, threat_summary from block_store + state */ }))
     }
-    
-    async fn block_ip(&self, req: BlockRequest) -> BlockResponse {
+
+    async fn block_ip(
+        &self,
+        request: Request<BlockRequest>,
+    ) -> Result<Response<BlockResponse>, Status> {
+        let req = request.into_inner();
+        let ip = req.ip.parse::<std::net::IpAddr>()?;
         self.state.block_store.block_ip_with_provenance(
-            req.ip,
-            req.reason,
-            BlockProvenanceKind::SupervisorManual,
+            &ip,
+            &req.reason,
+            req.duration_secs,
+            &req.scope,
+            BlockProvenance {
+                kind: BlockProvenanceKind::SupervisorManual,
+                source: Some("grpc_block_ip".to_string()),
+            },
         );
-        
-        // Propagate to workers via IPC
-        self.process_manager.broadcast_blocklist_update();
-        
-        BlockResponse {
-            result: AdminMutationResult::success("IP blocked"),
-        }
+
+        // No mesh broadcast is issued here; the handler logs
+        // "Block list change queued for mesh propagation" and returns.
+        Ok(Response::new(BlockResponse { success: true }))
     }
 }
 ```
@@ -205,21 +230,23 @@ impl ControlPlane for ControlPlaneService {
 
 ## Shutdown Sequence
 
+The supervisor's own shutdown has **four** phases (`src/supervisor/process.rs:275`,
+`:363`). It does not perform the connection drain, mesh teardown, or app-server
+shutdown itself — those are worker-side and driven over IPC.
+
 ```
-1. begin_coordinated_shutdown()
-2. Stop accepting new connections
-3. Graceful drain (if requested)
-4. Stop Granian supervisors
-5. Shutdown mesh transport
-6. Stop mesh support bundle
-7. Clear running flag
-8. Broadcast registry cancellation
-9. Persist bandwidth data
-10. Await registry tasks (5s critical, 3s background)
-11. Abort remaining handles
-12. Send supervisor ack
-13. Derive exit code
+1. Join registered supervisor tasks:  supervisor_tasks.shutdown_and_join(10s)
+2. Per worker: send DrainRequest(timeout), then StopAccepting, then poll
+   DrainStatusResponse until drained or the timeout (bounded exponential poll
+   backoff, 3 retries max)
+3. manager.wait_for_drain() -> drain_complete
+4. graceful_shutdown() + reap_zombies(), then log the SupervisorDrainReport
 ```
+
+> The 13-step list ("begin_coordinated_shutdown", "Stop Granian supervisors",
+> "Persist bandwidth data", 5s/3s registry timeouts, …) is the **worker**
+> shutdown procedure in `src/worker/unified_server/shutdown_executor.rs`, not
+> the supervisor's. See `architecture/worker_task_lifecycle.md`.
 
 ## Key Types
 

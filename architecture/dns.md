@@ -5,17 +5,28 @@ see [`dns_hickory_patch_requalification.md`](dns_hickory_patch_requalification.m
 for the Phase 105 security, verification, and benchmark evidence.
 
 **Current packaging/dependency status (read before planning DNS boundary work).**
-`synvoid-dns` is class 1: it still has six required SynVoid sibling
-dependencies plus optional `synvoid-mesh`. Phases 116/117 closed DEFER
-(`standalone_crate_phase116_closeout.md`), so the persisted-config ->
-runtime-DTO split was **not** delivered. The Phase 116 design blocker is
-answered at research level in
-[`dns_runtime_dto_conversion_research.md`](dns_runtime_dto_conversion_research.md)
-— **research complete; implementation registered as Phases 125–130** in `plans/dns_runtime_dto_conversion_roadmap.md`. Its actionable
-boundary facts for future work: Phase 125 starts with the exhaustive persisted-field projection matrix and adapter parity gate; production constructor cutover does not begin until that evidence exists. Persisted DNS config stays in
-`synvoid-config`; the conversion adapter is composition code under
-`src/server/`; `src/dns/` is a guard-enforced pure re-export facade and must
-stay one; `synvoid-dns` owns only parsed runtime values. DNS source changes in this line are authorized only by the registered Phases 125–130 plans. Provider inversion and standalone promotion remain outside that campaign.
+`synvoid-dns` is class 1 with **2 direct SynVoid normal edges**: `synvoid-dnssec-keystore`
+(a deliberate security-custody leaf) and an **optional** `synvoid-mesh` (`mesh` feature).
+Phases 116/117 closed DEFER (`standalone_crate_phase116_closeout.md`); the
+persisted-config -> runtime-DTO split was subsequently **delivered and closed
+qualified** in Phases 125–130 (`plans/dns_runtime_dto_conversion_roadmap.md`;
+closeouts `architecture/dns_runtime_dto_phase12{5,6,7,8,9}_closeout.md` and
+`..._phase130_closeout.md`). Persisted DNS config stays in `synvoid-config`; the
+conversion adapter is composition code at `src/server/dns_runtime_config.rs`;
+`src/dns/` is a guard-enforced pure re-export facade and stays one;
+`synvoid-dns` owns only parsed runtime values in
+`crates/synvoid-dns/src/runtime_config.rs`, and the temporary
+`runtime_config_deferred.rs` passthrough is **deleted**. Provider inversion is
+also complete for the two narrow seams (`secure_transport.rs` ->
+`src/tls/dns_providers.rs`; `geo.rs` -> `src/geo/dns_provider.rs`).
+
+**The one remaining blocker is the optional `synvoid-mesh` edge.** The "2 edges"
+measurement above is feature-conditional: a default-feature `cargo tree` excludes
+it, and `cargo tree -p synvoid-dns -e normal --features mesh` returns the mesh
+transitive closure (2047 expanded lines vs 552), which brings back
+`synvoid-config`, `synvoid-core`, `synvoid-utils`, `synvoid-tls` and
+`synvoid-geoip` — as transitive dependencies, not as direct DNS edges. §3 carries
+the full measurement, the Phase 139 mesh disposition, and the guard names.
 
 ## 1. Purpose and Responsibility
 
@@ -121,11 +132,15 @@ The module is located at `crates/synvoid-dns/` and exports a rich set of submodu
 
 ## 3. Major Data Structures and Types
 
-### 3.1 DnsServer (server/mod.rs:447)
+### 3.1 DnsServer (`server/mod.rs`; Phase 126-128 cutover, Phase 139 late binding)
 
 ```rust
 pub struct DnsServer {
-    config: Arc<DnsConfig>,
+    // Phase 126/127/128 cutover: three DNS-owned runtime projections replace
+    // the persisted `DnsConfig`. No persistence DTO is held here.
+    authoritative: Arc<AuthoritativeRuntimeConfig>,
+    recursive: Arc<RecursiveRuntimeConfig>,
+    dnssec_runtime: Arc<DnssecRuntimeConfig>,
     zones: Arc<ShardedZoneStore>,
     zone_trie: Arc<RwLock<ZoneTrie>>,
     zone_index: Arc<RwLock<Vec<(String, String)>>>,
@@ -135,15 +150,16 @@ pub struct DnsServer {
     query_validator: Option<DnsQueryValidator>,
     firewall: Option<Arc<RwLock<DnsFirewall>>>,
     connection_limits: Arc<ConnectionLimits>,
-    #[cfg(feature = "mesh")]
-    mesh_registry: Option<Arc<MeshDnsRegistry>>,
-    geoip_lookup: Option<Arc<GeoIpManager>>,
+    // Phase 135: DNS-owned trait, not `Arc<GeoIpManager>`.
+    geoip_lookup: Option<Arc<dyn CountryLookup>>,
     shutdown_tx: Option<oneshot::Sender<()>>,
+    shutdown_watcher_tx: Option<tokio::sync::watch::Sender<bool>>,
     cache: Option<Arc<DnsCache>>,
     dnssec: Option<Arc<RwLock<DnsSecKeyManager>>>,
     signer_name: Option<String>,
     rrl_enabled: bool,
-    cert_resolver: Option<Arc<CertResolver>>,
+    // Phase 134: DNS-owned trait, not `Arc<CertResolver>`.
+    cert_resolver: Option<Arc<dyn SecureTransportConfig>>,
     dot_server: Option<DotServer>,
     doh_server: Option<DohServer>,
     doq_server: Option<DoqServer>,
@@ -154,17 +170,34 @@ pub struct DnsServer {
     hsm_manager: Option<HsmManager>,
     query_coalescer: Option<Arc<QueryCoalescer>>,
     anycast_manager: Option<Arc<AnycastSocketManager>>,
-    #[cfg(feature = "mesh")]
-    mesh_transport: Option<Arc<MeshTransport>>,
-    #[cfg(feature = "mesh")]
-    zone_sync: Option<Arc<AnycastZoneSync>>,
     recursive_server: Option<Arc<RecursiveDnsServer>>,
     dns64_translator: Option<Dns64Translator>,
-    #[cfg(feature = "dns")]
-    acme_dns_challenges: Option<Arc<AcmeDnsChallenge>>,
+    // Phase 139: late-bound, not a plain Option. See `LateBinding`.
+    pub(crate) acme_dns_challenges: LateBinding<Arc<dyn AcmeTxtChallenges>>,
     cookie_server: Option<Arc<DnsCookieServer>>,
+    pub health: Arc<DnsHealthChecker>,
+    // Phase 139: late-bound, mesh feature.
+    #[cfg(feature = "mesh")]
+    mesh_registry: LateBinding<Arc<MeshDnsRegistry>>,
 }
 ```
+
+Three fields that earlier revisions of this listing showed are **gone**: the
+persisted `config: Arc<DnsConfig>` (replaced by the three runtime projections),
+`acme_dns_challenges: Option<Arc<AcmeDnsChallenge>>` (now a `LateBinding` over the
+DNS-owned `AcmeTxtChallenges` trait), and the `mesh_registry` /
+`mesh_transport` / `zone_sync` cluster that lived here. `zone_sync` was never on
+`DnsServer`; it lives on `DynamicUpdateHandler` (`update.rs`) as a
+`None`-valued field whose only builder, `with_zone_sync`, has **zero callers**.
+The anycast broadcast cluster (`anycast_sync.rs`) is therefore still coupled to
+`synvoid-mesh` and still unreachable — see §3.9.
+
+`Clone` is hand-written and deliberately resets the non-cloneable senders and
+the re-initializable handles (`dot_server`/`doh_server`/`doq_server` = `None`,
+`hsm_manager` = `None`, `anycast_manager` = `None`, `recursive_server` = `None`).
+The two `LateBinding` cells are cloned by sharing the inner `Arc`, which is what
+makes a binding made through any clone visible to the `Arc<DnsServer>` the
+request path holds.
 
 ### 3.2 Zone (server/mod.rs:129; Phase 30 custody)
 
@@ -336,9 +369,10 @@ pub struct AuthoritativeRuntimeConfig {
 }
 ```
 
-`DnsServer::new(DnsRuntimeConfig, Option<Arc<CertResolver>>)` is the canonical
-constructor: the whole-DNS runtime projection plus a composition-owned
-`CertResolver`. The single persisted-to-runtime conversion lives in
+`DnsServer::new(DnsRuntimeConfig, Option<Arc<dyn SecureTransportConfig>>, Option<Arc<dyn CountryLookup>>)`
+is the canonical constructor: the whole-DNS runtime projection plus the two
+composition-owned provider capabilities (both DNS-owned traits after Phases
+134/135). The single persisted-to-runtime conversion lives in
 `src/server/dns_runtime_config.rs` (composition), never in the `src/dns/`
 facade.
 
@@ -545,20 +579,29 @@ pub struct PrefetchConfig {
 // server/mod.rs
 impl DnsServer {
     // Phases 126-128: DNS-owned runtime values only, never a persistence DTO.
+    // Phase 135/138: the third argument is the DNS-owned `CountryLookup`,
+    // adapted by composition from `Arc<GeoIpManager>` in src/geo/dns_provider.rs.
     pub fn new(
         runtime: DnsRuntimeConfig,
-        cert_resolver: Option<Arc<CertResolver>>,
+        cert_resolver: Option<Arc<dyn SecureTransportConfig>>,
+        country_lookup: Option<Arc<dyn CountryLookup>>,
     ) -> Self
 
-    #[cfg(feature = "dns")]
-    pub fn with_acme_dns_challenges(self, challenges: Arc<AcmeDnsChallenge>) -> Self
-    #[cfg(feature = "dns")]
+    /// Prefer `set_acme_dns_challenges`: this consuming builder only rebinds
+    /// the temporary clone it is called on.
+    pub fn with_acme_dns_challenges(self, challenges: Arc<dyn AcmeTxtChallenges>) -> Self
+    /// Phase 139: bind on the live server. `false` if already bound.
+    pub fn set_acme_dns_challenges(&self, challenges: Arc<dyn AcmeTxtChallenges>) -> bool
     pub fn with_cookie_server(self, cookie_server: Arc<DnsCookieServer>) -> Self
 
     /// Activate authoritative zones (Phase 132).
     pub fn load_zones(&self, zone_configs: Vec<ZoneSpec>) -> Result<(), String>
 }
 ```
+
+Neither ACME builder is `#[cfg]`-gated: `synvoid-dns` has only the `mesh` and
+`hsm` features, so the `#[cfg(feature = "dns")]` attributes earlier revisions of
+this listing carried were inherited from the root crate and do not exist here.
 
 The single persisted-config conversion path is
 `src/server/dns_runtime_config.rs`; `src/dns/` stays a pure re-export facade.
@@ -571,8 +614,13 @@ activates them explicitly, in `src/server/resources.rs`:
 
 ```rust
 let configured_zones = runtime_cfg.zones.clone();   // before the move
-let mut dns_server = DnsServer::new(runtime_cfg, cert_resolver.clone());
-dns_server.load_zones(configured_zones)?;          // fails startup closed
+let country_lookup = crate::geo::country_lookup_from_config(&main_config.geoip, &[]);
+let mut dns_server = DnsServer::new(
+    runtime_cfg,
+    crate::tls::dns_providers::as_transport(cert_resolver.clone()),
+    country_lookup,
+);
+dns_server.load_zones(configured_zones)?;           // fails startup closed
 ```
 
 Three consequences worth knowing:
@@ -1464,6 +1512,14 @@ Two facts about these seams are load-bearing and guarded:
   earlier claim here that a configured restrictive geo rule blocks all traffic
   described an unreachable consequence and is corrected by pointer in
   `architecture/dns_provider_inversion_phase138_closeout.md`.
+- **`block_internal_ips` installs 8 hardcoded rules and is not separately
+  selectable.** When `[dns.firewall] enabled` is true and
+  `block_internal_ips` is true (its default), `DnsServer::new` adds exactly 8
+  `Subnet`/`Block` rules: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`,
+  `127.0.0.0/8`, `169.254.0.0/16`, `::1/128`, `fc00::/7`, `fe80::/10`. There is
+  no per-rule or per-range control. Its observable symptom on TCP is
+  **silence**: the handler `continue`s before writing a response, so the client
+  times out rather than receiving SERVFAIL.
 - **Phase 138 is "wired, not yet load-bearing."** An injected handle reaches both
   consumers — `DnsServer::geoip_lookup` and the firewall's separate
   `country_lookup` field — and is preserved across a `DnsServer` clone, pinned by

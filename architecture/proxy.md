@@ -30,15 +30,21 @@ The proxy subsystem is SynVoid's reverse proxy that handles proxied HTTP/HTTPS r
 | `client_registry` | `crates/synvoid-proxy/src/client_registry.rs` | HTTP client registration |
 | `governor` | `crates/synvoid-proxy/src/governor.rs` | Rate limiting for upstream requests |
 | `streaming` | `crates/synvoid-proxy/src/streaming.rs` | TeeBody for caching streamed responses |
+| `server` | `crates/synvoid-proxy/src/server.rs` | `ProxyServer`, `ProxyResponse`, `QuicTunnelSender`, WAF/caching dispatch |
+| `router` | `crates/synvoid-proxy/src/router.rs` | `Router`, `RouteTarget`, `RouteResult`, `BackendType` |
+| `routing` / `router_adapter` | `crates/synvoid-proxy/src/{routing,router_adapter}.rs` | Route helpers; `RouterRouteResolver` adapter |
+| `location_matcher` | `crates/synvoid-proxy/src/location_matcher.rs` | nginx-style location matching |
+| `bidirectional` | `crates/synvoid-proxy/src/bidirectional.rs` | Bidirectional streaming copy with optional WAF scan |
+| `protocol/` | `crates/synvoid-proxy/src/protocol/` | Pluggable framed-protocol handlers + `WafAction` adapter |
 
 ## 3. Major Data Structures
 
 ### ProxyServer
 ```rust
 pub struct ProxyServer<W: WafProcessor> {   // Generic over the WAF bound (composition roots pass WafCore)
-    _client: HttpClient,                    // Primary upstream client
-    revalidation_client: HttpClient,      // Client for cache revalidation
-    erased_client: ErasedHttpClient,      // Type-erased client for dynamic dispatch
+    lane_client: Option<EggfetchUpstreamClient>,         // Primary egress lane (Phase 60)
+    revalidation_lane: Option<EggfetchUpstreamClient>,   // Separate lane for cache revalidation
+    lane_init_error: Option<String>,     // Terminal lane-build failure; fails every request pre-I/O
     upstream_url: String,                // Single upstream URL (fallback)
     waf: Arc<W>,                          // WAF for pre-forwarding checks
     max_response_size: usize,             // Max response size limit
@@ -52,10 +58,15 @@ pub struct ProxyServer<W: WafProcessor> {   // Generic over the WAF bound (compo
     skip_verify: bool,
     cache_purge_token: Option<String>,
     cache_purge_allowed_ips: Arc<HashSet<IpAddr>>,
-    pool_max_idle_per_host: usize,
-    pool_idle_timeout: Duration,
-    is_http2: bool,                       // HTTP/2 enabled flag
+    pool_max_idle_per_host: usize,        // #[allow(dead_code)] — retained for API compat
+    pool_idle_timeout: Duration,          // #[allow(dead_code)] — retained for API compat
+    is_http2: bool,                       // Ignored: the eggfetch lane negotiates via ALPN
     proxy_headers_config: Option<Arc<ProxyHeadersConfig>>,  // Custom header overrides
+    connection_limiter: Option<Arc<ConnectionLimiter>>,
+    threat_level_provider: Option<Arc<dyn ThreatLevelProvider>>,
+    tarpit_service: Option<Arc<dyn TarpitService>>,
+    block_store: Option<Arc<dyn BlockListStore>>,
+    quic_tunnel_sender: Option<Arc<QuicTunnelSender>>,
 }
 ```
 
@@ -188,7 +199,9 @@ loop {
 ### Cache Key Building
 ```rust
 CacheKeyBuilder::new(key_pattern, vary_by)
-// Default pattern: "{scheme}://{host}:{port}{path}"
+// Default pattern (crates/synvoid-proxy-cache/src/config.rs:49):
+//   "$scheme$request_method$host$site_id$request_uri"
+// Placeholders: $scheme, $request_method, $host, $request_uri, $site_id
 // Vary-by: selected request headers (for example, Accept-Encoding)
 ```
 
@@ -279,8 +292,11 @@ The Proxy module has no feature gates - it is always compiled. However, it integ
 | `mesh` | Threat intelligence announcement on upstream error probing |
 
 Note: `is_http2` is a struct field on `ProxyServer` (set via `with_http2()` builder method),
-not a feature gate. The site config value `proxy.http2` is wired through at
-`src/tls/server.rs:1722`.
+not a feature gate. It is, however, **inert**: `crates/synvoid-proxy/src/server.rs`
+retains it only for API compatibility because the legacy transport used it as a
+pool-lookup hint (never for protocol switching). The eggfetch lane negotiates
+HTTP/1.1 vs HTTP/2 via ALPN, so the field (and the `proxy.http2` site value
+wired through at `src/tls/server.rs`) selects nothing.
 
 ## 10. Key Constants
 
@@ -340,19 +356,21 @@ Self {
 The `uri` field contains `"<ahash_hex>:<path_and_query>"`, NOT the raw URI.
 This ensures cache key uniqueness when the same path has different pattern or vary values.
 
-### ErasedHttpClient Pool Size (DOC-H21)
+### Erased Pool Status (DOC-H21, corrected)
 
-In `crates/synvoid-proxy/src/server.rs`, `ErasedHttpClient::new(100)` hardcodes the pool size to 100
-max idle connections per host, ignoring any configurable parameter:
+`ProxyServer` **no longer constructs an `ErasedHttpClient`**. There is no
+`ErasedHttpClient::new(100)` call in `crates/synvoid-proxy/src/server.rs`; egress
+runs on the eggfetch lane (`lane_client` / `revalidation_lane`, Phase 60/62), and
+the erased pool survives only as a frozen compatibility surface guarded by
+`eggfetch_lane_freeze_guard`.
 
-```rust
-erased_client: crate::http_client::ErasedHttpClient::new(100),
-```
+`ErasedHttpClient::new(max_idle_per_host: usize)`
+(`crates/synvoid-http-client/src/erased_pool.rs:359`) still accepts a parameter,
+but its pool stores `Http1PooledConnection` only — the erased pool is
+HTTP/1.1-only. `PoolKey` retains an `is_http2` field that now only partitions
+pool entries; it does not select a protocol.
 
-The `ErasedHttpClient::new(max_idle_per_host: usize)` constructor accepts a parameter,
-but `ProxyServer` always passes 100. This is a known limitation.
-
-## 12. Related Documentation
+## 13. Related Documentation
 
 - [`upstream.md`](./upstream.md) - Upstream pool and health checking (upstream.rs)
 - [`http_shared.md`](./http_shared.md) - HTTP client implementation

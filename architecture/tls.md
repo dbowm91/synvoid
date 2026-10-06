@@ -300,7 +300,8 @@ if let Some(key_auth) = acme.handle_http_challenge(path) {
 4. **TLS Handshake:** `TlsAcceptor::accept(stream)` is called asynchronously. The acceptor is built from `CertResolver::build_server_config()` which provides:
    - `rustls::ServerConfig` with `Arc<CertResolver>` as the cert resolver (SNI-based resolution)
    - Protocol versions (TLS 1.3 only, or TLS 1.2+1.3 fallback)
-   - Post-quantum hybrid KEM if enabled
+   - Post-quantum hybrid KEM **always** (compiled in via rustls's unconditional
+     `prefer-post-quantum` feature; not conditional on any config field)
    - mTLS verifier if configured
 
 5. **ALPN Negotiation:** After handshake, `tls_stream.get_ref().1.alpn_protocol()` is checked:
@@ -433,4 +434,4 @@ request_certificate(domain)
 |---------|--------|--------|
 | `dns` | acme_dns.rs | Enables DNS-01 challenge support (`AcmeDnsChallenge`) |
 | `mesh` | server.rs | Enables mesh transport and IPC fields in `HttpsServer` |
-| `post-quantum` | server.rs | Logs post-quantum crypto status at startup |
+| `post-quantum` | (marker only; consumed by `synvoid-http-client` and `synvoid-admin`) | Egress marker for http-client/admin. It gates **nothing** inbound: `synvoid-tls` always enables rustls `prefer-post-quantum`. `src/tls/server.rs` only reads it via `cfg!(feature = "post-quantum")` for the startup banner's PQC clause, labelled as the egress marker (`tls_profile_description`, server.rs:143) |

@@ -79,7 +79,7 @@ Remaining transport-specific differences (by design, tested):
 ```rust
 // request_preparation.rs
 pub struct PreparedRequest {
-    pub on_upgrade: Option<hyper::upgrade::OnUpgrade>,
+    pub upgrade: Option<Box<dyn UpgradeCapability>>,
     pub target: RouteTarget,
     pub parts: http::request::Parts,
     pub method: http::Method,
@@ -92,7 +92,13 @@ pub struct PreparedRequest {
 }
 ```
 
-`PreparedRequest` is the output of `prepare_request_preflight()` after metadata extraction, early WAF, route resolution, and body collection. It is consumed by `http_request_postlude.rs` which runs the full WAF decision and backend dispatch.
+`PreparedRequest` is the output of `finalize_request_preparation()` (body
+collection + chunk-WAF policy). Its upstream input is `RequestPreflight`, the
+value `prepare_request_preflight()` returns via `RequestPreflightOutcome::Continue`
+(holding `body: InboundBody`, not collected bytes); preflight itself covers
+framing validation, metadata extraction, trust-token bypass, and route
+resolution. `PreparedRequest` is consumed by `http_request_postlude.rs`, which
+runs the full WAF decision and backend dispatch.
 
 ### HTTP/3
 
@@ -121,12 +127,16 @@ pub struct Http3DispatchDeps {
     pub streaming_waf_for_upstream: Option<Box<dyn StreamingWafScanner>>,
     pub connection_limiter: Option<Arc<ConnectionLimiter>>,
     pub main_config: Arc<MainConfig>,
-    pub client: HttpClient,
     pub upstream_client_registry: Arc<UpstreamClientRegistry>,
     pub bandwidth: Option<Arc<BandwidthTracker>>,
     pub metrics: Option<Arc<WorkerMetrics>>,
 }
 ```
+
+`Http3DispatchDeps` has **no typed `HttpClient` field**: HTTP/3 upstream sends
+go through the same `synvoid-http-client` eggfetch transport lane as the proxy
+(`EggfetchResponseBody` / `UpstreamTlsConfig`), reached via the shared
+`UpstreamClientRegistry`.
 
 `handle_http3_request_dispatch()` receives `Http3RequestMetadata`, `Http3DispatchDeps`, the request stream, the optional connection guard, and the WAF backend. HTTP/3 framing, body flow, request state, and dispatch are owned by `synvoid-http3`; protocol-neutral HTTP policy helpers remain in `synvoid-http` and are called through narrow functions and traits.
 
@@ -136,7 +146,9 @@ pub struct Http3DispatchDeps {
 // src/worker/context.rs
 pub struct RequestServices {
     #[cfg(feature = "mesh")]
-    pub threat_intel: Option<Arc<ThreatIntelligenceManager>>,
+    pub threat_intel: Option<Arc<dyn ThreatIntelLookup>>,
+    #[cfg(feature = "mesh")]
+    pub behavioral_intel: Option<Arc<dyn BehavioralIntelLookup>>,
     pub upload_validator: Option<Arc<UploadValidator>>,
     #[cfg(feature = "mesh")]
     pub yara_rules: Option<Arc<YaraRulesManager>>,
@@ -145,7 +157,10 @@ pub struct RequestServices {
 }
 ```
 
-`RequestServices` is the narrow service handle passed to request dispatch. It must not grow lifecycle/supervision/shutdown dependencies.
+`RequestServices` is the narrow service handle passed to request dispatch. It
+holds narrow traits (`dyn ThreatIntelLookup`, `dyn BehavioralIntelLookup`), not
+concrete control-plane types such as `ThreatIntelligenceManager`. It must not
+grow lifecycle/supervision/shutdown dependencies.
 
 ## Body/Streaming Semantics
 

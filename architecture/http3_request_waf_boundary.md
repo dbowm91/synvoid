@@ -29,23 +29,23 @@
 
 | Surface | File | Classification |
 |---------|------|----------------|
-| `Http3WafBackend` trait | `lib.rs:21` | Protocol adapter (composite trait boundary) |
-| `Http3Server` struct | `server.rs:20` | Protocol adapter |
+| `Http3WafBackend` trait | `lib.rs:30` | Protocol adapter (composite trait boundary) |
+| `Http3Server` struct | `server.rs:19` | Protocol adapter |
 | `Http3Server::handle_request()` | `server.rs:205` | Protocol adapter — calls crate-owned `prepare_http3_request_dispatch` + `handle_http3_request_dispatch` |
 | WAF connection limiter access | `server.rs:218,264` | Protocol adapter — delegates to `WafAccess` trait |
 | WAF streaming scanner access | `server.rs:261-262` | Protocol adapter — delegates to `WafAccess` trait |
 | WAF bandwidth check | `server.rs:219` | Protocol adapter — delegates to `WafAccess` trait |
 
-### HTTP Dispatch (`crates/synvoid-http`)
+### HTTP Dispatch (`crates/synvoid-http3` and `crates/synvoid-http`)
 
 | Surface | File | Classification |
 |---------|------|----------------|
-| `Http3RequestWaf` trait | `http3_request_dispatch.rs:28` | WAF service adapter (narrow trait for HTTP/3) |
-| `handle_http3_request_dispatch()` | `http3_request_dispatch.rs:79` | Worker/data-plane composition (delegates to WAF) |
-| `maybe_handle_http3_waf_decision()` | `http3_waf_dispatch.rs:47` | WAF decision mapping (HTTP/3-specific) |
-| `collect_http3_request_body()` | `http3_body.rs` | Body streaming adapter |
-| `stream_body_with_waf()` | `shared_handler.rs:304` | Body streaming adapter |
-| `collect_body_with_chunk_waf()` | `shared_handler.rs:319` | Body streaming adapter |
+| `Http3RequestWaf` trait | `synvoid-http3/http3_request_dispatch.rs:82` | WAF service adapter (narrow trait for HTTP/3) |
+| `handle_http3_request_dispatch()` | `synvoid-http3/http3_request_dispatch.rs:132` | Worker/data-plane composition (delegates to WAF) |
+| `maybe_handle_http3_waf_decision()` | `synvoid-http3/http3_waf_dispatch.rs:48` | WAF decision mapping (HTTP/3-specific) |
+| `collect_http3_request_body()` | `synvoid-http3/http3_body.rs:60` | Body streaming adapter |
+| `stream_body_with_waf()` | `synvoid-http/shared_handler.rs:292` | Body streaming adapter |
+| `collect_body_with_chunk_waf()` | `synvoid-http/shared_handler.rs:308` | Body streaming adapter |
 
 ### WAF Crate (`crates/synvoid-waf`)
 
@@ -90,7 +90,7 @@ crates/synvoid-http3
   ├── synvoid-core      (StreamingWafScanner — test only)
   ├── synvoid-config    (Http3Config, MainConfig, SiteBotConfig)
   ├── synvoid-proxy     (Router, UpstreamClientRegistry)
-  ├── synvoid-http-client (HttpClient)
+  ├── synvoid-http-client (eggfetch lane: EggfetchResponseBody, UpstreamTlsConfig)
   ├── synvoid-metrics   (WorkerMetrics, bandwidth)
   ├── synvoid-platform  (bind_udp_reuse)
   └── synvoid-upstream  (site-to-TLS policy adapter)
@@ -205,7 +205,7 @@ waf.check_request_full_owned(
 
 1. `stream_body_with_waf()` in `crates/synvoid-http/src/shared_handler.rs:304` wraps the body with a streaming WAF scanner.
 2. `collect_body_with_chunk_waf()` collects the full body via the scanner.
-3. `collect_and_scan_request_body()` in `crates/synvoid-http/src/body_policy.rs:23` orchestrates the flow.
+3. `collect_and_scan_request_body()` in `crates/synvoid-http/src/body_policy.rs:49` orchestrates the flow.
 4. Backpressure is preserved via hyper body framing.
 
 ### Comparison

@@ -50,23 +50,23 @@ by `server_long_lived_spawns_go_through_registration` guard test).
 
 | Task | Name | Class | File | Shutdown behavior |
 |------|------|-------|------|-------------------|
-| HTTP/1 IPv4 | `http_v4` | CriticalServer | `mod.rs` | broadcast + join |
-| HTTP/1 IPv6 | `http_v6` | ProtocolListener | `mod.rs` | broadcast + join |
-| HTTPS IPv4 | `https_v4` | CriticalServer | `mod.rs` | broadcast + join |
-| HTTPS IPv6 | `https_v6` | ProtocolListener | `mod.rs` | broadcast + join |
-| HTTP/3 IPv4 | `http3_v4` | ProtocolListener | `mod.rs` | broadcast + join |
-| HTTP/3 IPv6 | `http3_v6` | ProtocolListener | `mod.rs` | broadcast + join |
-| TCP pool | `tcp_pool` | ProtocolListener | `mod.rs` | broadcast + join |
-| UDP pool | `udp_pool` | ProtocolListener | `mod.rs` | broadcast + join |
-| DNS server | `dns` | ProtocolListener | `mod.rs` | broadcast + join |
-| Threat-level auto-scale | `threat_level_auto_scale` | Maintenance | `mod.rs` | shutdown watch + join |
-| ACME init/renewal | `acme_init_renewal` | Maintenance | `mod.rs` | shutdown watch + join |
+| HTTP/1 IPv4 | `http_v4` | CriticalServer | `listener_tasks.rs:26` | broadcast + join |
+| HTTP/1 IPv6 | `http_v6` | ProtocolListener | `listener_tasks.rs:36` | broadcast + join |
+| HTTPS IPv4 | `https_v4` | CriticalServer | `listener_tasks.rs:66` | broadcast + join |
+| HTTPS IPv6 | `https_v6` | ProtocolListener | `listener_tasks.rs:94` | broadcast + join |
+| HTTP/3 IPv4 | `http3_v4` | ProtocolListener | `listener_tasks.rs:128` | broadcast + join |
+| HTTP/3 IPv6 | `http3_v6` | ProtocolListener | `listener_tasks.rs:142` | broadcast + join |
+| TCP pool | `tcp_pool` | ProtocolListener | `listener_tasks.rs:159` | broadcast + join |
+| UDP pool | `udp_pool` | ProtocolListener | `listener_tasks.rs:169` | broadcast + join |
+| DNS server | `dns` | ProtocolListener | `listener_tasks.rs:213` | broadcast + join |
+| Threat-level auto-scale | `threat_level_auto_scale` | Maintenance | `service_assembly.rs:158` | shutdown watch + join |
+| ACME init/renewal | `acme_init_renewal` | Maintenance | `listener_tasks.rs:242` | shutdown watch + join |
 | ACME cert reload IPC | *(short-lived)* | *(exempt)* | `mod.rs` | callback-owned, completes quickly |
 | Plugin hot-reload | *(owned by PluginRuntimeOwner)* | HotReloadWatcher | `plugin_runtime.rs` | dropped after task shutdown |
 
 ## Spawn Classes
 
-- **CriticalServer**: HTTP/1, HTTPS — primary protocol listeners whose exit triggers shutdown.
+- **CriticalServer**: HTTP/1 IPv4, HTTPS IPv4 — primary protocol listeners whose exit triggers shutdown. `RuntimeHandleClass` also carries `BestEffort` for ephemeral/best-effort tasks (`runtime_handles.rs:17-23`).
 - **ProtocolListener**: HTTP/3, TCP/UDP pools, DNS — secondary listeners.
 - **Maintenance**: Background tasks (threat-level auto-scale, ACME renewal).
 - **HotReloadWatcher**: Plugin hot-reload file watchers (owned by `PluginRuntimeOwner`).
@@ -81,7 +81,7 @@ watcher remains alive for the full server runtime lifetime.
 
 ## Lifecycle Rules
 
-- **No `std::mem::forget`** in server or plugin code — enforced by `unified_server_lifecycle_ownership_guard.rs`.
+- **No `std::mem::forget`** in server or plugin code — enforced by the server/plugin section of `tests/lifecycle_task_guard.rs` (there is no standalone `unified_server_lifecycle_ownership_guard.rs` file).
 - **Every `tokio::spawn` must have a `// reason:` comment** — enforced by `tokio_spawns_require_reason_comments`.
 - **Long-lived spawns must use `spawn_registered`/`spawn_registered_unit`** — enforced by `server_long_lived_spawns_go_through_registration`.
 - **`UnifiedServerRuntimeHandles` must be instantiated** — enforced by `unified_server_runtime_handles_are_integrated`.
@@ -89,15 +89,24 @@ watcher remains alive for the full server runtime lifetime.
 
 ## Non-Mesh HTTP Behavior
 
-When compiled without the `mesh` feature (`cargo check --no-default-features`),
-`run_http_server_inner()` returns `Ok(())` without starting an HTTP server. This
-is intentional — the non-mesh binary is a degenerate shell that does not serve HTTP.
-The mesh feature is required for actual request handling.
+**The HTTP listener serves on all feature profiles**, mesh or not.
+`run_http_server_inner()` (`src/server/mod.rs:524`) unconditionally builds the
+`HttpServer` and calls `server.serve().await`; the mesh-specific wiring
+(`with_mesh_config` / `with_mesh_transport` / `with_mesh_backend_pool`) is the
+only part behind `#[cfg(feature = "mesh")]`. The source carries an explicit
+qualification comment at `src/server/mod.rs:604-607`:
+
+> NOTE (eggbench qualification): the HTTP listener serves on all profiles. A
+> `#[cfg(not(feature = "mesh"))] let _ = server;` stub here silently disabled the
+> data plane on minimal builds; the accept loop carries no mesh dependency.
+
+An earlier revision of this document claimed the opposite (a non-mesh binary that
+does not serve HTTP). That stub has been removed; the claim is retracted.
 
 ## Guardrail Tests
 
 ```bash
-cargo test --test unified_server_lifecycle_ownership_guard  # 5 tests: mem::forget, reason comments, handles integrated, spawns registered, plugin owner lifetime
+cargo test --test lifecycle_task_guard  # server/plugin guards: mem::forget, reason comments, handles integrated, spawns registered, plugin owner lifetime
 cargo test -p synvoid --lib server::startup_plan           # Startup validation unit tests
 cargo test -p synvoid --lib server::plugin_runtime         # Plugin lifecycle tests
 cargo test -p synvoid --lib server::resources              # Resource construction tests

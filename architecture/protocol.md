@@ -23,10 +23,10 @@ pub trait ProtocolHandler: Send + Sync {
     fn parse_request(&self, data: &[u8]) -> Result<ProtocolRequest, ProtocolError>;
     fn build_request_for_upstream(&self, request: &ProtocolRequest) -> Vec<u8>;
     fn parse_response(&self, data: &[u8]) -> Result<ProtocolResponse, ProtocolError>;
-    fn apply_waf(&self, request: &mut ProtocolRequest, waf: &Arc<WafCore>) -> WafAction;
+    fn apply_waf(&self, request: &mut ProtocolRequest, waf: &Arc<dyn WafCoreBackend>) -> WafAction;
     fn select_upstream(&self, request: &ProtocolRequest, pool: &UpstreamPool) -> Option<Backend>;
     fn metrics(&self) -> ProtocolMetrics;
-    fn set_waf(&mut self, waf: Arc<WafCore>);
+    fn set_waf(&mut self, waf: Arc<dyn WafCoreBackend>);
     fn set_upstream_pool(&mut self, pool: Arc<UpstreamPool>);
 }
 
@@ -89,6 +89,10 @@ pub enum ProtocolError {
 - DNS packet detection
 - First-line extraction
 - Protocol fingerprinting
+
+### `trait_def.rs` / `types.rs`
+- `trait_def.rs` — the `ProtocolHandler` trait itself
+- `types.rs` — `ProtocolType`, `ProtocolFamily`, `WafAction`, `ProtocolError`, `ProtocolRequest`/`ProtocolResponse`
 
 ---
 

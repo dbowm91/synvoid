@@ -40,7 +40,10 @@ crates/synvoid-http-client/src/
 ├── unix.rs             # is_unix_socket_url, Unix client and request helpers
 ├── request.rs          # All send_request_* / streaming / get / post_json / auth helpers
 ├── response.rs         # HttpResponse + from_hyper conversion
-└── erased_pool.rs      # Type-erased connection pool (primary production path)
+├── erased_pool.rs      # Type-erased connection pool (frozen compatibility surface)
+├── eggfetch_transport.rs # EggfetchUpstreamClient — the PRODUCTION egress lane
+├── eggfetch_policy.rs  # Private UpstreamTlsConfig -> eggfetch TlsConfig translator
+└── eggfetch_differential.rs # Differential harness: egg lane vs legacy lane
 ```
 
 Phase 34 moves (transport stays policy-free): site-config → TLS conversion
@@ -51,7 +54,6 @@ lives in `crates/synvoid-http/src/streaming_waf_body.rs`
 `synvoid_core::streaming_waf` via `synvoid_http::shared_handler`).
 `crates/synvoid-http-client` keeps no `synvoid-config`/`synvoid-core`/`metrics`
 edges. Full decision record: `architecture/egress_client_decision_phase34.md`.
-```
 
 ### 1. Core Module (`mod.rs`)
 
@@ -94,10 +96,9 @@ edges. Full decision record: `architecture/egress_client_decision_phase34.md`.
 - `ErasedBody` trait — Type-erased body with `poll_frame()` and `size_hint()`
 - `ErasedBodyImpl<B>` — Wraps any `HttpBody<Data=Bytes>` into `Box<dyn ErasedBody>`
 - `BoxErasedBody = Box<dyn ErasedBody>` — Alias for boxed trait object
-- `ErasedConnectionPool` — HashMap-based pool with `checkout()` / `checkin()` semantics
+- `ErasedConnectionPool` — HashMap-based pool with `checkout()` / `checkin()` semantics; **HTTP/1.1 only**
 - `Http1PooledConnection` — Wraps `hyper::client::conn::http1::SendRequest`
-- `Http2PooledConnection` — Stub for HTTP/2 (see HTTP/2 Support below)
-- `ErasedHttpClient` — High-level client using `ErasedConnectionPool`
+- `ErasedHttpClient` — High-level client using `ErasedConnectionPool` (there is no `Http2PooledConnection` type)
 - `PoolKey` — `{ authority: String, is_http2: bool }` for pool entry identification
 
 **Pool Semantics:**
@@ -154,9 +155,9 @@ Used as cache key for `UPSTREAM_CLIENT_CACHE` and `UPSTREAM_STREAMING_CLIENT_CAC
 ### `StreamingWafBody<B>` (canonical: `synvoid_http::streaming_waf_body`, Phase 34)
 
 ```rust
-pub struct StreamingWafBody<B> {
+pub struct StreamingWafBody<B, S> {
     inner: B,                                            // Original body
-    streaming_waf: Option<StreamingWafCore>,             // WAF scanner
+    streaming_waf: Option<S>,                            // WAF scanner
     client_ip: IpAddr,                                   // For logging
     blocked: bool,                                       // State: already blocked
     error_sent: bool,                                    // State: error frame sent
@@ -289,25 +290,27 @@ Client negotiates with server — both protocols supported.
 ### HTTP/2 Configuration Points
 
 1. **`http2_only(false)`** on `Client::builder()` — Allows fallback to HTTP/1.1
-2. **`ErasedHttpClient::send_request(..., is_http2)`** — Boolean flag (currently **not wired** for HTTP/2 pooling)
+2. **`ErasedHttpClient::send_request(..., is_http2)`** — Retained compat flag; it partitions the pool key only and does **not** drive HTTP/2 pooling
 
 ### Known Limitation: HTTP/2 Pooling
 
-From `src/http/AGENTS.override.md`:
-> **HTTP2-POOL | ErasedHttpClient HTTP/2 pooling** — hyper http2_client::handshake() API incompatible with current hyper-util
+The erased pool is **HTTP/1.1-only**. There is no `Http2PooledConnection` type in
+the tree any more — the former stub (and its `is_available() -> false` impl) has
+been removed, and `ErasedConnectionPool` stores only
+`VecDeque<Http1PooledConnection>` (`erased_pool.rs:159-167`).
 
-The `Http2PooledConnection` stub exists but `is_available()` always returns `false`:
-```rust
-impl PooledConnection for Http2PooledConnection {
-    fn is_available(&self) -> bool { false }  // Stub - HTTP/2 pooling not implemented
-}
-```
-
-This is a **deferred item** — HTTP/2 connection pooling requires different API surface.
+HTTP/2 upstream negotiation is handled by the eggfetch lane via ALPN, not by
+this pool. Earlier revisions of this document quoted an "HTTP2-POOL" section from
+`src/http/AGENTS.override.md`; no such section exists there, so that citation
+was inaccurate and has been removed.
 
 ### Per-Request HTTP/2 Control
 
-`sync void request_erased_streaming()` passes `is_http2` to `ErasedHttpClient::send_request()` but the boolean is stored in `PoolKey` and used for pool lookup, not actual protocol switching on existing connections.
+`send_request_erased_streaming()` passes `is_http2` to `ErasedHttpClient::send_request()`,
+but the boolean is only stored in `PoolKey` for pool-key partitioning. It never
+selects a protocol: the erased pool performs an HTTP/1.1 handshake
+unconditionally (`Http1PooledConnection::new`). Protocol choice belongs to the
+eggfetch lane's ALPN negotiation.
 
 ---
 
@@ -318,7 +321,7 @@ This is a **deferred item** — HTTP/2 connection pooling requires different API
 | `erased_pool` | **Enabled** | Enables `ErasedConnectionPool`, `ErasedHttpClient`, type-erased body support |
 | `buffer` | Off | Enables `synvoid-utils/buffer` (TreiberStack replacement) |
 | `rkyv` | Off | Zero-copy serialization alternative to Postcard |
-| `post-quantum` | Off | Rustls post-quantum crypto (RUSTSEC-2026-0096 patched) |
+| `post-quantum` | Off | **Empty marker** (`post-quantum = []`). Rustls PQ hybrid key exchange is always on because rustls is pulled with `prefer-post-quantum` unconditionally; this feature only marks the http-client/admin **egress** lane |
 
 ### `erased_pool` Feature Impact
 
@@ -335,7 +338,11 @@ erased_pool = []  # Feature gate in [features]
 
 ### TLS Provider
 
-All TLS uses **aws-lc-rs** (Pure Rust):
+All TLS uses the **aws-lc-rs** rustls provider. Note this is an FFI binding to
+AWS-LC (BoringSSL-derived C), **not** a pure-Rust implementation — the
+`AGENTS.md` "prefer pure-Rust deps over C bindings" preference is a guideline,
+and this crate deliberately keeps the aws-lc-rs process provider
+(`rustls = { features = ["prefer-post-quantum", "aws-lc-rs"] }`).
 ```rust
 use rustls::crypto::aws_lc_rs;
 let provider = Arc::new(aws_lc_rs::default_provider());
@@ -437,7 +444,11 @@ Moka provides:
 
 ### Why aws-lc-rs?
 
-Per `AGENTS.md` — Pure Rust crypto, battle-tested, no C bindings. Provides TLS 1.3 and post-quantum (PQ) support when `post-quantum` feature enabled.
+Battle-tested TLS 1.3 performance (BoringSSL lineage). It is an FFI binding to
+AWS-LC, not pure Rust, so it is a deliberate exception to the `AGENTS.md`
+preference for pure-Rust crypto. Hybrid PQ key exchange comes from rustls's
+`prefer-post-quantum` feature, which this crate enables **unconditionally** —
+see the `post-quantum` row in Feature Gates.
 
 ---
 

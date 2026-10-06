@@ -167,7 +167,11 @@ Default pattern: `"$scheme$request_method$host$site_id$request_uri"`
 - **Config**: Per-site `ProxyCacheSettings` from `SiteConfig.proxy.cache`
 - **Metrics**: Cache hit/miss counters (`synvoid.proxy.cache.hit`/`miss`)
 - **Circuit Breaker**: Stops revalidation attempts during backend outages
-- **Mesh**: `apply_preferences()` for mesh-driven cache configuration
+
+Note: an earlier revision of this list claimed an `apply_preferences()` hook for
+mesh-driven cache configuration. No such function exists in
+`crates/synvoid-proxy-cache/`; the claim was unverified and has been removed.
+Mesh cache coordination (if any) is not implemented at this layer.
 
 ---
 

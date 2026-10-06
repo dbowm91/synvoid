@@ -30,13 +30,15 @@ pub struct CgiResponse {
 }
 
 pub enum CgiError {
-    NotFound,
-    Forbidden,
+    NotFound(String),
+    Forbidden(String),
     ExecutionFailed(String),
     Timeout,
     InvalidResponse,
 }
 ```
+
+Both `NotFound` and `Forbidden` carry a message payload.
 
 ---
 
@@ -47,7 +49,7 @@ pub enum CgiError {
 | `CgiHandler::new(config)` | Constructor with root validation |
 | `execute(method, uri, headers, body, client_ip).await` | Execute CGI script |
 | `CgiResponse::into_http_response()` | Convert to HTTP response |
-| `sanitize_cgi_path(path)` | Remove `.` and `..` components |
+| `sanitize_cgi_path(path)` | Remove `.` and `..` components (module-private helper, `cgi/mod.rs:12`) |
 
 ---
 

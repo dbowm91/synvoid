@@ -7,13 +7,13 @@ SynVoid's networking layer is built for extreme performance and flexibility, sup
 ### 1. HTTP/1.1 & HTTP/2
 SynVoid uses **Hyper** as its foundational HTTP library.
 - **HTTP/1.1:** Robust implementation with connection pooling and keep-alive support.
-- **HTTP/2:** Infrastructure exists (see `ErasedHttpClient::send_request(..., is_http2)`) but HTTP/2 pooled connections are not fully available in current implementation. **Milestone:** HTTP/2 upstream connection pooling is a planned enhancement. The `Http2PooledConnection` stub exists but is not wired for production use. This is a known limitation (HTTP2-POOL deferred item).
+- **HTTP/2:** Infrastructure exists — `ErasedHttpClient::send_request(&self, request, authority, is_http2, timeout)` (`crates/synvoid-http-client/src/erased_pool.rs:365`) carries an `is_http2` flag, and `synvoid-proxy` threads `is_http2` through `ProxyServer::with_http2()` (`crates/synvoid-proxy/src/server.rs:283`). However, HTTP/2 pooled connections are not fully available in current implementation. **Milestone:** HTTP/2 upstream connection pooling is a planned enhancement. There is no `Http2PooledConnection` type anywhere in `crates/` or `src/`; the pooling work is unimplemented rather than stubbed. This is a known limitation (HTTP2-POOL deferred item).
 - **Protocol Detection:** At TLS handshake, protocol negotiation occurs via ALPN (`src/tls/server.rs:420-421`). The server extracts the ALPN protocol and determines if the connection should use HTTP/2 (`h2`) or HTTP/1.1. This detection happens during the TLS handshake callback before request processing begins.
 
 ### 2. HTTP/3 (QUIC)
 SynVoid features native HTTP/3 support via the **Quinn** library.
 - **Connection Migration:** QUIC's use of connection IDs allows clients (like mobile devices) to switch networks without dropping connections. When a client changes network interfaces (e.g., Wi-Fi to cellular), the connection persists using the same connection ID, enabling seamless migration.
-- **0-RTT:** Enables clients to send data in the first packet of a handshake, significantly reducing time-to-first-byte. **Security Tradeoff:** 0-RTT data is susceptible to replay attacks (RFC 9000). By default, 0-RTT is **disabled** (`tls.quic_enable_0rtt = false`). When enabled, only idempotent requests should be sent early. Configuration: `tls.quic_enable_0rtt` (default: false).
+- **0-RTT:** Enables clients to send data in the first packet of a handshake, significantly reducing time-to-first-byte. **Security Tradeoff:** 0-RTT data is susceptible to replay attacks (RFC 9000). By default, 0-RTT is **disabled**. When enabled, only idempotent requests should be sent early. Configuration: `quic_enable_0rtt` on the **mesh** TLS config (`MeshTlsConfig` in `crates/synvoid-config/src/mesh.rs:302`, `#[serde(default)]` → `false`; mirrored in `crates/synvoid-mesh/src/mesh/config.rs:1571`), consumed by `crates/synvoid-mesh/src/mesh/cert.rs:417,431` to set `max_early_data_size = 0` on the QUIC server config and emit a replay warning. It is a mesh-node setting, not a site-level `tls.*` option.
 - **Independence:** QUIC streams are independent, meaning packet loss on one stream doesn't stall others (eliminating Head-of-Line blocking).
 - **QUIC Tunnel Datagrams:** Maximum datagram payload size is **1200 bytes** (per `crates/synvoid-tunnel/src/quic/messages.rs:4` `MAX_DATAGRAM_PAYLOAD`).
 
@@ -56,18 +56,18 @@ SynVoid is at the forefront of post-quantum security:
 
 **Key Exchange:**
 - **X25519MLKEM768:** A hybrid key exchange that combines classical X25519 with the ML-KEM-768 (Kyber) algorithm.
-- **Feature-Gated:** PQ key exchange can be enabled via the `post-quantum` feature flag.
+- **Not an inbound gate:** hybrid key exchange is always available, because `synvoid-tls` and `synvoid-http-client` unconditionally enable rustls `prefer-post-quantum` + `aws-lc-rs`. The root `post-quantum` feature is a marker for http-client/admin **egress** only (see the Feature Flags list below).
 - Configuration: `mesh.mlkem` section in `MeshConfig` (variant, rotation interval, session TTL, max sessions).
 
 **Message Signatures:**
 - **ML-DSA-44:** Post-quantum digital signature algorithm for mesh message authentication.
-- **Feature-Gated:** PQ mesh signatures can be enabled via the `pqc-mesh` feature flag.
+- **Always compiled:** there is no `pqc-mesh` feature flag. `synvoid-mesh` depends on the `pqc` crate (`features = ["async"]`) unconditionally and `mesh/ml_dsa.rs` contains no `cfg(feature)` gate, so hybrid signing is available in every mesh build; Ed25519-only operation is a runtime fallback in `verify_hybrid()`, not a build-time choice.
 - Configuration: `global_node.ml_dsa_private_key_base64` in `GlobalNodeConfig`.
 
 **Feature Flags:**
 - `post-quantum` — Marker feature wiring `synvoid-http-client/post-quantum` + `synvoid-admin/post-quantum` for http-client/admin egress (`crates/synvoid-http-client/src/tls.rs` gates PQ log/status on `cfg!(feature = "post-quantum")`). It does NOT gate inbound TLS: both `crates/synvoid-tls` and `crates/synvoid-http-client` unconditionally enable rustls `prefer-post-quantum` + `aws-lc-rs` (see both Cargo.tomls).
-- `pqc-mesh` — Enables post-quantum mesh message signatures (ML-DSA-44) for inter-node communication. When enabled, Global nodes sign DHT records and threat intel messages with hybrid Ed25519+ML-DSA signatures. Requires `post-quantum` to be enabled as well for full PQC protection.
-- `verify-pq` — Enables verification of post-quantum key exchange proofs during mesh connection establishment. Ensures that hybrid key exchange properly validates both the classical and post-quantum components. Typically used in production mesh deployments.
+- ~~`pqc-mesh`~~ — **No such feature exists.** It appears in neither the root `Cargo.toml` nor `synvoid-mesh/Cargo.toml`. Do not add a `pqc-mesh` Cargo snippet; ML-DSA-44 mesh signing is unconditional (see the "Always compiled" bullet above).
+- `verify-pq` — Declared in the root `Cargo.toml:38` and `synvoid-mesh/Cargo.toml:17`. It has exactly one use site: at mesh QUIC transport construction, `cert_manager.read().verify_post_quantum()` runs a startup self-check (`crates/synvoid-mesh/src/mesh/transports/quic.rs:31-33`). It is off by default and gates no request-path behavior.
 
 ---
 

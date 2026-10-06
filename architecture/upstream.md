@@ -53,7 +53,7 @@ HealthChecker
 ├── pools: Arc<RwLock<Vec<Arc<UpstreamPool>>>>  # Registered pools to check
 ├── config: HealthCheckConfig                    # Check parameters
 ├── shutdown_tx: broadcast::Sender<()>          # Graceful shutdown
-└── client: HttpClient                           # HTTP client for checks
+└── client: EggfetchUpstreamClient               # Egress lane used for HTTP checks
 ```
 
 **HealthCheckConfig defaults**:
@@ -409,6 +409,15 @@ is_available() -> bool
 └── is_healthy.is_running() && connections < max_connections
 ```
 
+**Two independent threshold mechanisms.** `Backend::record_failure()` /
+`record_success()` use a **hardcoded** threshold of 3 consecutive results
+(`pool.rs:358`, `pool.rs:367`). The `HealthChecker` loop instead applies the
+**configurable** `HealthCheckConfig.failure_threshold` (default 3) and
+`recovery_threshold` (default 2) from §2.2 (`health.rs:155`, `health.rs:170`).
+A backend marked unhealthy by passive failure still needs 2 (by default)
+consecutive active-check successes to be restored by the health checker, even
+though the passive path itself would need 3.
+
 ### ConnectionScope RAII Pattern
 
 ```rust
@@ -435,7 +444,7 @@ Usage ensures connection counts are always decremented, even on panic.
 ```rust
 HealthChecker::new(config)
 ├── Create broadcast channel for shutdown signal
-├── Create HTTP client with configured timeout (timeout_secs)
+├── Create the eggfetch upstream lane with configured connect timeout (timeout_secs)
 ├── Initialize pools RwLock (empty)
 └── Clone config for later use
 ```

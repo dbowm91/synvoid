@@ -122,9 +122,17 @@ Durable audit storage is future work.
 
 Phase 12 completed the conversion of all legacy mutating endpoints. All mutating endpoints now return typed `AdminMutationResult` and emit `AdminAuditEvent`. Config and site management endpoints are deferred.
 
+Paths below are shown relative to the `/api` nest applied by
+`build_router_from_state()` (`src/admin/routes.rs` is the authoritative
+registration list): `/mesh/ban/ip` is served at `/api/mesh/ban/ip`.
+
 ### Phase 12 Gap Closure (2026-06-30)
 
-The following endpoints were converted in the final Phase 12 pass:
+The following endpoints were converted in the final Phase 12 pass. The `File`
+column names the handler *module*; `system.rs`, `logs.rs`, and `probes.rs` are
+crate-owned (`crates/synvoid-admin/src/handlers/`, re-exported through
+`src/admin/handlers/mod.rs`), while the rest are root `src/admin/handlers/`
+modules.
 
 | Endpoint | File | Change |
 |----------|------|--------|
@@ -189,12 +197,15 @@ All non-deferred mutating endpoints now return `AdminMutationResult` and emit `A
 
 | Endpoint | File | Authority | Response |
 |----------|------|-----------|----------|
-| PUT `/threat-level/level/{level}` | threat_level.rs | AdminManual | AdminMutationResult<String> |
+| POST `/threat-level/set/{level}` | threat_level.rs | AdminManual | AdminMutationResult<String> |
 | POST `/threat-level/auto` | threat_level.rs | AdminManual | AdminMutationResult<String> |
-| POST `/threat-level/baseline/reset` | threat_level.rs | AdminManual | AdminMutationResult<String> |
-| POST `/threat-level/backup` | threat_level.rs | AdminManual | AdminMutationResult<String> |
-| DELETE `/threat-level/backup` | threat_level.rs | AdminManual | AdminMutationResult<String> |
+| POST `/threat-level/reset` | threat_level.rs | AdminManual | AdminMutationResult<String> |
+| POST `/threat-level/history/backup` | threat_level.rs | AdminManual | AdminMutationResult<String> |
+| DELETE `/threat-level/history/backups` | threat_level.rs | AdminManual | AdminMutationResult<String> |
 | POST `/threat-level/history/prune` | threat_level.rs | AdminManual | AdminMutationResult<String> |
+
+Threat-level mutations are local-only (`PropagationStatus::NotApplicable`); they
+do not propagate to mesh peers.
 
 ### Serverless Endpoints — CONVERTED
 
@@ -213,8 +224,8 @@ All non-deferred mutating endpoints now return `AdminMutationResult` and emit `A
 
 | Endpoint | File | Authority | Response |
 |----------|------|-----------|----------|
-| POST `/rule-feed/apply` | rule_feed.rs | AdminManual | AdminMutationResult<String> |
-| POST `/rule-feed/discard` | rule_feed.rs | AdminManual | AdminMutationResult<String> |
+| POST `/rules/apply` | rule_feed.rs | AdminManual | AdminMutationResult<String> |
+| POST `/rules/discard` | rule_feed.rs | AdminManual | AdminMutationResult<String> |
 
 ### Plugin Endpoints — ALL CONVERTED
 

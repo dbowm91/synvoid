@@ -76,9 +76,15 @@ mesh_emit_event(topic_ptr: i32, topic_len: i32, data_ptr: i32, data_len: i32) ->
 
 ### Canonical Header Serialization
 
-Binary format: `[u16 header_count | per entry: u16 name_len | name | u16 val_len | val]`
+Binary format: `[u16 LE header_count | per entry: u16 LE name_len | name | u16 LE val_len | val]`
 
-Single authoritative serializer — ad-hoc encoding forbidden.
+Single authoritative serializer —
+`abi_frame::serialize_headers_canonical()`
+(`crates/synvoid-plugin-runtime/src/abi_frame.rs`); ad-hoc encoding is forbidden.
+The companion entry point is `abi_frame::build_request_frame()`. Both are
+bounded by `RequestFramePolicy` (`abi_frame::request_frame_policy_from_limits`).
+The internal `RequestContext::serialize_headers` helper delegates to
+`serialize_headers_canonical`; it is not a second encoder.
 
 ## Sandbox Mechanisms
 
@@ -124,12 +130,18 @@ impl ResourceLimiter for RequestContext {
 ## Hot-Reload
 
 ```rust
-// 1. File watcher detects .wasm change
-// 2. Wait for file stability (300ms debounce + 3 checks × 100ms)
-// 3. Prepare new instance (never touches active generation)
+// 1. `notify` recommended watcher observes a `Modify` event for a .wasm/.wat change
+// 2. `reload_plugin` → `prepare_reload_candidate` waits for file stability
+//    (`wait_for_stable_file`: 300ms debounce, 3 checks × 100ms, 5s max wait)
+//    BEFORE reading, so an in-flight write cannot be compiled
+// 3. Prepare new instance (never touches the active generation)
 // 4. Atomic swap: remove old, push new, update generation
 // 5. Generation ID: monotonic AtomicU64, never reused
 ```
+
+Debounce lives in the reload candidate preparation, not in the watcher event
+handler. Prepare-then-commit ordering means a failed reload never replaces a
+working plugin.
 
 ## Lifecycle State Machine
 

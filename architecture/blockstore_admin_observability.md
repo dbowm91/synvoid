@@ -135,7 +135,7 @@ Admin unban now propagates to mesh peers and workers:
 2. `announce_local_unblock()` gossips `BlocklistEventGossip` to mesh peers
 3. Supervisor pushes `BlocklistEventUpdate` IPC to all connected workers
 4. Peers/workers apply via `BlockStore::apply_blocklist_event()` (idempotent)
-5. Response includes `"propagation": "queued"` (not `"propagated: true"` — no ack)
+5. Response carries `PropagationStatus::QueuedBestEffort`, which serializes as `"queued_best_effort"` (`#[serde(rename_all = "snake_case")]`) — never a `"propagated": true` ack
 
 ## BlocklistEvent (Structured Logging + Mesh Propagation)
 

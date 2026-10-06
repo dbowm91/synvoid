@@ -41,6 +41,15 @@ stay warnings, not hard errors).
 dependency path, capability, wasmtime-wasi status, exposure, owner, and
 review/remove-by date:
 
+> Superseded (see `architecture/dependency_security_reaudit_phase103_closeout.md`
+> and `architecture/dependency_security_baseline_phase25.md`): this 16-ignore
+> list is the **Phase 31 baseline**, not the present state. `deny.toml` and
+> `.cargo/audit.toml` now carry exactly **two** ignores — `RUSTSEC-2023-0071`
+> (rsa-via-yara-x) and `RUSTSEC-2026-0235` (rkyv 0.7-via-minify) — after
+> Phase 40 retired 14 Wasmtime-40.x-only entries and Phase 103 cleared
+> RUSTSEC-2026-0315/0316 by moving the transitive Wasmtime line to 48.0.5 and
+> the direct line to 36.0.16.
+
 - RUSTSEC-2023-0071 (rsa Marvin; yara-x path never invoked, ed25519 used instead)
 - RUSTSEC-2026-0085/0086/0087/0088/0089/0091/0092/0093/0094/0095/0096/0114
   (wasmtime 40.0.4 via yara-x; direct 42.0.2 fixed for these; mesh out of scope)

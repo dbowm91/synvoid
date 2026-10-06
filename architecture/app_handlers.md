@@ -2,6 +2,17 @@
 
 SynVoid provides built-in, optimized handlers for various application types, allowing it to serve content directly or interface efficiently with specialized backends.
 
+The `synvoid-app-handlers` crate (`crates/synvoid-app-handlers/src/lib.rs`) is organized around a
+generic backend dispatcher trait plus three backend sub-modules and the MIME registry:
+
+| Module | Role |
+|--------|------|
+| `dispatch.rs` | `AppBackendDispatcher` — the generic backend dispatcher trait (`dispatch(&self, target: &RouteTarget, request: Self::Request) -> Result<Self::Response, Self::Error>`, with associated `Request`/`Response`/`Error` types) |
+| `fastcgi/` | FastCGI protocol client, connection pool, and opt-in streaming client |
+| `php/` | PHP-FPM-specialized adapter over the generic FastCGI layer |
+| `cgi/` | Classic CGI script execution |
+| `mime/` | MIME registry and nginx-format MIME file parsing |
+
 ## 1. Static File Handler
 
 > **Scope note:** static-file serving is canonically owned by `synvoid-static-files`
@@ -22,22 +33,23 @@ SynVoid handles dynamic PHP applications by interfacing directly with PHP-FPM (o
 
 - **Unix Socket & TCP Support:** Can connect to PHP-FPM via local Unix domain sockets for maximum performance or over TCP for remote backends.
 - **Environment Management:** Automatically populates FastCGI environment variables (e.g., `SCRIPT_FILENAME`, `QUERY_STRING`) required for PHP execution.
-- **Response Streaming:** Efficiently streams responses from the FastCGI backend via `crates/synvoid-app-handlers/src/fastcgi/streaming.rs`.
+- **Response Streaming:** Efficiently streams responses from the FastCGI backend via `crates/synvoid-app-handlers/src/fastcgi/streaming.rs`. This module is gated behind the additive, opt-in root feature `fastcgi_streaming` (`Cargo.toml:47` → `synvoid-app-handlers/fastcgi_streaming`); it is **off by default**, so streaming responses are not compiled into a default build.
 - **PHP specialization:** FPM socket auto-detection, INI forwarding, and location config merging live in
   `crates/synvoid-app-handlers/src/php/` — see [`php.md`](./php.md) for the full deep dive.
 
 ## 3. Python (Granian)
 
-SynVoid includes built-in support for Python ASGI/WSGI applications using the **Granian** application server (`crates/synvoid-app-server/src/granian.rs`).
+SynVoid includes built-in support for Python ASGI/RSGI/WSGI applications using the **Granian** application server (`crates/synvoid-app-server/src/granian.rs`).
 
 - **GranianSupervisor:** Full process management struct that spawns and monitors Granian instances as child processes (`GranianSupervisor`).
+- **Interface Modes:** `GranianInterface` selects `Asgi` (default), `AsgiNl`, `Rsgi`, or `Wsgi`.
 - **GranianConfig:** Runtime configuration struct for Granian deployment settings (defined at `crates/synvoid-app-server/src/granian.rs`). Note: This is distinct from `AppServerConfig` in `crates/synvoid-config/src/app_server.rs` which is the TOML-parsed configuration; GranianConfig is the resolved runtime type.
-- **Auto-install Support:** Granian can be automatically installed if not present.
+- **Auto-install Support:** Granian can be automatically installed if not present (`GranianConfig::auto_install_granian`, default `true`), including pip installs of requirements.
 - **Admin API Endpoints:** Granian instances are manageable via the Admin API.
 - **Unix Socket IPC:** Communication between the Worker and Granian happens over local Unix sockets, bypassing the overhead of the network stack.
 - **Simplified Deployment:** Allows deploying Django, Flask, or FastAPI applications with a single configuration file.
 
-Verification: `rg "granian" src/` returns 70+ matches across the codebase.
+Verification: `rg "granian" src/` returns 39 matches across 14 files under `src/` (most of the implementation has moved to `crates/synvoid-app-server/`).
 
 ## 4. Serverless WASM (Edge Functions)
 
@@ -90,7 +102,7 @@ The `BackendType` enum at `crates/synvoid-proxy/src/router.rs` defines all backe
 | `FastCgi` / `Php` | `fastcgi_php_backend_dispatch.rs` | FastCGI proxy / PHP-FPM |
 | `Cgi` | `cgi_backend_dispatch.rs` | Generic CGI execution |
 | `AxumDynamic` | `axum_dynamic_dispatch.rs` | Dynamic Axum routes |
-| `AppServer` | `app_server_backend_dispatch.rs` | Granian Python ASGI/WSGI |
+| `AppServer` | `app_server_backend_dispatch.rs` | Granian Python ASGI/RSGI/WSGI |
 | `Static` | `static_backend_dispatch.rs` | Static file serving |
 | `QuicTunnel` | tunnel dispatch | QUIC tunnel proxy |
 | `Serverless` | `backend_dispatch.rs` (+ mesh/serverless dispatch) | WASM serverless functions (mesh-gated) |

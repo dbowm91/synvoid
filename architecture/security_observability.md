@@ -243,10 +243,11 @@ Request-path enforcement metrics must identify the local enforcement source (`Lo
 
 ## 8. Admin Diagnostics Endpoints
 
-Diagnostics endpoints return summary-oriented, bounded JSON responses. They are read-only and require admin authentication. Routes are registered as `/observability/*` and nested under `/api` (`src/admin/mod.rs:289,325`), so the served paths are `/api/observability/*`.
+Diagnostics endpoints return summary-oriented, bounded JSON responses. They are read-only and require admin authentication. Routes are registered as `/observability/*` in `observability_routes()` (`src/admin/routes.rs`) and nested under `/api` by `build_router_from_state()` (`src/admin/mod.rs`), so the served paths are `/api/observability/*`.
 
 | Endpoint | Returns | Bound |
 |----------|---------|-------|
+| `GET /api/observability/security-summary` | Aggregate admin security posture summary | Single JSON object |
 | `GET /api/observability/tasks` | UnifiedServer + Worker + Supervisor task registry state | Summary counters |
 | `GET /api/observability/blocklist-health` | Blocklist convergence: event apply, stale suppressions, snapshot fallbacks, cursor stats | Summary counters |
 | `GET /api/observability/plugins` | Plugin runtime state: loaded count, per-plugin invocation/error/duration | Per-plugin summary |
@@ -259,14 +260,23 @@ Diagnostics endpoints return summary-oriented, bounded JSON responses. They are 
 
 ### Guard Test
 
-`tests/security_observability_guard.rs` enforces:
+`tests/security_guard.rs` enforces (this suite absorbed the former
+`tests/security_observability_guard.rs`; the file header records the rename):
 
-- No raw IPs, tokens, or event IDs in metric label definitions.
-- All new `synvoid_` metrics use the approved label key set.
-- Structured log fields do not appear as metric labels in the same module.
+- `metric_labels_no_sensitive_fields` — no raw IPs, tokens, or event IDs in
+  metric label definitions (`FORBIDDEN_LABEL_KEYS`).
+- `raw_lookups_not_in_counter_functions` — diagnostic-only threat-intel lookups
+  (`RAW_LOOKUP_TOKENS`) never appear in counter/gauge/histogram functions.
+- `admin_mutations_tagged_with_authority` — admin mutations carry an authority
+  tag.
+- `runtime_registries_emit_observability_signals` — runtime registries in
+  `RUNTIME_REGISTRY_FILES` emit the required signals.
+- `observability_doc_covers_all_metric_prefixes` — **this document is itself
+  guard-enforced**: every `synvoid_*` metric name found in `src/` and `crates/`
+  must be covered by a backticked prefix pattern in §4 or appear verbatim here.
 
 ```bash
-cargo test --test security_observability_guard
+cargo test --test security_guard
 ```
 
 ### Metric Completeness

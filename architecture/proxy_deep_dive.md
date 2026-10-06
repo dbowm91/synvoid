@@ -49,10 +49,10 @@ End-to-end handling of proxied HTTP/HTTPS requests including upstream selection,
   - `handle_request_with_cache()` - Cache-aware request handling with PURGE support
   - `forward_with_pool()` - Retry loop with backend selection
 
-**`DispatchParams`** (dispatch.rs:14-26)
+**`DispatchParams`** (dispatch.rs:10-26)
 - Bundles all parameters needed for upstream dispatch
-- Contains client, erased_client, method, upstream_url, body, headers, timeout, forwarded_protocol, proxy_config, client_ip, is_http2
-- `dispatch_to_upstream()` builds forward headers via `build_forward_headers()` then calls `send_request_erased_streaming()`
+- Contains `lane_client: EggfetchUpstreamClient`, method, upstream_url, body, headers, timeout, forwarded_protocol, proxy_config, client_ip, and an ignored `is_http2` compat field
+- `dispatch_to_upstream()` (dispatch.rs:43) builds forward headers via `build_forward_headers()` then sends on the eggfetch lane, returning `Response<EggfetchResponseBody>`
 
 **`ProxyExecutor`** (executor.rs:101-110)
 - Caching-aware request executor
@@ -87,7 +87,7 @@ handle_request()
   │     │
   │     ├─> [Cache lookup] ──MISS──> forward_with_pool()
   │     │                              ├─> select_backend()
-  │     │                              ├─> send_single_request() via ErasedHttpClient
+  │     │                              ├─> send_single_request() via the eggfetch lane
   │     │                              ├─> on failure: mark_failed(), retry with backoff
   │     │                              └─> [Response] ──cacheable──> TeeBody streaming
   │     │
@@ -281,21 +281,23 @@ The erased pool is used for true streaming at 1M RPS scale to avoid per-request 
 
 ## Implementation Decisions (Wave 4.2)
 
-// Decision: HTTP/2 is configurable via ProxyServer::with_http2() builder method.
-// The site_config.proxy.http2 value is wired through to control HTTP/2 usage.
-// HTTP/2 upstream pooling (Http2PooledConnection) remains a deferred item (HTTP2-POOL)
-// due to hyper-util API limitations.
+// Decision: HTTP/2 is configured via the ProxyServer::with_http2() builder method,
+// but the field is INERT. The legacy transport used it only as a pool-lookup hint
+// (never for protocol switching); the eggfetch lane negotiates HTTP/1.1 vs HTTP/2
+// via ALPN, so the site_config.proxy.http2 value selects nothing. There is no
+// `Http2PooledConnection` type any more — the erased pool is HTTP/1.1-only and is a
+// frozen compatibility surface behind `eggfetch_lane_freeze_guard`.
 
 // Decision: UpstreamClientRegistry is integrated but not used in ProxyServer::send_single_request.
 // The registry exists at crates/synvoid-proxy/src/client_registry.rs and is instantiated in
 // http/server.rs, http3/server.rs, and tls/server.rs for streaming client management. The ProxyServer flow
-// uses ErasedHttpClient directly via send_request_erased_streaming. The registry remains
+// sends on the eggfetch lane via `EggfetchUpstreamClient` directly. The registry remains
 // available for future typed client management but is not currently required.
 
 // Decision: ProxyHeadersConfig (proxy_headers field) is not passed through send_single_request
 // in crates/synvoid-proxy/src/server.rs. The forward_headers are cloned from the incoming request headers.
 // Custom proxy headers per upstream are not currently supported; this can be addressed in a
-// future enhancement by extending send_request_erased_streaming to accept a ProxyHeadersConfig
+// future enhancement by extending the lane send path to accept a ProxyHeadersConfig
 // parameter. Tracking: [PR-6] - Enhancement tracking ticket needed.
 
 // BUG-PROXY-1 Regression: retry_config was not being applied in send_single_request flow.

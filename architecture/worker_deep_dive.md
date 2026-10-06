@@ -20,8 +20,9 @@ Workers handle the data plane — HTTP request processing, WAF evaluation, proxy
 | 8.5-8.7 | Mesh validation | Validate mesh configuration |
 | 9 | Cross-wire services | Build DataPlaneServices |
 | 10 | Initial blocklist | Request blocklist from supervisor |
-| 11 | Build services + ready | Finalize DataPlaneServices, send ready signal |
-| 12 | Subscribe exit | Subscribe to exit notifications |
+| 11 | Build services + ready | Finalize DataPlaneServices |
+| 11.5 | Mesh support tasks | Extract mesh support tasks, then send the ready message |
+| 12 | Subscribe exit | Subscribe to exit notifications **before** any spawn |
 | 13 | Spawn tasks | Heartbeat, bandwidth persist, IPC loop |
 | 14 | Register server | Register HTTP server task |
 | 14.5 | Mesh supervision | Mesh supervision pipeline |
@@ -122,71 +123,78 @@ pub struct CpuTaskLimits {
     pub max_queue_global: usize,       // 1024
     pub max_active_per_site: usize,    // 32
     pub max_queue_per_site: usize,     // 256
-    pub max_payload_bytes: usize,      // 64MB
-    pub max_output_bytes: usize,       // 64MB
+    pub max_payload_bytes: usize,      // 64 MiB
+    pub max_output_bytes: usize,       // 64 MiB
+    // Values are set at the construction site in cpu_task/mod.rs:99-104;
+    // there is no `impl Default for CpuTaskLimits`.
 }
 ```
 
 ### Connection Model
 
-- Listens on Unix domain socket (`cpu_worker_socket`)
-- Up to `MAX_STATIC_CONNECTIONS = 100` concurrent connections
+- Listens on the Unix domain socket at `args.cpu_worker_socket` (`cpu_task/mod.rs:121`);
+  the path is unlinked if it already exists (`:123`) before `UnixListener::bind` (`:131`)
+- Up to `MAX_STATIC_CONNECTIONS = 100` concurrent connections (`cpu_task/mod.rs:149` and `:196`)
 - `std::thread::spawn` accept loop (not Tokio — blocking I/O OK for accept)
 - Each connection handled in a Tokio task
 
 ## Supervision Loop
 
 ```rust
-async fn supervision_loop(state: UnifiedServerWorkerState) -> SupervisionResult {
+// src/worker/unified_server/supervision_loop.rs:48 — pseudocode
+pub async fn run_worker_supervision(
+    state: &UnifiedServerWorkerState,           // by reference, not by value
+    lifecycle_rx: mpsc::Receiver<LifecycleRequest>,
+    exit_rx: broadcast::Receiver<NamedTaskExit>,
+    mesh_decision_rx_opt: Option<MeshDecisionReceiver>,
+    required_mesh_startup_failure: Option<WorkerShutdownCause>,
+    active_mesh_support: OptionalMeshSupport,   // `Option<()>` without mesh
+) -> WorkerSupervisionResult {                  // note: Result, not SupervisionResult
     loop {
         tokio::select! {
-            event = state.recv_lifecycle_event() => {
-                match event {
-                    LifecycleEvent::Drain { timeout } => {
-                        state.start_drain(timeout).await;
-                    }
-                    LifecycleEvent::Shutdown { graceful } => {
-                        return shutdown(state, graceful).await;
-                    }
-                    LifecycleEvent::ConfigReload => {
-                        state.reload_config().await;
-                    }
-                }
+            request = lifecycle_rx.recv() => { /* LifecycleRequest + ack sender */ }
+            exit = exit_rx.recv() => {
+                // RecvError::Lagged / Closed are mapped by
+                // map_exit_recv_error_to_shutdown_cause()
             }
-            exit = state.task_registry.next_exit() => {
-                handle_task_exit(exit, &state).await;
-            }
-            decision = state.mesh_supervision_decision() => {
-                apply_mesh_decision(decision, &state).await;
-            }
+            decision = mesh_decision_rx_opt... => { /* mesh supervision */ }
         }
     }
 }
 ```
 
+The receivers are passed **in** from the startup plan; there are no
+`state.recv_lifecycle_event()` / `state.task_registry.next_exit()` accessors.
+The function is side-effect free: it selects a cause and returns, leaving all
+teardown to `shutdown_executor::execute_worker_shutdown()`.
+
 ## Shutdown Executor
 
-Ordered teardown sequence:
+Ordered teardown sequence — authoritative list is the doc comment at
+`src/worker/unified_server/shutdown_executor.rs:140-155`, implemented in
+`execute_worker_shutdown()`:
 
 ```
-1. begin_coordinated_shutdown() + lifecycle ack
-2. Stop accepting new connections
-3. Graceful drain (if requested)
-   - Wait for active_connections == 0
-   - Or timeout expiry
-4. Stop Granian supervisors
-5. Shutdown mesh transport
-6. Stop mesh support bundle
-7. Clear running flag
-8. Broadcast registry cancellation
-9. Persist bandwidth data
-10. Await registry tasks
-    - Critical: 5s timeout
-    - Background: 3s timeout
-11. Abort remaining handles
-12. Send supervisor ack
-13. Derive exit code
+ 1. Record coordinated shutdown intent + lifecycle ack  (begin_coordinated_shutdown)
+ 1.5. Establish the real shutdown deadline
+ 2. Stop accepting new connections
+ 3. Graceful drain (if requested and timeout nonzero) — wait for
+    active_connections == 0, or drain-timeout expiry
+ 4. Stop app servers (Granian supervisors)
+ 4.5. Shutdown mesh transport (if running)
+ 4.6. Stop the active mesh support bundle explicitly
+ 5. Clear running flag
+ 6. Broadcast registry cancellation
+ 7. Bandwidth persist — handled by the background task's own final flush,
+    NOT by the composition root
+ 8. Await registry tasks: shutdown_and_join(critical=5s, background=3s)
+ 9. Abort and await remaining non-migrated task handles
+10. Send supervisor acknowledgement (routed by WorkerShutdownCause)
+11. Derive exit code from shutdown_cause.exit_code()
 ```
+
+(The list is 11 steps + two mesh sub-steps, not 13; the original count double-counted
+the mesh support bundle and the bandwidth flush as separate top-level steps.)
 
 ## Task Registry (Worker-Level)
 
@@ -216,7 +224,7 @@ pub enum TaskExitReason {
 |------|----------|---------|
 | `UnifiedServerWorkerState` | `src/worker/unified_server/state.rs` | Core worker state |
 | `DataPlaneServices` | `src/worker/unified_server/services.rs` | Bundled request-path services |
-| `WorkerStartupArtifacts` | `src/worker/unified_server/startup_plan.rs` | Startup outputs |
+| `WorkerStartupArtifacts` | `src/worker/unified_server/startup_plan.rs` | Startup outputs (phases 0–14.5) |
 | `WorkerSupervisionResult` | `src/worker/unified_server/supervision_loop.rs` | Supervision output |
 | `WorkerShutdownPlan` | `src/worker/unified_server/shutdown_executor.rs` | Shutdown parameters |
 | `CpuWorkerState` | `src/worker/cpu_task/state.rs` | CPU offload state |

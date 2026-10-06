@@ -42,6 +42,22 @@ pub struct ErasedConnectionPool {
 }
 ```
 
+### Egress Lanes (Phase 60/62)
+
+Two lanes exist in this crate:
+
+- **Production: the eggfetch lane.** `eggfetch_transport::EggfetchUpstreamClient`
+  carries all upstream sends (proxy `ProxyServer`, HTTP/3 upstream dispatch, and
+  upstream health checks). `eggfetch_policy` is a private
+  `UpstreamTlsConfig` → `eggfetch_core::TlsConfig` translator that keeps a
+  single public TLS policy type and preserves the legacy invariants: custom CA
+  *augments* the base store rather than replacing it, `skip_verify` disables
+  hostname matching only (never chain/signature verification), and the SNI
+  override travels per-request.
+- **Frozen compatibility surface: the erased pool.** `ErasedConnectionPool` /
+  `ErasedHttpClient` still compile and are tested, but production use is blocked
+  by `eggfetch_lane_freeze_guard`.
+
 ### Per-Site TLS
 
 ```rust
@@ -87,8 +103,11 @@ where
 
 ## Integration Points
 
-- Used by HTTP/1, HTTP/3, and proxy layers
-- All upstream HTTP connections flow through this crate
+- Used by HTTP/1, HTTP/3, upstream health checks, and the proxy layer
+- The proxy, HTTP/3, and `HealthChecker` all send upstream through this crate's
+  eggfetch lane, so it owns the shared egress path. Do **not** read this as
+  "every connection in the process": in-process lane plumbing also involves
+  `synvoid-http-client`'s Unix, QUIC-tunnel, and differential surfaces.
 - Streaming body support for large uploads/downloads
 - Per-site TLS configuration for multi-tenant deployments
 
@@ -103,4 +122,5 @@ where
 | `StreamingWafBody` | `crates/synvoid-http/src/streaming_waf_body.rs` (Phase 34; was `synvoid-http-client`) | WAF-scanning body |
 | `ErasedConnectionPool` | `crates/synvoid-http-client/src/erased_pool.rs` | Type-erased HTTP/1.1 pool |
 | `ErasedHttpClient` | `crates/synvoid-http-client/src/erased_pool.rs` | Type-erased HTTP client |
-| `ErasedBody` / `BoxErasedBody` | `crates/synvoid-http-client/src/erased_pool.rs` | Type-erased body trait/alias |
+| `ErasedBody` / `BoxErasedBody` | `crates/synvoid-http-client/src/erased_pool.rs` | Type-erased body trait/alias (frozen lane) |
+| `EggfetchUpstreamClient` | `crates/synvoid-http-client/src/eggfetch_transport.rs` | Production upstream egress lane |

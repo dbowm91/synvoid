@@ -1,6 +1,6 @@
 # HTTP Server Deep Dive
 
-SynVoid's HTTP server crate (`synvoid-http`) implements the 7-stage request pipeline for HTTP/1.1 and HTTP/2, handling all request processing from connection acceptance to backend dispatch.
+SynVoid's HTTP server crate (`synvoid-http`) implements the 7-stage request pipeline for HTTP/1.1 and HTTP/2, handling all request processing from ingress normalization to backend dispatch. The pipeline is **transport-neutral**: it consumes `synvoid_http::inbound::InboundRequest`, so connection acceptance, admission, and framing live in the root composition lane (`src/http/eggserve_h1.rs` for H1, `src/http/service_core.rs` for the shared neutral core, `crates/synvoid-http/src/hyper_adapter.rs` for H2 and the test-only comparison lanes).
 
 ## 7-Stage Pipeline
 
@@ -21,7 +21,7 @@ pub async fn prepare_request_frontdoor<D: HttpDrainControl>(
 
 ```rust
 pub async fn prepare_request_preflight<W, LogFn, DropFn>(
-    req: hyper::Request<hyper::body::Incoming>,
+    req: InboundRequest,
     client_ip: IpAddr,
     local_addr: Option<SocketAddr>,
     router: Arc<Router>,
@@ -107,7 +107,11 @@ pub async fn handle_http_request_postlude(
 
 ## HTTP/1.1 and HTTP/2
 
-- Uses `hyper` 1.x with `http1` and `http2` features
+- The crate depends on `hyper` 1.x (`http1`, `http2`, `server`) and `hyper-util`
+  (`server-auto`, `server-graceful`), but **production H1 serving runs on the
+  pinned EggServe direct runtime** (`eggserve-server` `=0.4.0`,
+  `eggserve-primitives` `=0.2.2` with `http-interop`; no `eggserve-core`).
+  Hyper serves H2, egress, and the test-only differential lanes.
 - `EarlyHttpParser` does zero-copy header parsing via `httparse`
 - Rejects obs-fold, null bytes, whitespace before header names
 - `hyper-util` with `server-auto` and `server-graceful` features

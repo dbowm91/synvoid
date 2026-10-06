@@ -10,14 +10,22 @@
 - Toolchain: wasm-pack, Tailwind CSS + PostCSS.
 - The backend serves the built assets; API alignment is guarded by the `admin_route_contract` test suite (frontend expectations vs backend routes).
 
-## 3. Pages (~21 route-level pages)
+## 3. Pages (21 route-level pages)
 
-Dashboard, Sites (list/editor/detail), DNS, Mesh, Settings, Workers, Logs, Request Logs, Alerts, Honeypot, ICMP, Probes, Process Management, System Status, TCP/UDP, Threat Level, Tier Keys, Traffic Shaping, Upstreams.
+Dashboard, Sites (list/editor/detail), DNS, Mesh, Settings, Workers, Logs, Request Logs, Alerts, Honeypot, ICMP, Probes, Process Management, System Status, Threat Level, Tier Keys, Traffic Shaping, Upstreams, Login.
+
+`admin-ui/src/pages/` holds 24 files: 22 page modules plus `mod.rs` and `dns.ts`.
+Of the 22 modules, 21 are declared in `pages/mod.rs` and each has a `Route`
+variant and `switch()` arm in `app.rs`. TCP/UDP is the twenty-second module and
+is **not** wired — see the known gap below.
 
 > **Known gap:** the `TcpUdp` component (`admin-ui/src/pages/tcp_udp.rs`) is **not wired** — `pages/mod.rs`
 > declares 21 page modules but has no `mod tcp_udp;`, so the file is not compiled and no `Route`
 > renders it. TCP/UDP *defaults* remain editable via Settings (`TcpUdpDefaultsSection` in
-> `settings.rs:4973`, `tcp_udp_defaults` config docs). Wiring checklist: add `mod tcp_udp;` + export in
+> `settings.rs`, `tcp_udp_defaults` config docs). The backend routes are live
+> (`GET/POST /api/tcp-udp/listeners`, `DELETE /api/tcp-udp/listeners/{listener_id}`,
+> `GET /api/tcp-udp/protocols` in `src/admin/routes.rs`), so this is a frontend gap only.
+> Wiring checklist: add `mod tcp_udp;` + export in
 > `pages/mod.rs`, add a `Route` variant + `switch()` arm in `app.rs`, add the sidebar entry.
 
 ## 4. Shared Components

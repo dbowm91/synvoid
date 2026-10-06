@@ -154,7 +154,28 @@ non-goal).
 Stale "overridden/warned" wording (policy-build override) is superseded
 by this fail-closed contract.
 
-## 6. Tests
+## 6. Config path selection
+
+Feature absence is a *build* property, but reaching the config at all is a
+*path* property, and the two are easy to confuse:
+
+- `--config-path <PATH>` (`crates/synvoid-cli/src/lib.rs:44`) is the
+  **directory** containing `main.toml` and `sites/`, not the TOML file.
+  Call sites join it: `config_dir.join("main.toml")`
+  (`src/supervisor/process.rs:601`, `src/supervisor/mesh.rs:67`,
+  `src/commands/one_shot.rs:217`). Defaults to CWD-relative `config`.
+- `--configtest` (`crates/synvoid-cli/src/lib.rs:105`) validates that
+  directory: `MainConfig::from_file(<dir>/main.toml)` first, then each
+  `<dir>/sites/*.toml` when `sites/` exists (`src/commands/one_shot.rs:215-256`). Missing `main.toml` errors; missing
+  `sites/` does not.
+- `--rehash` (`crates/synvoid-cli/src/lib.rs:116`) is the CLI reload path.
+  There is no `synvoid reload` subcommand, and the only admin reload route is
+  `POST /config/reload` (`src/admin/routes.rs:116`).
+
+Passing the TOML file to `--config-path` therefore produces a lookup for
+`<file>/main.toml`, which fails closed rather than reading the intended file.
+
+## 7. Tests
 
 - `synvoid-config` feature-profile parser tests (run under the actual
   profile; dev-deps do not re-enable features):

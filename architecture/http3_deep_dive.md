@@ -13,7 +13,6 @@ pub struct Http3Server {
     router: Arc<Router>,
     waf: Arc<dyn Http3WafBackend>,
     flood_protector: Option<Arc<FloodProtector>>,
-    client: HttpClient,
     upstream_client_registry: Arc<UpstreamClientRegistry>,
     metrics: Option<Arc<WorkerMetrics>>,
     shutdown_rx: broadcast::Receiver<()>,
@@ -21,6 +20,11 @@ pub struct Http3Server {
     main_config: Arc<MainConfig>,
 }
 ```
+
+There is **no typed `HttpClient` field**: HTTP/3 upstream sends share the
+`synvoid-http-client` eggfetch lane (`EggfetchResponseBody`, `UpstreamTlsConfig`)
+used by the proxy, reached through `upstream_client_registry`. The same is true
+of `Http3DispatchDeps`, which has no `client` field.
 
 ### Key Trait
 

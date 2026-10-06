@@ -77,12 +77,24 @@ To avoid tarpit detection:
 
 - **Chunk delays**: 5-30ms configurable delay between chunks
 - **Content-type variation**: Randomize between `text/html` variants
-- **Status-code variation**: Occasionally return 200, mostly 200 with slow delivery
+- **Status-code variation**: `FingerprintResistance::vary_status_code` exists as a
+  configuration field (default `true`) but has **no consumer** — nothing in the
+  crate or in root composition reads it, so every tarpit response uses the same
+  status code. The generator does not vary it.
 - **Header variation**: Randomize `Server`, `X-Powered-By` headers
 
 ## Redirect Safety
 
+There is **no `redirect` module** in `crates/synvoid-tarpit/`. The crate's modules
+are `admission`, `budget`, `config`, `escaping`, and `generator` (plus `lib.rs`).
+Redirect safety is split across two of them:
+
+- `escaping` owns `sanitize_redirect_target` and the `RedirectRejection` enum
+- `config` owns the `RedirectPolicy` enum (`RelativeOnly` / `AllowList` /
+  `AllowAll`) and the `redirect_policy` field
+
 ```rust
+// crates/synvoid-tarpit/src/escaping.rs
 pub fn sanitize_redirect_target(
     target: &str,
     allowed_hosts: &[String],
@@ -101,6 +113,9 @@ pub fn sanitize_redirect_target(
     // 4. Relative paths: must start with / and not //
 }
 ```
+
+`generate_redirect_page` is **not** in the crate — it is root-owned
+(`src/tarpit/handler.rs`).
 
 ## Output Escaping
 

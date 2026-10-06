@@ -29,6 +29,8 @@ SynVoid supports two fundamentally different authentication systems that serve d
 - One static admin token configured in `admin.token`
 - Token is hashed using bcrypt (configurable cost, default 12)
 - Token verified via `verify_admin_token()` using bcrypt verify
+- Every request-path verification uses the bounded async wrapper
+  `verify_admin_token_async()` (see [Phase 43 Auth Hardening](#phase-43--auth-hardening-bounded-cpu-isolation-and-fail-closed-persistence)); the synchronous `verify_admin_token()` is not on the request path
 - No registration flow - token is configured, not created
 
 **Client Classes:**
@@ -92,6 +94,10 @@ SynVoid supports two client classes with distinct trust boundaries:
 - Token is hashed using bcrypt (configurable cost, default 12)
 - Token verified via `verify_admin_token()` using bcrypt verify
 
+**Request path:** verification goes through `verify_admin_token_async()`, which
+never runs bcrypt on a Tokio core thread. See
+[Phase 43 Auth Hardening](#phase-43--auth-hardening-bounded-cpu-isolation-and-fail-closed-persistence).
+
 **Key Files:**
 - `src/admin/auth.rs` - re-exports `hash_admin_token()` and `verify_admin_token()` from `synvoid-admin`
 
@@ -108,21 +114,35 @@ The session ID is generated from 32 random bytes and encoded as 43 URL-safe
 base64 characters without padding. Validation accepts that encoded length so
 freshly-created sessions remain usable.
 
-**Timing Normalization (ADMIN-5):**
-To prevent session enumeration attacks, admin auth includes timing normalization:
-- `verify_dummy_admin_token()` at `src/admin/handlers/auth.rs` performs a dummy bcrypt verify
-- Ensures minimum 200ms response time even on invalid tokens
-- Applied before both `UNAUTHORIZED` returns in `create_session()`
+**Timing Normalization (ADMIN-5, hardened in Phase 43):**
+To prevent session enumeration attacks, admin auth includes timing normalization.
+Both async verifiers pad to a 200ms floor (`ADMIN_MIN_DELAY`) and perform
+**exactly one** bcrypt each:
+
+- `verify_dummy_admin_token_async()` (`crates/synvoid-admin/src/auth.rs`, called
+  from `src/admin/handlers/auth.rs::create_session()`) performs a dummy bcrypt
+  verify against `DUMMY_ADMIN_HASH`. It runs on the **missing-bearer-token
+  branch only**.
+- `verify_admin_token_async()` performs the single real verify and pads to the
+  same 200ms floor, so a bad token is already timing-normalized.
+- `create_session()` therefore performs **one** bcrypt per request: a dummy on the
+  missing-token branch, a real one otherwise. It never adds a second dummy verify
+  after a failed real verify (the pre-Phase-43 "dummy before both `UNAUTHORIZED`
+  returns" behavior was removed).
+- Both verifiers are bounded: at most 4 concurrent admin-token bcrypts
+  (`ADMIN_CRYPTO_CONCURRENCY`) with a 2s acquire timeout
+  (`ADMIN_CRYPTO_ACQUIRE_TIMEOUT`). Overload **fails closed** — the real verifier
+  returns `false` and authenticates nobody.
 
 **Key Files:**
 - `src/admin/state.rs` - `create_session()` and session data storage
 - `src/admin/state.rs` - `validate_session()` with sliding window expiration
-- `src/admin/handlers/auth.rs` - `verify_dummy_admin_token()` timing normalization
-- `src/admin/handlers/auth.rs` - Session creation endpoint
+- `crates/synvoid-admin/src/auth.rs` - `verify_admin_token_async()` / `verify_dummy_admin_token_async()`, `ADMIN_MIN_DELAY`, semaphore bounds
+- `src/admin/handlers/auth.rs` - `create_session()` (single-verify branch structure), session creation endpoint
 
 ### Brute-Force Protection
 
-**Global Auth Rate Limiter** (`crates/synvoid-admin/src/auth.rs`, re-exported via `src/admin/auth.rs`):
+**Global Auth Rate Limiter** (`crates/synvoid-admin/src/auth.rs`; `AuthRateLimiter`, `AUTH_RATE_LIMITER`, `MAX_AUTH_ATTEMPTS`, and `AUTH_LOCKOUT_DURATION` are re-exported via `src/admin/auth.rs` — `AUTH_WINDOW_DURATION` is crate-private):
 - **MAX_AUTH_ATTEMPTS**: 5 failures per IP
 - **AUTH_LOCKOUT_DURATION**: 300 seconds (5 minutes)
 - **AUTH_WINDOW_DURATION**: 60 seconds (sliding window)
@@ -240,7 +260,14 @@ Request
 
 ### Key REST Endpoint Groups
 
-**Configuration Endpoints** (`/config/*`):
+Every family in `src/admin/routes.rs` is nested under `/api` by
+`build_router_from_state()`, so the paths below are shown relative to that
+prefix: `/config/main` is served at `/api/config/main`. (`/health`,
+`/api/openapi.json`, `/api/docs/*`, and the two WebSocket paths are the only
+non-`/api`-relative surfaces.) See `src/admin/routes.rs` for the authoritative
+registration list.
+
+**Configuration Endpoints** (`/api/config/*`):
 - `/config/main` - Main config
 - `/config/schema` - JSON schema
 - `/config/tls`, `/config/http`, `/config/http3` - Protocol configs
@@ -250,11 +277,11 @@ Request
 - `/config/versions` - Config version history
 - `/config/rollback/{id}` - Rollback capability
 
-**Site Management** (`/sites/*`):
+**Site Management** (`/api/sites/*`):
 - CRUD operations on site configurations
 - Theme, bot-detection, error-pages sub-resources
 
-**System/Process** (`/system/*`):
+**System/Process** (`/api/system/*`):
 - `/system/info` - System information
 - `/system/capabilities` - Capability flags tracking compiled route families
   (Phase 05: `mesh_admin`→`mesh`, `dns_admin`→`dns`, `icmp_admin`→`icmp-filter`;
@@ -263,7 +290,7 @@ Request
 - `/system/supervisor` - Supervisor status (canonical; `/system/master`,
   `/system/overseer`, and `/config/overseer` were removed and are guarded absent)
 
-**Stats/Metrics** (`/stats/*`):
+**Stats/Metrics** (`/api/stats/*`):
 - `/stats/summary` - Aggregated metrics
 - `/stats/history` - Historical metrics
 - `/stats/attacks` - Attack statistics
@@ -271,7 +298,7 @@ Request
 - `/stats/bandwidth` - Bandwidth usage
 - `/stats/requests` - Request logs
 
-**Mesh** (feature-gated, `/mesh/*`):
+**Mesh** (feature-gated, `/api/mesh/*`):
 - Node management, organization, bans
 - DHT/Raft status
 - YARA rules management
@@ -372,8 +399,47 @@ Separate rate limits for YARA operations:
 
 - Site-level Basic Auth configuration
 - Per-site realm configuration
-- Bcrypt password verification
-- Returns `BasicAuthResult` enum: `Authenticated`, `CredentialsRequired`, `Unauthorized`
+- Bcrypt password verification, **async-only** via `PasswordCrypto` (bounded
+  semaphore + `spawn_blocking`); there is no synchronous verification path
+- Returns `BasicAuthResult` enum: `Authenticated`, `CredentialsRequired`,
+  `Unauthorized`, `BackendBusy`
+- `BackendBusy` means the bounded crypto was saturated; HTTP policy maps it to
+  **503**, deliberately distinct from the 401 that `Unauthorized` /
+  `CredentialsRequired` produce, so overload is never reported as bad credentials
+
+---
+
+## Phase 43 — Auth Hardening (bounded CPU isolation and fail-closed persistence)
+
+Admin token and password verification are the only bcrypt in the request path, so
+Phase 43 isolated them from the Tokio core threads and made overload fail closed.
+Binding design: `architecture/auth.md` (and `auth_deep_dive.md`).
+
+**Admin token verification** (`crates/synvoid-admin/src/auth.rs`):
+
+- Bounded semaphore, `ADMIN_CRYPTO_CONCURRENCY = 4` concurrent bcrypts, with a
+  2s acquire timeout (`ADMIN_CRYPTO_ACQUIRE_TIMEOUT`). Overload **fails closed**:
+  `verify_admin_token_async()` returns `false`, authenticating nobody.
+- bcrypt runs in `spawn_blocking`; the permit is released before the min-delay pad.
+- Exactly one bcrypt per call. Callers must not add a second dummy verify after a
+  failed real verify (enforced by the structure of
+  `src/admin/handlers/auth.rs::create_session()`).
+
+**Password verification** (`crates/synvoid-auth`): `PasswordCrypto` is likewise a
+bounded semaphore plus `spawn_blocking`; saturation surfaces as
+`PasswordCryptoError::Busy` → `BasicAuthResult::BackendBusy` → HTTP 503.
+
+**Store persistence and load-time posture:**
+
+- Writes are atomic: temp file → `sync_all` → `rename` → parent-dir `sync_all`
+  where supported. The store file is `0o600` and the directory `0o700` from
+  creation, and permissions are re-asserted after every write.
+- `AuthManager::try_new` / `try_new_with_crypto` **fail closed**: a corrupt,
+  unparsable, or overly-permissive store returns `Err` instead of silently
+  degrading to an empty credential database.
+- No `RwLock<AuthStore>` is held across bcrypt. The store is snapshot →
+  lock released → verify → reacquire with a generation recheck.
+- Login audit retention is bounded at insertion: `MAX_LOGIN_LOGS = 1000`.
 
 ---
 

@@ -59,7 +59,7 @@ The `AttackDetector` is responsible for deep packet inspection. It normalizes in
 - **Cross-Site Scripting (XSS):** Identifies malicious scripts in paths, queries, headers, and bodies.
 - **Path Traversal:** Blocks attempts to access files outside the intended directory.
 - **SSRF & RFI:** Prevents Server-Side Request Forgery and Remote File Inclusion by validating URLs.
-- **Pattern Detection:** Uses Aho-Corasick multi-pattern matching via `PatternDetector` trait (`crates/synvoid-waf/src/attack_detection/detector_common.rs:195`) for efficient bulk pattern matching. `BasePatternDetector` provides the default implementation; individual detectors (e.g. `SqliDetector`, `XssDetector`, `SstiDetector`, `LdapInjectionDetector`, `XPathInjectionDetector`, `OpenRedirectDetector`, `XxeDetector`, `CmdInjectionDetector`, `PathTraversalDetector`, `RfiDetector`, `SsrfDetector`) wrap it. `LibInjectionDetector` is a separate module re-exported from `crates/synvoid-waf/src/attack_detection/libinjection.rs`.
+- **Pattern Detection:** Uses Aho-Corasick multi-pattern matching via `PatternDetector` trait (`crates/synvoid-waf/src/attack_detection/detector_common.rs:204`) for efficient bulk pattern matching. `BasePatternDetector` provides the default implementation; individual detectors (e.g. `SqliDetector`, `XssDetector`, `SstiDetector`, `LdapInjectionDetector`, `XPathInjectionDetector`, `OpenRedirectDetector`, `XxeDetector`, `CmdInjectionDetector`, `PathTraversalDetector`, `RfiDetector`, `SsrfDetector`) wrap it. `LibInjectionDetector` is a separate module re-exported from `crates/synvoid-waf/src/attack_detection/libinjection.rs`.
 
 ### 4. Bot Detection Layer
 
@@ -146,10 +146,13 @@ The WAF can take several actions based on its findings:
 
 - **Pass:** The request is allowed through to the upstream.
 - **Block:** Returns a configurable error page (e.g., 403 Forbidden).
-- **Challenge:** Intercepts the request and serves a challenge (JS/CAPTCHA/PoW).
+- **Challenge:** Intercepts the request and serves a challenge. `ChallengeType` is
+  `None` / `PowChallenge` / `MeshPowChallenge` / `CssChallenge`; there is no CAPTCHA
+  challenge type in `synvoid-challenge`.
 - **ChallengeWithCookie:** Like Challenge but includes a session cookie for bot verification via CSS challenge.
-- **Tarpit:** Artificially delays the response to slow down the attacker.
-- **Stall:** Silent stalling that wastes attacker time without sending a response.
+- **Stall:** Artificially delays the response to slow down the attacker.
+- **Tarpit:** Traps the client in a tarpit session that serves a slowly generated
+  Markov-chain page stream.
 - **Drop:** Immediately closes the connection.
 
 ---
@@ -161,7 +164,7 @@ The WAF can take several actions based on its findings:
 The WAF uses `BufferPool` and `PooledBuf` from `crates/synvoid-utils/src/buffer/pool.rs` to minimize data copying during inspection.
 
 **BufferPool Architecture:**
-- **Tiered Design:** Four buffer tiers (Small: 4KB, Medium: 64KB, Large: 256KB, Jumbo: 256KB+) with per-tier capacity limits
+- **Tiered Design:** Four buffer tiers (Small: 4KB, Medium: 64KB, Large: 256KB, Jumbo: 512KB) with per-tier capacity limits
 - **Sharded Pools:** 8 shards with per-shard arenas to reduce contention under concurrent load
 - **Thread-Local Cache:** Each thread caches up to 16 buffers per tier for fast allocation without locking
 - **Global Pool:** Fallback shared pool for cross-thread buffer allocation
@@ -176,22 +179,35 @@ The WAF uses `BufferPool` and `PooledBuf` from `crates/synvoid-utils/src/buffer/
 - Streaming WAF uses `check_body_fragments()` to scan data in-place
 - Multipart parsing maintains state without buffer duplication
 
-### Parallel Processing (Async WAF Pipeline)
+### Staged Inline Pipeline (no intra-request parallelism)
 
-The WAF pipeline executes asynchronously at `src/waf/mod.rs:442-517` to maximize throughput:
+`WafCore::check_request_full()` (`src/waf/mod.rs:415`) is the single request-path
+entry point. It is `async`, but the stages are **not** fanned out concurrently:
+the Phase 50 perf campaign replaced per-request `JoinSet` fanout with inline
+evaluation on borrowed inputs, so no stage spawns tasks or runs in parallel.
 
-**Pipeline Stages:**
-1. **Flood Protection:** Non-blocking check via `FloodProtector::check()` returning `FloodDecision`
-2. **Parallel Attack Detection:** `AttackDetector::check_request()` runs async with `.await`
+**Pipeline Stages** (`src/waf/mod.rs`, folded by
+`synvoid_core::enforcement::reduce`, not by call order):
+1. **Rate limit** — root manager produces a `RateLimit`/`RateLimited` candidate
+2. **Endpoint policy** — endpoint blocker + sensitive-endpoint managers
+3. **Honeypot** — `Honeypot`/`HoneypotHit` candidate
+4. **Bot policy** — bot detector candidate
+5. **Flood protection** — `FloodProtector` check returning a `FloodDecision`-backed candidate
+6. **Attack detection** — `AttackDetector::check_request_sync()`, run inline on
+   borrowed inputs, and **skipped** when an interim terminal candidate
+   (`Drop`/`Block`) was already folded; this is a resource-protection
+   short-circuit, not an early return
+7. **Deterministic reduction** + directive rendering at dispatch
 
-**Async Execution Model:**
-- Flood protection executes first, allowing connection-level blocking before body reading
-- Attack detection awaits on `ad.check_request(ip, &http_method, path, query, headers, body)`
-- Each stage can block/allow independently; early exit on block decision
-- Violation tracking and threat level recording integrate with mesh for distributed intelligence
+**Execution Model:**
+- Stages always run in this order; there is no parallelism between them
+- No stage short-circuits by returning early: every cheap stage folds into a
+  candidate and the reducer decides the final class
+- Detectors read borrowed inputs; no `Arc` snapshot or per-request task is created
+- Violation tracking and threat-level recording integrate with mesh for distributed intelligence
 
 **Integration:**
-- `check_request_full()` is the main entry point coordinating all stages
+- `check_request_full()` coordinates all stages
 - Threat level and violation tracker update based on attack detection results
 - Mesh mode enables shared blocked IPs and threat signatures across nodes
 

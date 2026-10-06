@@ -131,18 +131,18 @@ every public surface of the SynVoid codebase as stable, internal, transitional, 
 
 ## 4. Admin Endpoints Summary
 
-~240 distinct endpoint registrations across 22 handler files. See `src/admin/mod.rs` for route tree.
+248 method registrations across 187 distinct paths, declared in `src/admin/routes.rs` and served under the `/api` nest by `build_router_from_state()`. Handlers live in `src/admin/handlers/` — 24 local modules plus 4 re-exported from `synvoid-admin` (`logs`, `probes`, `stats`, `system`). Counts below are method registrations per category prefix.
 
 ### By Category
 
 | Category | Endpoints | Method Mix | Feature Gate |
 |----------|-----------|------------|-------------|
-| Config (main + sub-sections) | ~97 | GET/PUT | none |
+| Config (main + sub-sections) | 100 | GET/PUT | none (2 DNS/mesh-gated) |
 | Sites | 11 | GET/POST/PUT/DELETE | none |
 | Upstreams | 3 | GET/POST | none |
 | Stats | 7 | GET | none |
-| Logs | 4 | GET/PUT | none |
-| System | 12 | GET/POST | none |
+| Logs | 5 | GET/PUT | none |
+| System | 11 | GET/POST | none |
 | Probes | 11 | GET/POST/DELETE | none |
 | Threat Level | 11 | GET/POST/DELETE | none |
 | Rule Feed | 4 | GET/POST | none |
@@ -152,32 +152,49 @@ every public surface of the SynVoid codebase as stable, internal, transitional, 
 | TCP/UDP | 4 | GET/POST/DELETE | none |
 | Alerting | 3 | GET/PUT/POST | none |
 | API Discovery | 1 | GET | none |
-| Plugins | 5 | GET/POST | none |
-| Mesh Admin | 20 | GET/POST/DELETE | mesh |
+| Plugins | 4 | GET/POST | mesh |
+| Mesh Admin | 19 | GET/POST/DELETE | mesh |
 | Mesh Topology | 2 | GET | mesh |
 | Mesh Threat-Intel Policy | 2 | GET | mesh |
 | Behavioral Intel | 2 | GET | mesh |
 | YARA Rules | 10 | GET/POST/DELETE | mesh |
-| ICMP Filter | 6 | GET/PUT/POST | mesh |
+| ICMP Filter | 6 | GET/PUT/POST | icmp-filter |
 | Serverless | 5 | GET/PUT | mesh |
 | Spin | 5 | GET/POST/DELETE | mesh |
-| Honeypot | 4 | GET/POST/PUT | mesh |
+| Tier Keys | 4 | GET/POST | mesh |
+| Honeypot | 4 | GET/POST/PUT | none |
 | WebSocket | 2 | WS | none |
 
+Notes on the less obvious rows: `Mesh Admin` counts `/api/mesh/*` handlers owned by
+`mesh_admin.rs` plus the two `/api/v1/mesh/*` read aliases (19), excluding the
+topology, threat-intel-policy, behavioral-intel, and `/api/mesh/wasm-modules`
+rows, which are counted in their own categories. `Plugins` counts the four
+`/api/plugins/*` routes; the plugin-owned `/api/mesh/wasm-modules` route sits
+under the Mesh prefix. `ICMP Filter` is gated by `icmp-filter`, **not** `mesh`
+(`icmp_routes()`), and `Honeypot` is **not** mesh-gated (`honeypot_routes()` is
+merged unconditionally; controller availability is a runtime concern).
+
 ### Authority Classification
+
+Authority variants are the `AdminMutationAuthority` enum in
+`synvoid_core::admin_mutation` — note the variant is `AdminManual`, not `Admin`.
 
 | Endpoint Type | Authority | Mutation Result | Audit | Propagation |
 |--------------|-----------|----------------|-------|-------------|
 | Config read | read-only diagnostic | N/A | no | N/A |
-| Config write | AdminMutationAuthority::Admin | AdminMutationResult | AdminAuditEvent | QueuedBestEffort |
-| Site CRUD | AdminMutationAuthority::Admin | AdminMutationResult | AdminAuditEvent | QueuedBestEffort |
-| Block/Unblock | AdminMutationAuthority::Admin | AdminMutationResult | AdminAuditEvent | QueuedBestEffort |
-| Mesh ban | AdminMutationAuthority::Admin | AdminMutationResult | AdminAuditEvent | QueuedBestEffort |
-| Worker restart | AdminMutationAuthority::Admin | AdminMutationResult | AdminAuditEvent | local only |
-| Threat level | AdminMutationAuthority::Admin | AdminMutationResult | AdminAuditEvent | QueuedBestEffort |
-| YARA approve | AdminMutationAuthority::Admin | AdminMutationResult | AdminAuditEvent | QueuedBestEffort |
-| Auth session | session-based | simple response | no | N/A |
+| Config write | AdminMutationAuthority::AdminManual | AdminMutationResult | AdminAuditEvent | NotApplicable (local-only) |
+| Site CRUD | AdminMutationAuthority::AdminManual | **deferred** — typed DTOs (`Json<SiteDetail>`), not yet AdminMutationResult | no (deferred) | N/A |
+| Block/Unblock | AdminMutationAuthority::AdminManual | AdminMutationResult | AdminAuditEvent | QueuedBestEffort |
+| Mesh ban | AdminMutationAuthority::AdminManual | AdminMutationResult | AdminAuditEvent | QueuedBestEffort |
+| Worker restart | AdminMutationAuthority::AdminManual | AdminMutationResult | AdminAuditEvent | local only |
+| Threat level | AdminMutationAuthority::AdminManual | AdminMutationResult | AdminAuditEvent | NotApplicable (local-only) |
+| YARA approve | AdminMutationAuthority::AdminManual | AdminMutationResult | AdminAuditEvent | QueuedBestEffort |
+| Auth session | AdminMutationAuthority::AdminManual (Phase 12 conversion) | AdminMutationResult | AdminAuditEvent | AppliedLocalOnly |
 | Stats/logs | read-only diagnostic | N/A | no | N/A |
+
+`QueuedBestEffort` is best-effort placement in the propagation queue, never a
+delivery acknowledgement and never canonical commit success. See
+`architecture/admin_control_plane_authority.md`.
 
 ## 5. Feature Profile Support Matrix
 
@@ -217,7 +234,7 @@ every public surface of the SynVoid codebase as stable, internal, transitional, 
 | `admin_mutation_response_guard` | Typed AdminMutationResult | Moderate (pattern scan) | None | Yes |
 | `plugin_capability_boundary_guard` | 4 sandbox invariants | Strong (fail-closed) | None | Yes |
 | `docs_path_reference_guard` | Markdown links valid | Strong (fail-closed) | None | Yes |
-| `security_observability_guard` | Metric labels, registry signals | Strong (fail-closed) | None | Yes |
+| `security_guard` (`security_observability_guard`) | Metric labels, registry signals; also asserts this doc covers every `synvoid_*` metric prefix | Strong (fail-closed) | None | Yes |
 | `background_task_ownership_guard` | Background tasks registered | Strong (fail-closed) | None | Yes |
 | `cli_command_dispatch_guard` | main.rs thin, dispatch in commands/ | Strong (fail-closed) | None | Yes |
 | `manual_enforcement_provenance_guard` | block_ip_with_provenance used | Strong (fail-closed) | None | Yes |

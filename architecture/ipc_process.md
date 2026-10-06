@@ -19,7 +19,7 @@ The IPC & Process stack is responsible for:
 4. **Signed IPC**: Cryptographic authentication of IPC messages using HMAC-SHA3-256 with replay protection via nonce caching
 5. **Rate Limiting**: Token bucket-based rate limiting for IPC connections to prevent DoS attacks
 6. **Connection Pooling**: Connection pooling for IPC endpoints to reduce connection overhead
-7. **Socket FD Passing**: Unix-specific file descriptor passing for socket handoff during upgrades
+7. **Socket FD Passing**: Unix-specific file descriptor passing for socket handoff during upgrades — **not** in this crate; the `SCM_RIGHTS` path lives in `synvoid-platform` (`crates/synvoid-platform/src/unix.rs`), as noted in §2
 8. **PID/Lock Management**: PID file management and supervisor lock file handling for single-instance enforcement
 
 ---
@@ -38,7 +38,7 @@ The IPC & Process stack is responsible for:
 | **ipc_pool.rs** | `crates/synvoid-ipc/src/ipc_pool.rs` | Connection pooling for IPC endpoints |
 | **ipc_windows.rs** | `crates/synvoid-ipc/src/ipc_windows.rs` | Windows named pipe utilities |
 | **worker.rs** | `crates/synvoid-ipc/src/worker.rs` | `BaseWorkerProcess`, `WorkerProcess`, `StaticWorkerProcess` / `CpuWorkerProcess`, `UnifiedServerWorkerProcess` |
-| **command.rs** | `crates/synvoid-ipc/src/command.rs` | `CommandClient` for sending commands to master via socket/signal/grpc |
+| **command.rs** | `crates/synvoid-ipc/src/command.rs` | `CommandClient` for sending `SupervisorCommand` to the supervisor via socket/named-pipe/signal. The gRPC arm is a stub that always errors (`ConnectionFailed("gRPC support requires root crate")`) |
 | **socket_path.rs** | `crates/synvoid-ipc/src/socket_path.rs` | Socket path resolution, generation tracking, permissions |
 | **jail_binary.rs / jail_process.rs / jail_protocol.rs** | `crates/synvoid-ipc/src/jail_*` | Jail binary resolution (exe-dir only), jail process handle, versioned jail protocol (no `socket_fd.rs` — FD passing lives in `synvoid-platform::socket`) |
 | **pidfile.rs** | `crates/synvoid-ipc/src/pidfile.rs` | `PidFileManager`, `SupervisorLockFile` for process single-instance |
@@ -51,10 +51,10 @@ The IPC & Process stack is responsible for:
 
 ### 3.1 Process Manager Types
 
-**ProcessManagerConfig** (`manager.rs:38-59`):
+**ProcessManagerConfig** (`manager.rs:195-217`):
 - `min_workers: usize` - Minimum worker count
 - `max_workers: usize` - Maximum worker count
-- `unified_server_workers: usize` - Unified server worker process count (default 1; advanced isolation mode)
+- `unified_server_workers: usize` - Unified server worker process count (advanced isolation mode). The struct default is 1 (`manager.rs:226`), but `run_supervisor_mode` always overwrites it from `main_config.defaults.worker_pool.workers.max(1)` (`src/supervisor/process.rs`), whose serde/Default value is 4 (`crates/synvoid-config/src/defaults.rs:972`)
 - `max_restart_attempts: u32` - Max restart attempts before giving up
 - `restart_cooldown_secs: u64` - Base cooldown between restarts
 - `restart_backoff_max_secs: u64` - Maximum restart backoff
@@ -74,16 +74,16 @@ The IPC & Process stack is responsible for:
 - `allow_insecure_ipc_key: bool` - Allow insecure IPC key via env
 - `ipc_rate_limit: IpcRateLimitConfig` - Rate limit config
 
-**ProcessEvent** (`manager.rs:114-127`):
+**ProcessEvent** (`manager.rs:283-300`):
 - WorkerStarted, WorkerReady, WorkerStopped, WorkerFailed, WorkerRestarted
 - UnifiedServerWorkerStarted, UnifiedServerWorkerReady, UnifiedServerWorkerStopped, UnifiedServerWorkerFailed
 - ShutdownInitiated, ShutdownComplete
 
 ### 3.2 IPC Message Types
 
-**WorkerId** (`ipc.rs:150-157`): Unique worker identifier wrapping `usize`
+**WorkerId** (`ipc.rs:351`): Newtype identifier wrapping `usize`
 
-The `Message` enum (`ipc.rs:299-802`) contains **60+ variants** organized into 18 categories:
+The `Message` enum (`ipc.rs:504-~1050`, 125 variants) is organized into 18 categories:
 
 | Category | Message Variants |
 |----------|-----------------|
@@ -110,7 +110,7 @@ The `Message` enum (`ipc.rs:299-802`) contains **60+ variants** organized into 1
 
 ### 3.3 Signed IPC Types
 
-**Constant sizes** (`ipc_signed.rs:49-53`):
+**Constant sizes** (`ipc_signed.rs:47-51`):
 ```
 HMAC_SIZE: 32 bytes
 TIMESTAMP_SIZE: 8 bytes
@@ -119,11 +119,11 @@ SIGNED_MESSAGE_OVERHEAD: 60 bytes (4 + 8 + 16 + 32)
 MAX_IPC_MESSAGE_SIZE: 1,048,576 bytes (1MB)
 ```
 
-**IpcSigner** (`ipc_signed.rs:114-117`):
+**IpcSigner** (`ipc_signed.rs:162-165`):
 - `signer_id: u64` - Derived from first 8 bytes of key
 - `key: [u8; 32]` - HMAC-SHA3-256 key
 
-**IpcEnvelope** (`ipc_signed.rs:408-415`):
+**IpcEnvelope** (`ipc_signed.rs:464`):
 - `timestamp: u64` - Unix timestamp
 - `nonce: [u8; 16]` - Random nonce
 - `hmac: [u8; 32]` - HMAC-SHA3-256
@@ -198,7 +198,7 @@ pub fn resize_threadpool(&self, worker_threads: u32)
 pub fn reload_config(&self)
 ```
 
-### 4.2 IpcSigner (`ipc_signed.rs:119-246`)
+### 4.2 IpcSigner (`ipc_signed.rs:166-260`)
 
 ```rust
 pub fn new(key: &[u8; 32]) -> Self
@@ -240,12 +240,12 @@ pub async fn record_failure(&self, endpoint_name: &str)
 pub async fn get_stats(&self, endpoint_name: &str) -> Option<ConnectionPoolStats>
 ```
 
-### 4.6 CommandClient (`command.rs:20-66`)
+### 4.6 CommandClient (`command.rs:14-52`)
 
 ```rust
-pub fn new(socket_path: Option<PathBuf>, grpc_addr: Option<String>) -> Self
-pub fn send_command(&self, command: MasterCommand) -> Result<String, CommandError>
-pub fn get_status(&self) -> Result<MasterStatus, CommandError>
+pub fn new(socket_path: Option<PathBuf>, grpc_addr: Option<String>, use_tls: bool) -> Self
+pub fn send_command(&self, command: SupervisorCommand) -> Result<String, CommandError>
+pub fn get_status(&self) -> Result<SupervisorStatus, CommandError>
 pub fn method(&self) -> CommandMethod
 ```
 
@@ -430,13 +430,15 @@ The **UnifiedServerWorker** is the primary worker, handling HTTP/HTTPS/HTTP3 + W
 
 | Function | File | Purpose |
 |----------|------|---------|
-| `start_health_monitor()` | `manager.rs:2067` | Background task for health checking |
-| `connect_to_supervisor_signed()` | `ipc_transport.rs:551` | Connect to supervisor with signing |
-| `connect_to_cpu_worker_signed()` | `ipc_transport.rs:559` | Connect to CPU offload worker |
-| `connect_to_static_worker_signed()` | `ipc_transport.rs:567` | Compatibility alias for CPU offload worker |
-| `connect_to_commands_signed()` | `ipc_transport.rs:566` | Connect to command endpoint |
-| `read_ipc_key_file()` | `ipc_signed.rs:598` | Load signer from key file |
-| `IpcSigner::try_from_env()` | `ipc_signed.rs:149` | Load signer from environment |
+| `start_health_monitor()` | `manager.rs:2487` | Background task for health checking |
+| `connect_to_supervisor_signed()` | `ipc_transport.rs:627` | Connect to supervisor with signing |
+| `connect_to_cpu_worker_signed()` | `ipc_transport.rs:635` | Connect to CPU offload worker |
+| `connect_to_commands_signed()` | `ipc_transport.rs:643` | Connect to command endpoint (Unix socket / named pipe) |
+| `read_ipc_key_file()` | `ipc_signed.rs:675` | Load signer from key file |
+| `IpcSigner::try_from_env()` | `ipc_signed.rs:200` | Load signer from environment |
+
+> There is **no** `connect_to_static_worker_signed()` function; the CPU-offload
+> connect helper is the single `connect_to_cpu_worker_signed()` above.
 
 ---
 
@@ -447,15 +449,18 @@ The **UnifiedServerWorker** is the primary worker, handling HTTP/HTTPS/HTTP3 + W
 HMAC_SIZE = 32
 TIMESTAMP_SIZE = 8
 NONCE_SIZE = 16
-SIGNED_MESSAGE_OVERHEAD = 60
+SIGNED_MESSAGE_OVERHEAD = 60 (4-byte length prefix + 8 + 16 + 32)
 MAX_IPC_MESSAGE_SIZE = 1,048,576 (1MB)
-MAX_STRING_LENGTH = 65,536 (64KB)
-MAX_PATH_LENGTH = 4,096 (4KB)
-
-// ipc_rate_limit.rs
 MAX_NONCE_CACHE_SIZE = 10,000
 REPLAY_WINDOW_SECS = 60
+
+// ipc.rs — message validation, not ipc_signed.rs
+MAX_STRING_LENGTH = 65,536 (64KB)   (ipc.rs:1054)
+MAX_PATH_LENGTH = 4,096 (4KB)       (ipc.rs:1055)
+
+// ipc_rate_limit.rs
 MAX_WORKERS_TRACKED = 10,000
+cleanup_interval = 60s
 
 // ipc_framing.rs
 DEFAULT_BUFFER_SIZE = 65,536 (64KB)

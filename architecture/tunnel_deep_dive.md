@@ -34,7 +34,7 @@ The `synvoid-tunnel` crate provides VPN tunnel infrastructure for SynVoid, suppo
 | `wireguard/kernel.rs` | Kernel WireGuard integration |
 | `wireguard/userspace.rs` | Userspace WireGuard (boringtun) |
 | `wireguard/stats.rs` | WireGuard statistics |
-| `tun.rs` | TUN device abstraction |
+| `tun.rs` | Dependency-free TUN type definitions only — **stub**: every device/route op returns `io::ErrorKind::Unsupported` and `is_tun_available()` returns `false`; the working platform TUN is `wireguard/tun.rs` |
 | `router.rs` | Tunnel routing table |
 | `udp_manager.rs` | UDP tunnel multiplexing |
 | `upstream.rs` | Upstream tunnel connections |
@@ -154,7 +154,10 @@ double as RTT probes (`client.rs:490-522`).
 - **Keys:** `generate_keypair()` / `x25519_public_from_private()` with base64 encoding (`config.rs:315-347`).
 - **TUN per platform** (`wireguard/tun.rs:148-991`): Linux `/dev/net/tun` via `ioctl(TUNSETIFF)`, BSD
   `/dev/tun`, macOS utun (socket + ioctl, 4-byte AF header strip/prepend). The top-level `tun.rs`
-  abstraction is dependency-free and reports unavailable — platform code lives under `wireguard/`.
+  abstraction is dependency-free and **reports unavailable** — `AsyncTunDevice::create()`,
+  `TunInterface::create()`, `add_route()`, and the reader/writer packet methods all return
+  `io::ErrorKind::Unsupported` ("TUN support requires platform-specific dependencies (not yet
+  available)"), and `is_tun_available()` is hardcoded `false`. Platform code lives under `wireguard/`.
 
 ### TLS Configuration (`quic/tls.rs`)
 

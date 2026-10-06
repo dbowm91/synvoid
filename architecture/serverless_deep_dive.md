@@ -81,65 +81,87 @@ pub struct InstancePoolConfig {
 ### Route-Based Invocation
 
 ```rust
-impl ServerlessManager {
-    pub async fn invoke(
-        &self,
-        path: &str,
-        request: Request<Body>,
-    ) -> Result<Response<Body>> {
-        // 1. Match route pattern
-        let function_name = self.match_route(path)?;
-        
-        // 2. Get or create instance from pool
-        let instance = self.get_instance(&function_name).await?;
-        
-        // 3. Execute WASM function
-        let response = instance.execute(request).await?;
-        
-        // 4. Return instance to pool
-        self.return_instance(function_name, instance);
-        
-        Ok(response)
+// Canonical entry point (free function, mesh-gated in lib.rs).
+pub async fn handle_serverless_function(
+    manager: &ServerlessManager,
+    method: &Method,
+    path: &str,
+    headers: &HeaderMap,
+    body: Option<Bytes>,
+    caller: CallerContext,
+) -> Result<Response<Bytes>, ServerlessError> {
+    // 1. Match route pattern
+    let (function, _route) = manager.find_matching_route(path, method)?;
+
+    // 2. Verify caller permissions unless the function is public
+    if !function.definition.public_function.unwrap_or(false) {
+        manager.verify_caller_permission(&function_name, &caller.node_id, caller.role, ...)?;
     }
+
+    // 3. Execute the WASM function through the per-function pool
+    //    (the pool owns instance acquire/return internally)
+    // 4. Return the response
 }
 ```
 
 ### Mesh Distribution (Feature-Gated)
 
+Mesh integration is provider-based, not a direct mesh dependency: the
+`synvoid-serverless` crate defines narrow traits in
+`crates/synvoid-serverless/src/mesh_integration.rs` and the root crate
+implements and wires them at startup via `set_mesh_*` (`OnceLock` globals).
+
 ```rust
 #[cfg(feature = "mesh")]
-impl ServerlessManager {
-    pub async fn publish_to_dht(&self, function: &ServerlessFunction) {
-        // Register function in mesh DHT
-        // Include: name, route_pattern, capabilities, caller_permissions
-    }
-    
-    pub async fn handle_mesh_invocation(
-        &self,
-        request: MeshServerlessRequest,
-    ) -> Result<MeshServerlessResponse> {
-        // Verify caller permissions (org, tier, allowed callers)
-        // Execute function
-        // Return response
-    }
+pub trait MeshWasmDistProvider: Send + Sync + 'static {
+    fn get_module_data(&self, name: &str) -> Option<Vec<u8>>;
+}
+
+pub trait MeshDhtProvider: Send + Sync + 'static {
+    fn store_function(&self, name: &str, data: Vec<u8>, ttl: u64);
+    fn get_record(&self, key: &str) -> Option<Vec<u8>>;
+}
+
+pub trait MeshTransportProvider: Send + Sync + 'static {
+    fn announce_serverless(&self);
+    fn node_id(&self) -> String;
+}
+
+pub trait MeshOrganizationProvider: Send + Sync + 'static {
+    fn validate_tier_claim(&self, tier: u32, org: &str) -> bool;
+    fn is_node_revoked(&self, node_id: &str) -> Option<String>;
+}
+
+pub trait MeshRoutingProvider: Send + Sync + 'static {
+    fn register_function(&self, name: &str, node_id: &str);
 }
 ```
+
+`ServerlessManager::initialize` calls these providers when the `mesh` feature
+is on: DHT publication via `register_function_dht` (`dht.store_function(..., 3600)`),
+route registration (`routing.register_function`), and
+`transport.announce_serverless()`. Inbound mesh invocation is
+`ServerlessManager::invoke_for_mesh(...)`, which delegates authorization to
+`verify_caller_permission` (organization, role, tier, revocation) unless the
+function is marked `public_function`.
 
 ### CPU Offload
 
 ```rust
-// For CPU-intensive transforms
-pub async fn invoke_with_cpu_offload(
+// For CPU-intensive workloads
+pub async fn invoke_for_cpu_offload(
     &self,
     function_name: &str,
-    request: Request<Body>,
-    cpu_worker: &CpuWorkerClient,
-) -> Result<Response<Body>> {
-    // Serialize request
-    // Send to CPU worker via IPC
-    // Receive response
+    input: &[u8],
+    timeout_ms: u64,
+) -> Result<Vec<u8>, ServerlessError> {
+    // Record the invocation, acquire an instance from the per-function pool,
+    // execute, and return the raw output bytes.
 }
 ```
+
+The CPU-offload path executes in the calling process via the instance pool; it
+does not take a `CpuWorkerClient` and performs no IPC serialization round-trip.
 
 ## Compilation States
 
@@ -152,8 +174,7 @@ pub enum CompilationState {
 }
 
 pub struct AsyncCompilationManager {
-    states: DashMap<String, CompilationState>,
-    watchers: DashMap<String, watch::Receiver<CompilationState>>,
+    handles: parking_lot::RwLock<std::collections::HashMap<String, Arc<AsyncCompilationHandle>>>,
 }
 ```
 

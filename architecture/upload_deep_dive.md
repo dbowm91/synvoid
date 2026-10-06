@@ -19,7 +19,7 @@ Upload
 ```rust
 pub struct YaraScanner {
     // Compiles and scans with YARA rules
-    // Supports bundled, directory, inline, mesh-distributed, and compiled bundle sources
+    // Supports bundled, directory, inline, and mesh-distributed SOURCE TEXT
 }
 
 pub enum YaraLargeFileScanMode {
@@ -29,7 +29,10 @@ pub enum YaraLargeFileScanMode {
 }
 ```
 
-- Bundled and custom rule sources (`YaraRuleSourceType`: Bundled, Directory, Inline, Mesh, CompiledBundle)
+- Bundled and custom rule sources (`YaraRuleSourceType`: Bundled, Directory, Inline, Mesh).
+  Phase 36 removed the `CompiledBundle` variant: there is no compiled-bundle
+  source type, and `YaraScanner::reload_with_rules` recompiles approved source
+  text locally rather than deserializing compiled bytes.
 - Configurable timeout per scan
 - Max concurrent scans with queue limits
 - Hot-reload when YARA rule version changes (mesh distribution)

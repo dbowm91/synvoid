@@ -21,27 +21,36 @@ pub struct ThemeRenderer {
 }
 
 pub struct ChallengePageTemplate {
+    renderer: ThemeRenderer,
     title: String,
     subtitle: String,
     content: String,
     scripts: String,
-    css: String,
+    honeypot_html: String,
+    show_spinner: bool,
+    show_logo: bool,
 }
 
 pub struct ErrorPageTemplate {
+    renderer: ThemeRenderer,
     status_code: u16,
-    title: String,
     message: String,
-    css: String,
+    timestamp: String,   // stealth-jittered, see §5
 }
 
-pub struct LoginPageTemplate { /* ... */ }
-pub struct CaptchaPageTemplate { /* ... */ }
+pub struct LoginPageTemplate { /* action_url, error_message, label fields */ }
+pub struct CaptchaPageTemplate { /* challenge_id, image_url, action_url */ }
 
 pub struct DirectoryListingTemplate {
+    renderer: ThemeRenderer,
+    url_path: String,
     entries: Vec<DirectoryEntry>,
-    config: DirectoryConfig,
-    page: PaginationInfo,
+    sort_by: String,
+    sort_order: String,
+    page: usize,
+    limit: usize,
+    total_entries: usize,
+    filter_pattern: Option<String>,
 }
 
 pub struct DirectoryEntry {
@@ -71,6 +80,8 @@ pub struct DirectoryEntry {
 | `generate_folder_icon_svg()` | Folder icon |
 | `generate_file_icon_svg()` | File icon |
 | `generate_file_type_icon_svg(filename)` | Type-specific icon |
+| `generate_parent_dir_icon_svg()` | Parent-directory ("..") icon for listings |
+| `config()` | Borrow the active `ThemeConfig` |
 | Template builders | `.title()`, `.subtitle()`, `.content()`, `.render()` |
 | `DirectoryListingTemplate::new(config)` | Directory listing page |
 
@@ -90,6 +101,12 @@ pub struct DirectoryEntry {
 
 - **CSS-only Theming**: No JavaScript required for basic theming
 - **Dark/Light/Auto**: System preference detection via CSS media queries
-- **Neon Effects**: Optional glassmorphism and neon visual effects
+- **Stealth Timestamps:** `generate_stealth_timestamp(jitter_seconds)`
+  (`crates/synvoid-theme/src/template.rs:7`) stamps rendered pages with `Utc::now()` offset by a random
+  amount in `±jitter_seconds` (via `rand`), formatted `%a, %d %b %Y %H:%M:%S GMT`. `ErrorPageTemplate`
+  calls it with 5 seconds in both constructors (`template.rs:165` and `template.rs:174`), so page
+  timestamps are deliberately imprecise rather than an exact request-time oracle. Passing `0` yields the
+  exact current time.
+- **Neon Effects:** Optional glassmorphism and neon visual effects
 - **Accessibility**: ARIA labels and keyboard navigation in directory listings
 - **Responsive**: Mobile-friendly templates

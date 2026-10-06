@@ -335,28 +335,27 @@ impl ServerlessManager {
     /// Graceful shutdown of all instance pools
     pub async fn shutdown(&self);
 
-    // Mesh-only methods (requires feature="mesh")
-    #[cfg(feature = "mesh")]
-    pub fn set_record_store(&self, store: Arc<RecordStoreManager>);
-    #[cfg(feature = "mesh")]
-    pub fn set_routing_manager(&self, manager: Arc<HierarchicalRoutingManager>);
-    #[cfg(feature = "mesh")]
-    pub fn set_org_manager(&self, manager: Arc<OrganizationManager>);
-    #[cfg(feature = "mesh")]
-    pub fn set_revocation_list(&self, list: Arc<GlobalNodeRevocationList>);
-    #[cfg(feature = "mesh")]
-    pub fn set_transport(&self, transport: Arc<MeshTransport>);
+    // Mesh-only method (requires feature="mesh")
     #[cfg(feature = "mesh")]
     pub fn verify_caller_permission(&self, function_name: &str, ...) -> Result<(), ServerlessError>;
 }
 ```
+
+Mesh capabilities are injected as narrow provider traits rather than concrete
+mesh types (`crates/synvoid-serverless/src/mesh_integration.rs`, wired from the
+root crate via `set_mesh_wasm_dist` / `set_mesh_dht` / `set_mesh_transport` /
+`set_mesh_org` / `set_mesh_routing`): `MeshWasmDistProvider`,
+`MeshDhtProvider`, `MeshTransportProvider`, `MeshOrganizationProvider`, and
+`MeshRoutingProvider`. No concrete mesh infrastructure type (record store,
+routing, organization, revocation list, or transport) appears in a
+`synvoid-serverless` signature.
 
 ### handle_serverless_function (mesh-only entry point)
 
 **Note:** This function is only exported when `#[cfg(feature = "mesh")]`.
 
 ```rust
-// crates/synvoid-serverless/src/manager.rs:1049
+// crates/synvoid-serverless/src/manager.rs (`handle_serverless_function`)
 #[cfg(feature = "mesh")]
 pub async fn handle_serverless_function(
     manager: &ServerlessManager,
@@ -373,7 +372,7 @@ pub async fn handle_serverless_function(
 For streaming request bodies, use the streaming variant:
 
 ```rust
-// crates/synvoid-serverless/src/manager.rs:1224
+// crates/synvoid-serverless/src/manager.rs (`handle_serverless_function_streaming`)
 pub async fn handle_serverless_function_streaming(
     manager: &ServerlessManager,
     method: &Method,

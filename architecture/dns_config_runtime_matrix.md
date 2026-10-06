@@ -1668,7 +1668,16 @@ Option<u32>` seam reachable at all.
 >    owned a `geoip` field. "Unwired" understated the gap — there was no
 >    configuration to wire *from*.
 
-### F-17 (recorded, not fixed): `[geoip]` is unwired in composition
+### F-17 (recorded, not fixed **at Phase 135**): `[geoip]` is unwired in composition
+
+> **Superseded by Phase 138.** The body below is the Phase 135 record. Two of
+> its present-tense statements are no longer true: `[geoip]` **is** now a real
+> `MainConfig` field and **is** wired in composition, and
+> `geoip_provider_is_still_unwired_by_composition` was deleted and replaced by
+> the positive gate `geoip_capability_is_wired_through_composition`. See
+> `architecture/dns_provider_inversion_phase138_closeout.md`. The paragraph
+> below also repeats the "blocks all DNS traffic" over-claim that the Phase 138
+> correction above withdraws.
 
 No root path constructs a `GeoIpManager`. Every `geoip:` field is `None`, and
 nothing ever called `with_geoip` on the DNS server or the mesh registry. So the

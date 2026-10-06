@@ -23,6 +23,13 @@ rsa 0.9.10   (RUSTSEC-2023-0071)  → ignored; Marvin decrypt unreachable
 rkyv 0.7.46 (RUSTSEC-2026-0235)  → ignored; minifier-internal sourcemaps only
 ```
 
+> Superseded anchor (2026-10-02, Phase 123): the transitive line is now
+> **48.0.5**, not 48.0.3 — advanced for RUSTSEC-2026-0326/-0327. The live guard
+> anchors in `architecture/dependency_security_baseline_phase25.md` are
+> `wasmtime-direct-version = "36.0.16"` and
+> `wasmtime-transitive-version = "48.0.5"`, both matching `Cargo.lock`. The
+> direct 36.0.16 line and the two retained ignores above are unchanged.
+
 ## Advisories
 
 | ID | Crate | Resolved version | Disposition |

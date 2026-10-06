@@ -18,6 +18,13 @@ Phase 35 table in `crate_granularity_audit.md` is historical; the Phase 101
 reconciliation there lists actual current internal direct/reverse edges for
 all changed boundaries.
 
+> Superseded count (re-measured 2026-10-06): the 44/9 split above no longer
+> holds — it predates later crate additions and mis-classifies `fuzz` and
+> `repo guards`, which are named `synvoid-fuzz` and `synvoid-repo-guards` and
+> therefore count as `synvoid-*`. Current: **53 members = 47 `synvoid-*` + 6
+> non-`synvoid-*`** (root app `synvoid`, `pqc`, `admin-ui`, `myapp-dynamic`,
+> `my-waf-app`, `xtask`). The 53 total is unchanged.
+
 Confirmed absent normal dependency paths using `cargo tree -e normal -i`:
 
 - metrics → WAF and block-store → WAF;

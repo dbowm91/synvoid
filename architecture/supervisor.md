@@ -46,7 +46,7 @@ The Supervisor **consolidates** the legacy Overseer and Master hierarchy into a 
 
 ## 2. Key Submodules and Their Responsibilities
 
-### 2.1 `supervisor/mod.rs` - Module Root (10 modules)
+### 2.1 `supervisor/mod.rs` - Module Root (11 modules)
 
 Public API surface for the supervisor crate:
 
@@ -62,9 +62,11 @@ pub mod process;   // SupervisorProcess and run_supervisor_mode
 pub mod shutdown;  // ShutdownCause + drain report
 pub mod state;     // SupervisorState and SupervisorStateTrackers
 pub mod task_registry;
+pub mod telemetry_bridge;  // eggbench-telemetry.v2 exporter + heartbeat bridge
 
 pub use mesh::run_mesh_agent_mode;
 pub use process::{run_supervisor_mode, SupervisorProcess};
+pub use shutdown::{SupervisorDrainReport, SupervisorShutdownCause};
 pub use state::{SupervisorState, SupervisorStateTrackers};
 ```
 
@@ -98,7 +100,8 @@ pub struct SupervisorState {
     pub shutdown_tx: broadcast::Sender<()>,
     pub start_time: std::time::Instant,
     
-    // Feature-gated trackers (only present with `mesh` feature)
+    // Optional trackers — these fields are NOT mesh-gated; every one is
+    // `None` unless the corresponding subsystem is configured at startup.
     pub probe_tracker: Option<Arc<ProbeTracker>>,
     pub suspicious_word_tracker: Option<Arc<SuspiciousWordTracker>>,
     pub upstream_error_tracker: Option<Arc<UpstreamErrorTracker>>,
@@ -109,6 +112,7 @@ pub struct SupervisorState {
     pub mesh_transport_manager: Option<Arc<MeshTransportManager>>,    // mesh only
     pub org_key_manager: Option<Arc<OrgKeyManager>>,                  // mesh only
     
+    // `#[cfg(feature = "mesh")]` — block store is the admission authority
     pub block_store: Arc<BlockStore>,
 }
 ```
@@ -139,7 +143,8 @@ service ControlPlane {
 
 ### 2.5 `supervisor/commands.rs` - IPC Command Handlers
 
-Handles supervisor commands received from workers via IPC.
+Handles supervisor commands received from the operator CLI over the supervisor IPC
+command socket (`SupervisorCommand` framing), **not** from workers.
 
 **Supported Commands** (`SupervisorCommand`, defined in `crates/synvoid-ipc/src/ipc.rs`):
 - `SupervisorCommand::Status` - Returns comprehensive status
@@ -261,7 +266,7 @@ pub struct WorkerDrainState {
 ### 3.3 IPC Message Types (Worker ↔ Supervisor)
 
 ```rust
-// crates/synvoid-ipc/src/ipc.rs:729-761 - Drain Protocol Messages
+// crates/synvoid-ipc/src/ipc.rs:979-1007 - Drain Protocol Messages
 Message::DrainRequest {
     timeout_secs: u64,
     drain_id: u64,
@@ -287,7 +292,7 @@ Message::StopAcceptingAck {
 ### 3.4 Process Manager Configuration
 
 ```rust
-// crates/synvoid-ipc/src/manager.rs:37-59
+// crates/synvoid-ipc/src/manager.rs:195-217
 pub struct ProcessManagerConfig {
     pub min_workers: usize,
     pub max_workers: usize,
@@ -358,7 +363,8 @@ Creates a new supervisor instance with:
 1. `ProcessManager` from config
 2. `DrainManager` with 100ms poll interval
 3. `DrainProtocol` wrapper
-4. IPC listener bound to master endpoint
+4. IPC listener bound to the supervisor endpoint (`IpcEndpoint::supervisor()`
+   → `get_secure_socket_path("supervisor.sock")`, `ipc_framing.rs:269-271`)
 
 ### 4.2 Main Supervisor Run Loop
 
@@ -423,6 +429,7 @@ pub async fn start_grpc_server(
     addr: std::net::SocketAddr,
     process_manager: Arc<ProcessManager>,
     state: SupervisorState,
+    tls: Option<InternalTlsConfig>,   // 4th parameter — internal mTLS for the control API
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
 ```
 
@@ -430,8 +437,33 @@ Starts tonic gRPC server with `ControlPlaneServer` service.
 
 > **Mesh-gated:** the gRPC control API only runs with the `mesh` feature — `pub mod api` is
 > `#[cfg(feature = "mesh")]` (`src/supervisor/mod.rs:6`), its managed-task registration is gated
-> (`src/supervisor/process.rs:136`), and the server task itself is gated
-> (`src/supervisor/process.rs:445`). Without `mesh` there is no control-plane listener.
+> (`src/supervisor/process.rs:229-267`, wrapping both the task registration and
+> `run_supervisor_control_api_task`). Without `mesh` there is no control-plane
+> listener. Note also that the gate is *conditional on config*: inside the block,
+> a `control_api_addr` that fails to parse logs
+> `error!("Invalid gRPC control API address configured")` and simply skips
+> registration (`process.rs:265-267`) — the supervisor keeps running with no
+> control plane rather than refusing to start.
+
+### 4.6 How the CLI Actually Reaches the Supervisor
+
+The operator CLI does **not** use the gRPC control plane. `cli_commands.rs` builds a
+`CommandClient` (`crates/synvoid-ipc/src/command.rs`) whose transport is selected in
+`CommandClient::new(socket_path, grpc_addr, use_tls)`:
+
+- `grpc_addr = Some(_)` → `CommandMethod::GRpc`
+- else socket file exists → `CommandMethod::UnixSocket` (Unix) / `NamedPipe` (Windows)
+- else → `CommandMethod::Signal` (SIGTERM fallback on Unix)
+
+The default path is therefore the **Unix socket / named pipe**, sending
+`SupervisorCommand` and reading `SupervisorStatus`. The gRPC method is a stub:
+`CommandMethod::GRpc` returns
+`Err(CommandError::ConnectionFailed("gRPC support requires root crate"))`
+(`command.rs`, `send_command` / `get_status` / `stop_gracefully` arms). So
+`--control-addr` selects a transport that always errors, and the gRPC server started
+in §4.5 serves the `ControlPlane` proto for non-CLI callers only. The gRPC endpoint
+is localhost-only by default (`ProcessManagerConfig::control_api_addr =
+"127.0.0.1:50051"`, `manager.rs:239`).
 
 ## 5. Process Supervision and Worker Orchestration
 
@@ -471,7 +503,7 @@ The `ProcessManager` (in `crates/synvoid-ipc/src/manager.rs`) handles:
                                  ▼
                     ┌─────────────────────────┐
                     │ Worker IPC connects     │
-                    │ to master socket        │
+                    │ to supervisor socket    │
                     └─────────────────────────┘
                                  │
                                  ▼
@@ -528,7 +560,7 @@ pub struct DrainManager {
 
 Thread-safe drain state tracking using:
 - `parking_lot::RwLock` for worker state map
-- `tokio::sync::Mutex` for drain start time
+- `parking_lot::Mutex` for drain start time (the crate imports `parking_lot::{Mutex, RwLock}`, not `tokio::sync`)
 - Atomic counter for drain IDs
 
 ### 6.2 Drain Protocol Sequence
@@ -570,7 +602,9 @@ let timeout_secs = self
     .graceful_shutdown_timeout_secs;
 ```
 
-Workers have the same timeout to complete their drain.
+Every worker drain reuses that same `timeout_secs` value
+(`process.rs:398-402`), and each is polled on `DRAIN_POLL_INTERVAL_MS` with
+bounded exponential backoff on send failure (3 retries, `drain_manager.rs:314-343`).
 
 ### 6.4 Shared Memory Tables (Initialized on Startup)
 
@@ -668,19 +702,34 @@ Supports:
 
 ### 7.6 Configuration
 
+The control-API address is read from `SupervisorConfig::control_api_addr`
+(`crates/synvoid-config/src/process.rs:236`, `#[serde(default =
+"default_control_api_addr")]`), which resolves to `127.0.0.1:50051`. The
+**shipped** `config/main.toml` does not contain a `[supervisor]` section at all
+(zero occurrences of the string `supervisor`), so the default applies unless an
+operator adds one.
+
 ```toml
-# config/main.toml
+# config/main.toml — NOT present in the shipped file; shown for reference only
 [supervisor]
-control_api_addr = "127.0.0.1:50051"  # Default gRPC address
+control_api_addr = "127.0.0.1:50051"
+control_api_tls = { /* optional TlsConfig */ }
 ```
+
+The identical field also exists on `ProcessManagerConfig`
+(`manager.rs:239`), and `run_supervisor_mode` copies the config value into it
+(`manager.rs:355`).
 
 ## 8. Feature Gates
 
 ### 8.1 Mesh Feature
 
 ```toml
-# Cargo.toml:33
-mesh = ["synvoid-config/mesh", "dep:openraft"]
+# Cargo.toml:40
+mesh = ["synvoid-config/mesh", "synvoid-http/mesh", "synvoid-static-files/mesh",
+        "synvoid-serverless/mesh", "synvoid-admin/mesh", "dep:synvoid-mesh",
+        "dep:synvoid-mesh-protocol", "synvoid-mesh/mesh",
+        "synvoid-block-store/mesh", "synvoid-honeypot/mesh"]
 ```
 
 **Feature-gated components:**
@@ -779,15 +828,23 @@ let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR")
 ### 10.3 Tokio Runtime Configuration
 
 ```rust
-// src/supervisor/process.rs
-let rt = tokio::runtime::Builder::new_multi_thread()
+// src/supervisor/process.rs:636-646
+let rt = match tokio::runtime::Builder::new_multi_thread()
     .worker_threads(4)
     .enable_all()
     .build()
-    .expect("Failed to build Tokio runtime");
+{
+    Ok(rt) => rt,
+    Err(e) => {
+        tracing::error!("Failed to build Tokio runtime: {}", e);
+        return;
+    }
+};
 ```
 
-Supervisor uses multi-threaded Tokio runtime with 4 worker threads (independent of worker pool size).
+Supervisor uses a multi-threaded Tokio runtime with 4 worker threads
+(independent of worker pool size). A build failure logs an error and returns —
+it does not panic.
 
 ## 11. Error Handling
 
@@ -797,7 +854,10 @@ Supervisor uses multi-threaded Tokio runtime with 4 worker threads (independent 
 |-------|----------|
 | Config load failure | Log warning, use defaults |
 | Block store init failure | Log warning, continue |
-| Worker spawn failure | Log error, continue with fewer workers |
+| Worker spawn failure | `spawn_unified_server_workers` is **fail-fast**: the `?` in its
+  loop (`manager.rs:861-871`) returns on the first failure and discards the
+  partial id list. `run()` logs `error!` and continues — the already-spawned
+  workers stay alive, but there is **no retry and no resume** |
 | gRPC server failure | Log error (doesn't stop supervisor) |
 | IPC accept error | Log debug, sleep and retry |
 | Drain timeout | Log warning, proceed with forced shutdown |
@@ -828,8 +888,9 @@ process_manager.reap_zombies().await;
 
 | Platform | Socket Type | Path |
 |----------|-------------|------|
-| Unix | Unix domain | `/var/run/synvoid/master.sock` (or `XDG_RUNTIME_DIR/synvoid/master.sock`) |
-| Windows | Named pipe | `\\.\pipe\synvoid-master` |
+| Unix | Unix domain | `get_secure_socket_path("supervisor.sock")` → `$XDG_RUNTIME_DIR/synvoid/supervisor.sock`, else `/var/run/synvoid/supervisor.sock`, else `/tmp/synvoid-<uid>/supervisor.sock` (`socket_path.rs:20-60`). Upgrades use `get_versioned_supervisor_socket_path(gen)` → `supervisor-<gen>.sock`. |
+| Windows | Named pipe | `\\.\pipe\synvoid-supervisor` (`ipc_windows.rs:95`, `endpoint_to_pipe_name`) |
+| CLI command socket | Unix / Windows | `pid_manager.socket_file_path()` → `<data_dir>/synvoid.sock`; the named-pipe form used by `CommandClient` is `\\.\pipe\synvoid-commands` (`command.rs:118`) |
 
 See `crates/synvoid-ipc/src/socket_path.rs` for full resolution logic including versioned paths for upgrades.
 
@@ -868,7 +929,7 @@ All long-lived supervisor tasks are registered in `SupervisorTaskRegistry` (`src
 
 **Registration rule:** All long-lived supervisor tasks must be registered. Per-connection IPC handlers, mesh agent mode spawns, and `ProcessManager` internal tasks are documented exceptions.
 
-**Enforcement:** `cargo test --test supervisor_task_ownership_guard`
+**Enforcement:** `cargo test --test lifecycle_task_guard` (SECTION 2 holds the supervisor spawn allowlist; no standalone `tests/supervisor_task_ownership_guard.rs` exists any more)
 
 See `architecture/supervisor_lifecycle.md` for the full deep-dive document.
 
@@ -904,4 +965,4 @@ pub struct SupervisorDrainReport {
 }
 ```
 
-**Semantics:** `drained + timed_out + errored == worker_count`. `forced_shutdown == true` when any worker exceeded the timeout. The report is emitted at `info` level after shutdown and available for structured logging and metric emission.
+**Semantics:** `drained + timed_out + errored <= worker_count` — a worker with no IPC handle is skipped by the `if let Some(ipc)` guard (`process.rs:389`) and lands in no bucket, so equality only holds when every registered worker has a live handle. `forced_shutdown == !drain_complete` (`process.rs:448`) reflects the manager-wide drain result, not a per-worker timeout. The report is emitted at `info` level after shutdown and available for structured logging and metric emission.

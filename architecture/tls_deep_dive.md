@@ -10,8 +10,8 @@ SynVoid's TLS crate handles TLS termination, ACME certificate management, SNI ha
 TLS
 ├── CertResolver (SNI-based resolution)
 ├── AcmeManager (Let's Encrypt)
-├── SniPeek (JA4 fingerprinting)
-└── CertWatcher (hot-reload)
+├── sni_peek (extract_sni + compute_ja4)
+└── watch_for_cert_changes (free function, not a type — spawns the notify watcher)
 ```
 
 ### Certificate Resolution
@@ -126,6 +126,24 @@ fn validate_key_strength(&self, key: &PrivateKeyDer<'_>) -> Result<(), Box<dyn s
     Ok(())
 }
 ```
+
+### Post-Quantum Posture (Phase 140)
+
+`tls.prefer_post_quantum` is **telemetry only and gates nothing**. Inbound hybrid
+PQ key exchange is always available because `synvoid-tls` unconditionally enables
+rustls's `prefer-post-quantum` cargo feature. The field's only in-crate effect
+is a debug log plus a `synvoid.tls.post_quantum` counter increment
+(`cert_resolver.rs:269-272`) — it selects no key exchange group and no protocol.
+
+The root `post-quantum` cargo feature is a **marker** covering
+`synvoid-http-client/post-quantum` and `synvoid-admin/post-quantum` (egress), not
+an inbound gate. `tls_profile_description` (`src/tls/server.rs:143`) derives the
+startup banner from real state: the protocol range from `tls_1_3_only` /
+`enable_tls_12_fallback`, and the PQC clause from `cfg!(feature = "post-quantum")`
+worded as the egress marker, so the banner and the adjacent truthful `#[cfg]` log
+cannot disagree. Pinned by `prefer_post_quantum_does_not_gate_the_hybrid_key_exchange`.
+Never describe this field as a switch, and never add a `validate()` rejection for
+it — it defaults to `true`, so that would reject every default config.
 
 ## Integration Points
 

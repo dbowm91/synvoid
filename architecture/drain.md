@@ -68,7 +68,10 @@ pub struct WorkerConnectionInfo {
 - **Supervisor**: Orchestrates drain protocol
 - **DrainManager**: Uses drain state for shutdown decisions
 - **Worker**: Reports connection counts during drain
-- **gRPC API**: Exposes drain status to operators
+- **gRPC API**: **no drain RPC exists.** `proto/control.proto`'s `ControlPlane`
+  service exposes only `GetStatus`, `ReloadConfig`, `Stop`, `BlockIp`, `UnblockIp`.
+  Drain state reaches operators only through the `SupervisorDrainReport` logged at
+  supervisor shutdown and through worker-side log lines.
 
 ---
 

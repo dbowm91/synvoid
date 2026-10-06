@@ -8,7 +8,11 @@ This document is the canonical reference for the **Worker Structured Concurrency
 
 ## Task Classes
 
-Every spawned background task is classified into exactly one of five severity classes.
+Every spawned background task is classified into exactly one of **six** severity classes.
+
+(The worker `TaskClass` enum in `src/worker/task_registry.rs` has six variants: the five
+below plus `OneShot` — used for optional-mesh startup. The supervisor's
+`SupervisorTaskClass` is a separate four-variant enum.)
 
 ### CriticalService
 
@@ -51,6 +55,16 @@ Only for truly fire-and-forget work where result and lifetime do not affect corr
 - Must have an explicit allowlist entry in the guardrail test.
 - Examples: fire-and-forget telemetry emission (if any).
 
+### OneShot
+
+Runs to completion once and is then removed; it has no restart or cancellation contract.
+
+- Used for tasks that are *supposed* to finish, e.g. optional mesh startup
+  (registered `OneShot`, phase 14.5 — see `worker_data_plane_composition_root.md`).
+- Completion is an expected exit, never a failure. Starts as
+  `TaskExitReason::UnexpectedCompletion` until it actually completes cleanly.
+- Spawn API: `registry.spawn_one_shot(name, future)` (`task_registry.rs:583`).
+
 ## Task Inventory Table
 
 All long-lived spawned tasks are listed below, grouped by subsystem.
@@ -59,22 +73,22 @@ All long-lived spawned tasks are listed below, grouped by subsystem.
 
 | # | Task | File:Line | Class | Owner | Cancel Path | Join Path | Failure Policy | Notes |
 |---|------|-----------|-------|-------|-------------|-----------|----------------|-------|
-| 1 | `spawn_heartbeat_task` | `lifecycle.rs:58` | RestartableBackground | WorkerTaskRegistry | `child_token()` watch | Registry join | log+continue on error | **Migrated (Iteration 62)**: Periodic heartbeat to supervisor |
-| 2 | `spawn_bandwidth_persist_task` | `lifecycle.rs:129` | RestartableBackground | WorkerTaskRegistry | `child_token()` watch | Registry join | runs forever | **Migrated (Iteration 62)**: Bandwidth counter persistence |
-| 3 | `spawn_ipc_loop` | `lifecycle.rs:140` | CriticalService | WorkerTaskRegistry | `child_token()` watch | Registry join | break on error, marks `master_dead` | **Migrated (Iteration 62)**: Supervisor/worker IPC message loop |
-| 4 | `spawn_server_run_task` | `lifecycle.rs:744` | CriticalService | WorkerTaskRegistry | `child_token()` watch | Registry join | marks `running.stop()` on error | **Migrated (Iteration 63)**: Unified server main run loop; registered via `spawn_critical_result` as `CriticalService` under `WorkerTaskRegistry` |
+| 1 | `spawn_heartbeat_task` | `lifecycle.rs:138` | RestartableBackground | WorkerTaskRegistry | `child_token()` watch | Registry join | log+continue on error | **Migrated (Iteration 62)**: Periodic heartbeat to supervisor. Registry name is `heartbeat` |
+| 2 | `spawn_bandwidth_persist_task` | `lifecycle.rs:258` | RestartableBackground | WorkerTaskRegistry | `child_token()` watch | Registry join | runs forever | **Migrated (Iteration 62)**: Bandwidth counter persistence. Registry name is `bandwidth_persist` |
+| 3 | `spawn_ipc_loop` | `lifecycle.rs:284` | CriticalService | WorkerTaskRegistry | `child_token()` watch | Registry join | break on error, marks `master_dead` | **Migrated (Iteration 62)**: Supervisor/worker IPC message loop. Registered via `spawn_critical_result("ipc_loop", …)` |
+| 4 | server run loop (the `spawn_server_run_task` fn was removed) | `startup_plan.rs:406` | CriticalService | WorkerTaskRegistry | `child_token()` watch | Registry join | maps to `ServerExitedUnexpectedly` | **Migrated (Iteration 63)**: Unified server main run loop, registered as `spawn_critical_result("server_run", …)` |
 | 5 | Shared connection heartbeat | `state.rs:190` | RestartableBackground | (unowned) | NONE | Dropped | runs forever, no shutdown | Per-connection heartbeat; no shutdown signal |
 | 6 | `spawn_port_honeypot` | `init_waf.rs:108` | RestartableBackground | (unowned) | `shutdown_tx` inside runner | Dropped | runs forever | Honeypot listener on configured ports |
 
-### UnifiedServer Server (`src/server/` — `src/server/mod.rs` is 720 lines; listeners/assembly moved to `listener_tasks.rs`/`service_assembly.rs`)
+### UnifiedServer Server (`src/server/` — `src/server/mod.rs` is 723 lines; listeners/assembly moved to `listener_tasks.rs`/`service_assembly.rs`)
 
 | # | Task | File | Class | Owner | Cancel Path | Join Path | Failure Policy | Notes |
 |---|------|------|-------|-------|-------------|-----------|----------------|-------|
-| 7 | Threat level auto-scale | `service_assembly.rs` (`spawn_threat_autoscale`) | RestartableBackground | (unowned) | NONE | Dropped | runs forever | Periodic threat-level recalculation |
-| 8 | HTTP/HTTPS/HTTP3 servers (listeners) | `listener_tasks.rs` (`spawn_http/https/http3_listeners`) | CriticalService | UnifiedServer::run | `shutdown_rx` broadcast | Awaited directly | graceful shutdown | Multiple accept loops; all must drain |
-| 9 | TCP/UDP connection pools | `listener_tasks.rs` (`spawn_aux_pools`) | CriticalService | UnifiedServer::run | internal shutdown | Awaited directly | graceful | Connection pool maintenance |
-| 10 | DNS server | `listener_tasks.rs` (`spawn_dns_service`) | CriticalService | UnifiedServer::run | internal shutdown | Awaited directly | feature-gated | DNS listener; compiled out without `dns` feature |
-| 11 | ACME cert renewal | `listener_tasks.rs` (`spawn_acme_service`) | RestartableBackground | (unowned) | NONE | Dropped | runs forever | Periodic TLS certificate renewal |
+| 7 | Threat level auto-scale (`threat_level_auto_scale`) | `service_assembly.rs:158` | `RuntimeHandleClass::Maintenance` | `UnifiedServerRuntimeHandles` | `shutdown_rx` broadcast | `shutdown_and_join(timeout)` | graceful | Periodic threat-level recalculation; only spawned when `auto_scale` is set. **This is the server-side `RuntimeHandleClass` taxonomy, not the worker `TaskClass`** |
+| 8 | HTTP/1 IPv4 (`http_v4`) / HTTPS IPv4 (`https_v4`) | `listener_tasks.rs:26`, `:66` | `RuntimeHandleClass::CriticalServer` | `UnifiedServerRuntimeHandles` | `shutdown_rx` broadcast | `shutdown_and_join(timeout)` | graceful shutdown | `http_v6` (`:36`) and `https_v6` (`:94`) are `ProtocolListener` |
+| 9 | HTTP/3 (`http3_v4` `http3_v6`) + TCP/UDP pools (`tcp_pool` `udp_pool`) | `listener_tasks.rs:128-171` | `RuntimeHandleClass::ProtocolListener` | `UnifiedServerRuntimeHandles` | `shutdown_rx` broadcast | `shutdown_and_join(timeout)` | graceful | Secondary listeners |
+| 10 | DNS server (`dns`) | `listener_tasks.rs:215` | `RuntimeHandleClass::ProtocolListener` | `UnifiedServerRuntimeHandles` | `shutdown_rx` broadcast | `shutdown_and_join(timeout)` | feature-gated | Compiled out without the `dns` feature; the spawn site also sits behind `#[cfg(feature = "mesh")]` / `#[cfg(not(feature = "mesh"))]` branches |
+| 11 | ACME cert renewal (`acme_init_renewal`) | `listener_tasks.rs:242` | `RuntimeHandleClass::Maintenance` | `UnifiedServerRuntimeHandles` | `shutdown_rx` broadcast | `shutdown_and_join(timeout)` | graceful | Periodic TLS certificate renewal |
 
 ### Threat Intel (`src/waf/threat_intel/`)
 
@@ -112,8 +126,10 @@ All long-lived spawned tasks are listed below, grouped by subsystem.
 
 | # | Task | File:Line | Class | Owner | Cancel Path | Join Path | Failure Policy | Notes |
 |---|------|-----------|-------|-------|-------------|-----------|----------------|-------|
-| 24 | IPC accept loop | `process.rs:114` | CriticalService | SupervisorProcess | NONE | Dropped | runs forever | Worker IPC connection accept |
-| 25 | gRPC control server | `process.rs:156` | CriticalService | SupervisorProcess | internal shutdown | Dropped | graceful | gRPC API server |
+| 24 | `supervisor_ipc_accept` | `process.rs:140` | `SupervisorTaskClass::CriticalControlPlane` | `SupervisorTaskRegistry` | `shutdown_rx` select branch | `shutdown_and_join(10s)` | fatal → `TaskFailed` | `#[cfg(feature = "mesh")]`-gated. Per-connection handlers are spawned but **not** registered |
+| 25 | `supervisor_grpc_control_api` | `process.rs:260` | `SupervisorTaskClass::CriticalControlPlane` | `SupervisorTaskRegistry` | `shutdown_rx` select branch | `shutdown_and_join(10s)` | fatal → `TaskFailed` | `#[cfg(feature = "mesh")]`-gated; absent entirely without the feature |
+| 25a | `supervisor_eggbench_telemetry_exporter` | `process.rs:196` | `SupervisorTaskClass::BestEffortMaintenance` | `SupervisorTaskRegistry` | `shutdown_rx` | `shutdown_and_join(10s)` | best-effort | Only when `[metrics].enabled = true` |
+| 25b | `supervisor_eggbench_telemetry_bridge` | `process.rs:209` | `SupervisorTaskClass::BestEffortMaintenance` | `SupervisorTaskRegistry` | `shutdown_rx` | `shutdown_and_join(10s)` | best-effort | Heartbeat → bridge aggregation loop |
 
 ### Admin (`src/admin/`)
 
@@ -144,11 +160,11 @@ All long-lived spawned tasks are listed below, grouped by subsystem.
 
 | # | Task | File:Line | Class | Owner | Cancel Path | Join Path | Failure Policy | Notes |
 |---|------|-----------|-------|-------|-------------|-----------|----------------|-------|
-| 36 | Unix socket accept thread | `mod.rs:149` | CriticalService | run_cpu_worker | `running.is_running()` | Dropped (std::thread) | OS thread | Blocking accept on Unix socket; must join OS thread |
-| 37 | IPC message loop | `mod.rs:249` | CriticalService | run_cpu_worker | `running.is_running()` | Local select | graceful | IPC message handling for CPU tasks |
-| 38 | Compression queue | `mod.rs:432` | RestartableBackground | run_cpu_worker | `running.is_running()` | Local select | graceful | Bounded compression task queue |
-| 39 | Watch/heartbeat loop | `mod.rs:461` | RestartableBackground | run_cpu_worker | `running.is_running()` | Local select | graceful | CPU worker heartbeat to supervisor |
-| 40 | Config reload | `mod.rs:532` | RestartableBackground | run_cpu_worker | `running.is_running()` | Local select | graceful | Config change detection and reload |
+| 35 | Unix socket accept thread | `mod.rs:149` / `mod.rs:196` (per-`cfg` copies) | CriticalService | run_cpu_worker | `running.is_running()` | Dropped (std::thread) | OS thread | Blocking accept on Unix socket; must join OS thread |
+| 36 | IPC message loop | `mod.rs:249` | CriticalService | run_cpu_worker | `running.is_running()` | Local select | graceful | IPC message handling for CPU tasks |
+| 37 | Compression queue | `mod.rs:432` | RestartableBackground | run_cpu_worker | `running.is_running()` | Local select | graceful | Bounded compression task queue |
+| 38 | Watch/heartbeat loop | `mod.rs:461` | RestartableBackground | run_cpu_worker | `running.is_running()` | Local select | graceful | CPU worker heartbeat to supervisor |
+| 39 | Config reload | `mod.rs:532` | RestartableBackground | run_cpu_worker | `running.is_running()` | Local select | graceful | Config change detection and reload |
 
 ## Shutdown Ordering
 
@@ -231,9 +247,7 @@ Abort remaining tasks after timeout and report them. `shutdown_and_join()` expli
 ### RestartableBackground exits
 
 - Log at `warn` level and increment task failure metrics.
-- Optional bounded restart with exponential backoff and jitter.
-- Cap consecutive restart attempts (default: 5 within 60 seconds).
-- Escalate to unhealthy state if retries exhausted.
+- *Intended* policy: optional bounded restart with exponential backoff and jitter, capped at 5 attempts within 60 seconds, escalating to unhealthy when exhausted. **The 5/60s figures are the `ProcessManager` worker-process restart policy** (`max_restart_attempts: 5`, `restart_cooldown_secs: 60`, `manager.rs`), not a task-level restart implementation. `WorkerTaskRegistry` implements **no** automatic task restart: an unexpected `RestartableBackground` exit is logged and the exit is broadcast, but the task is not respawned.
 
 ### Panics
 
@@ -254,7 +268,7 @@ Tasks are tracked using the following status labels to indicate their lifecycle 
 - **`Migrated`** — Task is registered with `WorkerTaskRegistry` and uses registry spawn APIs (`spawn_critical`, `spawn_background`, etc.). Provides automatic panic detection via `catch_unwind`, immediate exit notifications via `subscribe_exits()`, and bounded shutdown with abort.
 - **`LegacyOwned`** — Task is tracked in `state.task_handles` (or equivalent) but not yet migrated to the registry. Owner retains the join handle and is responsible for cancellation/join.
 - **`UnownedKnownGap`** — Task is spawned without proper ownership tracking. The join handle is dropped or not retained. This is a known gap that should be addressed.
-- **`DetachedApproved`** — Task is intentionally fire-and-forget with a documented rationale. Must have an explicit allowlist entry in `tests/background_task_ownership_guard.rs`.
+- **`DetachedApproved`** — Task is intentionally fire-and-forget with a documented rationale. Must have an explicit allowlist entry in the worker spawn-ownership section of `tests/lifecycle_task_guard.rs` (SECTION 1); the former `tests/background_task_ownership_guard.rs` file no longer exists.
 
 ## WorkerTaskRegistry
 
@@ -285,6 +299,9 @@ impl WorkerTaskRegistry {
     pub fn spawn_critical_result<F, E>(&mut self, name: &'static str, fut: F) -> usize;
     pub fn spawn_background<F>(&mut self, name: &'static str, fut: F) -> usize;
     pub fn spawn_cancellable_background<F>(&mut self, name: &'static str, fut: F) -> usize;
+    pub fn spawn_one_shot<F>(&mut self, name: &'static str, fut: F) -> usize;
+    pub fn begin_shutdown(&self);
+    pub fn broadcast_shutdown(&self);
     pub fn shutdown(&self);
     pub async fn shutdown_and_join(
         &mut self,
@@ -315,7 +332,7 @@ pub enum TaskExitReason {
 
 **Key behaviors:**
 
-- **Panic detection**: All spawn methods (`spawn_critical`, `spawn_critical_result`, `spawn_background`, `spawn_cancellable_background`) wrap the provided future with `AssertUnwindSafe(future).catch_unwind()` to capture panics and classify them as `TaskExitReason::Panic`.
+- **Panic detection**: All spawn methods (`spawn_critical`, `spawn_critical_result`, `spawn_background`, `spawn_cancellable_background`, `spawn_one_shot`) wrap the provided future with `AssertUnwindSafe(future).catch_unwind()` to capture panics and classify them as `TaskExitReason::Panic`.
 - **Immediate supervision**: `subscribe_exits()` returns a broadcast receiver that delivers `NamedTaskExit` events immediately when any task completes, panics, or errors — no need to await `shutdown_and_join`.
 - **Deduplication**: `record_exit_metrics()` records metrics inside the task wrapper and stores the exit in `reported_exits` map. When `shutdown_and_join` later joins the same task, it checks `reported_exits` to avoid double-counting metrics.
 - **`is_shutdown_started()`**: Returns whether `shutdown()` has been called, useful for tasks that check shutdown state without a watch channel.
@@ -325,12 +342,13 @@ pub enum TaskExitReason {
 Services that own long-lived background tasks should implement `ManagedService` for uniform lifecycle management.
 
 ```rust
-pub trait ManagedService {
+// src/worker/task_registry.rs:295 — note `shutdown` is SYNCHRONOUS.
+pub trait ManagedService: Send + Sync {
     /// Human-readable service name for logging and diagnostics.
     fn name(&self) -> &'static str;
 
     /// Initiate graceful shutdown. Must be idempotent — safe to call multiple times.
-    async fn shutdown(&self);
+    fn shutdown(&self);
 
     /// Wait for the service to fully stop. Returns Ok(()) on clean exit,
     /// or Err(ServiceExitError) on failure/panic.
@@ -347,13 +365,13 @@ Implementations:
 
 ## How to Add a New Long-Lived Task
 
-1. **Determine the task class.** Choose one of: CriticalService, RestartableBackground, BoundedChild, CpuOffload, Detached. Document the rationale.
+1. **Determine the task class.** Choose one of: CriticalService, RestartableBackground, BoundedChild, CpuOffload, Detached, OneShot. Document the rationale.
 2. **Register with WorkerTaskRegistry.** For CriticalService and RestartableBackground tasks, use `spawn_critical` or `spawn_background` on the registry. This provides automatic cancellation and shutdown.
 3. **Implement cancellation.** Every interval/polling loop must include a `tokio::select!` branch on the shutdown signal. Never run an unbounded loop without cancellation.
 4. **Store the JoinHandle.** Either retain the `JoinHandle` in a `task_handles` map, register with the registry's `JoinSet`, or document why the handle is dropped (fire-and-forget with rationale).
 5. **Define panic/unexpected-exit behavior.** Specify whether the task is restartable, what happens on failure, and whether the worker transitions unhealthy.
 6. **Add to the shutdown sequence.** If the task has ordering dependencies (e.g., must stop before persistence flush), add an explicit step in the shutdown ordering section.
-7. **For Detached tasks only:** Add an explicit allowlist entry in `tests/background_task_ownership_guard.rs` with a written rationale for why detachment is safe.
+7. **For Detached tasks only:** Add an explicit allowlist entry in the `tests/lifecycle_task_guard.rs` SECTION 1 allowlist with a written rationale for why detachment is safe.
 8. **Update this document.** Add a row to the task inventory table with all fields filled in.
 
 ## Iteration 62: First Registry-Migrated Tasks
@@ -366,7 +384,9 @@ The server run task (`spawn_server_run_task`, task #4) is now registered under `
 
 ### Supervision Control Flow
 
-The supervision loop (`Phase 15`) in `src/worker/unified_server/mod.rs` enforces the following invariants:
+The supervision loop (`Phase 15`) — invoked as `supervision_loop::run_worker_supervision(...)`
+from `src/worker/unified_server/mod.rs:508`, implemented in
+`src/worker/unified_server/supervision_loop.rs` — enforces the following invariants:
 
 #### Subscription-Before-Spawn
 
@@ -409,8 +429,14 @@ The bandwidth persist task performs a final flush after its loop breaks on every
 
 | Variant | Meaning | Nonzero Exit Code | Notify Supervisor |
 |---------|---------|-------------------|-------------------|
-| `ServerExited` | Server run task exited (normal or error) | No | No |
+| `ServerExitedUnexpectedly(NamedTaskExit)` | Server run task returned while the worker is active | Yes | Yes |
+| `ServerStoppedForShutdown` | Server run task completed after coordinated shutdown | No | No |
 | `CriticalTaskExit(NamedTaskExit)` | Critical service exited abnormally | Yes | Yes |
+| `MeshServiceExit(MeshTaskExit)` | A critical mesh service exited unexpectedly (mesh) | Yes | Yes |
+| `MeshStartupFailed(String)` | Mesh startup was rolled back (mesh) | Yes | Yes |
+| `MeshRestartExhausted { attempts, last_error }` | Mesh restart budget exhausted (mesh) | Yes | Yes |
+| `MeshShutdownIncomplete(String)` | Mesh shutdown did not complete cleanly (mesh) | Yes | Yes |
+| `MeshConfigurationInvariant(String)` | Mesh policy/transport invariant violated at startup (mesh) | Yes | Yes |
 | `SupervisorShutdown` | Supervisor initiated coordinated shutdown | No | No |
 | `SupervisorDisconnected` | IPC connection lost | Yes | Yes |
 | `RegistryExitChannelClosed` | Broadcast channel closed unexpectedly | Yes | Yes |
@@ -578,7 +604,8 @@ The ordered shutdown sequence:
 
 ### Guardrail Additions
 
-New guardrail tests in `tests/background_task_ownership_guard.rs`:
+New guardrail tests, now consolidated into `tests/lifecycle_task_guard.rs` SECTION 1
+(the standalone `tests/background_task_ownership_guard.rs` no longer exists):
 
 - `ipc_lifecycle_uses_channel_not_shared_state` — IPC must use channel, not Arc<RwLock>
 - `ipc_loop_exit_cause_removed` — IpcLoopExitCause/IpcLoopExit must be removed
@@ -600,7 +627,8 @@ New integration tests in `tests/worker_supervision_control_flow.rs`:
 
 ## Guardrail
 
-The test `tests/background_task_ownership_guard.rs` enforces structured concurrency hygiene:
+The worker section (`tests/lifecycle_task_guard.rs` SECTION 1) enforces structured
+concurrency hygiene:
 
 - **Unregistered long-lived spawn detection**: Scans audited modules for `tokio::spawn` calls and verifies each is registered with a task registry or has an explicit exception.
 - **Missing cancellation select**: Flags interval/polling loops that lack a `tokio::select!` branch on a shutdown signal.
@@ -610,7 +638,7 @@ The test `tests/background_task_ownership_guard.rs` enforces structured concurre
 Run the guardrail with:
 
 ```bash
-cargo test --test background_task_ownership_guard
+cargo test --test lifecycle_task_guard
 ```
 
 ## Iteration 66: Supervision Cause Preservation Cleanup
@@ -631,7 +659,7 @@ The supervision loop now returns a typed `SupervisionOutcome` instead of `(Worke
 ### New Tests
 
 - 15 new tests in `tests/worker_supervision_control_flow.rs`
-- 8 new guardrail checks in `tests/background_task_ownership_guard.rs`
+- 8 new guardrail checks in the `tests/lifecycle_task_guard.rs` worker section
 
 ## Iteration 67: Shutdown Intent and Lifecycle Error Cleanup
 
@@ -679,7 +707,7 @@ After a primary cause is selected, secondary task exits are classified as expect
 ### New Tests
 
 - 8 new tests in `tests/worker_supervision_control_flow.rs` covering lifecycle transition failures, secondary exit classification, server exit detail preservation, and primary cause immutability
-- 4 new guardrail checks in `tests/background_task_ownership_guard.rs` verifying supervision side-effect freedom, helper encapsulation, lifecycle error propagation, and server exit detail preservation
+- 4 new guardrail checks in the `tests/lifecycle_task_guard.rs` worker section verifying supervision side-effect freedom, helper encapsulation, lifecycle error propagation, and server exit detail preservation
 
 ## Mesh Transport Lifecycle (Iterations 68–69)
 

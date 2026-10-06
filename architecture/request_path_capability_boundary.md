@@ -1,7 +1,12 @@
 # Request-Path Capability Boundary
 
 **Established**: Phase 4
-**Guardrail**: `tests/request_path_capability_boundary_guard.rs`
+**Guardrail**: the request-path assertions run inside
+`tools/synvoid-repo-guards/tests/composition_boundary.rs` (test fn
+`request_path_capability_boundary_guard`), alongside
+`tests/boundary_composition_guard.rs`. The former standalone file
+`tests/request_path_capability_boundary_guard.rs` no longer exists — see §"Guard
+Tests" below.
 
 ## Invariant
 
@@ -172,6 +177,7 @@ The former per-boundary guard files were consolidated into
 
 | Test | What It Enforces |
 |------|------------------|
+| `tools/synvoid-repo-guards/tests/composition_boundary.rs` (`request_path_capability_boundary_guard`) | The forbidden-import table and scan roots above |
 | `tests/boundary_composition_guard.rs` | Composition boundary role-based classification; request-path modules don't import forbidden concrete types; HTTP dispatch doesn't import worker lifecycle; HTTP/3 WAF doesn't leak concrete types |
 | `tests/security_guard.rs` | Raw lookups separated from enforcement |
 | `tests/mesh_id_boundary_guard.rs` | Mesh-ID blocks not in request path |
@@ -179,6 +185,7 @@ The former per-boundary guard files were consolidated into
 ## Verification
 
 ```bash
+cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci
 cargo test --test boundary_composition_guard
 cargo test --test security_guard
 cargo test --test mesh_id_boundary_guard
