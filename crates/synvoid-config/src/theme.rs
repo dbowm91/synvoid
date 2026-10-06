@@ -4,7 +4,7 @@ use utoipa::ToSchema;
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, ToSchema)]
 pub struct ThemeDefaults {
-    #[serde(default)]
+    #[serde(default = "default_theme_preset")]
     pub preset: String,
     #[serde(default = "default_theme_mode")]
     pub mode: String,
@@ -24,7 +24,7 @@ impl Default for ThemeDefaults {
     fn default() -> Self {
         let preset = ThemePreset::Default;
         Self {
-            preset: "default".to_string(),
+            preset: default_theme_preset(),
             mode: default_theme_mode(),
             allow_only: default_allow_only(),
             colors: preset.colors(),
@@ -33,6 +33,13 @@ impl Default for ThemeDefaults {
             branding: ThemeBranding::default(),
         }
     }
+}
+
+/// A bare `#[serde(default)]` on `preset` parsed `""`, so an explicit
+/// `[defaults.theme]` table lost the default preset name. Kept in sync with
+/// `ThemeDefaults::default()` so both spellings agree.
+fn default_theme_preset() -> String {
+    "default".to_string()
 }
 
 impl ThemeDefaults {

@@ -74,42 +74,24 @@ Supervisor/global state:
 
 ### Installation
 
-> **Known defect in the shipped unit file.** `contrib/systemd/synvoid.service`
-> currently runs `ExecStart=/usr/local/bin/synvoid --overseer --foreground`.
-> `--overseer` is not a SynVoid flag — `crates/synvoid-cli/src/lib.rs` defines
-> no such argument, so the process exits immediately with
-> `error: unexpected argument '--overseer' found` (exit code 2) and systemd
-> fails the unit. Two further lines in the unit are also inert or harmful:
-> `Environment=SYNVOID_CONFIG_PATH=...`, which nothing in the codebase reads,
-> and the `WatchdogSec=30s` / `NotifyAccess=all` block, which will put the
-> service into a restart loop because SynVoid contains no `sd_notify` call and
-> therefore never sends a watchdog notification.
->
-> Copy the unit, then fix `ExecStart` and remove the two dead lines before
-> enabling it:
->
-> ```ini
-> ExecStart=/usr/local/bin/synvoid --foreground --config-path /opt/synvoid/config
-> ```
->
-> Delete the `Environment=SYNVOID_CONFIG_PATH=` line and the
-> `WatchdogSec`/`NotifyAccess` pair. Reloading configuration is
-> `synvoid --rehash`; there is no inbound SIGHUP reload handler, so
-> `ExecReload=/bin/kill -HUP $MAINPID` from the shipped unit is not a valid
-> reload path either.
-
-1. Copy the service file:
+1. Create the runtime directories the unit expects. SynVoid writes access logs
+   to `/var/log/synvoid` and threat-level history to `/var/lib/synvoid`, and
+   `--configtest` fails if the access-log directory is missing:
 ```bash
-sudo cp contrib/systemd/synvoid.service /etc/systemd/system/
-# then apply the ExecStart correction above
+sudo install -d -m 0755 /opt/synvoid /var/log/synvoid /var/lib/synvoid
 ```
 
-2. Reload systemd:
+2. Copy the service file:
+```bash
+sudo cp contrib/systemd/synvoid.service /etc/systemd/system/
+```
+
+3. Reload systemd:
 ```bash
 sudo systemctl daemon-reload
 ```
 
-3. Enable and start:
+4. Enable and start:
 ```bash
 sudo systemctl enable synvoid
 sudo systemctl start synvoid
@@ -131,23 +113,37 @@ sudo systemctl restart synvoid
 sudo systemctl stop synvoid
 
 # Reload configuration and distribute it to workers.
-# NB: `systemctl reload` sends SIGHUP, which SynVoid does not handle — it has no
-# SIGHUP listener. Use the CLI (or POST /api/config/reload), or change the unit's
-# ExecReload to run `synvoid --rehash`.
+# `systemctl reload synvoid` runs the unit's ExecReload, which is `synvoid --rehash`:
+# it locates the Supervisor through its pidfile and sends
+# `SupervisorCommand::ReloadConfig` over IPC. Do not `kill -HUP` the Supervisor —
+# SynVoid has no inbound SIGHUP handler (SIGHUP only appears as an *outbound*
+# signal inside `synvoid-ipc`), so a manual SIGHUP is a silent no-op.
 synvoid --rehash
 ```
 
 ### systemd Watchdog
 
-The shipped unit declares `WatchdogSec=30s` / `NotifyAccess=all`, but **SynVoid
-does not implement systemd notification**: there is no `sd_notify`,
-`WATCHDOG=1`, or `NOTIFY_SOCKET` handling anywhere in `src/` or `crates/`. With
-those directives left in place systemd will consider the service wedged after
-30s and restart it in a loop.
+The shipped unit does **not** declare `WatchdogSec`. SynVoid does not implement
+systemd notification: there is no `sd_notify`, `WATCHDOG=1`, or `NOTIFY_SOCKET`
+handling anywhere in `src/` or `crates/` (the `sd-notify` dependency was
+removed — see `plans/root_dependency_ownership.md`). Adding `WatchdogSec` to
+this unit would make systemd consider the service wedged after the timeout and
+restart it in a loop, because no watchdog notification is ever sent.
 
-Delete the `WatchdogSec` / `NotifyAccess` lines from the unit. Use
-`Restart=always` plus `RestartSec` (already in the unit) and the
+Use `Restart=always` plus `RestartSec` (already in the unit) and the
 `/__internal__/health` data-plane path for liveness instead.
+
+### Unit-file history
+
+The unit shipped a broken `ExecStart` (`--overseer` is not a SynVoid flag, so the
+process exited 2 before reading any configuration), an unread
+`Environment=SYNVOID_CONFIG_PATH`, and the watchdog pair above. All were fixed
+in `contrib/systemd/synvoid.service`; the audit record with reproduction
+evidence is `architecture/quickstart_verification_findings.md` (F-4). The unit
+also sets `Environment=XDG_DATA_HOME=/var/lib/synvoid` so that
+`PidFileManager`'s `dirs::data_dir()` resolves somewhere `ProtectHome=true`
+does not hide — without it the pidfile and IPC socket land under `/root` and
+`--status` / `--stop` / `--rehash` cannot find the Supervisor.
 
 ## Option 2: Docker/Kubernetes
 

@@ -9,7 +9,7 @@ pub struct TcpDefaults {
     pub enabled: bool,
     #[serde(default = "default_tcp_worker_pool_size")]
     pub worker_pool_size: usize,
-    #[serde(default)]
+    #[serde(default = "default_tcp_protocols")]
     pub protocols: HashMap<String, TcpProtocolConfig>,
     #[serde(default)]
     pub socket: TcpSocketConfig,
@@ -93,6 +93,23 @@ impl Default for TcpDefaults {
     }
 }
 
+/// Serde-facing alias for [`TcpDefaults::default_protocols`].
+///
+/// A bare `#[serde(default)]` on `protocols` parsed an empty map, so an
+/// explicit `[defaults.tcp]` table installed **no TCP listeners at all** while
+/// an omitted one installed smtp/imap/pop3/... Fail-closed parity matters more
+/// than the literal "no protocols" reading, and `DefaultsConfig`'s struct-level
+/// `#[serde(default)]` made the two spellings disagree.
+fn default_tcp_protocols() -> HashMap<String, TcpProtocolConfig> {
+    TcpDefaults::default_protocols()
+}
+
+/// See [`default_tcp_protocols`] — same defect on the UDP side: an explicit
+/// `[defaults.udp]` table dropped the default `dns` protocol map.
+fn default_udp_protocols() -> HashMap<String, UdpProtocolConfig> {
+    UdpDefaults::default_protocols()
+}
+
 impl TcpDefaults {
     fn default_protocols() -> HashMap<String, TcpProtocolConfig> {
         let mut protocols = HashMap::new();
@@ -165,7 +182,7 @@ pub struct UdpDefaults {
     pub enabled: bool,
     #[serde(default = "default_udp_worker_pool_size")]
     pub worker_pool_size: usize,
-    #[serde(default)]
+    #[serde(default = "default_udp_protocols")]
     pub protocols: HashMap<String, UdpProtocolConfig>,
     #[serde(default)]
     pub socket: UdpSocketConfig,
@@ -260,7 +277,7 @@ pub struct TarpitDefaults {
     pub links_per_page: u32,
     #[serde(default = "default_tarpit_delay")]
     pub response_delay_ms: u64,
-    #[serde(default)]
+    #[serde(default = "default_tarpit_scraper_user_agents")]
     pub scraper_user_agents: Vec<String>,
     #[serde(default)]
     pub content_templates: Vec<String>,
@@ -284,6 +301,33 @@ pub struct TarpitDefaults {
     pub max_chunk_delay_ms: u64,
 }
 
+/// A bare `#[serde(default)]` on `scraper_user_agents` parsed an empty list, so an
+/// explicit `[defaults.tarpit]` table silently disabled scraper tarpitting.
+fn default_tarpit_scraper_user_agents() -> Vec<String> {
+    vec![
+        "scrapy".to_string(),
+        "curl".to_string(),
+        "wget".to_string(),
+        "python-requests".to_string(),
+        "python-urllib".to_string(),
+        "aiohttp".to_string(),
+        "httpx".to_string(),
+        "go-http".to_string(),
+        "node-fetch".to_string(),
+        "axios".to_string(),
+        "rubygems".to_string(),
+        "java".to_string(),
+        "okhttp".to_string(),
+        "feedparser".to_string(),
+        " UniversalFeedParser".to_string(),
+        "libwww-perl".to_string(),
+        "PySpider".to_string(),
+        "scrapeloader".to_string(),
+        "SiteAnalyzer".to_string(),
+        "Screaming Frog".to_string(),
+    ]
+}
+
 impl Default for TarpitDefaults {
     fn default() -> Self {
         Self {
@@ -291,28 +335,7 @@ impl Default for TarpitDefaults {
             max_depth: 10,
             links_per_page: 50,
             response_delay_ms: 100,
-            scraper_user_agents: vec![
-                "scrapy".to_string(),
-                "curl".to_string(),
-                "wget".to_string(),
-                "python-requests".to_string(),
-                "python-urllib".to_string(),
-                "aiohttp".to_string(),
-                "httpx".to_string(),
-                "go-http".to_string(),
-                "node-fetch".to_string(),
-                "axios".to_string(),
-                "rubygems".to_string(),
-                "java".to_string(),
-                "okhttp".to_string(),
-                "feedparser".to_string(),
-                " UniversalFeedParser".to_string(),
-                "libwww-perl".to_string(),
-                "PySpider".to_string(),
-                "scrapeloader".to_string(),
-                "SiteAnalyzer".to_string(),
-                "Screaming Frog".to_string(),
-            ],
+            scraper_user_agents: default_tarpit_scraper_user_agents(),
             content_templates: vec![],
             max_concurrent_sessions: default_tarpit_max_concurrent(),
             max_sessions_per_ip: default_tarpit_max_per_ip(),

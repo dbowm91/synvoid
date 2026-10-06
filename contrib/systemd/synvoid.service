@@ -1,5 +1,5 @@
 [Unit]
-Description=MaluWAF - Multi-Process Web Application Firewall
+Description=SynVoid - Multi-Process Web Application Firewall
 Documentation=https://github.com/dbowm91/synvoid
 After=network-online.target
 Wants=network-online.target
@@ -9,8 +9,23 @@ Type=simple
 User=root
 Group=root
 WorkingDirectory=/opt/synvoid
-ExecStart=/usr/local/bin/synvoid --overseer --foreground
-ExecReload=/bin/kill -HUP $MAINPID
+
+# Plain `--foreground` runs the Supervisor: it spawns and supervises the
+# UnifiedServerWorker data-plane processes and the CPU offload worker.
+# There is deliberately no `--overseer` flag — it was never defined in
+# `synvoid-cli` and clap rejected it, so the unit exited 2 before reading any
+# configuration. See architecture/quickstart_verification_findings.md (F-4).
+ExecStart=/usr/local/bin/synvoid --foreground --config-path /opt/synvoid/config
+
+# `--config-path` takes the DIRECTORY that contains `main.toml` and `sites/`,
+# not the TOML file itself.
+#
+# Reload is IPC-driven, not signal-driven: `--rehash` locates the Supervisor
+# through its pidfile and sends `SupervisorCommand::ReloadConfig`. SynVoid has
+# no inbound SIGHUP handler — SIGHUP only ever appears as an *outbound* signal
+# inside `synvoid-ipc` — so `kill -HUP $MAINPID` was a silent no-op.
+ExecReload=/usr/local/bin/synvoid --rehash
+
 Restart=always
 RestartSec=5s
 
@@ -23,15 +38,29 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-ReadWritePaths=/opt/synvoid /var/log/synvoid /var/run/synvoid
+# /opt/synvoid   — config, sites, minified-HTML cache
+# /var/log/synvoid — access logs (config `logging.access_log_dir`)
+# /var/lib/synvoid — threat-level SQLite history + backups, GeoIP database,
+#                    and (via XDG_DATA_HOME below) the Supervisor pidfile/socket.
+#                    /var/lib/synvoid was missing here, so threat-level
+#                    persistence could not write its database under
+#                    ProtectSystem=strict.
+ReadWritePaths=/opt/synvoid /var/log/synvoid /var/lib/synvoid
 
 # Environment
 Environment=RUST_LOG=info
-Environment=SYNVOID_CONFIG_PATH=/opt/synvoid/config
 
-# Watchdog support (optional - for systemd watchdog)
-WatchdogSec=30s
-NotifyAccess=all
+# `PidFileManager::new()` resolves its data directory via `dirs::data_dir()`,
+# which on Linux is `$XDG_DATA_HOME`. Left unset it resolves under `$HOME`, and
+# `ProtectHome=true` makes that path unreachable for `User=root` — the pidfile
+# and IPC socket could not be created, which breaks `--status`, `--stop` and
+# `--rehash`. There is no `SYNVOID_DATA_DIR` override, so XDG is the only lever.
+Environment=XDG_DATA_HOME=/var/lib/synvoid
+
+# NOTE: no `WatchdogSec`. SynVoid never calls `sd_notify(3)` — the `sd-notify`
+# dependency was removed (see plans/root_dependency_ownership.md) — so
+# `WatchdogSec=30s` made systemd consider the service hung, kill it every 30
+# seconds, and (with Restart=always) turn that into a restart loop.
 
 [Install]
 WantedBy=multi-user.target

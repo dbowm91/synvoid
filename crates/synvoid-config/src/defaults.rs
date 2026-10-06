@@ -104,7 +104,7 @@ pub struct RateLimitDefaults {
 impl Default for RateLimitDefaults {
     fn default() -> Self {
         Self {
-            mode: "shared".to_string(),
+            mode: default_ratelimit_mode(),
             ip: IpRateLimitConfig::default(),
             global: GlobalRateLimitConfig::default(),
             endpoints: vec![],
@@ -131,7 +131,7 @@ fn default_ratelimit_mode() -> String {
     "shared".to_string()
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema, ToSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct IpRateLimitConfig {
     #[serde(default = "default_ip_per_second")]
     pub per_second: u32,
@@ -171,7 +171,32 @@ fn default_ip_burst() -> u32 {
     20
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema, ToSchema)]
+/// Rust `Default` **must** mirror the per-field serde defaults.
+///
+/// `DefaultsConfig` carries a struct-level `#[serde(default)]`, so an omitted or
+/// empty `[defaults]` table is resolved through `DefaultsConfig::default()` and
+/// never consults the `#[serde(default = "...")]` attributes below. Deriving
+/// `Default` on this struct therefore yielded all zeros, so `per_second` resolved
+/// to `0` rather than `10` and the site limiter's `len() >= per_second` check
+/// rejected 100% of traffic with HTTP 429.
+///
+/// Each field delegates to its `default_*` function so there is exactly one
+/// source of truth. Pinned by `tests/serde_defaults_match_rust_defaults.rs`.
+impl Default for IpRateLimitConfig {
+    fn default() -> Self {
+        Self {
+            per_second: default_ip_per_second(),
+            per_minute: default_ip_per_minute(),
+            per_5min: default_ip_per_5min(),
+            per_10min: default_ip_per_10min(),
+            per_hour: default_ip_per_hour(),
+            per_day: default_ip_per_day(),
+            burst: default_ip_burst(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct GlobalRateLimitConfig {
     #[serde(default = "default_global_per_second")]
     pub per_second: u32,
@@ -194,6 +219,20 @@ fn default_global_per_5min() -> u32 {
 }
 fn default_global_max_connections() -> u32 {
     1000
+}
+
+/// Rust `Default` **must** mirror the per-field serde defaults — see the note on
+/// [`IpRateLimitConfig::default`]. Derived `Default` resolved `max_connections`
+/// to `0` instead of `1000` on the `[defaults]`-omitted path.
+impl Default for GlobalRateLimitConfig {
+    fn default() -> Self {
+        Self {
+            per_second: default_global_per_second(),
+            per_minute: default_global_per_minute(),
+            per_5min: default_global_per_5min(),
+            max_connections: default_global_max_connections(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
@@ -219,29 +258,46 @@ fn default_endpoint_burst() -> u32 {
 
 #[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct BlockedDefaults {
-    #[serde(default)]
+    #[serde(default = "default_blocked_paths")]
     pub paths: Vec<String>,
     #[serde(default = "default_regex")]
     pub use_regex: bool,
-    #[serde(default)]
+    #[serde(default = "default_block_methods")]
     pub block_methods: Vec<String>,
     #[serde(default = "default_block_response")]
     pub block_response_code: u16,
 }
 
+/// Rust `Default` **must** mirror the per-field serde defaults — see the note on
+/// [`IpRateLimitConfig::default`].
+///
+/// This one previously failed *open*: `paths` and `block_methods` used a bare
+/// `#[serde(default)]`, so writing an explicit `[defaults.blocked]` table — or
+/// omitting `[defaults]` entirely, which routes through this impl — disagreed
+/// about whether `/.env`, `/.git` and `/wp-login.php` are blocked. The empty-table
+/// form silently disabled blocked-path protection. Both paths now share one
+/// source of truth.
 impl Default for BlockedDefaults {
     fn default() -> Self {
         Self {
-            paths: vec![
-                "/.env".to_string(),
-                "/.git".to_string(),
-                "/wp-login.php".to_string(),
-            ],
-            use_regex: true,
-            block_methods: vec!["GET".to_string(), "POST".to_string()],
-            block_response_code: 403,
+            paths: default_blocked_paths(),
+            use_regex: default_regex(),
+            block_methods: default_block_methods(),
+            block_response_code: default_block_response(),
         }
     }
+}
+
+fn default_blocked_paths() -> Vec<String> {
+    vec![
+        "/.env".to_string(),
+        "/.git".to_string(),
+        "/wp-login.php".to_string(),
+    ]
+}
+
+fn default_block_methods() -> Vec<String> {
+    vec!["GET".to_string(), "POST".to_string()]
 }
 
 fn default_regex() -> bool {
@@ -259,11 +315,11 @@ pub struct BotDefaults {
     pub enable_css_honeypot: bool,
     #[serde(default)]
     pub enable_js_challenge: bool,
-    #[serde(default)]
+    #[serde(default = "default_known_bots_allow")]
     pub known_bots_allow: Vec<String>,
-    #[serde(default)]
+    #[serde(default = "default_ai_crawlers_block")]
     pub ai_crawlers_block: Vec<String>,
-    #[serde(default)]
+    #[serde(default = "default_scraper_patterns")]
     pub scraper_patterns: Vec<String>,
     #[serde(default = "default_challenge_cookie_name")]
     pub challenge_cookie_name: String,
@@ -280,76 +336,12 @@ pub struct BotDefaults {
 impl Default for BotDefaults {
     fn default() -> Self {
         Self {
-            block_ai_crawlers: true,
-            enable_css_honeypot: true,
+            block_ai_crawlers: default_block_ai(),
+            enable_css_honeypot: default_true(),
             enable_js_challenge: false,
-            known_bots_allow: vec![
-                "googlebot".to_string(),
-                "bingbot".to_string(),
-                "yandex".to_string(),
-                "duckduckbot".to_string(),
-            ],
-            ai_crawlers_block: vec![
-                // OpenAI
-                "GPTBot".to_string(),
-                "ChatGPT-User".to_string(),
-                "ChatGPT-Plugin".to_string(),
-                "OAI-SearchBot".to_string(),
-                // Anthropic
-                "ClaudeBot".to_string(),
-                "Claude-Web".to_string(),
-                "anthropic-ai".to_string(),
-                // Google
-                "Google-Extended".to_string(),
-                "GoogleOther".to_string(),
-                // Common Crawl
-                "CCBot".to_string(),
-                // Perplexity
-                "PerplexityBot".to_string(),
-                // Apple
-                "Applebot".to_string(),
-                "Applebot-Extended".to_string(),
-                // Amazon
-                "Amazonbot".to_string(),
-                // Meta / Facebook
-                "Meta-ExternalBot".to_string(),
-                "FacebookBot".to_string(),
-                "meta-externalagent".to_string(),
-                // ByteDance / TikTok
-                "Bytespider".to_string(),
-                // xAI
-                "Grok".to_string(),
-                // Mistral
-                "MistralAI".to_string(),
-                "MistralAI-User".to_string(),
-                // Cohere
-                "CohereBot".to_string(),
-                "cohere-training-data-crawler".to_string(),
-                // AI21
-                "AI21".to_string(),
-            ],
-            scraper_patterns: vec![
-                "scrapy".to_string(),
-                "curl".to_string(),
-                "wget".to_string(),
-                "python-requests".to_string(),
-                "python-urllib".to_string(),
-                "aiohttp".to_string(),
-                "httpx".to_string(),
-                "go-http".to_string(),
-                "node-fetch".to_string(),
-                "axios".to_string(),
-                "rubygems".to_string(),
-                "java".to_string(),
-                "okhttp".to_string(),
-                "feedparser".to_string(),
-                " UniversalFeedParser".to_string(),
-                "libwww-perl".to_string(),
-                "pyspider".to_string(),
-                "scrapeloader".to_string(),
-                "siteanalyzer".to_string(),
-                "screaming frog".to_string(),
-            ],
+            known_bots_allow: default_known_bots_allow(),
+            ai_crawlers_block: default_ai_crawlers_block(),
+            scraper_patterns: default_scraper_patterns(),
             challenge_cookie_name: "waf_challenge".to_string(),
             challenge_window_secs: 300,
             js_difficulty: 1,
@@ -357,6 +349,82 @@ impl Default for BotDefaults {
             challenge_rate_limit_window_secs: 3600,
         }
     }
+}
+
+fn default_known_bots_allow() -> Vec<String> {
+    vec![
+        "googlebot".to_string(),
+        "bingbot".to_string(),
+        "yandex".to_string(),
+        "duckduckbot".to_string(),
+    ]
+}
+
+fn default_ai_crawlers_block() -> Vec<String> {
+    vec![
+        // OpenAI
+        "GPTBot".to_string(),
+        "ChatGPT-User".to_string(),
+        "ChatGPT-Plugin".to_string(),
+        "OAI-SearchBot".to_string(),
+        // Anthropic
+        "ClaudeBot".to_string(),
+        "Claude-Web".to_string(),
+        "anthropic-ai".to_string(),
+        // Google
+        "Google-Extended".to_string(),
+        "GoogleOther".to_string(),
+        // Common Crawl
+        "CCBot".to_string(),
+        // Perplexity
+        "PerplexityBot".to_string(),
+        // Apple
+        "Applebot".to_string(),
+        "Applebot-Extended".to_string(),
+        // Amazon
+        "Amazonbot".to_string(),
+        // Meta / Facebook
+        "Meta-ExternalBot".to_string(),
+        "FacebookBot".to_string(),
+        "meta-externalagent".to_string(),
+        // ByteDance / TikTok
+        "Bytespider".to_string(),
+        // xAI
+        "Grok".to_string(),
+        // Mistral
+        "MistralAI".to_string(),
+        "MistralAI-User".to_string(),
+        // Cohere
+        "CohereBot".to_string(),
+        "cohere-training-data-crawler".to_string(),
+        // AI21
+        "AI21".to_string(),
+    ]
+}
+
+fn default_scraper_patterns() -> Vec<String> {
+    vec![
+        "scrapy".to_string(),
+        "curl".to_string(),
+        "wget".to_string(),
+        "python-requests".to_string(),
+        "python-urllib".to_string(),
+        "aiohttp".to_string(),
+        "httpx".to_string(),
+        "go-http".to_string(),
+        "node-fetch".to_string(),
+        "axios".to_string(),
+        "rubygems".to_string(),
+        "java".to_string(),
+        "okhttp".to_string(),
+        "feedparser".to_string(),
+        " UniversalFeedParser".to_string(),
+        "libwww-perl".to_string(),
+        "pyspider".to_string(),
+        "scrapeloader".to_string(),
+        "siteanalyzer".to_string(),
+        "screaming frog".to_string(),
+    ]
 }
 
 impl BotDefaults {
@@ -419,7 +487,7 @@ pub struct AsnScrapingConfig {
     pub ban_duration_secs: u64,
     #[serde(default = "default_asn_cache_size")]
     pub cache_size: usize,
-    #[serde(default)]
+    #[serde(default = "default_whitelisted_asns")]
     pub whitelisted_asns: Vec<u32>,
 }
 
@@ -435,22 +503,26 @@ impl Default for AsnScrapingConfig {
             violations_before_block: 2,
             ban_duration_secs: 3600,
             cache_size: 10000,
-            whitelisted_asns: vec![
-                15169, // Google
-                13335, // Cloudflare
-                8075,  // Microsoft
-                32934, // Meta
-                14906, // Apple
-                20940, // Akamai
-                16625, // Akamai
-                13414, // Twitter/X
-                14618, // Amazon
-                16509, // Amazon
-                3836,  // Verizon
-                7922,  // Comcast
-            ],
+            whitelisted_asns: default_whitelisted_asns(),
         }
     }
+}
+
+fn default_whitelisted_asns() -> Vec<u32> {
+    vec![
+        15169, // Google
+        13335, // Cloudflare
+        8075,  // Microsoft
+        32934, // Meta
+        14906, // Apple
+        20940, // Akamai
+        16625, // Akamai
+        13414, // Twitter/X
+        14618, // Amazon
+        16509, // Amazon
+        3836,  // Verizon
+        7922,  // Comcast
+    ]
 }
 
 fn default_asn_requests_per_minute() -> u32 {
@@ -617,39 +689,47 @@ fn default_probing_ban_duration() -> u64 {
 pub struct SuspiciousWordsConfig {
     #[serde(default = "default_suspicious_words_enabled")]
     pub enabled: bool,
-    #[serde(default)]
+    #[serde(default = "default_suspicious_words")]
     pub words: Vec<String>,
 }
 
+/// Rust `Default` **must** mirror the per-field serde defaults — see the note on
+/// [`IpRateLimitConfig::default`]. This one previously failed *open*: an explicit
+/// `[defaults.suspicious_words]` table parsed `words` as empty, so
+/// suspicious-word scanning silently switched off.
 impl Default for SuspiciousWordsConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
-            words: vec![
-                "admin".to_string(),
-                "administrator".to_string(),
-                "backup".to_string(),
-                "bak".to_string(),
-                "config".to_string(),
-                "debug".to_string(),
-                ".git".to_string(),
-                ".svn".to_string(),
-                ".env".to_string(),
-                "wp-admin".to_string(),
-                "phpmyadmin".to_string(),
-                "shell".to_string(),
-                "webshell".to_string(),
-                "passwd".to_string(),
-                "shadow".to_string(),
-                "id_rsa".to_string(),
-                "database".to_string(),
-                "db".to_string(),
-                "sql".to_string(),
-                "dump".to_string(),
-                "restore".to_string(),
-            ],
+            enabled: default_suspicious_words_enabled(),
+            words: default_suspicious_words(),
         }
     }
+}
+
+fn default_suspicious_words() -> Vec<String> {
+    vec![
+        "admin".to_string(),
+        "administrator".to_string(),
+        "backup".to_string(),
+        "bak".to_string(),
+        "config".to_string(),
+        "debug".to_string(),
+        ".git".to_string(),
+        ".svn".to_string(),
+        ".env".to_string(),
+        "wp-admin".to_string(),
+        "phpmyadmin".to_string(),
+        "shell".to_string(),
+        "webshell".to_string(),
+        "passwd".to_string(),
+        "shadow".to_string(),
+        "id_rsa".to_string(),
+        "database".to_string(),
+        "db".to_string(),
+        "sql".to_string(),
+        "dump".to_string(),
+        "restore".to_string(),
+    ]
 }
 
 fn default_suspicious_words_enabled() -> bool {
@@ -825,11 +905,11 @@ fn default_css_ban_duration() -> String {
 
 #[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct PowChallengeDefaults {
-    #[serde(default)]
+    #[serde(default = "default_pow_enabled")]
     pub enabled: bool,
     #[serde(default = "default_pow_difficulty")]
     pub difficulty: u8,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub adaptive_difficulty: bool,
     #[serde(default = "default_pow_max_difficulty")]
     pub max_difficulty: u8,
@@ -845,16 +925,20 @@ pub struct PowChallengeDefaults {
 impl Default for PowChallengeDefaults {
     fn default() -> Self {
         Self {
-            enabled: true,
-            difficulty: 6,
-            adaptive_difficulty: true,
-            max_difficulty: 12,
-            timeout_secs: 60,
-            window_secs: 300,
-            prefer_wasm: true,
+            enabled: default_pow_enabled(),
+            difficulty: default_pow_difficulty(),
+            adaptive_difficulty: default_true(),
+            max_difficulty: default_pow_max_difficulty(),
+            timeout_secs: default_pow_timeout(),
+            window_secs: default_pow_window(),
+            prefer_wasm: default_true(),
             block: PowBlockDefaults::default(),
         }
     }
+}
+
+fn default_pow_enabled() -> bool {
+    true
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]

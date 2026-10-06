@@ -245,7 +245,6 @@ No `[tcp]`, `[udp]`, or `[defaults]` field by those names exists anywhere in
 [defaults.ratelimit]
 mode = "shared"  # "shared" or "isolated" per site
 
-# REQUIRED IN PRACTICE — see the warning below.
 [defaults.ratelimit.ip]
 per_second = 10
 per_minute = 60
@@ -255,21 +254,21 @@ per_second = 500
 per_minute = 5000
 ```
 
-> **[`defaults.ratelimit.ip]` is effectively required, not optional.**
-> `DefaultsConfig` carries a struct-level `#[serde(default)]`, so a `main.toml`
-> that omits `[defaults.ratelimit.ip]` falls through to the hand-written
-> `impl Default for RateLimitDefaults`, which calls the **derived**
-> `IpRateLimitConfig::default()` — all zeros — instead of the serde field
-> defaults (`default_ip_per_second() = 10`). The site check is then
-> `if ip_state.per_second.len() >= self.state.config.ip.per_second as usize`
-> (`src/waf/ratelimit.rs`), i.e. `len() >= 0`, which is always true, so
-> **100% of requests are answered with HTTP 429**.
+> **Rate-limit defaults are optional, but they are not inert.**
+> `DefaultsConfig` carries a struct-level `#[serde(default)]`, so an omitted
+> `[defaults]` table is resolved through the Rust `Default` impls rather than
+> through the per-field serde defaults. These two paths used to disagree:
+> `IpRateLimitConfig` derived `Default` (all zeros) while its serde fields
+> defaulted to `per_second = 10`, so omitting `[defaults.ratelimit.ip]` made the
+> site check `len() >= per_second` collapse to `len() >= 0` and **100% of
+> requests were answered with HTTP 429**.
 >
-> Verified live: a config with an absent/empty `[defaults.ratelimit.ip]` returns
-> 429 on the very first request; adding `[defaults.ratelimit.ip] per_second = 10`
-> fixes it. Write the IP limits explicitly in every config. Note the values
-> quoted as "defaults" below are the *serde* field defaults, which only apply
-> when the field is present but the individual key is omitted.
+> That is fixed — `IpRateLimitConfig` and `GlobalRateLimitConfig` now have
+> hand-written `Default` impls that reuse the same `default_*` functions as the
+> serde attributes, and `crates/synvoid-config/tests/serde_defaults_match_rust_defaults.rs`
+> pins the parity across the whole `[defaults]` subtree. Writing the values
+> explicitly, as above, is still good practice and is what the shipped
+> `config/main.toml` does; it is no longer a workaround for a defect.
 
 **Why these defaults:**
 - `mode = "shared"` uses a global rate limit pool, protecting the system as a whole rather than per-site; use `isolated` when you want each site to have its own independent limit bucket

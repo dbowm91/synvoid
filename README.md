@@ -199,6 +199,16 @@ The configuration above is a working starting point, not a production policy.
 - Linux gives the strictest sandbox isolation (Landlock). macOS Seatbelt is experimental and deprecated; Windows sandboxing is process-limits-only. See [SANDBOXING.md](docs/SANDBOXING.md).
 - Authentication is CPU-isolated and fails closed: the auth store persists atomically and a corrupt store fails startup rather than starting empty.
 
+### Library crates
+
+Most of the workspace is internal and carries no external support commitment. Of the
+crates published as libraries, only **`synvoid-rate-limit`** is an **externally supported**
+release (Phase 47, class 3). The remaining published crates — including honeypot,
+DNSSEC keystore and mesh protocol — are unsupported class 2 with
+`external_support = false`, and DNS and mesh extraction were deferred. See
+[`architecture/public_crate_release_policy.md`](architecture/public_crate_release_policy.md)
+and [`architecture/public_crate_release_readiness_phase47.md`](architecture/public_crate_release_readiness_phase47.md).
+
 ## License
 
 MIT. See [`LICENSE`](LICENSE).

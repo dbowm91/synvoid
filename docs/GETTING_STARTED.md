@@ -219,7 +219,7 @@ Defaults are deliberately left full-featured for operator compatibility. Prefer 
 
 ## Configuration Gotchas
 
-- **`[defaults.ratelimit.ip]` is effectively required.** `DefaultsConfig` uses a struct-level `#[serde(default)]` whose hand-written `Default` builds `IpRateLimitConfig` from the *derived* default (all zeros) instead of the per-field serde defaults. A config that omits `[defaults.ratelimit.ip]` therefore resolves `per_second = 0`, and the site check `len() >= per_second` is true for every request — so **all traffic gets HTTP 429**. Set the values explicitly, as shown above.
+- **Rate-limit defaults are optional and correct.** `[defaults.ratelimit.ip]` used to be effectively required: omitting it resolved `per_second = 0` (a derived `Default` behind a struct-level `#[serde(default)]`) and answered every request with HTTP 429. That is fixed and pinned by `crates/synvoid-config/tests/serde_defaults_match_rust_defaults.rs`; the explicit values in the config above are good practice, not a workaround.
 - **Set `[http] strict_protocol_validation = true`** unless you have a specific reason not to. With it off, the data plane accepts the connection but writes no response (observed on macOS/darwin x86_64; curl exits 56 with an empty reply).
 - **A short admin token is rejected.** `admin.token` must be at least 32 characters and free of placeholder words. Prefer `token_env_var` over writing a token into `main.toml`.
 - **Metrics binds loopback only.** A non-loopback `metrics.bind_address` is rejected at config load.
