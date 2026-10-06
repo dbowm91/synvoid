@@ -7,16 +7,37 @@ description: eBPF-based SYN-level traffic dropping and block store integration f
 
 ## Overview
 
-The eBPF SYN-level dropping feature allows blocking IPs at the network driver level before they consume any userspace memory. This is implemented via XDP (eXpress Data Path) in the `ebpf-flood` crate.
+The eBPF SYN-level dropping feature allows blocking IPs at the network driver level before they consume any userspace memory. This is implemented via XDP (eXpress Data Path) in the `ebpf-flood/` crate.
+
+**Read this first — the capability is real but OFF by default and currently unwired.**
+It is split across two halves that do *not* share a dependency:
+
+| Half | Location | Status |
+|---|---|---|
+| Kernel program + maps | `ebpf-flood/` (package `synvoid-ebpf-flood`, `aya-ebpf` 0.1) | built separately; **not a workspace member** |
+| Userspace loader | `src/waf/flood/ebpf_flood.rs` (`EbpfFlood`, `aya` 0.13) | `#[cfg(all(target_os = "linux", feature = "flood-ebpf"))]` via `src/waf/flood/mod.rs` |
+
+`flood-ebpf` is **not** in the root `default` feature set
+(`["socket-handoff", "mesh", "dns", "erased_pool", "swagger-ui"]`), and
+`EbpfFlood` has **no construction site anywhere in `src/` or `crates/`** outside
+its own module. The capability is therefore built but never reached at runtime.
+Admin capability reporting only reflects the compile-time flag
+(`crates/synvoid-admin/src/handlers/system.rs`), never a loaded program.
 
 ## Key Files
 
 - `ebpf-flood/src/maps.rs` - eBPF map definitions
 - `ebpf-flood/src/xdp.rs` - XDP program for SYN filtering and blocklist checking
+  (`filter_syn`, the `#[xdp]` entry point)
+- `src/waf/flood/ebpf_flood.rs` - userspace loader/attacher: `EbpfFlood::{new,
+  is_available, enable, disable, block_ip, unblock_ip, get_stats, update_config,
+  check_syn, register_half_open, register_ack, complete_half_open, is_ebpf_loaded}`
+- `src/waf/flood/mod.rs` - the `linux` + `flood-ebpf` gate
 - `crates/synvoid-block-store/src/lib.rs` - Canonical block store (`BlockStore`,
   `block_ip_with_provenance`); `src/block_store.rs` is only a compat re-export facade
 - `crates/synvoid-icmp-filter/src/ebpf.rs` - eBPF backend for ICMP filtering
-  (see `icmp_filter` skill for the per-protocol backend)
+  (separate program, `icmp-ebpf` feature — see the `icmp_filter` skill for the
+  per-protocol backend)
 
 ## Architecture
 
@@ -72,45 +93,42 @@ hook inside `BlockStore`.
 
 ## Integration Pattern (reference — userspace eBPF map sync)
 
-The eBPF hook requires a separate userspace component that:
-1. Loads the eBPF program and maps using `aya`
-2. Registers a callback with `BlockStore::set_ebpf_block_hook()`
-3. The callback inserts blocked IPs into the kernel maps
+The kernel-map write path is `EbpfFlood::block_ip` / `unblock_ip`, reached only
+by constructing an `EbpfFlood` and enabling it. There is **no
+`BlockStore::set_ebpf_block_hook()`** and no `GlobalBlockHook` call site — that
+API was removed during modularization (see the block store hook section above).
+Do not resurrect it. If blocklist sync is ever wired, it must be an explicit
+subscriber of blocklist events that calls `block_ip`, not a hidden hook inside
+`BlockStore`.
 
-Example userspace integration:
+Reference shape of the userspace side (mirrors `src/waf/flood/ebpf_flood.rs`,
+which uses `aya::maps::HashMap` via the `AyaHashMap` alias):
 ```rust
 use aya::maps::HashMap;
 use aya::programs::Xdp;
 
-fn setup_ebpf_blocking() {
+fn setup_ebpf_blocking(/* ... */) {
     let mut blocklist_v4: HashMap<_, Ipv4Key, u8> = // ... load from Aya
     let mut blocklist_v6: HashMap<_, Ipv6Key, u8> = // ... load from Aya
 
-    let hook = Arc::new(move |ip: IpAddr| {
-        match ip {
-            IpAddr::V4(v4) => {
-                let key = Ipv4Key { addr: v4.to_u32() };
-                let _ = blocklist_v4.insert(&key, &1, 0);
-            }
-            IpAddr::V6(v6) => {
-                let key = Ipv6Key { addr: v6.octets() };
-                let _ = blocklist_v6.insert(&key, &1, 0);
-            }
-        }
-    });
-
-    block_store.set_ebpf_block_hook(hook);
+    // Blocked IPs are pushed by EbpfFlood::block_ip(ip), which writes
+    // IP_BLOCKLIST_V4 / IP_BLOCKLIST_V6 keyed by the client's address.
+    let _ = blocklist_v4.insert(&key, &1, 0);
+    let _ = blocklist_v6.insert(&key, &1, 0);
 }
 ```
 
 ## Verification Commands
 
 ```bash
-# Build eBPF program (requires Aya tooling)
-cargo build --package ebpf-flood
+# Build the kernel program — it is OUTSIDE the cargo workspace,
+# so build from its own directory. The package is named
+# `synvoid-ebpf-flood`; there is no `ebpf-flood` package id.
+(cd ebpf-flood && cargo build)
 
-# Check userspace compilation
-cargo check --profile ci
+# Check the userspace half compiles under the feature (needs Linux
+# for the cfg; on non-Linux this module is compiled out entirely)
+cargo check --profile ci --features flood-ebpf
 
 # Run block-store tests
 cargo nextest run -p synvoid-block-store --cargo-profile ci --profile ci
@@ -118,16 +136,18 @@ cargo nextest run -p synvoid-block-store --cargo-profile ci --profile ci
 
 ## Performance Impact
 
-Dropping at XDP level vs userspace:
+Dropping at XDP level vs userspace — **order-of-magnitude estimates only**.
+Nothing here is a measured SynVoid figure, and the capability is currently
+unwired, so treat these as design rationale rather than a result:
 - XDP DROP: ~50-100 ns per packet
 - Userspace block: ~1000-5000 ns per packet
-- **100x improvement** in packet processing overhead
+- That is roughly a **10x-100x** difference, not a single 100x factor
 
-At 1M RPS with 10% blocked IPs (illustrative capacity arithmetic, not a
-measured throughput claim):
-- Without eBPF: 50ms/sec overhead from blocking
-- With eBPF: 0.5ms/sec overhead from blocking
+Arithmetic sanity check (illustrative, not a throughput claim): at 1M pps with
+10% of packets dropped, 100k drops/sec costs roughly 100-500 ms/sec in userspace
+versus 5-10 ms/sec in XDP.
 
 ## Related Skills
 
-- `ipc_hardening` - IPC security patterns
+- `icmp_filter` — the separate `icmp-ebpf` backend
+- `block_store` — canonical blocklist write path

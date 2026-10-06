@@ -38,7 +38,7 @@ never invokes the compiler; approval distributes text without compiling.
 (counting-validator tests) + `architecture/mesh.md` §13. Do not move `yara-x` into
 mesh or add compiler calls on remote paths.
 
-**Binding distributed-state contract (Phase 23)**: `architecture/distributed_state_contract.md` is authoritative for authority/consistency/versioning/TTL/conflict/partition-read-write/enforcement of every replicated namespace. Quorum is openraft N/2+1 majority (not manual 2/3); without quorum canonical writes fail typed `QuorumUnavailable` (never success); MESH-15 original wording is closed as stale (see contract §2). Code: `DistributedNamespaceAuthority` + `CanonicalWriteOutcome` in `crates/synvoid-mesh/src/mesh/canonical.rs`, `RaftAwareClientError::QuorumUnavailable` in `raft/client.rs`, `PropagationStatus::{CanonicalCommitted, QuorumUnavailable}` in `synvoid-core/src/admin_mutation.rs`. Tests: `crates/synvoid-mesh/tests/distributed_state_partition.rs`. **Canonical seam** (Iterations 7-15, complete): `CanonicalTrustReader` in `crates/synvoid-mesh/src/mesh/canonical.rs`; `validate_peer_canonical_status` in `peer_auth.rs`; `classify_key_authority_with_canonical_reader` in `dht/key_policy.rs`; `validate_dht_key_authority_for_ingress` adapter; `DhtIngressPolicyContext` wired for Push/Announce via `RecordStoreManager`. Ingress gate active for configured Push/Announce paths; disabled context preserves legacy. **Iteration 16: AdvisoryRecordSource seam** — `AdvisoryRecordSource` trait + `RecordStoreAdvisorySource` adapter + `StaticAdvisoryRecordSource` in `crates/synvoid-mesh/src/mesh/dht/advisory_source.rs`. **Iteration 17: Advisory source hardening** — `RecordStoreAdvisorySource` has focused real-store tests (present/missing/expired/prefix); architecture/docs updated; no service migration. **Iteration 18: Policy composition helper** — `evaluate_threat_intel_policy()` in `crates/synvoid-mesh/src/mesh/threat_intel_policy.rs` composes `AdvisoryRecordSource` + `CanonicalTrustReader` into explicit threat-intel policy decisions (Actionable/AdvisoryOnly/NotActionable/Deferred). Tests cover all advisory + canonical state combinations. **Iteration 19: First consumer migration** — `ThreatIntelligenceManager::evaluate_indicator_actionability` wraps the policy helper, taking trait objects as parameters. Tests cover all policy-composed and legacy paths. **Iteration 20: Injection seam** — `ThreatIntelPolicyContext` carrier with `set_policy_context()`, `evaluate_indicator_actionability_configured()`, and `lookup_threat_indicator_policy_composed()`. **Iteration 21: Second consumer migration** — `lookup_local_indicator_policy_composed` and `lookup_local_indicator_by_ip_policy_composed` added. Two threat-intel read paths now use the composed policy seam. Raw methods remain for compatibility. No proxy, YARA/WASM, or routing consumers migrated. **Iteration 22: Policy cleanup** — shared `is_policy_actionable` helper consolidates duplicate DHT/local gating; policy-composed methods documented as preferred; raw methods documented as compatibility/diagnostic. **Iteration 23: Policy reassessment** — the track is staged and stable after call-graph review. No low-risk caller was migrated, no proxy/YARA/WASM/routing/enforcement hot path was touched, and raw lookup APIs remain compatibility/diagnostic paths. **Iteration 24: Verification** — the shared helper remains in place and focused mesh checks passed; raw lookup APIs remain compatibility/diagnostic paths. **Iterations 25-26: Root wiring** — `DataPlaneServices` carries optional `ThreatIntelPolicyContext`; a root-side helper builds it from explicit canonical/advisory handles. **Iteration 27** assessed canonical reader ownership; workers are data-planes without direct access to Raft/EdgeReplicaManager. **Iteration 28: Supervisor exports `CanonicalTrustSnapshot` via IPC to workers** — `EdgeReplicaManager::canonical_trust_snapshot()` produces the snapshot, Supervisor sends `CanonicalTrustSnapshotUpdate` IPC, workers store it and apply the snapshot via `DataPlaneServices::update_threat_intel_policy_context()` in the IPC message loop. `CanonicalTrustSnapshot` implements `CanonicalTrustReader`. `DataPlaneServices::update_threat_intel_policy_context()` enables live policy context updates when snapshots arrive via IPC. **Iteration 31: Canonical snapshot freshness policy** — `CanonicalSnapshotFreshnessPolicy` and `classify_canonical_snapshot()` in `crates/synvoid-mesh/src/mesh/canonical.rs` classify snapshots as fresh (≤60s), stale-within-grace (≤5min), expired, invalid, or missing. `FreshnessBoundCanonicalReader` wrapper enforces freshness on `CanonicalTrustReader` trust decisions. Workers classify snapshot freshness before applying; expired/invalid snapshots are not applied. **Iteration 32: Config wiring** — `From<&AuthorityFreshnessConfig>` conversion with normalization; worker reads config at runtime; `FailClosedNotActionable` installs reader. No proxy/YARA/WASM/routing/WAF consumers were migrated. **Iteration 33: Shadow/observability consumers** — `ThreatIntelPolicyShadowDecision` DTO, `ThreatIntelPolicyDecisionClass`, `ThreatIntelPolicyShadowDisagreement` enums; `evaluate_indicator_policy_shadow()` with metrics counters; admin endpoints for diagnostics. **Shadow/observability only — no enforcement behavior changed.**
+**Binding distributed-state contract (Phase 23)**: `architecture/distributed_state_contract.md` is authoritative for authority/consistency/versioning/TTL/conflict/partition-read-write/enforcement of every replicated namespace. Quorum is openraft N/2+1 majority (not manual 2/3); without quorum canonical writes fail typed `QuorumUnavailable` (never success); MESH-15 original wording is closed as stale (see contract §2). Code: `DistributedNamespaceAuthority` + `CanonicalWriteOutcome` in `crates/synvoid-mesh/src/mesh/canonical.rs`, `RaftAwareClientError::QuorumUnavailable` in `crates/synvoid-mesh/src/mesh/raft/client.rs`, `PropagationStatus::{CanonicalCommitted, QuorumUnavailable}` in `crates/synvoid-core/src/admin_mutation.rs`. Tests: `crates/synvoid-mesh/tests/distributed_state_partition.rs`. **Canonical seam** (Iterations 7-15, complete): `CanonicalTrustReader` in `crates/synvoid-mesh/src/mesh/canonical.rs`; `validate_peer_canonical_status` in `crates/synvoid-mesh/src/mesh/peer_auth.rs`; `classify_key_authority_with_canonical_reader` in `crates/synvoid-mesh/src/mesh/dht/key_policy.rs`; `validate_dht_key_authority_for_ingress` adapter; `DhtIngressPolicyContext` wired for Push/Announce via `RecordStoreManager`. Ingress gate active for configured Push/Announce paths; disabled context preserves legacy. **Iteration 16: AdvisoryRecordSource seam** — `AdvisoryRecordSource` trait + `RecordStoreAdvisorySource` adapter + `StaticAdvisoryRecordSource` in `crates/synvoid-mesh/src/mesh/dht/advisory_source.rs`. **Iteration 17: Advisory source hardening** — `RecordStoreAdvisorySource` has focused real-store tests (present/missing/expired/prefix); architecture/docs updated; no service migration. **Iteration 18: Policy composition helper** — `evaluate_threat_intel_policy()` in `crates/synvoid-mesh/src/mesh/threat_intel_policy.rs` composes `AdvisoryRecordSource` + `CanonicalTrustReader` into explicit threat-intel policy decisions (Actionable/AdvisoryOnly/NotActionable/Deferred). Tests cover all advisory + canonical state combinations. **Iteration 19: First consumer migration** — `ThreatIntelligenceManager::evaluate_indicator_actionability` wraps the policy helper, taking trait objects as parameters. Tests cover all policy-composed and legacy paths. **Iteration 20: Injection seam** — `ThreatIntelPolicyContext` carrier with `set_policy_context()`, `evaluate_indicator_actionability_configured()`, and `lookup_threat_indicator_policy_composed()`. **Iteration 21: Second consumer migration** — `lookup_local_indicator_policy_composed` and `lookup_local_indicator_by_ip_policy_composed` added. Two threat-intel read paths now use the composed policy seam. Raw methods remain for compatibility. No proxy, YARA/WASM, or routing consumers migrated. **Iteration 22: Policy cleanup** — shared `is_policy_actionable` helper consolidates duplicate DHT/local gating; policy-composed methods documented as preferred; raw methods documented as compatibility/diagnostic. **Iteration 23: Policy reassessment** — the track is staged and stable after call-graph review. No low-risk caller was migrated, no proxy/YARA/WASM/routing/enforcement hot path was touched, and raw lookup APIs remain compatibility/diagnostic paths. **Iteration 24: Verification** — the shared helper remains in place and focused mesh checks passed; raw lookup APIs remain compatibility/diagnostic paths. **Iterations 25-26: Root wiring** — `DataPlaneServices` carries optional `ThreatIntelPolicyContext`; a root-side helper builds it from explicit canonical/advisory handles. **Iteration 27** assessed canonical reader ownership; workers are data-planes without direct access to Raft/EdgeReplicaManager. **Iteration 28: Supervisor exports `CanonicalTrustSnapshot` via IPC to workers** — `EdgeReplicaManager::canonical_trust_snapshot()` produces the snapshot, Supervisor sends `CanonicalTrustSnapshotUpdate` IPC, workers store it and apply the snapshot via `DataPlaneServices::update_threat_intel_policy_context()` in the IPC message loop. `CanonicalTrustSnapshot` implements `CanonicalTrustReader`. `DataPlaneServices::update_threat_intel_policy_context()` enables live policy context updates when snapshots arrive via IPC. **Iteration 31: Canonical snapshot freshness policy** — `CanonicalSnapshotFreshnessPolicy` and `classify_canonical_snapshot()` in `crates/synvoid-mesh/src/mesh/canonical.rs` classify snapshots as fresh (≤60s), stale-within-grace (≤5min), expired, invalid, or missing. `FreshnessBoundCanonicalReader` wrapper enforces freshness on `CanonicalTrustReader` trust decisions. Workers classify snapshot freshness before applying; expired/invalid snapshots are not applied. **Iteration 32: Config wiring** — `From<&AuthorityFreshnessConfig>` conversion with normalization; worker reads config at runtime; `FailClosedNotActionable` installs reader. No proxy/YARA/WASM/routing/WAF consumers were migrated. **Iteration 33: Shadow/observability consumers** — `ThreatIntelPolicyShadowDecision` DTO, `ThreatIntelPolicyDecisionClass`, `ThreatIntelPolicyShadowDisagreement` enums; `evaluate_indicator_policy_shadow()` with metrics counters; admin endpoints for diagnostics. **Shadow/observability only — no enforcement behavior changed.**
 
 ## Node Roles
 
@@ -113,12 +113,12 @@ Examples:
 |-------------|---------|-----|
 | `verified_upstream:{upstream_id}` | Verified origin registration | 30 days |
 | `upstream:{upstream_id}` | Route announcement | 5 min |
-| `node_capability:{node_id}` | Node capabilities | 5 min |
+| `node_capability:{node_id}:{capability}` | Node capabilities | 5 min |
 | `origin_reachability:{upstream_id}:{provider}` | Reachability status | 60 sec |
 | `origin_penalty:{upstream_id}:{provider}` | Route penalty score | 600 sec |
 | `capability_attestation:{node_id}:{capability}` | Signed capability attestation | 24 hours |
-| `genesis_key_transition:{sequence}` | Genesis key rotation record | 24 hours |
-| `revoked_global_node:{node_id}` | Revoked global node | 24 hours |
+| `genesis_key_transition:{sequence}:{new_key_fingerprint}:{announced_by}` | Genesis key rotation record | 24 hours |
+| `revoked_global_node:{node_id}:{revoked_at}:{reason}` | Revoked global node | 24 hours |
 | `serverless_function:{name}` | Serverless function registration | 1 hour |
 | `yara_chunk:{content_hash}:{index}` | Compressed YARA rule chunk (for large rulesets) | 24 hours |
 
@@ -379,7 +379,7 @@ revoke_genesis_key(public_key: &str)
 ### Key Rotation Flow
 
 1. New genesis key generated
-2. `GenesisKeyTransition` announced via DHT: `genesis_key_transition:{sequence}`
+2. `GenesisKeyTransition` announced via DHT: `genesis_key_transition:{sequence}:{new_key_fingerprint}:{announced_by}`
 3. All global nodes update `previous_genesis_key_base64`
 4. Old key retained for verification during transition
 
@@ -1109,7 +1109,8 @@ This ensures background tasks are owned by the task group from the moment they a
 
 ### YARA Broadcast Loop Extraction
 
-`run_yara_broadcast_loop()` is extracted from inline logic in `init_mesh.rs`. The function:
+`run_yara_broadcast_loop()` (`src/worker/unified_server/mod.rs`) is extracted from
+inline logic in `src/worker/unified_server/init_mesh.rs`. The function:
 
 - Takes ownership of YARA broadcast components (receiver, shutdown signal)
 - Uses deadline-bounded drain to ensure no hung YARA operations block worker shutdown
@@ -1676,10 +1677,10 @@ The mesh supports ACME HTTP-01 challenges across edge/origin topologies. When an
 
 ### Two Serving Paths
 
-**Path A — Direct HTTP server** (`crates/synvoid-http/src/challenge_paths.rs`, via `request_preparation.rs` preflight; `special_request_paths.rs` under `mesh`):
+**Path A — Direct HTTP server** (`crates/synvoid-http/src/challenge_paths.rs`, via `crates/synvoid-http/src/request_preparation.rs` preflight and `crates/synvoid-http/src/special_request_paths.rs`, dispatched from `request_frontdoor.rs`; root `src/http/special_request_paths.rs` is a re-export facade):
 The edge node's own HTTP server handles ACME requests. This path serves requests that arrive via the normal HTTP/TCP flow (ACME server → edge node directly).
 
-**Path B — Mesh QUIC stream** (`crates/synvoid-mesh/src/mesh/transport_peer.rs:2345-2366`):
+**Path B — Mesh QUIC stream** (`crates/synvoid-mesh/src/mesh/transport_peer.rs`, `MeshTransport::handle_http_proxy_stream()`):
 The edge node's mesh accept loop receives QUIC streams from global nodes. When the stream contains an HTTP request with `Host: origin-host`, `handle_http_proxy_stream()` now checks for ACME paths first before attempting backend proxy.
 
 ### Why Both Paths?
@@ -1715,7 +1716,7 @@ The challenge store on the edge must be populated BEFORE the ACME server probes.
 
 ### Overview
 
-Origin nodes can now serve serverless functions over mesh QUIC connections. The `handle_serverless_proxy_stream()` function (`crates/synvoid-mesh/src/mesh/transport_peer.rs:2884-2992`) handles serverless invocations.
+Origin nodes can now serve serverless functions over mesh QUIC connections. The `handle_serverless_proxy_stream()` function (`crates/synvoid-mesh/src/mesh/transport_peer.rs`) handles serverless invocations.
 
 ### Routing Flow
 
@@ -1738,7 +1739,9 @@ Returns WASM response as HTTP response
 ### Key Implementation Details
 
 - `serverless_manager: Arc<RwLock<Option<Arc<ServerlessManager>>>>` field in `MeshTransport`
-- Set during worker initialization via `unified_server.rs:1095-1097`
+- Set during worker mesh attachment via `src/worker/unified_server/init_mesh.rs`
+  (`unified_server.get_serverless_manager()` → `inner.set_serverless_manager(...)`;
+  there is no `src/worker/unified_server.rs` file — it is a module directory)
 - Serverless functions can be registered in DHT via `serverless_function:{name}` keys
 
 ---
@@ -2153,7 +2156,10 @@ The consumer actionability audit inventoried every threat-intel consumer and cla
 - `AsnBlock` is observational only (no block-store mutation)
 
 **Canonical inventory**: `architecture/threat_intel_consumer_actionability.md`
-**Guardrail test**: `tests/threat_intel_consumer_actionability_guard.rs`
+**Guardrail test**: `tests/security_guard.rs` (Section 3, "Threat-Intel Consumer
+Actionability Guards"; the former standalone
+`tests/threat_intel_consumer_actionability_guard.rs` was consolidated into it —
+that filename survives only as an "Origin:" comment in the guard source)
 
 ## Iteration 36 — Doc Drift, Three-Plane Model, Request/WAF Audit
 

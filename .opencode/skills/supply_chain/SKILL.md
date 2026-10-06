@@ -49,15 +49,21 @@ Pinned tools: cargo-deny 0.20.2, cargo-audit 0.22.2
    an affected version "patched".** The direct runtime is 36.0.16 LTS from
    crates.io (supported through 2027-08-20, no git patch) and IS patched
    for RUSTSEC-2026-0269 (>=36.0.14) and RUSTSEC-2026-0316 (>=36.0.16) —
-   it needs no ignore for either. The YARA transitive line is 48.0.3
+   it needs no ignore for either. The YARA transitive line is 48.0.5
    (48 LTS line, patched >=48.0.3 for 0269, 0315, 0316, and the
-   2026-04 batch) via the temporary manifest-only `yara-x` compat fork
+   2026-04 batch; Phase 123 advanced 48.0.3 → 48.0.5 to clear
+   RUSTSEC-2026-0326/-0327) via the temporary manifest-only `yara-x` compat fork
    (`third-party/yara-x-compat/`, exact upstream 1.20.0 sources + the
    manifest-only wasmtime 45.0.3 → 47.0.4 (Phase 40) → 48.0.3
-   (Phase 103) delta; root `[patch.crates-io]` path override, no git
-   source). Wasmtime 40.0.4 and 47.0.4 are gone, so their ignores are
-   removed — do not re-add them without a version-affected wasmtime in
-   the graph.
+   (Phase 103) → 48.0.5 (Phase 123) delta; root `[patch.crates-io]` path
+   override, no git source). Wasmtime 40.0.4 and 47.0.4 are gone, so their
+   ignores are removed — do not re-add them without a version-affected
+   wasmtime in the graph. `deny.toml` and parts of
+   `architecture/dependency_security_baseline_phase25.md` still narrate the
+   YARA line as "48.0.3" (the pre-Phase-123 version); `Cargo.lock` and the
+   fork manifest are the ground truth at 48.0.5, and
+   `wasmtime_transitive_matches_baseline` pins `version = "48.0.5"` in the
+   vendored fork.
    `wasmtime-wasi` remains absent (capability absence still holds and is
    still guard-enforced, but it is not a substitute for version remediation).
    `yara_fork_is_temporary_guard` + `wasmtime_transitive_matches_baseline`
@@ -90,7 +96,20 @@ Pinned tools: cargo-deny 0.20.2, cargo-audit 0.22.2
    moves without a baseline update.
 3. **Prefer pure-Rust deps over C bindings** for new dependencies
    (serialization/crypto standards in `AGENTS.md`).
-4. **pip installs fail closed on `require_hashes`**: `AppServerConfig.require_hashes`
+4. **Current advisory posture: `cargo audit` is clean (0 vulnerabilities).**
+   `deny.toml` and `.cargo/audit.toml` each carry **exactly 2 ignores** —
+   `RUSTSEC-2023-0071` (rsa Marvin Attack, via `yara-x` 1.20.0 / DNSSEC)
+   and `RUSTSEC-2026-0235` (rkyv 0.7.46 via `parcel_sourcemap`) — and no
+   ignore may be added without full metadata. `xxhash-rust` was bumped
+   **0.8.15 → 0.8.19** via targeted `cargo update -p xxhash-rust`
+   (fixes **GHSA-6g2r-675j-hx59**; runtime scope, pulled in transitively by
+   `notify` and `iscc-lib` — it is not a direct SynVoid dependency). That
+   upgrade is why the audit is clean; do not let `xxhash-rust` drift back to
+   0.8.15–0.8.18 in `Cargo.lock`. `cargo audit` still reports 6 allowed
+   **warnings** (unmaintained crates: `proc-macro-error`,
+   `proc-macro-error2`, and friends) — warnings are not vulnerabilities and
+   are not a gate failure; do not convert them into ignores.
+5. **pip installs fail closed on `require_hashes`**: `AppServerConfig.require_hashes`
    flows `SiteAppServerConfig` → `AppServerConfig` → `GranianConfig`
    (`crates/synvoid-config/src/site/app_server.rs`,
    `crates/synvoid-app-server/src/granian.rs`), adding `--require-hashes`
@@ -98,7 +117,7 @@ Pinned tools: cargo-deny 0.20.2, cargo-audit 0.22.2
    opt out explicitly with `[app_server] require_hashes = false`.
    With it on, maintain a hashed `requirements.txt`
    (`pip hash -r <package>`). TOML: `[app_server] require_hashes = true`.
-5. **Publication is manual** (`cargo publish` only, see `docs/releasing.md`);
+6. **Publication is manual** (`cargo publish` only, see `docs/releasing.md`);
    `cargo xtask verify-release` never publishes and fails on a dirty tree.
    Only `synvoid-rate-limit` is externally supported (class 3, MSRV 1.81);
    every other `synvoid-*` crate is class 1/2 with no support promise —
@@ -109,6 +128,6 @@ Pinned tools: cargo-deny 0.20.2, cargo-audit 0.22.2
 
 ```bash
 cargo deny check
-cargo audit
+cargo audit                      # expect: 0 vulnerabilities, 6 allowed warnings
 cargo xtask test guards   # includes deny_ignore_metadata_guard
 ```

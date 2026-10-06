@@ -40,6 +40,8 @@ Welcome to the SynVoid documentation. This index provides quick access to all do
 | [REQUEST_SANITIZATION.md](REQUEST_SANITIZATION.md) | Request sanitization and header handling |
 | [STATIC_FILES.md](STATIC_FILES.md) | Static file serving and optimization |
 | [TARPIT.md](TARPIT.md) | Anti-scraping tarpit behavior |
+| [HONEYPOT.md](HONEYPOT.md) | Deception listeners, honeypot ports, and storage |
+| [FEATURE_STATUS.md](FEATURE_STATUS.md) | Which features are live, partial, or fail-closed |
 
 ## Upstream Management
 
@@ -89,6 +91,24 @@ SynVoid includes additional features for specific use cases:
 - [API_REFERENCE.md](API_REFERENCE.md) - Admin API documentation
 - [PLATFORM_SUPPORT.md](PLATFORM_SUPPORT.md) - Platform-specific notes
 - [SECURITY.md](SECURITY.md) - Security hardening guide
+
+## Architecture Decisions & Testing Contracts
+
+Architecture decision records (historical rationale — not current behavior):
+
+- [adr/ADR-001-global-nodes-trust-anchors.md](adr/ADR-001-global-nodes-trust-anchors.md) — global-node trust anchors
+- [adr/ADR-002-dnssec-validation-recursive-only.md](adr/ADR-002-dnssec-validation-recursive-only.md) — DNSSEC validation is recursive-only
+- [adr/ADR-003-unified-worker-process.md](adr/ADR-003-unified-worker-process.md) — one unified worker process
+- [adr/ADR-004-module-split-pattern.md](adr/ADR-004-module-split-pattern.md) — the module split pattern
+
+Testing contracts and policies:
+
+- [testing/verification-contract.md](testing/verification-contract.md) — **frozen** verification contract (`cargo xtask verify` lanes)
+- [testing/nextest-policy.md](testing/nextest-policy.md) — cargo-nextest version pinning and invocation
+- [testing/root-test-ownership.md](testing/root-test-ownership.md) — where a test belongs (root `tests/` vs owning crate)
+- [testing/test-resource-inventory.md](testing/test-resource-inventory.md) — test suite resource inventory
+
+For the internal design record, start at [`architecture/overview.md`](../architecture/overview.md) — it indexes all 224 architecture docs. Binding design docs live in `architecture/`; `plans/` is retained phase-handoff history.
 
 ## Additional Resources
 

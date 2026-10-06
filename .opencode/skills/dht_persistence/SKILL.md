@@ -22,9 +22,8 @@ Use this skill when:
 - Implementing background pruning tasks for expired records
 
 ## Key Files
-- `crates/synvoid-mesh/src/mesh/dht/record_store_persist.rs` - Persistence implementation
-- `crates/synvoid-mesh/src/mesh/dht/record_store.rs` - Added `persist_neighborhood()`, `load_neighborhood()`
-- `crates/synvoid-mesh/src/mesh/config.rs` - Added `neighborhood_persistence_enabled`, `neighborhood_cache_size`, `persist_max_age_secs`
+- `crates/synvoid-mesh/src/mesh/dht/record_store_persist.rs` - Persistence implementation (`persist_neighborhood()`, `load_neighborhood()`)
+- `crates/synvoid-mesh/src/mesh/dht/record_store.rs` - Defines `RecordStoreConfig` (`neighborhood_persistence_enabled`, `neighborhood_cache_size`, `persist_max_age_secs` live here, NOT in `crates/synvoid-mesh/src/mesh/config.rs`)
 
 ## Implementation Pattern
 
@@ -108,30 +107,51 @@ cargo test --test dht_integration_test
 ## Schema Version
 Always include schema version for forward compatibility:
 ```rust
+const CURRENT_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PersistedNeighborhood {
+    version: u32,
+    node_id: String,
+    mesh_id: String,
+    persisted_at: u64,
+    records: Vec<PersistedRecord>,
+}
+```
 
 ## DHT Record Versioning
 
-Immutable record types cannot be replaced once stored:
+Immutable record types (`SignedRecordType::is_immutable()` in
+`crates/synvoid-mesh/src/mesh/dht/signed.rs`):
 - `GenesisKeyTransition` — Genesis key rotation records
 - `RevokedGlobalNode` — Revocation records
 - `YaraRulesManifest` — YARA rule manifests
 - `YaraRuleContent` — YARA rule content
+- `YaraCompiledRuleContent` — YARA compiled-rule metadata
+- `GlobalNodeProof` — global node proof records
 
-These types use `SignedRecordType::is_immutable()` check before allowing replacement.
+**Reachability caveat**: `is_immutable()` currently has zero call sites outside
+its own definition (grep across `crates/synvoid-mesh/src/` finds only the
+`impl` block), so the replacement check it describes is not enforced on any
+store path today. Treat the trust anchor (`authorized_genesis_keys`, see W12.5
+below) as the live control, not this classifier.
 
 ### Timestamp Validation
 
-All DHT records are validated against future timestamps using `validate_record_timestamp()`:
+All DHT records are validated against future timestamps using `validate_record_timestamp()`
+(`crates/synvoid-mesh/src/mesh/dht/signed.rs`):
 ```rust
 pub fn validate_record_timestamp(timestamp: u64) -> bool {
-    let now = crate::mesh::safe_unix_timestamp() as i64;
-    let msg_time = timestamp as i64;
-    let diff = (now - msg_time).abs();
-    diff <= DHT_RECORD_TIMESTAMP_WINDOW_SECS  // 300 seconds
+    let now = synvoid_utils::safe_unix_timestamp() as i64;
+    let record_time = timestamp as i64;
+    let future_diff = record_time.saturating_sub(now);
+    future_diff <= DHT_RECORD_TIMESTAMP_WINDOW_SECS  // 300 seconds
 }
 ```
 
-Records with timestamps too far in the future are rejected before storage.
+Only the **future** direction is bounded (a one-sided `saturating_sub`, not an
+`abs()`): records too far in the future are rejected before storage, but old
+records are allowed and are governed by `timestamp + ttl_seconds`, not by age.
 
 ## Content-Addressed Integrity (record_set_digest)
 
@@ -182,33 +202,35 @@ Verification functions in `crates/synvoid-mesh/src/mesh/dht/signed.rs`:
 - `verify_dht_record_signature()` — verifies signature on a DhtRecord
 - `verify_dht_record_signature_for_key()` — verifies with expected record type
 
-## DHT Two-Phase Commit (W11.3)
+## DHT Two-Phase Commit (W11.3) — REMOVED
 
-Records requiring quorum use a two-phase commit to prevent gossip of unconfirmed state:
-
-1. **Phase 1 (Pending)**: Record stored with `DhtRecordStatus::PendingQuorum` in `DhtRecordEntry.status`. Hidden from `get_record()` and `get_all_records()` but exists locally.
-2. **Phase 2 (Commit)**: On quorum approval, `commit_record_after_quorum()` transitions to `Live`, queues for announce, and notifies peers.
-
-Key types:
-- `DhtRecordStatus` enum (`PendingQuorum`, `Live`) in `crates/synvoid-mesh/src/mesh/protocol.rs` with `Default::default()` = `Live`
-- `QuorumSignatureProto` — serializes quorum signatures attached to records
-
-Key methods:
-- `store_record_global()` — stores quorum-requiring records as `PendingQuorum` before starting quorum
-- `commit_record_after_quorum()` — transitions to `Live`, announces, notifies peers
-- `abort_pending_record()` — removes record on rejection/timeout
-- `get_record()` / `get_all_records()` — filter out `PendingQuorum` records
-- Peer notification uses standard DHT sync/gossip paths with quorum proof verification
+**The two-phase commit path no longer exists.** `DhtRecordStatus` is now a
+single-variant enum (`crates/synvoid-mesh/src/mesh/protocol.rs`):
 
 ```rust
-// DhtRecordEntry now includes status
-pub struct DhtRecordEntry {
-    pub record: DhtRecord,
-    pub local_origin: bool,
-    pub version: u64,
-    pub status: DhtRecordStatus,  // Default is Live for backward compat
+pub enum DhtRecordStatus {
+    #[default]
+    Live,
 }
 ```
+
+`to_u8()` always returns `0` and `from_u8(_v)` always returns `Live`
+(discarding the stored byte), so the `PendingQuorum` state is unreachable in
+both directions. `commit_record_after_quorum()` and `abort_pending_record()`
+have zero call sites repo-wide, and `PendingQuorum` survives only in the
+deprecation log of `start_recovery_worker()`. Canonical authority moved to Raft
+and global writes are Raft-enforced, so the pending/confirm dance is gone.
+
+Retained residue:
+- `DhtRecordEntry.status` still exists (typed `crate::protocol::DhtRecordStatus`)
+  and `get_record()` / `get_all_records()` still filter on
+  `entry.status == DhtRecordStatus::Live` — but that check is now trivially true.
+- The disk store keeps a `status INTEGER NOT NULL` column
+  (`record_store_disk.rs`) for schema compatibility; it always round-trips `0`.
+- `store_record_global()` and the `QuorumSignatureProto` wire type still exist.
+
+Do not reintroduce `PendingQuorum` or a commit/abort pair without a fresh
+design review against `architecture/distributed_state_contract.md`.
 
 ## DHT Disk-Backed Storage (W11.5)
 
@@ -254,6 +276,10 @@ CREATE TABLE dht_records (
     ttl_seconds INTEGER NOT NULL,
     source_node_id TEXT NOT NULL,
     content_hash BLOB NOT NULL,
+    signature BLOB,
+    signer_public_key TEXT,
+    quorum_proof BLOB,
+    request_id TEXT,
     local_origin INTEGER NOT NULL,
     version INTEGER NOT NULL,
     status INTEGER NOT NULL
@@ -273,9 +299,9 @@ CREATE INDEX idx_source ON dht_records(source_node_id);
 - `vacuum()` - VACUUM the database
 
 ### DhtRecordStatus Serialization
-`DhtRecordStatus` provides `to_u8()` and `from_u8()` for SQLite storage:
-- `Live` = 0
-- `PendingQuorum` = 1
+`DhtRecordStatus` provides `to_u8()` and `from_u8()` for SQLite storage, but
+`Live` is the only variant (see "Two-Phase Commit — REMOVED" above):
+- `Live` = 0 (the only encoded value; `from_u8` ignores its argument)
 
 ## DHT L1/L2 Cache (W11.6)
 
@@ -284,7 +310,6 @@ The `DiskRecordStore` can act as an L2 cache transparent to the `ShardedRecordSt
 ### Key Files
 - `crates/synvoid-mesh/src/mesh/dht/record_store_crud.rs` - Modified `get_record()`, `store_record_global()`
 - `crates/synvoid-mesh/src/mesh/dht/record_store.rs` - Added `warmup_from_disk()` method
-- `crates/synvoid-mesh/src/mesh/dht/record_store_message.rs` - Modified `commit_record_after_quorum()`, `abort_pending_record()`
 
 ### L1 Read-Through Cache
 When `get_record()` finds a record not in memory (L1), it checks disk (L2):
@@ -320,22 +345,10 @@ if self.is_global_node() {
 ```
 
 ### Quorum Commit/Abort
-When quorum commits or aborts, disk store is updated:
-```rust
-// On commit_record_after_quorum():
-if self.is_global_node() {
-    if let Some(ref disk_store) = self.record_state.read().disk_store {
-        if let Some(entry) = self.record_state.read().records.get(&record.key) {
-            disk_store.insert(record.key.clone(), entry.clone());
-        }
-    }
-}
-
-// On abort_pending_record():
-if let Some(ref disk_store) = self.record_state.read().disk_store {
-    disk_store.remove(key);
-}
-```
+REMOVED — `commit_record_after_quorum()` / `abort_pending_record()` no longer
+exist (see "Two-Phase Commit — REMOVED" above), so there is no disk-store
+update on quorum commit or abort. Write-through now happens only on the
+`store_record_global()` path shown above.
 
 ### Startup Warmup
 `warmup_from_disk()` rebuilds Merkle tree from disk keys without loading all values:
@@ -427,7 +440,6 @@ if self.config.regional_quorum_enabled {
 - History stores last 20 measurements per node (see `record_latency()`)
 - `PeerShard::latency_history: HashMap<String, Vec<(Instant, u32)>>`
 - Older measurements naturally deprioritize stale nodes in regional selection
-```
 
 ## Incremental Merkle Updates (W12.1)
 
@@ -504,48 +516,25 @@ pub fn get_log_entries_paged(
 }
 ```
 
-## Durable Quorum Recovery (W12.4)
+## Durable Quorum Recovery (W12.4) — DISABLED
 
-### Purpose
-Records marked `PendingQuorum` are lost on restart because the ephemeral polling tasks in `store_record_global` do not persist. The `RecoveryWorker` recovers these records on startup.
+### Current state
+The `RecoveryWorker` is a deprecated no-op. In
+`crates/synvoid-mesh/src/mesh/dht/record_store_persist.rs` the entire body is:
 
-### Implementation
 ```rust
 pub fn start_recovery_worker(&self) {
-    let self_arc = Arc::new(self.clone());
-    tokio::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-
-        // Scan disk store for PendingQuorum records
-        let pending_records = {
-            let rs = self_arc.record_state.read();
-            if let Some(ref disk_store) = rs.disk_store {
-                disk_store.get_pending_quorum_records()
-            } else {
-                Vec::new()
-            }
-        };
-
-        // Re-initialize quorum requests for non-expired records
-        for (key, entry) in pending_records {
-            // Check TTL, remove if expired, otherwise restart quorum
-        }
-    });
+    tracing::info!(
+        "RecoveryWorker disabled: PendingQuorum restart flow is deprecated after Raft-global write enforcement"
+    );
 }
 ```
 
-### Disk Store Query
-```rust
-pub fn get_pending_quorum_records(&self) -> Vec<(String, DhtRecordEntry)> {
-    let conn = self.conn.lock();
-    let mut stmt = conn.prepare(
-        "SELECT ... FROM dht_records WHERE status = ?"
-    ).unwrap();
-    // Uses DhtRecordStatus::PendingQuorum as query parameter
-}
-```
-
-Called from `start_background_tasks()` in `record_store_message.rs`.
+`get_pending_quorum_records()` no longer exists on `DiskRecordStore` (zero
+references repo-wide), and there is no `PendingQuorum` state to recover — see
+"Two-Phase Commit — REMOVED" above. `start_background_tasks()` still calls
+`start_recovery_worker()`, so the call site survives; only the work is gone.
+Canonical state recovery is Raft's concern, not the DHT store's.
 
 ## Trust-Rooted Immutability (W12.5)
 

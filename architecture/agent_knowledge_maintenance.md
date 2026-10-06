@@ -3,7 +3,160 @@
 How `AGENTS.md`, `.opencode/skills/`, `docs/`, `README.md`, and `plans/`
 stay accurate. For agents, by an agent audit (2026-09-11, follow-up 2026-09-13,
 Phase 37 pass 2026-09-17, Phase 40 pass 2026-09-18, Phase 47 pass 2026-09-19,
-skills/architecture/docs refresh 2026-09-22).
+skills/architecture/docs refresh 2026-09-22, tooling/CI pass 2026-10-06,
+skills+advisory pass 2026-10-06).
+
+## What was audited (skills + advisory remediation, 2026-10-06)
+
+The skills directory had never been covered by the systematic verification pass
+that repaired `architecture/*.md` (commit `d255106e`). All **48** skills were
+re-verified against source in four disjoint slices (one agent per slice, strict
+file ownership), then every correction was re-checked by the parent agent against
+the source symbol before acceptance. **45 skills were edited; 3 were verified
+accurate and left byte-identical.** Two new skills were added.
+
+### Dependency advisories (resolved first, documented as precedent)
+
+Three open Dependabot alerts were resolved and recorded in
+`architecture/dependency_advisory_remediation.md`:
+
+- `xxhash-rust` GHSA-6g2r-675j-hx59 (runtime scope) 0.8.15 → 0.8.19, lockfile
+  only, transitive via `notify` / `iscc-lib`.
+- `source-map-js` GHSA-68fv-2mgg-jv7q 1.2.1 → 1.2.2, by raising the
+  `admin-ui` `postcss` floor to `^8.5.29` (the committed lock had drifted to
+  8.5.10 and did not even satisfy the declared `^8.5.23` range).
+- `postcss-selector-parser` GHSA-rj75-hqrm-r3gf 6.1.4 → 7.1.6 via an npm
+  `overrides` entry, because Tailwind 3.4.19 pins `^6.1.2` and no 6.x satisfies
+  the advisory. Verified by diffing the regenerated `admin-ui/dist/styles.css`
+  selector-by-selector: 0 lost, 9 added — all real usage, i.e. the committed CSS
+  was **stale**, not degraded.
+
+`cargo audit` is now clean (exit 0; 6 allowed `unmaintained` warnings). The npm
+`braces` advisory has **no upstream patch** (range `<= 3.0.3`,
+`first_patched_version: null`) and is reachable only through the Tailwind build
+toolchain; it is **recorded, not suppressed**, because the only fix is a
+breaking Tailwind 4 migration. See checklist item 13.
+
+### Skills: the drift classes that actually occurred
+
+- **Fabricated APIs presented as live.** `serverless_wasm` documented
+  `ServerlessManager` and `FunctionDefinition` struct layouts that never existed
+  (5 + 7 invented public fields) plus three invented APIs
+  (`reload_function`, `deploy_function`, `start_event_consumer`).
+  `rule_feed_persistence` cited a non-existent `RulePatternUpdate`.
+  `admin_api` listed 8 non-existent metric names and a dead Prometheus owner
+  (`start_prometheus_exporter` is `#[allow(dead_code)]`, zero callers).
+  `windows_service` cited `inject_https_firewall_rule`, which does not exist.
+  In every case the fabricated API was **replaced with the real one** rather
+  than deleted, since a gap is less useful to an agent than a correct path.
+- **Removed subsystems documented as active.** `dht_persistence` documented
+  DHT two-phase commit (`commit_record_after_quorum` / `abort_pending_record`,
+  zero call sites) and durable quorum recovery (a `tracing::info!` no-op) as
+  live; `dns_dnssec` documented the `dns_interop_encrypted` conformance lane
+  removed in Phase 128 and four non-existent example-config filenames.
+- **Wrong-but-plausible signatures.** `TunnelConnector::connect` (real:
+  `open_tunnel_stream_to_peer`), `HealthCheckMethod::{Http,None}` (real:
+  `Head`/`Get`/`Tcp`), `TunnelTransport` wrong on five points, and
+  `scan_chunk_utf8` on `StreamingWafCore` — which does not exist anywhere.
+- **Unreachable capability described as active.** `broadcast_rule_patterns_update`
+  and `set_on_apply_callback` have zero callers, so the supervisor side of rule-feed
+  broadcast never triggers while the worker side is live.
+- **Silently restructured types.** `StreamingWafCore` moved from
+  `state: RwLock<StreamingState>` with `&self` methods to owned state with
+  `&mut self`, gaining multipart handling and `PooledBuf` fields.
+
+### Deletion candidates investigated and rejected
+
+Two skills looked dead on a naive grep and were **kept**, after the grep premise
+was disproved by reading the source:
+
+- `org_key_trust_chain` — `grep "org_key_trust_chain"` returns 0 files, but the
+  identifier is Rust-cased (`OrgKeyManager` in
+  `crates/synvoid-mesh/src/mesh/org_key_manager.rs`). The whole trust chain —
+  `OrgPublicKey::verify_quorum`, `MemberCertificate::verify_with_public_key`,
+  `validate_member_certificate` — exists with matching signatures. **Skill kept
+  byte-identical.**
+- `topology_visualizer` — no `topolog` match anywhere in `admin-ui/src`, but the
+  backend is fully real (`src/admin/handlers/mesh_topology.rs`, routes at
+  `src/admin/routes.rs`, `crates/synvoid-mesh/src/mesh/topology.rs`). The only
+  drift is that the frontend was never built. Corrected to "backend-only".
+
+**Lesson (now checklist item 14): a zero-hit grep is not evidence of absence.**
+Confirm with a Rust-cased / symbol search before proposing a deletion.
+
+### eBPF/XDP recorded as unreachable
+
+`src/waf/flood/ebpf_flood.rs` compiles only under
+`#[cfg(all(target_os = "linux", feature = "flood-ebpf"))]`, `flood-ebpf` is not a
+default feature, `EbpfFlood` has **no construction site**, and the kernel crate
+`ebpf-flood/` is **not a workspace member** (`cargo build --package ebpf-flood`
+cannot resolve). `set_ebpf_block_hook` is gone. Recorded in `AGENTS.md` Known
+Issues so no agent describes XDP dropping as active.
+
+### New skills added (48 → 50)
+
+- `threat_intel_enforcement` — the observation-vs-enforcement split
+  (`lookup_*` diagnostic-only vs `lookup_*_policy_strict`), the five
+  `ThreatIntelConsumerKind` variants, provenance rules, and the six
+  `tests/security_guard.rs` functions that pin the boundary. Previously smeared
+  across `synvoid_mesh`, `block_store`, and `waf_engine`.
+- `dns_trust_anchor_rfc5011` — the RFC 5011 state machine
+  (`crates/synvoid-dns/src/trust_anchor.rs`, 6 states), `Missing`→`Pending`
+  restoration gated on `trust_point == 0`, the unsynchronized
+  `TrustAnchorManager` / `hickory_proto::TrustAnchors` limitation, and why
+  `[dns] trust_anchors.enabled` currently fails validation with typed
+  `Unsupported`. Previously fragmented inside `dns_dnssec`.
+
+Both were authored from source read directly by the parent agent, **not** from
+subagent prose — one subagent summary claimed 7 anchor states (there are 6) and
+placed `ShadowOnly` on the wrong enum. That correction is the reason new skills
+were verified by hand.
+
+### `AGENTS.md`, `SECURITY.md`, `docs/` repairs
+
+- `AGENTS.md`: the facade table cited `src/admin/authority.rs` as the
+  non-canonical home for admin mutation authority — **that file does not
+  exist**. The whole vocabulary (`AdminMutationAuthority`, `AdminActor`,
+  `AdminMutationStatus`, `PropagationStatus`, `AdminMutationResult`,
+  `BlockMutationTarget`, `AdminAuditEvent`, `AdminAuditSink`) lives in
+  `crates/synvoid-core/src/admin_mutation.rs`; `src/admin/` holds only
+  router/middleware/handler wiring. Also corrected
+  `DnsServer::new(DnsRuntimeConfig, CertResolver)` to its real 3-arg form
+  (adds `Option<Arc<dyn CountryLookup>>`), added the advisory + eBPF Known
+  Issues, and added the supply-chain index row for the new remediation record.
+- `SECURITY.md`: the YARA transitive Wasmtime line was stated as **48.0.3** in
+  four present-tense places while `Cargo.lock` and the `yara-x-compat` fork pin
+  **48.0.5**; the RUSTSEC-2026-0326/-0327 remediation had no entry at all.
+  Corrected, plus a new triage section for 0326/-0327. Also repaired the rkyv
+  section, which pointed at `src/serialization_rkyv.rs` and `src/mesh/config.rs`
+  (both nonexistent) — direct `rkyv` was removed from the root package in
+  Phase 31, and two rkyv majors are resolved (0.8.18 for SynVoid code, 0.7.46
+  transitively via `parcel_sourcemap` → `lightningcss` → the minify fork).
+- `architecture/dependency_security_baseline_phase25.md`: the guard
+  `wasmtime_transitive_matches_baseline` asserts the literal substring
+  `"transitive 48.0.3 line is patched"`. Rather than edit the guard — which
+  would weaken a security gate — a **naming note** was added after the sentence
+  recording that the line has since advanced to 48.0.5, that 48.0.5 still
+  satisfies every patched range listed, and that the 48.0.3 wording must not be
+  "corrected" without updating the guard in the same change.
+- `docs/README.md`: `FEATURE_STATUS.md` and `HONEYPOT.md` were unlinked from the
+  index, and the whole `docs/testing/` (4) and `docs/adr/` (4) trees were absent.
+  Added, plus a pointer to `architecture/overview.md` as the internal index.
+- `docs/API_REFERENCE.md` was checked and found **correct**: its `config/overseer`
+  / `logs/realtime` mentions are in an explicit "removed paths that must stay
+  absent" section, not presented as live routes.
+- `docs/testing/verification-contract.md` references `testing/lanes.toml` and
+  `scripts/ci/select-affected.py`, neither of which exists — **correct as
+  written**: that table documents files deliberately deleted in Phase 3, and
+  `tools/xtask/src/` confirms no live reference. Left untouched.
+
+### False positives worth recording
+
+A naive path-existence scan over `docs/` produced ~200 "missing" hits. Nearly all
+were HTTP routes, MIME types, or traversal examples. Two looked alarming and were
+both correct as written: the frozen verification contract above, and
+`architecture/overview.md`'s doc count. Do not let an automated sweep trigger
+edits without reading the surrounding sentence.
 
 ## What was audited (tooling/CI + boundary docs drift repair, 2026-10-06)
 
@@ -270,10 +423,11 @@ Checklist item 12 added (see below).
      non-default semantics (`check_request_sync` inline, `BufferPool::acquire`
      length-not-capacity, `resize(0)`-not-`clear()`, TeeBody exact-once
      governor release, one honeypot-runner per lifecycle) and the current
-     skill count (48 as of 2026-09-22) wherever a count is stated. New
-     subsystem coverage without a skill is a gap — re-run the missing-skill
-     scan from the 2026-09-22 entry (remaining uncovered: geoip, integrity,
-     vpn-client, app-server/theme, cli-dispatch).
+     skill count wherever a count is stated — **re-derive it, do not increment
+     it** (see item 15; 50 as of 2026-10-06). New subsystem coverage without a
+     skill is a gap — re-run the missing-skill scan from the 2026-09-22 entry
+     (remaining uncovered: geoip, integrity, vpn-client, app-server/theme,
+     cli-dispatch).
 12. Tooling/CI + boundary doc truthfulness (added 2026-10-06):
      - `cargo xtask verify` is 10 steps — fmt, clippy, dependency-policy
        (`cargo deny check`), core-compile, repo-guards, security-regression
@@ -300,6 +454,28 @@ Checklist item 12 added (see below).
        `src/dns/`, `src/process/`, and `src/utils/ratelimit/` are alias/re-export
        facades, but `src/icmp_filter/` also holds a real 232-line `adapt.rs`
        adapter, so it is not a bare re-export.
+13. Advisory triage by **scope and reachability**, not severity alone (added
+    2026-10-06): `gh api repos/dbowm91/synvoid/dependabot/alerts` is the source
+    of truth for open alerts; the advisory detail (vulnerable range,
+    `first_patched_version`) comes from `gh api /advisories/<GHSA>`. Classify
+    each as runtime / dev-scope and note whether a patch exists at all before
+    choosing a remediation. Current posture: `cargo audit` clean; `xxhash-rust`
+    0.8.19; npm `braces` has **no upstream patch** (range `<= 3.0.3`) and is
+    recorded, not suppressed — an unpatched advisory is documented with its
+    removal condition, never silenced. `deny.toml` ignore rules are Rust-scoped
+    and cannot govern an npm advisory. Record:
+    `architecture/dependency_advisory_remediation.md`.
+14. A zero-hit grep is **not** evidence of absence (added 2026-10-06). Two
+    skills were nearly deleted on this basis in the 2026-10-06 pass and both
+    were fully intact: `org_key_trust_chain` (the literal string is
+    snake_case; the code is Rust-cased `OrgKeyManager`) and
+    `topology_visualizer` (backend real, frontend never built). Before
+    proposing a skill deletion, re-search by Rust symbol / enum variant /
+    PascalCase, and read the referenced source file. A deletion proposal must
+    cite a file you opened, not a grep that returned nothing.
+15. Doc counts and skill counts stated anywhere must be re-derived, not
+    incremented: `ls architecture/*.md | wc -l` (224 as of 2026-10-06) and
+    `ls -d .opencode/skills/*/ | wc -l` (50 as of 2026-10-06).
 
 ## Index
 

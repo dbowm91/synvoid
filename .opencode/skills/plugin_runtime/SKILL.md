@@ -30,13 +30,17 @@ Full reference: `architecture/plugin_deep_dive.md`,
 | `crates/synvoid-plugin-runtime/src/wasm_runtime.rs` | wasmtime engine, `WasmResourceLimits`, trust tiers |
 | `crates/synvoid-plugin-runtime/src/instance_pool.rs`, `pool.rs` | Instance pooling |
 | `crates/synvoid-plugin-runtime/src/abi_frame.rs` | Canonical frame serialization (`serialize_headers_canonical`, `build_request_frame`) — the ONLY frame path |
-| `crates/synvoid-plugin-runtime/src/sandbox/` | Capability enforcement |
-| `crates/synvoid-native-extension/src/loader.rs` | Native loader behind `NativeExtensionBackend` (never raw `Library` handles) |
+| `crates/synvoid-plugin-runtime/src/sandbox/` | Capability enforcement (`types.rs`, `policy.rs`, `mod.rs`) |
+| `crates/synvoid-native-extension/src/loader.rs` | Native loader (the only file holding `libloading` `Library`/`Symbol`) |
+| `crates/synvoid-native-extension/src/backend.rs` | `NativeExtensionBackend` trait — the narrow seam `plugin_manager.rs` depends on |
 
 ## Non-Negotiables
 
 1. **Own hot-reload watchers with `PluginRuntimeOwner`, never
-   `std::mem::forget`.** Reload is prepare-then-commit: a failed reload
+   `std::mem::forget`.** `PluginRuntimeOwner` is defined in
+   `src/server/plugin_runtime.rs` (composition-owned; it has a `Drop` impl
+   that stops the watchers). Reload is prepare-then-commit
+   (`prepare_reload_candidate` → `commit_reload_candidate`): a failed reload
    must never replace a working plugin.
 2. **Guest pointer ops require `guest_alloc`/`guest_free` +
    `checked_guest_range`.** Frame serialization only via

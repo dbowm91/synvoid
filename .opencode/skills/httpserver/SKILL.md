@@ -98,8 +98,13 @@ code must not branch on transport outside this header.
 
 WebSocket upgrades validate via canonical `validate_websocket_upgrade` in
 preflight and dispatch via `maybe_handle_websocket_upgrade` in the
-postlude on both transports. `.with_upgrades()` stays on each
-connection builder.
+postlude on both transports. Upgrade plumbing is behind the neutral
+`UpgradeCapability` trait: production plaintext H1 supplies
+`EggserveUpgradeCapability` (`src/http/eggserve_h1.rs`) so EggServe owns the
+101/tunnel handoff. Hyper's `.with_upgrades()` is **test-lane only** now
+(`tests/http_h1_parser_parity.rs`, `tests/http_h1_tls_transport.rs`,
+`tests/http_config_runtime_semantics.rs`) — it is not called from `src/http/`
+or `src/tls/`.
 
 ## JA4 Wiring (Phase 01)
 
@@ -115,7 +120,9 @@ connection builder.
 
 ```rust
 struct HttpConnection {
-    io: Mutex<Option<TokioIo<tokio::net::TcpStream>>>,
+    // The listener sniffs the first bytes, so the stream is a validating
+    // wrapper — not a bare TcpStream.
+    io: Mutex<Option<TokioIo<ProtocolValidatingStream<tokio::net::TcpStream>>>>,
     drop_requested: RunningFlag,
 }
 ```
@@ -227,23 +234,25 @@ composition with narrow boundary values (`ja4_hash`,
 ### WebSocket Not Working on HTTPS
 
 If WebSocket upgrades fail on HTTPS:
-1. Verify `.with_upgrades()` is called on the HTTP/1 connection builder
+1. Verify the plaintext/H1 lane supplies a tunnel upgrade capability (EggServe's `EggserveUpgradeCapability`), or that the Hyper comparison lane still calls `.with_upgrades()`
 2. Ensure `hyper::upgrade::on()` is called before consuming the request body (canonical preflight does this)
 3. Check route target websocket config allows the upgrade
 
 ### JA4 Hash Not Available
 
-JA4 is computed during TLS handshake in `HttpsConnection::new()`. If unavailable:
+JA4 is computed during TLS handshake in `HttpsConnection::new()` (src/tls/server.rs). If unavailable:
 1. Check that TLS handshake completed successfully
 2. Verify `extract_client_hello_bytes_from_stream()` returns `Some`
-3. Check that `compute_ja4()` doesn't return `None`
+3. Check that `synvoid_tls::sni_peek::compute_ja4(&bytes)` doesn't return `None`
 
 ## Request Pipeline Normalization (Iteration 99)
 
 HTTP/1 and HTTP/3 pipelines now share the same stage vocabulary documented in `architecture/http_request_pipeline.md`.
 HTTP/3 dispatch uses `Http3RequestMetadata` (request fields) and `Http3DispatchDeps` (service handles) context structs
 instead of 21 discrete parameters. Both pipelines consume `RequestServices` or narrower handles, never
-`UnifiedServerWorkerState`. Guard tests in `tests/http_request_pipeline_boundary_guard.rs` enforce this boundary.
+`UnifiedServerWorkerState`. Guard: `tests/boundary_composition_guard.rs` — the standalone
+`http_request_pipeline_boundary_guard.rs` target was merged into that compilation unit
+(see its header, item 3).
 
 ## Canonical Framing Policy (Phase 20)
 

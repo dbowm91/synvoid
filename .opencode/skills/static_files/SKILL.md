@@ -13,30 +13,45 @@ The static files subsystem (canonical: `crates/synvoid-static-files/`) serves st
 
 | File | Purpose |
 |------|---------|
-| `crates/synvoid-static-files/src/lib.rs` | StaticFileHandler, main serving logic, directory listing rendering |
+| `crates/synvoid-static-files/src/lib.rs` | `StaticFileHandler` + main serving logic |
+| `crates/synvoid-static-files/src/directory.rs` | Directory listing: `load_directory_template`, `collect_directory_entries`, `render_custom_template`, `render_directory_listing` |
 | `crates/synvoid-static-files/src/file_manager.rs` | Canonical `FileManager` + `FileManagerSecurityBackend` trait |
 | `src/static_files/mod.rs` | Pure re-export facade (no implementation) |
 | `src/http/file_manager.rs` | Root HTTP adapter + production `UploadFileManagerBackend` |
 | `src/http/webdav.rs` | Root WebDAV adapter over canonical `FileManager` |
-| `crates/synvoid-config/src/site/static_files.rs` | SiteStaticThemeConfig |
+| `crates/synvoid-config/src/site/static_files.rs` | `SiteStaticConfig`, `SiteStaticThemeConfig`, `StaticLocation` |
 
 ## StaticFileHandler
 
-The `StaticFileHandler` serves files from a configured root directory:
+`StaticFileHandler` is **multi-location**, not single-root. It holds a
+normalized snapshot of the site config, so all behavior is config-driven:
 
 ```rust
 pub struct StaticFileHandler {
-    root: PathBuf,
-    index_file: Option<String>,
-    show_directory_index: bool,
-    site_name: String,
-    directory_template_path: Option<String>,  // Custom template
+    config: Arc<SiteStaticConfig>,
+    locations: Vec<NormalizedLocation>,
+    gzip_types: Vec<String>,
+    max_file_size: u64,
+    gzip_level: u32,
+    gzip_min_size: usize,
+    allow_symlinks: bool,
+    block_hidden_files: bool,
+    enable_compression: bool,
+    gzip_on_the_fly: bool,
+    directory_listing: bool,
+    default_cache_ttl: Option<u64>,
+    // ...
 }
 ```
+There is no per-handler `root`, `index_file`, `site_name`, or
+`directory_template_path` field — those live in the site config
+(`SiteStaticConfig` / `StaticLocation`) and the theme config.
 
 ## Directory Listing
 
-When `show_directory_index` is true and no index file exists, directory listing is shown.
+Directory listing is controlled by `directory_listing: Option<bool>` (and
+`directory_listing_format`) on the site static config — the field is **not**
+named `show_directory_index`.
 
 ### Built-in Template
 
@@ -70,11 +85,11 @@ Custom templates support these placeholders (similar to Handlebars):
 
 | Placeholder | Description |
 |-------------|-------------|
-| `{{url_path}}` | Current URL path (e.g., `/images/`) |
-| `{{parent_link}}` | HTML link to parent directory (tr with colspan=3) |
-| `{{rows}}` | File/folder entries as HTML tr elements |
-| `{{site_name}}` | Site name (defaults to "synvoid") |
-| `{{title}}` | Page title (e.g., "Index of /images/") |
+| `{{url_path}}` | Current URL path, HTML-escaped (e.g., `/images/`) |
+| `{{parent_link}}` | HTML `<tr><td colspan="3">` parent link, or empty at root |
+| `{{rows}}` | File/folder entries as HTML `<tr>` elements |
+| `{{site_name}}` | Substituted with the literal `"SynVoid"` — always, unconditionally |
+| `{{title}}` | `"Index of <url_path>"` |
 
 ### Example Template
 
@@ -104,28 +119,34 @@ Custom templates support these placeholders (similar to Handlebars):
 
 ## DirectoryEntry
 
-Files and subdirectories are represented as `DirectoryEntry`:
+Files and subdirectories are represented as `DirectoryEntry`. It is owned by
+the theme crate, not this one (`crates/synvoid-theme/src/dir_listing.rs`), and
+carries pre-formatted display strings alongside raw values:
 
 ```rust
 pub struct DirectoryEntry {
     pub name: String,
-    pub path: PathBuf,
+    pub href: String,          // relative link, already percent-decoded/escaped upstream
     pub is_dir: bool,
-    pub size: u64,
-    pub modified: Option<DateTime<Utc>>,
+    pub modified: String,      // display-formatted
+    pub size: String,          // display-formatted
+    pub modified_timestamp: u64,
+    pub size_bytes: u64,
 }
 ```
+There is no `path: PathBuf` field and no `Option<DateTime<Utc>>` — sorting
+and paging use the raw `modified_timestamp` / `size_bytes`, while
+`render_custom_template` emits the formatted `modified` / `size`.
 
 ## Template Loading Flow
 
-1. `serve_directory()` is called for a directory request
-2. Check if `directory_template_path` is set in config
-3. If set and format is "html":
-   - `load_directory_template()` reads template from filesystem
-   - `collect_directory_entries()` reads directory contents
-   - `render_custom_template()` substitutes placeholders
-4. If no custom template:
-   - Use built-in `render_directory_listing()`
+1. `serve_directory()` (in `crates/synvoid-static-files/src/lib.rs`) handles a directory request
+2. `directory::load_directory_template()` reads the template from the filesystem
+   when `directory_template_path` is set on the resolved theme config
+3. `directory::collect_directory_entries()` reads directory contents into `Vec<DirectoryEntry>`
+4. `directory::render_custom_template()` substitutes the `{{...}}` placeholders
+5. Without a custom template: `directory::render_directory_listing()` renders the
+   built-in listing (with JSON output available via `render_json`)
 
 ## Adding Custom Themes
 
@@ -174,14 +195,10 @@ let manager = FileManager::new(config, security_backend);
 ## Testing
 
 ```bash
-# File-manager unit tests (path safety, upload policy)
-cargo test -p synvoid-static-files --profile ci file_manager
+# Whole crate (path safety, upload policy, directory rendering)
+cargo nextest run -p synvoid-static-files --cargo-profile ci --profile ci
 
-# HTTP adapter tests
-cargo test --lib --profile ci file_manager
-cargo test --lib --profile ci webdav
-
-# Ownership guard
+# Ownership guard (root integration test)
 cargo test --test static_file_manager_ownership_guard --profile ci
 
 # Check compilation

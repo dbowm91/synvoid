@@ -1,25 +1,38 @@
 ---
 name: topology_visualizer
-description: Real-time topology visualizer API providing mesh topology data for frontend visualization.
+description: Mesh topology Admin API (peer partition + D3-style graph payloads). Use when touching /mesh/topology endpoints. Backend-only — no admin-ui page consumes it yet.
 ---
 
-# Skill: Real-time Topology Visualizer
+# Skill: Mesh Topology Admin API
 
 ## Context
-The codebase implements a real-time topology visualizer providing mesh topology data via Admin API for frontend visualization.
+The backend exposes mesh topology data via Admin API. The capability is
+**real and routed**, but there is **no frontend consumer**: there is no
+`admin-ui/src/pages/topology.rs` and a repo-wide grep for `topolog` under
+`admin-ui/src` returns zero hits. Treat this as a backend API for API clients
+and future UI work, not as a shipped visualizer feature.
+
+The whole module is `#![cfg(feature = "mesh")]`, so the endpoints exist only in
+mesh-feature builds; `src/admin/handlers/mod.rs` gates `pub mod mesh_topology;`
+the same way.
 
 ## When to Use
 Use this skill when:
-- Adding Admin API endpoints for mesh topology
-- Creating D3.js-compatible graph data structures
-- Wiring topology data from MeshTransport
-- Implementing partition logic for global/edge nodes
+- Adding or changing Admin API endpoints for mesh topology
+- Building a D3.js-compatible graph payload or a frontend consumer for it
+- Extending peer partition logic for global/edge nodes
 
 ## Key Files
 - `src/admin/handlers/mesh_topology.rs` - Handler implementation
-- `src/admin/routes.rs` - Route registration (lines ~617-622)
-- `src/admin/handlers/mod.rs` - Module declaration
-- `crates/synvoid-mesh/src/mesh/topology.rs` - `MeshTopology::get_all_peers()`
+- `src/admin/routes.rs` - Route registration (the `/mesh/topology` and
+  `/mesh/topology/graph` entries, ~lines 617-622)
+- `src/admin/handlers/mod.rs` - Module declaration (`#[cfg(feature = "mesh")] pub mod mesh_topology;`)
+- `src/admin/handlers/api_discovery.rs` - Both paths are advertised in the
+  self-describing endpoint catalog
+- `crates/synvoid-mesh/src/mesh/topology.rs` - `MeshTopology::get_all_peers()`,
+  `get_topology_version()`
+- `src/admin/handlers/mesh_admin.rs` - The same `mesh_transport.get_topology()`
+  accessor is reused by the non-topology mesh admin handlers
 
 ## Implementation Pattern
 
@@ -115,10 +128,13 @@ pub mod mesh_topology;
 - Then call `topology.get_all_peers().await` and `topology.get_topology_version().await`
 
 ## Verification
+Both routes are mesh-only and return `404` when `mesh_transport` is `None`.
 ```bash
 curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/mesh/topology
 curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/mesh/topology/graph
 ```
+There is no UI page to click through; verify with `curl` (or `swagger-ui`) and a
+mesh-feature build.
 
 ## Common Issues
 1. **partition() on Vec<PeerState>** - `into_iter().partition()` doesn't work on `Vec<&PeerState>`; use manual for loop

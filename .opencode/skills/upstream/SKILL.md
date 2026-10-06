@@ -35,38 +35,57 @@ Request → UpstreamPool::get_backend()
 ```
 
 ### Load Balancing Algorithms
-- `RoundRobin` — sequential cycling
-- `LeastConnections` — fewest active connections
-- `IpHash` — consistent hashing by client IP
+`LoadBalanceAlgorithm` (`crates/synvoid-upstream/src/pool.rs`):
+- `RoundRobin` (default) — sequential cycling
 - `Random` — random selection
+- `LeastConnections` — fewest active connections
+- `PeakEwma` — peak-EWMA selection
+- `WeightedRoundRobin` — weight-aware cycling
+- `IpHash` — consistent hashing by client IP
 
 ### Health Checking
-- `None` — no active checks
-- `Http` — HTTP GET to health endpoint
+`HealthCheckMethod` (`crates/synvoid-upstream/src/health.rs`):
+- `Head` — HTTP HEAD to the health endpoint (default)
+- `Get` — HTTP GET to the health endpoint
 - `Tcp` — TCP connect check
-- Interval-based with configurable timeout
+
+There is no `Http` variant. Interval-based with configurable timeout.
 
 ### Tunnel Integration
 ```rust
-pub trait TunnelConnector: Send + Sync {
-    async fn connect(&self, addr: &UpstreamAddress) -> Result<QuicTunnelStream>;
+pub trait TunnelConnector: Send + Sync + 'static {
+    async fn open_tunnel_stream_to_peer(
+        &self,
+        peer: &str,
+        identifier: &str,
+    ) -> Result<(quinn::SendStream, quinn::RecvStream), Box<dyn std::error::Error + Send + Sync>>;
 }
 ```
 - `NoopTunnelConnector` — direct connection (default)
 - Real implementations bridge to `synvoid-tunnel` QUIC/WireGuard
 
 ## Configuration
-```toml
-[upstream]
-pool_size = 64
-connect_timeout_ms = 5000
-health_check_interval_secs = 30
+There is **no global `[upstream]` section** in `MainConfig`. Backends are
+configured **per site** as URL routes (`crates/synvoid-config/src/site/listen.rs::UpstreamConfig`):
 
-[[upstream.backends]]
-address = "127.0.0.1:8080"
-protocol = "http"
-weight = 1
+```toml
+[site.upstream]
+default = "http://127.0.0.1:8000"          # default_upstream()
+
+[site.upstream.routes]                       # path-prefix match
+"/api" = "http://api.internal:8001"
+
+[site.upstream.tunnel_mappings]              # "<name>" -> port
+"wg-home" = 51820
 ```
+A route value prefixed `tunnel:` resolves through `TunnelMapping` instead of a
+direct connect. Timeouts (`connect_timeout`, `send_timeout`, `read_timeout`,
+`max_connections`) are per backend-type fields in
+`crates/synvoid-config/src/site/backend.rs`, not pool-wide knobs.
+
+`LoadBalanceAlgorithm` has **no TOML binding** — it is a constructor argument
+today, selected only from code and tests. Do not document an operator-facing
+`load_balance` setting; none exists.
 
 ## Critical Invariants
 - Connections are reused across requests when possible
@@ -87,5 +106,6 @@ weight = 1
 
 ## Testing
 ```bash
-cargo test -p synvoid-upstream --all-targets
+cargo nextest run -p synvoid-upstream --cargo-profile ci --profile ci
+cargo nextest run -p synvoid-upstream --cargo-profile ci --profile ci --test selection_parity
 ```

@@ -19,7 +19,9 @@ Use this skill when:
 - `crates/synvoid-waf/src/attack_detection/streaming.rs` - `StreamingWafCore` implementation
 - `crates/synvoid-waf/src/attack_detection/mod.rs` - Added `check_body_only_via_normalized()` method
   (`src/waf/attack_detection/mod.rs` is only a compat re-export shim)
-- `crates/synvoid-http3/src/server.rs` - HTTP/3 body handling (lines 264-281)
+- `crates/synvoid-http/src/streaming_waf_body.rs` - `StreamingWafBody` request-body adapter
+  (canonical home since Phase 34)
+- `crates/synvoid-http3/src/http3_body.rs` - HTTP/3 body collection/limit handling
 
 ## Implementation Pattern
 
@@ -28,25 +30,31 @@ Use this skill when:
 pub struct StreamingWafCore {
     inner: Arc<AttackDetector>,
     chunk_size: usize,
-    max_buffered_chunks: usize,
-    state: RwLock<StreamingState>,
+    max_buffered_bytes: usize,   // byte ceiling, not a chunk-count ceiling
+    state: StreamingState,       // owned directly — NOT behind a lock
 }
 
 struct StreamingState {
-    pending_chunks: VecDeque<Bytes>,
-    current_input: Option<String>,
     chunks_processed: usize,
     last_result: Option<AttackDetectionResult>,
     bytes_seen: usize,
-    trailing_window: Vec<u8>,  // Must accumulate previous chunk bytes!
+    boundary: Option<String>,                  // set by set_multipart_boundary
+    multipart_state: MultipartState,
+    trailing_window: PooledBuf,               // Must accumulate previous chunk bytes!
+    multipart_header_buffer: PooledBuf,
+    multipart_field_buffer: PooledBuf,
+    field_trailing_window: PooledBuf,
 }
 ```
+`StreamingWafCore` is a plain owned-state struct: every scanning method takes
+`&mut self`. There is no `RwLock`, no `pending_chunks` queue, and no
+`current_input`; `const TRAILING_WINDOW_SIZE: usize = 512` bounds the window.
 
 ### 2. Trailing Window Pattern (CRITICAL - Fixed 2026-05-23, Phase-54 rule)
 
 The trailing window MUST properly accumulate context across chunks. Canonical
 code is `process_regular_chunk` in
-`crates/synvoid-waf/src/attack_detection/streaming.rs:114-143`:
+`crates/synvoid-waf/src/attack_detection/streaming.rs`:
 
 ```rust
 // Scan previous window + current chunk together so patterns split across
@@ -75,10 +83,16 @@ self.state.trailing_window.extend_from_slice(
 **Common Bug**: Simply `extend_from_slice(&chunk[window_start..])` loses previous context. Attack patterns split across chunk boundaries won't be detected.
 
 ### 3. Required Methods
-- `scan_chunk(&self, chunk: &[u8]) -> StreamingWafDecision` - Main scanning entry
-- `scan_chunk_utf8(&self, chunk: &[u8]) -> StreamingWafDecision` - UTF-8 validated version
-- `finalize(&self) -> Option<AttackDetectionResult>` - Get final detection result
-- `reset(&self)` - Reset state for reuse
+All take `&mut self` (owned state, no interior locking):
+- `scan_chunk(&mut self, chunk: &[u8]) -> StreamingWafDecision` - Main scanning entry; also
+  dispatches to `process_multipart_chunk` once `set_multipart_boundary` has been called
+- `finalize(&mut self) -> Option<AttackDetectionResult>` - Get final detection result
+- `reset(&mut self)` - Reset state for reuse
+- `set_multipart_boundary(&mut self, boundary: &str)` - Switch to multipart mode
+
+There is **no `scan_chunk_utf8` method** — do not call it. The
+`synvoid_core::streaming_waf::StreamingWafScanner` trait impl adapts
+`scan_chunk` to the shared neutral decision type.
 
 **Important**: Use `.resize(0)` on `PooledBuf`, never `.clear()`, when you
 intend an empty buffer (Phase 54):
@@ -129,15 +143,18 @@ pub fn check_body_only_via_normalized(&self, body_str: &str) -> Option<AttackDet
 ```
 
 ### 6. Fail-Closed Buffer Overflow
-Always check buffer limits:
+`scan_chunk` enforces the ceiling **before** scanning, on accumulated bytes
+(`DEFAULT_MAX_BUFFERED_BYTES`, overridable via `with_config`):
 ```rust
-if state.pending_chunks.len() >= self.max_buffered_chunks {
+if self.state.bytes_seen.saturating_add(chunk.len()) > self.max_buffered_bytes {
     return StreamingWafDecision::Block(
         413,
-        "Request body too large: buffer overflow".to_string(),
+        "Request body too large: byte limit exceeded".to_string(),
     );
 }
 ```
+The limit is fail-closed: an oversized chunk blocks with 413 instead of being
+truncated, dropped, or partially scanned.
 
 ### 7. Export Pattern
 In `crates/synvoid-waf/src/attack_detection/mod.rs`:
@@ -159,31 +176,36 @@ cargo clippy --profile ci --all-targets -- -D warnings
 4. **Bytes vs Vec<u8>** - Use `Bytes::copy_from_slice()` for zero-copy chunk storage
 
 ## Memory Budget
-At 1000K RPS:
+Design target at 1000K RPS:
 - Target: 256KB max buffer per request
 - Total concurrent: 1000 requests = 256MB
+
+The shipped default ceiling is `DEFAULT_MAX_BUFFERED_BYTES = 2MB`
+(overridable per instance via `with_config`), so the target is not met by
+default — treat the numbers above as the stated goal, not current behavior.
 
 ## StreamingWafBody for True Streaming (Wave P1)
 
 **Location**: `crates/synvoid-http/src/streaming_waf_body.rs` (canonical since Phase 34; was `crates/synvoid-http-client/src/streaming_waf_body.rs`; re-exported via `src/http_client/streaming_waf_body.rs`)
 
-For true streaming to upstream (without full body buffering), a `StreamingWafBody<B>` type was added that wraps `hyper::body::Body` and performs WAF scanning on chunks as they pass through:
+For true streaming to upstream (without full body buffering), a `StreamingWafBody<B>` type was added that wraps `hyper::body::Body` and performs WAF scanning on chunks as they pass through. It is generic over the scanner **trait**, not the concrete type:
 
 ```rust
-pub struct StreamingWafBody<B> {
+pub struct StreamingWafBody<B, S> {
     inner: B,
-    streaming_waf: Option<Arc<StreamingWafCore>>,
+    streaming_waf: Option<S>,
     client_ip: IpAddr,
     blocked: bool,
     error_sent: bool,
 }
 
-impl<B> StreamingWafBody<B>
+impl<B, S> StreamingWafBody<B, S>
 where
     B: http_body::Body<Data = Bytes> + Unpin,
     B::Error: std::fmt::Debug,
+    S: StreamingWafScanner,
 {
-    pub fn new(inner: B, streaming_waf: Option<Arc<StreamingWafCore>>, client_ip: IpAddr) -> Self {
+    pub fn new(inner: B, streaming_waf: Option<S>, client_ip: IpAddr) -> Self {
         Self { inner, streaming_waf, client_ip, blocked: false, error_sent: false }
     }
 }
@@ -232,7 +254,11 @@ pub type BoxErasedBody = Box<dyn ErasedBody>;
 
 **Key insight**: `ErasedBodyImpl` can wrap any `HttpBody<Data = Bytes>` including `StreamingWafBody`, enabling type-erased body handling at the connection pool level.
 
-**Current status**: Core infrastructure complete. Full connection pooling (Phases 2-5 of Option D) deferred due to hyper type system complexity.
+**Current status**: The pool is built — `ErasedHttpClient::new(max_idle_per_host)`
+constructs an `ErasedConnectionPool` and `send_request` checks out/returns
+connections by `PoolKey { authority, is_http2 }`. However this whole surface is
+**FROZEN legacy-only** (see the `http_client` skill, Phase 60/62): production
+egress runs on the eggfetch lane. Keep it compiling and tested; do not build on it.
 
 ## Request Pipeline Normalization (Iteration 99)
 

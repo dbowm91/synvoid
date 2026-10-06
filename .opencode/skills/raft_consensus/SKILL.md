@@ -9,7 +9,7 @@ description: Raft consensus integration for global control plane coordination an
 
 Wave 6-7 implemented Raft consensus for the SynVoid Global Control Plane, replacing the previous quorum-based signature approach that required 2/3 of Global nodes to manually sign records.
 
-**Phase 23 binding contract**: `architecture/distributed_state_contract.md` §2 reconciles Raft behavior with code evidence and closes original MESH-15 wording as stale. Quorum is openraft N/2+1 majority; without quorum canonical writes fail typed `QuorumUnavailable` (fail-closed, never success or queued-canonical); reads serve last committed snapshots per `CanonicalSnapshotFreshnessPolicy`. DHT canonical namespaces are derived caches requiring attestation/proof, never independent authority. Code: `CanonicalWriteOutcome` (`canonical.rs`), `RaftAwareClientError::QuorumUnavailable` (`raft/client.rs`), `PropagationStatus::{CanonicalCommitted, QuorumUnavailable}` (`synvoid-core`). Tests: `crates/synvoid-mesh/tests/distributed_state_partition.rs`.
+**Phase 23 binding contract**: `architecture/distributed_state_contract.md` §2 reconciles Raft behavior with code evidence and closes original MESH-15 wording as stale. Quorum is openraft N/2+1 majority; without quorum canonical writes fail typed `QuorumUnavailable` (fail-closed, never success or queued-canonical); reads serve last committed snapshots per `CanonicalSnapshotFreshnessPolicy`. DHT canonical namespaces are derived caches requiring attestation/proof, never independent authority. Code: `CanonicalWriteOutcome` (`crates/synvoid-mesh/src/mesh/canonical.rs`), `RaftAwareClientError::QuorumUnavailable` (`crates/synvoid-mesh/src/mesh/raft/client.rs`), `PropagationStatus::{CanonicalCommitted, QuorumUnavailable}` (`crates/synvoid-core/src/admin_mutation.rs`). Tests: `crates/synvoid-mesh/tests/distributed_state_partition.rs`.
 
 ## Architecture
 
@@ -32,9 +32,10 @@ The Raft state machine organizes data by namespace:
 
 ```rust
 pub enum Namespace {
-    Org,        // Organization public keys
-    Intel,      // Threat intelligence indicators
-    Revocation, // Global node revocation list
+    Org,                   // Organization public keys
+    Intel,                 // Threat intelligence indicators
+    Revocation,            // Global node revocation list
+    AuthorizedGlobalNodes, // Authorized global node set
 }
 ```
 
@@ -102,7 +103,7 @@ In Raft, a record is "Authorized" the moment it is committed to the log. The Lea
 
 1. `OrgKeyManager.commit_key_to_raft()` submits new key to Raft cluster
 2. Once committed, Leader broadcasts `RaftCommitNotification` via DHT (gossip)
-3. Verification logic in `peer_auth.rs` accepts **either**:
+3. Verification logic in `crates/synvoid-mesh/src/mesh/peer_auth.rs` accepts **either**:
    - 2/3 signature set (legacy DHT-based), OR
    - Raft-signed attestation from current Leader
 
@@ -276,11 +277,11 @@ impl OrgKeyManager {
         reason: &str,
     ) -> Result<(), OrgKeyError> {
         // Commit revocation to Namespace::Revocation via Raft
-        let revocation_info = RevocationInfo {
-            revoked_at: crate::mesh::safe_unix_timestamp(),
+        let revocation_info = crate::peer_auth::RevocationInfo {
+            revoked_at: synvoid_utils::safe_unix_timestamp(),
             reason: reason.to_string(),
         };
-        let value = crate::serialization::serialize(&revocation_info)?;
+        let value = synvoid_utils::serialization::serialize(&revocation_info)?;
         if let Some(raft_client) = self.raft_client.read().clone() {
             raft_client.raft_write(Namespace::Revocation, target_node_id.to_string(), value).await?;
         }
@@ -333,13 +334,16 @@ impl MeshTransport {
 Edge nodes mirror Raft state locally for O(1) lookups:
 
 ```rust
+// crates/synvoid-mesh/src/mesh/raft/edge_replica.rs
 pub struct EdgeReplicaManager {
     db: Arc<Mutex<Connection>>,
-    cache: moka::sync::Cache<String, Vec<u8>>,
+    cache: moka::sync::Cache<String, CachedRecord>,
+    freshness_config: AuthorityFreshnessConfig,
+    metrics: Arc<Mutex<StaleAuthorityMetrics>>,
 }
 
 impl EdgeReplicaManager {
-    pub fn get_org_key(&self, org_id: &str) -> Option<OrgPublicKey>;
+    pub fn get_org_key(&self, key_id: &str) -> Option<OrgPublicKey>;
     pub fn get_threat_intel(&self, indicator_id: &str) -> Option<ThreatIntel>;
     pub fn update_from_notification(&self, notification: &RaftCommitNotification) -> Result<(), ...>;
 }
@@ -443,7 +447,7 @@ cargo nextest run -p synvoid-mesh --cargo-profile ci --profile ci
 | `crates/synvoid-mesh/src/mesh/raft/state_machine.rs` | GlobalRegistryStateMachine, GlobalRegistryLogStorage, GlobalRegistryTypeConfig, LeaderCache (W9.4, W9.5) |
 | `crates/synvoid-mesh/src/mesh/raft/client.rs` | RaftAwareClient with LeaderCache, linearizable reads (W9.3, W9.4) |
 | `crates/synvoid-mesh/src/mesh/raft/instance.rs` | RaftInstance with raft_append_entries(), raft_vote(), install_snapshot() (W9.1, W9.6) |
-| `crates/synvoid-mesh/src/mesh/raft/regression_tests.rs` | 33 regression tests for distributed control plane (W9.9) |
+| `crates/synvoid-mesh/src/mesh/raft/regression_tests.rs` | 33 regression tests for distributed control plane (W9.9); the file has since grown well past that count — locate by module, not by number |
 | `crates/synvoid-mesh/src/mesh/dht/signed.rs` | DhtRecordSignable canonical struct with SHA256 value hashing (W9.8) |
 | `crates/synvoid-mesh/src/mesh/transport_dht.rs` | DHT auth default-deny, signature verification (W9.7) |
 | `crates/synvoid-mesh/src/mesh/org_key_manager.rs` | Raft commit path in OrgKeyManager |
@@ -468,7 +472,7 @@ cargo nextest run -p synvoid-mesh --cargo-profile ci --profile ci
 | Task | Key Changes |
 |------|-------------|
 | W10.1 | Fixed double-encoding: `send_raw()` no longer wraps payload in another `MeshRaftPayload` and re-serializes |
-| W10.2 | Added bounded 30s timeout to `send_message_to_peer_with_response()` in `transport.rs`. On timeout/error, stream NOT returned to pool to prevent poisoning |
+| W10.2 | Added bounded 30s timeout to `send_message_to_peer_with_response()` in `crates/synvoid-mesh/src/mesh/transport.rs`. On timeout/error, stream NOT returned to pool to prevent poisoning |
 | W10.3 | Added `raft_write_to_leader()` helper with one retry against hinted leader on `NotLeader`. Invalidates leader cache on redirect |
 | W10.4 | Added `InProgressSnapshot` struct and `pending_snapshot_transfers` HashMap. `handle_raft_message()` handles `InstallSnapshot` header/chunks with offset validation |
 | W10.5 | Canonical `DhtSnapshotResponseSignable` and `DhtSyncResponseSignable` with postcard serialization. Producer and verifier use same helpers |
@@ -547,7 +551,8 @@ The magic number `0x53524D53` is checked on deserialization. If absent, the data
 
 #### Tests
 
-8 tests in `regression_tests::streaming_snapshot_tests`:
+8 tests (as of W11.2) in `regression_tests::streaming_snapshot_tests` — the
+module has since grown; the 8 listed below are the original set:
 - Empty state round-trip
 - Multi-namespace entry round-trip
 - Magic number verification

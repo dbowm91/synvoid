@@ -31,7 +31,7 @@ admin-ui/
 │   │   ├── system_status.rs  # System status + mesh status + genesis key modal
 │   │   ├── threat_level.rs   # Threat level controls
 │   │   ├── workers.rs     # Worker management
-│   │   └── ...               # Other pages (23 total)
+│   │   └── ...               # Other pages (21 modules registered in pages/mod.rs)
 │   ├── services/          # API client
 │   │   └── api.rs         # ApiService with all REST methods (single owner of paths)
 │   ├── types/             # Shared TypeScript-like types
@@ -47,9 +47,12 @@ admin-ui/
 │   │   ├── use_toast.rs      # Toast notifications
 │   │   └── use_websocket.rs  # WebSocket hook
 │   └── config_docs.rs     # Field documentation (orphaned - not a page)
-├── index.html
-├── trunk.toml
-└── package.json
+├── index.html             # Trunk HTML entry (links styles.css directly)
+├── Trunk.toml             # capital T — target=index.html, dist=dist
+├── tailwind.config.js
+├── postcss.config.js
+├── package.json           # CSS build scripts; Trunk does not run them
+└── dist/                  # committed build output
 ```
 
 ## Key Files
@@ -408,20 +411,41 @@ match api.call_endpoint().await {
 ## Building
 
 ```bash
-# Install dependencies (if needed)
+# 1. CSS: tailwind -> src/styles.css, then copy to dist/
 npm install
+npm run build          # build:css (tailwindcss, minified) + copy:css
+npm run watch:css      # dev only; does not copy to dist/
 
-# Build with trunk (outputs to dist/)
+# 2. WASM + JS: Trunk (does NOT run the npm CSS step)
 trunk build
-
-# Watch mode for development
-trunk serve
+trunk serve            # watch mode, serves on 127.0.0.1:3000
 ```
 
-The build outputs:
-- `dist/index.html`
-- `dist/admin-ui-*.wasm` (WASM binary)
-- `dist/admin-ui-*.js` (JS glue code)
+**Run `npm run build` before `trunk build`.** Trunk has no postcss hook —
+`Trunk.toml` only declares `target`/`dist` and a no-op `post_build` echo, so
+a bare `trunk build` ships the previous `dist/styles.css`.
+
+### CSS toolchain
+
+Tailwind 3 (`tailwindcss ^3.4.0`) with `postcss ^8.5.29` + `autoprefixer`
+and the Inter / JetBrains Mono `@fontsource` packages. `package.json` pins
+`postcss-selector-parser` to `^7.1.6` via an `overrides` entry, because
+Tailwind 3.4.19 depends on the `^6.1.2` range that carries the advisory.
+`npm run build:css` reads `src/tailwind.css`, writes minified
+`src/styles.css`; `copy:css` copies that to `dist/styles.css`. Do not edit
+`src/styles.css` or `dist/styles.css` by hand — both are generated.
+
+### Build output (`dist/` is tracked in git)
+
+- `dist/index.html` — references `styles.css` **directly** (no hash) plus the
+  content-hashed WASM bundle
+- `dist/admin-ui-<hash>.js` — wasm-bindgen JS glue
+- `dist/admin-ui-<hash>_bg.wasm` — WASM binary (note the `_bg` suffix)
+- `dist/styles.css` — copied from `src/styles.css` by the npm step
+
+The npm and Trunk steps are independent — in the tracked `dist/`,
+`styles.css` can be newer than `index.html` because the CSS copy does not
+invalidate the Trunk-generated HTML.
 
 ## Key Dependencies
 

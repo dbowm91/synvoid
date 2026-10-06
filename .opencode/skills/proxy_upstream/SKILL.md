@@ -32,9 +32,9 @@ Use this skill when:
 | `crates/synvoid-proxy/src/executor.rs` | Request building + response handling |
 | `crates/synvoid-proxy/src/router.rs` | Routing + `BackendType` enum (Upstream, FastCgi, Static, QuicTunnel, Serverless, Mesh, Spin, ...) |
 | `crates/synvoid-proxy/src/headers.rs` | Header filtering, XFF validation/truncation |
-| `crates/synvoid-proxy/src/retry.rs` | Retry conditions + `calculate_backoff` (exp cap 2^5, 30s max) |
+| `crates/synvoid-proxy/src/retry.rs` | Retry conditions + `calculate_backoff` (exp cap `attempt.min(5)` = 2^5, `min(30000)` = 30s, then jitter) |
 | `crates/synvoid-upstream/src/` | Backend pool, health checking, load-balance algorithms |
-| `crates/synvoid-proxy-cache/src/key.rs` | Cache keys: `uri` field is `"<ahash_hex>:<path_and_query>"`, not raw URI |
+| `crates/synvoid-proxy-cache/src/key.rs` | Cache keys: `uri` field is `"<ahash_digest>:<path_and_query>"` (u64 `AHasher` digest, decimal — not raw URI) |
 
 ## Non-Negotiables
 
@@ -45,8 +45,11 @@ Use this skill when:
    never replay bodies. Idempotent methods only unless `retry_non_idempotent`.
 3. **Cache bypass**: requests carrying `Authorization`, `Proxy-Authorization`, or `Cookie`
    skip shared-cache lookup; responses with `Set-Cookie` / private / no-store are not stored.
-4. **Known limitation**: `ErasedHttpClient::new(100)` hardcodes pool size in
-   `ProxyServer` regardless of config.
+4. **Transport**: `ProxyServer` egress runs on the **eggfetch lane**
+   (`synvoid_http_client::eggfetch_transport::{EggfetchUpstreamClient, SyncBody}`)
+   acquired per site+policy from `UpstreamClientRegistry`. The frozen
+   `ErasedHttpClient`/`ErasedConnectionPool` legacy surface is not the
+   production path and is no longer constructed in `ProxyServer`.
 5. **Allocation-free selection** (Phase 51): `UpstreamPool` algorithms select
     over the backend slice through predicates — no per-request candidate
     vectors, no cloned weighted vector. Preserve exact

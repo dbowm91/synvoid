@@ -16,18 +16,39 @@ SynVoid supports automatic rule updates via a signed feed. Rules are fetched, ve
 ### RuleFeedManager (`src/waf/rule_feed.rs`)
 
 The `RuleFeedManager` handles the lifecycle of signed rules:
-- **Fetching**: Background polling of configured HTTPS endpoints.
+- **Fetching**: Background polling of configured HTTPS endpoints
+  (`start_background_fetching` / `check_and_fetch`).
 - **Verification**: Ed25519 signature verification using an embedded or configured public key.
 - **Persistence**: Saving verified rules to `storage_dir` in JSON format.
-- **Hot-Reload**: Broadcasting updates to workers via IPC callbacks.
+- **Apply**: Updates the supervisor's in-process pattern globals via
+  `apply_rules()`, then invokes an optional callback. Worker broadcast is
+  wired on the worker side but the callback is never registered — see
+  "Cross-Process Synchronization" below.
 
 ### Cross-Process Synchronization
 
-1. **Supervisor**: Runs the `RuleFeedManager` in background mode ("Master Process"
-   in older docs = the Supervisor under the current process model).
-2. **Apply Callback**: When new rules are verified, the manager triggers a callback.
-3. **IPC Broadcast**: The supervisor sends a `RulePatternUpdate` message to all active workers.
-4. **Worker Update**: Workers receive the message and reload their `AttackDetector` instances with the new patterns.
+The apply path is a callback, not a direct broadcast. Verified state:
+
+1. **Supervisor**: `RuleFeedManager::start_background_fetching()` runs the
+   poll loop ("Master Process" in older docs = the Supervisor under the
+   current process model).
+2. **Apply Callback**: `RuleFeedManager::set_on_apply_callback()` installs a
+   closure typed `Fn(String, Vec<crate::process::ipc::RulePatternData>)` —
+   the payload carries the new `version` plus the patterns.
+3. **IPC Broadcast**: `IpcManager::broadcast_rule_patterns_update(version,
+   patterns)` in `crates/synvoid-ipc/src/manager.rs` wraps them in
+   `Message::RulePatternsUpdate { version, patterns }` and sends to every
+   unified-server worker.
+4. **Worker Update**: `src/worker/unified_server/lifecycle.rs` matches
+   `Message::RulePatternsUpdate` and reloads the in-process pattern sets.
+
+**Gap**: nothing in the repository calls `set_on_apply_callback()` outside
+`src/waf/rule_feed.rs` itself, and `broadcast_rule_patterns_update()` has no
+callers at all. Both halves of the chain are implemented and the worker side
+is live, but the callback is never registered, so supervisor→worker rule
+broadcast does not currently fire. `apply_rules()` still updates the
+supervisor's own in-process pattern globals. Do not describe cross-worker
+rule propagation as active.
 
 ## Implementation Details
 
@@ -49,9 +70,11 @@ Rules are stored in `storage_dir/rules.json` with the following structure:
 ### Pattern Merging
 
 The `get_merged_patterns` function combines three sources of rules:
-1. **DefaultPatterns**: Built-in hardcoded patterns (`crates/synvoid-waf/src/attack_detection/patterns.rs`; `src/waf/` is a re-export facade only).
-2. **Local Config**: Patterns defined in the site TOML configuration.
-3. **Rule Feed**: Dynamic patterns fetched from the signed update server.
+1. **DefaultPatterns**: Built-in hardcoded patterns (`crates/synvoid-waf/src/attack_detection/patterns.rs`, passed in as `default_patterns`).
+2. **Local Config**: Patterns defined in the site TOML configuration
+   (`config_custom`).
+3. **Rule Feed**: Dynamic patterns fetched from the signed update server
+   (`get_custom_patterns_for_category`).
 
 ## Configuration
 
@@ -77,9 +100,11 @@ Top-level `[rule_feed]` section in `main.toml`
 
 ## Monitoring
 
-- `synvoid.waf.rule_update_success`: Counter incremented on successful application.
-- `synvoid.waf.rule_update_failure`: Counter incremented on verification or application failure.
-- `current_version`: Exposed via Admin API /status endpoint.
+- `get_current_version()` — exposed via the admin rule-feed handler
+  (`src/admin/handlers/rule_feed.rs`), which also reports `last_update` /
+  `last_check` / pending-update state.
+- No rule-feed `metrics::counter!` is emitted from `src/waf/rule_feed.rs`;
+  observability is via `tracing` logs and the admin handler response.
 
 ---
 

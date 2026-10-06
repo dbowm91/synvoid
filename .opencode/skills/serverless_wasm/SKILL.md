@@ -20,24 +20,39 @@ This skill documents the serverless function architecture in SynVoid, including 
 The `ServerlessManager` in `crates/synvoid-serverless/src/manager.rs` (canonical; root `src/serverless/` is a re-export facade) manages serverless function lifecycle:
 
 ```rust
+// crates/synvoid-serverless/src/manager.rs — all fields are private
 pub struct ServerlessManager {
-    pub functions: RwLock<HashMap<String, ServerlessFunction>>,
-    pub instance_pools: RwLock<HashMap<String, Arc<InstancePool>>>,
-    pub scheduler: Arc<ServerlessScheduler>,
-    pub event_consumer_enabled: bool,
-    pub last_event_poll: RwLock<Option<Instant>>,
+    functions: RwLock<HashMap<String, ServerlessFunction>>,
+    pools: RwLock<HashMap<String, Arc<InstancePool>>>,
+    config: RwLock<Option<ServerlessConfig>>,
+    runtime: Arc<WasmPluginManager>,
+    routes: RwLock<Vec<ServerlessRoute>>,
+    event_subscriptions: RwLock<HashMap<String, Vec<String>>>,
+    compilation_manager: Arc<AsyncCompilationManager>,
 }
 ```
 
+There is no `scheduler`, `event_consumer_enabled`, or `last_event_poll`
+field. Scheduling is owned by `ServerlessScheduler` (see below) and event
+routing by `event_subscriptions`.
+
 ### InstancePool
 
-The `InstancePool` in `crates/synvoid-serverless/src/instance_pool.rs` (canonical; root is a facade) manages pooled WASM instances:
+The `InstancePool` in `crates/synvoid-serverless/src/instance_pool.rs` manages pooled WASM instances. Note this is the **serverless** pool; the plugin pool is `crates/synvoid-plugin-runtime/src/instance_pool.rs` (a distinct type):
 
 ```rust
 pub struct InstancePool {
-    runtime: Arc<WasmRuntime>,
+    config: InstancePoolConfig,
     function_definition: FunctionDefinition,
-    // ...
+    runtime: Arc<WasmRuntime>,
+    instances: RwLock<Vec<Arc<ServerlessInstance>>>,
+    active_instances: RwLock<HashMap<String, Arc<ServerlessInstance>>>,
+    idle_instances: RwLock<Vec<Arc<ServerlessInstance>>>,
+    last_scale_up: RwLock<Instant>,
+    last_scale_down: RwLock<Instant>,
+    shutdown_tx: tokio::sync::watch::Sender<()>,
+    mode: RwLock<InstancePoolMode>,
+    last_mode_used: RwLock<InstancePoolMode>,
 }
 ```
 
@@ -48,28 +63,60 @@ Defines function metadata at `crates/synvoid-config/src/serverless.rs`:
 ```rust
 pub struct FunctionDefinition {
     pub name: String,
-    pub wasm_path: Option<String>,
-    pub version: Option<u64>,           // Added in Wave 3.9
-    pub checksum: Option<String>,          // Added in Wave 3.9
-    pub signature: Option<String>,       // Added in Wave 3.9
-    pub signer_public_key: Option<String>, // Added in Wave 3.9
-    pub wasi_enabled: bool,              // Added in Wave 4.6
-    pub wasi_config: Option<WasiConfig>, // Added in Wave 4.6
-    // ...
+    pub path: String,                       // NOT wasm_path
+    pub handler: String,                    // defaults to "handle_request"
+    pub memory_mb: Option<usize>,
+    pub cpu_fuel: Option<u64>,
+    pub timeout_seconds: Option<u64>,
+    pub env: HashMap<String, String>,
+    pub pre_warm_instances: Option<usize>,
+    pub min_instances: Option<usize>,
+    pub max_instances: Option<usize>,
+    pub idle_timeout_seconds: Option<u64>,
+    pub routes: Option<Vec<String>>,
+    pub description: Option<String>,
+    pub allowed_methods: Option<Vec<String>>,
+    pub event_subscriptions: Option<Vec<String>>,
+    pub allowed_callers: Option<Vec<String>>,
+    pub allowed_orgs: Option<Vec<String>>,
+    pub require_trusted_caller: bool,
+    pub min_tier_level: Option<u32>,
+    pub public_function: Option<bool>,
+    pub allowed_dht_prefixes: Vec<String>,
 }
 ```
 
+There are no `version`, `checksum`, `signature`, `signer_public_key`,
+`wasi_enabled`, or `wasi_config` fields.
+
 ## Key Features Implemented
 
-### Hot Reload (Wave 3.10)
+### Function registration and WASM loading
 
-The `ServerlessManager` supports hot reloading:
+`ServerlessManager` has **no** `reload_function()`, `deploy_function()`, or
+public `load_function_wasm()` — those names do not exist. The real surface:
 
 ```rust
-pub fn reload_function(&self, function_name: &str, wasm_bytes: Vec<u8>) -> Result<()>
-pub fn deploy_function(&self, definition: FunctionDefinition) -> Result<()>
-pub fn load_function_wasm(&self, name: &str, wasm_bytes: &[u8]) -> Result<Arc<WasmRuntime>>
+pub fn initialize(&self, config: ServerlessConfig) -> Result<(), ServerlessError>;
+pub async fn load_function_wasm_async(&self, /* … */) -> /* Arc<WasmRuntime> */;
+pub fn process_pending_compilations(&self);
+pub fn get_compilation_status(&self, function_name: &str) -> Option<CompilationState>;
+pub fn get_function(&self, name: &str) -> Option<ServerlessFunction>;
+pub fn get_all_functions(&self) -> HashMap<String, ServerlessFunction>;
+pub fn has_function(&self, name: &str) -> bool;
+pub fn find_matching_function(&self, path: &str) -> Option<ServerlessFunction>;
+pub fn find_matching_route(&self, /* … */) -> /* … */;
+pub async fn invoke_for_mesh(&self, /* … */) -> /* … */;
+pub async fn invoke_serverless_with_runtime(&self, /* … */) -> /* … */;
+pub async fn invoke_for_cpu_offload(&self, /* … */) -> /* … */;
+pub async fn shutdown(&self);
 ```
+
+There is also a private `fn load_function_wasm(&self, func_def: &FunctionDefinition)`
+marked `#[allow(dead_code)]`. Functions are registered through
+`initialize()`; hot reload of serverless functions is not implemented here —
+plugin reload (`prepare_reload_candidate` → `commit_reload_candidate`) is the
+`plugin_runtime` domain and does not cover serverless function definitions.
 
 ### Pre-warming
 
@@ -152,18 +199,26 @@ capability-absence boundary; see
 ### Invocation Flow (Wave 3.2)
 
 ```
-Edge receives request for serverless function
+Request reaches a local upstream that no local function can serve
     ↓
-extract_upstream_id() → "serverless:{function_name}"
+ServerlessManager::invoke_* returns ServerlessError::RemoteExecutionRequired(upstream_id)
     ↓
-MeshTransport detects "serverless:" prefix
+HTTP dispatch layer (crates/synvoid-http/src/serverless_backend_dispatch.rs)
+  strips the "serverless:" prefix to recover the function name
     ↓
-handle_serverless_invoke_request() verifies signature
+Request is replayed through the mesh transport
     ↓
-invoke_for_mesh() executes function
+MeshTransport::handle_serverless_invoke_request() verifies the caller signature
     ↓
-Returns WASM response as HTTP response
+ServerlessManager::invoke_for_mesh() executes the function
+    ↓
+Response is signed (if a mesh signer is available) and returned as HTTP
 ```
+
+Note `MeshProxy::extract_upstream_id()`
+(`crates/synvoid-mesh/src/mesh/proxy.rs`) returns `http://{host}:{port}` — it
+does **not** produce the `serverless:{function_name}` form. That prefix is
+owned by the HTTP dispatch layer above.
 
 ### Handler Implementation
 
@@ -211,49 +266,45 @@ pub struct TimerEntry {
 Usage:
 
 ```rust
-scheduler.add_timer(interval_secs, function_name, topic);
-scheduler.remove_timer(function_name);
-let timers = scheduler.list_timers();
+scheduler.add_timer(interval_secs, function_name, topic);  // String args, by value
+scheduler.remove_timer(function_name);                      // &str
+let timers = scheduler.list_timers();                       // Vec<(String, u64, String)>
 ```
 
-## Event Consumer (Wave 3.12)
+## Event Routing
 
-Background task polls for `event:*` records in DHT:
+Events are routed through in-process pub/sub on the manager, not by polling
+DHT for `event:*` records:
 
 ```rust
-async fn start_event_consumer(&self) {
-    loop {
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        // Poll event: prefixed records
-        // Dispatch to subscribed functions
-    }
-}
+pub fn subscribe_to_event(&self, function_name: &str, topic: String);
+pub fn unsubscribe_from_event(&self, function_name: &str, topic: &str);
+pub fn get_subscribed_functions(&self, topic: &str) -> Vec<String>;
+pub fn publish_event(&self, topic: &str, payload: &[u8]);
 ```
 
-## DHT Watcher (Wave 3.11)
-
-`RecordWatcher` trait enables DHT record change notifications:
-
-```rust
-pub trait RecordWatcher: Send + Sync {
-    fn on_record_stored(&self, key: &str, value: &[u8]);
-    fn on_record_removed(&self, key: &str);
-    fn watch_prefix(&self) -> &str;
-}
-```
+State lives in `ServerlessManager::event_subscriptions`. There is **no**
+`start_event_consumer()` background task and no `RecordWatcher` trait
+anywhere in the workspace — a DHT-driven event watcher was never landed.
+Subscriptions are also declared per function via
+`FunctionDefinition::event_subscriptions`.
 
 ## Testing
 
 ```bash
-# Run serverless tests
-cargo test --lib serverless
+# Serverless crate (no crates/synvoid-serverless/tests/ dir — unit tests only)
+cargo test -p synvoid-serverless
 
-# Run serverless integration tests
-cargo test --test integration_test -- serverless
+# WASM runtime unit tests (crate path, not a root `plugin::` module)
+cargo test -p synvoid-plugin-runtime --lib wasm_runtime
 
-# Run WASM runtime tests
-cargo test --lib plugin::wasm_runtime
+# Plugin-runtime sandbox unit tests
+cargo test -p synvoid-plugin-runtime --lib sandbox
 ```
+
+There is no root `tests/integration_test.rs` coverage of serverless (the file
+contains no `serverless` match), and `src/plugin/` has no `wasm_runtime`
+module — the `plugin::wasm_runtime` filter from older docs selects nothing.
 
 ## Common Issues
 
@@ -441,7 +492,7 @@ limits.check_output(300_000)?; // Err(ResourceLimitError::OutputTooLarge)
 ### Related Tests
 
 ```bash
-cargo test --test plugin_capability_boundary_guard
+cargo test --test plugin_guard          # capability-boundary guard suite
 cargo test -p synvoid-plugin-runtime -- test_mesh_policy
 cargo test -p synvoid-plugin-runtime -- test_capabilities_mesh
 cargo test -p synvoid-plugin-runtime -- test_capabilities_check_metrics
@@ -450,6 +501,11 @@ cargo test -p synvoid-plugin-runtime -- test_manifest_toml_parses_mesh
 cargo test -p synvoid-plugin-runtime -- test_signing_payload_includes
 cargo test -p synvoid-plugin-runtime -- test_manifest_validate_trust
 ```
+
+The capability-boundary assertions live in `tests/plugin_guard.rs` under
+`// Section: plugin_capability_boundary_guard` — there is no separate
+`plugin_capability_boundary_guard.rs` test binary. All seven filters above are
+unit tests in `crates/synvoid-plugin-runtime/src/sandbox/types.rs`.
 
 ### Signed Byte Loading (Phase 2)
 

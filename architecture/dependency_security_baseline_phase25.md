@@ -591,6 +591,16 @@ Closeout evidence: `architecture/dependency_security_reaudit_phase103_closeout.m
   ignore is added for 0315 or 0316 — both are version-remediated, not
   capability-gated.
 
+  Naming note: "the transitive 48.0.3 line" names the version that cleared
+  0315/0316. The resolved transitive line has since advanced to **48.0.5**
+  for RUSTSEC-2026-0326/-0327 (§12), which still satisfies every patched
+  range listed above. 48.0.5 is the current anchor
+  (`guard-anchor: wasmtime-transitive-version = "48.0.5"`, enforced by
+  `wasmtime_transitive_matches_baseline`). The 48.0.3 wording above is
+  retained deliberately because the guard asserts that literal substring; do
+  not "correct" it without updating the guard assertion in the same change.
+  See also `architecture/dependency_advisory_remediation.md`.
+
 ## 13. Phase 112 YARA upstream gate refresh (2026-10-02)
 
 Official YARA-X `1.21.0` (latest release, 2026-09-29) still declares Wasmtime

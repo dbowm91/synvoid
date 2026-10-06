@@ -55,12 +55,15 @@ let all = WindowsInterfaceResolver::get_all_interfaces();
 
 **File**: `crates/synvoid-platform/src/windows/firewall.rs` (canonical; `#[cfg(windows)]`)
 
-Manages Windows Firewall rules for HTTP/HTTPS/QUIC:
+Manages Windows Firewall rules for HTTP/QUIC:
 - `inject_quic_firewall_rule(port)` - Add UDP firewall rule for QUIC
 - `inject_http_firewall_rule(port)` - Add TCP firewall rule for HTTP
-- `inject_https_firewall_rule(port)` - Add TCP firewall rule for HTTPS
 - `remove_quic_firewall_rule(port)` - Remove QUIC firewall rule
 - Uses `netsh advfirewall`
+
+**Note**: there is **no** `inject_https_firewall_rule()` — the module exports
+exactly the three functions above. HTTPS is covered by the caller passing its
+TLS port to `inject_http_firewall_rule()`, or by an externally-managed rule.
 
 ```rust
 use synvoid_platform::windows::firewall;
@@ -85,7 +88,7 @@ firewall::inject_http_firewall_rule(8080)?;
 ### Firewall Rules
 - Rule names prefixed with "SynVoid"
 - Check for existing rules before adding
-- Support both UDP (QUIC) and TCP (HTTP/HTTPS)
+- Support UDP (QUIC) and TCP (HTTP); there is no dedicated HTTPS injector
 
 ## Testing
 

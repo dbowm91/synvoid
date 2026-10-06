@@ -36,7 +36,7 @@ Policy adapters live one layer up — import from there, never reimplement here:
 | Site config → TLS | `synvoid_upstream::tls_adapter` (`upstream` skill) |
 | WAF-scanning bodies | `synvoid_http::streaming_waf_body` (`streaming_waf` skill) |
 | QUIC/tunnel dispatch | root `src/http_client/quic_tunnel_dispatch.rs` |
-| H3 upstream dispatch | `synvoid_http::{http3_buffered_upstream_dispatch, http3_streaming_upstream_dispatch}` |
+| H3 upstream dispatch | `synvoid_http3::{http3_buffered_upstream_dispatch, http3_streaming_upstream_dispatch}` |
 
 `is_quictunnel_url` stays here only as a dependency-free scheme predicate
 (no I/O, no tunnel state) so existing dispatch call sites keep compiling.

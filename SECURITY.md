@@ -243,7 +243,7 @@ let error = scanner.get_last_reload_error();
 - Documented rationale, exposure, owner, Reviewed/Re-audit dates, and remove
   conditions for all ignored advisories (guard-enforced by `deny_ignore_metadata_guard`)
 - Duplicate-version allowlist narrowed to the documented wasmtime split
-  (transitive 48.0.3 via the yara-x compat fork + direct 36.0.16 LTS)
+  (transitive 48.0.5 via the yara-x compat fork + direct 36.0.16 LTS)
 
 `cargo audit` runs as a blocking gate with the same narrow exceptions mirrored
 in `.cargo/audit.toml` (cargo-audit does not read `deny.toml`).
@@ -263,14 +263,14 @@ in `.cargo/audit.toml` (cargo-audit does not read `deny.toml`).
 ### wasmtime (RUSTSEC-2026-0095 and related 2026-04 advisories — remediated Phase 40)
 - **Issue**: Winch compiler backend sandbox escape (CVE-2026-34987) + Cranelift/Winch/component-model advisories 0085-0096, 0114, 0222
 - **Severity**: High (0095/0096 critical-class sandbox escapes)
-- **Fix**: Direct runtime at `wasmtime 36.0.16` LTS (Phase 103 in-line LTS patch from 36.0.15 — unaffected by every advisory in this group — proven by a clean `cargo audit` on an isolated 36.0.16 resolve with no ignores, 2026-10-01); YARA transitive line moved 40.0.4 → 47.0.4 → 48.0.3 in Phase 40 + Phase 103 (patched; ignores removed)
+- **Fix**: Direct runtime at `wasmtime 36.0.16` LTS (Phase 103 in-line LTS patch from 36.0.15 — unaffected by every advisory in this group — proven by a clean `cargo audit` on an isolated 36.0.16 resolve with no ignores, 2026-10-01); YARA transitive line moved 40.0.4 → 47.0.4 → 48.0.3 → **48.0.5** in Phase 40, Phase 103, and the RUSTSEC-2026-0326/-0327 remediation (patched; ignores removed)
 - **Status**: Not affected (direct) / version-patched (YARA transitive) — no ignores remain for this group
 
 ### wasmtime (RUSTSEC-2026-0269 — patched on both lines, Phase 40)
 - **Issue**: Filesystem sandbox escape when paths/symlinks contain trailing slashes (GHSA-vqjp-4c8c-hfgg)
-- **Severity**: High (8.8). Affected: 37.0.0–46.0.2 except backported LTS lines; patched ranges include >=36.0.14,<37.0.0, >=47.0.4, and >=48.0.3. Direct 36.0.16 LTS is PATCHED; transitive 48.0.3 is PATCHED.
+- **Severity**: High (8.8). Affected: 37.0.0–46.0.2 except backported LTS lines; patched ranges include >=36.0.14,<37.0.0, >=47.0.4, and >=48.0.3. Direct 36.0.16 LTS is PATCHED; transitive **48.0.5** is PATCHED.
 - **Exposure**: Capability-absent on top of version remediation — `wasmtime-wasi` is not resolved, linked, or reachable from either consumer (proven from the lockfile/feature graph, not from absence of a PoC).
-- **Upgrade**: Phase 40 moved the YARA line off wasmtime 40.x; Phase 103 advanced the same line 47.0.4 → 48.0.3 to clear RUSTSEC-2026-0315/0316 (manifest-only delta in the same temporary `third-party/yara-x-compat` fork; no source divergence). Removal condition for the fork: an official fixed yara-x release (see `architecture/dependency_security_baseline_phase25.md` §11/§12). Re-audit: 2026-11-01.
+- **Upgrade**: Phase 40 moved the YARA line off wasmtime 40.x; Phase 103 advanced the same line 47.0.4 → 48.0.3 to clear RUSTSEC-2026-0315/0316, and the RUSTSEC-2026-0326/-0327 remediation advanced it again to 48.0.5 (manifest-only delta in the same temporary `third-party/yara-x-compat` fork; no source divergence). Removal condition for the fork: an official fixed yara-x release (see `architecture/dependency_security_baseline_phase25.md` §11/§12). Re-audit: 2026-11-01.
 - **Status**: Patched (both lines) + documented decision + guard-enforced (`wasmtime_baseline_guard`, `wasmtime_transitive_matches_baseline`)
 - **Reference**: `architecture/dependency_security_baseline_phase25.md`
 
@@ -285,7 +285,14 @@ in `.cargo/audit.toml` (cargo-audit does not read `deny.toml`).
 - **Issue**: Dynamic component-record lifting can allocate beyond the hostcall fuel limit (GHSA-jqpg-j7w6-42pr).
 - **Severity**: Low (1).
 - **Affected range**: 36.0.0–46.x and 47.x (fixed in >=36.0.16,<37.0.0 / >=48.0.3,<49.0.0 / >=49.0.1).
-- **Disposition**: Direct runtime patched in-line 36.0.15 → 36.0.16 LTS; transitive YARA line moved 47.0.4 → 48.0.3 in Phase 103. **No ignore added** — both resolved lines are version-patched.
+- **Disposition**: Direct runtime patched in-line 36.0.15 → 36.0.16 LTS; transitive YARA line moved 47.0.4 → 48.0.3 in Phase 103 and on to **48.0.5** for RUSTSEC-2026-0326/-0327. **No ignore added** — both resolved lines are version-patched.
+- **Reference**: `architecture/dependency_security_baseline_phase25.md` §12.
+
+### wasmtime (RUSTSEC-2026-0326 / -0327 — transitive line advanced to 48.0.5)
+- **Issue**: Two further wasmtime advisories published against the YARA transitive line after the Phase 103 move to 48.0.3.
+- **Severity**: Both remediated by version advance; no direct-runtime exposure.
+- **Disposition**: The temporary `third-party/yara-x-compat` manifest-only fork now pins **48.0.5**, the available resolved version at the time. The direct runtime is unaffected (36.0.16 LTS, below both affected ranges). **No ignore added.**
+- **Guard**: `architecture/dependency_security_baseline_phase25.md` carries `guard-anchor: wasmtime-transitive-version = "48.0.5"`; `wasmtime_transitive_matches_baseline` fails if the lock drifts.
 - **Reference**: `architecture/dependency_security_baseline_phase25.md` §12.
 
 ### rustls-pemfile Removal
@@ -305,11 +312,10 @@ in `.cargo/audit.toml` (cargo-audit does not read `deny.toml`).
 ### rkyv for High-Performance Paths
 - **Purpose**: Zero-copy serialization for DNS and DHT operations
 - **Implementation**:
-  - Added `rkyv` dependency (renamed to avoid lightningcss conflict)
-  - Created `src/serialization_rkyv.rs` module re-exporting rkyv
-  - Added rkyv derives to DNS message types (`crates/synvoid-dns/src/messages.rs`)
-  - Added rkyv derives to DHT types (keys, signed, stake, network_policy, merkle, store, routing)
-  - Added rkyv derives to `MeshNodeRole` in `src/mesh/config.rs`
+  - Direct `rkyv` was removed from the root package in Phase 31 — **zero root `src/` files use it** (`Cargo.toml` records this at the dependency block). The canonical helpers live in `crates/synvoid-utils/src/serialization.rs` (`serialize_rkyv` / `deserialize_rkyv`, the latter validated via `rkyv::validation` + `CheckBytes`)
+  - `rkyv` derives live in the domain crates: `crates/synvoid-mesh-protocol/src/{threat,wire}.rs` (rkyv 0.8), plus typed archived structs in `crates/synvoid-dns/` and `crates/synvoid-mesh/`
+  - `MeshNodeRole` derives rkyv in `crates/synvoid-mesh/src/mesh/config.rs`
+  - Two rkyv majors are resolved: **0.8.18** for SynVoid code, and **0.7.46** transitively via `parcel_sourcemap` → `lightningcss` → the `third-party/minify-html-compat` fork (the RUSTSEC-2026-0235 ignore; see Known Issues in `AGENTS.md`)
 - **Default Serialization**: rkyv is now the default for:
   - `SignedDhtRecord::serialize()` / `deserialize()` - DHT record storage
   - `PersistedRoutingTable::to_bytes()` / `from_bytes()` - routing table persistence

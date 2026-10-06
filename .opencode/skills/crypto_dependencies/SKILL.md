@@ -28,7 +28,7 @@ SynVoid uses a multi-layered approach to cryptography:
 | `libcrux-ml-dsa` | 0.0.10 | Pure Rust | ML-DSA signatures |
 | `ml-kem` | 0.3.2 | Pure Rust | Final ML-KEM-768 (wasm-pow client; Phase 44) |
 | `ed25519-dalek` | 2.2.0 | Pure Rust | Ed25519 signatures |
-| `x25519-dalek` | 2.0.0 | Pure Rust | X25519 key exchange |
+| `x25519-dalek` | 2.0.1 | Pure Rust | X25519 key exchange |
 | `sha2` | 0.10 | Pure Rust | SHA-256/512 |
 | `sha3` | 0.10 | Pure Rust | SHA3 |
 | `hmac` | 0.12 | Pure Rust | HMAC |

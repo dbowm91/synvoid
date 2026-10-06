@@ -57,7 +57,11 @@ Keys can be loaded from:
 3. **Secret** (`IpcSigner::from_secret()`): SHA-256 of string — **`#[cfg(test)]` ONLY,
    not compiled into production binaries at all**
 
-Unix key file uses `O_EXCL | O_NOFOLLOW` to prevent symlink attacks.
+Unix key *reading* uses `O_NOFOLLOW | O_CLOEXEC` (`open_secure_key_file()`) plus a
+post-open `fstat` check (regular file, `mode & 0o077 == 0`, owned by the current
+uid) — the descriptor's metadata is checked, not the path, to close the
+check-to-read race. Unix key *writing* uses `create_new(true)` (O_EXCL
+semantics) + `O_NOFOLLOW` and sets mode `0600`.
 
 ### Replay Protection
 
@@ -89,10 +93,11 @@ Use `synvoid_ipc::ipc_signed::MAX_IPC_MESSAGE_SIZE` for all size checks.
 ### Creating a Signed Connection
 
 ```rust
-use synvoid_ipc::ipc_transport::{IpcStream, IpcSigner};
+use synvoid_ipc::ipc_transport::{IpcEndpoint, IpcStream};
+use synvoid_ipc::IpcSigner; // re-exported at the crate root, not from ipc_transport
 
-let signer = IpcSigner::try_from_env()?;
-let stream = IpcStream::connect_with_signer(endpoint, signer).await?;
+let signer = IpcSigner::try_from_env();
+let stream = IpcStream::connect_with_signer(&endpoint, Arc::new(signer)).await?;
 ```
 
 ### Verifying Incoming Commands
@@ -121,7 +126,13 @@ Unsigned IPC is allowed for read-only operations (Status, HealthCheck) but:
 3. **Key file security**: Files must be owned by current user, mode 0600, not symlinks, not in world-writable directories
 4. **No hardcoded secrets**: `from_secret()` is `#[cfg(test)]` — unavailable in production builds
 5. **Windows Security**: `SecurityDescriptor::new_user_only()` creates DACLs granting `FILE_ALL_ACCESS` only to current user
-6. **Signing enforced by default**: `enforce_signing=true` is default for `IpcStream` with explicit signer constructors
+6. **Signing is enforced by construction on the explicit signer
+   constructors** (`from_unix_stream_with_signer`, `with_signer`,
+   `connect_with_signer`): those set `_enforce_signing = true`, and read/write
+   refuse unsigned frames when it is set or when signing was negotiated. The
+   *unsigned* constructors (`from_unix_stream`, `connect`) set
+   `_enforce_signing = false` — a separate `enforce_signing` field default does
+   not exist, so pick the constructor that matches the intended posture.
 
 ## Testing
 

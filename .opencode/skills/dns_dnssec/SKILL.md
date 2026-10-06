@@ -32,12 +32,22 @@ crates/synvoid-dns/src/
 ├── dnssec_validation.rs     # Key tag (delegates to keystore), DS digest, canonicalization (public-only)
 ├── hsm.rs                   # Facade: HSM config conversion + re-exports (PKCS#11 behind `hsm` feature)
 ├── mesh_dnssec.rs           # Mesh validation with KeyMetadata-only trust anchors (no private keys)
+├── runtime_config.rs        # DnsRuntimeConfig — parsed runtime values owned by this crate
+├── secure_transport.rs      # SecureTransportConfig / AcmeTxtChallenges (DNS-owned seam)
+├── geo.rs                   # CountryLookup (DNS-owned seam)
+├── net_policy.rs            # is_restricted_ip — SECURITY BOUNDARY, do not weaken
+├── anycast_sync.rs          # The only file naming mesh types (MeshMessage/MeshTransport/MeshNodeRole)
+├── mesh_sync/dht_capability.rs  # DhtRecordStore / DhtGlobalLocator traits (no synvoid-mesh types)
 ├── server/
 │   ├── mod.rs              # DnsServer, DnsHandler (zones hold opaque Arc<SealedSigningKey> handles)
 │   ├── dnssec_impl.rs      # Authoritative DNSSEC implementation (signs via sealed handles)
 │   ├── query.rs             # Query handling with NSEC/NSEC3
-│   ├── response.rs          # Response building with AD bit
-│   └── response_encoder.rs  # Typed wire-format response encoder
+│   ├── response.rs          # Response building
+│   ├── response_encoder.rs  # Typed wire-format response encoder (EncodeReport)
+│   ├── rate_limit.rs        # Query rate limiting
+│   ├── sharded_store.rs     # Sharded zone store
+│   ├── startup.rs           # configured_bind_addr / shutdown_runtime / listener wiring
+│   └── zone.rs             # Zone load/activation/replace + cache invalidation
 crates/synvoid-dnssec-keystore/src/   # Phase 30 custody boundary (private keys live here)
 ├── key.rs                   # SealedSigningKey (opaque, #[non_exhaustive]) + KeyMetadata (public)
 ├── keystore.rs              # DnssecKeystore: generation, sealed storage, rotation, sign_canonical
@@ -50,6 +60,22 @@ crates/synvoid-config/src/dns/
 └── dns_dnssec.rs            # DNSSEC, HSM, and trust anchor config
 ```
 
+### Runtime DTO boundary (Phases 125-140, CLOSED QUALIFIED)
+
+- `DnsServer::new(DnsRuntimeConfig, CertResolver, CountryLookup)` is canonical:
+  the whole-DNS runtime projection plus two composition-owned capability
+  objects (`SecureTransportConfig`, `CountryLookup`).
+- Persisted config stays in `synvoid-config`; the conversion adapter is
+  `src/server/dns_runtime_config.rs` in composition.
+- `src/dns/` is a guard-enforced pure re-export facade
+  (`tests/facade_disposition_guard.rs`) — never add logic there.
+- `synvoid-dns` is class 1: it links only `synvoid-dnssec-keystore` plus
+  optional `synvoid-mesh`, and names exactly three mesh types
+  (`MeshMessage`, `MeshTransport`, `MeshNodeRole`), all in
+  `anycast_sync.rs`. The DHT coupling was inverted, not deleted: see
+  `crates/synvoid-dns/src/mesh_sync/dht_capability.rs`.
+- Binding amendments: `architecture/distributed_state_contract.md` §3e.
+
 ## Resolver Types
 
 ### HickoryRecursor (Recursive Mode)
@@ -57,7 +83,7 @@ crates/synvoid-config/src/dns/
 Performs full DNSSEC validation when `enable_dnssec: true`.
 
 ```rust
-// crates/synvoid-dns/src/resolver.rs:605
+// crates/synvoid-dns/src/resolver.rs — HickoryRecursor::from_paths
 HickoryRecursor::from_paths(root_hints_path, trust_anchor_path, enable_dnssec)
 ```
 
@@ -72,7 +98,7 @@ HickoryRecursor::from_paths(root_hints_path, trust_anchor_path, enable_dnssec)
 Does NOT perform DNSSEC validation - simply forwards to upstream.
 
 ```rust
-// crates/synvoid-dns/src/resolver.rs:141
+// crates/synvoid-dns/src/resolver.rs — HickoryResolver (forwarder mode)
 // NOTE: is_dnssec_validated is ALWAYS false for HickoryResolver
 ```
 
@@ -104,16 +130,20 @@ If validation fails → SERVFAIL or Bogus
 The AD (Authentic Data) bit is set based on validation status:
 
 **Authoritative server** (`crates/synvoid-dns/src/server/response.rs`):
+
+Authoritative servers **never** set AD — it is a recursive-validation signal,
+not a "we signed this" signal. `records_signed`
+(`dnssec_ok && !records.is_empty() && zsk.is_some()`) gates RRSIG attachment
+only:
+
 ```rust
-let records_signed = dnssec_ok && !records.is_empty() && zsk.is_some();
-if records_signed {
-    qr_aa |= 0x0020;  // AD bit
-}
+// records_signed is only used for signing, not for the AD flag.
+let flags = build_response_flags(true, false, rd, false, false, 0);
 ```
 
 **Recursive server** (`crates/synvoid-dns/src/recursive.rs`):
 ```rust
-authentic_data: is_dnssec_validated,  // From upstream resolver
+authentic_data: effective_dnssec_validated && dnssec_ok,  // From upstream resolver, gated on DO
 ```
 
 ## Configuration
@@ -188,7 +218,7 @@ The `RecursiveDnsCache` uses Moka with weighted entries (via `weigher` callback)
 - Use `iter().count()` instead for accurate count of entries
 - Use `len()`, `positive_len()`, `negative_len()` methods which correctly use `iter().count()`
 
-**Example from** `crates/synvoid-dns/src/recursive_cache.rs:326-342`:
+**Example** (`crates/synvoid-dns/src/recursive_cache.rs`, `RecursiveDnsCache::len`):
 ```rust
 pub fn len(&self) -> usize {
     let inner = &self.inner;
@@ -227,8 +257,11 @@ never in query/transport code. Full spec: `architecture/dnssec_keystore.md`.
   Files are `0600` (dirs `0700`), atomic writes, overly-permissive files
   refused on load.
 - **HSM**: `cryptoki` is opt-in (`synvoid-dns/hsm`, root `dns-hsm`), off by
-  default. PKCS#11 failures fail closed — never silent software fallback.
-  Convert config via `synvoid_dns::hsm::keystore_config_from_dns`.
+  default. PKCS#11 establishment failures fail closed — never silent
+  software fallback. Convert config via `synvoid_dns::hsm::keystore_config_from_runtime`
+  (DNS-owned `HsmRuntimeConfig` → keystore-local `KeystoreHsmConfig`).
+  `keystore_config_from_dns` was **removed in Phase 128**: the persisted HSM
+  schema no longer reaches `synvoid-dns`, so runtime values are the only input.
 - **Never**: read `private_key` fields or struct-literal `ZoneSigningKey`
   (does not compile), use `cryptoki` from `synvoid-dns`, or put private
   keys in mesh anchors (use `KeyMetadata`), admin DTOs, logs, or metrics.
@@ -378,18 +411,23 @@ On failure, `cancel_in_flight()` cleans up. Negative responses (NXDOMAIN/NODATA)
 ### Checking DNSSEC Validation Status
 
 ```rust
-use crate::dns::resolver::{HickoryRecursor, IpRecord};
+use synvoid_dns::resolver::{HickoryRecursor, IpRecord};
 
-let ip_record: IpRecord = resolver.lookup_ip("example.com").await?;
+let ip_record: IpRecord = resolver.lookup_ip_with_ttl("example.com").await?;
 if ip_record.is_dnssec_validated {
     // DNSSEC chain validated
 }
 ```
 
+The method is `lookup_ip_with_ttl` (there is no bare `lookup_ip`), and it
+returns `ResolverResult<IpRecord>`. Prefer importing from `synvoid_dns::`
+directly over the root `crate::dns::` facade — the facade is a glob
+re-export kept only for compatibility.
+
 ### RFC 5011 Events
 
 ```rust
-use crate::dns::trust_anchor::{TrustAnchorManager, TrustAnchorConfig, Rfc5011Event};
+use synvoid_dns::trust_anchor::{TrustAnchorManager, TrustAnchorConfig, Rfc5011Event};
 
 let config = TrustAnchorConfig {
     enabled: true,
@@ -440,17 +478,17 @@ Dynamic UPDATE now re-validates post-mutation invariants. If a crafted UPDATE re
 
 ### New Test Files
 
-- **`tests/control_plane_authorization.rs`** (10 tests): Deny-by-default behavior for UPDATE/NOTIFY/AXFR/IXFR. Covers disabled-by-default refusal, malformed message non-mutation, invalid zone error RCODE, unknown NOTIFY source ignored, AXFR/IXFR denied by default, query type constants (251/252), transfer disabled when axfr_enabled=false, allowed-client SOA-bracketed transfer.
-- **`tests/verification_gate.rs`** (strengthened): Replaced documentation-grade tests with behavior tests: `successful_reload_swaps_zone_atomically`, `failed_reload_preserves_previous_active_zone`, `validate_zone_for_activation_rejects_duplicate_soa`, `validate_zone_for_activation_rejects_bad_origin`, `successful_reload_invalidates_cache_for_zone`. Plus 15 new protocol-semantics tests across gates 7/8/9 (DNSSEC flags, RRSIG validity window, DS digest lengths, recursive safety config invariants, ECS default, encrypted transport cache isolation).
+- **`crates/synvoid-dns/tests/control_plane_authorization.rs`** (10 tests): Deny-by-default behavior for UPDATE/NOTIFY/AXFR/IXFR. Covers disabled-by-default refusal, malformed message non-mutation, invalid zone error RCODE, unknown NOTIFY source ignored, AXFR/IXFR denied by default, query type constants (251/252), transfer disabled when axfr_enabled=false, allowed-client SOA-bracketed transfer.
+- **`crates/synvoid-dns/tests/verification_gate.rs`** (strengthened): Replaced documentation-grade tests with behavior tests: `successful_reload_swaps_zone_atomically`, `failed_reload_preserves_previous_active_zone`, `validate_zone_for_activation_rejects_duplicate_soa`, `validate_zone_for_activation_rejects_bad_origin`, `successful_reload_invalidates_cache_for_zone`. Plus 15 new protocol-semantics tests across gates 7/8/9 (DNSSEC flags, RRSIG validity window, DS digest lengths, recursive safety config invariants, ECS default, encrypted transport cache isolation).
 
 ### Final Validation Hardening Test Files (Milestone 3 Completion)
 
-- **`tests/dnssec_live_signing.rs`** (10 tests): Ed25519 signing roundtrip, RRSIG construction shape (type_covered/algorithm/labels/original_ttl/sig_expiration>sig_inception/key_tag/signer_name/embedded_signature), NSEC wire format + type bitmap + chain construction, DNSKEY RDATA computation, DS digest determinism, key tag properties, canonical name/rdata (Option<u32> params).
-- **`tests/tsig_success_fixtures.rs`** (19 tests): SHA-256/512/1/384 sign+verify roundtrips, two keys coexist, add_key at runtime, remove_key, UnknownKey error, empty verifier, error codes, different algorithms produce different RDATA lengths, key name embedded in RDATA (raw bytes + null).
-- **`tests/ixfr_record_delta.rs`** (7 tests): Single add/delete/modification/multi-record IXFR deltas (record-by-record verification), RFC 1982 serial comparison, current serial SOA-only, disabled error.
-- **`tests/update_atomicity_rollback.rs`** (13 tests): Atomic add/delete, prerequisite failures (NXRRSET/YXRRSET), SOA deletion → NOTAUTH, CNAME coexistence preservation, cache invalidation on success, failed prerequisite preserves cache, TSIG absent preserves serial, unknown zone, multi-record add, delete removes record.
-- **`tests/notify_scheduling_semantics.rs`** (7 tests): Response shape (QR=1, AA=1, opcode=4), cache invalidation, unknown zone preserves other cache, source allowlist (empty=allow all, specific IP, wildcard `*`), rate limiting, disabled handler, TSIG enforcement, multi-zone independence.
-- **`tests/control_plane_cache_completion.rs`** (8 tests): Cache key dimensions (TransportClass::Udp512/Tcp, CacheNamespace::Authoritative/Recursive), UPDATE/NOTIFY invalidation, AXFR reads from zone store not cache, concurrent AXFR independence, invalidation reason labels, zone-scoped invalidation, clear removes all.
+- **`crates/synvoid-dns/tests/dnssec_live_signing.rs`** (19 tests): Ed25519 signing roundtrip, RRSIG construction shape (type_covered/algorithm/labels/original_ttl/sig_expiration>sig_inception/key_tag/signer_name/embedded_signature), NSEC wire format + type bitmap + chain construction, DNSKEY RDATA computation, DS digest determinism, key tag properties, canonical name/rdata (Option<u32> params).
+- **`crates/synvoid-dns/tests/tsig_success_fixtures.rs`** (13 tests): SHA-256/512/1/384 sign+verify roundtrips, two keys coexist, add_key at runtime, remove_key, UnknownKey error, empty verifier, error codes, different algorithms produce different RDATA lengths, key name embedded in RDATA (raw bytes + null).
+- **`crates/synvoid-dns/tests/ixfr_record_delta.rs`** (7 tests): Single add/delete/modification/multi-record IXFR deltas (record-by-record verification), RFC 1982 serial comparison, current serial SOA-only, disabled error.
+- **`crates/synvoid-dns/tests/update_atomicity_rollback.rs`** (12 tests): Atomic add/delete, prerequisite failures (NXRRSET/YXRRSET), SOA deletion → NOTAUTH, CNAME coexistence preservation, cache invalidation on success, failed prerequisite preserves cache, TSIG absent preserves serial, unknown zone, multi-record add, delete removes record.
+- **`crates/synvoid-dns/tests/notify_scheduling_semantics.rs`** (13 tests): Response shape (QR=1, AA=1, opcode=4), cache invalidation, unknown zone preserves other cache, source allowlist (empty=allow all, specific IP, wildcard `*`), rate limiting, disabled handler, TSIG enforcement, multi-zone independence.
+- **`crates/synvoid-dns/tests/control_plane_cache_completion.rs`** (10 tests): Cache key dimensions (TransportClass::Udp512/Tcp, CacheNamespace::Authoritative/Recursive), UPDATE/NOTIFY invalidation, AXFR reads from zone store not cache, concurrent AXFR independence, invalidation reason labels, zone-scoped invalidation, clear removes all.
 
 ### Deferred / Known Limitations
 
@@ -468,12 +506,12 @@ Dynamic UPDATE now re-validates post-mutation invariants. If a crafted UPDATE re
 2. **TrustAnchorManager and hickory_proto::TrustAnchors are separate** - Synchronization between RFC 5011 manager and hickory's internal anchors
 3. **NSEC3 uses SHA-1** - RFC 9276 suggests SHA-1 is acceptable for NSEC3 hashing
 4. **NSEC3 Hash Length Encoding** - When creating NSEC3 records, the hash must be prefixed with its length as a single byte per RFC 5155 Section 3.2. The `create_nsec3_record()` function in `crates/synvoid-dns/src/dnssec_signing.rs` handles this correctly.
-5. **QNAME Privacy and DNS Padding are deferred (activation rejected)** - `sanitize_qname()` (`dns_settings.rs:244`) and `DnsPadding` (`edns.rs:540`) exist but are not wired into the query path; enabling fails validation (Phase 45).
+5. **QNAME Privacy and DNS Padding are deferred (activation rejected)** - `sanitize_qname()` lives in `crates/synvoid-config/src/dns/dns_settings.rs` (config model, **not** in `synvoid-dns`), and `DnsPadding` is defined in `crates/synvoid-dns/src/edns.rs`. Neither is called from the query path: `DnsConfig::validate()` returns a typed `Unsupported` error for `dns.settings.qname_privacy.enabled` and `dns.settings.padding.enabled` (Phase 45). There is no `dns_settings.rs` in `crates/synvoid-dns/src/`.
 6. **DoQ bind_address is honored and validated (Phase 45)** - `DoqServer::doq_bind_addr()` consumes the config field (IPv6-safe); enabled transports require an explicit parseable bind + non-zero port.
 
 ## DNSSEC Known-Vector Testing (Tightening Follow-up)
 
-`tests/dnssec_known_vectors.rs` (~430 lines) verifies DNSSEC primitives against IETF-known answer values and RFC 4034 §A example data. Coverage:
+`crates/synvoid-dns/tests/dnssec_known_vectors.rs` (~430 lines) verifies DNSSEC primitives against IETF-known answer values and RFC 4034 §A example data. Coverage:
 
 ### Key Tag (RFC 4034 §A.2)
 - Ed25519 KSK (flags=257, algorithm=15) with well-known 32-byte key: tag = 1313
@@ -541,13 +579,14 @@ When zone mutation handlers (NOTIFY, UPDATE, AXFR, IXFR) are `None` in `DnsServe
 ### Config-to-Runtime Fidelity
 - `serve_stale.max_stale_count` wired from config to `DnsCache::with_serve_stale()`
 - `enable_graceful_degradation` wired from `DnsLimitsConfig` to `ConnectionLimits`
-- `default_ttl` confirmed consumed at `server/zone.rs:137` as zone record fallback TTL
+- `default_ttl` confirmed consumed in `server/zone.rs` as the zone-record fallback TTL
 
 ## Security Notes
 
 ### DS Digest Comparison (2026-05-23)
 
-**Location**: `crates/synvoid-dns/src/dnssec_validation.rs:272`
+**Location**: `crates/synvoid-dns/src/dnssec_validation.rs` — the DS digest
+`ct_eq` comparison.
 
 DS digest comparison MUST use constant-time comparison to prevent timing attacks:
 
@@ -561,7 +600,8 @@ Ok(computed == expected_digest)
 Ok(bool::from(computed.ct_eq(expected_digest)))
 ```
 
-This matches the pattern used in `tsig.rs:238` and `cookie.rs:86`.
+This matches the pattern used in `crates/synvoid-dns/src/tsig.rs`
+(MAC verification) and `crates/synvoid-dns/src/cookie.rs`.
 
 ## Milestone 2 Phase 1 Changes
 
@@ -578,7 +618,7 @@ held, graceful drain. DoT shares the lifecycle after TLS handshake.
 ### UDP/EDNS Truncation (`server/response.rs`)
 When a response exceeds the EDNS UDP payload size (512 without EDNS, OPT CLASS field with EDNS, default 1232), the server emits TC=1 with the question section. Clients retry over TCP.
 
-### TCP Hard-Limit SERVFAIL (`server/query.rs:390-479`)
+### TCP Hard-Limit SERVFAIL (`server/query.rs`)
 TCP responses exceeding `max_response_size` produce a protocol-correct SERVFAIL: echoed query ID, question section, RD bit, RA=0, AD=0, RCODE=2. The SERVFAIL is self-validated to fit within the hard limit.
 
 ### Shutdown (`server/startup.rs`)
@@ -603,7 +643,7 @@ cargo test -p synvoid-dns -- response_encoder
 cargo test -p synvoid-dns -- parsed_query
 
 # Authoritative negative response tests (Phase D: NODATA/NXDOMAIN with SOA)
-cargo test --test authoritative_negative
+cargo test -p synvoid-dns --test authoritative_negative
 
 # Query coalescing tests (Phase F: key dimensions, owner/waiter lifecycle, metrics)
 cargo test -p synvoid-dns -- query_coalesce
@@ -651,20 +691,27 @@ cargo test -p synvoid-dns --test encrypted_transport
 cargo test -p synvoid-dns -- dot
 cargo test -p synvoid-dns -- doh
 cargo test -p synvoid-dns -- doq
+```
 
 ### Internal Conformance & External Interop
 ```bash
-# 7 internal conformance suites (in-process, required, part of CI)
+# 6 internal conformance suites (in-process, required, part of CI)
 cargo test -p synvoid-dns --test dns_interop_authoritative
 cargo test -p synvoid-dns --test dns_interop_truncation
 cargo test -p synvoid-dns --test dns_interop_dnssec
 cargo test -p synvoid-dns --test dns_interop_transfers
 cargo test -p synvoid-dns --test dns_interop_update_notify
-cargo test -p synvoid-dns --test dns_interop_encrypted
 cargo test -p synvoid-dns --test dns_interop_recursive
 # Combined runner (internal + optional external tool detection)
 ./scripts/dns/conformance.sh
 ```
+
+There is no `dns_interop_encrypted.rs` — that lane was **removed in Phase
+128** (see the note in `scripts/dns/conformance.sh`). Encrypted-transport
+coverage lives in `crates/synvoid-dns/tests/encrypted_transport.rs`,
+`encrypted_transport_alpn_negotiation.rs`, and
+`encrypted_transport_startup_contract.rs`. Any doc claiming 7 interop suites
+is stale.
 
 ## Milestone 2 Phase 5: Verification & Release Gate
 
@@ -694,7 +741,7 @@ All 8 gate areas verified:
 
 ### Metrics
 
-All DNS metrics use stable names with low-cardinality labels. The `DnsMetrics` struct has 17 production-active `record_*` methods plus 5 watchable metrics emitted directly via `metrics::counter!`/`metrics::gauge!` in production code.
+All DNS metrics use stable names with low-cardinality labels. The `DnsMetrics` struct defines 18 `record_*` methods; **17 have production callers**, and `record_cache_negative_hit` is the one orphan (see below). Five further watchable metrics are emitted directly via `metrics::counter!`/`metrics::gauge!` in production code.
 
 **Production-active wired metrics** (operator-visible):
 - **Query/Response**: `dns_queries_received_total`, `dns_responses_sent_total`, `dns_response_code_total{code}`
@@ -703,13 +750,19 @@ All DNS metrics use stable names with low-cardinality labels. The `DnsMetrics` s
 - **Recursive**: `dns_recursive_queries_total`, `dns_recursive_cache_hits_total`, `dns_recursive_cache_misses_total`, `dns_recursive_upstream_forwards_total`, `dns_recursive_upstream_failures_total`, `dns_bailiwick_violations_total`
 
 **Watchable metrics emitted directly** (operator-visible):
-- `dns_active_tcp_connections` (gauge) — `server/startup.rs`, `limits.rs:251`
-- `dns_recursive_circuit_breaker_opens_total` — `recursive.rs:114`
+- `dns_active_tcp_connections` (gauge) — `server/startup.rs`, `limits.rs`
+- `dns_recursive_circuit_breaker_opens_total` — `recursive.rs`
 - `dns_zone_reload_failures_total` — `server/zone.rs`
-- `dns_encode_failures_total` — `server/response_encoder.rs:40`
-- `dns_dnssec_signing_failures_total` — `server/dnssec_impl.rs:554`
+- `dns_encode_failures_total` — `server/response_encoder.rs`
+- `dns_dnssec_signing_failures_total` — `server/dnssec_impl.rs`
 
-**Deferred / not wired**: `dns_update_accepted`, `dns_update_rejected`, `dns_notify_sent`, `dns_notify_received`, `dns_axfr_accepted`, `dns_axfr_rejected`, `dns_ixfr_accepted`, `dns_ixfr_rejected`, `dns_dnssec_key_rotations_total`, `dns_query_latency`, `dns_transport_queries_total`, `dns_transport_errors_total`, `dns_operation_counts_total`, `dns_cache_negative_hits_total`, `dnssec_queries_total`, `dnssec_signed_responses_total`, `dns_rrl_limited_total`, `dns_malformed_queries_total`, `dns_nxdomain_responses_total`, `dns_queries_blocked`, `dns_queries_validated`, `dns_firewall_queries_allowed_total`, `dns_firewall_rule_matches_total`, `dns_zone_reload_successes_total`, `dns_zones_loaded_total`, `dns_recursive_circuit_breaker_closes_total`, `dns_tcp_connections_total`, `dns_response_latency_seconds`. These are intentionally not registered or are reserved for future features.
+**Deferred / not wired**: `dns_update_accepted`, `dns_update_rejected`, `dns_notify_sent`, `dns_notify_received`, `dns_axfr_accepted`, `dns_axfr_rejected`, `dns_ixfr_accepted`, `dns_ixfr_rejected`, `dns_dnssec_key_rotations_total`, `dns_query_latency`, `dns_transport_queries_total`, `dns_transport_errors_total`, `dns_operation_counts_total`, `dnssec_queries_total`, `dnssec_signed_responses_total`, `dns_rrl_limited_total`, `dns_malformed_queries_total`, `dns_nxdomain_responses_total`, `dns_queries_blocked`, `dns_queries_validated`, `dns_firewall_queries_allowed_total`, `dns_firewall_rule_matches_total`, `dns_zone_reload_successes_total`, `dns_zones_loaded_total`, `dns_recursive_circuit_breaker_closes_total`, `dns_tcp_connections_total`, `dns_response_latency_seconds`. These are intentionally not registered or are reserved for future features.
+
+**Correction — `dns_cache_negative_hits_total` is defined but never fires**:
+`DnsMetrics::record_cache_negative_hit()` in
+`crates/synvoid-dns/src/metrics.rs` emits the counter, but nothing calls the
+method, so the series is always absent in production. The other 17
+`record_*` methods all have production callers.
 
 ### Health
 
@@ -755,7 +808,7 @@ Local reference: `benchmarks/dns/results/2026-07-07-baseline.md` (commit 4a76cc7
 
 ### Scripts
 
-All 5 DNS scripts pass `bash -n`. `scripts/dns/conformance.sh` distinguishes internal in-process interop (7 suites, run in CI) from optional external tool checks (operator-validated, deferred).
+All 5 DNS scripts pass `bash -n`. `scripts/dns/conformance.sh` distinguishes internal in-process interop (6 suites, run in CI) from optional external tool checks (operator-validated, deferred).
 
 ### Deferred Items (Non-Blocking)
 
@@ -791,7 +844,7 @@ cargo bench -p synvoid-dns --bench wire_bench -- --test             # Dry-run
 
 ### Stress and Resource Limit Tests
 
-28 tests in `tests/dns_stress_resource_limits.rs`:
+28 tests in `crates/synvoid-dns/tests/dns_stress_resource_limits.rs`:
 - Query/response/record-count size boundary validation
 - TCP connection and concurrent query limit enforcement with guard drop semantics
 - Graceful degradation activation, deactivation, shutdown flag, load factor
@@ -832,11 +885,11 @@ are design references, not supported runtime capabilities.
 ### Example Configs
 
 5 example configs in `examples/dns/`:
-- `authoritative_only.toml` — Minimal authoritative-only server
-- `local_recursive.toml` — Forwarding resolver for local networks
+- `authoritative_public.toml` — Authoritative serving
+- `recursive_local.toml` — Local recursive/forwarding resolver
 - `dnssec_signed.toml` — DNSSEC-signed zones with key rotation
-- `encrypted_transport.toml` — DoT/DoH/DoQ with TLS certificates
-- `full_mesh.toml` — Mesh-integrated DNS design reference; deferred settings remain rejected
+- `encrypted_dot_doh.toml` — DoT + DoH with TLS certificates
+- `transfer_primary.toml` — AXFR/IXFR primary with TSIG (deferred; activation rejected)
 
 ### Release Gate
 
@@ -845,10 +898,10 @@ are design references, not supported runtime capabilities.
 cargo test -p synvoid-dns --lib           # 607 unit tests
 cargo test -p synvoid-dns                # 781 tests (unit + integration)
 cargo test -p synvoid-dns --release      # Release mode
-./scripts/dns/conformance.sh             # 7 internal conformance suites + optional external interop
+./scripts/dns/conformance.sh             # 6 internal conformance suites + optional external interop
 ```
 
-Results: 781 tests passing, 7 internal conformance suites + optional external interop, all gate areas verified.
+Results: 781 tests passing, 6 internal conformance suites + optional external interop, all gate areas verified.
 
 ### Security Review
 

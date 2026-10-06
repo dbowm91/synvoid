@@ -14,17 +14,24 @@ Never cite those paths; they do not exist.
 
 Key files:
 
-- `crates/synvoid-config/src/lib.rs` — crate root, re-exports
-- `crates/synvoid-config/src/main_config.rs` — `MainConfig` load wiring
-  (calls `mesh_config.load_node_identity()` at load time)
-- `crates/synvoid-config/src/mesh.rs` — mesh config incl.
-  `load_node_identity()`
+- `crates/synvoid-config/src/lib.rs` — crate root, `ConfigManager` + re-exports
+- `crates/synvoid-config/src/main_config.rs` — `MainConfig` struct and load wiring
+- `crates/synvoid-config/src/mesh.rs` — mesh config **model DTO** (`MeshConfig`,
+  `NodeIdentityConfig`, `MeshNodeRole`, `validate()`). It does **not** load
+  identity or key material; that is mesh-owned and happens at composition.
 - `crates/synvoid-config/src/site/` — per-site schema (`proxy.rs`,
   `backend.rs`, `attack_detection.rs`, `listen.rs`, …)
 - `crates/synvoid-config/src/admin.rs` — admin service config
 - `crates/synvoid-config/src/serverless.rs` — `FunctionDefinition`
 - `crates/synvoid-config/src/process.rs` — `unified_server_workers`,
   worker-pool sizing
+
+**Identity/key realization is not a config-load step.**
+`load_node_identity()` / `load_global_node_keys()` are methods on the
+*mesh-owned* `synvoid_mesh::mesh::config::MeshConfig`
+(`crates/synvoid-mesh/src/mesh/config_mesh.rs`), invoked by the root
+composition adapter `realize_mesh_runtime_config()` in
+`src/supervisor/mesh.rs` — never during model deserialization.
 
 Full reference: `architecture/config.md`, `architecture/core_types.md`,
 subsystem rules in `src/config/AGENTS.override.md`.

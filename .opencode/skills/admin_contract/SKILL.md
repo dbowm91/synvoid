@@ -53,11 +53,18 @@ Gate new feature-dependent routes behind the matching capability flag.
 ## Stale paths (must stay absent)
 
 `/system/master`, `/system/overseer`, `/config/overseer`, singular worker
-restart, `/api/logs/realtime`. The composition suite fails if any return.
+restart (`/api/system/worker/{id}/restart`), `/api/logs/realtime`.
+`tests/admin_route_contract.rs` enforces these — `ABSENT_ROUTES` plus the
+dedicated `*_absent` tests — so the **route contract** suite, not the
+composition suite, is what fails if any of them return.
 
 ## Ownership note
 
-Root `src/admin/` is `keep_app_root` Axum transport/composition; DTOs and
-shared logic live canonically in `crates/synvoid-admin/src/`
-(`src/admin/handlers/{logs,probes,stats,system}.rs`, `common.rs` DTOs,
-`auth.rs`, `rate_limit.rs` are facades + transport helpers).
+Root `src/admin/` is `keep_app_root` Axum transport/composition. DTOs and
+shared logic live canonically in `crates/synvoid-admin/` — `logs.rs`,
+`probes.rs`, `stats.rs`, `system.rs`, `common.rs` (DTOs), `state.rs`
+(`AdminStateProvider`), `auth.rs`, `rate_limit.rs`, `schema.rs`. Those files
+do **not** exist under `src/admin/handlers/`; root `src/admin/auth.rs` and
+`src/admin/rate_limit.rs` are re-export facades and
+`src/admin/handlers/common.rs` keeps only `require_role`, `config_path`,
+`write_config_file_secure`.

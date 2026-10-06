@@ -108,6 +108,9 @@ payload_retention = "truncated"  # 256 bytes + SHA-256
 
 ## Testing
 ```bash
-cargo test -p synvoid-honeypot --all-targets
+cargo nextest run -p synvoid-honeypot --cargo-profile ci --profile ci
 ```
-182 tests covering responders, protocol detection, AI budget, storage, and threat intel extraction.
+~220 `#[test]`/`#[tokio::test]` functions covering responders, protocol detection,
+AI budget, storage, and threat intel extraction. There is no `tests/` directory —
+all tests are in-crate (`src/**` plus the `ai_responder_containment_tests`,
+`config_tests`, `listener_tests`, and `storage_writer_tests` modules).

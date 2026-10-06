@@ -30,9 +30,14 @@ there, reusable aggregation in the crate).
   lock on the request path for a metric increment.
 - **Bounded summaries**: latency samples are fixed-size (`LATENCY_SAMPLE_SIZE`);
   p50/p95/p99 computed on sorted snapshot, never on unbounded Vec growth.
-- **`synvoid.` prefix**: metric names in code use the `synvoid.<area>.<name>`
-  shape (e.g. `synvoid.http.streaming_body_blocked`, `synvoid.waf.rule_update_success`).
-  Keep new names in the same hierarchy; check `collection.rs` for collisions.
+- **`synvoid.` prefix is the convention for newer metrics, not a universal one.**
+  `metrics::counter!` / `gauge!` names use the `synvoid.<area>.<name>` dotted
+  shape for current work (e.g. `synvoid.http.streaming_body_blocked`,
+  `synvoid.supervisor.tasks_failed_total`, `synvoid.flood.connection_limited`),
+  but a large set of older subsystem metrics is un-prefixed and underscore-shaped
+  (e.g. `dns_cache_hits_total`, `dns_firewall_queries_blocked_total`). Match the
+  surrounding subsystem's existing names rather than renaming across the divide;
+  there is no bulk migration and no guard enforcing the prefix.
 - **Diagnostics ≠ enforcement**: metrics observe; never gate a block/allow
   decision on a metric value (see `architecture/distributed_state_contract.md`).
 

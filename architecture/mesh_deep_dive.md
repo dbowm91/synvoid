@@ -29,7 +29,7 @@ Peer and service discovery are handled via a Kademlia-based **Distributed Hash T
 - **Signed/Raft-Attested Records**: DHT distributes signed or Raft-attested records. DHT does not decide trust, ownership, revocation, or global policy — it is a transport layer for record distribution.
 - **Capability Attestations:** Nodes sign and publish their capabilities (e.g., "I can proxy example.com") to the DHT. These records are soft-state: advisory and TTL-bound.
 - **Authority-Adjacent Records**: Records in sensitive namespaces (org keys, verified upstreams) require a signed Raft attestation or quorum proof for acceptance.
-- **Hierarchical Routing:** [RESERVED/PLANNED] Future multi-region topology feature using Bloom filters and regional hubs for memory-efficient route announcement checking. Not yet active. See [`hierarchical_routing.rs`](crates/synvoid-mesh/src/mesh/hierarchical_routing.rs) for implementation details.
+- **Hierarchical Routing:** [RESERVED/PLANNED] Future multi-region topology feature using Bloom filters and regional hubs for memory-efficient route announcement checking. Not yet active. See [`hierarchical_routing.rs`](../crates/synvoid-mesh/src/mesh/hierarchical_routing.rs) for implementation details.
 
 ### 4. Raft Consensus
 Global nodes use Raft consensus (`crates/synvoid-mesh/src/mesh/raft/*.rs`, openraft) for **canonical global authority**:
@@ -82,7 +82,7 @@ MeshProxy is the critical routing component that coordinates mesh traffic betwee
 
 - **Peer Authentication:** Mesh TLS supports `strict`, `tofu`, and `permissive` modes. Strict mode requires CA-backed validation, TOFU can pin first-seen fingerprints, and permissive mode accepts peers without CA validation. Transport also enforces node-ID binding for DHT sync and anti-entropy traffic.
 - **Audit Logs:** The mesh includes a distributed auditing system (`crates/synvoid-mesh/src/mesh/audit.rs`) to track network events and detect malicious or misconfigured peers.
-- **Access Control:** Fine-grained policies control which nodes can proxy which services (see [`CapabilityAccessVerifier`](crates/synvoid-mesh/src/mesh/dht/capability_access.rs:8) in `crates/synvoid-mesh/src/mesh/dht/capability_access.rs`).
+- **Access Control:** Fine-grained policies control which nodes can proxy which services (see [`CapabilityAccessVerifier`](../crates/synvoid-mesh/src/mesh/dht/capability_access.rs) in `crates/synvoid-mesh/src/mesh/dht/capability_access.rs`).
 
 ### Current DHT Verification Split
 

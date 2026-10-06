@@ -52,7 +52,9 @@ Use this skill when:
    before task construction (`architecture/config_feature_contract.md`);
    map stray `RestartMesh` decisions to `MeshRestartExhausted`.
 5. Request dispatch must not import worker lifecycle modules or `UnifiedServerWorkerState`
-   (guard: `tests/http_request_pipeline_boundary_guard.rs`).
+   (guard: `tests/boundary_composition_guard.rs` — it consolidated the former
+   standalone `tests/http_request_pipeline_boundary_guard.rs`, whose name now
+   survives only in that guard's file-header comment).
 
 ## Verification
 

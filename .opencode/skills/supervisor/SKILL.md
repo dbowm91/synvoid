@@ -11,7 +11,8 @@ SynVoid runs as Supervisor (control plane) → UnifiedServerWorker (data plane) 
 (offload). The Supervisor is NOT process-per-tenant. Full reference:
 `architecture/supervisor.md`, `architecture/supervisor_lifecycle.md`,
 `architecture/process_lifecycle.md`, `architecture/ipc_process.md`.
-Subsystem rules: `src/supervisor/AGENTS.override.md`.
+There is no `src/supervisor/AGENTS.override.md`; the root `AGENTS.md`
+"Architecture Facts" supervisor section is the subsystem rule set.
 
 ## When to Use
 

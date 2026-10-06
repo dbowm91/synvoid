@@ -28,19 +28,33 @@ The tunnel crate provides encrypted transport abstractions for connecting to ups
 ## Architecture
 
 ### Transport Abstraction
+`crates/synvoid-tunnel/src/lib.rs`:
 ```rust
 #[async_trait]
 pub trait TunnelTransport: Send + Sync {
-    async fn start(&self) -> Result<()>;
-    async fn stop(&self) -> Result<()>;
+    fn tunnel_type(&self) -> TunnelType;
+
+    async fn start(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
+
+    async fn stop(&mut self);
+
     fn is_running(&self) -> bool;
+
     fn stats(&self) -> TunnelStats;
-    fn local_address(&self) -> Option<String>;
+
+    fn local_address(&self) -> Option<std::net::SocketAddr>;
+
     fn peer_count(&self) -> usize;
+
     fn peers(&self) -> Vec<PeerInfo>;
-    async fn shutdown(&self) -> Result<()>;
+
+    fn shutdown(&self);
 }
 ```
+Note the signatures that differ from an intuitive reading: `start`/`stop`
+take `&mut self`, `stop` returns `()` (not a `Result`), `shutdown` is
+**synchronous** and returns `()`, and `local_address` yields a
+`SocketAddr` (not a `String`).
 
 ### Session Management
 ```
@@ -62,27 +76,46 @@ Outgoing connection → TunnelRouter
 ```
 
 ## Critical Invariants
-- `TunnelTransport` is `async_trait` — all operations are async
+- `TunnelTransport` is `#[async_trait]` — its `async fn`s are async, but
+  `shutdown()` is a plain sync method
 - Session state uses `Arc<RwLock<HashMap>>` for concurrent access
 - `broadcast::channel` used for shutdown signaling
 - QUIC and WireGuard are separate, independent transports
-- `detect_available_implementation()` checks WireGuard availability at runtime
+- `detect_available_implementation()` (in `crates/synvoid-tunnel/src/wireguard/mod.rs`)
+  is **async** and checks WireGuard availability at runtime
 
 ## Configuration
+Schema: `crates/synvoid-config/src/tunnel.rs`. There is **no `[tunnel.wireguard]`
+section** — WireGuard config lives under `[tunnel.vpn]`, and `[tunnel.quic]` has
+no `endpoint`/`max_connections` field.
+
 ```toml
 [tunnel]
 enabled = false
 
 [tunnel.quic]
-endpoint = "0.0.0.0:51820"
-max_connections = 256
+enabled = false
+bind_address = "0.0.0.0"       # default_quic_bind()
+port = 51821                  # default_quic_port()
+max_idle_timeout_secs = 300   # default_quic_max_idle()
+keepalive_interval_secs = 25  # default_quic_keepalive()
+cert_path = "..."             # optional
+# plus [tunnel.quic.server] / [tunnel.quic.client]
 
-[tunnel.wireguard]
-interface = "wg0"
-private_key = "..."
+[tunnel.vpn]                  # WireGuard
+enabled = false
+bind_address = "0.0.0.0"      # default_wg_bind()
+port = 51820                  # default_wg_port()
+interface = "wg0"             # default_wg_interface()
+private_key = "..."           # Option<String>
+addresses = ["10.0.0.2/32"]
+persistent_keepalive = 0      # #[serde(default)] — only per-peer default is 25
+# plus [[tunnel.vpn.peers]] (each with endpoint, persistent_keepalive, enabled)
 ```
+Under `--features mesh` there is additionally `[tunnel.mesh]`, which reduced-feature
+binaries reject fail-closed (Phase 41).
 
 ## Testing
 ```bash
-cargo test -p synvoid-tunnel --all-targets
+cargo nextest run -p synvoid-tunnel --cargo-profile ci --profile ci
 ```

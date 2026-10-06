@@ -19,11 +19,13 @@ even when inert (`enabled = false`) — Phase 41 fail-closed config.
   vocabulary (Phase 85 single semantic owner; DTOs convert to it, never JSON)
 - `crates/synvoid-icmp-filter/src/compat.rs` - crate-DTO typed adapter
 - `crates/synvoid-icmp-filter/src/validation.rs` - RFC 4890/8201 findings
-- `crates/synvoid-icmp-filter/src/traits.rs` - `IcmpFilter`, `FilterBackend`,
+- `crates/synvoid-icmp-filter/src/traits.rs` - `IcmpFilter`, `IcmpFilterFactory`,
   static `BackendCapabilities`, `check_policy_compatibility`
+  (there is no `FilterBackend` trait)
 - `crates/synvoid-icmp-filter/src/config.rs` - `IcmpFilterConfig`
   serialization DTO (not the semantic owner)
 - `crates/synvoid-icmp-filter/src/nftables.rs` - Linux nftables baseline
+  (batched writes live in `crates/synvoid-icmp-filter/src/nft_batch.rs`)
 - `crates/synvoid-icmp-filter/src/ebpf.rs` - Linux eBPF (`icmp-ebpf`)
 - `crates/synvoid-icmp-filter/src/pf.rs` - macOS pf (`icmp-pf`)
 - `crates/synvoid-icmp-filter/src/pf_bsd.rs` - FreeBSD/OpenBSD pf

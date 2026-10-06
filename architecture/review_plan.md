@@ -9,7 +9,11 @@
 
 All 14 review modules have been completed, verified against source code, and consolidated into a single plan file.
 
-**Consolidated plan**: [`plans/plan.md`](../plans/plan.md) — 183 actionable items organized into execution waves.
+**Consolidated plan**: `plans/plan.md` — 183 actionable items organized into
+execution waves. That file consolidated the per-module plans and has since been
+removed from the repository (see "Original plan files removed" below), so the
+link is intentionally not live. The review procedure itself is preserved in this
+document.
 
 ### Completion Summary
 

@@ -22,7 +22,9 @@ This skill documents the security patterns implemented for the SynVoid codebase.
 
 ### Trusted Signer Default Deny (P0.3)
 
-**Location**: `crates/synvoid-mesh/src/mesh/threat_intel.rs:1628-1656`
+**Location**: `crates/synvoid-mesh/src/mesh/threat_intel.rs` (threat message
+handler; locate the "No trusted signers configured - rejecting threat from
+non-global node" branch)
 
 **Issue**: When `trusted_signers` is empty, condition `!self.node_role.is_global() && !self.config.trusted_signers.is_empty()` short-circuits and ALL non-global nodes bypass the check. Any non-global node can send forged threats.
 
@@ -43,7 +45,8 @@ if !self.node_role.is_global() {
 
 ### Time-Based Challenge Verification (P0.5)
 
-**Location**: `crates/synvoid-mesh/src/mesh/security_challenge.rs:159-218`
+**Location**: `crates/synvoid-mesh/src/mesh/security_challenge.rs`
+(`verify_time_based_challenge`)
 
 **Issue**: Previously, `verify_time_based_challenge()` took `_solution: &str` (unused) and only checked challenge existence and expiry. Any string was accepted.
 
@@ -68,7 +71,8 @@ if solution != expected_solution {
 
 ### Pass-Over Fallback Signing (P0.6)
 
-**Location**: `crates/synvoid-mesh/src/mesh/passover_key_exchange.rs:505-515`
+**Location**: `crates/synvoid-mesh/src/mesh/passover_key_exchange.rs`
+(origin-signing-key fallback path)
 
 **Issue**: When origin is unreachable, fallback path used `origin_signing_key` to sign. A global node with `origin_signing_key` would produce messages appearing signed by an origin node.
 
@@ -88,7 +92,7 @@ let pending_signature = if self.config.role.is_global() {
 
 ### RecordStoreManager Clone (P0.7)
 
-**Location**: `crates/synvoid-mesh/src/mesh/dht/record_store.rs:468-519`
+**Location**: `crates/synvoid-mesh/src/mesh/dht/record_store.rs` (`impl Clone for RecordStoreManager`)
 
 **Issue**: Clone impl used `records: ShardedRecordStore::new()` instead of cloning from `self.records`. Cloned managers had zero records.
 
@@ -219,7 +223,8 @@ deny ignore the scanner cannot associate with a renamed package. Guard:
 
 ### Path Traversal Prevention in Template Loading
 
-**Location**: `crates/synvoid-static-files/src/directory.rs:30-74`
+**Location**: `crates/synvoid-static-files/src/directory.rs`
+(`load_directory_template`)
 
 **Fix**: Ensure template paths can't escape allowed directories:
 
@@ -309,7 +314,9 @@ if !matches!(bits, 2048 | 4096) {
 
 ### ML-KEM/ML-DSA Key Pair Derivation from Loaded Secrets
 
-**Location**: `crates/synvoid-mesh/src/mesh/config_identity.rs:49-84`, `pqc/src/keys.rs`, `pqc/src/dsa.rs`
+**Location**: `crates/synvoid-mesh/src/mesh/config_identity.rs` (ML-KEM/ML-DSA key
+derivation on load), `pqc/src/keys.rs` (`SecretKey::public_key`),
+`pqc/src/dsa.rs` (`SigningKey::verifying_key`)
 
 **Issue**: When loading ML-KEM-768 or ML-DSA private keys from base64 configuration, the code was discarding the loaded key and generating a new random keypair instead.
 
@@ -337,7 +344,7 @@ self.ml_dsa_public_key_base64 = Some(vk.to_base64());
 
 ### Threat Intel DHT Sync Signature Requirement
 
-**Location**: `crates/synvoid-mesh/src/mesh/threat_intel.rs:1233-1242`
+**Location**: `crates/synvoid-mesh/src/mesh/threat_intel.rs` (`sync_from_dht`)
 
 **Issue**: `sync_from_dht()` accepted records without signatures, allowing unsigned threats to be accepted.
 
@@ -359,7 +366,7 @@ if !signature.is_empty() && !signer_pk.is_empty() {
 
 ### Threat Intel Publish Signature Requirement
 
-**Location**: `crates/synvoid-mesh/src/mesh/threat_intel.rs:650-654`
+**Location**: `crates/synvoid-mesh/src/mesh/threat_intel.rs` (`publish_indicator_to_dht`)
 
 **Issue**: When a node had no signer configured, `publish_indicator_to_dht()` would publish with empty signature.
 
@@ -376,7 +383,7 @@ if self.signer.is_none() {
 
 ### Edge Node PoW Revocation Check Order
 
-**Location**: `crates/synvoid-mesh/src/mesh/peer_auth.rs:120-150`
+**Location**: `crates/synvoid-mesh/src/mesh/peer_auth.rs` (`validate_edge_node`)
 
 **Issue**: Edge nodes could bypass PoW requirement by not providing credentials.
 
@@ -418,7 +425,7 @@ fn validate_edge_node(...) -> Result<(), String> {
 
 ### DnsRecord Privilege Classification
 
-**Location**: `crates/synvoid-mesh/src/mesh/dht/keys.rs:496`
+**Location**: `crates/synvoid-mesh/src/mesh/dht/keys.rs` (`DhtKey::is_privileged`)
 
 **Issue**: `DnsZone` was privileged but `DnsRecord` was not, allowing edge nodes to store individual DNS records without proper authorization.
 
@@ -426,20 +433,27 @@ fn validate_edge_node(...) -> Result<(), String> {
 
 ```rust
 pub fn is_privileged(&self) -> bool {
-    matches!(
-        self,
-        DhtKey::Organization(_)
-            | DhtKey::TierKey(_, _)
-            | DhtKey::MemberCertificate(_, _)
-            | DhtKey::GlobalNodeList
-            | DhtKey::OrgNameReservation(_)
-            | DhtKey::DnsZone(_)
-            | DhtKey::DnsRecord(_, _)  // Added
-            | DhtKey::DnsDomainRegistration(_)
-            | DhtKey::AnycastNode(_)
-    )
+    match self {
+        DhtKey::SiteScoped { inner_key, .. } => DhtKey::from_str(inner_key).is_privileged(),
+        _ => matches!(
+            self,
+            DhtKey::Organization(_)
+                | DhtKey::OrgPublicKey(_)           // added since the original fix
+                | DhtKey::TierKey(_, _)
+                | DhtKey::MemberCertificate(_, _)
+                | DhtKey::GlobalNodeList
+                | DhtKey::OrgNameReservation(_)
+                | DhtKey::DnsZone(_)
+                | DhtKey::DnsRecord(_, _)  // Added by the fix
+                | DhtKey::DnsDomainRegistration(_)
+                | DhtKey::AnycastNode(_)
+        ),
+    }
 }
 ```
+
+`SiteScoped` keys inherit the privilege of the wrapped inner key — a site-scoped
+`DnsRecord` is therefore privileged too.
 
 ---
 
@@ -449,7 +463,7 @@ pub fn is_privileged(&self) -> bool {
 
 ### CSRF Token Validation
 
-**Location**: `crates/synvoid-auth/src/lib.rs:validate_csrf_token()`, `src/admin/state.rs:validate_csrf()`
+**Location**: `crates/synvoid-auth/src/lib.rs` (`AuthManager::validate_csrf_token`), `src/admin/state.rs` (`AdminState::validate_csrf`)
 
 **Issue**: Timing attacks on CSRF token comparison using `==` operator.
 
@@ -576,24 +590,38 @@ pub fn generate_global_node_auth(
 
 ```rust
 // IpcSigner for creating signed connections
-pub struct IpcSigner {
-    key: Arc<[u8; 32]>,
-}
+pub struct IpcSigner { /* secret key */ }
 
 impl IpcSigner {
     pub fn new(key: &[u8; 32]) -> Self { ... }
-    pub fn sign(&self, message: &[u8]) -> Vec<u8> { ... }
-    pub fn verify(&self, message: &[u8], signature: &[u8]) -> bool { ... }
+    // HMAC-SHA3-256; returns a fixed-size MAC, not a Vec
+    pub fn sign(&self, data: &[u8]) -> [u8; HMAC_SIZE] { ... }
+    pub fn verify(&self, data: &[u8], expected_hmac: &[u8; HMAC_SIZE]) -> bool { ... }
+    pub fn sign_parts(&self, parts: &[&[u8]]) -> [u8; HMAC_SIZE] { ... }
+    pub fn verify_parts(&self, parts: &[&[u8]], expected_hmac: &[u8; HMAC_SIZE]) -> bool { ... }
+    // Reads SYNVOID_IPC_KEY_FILE (unlinked after read) or SYNVOID_IPC_KEY
+    pub fn try_from_env() -> Option<Self> { ... }
 }
 
-// Connect with signer
-let stream = IpcStream::connect_with_signer(path, signer).await?;
+// Connect with signer (async transport)
+let stream = IpcEndpoint::connect_with_signer(path, Arc::new(signer)).await?;
 
-// Send signed message
-stream.send_signed(&msg, &signer).await?;
+// Blocking form lives on IpcStream
+let stream = IpcStream::connect_with_signer(path, Arc::new(signer))?;
+
+// Send / receive signed messages (signer is bound to the stream, not passed per call)
+stream.send_signed(&msg)?;
+let msg = stream.try_recv_signed()?;
 ```
 
-**Backwards compatibility**: If no key is available, falls back to unsigned.
+**Backwards compatibility — signed stream, unsigned fallback**: `send_signed` /
+`try_recv_signed` write/read plaintext when the stream was created **without** a
+signer, and `connect_to_supervisor(path)` is explicitly marked `DEPRECATED`
+("Unsigned connections must not be used for privileged operations (Stop,
+ReloadConfig, threat data exchange)"). `src/worker/connect.rs` and
+`src/worker/common.rs` still call that unsigned constructor, so the signing
+capability is available but **not** the universal worker path — treat
+"all supervisor IPC is HMAC-signed" as aspirational, not current behavior.
 
 ---
 
@@ -627,25 +655,30 @@ fs::rename(&temp_path, &path)?;
 
 ### Nonce Cache Size Limit
 
-**Location**: `crates/synvoid-ipc/src/ipc_signed.rs`
+**Location**: `crates/synvoid-ipc/src/ipc_signed.rs` (`check_and_insert_nonce`)
 
-**Issue**: Unbounded LRU cache could grow indefinitely.
+**Issue**: Unbounded replay-nonce cache could grow indefinitely (a memory-exhaustion
+/ nonce-space-exhaustion vector).
 
-**Pattern**:
+**Pattern** — a sharded `DashMap` keyed by `(signer_id, [u8; 16])`, with three
+independent bound mechanisms, all under `NONCE_CACHE_CAPACITY_LOCK`:
 ```rust
+type CacheKey = (u64, [u8; 16]);
+type ShardedNonceCache = DashMap<CacheKey, u64>;
+
+static NONCE_CACHE: LazyLock<ShardedNonceCache> = LazyLock::new(ShardedNonceCache::new);
 const MAX_NONCE_CACHE_SIZE: usize = 10000;
+const REPLAY_WINDOW_SECS: u64 = 60;
 
-static NONCE_CACHE: LazyLock<RwLock<LruCache<String, Instant>>> = ...
-
-fn evict_oldest() {
-    let mut cache = NONCE_CACHE.write();
-    while cache.len() > MAX_NONCE_CACHE_SIZE {
-        if let Some(_oldest) = cache.pop_oldest() {
-            // Evict until under limit
-        }
-    }
-}
+// 1. Periodic retain (every RETAIN_INTERVAL messages) drops entries older than
+//    the replay window.
+// 2. On reaching MAX_NONCE_CACHE_SIZE, retain() expired entries first; if still
+//    full, evict a single entry and warn.
+// 3. If the cache is empty after that, the nonce is REJECTED (fail closed),
+//    not admitted.
 ```
+Note the eviction is "evict one, then proceed" — a full cache does not reject,
+so the cache is a space bound, not an admission gate.
 
 ---
 
@@ -657,14 +690,17 @@ fn evict_oldest() {
 
 **Issue**: Multiple threat types for same IP overwrote each other (key was just IP).
 
-**Fix**: Use composite keys `"{threat_type}:{ip}"`:
+**Fix**: Use composite keys via the private helper `make_indicator_key(ip,
+threat_type)`. The actual format string is:
 
 | Key Pattern | Purpose |
 |-------------|---------|
-| `IpBlock:{ip}` | IP blocking indicator |
-| `{threat_type}:{ip}` | Specific threat type |
-| `RateLimitViolation:{ip}` | Rate limit exceeders |
-| `SuspiciousActivity:{ip}` | Suspicious behavior |
+| `threat_indicator:{ip}:{threat_type}` | One record per (IP, threat type) pair |
+
+So the discriminator is the **type suffix**, not a per-threat-type key prefix —
+e.g. `threat_indicator:192.168.1.1:IpBlock`. A single IP blocked for `IpBlock`
+and for `RateLimitViolation` occupies two distinct DHT records, so neither
+overwrites the other.
 
 ---
 
@@ -793,7 +829,7 @@ fn attest_capability(node_id: &str, capability: &str) {
 
 ### SSRF Allowlist Bypass Prevention (S2.6)
 
-**Location**: `crates/synvoid-waf/src/attack_detection/ssrf.rs:267-294`
+**Location**: `crates/synvoid-waf/src/attack_detection/ssrf.rs` (`has_word_boundary`)
 
 **Pattern**: Word boundary checks instead of substring matching:
 ```rust
@@ -903,7 +939,8 @@ return Cow::Owned(result.nfkc().collect());
 
 ### Revocation Check for Edge/Origin (M1.3)
 
-**Location**: `crates/synvoid-mesh/src/mesh/peer_auth.rs:116-132, 223-240`
+**Location**: `crates/synvoid-mesh/src/mesh/peer_auth.rs` (`validate_edge_node`,
+`validate_origin_node`)
 
 **Pattern**: Revocation checks in all node validation paths:
 ```rust
@@ -921,43 +958,30 @@ fn validate_edge_node(..., revoked_nodes: Option<&GlobalNodeRevocationList>) -> 
 
 ### DHT Churn Handling (M2.1)
 
-**Location**: `crates/synvoid-mesh/src/mesh/dht/routing/manager.rs:483-557`
+**Location**: `crates/synvoid-mesh/src/mesh/dht/routing/manager.rs`
+(`ping_peers`, driven by the routing table's periodic self-ping at line ~281)
 
-**Pattern**: Background ping loop for peer health:
-```rust
-async fn ping_peers_loop(&self, transport: Arc<dyn PingTransport>) {
-    loop {
-        tokio::time::sleep(Duration::from_secs(60)).await;
-        let peers = self.get_peers_to_ping();
-        for peer in peers {
-            transport.send_ping(&peer.node_id, request_id.clone(), local_id.clone()).await;
-        }
-    }
-}
-```
+**Pattern**: periodic peer-health ping sweep that iterates the routing table
+and sends `send_ping` for each peer, invoked from the routing maintenance loop
+rather than a dedicated free function.
 
 ---
 
 ### Bucket Refresh (M2.2)
 
-**Location**: `crates/synvoid-mesh/src/mesh/dht/routing/manager.rs:455-492`
+**Location**: `crates/synvoid-mesh/src/mesh/dht/routing/manager.rs`
+(`refresh_sparse_buckets`)
 
-**Pattern**: Periodic refresh of sparse buckets:
-```rust
-fn refresh_sparse_buckets(&self) {
-    let sparse = self.routing_table.get_sparse_bucket_indices(k);
-    for bucket_idx in sparse {
-        let target = NodeId::generate_random_in_bucket(bucket_idx, &self.local_node_id);
-        self.iterative_find_node(&target);
-    }
-}
-```
+**Pattern**: `refresh_sparse_buckets()` is an `async fn` on the routing manager:
+for each sparse bucket it generates a random target node id in that bucket and
+runs `iterative_find_node` against it.
 
 ---
 
 ### Revocation Bypass Edge/Origin
 
-**Location**: `crates/synvoid-mesh/src/mesh/peer_auth.rs:116-132,223-240`
+**Location**: `crates/synvoid-mesh/src/mesh/peer_auth.rs` (`validate_edge_node`,
+`validate_origin_node`)
 
 **Pattern**: Revocation checks added to edge/origin validation.
 
@@ -1256,7 +1280,8 @@ expected_server.ct_eq(server_cookie).into()
 
 ### Origin Attestation with Empty Authorized List
 
-**Location**: `crates/synvoid-mesh/src/mesh/peer_auth.rs:281-300`
+**Location**: `crates/synvoid-mesh/src/mesh/peer_auth.rs`
+(`validate_origin_node`, the `authorized_global_pubkeys.is_empty()` guard)
 
 **Issue**: When `authorized_global_pubkeys` is empty, origin attestation was bypassed entirely.
 
@@ -1278,7 +1303,8 @@ if !authorized_global_pubkeys.iter().any(|k| k == attestation_key) {
 
 ### DHT Snapshot Request Rate Limiting
 
-**Location**: `crates/synvoid-mesh/src/mesh/transport_dht.rs:6-77`
+**Location**: `crates/synvoid-mesh/src/mesh/transport_dht.rs` (snapshot request
+handler; constants live in `crates/synvoid-mesh/src/mesh/transport.rs`)
 
 **Issue**: `DhtSnapshotRequest` had no rate limiting or authentication - DoS vector.
 
@@ -1314,7 +1340,8 @@ if !signature.is_empty() && !signer_public_key.is_empty() {
 
 ### Slashing Quorum Scalability
 
-**Location**: `crates/synvoid-mesh/src/mesh/dht/stake.rs:425-447`
+**Location**: `crates/synvoid-mesh/src/mesh/dht/stake.rs`
+(`process_global_slash_vote` / global-node-count helper)
 
 **Issue**: Slashing required exactly 3 global node votes - impossible with 1-2 global nodes.
 
@@ -1395,7 +1422,7 @@ const CONNECTION_TRACKER_SLOTS: usize = 262144;
 
 ### Revocation List Passed in Discovery
 
-**Location**: `crates/synvoid-mesh/src/mesh/discovery.rs:439`
+**Location**: `crates/synvoid-mesh/src/mesh/discovery.rs` (`MeshDiscovery::handle_hello`)
 
 **Issue**: Global node, Edge, and Origin revocation was bypassed - revocation list always `None`.
 
@@ -1426,7 +1453,7 @@ validate_peer_role(
 
 ### SSRF Subdomain Spoofing Detection
 
-**Location**: `crates/synvoid-waf/src/attack_detection/ssrf.rs:267-294`
+**Location**: `crates/synvoid-waf/src/attack_detection/ssrf.rs` (`has_word_boundary`)
 
 **Issue**: Only checked exact `.localhost` and `.local` - bypassable via subdomain.
 
@@ -1457,7 +1484,8 @@ fn matches_localhost_lookalike(input: &str) -> bool {
 
 ### Genesis Key Default Deny
 
-**Location**: `crates/synvoid-mesh/src/mesh/config_identity.rs:238-245`
+**Location**: `crates/synvoid-mesh/src/mesh/config_identity.rs`
+(`is_genesis_key_authorized`)
 
 **Current behavior**: Empty `authorized_genesis_keys` denies all remote immutable records (secure default). Implemented 2026-05-26.
 
@@ -1501,7 +1529,7 @@ if current >= limit {
 
 ### Revocation List Propagation in Discovery
 
-**Location**: `crates/synvoid-mesh/src/mesh/discovery.rs:439`
+**Location**: `crates/synvoid-mesh/src/mesh/discovery.rs` (`MeshDiscovery::handle_hello`)
 
 **Issue**: `handle_hello` passed `None` for revocation list.
 
@@ -1573,7 +1601,8 @@ TrustAnchorState::Missing => {
 
 ### CSPRNG for Signing Key Generation
 
-**Location**: `crates/synvoid-mesh/src/mesh/config_identity.rs:343-345`
+**Location**: `crates/synvoid-mesh/src/mesh/config_identity.rs` (signing-key
+generation using `rand::rngs::OsRng`)
 
 **Issue**: Used `rand::rng().fill_bytes()` (SmallRng) instead of OS CSPRNG.
 
@@ -1781,4 +1810,3 @@ Added tests validating header sanitization security:
    - Ensures protocol cannot be spoofed by client
 
 These tests ensure proxy security defaults are enforced and prevent regression.
-```

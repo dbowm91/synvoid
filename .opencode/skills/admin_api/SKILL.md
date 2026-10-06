@@ -173,11 +173,15 @@ The Supervisor manages worker lifecycle and exposes status via the Admin API. Us
 
 ## DefaultsConfig Sub-configs
 
-All 24 DefaultsConfig sub-configs now have GET/PUT handlers at `/config/defaults/{subconfig}`:
+`DefaultsConfig` (`crates/synvoid-config/src/defaults.rs`) has **24**
+sub-config fields. **16** of them are served at
+`/config/defaults/{subconfig}` in `config_routes()`
+(`src/admin/routes.rs`):
 
 | Endpoint | Config Field |
 |---------|-------------|
 | `/config/defaults/honeypot` | `defaults.honeypot` |
+| `/config/defaults/honeypot-probe` | `defaults.honeypot_probe` |
 | `/config/defaults/blocked` | `defaults.blocked` |
 | `/config/defaults/suspicious-words` | `defaults.suspicious_words` |
 | `/config/defaults/upstream-errors` | `defaults.upstream_errors` |
@@ -193,7 +197,13 @@ All 24 DefaultsConfig sub-configs now have GET/PUT handlers at `/config/defaults
 | `/config/defaults/traffic-shaping` | `defaults.traffic_shaping` |
 | `/config/defaults/asn-scraping` | `defaults.asn_scraping` |
 
-Also covered: ratelimit, bot, tcp, udp, theme (pre-existing handlers)
+The remaining sub-configs are **not** under `/config/defaults/`; they keep
+their own paths in `src/admin/routes.rs`: `defaults.bot` →
+`/config/bot-detection`, `defaults.ratelimit` → `/config/rate-limits`,
+`defaults.tcp` + `defaults.udp` → the single `/config/tcp-udp-defaults`,
+`defaults.theme` → the `/theme`, `/theme/css`, `/theme/presets` family inside
+`system_process_routes()`. Do not invent a `/config/defaults/{name}` route for
+these — the naming is not uniform.
 
 ## Manual ToSchema Implementation
 
@@ -315,7 +325,23 @@ The Admin API uses a **hybrid authentication model** with two distinct client cl
 
 ### Auth Lockout
 
-After 5 failed auth attempts within 60 seconds, the client is locked out for 5 minutes. Lockout is enforced BEFORE bcrypt verification to prevent DoS attacks. Lockout state is keyed to the resolved client IP.
+After 5 failed auth attempts within 60 seconds, the client is locked out for
+5 minutes (`MAX_AUTH_ATTEMPTS`, `AUTH_WINDOW_DURATION`,
+`AUTH_LOCKOUT_DURATION` in `crates/synvoid-admin/src/auth.rs`). Lockout state
+is keyed to the resolved client IP. `AuthRateLimiter::is_locked()` is a cheap
+in-memory pre-check, so a locked client is rejected before any bcrypt work is
+scheduled.
+
+### Auth CPU Isolation (Phase 43)
+
+bcrypt never runs on a Tokio core thread. `verify_admin_token_async` /
+`verify_dummy_admin_token_async` (`crates/synvoid-admin/src/auth.rs`) run it
+behind a bounded semaphore (`ADMIN_CRYPTO_CONCURRENCY = 4`) plus
+`spawn_blocking`, and pad to `ADMIN_MIN_DELAY = 200ms` so missing and present
+tokens cost the same — exactly one verify, never a dummy *and* a real one.
+Semaphore acquisition times out after 2s and **fails closed**. Use the async
+verifiers on every new auth surface; the sync `verify_admin_token` exists only
+for tests/tools.
 
 ### Client IP Extraction
 
@@ -358,37 +384,70 @@ Audit logs are persisted to `audit.log` file in JSON Lines format (`.0600` permi
 
 ### High-Impact Handler Audit Checklist
 
-Mutating operations in these handlers include audit logging:
+Mutating operations in these handlers include audit logging (all call
+`state.audit.log_audit_event()`):
 - `config.rs` - config updates, reload, import
-- `system.rs` - worker scale/restart
+- `system` (`synvoid-admin`, re-exported by `src/admin/handlers/mod.rs`) -
+  worker scale/restart
 - `mesh_admin.rs` - ban/unban, organization creation
 - `yara_rules.rs` - submit, approve, reject, broadcast
 - `plugins.rs` - plugin reload
 - `honeypot.rs` - control, config updates
 - `sites.rs` - site CRUD
-- `alerting.rs` - alert config updates, test webhook
+- `alerting/` - alert config updates, test webhook
+
+Note `src/admin/handlers/` has no `system.rs`, `logs.rs`, `probes.rs`, or
+`stats.rs` file — those four are re-exported from the `synvoid-admin` crate by
+`src/admin/handlers/mod.rs`.
 
 ## Metrics Export
 
-Prometheus metrics are exported on `127.0.0.1:9090/metrics` when `config.main.metrics.enabled` is true.
+Prometheus metrics are exported on a loopback listener configured by
+`[metrics]` (`MetricsConfig` in `crates/synvoid-config/src/admin.rs`):
+`enabled` defaults to `true`, `port` to `9090`, `bind_address` to
+`127.0.0.1`, and `MetricsConfig::validate()` refuses non-loopback binds.
+The live exporter is supervisor-owned —
+`src/supervisor/process.rs` calls
+`crate::supervisor::telemetry_bridge::start_telemetry_bridge(bind_addr, …)`
+and registers the exporter future with the supervisor task registry. The
+admin-side `src/admin/prometheus_exporter.rs::start_prometheus_exporter()`
+is `#[allow(dead_code)]` with no callers; do not use it as the reference.
 
-Key admin metrics:
-- `synvoid_admin_auth_failures_total`
-- `synvoid_admin_auth_lockouts_total`
-- `synvoid_admin_rate_limited_total`
-- `synvoid_admin_csrf_failures_total`
-- `synvoid_admin_audit_write_failures_total`
-- `synvoid_admin_ws_clients` (gauge)
-- `synvoid_admin_alert_delivery_success_total`
-- `synvoid_admin_alert_delivery_failure_total`
+Admin-subsystem metrics (`src/admin/metrics_events.rs`, dotted
+`synvoid.admin.*` convention):
+- `synvoid.admin.auth.failures`
+- `synvoid.admin.auth.lockouts`
+- `synvoid.admin.csrf.failures`
+- `synvoid.admin.rate_limited`
+- `synvoid.admin.audit.write_failures`
+- `synvoid.admin.ws.clients` (gauge)
+- `synvoid.admin.ws.lagged`
+- `synvoid.admin.ws.dropped`
+- `synvoid.admin.alert.delivery.success`
+- `synvoid.admin.alert.delivery.failure`
+
+Also `synvoid_admin_mutation_total` and `synvoid_admin_audit_event_total`
+from `src/admin/audit.rs`, plus the mixed-form
+`synvoid_admin_unauthorized_total{action="auth", reason="invalid_credentials"}`.
+The naming is not uniform — read `metrics_events.rs` before adding one.
 
 ## Health Status
 
-Site/backend health is reported as enum values (`healthy`, `unhealthy`, `unknown`) rather than optimistic boolean defaults. Freshness is indicated via `metrics_timestamp_ms` field.
+Site/backend health is reported as the `HealthStatus` enum in
+`crates/synvoid-metrics/src/payloads.rs` — `healthy` / `unhealthy` /
+`unknown` (`rename_all = "lowercase"`) — rather than a boolean, with
+`as_bool()` only as a derived helper. Freshness is indicated separately via
+the `metrics_timestamp_ms` field. Note the enum's `Default` is `Healthy`, so
+the fail-safe direction is `unknown`, not `unhealthy`.
 
 ## Request Log Redaction
 
-Request logs redact sensitive query parameters: `token`, `secret`, `password`, `key`, `authorization`, `session`, `csrf`, etc.
+Request logs redact sensitive query parameters via
+`redact_sensitive_params()` in `crates/synvoid-admin/src/handlers/stats.rs`,
+matching on `SENSITIVE_QUERY_PARAMS`: `token`, `secret`, `password`,
+`passwd`, `key`, `authorization`, `auth`, `session`, `csrf`, `access_token`,
+`refresh_token`, `api_key`, `apikey`, `private`. Redaction is a substring
+match on the lowercased key and rewrites the value to `[REDACTED]`.
 
 ## Typed Mutation Results (Phase 6, Phase 12 Complete)
 

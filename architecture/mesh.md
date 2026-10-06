@@ -542,7 +542,7 @@ Remote DHT writes require explicit ingress validation (node-ID binding, message 
 
 ### Constant-Time Comparison
 
-Per [`AGENTS.md`](../../AGENTS.md), constant-time comparison using `subtle::ConstantTimeEq` is used for:
+Per [`AGENTS.md`](../AGENTS.md), constant-time comparison using `subtle::ConstantTimeEq` is used for:
 - Secret keys, MACs, auth tokens, passwords
 - NOT for puzzle verification (`security_challenge.rs:196` uses simple `!=`) as the challenge data is publicly known
 

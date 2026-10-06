@@ -29,9 +29,12 @@ The `Http3Server` manages the QUIC endpoint and H3 connection lifecycle.
 4. **WAF Scanning**: full request body collection (up to `max_request_size`) and scanning via `WafCore::check_request_full`. Dispatch of the resulting `WafDecision` is exhaustive per the enforcement decision contract (`architecture/enforcement_decision_contract.md`); HTTP/3 renders via `maybe_handle_http3_waf_decision` in `crates/synvoid-http3/src/http3_waf_dispatch.rs`.
 5. **Routing**: Host and path-based routing via `Router`.
 6. **Connection Limiting**: Per-site and per-IP connection limits enforced.
-7. **Proxying**: Actual forwarding using `synvoid_http_client::send_request_streaming`
-   (generic transport crate since Phase 34; `send_request_streaming_generic` for
-   type-erased bodies — never a `crate::http_client::` root path).
+7. **Proxying**: upstream forwarding runs on the **eggfetch lane** via
+   `UpstreamClientRegistry::get_or_create_lane(site_id, policy)` +
+   `execute(...)` — `crates/synvoid-http3/src/http3_buffered_upstream_dispatch.rs`
+   and `http3_streaming_upstream_dispatch.rs`. The frozen legacy
+   `send_request_streaming` / `send_request_streaming_generic` helpers in
+   `synvoid-http-client` are NOT the HTTP/3 path.
 8. **Body Streaming**: Asynchronous piping of upstream response body back to the H3 stream.
 
 ## Implementation Details
@@ -65,10 +68,12 @@ while let Some(chunk) = upstream_body.frame().await {
 
 | Option | Location | Default |
 |--------|----------|---------|
-| `http3.enabled` | `main.toml` | `false` |
-| `http3.port` | `main.toml` | `443` |
-| `max_request_size` | `main.toml` | `10MB` |
-| `alt_svc_max_age` | `main.toml` | `86400` |
+| `http3.enabled` | `[http3]` in `main.toml` | `false` |
+| `http3.port` | `[http3]` in `main.toml` | `443` |
+| `max_request_size` | `[http3]` in `main.toml` | `10MB` (distinct from `[http].max_request_size`, default `1MB`) |
+| `alt_svc_max_age` | `[http3]` in `main.toml` | `86400` |
+
+(Schema: `crates/synvoid-config/src/http.rs::Http3Config`.)
 
 ## Performance Considerations
 
@@ -78,11 +83,19 @@ while let Some(chunk) = upstream_body.frame().await {
 
 ## Observability
 
-Metrics are exposed via the global registry:
-- `synvoid.http3.connections` (gauge)
-- `synvoid.http3.requests.total` (counter)
-- `synvoid.http3.requests.blocked` (counter)
-- `synvoid.http3.request.duration` (histogram)
+Metrics are emitted through `metrics::` macros across
+`crates/synvoid-http3/src/` (`server.rs`, `http3_request_flow.rs`,
+`http3_route_dispatch.rs`, `http3_request_dispatch.rs`, `http3_body.rs`,
+`http3_waf_dispatch.rs`, `http3_terminal.rs`). There is no single registry
+struct; representative names:
+- `synvoid.http3.connections` (gauge) / `synvoid.http3.connections.total` (counter)
+- `synvoid.http3.responses` (counter)
+- `synvoid.http3.requests.blocked`, `.challenged`, `.tarpitted`, `.not_found`,
+  `.stalled`, `.stall_capped` (counters)
+- `synvoid.http3.request.duration` (histogram), `synvoid.http3.request.errors` (counter)
+- `synvoid.http3.enforcement_class_total` (counter, labelled by enforcement class)
+
+There is **no `synvoid.http3.requests.total`** metric — do not reference it.
 
 ---
 
@@ -93,4 +106,4 @@ and `Http3DispatchDeps` (grouped service handles) instead of 21 discrete paramet
 metadata normalization → route resolution → body policy → WAF evaluation → terminal response → upstream dispatch → accounting.
 See `architecture/http_request_pipeline.md` for the full stage map.
 
-Last updated: 2026-04-26
+Last updated: 2026-10-06
