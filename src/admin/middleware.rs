@@ -136,15 +136,34 @@ pub async fn auth_middleware_with_state(
         .map(|t| t.to_string());
 
     if let Some(token) = bearer_token {
-        if super::auth::verify_admin_token_async(&token, &state.security.admin_token).await {
-            super::auth::AUTH_RATE_LIMITER.record_success(client_ip);
-            request
-                .extensions_mut()
-                .insert(super::handlers::common::AuthenticatedUser {
-                    username: "admin".to_string(),
-                    role: super::handlers::common::RequiredRole::Admin,
-                });
-            return next.run(request).await;
+        match super::auth::verify_admin_token_async(&token, &state.security.admin_token).await {
+            super::auth::AdminTokenResult::Valid => {
+                super::auth::AUTH_RATE_LIMITER.record_success(client_ip);
+                request
+                    .extensions_mut()
+                    .insert(super::handlers::common::AuthenticatedUser {
+                        username: "admin".to_string(),
+                        role: super::handlers::common::RequiredRole::Admin,
+                    });
+                return next.run(request).await;
+            }
+            // Overload is a server condition: 503, and deliberately NOT counted
+            // as a failed login — otherwise a burst of legitimate admin
+            // requests saturating the bcrypt pool locks the operator's own IP
+            // out for 5 minutes without any bad credential ever being tried.
+            super::auth::AdminTokenResult::Busy => {
+                tracing::warn!(
+                    "Auth middleware: admin token crypto backend busy for {}",
+                    client_ip
+                );
+                return (
+                    axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                    [(axum::http::header::RETRY_AFTER, "1")],
+                    "Authentication backend busy",
+                )
+                    .into_response();
+            }
+            super::auth::AdminTokenResult::Invalid => {}
         }
     }
 

@@ -1625,7 +1625,7 @@ impl DnsServer {
         // Authoritative servers never set AD — AD is a recursive validation signal.
         let flags = build_response_flags(true, false, rd, false, false, 3);
         let packet = assemble_packet(&envelope, response_id, flags, qname, qtype);
-        Arc::new(packet)
+        Self::fit_to_transport(response_id, packet, qname, qtype, edns_options, rd)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1777,6 +1777,37 @@ impl DnsServer {
         // Authoritative servers never set AD — AD is a recursive validation signal.
         let flags = build_response_flags(true, false, rd, false, false, 0);
         let packet = assemble_packet(&envelope, response_id, flags, qname, qtype);
+        Self::fit_to_transport(response_id, packet, qname, qtype, edns_options, rd)
+    }
+
+    /// Enforce the negotiated UDP payload size (512 when the client sent no
+    /// EDNS) and degrade to a TC=1 empty response when the assembled answer
+    /// does not fit.
+    ///
+    /// `build_response` already applies this to positive answers; the
+    /// DNSSEC-bearing NXDOMAIN/NODATA builders reach this instead so no
+    /// authoritative datagram is emitted oversized with TC=0.
+    fn fit_to_transport(
+        response_id: u16,
+        packet: Vec<u8>,
+        qname: &str,
+        qtype: u16,
+        edns_options: Option<&EdnsOptions>,
+        rd: bool,
+    ) -> Arc<Vec<u8>> {
+        let max_size = edns_options
+            .map(|e| e.udp_payload_size as usize)
+            .unwrap_or(512);
+        if max_size > 0 && packet.len() > max_size {
+            tracing::debug!(
+                qname = %qname,
+                response_len = packet.len(),
+                max_size = max_size,
+                "DNS authoritative response truncated for UDP transport"
+            );
+            return Self::build_truncated_tc_response(response_id, qname, qtype, rd, edns_options)
+                .0;
+        }
         Arc::new(packet)
     }
 }

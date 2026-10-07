@@ -107,15 +107,20 @@ impl IpFeedManager {
 
         match self.fetch_feed(&self.config.url).await {
             Ok((networks, ips)) => {
-                let trimmed_networks: Vec<BlockedNetwork> = networks
-                    .into_iter()
-                    .take(self.config.max_permanent_blocks / 256)
-                    .collect();
+                // A limit of 0 is not "block nothing": `take(0)` would replace
+                // a working blocklist with an empty set on every successful
+                // refresh. Treat it as unbounded so the configured cap is the
+                // only thing that trims.
+                let block_limit = if self.config.max_permanent_blocks == 0 {
+                    usize::MAX
+                } else {
+                    self.config.max_permanent_blocks
+                };
 
-                let trimmed_ips: HashSet<IpAddr> = ips
-                    .into_iter()
-                    .take(self.config.max_permanent_blocks)
-                    .collect();
+                let trimmed_networks: Vec<BlockedNetwork> =
+                    networks.into_iter().take(block_limit / 256).collect();
+
+                let trimmed_ips: HashSet<IpAddr> = ips.into_iter().take(block_limit).collect();
 
                 let network_count = trimmed_networks.len();
                 let ip_count = trimmed_ips.len();

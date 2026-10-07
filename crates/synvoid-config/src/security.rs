@@ -10,7 +10,7 @@ fn default_global_security_headers() -> bool {
     true
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema, ToSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct MainSecurityConfig {
     #[serde(default)]
     pub more_clear_headers: Vec<String>,
@@ -26,6 +26,27 @@ pub struct MainSecurityConfig {
     pub allow_insecure_ipc_key: bool,
     #[serde(default)]
     pub strict_tls_passthrough_policy: bool,
+}
+
+impl Default for MainSecurityConfig {
+    /// Hand-written so the struct default matches the serde field defaults.
+    ///
+    /// The derive produced `false` for `ipc_enforce_signing`,
+    /// `sanitize_forwarded_headers` and `global_security_headers` where TOML
+    /// parsing produced `true` — a fail-open default on an authentication
+    /// boundary for any construction path that used `default()` instead of a
+    /// parsed file.
+    fn default() -> Self {
+        Self {
+            more_clear_headers: Vec::new(),
+            sanitize_forwarded_headers: default_sanitize_forwarded(),
+            global_security_headers: default_global_security_headers(),
+            ipc_enforce_signing: default_ipc_enforce_signing(),
+            ipc_session_key_env: None,
+            allow_insecure_ipc_key: false,
+            strict_tls_passthrough_policy: false,
+        }
+    }
 }
 
 fn default_sanitize_forwarded() -> bool {

@@ -59,12 +59,28 @@ pub struct AdminConfig {
     pub secure_cookie: bool,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
 pub struct AdminRateLimitConfig {
     #[serde(default = "default_admin_rate_limit_requests")]
     pub requests_per_minute: u32,
     #[serde(default = "default_admin_rate_limit_burst")]
     pub burst: u32,
+}
+
+impl Default for AdminRateLimitConfig {
+    /// Hand-written to match the serde field defaults.
+    ///
+    /// `AdminConfig::rate_limit` carries a bare `#[serde(default)]`, so serde
+    /// calls *this* impl when `[admin.rate_limit]` is absent and bypasses the
+    /// per-field `default = "fn"` functions. The derive produced `{0, 0}`,
+    /// and the limiter rejects when `requests_per_minute >= limit` — so a 0
+    /// limit rejected every request, including the first.
+    fn default() -> Self {
+        Self {
+            requests_per_minute: default_admin_rate_limit_requests(),
+            burst: default_admin_rate_limit_burst(),
+        }
+    }
 }
 
 fn default_admin_bind() -> String {
@@ -189,6 +205,22 @@ impl AdminConfig {
                     ),
                 });
             }
+        }
+
+        if self.rate_limit.requests_per_minute == 0 {
+            return Err(ConfigValidationError {
+                field: "admin.rate_limit.requests_per_minute".to_string(),
+                message: "admin.rate_limit.requests_per_minute must be non-zero; the limiter \
+                          rejects when count >= limit, so 0 would reject every request."
+                    .to_string(),
+            });
+        }
+
+        if self.rate_limit.burst == 0 {
+            return Err(ConfigValidationError {
+                field: "admin.rate_limit.burst".to_string(),
+                message: "admin.rate_limit.burst must be non-zero".to_string(),
+            });
         }
 
         if let Some(ref origin) = self.cors.allow_origin {

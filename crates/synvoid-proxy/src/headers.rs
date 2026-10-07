@@ -295,8 +295,13 @@ pub fn sanitize_request_path(path: &str) -> std::borrow::Cow<'_, str> {
 
     for segment in segments.iter() {
         if segment.len() == 2 && segment[0] == b'.' && segment[1] == b'.' {
+            // `..` at the root has nowhere to go and must be a no-op. The
+            // old `rposition` found no '/' and fell through, but when a `/`
+            // did exist `drain(pos..)` removed the separator *and everything
+            // after it*, so `/a/../secret` lost `secret` entirely instead of
+            // resolving to `/secret`.
             if let Some(pos) = result.iter().rposition(|&b| b == b'/') {
-                result.drain(pos..);
+                result.truncate(pos);
             }
         } else if segment.len() == 1 && segment[0] == b'.' {
             continue;
@@ -621,6 +626,26 @@ mod tests {
     #[test]
     fn sanitize_collapses_dot_segments() {
         assert_eq!(sanitize_request_path("/foo/./bar"), "/foo/bar");
+    }
+
+    #[test]
+    fn sanitize_resolves_parent_segments() {
+        // Regression guard: `drain(pos..)` removed the separator *and*
+        // everything after it, so a later segment was silently discarded
+        // instead of being resolved relative to the parent.
+        assert_eq!(sanitize_request_path("/a/../secret"), "/secret");
+        assert_eq!(sanitize_request_path("/foo/bar/../baz"), "/foo/baz");
+        assert_eq!(sanitize_request_path("/foo/bar/.."), "/foo");
+    }
+
+    #[test]
+    fn sanitize_parent_segment_at_root_is_a_no_op() {
+        // `..` cannot ascend above the root; the remaining segments must
+        // survive rather than collapse to "/".
+        assert_eq!(sanitize_request_path("/../x"), "/x");
+        assert_eq!(sanitize_request_path("/../secret"), "/secret");
+        assert_eq!(sanitize_request_path("/../../x"), "/x");
+        assert_eq!(sanitize_request_path("/.."), "/");
     }
 
     #[test]

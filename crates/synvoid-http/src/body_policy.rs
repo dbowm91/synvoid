@@ -10,14 +10,21 @@ use crate::shared_handler::{collect_body_with_chunk_waf, BodyCollectionProtocol}
 pub enum BodyPolicyError {
     BlockedByWaf,
     BodyTooLarge,
+    /// The declared body could not be read to completion.
+    ///
+    /// This is a terminal client/protocol failure, not a scan verdict. It
+    /// exists so a mid-read error can never be substituted with an empty
+    /// body: doing so silently truncated the request and skipped every
+    /// downstream WAF scan.
+    BodyReadFailed,
 }
 
 impl BodyPolicyError {
     /// Project a body-policy failure onto the canonical enforcement contract.
     ///
     /// Both variants deny the request (fail closed): `BlockedByWaf` renders
-    /// 403, `BodyTooLarge` renders 413. The mapping is exhaustive so a new
-    /// variant cannot silently become an allow.
+    /// 403, `BodyTooLarge` renders 413, `BodyReadFailed` renders 400. The
+    /// mapping is exhaustive so a new variant cannot silently become an allow.
     pub const fn candidate(&self) -> synvoid_core::enforcement::EnforcementCandidate {
         use synvoid_core::enforcement::{
             EnforcementCandidate, EnforcementClass, EnforcementReason, EnforcementSource,
@@ -32,6 +39,13 @@ impl BodyPolicyError {
                 EnforcementClass::Block,
                 EnforcementSource::StreamingBodyScan,
                 EnforcementReason::BodyTooLarge,
+            ),
+            // An unreadable body is a malformed outcome, and the fail-closed
+            // bucket for that is `UnsupportedOutcome` — never `Allowed`.
+            Self::BodyReadFailed => EnforcementCandidate::new(
+                EnforcementClass::Block,
+                EnforcementSource::StreamingBodyScan,
+                EnforcementReason::UnsupportedOutcome,
             ),
         }
     }
@@ -76,7 +90,14 @@ where
         } else {
             match body.collect().await {
                 Ok(collected) => collected.to_bytes(),
-                Err(_) => Bytes::from_static(&[]),
+                Err(_) => {
+                    // Never substitute an empty body here: the declared
+                    // Content-Length would be silently dropped and the
+                    // post-collect scan below would be skipped, so a body that
+                    // errors mid-read would reach the upstream as empty-and-
+                    // clean. Fail closed instead.
+                    return Err(BodyPolicyError::BodyReadFailed);
+                }
             }
         }
     } else {
@@ -134,9 +155,13 @@ mod tests {
 
     #[test]
     fn body_policy_errors_are_terminal_and_fail_closed() {
-        // Both variants must deny: a new BodyPolicyError variant that maps
+        // Every variant must deny: a new BodyPolicyError variant that maps
         // to Allow would be a fail-open regression.
-        for error in [BodyPolicyError::BlockedByWaf, BodyPolicyError::BodyTooLarge] {
+        for error in [
+            BodyPolicyError::BlockedByWaf,
+            BodyPolicyError::BodyTooLarge,
+            BodyPolicyError::BodyReadFailed,
+        ] {
             let candidate = error.candidate();
             assert_eq!(candidate.class, EnforcementClass::Block);
             assert!(candidate.class.is_terminal());
@@ -149,6 +174,11 @@ mod tests {
         assert_eq!(
             BodyPolicyError::BodyTooLarge.candidate().reason.as_str(),
             "body_too_large"
+        );
+        assert_eq!(
+            BodyPolicyError::BodyReadFailed.candidate().reason.as_str(),
+            "unsupported_outcome",
+            "an unreadable body must land in the fail-closed bucket"
         );
     }
 }

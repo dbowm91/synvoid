@@ -2,6 +2,33 @@
 
 This document describes the typed authority, outcome, and audit model for admin and control-plane mutations.
 
+## Shipping status: NOT MOUNTED IN THE BINARY
+
+> **The admin HTTP control plane described below is compiled but not reachable.**
+> `create_admin_router` (`src/admin/mod.rs`) is the single public entry point of
+> `src/admin/`, and it has **no production caller**: as of `f5f940b3` its only
+> references are `tests/admin_smoke_flow.rs`, `tests/admin_router_composition.rs`
+> and `tests/admin_route_contract.rs`. `AdminState::new` is likewise only reached
+> from that router and from test code, and `start_metrics_publisher`
+> (`src/admin/metrics.rs`) has no caller at all.
+>
+> Everything below therefore specifies the **intended** control plane. It is a
+> binding contract for the day the router is mounted, and it is the reason the
+> authority/outcome/audit model is shaped the way it is — but none of it is
+> served today. Do not read the rest of this document as a statement about the
+> shipped binary.
+>
+> The `admin_surface_is_not_mounted` guard in
+> `tools/synvoid-repo-guards/tests/admin_surface_truthfulness.rs` enforces the
+> pairing: while the router is unmounted, this notice must be present. Mounting
+> the router (or removing this claim) requires updating that guard in the same
+> commit.
+>
+> Note also that the three `admin-contract` lanes in the verification contract
+> drive `create_admin_router` directly through `ServiceExt::oneshot` and pass
+> `u32::MAX` as the rate-limit ceiling. They characterize this router, not the
+> shipped binary.
+
 ## Overview
 
 Every admin/control-plane mutation must be explicit about:

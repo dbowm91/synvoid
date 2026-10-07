@@ -320,23 +320,37 @@ pub async fn delete_probe<S: AdminStateProvider>(
 
 fn parse_duration(duration: &str) -> u64 {
     let duration = duration.trim();
-    let num: u64 = duration
+    let digits: String = duration
         .chars()
         .take_while(|c| c.is_ascii_digit())
-        .collect::<String>()
-        .parse()
-        .unwrap_or(0);
+        .collect();
+
+    // `duration` is a request-body field, so both the digit run and the
+    // multiplier are attacker-controlled. Two separate overflow hazards:
+    //
+    //  * a digit run longer than `u64::MAX` failed `.parse()`, and
+    //    `.unwrap_or(0)` turned it into **0 — a permanent ban**;
+    //  * every multiply below was unchecked: it panicked under `--profile ci`
+    //    (overflow-checks on) and silently wrapped in release, turning a
+    //    `w`-suffixed ban into a near-instant or near-infinite block.
+    //
+    // Saturate both, so the outcome is always the deliberate maximum.
+    let num: u64 = if digits.is_empty() {
+        0
+    } else {
+        digits.parse().unwrap_or(u64::MAX)
+    };
 
     if duration.ends_with('s') {
         num
     } else if duration.ends_with('m') {
-        num * 60
+        num.saturating_mul(60)
     } else if duration.ends_with('h') {
-        num * 3600
+        num.saturating_mul(3600)
     } else if duration.ends_with('d') {
-        num * 86400
+        num.saturating_mul(86400)
     } else if duration.ends_with('w') {
-        num * 604800
+        num.saturating_mul(604800)
     } else {
         num
     }
@@ -782,5 +796,34 @@ pub async fn delete_upstream_error<S: AdminStateProvider>(
             audit_id: None,
             message: "Upstream error record not found".to_string(),
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_duration;
+
+    #[test]
+    fn probe_duration_multipliers_do_not_overflow() {
+        // Regression guard: these panicked under `--profile ci`
+        // (overflow-checks on) and silently wrapped in release.
+        assert_eq!(parse_duration("18446744073709551615w"), u64::MAX);
+        assert_eq!(parse_duration("3402823669209384634w"), u64::MAX);
+        assert_eq!(parse_duration("18446744073709551615d"), u64::MAX);
+        assert_eq!(parse_duration("18446744073709551615h"), u64::MAX);
+        assert_eq!(parse_duration("18446744073709551615m"), u64::MAX);
+        assert_eq!(parse_duration("99999999999999999999w"), u64::MAX);
+        // A digit run with no unit suffix saturates at parse, not at 0.
+        assert_eq!(parse_duration("99999999999999999999"), u64::MAX);
+
+        // Ordinary values are unchanged.
+        assert_eq!(parse_duration("30s"), 30);
+        assert_eq!(parse_duration("5m"), 300);
+        assert_eq!(parse_duration("2h"), 7200);
+        assert_eq!(parse_duration("1d"), 86400);
+        assert_eq!(parse_duration("1w"), 604800);
+        // No digits at all is still 0, not u64::MAX.
+        assert_eq!(parse_duration("ban-forever"), 0);
+        assert_eq!(parse_duration(""), 0);
     }
 }

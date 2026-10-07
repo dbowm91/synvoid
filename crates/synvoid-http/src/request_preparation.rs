@@ -375,6 +375,17 @@ where
                 ),
             ));
         }
+        Err(BodyPolicyError::BodyReadFailed) => {
+            return Ok(RequestPreparationOutcome::Respond(
+                build_response_with_alt_svc(
+                    400,
+                    "Request body could not be read".to_string(),
+                    "text/plain",
+                    &alt_svc,
+                    main_config.as_ref(),
+                ),
+            ));
+        }
     };
 
     let full_body_arc = Arc::new(full_body);

@@ -144,7 +144,7 @@ impl DnsServer {
         (Arc::new(response), report)
     }
 
-    fn build_truncated_tc_response(
+    pub(super) fn build_truncated_tc_response(
         query_id: u16,
         qname: &str,
         qtype: u16,
@@ -779,6 +779,76 @@ mod tests {
         assert_eq!(ancount, 0, "ANCOUNT must be 0 in TC response");
         assert_eq!(nscount, 0, "NSCOUNT must be 0 in TC response");
         assert_eq!(arcount, 0, "ARCOUNT must be 0 without EDNS");
+    }
+
+    #[test]
+    fn nxdomain_and_nodata_authoritative_responses_respect_udp_limit() {
+        // Regression guard: the DNSSEC-bearing NXDOMAIN / NODATA builders
+        // assemble their own packets and previously emitted them unbounded, so
+        // an NSEC-heavy zone could send a >512-byte datagram with TC=0.
+        let mut nsec = Vec::new();
+        for i in 0..40 {
+            // TXT encodes cleanly; NSEC rdata needs a real bitmap and is
+            // silently skipped by `encode_rr`, which would make this vacuous.
+            nsec.push(make_record(
+                &format!("n{}.example.com", i),
+                RecordType::TXT,
+                &"x".repeat(60),
+                300,
+            ));
+        }
+        let soa = make_record(
+            "example.com",
+            RecordType::SOA,
+            "ns.example.com hostmaster.example.com 1 3600 600 86400 60",
+            300,
+        );
+
+        for qtype in [1u16, 6, 15, 28] {
+            let nx = DnsServer::build_nxdomain_response(
+                0x4242,
+                "absent.example.com",
+                qtype,
+                &nsec,
+                u16::from(RecordType::TXT),
+                false,
+                None,
+                None,
+                "example.com",
+                Some(&soa),
+                false,
+            );
+            assert!(
+                nx.len() <= 512,
+                "NXDOMAIN must fit 512 without EDNS, got {}",
+                nx.len()
+            );
+            assert_eq!(
+                u16::from_be_bytes([nx[0], nx[1]]),
+                0x4242,
+                "TC fallback must echo the query id"
+            );
+
+            let nodata = DnsServer::build_nodata_response(
+                0x4343,
+                "nokey.example.com",
+                qtype,
+                &nsec,
+                u16::from(RecordType::TXT),
+                false,
+                None,
+                None,
+                "example.com",
+                Some(&soa),
+                false,
+            );
+            assert!(
+                nodata.len() <= 512,
+                "NODATA must fit 512 without EDNS, got {}",
+                nodata.len()
+            );
+            assert_eq!(u16::from_be_bytes([nodata[0], nodata[1]]), 0x4343);
+        }
     }
 
     #[test]

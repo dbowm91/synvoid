@@ -215,6 +215,19 @@ pub fn validate_transfer_framing(headers: &HeaderMap) -> Result<Option<usize>, F
         }
     }
 
+    // RFC 9112 §6.1: a server MUST reject a message in which `chunked`
+    // appears more than once, and MUST reject one in which `chunked` is not
+    // the final coding (message length is then not reliably determinable).
+    // Allowlist membership alone accepted `chunked, chunked` and
+    // `chunked, identity` — both request-smuggling ambiguities.
+    let chunked_count = codings.iter().filter(|c| *c == "chunked").count();
+    if chunked_count > 1 {
+        return Err(FramingError::UnsupportedTransferCoding);
+    }
+    if chunked_count == 1 && codings.last().map(String::as_str) != Some("chunked") {
+        return Err(FramingError::UnsupportedTransferCoding);
+    }
+
     Ok(None)
 }
 
@@ -420,6 +433,33 @@ mod tests {
     #[test]
     fn chunked_coding_is_case_insensitive() {
         let h = headers(&[("transfer-encoding", "Chunked")]);
+        assert_eq!(validate_transfer_framing(&h), Ok(None));
+    }
+
+    #[test]
+    fn duplicated_and_misordered_chunked_rejected() {
+        // RFC 9112 §6.1: `chunked` must appear at most once and must be the
+        // final coding. Allowlist membership alone accepted all of these.
+        for value in [
+            "chunked, chunked",
+            "chunked, identity",
+            "chunked,gzip",
+            "gzip, chunked, chunked",
+        ] {
+            let h = headers(&[("transfer-encoding", value)]);
+            assert_eq!(
+                validate_transfer_framing(&h),
+                Err(FramingError::UnsupportedTransferCoding),
+                "{value:?} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn chunked_as_final_coding_after_identity_still_accepted() {
+        // `identity, chunked` satisfies §6.1: chunked appears once and is
+        // final, so the body length is determinable. Must not regress.
+        let h = headers(&[("transfer-encoding", "identity, chunked")]);
         assert_eq!(validate_transfer_framing(&h), Ok(None));
     }
 

@@ -56,10 +56,13 @@ async fn validate_bearer_token(headers: &HeaderMap, admin_token: &str) -> Result
         .and_then(|v| v.strip_prefix("Bearer "))
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
-    if verify_admin_token_async(bearer_token, admin_token).await {
-        Ok(())
-    } else {
-        Err(StatusCode::UNAUTHORIZED)
+    match verify_admin_token_async(bearer_token, admin_token).await {
+        r if r.is_valid() => Ok(()),
+        // Overload is a server condition, not a bad credential: 503, distinct
+        // from 401 so a saturated bcrypt pool is not reported as an auth
+        // failure.
+        r if r.is_busy() => Err(StatusCode::SERVICE_UNAVAILABLE),
+        _ => Err(StatusCode::UNAUTHORIZED),
     }
 }
 

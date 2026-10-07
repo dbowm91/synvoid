@@ -238,3 +238,81 @@ fn defaults_subtree_parity() {
     assert_eq!(empty_subtables.ip.per_second, 10);
     assert_eq!(empty_subtables.global.max_connections, 1000);
 }
+
+// ---------------------------------------------------------------------------
+// The shape `defaults_subtree_parity` does not model: parent-field defaults.
+//
+// Every case above is a *top-level* table under `[defaults]`. The remaining
+// instance of this defect class lives one level up: a **parent field** carrying
+// a bare `#[serde(default)]` makes serde call that type's `Default::default()`
+// and thereby **bypass the child's per-field `#[serde(default = "...")]`
+// functions entirely**. So an operator who omitted the child table got one set
+// of values and an operator who wrote the (now empty) child table got another.
+//
+// That is how all three of the following survived the F-1 sweep, which only
+// walked the `[defaults]` subtree.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn parent_field_default_types_match_their_serde_field_defaults() {
+    use synvoid_config::admin::AdminRateLimitConfig;
+    use synvoid_config::protection::IpFeedConfig;
+    use synvoid_config::security::MainSecurityConfig;
+
+    assert_parity::<IpFeedConfig>("IpFeedConfig", "{}");
+    assert_parity::<AdminRateLimitConfig>("AdminRateLimitConfig", "{}");
+    assert_parity::<MainSecurityConfig>("MainSecurityConfig", "{}");
+    let _ = &IpFeedConfig::default();
+}
+
+#[test]
+fn present_but_incomplete_ip_feeds_keeps_the_blocklist_cap() {
+    use synvoid_config::protection::IpFeedConfig;
+
+    // B-9: `[ip_feeds]` written without `max_permanent_blocks` parsed to 0, and
+    // `fetch_and_update` applies the cap with `.take(n)` — so a *successful*
+    // feed fetch replaced the whole blocklist with an empty set.
+    let toml = r#"
+[ip_feeds]
+enabled = true
+url = "https://example.invalid/feed.txt"
+"#;
+    let parsed: IpFeedConfig = toml::from_str(toml).expect("[ip_feeds] must parse");
+    assert_eq!(
+        parsed.max_permanent_blocks, 1_000_000,
+        "a present-but-incomplete `[ip_feeds]` must not parse `max_permanent_blocks` to 0"
+    );
+    assert!(parsed.max_permanent_blocks > 0);
+}
+
+#[test]
+fn omitted_admin_rate_limit_does_not_reject_every_request() {
+    // B-11: `AdminConfig::rate_limit` carried a bare `#[serde(default)]`, so an
+    // absent `[admin.rate_limit]` resolved to the derived `{0, 0}`. The limiter
+    // rejects when `count >= limit`, so 0 rejected the very first request.
+    use synvoid_config::admin::AdminRateLimitConfig;
+
+    let parsed: AdminRateLimitConfig =
+        serde_json::from_str("{}").expect("an empty [admin.rate_limit] must parse");
+    assert_eq!(parsed.requests_per_minute, 60);
+    assert_eq!(parsed.burst, 10);
+    assert!(
+        parsed.requests_per_minute > 0,
+        "a zero limit rejects 100% of admin requests, including the first"
+    );
+}
+
+#[test]
+fn main_security_default_is_fail_closed() {
+    use synvoid_config::security::MainSecurityConfig;
+
+    // B-12: the derived `Default` produced `false` for three fields whose serde
+    // defaults are `true`, including IPC signing enforcement.
+    let def = MainSecurityConfig::default();
+    assert!(
+        def.ipc_enforce_signing,
+        "IPC signing enforcement must default to enforced"
+    );
+    assert!(def.sanitize_forwarded_headers);
+    assert!(def.global_security_headers);
+}

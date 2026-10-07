@@ -22,7 +22,15 @@ impl<S> ProtocolValidatingStream<S> {
     pub(super) fn new(stream: S, initial_bytes: Vec<u8>) -> Self {
         Self {
             stream,
-            initial_bytes: Some(initial_bytes),
+            // `None` means "no replay pending". An empty `Some(vec![])` is
+            // indistinguishable from a pending-but-empty replay, and taking it
+            // in `poll_read` produced `Ready(Ok(()))` with zero bytes filled —
+            // i.e. a spurious EOF on the first read of every connection.
+            initial_bytes: if initial_bytes.is_empty() {
+                None
+            } else {
+                Some(initial_bytes)
+            },
         }
     }
 }
@@ -35,12 +43,16 @@ impl<S: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for ProtocolValidatin
     ) -> std::task::Poll<std::io::Result<()>> {
         if let Some(bytes) = self.initial_bytes.take() {
             let len = bytes.len().min(buf.remaining());
-            buf.put_slice(&bytes[..len]);
+            if len > 0 {
+                buf.put_slice(&bytes[..len]);
+            }
             if len < bytes.len() {
                 self.initial_bytes = Some(bytes[len..].to_vec());
             }
-            return std::task::Poll::Ready(Ok(()));
         }
+        // Always delegate. Returning `Ready(Ok(()))` here with an untouched
+        // `ReadBuf` signals EOF to the reader (Hyper), which closed every
+        // connection without a response.
         std::pin::Pin::new(&mut self.stream).poll_read(cx, buf)
     }
 }
@@ -76,13 +88,11 @@ pub(super) struct HttpConnection {
 
 impl HttpConnection {
     pub(super) fn new(stream: tokio::net::TcpStream, initial_bytes: Vec<u8>) -> Self {
-        let stream = if initial_bytes.is_empty() {
-            ProtocolValidatingStream::new(stream, vec![])
-        } else {
-            ProtocolValidatingStream::new(stream, initial_bytes)
-        };
         Self {
-            io: Mutex::new(Some(TokioIo::new(stream))),
+            io: Mutex::new(Some(TokioIo::new(ProtocolValidatingStream::new(
+                stream,
+                initial_bytes,
+            )))),
             drop_requested: RunningFlag::new(),
         }
     }

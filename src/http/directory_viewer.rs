@@ -59,8 +59,10 @@ async fn require_auth(state: &DirectoryViewerState, headers: &HeaderMap) -> Resu
         .and_then(|auth| auth.strip_prefix("Bearer "))
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
-    if !verify_admin_token_async(token, &state.admin_token_hash).await {
-        return Err(StatusCode::UNAUTHORIZED);
+    match verify_admin_token_async(token, &state.admin_token_hash).await {
+        r if r.is_valid() => {}
+        r if r.is_busy() => return Err(StatusCode::SERVICE_UNAVAILABLE),
+        _ => return Err(StatusCode::UNAUTHORIZED),
     }
 
     Ok(())

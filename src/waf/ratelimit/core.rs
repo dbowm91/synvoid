@@ -155,8 +155,12 @@ impl GlobalRateLimiter {
         let now_ms = self.start_instant.elapsed().as_millis() as u64;
 
         let second_count = self.second_window.increment_at(now_ms);
-        let minute_count = self.minute_window.count_at(now_ms);
-        let five_min_count = self.five_min_window.count_at(now_ms);
+        // All three windows must record the event: `count_at` only rotates and
+        // reads `running_sum`, so using it here left the minute and 5-minute
+        // windows permanently at 0 and both tiers (plus their blackhole
+        // escalation) unreachable.
+        let minute_count = self.minute_window.increment_at(now_ms);
+        let five_min_count = self.five_min_window.increment_at(now_ms);
 
         if !self.blackhole_active.is_running() {
             return self.handle_blackhole_mode(now_ms, second_count);
@@ -271,7 +275,7 @@ impl GlobalRateLimiter {
             per_second: self.second_window.count_at(now_ms),
             per_minute: self.minute_window.count_at(now_ms),
             per_5min: self.five_min_window.count_at(now_ms),
-            blackhole_active: self.blackhole_active.is_running(),
+            blackhole_active: self.is_in_blackhole(),
             sample_rate: self.sample_rate.load(Ordering::Relaxed),
             consecutive_low_samples: self.consecutive_low_samples.load(Ordering::Relaxed),
         }
@@ -751,6 +755,91 @@ mod tests {
 
         let stats = limiter.get_stats();
         assert!(stats.per_second >= 10);
+    }
+
+    /// Regression guard for B-2: the minute and 5-minute tiers must actually
+    /// record events. They previously read the window with `count_at`, which
+    /// only rotates and reads, leaving the counters permanently 0 so the
+    /// configured tiers could never fire. `blackhole_entry_threshold` is raised
+    /// to 10.0 so blackhole escalation does not mask the tier under test.
+    #[test]
+    fn test_global_rate_limiter_minute_tier_enforces() {
+        let config = GlobalRateLimitConfig {
+            per_second: 1000,
+            per_minute: 5,
+            per_5min: 1_000_000,
+            blackhole_entry_threshold: 10.0,
+            ..Default::default()
+        };
+        let limiter = GlobalRateLimiter::new(config);
+
+        for _ in 0..5 {
+            assert_eq!(limiter.check_and_increment(), RateLimitDecision::Allowed);
+        }
+
+        let decision = limiter.check_and_increment();
+        assert_eq!(
+            decision,
+            RateLimitDecision::Limited {
+                limit_type: "global_per_minute"
+            },
+            "per-minute tier must fire once its own window records events"
+        );
+
+        assert!(limiter.get_stats().per_minute >= 5);
+    }
+
+    /// Regression guard for B-2: same for the 5-minute tier.
+    #[test]
+    fn test_global_rate_limiter_five_minute_tier_enforces() {
+        let config = GlobalRateLimitConfig {
+            per_second: 1000,
+            per_minute: 1_000_000,
+            per_5min: 5,
+            blackhole_entry_threshold: 10.0,
+            ..Default::default()
+        };
+        let limiter = GlobalRateLimiter::new(config);
+
+        for _ in 0..5 {
+            assert_eq!(limiter.check_and_increment(), RateLimitDecision::Allowed);
+        }
+
+        assert_eq!(
+            limiter.check_and_increment(),
+            RateLimitDecision::Limited {
+                limit_type: "global_per_5min"
+            }
+        );
+
+        assert!(limiter.get_stats().per_5min >= 5);
+    }
+
+    /// Regression guard for B-17: `blackhole_active` must read true while in
+    /// blackhole. It previously reported the raw `RunningFlag`, which uses
+    /// inverted polarity (`enter_blackhole` -> `stop()`).
+    #[test]
+    fn test_global_stats_blackhole_active_polarity() {
+        let config = GlobalRateLimitConfig {
+            per_second: 3,
+            blackhole_entry_threshold: 1.0,
+            ..Default::default()
+        };
+        let limiter = GlobalRateLimiter::new(config);
+
+        assert!(!limiter.get_stats().blackhole_active, "healthy by default");
+        assert!(!limiter.is_in_blackhole());
+
+        for _ in 0..3 {
+            let _ = limiter.check_and_increment();
+        }
+        let _ = limiter.check_and_increment();
+
+        assert!(limiter.is_in_blackhole());
+        assert!(
+            limiter.get_stats().blackhole_active,
+            "stat must agree with is_in_blackhole()"
+        );
     }
 
     #[test]

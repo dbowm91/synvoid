@@ -142,7 +142,11 @@ fn websocket_upgrade_validation_parity() {
 
 #[test]
 fn body_policy_errors_fail_closed_on_both_transports() {
-    for error in [BodyPolicyError::BlockedByWaf, BodyPolicyError::BodyTooLarge] {
+    for error in [
+        BodyPolicyError::BlockedByWaf,
+        BodyPolicyError::BodyTooLarge,
+        BodyPolicyError::BodyReadFailed,
+    ] {
         let candidate = error.candidate();
         assert_eq!(
             candidate.class,

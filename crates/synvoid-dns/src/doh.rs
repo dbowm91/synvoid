@@ -169,12 +169,31 @@ impl DohServer {
                     .body(Full::new(Bytes::from("Missing Content-Type header")))
                     .expect("response builder should not fail"));
             }
-            let body = match req.collect().await {
+            // Read through `Limited` so the size limit is an *allocation* limit, not
+            // just an inspection one. `req.collect()` had no streaming guard,
+            // so an arbitrarily large `application/dns-message` POST body was
+            // fully materialized (twice, via `to_bytes()` then `to_vec()`)
+            // before the 413 below ever ran.
+            let body = match http_body_util::Limited::new(req.into_body(), DOH_MAX_QUERY_SIZE)
+                .collect()
+                .await
+            {
                 Ok(b) => b.to_bytes(),
-                Err(_e) => {
+                // `Limited` reports both "body exceeded the limit" and
+                // "the body failed mid-read" as a boxed error, so
+                // downcast to keep a genuine transport failure a 400.
+                Err(e) => {
+                    let over_limit = e
+                        .downcast_ref::<http_body_util::LengthLimitError>()
+                        .is_some();
+                    let (status, message) = if over_limit {
+                        (StatusCode::PAYLOAD_TOO_LARGE, "Request body too large")
+                    } else {
+                        (StatusCode::BAD_REQUEST, "Failed to read request body")
+                    };
                     return Ok(hyper::Response::builder()
-                        .status(StatusCode::BAD_REQUEST)
-                        .body(Full::new(Bytes::from("Failed to read request body")))
+                        .status(status)
+                        .body(Full::new(Bytes::from(message)))
                         .expect("response builder should not fail"));
                 }
             };

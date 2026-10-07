@@ -1,5 +1,53 @@
 use super::*;
 
+/// Upper bound for the protocol-sniff peek.
+const PEEK_MAX_BYTES: usize = 16;
+/// Total budget for the peek, so a client that connects and sends nothing
+/// cannot pin an accept-loop task.
+const PEEK_DEADLINE: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Peek enough of the connection prefix for protocol sniffing.
+///
+/// A single short read is not a decision: TCP routinely fragments a request
+/// line, so a prefix of `"GE"` or `"GET"` fails
+/// [`is_valid_http_request_start`] purely because of segmentation and the
+/// connection was dropped with no response. Accumulate until the prefix is
+/// decidable — a delimiter byte is seen, the buffer fills, EOF, or the
+/// deadline expires — and hand back everything read so it can be replayed.
+///
+/// Returns `Ok(vec![])` on EOF (caller drops) and propagates read errors.
+async fn peek_decidable_prefix(stream: &mut tokio::net::TcpStream) -> std::io::Result<Vec<u8>> {
+    let mut buf: Vec<u8> = Vec::with_capacity(PEEK_MAX_BYTES);
+
+    let collect = async {
+        let mut chunk = [0u8; PEEK_MAX_BYTES];
+        loop {
+            // Decidable: the request line has been delimited, or we cannot
+            // learn anything more within the peek window.
+            if buf.contains(&b' ') || buf.len() >= PEEK_MAX_BYTES {
+                break;
+            }
+            let n = {
+                let dst = &mut chunk[..PEEK_MAX_BYTES - buf.len()];
+                match tokio::io::AsyncReadExt::read(stream, dst).await {
+                    Ok(0) => break,
+                    Ok(n) => n,
+                    Err(e) => return Err(e),
+                }
+            };
+            buf.extend_from_slice(&chunk[..n]);
+        }
+        std::result::Result::<(), std::io::Error>::Ok(())
+    };
+
+    match tokio::time::timeout(PEEK_DEADLINE, collect).await {
+        Ok(result) => result.map(|()| buf),
+        // Deadline: keep whatever arrived so the bytes are still replayed to
+        // the connection; the caller decides on the partial prefix.
+        Err(_elapsed) => Ok(buf),
+    }
+}
+
 #[allow(dead_code)]
 pub(super) async fn run_accept_loop(
     addr: SocketAddr,
@@ -76,14 +124,13 @@ pub(super) async fn run_accept_loop(
                         let upstream_client_registry = runtime.upstream_client_registry.clone();
 
                         let (initial_bytes, stream_for_conn) = if http_config.strict_protocol_validation {
-                            let mut peek_buf = [0u8; 16];
                             let mut stream_clone = stream;
-                            match tokio::io::AsyncReadExt::read(&mut stream_clone, &mut peek_buf).await {
-                                Ok(n) => {
-                                    if n == 0 {
+                            match peek_decidable_prefix(&mut stream_clone).await {
+                                Ok(prefix) => {
+                                    if prefix.is_empty() {
                                         continue;
                                     }
-                                    if is_tls_client_hello(&peek_buf[..n]) {
+                                    if is_tls_client_hello(&prefix) {
                                         counter!("synvoid.http.tls_on_http_port").increment(1);
                                         tracing::debug!(
                                             "Rejected TLS connection on HTTP port from {}",
@@ -91,7 +138,7 @@ pub(super) async fn run_accept_loop(
                                         );
                                         continue;
                                     }
-                                    if !is_valid_http_request_start(&peek_buf[..n]) {
+                                    if !is_valid_http_request_start(&prefix) {
                                         counter!("synvoid.http.invalid_protocol").increment(1);
                                         tracing::debug!(
                                             "Rejected non-HTTP connection on HTTP port from {}",
@@ -99,7 +146,7 @@ pub(super) async fn run_accept_loop(
                                         );
                                         continue;
                                     }
-                                    (peek_buf[..n].to_vec(), stream_clone)
+                                    (prefix, stream_clone)
                                 }
                                 Err(_) => {
                                     continue;

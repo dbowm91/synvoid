@@ -247,6 +247,37 @@ async fn body_policy_waf_blocks_large_neutral_body() {
     assert_eq!(err, BodyPolicyError::BlockedByWaf);
 }
 
+#[tokio::test]
+async fn body_policy_read_failure_is_terminal_not_empty_body() {
+    // Regression guard: a body that errors mid-read on the small
+    // `Content-Length` branch used to be replaced with an empty body, which
+    // silently dropped the declared length and skipped the post-collect WAF
+    // scan (the stub WAF below blocks everything).
+    let waf = StubWaf;
+    let frames = vec![
+        Ok::<http_body::Frame<Bytes>, InboundBodyError>(http_body::Frame::data(
+            Bytes::from_static(b"partial"),
+        )),
+        Err(InboundBodyError::Transport("peer reset".to_string())),
+    ];
+    let body = InboundBody::from_frame_stream(futures::stream::iter(frames));
+    let err = synvoid_http::body_policy::collect_and_scan_request_body(
+        body,
+        &waf,
+        IpAddr::from([127, 0, 0, 1]),
+        // Under CHUNK_WAF_THRESHOLD, so this takes the `collect()` branch.
+        Some(100),
+        1024 * 1024,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err, BodyPolicyError::BodyReadFailed);
+    assert_eq!(
+        err.candidate().class,
+        synvoid_core::enforcement::EnforcementClass::Block
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Hyper H1 adapter loopback
 // ---------------------------------------------------------------------------

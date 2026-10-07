@@ -23,11 +23,20 @@ pub fn ip_to_slot(ip: IpAddr, num_slots: usize) -> Option<usize> {
             }
             IpAddr::V6(ipv6) => {
                 let segments = ipv6.segments();
-                let hash = ((segments[0] as u64) << 48
+                // Fold all 128 bits. Hashing only segments[0..4] dropped the
+                // interface ID, so every address in one /64 shared a single
+                // rate-limit bucket and legitimate hosts throttled each other.
+                let hi = ((segments[0] as u64) << 48
                     | (segments[1] as u64) << 32
                     | (segments[2] as u64) << 16
                     | segments[3] as u64)
-                    .wrapping_mul(0x9e3779b9);
+                    .wrapping_mul(0x9e3779b97f4a7c15);
+                let lo = ((segments[4] as u64) << 48
+                    | (segments[5] as u64) << 32
+                    | (segments[6] as u64) << 16
+                    | segments[7] as u64)
+                    .wrapping_mul(0x9e3779b97f4a7c15);
+                let hash = hi ^ lo.rotate_left(32);
                 Some(((hash >> 16) as usize) & mask)
             }
         }
@@ -44,11 +53,20 @@ pub fn ip_to_slot(ip: IpAddr, num_slots: usize) -> Option<usize> {
             }
             IpAddr::V6(ipv6) => {
                 let segments = ipv6.segments();
-                let hash = ((segments[0] as u64) << 48
+                // Fold all 128 bits. Hashing only segments[0..4] dropped the
+                // interface ID, so every address in one /64 shared a single
+                // rate-limit bucket and legitimate hosts throttled each other.
+                let hi = ((segments[0] as u64) << 48
                     | (segments[1] as u64) << 32
                     | (segments[2] as u64) << 16
                     | segments[3] as u64)
-                    .wrapping_mul(0x9e3779b9);
+                    .wrapping_mul(0x9e3779b97f4a7c15);
+                let lo = ((segments[4] as u64) << 48
+                    | (segments[5] as u64) << 32
+                    | (segments[6] as u64) << 16
+                    | segments[7] as u64)
+                    .wrapping_mul(0x9e3779b97f4a7c15);
+                let hash = hi ^ lo.rotate_left(32);
                 Some((hash as usize) % num_slots)
             }
         }
@@ -128,4 +146,27 @@ pub fn is_newer_version(new: &str, current: &str) -> bool {
         }
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ip_to_slot;
+    use std::net::{IpAddr, Ipv6Addr};
+
+    /// Mirrors `synvoid-rate-limit`'s guard: the two `ip_to_slot` copies must
+    /// stay behaviorally identical, and neither may collapse a /64.
+    #[test]
+    fn hosts_within_one_prefix_64_get_distinct_slots() {
+        let base: u128 = 0x2001_0db8_0000_0000;
+        let mut seen = std::collections::HashSet::new();
+        for i in 0..256u128 {
+            let ip = IpAddr::V6(Ipv6Addr::from(base | i));
+            seen.insert(ip_to_slot(ip, 65536).unwrap());
+        }
+        assert_eq!(
+            seen.len(),
+            256,
+            "256 distinct hosts in one /64 must not collapse to one slot"
+        );
+    }
 }

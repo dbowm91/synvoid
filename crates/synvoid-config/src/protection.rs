@@ -234,7 +234,11 @@ pub struct IpFeedConfig {
     pub update_interval_hours: u32,
     #[serde(default = "default_feed_url")]
     pub url: String,
-    #[serde(default)]
+    // NOT a bare `#[serde(default)]`: that yields 0 for a present-but-
+    // incomplete `[ip_feeds]` table, and the consumer treats the limit as a
+    // `.take(n)` cap — so 0 silently overwrote a working blocklist with an
+    // empty set on every successful refresh.
+    #[serde(default = "default_max_permanent_blocks")]
     pub max_permanent_blocks: usize,
 }
 
@@ -252,6 +256,9 @@ impl Default for IpFeedConfig {
 
 fn default_ip_feed_enabled() -> bool {
     true
+}
+fn default_max_permanent_blocks() -> usize {
+    1_000_000
 }
 fn default_feed_update_interval() -> u32 {
     2

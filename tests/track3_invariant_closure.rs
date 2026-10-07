@@ -305,7 +305,11 @@ fn proxy_waf_action_mapping_is_exhaustive_and_round_trips() {
 
 #[test]
 fn http_body_policy_mapping_is_terminal_fail_closed() {
-    for error in [BodyPolicyError::BlockedByWaf, BodyPolicyError::BodyTooLarge] {
+    for error in [
+        BodyPolicyError::BlockedByWaf,
+        BodyPolicyError::BodyTooLarge,
+        BodyPolicyError::BodyReadFailed,
+    ] {
         let c = error.candidate();
         assert_eq!(c.class, EnforcementClass::Block);
         assert!(c.class.is_terminal());

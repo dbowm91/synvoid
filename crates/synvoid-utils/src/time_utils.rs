@@ -18,6 +18,16 @@ pub fn parse_duration(s: &str) -> Option<u64> {
         return None;
     }
 
+    // Every suffix match below is a byte-length slice, and `str::len()` is a
+    // byte length — `s.len() > suffix_len` guards out-of-range, not
+    // mid-character. A single multi-byte char in the value therefore made the
+    // slice panic (e.g. "é1", "1234567890éABCDEFGHIJK"). Reject non-ASCII
+    // up front so all indexing below is on char boundaries; a duration is a
+    // decimal number plus an ASCII unit, so nothing valid is lost.
+    if !s.is_ascii() {
+        return None;
+    }
+
     if s.eq_ignore_ascii_case("never")
         || s.eq_ignore_ascii_case("permanent")
         || s.eq_ignore_ascii_case("0")
@@ -83,5 +93,28 @@ mod tests {
         assert_eq!(parse_duration("60"), Some(60));
         assert_eq!(parse_duration(""), None);
         assert_eq!(parse_duration("x"), None);
+    }
+
+    #[test]
+    fn test_parse_duration_rejects_non_ascii_without_panicking() {
+        // Regression guard: these are byte-length slices landing mid-char and
+        // panicked on the per-request upstream-dispatch path.
+        for s in [
+            "é1",
+            "2é",
+            "1234567890éABCDEFGHIJK",
+            "30é",
+            "30secondsé",
+            "1500mé",
+            "é",
+            "µs",
+            "30秒",
+        ] {
+            assert_eq!(parse_duration(s), None, "{s:?} must be None, not a panic");
+        }
+        // Long suffixes still parse once ASCII.
+        assert_eq!(parse_duration("30seconds"), Some(30));
+        assert_eq!(parse_duration("1500milliseconds"), Some(1));
+        assert_eq!(parse_duration("2hours"), Some(7200));
     }
 }

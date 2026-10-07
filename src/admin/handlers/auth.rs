@@ -33,8 +33,11 @@ pub async fn create_session(
 
     // Exactly one bounded real verify. The async verifier already applies
     // minimum-delay padding, so no second dummy bcrypt is added on failure.
-    if !super::super::auth::verify_admin_token_async(token, &state.security.admin_token).await {
-        return StatusCode::UNAUTHORIZED.into_response();
+    // `Busy` is a server condition and must not be reported as 401.
+    match super::super::auth::verify_admin_token_async(token, &state.security.admin_token).await {
+        r if r.is_valid() => {}
+        r if r.is_busy() => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+        _ => return StatusCode::UNAUTHORIZED.into_response(),
     }
 
     let session_id = state.create_session();

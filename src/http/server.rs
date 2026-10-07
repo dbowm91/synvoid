@@ -239,6 +239,55 @@ mod tests {
         assert_eq!(stream.initial_bytes.as_ref().map(|s| s.len()), Some(11));
     }
 
+    /// Regression guard: an empty replay buffer must not be modelled as a
+    /// pending replay. Returning `Ready(Ok(()))` with zero bytes filled is
+    /// EOF to the reader, which closed every connection with no response on
+    /// the default (`strict_protocol_validation = false`) path.
+    #[test]
+    fn test_protocol_validating_stream_empty_replay_is_not_eof() {
+        use std::pin::Pin;
+        use std::task::{Context, Poll};
+        use tokio::io::{AsyncRead, ReadBuf};
+
+        fn first_poll<S: AsyncRead + Unpin>(stream: S) -> Poll<std::io::Result<usize>> {
+            let mut stream = stream;
+            let mut storage = vec![0u8; 64];
+            let mut buf = ReadBuf::new(&mut storage);
+            let waker = futures::task::noop_waker();
+            let mut cx = Context::from_waker(&waker);
+            match Pin::new(&mut stream).poll_read(&mut cx, &mut buf) {
+                Poll::Ready(Ok(())) => Poll::Ready(Ok(buf.filled().len())),
+                Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
+                Poll::Pending => Poll::Pending,
+            }
+        }
+
+        // Empty replay: the underlying stream has the real payload, which must
+        // be delivered rather than being reported as EOF.
+        let payload = b"GET / HTTP/1.1\r\nHost: x\r\n\r\n";
+        let empty_replay =
+            ProtocolValidatingStream::new(std::io::Cursor::new(payload.to_vec()), Vec::new());
+        assert!(
+            empty_replay.initial_bytes.is_none(),
+            "empty replay must be normalized to None, not Some(empty)"
+        );
+        assert!(
+            matches!(first_poll(empty_replay), Poll::Ready(Ok(n)) if n == payload.len()),
+            "first poll_read must yield the payload, never a 0-byte Ready(Ok) EOF"
+        );
+
+        // Non-empty replay is still replayed in full, ahead of the stream.
+        // `poll_read` now always delegates after replaying, so a single call
+        // yields the 4 stashed bytes plus whatever the inner stream has (4
+        // more) — the reader sees the whole 8-byte stream, never a gap.
+        let replayed =
+            ProtocolValidatingStream::new(std::io::Cursor::new(b"tail".to_vec()), b"head".to_vec());
+        assert!(
+            matches!(first_poll(replayed), Poll::Ready(Ok(8))),
+            "replay + underlying stream must both be delivered"
+        );
+    }
+
     #[test]
     #[cfg(feature = "mesh")]
     fn test_get_cached_regex_valid_pattern() {

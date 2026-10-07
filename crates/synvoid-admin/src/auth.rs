@@ -56,26 +56,61 @@ async fn acquire_admin_permit() -> Option<tokio::sync::OwnedSemaphorePermit> {
     }
 }
 
+/// Typed admin-token verification outcome.
+///
+/// `Busy` must stay distinguishable from `Invalid`: overload is a server
+/// condition (503, do not count as a failed login), not a credential failure
+/// (401, count). The Basic-Auth sibling
+/// (`synvoid_auth::BasicAuthResult::BackendBusy`) exists for exactly this
+/// reason and maps to 503.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdminTokenResult {
+    Valid,
+    Invalid,
+    /// The bounded crypto pool was saturated; nobody was authenticated.
+    Busy,
+}
+
+impl AdminTokenResult {
+    pub const fn is_valid(self) -> bool {
+        matches!(self, Self::Valid)
+    }
+
+    pub const fn is_busy(self) -> bool {
+        matches!(self, Self::Busy)
+    }
+}
+
 /// Bounded admin-token verification (Phase 43 D). Never runs bcrypt on a
-/// Tokio core thread; overload fails closed (`false`) and authenticates
-/// nobody. Exactly one bcrypt per call — callers must not add a second dummy
-/// verify after a failed real verify.
-pub async fn verify_admin_token_async(token: &str, hash: &str) -> bool {
+/// Tokio core thread; overload fails closed (`Busy`, authenticates nobody).
+/// Exactly one bcrypt per call — callers must not add a second dummy verify
+/// after a failed real verify.
+///
+/// The minimum-delay padding is applied on every path, including `Busy`, so
+/// overload is not distinguishable from a credential check by latency.
+pub async fn verify_admin_token_async(token: &str, hash: &str) -> AdminTokenResult {
     let start = std::time::Instant::now();
-    let Some(_permit) = acquire_admin_permit().await else {
-        return false;
-    };
-    let token = token.to_string();
-    let hash = hash.to_string();
-    let valid =
-        tokio::task::spawn_blocking(move || bcrypt::verify(token, hash.as_str()).unwrap_or(false))
+    let outcome = match acquire_admin_permit().await {
+        Some(_permit) => {
+            let token = token.to_string();
+            let hash = hash.to_string();
+            let valid = tokio::task::spawn_blocking(move || {
+                bcrypt::verify(token, hash.as_str()).unwrap_or(false)
+            })
             .await
             .unwrap_or(false);
-    drop(_permit);
+            if valid {
+                AdminTokenResult::Valid
+            } else {
+                AdminTokenResult::Invalid
+            }
+        }
+        None => AdminTokenResult::Busy,
+    };
     if start.elapsed() < ADMIN_MIN_DELAY {
         tokio::time::sleep(ADMIN_MIN_DELAY - start.elapsed()).await;
     }
-    valid
+    outcome
 }
 
 /// Constant-work dummy verification for missing/unparsable tokens.
@@ -389,5 +424,43 @@ mod tests {
         }
 
         assert!(!limiter.is_locked(identifier));
+    }
+}
+
+#[cfg(test)]
+mod admin_token_result_tests {
+    use super::{verify_admin_token_async, AdminTokenResult, ADMIN_MIN_DELAY};
+    use std::time::Instant;
+
+    #[test]
+    fn busy_is_distinguishable_from_invalid() {
+        // Regression guard: overload previously collapsed into `false`, so a
+        // saturated crypto pool answered 401 and was counted as a failed
+        // login. `Busy` must stay a distinct outcome.
+        assert_ne!(AdminTokenResult::Busy, AdminTokenResult::Invalid);
+        assert!(AdminTokenResult::Busy.is_busy());
+        assert!(!AdminTokenResult::Busy.is_valid());
+        assert!(AdminTokenResult::Invalid.is_busy() == false);
+        assert!(!AdminTokenResult::Invalid.is_valid());
+        assert!(AdminTokenResult::Valid.is_valid());
+    }
+
+    #[tokio::test]
+    async fn valid_token_authenticates() {
+        let hash = super::hash_admin_token("correct-horse-battery-staple").unwrap();
+        let start = Instant::now();
+        let result = verify_admin_token_async("correct-horse-battery-staple", &hash).await;
+        assert_eq!(result, AdminTokenResult::Valid);
+        assert!(
+            start.elapsed() >= ADMIN_MIN_DELAY,
+            "min-delay padding must apply on the success path too"
+        );
+    }
+
+    #[tokio::test]
+    async fn wrong_token_is_invalid_not_busy() {
+        let hash = super::hash_admin_token("correct-horse-battery-staple").unwrap();
+        let result = verify_admin_token_async("wrong-token", &hash).await;
+        assert_eq!(result, AdminTokenResult::Invalid);
     }
 }
