@@ -13,7 +13,11 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 yew = { version = "0.23", features = ["csr"] }
 yew-router = "0.20"
-gloo = "0.12"
+# `futures` forwards to `gloo-timers/futures`, which gates
+# `gloo::timers::future::TimeoutFuture` (used for the bounded capability-fetch
+# retry in app.rs). The default `timers` feature alone only exposes
+# `gloo::timers::callback`.
+gloo = { version = "0.12", features = ["futures"] }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 wasm-logger = "0.2"

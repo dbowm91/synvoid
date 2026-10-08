@@ -68,22 +68,34 @@ pub fn ConfirmDialog(props: &ConfirmDialogProps) -> Html {
         })
     };
 
-    // Auto-focus the cancel button on mount
+    // Auto-focus the cancel button on mount.
     let cancel_node = use_node_ref();
     {
         let cancel_node = cancel_node.clone();
         let show = props.show;
         use_effect_with(show, move |show| {
-            if *show {
-                // Defer focus to next microtask so the DOM is rendered
-                let node = cancel_node.clone();
-                let _timeout = Timeout::new(0, move || {
-                    if let Some(el) = node.cast::<web_sys::HtmlElement>() {
-                        let _ = el.focus();
+            // Built in both branches so the effect always returns one closure
+            // type; an early `return` would hand back `()` instead.
+            let timeout = if *show {
+                // Defer focus to the next tick so the DOM is rendered first.
+                //
+                // The handle is moved into the effect destructor rather than
+                // bound locally: `Timeout` implements `Drop` by calling
+                // `clear_timeout`, so a `let _timeout = …` binding would cancel
+                // this very callback as the effect body returned and focus
+                // would never move.
+                Some(Timeout::new(0, {
+                    let node = cancel_node.clone();
+                    move || {
+                        if let Some(el) = node.cast::<web_sys::HtmlElement>() {
+                            let _ = el.focus();
+                        }
                     }
-                });
-            }
-            || {}
+                }))
+            } else {
+                None
+            };
+            move || drop(timeout)
         });
     }
 

@@ -36,7 +36,13 @@ pub fn Sites() -> Html {
 
                 match api.get_stats_sites().await {
                     Ok(s) => site_stats.set(s),
-                    Err(e) => tracing::error!("Failed to fetch site stats: {}", e),
+                    Err(e) => {
+                        // Surfaced rather than only logged: without site stats
+                        // every card falls back to an unknown health state, and
+                        // the operator needs to know that is why.
+                        error.set(Some(format!("Failed to load site health: {}", e)));
+                        tracing::error!("Failed to fetch site stats: {}", e);
+                    }
                 }
 
                 loading.set(false);
@@ -163,17 +169,22 @@ pub fn Sites() -> Html {
                         let site_id = site.id.clone();
                         let domains = site.domains.clone();
                         let routes_count = site.routes.keys().count();
-                        let healthy = site_stats.iter()
-                            .find(|s| s.site_id == site_id)
-                            .map(|s| s.upstream_healthy)
-                            .unwrap_or(true);
+                        // A site with no matching stats entry is unknown, not
+                        // healthy: defaulting to `true` reported every site
+                        // green whenever the stats endpoint failed or had not
+                        // reported yet.
+                        let health = match site_stats.iter().find(|s| s.site_id == site_id) {
+                            Some(stats) if stats.upstream_healthy => Health::Healthy,
+                            Some(_) => Health::Unhealthy,
+                            None => Health::Unknown,
+                        };
                         html! {
                             <SiteCard
                                 site_id={site_id.clone()}
                                 domains={domains}
                                 upstream={site.default_upstream.clone()}
                                 routes={routes_count}
-                                healthy={healthy}
+                                health={health}
                                 on_delete={on_delete.clone()}
                             />
                         }
@@ -190,16 +201,28 @@ struct SiteCardProps {
     domains: Vec<String>,
     upstream: String,
     routes: usize,
-    healthy: bool,
+    health: Health,
     on_delete: Callback<String>,
+}
+
+/// Upstream health as reported by the stats endpoint.
+///
+/// `Unknown` is distinct from both outcomes: a site with no stats row has not
+/// been observed as failing, and colouring it red would be as wrong as
+/// colouring it green.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Health {
+    Healthy,
+    Unhealthy,
+    Unknown,
 }
 
 #[function_component]
 fn SiteCard(props: &SiteCardProps) -> Html {
-    let status_class = if props.healthy {
-        "bg-green-500"
-    } else {
-        "bg-red-500"
+    let (status_class, status_label) = match props.health {
+        Health::Healthy => ("bg-green-500", "Healthy"),
+        Health::Unhealthy => ("bg-red-500", "Unhealthy"),
+        Health::Unknown => ("bg-gray-500", "Health unknown"),
     };
     let primary_domain = props
         .domains
@@ -220,7 +243,7 @@ fn SiteCard(props: &SiteCardProps) -> Html {
             <div class="p-4 border-b border-default flex items-center justify-between">
                 <div class="flex items-center gap-3">
                     <span class={format!("w-3 h-3 rounded-full {}", status_class)}>
-                        <span class="sr-only">{ if props.healthy { "Healthy" } else { "Unhealthy" } }</span>
+                        <span class="sr-only">{ status_label }</span>
                     </span>
                     <h3 class="text-lg font-semibold">{ &primary_domain }</h3>
                 </div>

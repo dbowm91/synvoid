@@ -14,7 +14,7 @@ pub fn Probes() -> Html {
 
     let tab_class = |tab: &ProbeTab| {
         if *active_tab == *tab {
-            "px-4 py-2 bg-primary text-white rounded-t-lg border-b-2 border-primary"
+            "px-4 py-2 bg-accent text-white rounded-t-lg border-b-2 border-accent"
         } else {
             "px-4 py-2 bg-secondary text-secondary hover:text-primary rounded-t-lg"
         }
@@ -129,7 +129,7 @@ fn HoneypotProbes() -> Html {
     if *loading {
         return html! {
             <div class="flex justify-center py-12">
-                <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+                <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-accent"></div>
             </div>
         };
     }
@@ -283,7 +283,7 @@ fn SuspiciousWordsTab() -> Html {
     if *loading {
         return html! {
             <div class="flex justify-center py-12">
-                <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+                <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-accent"></div>
             </div>
         };
     }
@@ -429,7 +429,7 @@ fn UpstreamErrorsTab() -> Html {
     if *loading {
         return html! {
             <div class="flex justify-center py-12">
-                <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+                <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-accent"></div>
             </div>
         };
     }

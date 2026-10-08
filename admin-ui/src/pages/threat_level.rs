@@ -19,7 +19,7 @@ pub fn ThreatLevel() -> Html {
 
     let tab_class = |tab: &ThreatTab| {
         if *active_tab == *tab {
-            "px-4 py-2 bg-primary text-white rounded-t-lg border-b-2 border-primary"
+            "px-4 py-2 bg-accent text-white rounded-t-lg border-b-2 border-accent"
         } else {
             "px-4 py-2 bg-secondary text-secondary hover:text-primary rounded-t-lg"
         }
@@ -175,7 +175,7 @@ fn ThreatStatusTab() -> Html {
                 <div class="mt-6 flex items-center gap-4">
                     if s.is_learning {
                         <div class="flex items-center gap-2 text-secondary">
-                            <div class="animate-spin w-4 h-4 border-2 border-primary border-t-transparent rounded-full"></div>
+                            <div class="animate-spin w-4 h-4 border-2 border-accent border-t-transparent rounded-full"></div>
                             <span>{ format!("Learning... {:.0}%", s.learning_progress * 100.0) }</span>
                         </div>
                     }
@@ -392,7 +392,7 @@ fn ThreatBackupsTab() -> Html {
                 <h3 class="text-lg font-semibold">{ "Backups" }</h3>
                 <button
                     onclick={on_create_backup}
-                    class="px-4 py-2 bg-primary text-white rounded-lg hover:opacity-80"
+                    class="px-4 py-2 bg-accent text-white rounded-lg hover:opacity-80"
                 >
                     { "Create Backup" }
                 </button>
@@ -582,7 +582,7 @@ fn ThreatSettingsTab() -> Html {
                             { for (1..=5).map(|level| {
                                 let is_active = current_status.as_ref().is_some_and(|s| s.level == level);
                                 let on_set = on_set_level.clone();
-                                let base_class = if is_active { "bg-primary text-white border-primary" } else { "bg-tertiary text-primary border-default hover:border-primary" };
+                                let base_class = if is_active { "bg-accent text-white border-accent" } else { "bg-tertiary text-primary border-default hover:border-accent" };
                                 html! {
                                     <button
                                         onclick={move |_| on_set.emit(level)}

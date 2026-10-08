@@ -251,9 +251,18 @@ fn BasicTab(props: &BasicTabProps) -> Html {
             saving.set(true);
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
-                let _ = api.update_site(&site_id, &new_config).await;
-                saving.set(false);
-                toast_success("Site configuration saved");
+                // the Result used to be discarded, so a rejected save reported the
+                // same "saved" toast as an accepted one
+                match api.update_site(&site_id, &new_config).await {
+                    Ok(_) => {
+                        saving.set(false);
+                        toast_success("Site configuration saved");
+                    }
+                    Err(e) => {
+                        saving.set(false);
+                        toast_error(&format!("Failed to save: {}", e));
+                    }
+                }
             });
         })
     };
@@ -306,6 +315,7 @@ struct AttacksTabProps {
 fn AttacksTab(_props: &AttacksTabProps) -> Html {
     html! {
         <div class="space-y-6">
+            <p class="text-sm text-secondary mb-4">{ "These settings are not yet editable from the dashboard." }</p>
             <div>
                 <h3 class="text-lg font-semibold mb-4">{ "Detection Settings" }</h3>
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -313,6 +323,7 @@ fn AttacksTab(_props: &AttacksTabProps) -> Html {
                         label="Paranoia Level"
                         name="paranoia_level"
                         value="2"
+                        disabled=true
                         options={vec![
                             ("1".to_string(), "1 - Low (fewer false positives)".to_string()),
                             ("2".to_string(), "2 - Medium (balanced)".to_string()),
@@ -326,6 +337,7 @@ fn AttacksTab(_props: &AttacksTabProps) -> Html {
                         label="Action"
                         name="attack_action"
                         value="stall"
+                        disabled=true
                         options={vec![
                             ("log".to_string(), "Log only".to_string()),
                             ("stall".to_string(), "Stall connection".to_string()),
@@ -436,6 +448,7 @@ struct BotTabProps {
 fn BotTab(_props: &BotTabProps) -> Html {
     html! {
         <div class="space-y-6">
+            <p class="text-sm text-secondary mb-4">{ "These settings are not yet editable from the dashboard." }</p>
             <div>
                 <h3 class="text-lg font-semibold mb-4">{ "Bot Protection" }</h3>
                 <div class="space-y-3">
@@ -469,6 +482,7 @@ fn BotTab(_props: &BotTabProps) -> Html {
                         label="PoW Difficulty"
                         name="pow_difficulty"
                         value="6"
+                        disabled=true
                         help="Higher = more difficult (1-10)"
                         tooltip_title="PoW Difficulty"
                         tooltip_content="Sets the computational difficulty for the Proof-of-Work challenge. Higher values require more CPU work but provide stronger DDoS protection. Recommended: 4-8"
@@ -477,6 +491,7 @@ fn BotTab(_props: &BotTabProps) -> Html {
                         label="Challenge Window (secs)"
                         name="challenge_window"
                         value="300"
+                        disabled=true
                         help="How long the challenge result is valid"
                         tooltip_title="Challenge Window"
                         tooltip_content="Duration in seconds that a passed challenge remains valid. After this period, the client must complete the challenge again."
@@ -497,6 +512,7 @@ struct UploadTabProps {
 fn UploadTab(_props: &UploadTabProps) -> Html {
     html! {
         <div class="space-y-6">
+            <p class="text-sm text-secondary mb-4">{ "These settings are not yet editable from the dashboard." }</p>
             <div>
                 <h3 class="text-lg font-semibold mb-4">{ "Upload Settings" }</h3>
                 <div class="space-y-3">
@@ -525,6 +541,7 @@ fn UploadTab(_props: &UploadTabProps) -> Html {
                         label="Max Upload Size"
                         name="max_size"
                         value="100MB"
+                        disabled=true
                         help="Maximum size for a single file upload"
                         tooltip_title="Max Upload Size"
                         tooltip_content="Maximum allowed size for a single uploaded file. Format: number followed by B, KB, MB, or GB."
@@ -533,6 +550,7 @@ fn UploadTab(_props: &UploadTabProps) -> Html {
                         label="Memory Threshold"
                         name="memory_threshold"
                         value="10MB"
+                        disabled=true
                         help="Files larger than this are written to disk"
                         tooltip_title="Memory Threshold"
                         tooltip_content="Files smaller than this are held in memory, larger files are written to disk. Lower values use more memory but improve performance."
@@ -563,6 +581,11 @@ fn UploadTab(_props: &UploadTabProps) -> Html {
 struct ToggleFieldProps {
     label: String,
     enabled: bool,
+    // when the toggle guards a value that is loaded from config and sent back on
+    // save, the parent state must hear about the flip or the edit is silently
+    // discarded; left unset the toggle keeps its previous standalone behaviour
+    #[prop_or_default]
+    on_change: Callback<bool>,
 }
 
 #[function_component]
@@ -570,8 +593,11 @@ fn ToggleField(props: &ToggleFieldProps) -> Html {
     let enabled = use_state(|| props.enabled);
     let onclick = {
         let enabled = enabled.clone();
+        let on_change = props.on_change.clone();
         Callback::from(move |_| {
-            enabled.set(!*enabled);
+            let next = !*enabled;
+            enabled.set(next);
+            on_change.emit(next);
         })
     };
 
@@ -1092,14 +1118,35 @@ struct SelectWithTooltipProps {
     tooltip_title: String,
     #[prop_or_default]
     tooltip_content: String,
+    // set when the selection is backed by state that a save handler persists;
+    // without it the dropdown renders but the choice never reaches the config
+    #[prop_or_default]
+    on_change: Callback<String>,
+    // marks a fixed dropdown whose value is not persisted anywhere, so the
+    // control must not look selectable
+    #[prop_or_default]
+    disabled: bool,
 }
 
 #[function_component]
 fn SelectWithTooltip(props: &SelectWithTooltipProps) -> Html {
+    let name = props.name.clone();
+    let on_change = props.on_change.reform(|e: Event| {
+        let select: web_sys::HtmlSelectElement = e.target_unchecked_into();
+        select.value()
+    });
+
     html! {
         <div>
-            <label class="block text-sm font-medium text-primary mb-2">{ &props.label }</label>
-            <select class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary" value={props.value.clone()}>
+            <label class="block text-sm font-medium text-primary mb-2" for={name.clone()}>{ &props.label }</label>
+            <select
+                class={if props.disabled { "w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-secondary opacity-60 cursor-not-allowed" } else { "w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary" }}
+                id={name.clone()}
+                name={name}
+                value={props.value.clone()}
+                disabled={props.disabled}
+                onchange={on_change}
+            >
                 { for props.options.iter().map(|(v, l)| html! { <option value={v.clone()}>{ l }</option> }) }
             </select>
             if !props.help.is_empty() {
@@ -1120,21 +1167,74 @@ struct InputWithTooltipProps {
     tooltip_title: String,
     #[prop_or_default]
     tooltip_content: String,
+    // marks a field whose value is a hardcoded literal with no backing state, so
+    // the control must not look editable
+    #[prop_or_default]
+    disabled: bool,
 }
 
 #[function_component]
 fn InputWithTooltip(props: &InputWithTooltipProps) -> Html {
+    let name = props.name.clone();
     html! {
         <div>
-            <label class="block text-sm font-medium text-primary mb-2">{ &props.label }</label>
+            <label class="block text-sm font-medium text-primary mb-2" for={name.clone()}>{ &props.label }</label>
             <input
                 type="text"
-                name={props.name.clone()}
+                id={name.clone()}
+                name={name}
                 value={props.value.clone()}
-                class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary"
+                disabled={props.disabled}
+                class={if props.disabled { "w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-secondary opacity-60 cursor-not-allowed" } else { "w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary" }}
             />
             if !props.help.is_empty() {
                 <p class="mt-1 text-sm text-secondary">{ &props.help }</p>
+            }
+        </div>
+    }
+}
+
+#[derive(Properties, PartialEq)]
+struct ReadOnlyInputProps {
+    label: String,
+    name: String,
+    value: String,
+    #[prop_or_default]
+    input_type: String,
+    #[prop_or_default]
+    help: Option<String>,
+}
+
+/// Stand-in for the shared `Input` on fields with no backing state. The shared
+/// component takes no `disabled` prop, so a separate local component keeps the
+/// untouched fields on the shared component untouched.
+#[function_component]
+fn ReadOnlyInput(props: &ReadOnlyInputProps) -> Html {
+    let input_type = if props.input_type.is_empty() {
+        "text".to_string()
+    } else {
+        props.input_type.clone()
+    };
+    let name = props.name.clone();
+    let value = props.value.clone();
+    let label = props.label.clone();
+    let help = props.help.clone();
+
+    html! {
+        <div class="mb-4">
+            <label class="block text-sm font-medium text-primary mb-1" for={name.clone()}>
+                { label }
+            </label>
+            <input
+                type={input_type}
+                id={name.clone()}
+                name={name}
+                value={value}
+                disabled=true
+                class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-secondary opacity-60 cursor-not-allowed"
+            />
+            if let Some(help_text) = help {
+                <p class="mt-1 text-xs text-secondary">{ help_text }</p>
             }
         </div>
     }
@@ -1150,23 +1250,24 @@ struct RateLimitTabProps {
 fn RateLimitTab(_props: &RateLimitTabProps) -> Html {
     html! {
         <div class="space-y-6">
+            <p class="text-sm text-secondary mb-4">{ "These settings are not yet editable from the dashboard." }</p>
             <div>
                 <h3 class="text-lg font-semibold mb-4">{ "Per-IP Rate Limits" }</h3>
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <InputWithTooltip label="Per Second" name="ip_per_second" value="10" help="Requests per second per IP" tooltip_title="" tooltip_content="" />
-                    <InputWithTooltip label="Per Minute" name="ip_per_minute" value="60" help="Requests per minute per IP" tooltip_title="" tooltip_content="" />
-                    <InputWithTooltip label="Per 5 Min" name="ip_per_5min" value="200" help="Requests per 5 minutes per IP" tooltip_title="" tooltip_content="" />
-                    <InputWithTooltip label="Per Hour" name="ip_per_hour" value="500" help="Requests per hour per IP" tooltip_title="" tooltip_content="" />
-                    <InputWithTooltip label="Per Day" name="ip_per_day" value="1000" help="Requests per day per IP" tooltip_title="" tooltip_content="" />
-                    <InputWithTooltip label="Burst" name="ip_burst" value="20" help="Burst capacity per IP" tooltip_title="" tooltip_content="" />
+                    <InputWithTooltip label="Per Second" name="ip_per_second" value="10" disabled=true help="Requests per second per IP" tooltip_title="" tooltip_content="" />
+                    <InputWithTooltip label="Per Minute" name="ip_per_minute" value="60" disabled=true help="Requests per minute per IP" tooltip_title="" tooltip_content="" />
+                    <InputWithTooltip label="Per 5 Min" name="ip_per_5min" value="200" disabled=true help="Requests per 5 minutes per IP" tooltip_title="" tooltip_content="" />
+                    <InputWithTooltip label="Per Hour" name="ip_per_hour" value="500" disabled=true help="Requests per hour per IP" tooltip_title="" tooltip_content="" />
+                    <InputWithTooltip label="Per Day" name="ip_per_day" value="1000" disabled=true help="Requests per day per IP" tooltip_title="" tooltip_content="" />
+                    <InputWithTooltip label="Burst" name="ip_burst" value="20" disabled=true help="Burst capacity per IP" tooltip_title="" tooltip_content="" />
                 </div>
             </div>
             <div>
                 <h3 class="text-lg font-semibold mb-4">{ "Global Rate Limits" }</h3>
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <InputWithTooltip label="Per Second" name="global_per_second" value="500" help="Total requests per second" tooltip_title="" tooltip_content="" />
-                    <InputWithTooltip label="Per Minute" name="global_per_minute" value="5000" help="Total requests per minute" tooltip_title="" tooltip_content="" />
-                    <InputWithTooltip label="Max Connections" name="max_connections" value="1000" help="Max concurrent connections" tooltip_title="" tooltip_content="" />
+                    <InputWithTooltip label="Per Second" name="global_per_second" value="500" disabled=true help="Total requests per second" tooltip_title="" tooltip_content="" />
+                    <InputWithTooltip label="Per Minute" name="global_per_minute" value="5000" disabled=true help="Total requests per minute" tooltip_title="" tooltip_content="" />
+                    <InputWithTooltip label="Max Connections" name="max_connections" value="1000" disabled=true help="Max concurrent connections" tooltip_title="" tooltip_content="" />
                 </div>
             </div>
         </div>
@@ -1302,9 +1403,19 @@ fn BlockingTab(props: &BlockingTabProps) -> Html {
             saving.set(true);
             wasm_bindgen_futures::spawn_local(async move {
                 let api = crate::services::ApiService::new();
-                let _ = api.update_site(&site_id, &new_config).await;
-                saving.set(false);
-                crate::components::toast::toast_success("Blocking settings saved");
+                match api.update_site(&site_id, &new_config).await {
+                    Ok(_) => {
+                        saving.set(false);
+                        crate::components::toast::toast_success("Blocking settings saved");
+                    }
+                    Err(e) => {
+                        saving.set(false);
+                        crate::components::toast::toast_error(&format!(
+                            "Failed to save blocking settings: {}",
+                            e
+                        ));
+                    }
+                }
             });
         })
     };
@@ -1456,19 +1567,60 @@ fn ProxyTab(props: &ProxyTabProps) -> Html {
         let keepalive = keepalive.clone();
         let site_id = props.site_id.clone();
         Callback::from(move |_| {
+            // reject a non-numeric timeout instead of silently persisting the
+            // default 30/60, which would look like the user's edit was applied
+            let upstream_timeout_secs = match upstream_timeout.parse::<u64>() {
+                Ok(v) => v,
+                Err(_) => {
+                    toast_error(
+                        "Upstream Timeout (secs) must be a whole number of seconds (0 or greater)",
+                    );
+                    return;
+                }
+            };
+            let keepalive_timeout_secs = match keepalive.parse::<u64>() {
+                Ok(v) => v,
+                Err(_) => {
+                    toast_error(
+                        "Keep-Alive Timeout (secs) must be a whole number of seconds (0 or greater)",
+                    );
+                    return;
+                }
+            };
             let new_config = serde_json::json!({
-                "upstream_timeout_secs": upstream_timeout.parse::<u64>().unwrap_or(30),
-                "keepalive_timeout_secs": keepalive.parse::<u64>().unwrap_or(60),
+                "upstream_timeout_secs": upstream_timeout_secs,
+                "keepalive_timeout_secs": keepalive_timeout_secs,
             });
             let saving = saving.clone();
             let site_id = site_id.clone();
             saving.set(true);
             wasm_bindgen_futures::spawn_local(async move {
                 let api = crate::services::ApiService::new();
-                let _ = api.update_site(&site_id, &new_config).await;
-                saving.set(false);
-                toast_success("Proxy settings saved");
+                match api.update_site(&site_id, &new_config).await {
+                    Ok(_) => {
+                        saving.set(false);
+                        toast_success("Proxy settings saved");
+                    }
+                    Err(e) => {
+                        saving.set(false);
+                        toast_error(&format!("Failed to save: {}", e));
+                    }
+                }
             });
+        })
+    };
+
+    let on_upstream_timeout_change = {
+        let upstream_timeout = upstream_timeout.clone();
+        Callback::from(move |v: String| {
+            upstream_timeout.set(v);
+        })
+    };
+
+    let on_keepalive_change = {
+        let keepalive = keepalive.clone();
+        Callback::from(move |v: String| {
+            keepalive.set(v);
         })
     };
 
@@ -1477,8 +1629,8 @@ fn ProxyTab(props: &ProxyTabProps) -> Html {
             <div>
                 <h3 class="text-lg font-semibold mb-4">{ "Proxy Settings" }</h3>
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <Input label="Upstream Timeout (secs)" name="upstream_timeout" value={(*upstream_timeout).clone()} input_type="number" help="Timeout for upstream requests" />
-                    <Input label="Keep-Alive Timeout (secs)" name="keepalive" value={(*keepalive).clone()} input_type="number" help="Upstream keep-alive timeout" />
+                    <Input label="Upstream Timeout (secs)" name="upstream_timeout" value={(*upstream_timeout).clone()} input_type="number" help="Timeout for upstream requests" on_change={on_upstream_timeout_change} />
+                    <Input label="Keep-Alive Timeout (secs)" name="keepalive" value={(*keepalive).clone()} input_type="number" help="Upstream keep-alive timeout" on_change={on_keepalive_change} />
                 </div>
             </div>
             <div class="flex justify-end">
@@ -1543,9 +1695,20 @@ fn SecurityHeadersTab(props: &SecurityHeadersTabProps) -> Html {
         let referrer_policy = referrer_policy.clone();
         let site_id = props.site_id.clone();
         Callback::from(move |_| {
+            // as with the proxy timeouts, a bad max-age must not be saved as the
+            // 1-year default without telling the operator
+            let hsts_max_age_secs = match hsts_max_age.parse::<u64>() {
+                Ok(v) => v,
+                Err(_) => {
+                    toast_error(
+                        "HSTS Max Age (secs) must be a whole number of seconds (0 or greater)",
+                    );
+                    return;
+                }
+            };
             let new_config = serde_json::json!({
                 "hsts": *hsts,
-                "hsts_max_age": hsts_max_age.parse::<u64>().unwrap_or(31536000),
+                "hsts_max_age": hsts_max_age_secs,
                 "x_frame_options": (*x_frame_options).clone(),
                 "x_content_type_options": *x_content_type,
                 "referrer_policy": (*referrer_policy).clone(),
@@ -1555,10 +1718,52 @@ fn SecurityHeadersTab(props: &SecurityHeadersTabProps) -> Html {
             saving.set(true);
             wasm_bindgen_futures::spawn_local(async move {
                 let api = crate::services::ApiService::new();
-                let _ = api.update_site(&site_id, &new_config).await;
-                saving.set(false);
-                toast_success("Security headers saved");
+                match api.update_site(&site_id, &new_config).await {
+                    Ok(_) => {
+                        saving.set(false);
+                        toast_success("Security headers saved");
+                    }
+                    Err(e) => {
+                        saving.set(false);
+                        toast_error(&format!("Failed to save: {}", e));
+                    }
+                }
             });
+        })
+    };
+
+    let on_hsts_change = {
+        let hsts = hsts.clone();
+        Callback::from(move |v: bool| {
+            hsts.set(v);
+        })
+    };
+
+    let on_hsts_max_age_change = {
+        let hsts_max_age = hsts_max_age.clone();
+        Callback::from(move |v: String| {
+            hsts_max_age.set(v);
+        })
+    };
+
+    let on_x_frame_options_change = {
+        let x_frame_options = x_frame_options.clone();
+        Callback::from(move |v: String| {
+            x_frame_options.set(v);
+        })
+    };
+
+    let on_x_content_type_change = {
+        let x_content_type = x_content_type.clone();
+        Callback::from(move |v: bool| {
+            x_content_type.set(v);
+        })
+    };
+
+    let on_referrer_policy_change = {
+        let referrer_policy = referrer_policy.clone();
+        Callback::from(move |v: String| {
+            referrer_policy.set(v);
         })
     };
 
@@ -1567,11 +1772,11 @@ fn SecurityHeadersTab(props: &SecurityHeadersTabProps) -> Html {
             <div>
                 <h3 class="text-lg font-semibold mb-4">{ "Security Headers" }</h3>
                 <div class="space-y-3">
-                    <ToggleField label="HSTS (Strict-Transport-Security)" enabled={*hsts} />
-                    <Input label="HSTS Max Age (secs)" name="hsts_max_age" value={(*hsts_max_age).clone()} input_type="number" help="How long browsers should remember to use HTTPS" />
-                    <SelectWithTooltip label="X-Frame-Options" name="x_frame_options" value={(*x_frame_options).clone()} options={vec![("SAMEORIGIN".to_string(), "Same Origin".to_string()), ("DENY".to_string(), "Deny".to_string())]} help="Prevents clickjacking" tooltip_title="" tooltip_content="" />
-                    <ToggleField label="X-Content-Type-Options" enabled={*x_content_type} />
-                    <Input label="Referrer-Policy" name="referrer_policy" value={(*referrer_policy).clone()} help="How much referrer info to send" />
+                    <ToggleField label="HSTS (Strict-Transport-Security)" enabled={*hsts} on_change={on_hsts_change} />
+                    <Input label="HSTS Max Age (secs)" name="hsts_max_age" value={(*hsts_max_age).clone()} input_type="number" help="How long browsers should remember to use HTTPS" on_change={on_hsts_max_age_change} />
+                    <SelectWithTooltip label="X-Frame-Options" name="x_frame_options" value={(*x_frame_options).clone()} options={vec![("SAMEORIGIN".to_string(), "Same Origin".to_string()), ("DENY".to_string(), "Deny".to_string())]} help="Prevents clickjacking" tooltip_title="" tooltip_content="" on_change={on_x_frame_options_change} />
+                    <ToggleField label="X-Content-Type-Options" enabled={*x_content_type} on_change={on_x_content_type_change} />
+                    <Input label="Referrer-Policy" name="referrer_policy" value={(*referrer_policy).clone()} help="How much referrer info to send" on_change={on_referrer_policy_change} />
                 </div>
             </div>
             <div class="flex justify-end">
@@ -1593,19 +1798,20 @@ struct StaticTabProps {
 fn StaticTab(_props: &StaticTabProps) -> Html {
     html! {
         <div class="space-y-6">
+            <p class="text-sm text-secondary mb-4">{ "These settings are not yet editable from the dashboard." }</p>
             <div>
                 <h3 class="text-lg font-semibold mb-4">{ "Static File Serving" }</h3>
                 <div class="space-y-3">
                     <ToggleField label="Enable Static Serving" enabled=false />
-                    <Input label="Document Root" name="doc_root" value="/var/www/html" help="Path to static files directory" />
-                    <Input label="Index File" name="index" value="index.html" help="Default file to serve for directory requests" />
+                    <ReadOnlyInput label="Document Root" name="doc_root" value="/var/www/html" help="Path to static files directory" />
+                    <ReadOnlyInput label="Index File" name="index" value="index.html" help="Default file to serve for directory requests" />
                 </div>
             </div>
             <div>
                 <h3 class="text-lg font-semibold mb-4">{ "Caching" }</h3>
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <Input label="Cache Max Age (secs)" name="cache_max_age" value="3600" input_type="number" help="Browser cache duration" />
-                    <Input label="ETag" name="etag" value="true" help="Enable ETag headers" />
+                    <ReadOnlyInput label="Cache Max Age (secs)" name="cache_max_age" value="3600" input_type="number" help="Browser cache duration" />
+                    <ReadOnlyInput label="ETag" name="etag" value="true" help="Enable ETag headers" />
                 </div>
             </div>
         </div>
@@ -1622,12 +1828,13 @@ struct AuthTabProps {
 fn AuthTab(_props: &AuthTabProps) -> Html {
     html! {
         <div class="space-y-6">
+            <p class="text-sm text-secondary mb-4">{ "These settings are not yet editable from the dashboard." }</p>
             <div>
                 <h3 class="text-lg font-semibold mb-4">{ "Site Authentication" }</h3>
                 <div class="space-y-3">
                     <ToggleField label="Enable Site Auth" enabled=false />
-                    <SelectWithTooltip label="Auth Type" name="auth_type" value="basic" options={vec![("basic".to_string(), "HTTP Basic".to_string()), ("bearer".to_string(), "Bearer Token".to_string()), ("jwt".to_string(), "JWT".to_string())]} help="Authentication method" tooltip_title="" tooltip_content="" />
-                    <Input label="Realm" name="realm" value="Restricted" help="Authentication realm shown to browsers" />
+                    <SelectWithTooltip label="Auth Type" name="auth_type" value="basic" options={vec![("basic".to_string(), "HTTP Basic".to_string()), ("bearer".to_string(), "Bearer Token".to_string()), ("jwt".to_string(), "JWT".to_string())]} help="Authentication method" tooltip_title="" tooltip_content="" disabled=true />
+                    <ReadOnlyInput label="Realm" name="realm" value="Restricted" help="Authentication realm shown to browsers" />
                 </div>
             </div>
             <div>
@@ -1649,12 +1856,13 @@ struct WebSocketTabProps {
 fn WebSocketTab(_props: &WebSocketTabProps) -> Html {
     html! {
         <div class="space-y-6">
+            <p class="text-sm text-secondary mb-4">{ "These settings are not yet editable from the dashboard." }</p>
             <div>
                 <h3 class="text-lg font-semibold mb-4">{ "WebSocket Proxy" }</h3>
                 <div class="space-y-3">
                     <ToggleField label="Enable WebSocket Proxy" enabled=true />
-                    <Input label="Max Frame Size" name="max_frame_size" value="65536" input_type="number" help="Maximum WebSocket frame size in bytes" />
-                    <Input label="Idle Timeout (secs)" name="ws_idle_timeout" value="300" input_type="number" help="Close idle connections after this period" />
+                    <ReadOnlyInput label="Max Frame Size" name="max_frame_size" value="65536" input_type="number" help="Maximum WebSocket frame size in bytes" />
+                    <ReadOnlyInput label="Idle Timeout (secs)" name="ws_idle_timeout" value="300" input_type="number" help="Close idle connections after this period" />
                 </div>
             </div>
             <div>
@@ -1676,19 +1884,20 @@ struct GrpcTabProps {
 fn GrpcTab(_props: &GrpcTabProps) -> Html {
     html! {
         <div class="space-y-6">
+            <p class="text-sm text-secondary mb-4">{ "These settings are not yet editable from the dashboard." }</p>
             <div>
                 <h3 class="text-lg font-semibold mb-4">{ "gRPC Proxy" }</h3>
                 <div class="space-y-3">
                     <ToggleField label="Enable gRPC Proxy" enabled=false />
-                    <Input label="Max Message Size" name="max_msg_size" value="4194304" input_type="number" help="Maximum gRPC message size in bytes (default 4MB)" />
-                    <Input label="Max Header List Size" name="max_header_list" value="8192" input_type="number" help="Maximum header list size in bytes" />
+                    <ReadOnlyInput label="Max Message Size" name="max_msg_size" value="4194304" input_type="number" help="Maximum gRPC message size in bytes (default 4MB)" />
+                    <ReadOnlyInput label="Max Header List Size" name="max_header_list" value="8192" input_type="number" help="Maximum header list size in bytes" />
                 </div>
             </div>
             <div>
                 <h3 class="text-lg font-semibold mb-4">{ "HTTP/2 Settings" }</h3>
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <Input label="Max Concurrent Streams" name="max_streams" value="100" input_type="number" />
-                    <Input label="Initial Window Size" name="init_window" value="65535" input_type="number" />
+                    <ReadOnlyInput label="Max Concurrent Streams" name="max_streams" value="100" input_type="number" />
+                    <ReadOnlyInput label="Initial Window Size" name="init_window" value="65535" input_type="number" />
                 </div>
             </div>
         </div>
@@ -1705,19 +1914,20 @@ struct TunnelTabProps {
 fn TunnelTab(_props: &TunnelTabProps) -> Html {
     html! {
         <div class="space-y-6">
+            <p class="text-sm text-secondary mb-4">{ "These settings are not yet editable from the dashboard." }</p>
             <div>
                 <h3 class="text-lg font-semibold mb-4">{ "Tunnel Settings" }</h3>
                 <div class="space-y-3">
                     <ToggleField label="Enable Tunnel" enabled=false />
-                    <Input label="Tunnel Port" name="tunnel_port" value="8443" input_type="number" help="Port for tunnel connections" />
-                    <SelectWithTooltip label="Protocol" name="tunnel_proto" value="wireguard" options={vec![("wireguard".to_string(), "WireGuard".to_string()), ("quic".to_string(), "QUIC".to_string())]} help="Tunnel protocol" tooltip_title="" tooltip_content="" />
+                    <ReadOnlyInput label="Tunnel Port" name="tunnel_port" value="8443" input_type="number" help="Port for tunnel connections" />
+                    <SelectWithTooltip label="Protocol" name="tunnel_proto" value="wireguard" options={vec![("wireguard".to_string(), "WireGuard".to_string()), ("quic".to_string(), "QUIC".to_string())]} help="Tunnel protocol" tooltip_title="" tooltip_content="" disabled=true />
                 </div>
             </div>
             <div>
                 <h3 class="text-lg font-semibold mb-4">{ "Connection Limits" }</h3>
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <Input label="Max Peers" name="max_peers" value="100" input_type="number" />
-                    <Input label="Keepalive Interval (secs)" name="keepalive" value="25" input_type="number" />
+                    <ReadOnlyInput label="Max Peers" name="max_peers" value="100" input_type="number" />
+                    <ReadOnlyInput label="Keepalive Interval (secs)" name="keepalive" value="25" input_type="number" />
                 </div>
             </div>
         </div>

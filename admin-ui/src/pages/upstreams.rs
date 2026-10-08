@@ -1,4 +1,5 @@
 use crate::components::skeleton::LoadingSpinner;
+use crate::components::toast::{toast_error, toast_success};
 use crate::services::ApiService;
 use crate::types::SiteUpstreams;
 use yew::prelude::*;
@@ -9,6 +10,9 @@ pub fn Upstreams() -> Html {
     let loading = use_state(|| true);
     let error = use_state(|| None::<String>);
     let filter = use_state(String::new);
+    // site_id of the health check currently in flight, so the row that is
+    // working can say so and no second trigger can be queued behind it
+    let checking = use_state(|| None::<String>);
 
     {
         let upstreams = upstreams.clone();
@@ -60,14 +64,31 @@ pub fn Upstreams() -> Html {
         })
     };
 
-    let health_check = |site_id: String| {
-        Callback::from(move |_: MouseEvent| {
-            let site_id = site_id.clone();
-            wasm_bindgen_futures::spawn_local(async move {
-                let api = ApiService::new();
-                let _ = api.trigger_health_check(&site_id).await;
-            });
-        })
+    let health_check = {
+        let checking = checking.clone();
+        move |site_id: String| {
+            let checking = checking.clone();
+            Callback::from(move |_: MouseEvent| {
+                // a check already in flight means one more click would queue a
+                // duplicate probe of the same upstreams
+                if (*checking).is_some() {
+                    return;
+                }
+                let site_id = site_id.clone();
+                checking.set(Some(site_id.clone()));
+                let checking = checking.clone();
+                wasm_bindgen_futures::spawn_local(async move {
+                    let api = ApiService::new();
+                    // the Result used to be discarded, leaving the operator with no
+                    // way to tell an accepted trigger from a rejected one
+                    match api.trigger_health_check(&site_id).await {
+                        Ok(_) => toast_success("Health check triggered"),
+                        Err(e) => toast_error(&format!("Failed to trigger health check: {}", e)),
+                    }
+                    checking.set(None);
+                });
+            })
+        }
     };
 
     let filter_lower = filter.to_lowercase();
@@ -193,10 +214,15 @@ pub fn Upstreams() -> Html {
                                             </p>
                                         </div>
                                         <button
-                                            class="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700"
+                                            class="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+                                            disabled={(*checking).is_some()}
                                             onclick={health_check(site.site_id.clone())}
                                         >
-                                            { "Check Health" }
+                                            { if checking.as_deref() == Some(site.site_id.as_str()) {
+                                                "Checking..."
+                                            } else {
+                                                "Check Health"
+                                            } }
                                         </button>
                                     </div>
 
@@ -206,7 +232,7 @@ pub fn Upstreams() -> Html {
                                             let status_text = if backend.healthy { "Healthy" } else { "Unhealthy" };
 
                                             html! {
-                                                <div class="flex items-center justify-between p-3 bg-primary rounded border border-default">
+                                                <div class="flex items-center justify-between p-3 bg-tertiary rounded border border-default">
                                                     <div class="flex items-center gap-3">
                                                         <span class={format!("w-2.5 h-2.5 rounded-full {}", status_color)} />
                                                         <span class="font-mono text-sm">{ &backend.url }</span>

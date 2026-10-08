@@ -39,6 +39,16 @@ fn export_to_csv(headers: &[&str], rows: &[Vec<String>], filename: &str) {
     let _ = a.dispatch_event(&web_sys::MouseEvent::new("click").unwrap());
 }
 
+fn hit_rate_class(rate: f64) -> &'static str {
+    if rate > 70.0 {
+        "text-green-500 font-medium"
+    } else if rate > 40.0 {
+        "text-yellow-500 font-medium"
+    } else {
+        "text-red-500 font-medium"
+    }
+}
+
 fn format_number(n: u64) -> String {
     if n >= 1_000_000_000 {
         format!("{:.1}B", n as f64 / 1_000_000_000.0)
@@ -321,10 +331,6 @@ pub fn Dashboard() -> Html {
 
     let labels: Vec<String> = (1..=12).map(|i| format!("{}m", i)).collect();
     let current = stats.as_ref();
-    let cpu = current.map(|s| s.cpu_usage_percent as f64).unwrap_or(0.0);
-    let mem_pct = current
-        .map(|s| (s.memory_used_mb as f64 / s.memory_total_mb as f64) * 100.0)
-        .unwrap_or(0.0);
 
     let on_window_change = {
         let selected_window = selected_window.clone();
@@ -498,16 +504,38 @@ pub fn Dashboard() -> Html {
 
                 <div class="bg-secondary rounded-lg p-6 border border-default">
                     <h3 class="text-lg font-semibold mb-4">{ "System Resources" }</h3>
-                    <div class="flex justify-around">
-                        <Gauge value={cpu} max={100.0} label="CPU" unit="%" />
-                        <Gauge value={mem_pct} max={100.0} label="Memory" unit="%" />
-                    </div>
-                    <div class="mt-4 text-sm text-secondary">
-                        <div class="flex justify-between">
-                            <span>{ "Memory:" }</span>
-                            <span>{ format!("{}/{} MB", current.map(|s| s.memory_used_mb).unwrap_or(0), current.map(|s| s.memory_total_mb).unwrap_or(0)) }</span>
-                        </div>
-                    </div>
+                    { match current.map(|s| {
+                        (
+                            s.cpu_usage_percent as f64,
+                            (s.memory_used_mb as f64 / s.memory_total_mb.max(1) as f64) * 100.0,
+                            s.memory_used_mb,
+                            s.memory_total_mb,
+                        )
+                    }) {
+                        // Before the first successful poll there is no
+                        // measurement, and rendering a 0% gauge would read as a
+                        // healthy idle server rather than as "not known yet".
+                        Some((cpu, mem_pct, mem_used, mem_total)) => html! {
+                            <>
+                                <div class="flex justify-around">
+                                    <Gauge value={cpu} max={100.0} label="CPU" unit="%" />
+                                    <Gauge value={mem_pct} max={100.0} label="Memory" unit="%" />
+                                </div>
+                                <div class="mt-4 text-sm text-secondary">
+                                    <div class="flex justify-between">
+                                        <span>{ "Memory:" }</span>
+                                        <span>{ format!("{}/{} MB", mem_used, mem_total) }</span>
+                                    </div>
+                                </div>
+                            </>
+                        },
+                        None => html! {
+                            <div class="flex justify-around py-8">
+                                <span class="text-secondary text-sm">{ "Waiting for metrics..." }</span>
+                            </div>
+                        },
+                    }
+                }
                 </div>
 
                 <div class="bg-secondary rounded-lg p-6 border border-default">
@@ -522,24 +550,38 @@ pub fn Dashboard() -> Html {
 
                 <div class="bg-secondary rounded-lg p-6 border border-default">
                     <h3 class="text-lg font-semibold mb-4">{ "Cache Performance" }</h3>
-                    <div class="space-y-3">
-                        <StatRow label="Proxy Cache Hits" value={format_number(cache_stats.as_ref().map(|c| c.proxy_cache_hits).unwrap_or(0))} />
-                        <StatRow label="Proxy Cache Misses" value={format_number(cache_stats.as_ref().map(|c| c.proxy_cache_misses).unwrap_or(0))} />
-                        <div class="flex justify-between items-center py-2 border-b border-default">
-                            <span class="text-secondary text-sm">{ "Proxy Cache Hit Rate" }</span>
-                            <span class={if cache_stats.as_ref().map(|c| c.proxy_cache_hit_rate).unwrap_or(0.0) > 70.0 { "text-green-500 font-medium" } else if cache_stats.as_ref().map(|c| c.proxy_cache_hit_rate).unwrap_or(0.0) > 40.0 { "text-yellow-500 font-medium" } else { "text-red-500 font-medium" }}>
-                                { format!("{:.1}%", cache_stats.as_ref().map(|c| c.proxy_cache_hit_rate).unwrap_or(0.0)) }
-                            </span>
-                        </div>
-                        <StatRow label="Static Cache Hits" value={format_number(cache_stats.as_ref().map(|c| c.static_cache_hits).unwrap_or(0))} />
-                        <StatRow label="Static Cache Misses" value={format_number(cache_stats.as_ref().map(|c| c.static_cache_misses).unwrap_or(0))} />
-                        <div class="flex justify-between items-center py-2 border-b border-default">
-                            <span class="text-secondary text-sm">{ "Static Cache Hit Rate" }</span>
-                            <span class={if cache_stats.as_ref().map(|c| c.static_cache_hit_rate).unwrap_or(0.0) > 70.0 { "text-green-500 font-medium" } else if cache_stats.as_ref().map(|c| c.static_cache_hit_rate).unwrap_or(0.0) > 40.0 { "text-yellow-500 font-medium" } else { "text-red-500 font-medium" }}>
-                                { format!("{:.1}%", cache_stats.as_ref().map(|c| c.static_cache_hit_rate).unwrap_or(0.0)) }
-                            </span>
-                        </div>
-                    </div>
+                    // `cache_stats` is absent until the first successful fetch.
+                    // Colour-coding a missing reading as 0.0% rendered it in the
+                    // failure colour, so a stats outage looked like a cache
+                    // that had stopped working.
+                    { match cache_stats.as_ref() {
+                        Some(cache) => html! {
+                            <div class="space-y-3">
+                                <StatRow label="Proxy Cache Hits" value={format_number(cache.proxy_cache_hits)} />
+                                <StatRow label="Proxy Cache Misses" value={format_number(cache.proxy_cache_misses)} />
+                                <div class="flex justify-between items-center py-2 border-b border-default">
+                                    <span class="text-secondary text-sm">{ "Proxy Cache Hit Rate" }</span>
+                                    <span class={hit_rate_class(cache.proxy_cache_hit_rate)}>
+                                        { format!("{:.1}%", cache.proxy_cache_hit_rate) }
+                                    </span>
+                                </div>
+                                <StatRow label="Static Cache Hits" value={format_number(cache.static_cache_hits)} />
+                                <StatRow label="Static Cache Misses" value={format_number(cache.static_cache_misses)} />
+                                <div class="flex justify-between items-center py-2 border-b border-default">
+                                    <span class="text-secondary text-sm">{ "Static Cache Hit Rate" }</span>
+                                    <span class={hit_rate_class(cache.static_cache_hit_rate)}>
+                                        { format!("{:.1}%", cache.static_cache_hit_rate) }
+                                    </span>
+                                </div>
+                            </div>
+                        },
+                        None => html! {
+                            <div class="py-8 text-center text-secondary text-sm">
+                                { "Cache statistics unavailable." }
+                            </div>
+                        },
+                    }
+                    }
                 </div>
 
                 <div class="bg-secondary rounded-lg p-6 border border-default">

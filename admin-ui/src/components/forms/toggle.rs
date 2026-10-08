@@ -51,7 +51,16 @@ pub fn Toggle(props: &ToggleProps) -> Html {
     };
 
     let toggle_element = html! {
+        // `role="switch"` + `aria-checked` is what conveys the on/off state;
+        // without it the control is announced as a nameless button and a
+        // screen-reader user cannot tell whether the setting is enabled.
+        // The visible label is a sibling `<span>`, so it is referenced
+        // explicitly rather than relied on as an implicit label.
         <button
+            type="button"
+            role="switch"
+            aria-checked={if *enabled { "true" } else { "false" }}
+            aria-label={props.label.clone()}
             onclick={onclick}
             disabled={props.disabled}
             class={format!(

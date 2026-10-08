@@ -16,19 +16,42 @@ fn bytes_to_human(bytes: usize) -> String {
     }
 }
 
-fn human_to_bytes(s: &str) -> usize {
+/// Rejects a non-numeric timeout/limit instead of substituting a default that
+/// the operator never typed.
+fn parse_num(raw: &str, label: &str) -> Result<u64, String> {
+    raw.trim()
+        .parse::<u64>()
+        .map_err(|_| format!("{} must be a whole number of seconds", label))
+}
+
+/// Parse a human size (`10`, `512KB`, `10MB`, `1GB`) into bytes.
+///
+/// Returns `None` rather than collapsing unparseable input to `0`, which is
+/// what the previous `unwrap_or(0)` did — a typo in a buffer size silently
+/// persisted a zero-sized buffer.
+fn human_to_bytes(s: &str) -> Option<usize> {
     let s = s.trim().to_uppercase();
-    if let Some(val) = s.strip_suffix("GB") {
-        val.trim().parse::<usize>().unwrap_or(0) * 1_073_741_824
-    } else if let Some(val) = s.strip_suffix("MB") {
-        val.trim().parse::<usize>().unwrap_or(0) * 1_048_576
-    } else if let Some(val) = s.strip_suffix("KB") {
-        val.trim().parse::<usize>().unwrap_or(0) * 1024
-    } else if let Some(val) = s.strip_suffix("B") {
-        val.trim().parse::<usize>().unwrap_or(0)
-    } else {
-        s.parse::<usize>().unwrap_or(0)
+    if s.is_empty() {
+        return None;
     }
+    let (digits, multiplier) = if let Some(v) = s.strip_suffix("GB") {
+        (v, 1_073_741_824usize)
+    } else if let Some(v) = s.strip_suffix("MB") {
+        (v, 1_048_576)
+    } else if let Some(v) = s.strip_suffix("KB") {
+        (v, 1024)
+    } else if let Some(v) = s.strip_suffix("B") {
+        (v, 1)
+    } else {
+        (s.as_str(), 1)
+    };
+    digits
+        .trim()
+        .parse::<usize>()
+        .ok()
+        // `checked_mul` so a value like 99999999GB overflows to `None`
+        // instead of wrapping to a small, plausible-looking size.
+        .and_then(|n| n.checked_mul(multiplier))
 }
 
 #[function_component]
@@ -174,17 +197,76 @@ pub fn TrafficShaping() -> Html {
         let original_global_read_buf_size = original_global_read_buf_size.clone();
         let original_global_max_request_size = original_global_max_request_size.clone();
         Callback::from(move |_: MouseEvent| {
+            // Validate before anything is sent: the previous
+            // `parse().unwrap_or(default)` chain persisted 10000/30/120/… for
+            // any unparseable input, so a typo looked like a successful save.
+            let max_conn_value = match parse_num(&max_conn, "Max connections") {
+                Ok(v) => v,
+                Err(msg) => {
+                    toast_error(&msg);
+                    return;
+                }
+            };
+            let conn_timeout_value = match parse_num(&conn_timeout, "Connection timeout") {
+                Ok(v) => v,
+                Err(msg) => {
+                    toast_error(&msg);
+                    return;
+                }
+            };
+            let idle_timeout_value = match parse_num(&idle_timeout, "Idle timeout") {
+                Ok(v) => v,
+                Err(msg) => {
+                    toast_error(&msg);
+                    return;
+                }
+            };
+            let read_timeout_value = match parse_num(&read_timeout, "Read timeout") {
+                Ok(v) => v,
+                Err(msg) => {
+                    toast_error(&msg);
+                    return;
+                }
+            };
+            let write_timeout_value = match parse_num(&write_timeout, "Write timeout") {
+                Ok(v) => v,
+                Err(msg) => {
+                    toast_error(&msg);
+                    return;
+                }
+            };
+            let write_buf_value = match human_to_bytes(&write_buf) {
+                Some(v) => v,
+                None => {
+                    toast_error("Write buffer size must be a size like 64KB or 1MB");
+                    return;
+                }
+            };
+            let read_buf_value = match human_to_bytes(&read_buf) {
+                Some(v) => v,
+                None => {
+                    toast_error("Read buffer size must be a size like 64KB or 1MB");
+                    return;
+                }
+            };
+            let max_req_value = match human_to_bytes(&max_req) {
+                Some(v) => v,
+                None => {
+                    toast_error("Max request size must be a size like 10MB or 1GB");
+                    return;
+                }
+            };
             let config = serde_json::json!({
                 "config": {
                     "enabled": enabled,
-                    "max_connections": max_conn.parse::<u64>().unwrap_or(10000),
-                    "connection_timeout_secs": conn_timeout.parse::<u64>().unwrap_or(30),
-                    "idle_timeout_secs": idle_timeout.parse::<u64>().unwrap_or(120),
-                    "read_timeout_secs": read_timeout.parse::<u64>().unwrap_or(30),
-                    "write_timeout_secs": write_timeout.parse::<u64>().unwrap_or(30),
-                    "write_buf_size": human_to_bytes(&write_buf),
-                    "read_buf_size": human_to_bytes(&read_buf),
-                    "max_request_size": human_to_bytes(&max_req),
+                    "max_connections": max_conn_value,
+                    "connection_timeout_secs": conn_timeout_value,
+                    "idle_timeout_secs": idle_timeout_value,
+                    "read_timeout_secs": read_timeout_value,
+                    "write_timeout_secs": write_timeout_value,
+                    "write_buf_size": write_buf_value,
+                    "read_buf_size": read_buf_value,
+                    "max_request_size": max_req_value,
                 }
             });
             let saving = saving.clone();

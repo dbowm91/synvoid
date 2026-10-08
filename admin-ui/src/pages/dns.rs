@@ -216,8 +216,8 @@ pub fn Dns() -> Html {
                                 </div>
 
     <div>
-                                    <label class="block text-sm text-secondary mb-1">{ "Port" }</label>
-                                    <input
+                                    <label for="dns-port" class="block text-sm text-secondary mb-1">{ "Port" }</label>
+                                    <input id="dns-port"
                                         type="number"
                                         value={port_string}
                                         oninput={{
@@ -329,8 +329,8 @@ pub fn Dns() -> Html {
                                 </div>
 
                                 <div>
-                                    <label class="block text-sm text-secondary mb-1">{ "Blocked TLDs (comma-separated)" }</label>
-                                    <input
+                                    <label for="dns-blocked-tlds" class="block text-sm text-secondary mb-1">{ "Blocked TLDs (comma-separated)" }</label>
+                                    <input id="dns-blocked-tlds"
                                         type="text"
                                         placeholder=".onion, .test"
                                         value={block_tld_string}
@@ -354,8 +354,8 @@ pub fn Dns() -> Html {
                                 </div>
 
                                 <div>
-                                    <label class="block text-sm text-secondary mb-1">{ "NXDOMAIN Redirect" }</label>
-                                    <input
+                                    <label for="dns-nxdomain-redirect" class="block text-sm text-secondary mb-1">{ "NXDOMAIN Redirect" }</label>
+                                    <input id="dns-nxdomain-redirect"
                                         type="text"
                                         placeholder="http://blocked.local"
                                         value={edited_config_for_render.nxdomain_redirect.clone().unwrap_or_default()}

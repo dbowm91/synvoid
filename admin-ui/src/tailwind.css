@@ -1,3 +1,178 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* ---------------------------------------------------------------------------
+ * Theme tokens
+ *
+ * `tailwind.config.js` maps the semantic palette to CSS custom properties, so
+ * every `bg-*`/`border-*`/`text-*` utility resolves through one of these.
+ * The preset values are the same ones the Settings → Theme preview renders and
+ * the ones `get_preset_colors()` returns to the API, so the palette here and the
+ * palette an operator configures cannot drift.
+ *
+ * `apply_theme_class()` (hooks/use_theme.rs) puts the preset class on <html>;
+ * `Theme::Dark` uses no class at all, so the dark palette is `:root` and every
+ * preset is a later equal-specificity override.
+ * ------------------------------------------------------------------------ */
+:root {
+  --bg-primary: #0a0a0f;
+  --bg-secondary: #12121a;
+  --bg-tertiary: #1a1a24;
+  --bg-card: #12121a;
+  --border-color: #2a2a3a;
+  --accent-primary: #00d4aa;
+  --accent-secondary: #00b894;
+  --accent-glow: rgba(0, 212, 170, 0.35);
+  --text-primary: #f0f0f5;
+  --text-secondary: #a8a8bd;
+  --text-tertiary: #6b6b80;
+}
+
+.light {
+  --bg-primary: #f8fafc;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #f1f5f9;
+  --bg-card: #ffffff;
+  --border-color: #e2e8f0;
+  --accent-primary: #059669;
+  --accent-secondary: #10b981;
+  --accent-glow: rgba(5, 150, 105, 0.3);
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-tertiary: #94a3b8;
+}
+
+.theme-ocean {
+  --bg-primary: #0c1929;
+  --bg-secondary: #132f4c;
+  --bg-tertiary: #173a5e;
+  --bg-card: #132f4c;
+  --border-color: #2d4a6f;
+  --accent-primary: #0ea5e9;
+  --accent-secondary: #38bdf8;
+  --accent-glow: rgba(14, 165, 233, 0.35);
+  --text-primary: #e3f2fd;
+  --text-secondary: #9fb8d0;
+  --text-tertiary: #64809e;
+}
+
+.theme-forest {
+  --bg-primary: #0a1a0f;
+  --bg-secondary: #132318;
+  --bg-tertiary: #1a2e21;
+  --bg-card: #132318;
+  --border-color: #2d4a3a;
+  --accent-primary: #22c55e;
+  --accent-secondary: #4ade80;
+  --accent-glow: rgba(34, 197, 94, 0.35);
+  --text-primary: #e8f5e9;
+  --text-secondary: #9fc4ab;
+  --text-tertiary: #63856e;
+}
+
+.theme-sunset {
+  --bg-primary: #1a0f0a;
+  --bg-secondary: #2a1a14;
+  --bg-tertiary: #3d261e;
+  --bg-card: #2a1a14;
+  --border-color: #4a3028;
+  --accent-primary: #f97316;
+  --accent-secondary: #fb923c;
+  --accent-glow: rgba(249, 115, 22, 0.35);
+  --text-primary: #fff1ec;
+  --text-secondary: #d8b5a5;
+  --text-tertiary: #9c7a68;
+}
+
+/* ---------------------------------------------------------------------------
+ * Token split-outs
+ *
+ * A Tailwind colour entry backs `text-{token}`, `bg-{token}` and
+ * `border-{token}` from a single variable, so the generated `text-primary`
+ * resolves to `var(--bg-primary)` — a surface colour used as type. Those
+ * utilities are re-pointed at the dedicated text tokens here; equal specificity
+ * plus later source order wins.
+ * ------------------------------------------------------------------------ */
+.text-primary {
+  color: var(--text-primary);
+}
+
+.text-secondary {
+  color: var(--text-secondary);
+}
+
+.text-tertiary {
+  color: var(--text-tertiary);
+}
+
+.hover\:text-primary:hover {
+  color: var(--text-primary);
+}
+
+/* `border-secondary` is used as a border (tooltip.rs), not a surface. */
+.border-secondary {
+  border-color: var(--border-color);
+}
+
+/*
+ * Bare `.accent` is not a Tailwind utility, so it generated no rule at all: the
+ * SynVoid wordmark and every chart stroke fell back to inherited colour.
+ */
+.accent {
+  color: var(--accent-primary);
+}
+
+/* ---------------------------------------------------------------------------
+ * Pre-WASM splash (index.html) — the one place styles must not depend on the
+ * bundle having booted, so these live here rather than in a Tailwind layer.
+ * ------------------------------------------------------------------------ */
+.loading-screen {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  background: var(--bg-primary, #0a0a0f);
+  color: var(--text-secondary, #a8a8bd);
+}
+
+.loading-logo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 3rem;
+  height: 3rem;
+  border-radius: 0.75rem;
+  background: var(--accent-primary, #00d4aa);
+  color: var(--bg-primary, #0a0a0f);
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+.loading-spinner {
+  width: 1.5rem;
+  height: 1.5rem;
+  border: 2px solid var(--border-color, #2a2a3a);
+  border-top-color: var(--accent-primary, #00d4aa);
+  border-radius: 9999px;
+  animation: loading-spin 1s linear infinite;
+}
+
+@keyframes loading-spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loading-spinner {
+    animation: none;
+  }
+}
+
+.loading-text {
+  font-size: 0.875rem;
+}

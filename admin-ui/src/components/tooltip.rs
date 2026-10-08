@@ -59,7 +59,7 @@ pub fn Tooltip(props: &TooltipProps) -> Html {
 
             if *visible {
                 <div class={format!("absolute z-50 {}", position_class)}>
-                    <div class="bg-primary text-white text-xs rounded-lg shadow-lg p-3 max-w-xs whitespace-normal border border-secondary animate-fade-in">
+                    <div class="bg-accent text-white text-xs rounded-lg shadow-lg p-3 max-w-xs whitespace-normal border border-secondary animate-fade-in">
                         if let Some(title) = &props.title {
                             <div class="font-semibold mb-1 text-sm">{ title }</div>
                         }

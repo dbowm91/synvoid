@@ -1,3 +1,4 @@
+use gloo::timers::future::TimeoutFuture;
 use wasm_bindgen_futures::spawn_local;
 use yew::prelude::*;
 use yew_router::prelude::*;
@@ -82,8 +83,39 @@ pub fn App() -> Html {
         use_effect_with((), move |_| {
             let capabilities = capabilities.clone();
             spawn_local(async move {
-                if let Ok(cap) = ApiService::new().get_capabilities().await {
-                    capabilities.set(Some(cap));
+                // `None` means "still resolving", and the route guard holds
+                // every gated route on it. Leaving the state unset on error
+                // would therefore lock DNS/Mesh/ICMP/Honeypot/Process
+                // Management at "Checking available features…" indefinitely, so
+                // a transient failure is retried and then resolved to a
+                // fail-closed terminal state.
+                const ATTEMPTS: u32 = 3;
+                let mut backoff_ms = 300u32;
+                for attempt in 1..=ATTEMPTS {
+                    match ApiService::new().get_capabilities().await {
+                        Ok(cap) => {
+                            capabilities.set(Some(cap));
+                            return;
+                        }
+                        Err(error) if attempt < ATTEMPTS => {
+                            tracing::warn!(
+                                "capabilities fetch attempt {}/{} failed: {}",
+                                attempt,
+                                ATTEMPTS,
+                                error
+                            );
+                            TimeoutFuture::new(backoff_ms).await;
+                            backoff_ms = backoff_ms.saturating_mul(2);
+                        }
+                        Err(error) => {
+                            tracing::error!(
+                                "capabilities unavailable after {} attempts: {}",
+                                ATTEMPTS,
+                                error
+                            );
+                            capabilities.set(Some(Capabilities::none_enabled()));
+                        }
+                    }
                 }
             });
             || ()

@@ -262,8 +262,8 @@ pub fn Mesh() -> Html {
                             </div>
 
                             <div>
-                                <label class="block text-sm text-secondary mb-1">{ "Node ID" }</label>
-                                <input
+                                <label for="mesh-node-id" class="block text-sm text-secondary mb-1">{ "Node ID" }</label>
+                                <input id="mesh-node-id"
                                     type="text"
                                     value={edited_config.node_id.clone().unwrap_or_default()}
                                     oninput={{
@@ -281,8 +281,8 @@ pub fn Mesh() -> Html {
                             </div>
 
                             <div>
-                                <label class="block text-sm text-secondary mb-1">{ "Listen Port" }</label>
-                                <input
+                                <label for="mesh-listen-port" class="block text-sm text-secondary mb-1">{ "Listen Port" }</label>
+                                <input id="mesh-listen-port"
                                     type="number"
                                     value={port_string}
                                     oninput={{

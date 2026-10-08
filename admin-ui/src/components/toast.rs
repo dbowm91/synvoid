@@ -130,12 +130,18 @@ pub fn ToastContainer() -> Html {
         });
     }
 
-    if toasts.is_empty() {
-        return html! {};
-    }
-
     html! {
-        <div class="fixed top-4 right-4 z-50 space-y-2">
+        // `aria-live` + `role="status"` is what makes a save/failure toast
+        // reachable by a screen reader; without it the notification is
+        // visual-only and the mutation is silent for non-sighted users.
+        // The container is always mounted (not conditionally on `toasts`)
+        // so the live region exists before the first toast is announced.
+        <div
+            class="fixed top-4 right-4 z-50 space-y-2"
+            role="status"
+            aria-live="polite"
+            aria-atomic="false"
+        >
             { for toasts.iter().map(|t| {
                 let id = t.id;
                 let on_close = Callback::from(move |_: MouseEvent| {

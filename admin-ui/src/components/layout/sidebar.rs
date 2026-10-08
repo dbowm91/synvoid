@@ -42,6 +42,25 @@ pub fn sidebar_visibility(cap: &Capabilities) -> SidebarVisibility {
     }
 }
 
+impl Capabilities {
+    /// Every optional feature reported as unavailable.
+    ///
+    /// Used as the terminal state when `/system/capabilities` cannot be
+    /// reached: `None` means "still loading", so without this the route guard
+    /// would hold gated routes at "Checking available features…" forever. This
+    /// fails closed — the nav hides the families and a deep link gets the
+    /// capability notice rather than mounting a page whose endpoints 404.
+    pub fn none_enabled() -> Self {
+        Self {
+            mesh_admin: false,
+            dns_admin: false,
+            icmp_admin: false,
+            honeypot: false,
+            process_manager: false,
+        }
+    }
+}
+
 impl Default for Capabilities {
     fn default() -> Self {
         Self {
@@ -160,6 +179,7 @@ pub fn Sidebar(props: &SidebarProps) -> Html {
                     if vis.show_dns {
                         <NavItem to={Route::Dns} icon="dns" label="DNS" />
                     }
+                    <NavItem to={Route::TrafficShaping} icon="gauge" label="Traffic Shaping" />
                     if vis.show_process_management {
                         <NavItem to={Route::ProcessManagement} icon="process" label="Process Management" />
                     }
@@ -333,6 +353,11 @@ fn icon(name: &str) -> Html {
         "arrows" => html! {
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+            </svg>
+        },
+        "gauge" => html! {
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3a9 9 0 00-9 9 9 9 0 0013.5 8.2M12 3a9 9 0 019 9 9 9 0 01-.7 3.4M12 12l4-4" />
             </svg>
         },
         _ => html! {},

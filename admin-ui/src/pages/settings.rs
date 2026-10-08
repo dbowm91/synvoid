@@ -27,17 +27,91 @@ fn bytes_to_human(bytes: usize) -> String {
     }
 }
 
-fn human_to_bytes(s: &str) -> usize {
+// returns None instead of 0 for an unparseable or unknown-suffix size, so the caller
+// can tell the operator their entry was bad rather than saving a silent 0
+fn human_to_bytes(s: &str) -> Option<usize> {
     let s = s.trim().to_uppercase();
-    if let Some(val) = s.strip_suffix("GB") {
-        val.trim().parse::<usize>().unwrap_or(0) * 1_073_741_824
+    let (val, mult) = if let Some(val) = s.strip_suffix("GB") {
+        (val, 1_073_741_824)
     } else if let Some(val) = s.strip_suffix("MB") {
-        val.trim().parse::<usize>().unwrap_or(0) * 1_048_576
+        (val, 1_048_576)
     } else if let Some(val) = s.strip_suffix("KB") {
-        val.trim().parse::<usize>().unwrap_or(0) * 1024
+        (val, 1024)
     } else {
-        s.parse::<usize>().unwrap_or(0)
+        (s.as_str(), 1)
+    };
+    // saturating_mul: a hand-typed "99999999GB" must not overflow the release build
+    val.trim()
+        .parse::<usize>()
+        .ok()
+        .map(|n| n.saturating_mul(mult))
+}
+
+// presence-checked numeric input: rejects anything the target type cannot represent,
+// which is what `parse::<T>().unwrap_or(DEFAULT)` used to swallow into a default
+fn parse_num<T: std::str::FromStr>(raw: &str, label: &str) -> Result<T, String> {
+    raw.trim()
+        .parse::<T>()
+        .map_err(|_| format!("{} must be a whole number", label))
+}
+
+// range-checked variant, for fields whose accepted range is part of their contract
+// (ports cannot bind 0, challenge difficulty is documented as 1-10)
+fn parse_num_ranged<T>(raw: &str, label: &str, min: T, max: T) -> Result<T, String>
+where
+    T: std::str::FromStr + PartialOrd + std::fmt::Display,
+{
+    match raw.trim().parse::<T>() {
+        Ok(v) if v >= min && v <= max => Ok(v),
+        Ok(v) => Err(format!(
+            "{} must be between {} and {} (got {})",
+            label, min, max, v
+        )),
+        Err(_) => Err(format!(
+            "{} must be a whole number between {} and {}",
+            label, min, max
+        )),
     }
+}
+
+// `num!`/`bytes!` abort the enclosing save callback on a bad entry, before any request
+// is sent. The operator sees which field was wrong instead of the section silently
+// persisting a default they never typed (a port of 99999 saving as 8080).
+macro_rules! num {
+    ($raw:expr, $t:ty, $label:expr) => {
+        match parse_num::<$t>($raw, $label) {
+            Ok(v) => v,
+            Err(msg) => {
+                // nothing has been sent yet, so `saving` is still false and stays that way
+                toast_error(&msg);
+                return;
+            }
+        }
+    };
+    ($raw:expr, $t:ty, $label:expr, $min:expr, $max:expr) => {
+        match parse_num_ranged::<$t>($raw, $label, $min, $max) {
+            Ok(v) => v,
+            Err(msg) => {
+                toast_error(&msg);
+                return;
+            }
+        }
+    };
+}
+
+macro_rules! bytes {
+    ($raw:expr, $label:expr) => {
+        match human_to_bytes($raw) {
+            Some(v) => v,
+            None => {
+                toast_error(&format!(
+                    "{} must be a size like 10, 512KB, 10MB or 1GB",
+                    $label
+                ));
+                return;
+            }
+        }
+    };
 }
 
 fn export_config_to_file(json: &str) {
@@ -766,7 +840,7 @@ fn ServerSection() -> Html {
                 "config": {
                     "server": {
                         "host": (*host).clone(),
-                        "port": port.parse::<u16>().unwrap_or(8080),
+                        "port": num!(&(*port), u16, "Listen port", 1, 65535),
                         "trusted_proxies": proxies
                     }
                 }
@@ -789,12 +863,19 @@ fn ServerSection() -> Html {
                         return;
                     }
                 }
-                let _ = api.update_main_config(&new_config).await;
-                saving.set(false);
-                original_host.set((*host).clone());
-                original_port.set((*port).clone());
-                original_proxies.set((*trusted_proxies).clone());
-                toast_success("Server configuration saved");
+                match api.update_main_config(&new_config).await {
+                    Ok(_) => {
+                        saving.set(false);
+                        original_host.set((*host).clone());
+                        original_port.set((*port).clone());
+                        original_proxies.set((*trusted_proxies).clone());
+                        toast_success("Server configuration saved");
+                    }
+                    Err(e) => {
+                        saving.set(false);
+                        toast_error(&format!("Failed to save: {}", e));
+                    }
+                }
             });
         })
     };
@@ -972,12 +1053,12 @@ fn HttpSection() -> Html {
         Callback::from(move |_| {
             let config = serde_json::json!({
                 "config": {
-                    "header_read_timeout_secs": header_read_timeout.parse::<u64>().unwrap_or(10),
-                    "keep_alive_timeout_secs": keep_alive_timeout.parse::<u64>().unwrap_or(60),
-                    "max_headers": max_headers.parse::<usize>().unwrap_or(128),
-                    "max_request_size": human_to_bytes(&max_request_size),
-                    "max_header_size_ingress": human_to_bytes(&max_header_size_ingress),
-                    "max_header_size_egress": human_to_bytes(&max_header_size_egress),
+                    "header_read_timeout_secs": num!(&(*header_read_timeout), u64, "Header read timeout"),
+                    "keep_alive_timeout_secs": num!(&(*keep_alive_timeout), u64, "Keep-alive timeout"),
+                    "max_headers": num!(&(*max_headers), usize, "Max headers"),
+                    "max_request_size": bytes!(&max_request_size, "Max request size"),
+                    "max_header_size_ingress": bytes!(&max_header_size_ingress, "Max header size (ingress)"),
+                    "max_header_size_egress": bytes!(&max_header_size_egress, "Max header size (egress)"),
                 }
             });
             let saving = saving.clone();
@@ -996,15 +1077,22 @@ fn HttpSection() -> Html {
             saving.set(true);
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
-                let _ = api.update_http_config(&config).await;
-                saving.set(false);
-                original_header_read_timeout.set((*header_read_timeout).clone());
-                original_keep_alive_timeout.set((*keep_alive_timeout).clone());
-                original_max_headers.set((*max_headers).clone());
-                original_max_request_size.set((*max_request_size).clone());
-                original_max_header_size_ingress.set((*max_header_size_ingress).clone());
-                original_max_header_size_egress.set((*max_header_size_egress).clone());
-                toast_success("HTTP configuration saved");
+                match api.update_http_config(&config).await {
+                    Ok(_) => {
+                        saving.set(false);
+                        original_header_read_timeout.set((*header_read_timeout).clone());
+                        original_keep_alive_timeout.set((*keep_alive_timeout).clone());
+                        original_max_headers.set((*max_headers).clone());
+                        original_max_request_size.set((*max_request_size).clone());
+                        original_max_header_size_ingress.set((*max_header_size_ingress).clone());
+                        original_max_header_size_egress.set((*max_header_size_egress).clone());
+                        toast_success("HTTP configuration saved");
+                    }
+                    Err(e) => {
+                        saving.set(false);
+                        toast_error(&format!("Failed to save: {}", e));
+                    }
+                }
             });
         })
     };
@@ -1181,8 +1269,8 @@ fn LoggingSection() -> Html {
                     "level": (*log_level).clone(),
                     "access_log_format": (*access_log_format).clone(),
                     "access_log_dir": (*access_log_dir).clone(),
-                    "retention_days": retention_days.parse::<u32>().unwrap_or(5),
-                    "max_entries_per_file": max_entries_per_file.parse::<u32>().unwrap_or(50000),
+                    "retention_days": num!(&(*retention_days), u32, "Retention days"),
+                    "max_entries_per_file": num!(&(*max_entries_per_file), u32, "Max entries per file"),
                 }
             });
             let saving = saving.clone();
@@ -1199,14 +1287,21 @@ fn LoggingSection() -> Html {
             saving.set(true);
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
-                let _ = api.update_logging_config(&config).await;
-                saving.set(false);
-                original_log_level.set((*log_level).clone());
-                original_access_log_format.set((*access_log_format).clone());
-                original_access_log_dir.set((*access_log_dir).clone());
-                original_retention_days.set((*retention_days).clone());
-                original_max_entries_per_file.set((*max_entries_per_file).clone());
-                toast_success("Logging configuration saved");
+                match api.update_logging_config(&config).await {
+                    Ok(_) => {
+                        saving.set(false);
+                        original_log_level.set((*log_level).clone());
+                        original_access_log_format.set((*access_log_format).clone());
+                        original_access_log_dir.set((*access_log_dir).clone());
+                        original_retention_days.set((*retention_days).clone());
+                        original_max_entries_per_file.set((*max_entries_per_file).clone());
+                        toast_success("Logging configuration saved");
+                    }
+                    Err(e) => {
+                        saving.set(false);
+                        toast_error(&format!("Failed to save: {}", e));
+                    }
+                }
             });
         })
     };
@@ -1356,7 +1451,7 @@ fn MetricsSection() -> Html {
                 "config": {
                     "metrics": {
                         "enabled": *metrics_enabled,
-                        "port": metrics_port.parse::<u16>().unwrap_or(9090),
+                        "port": num!(&(*metrics_port), u16, "Metrics port", 1, 65535),
                     }
                 }
             });
@@ -1368,11 +1463,18 @@ fn MetricsSection() -> Html {
             saving.set(true);
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
-                let _ = api.update_main_config(&config).await;
-                saving.set(false);
-                original_metrics_enabled.set(*metrics_enabled);
-                original_metrics_port.set((*metrics_port).clone());
-                toast_success("Metrics configuration saved");
+                match api.update_main_config(&config).await {
+                    Ok(_) => {
+                        saving.set(false);
+                        original_metrics_enabled.set(*metrics_enabled);
+                        original_metrics_port.set((*metrics_port).clone());
+                        toast_success("Metrics configuration saved");
+                    }
+                    Err(e) => {
+                        saving.set(false);
+                        toast_error(&format!("Failed to save: {}", e));
+                    }
+                }
             });
         })
     };
@@ -1511,8 +1613,8 @@ fn IpFeedsSection() -> Html {
                 "config": {
                     "enabled": *enabled,
                     "url": (*url).clone(),
-                    "update_interval_hours": update_interval.parse::<u32>().unwrap_or(2),
-                    "max_permanent_blocks": max_blocks.parse::<usize>().unwrap_or(1000000),
+                    "update_interval_hours": num!(&(*update_interval), u32, "Update interval"),
+                    "max_permanent_blocks": num!(&(*max_blocks), usize, "Max permanent blocks"),
                 }
             });
             let saving = saving.clone();
@@ -1523,9 +1625,16 @@ fn IpFeedsSection() -> Html {
             let _max_blocks = max_blocks.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
-                let _ = api.update_ip_feeds_config(&config).await;
-                saving.set(false);
-                toast_success("IP feeds configuration saved");
+                match api.update_ip_feeds_config(&config).await {
+                    Ok(_) => {
+                        saving.set(false);
+                        toast_success("IP feeds configuration saved");
+                    }
+                    Err(e) => {
+                        saving.set(false);
+                        toast_error(&format!("Failed to save: {}", e));
+                    }
+                }
             });
         })
     };
@@ -1685,7 +1794,7 @@ fn TlsSection() -> Html {
             let config = serde_json::json!({
                 "config": {
                     "enabled": *enabled,
-                    "port": port.parse::<u16>().unwrap_or(443),
+                    "port": num!(&(*port), u16, "Listen port", 1, 65535),
                     "cert_path": (*cert_path).clone(),
                     "key_path": (*key_path).clone(),
                     "prefer_post_quantum": *prefer_post_quantum,
@@ -1696,9 +1805,16 @@ fn TlsSection() -> Html {
             saving.set(true);
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
-                let _ = api.update_tls_config(&config).await;
-                saving.set(false);
-                toast_success("TLS configuration saved");
+                match api.update_tls_config(&config).await {
+                    Ok(_) => {
+                        saving.set(false);
+                        toast_success("TLS configuration saved");
+                    }
+                    Err(e) => {
+                        saving.set(false);
+                        toast_error(&format!("Failed to save: {}", e));
+                    }
+                }
             });
         })
     };
@@ -1880,9 +1996,16 @@ fn AcmeSection() -> Html {
             saving.set(true);
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
-                let _ = api.update_acme_config(&config).await;
-                saving.set(false);
-                toast_success("ACME configuration saved");
+                match api.update_acme_config(&config).await {
+                    Ok(_) => {
+                        saving.set(false);
+                        toast_success("ACME configuration saved");
+                    }
+                    Err(e) => {
+                        saving.set(false);
+                        toast_error(&format!("Failed to save: {}", e));
+                    }
+                }
             });
         })
     };
@@ -2049,18 +2172,25 @@ fn Http3Section() -> Html {
             let config = serde_json::json!({
                 "config": {
                     "enabled": *enabled,
-                    "port": port.parse::<u16>().unwrap_or(443),
-                    "alt_svc_max_age": alt_svc_max_age.parse::<u64>().unwrap_or(86400),
-                    "max_request_size": max_request_size.parse::<usize>().unwrap_or(10485760),
+                    "port": num!(&(*port), u16, "Listen port", 1, 65535),
+                    "alt_svc_max_age": num!(&(*alt_svc_max_age), u64, "Alt-Svc max age"),
+                    "max_request_size": num!(&(*max_request_size), usize, "Max request size"),
                 }
             });
             let saving = saving.clone();
             saving.set(true);
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
-                let _ = api.update_http3_config(&config).await;
-                saving.set(false);
-                toast_success("HTTP/3 configuration saved");
+                match api.update_http3_config(&config).await {
+                    Ok(_) => {
+                        saving.set(false);
+                        toast_success("HTTP/3 configuration saved");
+                    }
+                    Err(e) => {
+                        saving.set(false);
+                        toast_error(&format!("Failed to save: {}", e));
+                    }
+                }
             });
         })
     };
@@ -2387,31 +2517,31 @@ fn RateLimitsSection() -> Html {
         Callback::from(move |_| {
             let config = serde_json::json!({
                 "rate_limit_memory": {
-                    "max_ip_entries": max_ip_entries.parse::<usize>().unwrap_or(100000),
-                    "cleanup_interval_secs": cleanup_interval_secs.parse::<u64>().unwrap_or(60),
-                    "num_shards": num_shards.parse::<usize>().unwrap_or(256),
+                    "max_ip_entries": num!(&(*max_ip_entries), usize, "Max IP entries"),
+                    "cleanup_interval_secs": num!(&(*cleanup_interval_secs), u64, "Cleanup interval"),
+                    "num_shards": num!(&(*num_shards), usize, "Shard count"),
                 },
                 "proxy_limits": {
-                    "max_response_size": max_response_size.parse::<usize>().unwrap_or(10000000),
-                    "connection_pool_size": connection_pool_size.parse::<usize>().unwrap_or(100),
+                    "max_response_size": num!(&(*max_response_size), usize, "Max response size"),
+                    "connection_pool_size": num!(&(*connection_pool_size), usize, "Connection pool size"),
                 },
                 "blocklist_limits": {
-                    "max_entries": max_block_entries.parse::<usize>().unwrap_or(500000),
-                    "persist_interval_secs": persist_interval_secs.parse::<u64>().unwrap_or(60),
+                    "max_entries": num!(&(*max_block_entries), usize, "Max block entries"),
+                    "persist_interval_secs": num!(&(*persist_interval_secs), u64, "Persist interval"),
                 },
                 "defaults": {
                     "ip": {
-                        "per_second": ip_per_second.parse::<u32>().unwrap_or(10),
-                        "per_minute": ip_per_minute.parse::<u32>().unwrap_or(60),
-                        "per_5min": ip_per_5min.parse::<u32>().unwrap_or(200),
-                        "per_hour": ip_per_hour.parse::<u32>().unwrap_or(500),
-                        "per_day": ip_per_day.parse::<u32>().unwrap_or(1000),
-                        "burst": ip_burst.parse::<u32>().unwrap_or(20),
+                        "per_second": num!(&(*ip_per_second), u32, "Per-IP rate limit (per second)"),
+                        "per_minute": num!(&(*ip_per_minute), u32, "Per-IP rate limit (per minute)"),
+                        "per_5min": num!(&(*ip_per_5min), u32, "Per-IP rate limit (per 5 minutes)"),
+                        "per_hour": num!(&(*ip_per_hour), u32, "Per-IP rate limit (per hour)"),
+                        "per_day": num!(&(*ip_per_day), u32, "Per-IP rate limit (per day)"),
+                        "burst": num!(&(*ip_burst), u32, "Per-IP burst"),
                     },
                     "global": {
-                        "per_second": global_per_second.parse::<u32>().unwrap_or(500),
-                        "per_minute": global_per_minute.parse::<u32>().unwrap_or(5000),
-                        "max_connections": max_connections.parse::<u32>().unwrap_or(1000),
+                        "per_second": num!(&(*global_per_second), u32, "Global rate limit (per second)"),
+                        "per_minute": num!(&(*global_per_minute), u32, "Global rate limit (per minute)"),
+                        "max_connections": num!(&(*max_connections), u32, "Max connections"),
                     }
                 }
             });
@@ -2451,25 +2581,32 @@ fn RateLimitsSection() -> Html {
             saving.set(true);
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
-                let _ = api.update_rate_limits_config(&config).await;
-                saving.set(false);
-                original_max_ip_entries.set((*max_ip_entries).clone());
-                original_cleanup_interval_secs.set((*cleanup_interval_secs).clone());
-                original_num_shards.set((*num_shards).clone());
-                original_max_response_size.set((*max_response_size).clone());
-                original_connection_pool_size.set((*connection_pool_size).clone());
-                original_max_block_entries.set((*max_block_entries).clone());
-                original_persist_interval_secs.set((*persist_interval_secs).clone());
-                original_ip_per_second.set((*ip_per_second).clone());
-                original_ip_per_minute.set((*ip_per_minute).clone());
-                original_ip_per_5min.set((*ip_per_5min).clone());
-                original_ip_per_hour.set((*ip_per_hour).clone());
-                original_ip_per_day.set((*ip_per_day).clone());
-                original_ip_burst.set((*ip_burst).clone());
-                original_global_per_second.set((*global_per_second).clone());
-                original_global_per_minute.set((*global_per_minute).clone());
-                original_max_connections.set((*max_connections).clone());
-                toast_success("Rate limits configuration saved");
+                match api.update_rate_limits_config(&config).await {
+                    Ok(_) => {
+                        saving.set(false);
+                        original_max_ip_entries.set((*max_ip_entries).clone());
+                        original_cleanup_interval_secs.set((*cleanup_interval_secs).clone());
+                        original_num_shards.set((*num_shards).clone());
+                        original_max_response_size.set((*max_response_size).clone());
+                        original_connection_pool_size.set((*connection_pool_size).clone());
+                        original_max_block_entries.set((*max_block_entries).clone());
+                        original_persist_interval_secs.set((*persist_interval_secs).clone());
+                        original_ip_per_second.set((*ip_per_second).clone());
+                        original_ip_per_minute.set((*ip_per_minute).clone());
+                        original_ip_per_5min.set((*ip_per_5min).clone());
+                        original_ip_per_hour.set((*ip_per_hour).clone());
+                        original_ip_per_day.set((*ip_per_day).clone());
+                        original_ip_burst.set((*ip_burst).clone());
+                        original_global_per_second.set((*global_per_second).clone());
+                        original_global_per_minute.set((*global_per_minute).clone());
+                        original_max_connections.set((*max_connections).clone());
+                        toast_success("Rate limits configuration saved");
+                    }
+                    Err(e) => {
+                        saving.set(false);
+                        toast_error(&format!("Failed to save: {}", e));
+                    }
+                }
             });
         })
     };
@@ -2657,8 +2794,8 @@ fn BandwidthSection() -> Html {
             let config = serde_json::json!({
                 "config": {
                     "bandwidth": {
-                        "monthly_cap_ingress_gb": monthly_cap_ingress.parse::<u64>().unwrap_or(0),
-                        "monthly_cap_egress_gb": monthly_cap_egress.parse::<u64>().unwrap_or(0),
+                        "monthly_cap_ingress_gb": num!(&(*monthly_cap_ingress), u64, "Monthly bandwidth cap (ingress)"),
+                        "monthly_cap_egress_gb": num!(&(*monthly_cap_egress), u64, "Monthly bandwidth cap (egress)"),
                         "action_on_limit": (*action_on_limit).clone(),
                         "monthly_reset": reset_obj,
                         "data_dir": (*data_dir).clone(),
@@ -2681,15 +2818,22 @@ fn BandwidthSection() -> Html {
             saving.set(true);
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
-                let _ = api.update_traffic_shaping_config(&config).await;
-                saving.set(false);
-                original_monthly_cap_ingress.set((*monthly_cap_ingress).clone());
-                original_monthly_cap_egress.set((*monthly_cap_egress).clone());
-                original_action_on_limit.set((*action_on_limit).clone());
-                original_reset_mode.set((*reset_mode).clone());
-                original_fixed_day.set((*fixed_day).clone());
-                original_data_dir.set((*data_dir).clone());
-                toast_success("Bandwidth configuration saved");
+                match api.update_traffic_shaping_config(&config).await {
+                    Ok(_) => {
+                        saving.set(false);
+                        original_monthly_cap_ingress.set((*monthly_cap_ingress).clone());
+                        original_monthly_cap_egress.set((*monthly_cap_egress).clone());
+                        original_action_on_limit.set((*action_on_limit).clone());
+                        original_reset_mode.set((*reset_mode).clone());
+                        original_fixed_day.set((*fixed_day).clone());
+                        original_data_dir.set((*data_dir).clone());
+                        toast_success("Bandwidth configuration saved");
+                    }
+                    Err(e) => {
+                        saving.set(false);
+                        toast_error(&format!("Failed to save: {}", e));
+                    }
+                }
             });
         })
     };
@@ -2886,7 +3030,7 @@ fn BotSection() -> Html {
                     "block_ai_crawlers": *block_ai_crawlers,
                     "enable_css_honeypot": *enable_css_honeypot,
                     "enable_js_challenge": *enable_js_challenge,
-                    "js_difficulty": js_difficulty.parse::<u8>().unwrap_or(6),
+                    "js_difficulty": num!(&(*js_difficulty), u8, "JS challenge difficulty", 1, 10),
                 }
             });
             let saving = saving.clone();
@@ -2901,13 +3045,20 @@ fn BotSection() -> Html {
             saving.set(true);
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
-                let _ = api.update_bot_detection_config(&config).await;
-                saving.set(false);
-                original_block_ai_crawlers.set(*block_ai_crawlers);
-                original_enable_css_honeypot.set(*enable_css_honeypot);
-                original_enable_js_challenge.set(*enable_js_challenge);
-                original_js_difficulty.set((*js_difficulty).clone());
-                toast_success("Bot detection configuration saved");
+                match api.update_bot_detection_config(&config).await {
+                    Ok(_) => {
+                        saving.set(false);
+                        original_block_ai_crawlers.set(*block_ai_crawlers);
+                        original_enable_css_honeypot.set(*enable_css_honeypot);
+                        original_enable_js_challenge.set(*enable_js_challenge);
+                        original_js_difficulty.set((*js_difficulty).clone());
+                        toast_success("Bot detection configuration saved");
+                    }
+                    Err(e) => {
+                        saving.set(false);
+                        toast_error(&format!("Failed to save: {}", e));
+                    }
+                }
             });
         })
     };
@@ -3133,9 +3284,9 @@ fn TarpitSection() -> Html {
                 "config": {
                     "tarpit": {
                         "enabled": *enabled,
-                        "max_depth": max_depth.parse::<u32>().unwrap_or(10),
-                        "links_per_page": links_per_page.parse::<u32>().unwrap_or(50),
-                        "response_delay_ms": response_delay_ms.parse::<u64>().unwrap_or(100),
+                        "max_depth": num!(&(*max_depth), u32, "Max depth"),
+                        "links_per_page": num!(&(*links_per_page), u32, "Links per page"),
+                        "response_delay_ms": num!(&(*response_delay_ms), u64, "Response delay (ms)"),
                         "scraper_user_agents": agents,
                         "content_templates": templates,
                     }
@@ -3157,15 +3308,22 @@ fn TarpitSection() -> Html {
             saving.set(true);
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
-                let _ = api.update_main_config(&config).await;
-                saving.set(false);
-                original_enabled.set(*enabled);
-                original_max_depth.set((*max_depth).clone());
-                original_links_per_page.set((*links_per_page).clone());
-                original_response_delay_ms.set((*response_delay_ms).clone());
-                original_scraper_user_agents.set((*scraper_user_agents).clone());
-                original_content_templates.set((*content_templates).clone());
-                toast_success("Tarpit configuration saved");
+                match api.update_main_config(&config).await {
+                    Ok(_) => {
+                        saving.set(false);
+                        original_enabled.set(*enabled);
+                        original_max_depth.set((*max_depth).clone());
+                        original_links_per_page.set((*links_per_page).clone());
+                        original_response_delay_ms.set((*response_delay_ms).clone());
+                        original_scraper_user_agents.set((*scraper_user_agents).clone());
+                        original_content_templates.set((*content_templates).clone());
+                        toast_success("Tarpit configuration saved");
+                    }
+                    Err(e) => {
+                        saving.set(false);
+                        toast_error(&format!("Failed to save: {}", e));
+                    }
+                }
             });
         })
     };
@@ -3375,13 +3533,20 @@ fn UploadSection() -> Html {
             saving.set(true);
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
-                let _ = api.update_main_config(&config).await;
-                saving.set(false);
-                original_max_size.set((*max_size).clone());
-                original_memory_threshold.set((*memory_threshold).clone());
-                original_scan_with_yara.set(*scan_with_yara);
-                original_sandbox_enabled.set(*sandbox_enabled);
-                toast_success("Upload configuration saved");
+                match api.update_main_config(&config).await {
+                    Ok(_) => {
+                        saving.set(false);
+                        original_max_size.set((*max_size).clone());
+                        original_memory_threshold.set((*memory_threshold).clone());
+                        original_scan_with_yara.set(*scan_with_yara);
+                        original_sandbox_enabled.set(*sandbox_enabled);
+                        toast_success("Upload configuration saved");
+                    }
+                    Err(e) => {
+                        saving.set(false);
+                        toast_error(&format!("Failed to save: {}", e));
+                    }
+                }
             });
         })
     };
@@ -3871,9 +4036,16 @@ fn SecuritySection() -> Html {
             saving.set(true);
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
-                let _ = api.update_security_config(&config).await;
-                saving.set(false);
-                toast_success("Security configuration saved");
+                match api.update_security_config(&config).await {
+                    Ok(_) => {
+                        saving.set(false);
+                        toast_success("Security configuration saved");
+                    }
+                    Err(e) => {
+                        saving.set(false);
+                        toast_error(&format!("Failed to save: {}", e));
+                    }
+                }
             });
         })
     };
@@ -4066,7 +4238,7 @@ fn TunnelSection() -> Html {
                     },
                     "quic": {
                         "enabled": *quic_enabled,
-                        "port": listen_port.parse::<u16>().unwrap_or(51820),
+                        "port": num!(&(*listen_port), u16, "QUIC listen port", 1, 65535),
                     },
                 }
             });
@@ -4074,9 +4246,16 @@ fn TunnelSection() -> Html {
             saving.set(true);
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
-                let _ = api.update_tunnel_config(&config).await;
-                saving.set(false);
-                toast_success("Tunnel configuration saved");
+                match api.update_tunnel_config(&config).await {
+                    Ok(_) => {
+                        saving.set(false);
+                        toast_success("Tunnel configuration saved");
+                    }
+                    Err(e) => {
+                        saving.set(false);
+                        toast_error(&format!("Failed to save: {}", e));
+                    }
+                }
             });
         })
     };
@@ -4248,9 +4427,9 @@ fn PluginsSection() -> Html {
             let config = serde_json::json!({
                 "config": {
                     "wasm": {
-                        "max_memory_mb": mem_str.parse::<usize>().unwrap_or(64),
-                        "max_cpu_fuel": cpu_str.parse::<u64>().unwrap_or(1000000),
-                        "timeout_seconds": timeout_str.parse::<u64>().unwrap_or(30),
+                        "max_memory_mb": num!(&(*mem_str), usize, "Plugin max memory"),
+                        "max_cpu_fuel": num!(&(*cpu_str), u64, "Plugin max CPU fuel"),
+                        "timeout_seconds": num!(&(*timeout_str), u64, "Plugin timeout"),
                     }
                 }
             });
@@ -4261,12 +4440,19 @@ fn PluginsSection() -> Html {
             saving.set(true);
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
-                let _ = api.update_plugins_config(&config).await;
-                saving.set(false);
-                orig_mem.set(mem_str);
-                orig_cpu.set(cpu_str);
-                orig_timeout.set(timeout_str);
-                toast_success("Plugins configuration saved");
+                match api.update_plugins_config(&config).await {
+                    Ok(_) => {
+                        saving.set(false);
+                        orig_mem.set(mem_str);
+                        orig_cpu.set(cpu_str);
+                        orig_timeout.set(timeout_str);
+                        toast_success("Plugins configuration saved");
+                    }
+                    Err(e) => {
+                        saving.set(false);
+                        toast_error(&format!("Failed to save: {}", e));
+                    }
+                }
             });
         })
     };
@@ -4918,11 +5104,18 @@ fn MimeTypesSection() -> Html {
             saving.set(true);
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
-                let _ = api.update_mime_types_config(&config).await;
-                saving.set(false);
-                original_enabled.set(*enabled);
-                original_file.set((*file).clone());
-                toast_success("MIME types configuration saved");
+                match api.update_mime_types_config(&config).await {
+                    Ok(_) => {
+                        saving.set(false);
+                        original_enabled.set(*enabled);
+                        original_file.set((*file).clone());
+                        toast_success("MIME types configuration saved");
+                    }
+                    Err(e) => {
+                        saving.set(false);
+                        toast_error(&format!("Failed to save: {}", e));
+                    }
+                }
             });
         })
     };
@@ -5250,28 +5443,28 @@ fn TcpUdpDefaultsSection() -> Html {
             let config = serde_json::json!({
                 "tcp": {
                     "enabled": *tcp_enabled,
-                    "worker_pool_size": tcp_worker_pool_size.parse::<usize>().unwrap_or(4),
+                    "worker_pool_size": num!(&(*tcp_worker_pool_size), usize, "TCP worker pool size"),
                     "nodelay": *tcp_nodelay,
                     "socket": {
-                        "send_buffer_size": tcp_send_buffer_size.parse::<usize>().unwrap_or(262144),
-                        "recv_buffer_size": tcp_recv_buffer_size.parse::<usize>().unwrap_or(262144),
+                        "send_buffer_size": num!(&(*tcp_send_buffer_size), usize, "TCP send buffer size"),
+                        "recv_buffer_size": num!(&(*tcp_recv_buffer_size), usize, "TCP receive buffer size"),
                     },
-                    "syn_rate_per_ip": tcp_syn_rate_per_ip.parse::<u32>().unwrap_or(50),
-                    "syn_rate_global": tcp_syn_rate_global.parse::<u32>().unwrap_or(10000),
-                    "connection_rate_per_ip": tcp_connection_rate_per_ip.parse::<u32>().unwrap_or(100),
-                    "connection_rate_global": tcp_connection_rate_global.parse::<u32>().unwrap_or(20000),
-                    "half_open_max": tcp_half_open_max.parse::<u32>().unwrap_or(1000),
-                    "half_open_per_ip_max": tcp_half_open_per_ip_max.parse::<u32>().unwrap_or(10),
+                    "syn_rate_per_ip": num!(&(*tcp_syn_rate_per_ip), u32, "TCP SYN rate per IP"),
+                    "syn_rate_global": num!(&(*tcp_syn_rate_global), u32, "TCP SYN rate global"),
+                    "connection_rate_per_ip": num!(&(*tcp_connection_rate_per_ip), u32, "TCP connection rate per IP"),
+                    "connection_rate_global": num!(&(*tcp_connection_rate_global), u32, "TCP connection rate global"),
+                    "half_open_max": num!(&(*tcp_half_open_max), u32, "TCP half-open max"),
+                    "half_open_per_ip_max": num!(&(*tcp_half_open_per_ip_max), u32, "TCP half-open per-IP max"),
                 },
                 "udp": {
                     "enabled": *udp_enabled,
-                    "worker_pool_size": udp_worker_pool_size.parse::<usize>().unwrap_or(4),
+                    "worker_pool_size": num!(&(*udp_worker_pool_size), usize, "UDP worker pool size"),
                     "socket": {
-                        "recv_buffer_size": udp_recv_buffer_size.parse::<usize>().unwrap_or(131072),
-                        "send_buffer_size": udp_send_buffer_size.parse::<usize>().unwrap_or(131072),
+                        "recv_buffer_size": num!(&(*udp_recv_buffer_size), usize, "UDP receive buffer size"),
+                        "send_buffer_size": num!(&(*udp_send_buffer_size), usize, "UDP send buffer size"),
                     },
-                    "rate_per_ip": udp_rate_per_ip.parse::<u32>().unwrap_or(1000),
-                    "rate_global": udp_rate_global.parse::<u32>().unwrap_or(100000),
+                    "rate_per_ip": num!(&(*udp_rate_per_ip), u32, "UDP rate per IP"),
+                    "rate_global": num!(&(*udp_rate_global), u32, "UDP rate global"),
                 }
             });
             let saving = saving.clone();
@@ -5312,26 +5505,35 @@ fn TcpUdpDefaultsSection() -> Html {
             saving.set(true);
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
-                let _ = api.update_tcp_udp_defaults_config(&config).await;
-                saving.set(false);
-                original_tcp_enabled.set(*tcp_enabled);
-                original_tcp_worker_pool_size.set((*tcp_worker_pool_size).clone());
-                original_tcp_nodelay.set(*tcp_nodelay);
-                original_tcp_send_buffer_size.set((*tcp_send_buffer_size).clone());
-                original_tcp_recv_buffer_size.set((*tcp_recv_buffer_size).clone());
-                original_tcp_syn_rate_per_ip.set((*tcp_syn_rate_per_ip).clone());
-                original_tcp_syn_rate_global.set((*tcp_syn_rate_global).clone());
-                original_tcp_connection_rate_per_ip.set((*tcp_connection_rate_per_ip).clone());
-                original_tcp_connection_rate_global.set((*tcp_connection_rate_global).clone());
-                original_tcp_half_open_max.set((*tcp_half_open_max).clone());
-                original_tcp_half_open_per_ip_max.set((*tcp_half_open_per_ip_max).clone());
-                original_udp_enabled.set(*udp_enabled);
-                original_udp_worker_pool_size.set((*udp_worker_pool_size).clone());
-                original_udp_recv_buffer_size.set((*udp_recv_buffer_size).clone());
-                original_udp_send_buffer_size.set((*udp_send_buffer_size).clone());
-                original_udp_rate_per_ip.set((*udp_rate_per_ip).clone());
-                original_udp_rate_global.set((*udp_rate_global).clone());
-                toast_success("TCP/UDP defaults configuration saved");
+                match api.update_tcp_udp_defaults_config(&config).await {
+                    Ok(_) => {
+                        saving.set(false);
+                        original_tcp_enabled.set(*tcp_enabled);
+                        original_tcp_worker_pool_size.set((*tcp_worker_pool_size).clone());
+                        original_tcp_nodelay.set(*tcp_nodelay);
+                        original_tcp_send_buffer_size.set((*tcp_send_buffer_size).clone());
+                        original_tcp_recv_buffer_size.set((*tcp_recv_buffer_size).clone());
+                        original_tcp_syn_rate_per_ip.set((*tcp_syn_rate_per_ip).clone());
+                        original_tcp_syn_rate_global.set((*tcp_syn_rate_global).clone());
+                        original_tcp_connection_rate_per_ip
+                            .set((*tcp_connection_rate_per_ip).clone());
+                        original_tcp_connection_rate_global
+                            .set((*tcp_connection_rate_global).clone());
+                        original_tcp_half_open_max.set((*tcp_half_open_max).clone());
+                        original_tcp_half_open_per_ip_max.set((*tcp_half_open_per_ip_max).clone());
+                        original_udp_enabled.set(*udp_enabled);
+                        original_udp_worker_pool_size.set((*udp_worker_pool_size).clone());
+                        original_udp_recv_buffer_size.set((*udp_recv_buffer_size).clone());
+                        original_udp_send_buffer_size.set((*udp_send_buffer_size).clone());
+                        original_udp_rate_per_ip.set((*udp_rate_per_ip).clone());
+                        original_udp_rate_global.set((*udp_rate_global).clone());
+                        toast_success("TCP/UDP defaults configuration saved");
+                    }
+                    Err(e) => {
+                        saving.set(false);
+                        toast_error(&format!("Failed to save: {}", e));
+                    }
+                }
             });
         })
     };
@@ -5518,11 +5720,18 @@ fn FallbackSection() -> Html {
             saving.set(true);
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
-                let _ = api.update_fallback_config(&config).await;
-                saving.set(false);
-                original_mode.set((*mode).clone());
-                original_upstream.set((*upstream).clone());
-                toast_success("Fallback configuration saved");
+                match api.update_fallback_config(&config).await {
+                    Ok(_) => {
+                        saving.set(false);
+                        original_mode.set((*mode).clone());
+                        original_upstream.set((*upstream).clone());
+                        toast_success("Fallback configuration saved");
+                    }
+                    Err(e) => {
+                        saving.set(false);
+                        toast_error(&format!("Failed to save: {}", e));
+                    }
+                }
             });
         })
     };
@@ -5746,13 +5955,13 @@ fn UpgradeSection() -> Html {
             let config = serde_json::json!({
                 "config": {
                     "health_check_path": (*health_check_path).clone(),
-                    "health_check_timeout_secs": health_check_timeout_secs.parse::<u64>().unwrap_or(5),
-                    "validation_retries": validation_retries.parse::<u32>().unwrap_or(3),
-                    "validation_interval_secs": validation_interval_secs.parse::<u64>().unwrap_or(5),
-                    "drain_timeout_secs": drain_timeout_secs.parse::<u64>().unwrap_or(30),
-                    "drain_check_interval_ms": drain_check_interval_ms.parse::<u64>().unwrap_or(100),
-                    "port_swap_cutover_timeout_ms": port_swap_cutover_timeout_ms.parse::<u64>().unwrap_or(500),
-                    "keep_old_versions": keep_old_versions.parse::<usize>().unwrap_or(2),
+                    "health_check_timeout_secs": num!(&(*health_check_timeout_secs), u64, "Health check timeout"),
+                    "validation_retries": num!(&(*validation_retries), u32, "Validation retries"),
+                    "validation_interval_secs": num!(&(*validation_interval_secs), u64, "Validation interval"),
+                    "drain_timeout_secs": num!(&(*drain_timeout_secs), u64, "Drain timeout"),
+                    "drain_check_interval_ms": num!(&(*drain_check_interval_ms), u64, "Drain check interval"),
+                    "port_swap_cutover_timeout_ms": num!(&(*port_swap_cutover_timeout_ms), u64, "Port swap cutover timeout"),
+                    "keep_old_versions": num!(&(*keep_old_versions), usize, "Keep old versions"),
                     "staged_dir": if (*staged_dir).is_empty() { serde_json::Value::Null } else { serde_json::Value::String((*staged_dir).clone()) },
                     "bin_dir": if (*bin_dir).is_empty() { serde_json::Value::Null } else { serde_json::Value::String((*bin_dir).clone()) },
                 }
@@ -5782,19 +5991,28 @@ fn UpgradeSection() -> Html {
             saving.set(true);
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
-                let _ = api.update_upgrade_config(&config).await;
-                saving.set(false);
-                original_health_check_path.set((*health_check_path).clone());
-                original_health_check_timeout_secs.set((*health_check_timeout_secs).clone());
-                original_validation_retries.set((*validation_retries).clone());
-                original_validation_interval_secs.set((*validation_interval_secs).clone());
-                original_drain_timeout_secs.set((*drain_timeout_secs).clone());
-                original_drain_check_interval_ms.set((*drain_check_interval_ms).clone());
-                original_port_swap_cutover_timeout_ms.set((*port_swap_cutover_timeout_ms).clone());
-                original_keep_old_versions.set((*keep_old_versions).clone());
-                original_staged_dir.set((*staged_dir).clone());
-                original_bin_dir.set((*bin_dir).clone());
-                toast_success("Upgrade configuration saved");
+                match api.update_upgrade_config(&config).await {
+                    Ok(_) => {
+                        saving.set(false);
+                        original_health_check_path.set((*health_check_path).clone());
+                        original_health_check_timeout_secs
+                            .set((*health_check_timeout_secs).clone());
+                        original_validation_retries.set((*validation_retries).clone());
+                        original_validation_interval_secs.set((*validation_interval_secs).clone());
+                        original_drain_timeout_secs.set((*drain_timeout_secs).clone());
+                        original_drain_check_interval_ms.set((*drain_check_interval_ms).clone());
+                        original_port_swap_cutover_timeout_ms
+                            .set((*port_swap_cutover_timeout_ms).clone());
+                        original_keep_old_versions.set((*keep_old_versions).clone());
+                        original_staged_dir.set((*staged_dir).clone());
+                        original_bin_dir.set((*bin_dir).clone());
+                        toast_success("Upgrade configuration saved");
+                    }
+                    Err(e) => {
+                        saving.set(false);
+                        toast_error(&format!("Failed to save: {}", e));
+                    }
+                }
             });
         })
     };

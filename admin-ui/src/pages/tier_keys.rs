@@ -299,8 +299,8 @@ impl Component for TierKeys {
                                 }
 
                                 <div class="mb-4">
-                                    <label class="block text-sm font-medium mb-2">{ "Organization ID" }</label>
-                                    <input
+                                    <label for="tier-org-id" class="block text-sm font-medium mb-2">{ "Organization ID" }</label>
+                                    <input id="tier-org-id"
                                         type="text"
                                         class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg"
                                         placeholder="org_xxx"
