@@ -1050,3 +1050,205 @@ async fn admin_route_contract_fails_on_wrong_fixture() {
         );
     }
 }
+
+/// Behavioral contract for the TCP/UDP listener family.
+///
+/// The registration tests above only prove the routes exist. These drive the
+/// real handlers to pin the two defects that made the admin UI for this family
+/// unshippable while still looking correct:
+///
+/// 1. `create_listener` returned `Applied` and wrote an audit event but never
+///    inserted the port, so a created listener never appeared in `list_listeners`.
+/// 2. `delete_listener` split the `{site_id}-{protocol}` id on the FIRST dash,
+///    so any site id containing a dash resolved to the wrong site.
+#[tokio::test]
+async fn admin_route_contract_tcp_udp_listener_round_trip() {
+    use axum::http::header::{AUTHORIZATION, CONTENT_TYPE};
+
+    let config = std::sync::Arc::new(tokio::sync::RwLock::new(ConfigManager::new(
+        std::env::temp_dir(),
+    )));
+
+    // Site ids containing a dash are the norm, not the exception.
+    let site_id = "acme-mail";
+    {
+        let mut guard = config.write().await;
+        let mut site =
+            synvoid::config::SiteConfig::default_fallback_site("http://127.0.0.1:1".to_string());
+        site.site.domains = vec!["mail.example.com".to_string()];
+        guard.sites.insert(site_id.to_string(), site);
+    }
+
+    let router = tokio::task::spawn_blocking({
+        let config = config.clone();
+        move || {
+            create_admin_router(
+                config,
+                CONTRACT_BEARER.to_string(),
+                default_cors(),
+                disabled_rate_limit(),
+                vec![],
+                None,
+                None,
+                None,
+                None,
+                None,
+                #[cfg(feature = "mesh")]
+                None,
+                #[cfg(feature = "icmp-filter")]
+                None,
+            )
+        }
+    })
+    .await
+    .expect("spawn_blocking should not panic");
+
+    // Mutating admin endpoints require a browser-shaped session: cookie + CSRF
+    // header, not a bearer token (bearer is only for session exchange).
+    let session = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/auth/session")
+                .header(AUTHORIZATION, format!("Bearer {}", CONTRACT_BEARER))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        session.status(),
+        StatusCode::OK,
+        "session exchange body: {:?}",
+        session
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string())
+    );
+    let cookie = session
+        .headers()
+        .get(axum::http::header::SET_COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(';').next())
+        .expect("session cookie")
+        .to_string();
+    let csrf = session
+        .headers()
+        .get("x-csrf-token")
+        .and_then(|v| v.to_str().ok())
+        .expect("csrf token")
+        .to_string();
+
+    let authed = |mut req: Request<Body>| {
+        req.headers_mut()
+            .insert(axum::http::header::COOKIE, cookie.parse().unwrap());
+        req.headers_mut()
+            .insert("x-csrf-token", csrf.parse().unwrap());
+        req.headers_mut().insert(
+            AUTHORIZATION,
+            format!("Bearer {}", CONTRACT_BEARER).parse().unwrap(),
+        );
+        req
+    };
+
+    // ── Create ──────────────────────────────────────────────────────────
+    let create = authed(
+        Request::builder()
+            .method("POST")
+            .uri("/api/tcp-udp/listeners")
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                serde_json::json!({
+                    "site_id": site_id,
+                    "port": 2525,
+                    "protocol": "smtps",
+                    "upstream": "mail.internal:25",
+                })
+                .to_string(),
+            ))
+            .unwrap(),
+    );
+    let created = router.clone().oneshot(create).await.unwrap();
+    assert_eq!(created.status(), StatusCode::OK);
+    let created: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(created.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(created["status"], "applied", "create must report applied");
+    assert_eq!(created["local_store_mutated"], true);
+
+    // The insert is the regression: `Applied` alone proved nothing.
+    {
+        let guard = config.read().await;
+        let ports = &guard.sites.get(site_id).expect("site").tcp.ports;
+        let entry = ports
+            .get("smtps")
+            .expect("created listener must be inserted into SiteTcpConfig::ports");
+        assert_eq!(entry.port, Some(2525));
+        assert_eq!(entry.upstream.as_deref(), Some("mail.internal:25"));
+    }
+
+    // ── It is listed ────────────────────────────────────────────────────
+    let list = authed(
+        Request::builder()
+            .method("GET")
+            .uri("/api/tcp-udp/listeners")
+            .body(Body::empty())
+            .unwrap(),
+    );
+    let listed: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(
+            router.clone().oneshot(list).await.unwrap().into_body(),
+            usize::MAX,
+        )
+        .await
+        .unwrap(),
+    )
+    .unwrap();
+    let listeners = listed["listeners"].as_array().expect("listeners array");
+    assert!(
+        listeners
+            .iter()
+            .any(|l| l["id"] == "acme-mail-smtps" && l["port"] == 2525),
+        "created listener must appear in list_listeners, got: {listeners:?}"
+    );
+
+    // ── Delete round-trips the dashed site id ───────────────────────────
+    let delete = authed(
+        Request::builder()
+            .method("DELETE")
+            .uri("/api/tcp-udp/listeners/acme-mail-smtps")
+            .body(Body::empty())
+            .unwrap(),
+    );
+    let deleted = router.oneshot(delete).await.unwrap();
+    assert_eq!(deleted.status(), StatusCode::OK);
+    let deleted: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(deleted.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        deleted["status"], "applied",
+        "deleting acme-mail-smtps must resolve site `acme-mail`, not `acme`"
+    );
+
+    {
+        let guard = config.read().await;
+        assert!(
+            !guard
+                .sites
+                .get(site_id)
+                .expect("site")
+                .tcp
+                .ports
+                .contains_key("smtps"),
+            "listener must be removed from the correct site"
+        );
+    }
+}

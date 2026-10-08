@@ -3,7 +3,6 @@ use yew_router::prelude::*;
 
 use crate::app::Route;
 use crate::hooks::use_theme::Theme;
-use crate::services::api::ApiService;
 
 #[derive(Debug, Clone, PartialEq, serde::Deserialize)]
 pub struct Capabilities {
@@ -60,43 +59,79 @@ pub struct SidebarProps {
     pub theme: Theme,
     pub on_toggle_theme: Callback<()>,
     pub on_logout: Callback<()>,
+    /// Capabilities are fetched once in `App` and shared with the route guard.
+    /// Fetching them here as well would let the nav disagree with the guard.
+    pub capabilities: Capabilities,
+    /// Drawer visibility. Always true at `md` and above regardless of this flag.
+    pub open: bool,
+    pub on_close: Callback<()>,
 }
 
 #[function_component]
 pub fn Sidebar(props: &SidebarProps) -> Html {
     let on_toggle = props.on_toggle_theme.reform(|_| ());
     let on_logout = props.on_logout.reform(|_| ());
-    let capabilities = use_state(Capabilities::default);
+    let on_close = props.on_close.clone();
 
-    {
-        let capabilities = capabilities.clone();
-        use_effect_with((), move |_| {
-            let capabilities = capabilities.clone();
-            wasm_bindgen_futures::spawn_local(async move {
-                // Centralized through ApiService so the `/system/capabilities`
-                // path is owned in one place and covered by the route contract.
-                let api = ApiService::new();
-                if let Ok(cap) = api.get_capabilities().await {
-                    capabilities.set(cap);
-                }
-            });
-            || ()
-        });
-    }
-
-    let cap = (*capabilities).clone();
-    let vis = sidebar_visibility(&cap);
+    let vis = sidebar_visibility(&props.capabilities);
+    let drawer_position = if props.open {
+        "translate-x-0"
+    } else {
+        "-translate-x-full"
+    };
+    // Bubbling handler on the list container: every `NavItem` click closes the
+    // drawer without each item needing its own callback.
+    let on_close_nav = props.on_close.reform(|_: MouseEvent| ());
 
     html! {
-        <nav class="w-64 bg-secondary border-r border-default min-h-screen flex flex-col">
-            <div class="p-4 border-b border-default">
-                <h1 class="text-xl font-bold accent">
-                    { "SynVoid" }
-                </h1>
-                <p class="text-sm text-secondary">{"Admin Dashboard"}</p>
+        <nav
+            class={classes!(
+                // Off-canvas below `md`; pinned in-flow above it. `fixed` and
+                // `md:sticky` are the only two position utilities, so the
+                // breakpoint swap needs no `static` override to fight.
+                // Yew's `classes!` takes one class per literal.
+                "fixed",
+                "md:sticky",
+                "md:top-0",
+                "inset-y-0",
+                "left-0",
+                "z-40",
+                "w-64",
+                "shrink-0",
+                "h-screen",
+                "bg-secondary",
+                "border-r",
+                "border-default",
+                "flex",
+                "flex-col",
+                "transition-transform",
+                "duration-200",
+                drawer_position,
+                // The sticky column is full height, so the nav list scrolls
+                // internally and Logout/Theme stay reachable on tall pages.
+                "md:translate-x-0",
+            )}
+            aria-label="Primary"
+        >
+            <div class="p-4 border-b border-default flex items-start justify-between gap-2">
+                <div>
+                    <h1 class="text-xl font-bold accent">
+                        { "SynVoid" }
+                    </h1>
+                    <p class="text-sm text-secondary">{"Admin Dashboard"}</p>
+                </div>
+                <button
+                    onclick={on_close.reform(|_: MouseEvent| ())}
+                    class="md:hidden p-1 -mr-1 rounded-lg hover:bg-tertiary transition"
+                    aria-label="Close navigation"
+                >
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                </button>
             </div>
 
-            <div class="flex-1 p-4">
+            <div class="flex-1 overflow-y-auto p-4" onclick={on_close_nav}>
                 <NavSection title="Overview">
                     <NavItem to={Route::Dashboard} icon="dashboard" label="Dashboard" />
                     <NavItem to={Route::Logs} icon="logs" label="WAF Logs" />
@@ -111,6 +146,7 @@ pub fn Sidebar(props: &SidebarProps) -> Html {
                     <NavItem to={Route::Workers} icon="cpu" label="Workers" />
                     <NavItem to={Route::Upstreams} icon="server" label="Upstreams" />
                     <NavItem to={Route::Sites} icon="globe" label="Sites" />
+                    <NavItem to={Route::TcpUdp} icon="arrows" label="TCP/UDP Listeners" />
                     if vis.show_mesh {
                         <NavItem to={Route::Mesh} icon="mesh" label="Mesh" />
                     }
@@ -142,7 +178,7 @@ pub fn Sidebar(props: &SidebarProps) -> Html {
                 </NavSection>
             </div>
 
-            <div class="p-4 border-t border-default space-y-2">
+            <div class="shrink-0 p-4 border-t border-default space-y-2 bg-secondary">
                 <button
                     onclick={on_logout}
                     class="w-full px-4 py-2 rounded-lg bg-red-600/20 text-red-400 hover:bg-red-600/30 transition flex items-center justify-center gap-2"
@@ -292,6 +328,11 @@ fn icon(name: &str) -> Html {
         "dns" => html! {
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0 3-4.03 3-9s-1.343-9-3-9m-9 9a9 9 0 019-9" />
+            </svg>
+        },
+        "arrows" => html! {
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
             </svg>
         },
         _ => html! {},

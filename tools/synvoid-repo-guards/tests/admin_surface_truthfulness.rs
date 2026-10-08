@@ -49,7 +49,7 @@ fn has_production_caller() -> (bool, String) {
 
     for dir in SOURCE_ROOTS {
         let walk = root.join(dir);
-        let Ok(entries) = std::fs::read_dir(&walk) else {
+        let Ok(_) = std::fs::read_dir(&walk) else {
             continue;
         };
         let mut stack = vec![walk];

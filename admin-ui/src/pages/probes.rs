@@ -170,7 +170,7 @@ fn HoneypotProbes() -> Html {
                 </div>
             }
 
-            <div class="bg-secondary rounded-lg border border-default overflow-hidden">
+            <div class="bg-secondary rounded-lg border border-default overflow-x-auto">
                 <table class="w-full">
                     <thead class="bg-tertiary">
                         <tr>
@@ -318,7 +318,7 @@ fn SuspiciousWordsTab() -> Html {
                 </div>
             }
 
-            <div class="bg-secondary rounded-lg border border-default overflow-hidden">
+            <div class="bg-secondary rounded-lg border border-default overflow-x-auto">
                 <table class="w-full">
                     <thead class="bg-tertiary">
                         <tr>
@@ -472,7 +472,7 @@ fn UpstreamErrorsTab() -> Html {
                 </div>
             }
 
-            <div class="bg-secondary rounded-lg border border-default overflow-hidden">
+            <div class="bg-secondary rounded-lg border border-default overflow-x-auto">
                 <table class="w-full">
                     <thead class="bg-tertiary">
                         <tr>

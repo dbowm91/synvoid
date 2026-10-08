@@ -63,6 +63,50 @@ jobs:
       - name: Verify
         run: cargo xtask verify
 
+  # `admin-ui/dist` is a committed build artifact that the admin server serves
+  # directly (`resolve_admin_ui_assets` in `src/admin/mod.rs`). Nothing in
+  # `cargo xtask verify` rebuilds it, so it drifted silently once already: the
+  # shipped WASM lagged the Rust sources by ~3 months while the stylesheet was
+  # regenerated separately. This job is the build `dist` has never had.
+  admin-ui-build:
+    name: admin-ui-build
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # No `toolchain:` input: rust-toolchain.toml is authoritative. The pinned
+      # 1.98.1 is what makes the rebuilt bundle byte-comparable to the committed
+      # one, so the drift check below is not noise.
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable as of 2026-09-12
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - uses: taiki-e/install-action@9534c84618278caac52cb373bb164ed464dbd8af # v2
+        with:
+          tool: trunk@0.21.14
+
+      # Node ships preinstalled on ubuntu-latest; no setup-node pin needed.
+      - name: Build admin UI
+        working-directory: admin-ui
+        run: npm ci && npm run build
+
+      # `git status --porcelain` rather than `git diff`: Trunk renames the
+      # bundle on every build, so drift shows up as an untracked new hash plus a
+      # deleted old one. `git diff` alone only sees the deleted half.
+      - name: Assert committed dist matches source
+        run: |
+          drift="$(git status --porcelain -- admin-ui/dist)"
+          if [ -n "$drift" ]; then
+            echo "::error::admin-ui/dist is stale — the committed build artifact does not match admin-ui/src."
+            echo "Run 'cd admin-ui && npm run build' and commit the result."
+            echo "$drift"
+            exit 1
+          fi
+
   dependency-security:
     name: dependency-security
     runs-on: ubuntu-latest

@@ -1152,7 +1152,7 @@ fn RateLimitTab(_props: &RateLimitTabProps) -> Html {
         <div class="space-y-6">
             <div>
                 <h3 class="text-lg font-semibold mb-4">{ "Per-IP Rate Limits" }</h3>
-                <div class="grid grid-cols-3 gap-4">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <InputWithTooltip label="Per Second" name="ip_per_second" value="10" help="Requests per second per IP" tooltip_title="" tooltip_content="" />
                     <InputWithTooltip label="Per Minute" name="ip_per_minute" value="60" help="Requests per minute per IP" tooltip_title="" tooltip_content="" />
                     <InputWithTooltip label="Per 5 Min" name="ip_per_5min" value="200" help="Requests per 5 minutes per IP" tooltip_title="" tooltip_content="" />
@@ -1163,7 +1163,7 @@ fn RateLimitTab(_props: &RateLimitTabProps) -> Html {
             </div>
             <div>
                 <h3 class="text-lg font-semibold mb-4">{ "Global Rate Limits" }</h3>
-                <div class="grid grid-cols-3 gap-4">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <InputWithTooltip label="Per Second" name="global_per_second" value="500" help="Total requests per second" tooltip_title="" tooltip_content="" />
                     <InputWithTooltip label="Per Minute" name="global_per_minute" value="5000" help="Total requests per minute" tooltip_title="" tooltip_content="" />
                     <InputWithTooltip label="Max Connections" name="max_connections" value="1000" help="Max concurrent connections" tooltip_title="" tooltip_content="" />

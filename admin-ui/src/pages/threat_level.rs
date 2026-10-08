@@ -405,6 +405,7 @@ fn ThreatBackupsTab() -> Html {
             } else if backups.is_empty() {
                 <div class="text-secondary text-center py-8">{ "No backups yet" }</div>
             } else {
+                <div class="bg-secondary rounded-lg border border-default overflow-x-auto">
                 <table class="w-full text-sm">
                     <thead>
                         <tr class="border-b border-default">
@@ -436,6 +437,7 @@ fn ThreatBackupsTab() -> Html {
                         })}
                     </tbody>
                 </table>
+                </div>
             }
         </div>
     }

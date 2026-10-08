@@ -227,9 +227,9 @@ pub fn ProcessManagement() -> Html {
                 </div>
             }
 
-            <div class="flex gap-6">
-                <nav class="w-48 flex-shrink-0">
-                    <div class="bg-secondary rounded-lg border border-default">
+            <div class="flex flex-col md:flex-row gap-6">
+                <nav class="w-full md:w-48 md:flex-shrink-0">
+                    <div class="flex overflow-x-auto md:block md:overflow-visible bg-secondary rounded-lg border border-default">
                         <ProcessSectionButton
                             label="Supervisor"
                             section="supervisor"
@@ -245,7 +245,7 @@ pub fn ProcessManagement() -> Html {
                     </div>
                 </nav>
 
-                <div class="flex-1 bg-secondary rounded-lg border border-default">
+                <div class="flex-1 min-w-0 bg-secondary rounded-lg border border-default">
                     <div class="p-6 border-b border-default">
                         <h2 class="text-lg font-semibold">
                         { match active_section.as_str() {
@@ -301,9 +301,9 @@ fn ProcessSectionButton(props: &ProcessSectionButtonProps) -> Html {
     };
 
     let class = if props.active {
-        "block w-full text-left px-4 py-3 text-primary bg-tertiary border-l-2 border-blue-500"
+        "inline-block w-auto whitespace-nowrap px-4 py-3 text-primary bg-tertiary border-b-2 border-blue-500 md:block md:w-full md:border-b-0 md:border-l-2"
     } else {
-        "block w-full text-left px-4 py-3 text-secondary hover:text-primary hover:bg-tertiary"
+        "inline-block w-auto whitespace-nowrap px-4 py-3 text-secondary hover:text-primary hover:bg-tertiary md:block md:w-full"
     };
 
     html! {

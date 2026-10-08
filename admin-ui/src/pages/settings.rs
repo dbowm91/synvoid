@@ -515,9 +515,9 @@ pub fn Settings() -> Html {
                 }
             </div>
 
-            <div class="flex gap-6">
-                <nav class="w-48 flex-shrink-0">
-                    <div class="bg-secondary rounded-lg border border-default">
+            <div class="flex flex-col md:flex-row gap-6">
+                <nav class="w-full md:w-48 md:flex-shrink-0">
+                    <div class="flex overflow-x-auto md:block md:overflow-visible bg-secondary rounded-lg border border-default">
                         <SectionButton label="Server" section="server" active={*active_section == "server"} on_click={on_section_click.clone()} />
                         <SectionButton label="HTTP" section="http" active={*active_section == "http"} on_click={on_section_click.clone()} />
                         <SectionButton label="Logging" section="logging" active={*active_section == "logging"} on_click={on_section_click.clone()} />
@@ -547,7 +547,7 @@ pub fn Settings() -> Html {
                     </div>
                 </nav>
 
-                <div class="flex-1 bg-secondary rounded-lg border border-default">
+                <div class="flex-1 min-w-0 bg-secondary rounded-lg border border-default">
                     <div class="p-6 border-b border-default flex items-center justify-between">
                         <h2 class="text-lg font-semibold">
                         { match active_section.as_str() {
@@ -649,9 +649,9 @@ fn SectionButton(props: &SectionButtonProps) -> Html {
     };
 
     let class = if props.active {
-        "block w-full text-left px-4 py-3 text-primary bg-tertiary border-l-2 border-blue-500"
+        "inline-block w-auto whitespace-nowrap px-4 py-3 text-primary bg-tertiary border-b-2 border-blue-500 md:block md:w-full md:border-b-0 md:border-l-2"
     } else {
-        "block w-full text-left px-4 py-3 text-secondary hover:text-primary hover:bg-tertiary"
+        "inline-block w-auto whitespace-nowrap px-4 py-3 text-secondary hover:text-primary hover:bg-tertiary md:block md:w-full"
     };
 
     html! {
@@ -2477,7 +2477,7 @@ fn RateLimitsSection() -> Html {
     html! {
         <div class="space-y-6">
             <h3 class="font-semibold text-primary">{ "Rate Limit Memory" }</h3>
-            <div class="grid grid-cols-3 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <Input label="Max IP Entries" name="max_ip_entries" input_type="number" value={(*max_ip_entries).clone()} on_change={on_change(max_ip_entries.clone())} />
                 <Input label="Cleanup Interval (secs)" name="cleanup_interval_secs" input_type="number" value={(*cleanup_interval_secs).clone()} on_change={on_change(cleanup_interval_secs.clone())} />
                 <Input label="Num Shards" name="num_shards" input_type="number" value={(*num_shards).clone()} on_change={on_change(num_shards.clone())} />
@@ -2496,7 +2496,7 @@ fn RateLimitsSection() -> Html {
             </div>
 
             <h3 class="font-semibold text-primary mt-6">{ "Per-IP Defaults" }</h3>
-            <div class="grid grid-cols-3 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <Input label="Per Second" name="ip_per_second" input_type="number" value={(*ip_per_second).clone()} on_change={on_change(ip_per_second.clone())} />
                 <Input label="Per Minute" name="ip_per_minute" input_type="number" value={(*ip_per_minute).clone()} on_change={on_change(ip_per_minute.clone())} />
                 <Input label="Per 5 Min" name="ip_per_5min" input_type="number" value={(*ip_per_5min).clone()} on_change={on_change(ip_per_5min.clone())} />
@@ -2506,7 +2506,7 @@ fn RateLimitsSection() -> Html {
             </div>
 
             <h3 class="font-semibold text-primary mt-6">{ "Global Defaults" }</h3>
-            <div class="grid grid-cols-3 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <Input label="Per Second" name="global_per_second" input_type="number" value={(*global_per_second).clone()} on_change={on_change(global_per_second.clone())} />
                 <Input label="Per Minute" name="global_per_minute" input_type="number" value={(*global_per_minute).clone()} on_change={on_change(global_per_minute.clone())} />
                 <Input label="Max Connections" name="max_connections" input_type="number" value={(*max_connections).clone()} on_change={on_change(max_connections.clone())} />
@@ -4275,7 +4275,7 @@ fn PluginsSection() -> Html {
         <div class="space-y-6">
             <p class="text-sm text-secondary">{ "Configure WASM plugin runtime settings. Individual plugins can override these defaults." }</p>
 
-            <div class="grid grid-cols-3 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <Input
                     label="Max Memory (MB)"
                     name="max_memory_mb"
@@ -4604,7 +4604,7 @@ fn ServerlessSection() -> Html {
         <div class="space-y-6">
             <p class="text-sm text-secondary">{ "Serverless WASM function configuration." }</p>
             if let Some(data) = &*health_data {
-                <div class="grid grid-cols-3 gap-4">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div class="bg-tertiary p-4 rounded-lg border border-default">
                         <p class="text-secondary text-sm">{"Total Functions"}</p>
                         <p class="text-primary font-medium text-xl">{ data.get("total_functions").and_then(|v| v.as_u64()).unwrap_or(0) }</p>

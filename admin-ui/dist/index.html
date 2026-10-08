@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SynVoid Admin Dashboard</title>
     <link href="styles.css" rel="stylesheet">
-</head>
+<link rel="modulepreload" href="/admin-ui-ceeda459e7b9a170.js" crossorigin="anonymous" integrity="sha384-rO9FQWAzWS8xlV6HvzB+gdOdYVAJkE2W0WHfuv55aiLYFeT27LYhsyd0Vh+XlWJr"><link rel="preload" href="/admin-ui-ceeda459e7b9a170_bg.wasm" crossorigin="anonymous" integrity="sha384-u2tTBxum0xrjC3JKKeS5636qX++HX4rNlXJNrk7SxFPUWEw8kCx7nrm5kvpcwuAj" as="fetch" type="application/wasm"></head>
 <body class="min-h-screen">
     <div id="app">
         <div class="loading-screen">
@@ -16,8 +16,8 @@
     </div>
 
 <script type="module">
-import init, * as bindings from '/admin-ui-bf47744d90d05165.js';
-const wasm = await init({ module_or_path: '/admin-ui-bf47744d90d05165_bg.wasm' });
+import init, * as bindings from '/admin-ui-ceeda459e7b9a170.js';
+const wasm = await init({ module_or_path: '/admin-ui-ceeda459e7b9a170_bg.wasm' });
 
 
 window.wasmBindings = bindings;

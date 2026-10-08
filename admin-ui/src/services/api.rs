@@ -207,6 +207,7 @@ impl ApiService {
     ///   + caller treats as unauthenticated;
     /// - 5xx / network failure (session may still be valid) → retain CSRF and
     ///   auth state, report the error so the caller stays authenticated.
+    ///
     /// Never clear the only mutation credential while telling the UI it
     /// remains authenticated.
     pub async fn logout() -> Result<(), ApiError> {
@@ -536,6 +537,26 @@ impl ApiService {
         body: &B,
     ) -> Result<T, ApiError> {
         let response = self.request_with_body("PUT", path, body).await?;
+
+        Self::handle_auth_error(response.status())?;
+
+        if !response.ok() {
+            let body = Self::read_error_body(&response).await;
+            return Err(ApiError::from_response(response.status(), &body));
+        }
+
+        response.json().await.map_err(|e| ApiError {
+            status: response.status(),
+            message: format!("JSON parse error: {}", e),
+        })
+    }
+
+    /// Typed DELETE. Exists because several admin endpoints answer DELETE with
+    /// a typed `AdminMutationResult` rather than an empty 200 — notably
+    /// `/tcp-udp/listeners/{id}`, which distinguishes `Applied` from
+    /// `NoOpAlreadyAbsent` in an HTTP-200 body.
+    pub async fn delete<T: DeserializeOwned>(&self, path: &str) -> Result<T, ApiError> {
+        let response = self.request("DELETE", path).await?;
 
         Self::handle_auth_error(response.status())?;
 
@@ -1041,6 +1062,53 @@ impl ApiService {
             "/tier-keys/unbind",
             &serde_json::json!({ "org_id": org_id, "key_id": key_id }),
         )
+        .await
+    }
+
+    // ── TCP/UDP listeners (`src/admin/handlers/tcp_udp.rs`) ────────────
+    // These are plain `AdminMutationResult` responses, not `{"success": true}`.
+    // `NoOpAlreadyAbsent` / `InvalidRejected` arrive as HTTP 200 and are
+    // surfaced as non-applied by `AdminMutationResult::applied()`.
+
+    pub async fn list_tcp_udp_listeners(
+        &self,
+    ) -> Result<crate::types::TcpUdpListenerList, ApiError> {
+        self.get("/tcp-udp/listeners").await
+    }
+
+    pub async fn list_tcp_udp_protocols(
+        &self,
+    ) -> Result<Vec<crate::types::TcpUdpProtocolInfo>, ApiError> {
+        self.get("/tcp-udp/protocols").await
+    }
+
+    pub async fn create_tcp_udp_listener(
+        &self,
+        site_id: &str,
+        port: u16,
+        protocol: &str,
+        upstream: &str,
+    ) -> Result<crate::types::AdminMutationResult, ApiError> {
+        self.post(
+            "/tcp-udp/listeners",
+            &serde_json::json!({
+                "site_id": site_id,
+                "port": port,
+                "protocol": protocol,
+                "upstream": upstream,
+            }),
+        )
+        .await
+    }
+
+    pub async fn delete_tcp_udp_listener(
+        &self,
+        listener_id: &str,
+    ) -> Result<crate::types::AdminMutationResult, ApiError> {
+        self.delete(&format!(
+            "/tcp-udp/listeners/{}",
+            encode_path_segment(listener_id)
+        ))
         .await
     }
 }

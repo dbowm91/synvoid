@@ -368,7 +368,7 @@ impl Component for TierKeys {
                         <p class="text-red-400">{ error }</p>
                     </div>
                 } else {
-                    <div class="bg-secondary rounded-lg border border-default overflow-hidden">
+                    <div class="bg-secondary rounded-lg border border-default overflow-x-auto">
                         <table class="w-full">
                             <thead class="bg-tertiary">
                                 <tr>

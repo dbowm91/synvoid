@@ -7,6 +7,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use synvoid_config::site::SitePortConfig;
 use synvoid_core::admin_mutation::{
     AdminActor, AdminAuditEvent, AdminMutationAuthority, AdminMutationResult, AdminMutationStatus,
     PropagationStatus,
@@ -114,6 +115,19 @@ pub async fn create_listener(
         site_config.tcp.enabled = Some(true);
     }
 
+    // The port must actually land in the site config. This handler previously
+    // set `tcp.enabled` and then reported `Applied` + wrote an audit event
+    // without inserting anything, so the created listener never appeared in
+    // `list_listeners` — a success response for a mutation that did not happen.
+    site_config.tcp.ports.insert(
+        req.protocol.clone(),
+        SitePortConfig {
+            port: Some(req.port),
+            upstream: Some(req.upstream.clone()),
+            filter: None,
+        },
+    );
+
     let audit_id = uuid::Uuid::new_v4().to_string();
 
     let audit_event = AdminAuditEvent {
@@ -175,8 +189,11 @@ pub async fn delete_listener(
 ) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let mut config = state.process.config.write().await;
 
-    let parts: Vec<&str> = listener_id.splitn(2, '-').collect();
-    if parts.len() != 2 {
+    // Listener ids are `{site_id}-{protocol}`. Site ids routinely contain a
+    // dash, so the split must be on the LAST one: `splitn(2, '-')` turned
+    // `my-site-http` into site `my` + protocol `site-http`. Protocol names
+    // never contain a dash, which makes `rsplit_once` the correct cut.
+    let Some((site_id, protocol_name)) = listener_id.rsplit_once('-') else {
         return Ok(Json(AdminMutationResult {
             status: AdminMutationStatus::InvalidRejected,
             target: listener_id,
@@ -186,9 +203,7 @@ pub async fn delete_listener(
             audit_id: None,
             message: "Invalid listener ID format".to_string(),
         }));
-    }
-    let site_id = parts[0];
-    let protocol_name = parts[1];
+    };
 
     let site_config = config.sites.get_mut(site_id).ok_or(StatusCode::NOT_FOUND)?;
 

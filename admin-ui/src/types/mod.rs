@@ -792,3 +792,94 @@ pub struct DeriveSigningKeyResponse {
     pub node_id: Option<String>,
     pub message: String,
 }
+
+// ── TCP/UDP listeners (`/api/tcp-udp/*`) ────────────────────────────────
+// Mirrors `src/admin/handlers/tcp_udp.rs`. Note `protocol` is the site's TCP
+// port *name* (the map key in `SiteTcpConfig::ports`), not a transport
+// discriminator — the handler only surfaces TCP ports.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct TcpUdpListener {
+    pub id: String,
+    pub port: u16,
+    pub protocol: String,
+    pub upstream: String,
+    pub enabled: bool,
+    pub active_connections: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct TcpUdpListenerList {
+    pub listeners: Vec<TcpUdpListener>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct TcpUdpProtocolInfo {
+    pub name: String,
+    pub description: String,
+    pub supported: bool,
+}
+
+/// Typed view of `synvoid_core::admin_mutation::AdminMutationResult`, which
+/// every mutating admin endpoint returns instead of a bare `{"success": true}`.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct AdminMutationResult {
+    pub status: String,
+    #[serde(default)]
+    pub target: String,
+    #[serde(default)]
+    pub local_store_mutated: bool,
+    #[serde(default)]
+    pub propagation: String,
+    #[serde(default)]
+    pub audit_id: Option<String>,
+    #[serde(default)]
+    pub message: String,
+}
+
+impl AdminMutationResult {
+    /// True only when the server actually applied the change.
+    ///
+    /// `AdminMutationStatus` is `#[serde(rename_all = "snake_case")]`, so the
+    /// wire value is `"applied"` — not `"Applied"`. `NoOpAlreadyAbsent` and
+    /// `InvalidRejected` arrive as HTTP 200 and changed nothing, so the UI must
+    /// not report them as success.
+    pub fn applied(&self) -> bool {
+        self.status == "applied"
+    }
+}
+
+#[cfg(test)]
+mod admin_mutation_tests {
+    use super::*;
+
+    fn result(status: &str) -> AdminMutationResult {
+        AdminMutationResult {
+            status: status.to_string(),
+            target: "site-http".to_string(),
+            local_store_mutated: true,
+            propagation: "applied_local_only".to_string(),
+            audit_id: None,
+            message: "ok".to_string(),
+        }
+    }
+
+    /// Pins the wire casing. `AdminMutationStatus` serializes snake_case, so a
+    /// PascalCase comparison here would silently mark every real success as a
+    /// failure in the UI.
+    #[test]
+    fn only_applied_counts_as_success() {
+        assert!(result("applied").applied());
+        assert!(!result("no_op_already_absent").applied());
+        assert!(!result("invalid_rejected").applied());
+        assert!(!result("duplicate_ignored").applied());
+        assert!(!result("stale_ignored").applied());
+    }
+
+    #[test]
+    fn missing_optional_fields_still_deserialize() {
+        let minimal: AdminMutationResult = serde_json::from_str(r#"{"status":"applied"}"#)
+            .expect("AdminMutationResult tolerates absent optional fields");
+        assert!(minimal.applied());
+        assert!(minimal.target.is_empty());
+    }
+}
