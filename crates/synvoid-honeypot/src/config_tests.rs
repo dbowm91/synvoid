@@ -9,8 +9,10 @@ fn default_runtime_config_is_within_hard_resource_ceilings() {
 
 #[test]
 fn payload_limit_accepts_boundary_and_rejects_one_byte_over() {
-    let mut config = PortHoneypotConfig::default();
-    config.max_payload_size = MAX_RETAINED_PAYLOAD_BYTES;
+    let mut config = PortHoneypotConfig {
+        max_payload_size: MAX_RETAINED_PAYLOAD_BYTES,
+        ..Default::default()
+    };
     assert!(config.validate_resource_limits().is_ok());
     config.max_payload_size += 1;
     let error = config.validate_resource_limits().unwrap_err();
@@ -20,15 +22,19 @@ fn payload_limit_accepts_boundary_and_rejects_one_byte_over() {
 
 #[test]
 fn concurrent_connections_and_listener_counts_are_bounded() {
-    let mut config = PortHoneypotConfig::default();
-    config.max_concurrent_connections = MAX_CONNECTIONS + 1;
+    let config = PortHoneypotConfig {
+        max_concurrent_connections: MAX_CONNECTIONS + 1,
+        ..Default::default()
+    };
     assert_eq!(
         config.validate_resource_limits().unwrap_err().field,
         "max_concurrent_connections"
     );
 
-    let mut config = PortHoneypotConfig::default();
-    config.num_honeypot_ports = MAX_LISTENERS + 1;
+    let config = PortHoneypotConfig {
+        num_honeypot_ports: MAX_LISTENERS + 1,
+        ..Default::default()
+    };
     assert_eq!(
         config.validate_resource_limits().unwrap_err().field,
         "num_honeypot_ports"
@@ -37,15 +43,31 @@ fn concurrent_connections_and_listener_counts_are_bounded() {
 
 #[test]
 fn storage_queue_and_batch_sizes_are_bounded() {
-    let mut config = PortHoneypotConfig::default();
-    config.storage.writer.queue_capacity = MAX_STORAGE_QUEUE_CAPACITY + 1;
+    let config = PortHoneypotConfig {
+        storage: StorageConfig {
+            writer: StorageWriterConfig {
+                queue_capacity: MAX_STORAGE_QUEUE_CAPACITY + 1,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        ..Default::default()
+    };
     assert_eq!(
         config.validate_resource_limits().unwrap_err().field,
         "storage.writer.queue_capacity"
     );
 
-    let mut config = PortHoneypotConfig::default();
-    config.storage.writer.batch_size = MAX_STORAGE_BATCH_SIZE + 1;
+    let config = PortHoneypotConfig {
+        storage: StorageConfig {
+            writer: StorageWriterConfig {
+                batch_size: MAX_STORAGE_BATCH_SIZE + 1,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        ..Default::default()
+    };
     assert_eq!(
         config.validate_resource_limits().unwrap_err().field,
         "storage.writer.batch_size"
@@ -54,17 +76,19 @@ fn storage_queue_and_batch_sizes_are_bounded() {
 
 #[test]
 fn ai_prompt_response_and_concurrency_budgets_are_bounded() {
-    let mut config = PortHoneypotConfig::default();
-    config.ai_config = Some(AiConfig {
-        mode: AiResponderMode::ExternalProvider,
-        provider: "test".into(),
-        endpoint: None,
-        api_key: None,
-        model: "test".into(),
-        timeout_secs: 1,
-        system_prompt: None,
-        budget: AiBudgetConfig::default(),
-    });
+    let mut config = PortHoneypotConfig {
+        ai_config: Some(AiConfig {
+            mode: AiResponderMode::ExternalProvider,
+            provider: "test".into(),
+            endpoint: None,
+            api_key: None,
+            model: "test".into(),
+            timeout_secs: 1,
+            system_prompt: None,
+            budget: AiBudgetConfig::default(),
+        }),
+        ..Default::default()
+    };
     config.ai_config.as_mut().unwrap().budget.max_prompt_bytes = MAX_AI_PROMPT_BYTES + 1;
     assert_eq!(
         config.validate_resource_limits().unwrap_err().field,

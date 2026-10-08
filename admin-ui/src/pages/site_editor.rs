@@ -308,7 +308,7 @@ fn AttacksTab(_props: &AttacksTabProps) -> Html {
         <div class="space-y-6">
             <div>
                 <h3 class="text-lg font-semibold mb-4">{ "Detection Settings" }</h3>
-                <div class="grid grid-cols-2 gap-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <SelectWithTooltip
                         label="Paranoia Level"
                         name="paranoia_level"
@@ -464,7 +464,7 @@ fn BotTab(_props: &BotTabProps) -> Html {
 
             <div>
                 <h3 class="text-lg font-semibold mb-4">{ "Challenge Settings" }</h3>
-                <div class="grid grid-cols-2 gap-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <InputWithTooltip
                         label="PoW Difficulty"
                         name="pow_difficulty"
@@ -520,7 +520,7 @@ fn UploadTab(_props: &UploadTabProps) -> Html {
 
             <div>
                 <h3 class="text-lg font-semibold mb-4">{ "Size Limits" }</h3>
-                <div class="grid grid-cols-2 gap-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <InputWithTooltip
                         label="Max Upload Size"
                         name="max_size"
@@ -1476,7 +1476,7 @@ fn ProxyTab(props: &ProxyTabProps) -> Html {
         <div class="space-y-6">
             <div>
                 <h3 class="text-lg font-semibold mb-4">{ "Proxy Settings" }</h3>
-                <div class="grid grid-cols-2 gap-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <Input label="Upstream Timeout (secs)" name="upstream_timeout" value={(*upstream_timeout).clone()} input_type="number" help="Timeout for upstream requests" />
                     <Input label="Keep-Alive Timeout (secs)" name="keepalive" value={(*keepalive).clone()} input_type="number" help="Upstream keep-alive timeout" />
                 </div>
@@ -1603,7 +1603,7 @@ fn StaticTab(_props: &StaticTabProps) -> Html {
             </div>
             <div>
                 <h3 class="text-lg font-semibold mb-4">{ "Caching" }</h3>
-                <div class="grid grid-cols-2 gap-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <Input label="Cache Max Age (secs)" name="cache_max_age" value="3600" input_type="number" help="Browser cache duration" />
                     <Input label="ETag" name="etag" value="true" help="Enable ETag headers" />
                 </div>
@@ -1686,7 +1686,7 @@ fn GrpcTab(_props: &GrpcTabProps) -> Html {
             </div>
             <div>
                 <h3 class="text-lg font-semibold mb-4">{ "HTTP/2 Settings" }</h3>
-                <div class="grid grid-cols-2 gap-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <Input label="Max Concurrent Streams" name="max_streams" value="100" input_type="number" />
                     <Input label="Initial Window Size" name="init_window" value="65535" input_type="number" />
                 </div>
@@ -1715,7 +1715,7 @@ fn TunnelTab(_props: &TunnelTabProps) -> Html {
             </div>
             <div>
                 <h3 class="text-lg font-semibold mb-4">{ "Connection Limits" }</h3>
-                <div class="grid grid-cols-2 gap-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <Input label="Max Peers" name="max_peers" value="100" input_type="number" />
                     <Input label="Keepalive Interval (secs)" name="keepalive" value="25" input_type="number" />
                 </div>

@@ -270,8 +270,10 @@ mod tests {
     #[test]
     fn parser_buffer_minimum_matches_hyper_floor() {
         assert_eq!(MIN_H1_PARSER_BUFFER_SIZE, 8192);
-        let mut config = HttpConfig::default();
-        config.max_request_size = MIN_H1_PARSER_BUFFER_SIZE - 1;
+        let mut config = HttpConfig {
+            max_request_size: MIN_H1_PARSER_BUFFER_SIZE - 1,
+            ..Default::default()
+        };
         let err = config.validate().unwrap_err();
         assert_eq!(err.field, "http.max_request_size");
         config.max_request_size = MIN_H1_PARSER_BUFFER_SIZE;
@@ -280,8 +282,10 @@ mod tests {
 
     #[test]
     fn max_headers_u32_overflow_fails_closed() {
-        let mut config = HttpConfig::default();
-        config.max_headers = u32::MAX as usize + 1;
+        let mut config = HttpConfig {
+            max_headers: u32::MAX as usize + 1,
+            ..Default::default()
+        };
         let err = config.validate().unwrap_err();
         assert_eq!(err.field, "http.max_headers");
         config.max_headers = u32::MAX as usize;
@@ -290,8 +294,10 @@ mod tests {
 
     #[test]
     fn zero_ingress_bound_fails_closed() {
-        let mut config = HttpConfig::default();
-        config.max_header_size_ingress = 0;
+        let config = HttpConfig {
+            max_header_size_ingress: 0,
+            ..Default::default()
+        };
         let err = config.validate().unwrap_err();
         assert_eq!(err.field, "http.max_header_size_ingress");
     }

@@ -24,15 +24,12 @@ fn wasm_binary() -> Option<PathBuf> {
     }
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     // Workspace target dirs (profile-correct first).
-    for candidate in [
+    [
         root.join("../../target/ci/synvoid-wasm-jail"),
         root.join("../../target/debug/synvoid-wasm-jail"),
-    ] {
-        if candidate.exists() {
-            return Some(candidate);
-        }
-    }
-    None
+    ]
+    .into_iter()
+    .find(|candidate| candidate.exists())
 }
 
 fn yara_binary() -> Option<PathBuf> {
@@ -43,15 +40,12 @@ fn yara_binary() -> Option<PathBuf> {
         }
     }
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    for candidate in [
+    [
         root.join("../../target/ci/synvoid-yara-jail"),
         root.join("../../target/debug/synvoid-yara-jail"),
-    ] {
-        if candidate.exists() {
-            return Some(candidate);
-        }
-    }
-    None
+    ]
+    .into_iter()
+    .find(|candidate| candidate.exists())
 }
 
 fn live_config() -> JailHandleConfig {

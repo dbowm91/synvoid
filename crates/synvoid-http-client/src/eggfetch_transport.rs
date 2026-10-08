@@ -632,7 +632,6 @@ mod tests {
 
     #[tokio::test]
     async fn sync_body_forwards_frames_and_is_sync() {
-        use http_body::Body as _;
         use http_body_util::BodyExt as _;
         use std::collections::VecDeque;
         use std::pin::Pin;

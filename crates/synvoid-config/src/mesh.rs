@@ -898,20 +898,28 @@ mod tests {
 
     #[test]
     fn supervision_validate_rejects_nondefault_tuning_while_disabled() {
-        let mut cfg = MeshSupervisionConfig::default();
-        cfg.restart_limit = 5;
+        let cfg = MeshSupervisionConfig {
+            restart_limit: 5,
+            ..Default::default()
+        };
         assert!(cfg.validate().is_err());
 
-        let mut cfg = MeshSupervisionConfig::default();
-        cfg.restart_window_secs = 600;
+        let cfg = MeshSupervisionConfig {
+            restart_window_secs: 600,
+            ..Default::default()
+        };
         assert!(cfg.validate().is_err());
 
-        let mut cfg = MeshSupervisionConfig::default();
-        cfg.restart_backoff_initial_secs = 10;
+        let cfg = MeshSupervisionConfig {
+            restart_backoff_initial_secs: 10,
+            ..Default::default()
+        };
         assert!(cfg.validate().is_err());
 
-        let mut cfg = MeshSupervisionConfig::default();
-        cfg.restart_backoff_max_secs = 120;
+        let cfg = MeshSupervisionConfig {
+            restart_backoff_max_secs: 120,
+            ..Default::default()
+        };
         assert!(cfg.validate().is_err());
     }
 }

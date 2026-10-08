@@ -808,15 +808,17 @@ mod runner_lifecycle_tests {
     /// long rotation so tests exit via `stop()`, in-memory SQLite so no
     /// filesystem state leaks between tests.
     fn test_runner() -> Arc<PortHoneypotRunner> {
-        let mut config = PortHoneypotConfig::default();
-        config.enabled = true;
-        config.bind_address = std::net::IpAddr::from([127, 0, 0, 1]);
-        config.min_port = 0;
-        config.max_port = 0;
-        config.min_rotation_interval_secs = 3600;
-        config.max_rotation_interval_secs = 3600;
-        config.storage = StorageConfig {
-            database_path: ":memory:".to_string(),
+        let config = PortHoneypotConfig {
+            enabled: true,
+            bind_address: std::net::IpAddr::from([127, 0, 0, 1]),
+            min_port: 0,
+            max_port: 0,
+            min_rotation_interval_secs: 3600,
+            max_rotation_interval_secs: 3600,
+            storage: StorageConfig {
+                database_path: ":memory:".to_string(),
+                ..Default::default()
+            },
             ..Default::default()
         };
         PortHoneypotRunner::new(config).expect("test runner builds")

@@ -65,12 +65,6 @@ impl NativeExtensionHandle {
             keep_alive,
         }
     }
-
-    /// Borrow the keep-alive token (for backend-internal retention checks).
-    #[cfg(test)]
-    pub(crate) fn keep_alive(&self) -> &Arc<dyn Any + Send + Sync> {
-        &self.keep_alive
-    }
 }
 
 /// Narrow backend consumed by `PluginManager`.
@@ -249,23 +243,37 @@ mod tests {
         drain_audit_events, set_global_unsafe_native_config, UnsafeNativeExtensionConfig,
     };
 
-    fn dev_config() -> UnsafeNativeExtensionConfig {
-        UnsafeNativeExtensionConfig {
-            enabled: true,
-            production_mode_override: Some(false),
-            ..Default::default()
-        }
-    }
-
     #[test]
     fn backend_traits_do_not_expose_library_types() {
         // Compile-time boundary assertion: the public trait surface must not
         // mention libloading, raw pointers, or symbol lookup. We assert on
         // the non-test source text so future edits that widen the trait fail
-        // loudly. (Split before the test module: the forbidden list itself
-        // lives below and must not self-match.)
+        // loudly.
+        //
+        // Scope is the `NativeExtensionBackend` trait declaration itself. It
+        // used to split the file at the first `#[cfg(test)]`, which silently
+        // only covered the ~70 lines above the first incidental test-only
+        // helper -- so the trait was never actually inspected. Scanning the
+        // whole non-test region instead would fail on unrelated prose in the
+        // impl's doc comments (e.g. "before the first `Library::new` call"),
+        // which is not the boundary this test claims to guard.
         let src = include_str!("backend.rs");
-        let code = src.split("#[cfg(test)]").next().unwrap_or(src);
+        let trait_src = src
+            .split("pub trait NativeExtensionBackend")
+            .nth(1)
+            .and_then(|rest| rest.split("\n}").next())
+            .expect("NativeExtensionBackend trait declaration must exist");
+        // Scan declarations only. The trait's own doc comment legitimately
+        // names `Library::new` when describing the load gate chain; prose
+        // about a type is not an exposure of it.
+        let code: String = trait_src
+            .lines()
+            .filter(|line| {
+                let t = line.trim_start();
+                !t.starts_with("///") && !t.starts_with("//")
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
         for forbidden in ["libloading", "Library", "Symbol", "*mut", "*const", "dlsym"] {
             assert!(
                 !code.contains(forbidden),

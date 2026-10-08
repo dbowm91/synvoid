@@ -701,9 +701,7 @@ mod tests {
         assert!(tracker.record_failure().is_ok());
     }
 
-    struct StubHandler {
-        fail_ids: Vec<u64>,
-    }
+    struct StubHandler;
 
     impl JailHandler for StubHandler {
         fn handle(&mut self, op: &JailOperation) -> JailResult {
@@ -744,7 +742,7 @@ mod tests {
         let mut child_reader = child.try_clone().unwrap();
         let mut child_writer = child;
         let server = std::thread::spawn(move || {
-            let mut handler = StubHandler { fail_ids: vec![] };
+            let mut handler = StubHandler;
             serve_jail_connection(
                 JailKind::Wasm,
                 &mut child_reader,
@@ -769,7 +767,7 @@ mod tests {
         let mut child_reader = child.try_clone().unwrap();
         let mut child_writer = child;
         let server = std::thread::spawn(move || {
-            let mut handler = StubHandler { fail_ids: vec![] };
+            let mut handler = StubHandler;
             serve_jail_connection(
                 JailKind::Yara,
                 &mut child_reader,
@@ -802,7 +800,7 @@ mod tests {
         drop(parent);
         let mut child_reader = child.try_clone().unwrap();
         let mut child_writer = child;
-        let mut handler = StubHandler { fail_ids: vec![] };
+        let mut handler = StubHandler;
         assert_eq!(
             serve_jail_connection(
                 JailKind::Wasm,
@@ -820,7 +818,7 @@ mod tests {
         let mut child_reader = child.try_clone().unwrap();
         let mut child_writer = child;
         let server = std::thread::spawn(move || {
-            let mut handler = StubHandler { fail_ids: vec![] };
+            let mut handler = StubHandler;
             serve_jail_connection(
                 JailKind::Wasm,
                 &mut child_reader,
@@ -846,7 +844,7 @@ mod tests {
         let mut child_reader = child.try_clone().unwrap();
         let mut child_writer = child;
         let server = std::thread::spawn(move || {
-            let mut handler = StubHandler { fail_ids: vec![] };
+            let mut handler = StubHandler;
             serve_jail_connection(
                 JailKind::Wasm,
                 &mut child_reader,

@@ -69,6 +69,11 @@ impl ReplayProtection {
     pub fn len(&self) -> usize {
         self.seen_nonces.len()
     }
+
+    #[cfg(test)]
+    pub fn is_empty(&self) -> bool {
+        self.seen_nonces.is_empty()
+    }
 }
 
 impl Default for ReplayProtection {

@@ -259,7 +259,7 @@ pub fn TrafficShaping() -> Html {
                         </button>
                     </div>
 
-                    <div class="grid grid-cols-2 gap-4">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <Input
                             label="Max Connections"
                             name="max_connections"
@@ -287,7 +287,7 @@ pub fn TrafficShaping() -> Html {
                         />
                     </div>
 
-                    <div class="grid grid-cols-2 gap-4 mt-4">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
                         <Input
                             label="Idle Timeout (secs)"
                             name="idle_timeout"
@@ -315,7 +315,7 @@ pub fn TrafficShaping() -> Html {
                         />
                     </div>
 
-                    <div class="grid grid-cols-2 gap-4 mt-4">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
                         <Input
                             label="Write Timeout (secs)"
                             name="write_timeout"
@@ -342,7 +342,7 @@ pub fn TrafficShaping() -> Html {
                         />
                     </div>
 
-                    <div class="grid grid-cols-2 gap-4 mt-4">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
                         <Input
                             label="Write Buffer Size"
                             name="write_buf_size"

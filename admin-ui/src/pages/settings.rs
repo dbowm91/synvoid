@@ -801,7 +801,7 @@ fn ServerSection() -> Html {
 
     html! {
         <div class="space-y-6">
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Input
                     label="Listen Host"
                     name="host"
@@ -1011,7 +1011,7 @@ fn HttpSection() -> Html {
 
     html! {
         <div class="space-y-6">
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Input
                     label="Header Read Timeout (secs)"
                     name="header_read_timeout"
@@ -1028,7 +1028,7 @@ fn HttpSection() -> Html {
                 />
             </div>
 
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Input
                     label="Max Headers"
                     name="max_headers"
@@ -1045,7 +1045,7 @@ fn HttpSection() -> Html {
                 />
             </div>
 
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Input
                     label="Max Header Size (Ingress)"
                     name="max_header_size_ingress"
@@ -1228,7 +1228,7 @@ fn LoggingSection() -> Html {
                 on_change={on_change(log_level.clone())}
             />
 
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Select
                     label="Access Log Format"
                     name="access_log_format"
@@ -1247,7 +1247,7 @@ fn LoggingSection() -> Html {
                 />
             </div>
 
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Input
                     label="Retention Days"
                     name="retention_days"
@@ -1560,7 +1560,7 @@ fn IpFeedsSection() -> Html {
                     <p class="text-xs text-secondary mt-1">{ "Plain text file with one IP/CIDR per line" }</p>
                 </div>
 
-                <div class="grid grid-cols-2 gap-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                         <label class="block text-sm font-medium text-primary mb-1">
                             { "Update Interval (hours)" }
@@ -2484,13 +2484,13 @@ fn RateLimitsSection() -> Html {
             </div>
 
             <h3 class="font-semibold text-primary mt-6">{ "Proxy Limits" }</h3>
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Input label="Max Response Size" name="max_response_size" input_type="number" value={(*max_response_size).clone()} on_change={on_change(max_response_size.clone())} />
                 <Input label="Connection Pool Size" name="connection_pool_size" input_type="number" value={(*connection_pool_size).clone()} on_change={on_change(connection_pool_size.clone())} />
             </div>
 
             <h3 class="font-semibold text-primary mt-6">{ "Blocklist Limits" }</h3>
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Input label="Max Block Entries" name="max_block_entries" input_type="number" value={(*max_block_entries).clone()} on_change={on_change(max_block_entries.clone())} />
                 <Input label="Persist Interval (secs)" name="persist_interval_secs" input_type="number" value={(*persist_interval_secs).clone()} on_change={on_change(persist_interval_secs.clone())} />
             </div>
@@ -2697,7 +2697,7 @@ fn BandwidthSection() -> Html {
     html! {
         <div class="space-y-6">
             <h3 class="font-semibold text-primary">{ "Monthly Limits" }</h3>
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Input
                     label="Monthly Ingress Cap (GB)"
                     name="monthly_cap_ingress_gb"
@@ -3190,7 +3190,7 @@ fn TarpitSection() -> Html {
                 </button>
             </div>
 
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Input
                     label="Max Depth"
                     name="max_depth"
@@ -3388,7 +3388,7 @@ fn UploadSection() -> Html {
 
     html! {
         <div class="space-y-6">
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Input
                     label="Max Upload Size"
                     name="upload_max_size"
@@ -4538,7 +4538,7 @@ fn YaraSection() -> Html {
         <div class="space-y-6">
             <p class="text-sm text-secondary">{ "YARA rules management for malware scanning." }</p>
             if let Some(data) = &*status_data {
-                <div class="grid grid-cols-2 gap-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div class="bg-tertiary p-4 rounded-lg border border-default">
                         <p class="text-secondary text-sm">{"Status"}</p>
                         <p class="text-primary font-medium">{
@@ -4679,7 +4679,7 @@ fn ProcessSection() -> Html {
             if let Some(data) = &*master_status {
                 <div class="bg-tertiary p-4 rounded-lg border border-default">
                     <h4 class="text-primary font-medium mb-3">{"Supervisor Process"}</h4>
-                    <div class="grid grid-cols-2 gap-4">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
                             <p class="text-secondary text-sm">{"PID"}</p>
                             <p class="text-primary">{ data.get("pid").and_then(|v| v.as_u64()).unwrap_or(0) }</p>
@@ -4761,7 +4761,7 @@ fn DefaultsSection() -> Html {
             if let Some(data) = &*defaults_data {
                 if let Some(config) = data.get("config") {
                     if let Some(defaults) = config.get("defaults") {
-                        <div class="grid grid-cols-2 gap-4">
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div class="bg-tertiary p-4 rounded-lg border border-default">
                                 <h4 class="text-primary font-medium mb-2">{"Bot Defaults"}</h4>
                                 <p class="text-secondary text-sm">{"Block AI Crawlers"}</p>
@@ -4812,7 +4812,7 @@ fn DnsSection() -> Html {
             <p class="text-sm text-secondary">{ "DNS server and resolver configuration." }</p>
             if let Some(data) = &*dns_config {
                 if let Some(config) = data.get("config") {
-                    <div class="grid grid-cols-2 gap-4">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <Input
                             label="Upstream Provider"
                             name="upstream_provider"
@@ -5351,7 +5351,7 @@ fn TcpUdpDefaultsSection() -> Html {
                 </button>
             </div>
 
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Input label="Worker Pool Size" name="tcp_worker_pool_size" input_type="number" value={(*tcp_worker_pool_size).clone()} on_change={on_change(tcp_worker_pool_size.clone())} />
                 <div class="flex items-center justify-between py-2">
                     <div>
@@ -5366,22 +5366,22 @@ fn TcpUdpDefaultsSection() -> Html {
                 </div>
             </div>
 
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Input label="Send Buffer Size" name="tcp_send_buffer_size" input_type="number" value={(*tcp_send_buffer_size).clone()} on_change={on_change(tcp_send_buffer_size.clone())} />
                 <Input label="Recv Buffer Size" name="tcp_recv_buffer_size" input_type="number" value={(*tcp_recv_buffer_size).clone()} on_change={on_change(tcp_recv_buffer_size.clone())} />
             </div>
 
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Input label="SYN Rate Per IP" name="tcp_syn_rate_per_ip" input_type="number" value={(*tcp_syn_rate_per_ip).clone()} on_change={on_change(tcp_syn_rate_per_ip.clone())} />
                 <Input label="SYN Rate Global" name="tcp_syn_rate_global" input_type="number" value={(*tcp_syn_rate_global).clone()} on_change={on_change(tcp_syn_rate_global.clone())} />
             </div>
 
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Input label="Connection Rate Per IP" name="tcp_connection_rate_per_ip" input_type="number" value={(*tcp_connection_rate_per_ip).clone()} on_change={on_change(tcp_connection_rate_per_ip.clone())} />
                 <Input label="Connection Rate Global" name="tcp_connection_rate_global" input_type="number" value={(*tcp_connection_rate_global).clone()} on_change={on_change(tcp_connection_rate_global.clone())} />
             </div>
 
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Input label="Half Open Max" name="tcp_half_open_max" input_type="number" value={(*tcp_half_open_max).clone()} on_change={on_change(tcp_half_open_max.clone())} />
                 <Input label="Half Open Per IP Max" name="tcp_half_open_per_ip_max" input_type="number" value={(*tcp_half_open_per_ip_max).clone()} on_change={on_change(tcp_half_open_per_ip_max.clone())} />
             </div>
@@ -5399,17 +5399,17 @@ fn TcpUdpDefaultsSection() -> Html {
                 </button>
             </div>
 
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Input label="Worker Pool Size" name="udp_worker_pool_size" input_type="number" value={(*udp_worker_pool_size).clone()} on_change={on_change(udp_worker_pool_size.clone())} />
                 <Input label="Recv Buffer Size" name="udp_recv_buffer_size" input_type="number" value={(*udp_recv_buffer_size).clone()} on_change={on_change(udp_recv_buffer_size.clone())} />
             </div>
 
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Input label="Send Buffer Size" name="udp_send_buffer_size" input_type="number" value={(*udp_send_buffer_size).clone()} on_change={on_change(udp_send_buffer_size.clone())} />
                 <Input label="Rate Per IP" name="udp_rate_per_ip" input_type="number" value={(*udp_rate_per_ip).clone()} on_change={on_change(udp_rate_per_ip.clone())} />
             </div>
 
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Input label="Rate Global" name="udp_rate_global" input_type="number" value={(*udp_rate_global).clone()} on_change={on_change(udp_rate_global.clone())} />
             </div>
 
@@ -5804,7 +5804,7 @@ fn UpgradeSection() -> Html {
             <p class="text-sm text-secondary">{ "Configure zero-downtime upgrade behavior." }</p>
 
             <h3 class="font-semibold text-primary">{ "Health Check" }</h3>
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Input
                     label="Health Check Path"
                     name="health_check_path"
@@ -5822,7 +5822,7 @@ fn UpgradeSection() -> Html {
             </div>
 
             <h3 class="font-semibold text-primary mt-6">{ "Validation" }</h3>
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Input
                     label="Validation Retries"
                     name="validation_retries"
@@ -5840,7 +5840,7 @@ fn UpgradeSection() -> Html {
             </div>
 
             <h3 class="font-semibold text-primary mt-6">{ "Drain" }</h3>
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Input
                     label="Drain Timeout (secs)"
                     name="drain_timeout_secs"
@@ -5867,7 +5867,7 @@ fn UpgradeSection() -> Html {
             />
 
             <h3 class="font-semibold text-primary mt-6">{ "Versions" }</h3>
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Input
                     label="Keep Old Versions"
                     name="keep_old_versions"
@@ -5879,7 +5879,7 @@ fn UpgradeSection() -> Html {
             </div>
 
             <h3 class="font-semibold text-primary mt-6">{ "Directories" }</h3>
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Input
                     label="Staged Directory"
                     name="staged_dir"

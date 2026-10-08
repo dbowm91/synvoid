@@ -440,7 +440,7 @@ mod admin_token_result_tests {
         assert_ne!(AdminTokenResult::Busy, AdminTokenResult::Invalid);
         assert!(AdminTokenResult::Busy.is_busy());
         assert!(!AdminTokenResult::Busy.is_valid());
-        assert!(AdminTokenResult::Invalid.is_busy() == false);
+        assert!(!AdminTokenResult::Invalid.is_busy());
         assert!(!AdminTokenResult::Invalid.is_valid());
         assert!(AdminTokenResult::Valid.is_valid());
     }

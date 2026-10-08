@@ -32,19 +32,23 @@ fn test_admin_token_validation_rejects_weak_tokens() {
     ];
 
     for token in weak_tokens {
-        let mut config = AdminConfig::default();
-        config.port = 8081;
-        config.token = token.to_string();
+        let config = AdminConfig {
+            port: 8081,
+            token: token.to_string(),
+            ..Default::default()
+        };
         let _result = config.validate();
         let resolved = config.resolve_token();
         assert!(!resolved.is_empty());
     }
 
     let strong_token = "ThisIsAveryLongSecureTokenThatIsHardToGuessABCDEF!@#$%";
-    let mut config = AdminConfig::default();
-    config.port = 8081;
-    config.token = strong_token.to_string();
-    config.bcrypt_cost = 12;
+    let config = AdminConfig {
+        port: 8081,
+        token: strong_token.to_string(),
+        bcrypt_cost: 12,
+        ..Default::default()
+    };
     assert!(
         config.validate().is_ok(),
         "Validation failed for strong token: {:?}",
@@ -70,10 +74,12 @@ fn test_recursive_dns_config_defaults() {
 fn test_recursive_dns_config_validation() {
     use synvoid_config::dns::{RecursiveDnsConfig, RecursiveUpstreamProvider};
 
-    let mut config = RecursiveDnsConfig::default();
-    config.enabled = true;
-    config.upstream_provider = RecursiveUpstreamProvider::Custom;
-    config.upstream_servers = vec![];
+    let config = RecursiveDnsConfig {
+        enabled: true,
+        upstream_provider: RecursiveUpstreamProvider::Custom,
+        upstream_servers: vec![],
+        ..Default::default()
+    };
 
     let result = config.validate();
     assert!(result.is_err());
@@ -83,8 +89,10 @@ fn test_recursive_dns_config_upstream_ips_google() {
     use std::net::IpAddr;
     use synvoid_config::dns::{RecursiveDnsConfig, RecursiveUpstreamProvider};
 
-    let mut config = RecursiveDnsConfig::default();
-    config.upstream_provider = RecursiveUpstreamProvider::Google;
+    let config = RecursiveDnsConfig {
+        upstream_provider: RecursiveUpstreamProvider::Google,
+        ..Default::default()
+    };
 
     let ips = config.upstream_ips();
 
@@ -97,8 +105,10 @@ fn test_recursive_dns_config_upstream_ips_google() {
 fn test_recursive_dns_config_upstream_ips_cloudflare() {
     use synvoid_config::dns::{RecursiveDnsConfig, RecursiveUpstreamProvider};
 
-    let mut config = RecursiveDnsConfig::default();
-    config.upstream_provider = RecursiveUpstreamProvider::Cloudflare;
+    let config = RecursiveDnsConfig {
+        upstream_provider: RecursiveUpstreamProvider::Cloudflare,
+        ..Default::default()
+    };
 
     let ips = config.upstream_ips();
 
@@ -111,8 +121,10 @@ fn test_recursive_dns_config_custom_servers() {
         RecursiveDnsConfig, RecursiveUpstreamProvider, RecursiveUpstreamServer,
     };
 
-    let mut config = RecursiveDnsConfig::default();
-    config.upstream_provider = RecursiveUpstreamProvider::Custom;
+    let mut config = RecursiveDnsConfig {
+        upstream_provider: RecursiveUpstreamProvider::Custom,
+        ..Default::default()
+    };
     config.upstream_servers = vec![RecursiveUpstreamServer {
         address: "1.1.1.1".to_string(),
         port: 53,
@@ -126,8 +138,10 @@ fn test_recursive_dns_config_custom_servers() {
 fn test_recursive_dns_config_recursive_provider() {
     use synvoid_config::dns::{RecursiveDnsConfig, RecursiveUpstreamProvider};
 
-    let mut config = RecursiveDnsConfig::default();
-    config.upstream_provider = RecursiveUpstreamProvider::Recursive;
+    let config = RecursiveDnsConfig {
+        upstream_provider: RecursiveUpstreamProvider::Recursive,
+        ..Default::default()
+    };
 
     assert_eq!(
         config.upstream_provider,
@@ -149,9 +163,11 @@ fn test_recursive_dns_config_default_paths() {
 fn test_recursive_dns_config_validation_timeout() {
     use synvoid_config::dns::RecursiveDnsConfig;
 
-    let mut config = RecursiveDnsConfig::default();
-    config.enabled = true;
-    config.query_timeout_secs = 0;
+    let config = RecursiveDnsConfig {
+        enabled: true,
+        query_timeout_secs: 0,
+        ..Default::default()
+    };
 
     let result = config.validate();
     assert!(result.is_err());
@@ -169,8 +185,10 @@ fn test_dns_config_includes_recursive() {
 fn test_dnssec_config_validation() {
     use synvoid_config::dns::RecursiveDnsConfig;
 
-    let mut config = RecursiveDnsConfig::default();
-    config.dnssec_validation = true;
+    let config = RecursiveDnsConfig {
+        dnssec_validation: true,
+        ..Default::default()
+    };
 
     assert!(config.dnssec_validation);
 }
@@ -672,15 +690,19 @@ fn doq_default_port_and_alpn() {
 /// they are separate values that don't interfere with each other.
 #[test]
 fn test_recursive_mode_different_bind_address() {
-    let mut auth_config = DnsConfig::default();
-    auth_config.enabled = true;
-    auth_config.bind_address = "0.0.0.0".to_string();
-    auth_config.port = 53;
+    let auth_config = DnsConfig {
+        enabled: true,
+        bind_address: "0.0.0.0".to_string(),
+        port: 53,
+        ..Default::default()
+    };
 
-    let mut recursive_config = RecursiveDnsConfig::default();
-    recursive_config.enabled = true;
-    recursive_config.bind_address = "127.0.0.1".to_string();
-    recursive_config.port = 1053;
+    let recursive_config = RecursiveDnsConfig {
+        enabled: true,
+        bind_address: "127.0.0.1".to_string(),
+        port: 1053,
+        ..Default::default()
+    };
 
     // Verify the two configs have different bind addresses and ports
     assert_ne!(
@@ -762,10 +784,12 @@ fn test_trust_anchor_config_validation() {
 /// config-level behavior.
 #[test]
 fn test_mesh_mode_requires_mesh_feature() {
-    let mut config = DnsConfig::default();
-    config.mode = DnsMode::Mesh;
-    config.bind_address = "127.0.0.1".to_string();
-    config.port = 5353;
+    let mut config = DnsConfig {
+        mode: DnsMode::Mesh,
+        bind_address: "127.0.0.1".to_string(),
+        port: 5353,
+        ..Default::default()
+    };
 
     // Config validation passes because mesh defaults are valid.
     // The actual mesh feature gate is at runtime (mesh_registry is None),
@@ -798,9 +822,11 @@ fn test_mesh_mode_requires_mesh_feature() {
 /// DnsConfig::validate() returns InvalidPort when port is 0.
 #[test]
 fn test_port_zero_rejected() {
-    let mut config = DnsConfig::default();
-    config.bind_address = "127.0.0.1".to_string();
-    config.port = 0;
+    let config = DnsConfig {
+        bind_address: "127.0.0.1".to_string(),
+        port: 0,
+        ..Default::default()
+    };
 
     let result = config.validate();
     assert!(
@@ -821,9 +847,11 @@ fn test_port_zero_rejected() {
 /// DnsConfig::validate() returns InvalidBindAddress for non-parseable addresses.
 #[test]
 fn test_invalid_bind_address_rejected() {
-    let mut config = DnsConfig::default();
-    config.bind_address = "not-a-valid-ip".to_string();
-    config.port = 53;
+    let config = DnsConfig {
+        bind_address: "not-a-valid-ip".to_string(),
+        port: 53,
+        ..Default::default()
+    };
 
     let result = config.validate();
     assert!(result.is_err(), "invalid bind address should be rejected");
@@ -839,9 +867,11 @@ fn test_invalid_bind_address_rejected() {
 /// Recursive config validates custom upstream requires servers.
 #[test]
 fn test_recursive_custom_upstream_requires_servers() {
-    let mut config = RecursiveDnsConfig::default();
-    config.enabled = true;
-    config.upstream_provider = RecursiveUpstreamProvider::Custom;
+    let mut config = RecursiveDnsConfig {
+        enabled: true,
+        upstream_provider: RecursiveUpstreamProvider::Custom,
+        ..Default::default()
+    };
     config.upstream_servers = vec![]; // empty
 
     let result = config.validate();
@@ -853,9 +883,11 @@ fn test_recursive_custom_upstream_requires_servers() {
 /// Recursive config validates query_timeout_secs > 0.
 #[test]
 fn test_recursive_query_timeout_must_be_positive() {
-    let mut config = RecursiveDnsConfig::default();
-    config.enabled = true;
-    config.query_timeout_secs = 0;
+    let config = RecursiveDnsConfig {
+        enabled: true,
+        query_timeout_secs: 0,
+        ..Default::default()
+    };
 
     let result = config.validate();
     assert!(
@@ -866,9 +898,11 @@ fn test_recursive_query_timeout_must_be_positive() {
 /// Recursive config validates max_concurrent_queries > 0.
 #[test]
 fn test_recursive_max_concurrent_must_be_positive() {
-    let mut config = RecursiveDnsConfig::default();
-    config.enabled = true;
-    config.max_concurrent_queries = 0;
+    let config = RecursiveDnsConfig {
+        enabled: true,
+        max_concurrent_queries: 0,
+        ..Default::default()
+    };
 
     let result = config.validate();
     assert!(
@@ -879,8 +913,10 @@ fn test_recursive_max_concurrent_must_be_positive() {
 /// Recursive config validates negative_ttl_secs <= max_ttl_secs.
 #[test]
 fn test_recursive_negative_ttl_cannot_exceed_max() {
-    let mut config = RecursiveDnsConfig::default();
-    config.enabled = true;
+    let mut config = RecursiveDnsConfig {
+        enabled: true,
+        ..Default::default()
+    };
     config.cache.negative_ttl_secs = 1000;
     config.cache.max_ttl_secs = 500;
 
@@ -893,8 +929,10 @@ fn test_recursive_negative_ttl_cannot_exceed_max() {
 /// Recursive config disabled skips validation.
 #[test]
 fn test_recursive_disabled_skips_validation() {
-    let mut config = RecursiveDnsConfig::default();
-    config.enabled = false;
+    let mut config = RecursiveDnsConfig {
+        enabled: false,
+        ..Default::default()
+    };
     // These would fail if validation ran
     config.query_timeout_secs = 0;
     config.max_concurrent_queries = 0;
@@ -956,10 +994,12 @@ fn test_anycast_disabled_skips_validation() {
 /// Valid DnsConfig passes validation.
 #[test]
 fn test_valid_dns_config_passes() {
-    let mut config = DnsConfig::default();
-    config.enabled = true;
-    config.bind_address = "127.0.0.1".to_string();
-    config.port = 5353;
+    let config = DnsConfig {
+        enabled: true,
+        bind_address: "127.0.0.1".to_string(),
+        port: 5353,
+        ..Default::default()
+    };
 
     let result = config.validate();
     assert!(result.is_ok(), "valid config should pass: {:?}", result);
@@ -967,9 +1007,11 @@ fn test_valid_dns_config_passes() {
 /// Port 0 is rejected even with valid bind address.
 #[test]
 fn test_dns_config_port_zero_with_valid_bind() {
-    let mut config = DnsConfig::default();
-    config.bind_address = "127.0.0.1".to_string();
-    config.port = 0;
+    let config = DnsConfig {
+        bind_address: "127.0.0.1".to_string(),
+        port: 0,
+        ..Default::default()
+    };
 
     let result = config.validate();
     assert!(result.is_err(), "port 0 should be rejected");
@@ -977,9 +1019,11 @@ fn test_dns_config_port_zero_with_valid_bind() {
 /// Wildcard bind addresses are accepted.
 #[test]
 fn test_dns_config_wildcard_bind_accepted() {
-    let mut config = DnsConfig::default();
-    config.bind_address = "0.0.0.0".to_string();
-    config.port = 53;
+    let config = DnsConfig {
+        bind_address: "0.0.0.0".to_string(),
+        port: 53,
+        ..Default::default()
+    };
 
     let result = config.validate();
     assert!(
@@ -991,9 +1035,11 @@ fn test_dns_config_wildcard_bind_accepted() {
 /// IPv6 wildcard bind is accepted.
 #[test]
 fn test_dns_config_ipv6_wildcard_bind_accepted() {
-    let mut config = DnsConfig::default();
-    config.bind_address = "::".to_string();
-    config.port = 53;
+    let config = DnsConfig {
+        bind_address: "::".to_string(),
+        port: 53,
+        ..Default::default()
+    };
 
     let result = config.validate();
     assert!(
@@ -1022,8 +1068,10 @@ fn test_default_config_recursive_disabled() {
 /// WS5: Open-resolver guard rejects 0.0.0.0 and :: bind addresses
 #[test]
 fn test_recursive_open_resolver_guard() {
-    let mut config = synvoid_config::dns::RecursiveDnsConfig::default();
-    config.enabled = true;
+    let mut config = synvoid_config::dns::RecursiveDnsConfig {
+        enabled: true,
+        ..Default::default()
+    };
 
     // 0.0.0.0 should be rejected
     config.bind_address = "0.0.0.0".to_string();
@@ -1088,8 +1136,10 @@ fn test_recursive_client_acl_empty_allows_all() {
 }
 #[test]
 fn test_recursive_client_acl_invalid_cidr_rejected() {
-    let mut config = RecursiveDnsConfig::default();
-    config.enabled = true;
+    let mut config = RecursiveDnsConfig {
+        enabled: true,
+        ..Default::default()
+    };
     config.client_acl = Some(RecursiveClientAcl {
         allowed_clients: vec!["not-a-cidr".to_string()],
         action: "reject".to_string(),
@@ -1161,8 +1211,10 @@ fn test_recursive_client_acl_action_reject_denies_non_matching() {
 }
 #[test]
 fn test_recursive_client_acl_invalid_action_rejected() {
-    let mut config = RecursiveDnsConfig::default();
-    config.enabled = true;
+    let mut config = RecursiveDnsConfig {
+        enabled: true,
+        ..Default::default()
+    };
     config.client_acl = Some(RecursiveClientAcl {
         allowed_clients: vec!["127.0.0.1/32".to_string()],
         action: "invalid".to_string(),
@@ -1210,9 +1262,11 @@ fn test_recursive_client_acl_multiple_cidrs() {
 }
 #[test]
 fn test_recursive_client_acl_none_allows_all() {
-    let mut config = RecursiveDnsConfig::default();
-    config.enabled = true;
-    config.client_acl = None;
+    let config = RecursiveDnsConfig {
+        enabled: true,
+        client_acl: None,
+        ..Default::default()
+    };
 
     assert!(
         config.validate().is_ok(),
@@ -1262,9 +1316,11 @@ fn test_max_cname_depth_config_default() {
 }
 #[test]
 fn test_max_cname_depth_zero_means_unlimited() {
-    let mut config = RecursiveDnsConfig::default();
-    config.enabled = true;
-    config.max_cname_depth = 0;
+    let config = RecursiveDnsConfig {
+        enabled: true,
+        max_cname_depth: 0,
+        ..Default::default()
+    };
     assert!(
         config.validate().is_ok(),
         "max_cname_depth=0 (unlimited) should be allowed"
@@ -1279,8 +1335,10 @@ fn test_circuit_breaker_config_default() {
 }
 #[test]
 fn test_circuit_breaker_config_validation_failure_threshold_zero() {
-    let mut config = RecursiveDnsConfig::default();
-    config.enabled = true;
+    let mut config = RecursiveDnsConfig {
+        enabled: true,
+        ..Default::default()
+    };
     config.circuit_breaker.failure_threshold = 0;
     assert!(
         config.validate().is_err(),
@@ -1289,8 +1347,10 @@ fn test_circuit_breaker_config_validation_failure_threshold_zero() {
 }
 #[test]
 fn test_circuit_breaker_config_validation_success_threshold_zero() {
-    let mut config = RecursiveDnsConfig::default();
-    config.enabled = true;
+    let mut config = RecursiveDnsConfig {
+        enabled: true,
+        ..Default::default()
+    };
     config.circuit_breaker.success_threshold = 0;
     assert!(
         config.validate().is_err(),
@@ -1324,9 +1384,11 @@ fn test_max_per_client_queries_default() {
 }
 #[test]
 fn test_max_recursion_depth_zero_means_unlimited() {
-    let mut config = RecursiveDnsConfig::default();
-    config.enabled = true;
-    config.max_recursion_depth = 0;
+    let config = RecursiveDnsConfig {
+        enabled: true,
+        max_recursion_depth: 0,
+        ..Default::default()
+    };
     assert!(
         config.validate().is_ok(),
         "max_recursion_depth=0 (unlimited) should be allowed"
@@ -1334,9 +1396,11 @@ fn test_max_recursion_depth_zero_means_unlimited() {
 }
 #[test]
 fn test_max_per_client_queries_zero_means_unlimited() {
-    let mut config = RecursiveDnsConfig::default();
-    config.enabled = true;
-    config.max_per_client_queries = 0;
+    let config = RecursiveDnsConfig {
+        enabled: true,
+        max_per_client_queries: 0,
+        ..Default::default()
+    };
     assert!(
         config.validate().is_ok(),
         "max_per_client_queries=0 (unlimited) should be allowed"

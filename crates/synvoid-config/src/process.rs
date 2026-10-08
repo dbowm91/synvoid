@@ -780,56 +780,74 @@ mod tests {
 
     #[test]
     fn rejects_zero_and_overflow_counts_without_panic() {
-        let mut cfg = ProcessManagerConfig::default();
-        cfg.unified_server_workers = 0;
+        let cfg = ProcessManagerConfig {
+            unified_server_workers: 0,
+            ..Default::default()
+        };
         assert!(cfg.validate().is_err());
 
-        let mut cfg = ProcessManagerConfig::default();
-        cfg.unified_server_workers = usize::MAX;
+        let cfg = ProcessManagerConfig {
+            unified_server_workers: usize::MAX,
+            ..Default::default()
+        };
         assert!(cfg.validate().is_err());
 
-        let mut cfg = ProcessManagerConfig::default();
-        cfg.min_workers = 0;
+        let cfg = ProcessManagerConfig {
+            min_workers: 0,
+            ..Default::default()
+        };
         assert!(cfg.validate().is_err());
 
-        let mut cfg = ProcessManagerConfig::default();
-        cfg.max_workers = usize::MAX;
+        let cfg = ProcessManagerConfig {
+            max_workers: usize::MAX,
+            ..Default::default()
+        };
         assert!(cfg.validate().is_err());
 
-        let mut cfg = ProcessManagerConfig::default();
-        cfg.min_workers = 8;
-        cfg.max_workers = 2;
+        let cfg = ProcessManagerConfig {
+            min_workers: 8,
+            max_workers: 2,
+            ..Default::default()
+        };
         assert!(cfg.validate().is_err());
     }
 
     #[test]
     fn warm_and_prespawn_bounded_by_max_workers() {
-        let mut cfg = ProcessManagerConfig::default();
-        cfg.max_workers = 4;
-        cfg.min_workers = 2;
-        cfg.pre_spawn_workers = 5;
+        let cfg = ProcessManagerConfig {
+            max_workers: 4,
+            min_workers: 2,
+            pre_spawn_workers: 5,
+            ..Default::default()
+        };
         assert!(cfg.validate().is_err());
 
-        let mut cfg = ProcessManagerConfig::default();
-        cfg.max_workers = 4;
-        cfg.min_workers = 2;
-        cfg.warm_workers_target = 5;
+        let cfg = ProcessManagerConfig {
+            max_workers: 4,
+            min_workers: 2,
+            warm_workers_target: 5,
+            ..Default::default()
+        };
         assert!(cfg.validate().is_err());
 
         // Unified pool is independent: exceeding max_workers is allowed.
-        let mut cfg = ProcessManagerConfig::default();
-        cfg.max_workers = 4;
-        cfg.min_workers = 2;
-        cfg.unified_server_workers = 16;
-        cfg.pre_spawn_workers = 0;
-        cfg.warm_workers_target = 0;
+        let cfg = ProcessManagerConfig {
+            max_workers: 4,
+            min_workers: 2,
+            unified_server_workers: 16,
+            pre_spawn_workers: 0,
+            warm_workers_target: 0,
+            ..Default::default()
+        };
         assert!(cfg.validate().is_ok());
     }
 
     #[test]
     fn unified_workers_hard_maximum() {
-        let mut cfg = ProcessManagerConfig::default();
-        cfg.unified_server_workers = MAX_UNIFIED_SERVER_WORKERS;
+        let mut cfg = ProcessManagerConfig {
+            unified_server_workers: MAX_UNIFIED_SERVER_WORKERS,
+            ..Default::default()
+        };
         assert!(cfg.validate().is_ok());
         cfg.unified_server_workers = MAX_UNIFIED_SERVER_WORKERS + 1;
         assert!(cfg.validate().is_err());
@@ -841,24 +859,32 @@ mod tests {
         cfg.restart_backoff_max_secs = cfg.restart_cooldown_secs - 1;
         assert!(cfg.validate().is_err());
 
-        let mut cfg = ProcessManagerConfig::default();
-        cfg.heartbeat_timeout_secs = 0;
+        let cfg = ProcessManagerConfig {
+            heartbeat_timeout_secs: 0,
+            ..Default::default()
+        };
         assert!(cfg.validate().is_err());
 
-        let mut cfg = ProcessManagerConfig::default();
-        cfg.control_api_addr = "not-a-socket-addr".to_string();
+        let cfg = ProcessManagerConfig {
+            control_api_addr: "not-a-socket-addr".to_string(),
+            ..Default::default()
+        };
         assert!(cfg.validate().is_err());
     }
 
     #[test]
     fn supervisor_scale_thresholds() {
-        let mut cfg = SupervisorConfig::default();
-        cfg.scale_down_threshold = 0.9;
-        cfg.scale_up_threshold = 0.8;
+        let cfg = SupervisorConfig {
+            scale_down_threshold: 0.9,
+            scale_up_threshold: 0.8,
+            ..Default::default()
+        };
         assert!(cfg.validate().is_err());
 
-        let mut cfg = SupervisorConfig::default();
-        cfg.scale_up_threshold = 0.0;
+        let cfg = SupervisorConfig {
+            scale_up_threshold: 0.0,
+            ..Default::default()
+        };
         assert!(cfg.validate().is_err());
 
         assert!(SupervisorConfig::builder().try_build().is_ok());
@@ -871,9 +897,11 @@ mod tests {
 
     #[test]
     fn worker_port_base_capacity() {
-        let mut cfg = ProcessManagerConfig::default();
-        cfg.worker_port_base = u16::MAX;
-        cfg.max_workers = 16;
+        let cfg = ProcessManagerConfig {
+            worker_port_base: u16::MAX,
+            max_workers: 16,
+            ..Default::default()
+        };
         assert!(cfg.validate().is_err());
     }
 }

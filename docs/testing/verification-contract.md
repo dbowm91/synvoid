@@ -20,6 +20,16 @@
 > runs both checks on every PR plus a daily schedule; `verify-full` gains a
 > `minimal-tests` step that executes `#[cfg(not(feature))]` absence branches
 > honestly (self dev-edge keeps `default-features = false`).
+> Amended: 2026-10-08 | Admin UI hardening — the routine and `verify-full`
+> clippy steps become `cargo clippy --workspace`. Previously the bare
+> `cargo clippy` resolved to the root package only, so workspace *members*
+> that are not dependencies of it (`admin-ui`, `synvoid-repo-guards`, `xtask`)
+> were never linted; two real `-D warnings` findings survived there
+> indefinitely. Widening the scope required clearing the backlog it exposed,
+> which was confined to test modules plus two documented `allow`s (a
+> `deny_unknown_fields` schema fixture whose fields exist to be deserialized,
+> and a global-governor test lock that is deliberately held across awaits).
+> No new invocation, no feature/profile change, no command-count change.
 > Toolchain pinned to Rust 1.98.1 via `rust-toolchain.toml`; third-party Actions
 > pinned to commit SHAs; tool versions recorded in §15.
 
@@ -44,7 +54,7 @@ Or equivalently, the raw commands (10 Cargo invocations):
 
 ```bash
 cargo fmt --all -- --check
-cargo clippy --profile ci --all-targets -- -D warnings
+cargo clippy --workspace --profile ci --all-targets -- -D warnings
 cargo deny check
 cargo check --no-default-features --profile ci
 cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci
@@ -75,7 +85,7 @@ cargo test --test failure_injection --profile ci
 | Property | Command | Routine CI? |
 |----------|---------|:-----------:|
 | Formatting conformance | `cargo fmt --all -- --check` | Yes |
-| Lint correctness (ci profile) | `cargo clippy --profile ci --all-targets -- -D warnings` | Yes |
+| Lint correctness (ci profile) | `cargo clippy --workspace --profile ci --all-targets -- -D warnings` | Yes |
 | Dependency policy (bans/licenses/sources/advisories) | `cargo deny check` (pinned cargo-deny) | Yes |
 | Core-only compilation | `cargo check --no-default-features --profile ci` | Yes |
 | Architecture static guards | `cargo nextest run -p synvoid-repo-guards` | Yes |
@@ -126,7 +136,7 @@ Or equivalently, the raw commands (10 Cargo invocations):
 ```bash
 # Format + lint preflight (shared with routine, cheap)
 cargo fmt --all -- --check
-cargo clippy --profile ci --all-targets -- -D warnings
+cargo clippy --workspace --profile ci --all-targets -- -D warnings
 
 # Bounded admin-contract feature matrix (Phase 05): each row maps to a real
 # optional admin route/capability family. Full powerset intentionally excluded.
@@ -337,7 +347,7 @@ Every current CI command classified by product property and routine eligibility:
 | Property | Current command | Routine CI? | Disposition |
 |----------|----------------|:-----------:|-------------|
 | Formatting | `cargo fmt --all -- --check` | Yes | Keep in routine |
-| Clippy (ci profile) | `cargo clippy --profile ci --all-targets -- -D warnings` | Yes | Keep in routine |
+| Clippy (ci profile) | `cargo clippy --workspace --profile ci --all-targets -- -D warnings` | Yes | Keep in routine |
 | Dependency policy | `cargo deny check` | Yes | Keep in routine (Phase 25; pinned cargo-deny) |
 | Advisory audit | `cargo audit` | Dedicated job | Blocking `dependency-security` job + schedule + release (Phase 25) |
 | Clippy (all features) | `cargo clippy --all-targets --all-features -- -D warnings` | No | Release only |
@@ -403,7 +413,7 @@ All seven failure classes were demonstrated against the frozen routine contract 
 | # | Class | Injected defect | Command | Expected failure point | Actual failure point | Later commands skipped? |
 |---|-------|----------------|---------|----------------------|---------------------|------------------------|
 | 1 | Formatting violation | Extra spaces in `worker_id.rs` function signature | `cargo fmt --all -- --check` | Step 1: exit 1 with diff | Step 1: exit 1, diff output shows exact lines | N/A (first command) |
-| 2 | Clippy warning → error | Unused variable (no `_` prefix) in `worker_id.rs` | `cargo clippy --profile ci --all-targets -- -D warnings` | Step 2: exit 101, unused-variables error | Step 2: exit 101, `error: unused variable: unused_variable` | N/A (second command) |
+| 2 | Clippy warning → error | Unused variable (no `_` prefix) in `worker_id.rs` | `cargo clippy --workspace --profile ci --all-targets -- -D warnings` | Step 2: exit 101, unused-variables error | Step 2: exit 101, `error: unused variable: unused_variable` | N/A (second command) |
 | 3 | Compilation error | Missing closing paren in `worker_id.rs` | `cargo check --no-default-features --profile ci` | Step 3: exit 101, syntax error | Step 3: exit 101, `expected `)` found `}` | N/A (third command) |
 | 4 | Unit-test failure | `assert!(false)` in `root_test_ownership_guard.rs` | `cargo nextest run ... root-guards` | Root-guards step: exit 101, panic message | Root-guards: exit 101, `INJECTED FAILURE for testing` | No — other guard tests still passed |
 | 5 | Security regression | `assert!(false)` in `security_regression.rs::test_ipc_auth_bypass_rejected` | `cargo test --test security_regression --profile ci --test-threads=1` | Security suite: exit 96/101 | Security suite: exit 101, `INJECTED SECURITY REGRESSION` | No — other regression tests still passed |
@@ -426,7 +436,7 @@ Measured after Phase 1 consolidation on a warm-cache Linux x86_64 workstation (4
 | # | Command | Wall time | Exit |
 |---|---------|-----------|------|
 | 1 | `cargo fmt --all -- --check` | ~5s | 0 |
-| 2 | `cargo clippy --profile ci --all-targets -- -D warnings` | ~180s | 0 |
+| 2 | `cargo clippy --workspace --profile ci --all-targets -- -D warnings` | ~180s | 0 |
 | 3 | `cargo deny check` (Phase 25; measured 1.7s local, ~30s cold) | ~30s | 0 |
 | 4 | `cargo check --no-default-features --profile ci` | ~60s | 0 |
 | 5 | `cargo nextest run -p synvoid-repo-guards` | ~4s | 0 |

@@ -62,7 +62,7 @@ fn golden_size_bounds() {
 fn golden_operation_set_is_closed() {
     // Every narrow op encodes and validates; there is no generic exec op.
     let wasm_bytes = vec![0u8; 8];
-    let ops = vec![
+    let ops = [
         JailOperation::Ping,
         JailOperation::Shutdown,
         JailOperation::WasmLoad {

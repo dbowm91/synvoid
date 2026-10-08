@@ -106,13 +106,13 @@ mod tests {
         let nonce = solve_pow_sync(challenge, 4).expect("solvable at difficulty 4");
         assert!(verify_pow_solution(challenge, &nonce, 4));
 
-        let input = format!("{}{}", challenge, &nonce);
+        let input = format!("{}{}", challenge, nonce);
         let hash = Sha256::digest(input.as_bytes());
         let ct: bool = has_leading_zeros_ct(&hash, 4).into();
         assert!(ct);
 
         let bad_nonce = format!("{}-invalid", nonce);
-        let bad_input = format!("{}{}", challenge, &bad_nonce);
+        let bad_input = format!("{}{}", challenge, bad_nonce);
         let bad_hash = Sha256::digest(bad_input.as_bytes());
         let bad_ct: bool = has_leading_zeros_ct(&bad_hash, 4).into();
         assert_eq!(verify_pow_solution(challenge, &bad_nonce, 4), bad_ct);

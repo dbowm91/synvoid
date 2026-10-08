@@ -184,6 +184,11 @@ where
 }
 
 #[cfg(test)]
+// These tests mutate the process-global `GlobalCacheGovernor`, so each holds a
+// `GOVERNOR_TEST_LOCK` guard across its awaits to serialize them. Dropping the
+// guard before an await (or switching to an async mutex) would let a second
+// test interleave and corrupt the global usage accounting the assertions read.
+#[allow(clippy::await_holding_lock)]
 mod streaming_tests {
     use super::*;
     use http::{HeaderMap, Method, Uri};
@@ -256,11 +261,13 @@ mod streaming_tests {
     }
 
     fn test_cache() -> Arc<ProxyCache> {
-        let mut settings = synvoid_proxy_cache::ProxyCacheSettings::default();
-        settings.enabled = true;
-        settings.use_temp_file = false;
-        settings.max_memory_size = 10 * 1024 * 1024;
-        settings.valid_status = vec![200];
+        let settings = synvoid_proxy_cache::ProxyCacheSettings {
+            enabled: true,
+            use_temp_file: false,
+            max_memory_size: 10 * 1024 * 1024,
+            valid_status: vec![200],
+            ..Default::default()
+        };
         Arc::new(ProxyCache::new(settings))
     }
 

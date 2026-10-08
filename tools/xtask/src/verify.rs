@@ -132,8 +132,12 @@ fn verify_steps() -> Vec<(&'static str, &'static str)> {
     vec![
         ("fmt", "cargo fmt --all -- --check"),
         (
+            // `--workspace` is load-bearing. Without it this runs in the root
+            // package only: `admin-ui` and `synvoid-repo-guards` are members,
+            // not dependencies, so their lints were silently skipped and real
+            // findings there survived for months. Every member is now gated.
             "clippy",
-            "cargo clippy --profile ci --all-targets -- -D warnings",
+            "cargo clippy --workspace --profile ci --all-targets -- -D warnings",
         ),
         // Phase 25: routine blocking dependency-policy gate. Uses the pinned
         // cargo-deny version (see docs/testing/verification-contract.md).
@@ -227,7 +231,7 @@ fn verify_full_steps() -> Vec<(&'static str, &'static str)> {
         ("fmt", "cargo fmt --all -- --check"),
         (
             "clippy",
-            "cargo clippy --profile ci --all-targets -- -D warnings",
+            "cargo clippy --workspace --profile ci --all-targets -- -D warnings",
         ),
         // Bounded admin-contract feature matrix (Phase 05). Each entry maps
         // to a real optional admin route/capability family; the full powerset

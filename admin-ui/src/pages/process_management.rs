@@ -322,7 +322,7 @@ fn ProcessManagerSection(props: &ProcessManagerSectionProps) -> Html {
         <div class="space-y-6">
             <h3 class="font-semibold text-primary">{ "Worker Pool" }</h3>
 
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Input
                     label="Min Workers"
                     name="min_workers"
@@ -343,7 +343,7 @@ fn ProcessManagerSection(props: &ProcessManagerSectionProps) -> Html {
 
             <h3 class="font-semibold text-primary pt-4 border-t border-default">{ "Restart Behavior" }</h3>
 
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Input
                     label="Max Restart Attempts"
                     name="max_restart_attempts"
@@ -361,7 +361,7 @@ fn ProcessManagerSection(props: &ProcessManagerSectionProps) -> Html {
                 />
             </div>
 
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Input
                     label="Restart Backoff Max (secs)"
                     name="restart_backoff_max_secs"
@@ -382,7 +382,7 @@ fn ProcessManagerSection(props: &ProcessManagerSectionProps) -> Html {
 
             <h3 class="font-semibold text-primary pt-4 border-t border-default">{ "Worker Ports & Startup" }</h3>
 
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Input
                     label="Worker Port Base"
                     name="worker_port_base"
@@ -412,7 +412,7 @@ fn ProcessManagerSection(props: &ProcessManagerSectionProps) -> Html {
 
             <h3 class="font-semibold text-primary pt-4 border-t border-default">{ "Health & Shutdown" }</h3>
 
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Input
                     label="Health Check Interval (secs)"
                     name="health_check_interval_secs"
@@ -448,7 +448,7 @@ fn SupervisorSection(props: &SupervisorSectionProps) -> Html {
 
             <h3 class="font-semibold text-primary">{ "Worker Range" }</h3>
 
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Input
                     label="Min Workers"
                     name="min_workers"
@@ -469,7 +469,7 @@ fn SupervisorSection(props: &SupervisorSectionProps) -> Html {
 
             <h3 class="font-semibold text-primary pt-4 border-t border-default">{ "Scale Triggers" }</h3>
 
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Input
                     label="Scale Up Threshold"
                     name="scale_up_threshold"
@@ -490,7 +490,7 @@ fn SupervisorSection(props: &SupervisorSectionProps) -> Html {
 
             <h3 class="font-semibold text-primary pt-4 border-t border-default">{ "Scale Cooldowns" }</h3>
 
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Input
                     label="Scale Up Cooldown (secs)"
                     name="scale_up_cooldown_secs"
@@ -511,7 +511,7 @@ fn SupervisorSection(props: &SupervisorSectionProps) -> Html {
 
             <h3 class="font-semibold text-primary pt-4 border-t border-default">{ "Restart Behavior" }</h3>
 
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Input
                     label="Max Restart Attempts"
                     name="max_restart_attempts"
@@ -530,7 +530,7 @@ fn SupervisorSection(props: &SupervisorSectionProps) -> Html {
 
             <h3 class="font-semibold text-primary pt-4 border-t border-default">{ "Health & Shutdown" }</h3>
 
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Input
                     label="Health Check Interval (secs)"
                     name="health_check_interval_secs"

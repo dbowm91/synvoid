@@ -721,7 +721,7 @@ fn SiteStatusItem(props: &SiteStatusItemProps) -> Html {
             </div>
             if *expanded {
                 <div class="bg-tertiary p-3 border-b border-default">
-                    <div class="grid grid-cols-2 gap-4 text-sm">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
                         <div>
                             <div class="text-secondary text-xs mb-1">{ "Ingress" }</div>
                             <div class="font-medium">{ format_bytes(total_ingress) }</div>

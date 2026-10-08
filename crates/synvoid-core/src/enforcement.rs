@@ -531,7 +531,7 @@ mod tests {
             let forward = reduce_all(set.iter().copied()).map(|c| c.class);
             let mut reversed = set.clone();
             reversed.reverse();
-            let backward = reduce_all(reversed.into_iter()).map(|c| c.class);
+            let backward = reduce_all(reversed).map(|c| c.class);
             assert_eq!(forward, Some(want), "forward reduce of {set:?}");
             assert_eq!(backward, Some(want), "reversed reduce of {set:?}");
         }

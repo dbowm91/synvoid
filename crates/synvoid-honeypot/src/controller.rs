@@ -80,13 +80,21 @@ pub struct ControllerStatus {
 #[cfg(test)]
 mod tests {
     use super::PortHoneypotController;
-    use crate::{config::PortHoneypotConfig, PortHoneypotRunner};
+    use crate::{
+        config::{PortHoneypotConfig, StorageConfig},
+        PortHoneypotRunner,
+    };
 
     #[tokio::test]
     async fn controller_from_runner_uses_the_runners_runtime_config() {
-        let mut config = PortHoneypotConfig::default();
-        config.site_scope = "tenant-a".into();
-        config.storage.database_path = ":memory:".into();
+        let config = PortHoneypotConfig {
+            site_scope: "tenant-a".into(),
+            storage: StorageConfig {
+                database_path: ":memory:".into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
         let runner = PortHoneypotRunner::new(config).unwrap();
         let controller = PortHoneypotController::from_runner(runner);
         assert_eq!(controller.get_config().site_scope, "tenant-a");

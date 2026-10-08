@@ -23,8 +23,10 @@ fn detector_no_anomaly() -> AttackDetector {
 }
 
 fn detector_strict() -> AttackDetector {
-    let mut config = AttackDetectionConfig::default();
-    config.strict_normalization = true;
+    let config = AttackDetectionConfig {
+        strict_normalization: true,
+        ..Default::default()
+    };
     AttackDetector::new(config)
 }
 
@@ -130,8 +132,10 @@ async fn strict_normalization_rejects_overlong() {
 
 #[tokio::test]
 async fn body_size_limit_is_fail_closed() {
-    let mut config = AttackDetectionConfig::default();
-    config.max_request_body_size = Some(16);
+    let config = AttackDetectionConfig {
+        max_request_body_size: Some(16),
+        ..Default::default()
+    };
     let detector = AttackDetector::new(config);
     let headers = empty_headers();
     let big_body = vec![b'a'; 1024];

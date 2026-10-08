@@ -181,7 +181,7 @@ impl<'de> Deserialize<'de> for SourceHeaders {
         }
         let raw = RawHeaders::deserialize(deserializer)?;
         match raw {
-            RawHeaders::Map(m) => Ok(SourceHeaders(m.into_iter().map(|(k, v)| (k, v)).collect())),
+            RawHeaders::Map(m) => Ok(SourceHeaders(m.into_iter().collect())),
             RawHeaders::Array(a) => {
                 let mut out = Vec::with_capacity(a.len());
                 for pair in a {
@@ -480,10 +480,10 @@ impl TelemetryOwnerMetric {
     }
 
     pub const fn required(self) -> bool {
-        matches!(
+        !matches!(
             self,
             Self::CpuWorkerRssBytes | Self::WorkerMetricResetsTotal
-        ) == false
+        )
     }
 
     /// Owner/source aggregation (supervisor across worker snapshots at one
@@ -1089,18 +1089,15 @@ pub fn build_corpus(
             headers.push((name, value));
         }
 
-        let body = match &fixture.body_bytes {
-            Some(bytes) => Some(if fixture.raw.request.body_file.is_some() {
-                BodyRef::File {
-                    file: fixture.raw.request.body_file.as_ref().unwrap().clone(),
-                }
+        let body = fixture.body_bytes.as_ref().map(|bytes| {
+            if let Some(file) = &fixture.raw.request.body_file {
+                BodyRef::File { file: file.clone() }
             } else {
                 BodyRef::Inline {
                     inline: String::from_utf8_lossy(bytes).into_owned(),
                 }
-            }),
-            None => None,
-        };
+            }
+        });
 
         let expected_status = match entry.expected_result.as_str() {
             "detect" => DETECT_STATUS,
@@ -1133,6 +1130,10 @@ pub fn build_corpus(
     Ok(cases)
 }
 
+/// A provenance bundle is inherently wide: inputs, corpus, exclusions, and
+/// telemetry are distinct evidence groups that are recorded together rather
+/// than collapsed into one opaque struct.
+#[allow(clippy::too_many_arguments)]
 pub fn build_provenance(
     inputs: &BuildInputs,
     cases: &[CorpusCase],
@@ -2834,6 +2835,10 @@ mod tests {
         }
         #[derive(serde::Deserialize)]
         #[serde(deny_unknown_fields)]
+        // The field names are the assertion: `deny_unknown_fields` rejects any
+        // key not listed here, which is what pins the mapping schema. They are
+        // deserialized, never read.
+        #[allow(dead_code)]
         struct StrictField {
             output_name: String,
             prometheus_name: String,
@@ -2912,14 +2917,14 @@ mod tests {
     #[test]
     fn telemetry_contract_and_mapping_are_deterministic_and_digest_stable() {
         let (m1, m1_bytes) = build_telemetry_mapping().unwrap();
-        let (m2, m2_bytes) = build_telemetry_mapping().unwrap();
+        let (_m2, m2_bytes) = build_telemetry_mapping().unwrap();
         assert_eq!(m1_bytes, m2_bytes);
         assert_eq!(m1.schema_version, 1);
         assert_eq!(m1.source, "prometheus");
         let (c1, c1_bytes) =
             build_telemetry_contract(19191, "1.1.0", "deadbeef", &sha256_hex(&m1_bytes), b"")
                 .unwrap();
-        let (c2, c2_bytes) =
+        let (_c2, c2_bytes) =
             build_telemetry_contract(19191, "1.1.0", "deadbeef", &sha256_hex(&m1_bytes), b"")
                 .unwrap();
         assert_eq!(c1_bytes, c2_bytes);
