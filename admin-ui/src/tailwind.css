@@ -3,6 +3,103 @@
 @tailwind utilities;
 
 /* ---------------------------------------------------------------------------
+ * Web fonts
+ *
+ * These files are committed under `src/fonts/` and copied into `dist/` by
+ * Trunk's `copy-dir` hook in `index.html`. They were previously shipped but
+ * never referenced by any rule, so `font-sans`/`font-mono` (which name
+ * `Inter` / `JetBrains Mono` in `tailwind.config.js`) silently fell back to
+ * the system stack on every client that does not have those fonts installed.
+ *
+ * `swap` keeps text visible while the face loads; the files are latin-only
+ * subsets (~24KB each) to match the shipped subset.
+ * ------------------------------------------------------------------------ */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("fonts/inter-latin-400-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("fonts/inter-latin-500-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("fonts/inter-latin-600-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("fonts/inter-latin-700-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("fonts/jetbrains-mono-latin-400-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("fonts/jetbrains-mono-latin-500-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("fonts/jetbrains-mono-latin-600-normal.woff2") format("woff2");
+}
+
+/* ---------------------------------------------------------------------------
+ * Keyboard focus indication
+ *
+ * The frontend declared `focus-visible` nowhere: every `<button>`, `<Link>`
+ * and nav item carried hover styling with no keyboard equivalent, so a
+ * keyboard user tabbing through the sidebar or any button row saw no focus
+ * ring at all. The sidebar is the only navigation affordance on mobile, which
+ * made this the most consequential accessibility gap in the panel.
+ *
+ * `:where()` keeps this at zero specificity so any Tailwind utility still wins
+ * — and it deliberately does not override fields: inputs/selects already
+ * declare `focus:outline-none` plus `focus:ring-2`, so they keep that ring
+ * instead of acquiring a second outline. This rule covers exactly the
+ * controls that had no focus styling of their own.
+ * ------------------------------------------------------------------------ */
+:where(button, a, select, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
+/* ---------------------------------------------------------------------------
+ * Native widget rendering
+ *
+ * Without this, the OS-drawn parts of the page — native `<select>` dropdown
+ * popups, scrollbars, checkbox/radio controls — render light against the dark
+ * surfaces, which reads as a broken theme on first click.
+ * ------------------------------------------------------------------------ */
+:root {
+  color-scheme: dark;
+}
+
+.light {
+  color-scheme: light;
+}
+
+/* ---------------------------------------------------------------------------
  * Theme tokens
  *
  * `tailwind.config.js` maps the semantic palette to CSS custom properties, so
@@ -175,4 +272,93 @@
 
 .loading-text {
   font-size: 0.875rem;
+}
+
+/* ---------------------------------------------------------------------------
+ * Overlay animations
+ *
+ * `animate-fade-in` (confirm dialog, tooltip) and `animate-slide-in` (toast)
+ * are referenced from the Rust markup but were never defined here, so those
+ * classes generated no rule at all and every overlay appeared instantly.
+ * Tailwind ships no such utilities by default — they have to be declared.
+ * ------------------------------------------------------------------------ */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(1rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fade-in 150ms ease-out;
+}
+
+.animate-slide-in {
+  animation: slide-in 200ms ease-out;
+}
+
+/* ---------------------------------------------------------------------------
+ * Drawer height
+ *
+ * `100vh` is larger than the visible viewport on mobile Safari and Chrome
+ * Android while the URL bar is expanded, which pushed the drawer's Logout and
+ * Theme controls below the fold — unreachable until the bar collapsed.
+ * `dvh` tracks the visible height. The `vh` declaration stays as the fallback
+ * for engines without `dvh`; explicit source order (rather than two competing
+ * Tailwind utilities) makes the override deterministic.
+ * ------------------------------------------------------------------------ */
+.h-dvh-safe {
+  height: 100vh;
+}
+
+@supports (height: 100dvh) {
+  .h-dvh-safe {
+    height: 100dvh;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Touch target expansion
+ *
+ * Several controls are visually smaller than the ~44px touch minimum: the
+ * settings switches (40x24), icon buttons, and the worker scale/restart
+ * buttons. Padding cannot be used to grow them because the control's own
+ * background fills the box and would visibly change size.
+ *
+ * An invisible absolutely-positioned pseudo-element extends the clickable
+ * area past the painted box instead. The host must already be `position:
+ * relative`, which every caller here is. Layout, paint and accessible name
+ * are unchanged — only the hit region grows.
+ * ------------------------------------------------------------------------ */
+.expand-hit {
+  position: relative;
+}
+
+.expand-hit::after {
+  content: "";
+  position: absolute;
+  top: -10px;
+  bottom: -10px;
+  left: -4px;
+  right: -4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-in,
+  .animate-slide-in {
+    animation: none;
+  }
 }

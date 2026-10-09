@@ -16,4 +16,8 @@ wasm_pack = "latest"
 [[hooks]]
 stage = "post_build"
 command = "sh"
+# The stylesheet is attached to `index.html` via `data-trunk rel="css"`, so
+# trunk emits it as part of the distribution. A `post_build` hook cannot do this
+# job: hooks run *before* trunk applies the new distribution, so anything copied
+# into `dist/` there is discarded by the subsequent swap.
 command_arguments = ["-c", "echo 'Build complete'"]

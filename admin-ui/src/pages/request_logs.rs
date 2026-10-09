@@ -312,7 +312,7 @@ pub fn RequestLogs() -> Html {
                                 { for logs.iter().map(|log| {
                                     let time = log.timestamp.split('T').nth(1).unwrap_or(&log.timestamp).split('.').next().unwrap_or(&log.timestamp).to_string();
                                     html! {
-                                        <tr class="border-b border-default hover:bg-tertiary/50 transition">
+                                        <tr class="border-b border-default hover:bg-tertiary transition">
                                             <td class="px-4 py-3 text-secondary font-mono text-xs">{time}</td>
                                             <td class="px-4 py-3">
                                                 <span class={format!("px-2 py-1 rounded text-xs font-medium {}", get_method_class(&log.method))}>

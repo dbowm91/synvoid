@@ -443,8 +443,8 @@ pub fn Dashboard() -> Html {
 
             <RealtimeHeader />
 
-            <div class="mb-6 flex justify-between items-center">
-                <div class="flex gap-2">
+            <div class="mb-6 flex flex-wrap justify-between items-center gap-3">
+                <div class="flex flex-wrap gap-2">
                     <WindowButton label="1m" active={*selected_window == "1m"} on_click={on_window_change.clone()} />
                     <WindowButton label="5m" active={*selected_window == "5m"} on_click={on_window_change.clone()} />
                     <WindowButton label="15m" active={*selected_window == "15m"} on_click={on_window_change.clone()} />
@@ -452,7 +452,7 @@ pub fn Dashboard() -> Html {
                     <WindowButton label="6h" active={*selected_window == "6h"} on_click={on_window_change.clone()} />
                     <WindowButton label="24h" active={*selected_window == "24h"} on_click={on_window_change.clone()} />
                 </div>
-                <div class="flex gap-2">
+                <div class="flex flex-wrap gap-2">
                     <button
                         onclick={export_json}
                         class="px-3 py-2 bg-tertiary text-secondary rounded-lg hover:text-primary text-sm"
@@ -517,7 +517,11 @@ pub fn Dashboard() -> Html {
                         // healthy idle server rather than as "not known yet".
                         Some((cpu, mem_pct, mem_used, mem_total)) => html! {
                             <>
-                                <div class="flex justify-around">
+                                // Two fixed `w-32` gauges need ~256px plus card padding, which leaves almost
+                                // no slack at 360px once `main`'s own padding is
+                                // subtracted. `flex-wrap` lets them stack rather
+                                // than cramp under OS text scaling.
+                                <div class="flex flex-wrap justify-around gap-4">
                                     <Gauge value={cpu} max={100.0} label="CPU" unit="%" />
                                     <Gauge value={mem_pct} max={100.0} label="Memory" unit="%" />
                                 </div>

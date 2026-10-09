@@ -1,4 +1,5 @@
 use crate::components::forms::{Input, Select};
+use crate::components::layout::Capabilities;
 use crate::components::skeleton::LoadingSpinner;
 use crate::components::{toast_error, toast_success};
 use crate::config_docs::get_section_doc;
@@ -125,8 +126,41 @@ fn export_config_to_file(json: &str) {
     let _ = a.dispatch_event(&web_sys::MouseEvent::new("click").unwrap());
 }
 
+#[derive(Properties, PartialEq)]
+struct FeatureUnavailablePanelProps {
+    label: &'static str,
+    feature: &'static str,
+}
+
+/// Shown in place of a feature-gated settings panel on a build compiled without
+/// the corresponding backend feature. Matches the wording of the route-level
+/// `CapabilityNotice` in `app.rs` so the two paths read identically.
 #[function_component]
-pub fn Settings() -> Html {
+fn FeatureUnavailablePanel(props: &FeatureUnavailablePanelProps) -> Html {
+    html! {
+        <div class="p-8 text-center">
+            <h3 class="text-lg font-semibold mb-2">{ "This section is not available" }</h3>
+            <p class="text-secondary text-sm max-w-lg mx-auto">
+                { "This SynVoid build was compiled without " }
+                <span class="text-primary">{ props.feature }</span>
+                { format!(", so {} cannot be managed from this panel.", props.label) }
+            </p>
+        </div>
+    }
+}
+
+#[derive(Properties, PartialEq)]
+pub struct SettingsProps {
+    /// Settings embeds panels for several feature-gated backend families
+    /// (YARA + Serverless behind `mesh`, DNS config behind `dns`). The route
+    /// itself stays ungated — server/http/logging and the rest are available
+    /// on every build — so the capability has to be consulted per panel.
+    pub capabilities: Capabilities,
+}
+
+#[function_component]
+pub fn Settings(props: &SettingsProps) -> Html {
+    let capabilities = props.capabilities.clone();
     let active_section = use_state(|| "server".to_string());
     let exporting = use_state(|| false);
     let importing = use_state(|| false);
@@ -520,9 +554,9 @@ pub fn Settings() -> Html {
 
     html! {
         <div>
-            <div class="flex justify-between items-center mb-6">
+            <div class="flex flex-wrap justify-between items-center gap-3 mb-6">
                 <h1 class="text-2xl font-bold">{ "Global Settings" }</h1>
-                <div class="flex gap-2">
+                <div class="flex flex-wrap gap-2">
                     <button
                         onclick={on_export}
                         disabled={*exporting}
@@ -591,7 +625,7 @@ pub fn Settings() -> Html {
 
             <div class="flex flex-col md:flex-row gap-6">
                 <nav class="w-full md:w-48 md:flex-shrink-0">
-                    <div class="flex overflow-x-auto md:block md:overflow-visible bg-secondary rounded-lg border border-default">
+                    <div class="flex flex-wrap bg-secondary rounded-lg border border-default md:block">
                         <SectionButton label="Server" section="server" active={*active_section == "server"} on_click={on_section_click.clone()} />
                         <SectionButton label="HTTP" section="http" active={*active_section == "http"} on_click={on_section_click.clone()} />
                         <SectionButton label="Logging" section="logging" active={*active_section == "logging"} on_click={on_section_click.clone()} />
@@ -613,11 +647,21 @@ pub fn Settings() -> Html {
                         <SectionButton label="Fallback" section="fallback" active={*active_section == "fallback"} on_click={on_section_click.clone()} />
                         <SectionButton label="Upgrade" section="upgrade" active={*active_section == "upgrade"} on_click={on_section_click.clone()} />
                         <SectionButton label="Theme" section="theme" active={*active_section == "theme"} on_click={on_section_click.clone()} />
-                        <SectionButton label="YARA Rules" section="yara" active={*active_section == "yara"} on_click={on_section_click.clone()} />
-                        <SectionButton label="Serverless" section="serverless" active={*active_section == "serverless"} on_click={on_section_click.clone()} />
+                        // `yara/status`, `serverless/health` and
+                        // `serverless/functions` are registered behind the
+                        // backend `mesh` feature; `/config/dns` behind `dns`.
+                        // Unconditionally offering these tabs on a build
+                        // without the feature rendered an empty form or a
+                        // standing "Unable to load YARA status" error.
+                        if capabilities.mesh_admin {
+                            <SectionButton label="YARA Rules" section="yara" active={*active_section == "yara"} on_click={on_section_click.clone()} />
+                            <SectionButton label="Serverless" section="serverless" active={*active_section == "serverless"} on_click={on_section_click.clone()} />
+                        }
                         <SectionButton label="Process Status" section="process" active={*active_section == "process"} on_click={on_section_click.clone()} />
                         <SectionButton label="Defaults" section="defaults" active={*active_section == "defaults"} on_click={on_section_click.clone()} />
-                        <SectionButton label="DNS" section="dns" active={*active_section == "dns"} on_click={on_section_click.clone()} />
+                        if capabilities.dns_admin {
+                            <SectionButton label="DNS" section="dns" active={*active_section == "dns"} on_click={on_section_click.clone()} />
+                        }
                     </div>
                 </nav>
 
@@ -690,6 +734,16 @@ pub fn Settings() -> Html {
                             "tcp_udp_defaults" => html! { <TcpUdpDefaultsSection /> },
                             "fallback" => html! { <FallbackSection /> },
                             "upgrade" => html! { <UpgradeSection /> },
+                            // Defence in depth: hiding a section button is not enough, because the
+                            // in-page search can also set `active_section`. Without this
+                            // guard, searching for a YARA/DNS field on a build
+                            // lacking the feature would mount the panel directly.
+                            "yara" | "serverless" if !capabilities.mesh_admin => {
+                                html! { <FeatureUnavailablePanel label="this section" feature="mesh networking" /> }
+                            }
+                            "dns" if !capabilities.dns_admin => {
+                                html! { <FeatureUnavailablePanel label="this section" feature="the DNS resolver" /> }
+                            }
                             "yara" => html! { <YaraSection /> },
                             "serverless" => html! { <ServerlessSection /> },
                             "process" => html! { <ProcessSection /> },
@@ -723,9 +777,9 @@ fn SectionButton(props: &SectionButtonProps) -> Html {
     };
 
     let class = if props.active {
-        "inline-block w-auto whitespace-nowrap px-4 py-3 text-primary bg-tertiary border-b-2 border-blue-500 md:block md:w-full md:border-b-0 md:border-l-2"
+        "inline-block w-auto whitespace-nowrap px-4 py-3 text-primary bg-tertiary border-b-2 border-blue-500 shrink-0 md:block md:w-full md:border-b-0 md:border-l-2"
     } else {
-        "inline-block w-auto whitespace-nowrap px-4 py-3 text-secondary hover:text-primary hover:bg-tertiary md:block md:w-full"
+        "inline-block w-auto whitespace-nowrap px-4 py-3 text-secondary hover:text-primary hover:bg-tertiary shrink-0 md:block md:w-full"
     };
 
     html! {
@@ -1488,7 +1542,10 @@ fn MetricsSection() -> Html {
                 </div>
                 <button
                     onclick={on_toggle_enabled}
-                    class={format!("relative w-10 h-6 rounded-full {}", if *metrics_enabled { "bg-blue-600" } else { "bg-gray-600" })}
+                    role="switch"
+                    aria-checked={if *metrics_enabled { "true" } else { "false" }}
+                    aria-label="Enable Metrics"
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *metrics_enabled { "bg-blue-600" } else { "bg-gray-600" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *metrics_enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -1648,7 +1705,10 @@ fn IpFeedsSection() -> Html {
                 </div>
                 <button
                     onclick={on_toggle_enabled}
-                    class={format!("relative w-10 h-6 rounded-full {}", if *enabled { "bg-blue-600" } else { "bg-gray-600" })}
+                    role="switch"
+                    aria-checked={if *enabled { "true" } else { "false" }}
+                    aria-label="Enable IP Feeds"
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-blue-600" } else { "bg-gray-600" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -1828,7 +1888,10 @@ fn TlsSection() -> Html {
                 </div>
                 <button
                     onclick={on_toggle_enabled}
-                    class={format!("relative w-10 h-6 rounded-full {}", if *enabled { "bg-blue-600" } else { "bg-gray-600" })}
+                    role="switch"
+                    aria-checked={if *enabled { "true" } else { "false" }}
+                    aria-label="Enable TLS"
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-blue-600" } else { "bg-gray-600" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -1880,7 +1943,10 @@ fn TlsSection() -> Html {
                                 prefer_post_quantum.set(!*prefer_post_quantum);
                             })
                         }}
-                        class={format!("relative w-10 h-6 rounded-full {}", if *prefer_post_quantum { "bg-blue-600" } else { "bg-gray-600" })}
+                        role="switch"
+                        aria-checked={if *prefer_post_quantum { "true" } else { "false" }}
+                        aria-label="Prefer Post-Quantum"
+                        class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *prefer_post_quantum { "bg-blue-600" } else { "bg-gray-600" })}
                     >
                         <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *prefer_post_quantum { "translate-x-5" } else { "translate-x-0" })} />
                     </button>
@@ -2024,7 +2090,10 @@ fn AcmeSection() -> Html {
                             enabled.set(!*enabled);
                         })
                     }}
-                    class={format!("relative w-10 h-6 rounded-full {}", if *enabled { "bg-blue-600" } else { "bg-gray-600" })}
+                    role="switch"
+                    aria-checked={if *enabled { "true" } else { "false" }}
+                    aria-label="Enable ACME"
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-blue-600" } else { "bg-gray-600" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -2077,7 +2146,10 @@ fn AcmeSection() -> Html {
                                 staging.set(!*staging);
                             })
                         }}
-                        class={format!("relative w-10 h-6 rounded-full {}", if *staging { "bg-blue-600" } else { "bg-gray-600" })}
+                        role="switch"
+                        aria-checked={if *staging { "true" } else { "false" }}
+                        aria-label="Staging Mode"
+                        class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *staging { "bg-blue-600" } else { "bg-gray-600" })}
                     >
                         <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *staging { "translate-x-5" } else { "translate-x-0" })} />
                     </button>
@@ -2095,7 +2167,10 @@ fn AcmeSection() -> Html {
                                 terms_of_service_agreed.set(!*terms_of_service_agreed);
                             })
                         }}
-                        class={format!("relative w-10 h-6 rounded-full {}", if *terms_of_service_agreed { "bg-blue-600" } else { "bg-gray-600" })}
+                        role="switch"
+                        aria-checked={if *terms_of_service_agreed { "true" } else { "false" }}
+                        aria-label="Agree to Terms of Service"
+                        class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *terms_of_service_agreed { "bg-blue-600" } else { "bg-gray-600" })}
                     >
                         <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *terms_of_service_agreed { "translate-x-5" } else { "translate-x-0" })} />
                     </button>
@@ -2209,7 +2284,10 @@ fn Http3Section() -> Html {
                             enabled.set(!*enabled);
                         })
                     }}
-                    class={format!("relative w-10 h-6 rounded-full {}", if *enabled { "bg-blue-600" } else { "bg-gray-600" })}
+                    role="switch"
+                    aria-checked={if *enabled { "true" } else { "false" }}
+                    aria-label="Enable HTTP/3 (QUIC)"
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-blue-600" } else { "bg-gray-600" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -3077,7 +3155,10 @@ fn BotSection() -> Html {
                             block_ai_crawlers.set(!*block_ai_crawlers);
                         })
                     }
-                    class={format!("relative w-10 h-6 rounded-full {}", if *block_ai_crawlers { "bg-blue-600" } else { "bg-gray-600" })}
+                    role="switch"
+                    aria-checked={if *block_ai_crawlers { "true" } else { "false" }}
+                    aria-label="Block AI Crawlers"
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *block_ai_crawlers { "bg-blue-600" } else { "bg-gray-600" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *block_ai_crawlers { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -3095,7 +3176,10 @@ fn BotSection() -> Html {
                             enable_css_honeypot.set(!*enable_css_honeypot);
                         })
                     }
-                    class={format!("relative w-10 h-6 rounded-full {}", if *enable_css_honeypot { "bg-blue-600" } else { "bg-gray-600" })}
+                    role="switch"
+                    aria-checked={if *enable_css_honeypot { "true" } else { "false" }}
+                    aria-label="Enable CSS Honeypot"
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enable_css_honeypot { "bg-blue-600" } else { "bg-gray-600" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *enable_css_honeypot { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -3113,7 +3197,10 @@ fn BotSection() -> Html {
                             enable_js_challenge.set(!*enable_js_challenge);
                         })
                     }
-                    class={format!("relative w-10 h-6 rounded-full {}", if *enable_js_challenge { "bg-blue-600" } else { "bg-gray-600" })}
+                    role="switch"
+                    aria-checked={if *enable_js_challenge { "true" } else { "false" }}
+                    aria-label="Enable JS Challenge"
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enable_js_challenge { "bg-blue-600" } else { "bg-gray-600" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *enable_js_challenge { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -3342,7 +3429,10 @@ fn TarpitSection() -> Html {
                             enabled.set(!*enabled);
                         })
                     }}
-                    class={format!("relative w-10 h-6 rounded-full {}", if *enabled { "bg-blue-600" } else { "bg-gray-600" })}
+                    role="switch"
+                    aria-checked={if *enabled { "true" } else { "false" }}
+                    aria-label="Enable Tarpit"
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-blue-600" } else { "bg-gray-600" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -3581,7 +3671,10 @@ fn UploadSection() -> Html {
                             scan_with_yara.set(!*scan_with_yara);
                         })
                     }
-                    class={format!("relative w-10 h-6 rounded-full {}", if *scan_with_yara { "bg-blue-600" } else { "bg-gray-600" })}
+                    role="switch"
+                    aria-checked={if *scan_with_yara { "true" } else { "false" }}
+                    aria-label="Scan with YARA"
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *scan_with_yara { "bg-blue-600" } else { "bg-gray-600" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *scan_with_yara { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -3599,7 +3692,10 @@ fn UploadSection() -> Html {
                             sandbox_enabled.set(!*sandbox_enabled);
                         })
                     }
-                    class={format!("relative w-10 h-6 rounded-full {}", if *sandbox_enabled { "bg-blue-600" } else { "bg-gray-600" })}
+                    role="switch"
+                    aria-checked={if *sandbox_enabled { "true" } else { "false" }}
+                    aria-label="Sandbox Files"
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *sandbox_enabled { "bg-blue-600" } else { "bg-gray-600" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *sandbox_enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -4064,7 +4160,10 @@ fn SecuritySection() -> Html {
                             global_security_headers.set(!*global_security_headers);
                         })
                     }}
-                    class={format!("relative w-10 h-6 rounded-full {}", if *global_security_headers { "bg-blue-600" } else { "bg-gray-600" })}
+                    role="switch"
+                    aria-checked={if *global_security_headers { "true" } else { "false" }}
+                    aria-label="Global Security Headers"
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *global_security_headers { "bg-blue-600" } else { "bg-gray-600" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *global_security_headers { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -4082,7 +4181,10 @@ fn SecuritySection() -> Html {
                             sanitize_forwarded_headers.set(!*sanitize_forwarded_headers);
                         })
                     }}
-                    class={format!("relative w-10 h-6 rounded-full {}", if *sanitize_forwarded_headers { "bg-blue-600" } else { "bg-gray-600" })}
+                    role="switch"
+                    aria-checked={if *sanitize_forwarded_headers { "true" } else { "false" }}
+                    aria-label="Sanitize Forwarded Headers"
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *sanitize_forwarded_headers { "bg-blue-600" } else { "bg-gray-600" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *sanitize_forwarded_headers { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -4100,7 +4202,10 @@ fn SecuritySection() -> Html {
                             ipc_enforce_signing.set(!*ipc_enforce_signing);
                         })
                     }}
-                    class={format!("relative w-10 h-6 rounded-full {}", if *ipc_enforce_signing { "bg-blue-600" } else { "bg-gray-600" })}
+                    role="switch"
+                    aria-checked={if *ipc_enforce_signing { "true" } else { "false" }}
+                    aria-label="IPC Enforce Signing"
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *ipc_enforce_signing { "bg-blue-600" } else { "bg-gray-600" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *ipc_enforce_signing { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -4118,7 +4223,10 @@ fn SecuritySection() -> Html {
                             allow_insecure_ipc_key.set(!*allow_insecure_ipc_key);
                         })
                     }}
-                    class={format!("relative w-10 h-6 rounded-full {}", if *allow_insecure_ipc_key { "bg-blue-600" } else { "bg-gray-600" })}
+                    role="switch"
+                    aria-checked={if *allow_insecure_ipc_key { "true" } else { "false" }}
+                    aria-label="Allow Insecure IPC Key"
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *allow_insecure_ipc_key { "bg-blue-600" } else { "bg-gray-600" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *allow_insecure_ipc_key { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -4274,7 +4382,10 @@ fn TunnelSection() -> Html {
                             enabled.set(!*enabled);
                         })
                     }}
-                    class={format!("relative w-10 h-6 rounded-full {}", if *enabled { "bg-blue-600" } else { "bg-gray-600" })}
+                    role="switch"
+                    aria-checked={if *enabled { "true" } else { "false" }}
+                    aria-label="Enable Tunnel"
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-blue-600" } else { "bg-gray-600" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -4292,7 +4403,10 @@ fn TunnelSection() -> Html {
                             vpn_enabled.set(!*vpn_enabled);
                         })
                     }}
-                    class={format!("relative w-10 h-6 rounded-full {}", if *vpn_enabled { "bg-blue-600" } else { "bg-gray-600" })}
+                    role="switch"
+                    aria-checked={if *vpn_enabled { "true" } else { "false" }}
+                    aria-label="WireGuard VPN"
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *vpn_enabled { "bg-blue-600" } else { "bg-gray-600" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *vpn_enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -4310,7 +4424,10 @@ fn TunnelSection() -> Html {
                             quic_enabled.set(!*quic_enabled);
                         })
                     }}
-                    class={format!("relative w-10 h-6 rounded-full {}", if *quic_enabled { "bg-blue-600" } else { "bg-gray-600" })}
+                    role="switch"
+                    aria-checked={if *quic_enabled { "true" } else { "false" }}
+                    aria-label="QUIC Tunnel"
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *quic_enabled { "bg-blue-600" } else { "bg-gray-600" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *quic_enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -5131,7 +5248,10 @@ fn MimeTypesSection() -> Html {
                 </div>
                 <button
                     onclick={on_toggle_enabled}
-                    class={format!("relative w-10 h-6 rounded-full {}", if *enabled { "bg-blue-600" } else { "bg-gray-600" })}
+                    role="switch"
+                    aria-checked={if *enabled { "true" } else { "false" }}
+                    aria-label="Enable Custom MIME Types"
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-blue-600" } else { "bg-gray-600" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -5547,7 +5667,10 @@ fn TcpUdpDefaultsSection() -> Html {
                 </div>
                 <button
                     onclick={on_toggle_tcp}
-                    class={format!("relative w-10 h-6 rounded-full {}", if *tcp_enabled { "bg-blue-600" } else { "bg-gray-600" })}
+                    role="switch"
+                    aria-checked={if *tcp_enabled { "true" } else { "false" }}
+                    aria-label="Enable TCP Proxy"
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *tcp_enabled { "bg-blue-600" } else { "bg-gray-600" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *tcp_enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -5561,7 +5684,10 @@ fn TcpUdpDefaultsSection() -> Html {
                     </div>
                     <button
                         onclick={on_toggle_nodelay}
-                        class={format!("relative w-10 h-6 rounded-full {}", if *tcp_nodelay { "bg-blue-600" } else { "bg-gray-600" })}
+                        role="switch"
+                        aria-checked={if *tcp_nodelay { "true" } else { "false" }}
+                        aria-label="TCP Nodelay"
+                        class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *tcp_nodelay { "bg-blue-600" } else { "bg-gray-600" })}
                     >
                         <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *tcp_nodelay { "translate-x-5" } else { "translate-x-0" })} />
                     </button>
@@ -5595,7 +5721,10 @@ fn TcpUdpDefaultsSection() -> Html {
                 </div>
                 <button
                     onclick={on_toggle_udp}
-                    class={format!("relative w-10 h-6 rounded-full {}", if *udp_enabled { "bg-blue-600" } else { "bg-gray-600" })}
+                    role="switch"
+                    aria-checked={if *udp_enabled { "true" } else { "false" }}
+                    aria-label="Enable UDP Proxy"
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *udp_enabled { "bg-blue-600" } else { "bg-gray-600" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *udp_enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>

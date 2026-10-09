@@ -64,7 +64,7 @@ pub fn Toggle(props: &ToggleProps) -> Html {
             onclick={onclick}
             disabled={props.disabled}
             class={format!(
-                "relative w-10 h-6 rounded-full transition-colors {} {}",
+                "relative w-10 h-6 rounded-full expand-hit transition-colors {} {}",
                 bg_class,
                 if props.disabled { "opacity-50 cursor-not-allowed" } else { "cursor-pointer" }
             )}
@@ -84,7 +84,12 @@ pub fn Toggle(props: &ToggleProps) -> Html {
                             title={props.tooltip_title.clone()}
                             position={TooltipPosition::Right}
                         >
-                            <span class="inline-flex items-center justify-center w-4 h-4 rounded-full bg-tertiary text-secondary text-xs cursor-help hover:bg-blue-600 hover:text-white transition-colors">
+                            <span
+                                tabindex="0"
+                                role="button"
+                                aria-label={format!("Help: {}", content)}
+                                class="inline-flex items-center justify-center w-4 h-4 rounded-full bg-tertiary text-secondary text-xs cursor-help hover:bg-blue-600 hover:text-white transition-colors expand-hit"
+                            >
                                 {"?"}
                             </span>
                         </Tooltip>
@@ -143,7 +148,10 @@ pub fn InputWithTooltip(props: &InputWithTooltipProps) -> Html {
         props.input_type.clone()
     };
 
-    let on_change = props.on_change.reform(|e: Event| {
+    // `oninput` rather than `onchange`: this input is controlled by Yew state,
+    // and the DOM `change` event only fires on blur/commit. Bound per keystroke
+    // it keeps the field responsive and lets Enter submit with the real value.
+    let on_change = props.on_change.reform(|e: InputEvent| {
         let input: web_sys::HtmlInputElement = e.target_unchecked_into();
         input.value()
     });
@@ -160,7 +168,12 @@ pub fn InputWithTooltip(props: &InputWithTooltipProps) -> Html {
                         title={props.tooltip_title.clone()}
                         position={TooltipPosition::Right}
                     >
-                        <span class="inline-flex items-center justify-center w-4 h-4 rounded-full bg-tertiary text-secondary text-xs cursor-help hover:bg-blue-600 hover:text-white transition-colors">
+                        <span
+                            tabindex="0"
+                            role="button"
+                            aria-label={format!("Help: {}", content)}
+                            class="inline-flex items-center justify-center w-4 h-4 rounded-full bg-tertiary text-secondary text-xs cursor-help hover:bg-blue-600 hover:text-white transition-colors expand-hit"
+                        >
                             {"?"}
                         </span>
                     </Tooltip>
@@ -172,7 +185,7 @@ pub fn InputWithTooltip(props: &InputWithTooltipProps) -> Html {
                 name={props.name.clone()}
                 value={props.value.clone()}
                 placeholder={props.placeholder.clone()}
-                onchange={on_change}
+                oninput={on_change}
                 min={props.min.clone()}
                 max={props.max.clone()}
                 disabled={props.disabled}
@@ -237,7 +250,12 @@ pub fn SelectWithTooltip(props: &SelectWithTooltipProps) -> Html {
                         title={props.tooltip_title.clone()}
                         position={TooltipPosition::Right}
                     >
-                        <span class="inline-flex items-center justify-center w-4 h-4 rounded-full bg-tertiary text-secondary text-xs cursor-help hover:bg-blue-600 hover:text-white transition-colors">
+                        <span
+                            tabindex="0"
+                            role="button"
+                            aria-label={format!("Help: {}", content)}
+                            class="inline-flex items-center justify-center w-4 h-4 rounded-full bg-tertiary text-secondary text-xs cursor-help hover:bg-blue-600 hover:text-white transition-colors expand-hit"
+                        >
                             {"?"}
                         </span>
                     </Tooltip>

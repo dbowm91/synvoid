@@ -131,19 +131,19 @@ pub fn Honeypot() -> Html {
 
             if let Some(st) = &*status {
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
-                        <div class="text-sm text-gray-400">{ "Status" }</div>
+                    <div class="bg-secondary rounded-lg p-4 border border-default">
+                        <div class="text-sm text-secondary">{ "Status" }</div>
                         <div class="text-lg font-semibold mt-2">
                             if st.enabled {
                                 <span class="text-green-400">{ "Enabled" }</span>
                             } else {
-                                <span class="text-gray-400">{ "Disabled" }</span>
+                                <span class="text-secondary">{ "Disabled" }</span>
                             }
                         </div>
                     </div>
 
-                    <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
-                        <div class="text-sm text-gray-400">{ "Running" }</div>
+                    <div class="bg-secondary rounded-lg p-4 border border-default">
+                        <div class="text-sm text-secondary">{ "Running" }</div>
                         <div class="text-lg font-semibold mt-2">
                             if st.running {
                                 <span class="text-green-400">{ "Active" }</span>
@@ -153,8 +153,8 @@ pub fn Honeypot() -> Html {
                         </div>
                     </div>
 
-                    <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
-                        <div class="text-sm text-gray-400">{ "Total Connections" }</div>
+                    <div class="bg-secondary rounded-lg p-4 border border-default">
+                        <div class="text-sm text-secondary">{ "Total Connections" }</div>
                         <div class="text-lg font-semibold mt-2">
                             { st.connections_count }
                         </div>
@@ -162,7 +162,7 @@ pub fn Honeypot() -> Html {
                 </div>
 
                 if let Some(ports) = &st.ports {
-                    <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                    <div class="bg-secondary rounded-lg p-4 border border-default">
                         <div class="text-lg font-semibold mb-2">{ "Active Ports" }</div>
                         <div class="flex flex-wrap gap-2">
                             {for ports.iter().map(|port| {
@@ -194,8 +194,8 @@ pub fn Honeypot() -> Html {
                     }
                 </div>
             } else {
-                <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
-                    <div class="text-gray-400">{ "Loading honeypot status..." }</div>
+                <div class="bg-secondary rounded-lg p-4 border border-default">
+                    <div class="text-secondary">{ "Loading honeypot status..." }</div>
                 </div>
             }
         </div>

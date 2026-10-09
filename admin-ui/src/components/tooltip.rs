@@ -35,6 +35,20 @@ pub fn Tooltip(props: &TooltipProps) -> Html {
         Callback::from(move |_| visible.set(false))
     };
 
+    // Focus mirrors hover: every help affordance in Settings is wrapped in a
+    // `Tooltip`, and without this the entire explanatory text — including the
+    // "Impact:" notes — was unreachable without a mouse. On a touch device a
+    // hover-only tooltip has no trigger at all.
+    let on_focus = {
+        let visible = visible.clone();
+        Callback::from(move |_: FocusEvent| visible.set(true))
+    };
+
+    let on_blur = {
+        let visible = visible.clone();
+        Callback::from(move |_: FocusEvent| visible.set(false))
+    };
+
     let position_class = match props.position {
         TooltipPosition::Top => "bottom-full left-1/2 -translate-x-1/2 mb-2",
         TooltipPosition::Bottom => "top-full left-1/2 -translate-x-1/2 mt-2",
@@ -49,16 +63,29 @@ pub fn Tooltip(props: &TooltipProps) -> Html {
         TooltipPosition::Right => "right-full top-1/2 -translate-y-1/2 border-r-primary",
     };
 
+    // Yew 0.23 exposes no `use_id` hook, and `role="tooltip"` needs a stable
+    // per-instance id to be referenceable, so mint one from a counter rather
+    // than sharing a single hard-coded id across every tooltip instance.
+    static TOOLTIP_ID: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1);
+    let tooltip_id = format!(
+        "synvoid-tooltip-{}",
+        TOOLTIP_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
+
     html! {
+        // The wrapper is not itself focusable — its child (the `?` badge) is —
+        // so focus/blur are handled on the wrapper and bubble from that child.
         <div
             class="relative inline-flex items-center"
             onmouseenter={on_mouse_enter}
             onmouseleave={on_mouse_leave}
+            onfocus={on_focus}
+            onblur={on_blur}
         >
             {props.children.clone()}
 
             if *visible {
-                <div class={format!("absolute z-50 {}", position_class)}>
+                <div id={tooltip_id.clone()} role="tooltip" class={format!("absolute z-50 {}", position_class)}>
                     <div class="bg-accent text-white text-xs rounded-lg shadow-lg p-3 max-w-xs whitespace-normal border border-secondary animate-fade-in">
                         if let Some(title) = &props.title {
                             <div class="font-semibold mb-1 text-sm">{ title }</div>
@@ -83,7 +110,15 @@ pub struct HelpIconProps {
 pub fn HelpIcon(props: &HelpIconProps) -> Html {
     html! {
         <Tooltip content={props.content.clone()} title={props.title.clone()}>
-            <span class="ml-1 inline-flex items-center justify-center w-4 h-4 rounded-full bg-tertiary text-secondary text-xs cursor-help hover:bg-blue-600 hover:text-white transition-colors">
+            // Focusable so the tooltip's focus handler has something to fire on,
+            // and named so the badge is announced as help rather than a bare
+            // question mark.
+            <span
+                tabindex="0"
+                role="button"
+                aria-label={format!("Help: {}", props.content)}
+                class="ml-1 inline-flex items-center justify-center w-5 h-5 rounded-full bg-tertiary text-secondary text-xs cursor-help hover:bg-blue-600 hover:text-white transition-colors expand-hit"
+            >
                 {"?"}
             </span>
         </Tooltip>

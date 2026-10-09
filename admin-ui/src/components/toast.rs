@@ -137,7 +137,7 @@ pub fn ToastContainer() -> Html {
         // The container is always mounted (not conditionally on `toasts`)
         // so the live region exists before the first toast is announced.
         <div
-            class="fixed top-4 right-4 z-50 space-y-2"
+            class="fixed top-4 left-4 right-4 z-50 flex flex-col items-end gap-2 pointer-events-none"
             role="status"
             aria-live="polite"
             aria-atomic="false"
@@ -183,14 +183,14 @@ fn ToastItem(props: &ToastItemProps) -> Html {
     };
 
     html! {
-        <div class={format!("flex items-center gap-3 px-4 py-3 rounded-lg border shadow-lg min-w-[300px] max-w-[400px] animate-slide-in {}", bg_color)}>
-            <span class={format!("flex-shrink-0 w-5 h-5 {}", icon_color)}>
+        <div class={format!("pointer-events-auto flex items-start gap-3 px-4 py-3 rounded-lg border shadow-lg w-full sm:w-auto sm:min-w-[300px] sm:max-w-[400px] animate-slide-in {}", bg_color)}>
+            <span class={format!("flex-shrink-0 w-5 h-5 mt-0.5 {}", icon_color)}>
                 { icon }
             </span>
-            <p class="flex-1 text-sm text-white">{ &props.toast.message }</p>
+            <p class="flex-1 min-w-0 text-sm text-white break-words">{ &props.toast.message }</p>
             <button
                 onclick={props.on_close.clone()}
-                class="flex-shrink-0 text-white/60 hover:text-white"
+                class="flex-shrink-0 -mr-2 -mt-1 p-2 rounded text-white/60 hover:text-white"
                 aria-label="Close"
             >
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

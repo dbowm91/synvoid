@@ -320,9 +320,9 @@ pub fn Alerts() -> Html {
                                                 let status_class = if d.success { "text-green-500" } else { "text-red-500" };
                                                 let status_icon = if d.success { "\u{2713}" } else { "\u{2717}" };
                                                 html! {
-                                                    <div class="flex items-center gap-2 text-sm">
-                                                        <span class={status_class}>{ status_icon }</span>
-                                                        <span class="text-primary truncate">{ &d.url }</span>
+                                                    <div class="flex items-center gap-2 text-sm min-w-0">
+                                                        <span class={format!("{} shrink-0", status_class)}>{ status_icon }</span>
+                                                        <span class="text-primary truncate min-w-0">{ &d.url }</span>
                                                         if let Some(err) = &d.error {
                                                             <span class="text-red-400 text-xs">{ format!("({})", err) }</span>
                                                         }

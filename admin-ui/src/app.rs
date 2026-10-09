@@ -14,7 +14,9 @@ use crate::pages::{
 use crate::services::api::{set_session_expired_handler, ApiService};
 use crate::types::UpdateThemeRequest;
 
-#[derive(Clone, Routable, PartialEq)]
+// `Debug` is asserted on in sidebar tests that verify nav active-state
+// resolution; it is not otherwise used by the router.
+#[derive(Clone, Routable, PartialEq, Debug)]
 pub enum Route {
     #[at("/")]
     Home,
@@ -256,7 +258,7 @@ pub fn App() -> Html {
                         <header class="md:hidden flex items-center gap-3 mb-4">
                             <button
                                 onclick={on_open_scrim}
-                                class="p-2 -ml-2 rounded-lg hover:bg-tertiary transition"
+                                class="p-2 -ml-2 rounded-lg hover:bg-tertiary transition expand-hit"
                                 aria-label="Open navigation"
                             >
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -385,13 +387,19 @@ fn switch(route: Route, capabilities: Option<Capabilities>) -> Html {
         Route::SiteDetail { id } => html! { <SiteDetail id={id} /> },
         Route::Probes => html! { <Probes /> },
         Route::Dns => html! { <Dns /> },
-        Route::Settings => html! { <Settings /> },
+        Route::Settings => html! {
+            // Ungated as a route (server/http/logging work on every build), but
+            // it still embeds feature-gated panels, so it needs the flags.
+            <Settings capabilities={capabilities.clone().unwrap_or_default()} />
+        },
         Route::Mesh => html! { <Mesh /> },
         Route::ProcessManagement => html! { <ProcessManagement /> },
         Route::TierKeys => html! { <TierKeys /> },
         Route::Workers => html! { <Workers /> },
         Route::Alerts => html! { <Alerts /> },
-        Route::SystemStatus => html! { <SystemStatus /> },
+        Route::SystemStatus => html! {
+            <SystemStatus capabilities={capabilities.clone().unwrap_or_default()} />
+        },
         Route::ThreatLevel => html! { <ThreatLevel /> },
         Route::Honeypot => html! { <Honeypot /> },
         Route::Icmp => html! { <Icmp /> },

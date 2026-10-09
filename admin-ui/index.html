@@ -4,7 +4,16 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SynVoid Admin Dashboard</title>
-    <link href="styles.css" rel="stylesheet">
+    <!-- `src/styles.css` is the Tailwind build output of `src/tailwind.css`
+         (`npm run build:css`). It is attached with `data-trunk` so trunk emits
+         it into `dist/` as a hashed, fingerprinted asset. A plain
+         `<link href="styles.css">` is not enough: trunk rebuilds `dist/` from
+         scratch on every run and knows nothing about that file, so a bare
+         `trunk build` shipped the panel with no stylesheet at all. -->
+    <link data-trunk rel="css" href="src/styles.css" />
+    <!-- Web fonts referenced by the @font-face rules in src/tailwind.css.
+         Copied verbatim into dist/ so `url("fonts/…")` resolves at runtime. -->
+    <link data-trunk rel="copy-dir" href="src/fonts" />
 </head>
 <body class="min-h-screen">
     <div id="app">

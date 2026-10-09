@@ -144,9 +144,9 @@ async fn fetch_status_and_backends(
 fn enforcement_badge(enforcement: &str) -> Html {
     match enforcement {
         "applied" => html! { <span class="text-green-400">{ "Applied" }</span> },
-        "absent" => html! { <span class="text-gray-400">{ "Absent" }</span> },
+        "absent" => html! { <span class="text-secondary">{ "Absent" }</span> },
         "drifted" => html! { <span class="text-red-400">{ "Drifted" }</span> },
-        "not_configured" => html! { <span class="text-gray-400">{ "Not configured" }</span> },
+        "not_configured" => html! { <span class="text-secondary">{ "Not configured" }</span> },
         _ => html! { <span class="text-yellow-400">{ "Unknown" }</span> },
     }
 }
@@ -232,26 +232,26 @@ pub fn Icmp() -> Html {
 
             if let Some(st) = &*status {
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
-                        <div class="text-sm text-gray-400">{ "Desired state" }</div>
+                    <div class="bg-secondary rounded-lg p-4 border border-default">
+                        <div class="text-sm text-secondary">{ "Desired state" }</div>
                         <div class="text-lg font-semibold mt-2">
                             if st.desired_enabled {
                                 <span class="text-green-400">{ "Enabled" }</span>
                             } else {
-                                <span class="text-gray-400">{ "Disabled" }</span>
+                                <span class="text-secondary">{ "Disabled" }</span>
                             }
                         </div>
                     </div>
 
-                    <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
-                        <div class="text-sm text-gray-400">{ "Live enforcement" }</div>
+                    <div class="bg-secondary rounded-lg p-4 border border-default">
+                        <div class="text-sm text-secondary">{ "Live enforcement" }</div>
                         <div class="text-lg font-semibold mt-2">
                             { enforcement_badge(&st.enforcement) }
                         </div>
                     </div>
 
-                    <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
-                        <div class="text-sm text-gray-400">{ "Selected backend" }</div>
+                    <div class="bg-secondary rounded-lg p-4 border border-default">
+                        <div class="text-sm text-secondary">{ "Selected backend" }</div>
                         <div class="text-lg font-semibold mt-2">
                             { st.selected_backend.clone().unwrap_or_else(|| "None".to_string()) }
                         </div>
@@ -259,23 +259,23 @@ pub fn Icmp() -> Html {
                 </div>
 
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
-                        <div class="text-sm text-gray-400">{ "Desired generation" }</div>
+                    <div class="bg-secondary rounded-lg p-4 border border-default">
+                        <div class="text-sm text-secondary">{ "Desired generation" }</div>
                         <div class="text-lg font-semibold mt-2">{ st.desired_generation }</div>
                         if let Some(fp) = &st.desired_fingerprint_hex {
-                            <div class="text-xs text-gray-500 mt-1">{ format!("fingerprint {}", fp) }</div>
+                            <div class="text-xs text-secondary mt-1">{ format!("fingerprint {}", fp) }</div>
                         }
                     </div>
 
-                    <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
-                        <div class="text-sm text-gray-400">{ "Last applied receipt" }</div>
+                    <div class="bg-secondary rounded-lg p-4 border border-default">
+                        <div class="text-sm text-secondary">{ "Last applied receipt" }</div>
                         if let Some(rc) = &st.last_receipt {
                             <div class="text-sm mt-2">
                                 { format!("{} generation {} fp {}", rc.backend, rc.generation, rc.fingerprint_hex) }
                             </div>
-                            <div class="text-xs text-gray-500 mt-1">{ rc.ownership_tag.clone() }</div>
+                            <div class="text-xs text-secondary mt-1">{ rc.ownership_tag.clone() }</div>
                         } else {
-                            <div class="text-sm text-gray-500 mt-2">{ "None" }</div>
+                            <div class="text-sm text-secondary mt-2">{ "None" }</div>
                         }
                     </div>
                 </div>
@@ -287,21 +287,21 @@ pub fn Icmp() -> Html {
                 }
 
                 if !backends.is_empty() {
-                    <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                    <div class="bg-secondary rounded-lg p-4 border border-default">
                         <div class="text-lg font-semibold mb-4">{ "ICMP Backends" }</div>
                         if let Some(current) = &*current_backend {
-                            <div class="text-sm text-gray-400 mb-2">{ format!("Selected: {}", current) }</div>
+                            <div class="text-sm text-secondary mb-2">{ format!("Selected: {}", current) }</div>
                         }
                         <div class="overflow-x-auto">
-                            <table class="min-w-full divide-y divide-gray-700">
-                                <thead class="bg-gray-750">
+                            <table class="min-w-full divide-y divide-default">
+                                <thead class="bg-tertiary">
                                     <tr>
-                                        <th class="px-4 py-2 text-left text-sm text-gray-400">{ "Backend" }</th>
-                                        <th class="px-4 py-2 text-left text-sm text-gray-400">{ "Usable" }</th>
-                                        <th class="px-4 py-2 text-left text-sm text-gray-400">{ "Detail" }</th>
+                                        <th class="px-4 py-2 text-left text-sm text-secondary">{ "Backend" }</th>
+                                        <th class="px-4 py-2 text-left text-sm text-secondary">{ "Usable" }</th>
+                                        <th class="px-4 py-2 text-left text-sm text-secondary">{ "Detail" }</th>
                                     </tr>
                                 </thead>
-                                <tbody class="divide-y divide-gray-700">
+                                <tbody class="divide-y divide-default">
                                     {for backends.iter().map(|b| {
                                         html! {
                                             <tr>
@@ -313,7 +313,7 @@ pub fn Icmp() -> Html {
                                                         <span class="text-red-400">{ "Unusable" }</span>
                                                     }
                                                 </td>
-                                                <td class="px-4 py-2 text-sm text-gray-400">
+                                                <td class="px-4 py-2 text-sm text-secondary">
                                                     { b.reason.clone().unwrap_or_else(|| if b.compiled { "usable".to_string() } else { "not compiled".to_string() }) }
                                                 </td>
                                             </tr>
@@ -343,8 +343,8 @@ pub fn Icmp() -> Html {
                     }
                 </div>
             } else {
-                <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
-                    <div class="text-gray-400">{ "Loading ICMP enforcement status..." }</div>
+                <div class="bg-secondary rounded-lg p-4 border border-default">
+                    <div class="text-secondary">{ "Loading ICMP enforcement status..." }</div>
                 </div>
             }
         </div>

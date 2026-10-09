@@ -415,7 +415,7 @@ impl Component for TierKeys {
                                     };
 
                                     html! {
-                                        <tr class="hover:bg-tertiary/50">
+                                        <tr class="hover:bg-tertiary">
                                             <td class="px-4 py-3 font-mono text-sm">{ display_key_id }</td>
                                             <td class="px-4 py-3">{ key.tier }</td>
                                             <td class="px-4 py-3">{ bound_to }</td>

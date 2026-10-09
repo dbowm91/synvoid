@@ -232,13 +232,13 @@ pub fn Upstreams() -> Html {
                                             let status_text = if backend.healthy { "Healthy" } else { "Unhealthy" };
 
                                             html! {
-                                                <div class="flex items-center justify-between p-3 bg-tertiary rounded border border-default">
-                                                    <div class="flex items-center gap-3">
-                                                        <span class={format!("w-2.5 h-2.5 rounded-full {}", status_color)} />
-                                                        <span class="font-mono text-sm">{ &backend.url }</span>
-                                                        <span class="text-xs text-secondary">{ status_text }</span>
+                                                <div class="flex flex-wrap items-center justify-between gap-3 p-3 bg-tertiary rounded border border-default">
+                                                    <div class="flex items-center gap-3 min-w-0">
+                                                        <span class={format!("w-2.5 h-2.5 rounded-full shrink-0 {}", status_color)} />
+                                                        <span class="font-mono text-sm break-all min-w-0">{ &backend.url }</span>
+                                                        <span class="text-xs text-secondary shrink-0">{ status_text }</span>
                                                     </div>
-                                                    <div class="flex items-center gap-6 text-sm text-secondary">
+                                                    <div class="flex items-center gap-6 text-sm text-secondary shrink-0">
                                                         <span>{ format!("{}/{} conn", backend.current_connections, backend.max_connections) }</span>
                                                         <span>{ format!("weight: {}", backend.weight) }</span>
                                                         if backend.consecutive_failures > 0 {

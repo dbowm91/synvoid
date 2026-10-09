@@ -71,18 +71,24 @@ pub fn SiteEditor(props: &SiteEditorProps) -> Html {
             <div class="flex items-center gap-4 mb-6">
                 <Link<Route>
                     to={Route::Sites}
-                    classes="text-secondary hover:text-primary"
+                    classes="text-secondary hover:text-primary shrink-0"
                 >
                     <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
                     </svg>
                 </Link<Route>>
-                <h1 class="text-2xl font-bold">{ "Edit Site: " }{ &props.id }</h1>
+                // `min-w-0` lets the heading shrink below its min-content width
+                // so a long site id wraps instead of pushing the row wide.
+                <h1 class="text-2xl font-bold min-w-0 break-words">{ "Edit Site: " }{ &props.id }</h1>
             </div>
 
             <div class="bg-secondary rounded-lg border border-default">
                 <div class="border-b border-default">
-                    <nav class="flex">
+                    // 14 tabs at ~114px each cannot fit a phone width. Below
+                    // `md` this scrolls horizontally (with `shrink-0` on each
+                    // tab so none is squashed); at `md` and above it becomes a
+                    // normal wrapped block, matching `settings.rs`.
+                    <nav class="flex overflow-x-auto md:flex-wrap md:overflow-x-visible">
                         <TabButton label="Basic" tab="basic" active={*active_tab == "basic"} on_click={on_tab_click.clone()} />
                         <TabButton label="Rate Limits" tab="ratelimit" active={*active_tab == "ratelimit"} on_click={on_tab_click.clone()} />
                         <TabButton label="Blocking" tab="blocking" active={*active_tab == "blocking"} on_click={on_tab_click.clone()} />
@@ -143,9 +149,9 @@ fn TabButton(props: &TabButtonProps) -> Html {
     };
 
     let class = if props.active {
-        "px-4 py-3 text-primary border-b-2 border-blue-500"
+        "px-4 py-3 text-primary border-b-2 border-blue-500 whitespace-nowrap shrink-0"
     } else {
-        "px-4 py-3 text-secondary hover:text-primary"
+        "px-4 py-3 text-secondary hover:text-primary whitespace-nowrap shrink-0"
     };
 
     html! {
@@ -430,7 +436,10 @@ fn ToggleFieldWithTooltip(props: &ToggleFieldWithTooltipProps) -> Html {
             </div>
             <button
                 onclick={onclick}
-                class={format!("relative w-10 h-6 rounded-full transition-colors {}", bg_class)}
+                role="switch"
+                aria-checked={if *enabled { "true" } else { "false" }}
+                aria-label={props.label.clone()}
+                class={format!("relative w-10 h-6 rounded-full expand-hit transition-colors {}", bg_class)}
             >
                 <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", translate_class)} />
             </button>
@@ -617,7 +626,10 @@ fn ToggleField(props: &ToggleFieldProps) -> Html {
             <span class="text-primary">{ &props.label }</span>
             <button
                 onclick={onclick}
-                class={format!("relative w-10 h-6 rounded-full transition-colors {}", bg_class)}
+                role="switch"
+                aria-checked={if *enabled { "true" } else { "false" }}
+                aria-label={props.label.clone()}
+                class={format!("relative w-10 h-6 rounded-full expand-hit transition-colors {}", bg_class)}
             >
                 <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", translate_class)} />
             </button>
@@ -858,7 +870,7 @@ fn ErrorPagesTab(props: &ErrorPagesTabProps) -> Html {
                             value={(*custom_directory).clone()}
                             onchange={on_custom_directory_change}
                             placeholder="/var/www/error-pages"
-                            class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary placeholder-secondary/50"
+                            class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary placeholder-secondary"
                         />
                         <p class="mt-1 text-sm text-secondary">{ "Directory containing custom error page files" }</p>
                     </div>

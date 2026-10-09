@@ -17,9 +17,12 @@ pub struct SelectProps {
 pub fn Select(props: &SelectProps) -> Html {
     let on_change = {
         let on_change = props.on_change.clone();
+        // `HtmlSelectElement`, not `HtmlInputElement`: the target of this event
+        // is the `<select>`, not an `<input>`. `target_unchecked_into` performs
+        // no runtime type check, so the wrong wrapper only worked by accident.
         Callback::from(move |e: Event| {
-            let input: web_sys::HtmlInputElement = e.target_unchecked_into();
-            on_change.emit(input.value());
+            let select: web_sys::HtmlSelectElement = e.target_unchecked_into();
+            on_change.emit(select.value());
         })
     };
 

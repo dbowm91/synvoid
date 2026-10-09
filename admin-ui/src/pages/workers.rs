@@ -271,23 +271,28 @@ pub fn Workers() -> Html {
                 <div class="bg-secondary rounded-lg border border-default p-6">
                     <h2 class="text-lg font-semibold mb-4">{ "Architecture" }</h2>
                     <div class="flex items-center justify-center p-4">
-                        <div class="flex items-center gap-8">
+                        // The three-node chain needs ~400px laid out horizontally,
+                        // which overflowed a phone's 343px content column and cut
+                        // the outer circles in half. Below `sm` it becomes a
+                        // vertical chain (a chain still reads top-to-bottom) and
+                        // the connector bars rotate to match.
+                        <div class="flex flex-col lg:flex-row items-center justify-center gap-3 lg:gap-8">
                             <div class="text-center">
-                                <div class="w-20 h-20 rounded-full bg-blue-600 flex items-center justify-center text-white font-bold text-sm">
+                                <div class="w-20 h-20 rounded-full bg-blue-600 flex items-center justify-center text-white font-bold text-xs lg:text-sm px-2 text-center leading-tight">
                                     { "Supervisor" }
                                 </div>
                                 <p class="text-xs text-secondary mt-2">{ "Process Manager" }</p>
                             </div>
-                            <div class="w-12 h-1 bg-tertiary"></div>
+                            <div class="w-1 h-8 lg:w-12 lg:h-1 bg-tertiary shrink-0"></div>
                             <div class="text-center">
-                                <div class="w-20 h-20 rounded-full bg-green-600 flex items-center justify-center text-white font-bold text-sm">
+                                <div class="w-20 h-20 rounded-full bg-green-600 flex items-center justify-center text-white font-bold text-xs lg:text-sm px-2 text-center leading-tight">
                                     { "Master" }
                                 </div>
                                 <p class="text-xs text-secondary mt-2">{ "Process" }</p>
                             </div>
-                            <div class="w-12 h-1 bg-tertiary"></div>
+                            <div class="w-1 h-8 lg:w-12 lg:h-1 bg-tertiary shrink-0"></div>
                             <div class="text-center">
-                                <div class="w-20 h-20 rounded-full bg-purple-600 flex items-center justify-center text-white font-bold text-sm">
+                                <div class="w-20 h-20 rounded-full bg-purple-600 flex items-center justify-center text-white font-bold text-xs lg:text-sm px-2 text-center leading-tight">
                                     { "Workers" }
                                 </div>
                                 <p class="text-xs text-secondary mt-2">{ "Request Handler" }</p>
@@ -303,7 +308,7 @@ pub fn Workers() -> Html {
                                     onclick={on_scale_down}
                                     disabled={*scaling || worker_count.as_ref().map(|c| c.current <= c.min).unwrap_or(true)}
                                     aria-label="Scale down workers"
-                                    class="px-3 py-1 bg-tertiary rounded hover:bg-tertiary/80 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    class="px-3 py-1 bg-tertiary rounded hover:opacity-80 expand-hit disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4" />
@@ -316,7 +321,7 @@ pub fn Workers() -> Html {
                                     onclick={on_scale_up}
                                     disabled={*scaling || worker_count.as_ref().map(|c| c.current >= c.max).unwrap_or(true)}
                                     aria-label="Scale up workers"
-                                    class="px-3 py-1 bg-tertiary rounded hover:bg-tertiary/80 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    class="px-3 py-1 bg-tertiary rounded hover:opacity-80 expand-hit disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
@@ -369,7 +374,7 @@ pub fn Workers() -> Html {
                                     let is_restarting = restarting.as_ref().map(|r| r == &w.id).unwrap_or(false);
 
                                     html! {
-                                        <tr class="border-b border-default hover:bg-tertiary/30">
+                                        <tr class="border-b border-default hover:bg-tertiary">
                                             <td class="py-3 px-4 text-primary font-medium">{ &w.id }</td>
                                             <td class="py-3 px-4 text-secondary">{ &w.worker_type }</td>
                                             <td class="py-3 px-4 text-primary">{ w.pid.map(|p| p.to_string()).unwrap_or_else(|| "N/A".to_string()) }</td>
@@ -388,7 +393,7 @@ pub fn Workers() -> Html {
                                                         move |_| { on_restart.emit(worker_id.clone()); }
                                                     }}
                                                     disabled={is_restarting}
-                                                    class="px-3 py-1 bg-tertiary text-secondary rounded hover:text-primary hover:bg-tertiary/80 disabled:opacity-50 text-sm"
+                                                    class="px-3 py-1 bg-tertiary text-secondary rounded hover:text-primary hover:opacity-80 expand-hit disabled:opacity-50 text-sm"
                                                 >
                                                     { if is_restarting { "Restarting..." } else { "Restart" } }
                                                 </button>

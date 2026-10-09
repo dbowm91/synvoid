@@ -117,7 +117,10 @@ pub fn Sidebar(props: &SidebarProps) -> Html {
                 "z-40",
                 "w-64",
                 "shrink-0",
-                "h-screen",
+                // `h-dvh-safe` keeps the footer (Logout / Theme) reachable on
+                // mobile Safari and Chrome, where `100vh` exceeds the visible
+                // viewport while the URL bar is expanded.
+                "h-dvh-safe",
                 "bg-secondary",
                 "border-r",
                 "border-default",
@@ -141,7 +144,7 @@ pub fn Sidebar(props: &SidebarProps) -> Html {
                 </div>
                 <button
                     onclick={on_close.reform(|_: MouseEvent| ())}
-                    class="md:hidden p-1 -mr-1 rounded-lg hover:bg-tertiary transition"
+                    class="md:hidden p-1 -mr-1 rounded-lg hover:bg-tertiary transition expand-hit"
                     aria-label="Close navigation"
                 >
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -240,6 +243,21 @@ fn NavSection(props: &NavSectionProps) -> Html {
     }
 }
 
+/// Which nav entry should read as "current" for a given route.
+///
+/// Plain equality is not enough. `Home` and `Dashboard` render the same page,
+/// and the Sites family spans three routes — listing a site and editing one are
+/// the same destination in the operator's mental model, so the Sites entry
+/// stays highlighted across all three.
+pub fn is_nav_item_active(current: &Route, target: &Route) -> bool {
+    use Route::*;
+    match (current, target) {
+        (Home, Dashboard) | (Dashboard, Home) => true,
+        (SiteEditor { .. } | SiteDetail { .. } | Sites, Sites) => true,
+        _ => current == target,
+    }
+}
+
 #[derive(Properties, PartialEq)]
 struct NavItemProps {
     to: Route,
@@ -249,15 +267,55 @@ struct NavItemProps {
 
 #[function_component]
 fn NavItem(props: &NavItemProps) -> Html {
+    // `yew_router::Link` (0.20) has no `active_class` prop — `LinkProps` only
+    // carries `classes` — so the active state has to be resolved here against
+    // the live route and folded into the class list. Without this every item
+    // rendered identically and there was no indication of which page you were
+    // on.
+    let current = use_route::<Route>();
+    let is_active = current
+        .as_ref()
+        .map(|route| is_nav_item_active(route, &props.to))
+        .unwrap_or(false);
+
+    let class = classes!(
+        "flex",
+        "items-center",
+        "gap-3",
+        "px-3",
+        "py-2",
+        "rounded-lg",
+        "transition",
+        // Active: a filled surface plus the accent text colour, so the current
+        // page reads at a glance. Inactive: muted text that lifts on hover.
+        if is_active {
+            "bg-tertiary text-primary font-medium"
+        } else {
+            "text-secondary hover:bg-tertiary hover:text-primary"
+        },
+    );
+
     html! {
         <Link<Route>
             to={props.to.clone()}
-            classes="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-tertiary transition text-secondary hover:text-primary"
+            classes={class}
         >
-            <span class="w-5 h-5 flex items-center justify-center">
+            <span class={classes!(
+                "w-5",
+                "h-5",
+                "flex",
+                "items-center",
+                "justify-center",
+                "shrink-0",
+                if is_active { "accent" } else { "" },
+            )}>
                 { icon(&props.icon) }
             </span>
-            <span>{ &props.label }</span>
+            // `aria-current="page"` is what conveys "you are here" to a screen
+            // reader; the visual highlight alone does not. It lives on the
+            // label rather than the `<a>` because `yew_router::Link` 0.20 takes
+            // no attributes beyond `classes` — `LinkProps` has no slot for one.
+            <span aria-current={if is_active { "page" } else { "false" }}>{ &props.label }</span>
         </Link<Route>>
     }
 }
@@ -425,5 +483,117 @@ mod tests {
         assert!(vis.show_mesh);
         assert!(vis.show_dns);
         assert!(vis.show_icmp);
+    }
+
+    /// Every `Route` reachable from a `NavItem`, so the active-state helper is
+    /// covered against the real navigation set rather than a hand-picked list.
+    fn nav_targets() -> Vec<Route> {
+        vec![
+            Route::Dashboard,
+            Route::Logs,
+            Route::RequestLogs,
+            Route::Probes,
+            Route::Workers,
+            Route::Upstreams,
+            Route::Sites,
+            Route::TcpUdp,
+            Route::Mesh,
+            Route::TierKeys,
+            Route::Settings,
+            Route::Dns,
+            Route::TrafficShaping,
+            Route::ProcessManagement,
+            Route::ThreatLevel,
+            Route::Alerts,
+            Route::SystemStatus,
+            Route::Honeypot,
+            Route::Icmp,
+        ]
+    }
+
+    #[test]
+    fn a_nav_item_is_active_on_its_own_route() {
+        for target in nav_targets() {
+            assert!(
+                is_nav_item_active(&target, &target),
+                "{:?} must highlight itself",
+                target
+            );
+        }
+    }
+
+    #[test]
+    fn exactly_one_nav_item_is_active_per_route() {
+        // `nav_targets()` is the sidebar itself, so each entry appears once.
+        // The Sites family spanning three routes means more than one *current
+        // route* maps to the Sites entry — but that still lights exactly one
+        // nav item, which is the property that matters: the operator must
+        // always be able to tell where they are, with no ambiguity.
+        let targets = nav_targets();
+
+        for current in targets.iter() {
+            let active: Vec<&Route> = targets
+                .iter()
+                .filter(|target| is_nav_item_active(current, target))
+                .collect();
+            assert_eq!(
+                active.len(),
+                1,
+                "expected one active nav item for {:?}, got {:?}",
+                current,
+                active
+            );
+        }
+
+        // The sub-page routes a nav click can land on must also resolve to a
+        // single entry, and to the Sites one.
+        for current in [
+            Route::SiteEditor { id: "a.com".into() },
+            Route::SiteDetail { id: "a.com".into() },
+        ] {
+            let active: Vec<&Route> = targets
+                .iter()
+                .filter(|target| is_nav_item_active(&current, target))
+                .collect();
+            assert_eq!(
+                active.len(),
+                1,
+                "expected one active item for {:?}",
+                current
+            );
+            assert_eq!(active[0], &Route::Sites);
+        }
+    }
+
+    #[test]
+    fn root_and_dashboard_are_the_same_destination() {
+        assert!(is_nav_item_active(&Route::Home, &Route::Dashboard));
+        assert!(is_nav_item_active(&Route::Dashboard, &Route::Home));
+    }
+
+    #[test]
+    fn sites_stays_active_across_its_sub_pages() {
+        assert!(is_nav_item_active(&Route::Sites, &Route::Sites));
+        assert!(is_nav_item_active(
+            &Route::SiteEditor {
+                id: "example.com".into()
+            },
+            &Route::Sites
+        ));
+        assert!(is_nav_item_active(
+            &Route::SiteDetail {
+                id: "example.com".into()
+            },
+            &Route::Sites
+        ));
+    }
+
+    #[test]
+    fn unrelated_routes_are_not_active() {
+        // A different site id is a different page, so editing site A must not
+        // light up a nav entry aimed at the Sites list.
+        let editing = Route::SiteEditor { id: "a.com".into() };
+        assert!(!is_nav_item_active(&editing, &Route::Dashboard));
+        assert!(!is_nav_item_active(&Route::Dashboard, &Route::Settings));
     }
 }

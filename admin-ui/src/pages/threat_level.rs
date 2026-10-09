@@ -19,9 +19,9 @@ pub fn ThreatLevel() -> Html {
 
     let tab_class = |tab: &ThreatTab| {
         if *active_tab == *tab {
-            "px-4 py-2 bg-accent text-white rounded-t-lg border-b-2 border-accent"
+            "px-4 py-2 bg-accent text-white rounded-t-lg border-b-2 border-accent whitespace-nowrap shrink-0"
         } else {
-            "px-4 py-2 bg-secondary text-secondary hover:text-primary rounded-t-lg"
+            "px-4 py-2 bg-secondary text-secondary hover:text-primary rounded-t-lg whitespace-nowrap shrink-0"
         }
     };
 
@@ -31,7 +31,7 @@ pub fn ThreatLevel() -> Html {
                 <h1 class="text-2xl font-bold">{ "Threat Level Management" }</h1>
             </div>
 
-            <div class="flex gap-2 mb-4">
+            <div class="flex gap-2 mb-4 overflow-x-auto">
                 <button
                     class={tab_class(&ThreatTab::Status)}
                     onclick={let active_tab = active_tab.clone(); move |_| active_tab.set(ThreatTab::Status)}
@@ -612,12 +612,16 @@ fn ThreatSettingsTab() -> Html {
                                     let enabled = status.as_ref().is_some_and(|s| s.is_learning);
                                     on_toggle.emit(!enabled);
                                 }}
+                                role="switch"
+                                aria-checked={if current_status.as_ref().is_some_and(|s| s.is_learning) { "true" } else { "false" }}
+                                aria-label="Enable Auto-Scaling"
                                 class={classes!(
                                     "relative",
                                     "w-12",
                                     "h-6",
                                     "rounded-full",
                                     "transition-colors",
+                                    "expand-hit",
                                     if current_status.as_ref().is_some_and(|s| s.is_learning) { "bg-green-500" } else { "bg-gray-600" }
                                 )}
                             >

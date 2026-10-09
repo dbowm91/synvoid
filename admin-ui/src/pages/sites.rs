@@ -240,14 +240,17 @@ fn SiteCard(props: &SiteCardProps) -> Html {
 
     html! {
         <div class="bg-secondary rounded-lg border border-default overflow-hidden">
-            <div class="p-4 border-b border-default flex items-center justify-between">
-                <div class="flex items-center gap-3">
-                    <span class={format!("w-3 h-3 rounded-full {}", status_class)}>
+            <div class="p-4 border-b border-default flex items-center justify-between gap-3">
+                <div class="flex items-center gap-3 min-w-0">
+                    <span class={format!("w-3 h-3 rounded-full shrink-0 {}", status_class)}>
                         <span class="sr-only">{ status_label }</span>
                     </span>
-                    <h3 class="text-lg font-semibold">{ &primary_domain }</h3>
+                    // `min-w-0` on the parent lets this truncate rather than
+                    // pushing the actions past the card's `overflow-hidden`
+                    // edge, where they became unreachable on a phone.
+                    <h3 class="text-lg font-semibold truncate">{ &primary_domain }</h3>
                 </div>
-                <div class="flex gap-2">
+                <div class="flex gap-2 shrink-0">
                     <Link<Route>
                         to={Route::SiteEditor { id: props.site_id.clone() }}
                         classes="px-3 py-1 text-sm bg-tertiary text-primary rounded hover:opacity-80"
@@ -263,12 +266,12 @@ fn SiteCard(props: &SiteCardProps) -> Html {
             <div class="p-4">
                 <div class="mb-3">
                     <p class="text-sm text-secondary">{ "Domains" }</p>
-                    <p class="text-primary">{ props.domains.join(", ") }</p>
+                    <p class="text-primary break-all">{ props.domains.join(", ") }</p>
                 </div>
 
                 <div class="mb-3">
                     <p class="text-sm text-secondary">{ "Default Upstream" }</p>
-                    <p class="font-mono text-primary">{ &props.upstream }</p>
+                    <p class="font-mono text-primary break-all">{ &props.upstream }</p>
                 </div>
 
                 <div>

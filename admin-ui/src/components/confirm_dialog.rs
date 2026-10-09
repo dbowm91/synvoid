@@ -111,7 +111,7 @@ pub fn ConfirmDialog(props: &ConfirmDialogProps) -> Html {
                 class="absolute inset-0 bg-black/60 backdrop-blur-sm"
                 onclick={on_cancel.clone()}
             />
-            <div class="relative bg-secondary border border-default rounded-lg shadow-xl max-w-md w-full mx-4 p-6 animate-fade-in">
+            <div class="relative bg-secondary border border-default rounded-lg shadow-xl w-full max-w-md mx-4 max-h-[90vh] overflow-y-auto p-6 animate-fade-in">
                 <h3 id="confirm-dialog-title" class="text-lg font-semibold text-primary mb-2">
                     { &props.title }
                 </h3>

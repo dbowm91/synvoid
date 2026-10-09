@@ -23,12 +23,21 @@ pub fn FieldHelp(props: &FieldHelpProps) -> Html {
         <div class="relative inline-block">
             <button
                 onclick={toggle}
-                class="w-5 h-5 rounded-full bg-tertiary text-secondary hover:text-primary text-xs flex items-center justify-center"
+                // The painted badge is 20x20px, well under the ~44px touch
+                // target, so the hit region is expanded past the visible box.
+                // `aria-expanded` states the open/closed relationship that the
+                // styling alone conveyed.
+                aria-expanded={if *show_help { "true" } else { "false" }}
+                aria-label="Toggle field help"
+                class="w-5 h-5 rounded-full bg-tertiary text-secondary hover:text-primary text-xs flex items-center justify-center expand-hit"
             >
                 { "?" }
             </button>
             if *show_help {
-                <div class="absolute z-10 w-64 p-3 bg-secondary border border-default rounded-lg shadow-lg text-sm -left-28 mt-2">
+                <div
+                    role="tooltip"
+                    class="absolute z-10 w-64 p-3 bg-secondary border border-default rounded-lg shadow-lg text-sm -left-28 mt-2"
+                >
                     <p class="text-primary">{ &props.description }</p>
                     if let Some(impact) = &props.impact {
                         <p class="mt-2 text-xs text-yellow-500">

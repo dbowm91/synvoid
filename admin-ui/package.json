@@ -4,9 +4,8 @@
   "private": true,
   "scripts": {
     "build:css": "tailwindcss -i ./src/tailwind.css -o ./src/styles.css --minify",
-    "copy:css": "cp src/styles.css dist/",
     "build:bundle": "trunk build --release",
-    "build": "npm run build:css && npm run build:bundle && npm run copy:css",
+    "build": "npm run build:css && npm run build:bundle",
     "watch:css": "tailwindcss -i ./src/tailwind.css -o ./src/styles.css --watch"
   },
   "devDependencies": {

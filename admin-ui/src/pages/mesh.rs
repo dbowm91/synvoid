@@ -189,9 +189,13 @@ pub fn Mesh() -> Html {
                                         { if status.is_global_node { "Global Node" } else { "Edge Node" } }
                                     </span>
                                 </div>
-                                <div class="flex justify-between">
-                                    <span class="text-secondary">{ "Node ID" }</span>
-                                    <span class="text-primary font-mono text-sm">
+                                <div class="flex justify-between gap-3">
+                                    <span class="text-secondary shrink-0">{ "Node ID" }</span>
+                                    // Mesh node ids are long hex/base58 keys with no
+                                    // natural break points. Without `break-all` the
+                                    // flex row floors at the full key width and the
+                                    // whole page scrolls sideways on a phone.
+                                    <span class="text-primary font-mono text-sm break-all text-right min-w-0">
                                         { status.node_id.as_deref().unwrap_or("N/A") }
                                     </span>
                                 </div>

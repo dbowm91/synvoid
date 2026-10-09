@@ -203,31 +203,35 @@ pub fn RealtimeHeader() -> Html {
 
     html! {
         <div class="bg-secondary rounded-lg border border-default p-4 mb-6">
-            <div class="flex items-center justify-between mb-4">
-                <div class="flex items-center gap-2">
+            // The status text plus the four range buttons need ~390px side by side, which
+            // overflows a 360px phone. Wrapping lets the range selector drop to
+            // its own line instead of pushing the whole card into a horizontal
+            // scroll.
+            <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
+                <div class="flex items-center gap-2 min-w-0">
                     <div class={connection_status.0} />
                     <span class="text-sm text-secondary">{ connection_status.1 }</span>
-                    <span class="text-xs text-secondary ml-2">{ format!("Updated: {}", *last_updated) }</span>
+                    <span class="text-xs text-secondary ml-2 truncate">{ format!("Updated: {}", *last_updated) }</span>
                 </div>
                 <div class="flex items-center gap-2">
                     <button
                         onclick={let cb = on_range_change.clone(); move |_| cb.emit(60)}
-                        class={if *selected_range == 60 { "px-3 py-1 text-xs bg-blue-600 text-white rounded" } else { "px-3 py-1 text-xs bg-tertiary rounded hover:opacity-80" }}>
+                        class={if *selected_range == 60 { "px-3 py-1 text-xs bg-blue-600 text-white rounded expand-hit" } else { "px-3 py-1 text-xs bg-tertiary rounded hover:opacity-80 expand-hit" }}>
                         { "1m" }
                     </button>
                     <button
                         onclick={let cb = on_range_change.clone(); move |_| cb.emit(300)}
-                        class={if *selected_range == 300 { "px-3 py-1 text-xs bg-blue-600 text-white rounded" } else { "px-3 py-1 text-xs bg-tertiary rounded hover:opacity-80" }}>
+                        class={if *selected_range == 300 { "px-3 py-1 text-xs bg-blue-600 text-white rounded expand-hit" } else { "px-3 py-1 text-xs bg-tertiary rounded hover:opacity-80 expand-hit" }}>
                         { "5m" }
                     </button>
                     <button
                         onclick={let cb = on_range_change.clone(); move |_| cb.emit(900)}
-                        class={if *selected_range == 900 { "px-3 py-1 text-xs bg-blue-600 text-white rounded" } else { "px-3 py-1 text-xs bg-tertiary rounded hover:opacity-80" }}>
+                        class={if *selected_range == 900 { "px-3 py-1 text-xs bg-blue-600 text-white rounded expand-hit" } else { "px-3 py-1 text-xs bg-tertiary rounded hover:opacity-80 expand-hit" }}>
                         { "15m" }
                     </button>
                     <button
                         onclick={let cb = on_range_change.clone(); move |_| cb.emit(3600)}
-                        class={if *selected_range == 3600 { "px-3 py-1 text-xs bg-blue-600 text-white rounded" } else { "px-3 py-1 text-xs bg-tertiary rounded hover:opacity-80" }}>
+                        class={if *selected_range == 3600 { "px-3 py-1 text-xs bg-blue-600 text-white rounded expand-hit" } else { "px-3 py-1 text-xs bg-tertiary rounded hover:opacity-80 expand-hit" }}>
                         { "1h" }
                     </button>
                 </div>
