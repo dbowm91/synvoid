@@ -189,7 +189,10 @@ pub fn RealtimeHeader() -> Html {
             "w-2 h-2 rounded-full bg-yellow-500 animate-pulse",
             "Connecting",
         ),
-        UseWebSocketState::Polling => ("w-2 h-2 rounded-full bg-blue-500 animate-pulse", "Polling"),
+        UseWebSocketState::Polling => (
+            "w-2 h-2 rounded-full bg-action-500 animate-pulse",
+            "Polling",
+        ),
         UseWebSocketState::Disconnected => ("w-2 h-2 rounded-full bg-red-500", "Disconnected"),
         UseWebSocketState::Error(_) => ("w-2 h-2 rounded-full bg-red-500", "Error"),
     };
@@ -216,22 +219,22 @@ pub fn RealtimeHeader() -> Html {
                 <div class="flex items-center gap-2">
                     <button
                         onclick={let cb = on_range_change.clone(); move |_| cb.emit(60)}
-                        class={if *selected_range == 60 { "px-3 py-1 text-xs bg-blue-600 text-white rounded expand-hit" } else { "px-3 py-1 text-xs bg-tertiary rounded hover:opacity-80 expand-hit" }}>
+                        class={if *selected_range == 60 { "px-3 py-1 text-xs bg-action-600 text-white rounded expand-hit" } else { "px-3 py-1 text-xs bg-tertiary rounded hover:opacity-80 expand-hit" }}>
                         { "1m" }
                     </button>
                     <button
                         onclick={let cb = on_range_change.clone(); move |_| cb.emit(300)}
-                        class={if *selected_range == 300 { "px-3 py-1 text-xs bg-blue-600 text-white rounded expand-hit" } else { "px-3 py-1 text-xs bg-tertiary rounded hover:opacity-80 expand-hit" }}>
+                        class={if *selected_range == 300 { "px-3 py-1 text-xs bg-action-600 text-white rounded expand-hit" } else { "px-3 py-1 text-xs bg-tertiary rounded hover:opacity-80 expand-hit" }}>
                         { "5m" }
                     </button>
                     <button
                         onclick={let cb = on_range_change.clone(); move |_| cb.emit(900)}
-                        class={if *selected_range == 900 { "px-3 py-1 text-xs bg-blue-600 text-white rounded expand-hit" } else { "px-3 py-1 text-xs bg-tertiary rounded hover:opacity-80 expand-hit" }}>
+                        class={if *selected_range == 900 { "px-3 py-1 text-xs bg-action-600 text-white rounded expand-hit" } else { "px-3 py-1 text-xs bg-tertiary rounded hover:opacity-80 expand-hit" }}>
                         { "15m" }
                     </button>
                     <button
                         onclick={let cb = on_range_change.clone(); move |_| cb.emit(3600)}
-                        class={if *selected_range == 3600 { "px-3 py-1 text-xs bg-blue-600 text-white rounded expand-hit" } else { "px-3 py-1 text-xs bg-tertiary rounded hover:opacity-80 expand-hit" }}>
+                        class={if *selected_range == 3600 { "px-3 py-1 text-xs bg-action-600 text-white rounded expand-hit" } else { "px-3 py-1 text-xs bg-tertiary rounded hover:opacity-80 expand-hit" }}>
                         { "1h" }
                     </button>
                 </div>
@@ -241,7 +244,7 @@ pub fn RealtimeHeader() -> Html {
                 <div class="flex flex-col">
                     <span class="text-xs text-secondary">{ "Req/sec" }</span>
                     <div class="flex items-end justify-between">
-                        <span class="text-xl font-bold text-blue-500">{ req_per_sec }</span>
+                        <span class="text-xl font-bold text-action-500">{ req_per_sec }</span>
                         <Sparkline data={(*req_history).clone()} color={Some("#3b82f6".to_string())} width={Some("60px".to_string())} height={Some("20px".to_string())} />
                     </div>
                 </div>

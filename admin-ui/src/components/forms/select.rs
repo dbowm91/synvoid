@@ -36,7 +36,7 @@ pub fn Select(props: &SelectProps) -> Html {
                 name={props.name.clone()}
                 value={props.value.clone()}
                 onchange={on_change}
-                class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary focus:outline-none focus:ring-2 focus:ring-blue-500"
+                class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary focus:outline-none focus:ring-2 focus:ring-action-500"
             >
                 { for props.options.iter().map(|(value, label)| {
                     html! {

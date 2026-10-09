@@ -338,7 +338,7 @@ pub fn TrafficShaping() -> Html {
                             role="switch"
                             aria-checked={if *global_enabled { "true" } else { "false" }}
                             aria-label="Enable Global Limits"
-                            class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *global_enabled { "bg-blue-600" } else { "bg-gray-600" })}
+                            class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *global_enabled { "bg-action-600" } else { "bg-gray-600" })}
                         >
                             <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *global_enabled { "translate-x-5" } else { "translate-x-0" })} />
                         </button>
@@ -462,7 +462,7 @@ pub fn TrafficShaping() -> Html {
                         class={if is_dirty {
                             "px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50"
                         } else {
-                            "px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                            "px-4 py-2 bg-action-600 text-white rounded-lg hover:bg-action-700 disabled:opacity-50"
                         }}
                     >
                         { if *saving { "Saving..." } else if is_dirty { "Save*" } else { "Save" } }

@@ -34,7 +34,7 @@ fn get_status_class(status: u16) -> &'static str {
 
 fn get_method_class(method: &str) -> &'static str {
     match method {
-        "GET" => "bg-blue-500/20 text-blue-400",
+        "GET" => "bg-action-500/20 text-action-400",
         "POST" => "bg-green-500/20 text-green-400",
         "PUT" => "bg-yellow-500/20 text-yellow-400",
         "DELETE" => "bg-red-500/20 text-red-400",

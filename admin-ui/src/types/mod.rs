@@ -1,3 +1,15 @@
+pub mod diagnostics;
+
+// Re-exported for call sites that refer to these types by their full path.
+// The nested per-section structs below (`RuntimeTaskSummary`, `PluginInfo`,
+// `WorkerTaskStats`, …) are reachable through their parent's fields and are
+// deliberately not re-exported here.
+pub use diagnostics::{
+    AuditLogsResponse, BlocklistHealthDiagnostics, ErrorPageResponse, FeaturesDiagnostics,
+    PluginDiagnostics, RuntimeTasksDiagnostics, SecurityObservabilitySummary,
+    ThreatIntelDiagnostics, UpdateErrorPageRequest,
+};
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -821,11 +833,18 @@ pub struct TcpUdpProtocolInfo {
 
 /// Typed view of `synvoid_core::admin_mutation::AdminMutationResult`, which
 /// every mutating admin endpoint returns instead of a bare `{"success": true}`.
+///
+/// `target` is modelled as `serde_json::Value` rather than `String` because
+/// the backend field is generic (`AdminMutationResult<T>`). Almost every
+/// handler instantiates `T = String`, but `PUT /error-pages/{code}` sends
+/// `json!(code)` where `code` is a `u16` — a JSON **number**. `String` does
+/// not accept a number, so modelling it as `String` made that one endpoint
+/// fail to deserialize.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct AdminMutationResult {
     pub status: String,
     #[serde(default)]
-    pub target: String,
+    pub target: serde_json::Value,
     #[serde(default)]
     pub local_store_mutated: bool,
     #[serde(default)]
@@ -846,6 +865,15 @@ impl AdminMutationResult {
     pub fn applied(&self) -> bool {
         self.status == "applied"
     }
+
+    /// `target` rendered as text, for the common `T = String` case.
+    pub fn target_display(&self) -> String {
+        match &self.target {
+            serde_json::Value::String(s) => s.clone(),
+            serde_json::Value::Null => String::new(),
+            other => other.to_string(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -855,7 +883,7 @@ mod admin_mutation_tests {
     fn result(status: &str) -> AdminMutationResult {
         AdminMutationResult {
             status: status.to_string(),
-            target: "site-http".to_string(),
+            target: serde_json::Value::String("site-http".to_string()),
             local_store_mutated: true,
             propagation: "applied_local_only".to_string(),
             audit_id: None,
@@ -880,6 +908,19 @@ mod admin_mutation_tests {
         let minimal: AdminMutationResult = serde_json::from_str(r#"{"status":"applied"}"#)
             .expect("AdminMutationResult tolerates absent optional fields");
         assert!(minimal.applied());
-        assert!(minimal.target.is_empty());
+        assert!(minimal.target_display().is_empty());
+    }
+
+    /// `PUT /api/error-pages/{code}` sends `target: json!(code)` where `code`
+    /// is a `u16`, so the field is a JSON **number** on the wire. Modelling it
+    /// as `String` made this endpoint fail to deserialize outright.
+    #[test]
+    fn numeric_targets_deserialize_and_render() {
+        let numeric: AdminMutationResult = serde_json::from_str(
+            r#"{"status":"applied","target":404,"local_store_mutated":true,
+                "propagation":"applied_local_only","message":"Error page 404 updated"}"#,
+        )
+        .expect("a numeric target must not break deserialization");
+        assert_eq!(numeric.target_display(), "404");
     }
 }

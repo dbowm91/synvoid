@@ -271,7 +271,7 @@ pub fn ProcessManagement() -> Html {
                         <button
                             onclick={on_save}
                             disabled={*saving}
-                            class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                            class="px-4 py-2 bg-action-600 text-white rounded-lg hover:bg-action-700 disabled:opacity-50"
                         >
                             { if *saving { "Saving..." } else { "Save Changes" } }
                         </button>
@@ -301,7 +301,7 @@ fn ProcessSectionButton(props: &ProcessSectionButtonProps) -> Html {
     };
 
     let class = if props.active {
-        "inline-block w-auto whitespace-nowrap px-4 py-3 text-primary bg-tertiary border-b-2 border-blue-500 md:block md:w-full md:border-b-0 md:border-l-2"
+        "inline-block w-auto whitespace-nowrap px-4 py-3 text-primary bg-tertiary border-b-2 border-action-500 md:block md:w-full md:border-b-0 md:border-l-2"
     } else {
         "inline-block w-auto whitespace-nowrap px-4 py-3 text-secondary hover:text-primary hover:bg-tertiary md:block md:w-full"
     };
@@ -439,8 +439,8 @@ fn SupervisorSection(props: &SupervisorSectionProps) -> Html {
 
     html! {
         <div class="space-y-6">
-            <div class="bg-blue-500/10 border border-blue-500 rounded-lg p-4 mb-4">
-                <p class="text-sm text-blue-400">
+            <div class="bg-action-500/10 border border-action-500 rounded-lg p-4 mb-4">
+                <p class="text-sm text-action-400">
                     { "The Supervisor enables automatic worker scaling based on load. " }
                     { "When enabled, it dynamically adjusts worker count between min and max values." }
                 </p>

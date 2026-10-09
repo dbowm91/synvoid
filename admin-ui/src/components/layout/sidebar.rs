@@ -16,6 +16,17 @@ pub struct Capabilities {
     pub honeypot: bool,
     #[serde(default)]
     pub process_manager: bool,
+    /// Gates the plugin runtime surfaces (`/api/plugins/*`) and the YARA
+    /// submission workflow (`/api/yara/*`). The backend derives both from
+    /// `cfg!(feature = "mesh")`, so they are currently equal to `mesh_admin`
+    /// — but they are separate fields upstream and could diverge, so the UI
+    /// keys off the field that actually describes the route family.
+    #[serde(default)]
+    pub plugins: bool,
+    /// Gates the serverless/Spin application surface (`/api/spin/*`,
+    /// `/api/serverless/*`), also `cfg!(feature = "mesh")` upstream.
+    #[serde(default)]
+    pub serverless: bool,
 }
 
 /// Pure gating decision: which nav families are visible for a capability set.
@@ -29,6 +40,9 @@ pub struct SidebarVisibility {
     pub show_process_management: bool,
     pub show_honeypot: bool,
     pub show_icmp: bool,
+    pub show_plugins: bool,
+    pub show_yara: bool,
+    pub show_serverless: bool,
 }
 
 pub fn sidebar_visibility(cap: &Capabilities) -> SidebarVisibility {
@@ -39,6 +53,9 @@ pub fn sidebar_visibility(cap: &Capabilities) -> SidebarVisibility {
         show_process_management: cap.process_manager,
         show_honeypot: cap.honeypot,
         show_icmp: cap.icmp_admin,
+        show_plugins: cap.plugins,
+        show_yara: cap.plugins,
+        show_serverless: cap.serverless,
     }
 }
 
@@ -57,6 +74,8 @@ impl Capabilities {
             icmp_admin: false,
             honeypot: false,
             process_manager: false,
+            plugins: false,
+            serverless: false,
         }
     }
 }
@@ -69,6 +88,8 @@ impl Default for Capabilities {
             icmp_admin: true,
             honeypot: true,
             process_manager: true,
+            plugins: true,
+            serverless: true,
         }
     }
 }
@@ -158,6 +179,8 @@ pub fn Sidebar(props: &SidebarProps) -> Html {
                     <NavItem to={Route::Dashboard} icon="dashboard" label="Dashboard" />
                     <NavItem to={Route::Logs} icon="logs" label="WAF Logs" />
                     <NavItem to={Route::RequestLogs} icon="request" label="Request Logs" />
+                    <NavItem to={Route::Observability} icon="status" label="Observability" />
+                    <NavItem to={Route::AuditLogs} icon="list" label="Audit Log" />
                 </NavSection>
 
                 <NavSection title="Security">
@@ -188,6 +211,7 @@ pub fn Sidebar(props: &SidebarProps) -> Html {
                     }
                     <NavItem to={Route::ThreatLevel} icon="shield" label="Threat Level" />
                     <NavItem to={Route::Alerts} icon="bell" label="Alerts" />
+                    <NavItem to={Route::ErrorPages} icon="file" label="Error Pages" />
                 </NavSection>
 
                 <NavSection title="System">
@@ -322,6 +346,18 @@ fn NavItem(props: &NavItemProps) -> Html {
 
 fn icon(name: &str) -> Html {
     match name {
+        // Clipboard list — the Audit Log trail.
+        "list" => html! {
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9h6m-6 4h4" />
+            </svg>
+        },
+        // Document — the Error Pages catalogue.
+        "file" => html! {
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V7l-4-4H7a2 2 0 00-2 2v14a2 2 0 002 2zM14 3v4a1 1 0 001 1h4M9 13h6M9 17h6" />
+            </svg>
+        },
         "dashboard" => html! {
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
@@ -433,6 +469,8 @@ mod tests {
             icmp_admin: true,
             honeypot: true,
             process_manager: true,
+            plugins: true,
+            serverless: true,
         }
     }
 
@@ -492,6 +530,8 @@ mod tests {
             Route::Dashboard,
             Route::Logs,
             Route::RequestLogs,
+            Route::Observability,
+            Route::AuditLogs,
             Route::Probes,
             Route::Workers,
             Route::Upstreams,
@@ -505,6 +545,7 @@ mod tests {
             Route::ProcessManagement,
             Route::ThreatLevel,
             Route::Alerts,
+            Route::ErrorPages,
             Route::SystemStatus,
             Route::Honeypot,
             Route::Icmp,

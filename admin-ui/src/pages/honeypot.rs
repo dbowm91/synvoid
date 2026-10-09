@@ -167,7 +167,7 @@ pub fn Honeypot() -> Html {
                         <div class="flex flex-wrap gap-2">
                             {for ports.iter().map(|port| {
                                 html! {
-                                    <span class="px-3 py-1 bg-blue-900/50 text-blue-300 rounded-full">
+                                    <span class="px-3 py-1 bg-action-900/50 text-action-300 rounded-full">
                                         { *port }
                                     </span>
                                 }

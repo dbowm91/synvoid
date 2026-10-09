@@ -29,8 +29,8 @@ pub struct LogsResponse {
 fn get_level_class(level: &str) -> &'static str {
     match level.to_lowercase().as_str() {
         "trace" => "text-gray-500 bg-gray-500/20",
-        "debug" => "text-blue-400 bg-blue-500/20",
-        "info" => "text-blue-500 bg-blue-500/20",
+        "debug" => "text-action-400 bg-action-500/20",
+        "info" => "text-action-500 bg-action-500/20",
         "warn" | "warning" => "text-yellow-500 bg-yellow-500/20",
         "error" => "text-red-500 bg-red-500/20",
         _ => "text-secondary bg-tertiary",
@@ -271,7 +271,7 @@ pub fn Logs() -> Html {
                     <button
                         onclick={toggle_auto_scroll}
                         class={format!("px-3 py-2 rounded-lg text-sm font-medium {}",
-                            if *auto_scroll { "bg-blue-600 text-white" } else { "bg-tertiary text-secondary hover:text-primary" }
+                            if *auto_scroll { "bg-action-600 text-white" } else { "bg-tertiary text-secondary hover:text-primary" }
                         )}
                     >
                         { if *auto_scroll { "Auto-scroll On" } else { "Auto-scroll Off" } }
@@ -321,7 +321,7 @@ pub fn Logs() -> Html {
                                             <span class="text-green-400 text-xs font-mono">{ ip }</span>
                                         }
                                         if let Some(path) = &entry.path {
-                                            <span class="text-cyan-400 text-xs font-mono max-w-[200px] truncate" title={path.clone()}>{ path }</span>
+                                            <span class="text-action-400 text-xs font-mono max-w-[200px] truncate" title={path.clone()}>{ path }</span>
                                         }
                                         if let Some(status) = &entry.status {
                                             <span class={format!("text-xs font-medium {}",

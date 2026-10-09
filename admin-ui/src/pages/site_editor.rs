@@ -149,7 +149,7 @@ fn TabButton(props: &TabButtonProps) -> Html {
     };
 
     let class = if props.active {
-        "px-4 py-3 text-primary border-b-2 border-blue-500 whitespace-nowrap shrink-0"
+        "px-4 py-3 text-primary border-b-2 border-action-500 whitespace-nowrap shrink-0"
     } else {
         "px-4 py-3 text-secondary hover:text-primary whitespace-nowrap shrink-0"
     };
@@ -292,7 +292,7 @@ fn BasicTab(props: &BasicTabProps) -> Html {
                         html! {
                             <button
                                 onclick={on_select}
-                                class="p-3 bg-tertiary rounded-lg border border-default hover:border-blue-500 transition text-left"
+                                class="p-3 bg-tertiary rounded-lg border border-default hover:border-action-500 transition text-left"
                             >
                                 <div class="font-medium text-sm">{ &preset.name }</div>
                                 <div class="text-xs text-secondary mt-1">{ &preset.description }</div>
@@ -303,7 +303,7 @@ fn BasicTab(props: &BasicTabProps) -> Html {
             </div>
 
             <div class="flex justify-end">
-                <button onclick={on_save} disabled={*saving} class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
+                <button onclick={on_save} disabled={*saving} class="px-4 py-2 bg-action-600 text-white rounded-lg hover:bg-action-700 disabled:opacity-50">
                     { if *saving { "Saving..." } else { "Save Changes" } }
                 </button>
             </div>
@@ -414,7 +414,7 @@ fn ToggleFieldWithTooltip(props: &ToggleFieldWithTooltipProps) -> Html {
     };
 
     let bg_class = if *enabled {
-        "bg-blue-600"
+        "bg-action-600"
     } else {
         "bg-gray-600"
     };
@@ -429,7 +429,7 @@ fn ToggleFieldWithTooltip(props: &ToggleFieldWithTooltipProps) -> Html {
             <div class="flex items-center gap-2">
                 <span class="text-primary">{ &props.label }</span>
                 <Tooltip content={props.tooltip_content.clone()} position={TooltipPosition::Right}>
-                    <span class="inline-flex items-center justify-center w-4 h-4 rounded-full bg-tertiary text-secondary text-xs cursor-help hover:bg-blue-600 hover:text-white transition-colors">
+                    <span class="inline-flex items-center justify-center w-4 h-4 rounded-full bg-tertiary text-secondary text-xs cursor-help hover:bg-action-600 hover:text-white transition-colors">
                         {"?"}
                     </span>
                 </Tooltip>
@@ -611,7 +611,7 @@ fn ToggleField(props: &ToggleFieldProps) -> Html {
     };
 
     let bg_class = if *enabled {
-        "bg-blue-600"
+        "bg-action-600"
     } else {
         "bg-gray-600"
     };
@@ -840,7 +840,7 @@ fn ErrorPagesTab(props: &ErrorPagesTabProps) -> Html {
                             id="inherit"
                             checked={*inherit}
                             onchange={Callback::from(move |_| inherit.set(!*inherit))}
-                            class="w-4 h-4 rounded border-default text-blue-600 focus:ring-blue-500"
+                            class="w-4 h-4 rounded border-default text-action-600 focus:ring-action-500"
                         />
                         <label for="inherit" class="text-sm text-primary">
                             { "Inherit from global settings" }
@@ -921,7 +921,7 @@ fn ErrorPagesTab(props: &ErrorPagesTabProps) -> Html {
                 <button
                     onclick={on_save}
                     disabled={*saving}
-                    class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                    class="px-4 py-2 bg-action-600 text-white rounded-lg hover:bg-action-700 disabled:opacity-50"
                 >
                     { if *saving { "Saving..." } else { "Save Error Pages" } }
                 </button>
@@ -1496,7 +1496,7 @@ fn BlockingTab(props: &BlockingTabProps) -> Html {
                                     geoip_enabled.set(input.checked());
                                 })
                             }}
-                            class="w-4 h-4 rounded border-default bg-tertiary accent-blue-600"
+                            class="w-4 h-4 rounded border-default bg-tertiary accent-action-600"
                         />
                         <span class="text-primary">{ "Enable GeoIP Blocking" }</span>
                     </label>
@@ -1513,7 +1513,7 @@ fn BlockingTab(props: &BlockingTabProps) -> Html {
                                 blocked_countries.set(input.value());
                             })}
                             disabled={!*geoip_enabled}
-                            class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+                            class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary focus:outline-none focus:ring-2 focus:ring-action-500 disabled:opacity-50"
                         />
                         <p class="mt-1 text-xs text-secondary">{ "Traffic from these countries will be blocked" }</p>
                     </div>
@@ -1528,7 +1528,7 @@ fn BlockingTab(props: &BlockingTabProps) -> Html {
                                 allowed_countries.set(input.value());
                             })}
                             disabled={!*geoip_enabled}
-                            class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+                            class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary focus:outline-none focus:ring-2 focus:ring-action-500 disabled:opacity-50"
                         />
                         <p class="mt-1 text-xs text-secondary">{ "Only traffic from these countries will be allowed (overrides blocked list)" }</p>
                     </div>
@@ -1536,7 +1536,7 @@ fn BlockingTab(props: &BlockingTabProps) -> Html {
             </div>
 
             <div class="flex justify-end">
-                <button onclick={on_save} disabled={*saving} class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
+                <button onclick={on_save} disabled={*saving} class="px-4 py-2 bg-action-600 text-white rounded-lg hover:bg-action-700 disabled:opacity-50">
                     { if *saving { "Saving..." } else { "Save Changes" } }
                 </button>
             </div>
@@ -1646,7 +1646,7 @@ fn ProxyTab(props: &ProxyTabProps) -> Html {
                 </div>
             </div>
             <div class="flex justify-end">
-                <button onclick={on_save} disabled={*saving} class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
+                <button onclick={on_save} disabled={*saving} class="px-4 py-2 bg-action-600 text-white rounded-lg hover:bg-action-700 disabled:opacity-50">
                     { if *saving { "Saving..." } else { "Save Changes" } }
                 </button>
             </div>
@@ -1792,7 +1792,7 @@ fn SecurityHeadersTab(props: &SecurityHeadersTabProps) -> Html {
                 </div>
             </div>
             <div class="flex justify-end">
-                <button onclick={on_save} disabled={*saving} class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
+                <button onclick={on_save} disabled={*saving} class="px-4 py-2 bg-action-600 text-white rounded-lg hover:bg-action-700 disabled:opacity-50">
                     { if *saving { "Saving..." } else { "Save Changes" } }
                 </button>
             </div>

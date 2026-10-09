@@ -12,6 +12,11 @@ pub fn Workers() -> Html {
     let restarting = use_state(|| None as Option<String>);
     let scaling = use_state(|| false);
     let pending_restart = use_state(|| None as Option<String>);
+    // Batch restart (`POST /system/workers/batch-restart`).
+    let restarting_all = use_state(|| false);
+    let confirm_batch = use_state(|| false);
+    let batch_notice = use_state(|| None as Option<String>);
+    let batch_notice_is_error = use_state(|| false);
 
     {
         let workers = workers.clone();
@@ -177,6 +182,59 @@ pub fn Workers() -> Html {
         })
     };
 
+    let on_request_batch_restart = {
+        let confirm_batch = confirm_batch.clone();
+        Callback::from(move |_: MouseEvent| confirm_batch.set(true))
+    };
+
+    let on_cancel_batch = {
+        let confirm_batch = confirm_batch.clone();
+        Callback::from(move |_: ()| confirm_batch.set(false))
+    };
+
+    let on_confirm_batch = {
+        let confirm_batch = confirm_batch.clone();
+        let restarting_all = restarting_all.clone();
+        let batch_notice = batch_notice.clone();
+        let batch_notice_is_error = batch_notice_is_error.clone();
+        let workers = workers.clone();
+
+        Callback::from(move |_: ()| {
+            let restarting_all = restarting_all.clone();
+            let batch_notice = batch_notice.clone();
+            let batch_notice_is_error = batch_notice_is_error.clone();
+            let workers = workers.clone();
+            confirm_batch.set(false);
+            restarting_all.set(true);
+            batch_notice.set(None);
+
+            wasm_bindgen_futures::spawn_local(async move {
+                match ApiService::new().restart_all_workers().await {
+                    Ok(result) => {
+                        // 200 is not proof anything restarted — surface the
+                        // server's own message rather than a generic success.
+                        batch_notice.set(Some(format!(
+                            "{} (target: {})",
+                            result.message,
+                            result.target_display()
+                        )));
+                        batch_notice_is_error.set(!result.applied());
+                    }
+                    Err(e) => {
+                        batch_notice.set(Some(format!("Batch restart failed: {}", e)));
+                        batch_notice_is_error.set(true);
+                    }
+                }
+                restarting_all.set(false);
+                // Workers disappear briefly during a restart, so refresh once
+                // the server has settled.
+                if let Ok(w) = ApiService::new().get_workers_status().await {
+                    workers.set(w);
+                }
+            });
+        })
+    };
+
     let format_uptime = |secs: u64| -> String {
         let days = secs / 86400;
         let hours = (secs % 86400) / 3600;
@@ -204,6 +262,19 @@ pub fn Workers() -> Html {
     html! {
         <div class="space-y-6">
             <ConfirmDialog
+                show={*confirm_batch}
+                title={String::from("Restart all workers?")}
+                message={String::from(
+                    "Every worker process is stopped and restarted at once, which briefly interrupts in-flight traffic. Use the per-worker Restart button for a targeted restart.",
+                )}
+                confirm_label={Some(String::from("Restart all"))}
+                cancel_label={Some(String::from("Cancel"))}
+                confirm_type={Some(ConfirmType::Danger)}
+                on_confirm={on_confirm_batch}
+                on_cancel={on_cancel_batch}
+            />
+
+            <ConfirmDialog
                 show={(*pending_restart).is_some()}
                 title={"Restart Worker".to_string()}
                 message={"Are you sure you want to restart this worker? Active requests may be interrupted.".to_string()}
@@ -214,9 +285,32 @@ pub fn Workers() -> Html {
                 cancel_label={None}
             />
 
-            <div class="flex justify-between items-center">
+            <div class="flex flex-wrap justify-between items-center gap-2">
                 <h1 class="text-2xl font-bold">{ "Workers & Supervisor" }</h1>
+                <button
+                    onclick={on_request_batch_restart}
+                    disabled={*restarting_all}
+                    class="px-4 py-2 rounded-lg bg-red-600/20 text-red-400 hover:bg-red-600/30 disabled:opacity-50 transition expand-hit"
+                >
+                    { if *restarting_all { "Restarting all…" } else { "Restart all workers" } }
+                </button>
             </div>
+
+            if let Some(msg) = (*batch_notice).clone() {
+                <div class={classes!(
+                    "rounded-lg",
+                    "p-4",
+                    "border",
+                    "text-sm",
+                    if *batch_notice_is_error {
+                        "bg-red-500/10 border-red-500 text-red-500"
+                    } else {
+                        "bg-green-500/10 border-green-500 text-green-400"
+                    }
+                )}>
+                    { msg }
+                </div>
+            }
 
             if let Some(err) = &*error {
                 <div class="bg-red-500/10 border border-red-500 rounded-lg p-4 text-red-500">
@@ -278,7 +372,7 @@ pub fn Workers() -> Html {
                         // the connector bars rotate to match.
                         <div class="flex flex-col lg:flex-row items-center justify-center gap-3 lg:gap-8">
                             <div class="text-center">
-                                <div class="w-20 h-20 rounded-full bg-blue-600 flex items-center justify-center text-white font-bold text-xs lg:text-sm px-2 text-center leading-tight">
+                                <div class="w-20 h-20 rounded-full bg-action-600 flex items-center justify-center text-white font-bold text-xs lg:text-sm px-2 text-center leading-tight">
                                     { "Supervisor" }
                                 </div>
                                 <p class="text-xs text-secondary mt-2">{ "Process Manager" }</p>

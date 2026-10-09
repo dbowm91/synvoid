@@ -176,8 +176,8 @@ fn ToastItem(props: &ToastItemProps) -> Html {
             warning_icon(),
         ),
         ToastType::Info => (
-            "bg-blue-900/90 border-blue-500",
-            "text-blue-400",
+            "bg-action-900/90 border-action-500",
+            "text-action-400",
             info_icon(),
         ),
     };

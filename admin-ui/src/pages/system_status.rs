@@ -3,6 +3,26 @@ use crate::services::api::ApiService;
 use crate::types::{MasterStatus, MeshAdminStatus, SystemInfo};
 use yew::prelude::*;
 
+/// The exact set the backend accepts (`src/log_controller.rs`), matched
+/// case-insensitively and stored lowercased. Anything else is a 400.
+const LOG_LEVELS: [&str; 5] = ["trace", "debug", "info", "warn", "error"];
+
+/// Extracts the log level from `StatusResponse.message`.
+///
+/// The backend has no dedicated field for it — `GET /config/log-level` returns
+/// `{"status":"success","message":"Current log level: info"}`, so the value
+/// only exists as trailing prose. Returns `None` for any message shape that
+/// does not end in a recognised level, so a future wording change degrades to
+/// "unknown" rather than silently selecting the wrong option.
+fn parse_log_level(message: &str) -> Option<String> {
+    let tail = message.rsplit(':').next()?.trim().to_ascii_lowercase();
+    if LOG_LEVELS.contains(&tail.as_str()) {
+        Some(tail)
+    } else {
+        None
+    }
+}
+
 #[derive(Properties, PartialEq)]
 pub struct SystemStatusProps {
     /// The `/mesh/*` endpoints this page reads are registered behind the
@@ -28,6 +48,13 @@ pub fn SystemStatus(props: &SystemStatusProps) -> Html {
     let deriving_key = use_state(|| false);
     let derive_error = use_state(|| None as Option<String>);
     let derive_success = use_state(|| None as Option<String>);
+
+    // Config operations (`/config/reload`, `GET|PUT /config/log-level`).
+    let reloading_config = use_state(|| false);
+    let saving_log_level = use_state(|| false);
+    let current_log_level = use_state(|| None as Option<String>);
+    let config_notice = use_state(|| None as Option<String>);
+    let config_notice_is_error = use_state(|| false);
 
     {
         let system_info = system_info.clone();
@@ -172,6 +199,108 @@ pub fn SystemStatus(props: &SystemStatusProps) -> Html {
         None
     };
 
+    // Load the current log level once. The backend reports it inside the
+    // prose of `StatusResponse.message` ("Current log level: info") rather
+    // than as a dedicated field, so it has to be parsed out of the string.
+    {
+        let current_log_level = current_log_level.clone();
+
+        use_effect_with((), move |_| {
+            let current_log_level = current_log_level.clone();
+
+            wasm_bindgen_futures::spawn_local(async move {
+                match ApiService::new().get_log_level().await {
+                    Ok(status) => {
+                        current_log_level.set(parse_log_level(&status.message));
+                    }
+                    Err(e) => {
+                        tracing::warn!("failed to read current log level: {}", e);
+                    }
+                }
+            });
+
+            || ()
+        });
+    }
+
+    let on_reload_config = {
+        let reloading_config = reloading_config.clone();
+        let config_notice = config_notice.clone();
+        let config_notice_is_error = config_notice_is_error.clone();
+
+        Callback::from(move |_: MouseEvent| {
+            let reloading_config = reloading_config.clone();
+            let config_notice = config_notice.clone();
+            let config_notice_is_error = config_notice_is_error.clone();
+            reloading_config.set(true);
+            config_notice.set(None);
+
+            wasm_bindgen_futures::spawn_local(async move {
+                match ApiService::new().reload_config().await {
+                    Ok(result) => {
+                        // `POST /config/reload` answers 200 even when it
+                        // deliberately declines to reload (mesh enabled and
+                        // active), still reporting `status: "applied"`.
+                        // Surfacing `message` verbatim is the only way the
+                        // operator can tell the two apart. The mutation target
+                        // is included so a declined reload still names what it
+                        // would have applied.
+                        config_notice.set(Some(format!(
+                            "{} (target: {})",
+                            result.message,
+                            result.target_display()
+                        )));
+                        config_notice_is_error.set(!result.applied());
+                    }
+                    Err(e) => {
+                        config_notice.set(Some(format!("Reload failed: {}", e)));
+                        config_notice_is_error.set(true);
+                    }
+                }
+                reloading_config.set(false);
+            });
+        })
+    };
+
+    let on_log_level_change = {
+        let saving_log_level = saving_log_level.clone();
+        let current_log_level = current_log_level.clone();
+        let config_notice = config_notice.clone();
+        let config_notice_is_error = config_notice_is_error.clone();
+
+        Callback::from(move |e: Event| {
+            let select: web_sys::HtmlSelectElement = e.target_unchecked_into();
+            let level = select.value();
+
+            let saving_log_level = saving_log_level.clone();
+            let current_log_level = current_log_level.clone();
+            let config_notice = config_notice.clone();
+            let config_notice_is_error = config_notice_is_error.clone();
+            saving_log_level.set(true);
+
+            wasm_bindgen_futures::spawn_local(async move {
+                match ApiService::new().set_log_level(&level).await {
+                    Ok(result) => {
+                        if result.applied() {
+                            current_log_level.set(Some(level.clone()));
+                            config_notice.set(Some(result.message.clone()));
+                            config_notice_is_error.set(false);
+                        } else {
+                            config_notice
+                                .set(Some(format!("Log level unchanged ({})", result.status)));
+                            config_notice_is_error.set(true);
+                        }
+                    }
+                    Err(e) => {
+                        config_notice.set(Some(format!("Failed to set log level: {}", e)));
+                        config_notice_is_error.set(true);
+                    }
+                }
+                saving_log_level.set(false);
+            });
+        })
+    };
+
     html! {
         <div class="space-y-6">
             <div class="flex justify-between items-center">
@@ -311,7 +440,7 @@ pub fn SystemStatus(props: &SystemStatusProps) -> Html {
                 <div class="flex items-center justify-center p-4">
                     <div class="flex items-center gap-8">
                         <div class="text-center">
-                            <div class="w-24 h-24 rounded-full bg-blue-600 flex items-center justify-center text-white font-bold text-lg">
+                            <div class="w-24 h-24 rounded-full bg-action-600 flex items-center justify-center text-white font-bold text-lg">
                                 { "Supervisor" }
                             </div>
                             <p class="text-sm text-secondary mt-2">{ "Lifecycle" }</p>
@@ -396,7 +525,7 @@ pub fn SystemStatus(props: &SystemStatusProps) -> Html {
                             <div class="mt-4 pt-3 border-t border-default">
                                 <button
                                     onclick={show_genesis_modal_button.clone().unwrap_or_default()}
-                                    class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+                                    class="px-4 py-2 bg-action-600 hover:bg-action-700 text-white rounded-lg transition-colors"
                                 >
                                     { "Provide Genesis Key" }
                                 </button>
@@ -421,6 +550,73 @@ pub fn SystemStatus(props: &SystemStatusProps) -> Html {
                 }
             </div>
             }
+
+            // ── Config operations ─────────────────────────────────────────
+            // Backs `POST /config/reload` and `GET|PUT /config/log-level`, none
+            // of which had any UI: an operator could edit configuration but
+            // had no way to apply it to the running process or change the log
+            // level at runtime.
+            <div class="bg-secondary rounded-lg border border-default p-6">
+                <h2 class="text-lg font-semibold mb-1">{ "Configuration Operations" }</h2>
+                <p class="text-sm text-secondary mb-4">
+                    { "Apply on-disk configuration to the running process, or change the runtime log level." }
+                </p>
+
+                <div class="flex flex-wrap items-center gap-3">
+                    <button
+                        onclick={on_reload_config}
+                        disabled={*reloading_config}
+                        class="px-4 py-2 bg-action-600 hover:bg-action-700 disabled:bg-action-600/50 text-white rounded-lg transition-colors"
+                    >
+                        { if *reloading_config { "Reloading…" } else { "Reload configuration" } }
+                    </button>
+
+                    <div class="flex items-center gap-2">
+                        <label for="log-level-select" class="text-sm text-secondary">
+                            { "Log level" }
+                        </label>
+                        <select
+                            id="log-level-select"
+                            class="px-3 py-2 bg-tertiary border border-default rounded-lg text-primary text-sm focus:outline-none focus:ring-2 focus:ring-action-500"
+                            onchange={on_log_level_change}
+                        >
+                            { for LOG_LEVELS.iter().map(|level| html! {
+                                <option
+                                    value={*level}
+                                    selected={current_log_level.as_deref() == Some(*level)}
+                                >
+                                    { *level }
+                                </option>
+                            }) }
+                        </select>
+                    </div>
+
+                    if *saving_log_level {
+                        <span class="text-sm text-secondary">{ "Applying…" }</span>
+                    }
+                </div>
+
+                <p class="text-xs text-tertiary mt-3">
+                    { "A reload can legitimately decline to apply anything — with mesh enabled and mesh active the process keeps its running configuration. The result is reported verbatim below." }
+                </p>
+
+                if let Some(msg) = (*config_notice).clone() {
+                    <div class={classes!(
+                        "mt-3",
+                        "p-3",
+                        "rounded-lg",
+                        "text-sm",
+                        "border",
+                        if *config_notice_is_error {
+                            "bg-red-500/10 border-red-500 text-red-400"
+                        } else {
+                            "bg-green-500/10 border-green-500 text-green-400"
+                        }
+                    )}>
+                        { msg }
+                    </div>
+                }
+            </div>
 
             if *show_genesis_modal_for_render {
                 <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
@@ -452,7 +648,7 @@ pub fn SystemStatus(props: &SystemStatusProps) -> Html {
                             <button
                                 onclick={on_provide_genesis_key}
                                 disabled={*deriving_key || genesis_key_input_for_disable.as_ref().map(|h| h.is_empty()).unwrap_or(false)}
-                                class="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-600/50 text-white rounded-lg transition-colors"
+                                class="px-4 py-2 bg-action-600 hover:bg-action-700 disabled:bg-action-600/50 text-white rounded-lg transition-colors"
                             >
                                 { if *deriving_key { "Deriving..." } else { "Derive Signing Key" } }
                             </button>
@@ -461,5 +657,47 @@ pub fn SystemStatus(props: &SystemStatusProps) -> Html {
                 </div>
             }
         </div>
+    }
+}
+
+#[cfg(test)]
+mod config_operation_tests {
+    use super::*;
+
+    /// The wire form is `{ "status": "success", "message": "Current log level: info" }`
+    /// — the level is prose, not a field.
+    #[test]
+    fn log_level_is_parsed_from_the_message_prose() {
+        assert_eq!(
+            parse_log_level("Current log level: info"),
+            Some("info".to_string())
+        );
+        assert_eq!(
+            parse_log_level("Current log level: WARN"),
+            Some("warn".to_string())
+        );
+        assert_eq!(
+            parse_log_level("Current log level: error"),
+            Some("error".to_string())
+        );
+    }
+
+    /// A wording change upstream must degrade to "unknown" rather than
+    /// pre-selecting the wrong level in the dropdown.
+    #[test]
+    fn unrecognised_messages_yield_no_level() {
+        assert_eq!(parse_log_level("something else entirely"), None);
+        assert_eq!(parse_log_level(""), None);
+        // A level-looking word mid-sentence is not a selection.
+        assert_eq!(parse_log_level("failed to read info store"), None);
+    }
+
+    #[test]
+    fn every_offered_level_is_one_the_backend_accepts() {
+        // `set_log_level` 400s on anything outside this set.
+        assert_eq!(LOG_LEVELS.len(), 5);
+        for level in LOG_LEVELS {
+            assert!(parse_log_level(&format!("Current log level: {}", level)).is_some());
+        }
     }
 }

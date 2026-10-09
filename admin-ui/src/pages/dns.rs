@@ -209,7 +209,7 @@ pub fn Dns() -> Html {
                                                     edited_config.set(cfg);
                                                 })
                                             }}
-                                            class="w-4 h-4 rounded border-default bg-tertiary accent-blue-600"
+                                            class="w-4 h-4 rounded border-default bg-tertiary accent-action-600"
                                         />
                                         <span class="text-primary">{ "Enable DNS Server" }</span>
                                     </label>
@@ -229,7 +229,7 @@ pub fn Dns() -> Html {
                                                 edited_config.set(cfg);
                                             })
                                         }}
-                                        class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary focus:outline-none focus:ring-2 focus:ring-action-500"
                                     />
                                 </div>
 
@@ -247,7 +247,7 @@ pub fn Dns() -> Html {
                                                     edited_config.set(cfg);
                                                 })
                                             }}
-                                            class="w-4 h-4 rounded border-default bg-tertiary accent-blue-600"
+                                            class="w-4 h-4 rounded border-default bg-tertiary accent-action-600"
                                         />
                                         <span class="text-primary">{ "Allow Recursive Queries" }</span>
                                     </label>
@@ -267,7 +267,7 @@ pub fn Dns() -> Html {
                                                     edited_config.set(cfg);
                                                 })
                                             }}
-                                            class="w-4 h-4 rounded border-default bg-tertiary accent-blue-600"
+                                            class="w-4 h-4 rounded border-default bg-tertiary accent-action-600"
                                         />
                                         <span class="text-primary">{ "Enable DNSSEC" }</span>
                                     </label>
@@ -291,7 +291,7 @@ pub fn Dns() -> Html {
                                                     edited_config.set(cfg);
                                                 })
                                             }}
-                                            class="w-4 h-4 rounded border-default bg-tertiary accent-blue-600"
+                                            class="w-4 h-4 rounded border-default bg-tertiary accent-action-600"
                                         />
                                         <span class="text-primary">{ "Enable RPZ (Response Policy Zones) — unsupported" }</span>
                                     </label>
@@ -348,7 +348,7 @@ pub fn Dns() -> Html {
                                                 edited_config.set(cfg);
                                             })
                                         }}
-                                        class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary focus:outline-none focus:ring-2 focus:ring-action-500"
                                     />
                                     <p class="mt-1 text-xs text-secondary">{ "Block queries for these top-level domains" }</p>
                                 </div>
@@ -368,7 +368,7 @@ pub fn Dns() -> Html {
                                                 edited_config.set(cfg);
                                             })
                                         }}
-                                        class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary focus:outline-none focus:ring-2 focus:ring-action-500"
                                     />
                                     <p class="mt-1 text-xs text-secondary">{ "Redirect blocked domains to this URL" }</p>
                                 </div>
@@ -391,7 +391,7 @@ pub fn Dns() -> Html {
                         <button
                             onclick={on_save}
                             disabled={*saving}
-                            class="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-600/50 text-white rounded-lg transition-colors"
+                            class="px-4 py-2 bg-action-600 hover:bg-action-700 disabled:bg-action-600/50 text-white rounded-lg transition-colors"
                         >
                             { if *saving { "Saving..." } else { "Save Configuration" } }
                         </button>

@@ -121,6 +121,12 @@
   --accent-primary: #00d4aa;
   --accent-secondary: #00b894;
   --accent-glow: rgba(0, 212, 170, 0.35);
+  --action-300: 147 197 253;
+  --action-400: 96 165 250;
+  --action-500: 59 130 246;
+  --action-600: 37 99 235;
+  --action-700: 29 78 216;
+  --action-900: 30 58 138;
   --text-primary: #f0f0f5;
   --text-secondary: #a8a8bd;
   --text-tertiary: #6b6b80;
@@ -140,6 +146,20 @@
   --text-tertiary: #94a3b8;
 }
 
+/*
+ * The action ramp (blue-300 .. blue-900) backs primary buttons, focus rings,
+ * selected-tab underlines, badge tints and toast chrome.
+ *
+ * These six values exist as RGB *channels*, not colours, because `tailwind.config.js`
+ * declares them as `rgb(var(--action-NNN) / <alpha-value>)` so that the
+ * `/10`, `/20`, `/50` and `/90` opacity variants keep resolving. Writing a
+ * hex colour here would make every tinted badge silently render as fully
+ * opaque.
+ *
+ * The dark and light palettes keep the original blue values so the migration
+ * is appearance-neutral there; the presets below retint it so selecting a
+ * theme no longer leaves blue buttons behind in a green or orange panel.
+ */
 .theme-ocean {
   --bg-primary: #0c1929;
   --bg-secondary: #132f4c;
@@ -149,6 +169,12 @@
   --accent-primary: #0ea5e9;
   --accent-secondary: #38bdf8;
   --accent-glow: rgba(14, 165, 233, 0.35);
+  --action-300: 125 211 252;
+  --action-400: 56 189 248;
+  --action-500: 14 165 233;
+  --action-600: 2 132 199;
+  --action-700: 3 105 161;
+  --action-900: 7 89 133;
   --text-primary: #e3f2fd;
   --text-secondary: #9fb8d0;
   --text-tertiary: #64809e;
@@ -163,6 +189,12 @@
   --accent-primary: #22c55e;
   --accent-secondary: #4ade80;
   --accent-glow: rgba(34, 197, 94, 0.35);
+  --action-300: 134 239 172;
+  --action-400: 74 222 128;
+  --action-500: 34 197 94;
+  --action-600: 22 163 74;
+  --action-700: 21 128 61;
+  --action-900: 20 83 45;
   --text-primary: #e8f5e9;
   --text-secondary: #9fc4ab;
   --text-tertiary: #63856e;
@@ -177,6 +209,12 @@
   --accent-primary: #f97316;
   --accent-secondary: #fb923c;
   --accent-glow: rgba(249, 115, 22, 0.35);
+  --action-300: 253 186 116;
+  --action-400: 251 146 60;
+  --action-500: 249 115 22;
+  --action-600: 234 88 12;
+  --action-700: 194 65 12;
+  --action-900: 124 45 18;
   --text-primary: #fff1ec;
   --text-secondary: #d8b5a5;
   --text-tertiary: #9c7a68;

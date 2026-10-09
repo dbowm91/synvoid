@@ -29,7 +29,7 @@ impl ConfirmType {
         match self {
             ConfirmType::Danger => "bg-red-600 hover:bg-red-700",
             ConfirmType::Warning => "bg-yellow-600 hover:bg-yellow-700",
-            ConfirmType::Primary => "bg-blue-600 hover:bg-blue-700",
+            ConfirmType::Primary => "bg-action-600 hover:bg-action-700",
         }
     }
 }

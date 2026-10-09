@@ -92,7 +92,7 @@ pub fn Login(props: &LoginProps) -> Html {
                     <button
                         type="submit"
                         disabled={is_loading}
-                        class="w-full px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+                        class="w-full px-4 py-3 bg-action-600 text-white rounded-lg hover:bg-action-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
                     >
                         { if is_loading { "Authenticating..." } else { "Login" } }
                     </button>

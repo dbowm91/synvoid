@@ -259,7 +259,7 @@ pub fn Mesh() -> Html {
                                                 edited_config.set(cfg);
                                             })
                                         }}
-                                        class="w-4 h-4 rounded border-default bg-tertiary accent-blue-600"
+                                        class="w-4 h-4 rounded border-default bg-tertiary accent-action-600"
                                     />
                                     <span class="text-primary">{ "Enable Mesh" }</span>
                                 </label>
@@ -279,7 +279,7 @@ pub fn Mesh() -> Html {
                                             edited_config.set(cfg);
                                         })
                                     }}
-                                    class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary focus:outline-none focus:ring-2 focus:ring-action-500"
                                     placeholder="Auto-generated if empty"
                                 />
                             </div>
@@ -298,7 +298,7 @@ pub fn Mesh() -> Html {
                                             edited_config.set(cfg);
                                         })
                                     }}
-                                    class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary focus:outline-none focus:ring-2 focus:ring-action-500"
                                     placeholder="0 (auto)"
                                 />
                             </div>
@@ -317,7 +317,7 @@ pub fn Mesh() -> Html {
                                                 edited_config.set(cfg);
                                             })
                                         }}
-                                        class="w-4 h-4 rounded border-default bg-tertiary accent-blue-600"
+                                        class="w-4 h-4 rounded border-default bg-tertiary accent-action-600"
                                     />
                                     <span class="text-primary">{ "Enable DHT" }</span>
                                 </label>
@@ -329,7 +329,7 @@ pub fn Mesh() -> Html {
                                 <button
                                     onclick={on_save}
                                     disabled={*saving}
-                                    class="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-600/50 text-white rounded-lg transition-colors"
+                                    class="px-4 py-2 bg-action-600 hover:bg-action-700 disabled:bg-action-600/50 text-white rounded-lg transition-colors"
                                 >
                                     { if *saving { "Saving..." } else { "Save Configuration" } }
                                 </button>

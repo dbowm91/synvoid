@@ -61,7 +61,7 @@ pub fn Input(props: &InputProps) -> Html {
                 placeholder={placeholder}
                 oninput={on_change}
                 autocomplete="off"
-                class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary focus:outline-none focus:ring-2 focus:ring-blue-500"
+                class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary focus:outline-none focus:ring-2 focus:ring-action-500"
             />
             if let Some(help_text) = help {
                 <p class="mt-1 text-xs text-secondary">{ help_text }</p>

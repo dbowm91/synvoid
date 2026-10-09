@@ -311,7 +311,7 @@ pub fn TcpUdp() -> Html {
                     </button>
                     <button
                         onclick={toggle_form.clone()}
-                        class="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition"
+                        class="px-4 py-2 rounded-lg bg-action-600 text-white hover:bg-action-700 transition"
                     >
                         { "Add Listener" }
                     </button>
@@ -373,7 +373,7 @@ pub fn TcpUdp() -> Html {
                             <button
                                 onclick={on_create}
                                 disabled={*saving}
-                                class="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
+                                class="px-4 py-2 rounded-lg bg-action-600 text-white hover:bg-action-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
                             >
                                 { if *saving { "Creating..." } else { "Create" } }
                             </button>
@@ -397,7 +397,7 @@ pub fn TcpUdp() -> Html {
                     <p class="text-secondary mb-4">{ "No TCP listeners configured." }</p>
                     <button
                         onclick={toggle_form.clone()}
-                        class="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition"
+                        class="px-4 py-2 rounded-lg bg-action-600 text-white hover:bg-action-700 transition"
                     >
                         { "Add the first listener" }
                     </button>

@@ -10,11 +10,11 @@
          `<link href="styles.css">` is not enough: trunk rebuilds `dist/` from
          scratch on every run and knows nothing about that file, so a bare
          `trunk build` shipped the panel with no stylesheet at all. -->
-    <link rel="stylesheet" href="/styles-93987fd3ea559ebe.css" integrity="sha384-7GHPPU4NluTzecNyoxlhhi+Ka5kR+e/fcuJiYKnXnMXBCtr3r4UfpbwZO58liZ7U"/>
+    <link rel="stylesheet" href="/styles-a20559e44bb1472d.css" integrity="sha384-1RKiOa+J2Gs2Uh2sdMW9cCy03UJKdSTId6A5EKkIA2pqne/tkdJ6+SIm0N7Dah8v"/>
     <!-- Web fonts referenced by the @font-face rules in src/tailwind.css.
          Copied verbatim into dist/ so `url("fonts/…")` resolves at runtime. -->
     
-<link rel="modulepreload" href="/admin-ui-40cd20fe6d93e2f4.js" crossorigin="anonymous" integrity="sha384-cAe5DI3pqvv91dXMQaUT0KxImruwq3NXErhOdxXNUd/653Dv+ukJW4sp61ZTDPmA"><link rel="preload" href="/admin-ui-40cd20fe6d93e2f4_bg.wasm" crossorigin="anonymous" integrity="sha384-+DMV3uy3yGYvn8BBFHBnn2gNIZvxA/OsBEoms4pz7d7v0yAk4HpzqvJl2q8M8QxV" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="/admin-ui-dcf1fe494cda25d0.js" crossorigin="anonymous" integrity="sha384-tm8DGmN67Mq9S+t5W38VNfMavkCSpCyFpAAKJUeZeFdrpJUjT9Es/xBNXtgTmjZw"><link rel="preload" href="/admin-ui-dcf1fe494cda25d0_bg.wasm" crossorigin="anonymous" integrity="sha384-B3t7m5zAbGVaxZ70Ea9xbRaOWHkuQVz3QAB5TUaseyXOA/5JLsZfWU2tCkApGnTu" as="fetch" type="application/wasm"></head>
 <body class="min-h-screen">
     <div id="app">
         <div class="loading-screen">
@@ -25,8 +25,8 @@
     </div>
 
 <script type="module">
-import init, * as bindings from '/admin-ui-40cd20fe6d93e2f4.js';
-const wasm = await init({ module_or_path: '/admin-ui-40cd20fe6d93e2f4_bg.wasm' });
+import init, * as bindings from '/admin-ui-dcf1fe494cda25d0.js';
+const wasm = await init({ module_or_path: '/admin-ui-dcf1fe494cda25d0_bg.wasm' });
 
 
 window.wasmBindings = bindings;

@@ -7,9 +7,9 @@ use crate::components::layout::{Capabilities, Sidebar};
 use crate::components::ToastContainer;
 use crate::hooks::use_theme::*;
 use crate::pages::{
-    Alerts, Dashboard, Dns, Honeypot, Icmp, Login, Logs, Mesh, Probes, ProcessManagement,
-    RequestLogs, Settings, SiteDetail, SiteEditor, Sites, SystemStatus, TcpUdp, ThreatLevel,
-    TierKeys, TrafficShaping, Upstreams, Workers,
+    Alerts, AuditLogs, Dashboard, Dns, ErrorPages, Honeypot, Icmp, Login, Logs, Mesh,
+    Observability, Probes, ProcessManagement, RequestLogs, Settings, SiteDetail, SiteEditor, Sites,
+    SystemStatus, TcpUdp, ThreatLevel, TierKeys, TrafficShaping, Upstreams, Workers,
 };
 use crate::services::api::{set_session_expired_handler, ApiService};
 use crate::types::UpdateThemeRequest;
@@ -28,6 +28,15 @@ pub enum Route {
     Logs,
     #[at("/logs/requests")]
     RequestLogs,
+    // Diagnostics surfaces backed by `/api/observability/*` and
+    // `/api/audit-logs`. Both families are always registered with no runtime
+    // gate, so these stay ungated.
+    #[at("/observability")]
+    Observability,
+    #[at("/audit-logs")]
+    AuditLogs,
+    #[at("/error-pages")]
+    ErrorPages,
     #[at("/upstreams")]
     Upstreams,
     #[at("/sites")]
@@ -380,6 +389,9 @@ fn switch(route: Route, capabilities: Option<Capabilities>) -> Html {
         Route::Home | Route::Dashboard => html! { <Dashboard /> },
         Route::Logs => html! { <Logs /> },
         Route::RequestLogs => html! { <RequestLogs /> },
+        Route::Observability => html! { <Observability /> },
+        Route::AuditLogs => html! { <AuditLogs /> },
+        Route::ErrorPages => html! { <ErrorPages /> },
         Route::Upstreams => html! { <Upstreams /> },
         Route::Sites => html! { <Sites /> },
         Route::TcpUdp => html! { <TcpUdp /> },
@@ -418,6 +430,9 @@ fn switch_unauthenticated(route: Route, on_authenticated: Callback<()>) -> Html 
         | Route::Dashboard
         | Route::Logs
         | Route::RequestLogs
+        | Route::Observability
+        | Route::AuditLogs
+        | Route::ErrorPages
         | Route::Upstreams
         | Route::Sites
         | Route::TcpUdp
@@ -451,6 +466,8 @@ mod tests {
             icmp_admin: true,
             honeypot: true,
             process_manager: true,
+            plugins: true,
+            serverless: true,
         }
     }
 
@@ -474,6 +491,9 @@ mod tests {
             Route::Dashboard,
             Route::Logs,
             Route::RequestLogs,
+            Route::Observability,
+            Route::AuditLogs,
+            Route::ErrorPages,
             Route::Upstreams,
             Route::Sites,
             Route::Probes,

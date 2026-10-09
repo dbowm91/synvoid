@@ -970,19 +970,50 @@ impl ApiService {
         self.put("/config/dns", config).await
     }
 
-    pub async fn validate_config(&self) -> Result<serde_json::Value, ApiError> {
-        self.post("/config/validate", &serde_json::json!({})).await
-    }
-
-    pub async fn export_config(&self) -> Result<serde_json::Value, ApiError> {
-        self.get("/config/export").await
-    }
-
-    pub async fn import_config(
+    /// Pre-flight validation for a `MainConfig` document.
+    ///
+    /// The body must be `{ "config": <MainConfig JSON> }`: the backend holds
+    /// the whole document in a required `config` field and runs
+    /// `serde_json::from_value::<MainConfig>` on it. Sending `{}` passed
+    /// extraction (a missing field on a `serde_json::Value` payload is not a
+    /// shape error at the extractor) but failed the `from_value` with a bare
+    /// 400, so this check rejected every configuration including valid ones.
+    ///
+    /// Returns the raw `{ "valid": bool, "errors": [string] }` body —
+    /// invalidity is a **200**, not an error status, so callers must inspect
+    /// `valid` rather than relying on `Err`.
+    pub async fn validate_config(
         &self,
         config: &serde_json::Value,
     ) -> Result<serde_json::Value, ApiError> {
-        self.post("/config/import", config).await
+        self.post("/config/validate", &serde_json::json!({ "config": config }))
+            .await
+    }
+
+    /// Exports the live configuration.
+    ///
+    /// The backend returns `Result<String, StatusCode>` — a pretty-printed TOML
+    /// document as `text/plain`, not JSON. This therefore must use `get_text`;
+    /// going through `get` asked for JSON, failed to parse the TOML body, and
+    /// turned every export into a "JSON parse error".
+    ///
+    /// `main.admin.token` is cleared server-side before serialization.
+    pub async fn export_config(&self) -> Result<String, ApiError> {
+        self.get_text("/config/export").await
+    }
+
+    /// Imports a full TOML document.
+    ///
+    /// The backend deserializes `ImportConfigRequest { config: String }` and
+    /// runs `toml::from_str` on it, so the payload is TOML *wrapped in a JSON
+    /// string field*. Posting a bare JSON document (the old behaviour) left
+    /// `config` absent, so the request could never succeed.
+    pub async fn import_config(&self, toml_config: &str) -> Result<serde_json::Value, ApiError> {
+        self.post(
+            "/config/import",
+            &serde_json::json!({ "config": toml_config }),
+        )
+        .await
     }
 
     pub async fn get_honeypot_status(&self) -> Result<serde_json::Value, ApiError> {
@@ -1110,6 +1141,199 @@ impl ApiService {
             encode_path_segment(listener_id)
         ))
         .await
+    }
+
+    // ── Observability (`src/admin/handlers/observability.rs`) ──────────────
+    // Always-registered, compile-time feature flags only — no runtime gate.
+
+    pub async fn get_security_observability_summary(
+        &self,
+    ) -> Result<crate::types::SecurityObservabilitySummary, ApiError> {
+        self.get("/observability/security-summary").await
+    }
+
+    pub async fn get_runtime_tasks_diagnostics(
+        &self,
+    ) -> Result<crate::types::RuntimeTasksDiagnostics, ApiError> {
+        self.get("/observability/tasks").await
+    }
+
+    pub async fn get_blocklist_health(
+        &self,
+    ) -> Result<crate::types::BlocklistHealthDiagnostics, ApiError> {
+        self.get("/observability/blocklist-health").await
+    }
+
+    pub async fn get_plugin_diagnostics(
+        &self,
+    ) -> Result<crate::types::PluginDiagnostics, ApiError> {
+        self.get("/observability/plugins").await
+    }
+
+    pub async fn get_features_diagnostics(
+        &self,
+    ) -> Result<crate::types::FeaturesDiagnostics, ApiError> {
+        self.get("/observability/features").await
+    }
+
+    pub async fn get_threat_intel_diagnostics(
+        &self,
+    ) -> Result<crate::types::ThreatIntelDiagnostics, ApiError> {
+        self.get("/observability/threat-intel").await
+    }
+
+    // ── Audit log (`crates/synvoid-admin/src/handlers/logs.rs`) ───────────
+    //
+    // `username` (exact match) and `resource` (substring) are mutually
+    // exclusive upstream: when both are sent, `resource` is silently ignored.
+    // `total` is the unfiltered ring-buffer length and `offset` is dropped
+    // outright whenever a filter is active, so the page paginates from the
+    // returned slice length instead of trusting `has_more`.
+
+    pub async fn get_audit_logs(
+        &self,
+        limit: Option<usize>,
+        offset: Option<usize>,
+        username: Option<&str>,
+        resource: Option<&str>,
+    ) -> Result<crate::types::AuditLogsResponse, ApiError> {
+        let mut params = Vec::new();
+        if let Some(limit) = limit {
+            params.push(format!("limit={}", limit));
+        }
+        if let Some(offset) = offset {
+            params.push(format!("offset={}", offset));
+        }
+        if let Some(username) = username {
+            params.push(format!("username={}", encode_query_value(username)));
+        }
+        if let Some(resource) = resource {
+            params.push(format!("resource={}", encode_query_value(resource)));
+        }
+        let path = if params.is_empty() {
+            "/audit-logs".to_string()
+        } else {
+            format!("/audit-logs?{}", params.join("&"))
+        };
+        self.get(&path).await
+    }
+
+    // ── Error pages (`crates/synvoid-admin/src/handlers/logs.rs`) ─────────
+    //
+    // `list_error_pages` returns a BARE JSON array, not an envelope. Codes
+    // outside the fixed 400/403/404/429/500/502/503 table 404.
+
+    pub async fn list_error_pages(&self) -> Result<Vec<crate::types::ErrorPageResponse>, ApiError> {
+        self.get("/error-pages").await
+    }
+
+    pub async fn get_error_page(
+        &self,
+        code: u16,
+    ) -> Result<crate::types::ErrorPageResponse, ApiError> {
+        self.get(&format!("/error-pages/{}", code)).await
+    }
+
+    /// Writes the custom HTML for a status code.
+    ///
+    /// Returns an `AdminMutationResult` whose `target` is the numeric code,
+    /// and is audited as `update_error_page` on `error_page:{code}`.
+    pub async fn update_error_page(
+        &self,
+        code: u16,
+        content: &str,
+        title: Option<&str>,
+    ) -> Result<crate::types::AdminMutationResult, ApiError> {
+        let request = crate::types::UpdateErrorPageRequest {
+            title: title.map(|t| t.to_string()),
+            message: None,
+            content: Some(content.to_string()),
+        };
+        self.put(&format!("/error-pages/{}", code), &request).await
+    }
+
+    // ── Config operations (`src/admin/handlers/config.rs`) ────────────────
+
+    /// Applies the on-disk configuration to the running process.
+    ///
+    /// Returns 200 even when it deliberately declined: with the `mesh` feature
+    /// enabled and `main.mesh.enabled == true` the handler short-circuits and
+    /// reports "not supported" in `message` while still returning
+    /// `status: "applied"`. Callers must surface `message`.
+    pub async fn reload_config(&self) -> Result<crate::types::AdminMutationResult, ApiError> {
+        self.post("/config/reload", &serde_json::json!({})).await
+    }
+
+    /// Current log level.
+    ///
+    /// The backend returns `{ "status", "message" }` where the level is embedded
+    /// **in the prose of `message`** ("Current log level: info") — there is no
+    /// dedicated field to read.
+    pub async fn get_log_level(&self) -> Result<crate::types::StatusResponse, ApiError> {
+        self.get("/config/log-level").await
+    }
+
+    /// Sets the log level. Valid values are `trace`, `debug`, `info`, `warn`,
+    /// `error` (matched case-insensitively); anything else is a 400.
+    pub async fn set_log_level(
+        &self,
+        level: &str,
+    ) -> Result<crate::types::AdminMutationResult, ApiError> {
+        self.put("/config/log-level", &serde_json::json!({ "level": level }))
+            .await
+    }
+
+    // ── Probes (`crates/synvoid-admin/src/handlers/probes.rs`) ─────────────
+
+    /// Blocks one or more probe source addresses.
+    ///
+    /// `duration` is free-form: the handler takes the leading digit run and
+    /// applies an `s`/`m`/`h`/`d`/`w` suffix multiplier. **A string with no
+    /// parseable digits yields `0` seconds — a permanent ban** — so the UI
+    /// never sends an empty or unit-less value.
+    pub async fn block_probes(
+        &self,
+        ips: &[String],
+        duration: &str,
+    ) -> Result<crate::types::AdminMutationResult, ApiError> {
+        self.post(
+            "/probes/block",
+            &serde_json::json!({ "ips": ips, "duration": duration }),
+        )
+        .await
+    }
+
+    pub async fn delete_probe(
+        &self,
+        ip: &str,
+    ) -> Result<crate::types::AdminMutationResult, ApiError> {
+        self.delete(&format!("/probes/{}", encode_path_segment(ip)))
+            .await
+    }
+
+    pub async fn delete_suspicious_word(
+        &self,
+        ip: &str,
+    ) -> Result<crate::types::AdminMutationResult, ApiError> {
+        self.delete(&format!("/probes/words/{}", encode_path_segment(ip)))
+            .await
+    }
+
+    pub async fn delete_upstream_error(
+        &self,
+        ip: &str,
+    ) -> Result<crate::types::AdminMutationResult, ApiError> {
+        self.delete(&format!("/probes/upstream/{}", encode_path_segment(ip)))
+            .await
+    }
+
+    /// Restarts every worker process at once.
+    ///
+    /// Returns an `AdminMutationResult` targeting `"worker_batch"`; `message`
+    /// carries the per-worker outcome.
+    pub async fn restart_all_workers(&self) -> Result<crate::types::AdminMutationResult, ApiError> {
+        self.post("/system/workers/batch-restart", &serde_json::json!({}))
+            .await
     }
 }
 

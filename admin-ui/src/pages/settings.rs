@@ -115,14 +115,19 @@ macro_rules! bytes {
     };
 }
 
-fn export_config_to_file(json: &str) {
-    let blob = web_sys::Blob::new_with_str_sequence(&js_sys::Array::of1(&json.into())).unwrap();
+/// Writes the exported configuration to a download.
+///
+/// The payload is the raw TOML document the backend serialises, so it is
+/// written verbatim under a `.toml` name — re-encoding it as JSON would
+/// produce a file the import endpoint cannot parse.
+fn export_config_to_file(toml: &str) {
+    let blob = web_sys::Blob::new_with_str_sequence(&js_sys::Array::of1(&toml.into())).unwrap();
     let url = web_sys::Url::create_object_url_with_blob(&blob).unwrap();
     let window = web_sys::window().unwrap();
     let document = window.document().unwrap();
     let a = document.create_element("a").unwrap();
     a.set_attribute("href", &url).unwrap();
-    a.set_attribute("download", "synvoid-config.json").unwrap();
+    a.set_attribute("download", "synvoid-config.toml").unwrap();
     let _ = a.dispatch_event(&web_sys::MouseEvent::new("click").unwrap());
 }
 
@@ -475,10 +480,8 @@ pub fn Settings(props: &SettingsProps) -> Html {
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
                 match api.export_config().await {
-                    Ok(data) => {
-                        let json = serde_json::to_string_pretty(&data)
-                            .unwrap_or_else(|_| "{}".to_string());
-                        export_config_to_file(&json);
+                    Ok(toml) => {
+                        export_config_to_file(&toml);
                         toast_success("Configuration exported");
                     }
                     Err(e) => {
@@ -502,7 +505,7 @@ pub fn Settings(props: &SettingsProps) -> Html {
                 .dyn_into()
                 .unwrap();
             input.set_type("file");
-            input.set_accept(".json");
+            input.set_accept(".toml,application/toml,text/plain");
 
             let importing_clone = importing.clone();
             let input_clone = input.clone();
@@ -521,14 +524,16 @@ pub fn Settings(props: &SettingsProps) -> Html {
                                 let importing = importing.clone();
                                 wasm_bindgen_futures::spawn_local(async move {
                                     let api = ApiService::new();
-                                    match serde_json::from_str::<serde_json::Value>(&text) {
-                                        Ok(config) => match api.import_config(&config).await {
-                                            Ok(_) => {
-                                                toast_success("Configuration imported successfully")
-                                            }
-                                            Err(e) => toast_error(&format!("Import failed: {}", e)),
-                                        },
-                                        Err(e) => toast_error(&format!("Invalid JSON: {}", e)),
+                                    // The import endpoint takes the TOML
+                                    // document as a string field and re-parses
+                                    // it server-side, so the file text is
+                                    // forwarded as-is rather than being parsed
+                                    // as JSON in the browser.
+                                    match api.import_config(&text).await {
+                                        Ok(_) => {
+                                            toast_success("Configuration imported successfully")
+                                        }
+                                        Err(e) => toast_error(&format!("Import failed: {}", e)),
                                     }
                                     importing.set(false);
                                 });
@@ -588,7 +593,7 @@ pub fn Settings(props: &SettingsProps) -> Html {
                                 show_search_results.set(true);
                             })
                         }}
-                        class="w-full px-4 py-2 pl-10 bg-tertiary border border-default rounded-lg text-primary focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        class="w-full px-4 py-2 pl-10 bg-tertiary border border-default rounded-lg text-primary focus:outline-none focus:ring-2 focus:ring-action-500"
                     />
                     <svg class="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -777,7 +782,7 @@ fn SectionButton(props: &SectionButtonProps) -> Html {
     };
 
     let class = if props.active {
-        "inline-block w-auto whitespace-nowrap px-4 py-3 text-primary bg-tertiary border-b-2 border-blue-500 shrink-0 md:block md:w-full md:border-b-0 md:border-l-2"
+        "inline-block w-auto whitespace-nowrap px-4 py-3 text-primary bg-tertiary border-b-2 border-action-500 shrink-0 md:block md:w-full md:border-b-0 md:border-l-2"
     } else {
         "inline-block w-auto whitespace-nowrap px-4 py-3 text-secondary hover:text-primary hover:bg-tertiary shrink-0 md:block md:w-full"
     };
@@ -909,8 +914,33 @@ fn ServerSection() -> Html {
             saving.set(true);
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
-                match api.validate_config().await {
-                    Ok(_) => {}
+                match api.validate_config(&new_config).await {
+                    Ok(result) => {
+                        // Invalid config is a 200 with `valid: false`, not an
+                        // error status — the previous call ignored the body
+                        // entirely, so a rejected document would still have
+                        // been sent to `update_main_config`.
+                        let valid = result
+                            .get("valid")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        if !valid {
+                            let errors = result
+                                .get("errors")
+                                .and_then(|e| e.as_array())
+                                .map(|items| {
+                                    items
+                                        .iter()
+                                        .filter_map(|i| i.as_str())
+                                        .collect::<Vec<_>>()
+                                        .join("; ")
+                                })
+                                .unwrap_or_else(|| "configuration rejected".to_string());
+                            saving.set(false);
+                            toast_error(&format!("Validation failed: {}", errors));
+                            return;
+                        }
+                    }
                     Err(e) => {
                         saving.set(false);
                         toast_error(&format!("Validation failed: {}", e));
@@ -973,7 +1003,7 @@ fn ServerSection() -> Html {
                     class={if is_dirty {
                         "px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50"
                     } else {
-                        "px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                        "px-4 py-2 bg-action-600 text-white rounded-lg hover:bg-action-700 disabled:opacity-50"
                     }}
                 >
                     { if *saving { "Saving..." } else if is_dirty { "Save*" } else { "Save" } }
@@ -1209,7 +1239,7 @@ fn HttpSection() -> Html {
                     class={if is_dirty {
                         "px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50"
                     } else {
-                        "px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                        "px-4 py-2 bg-action-600 text-white rounded-lg hover:bg-action-700 disabled:opacity-50"
                     }}
                 >
                     { if *saving { "Saving..." } else if is_dirty { "Save*" } else { "Save" } }
@@ -1420,7 +1450,7 @@ fn LoggingSection() -> Html {
                     class={if is_dirty {
                         "px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50"
                     } else {
-                        "px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                        "px-4 py-2 bg-action-600 text-white rounded-lg hover:bg-action-700 disabled:opacity-50"
                     }}
                 >
                     { if *saving { "Saving..." } else if is_dirty { "Save*" } else { "Save" } }
@@ -1545,7 +1575,7 @@ fn MetricsSection() -> Html {
                     role="switch"
                     aria-checked={if *metrics_enabled { "true" } else { "false" }}
                     aria-label="Enable Metrics"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *metrics_enabled { "bg-blue-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *metrics_enabled { "bg-action-600" } else { "bg-gray-600" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *metrics_enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -1568,7 +1598,7 @@ fn MetricsSection() -> Html {
                     class={if is_dirty {
                         "px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50"
                     } else {
-                        "px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                        "px-4 py-2 bg-action-600 text-white rounded-lg hover:bg-action-700 disabled:opacity-50"
                     }}
                 >
                     { if *saving { "Saving..." } else if is_dirty { "Save*" } else { "Save" } }
@@ -1708,7 +1738,7 @@ fn IpFeedsSection() -> Html {
                     role="switch"
                     aria-checked={if *enabled { "true" } else { "false" }}
                     aria-label="Enable IP Feeds"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-blue-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-action-600" } else { "bg-gray-600" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -1765,7 +1795,7 @@ fn IpFeedsSection() -> Html {
                     class={if is_dirty {
                         "px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50"
                     } else {
-                        "px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                        "px-4 py-2 bg-action-600 text-white rounded-lg hover:bg-action-700 disabled:opacity-50"
                     }}
                 >
                     { if *saving { "Saving..." } else if is_dirty { "Save*" } else { "Save" } }
@@ -1891,7 +1921,7 @@ fn TlsSection() -> Html {
                     role="switch"
                     aria-checked={if *enabled { "true" } else { "false" }}
                     aria-label="Enable TLS"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-blue-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-action-600" } else { "bg-gray-600" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -1946,7 +1976,7 @@ fn TlsSection() -> Html {
                         role="switch"
                         aria-checked={if *prefer_post_quantum { "true" } else { "false" }}
                         aria-label="Prefer Post-Quantum"
-                        class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *prefer_post_quantum { "bg-blue-600" } else { "bg-gray-600" })}
+                        class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *prefer_post_quantum { "bg-action-600" } else { "bg-gray-600" })}
                     >
                         <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *prefer_post_quantum { "translate-x-5" } else { "translate-x-0" })} />
                     </button>
@@ -1969,7 +1999,7 @@ fn TlsSection() -> Html {
                 <button
                     onclick={on_save}
                     disabled={*saving}
-                    class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                    class="px-4 py-2 bg-action-600 text-white rounded-lg hover:bg-action-700 disabled:opacity-50"
                 >
                     { if *saving { "Saving..." } else { "Save" } }
                 </button>
@@ -2093,7 +2123,7 @@ fn AcmeSection() -> Html {
                     role="switch"
                     aria-checked={if *enabled { "true" } else { "false" }}
                     aria-label="Enable ACME"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-blue-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-action-600" } else { "bg-gray-600" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -2149,7 +2179,7 @@ fn AcmeSection() -> Html {
                         role="switch"
                         aria-checked={if *staging { "true" } else { "false" }}
                         aria-label="Staging Mode"
-                        class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *staging { "bg-blue-600" } else { "bg-gray-600" })}
+                        class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *staging { "bg-action-600" } else { "bg-gray-600" })}
                     >
                         <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *staging { "translate-x-5" } else { "translate-x-0" })} />
                     </button>
@@ -2170,7 +2200,7 @@ fn AcmeSection() -> Html {
                         role="switch"
                         aria-checked={if *terms_of_service_agreed { "true" } else { "false" }}
                         aria-label="Agree to Terms of Service"
-                        class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *terms_of_service_agreed { "bg-blue-600" } else { "bg-gray-600" })}
+                        class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *terms_of_service_agreed { "bg-action-600" } else { "bg-gray-600" })}
                     >
                         <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *terms_of_service_agreed { "translate-x-5" } else { "translate-x-0" })} />
                     </button>
@@ -2181,7 +2211,7 @@ fn AcmeSection() -> Html {
                 <button
                     onclick={on_save}
                     disabled={*saving}
-                    class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                    class="px-4 py-2 bg-action-600 text-white rounded-lg hover:bg-action-700 disabled:opacity-50"
                 >
                     { if *saving { "Saving..." } else { "Save" } }
                 </button>
@@ -2287,7 +2317,7 @@ fn Http3Section() -> Html {
                     role="switch"
                     aria-checked={if *enabled { "true" } else { "false" }}
                     aria-label="Enable HTTP/3 (QUIC)"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-blue-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-action-600" } else { "bg-gray-600" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -2334,7 +2364,7 @@ fn Http3Section() -> Html {
                 <button
                     onclick={on_save}
                     disabled={*saving}
-                    class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                    class="px-4 py-2 bg-action-600 text-white rounded-lg hover:bg-action-700 disabled:opacity-50"
                 >
                     { if *saving { "Saving..." } else { "Save" } }
                 </button>
@@ -2734,7 +2764,7 @@ fn RateLimitsSection() -> Html {
                     class={if is_dirty {
                         "px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50"
                     } else {
-                        "px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                        "px-4 py-2 bg-action-600 text-white rounded-lg hover:bg-action-700 disabled:opacity-50"
                     }}
                 >
                     { if *saving { "Saving..." } else if is_dirty { "Save*" } else { "Save" } }
@@ -3007,7 +3037,7 @@ fn BandwidthSection() -> Html {
                     class={if is_dirty {
                         "px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50"
                     } else {
-                        "px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                        "px-4 py-2 bg-action-600 text-white rounded-lg hover:bg-action-700 disabled:opacity-50"
                     }}
                 >
                     { if *saving { "Saving..." } else if is_dirty { "Save*" } else { "Save" } }
@@ -3158,7 +3188,7 @@ fn BotSection() -> Html {
                     role="switch"
                     aria-checked={if *block_ai_crawlers { "true" } else { "false" }}
                     aria-label="Block AI Crawlers"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *block_ai_crawlers { "bg-blue-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *block_ai_crawlers { "bg-action-600" } else { "bg-gray-600" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *block_ai_crawlers { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -3179,7 +3209,7 @@ fn BotSection() -> Html {
                     role="switch"
                     aria-checked={if *enable_css_honeypot { "true" } else { "false" }}
                     aria-label="Enable CSS Honeypot"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enable_css_honeypot { "bg-blue-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enable_css_honeypot { "bg-action-600" } else { "bg-gray-600" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *enable_css_honeypot { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -3200,7 +3230,7 @@ fn BotSection() -> Html {
                     role="switch"
                     aria-checked={if *enable_js_challenge { "true" } else { "false" }}
                     aria-label="Enable JS Challenge"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enable_js_challenge { "bg-blue-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enable_js_challenge { "bg-action-600" } else { "bg-gray-600" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *enable_js_challenge { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -3222,7 +3252,7 @@ fn BotSection() -> Html {
                     class={if is_dirty {
                         "px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50"
                     } else {
-                        "px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                        "px-4 py-2 bg-action-600 text-white rounded-lg hover:bg-action-700 disabled:opacity-50"
                     }}
                 >
                     { if *saving { "Saving..." } else if is_dirty { "Save*" } else { "Save" } }
@@ -3432,7 +3462,7 @@ fn TarpitSection() -> Html {
                     role="switch"
                     aria-checked={if *enabled { "true" } else { "false" }}
                     aria-label="Enable Tarpit"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-blue-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-action-600" } else { "bg-gray-600" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -3495,7 +3525,7 @@ fn TarpitSection() -> Html {
                     class={if is_dirty {
                         "px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50"
                     } else {
-                        "px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                        "px-4 py-2 bg-action-600 text-white rounded-lg hover:bg-action-700 disabled:opacity-50"
                     }}
                 >
                     { if *saving { "Saving..." } else if is_dirty { "Save*" } else { "Save" } }
@@ -3674,7 +3704,7 @@ fn UploadSection() -> Html {
                     role="switch"
                     aria-checked={if *scan_with_yara { "true" } else { "false" }}
                     aria-label="Scan with YARA"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *scan_with_yara { "bg-blue-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *scan_with_yara { "bg-action-600" } else { "bg-gray-600" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *scan_with_yara { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -3695,7 +3725,7 @@ fn UploadSection() -> Html {
                     role="switch"
                     aria-checked={if *sandbox_enabled { "true" } else { "false" }}
                     aria-label="Sandbox Files"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *sandbox_enabled { "bg-blue-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *sandbox_enabled { "bg-action-600" } else { "bg-gray-600" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *sandbox_enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -3708,7 +3738,7 @@ fn UploadSection() -> Html {
                     class={if is_dirty {
                         "px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50"
                     } else {
-                        "px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                        "px-4 py-2 bg-action-600 text-white rounded-lg hover:bg-action-700 disabled:opacity-50"
                     }}
                 >
                     { if *saving { "Saving..." } else if is_dirty { "Save*" } else { "Save" } }
@@ -4001,7 +4031,7 @@ fn ThemeSection() -> Html {
                     class={if is_dirty {
                         "px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50"
                     } else {
-                        "px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                        "px-4 py-2 bg-action-600 text-white rounded-lg hover:bg-action-700 disabled:opacity-50"
                     }}
                 >
                     { if *saving { "Saving..." } else if is_dirty { "Save Changes*" } else { "Save Changes" } }
@@ -4163,7 +4193,7 @@ fn SecuritySection() -> Html {
                     role="switch"
                     aria-checked={if *global_security_headers { "true" } else { "false" }}
                     aria-label="Global Security Headers"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *global_security_headers { "bg-blue-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *global_security_headers { "bg-action-600" } else { "bg-gray-600" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *global_security_headers { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -4184,7 +4214,7 @@ fn SecuritySection() -> Html {
                     role="switch"
                     aria-checked={if *sanitize_forwarded_headers { "true" } else { "false" }}
                     aria-label="Sanitize Forwarded Headers"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *sanitize_forwarded_headers { "bg-blue-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *sanitize_forwarded_headers { "bg-action-600" } else { "bg-gray-600" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *sanitize_forwarded_headers { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -4205,7 +4235,7 @@ fn SecuritySection() -> Html {
                     role="switch"
                     aria-checked={if *ipc_enforce_signing { "true" } else { "false" }}
                     aria-label="IPC Enforce Signing"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *ipc_enforce_signing { "bg-blue-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *ipc_enforce_signing { "bg-action-600" } else { "bg-gray-600" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *ipc_enforce_signing { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -4226,7 +4256,7 @@ fn SecuritySection() -> Html {
                     role="switch"
                     aria-checked={if *allow_insecure_ipc_key { "true" } else { "false" }}
                     aria-label="Allow Insecure IPC Key"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *allow_insecure_ipc_key { "bg-blue-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *allow_insecure_ipc_key { "bg-action-600" } else { "bg-gray-600" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *allow_insecure_ipc_key { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -4247,7 +4277,7 @@ fn SecuritySection() -> Html {
                     class={if is_dirty {
                         "px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50"
                     } else {
-                        "px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                        "px-4 py-2 bg-action-600 text-white rounded-lg hover:bg-action-700 disabled:opacity-50"
                     }}
                 >
                     { if *saving { "Saving..." } else if is_dirty { "Save*" } else { "Save" } }
@@ -4385,7 +4415,7 @@ fn TunnelSection() -> Html {
                     role="switch"
                     aria-checked={if *enabled { "true" } else { "false" }}
                     aria-label="Enable Tunnel"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-blue-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-action-600" } else { "bg-gray-600" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -4406,7 +4436,7 @@ fn TunnelSection() -> Html {
                     role="switch"
                     aria-checked={if *vpn_enabled { "true" } else { "false" }}
                     aria-label="WireGuard VPN"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *vpn_enabled { "bg-blue-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *vpn_enabled { "bg-action-600" } else { "bg-gray-600" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *vpn_enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -4427,7 +4457,7 @@ fn TunnelSection() -> Html {
                     role="switch"
                     aria-checked={if *quic_enabled { "true" } else { "false" }}
                     aria-label="QUIC Tunnel"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *quic_enabled { "bg-blue-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *quic_enabled { "bg-action-600" } else { "bg-gray-600" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *quic_enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -4452,7 +4482,7 @@ fn TunnelSection() -> Html {
                     class={if is_dirty {
                         "px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50"
                     } else {
-                        "px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                        "px-4 py-2 bg-action-600 text-white rounded-lg hover:bg-action-700 disabled:opacity-50"
                     }}
                 >
                     { if *saving { "Saving..." } else if is_dirty { "Save*" } else { "Save" } }
@@ -4614,7 +4644,7 @@ fn PluginsSection() -> Html {
                     class={if is_dirty {
                         "px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50"
                     } else {
-                        "px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                        "px-4 py-2 bg-action-600 text-white rounded-lg hover:bg-action-700 disabled:opacity-50"
                     }}
                 >
                     { if *saving { "Saving..." } else if is_dirty { "Save*" } else { "Save" } }
@@ -5251,7 +5281,7 @@ fn MimeTypesSection() -> Html {
                     role="switch"
                     aria-checked={if *enabled { "true" } else { "false" }}
                     aria-label="Enable Custom MIME Types"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-blue-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-action-600" } else { "bg-gray-600" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -5272,7 +5302,7 @@ fn MimeTypesSection() -> Html {
                     class={if is_dirty {
                         "px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50"
                     } else {
-                        "px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                        "px-4 py-2 bg-action-600 text-white rounded-lg hover:bg-action-700 disabled:opacity-50"
                     }}
                 >
                     { if *saving { "Saving..." } else if is_dirty { "Save*" } else { "Save" } }
@@ -5670,7 +5700,7 @@ fn TcpUdpDefaultsSection() -> Html {
                     role="switch"
                     aria-checked={if *tcp_enabled { "true" } else { "false" }}
                     aria-label="Enable TCP Proxy"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *tcp_enabled { "bg-blue-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *tcp_enabled { "bg-action-600" } else { "bg-gray-600" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *tcp_enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -5687,7 +5717,7 @@ fn TcpUdpDefaultsSection() -> Html {
                         role="switch"
                         aria-checked={if *tcp_nodelay { "true" } else { "false" }}
                         aria-label="TCP Nodelay"
-                        class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *tcp_nodelay { "bg-blue-600" } else { "bg-gray-600" })}
+                        class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *tcp_nodelay { "bg-action-600" } else { "bg-gray-600" })}
                     >
                         <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *tcp_nodelay { "translate-x-5" } else { "translate-x-0" })} />
                     </button>
@@ -5724,7 +5754,7 @@ fn TcpUdpDefaultsSection() -> Html {
                     role="switch"
                     aria-checked={if *udp_enabled { "true" } else { "false" }}
                     aria-label="Enable UDP Proxy"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *udp_enabled { "bg-blue-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *udp_enabled { "bg-action-600" } else { "bg-gray-600" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *udp_enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -5751,7 +5781,7 @@ fn TcpUdpDefaultsSection() -> Html {
                     class={if is_dirty {
                         "px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50"
                     } else {
-                        "px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                        "px-4 py-2 bg-action-600 text-white rounded-lg hover:bg-action-700 disabled:opacity-50"
                     }}
                 >
                     { if *saving { "Saving..." } else if is_dirty { "Save*" } else { "Save" } }
@@ -5901,7 +5931,7 @@ fn FallbackSection() -> Html {
                     class={if is_dirty {
                         "px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50"
                     } else {
-                        "px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                        "px-4 py-2 bg-action-600 text-white rounded-lg hover:bg-action-700 disabled:opacity-50"
                     }}
                 >
                     { if *saving { "Saving..." } else if is_dirty { "Save*" } else { "Save" } }
@@ -6250,7 +6280,7 @@ fn UpgradeSection() -> Html {
                     class={if is_dirty {
                         "px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50"
                     } else {
-                        "px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                        "px-4 py-2 bg-action-600 text-white rounded-lg hover:bg-action-700 disabled:opacity-50"
                     }}
                 >
                     { if *saving { "Saving..." } else if is_dirty { "Save*" } else { "Save" } }

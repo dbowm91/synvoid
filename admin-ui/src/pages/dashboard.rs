@@ -684,7 +684,7 @@ fn WindowButton(props: &WindowButtonProps) -> Html {
     };
 
     let class = if props.active {
-        "px-4 py-2 bg-blue-600 text-white rounded-lg text-sm"
+        "px-4 py-2 bg-action-600 text-white rounded-lg text-sm"
     } else {
         "px-4 py-2 bg-tertiary text-secondary rounded-lg hover:text-primary text-sm"
     };

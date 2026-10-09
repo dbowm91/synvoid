@@ -117,7 +117,7 @@ pub fn HelpIcon(props: &HelpIconProps) -> Html {
                 tabindex="0"
                 role="button"
                 aria-label={format!("Help: {}", props.content)}
-                class="ml-1 inline-flex items-center justify-center w-5 h-5 rounded-full bg-tertiary text-secondary text-xs cursor-help hover:bg-blue-600 hover:text-white transition-colors expand-hit"
+                class="ml-1 inline-flex items-center justify-center w-5 h-5 rounded-full bg-tertiary text-secondary text-xs cursor-help hover:bg-action-600 hover:text-white transition-colors expand-hit"
             >
                 {"?"}
             </span>

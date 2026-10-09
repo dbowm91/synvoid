@@ -40,7 +40,7 @@ pub fn Toggle(props: &ToggleProps) -> Html {
     };
 
     let bg_class = if *enabled {
-        "bg-blue-600"
+        "bg-action-600"
     } else {
         "bg-gray-600"
     };
@@ -88,7 +88,7 @@ pub fn Toggle(props: &ToggleProps) -> Html {
                                 tabindex="0"
                                 role="button"
                                 aria-label={format!("Help: {}", content)}
-                                class="inline-flex items-center justify-center w-4 h-4 rounded-full bg-tertiary text-secondary text-xs cursor-help hover:bg-blue-600 hover:text-white transition-colors expand-hit"
+                                class="inline-flex items-center justify-center w-4 h-4 rounded-full bg-tertiary text-secondary text-xs cursor-help hover:bg-action-600 hover:text-white transition-colors expand-hit"
                             >
                                 {"?"}
                             </span>
@@ -172,7 +172,7 @@ pub fn InputWithTooltip(props: &InputWithTooltipProps) -> Html {
                             tabindex="0"
                             role="button"
                             aria-label={format!("Help: {}", content)}
-                            class="inline-flex items-center justify-center w-4 h-4 rounded-full bg-tertiary text-secondary text-xs cursor-help hover:bg-blue-600 hover:text-white transition-colors expand-hit"
+                            class="inline-flex items-center justify-center w-4 h-4 rounded-full bg-tertiary text-secondary text-xs cursor-help hover:bg-action-600 hover:text-white transition-colors expand-hit"
                         >
                             {"?"}
                         </span>
@@ -190,7 +190,7 @@ pub fn InputWithTooltip(props: &InputWithTooltipProps) -> Html {
                 max={props.max.clone()}
                 disabled={props.disabled}
                 class={format!(
-                    "w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary focus:outline-none focus:ring-2 focus:ring-blue-500 {}",
+                    "w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary focus:outline-none focus:ring-2 focus:ring-action-500 {}",
                     if props.disabled { "opacity-50 cursor-not-allowed" } else { "" }
                 )}
             />
@@ -254,7 +254,7 @@ pub fn SelectWithTooltip(props: &SelectWithTooltipProps) -> Html {
                             tabindex="0"
                             role="button"
                             aria-label={format!("Help: {}", content)}
-                            class="inline-flex items-center justify-center w-4 h-4 rounded-full bg-tertiary text-secondary text-xs cursor-help hover:bg-blue-600 hover:text-white transition-colors expand-hit"
+                            class="inline-flex items-center justify-center w-4 h-4 rounded-full bg-tertiary text-secondary text-xs cursor-help hover:bg-action-600 hover:text-white transition-colors expand-hit"
                         >
                             {"?"}
                         </span>
@@ -268,7 +268,7 @@ pub fn SelectWithTooltip(props: &SelectWithTooltipProps) -> Html {
                 onchange={on_change}
                 disabled={props.disabled}
                 class={format!(
-                    "w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary focus:outline-none focus:ring-2 focus:ring-blue-500 {}",
+                    "w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary focus:outline-none focus:ring-2 focus:ring-action-500 {}",
                     if props.disabled { "opacity-50 cursor-not-allowed" } else { "" }
                 )}
             >

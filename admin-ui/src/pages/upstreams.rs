@@ -152,13 +152,13 @@ pub fn Upstreams() -> Html {
                                 filter.set(input.value());
                             })
                         }}
-                        class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary focus:outline-none focus:ring-2 focus:ring-action-500"
                     />
                 </div>
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
                     <div class="bg-secondary rounded-lg border border-default p-4">
                         <div class="flex items-center gap-3">
-                            <div class="p-3 rounded-lg bg-blue-500/10 text-blue-500">
+                            <div class="p-3 rounded-lg bg-action-500/10 text-action-500">
                                 <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01" />
                                 </svg>
@@ -214,7 +214,7 @@ pub fn Upstreams() -> Html {
                                             </p>
                                         </div>
                                         <button
-                                            class="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+                                            class="px-3 py-1 text-xs bg-action-600 text-white rounded hover:bg-action-700 disabled:opacity-50"
                                             disabled={(*checking).is_some()}
                                             onclick={health_check(site.site_id.clone())}
                                         >

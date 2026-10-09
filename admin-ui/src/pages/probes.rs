@@ -1,3 +1,5 @@
+use crate::components::confirm_dialog::{ConfirmDialog, ConfirmType};
+use crate::components::toast::{toast_error, toast_success};
 use crate::services::api::ApiService;
 use yew::prelude::*;
 
@@ -86,6 +88,14 @@ fn HoneypotProbes() -> Html {
     let probes = use_state(Vec::<HoneypotProbe>::new);
     let stats = use_state(|| None as Option<HoneypotProbeStats>);
     let loading = use_state(|| true);
+    // Block controls. `duration` defaults to a suffixed value on purpose: the
+    // backend parses the leading digit run, and a string with no digits
+    // resolves to 0 seconds — a *permanent* ban.
+    let block_duration = use_state(|| String::from("24h"));
+    let pending_block = use_state(|| None as Option<String>);
+    let blocking = use_state(|| false);
+    let pending_remove = use_state(|| None as Option<String>);
+    let removing = use_state(|| false);
 
     {
         let probes = probes.clone();
@@ -124,6 +134,100 @@ fn HoneypotProbes() -> Html {
         chrono::DateTime::from_timestamp(ts as i64, 0)
             .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
             .unwrap_or_else(|| "Unknown".to_string())
+    };
+
+    let on_duration_input = {
+        let block_duration = block_duration.clone();
+        Callback::from(move |e: InputEvent| {
+            let target: web_sys::HtmlInputElement = e.target_unchecked_into();
+            block_duration.set(target.value());
+        })
+    };
+
+    let on_block = {
+        let pending_block = pending_block.clone();
+        Callback::from(move |ip: String| pending_block.set(Some(ip)))
+    };
+
+    let on_confirm_block = {
+        let pending_block = pending_block.clone();
+        let block_duration = block_duration.clone();
+        let blocking = blocking.clone();
+
+        Callback::from(move |_: ()| {
+            let ip = match pending_block.as_ref().cloned() {
+                Some(ip) => ip,
+                None => return,
+            };
+            let block_duration = block_duration.clone();
+            let blocking = blocking.clone();
+            pending_block.set(None);
+            blocking.set(true);
+
+            let duration = (*block_duration).clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                match ApiService::new()
+                    .block_probes(std::slice::from_ref(&ip), &duration)
+                    .await
+                {
+                    Ok(result) => {
+                        if result.applied() {
+                            toast_success(&format!("Blocked {} for {}", ip, duration));
+                        } else {
+                            toast_error(&format!("{} not blocked: {}", ip, result.status));
+                        }
+                    }
+                    Err(e) => toast_error(&format!("Failed to block {}: {}", ip, e)),
+                }
+                blocking.set(false);
+            });
+        })
+    };
+
+    let on_cancel_block = {
+        let pending_block = pending_block.clone();
+        Callback::from(move |_: ()| pending_block.set(None))
+    };
+
+    let on_remove = {
+        let pending_remove = pending_remove.clone();
+        Callback::from(move |ip: String| pending_remove.set(Some(ip)))
+    };
+
+    let on_confirm_remove = {
+        let pending_remove = pending_remove.clone();
+        let removing = removing.clone();
+        let probes = probes.clone();
+
+        Callback::from(move |_: ()| {
+            let ip = match pending_remove.as_ref().cloned() {
+                Some(ip) => ip,
+                None => return,
+            };
+            let pending_remove = pending_remove.clone();
+            let removing = removing.clone();
+            let probes = probes.clone();
+            pending_remove.set(None);
+            removing.set(true);
+
+            wasm_bindgen_futures::spawn_local(async move {
+                match ApiService::new().delete_probe(&ip).await {
+                    Ok(_) => {
+                        toast_success(&format!("Removed probe record for {}", ip));
+                        let mut kept = (*probes).clone();
+                        kept.retain(|p| p.ip != ip);
+                        probes.set(kept);
+                    }
+                    Err(e) => toast_error(&format!("Failed to remove {}: {}", ip, e)),
+                }
+                removing.set(false);
+            });
+        })
+    };
+
+    let on_cancel_remove = {
+        let pending_remove = pending_remove.clone();
+        Callback::from(move |_: ()| pending_remove.set(None))
     };
 
     if *loading {
@@ -171,6 +275,24 @@ fn HoneypotProbes() -> Html {
             }
 
             <div class="bg-secondary rounded-lg border border-default overflow-x-auto">
+                <div class="flex flex-wrap items-center gap-2 mb-3">
+                    <label for="probe-block-duration" class="text-sm text-secondary">
+                        { "Block duration" }
+                    </label>
+                    <input
+                        id="probe-block-duration"
+                        type="text"
+                        value={(*block_duration).clone()}
+                        oninput={on_duration_input}
+                        placeholder="24h"
+                        aria-describedby="probe-block-duration-help"
+                        class="px-3 py-1.5 bg-tertiary border border-default rounded-lg text-sm w-28 focus:outline-none focus:ring-2 focus:ring-action-500"
+                    />
+                    <span id="probe-block-duration-help" class="text-xs text-tertiary">
+                        { "Digits with an s/m/h/d/w suffix. An empty value means a permanent ban." }
+                    </span>
+                </div>
+
                 <table class="w-full">
                     <thead class="bg-tertiary">
                         <tr>
@@ -179,6 +301,7 @@ fn HoneypotProbes() -> Html {
                             <th class="px-4 py-3 text-left text-sm font-semibold text-secondary">{ "Unique Endpoints" }</th>
                             <th class="px-4 py-3 text-left text-sm font-semibold text-secondary">{ "Last Seen" }</th>
                             <th class="px-4 py-3 text-left text-sm font-semibold text-secondary">{ "User Agent" }</th>
+                            <th class="px-4 py-3 text-right text-sm font-semibold text-secondary">{ "Actions" }</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -198,6 +321,30 @@ fn HoneypotProbes() -> Html {
                                     <td class="px-4 py-3 text-sm text-secondary truncate max-w-[200px]">
                                         { probe.user_agent.as_deref().unwrap_or("Unknown") }
                                     </td>
+                                    <td class="px-4 py-3 text-right">
+                                        <button
+                                            onclick={on_block.reform({
+                                                let ip = probe.ip.clone();
+                                                move |_: MouseEvent| ip.clone()
+                                            })}
+                                            disabled={*blocking}
+                                            aria-label={format!("Block {}", probe.ip)}
+                                            class="px-3 py-1.5 rounded-lg bg-red-600/20 text-red-400 hover:bg-red-600/30 disabled:opacity-50 transition whitespace-nowrap expand-hit"
+                                        >
+                                            { "Block" }
+                                        </button>
+                                        <button
+                                            onclick={on_remove.reform({
+                                                let ip = probe.ip.clone();
+                                                move |_: MouseEvent| ip.clone()
+                                            })}
+                                            disabled={*removing}
+                                            aria-label={format!("Remove probe record for {}", probe.ip)}
+                                            class="ml-2 px-3 py-1.5 rounded-lg bg-tertiary hover:bg-default disabled:opacity-50 transition whitespace-nowrap expand-hit"
+                                        >
+                                            { "Remove" }
+                                        </button>
+                                    </td>
                                 </tr>
                             }
                         })}
@@ -210,6 +357,39 @@ fn HoneypotProbes() -> Html {
                     </div>
                 }
             </div>
+
+            <ConfirmDialog
+                show={pending_block.is_some()}
+                title={match pending_block.as_ref() {
+                    Some(ip) => format!("Block {}?", ip),
+                    None => String::new(),
+                }}
+                message={format!(
+                    "This address will be blocked for {}. An empty duration blocks it permanently.",
+                    (*block_duration).clone()
+                )}
+                confirm_label={Some(String::from("Block"))}
+                cancel_label={Some(String::from("Cancel"))}
+                confirm_type={Some(ConfirmType::Danger)}
+                on_confirm={on_confirm_block}
+                on_cancel={on_cancel_block}
+            />
+
+            <ConfirmDialog
+                show={pending_remove.is_some()}
+                title={match pending_remove.as_ref() {
+                    Some(ip) => format!("Remove probe record for {}?", ip),
+                    None => String::new(),
+                }}
+                message={String::from(
+                    "This deletes the stored probe history for this address. It does not block the address — use Block for that.",
+                )}
+                confirm_label={Some(String::from("Remove"))}
+                cancel_label={Some(String::from("Cancel"))}
+                confirm_type={Some(ConfirmType::Danger)}
+                on_confirm={on_confirm_remove}
+                on_cancel={on_cancel_remove}
+            />
         </div>
     }
 }
@@ -240,6 +420,44 @@ fn SuspiciousWordsTab() -> Html {
     let records = use_state(Vec::<SuspiciousWordRecord>::new);
     let stats = use_state(|| None as Option<SuspiciousWordStats>);
     let loading = use_state(|| true);
+    let pending_delete = use_state(|| None as Option<String>);
+    let deleting = use_state(|| false);
+    let on_delete = {
+        let pending_delete = pending_delete.clone();
+        Callback::from(move |ip: String| pending_delete.set(Some(ip)))
+    };
+    let on_confirm_delete = {
+        let pending_delete = pending_delete.clone();
+        let deleting = deleting.clone();
+        let records = records.clone();
+        Callback::from(move |_: ()| {
+            let ip = match pending_delete.as_ref().cloned() {
+                Some(ip) => ip,
+                None => return,
+            };
+            let pending_delete = pending_delete.clone();
+            let deleting = deleting.clone();
+            let records = records.clone();
+            pending_delete.set(None);
+            deleting.set(true);
+            wasm_bindgen_futures::spawn_local(async move {
+                match ApiService::new().delete_suspicious_word(&ip).await {
+                    Ok(_) => {
+                        toast_success(&format!("Removed {}", ip));
+                        let mut kept = (*records).clone();
+                        kept.retain(|r| r.ip != ip);
+                        records.set(kept);
+                    }
+                    Err(e) => toast_error(&format!("Failed to remove {}: {}", ip, e)),
+                }
+                deleting.set(false);
+            });
+        })
+    };
+    let on_cancel_delete = {
+        let pending_delete = pending_delete.clone();
+        Callback::from(move |_: ()| pending_delete.set(None))
+    };
 
     {
         let records = records.clone();
@@ -326,6 +544,7 @@ fn SuspiciousWordsTab() -> Html {
                             <th class="px-4 py-3 text-left text-sm font-semibold text-secondary">{ "Matched Word" }</th>
                             <th class="px-4 py-3 text-left text-sm font-semibold text-secondary">{ "Endpoint" }</th>
                             <th class="px-4 py-3 text-left text-sm font-semibold text-secondary">{ "Timestamp" }</th>
+                            <th class="px-4 py-3 text-right text-sm font-semibold text-secondary"><span class="sr-only">{ "Actions" }</span></th>
                         </tr>
                     </thead>
                     <tbody>
@@ -340,6 +559,19 @@ fn SuspiciousWordsTab() -> Html {
                                     </td>
                                     <td class="px-4 py-3 text-sm text-secondary font-mono">{ &record.endpoint }</td>
                                     <td class="px-4 py-3 text-sm text-secondary">{ format_timestamp(record.timestamp) }</td>
+                                    <td class="px-4 py-3 text-right">
+                                        <button
+                                            onclick={on_delete.reform({
+                                                let ip = record.ip.clone();
+                                                move |_: MouseEvent| ip.clone()
+                                            })}
+                                            disabled={*deleting}
+                                            aria-label={format!("Remove record for {}", record.ip)}
+                                            class="px-3 py-1.5 rounded-lg bg-red-600/20 text-red-400 hover:bg-red-600/30 disabled:opacity-50 transition expand-hit"
+                                        >
+                                            { "Remove" }
+                                        </button>
+                                    </td>
                                 </tr>
                             }
                         })}
@@ -352,6 +584,21 @@ fn SuspiciousWordsTab() -> Html {
                     </div>
                 }
             </div>
+            <ConfirmDialog
+                show={pending_delete.is_some()}
+                title={match pending_delete.as_ref() {
+                    Some(ip) => format!("Remove record for {}?", ip),
+                    None => String::new(),
+                }}
+                message={String::from(
+                    "This removes the stored record for this address. The action is recorded in the audit log.",
+                )}
+                confirm_label={Some(String::from("Remove"))}
+                cancel_label={Some(String::from("Cancel"))}
+                confirm_type={Some(ConfirmType::Danger)}
+                on_confirm={on_confirm_delete}
+                on_cancel={on_cancel_delete}
+            />
         </div>
     }
 }
@@ -376,6 +623,44 @@ fn UpstreamErrorsTab() -> Html {
     let records = use_state(Vec::<UpstreamErrorRecord>::new);
     let stats = use_state(|| None as Option<UpstreamErrorStats>);
     let loading = use_state(|| true);
+    let pending_delete = use_state(|| None as Option<String>);
+    let deleting = use_state(|| false);
+    let on_delete = {
+        let pending_delete = pending_delete.clone();
+        Callback::from(move |ip: String| pending_delete.set(Some(ip)))
+    };
+    let on_confirm_delete = {
+        let pending_delete = pending_delete.clone();
+        let deleting = deleting.clone();
+        let records = records.clone();
+        Callback::from(move |_: ()| {
+            let ip = match pending_delete.as_ref().cloned() {
+                Some(ip) => ip,
+                None => return,
+            };
+            let pending_delete = pending_delete.clone();
+            let deleting = deleting.clone();
+            let records = records.clone();
+            pending_delete.set(None);
+            deleting.set(true);
+            wasm_bindgen_futures::spawn_local(async move {
+                match ApiService::new().delete_upstream_error(&ip).await {
+                    Ok(_) => {
+                        toast_success(&format!("Removed {}", ip));
+                        let mut kept = (*records).clone();
+                        kept.retain(|r| r.ip != ip);
+                        records.set(kept);
+                    }
+                    Err(e) => toast_error(&format!("Failed to remove {}: {}", ip, e)),
+                }
+                deleting.set(false);
+            });
+        })
+    };
+    let on_cancel_delete = {
+        let pending_delete = pending_delete.clone();
+        Callback::from(move |_: ()| pending_delete.set(None))
+    };
 
     {
         let records = records.clone();
@@ -438,8 +723,8 @@ fn UpstreamErrorsTab() -> Html {
 
     html! {
         <div>
-            <div class="bg-blue-900/20 border border-blue-600 rounded-lg p-4 mb-6">
-                <p class="text-blue-400 text-sm">
+            <div class="bg-action-900/20 border border-action-600 rounded-lg p-4 mb-6">
+                <p class="text-action-400 text-sm">
                     { "Upstream errors from healthy backends may indicate vulnerability probing. Multiple unique endpoints returning errors from the same IP suggests an attacker is mapping your application." }
                 </p>
             </div>
@@ -480,6 +765,7 @@ fn UpstreamErrorsTab() -> Html {
                             <th class="px-4 py-3 text-left text-sm font-semibold text-secondary">{ "Status" }</th>
                             <th class="px-4 py-3 text-left text-sm font-semibold text-secondary">{ "Endpoint" }</th>
                             <th class="px-4 py-3 text-left text-sm font-semibold text-secondary">{ "Timestamp" }</th>
+                            <th class="px-4 py-3 text-right text-sm font-semibold text-secondary"><span class="sr-only">{ "Actions" }</span></th>
                         </tr>
                     </thead>
                     <tbody>
@@ -494,6 +780,19 @@ fn UpstreamErrorsTab() -> Html {
                                     </td>
                                     <td class="px-4 py-3 text-sm text-secondary font-mono">{ &record.endpoint }</td>
                                     <td class="px-4 py-3 text-sm text-secondary">{ format_timestamp(record.timestamp) }</td>
+                                    <td class="px-4 py-3 text-right">
+                                        <button
+                                            onclick={on_delete.reform({
+                                                let ip = record.ip.clone();
+                                                move |_: MouseEvent| ip.clone()
+                                            })}
+                                            disabled={*deleting}
+                                            aria-label={format!("Remove record for {}", record.ip)}
+                                            class="px-3 py-1.5 rounded-lg bg-red-600/20 text-red-400 hover:bg-red-600/30 disabled:opacity-50 transition expand-hit"
+                                        >
+                                            { "Remove" }
+                                        </button>
+                                    </td>
                                 </tr>
                             }
                         })}
@@ -506,6 +805,21 @@ fn UpstreamErrorsTab() -> Html {
                     </div>
                 }
             </div>
+            <ConfirmDialog
+                show={pending_delete.is_some()}
+                title={match pending_delete.as_ref() {
+                    Some(ip) => format!("Remove record for {}?", ip),
+                    None => String::new(),
+                }}
+                message={String::from(
+                    "This removes the stored record for this address. The action is recorded in the audit log.",
+                )}
+                confirm_label={Some(String::from("Remove"))}
+                cancel_label={Some(String::from("Cancel"))}
+                confirm_type={Some(ConfirmType::Danger)}
+                on_confirm={on_confirm_delete}
+                on_cancel={on_cancel_delete}
+            />
         </div>
     }
 }
