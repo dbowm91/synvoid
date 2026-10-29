@@ -2524,3 +2524,23 @@ Binding constraints:
   `synvoid-mesh`;
 - historical closeouts are corrected by pointer only, never rewritten;
 - every skipped verification lane is recorded as not-run with its reason.
+
+## WAF/Admin Deployment-Truthfulness Series — Proposed
+
+Status: **PROPOSED**. Umbrella:
+`plans/waf_admin_deployment_truthfulness_roadmap.md`.
+
+Origin: IP-based test deployment (blog direct `0.0.0.0:5000`, WAF data plane
+`0.0.0.0:8082`, no domain). Browser asset loads carry same-site IP
+`Referer` and are blocked as `Rfi ... at header:referer` while `curl`
+without `Referer` passes; site `[attack_detection.rfi] enabled=false` has
+no effect; `[admin] port 8081` never listens.
+
+| Phase | File | Status |
+|---|---|---|
+| 01 | `waf_admin_deployment_truthfulness_phase_01_rfi_referer.md` | **Proposed** — skip RFI/SSRF bare-IP branch for `referer`/`origin`, keep Aho patterns |
+| 02 | `waf_admin_deployment_truthfulness_phase_02_site_attack_config_wiring.md` | **Proposed** — thread `SiteAttackDetectionConfig` into WAF dispatch (per-request gate) |
+| 03 | `waf_admin_deployment_truthfulness_phase_03_admin_mounting.md` | **Proposed** — mount `create_admin_router` in worker data-plane composition root |
+
+Run 01 first (unblocks browser testing). 02 needs 01 only for clean
+verification. 03 is independent, may proceed in parallel.
