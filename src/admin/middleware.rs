@@ -338,7 +338,11 @@ pub async fn security_headers_middleware(request: Request, next: Next) -> Respon
         HeaderValue::from_static(
             // L-02: Removed 'unsafe-inline' for styles; admin UI now serves styles
             // via external sheets. If inline styles are required, use a nonce.
-            "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' ws: wss:; frame-ancestors 'none'"
+            // L-03: 'wasm-unsafe-eval' allows the Yew/WASM bundle to compile
+            // (WebAssembly.instantiateStreaming falls under script-src) without
+            // permitting eval()/JS codegen. The bootstrap is an external file
+            // (admin-ui/dist/bootstrap.js); inline scripts stay refused.
+            "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; connect-src 'self' ws: wss:; frame-ancestors 'none'"
         )
     });
 

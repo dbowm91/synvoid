@@ -24,15 +24,9 @@
         </div>
     </div>
 
-<script type="module">
-import init, * as bindings from '/admin-ui-dcf1fe494cda25d0.js';
-const wasm = await init({ module_or_path: '/admin-ui-dcf1fe494cda25d0_bg.wasm' });
-
-
-window.wasmBindings = bindings;
-
-
-dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
-
-</script></body>
+<!-- The WASM bootstrap must stay an external file: the admin server sends
+     `script-src 'self'` with no 'unsafe-inline', so an inline bootstrap is
+     refused and the panel never starts. If trunk regenerates this file with
+     an inline `<script type="module">`, extract it to bootstrap.js again. -->
+<script type="module" src="/bootstrap.js" crossorigin="anonymous" integrity="sha384-Gx95LUgfspcFg/VnqyDErjpAU4ZlvBb7pv7LPjwQisjMTVKgQbG9Eas/88CvVklv"></script></body>
 </html>
