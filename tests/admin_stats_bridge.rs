@@ -169,6 +169,16 @@ async fn bridge_01_fed_metrics_reach_summary_and_history() {
         "fed requests must be visible in summary: {}",
         summary
     );
+    assert!(
+        summary["avg_latency_ms"].as_f64().unwrap_or(0.0) > 0.0,
+        "fed latency must be visible in summary: {}",
+        summary
+    );
+    assert!(
+        summary["p50_latency_ms"].as_f64().unwrap_or(0.0) > 0.0,
+        "fed latency percentiles must derive from the per-site map: {}",
+        summary
+    );
 
     let history = body_json(authed_get(&router, "/api/stats/history?seconds=300").await).await;
     let samples = history

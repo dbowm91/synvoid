@@ -189,21 +189,13 @@ pub async fn start_metrics_publisher(
                 let mut p50_latency_ms = 0.0;
                 let mut p95_latency_ms = 0.0;
                 let mut p99_latency_ms = 0.0;
-                if !worker_metrics.is_empty() {
-                    let total_worker_latency_ms: f64 = worker_metrics
-                        .iter()
-                        .map(|(_, m)| m.avg_latency_ms * m.total_requests as f64)
-                        .sum();
-                    let total_worker_requests: u64 = worker_metrics
-                        .iter()
-                        .map(|(_, m)| m.total_requests)
-                        .sum();
-                    if total_worker_requests > 0 {
-                        let global_avg = total_worker_latency_ms / total_worker_requests as f64;
-                        p50_latency_ms = global_avg;
-                        p95_latency_ms = global_avg * 1.2;
-                        p99_latency_ms = global_avg * 1.5;
-                    }
+                // Same source as `avg_latency_ms` above: the worker-top-level
+                // average and totals are never written in production.
+                if request_count > 0 {
+                    let global_avg = total_latency_ms / request_count as f64;
+                    p50_latency_ms = global_avg;
+                    p95_latency_ms = global_avg * 1.2;
+                    p99_latency_ms = global_avg * 1.5;
                 }
 
                 let mut total_healthy_backends: usize = 0;
