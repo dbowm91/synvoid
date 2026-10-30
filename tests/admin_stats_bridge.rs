@@ -139,9 +139,12 @@ async fn bridge_01_fed_metrics_reach_summary_and_history() {
     let (router, state) = build_router_with_state().await;
 
     let worker_metrics = Arc::new(synvoid::metrics::WorkerMetrics::default());
+    // Record per-site, exactly as the production data plane does: nothing in
+    // production writes the worker-top-level counters, so the publisher
+    // derives its totals from the per-site map.
     for _ in 0..7 {
-        worker_metrics.record_request_start();
-        worker_metrics.record_request_end(4);
+        worker_metrics.record_site_request_start("blog");
+        worker_metrics.record_site_request_end("blog", 4);
     }
 
     let feed = Arc::new(synvoid::admin::metrics::LocalMetricsFeed {

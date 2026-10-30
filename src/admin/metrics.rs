@@ -129,24 +129,33 @@ pub async fn start_metrics_publisher(
 
                 let mut blocked_by_type: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
 
+                // The data plane records per-site counters only (nothing in
+                // production writes the worker-top-level counters), so the
+                // worker totals are derived from the per-site map — the same
+                // source the per-site aggregation below reads. Single source
+                // of truth, no double counting.
                 for (worker_id, metrics) in &worker_metrics {
-                    total_requests += metrics.total_requests;
-                    total_blocked += metrics.blocked;
-                    total_challenged += metrics.challenged;
-                    total_proxied += metrics.proxied;
-                    total_errors += metrics.errors;
-                    current_concurrent += metrics.current_concurrent;
-                    peak_concurrent = peak_concurrent.max(metrics.peak_concurrent);
-                    total_latency_ms += metrics.avg_latency_ms * metrics.total_requests as f64;
-                    request_count += metrics.total_requests;
+                    for site_payload in metrics.per_site.values() {
+                        total_requests += site_payload.total_requests;
+                        total_blocked += site_payload.blocked;
+                        total_challenged += site_payload.challenged;
+                        total_proxied += site_payload.proxied;
+                        total_errors += site_payload.errors;
+                        current_concurrent += site_payload.current_concurrent as u64;
+                        peak_concurrent =
+                            peak_concurrent.max(site_payload.peak_concurrent as u64);
+                        total_latency_ms +=
+                            site_payload.avg_latency_ms * site_payload.total_requests as f64;
+                        request_count += site_payload.total_requests;
+
+                        for (attack_type, count) in &site_payload.blocked_by_type {
+                            *blocked_by_type.entry(attack_type.clone()).or_insert(0) += count;
+                        }
+                    }
                     total_memory_bytes += metrics.memory_bytes;
                     total_cpu_percent += metrics.cpu_percent;
                     _total_static_cache_hits += metrics.static_cache_hits;
                     _total_static_cache_misses += metrics.static_cache_misses;
-
-                    for (attack_type, count) in &metrics.blocked_by_type {
-                        *blocked_by_type.entry(attack_type.clone()).or_insert(0) += count;
-                    }
 
                     if feed.is_worker_running(worker_id) {
                         healthy_workers += 1;
