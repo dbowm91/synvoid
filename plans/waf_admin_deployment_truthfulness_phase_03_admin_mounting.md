@@ -2,6 +2,27 @@
 
 Status: **IMPLEMENTED** (branch `plans/waf-admin-deployment-truthfulness`; `spawn_admin_service` in worker data-plane root, plan `admin_addr` + conflict check, guard inverted to mounted state, authority doc + feature matrix updated).
 
+> Follow-ups found testing the panel in a real browser (same branch):
+>
+> - **CSP vs inline bootstrap (panel never booted).** The served CSP
+>   (`script-src 'self'`, no `unsafe-inline`) refused Trunk's inline WASM
+>   bootstrap, so the panel stuck on "Loading…". The bootstrap is now an
+>   external `admin-ui/dist/bootstrap.js`; `wasm-unsafe-eval` was added to
+>   `script-src` so `instantiateStreaming` compiles (no `eval` permitted).
+>   New `admin_ui_dist_has_no_inline_scripts` guard (mutation-tested);
+>   stylesheet gate now accepts trunk-hashed CSS.
+> - **Rate limit scoped to API+WS.** The 10/sec global budget 429d the
+>   panel's own boot storm (bundle, WASM, CSS, fonts), so assets failed
+>   alongside API calls. Static fallback + `/health` are unlimited; API+WS
+>   keep the budget (rate limit still runs outside auth, shielding bcrypt).
+> - **Lockout counted anonymous 401s.** Every logged-out API call recorded
+>   an auth failure, so opening the panel (5 boot 401s) locked the
+>   operator's IP out for 5 minutes and the login POST 429d. Failures now
+>   record only for presented-but-wrong credentials (bad bearer, wrong CSRF
+>   value); brute-force protection on the login path is unchanged.
+> - Ledger allowlist extended to `server` for `axum` + `synvoid-platform`
+>   (worker data-plane listener; same pattern as `tls`/`http`).
+
 Registered in: `plans/roadmap.md`.
 
 Campaign: `plans/waf_admin_deployment_truthfulness_roadmap.md`.

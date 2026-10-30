@@ -32,7 +32,7 @@ reference fails the guard until the row is reclassified with a reason.
 | hyper-rustls | — | remove_candidate | — | Phase 31: removed from root (0 src uses; egress TLS owned by synvoid-http-client) | removed Phase 31 | — |
 | tower | tests | remove_candidate | — | Phase 31: moved from [dependencies] to [dev-dependencies] (test-only: tower::ServiceExt::oneshot) | moved to dev-deps Phase 31 | — |
 | tower-http | http, admin | composition_runtime | default | HTTP middleware (filesystem, CORS) | keep | admin |
-| axum | admin, http | composition_runtime | default | REST API framework for admin endpoints | keep | admin, bin, http |
+| axum | admin, http, server | composition_runtime | default | REST API framework for admin endpoints + worker data-plane admin listener | keep | admin, bin, http, server |
 | axum-extra | — | remove_candidate | — | Phase 31: removed from root (0 src uses; canonical use in domain crates) | removed Phase 31 | — |
 | http-body | http | composition_runtime | default | Phase 75: frame polling/mapping in the EggServe direct-H1 adapter (`src/http/eggserve_h1.rs` only) | keep | http |
 | http-body-util | http, http_client | composition_runtime | default | HTTP body adapter utilities | keep | honeypot_port, http, server, tls |
@@ -81,7 +81,7 @@ reference fails the guard until the row is reclassified with a reason.
 | synvoid-yara | worker, supervisor | composition_runtime | default | Canonical YARA engine for CPU worker + mesh validator injection (Phase 26 single yara-x owner; Phase 29 jail service lives in synvoid-jail-runtime) | keep | supervisor, worker |
 | synvoid-ipc | process | composition_runtime | default | IPC transport abstractions | keep | http, process, sandbox, supervisor, worker |
 | synvoid-http-client | http_client | composition_runtime | default | HTTP client pool and QUIC dispatch | keep | http, http_client, tls |
-| synvoid-platform | platform facade + http, startup, supervisor, tls, worker | composition_runtime | default | Platform detection and OS abstractions (Phase 32: single owner; root internals import the crate directly) | keep | http, platform, startup, supervisor, tls, worker |
+| synvoid-platform | platform facade + http, server, startup, supervisor, tls, worker | composition_runtime | default | Platform detection and OS abstractions (Phase 32: single owner; root internals import the crate directly) | keep | http, platform, server, startup, supervisor, tls, worker |
 | synvoid-upstream | upstream | composition_runtime | default | Upstream server selection | keep | lib |
 | synvoid-tunnel | tunnel | composition_runtime | default | Tunnel backend routing | keep | tunnel |
 | hickory-proto | — | remove_candidate | — | Phase 31: removed from root + dns feature (0 src uses; DNS wire owned by synvoid-dns) | removed Phase 31 | — |
