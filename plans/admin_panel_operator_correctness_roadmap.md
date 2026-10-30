@@ -1,7 +1,14 @@
 # Admin Panel Operator-Correctness Roadmap
 
-Status: **READY** (branch `plans/admin-panel-operator-correctness`; none of
-the five phases started).
+Status: **IMPLEMENTED** (branch `plans/admin-panel-operator-correctness`;
+all five phases landed, verified, and deployed against the `~/prodtest`
+blog + SynVoid stack on 2026-10-30).
+
+Proof-bearing commits: `d2cc5cd` (phases 01–04: polling loop, tri-state,
+empty-state, metrics/log bridge, dist rebuild), `1146ab7` (publisher
+worker totals derived from the per-site map), `ef75889` (latency
+percentiles from the per-site map), `49c324b` (`get_logs` served from the
+request-log deque + WS broadcast on emit).
 
 Registered in: `plans/roadmap.md`.
 

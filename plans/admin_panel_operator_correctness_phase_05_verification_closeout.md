@@ -1,6 +1,24 @@
 # Phase 05 Plan: Terminal Verification and Closeout
 
-Status: **READY** (branch `plans/admin-panel-operator-correctness`; not started).
+Status: **IMPLEMENTED** (2026-10-30; this phase *was* the verification —
+record follows).
+
+Evidence: `cargo fmt` clean; `cargo clippy --workspace --profile ci
+--all-targets` clean; `cargo check --no-default-features` and
+`--features mesh,dns,icmp-filter` clean; `synvoid-repo-guards` 169/169
+(including the `server: synvoid-http` ledger extension for the sink impl);
+admin contract trio + `admin_stats_bridge` 72/72 under full features;
+`security_regression` 15/15; `admin-ui` lib 48/48; `synvoid-http` lib 93/93;
+touched eggserve suites 50/50. Fresh `--no-default-features` release build
+redeployed to `~/prodtest`; live tour: no 429 on any tab, summary/history/
+request-logs/WAF-logs populated, `upstream_healthy` parses, workers
+empty-state, panel boots.
+
+Residuals carried forward (not blockers): `WorkerStatus` UI-type field
+drift (harmless under serde); POST bodies uninspected on the
+fallback-proxy path (detector-coverage question); per-worker CPU/memory
+(atomics never written in production — dashboard reads sysinfo instead);
+`synvoid-mesh` `dns = []` empty-feature non-compilation (pre-existing).
 
 Registered in: `plans/roadmap.md`.
 

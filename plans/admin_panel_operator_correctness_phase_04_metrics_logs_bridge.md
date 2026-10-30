@@ -1,6 +1,11 @@
 # Phase 04 Plan: Wire the Metrics Publisher and Request-Log Sinks
 
-Status: **READY** (branch `plans/admin-panel-operator-correctness`; not started).
+Status: **IMPLEMENTED** (`d2cc5cd` + follow-ups `1146ab7`, `ef75889`,
+`49c324b`; live-verified 2026-10-30: summary/history/request-logs/`/api/logs`
+all populate from live traffic; two live-found gaps closed in the same
+pass — worker totals and latency percentiles derived from the per-site map
+(the data plane never writes worker-top-level counters), and `get_logs`
+served from the request-log deque with WS broadcast on emit).
 
 Registered in: `plans/roadmap.md`.
 

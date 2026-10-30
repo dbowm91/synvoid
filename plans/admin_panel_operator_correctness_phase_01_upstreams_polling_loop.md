@@ -1,6 +1,7 @@
 # Phase 01 Plan: Upstreams Infinite Fetch Loop (`use_effect` → `use_effect_with`)
 
-Status: **READY** (branch `plans/admin-panel-operator-correctness`; not started).
+Status: **IMPLEMENTED** (`d2cc5cd`; live-verified 2026-10-30: rapid
+upstreams/sites/workers/stats tab tour returns no 429).
 
 Registered in: `plans/roadmap.md`.
 

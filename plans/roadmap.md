@@ -2561,9 +2561,9 @@ patterns do not fire on query strings at paranoia 2 (only `=http(s)://` and
 `=ftp://` encoded forms match there); POST bodies pass uninspected through
 the fallback-proxy path (query/headers/path are inspected).
 
-## Admin Panel Operator-Correctness Series — Ready
+## Admin Panel Operator-Correctness Series — Implemented
 
-Status: **READY** on proposed branch `plans/admin-panel-operator-correctness`. Umbrella:
+Status: **IMPLEMENTED** on branch `plans/admin-panel-operator-correctness`. Umbrella:
 `plans/admin_panel_operator_correctness_roadmap.md`.
 
 Origin: operating the panel in a real browser against the `~/prodtest`
@@ -2578,11 +2578,11 @@ different deque, and the deployment disables verbose request logging).
 
 | Phase | File | Status |
 |---|---|---|
-| 01 | `admin_panel_operator_correctness_phase_01_upstreams_polling_loop.md` | **Ready** — `use_effect` → `use_effect_with(())`, run first |
-| 02 | `admin_panel_operator_correctness_phase_02_upstream_healthy_contract.md` | **Ready** — UI tri-state for backend `HealthStatus` |
-| 03 | `admin_panel_operator_correctness_phase_03_workers_standalone.md` | **Ready** — standalone empty-state, no contract change |
-| 04 | `admin_panel_operator_correctness_phase_04_metrics_logs_bridge.md` | **Ready** — spawn publisher, standalone feed + log sinks |
-| 05 | `admin_panel_operator_correctness_phase_05_verification_closeout.md` | **Ready** — terminal gate, runs last |
+| 01 | `admin_panel_operator_correctness_phase_01_upstreams_polling_loop.md` | **Implemented** (`d2cc5cd`) — `use_effect` → `use_effect_with(())`, run first |
+| 02 | `admin_panel_operator_correctness_phase_02_upstream_healthy_contract.md` | **Implemented** (`d2cc5cd`) — UI tri-state for backend `HealthStatus` |
+| 03 | `admin_panel_operator_correctness_phase_03_workers_standalone.md` | **Implemented** (`d2cc5cd`) — standalone empty-state, no contract change |
+| 04 | `admin_panel_operator_correctness_phase_04_metrics_logs_bridge.md` | **Implemented** (`d2cc5cd` + `1146ab7` + `ef75889` + `49c324b`) — spawn publisher, standalone feed + log sinks + per-site-derived totals + state-backed `/api/logs` |
+| 05 | `admin_panel_operator_correctness_phase_05_verification_closeout.md` | **Implemented** (2026-10-30) — terminal gate + live deployment proof, runs last |
 
 Run 01 first (removes the 429 storm masking other tabs). 02–03 independent.
 04 independent but largest; may proceed in parallel. 05 requires 01–04.

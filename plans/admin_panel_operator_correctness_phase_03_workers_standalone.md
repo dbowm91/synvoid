@@ -1,6 +1,8 @@
 # Phase 03 Plan: Workers 404 in Standalone Mode (UI Empty-State)
 
-Status: **READY** (branch `plans/admin-panel-operator-correctness`; not started).
+Status: **IMPLEMENTED** (`d2cc5cd`; live-verified 2026-10-30:
+standalone `/system/workers*` stay 404, supervisor 200 Standalone, panel
+serves the explanatory empty-state with no error banner).
 
 Registered in: `plans/roadmap.md`.
 

@@ -1,6 +1,8 @@
 # Phase 02 Plan: `upstream_healthy` Bool-vs-Enum Contract Mismatch
 
-Status: **READY** (branch `plans/admin-panel-operator-correctness`; not started).
+Status: **IMPLEMENTED** (`d2cc5cd`; live-verified 2026-10-30:
+`/api/stats/sites` serves `"upstream_healthy":"healthy"` string, dashboard
+parses with no error).
 
 Registered in: `plans/roadmap.md`.
 
