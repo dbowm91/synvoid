@@ -163,6 +163,15 @@ const SECURITY_HEADERS: &[&str] = &[
     "proxy-authorization",
 ];
 
+/// `Referer`/`Origin` legitimately carry absolute same-site URLs. Detectors
+/// skip their bare-URL heuristics there while keeping anchored/smuggled
+/// pattern matching active.
+pub(crate) fn is_referer_or_origin(location: &InputLocation) -> bool {
+    location
+        .header_name()
+        .is_some_and(|n| n.eq_ignore_ascii_case("referer") || n.eq_ignore_ascii_case("origin"))
+}
+
 pub fn detect_in_headers<F>(
     headers: &http::HeaderMap,
     mut check_header: F,

@@ -5,7 +5,9 @@ use std::sync::Arc;
 use std::sync::LazyLock;
 
 use crate::attack_detection::config::{AttackDetectionResult, AttackType, InputLocation};
-use crate::attack_detection::detector_common::{BasePatternDetector, PatternDetector};
+use crate::attack_detection::detector_common::{
+    is_referer_or_origin, BasePatternDetector, PatternDetector,
+};
 use crate::attack_detection::patterns::DefaultPatterns;
 use synvoid_core::url::{check_regex_complexity, url_decode_all};
 
@@ -25,12 +27,6 @@ static IP_REGEX: LazyLock<Option<Regex>> = LazyLock::new(|| {
 
 pub struct RfiDetector {
     inner: BasePatternDetector,
-}
-
-fn is_referer_or_origin(location: &InputLocation) -> bool {
-    location
-        .header_name()
-        .is_some_and(|n| n.eq_ignore_ascii_case("referer") || n.eq_ignore_ascii_case("origin"))
 }
 
 impl RfiDetector {

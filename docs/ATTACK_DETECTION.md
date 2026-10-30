@@ -260,6 +260,9 @@ HTTP Request Smuggling detection:
 (`ip_in_url`): browsers legitimately echo same-site intranet URLs there.
 Anchored inclusion patterns (e.g. `?file=http://`) are still inspected in
 those headers, and IP detection in query strings and bodies is unchanged.
+The same exemption applies to open-redirect bare-URL matching: a plain
+absolute `Referer`/`Origin` is not a redirect, but a value carrying a
+redirect parameter (e.g. `?next=http://evil/`) still fires.
 
 ### Header Validation
 

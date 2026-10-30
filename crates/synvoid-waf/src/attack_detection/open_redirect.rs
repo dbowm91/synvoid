@@ -5,7 +5,9 @@ use std::sync::LazyLock;
 use synvoid_core::url::url_decode_all;
 
 use crate::attack_detection::config::{AttackDetectionResult, AttackType, InputLocation};
-use crate::attack_detection::detector_common::{BasePatternDetector, PatternDetector};
+use crate::attack_detection::detector_common::{
+    is_referer_or_origin, BasePatternDetector, PatternDetector,
+};
 use crate::attack_detection::patterns::DefaultPatterns;
 
 #[allow(dead_code)]
@@ -311,20 +313,27 @@ impl OpenRedirectDetector {
 
         let is_redirect_param = self.is_redirect_param(decoded_lower.as_ref());
 
-        if let Some(mat) = self.inner.patterns_ref().find(decoded_lower.as_ref()) {
-            let matched = decoded_lower[mat.start()..mat.end()].to_string();
-            tracing::warn!(
-                attack_type = "open_redirect",
-                matched_pattern = %matched,
-                location = %location,
-                "Open redirect detected"
-            );
-            return Some(AttackDetectionResult {
-                attack_type: AttackType::OpenRedirect,
-                fingerprint: None,
-                matched_pattern: Some(matched),
-                input_location: location,
-            });
+        // `Referer`/`Origin` legitimately carry absolute URLs, and the pattern
+        // list matches any of them (`://`, `http://`, ...). Only a value that
+        // also carries a redirect parameter is a smuggled redirect payload.
+        let referer_without_redirect_param = is_referer_or_origin(&location) && !is_redirect_param;
+
+        if !referer_without_redirect_param {
+            if let Some(mat) = self.inner.patterns_ref().find(decoded_lower.as_ref()) {
+                let matched = decoded_lower[mat.start()..mat.end()].to_string();
+                tracing::warn!(
+                    attack_type = "open_redirect",
+                    matched_pattern = %matched,
+                    location = %location,
+                    "Open redirect detected"
+                );
+                return Some(AttackDetectionResult {
+                    attack_type: AttackType::OpenRedirect,
+                    fingerprint: None,
+                    matched_pattern: Some(matched),
+                    input_location: location,
+                });
+            }
         }
 
         if decoded_lower.starts_with("//") || decoded_lower.starts_with("\\\\") {
@@ -507,5 +516,33 @@ mod tests {
         let detector = OpenRedirectDetector::new(2, &[]);
         let input = "URL=JAVASCRIPT:ALERT(1)";
         assert!(detector.detect(input, InputLocation::QueryString).is_some());
+    }
+
+    #[test]
+    fn test_open_redirect_referer_absolute_url_exempt() {
+        let detector = OpenRedirectDetector::new(2, &[]);
+        assert!(detector
+            .detect(
+                "http://192.168.182.143:8082/static/css/public.css",
+                InputLocation::Header("referer".into())
+            )
+            .is_none());
+        assert!(detector
+            .detect(
+                "http://192.168.182.143:8082/",
+                InputLocation::Header("origin".into())
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn test_open_redirect_referer_smuggled_param_still_blocked() {
+        let detector = OpenRedirectDetector::new(2, &[]);
+        assert!(detector
+            .detect(
+                "/login?next=http://evil.com",
+                InputLocation::Header("referer".into())
+            )
+            .is_some());
     }
 }

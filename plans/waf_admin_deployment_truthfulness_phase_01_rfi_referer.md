@@ -1,6 +1,13 @@
 # Phase 01 Plan: RFI/SSRF `Referer` Same-Origin Exemption
 
-Status: **IMPLEMENTED** (branch `plans/waf-admin-deployment-truthfulness`; `is_referer_or_origin` gates in `rfi.rs`/`ssrf.rs`, unit tests, docs paragraph).
+Status: **IMPLEMENTED** (branch `plans/waf-admin-deployment-truthfulness`; shared `is_referer_or_origin` in `detector_common.rs`, gates in `rfi.rs`/`ssrf.rs`/`open_redirect.rs`, unit tests, docs paragraph).
+
+> Scope note (found during deployment verification): the first cut covered
+> RFI/SSRF only, but the same browser `Referer` was still blocked by the
+> open-redirect detector, whose Aho list matches any absolute URL (`://`,
+> `http://`, ...) via a branch that ignores redirect-param context. Phase 01
+> therefore also gates that branch for `referer`/`origin` values that carry
+> no redirect parameter (`?next=` etc. smuggled payloads still fire).
 
 Registered in: `plans/roadmap.md`.
 

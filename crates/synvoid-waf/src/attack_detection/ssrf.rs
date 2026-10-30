@@ -4,7 +4,9 @@ use std::net::IpAddr;
 use std::sync::Arc;
 
 use crate::attack_detection::config::{AttackDetectionResult, AttackType, InputLocation};
-use crate::attack_detection::detector_common::{BasePatternDetector, PatternDetector};
+use crate::attack_detection::detector_common::{
+    is_referer_or_origin, BasePatternDetector, PatternDetector,
+};
 use crate::attack_detection::patterns::DefaultPatterns;
 use synvoid_core::url::url_decode_all;
 
@@ -13,12 +15,6 @@ pub struct SsrfDetector {
     block_private_ips: bool,
     allowed_domains_lower: Vec<String>,
     allowlist_only_mode: bool,
-}
-
-fn is_referer_or_origin(location: &InputLocation) -> bool {
-    location
-        .header_name()
-        .is_some_and(|n| n.eq_ignore_ascii_case("referer") || n.eq_ignore_ascii_case("origin"))
 }
 
 impl SsrfDetector {
