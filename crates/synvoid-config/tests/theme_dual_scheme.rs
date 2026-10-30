@@ -222,6 +222,31 @@ fn apply_preset_resolves_compat_and_is_idempotent() {
 }
 
 #[test]
+fn legacy_preset_selection_sets_both_halloy_themes() {
+    let mut defaults = ThemeDefaults::default();
+    defaults.apply_legacy_preset_selection("dark");
+    assert_eq!(defaults.preset, "dark");
+    assert_eq!(defaults.dark_theme, "Catppuccin Mocha");
+    assert_eq!(defaults.light_theme, "Catppuccin Mocha");
+    assert_eq!(
+        defaults.colors,
+        ThemePreset::Dark.colors(),
+        "legacy colors blob follows the preset"
+    );
+
+    let mut ocean = ThemeDefaults::default();
+    ocean.apply_legacy_preset_selection("ocean");
+    assert_eq!(ocean.dark_theme, "ocean");
+    assert_eq!(ocean.light_theme, "ocean");
+
+    let mut unknown = ThemeDefaults::default();
+    unknown.apply_legacy_preset_selection("not-a-preset");
+    assert_eq!(unknown.preset, "not-a-preset");
+    assert_eq!(unknown.dark_theme, "Catppuccin Mocha");
+    assert_eq!(unknown.light_theme, "Catppuccin Latte");
+}
+
+#[test]
 fn shipped_example_resolves_to_blog_defaults() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")

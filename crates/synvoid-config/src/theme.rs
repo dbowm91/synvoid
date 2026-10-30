@@ -89,6 +89,21 @@ impl ThemeDefaults {
         self.scheme = scheme.as_str().to_string();
     }
 
+    pub fn apply_legacy_preset_selection(&mut self, preset: &str) {
+        self.preset = preset.to_string();
+        match legacy_halloy_equivalent(preset) {
+            Some((dark, light)) => {
+                self.dark_theme = dark;
+                self.light_theme = light;
+            }
+            None => {
+                self.dark_theme = default_dark_theme();
+                self.light_theme = default_light_theme();
+            }
+        }
+        self.colors = ThemePreset::from(preset).colors();
+    }
+
     /// Resolve the Halloy theme pair + scheme carried to the renderer.
     ///
     /// Blog-style dual-scheme resolution (mirrors the
