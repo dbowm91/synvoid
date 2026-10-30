@@ -374,3 +374,44 @@ async fn all_detectors_disabled_passes_attack_traffic() {
         "disabled detector families must not fire, got {result:?}"
     );
 }
+
+#[tokio::test]
+async fn site_disabled_detector_does_not_mask_enabled_detector() {
+    let detector = detector();
+    let headers = empty_headers();
+    // `url=http://169.254.169.254/latest` trips RFI (`=http://`) at higher
+    // priority than SSRF. With RFI site-disabled, the SSRF hit must surface
+    // instead of being discarded with the RFI one.
+    let (masked, _) = detector
+        .check_request_with_site_disabled(
+            TEST_IP,
+            &Method::GET,
+            "/t",
+            Some("url=http://169.254.169.254/latest"),
+            &headers,
+            None,
+            &[AttackType::Rfi],
+        )
+        .await;
+    assert_eq!(
+        masked.map(|r| r.attack_type),
+        Some(AttackType::Ssrf),
+        "site-disabled RFI must not mask the SSRF hit"
+    );
+
+    let (unmasked, _) = detector
+        .check_request(
+            TEST_IP,
+            &Method::GET,
+            "/t",
+            Some("url=http://169.254.169.254/latest"),
+            &headers,
+            None,
+        )
+        .await;
+    assert_eq!(
+        unmasked.map(|r| r.attack_type),
+        Some(AttackType::Rfi),
+        "without the mask RFI wins priority as before"
+    );
+}

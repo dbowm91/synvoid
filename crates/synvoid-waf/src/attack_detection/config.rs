@@ -146,7 +146,7 @@ impl Default for AttackDetectionConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct SsrfConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
@@ -158,6 +158,18 @@ pub struct SsrfConfig {
     pub allowed_domains: Vec<String>,
     #[serde(default)]
     pub allowlist_only_mode: bool,
+}
+
+impl Default for SsrfConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            custom_patterns: Vec::new(),
+            block_private_ips: default_block_private_ips(),
+            allowed_domains: Vec::new(),
+            allowlist_only_mode: false,
+        }
+    }
 }
 
 fn default_block_private_ips() -> bool {

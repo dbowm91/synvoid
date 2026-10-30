@@ -1,6 +1,24 @@
 # Phase 02 Plan: Wire `SiteAttackDetectionConfig` into WAF Dispatch
 
-Status: **IMPLEMENTED** (branch `plans/waf-admin-deployment-truthfulness`; `src/waf/site_attack_config.rs` merge helper, `site_attack_config` param threaded through `WafCore`/`BufferedRequestWaf`/`Http3RequestWaf` dispatch, helper unit tests, docs).
+Status: **IMPLEMENTED** (branch `plans/waf-admin-deployment-truthfulness`; `src/waf/site_attack_config.rs` merge helper + disabled-mask, `site_attack_config` param threaded through `WafCore`/`BufferedRequestWaf`/`Http3RequestWaf` dispatch, helper unit tests, docs).
+
+> Follow-ups found during deployment verification (same branch):
+>
+> - **Mask placement.** The first cut gated in `WafCore::check_attack` after
+>   `AttackDetector::check_request` returned its priority winner. A
+>   site-disabled detector winning priority (e.g. RFI on
+>   `url=http://169.254.169.254/…`) discarded the lower-priority hit for an
+>   enabled detector (SSRF). The gate now lives in
+>   `AttackDetector::check_request_sync` as a `site_disabled: &[AttackType]`
+>   mask: disabled detectors neither report nor score. Root builds the mask
+>   via `site_disabled_list()` (stack array, no alloc) and calls
+>   `check_request_with_site_disabled`; `check_request` keeps `&[]`.
+> - **`SsrfConfig::default()` disagreed with its serde defaults**
+>   (`enabled`/`block_private_ips` false vs `default_true` on deserialize),
+>   so every `AttackDetectionConfig::default()` — including production via
+>   `resources.rs`/`connection.rs` — ran with SSRF silently off. Now a manual
+>   `Default` matching the serde contract. One `wave10` streaming test that
+>   pinned the old default now disables SSRF explicitly.
 
 Registered in: `plans/roadmap.md`.
 

@@ -257,7 +257,25 @@ impl AttackDetector {
         // No per-request `JoinSet` fanout, no `Arc` snapshots, no
         // `NormalizedInputs::into_owned()` for task ownership. The async
         // signature is preserved for caller compatibility.
-        self.check_request_sync(client_ip, path, query_string, headers, body)
+        self.check_request_sync(client_ip, path, query_string, headers, body, &[])
+    }
+
+    /// Same as [`Self::check_request`], but detectors the site turned off
+    /// neither report nor score, so a disabled detector cannot mask a
+    /// lower-priority hit for an enabled one. `site_disabled` must only
+    /// contain detectors with site subtables (Sqli, Xss, PathTraversal, Rfi,
+    /// Ssrf); anything else is ignored by the dispatch gates.
+    pub async fn check_request_with_site_disabled(
+        &self,
+        client_ip: std::net::IpAddr,
+        _method: &http::Method,
+        path: &str,
+        query_string: Option<&str>,
+        headers: &http::HeaderMap,
+        body: Option<&[u8]>,
+        site_disabled: &[AttackType],
+    ) -> (Option<AttackDetectionResult>, u32) {
+        self.check_request_sync(client_ip, path, query_string, headers, body, site_disabled)
     }
 
     /// Borrowed synchronous evaluation core for `check_request`.
@@ -276,6 +294,7 @@ impl AttackDetector {
         query_string: Option<&str>,
         headers: &http::HeaderMap,
         body: Option<&[u8]>,
+        site_disabled: &[AttackType],
     ) -> (Option<AttackDetectionResult>, u32) {
         if !self.config.enabled {
             return (None, 0);
@@ -284,6 +303,12 @@ impl AttackDetector {
         let mut first_result = None;
         let mut total_score = 0;
         let anomaly_enabled = self.config.anomaly_scoring.enabled;
+
+        // Per-site detector kill-switch: the caller precomputes the set of
+        // detectors the site turned off, so they neither report nor score and
+        // cannot mask lower-priority hits for enabled detectors.
+        let site_on =
+            |attack_type: AttackType, global: bool| global && !site_disabled.contains(&attack_type);
 
         let standalone_features =
             self.behavioral_engine
@@ -428,7 +453,7 @@ impl AttackDetector {
             // the first hit (outcome-first, as before).
             let mut inline_results: Vec<(AttackDetectionResult, u32)> = Vec::new();
 
-            if self.config.sqli.enabled {
+            if site_on(AttackType::Sqli, self.config.sqli.enabled) {
                 if let Some(r) = Self::check_sqli_internal(&self.sqli_detector, &inputs) {
                     let score = match r.attack_type {
                         AttackType::Sqli => 50,
@@ -438,7 +463,7 @@ impl AttackDetector {
                 }
             }
 
-            if self.config.xss.enabled {
+            if site_on(AttackType::Xss, self.config.xss.enabled) {
                 if let Some(r) = Self::check_xss_internal(&self.xss_detector, &inputs) {
                     let score = match r.attack_type {
                         AttackType::Xss => 50,
@@ -462,7 +487,10 @@ impl AttackDetector {
                 }
             }
 
-            if self.config.path_traversal.enabled {
+            if site_on(
+                AttackType::PathTraversal,
+                self.config.path_traversal.enabled,
+            ) {
                 if let Some(r) =
                     Self::check_path_traversal_internal(&self.path_traversal_detector, &inputs)
                 {
@@ -470,13 +498,13 @@ impl AttackDetector {
                 }
             }
 
-            if self.config.rfi.enabled {
+            if site_on(AttackType::Rfi, self.config.rfi.enabled) {
                 if let Some(r) = Self::check_rfi_internal(&self.rfi_detector, &inputs) {
                     inline_results.push((r, 50));
                 }
             }
 
-            if self.config.ssrf.enabled {
+            if site_on(AttackType::Ssrf, self.config.ssrf.enabled) {
                 if let Some(r) = Self::check_ssrf_internal(&self.ssrf_detector, &inputs) {
                     inline_results.push((r, 50));
                 }

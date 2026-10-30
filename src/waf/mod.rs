@@ -55,6 +55,7 @@ pub use synvoid_waf::bot;
 pub use synvoid_waf::request_sanitization;
 
 pub use attack_detection::AttackDetectionConfig;
+pub use attack_detection::AttackType;
 pub use probe_tracker::{
     ProbeConfig, ProbeTracker, SuspiciousWordTracker, UpstreamErrorResult, UpstreamErrorTracker,
 };
@@ -603,8 +604,24 @@ impl WafCore {
             let http_method =
                 http::Method::from_bytes(method.as_bytes()).unwrap_or(http::Method::GET);
 
+            // Site-disabled detectors neither report nor score, so a disabled
+            // detector cannot mask a lower-priority hit for an enabled one.
+            let mut disabled_buf = [AttackType::Sqli; 5];
+            let site_disabled = site_attack_config::site_disabled_list(
+                site_attack_config,
+                global,
+                &mut disabled_buf,
+            );
             let (result, score) = ad
-                .check_request(ip, &http_method, path, query, headers, body)
+                .check_request_with_site_disabled(
+                    ip,
+                    &http_method,
+                    path,
+                    query,
+                    headers,
+                    body,
+                    site_disabled,
+                )
                 .await;
 
             if let Some(res) = result {

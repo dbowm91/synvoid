@@ -12,6 +12,36 @@ pub fn attack_globally_disabled(
     !effective_flag(site.and_then(|s| s.enabled), global.enabled)
 }
 
+/// Detectors the site turned off while the global config leaves on, written
+/// into `buf` (capacity 5: the detectors with site subtables) and returned as
+/// a slice. Only the five site-able types are ever emitted; the detector
+/// dispatch ignores anything else.
+pub fn site_disabled_list<'b>(
+    site: Option<&SiteAttackDetectionConfig>,
+    global: &AttackDetectionConfig,
+    buf: &'b mut [AttackType; 5],
+) -> &'b [AttackType] {
+    let mut n = 0;
+    if let Some(site) = site {
+        let mut consider = |site_flag: Option<bool>, global_flag: bool, attack_type: AttackType| {
+            if global_flag && site_flag.is_some_and(|v| !v) {
+                buf[n] = attack_type;
+                n += 1;
+            }
+        };
+        consider(site.sqli.enabled, global.sqli.enabled, AttackType::Sqli);
+        consider(site.xss.enabled, global.xss.enabled, AttackType::Xss);
+        consider(
+            site.path_traversal.enabled,
+            global.path_traversal.enabled,
+            AttackType::PathTraversal,
+        );
+        consider(site.rfi.enabled, global.rfi.enabled, AttackType::Rfi);
+        consider(site.ssrf.enabled, global.ssrf.enabled, AttackType::Ssrf);
+    }
+    &buf[..n]
+}
+
 pub fn attack_type_enabled(
     site: Option<&SiteAttackDetectionConfig>,
     global: &AttackDetectionConfig,
@@ -80,5 +110,21 @@ mod tests {
         let site = site_with_rfi_disabled();
         let global = AttackDetectionConfig::default();
         assert!(attack_type_enabled(Some(&site), &global, AttackType::Ssti));
+    }
+
+    #[test]
+    fn disabled_list_contains_only_site_turned_off_detectors() {
+        let site = site_with_rfi_disabled();
+        let global = AttackDetectionConfig::default();
+        let mut buf = [AttackType::Sqli; 5];
+        let list = site_disabled_list(Some(&site), &global, &mut buf);
+        assert_eq!(list, &[AttackType::Rfi]);
+
+        let mut buf_none = [AttackType::Sqli; 5];
+        assert!(site_disabled_list(None, &global, &mut buf_none).is_empty());
+
+        let mut buf_default = [AttackType::Sqli; 5];
+        let default_site = SiteAttackDetectionConfig::default();
+        assert!(site_disabled_list(Some(&default_site), &global, &mut buf_default).is_empty());
     }
 }
