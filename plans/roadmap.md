@@ -2544,3 +2544,29 @@ no effect; `[admin] port 8081` never listens.
 
 Run 01 first (unblocks browser testing). 02 needs 01 only for clean
 verification. 03 is independent, may proceed in parallel.
+
+## Admin Panel Operator-Correctness Series — Ready
+
+Status: **READY** on proposed branch `plans/admin-panel-operator-correctness`. Umbrella:
+`plans/admin_panel_operator_correctness_roadmap.md`.
+
+Origin: operating the panel in a real browser against the `~/prodtest`
+deployment (standalone single-process mode). Four defects no gate covers:
+Workers tab `HTTP 404:` (no process manager in standalone); Upstreams tab
+`HTTP 429` + endless refetch (bare `use_effect` infinite loop burning the
+per-IP budget, self-sustaining); Dashboard `upstream_healthy` bool-vs-enum
+parse error at `/api/stats/sites` column 470; zero stats and empty request
+logs in every mode (`start_metrics_publisher` has no production caller,
+`AdminState.request_logs` has no writer, the IPC log path lands in a
+different deque, and the deployment disables verbose request logging).
+
+| Phase | File | Status |
+|---|---|---|
+| 01 | `admin_panel_operator_correctness_phase_01_upstreams_polling_loop.md` | **Ready** — `use_effect` → `use_effect_with(())`, run first |
+| 02 | `admin_panel_operator_correctness_phase_02_upstream_healthy_contract.md` | **Ready** — UI tri-state for backend `HealthStatus` |
+| 03 | `admin_panel_operator_correctness_phase_03_workers_standalone.md` | **Ready** — standalone empty-state, no contract change |
+| 04 | `admin_panel_operator_correctness_phase_04_metrics_logs_bridge.md` | **Ready** — spawn publisher, standalone feed + log sinks |
+| 05 | `admin_panel_operator_correctness_phase_05_verification_closeout.md` | **Ready** — terminal gate, runs last |
+
+Run 01 first (removes the 429 storm masking other tabs). 02–03 independent.
+04 independent but largest; may proceed in parallel. 05 requires 01–04.
