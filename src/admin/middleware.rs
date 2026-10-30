@@ -163,7 +163,17 @@ pub async fn auth_middleware_with_state(
                 )
                     .into_response();
             }
-            super::auth::AdminTokenResult::Invalid => {}
+            super::auth::AdminTokenResult::Invalid => {
+                // Only a presented-but-wrong bearer counts as a failed login:
+                // it is the brute-force vector against the bcrypt admin token.
+                // A missing or invalid session is not credential-guessing
+                // (session IDs are unguessable randoms; expiry is normal), so
+                // it must not consume the lockout budget — otherwise the
+                // panel's own logged-out boot traffic (theme, capabilities,
+                // session restore: 5 failures) locks the operator's IP out
+                // for 5 minutes before they can even log in.
+                super::auth::AUTH_RATE_LIMITER.record_failure(client_ip);
+            }
         }
     }
 
@@ -180,7 +190,9 @@ pub async fn auth_middleware_with_state(
         }
     }
 
-    super::auth::AUTH_RATE_LIMITER.record_failure(client_ip);
+    // No failure is recorded here: reaching this point with no valid bearer
+    // and no valid session means no credential-guessing happened (see above).
+    // The failure metric is still emitted for observability.
     super::metrics_events::record_auth_failure();
     tracing::warn!("Auth middleware: authentication failed for {}", client_ip);
     StatusCode::UNAUTHORIZED.into_response()
@@ -252,7 +264,7 @@ pub async fn csrf_middleware(
                 method,
                 path
             );
-            super::auth::AUTH_RATE_LIMITER.record_failure(client_ip);
+            // No credential presented: not credential-guessing, no lockout.
             super::metrics_events::record_csrf_failure();
             return StatusCode::FORBIDDEN.into_response();
         }
@@ -264,7 +276,7 @@ pub async fn csrf_middleware(
             method,
             path
         );
-        super::auth::AUTH_RATE_LIMITER.record_failure(client_ip);
+        // A stale session is expiry, not guessing: no lockout.
         super::metrics_events::record_csrf_failure();
         return StatusCode::FORBIDDEN.into_response();
     }
@@ -283,7 +295,7 @@ pub async fn csrf_middleware(
                 method,
                 path
             );
-            super::auth::AUTH_RATE_LIMITER.record_failure(client_ip);
+            // No mutation credential presented: not guessing, no lockout.
             super::metrics_events::record_csrf_failure();
             return StatusCode::FORBIDDEN.into_response();
         }
