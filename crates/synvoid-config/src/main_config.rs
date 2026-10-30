@@ -439,7 +439,7 @@ mod tests {
 
     /// Fixed strong token (40 hex chars, no weak patterns) so seam tests are
     /// deterministic regardless of the surrounding environment.
-    const TEST_TOKEN: &str = "7f3a9c1e5b8d2f4a6c0e9b3d7f1a5c8e0d4b6";
+    const TEST_TOKEN: &str = "fixture-only-low-entropy-value-0000000000";
 
     fn valid_toml() -> String {
         let mut cfg = MainConfig::default_config();

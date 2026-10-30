@@ -50,7 +50,7 @@ pub use dns::{
 };
 pub use theme::{
     ThemeBranding, ThemeColors, ThemeConfig, ThemeDefaults, ThemeEffects, ThemeMode, ThemePreset,
-    ThemeRestriction, ThemeSpacing,
+    ThemeRestriction, ThemeScheme, ThemeSpacing,
 };
 
 pub use defaults::{

@@ -46,6 +46,9 @@ impl SiteThemeConfig {
                 .as_deref()
                 .map(|a| crate::theme::ThemeRestriction::from(a))
                 .unwrap_or(default_theme.restriction),
+            dark_theme: default_theme.dark_theme.clone(),
+            light_theme: default_theme.light_theme.clone(),
+            scheme: default_theme.scheme,
             colors,
             spacing: default_theme.spacing.clone(),
             effects: default_theme.effects.clone(),

@@ -9089,6 +9089,7 @@ dependencies = [
  "chrono",
  "rand 0.9.4",
  "synvoid-config",
+ "toml 0.8.23",
 ]
 
 [[package]]

@@ -4,12 +4,44 @@ use utoipa::ToSchema;
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, ToSchema)]
 pub struct ThemeDefaults {
+    /// Legacy block-page preset selector.
+    ///
+    /// Legacy-preferred-read: still parsed so existing configs and API
+    /// clients keep working, but new configs should prefer
+    /// `dark_theme` / `light_theme` / `scheme` below. When those three are
+    /// at their defaults and `preset` names a legacy preset, both resolve
+    /// to that preset's Halloy equivalent (see `resolve_halloy_themes`).
     #[serde(default = "default_theme_preset")]
     pub preset: String,
+    /// Legacy scheme selector (`"dark"` / `"light"` / `"auto"`).
+    ///
+    /// Legacy-preferred-read: still parsed for backward compatibility.
+    /// Under the legacy-compat rule it maps onto `scheme` (`dark`/`light`
+    /// forced, `auto` following the system preference). New configs should
+    /// set `scheme` directly.
     #[serde(default = "default_theme_mode")]
     pub mode: String,
     #[serde(default = "default_allow_only")]
     pub allow_only: String,
+    /// Halloy theme used for the dark scheme of block/error pages.
+    ///
+    /// Explicit values always win over the legacy `preset`. Validation here
+    /// is deliberately shallow (any non-empty string of at most
+    /// `MAX_THEME_NAME_BYTES` bytes); strict allowlist matching against the
+    /// 50 vendored Halloy themes lives in the `synvoid-theme` registry
+    /// layer (Phase 01 `selected_halloy_theme()`), which falls back to the
+    /// default at render time instead of failing the boot.
+    #[serde(default = "default_dark_theme")]
+    pub dark_theme: String,
+    /// Halloy theme used for the light scheme of block/error pages.
+    /// Same precedence and validation discipline as `dark_theme`.
+    #[serde(default = "default_light_theme")]
+    pub light_theme: String,
+    /// Which scheme the block/error pages render: `"system"` (follow
+    /// `prefers-color-scheme`), `"dark"`, or `"light"` (forced). Anything
+    /// else falls back to `"system"` at resolution time.
+    #[serde(default = "default_theme_scheme")]
+    pub scheme: String,
     #[serde(default)]
     pub colors: ThemeColors,
     #[serde(default)]
@@ -27,6 +59,9 @@ impl Default for ThemeDefaults {
             preset: default_theme_preset(),
             mode: default_theme_mode(),
             allow_only: default_allow_only(),
+            dark_theme: default_dark_theme(),
+            light_theme: default_light_theme(),
+            scheme: default_theme_scheme(),
             colors: preset.colors(),
             spacing: ThemeSpacing::default(),
             effects: ThemeEffects::default(),
@@ -48,6 +83,38 @@ impl ThemeDefaults {
         if preset != ThemePreset::Default || self.colors == ThemeColors::default() {
             self.colors = preset.colors();
         }
+        let (dark_theme, light_theme, scheme) = self.resolve_halloy_themes();
+        self.dark_theme = dark_theme;
+        self.light_theme = light_theme;
+        self.scheme = scheme.as_str().to_string();
+    }
+
+    /// Resolve the Halloy theme pair + scheme carried to the renderer.
+    ///
+    /// Blog-style dual-scheme resolution (mirrors the
+    /// dark/light/scheme-with-config-fallback pattern): explicit new fields
+    /// always win. Only when all three are at their defaults and `preset`
+    /// names a legacy preset do both resolve to that preset's Halloy
+    /// equivalent with `scheme` following `mode` (`dark`/`light` forced,
+    /// `auto` following the system preference). Anything else — including
+    /// unknown theme names — resolves without error; the registry layer
+    /// falls back to the defaults at render time, so a typo never fails
+    /// the boot.
+    pub fn resolve_halloy_themes(&self) -> (String, String, ThemeScheme) {
+        let scheme = ThemeScheme::from(self.scheme.as_str());
+        let new_fields_at_defaults = self.dark_theme == default_dark_theme()
+            && self.light_theme == default_light_theme()
+            && self.scheme == default_theme_scheme();
+        if new_fields_at_defaults {
+            if let Some((dark, light)) = legacy_halloy_equivalent(self.preset.as_str()) {
+                return (dark, light, ThemeScheme::from(self.mode.as_str()));
+            }
+        }
+        (
+            normalize_theme_name(self.dark_theme.as_str(), &default_dark_theme()),
+            normalize_theme_name(self.light_theme.as_str(), &default_light_theme()),
+            scheme,
+        )
     }
 }
 
@@ -57,6 +124,84 @@ fn default_theme_mode() -> String {
 
 fn default_allow_only() -> String {
     "both".to_string()
+}
+
+fn default_dark_theme() -> String {
+    "Catppuccin Mocha".to_string()
+}
+
+fn default_light_theme() -> String {
+    "Catppuccin Latte".to_string()
+}
+
+fn default_theme_scheme() -> String {
+    "system".to_string()
+}
+
+/// Maximum accepted theme-name length in bytes. This is a shallow
+/// well-formedness guard only, not an allowlist: Phase 01's registry
+/// (`selected_halloy_theme()`) owns strict name validation. Kept in sync
+/// with that layer's limit by convention; oversize names fall back to the
+/// per-field default instead of failing deserialization.
+pub const MAX_THEME_NAME_BYTES: usize = 128;
+
+fn normalize_theme_name(raw: &str, fallback: &str) -> String {
+    if raw.is_empty() || raw.len() > MAX_THEME_NAME_BYTES {
+        fallback.to_string()
+    } else {
+        raw.to_string()
+    }
+}
+
+/// Legacy `preset` name to Halloy equivalent pair.
+///
+/// Mapping: `default` resolves to the blog defaults (dark `Catppuccin
+/// Mocha`, light `Catppuccin Latte`); `dark` / `light` resolve both sides
+/// to the matching blog default; `ocean` / `forest` / `sunset` have no
+/// Halloy counterpart, so the preset name is carried through verbatim on
+/// both sides and the registry layer falls back to the defaults at render
+/// time. Unknown preset strings yield `None` (no compat applied).
+fn legacy_halloy_equivalent(preset: &str) -> Option<(String, String)> {
+    match preset.to_lowercase().as_str() {
+        "default" => Some((default_dark_theme(), default_light_theme())),
+        "dark" => Some((default_dark_theme(), default_dark_theme())),
+        "light" => Some((default_light_theme(), default_light_theme())),
+        "ocean" | "forest" | "sunset" => Some((preset.to_string(), preset.to_string())),
+        _ => None,
+    }
+}
+
+/// Resolved block-page color scheme. Carried on `ThemeConfig`; the raw
+/// operator-facing `ThemeDefaults::scheme` string normalizes into this,
+/// with anything outside `system` / `dark` / `light` falling back to
+/// `System` (never an error).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize, Serialize, JsonSchema, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ThemeScheme {
+    #[default]
+    System,
+    Dark,
+    Light,
+}
+
+impl From<&str> for ThemeScheme {
+    fn from(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "dark" => ThemeScheme::Dark,
+            "light" => ThemeScheme::Light,
+            _ => ThemeScheme::System,
+        }
+    }
+}
+
+impl ThemeScheme {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ThemeScheme::System => "system",
+            ThemeScheme::Dark => "dark",
+            ThemeScheme::Light => "light",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, JsonSchema, ToSchema)]
@@ -404,6 +549,9 @@ impl From<&str> for ThemeRestriction {
 pub struct ThemeConfig {
     pub mode: ThemeMode,
     pub restriction: ThemeRestriction,
+    pub dark_theme: String,
+    pub light_theme: String,
+    pub scheme: ThemeScheme,
     pub colors: ThemeColors,
     pub spacing: ThemeSpacing,
     pub effects: ThemeEffects,
@@ -412,9 +560,13 @@ pub struct ThemeConfig {
 
 impl From<ThemeDefaults> for ThemeConfig {
     fn from(defaults: ThemeDefaults) -> Self {
+        let (dark_theme, light_theme, scheme) = defaults.resolve_halloy_themes();
         Self {
             mode: ThemeMode::from(defaults.mode.as_str()),
             restriction: ThemeRestriction::from(defaults.allow_only.as_str()),
+            dark_theme,
+            light_theme,
+            scheme,
             colors: defaults.colors,
             spacing: defaults.spacing,
             effects: defaults.effects,

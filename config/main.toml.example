@@ -365,6 +365,20 @@ custom_directory = ""
 # =============================================================================
 
 [defaults.theme]
+# Halloy block-page themes (blog-style dual-scheme selection).
+# `dark_theme` / `light_theme` name a Halloy theme per color scheme and
+# `scheme` selects which renders: "system" (follow prefers-color-scheme),
+# "dark" or "light" (forced). Any other `scheme` falls back to "system".
+# Explicit values here always win over the legacy `preset` / `mode` below.
+dark_theme = "Catppuccin Mocha"
+light_theme = "Catppuccin Latte"
+scheme = "system"
+
+# Legacy preset + mode: still read for backward compatibility. When the
+# Halloy fields above are at their defaults and `preset` names a legacy
+# preset, both resolve to that preset's Halloy equivalent and `scheme`
+# follows `mode` (dark/light forced, auto -> system). Prefer the Halloy
+# fields above for new configs.
 # Theme preset: "default", "dark", "light", "ocean", "forest", "sunset"
 # When set, colors are loaded from the preset (custom colors below are ignored)
 preset = "default"
