@@ -348,7 +348,15 @@ fn build_router_from_state(
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             middleware::csrf_middleware,
-        ));
+        ))
+        // Rate limiting wraps the API (and WS below) only, outside the
+        // auth/CSRF middleware so abusive traffic is shed before bcrypt.
+        // Static assets, the SPA fallback and /health stay unlimited: the
+        // shipped panel fires ~10 requests in its first second (bundle,
+        // WASM, CSS, fonts, theme, capabilities, session restore), which the
+        // default per-second budget would 429 — including the login POST
+        // itself, starved by the page's own boot storm.
+        .layer(rate_limit_layer.clone());
 
     // ── WebSocket routes (session-authenticated upgrade, no blanket middleware) ──
     // Canonical paths live in `ws::{WS_METRICS_PATH, WS_LOGS_PATH}` so the
@@ -356,7 +364,8 @@ fn build_router_from_state(
     // one source of truth.
     let ws_routes = Router::new()
         .route(ws::WS_METRICS_PATH, get(ws::ws_metrics_handler))
-        .route(ws::WS_LOGS_PATH, get(ws::ws_logs_handler));
+        .route(ws::WS_LOGS_PATH, get(ws::ws_logs_handler))
+        .layer(rate_limit_layer);
 
     // ── Root health (public, no auth) ─────────────────────────────────────
     let health_route = Router::new().route("/health", get(health_check));
@@ -375,7 +384,6 @@ fn build_router_from_state(
             middleware::extract_client_ip_middleware,
         ))
         .layer(yara_rate_limit_layer)
-        .layer(rate_limit_layer)
         .with_state(state)
 }
 
