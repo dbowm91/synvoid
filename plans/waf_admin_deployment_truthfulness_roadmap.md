@@ -1,6 +1,6 @@
 # WAF/Admin Deployment-Truthfulness Roadmap
 
-Status: **PROPOSED**.
+Status: **IMPLEMENTED** (branch `plans/waf-admin-deployment-truthfulness`; all three phases landed, verified, and deployed against the `~/prodtest` blog).
 
 Registered in: `plans/roadmap.md`.
 
@@ -25,9 +25,9 @@ Phases (in order — 01 unblocks browser testing, 02 makes site policy real,
 
 | Phase | File | Status |
 |---|---|---|
-| 01 | `waf_admin_deployment_truthfulness_phase_01_rfi_referer.md` | **Proposed** — RFI/SSRF Referer same-origin exemption |
-| 02 | `waf_admin_deployment_truthfulness_phase_02_site_attack_config_wiring.md` | **Proposed** — wire `SiteAttackDetectionConfig` into WAF dispatch |
-| 03 | `waf_admin_deployment_truthfulness_phase_03_admin_mounting.md` | **Proposed** — mount `create_admin_router` in the worker data-plane composition root |
+| 01 | `waf_admin_deployment_truthfulness_phase_01_rfi_referer.md` | **Implemented** — RFI/SSRF Referer same-origin exemption |
+| 02 | `waf_admin_deployment_truthfulness_phase_02_site_attack_config_wiring.md` | **Implemented** — wire `SiteAttackDetectionConfig` into WAF dispatch |
+| 03 | `waf_admin_deployment_truthfulness_phase_03_admin_mounting.md` | **Implemented** — mount `create_admin_router` in the worker data-plane composition root |
 
 Run 01 first (smallest blast radius, unblocks IP-based browser testing).
 02 depends on 01 only for verification cleanliness (Referer traffic must pass

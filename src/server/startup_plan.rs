@@ -17,6 +17,7 @@ pub struct UnifiedServerStartupPlan {
     pub https_addr_v6: Option<SocketAddr>,
     pub http3_addr: Option<SocketAddr>,
     pub http3_addr_v6: Option<SocketAddr>,
+    pub admin_addr: Option<SocketAddr>,
     pub tls_enabled: bool,
     pub dns_enabled: bool,
     pub tcp_enabled: bool,
@@ -48,6 +49,8 @@ pub enum UnifiedServerStartupPlanError {
     InvalidHttpsAddress(String),
     #[error("invalid HTTP/3 bind address: {0}")]
     InvalidHttp3Address(String),
+    #[error("invalid admin bind address: {0}")]
+    InvalidAdminAddress(String),
     #[error("listener conflict: {0}")]
     ListenerConflict(String),
     #[error("invalid feature combination: {0}")]
@@ -141,7 +144,23 @@ impl UnifiedServerStartupPlan {
             (None, None)
         };
 
-        // 7. Normalize worker count
+        // 7. Parse admin addr when the control plane is enabled
+        let admin_addr = if main_config.admin.enabled {
+            Some(
+                parse_host_port(&main_config.admin.bind_address, main_config.admin.port).map_err(
+                    |e| {
+                        UnifiedServerStartupPlanError::InvalidAdminAddress(format!(
+                            "bind_address={}, port={}: {}",
+                            main_config.admin.bind_address, main_config.admin.port, e
+                        ))
+                    },
+                )?,
+            )
+        } else {
+            None
+        };
+
+        // 8. Normalize worker count
         let worker_count = worker_count.max(1);
 
         // 8. Scale rate limits by worker count (ceiling division)
@@ -149,7 +168,8 @@ impl UnifiedServerStartupPlan {
         let scaled_global =
             scale_global_rate_limit(&main_config.defaults.ratelimit.global, worker_count);
 
-        // 9. Check for listener conflicts
+        // 9. Check for listener conflicts (renumbered: admin parse is 7,
+        //    worker normalization is 8)
         if let Some(https) = https_addr {
             if https == http_addr {
                 return Err(UnifiedServerStartupPlanError::ListenerConflict(format!(
@@ -174,6 +194,23 @@ impl UnifiedServerStartupPlan {
                 }
             }
         }
+        if let Some(admin) = admin_addr {
+            for (name, other) in [
+                ("HTTP", Some(http_addr)),
+                ("HTTPS", https_addr),
+                ("HTTP/3", http3_addr),
+            ]
+            .into_iter()
+            .filter_map(|(name, addr)| addr.map(|a| (name, a)))
+            {
+                if admin == other {
+                    return Err(UnifiedServerStartupPlanError::ListenerConflict(format!(
+                        "Admin addr {} conflicts with {} addr {}",
+                        admin, name, other
+                    )));
+                }
+            }
+        }
 
         // 10. Build plan
         Ok(Self {
@@ -183,6 +220,7 @@ impl UnifiedServerStartupPlan {
             https_addr_v6,
             http3_addr,
             http3_addr_v6,
+            admin_addr,
             tls_enabled: tls_config.enabled,
             #[cfg(feature = "dns")]
             dns_enabled: main_config.dns.enabled,
@@ -368,6 +406,48 @@ mod tests {
 
         let err = UnifiedServerStartupPlan::from_config_snapshot(&cfg, 1)
             .expect_err("should fail on H3/HTTPS conflict");
+        assert!(
+            matches!(err, UnifiedServerStartupPlanError::ListenerConflict(_)),
+            "expected ListenerConflict, got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn admin_disabled_yields_no_admin_addr() {
+        let mut cfg = make_test_main_config();
+        cfg.admin.enabled = false;
+
+        let plan =
+            UnifiedServerStartupPlan::from_config_snapshot(&cfg, 1).expect("plan should build");
+        assert!(plan.admin_addr.is_none());
+    }
+
+    #[test]
+    fn admin_enabled_parses_admin_addr() {
+        let mut cfg = make_test_main_config();
+        cfg.admin.enabled = true;
+        cfg.admin.bind_address = "127.0.0.1".to_string();
+        cfg.admin.port = 18081;
+
+        let plan =
+            UnifiedServerStartupPlan::from_config_snapshot(&cfg, 1).expect("plan should build");
+        assert_eq!(
+            plan.admin_addr.map(|a| a.port()),
+            Some(18081),
+            "admin addr must be parsed when enabled"
+        );
+    }
+
+    #[test]
+    fn admin_port_conflicting_with_http_is_rejected() {
+        let mut cfg = make_test_main_config();
+        cfg.admin.enabled = true;
+        cfg.admin.bind_address = cfg.server.host.clone();
+        cfg.admin.port = cfg.server.port;
+
+        let err = UnifiedServerStartupPlan::from_config_snapshot(&cfg, 1)
+            .expect_err("should fail on admin/HTTP conflict");
         assert!(
             matches!(err, UnifiedServerStartupPlanError::ListenerConflict(_)),
             "expected ListenerConflict, got: {:?}",

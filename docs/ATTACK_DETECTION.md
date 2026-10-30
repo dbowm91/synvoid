@@ -256,6 +256,11 @@ HTTP Request Smuggling detection:
 - PHP-specific RFI vectors
 - Protocol handlers in parameters
 
+`Referer` and `Origin` headers are exempt from the bare-IP heuristic
+(`ip_in_url`): browsers legitimately echo same-site intranet URLs there.
+Anchored inclusion patterns (e.g. `?file=http://`) are still inspected in
+those headers, and IP detection in query strings and bodies is unchanged.
+
 ### Header Validation
 
 Validates incoming HTTP headers:

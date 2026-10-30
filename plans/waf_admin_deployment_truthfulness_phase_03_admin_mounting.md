@@ -1,6 +1,6 @@
 # Phase 03 Plan: Mount the Admin HTTP API
 
-Status: **PROPOSED**.
+Status: **IMPLEMENTED** (branch `plans/waf-admin-deployment-truthfulness`; `spawn_admin_service` in worker data-plane root, plan `admin_addr` + conflict check, guard inverted to mounted state, authority doc + feature matrix updated).
 
 Registered in: `plans/roadmap.md`.
 

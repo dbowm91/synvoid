@@ -24,7 +24,7 @@ These features are supported but not in the default profile. Enable them via fea
 | ICMP Filter | `icmp-filter` | ICMP flood filtering (nftables baseline; PF/WFP lanes per-crate) | Linux, macOS, FreeBSD, OpenBSD, Windows (NetBSD explicitly unsupported: native filter is NPF, a future backend) |
 | Origin Key Exchange | `origin_key_exchange` | Signed HTTP integrity verification | All |
 | Audit Logging | `audit` | Audit logging for admin mutations | All |
-| Admin HTTP API | — | **Not shipped.** Compiled into every worker (`src/admin/`, ~20k lines) but `create_admin_router` has no production mount point, so no admin endpoint is reachable. See `architecture/admin_control_plane_authority.md` | No — CI lanes drive the router directly, not the binary |
+| Admin HTTP API | — | **Shipped.** `[admin] enabled=true` serves `create_admin_router` on `bind_address:port` in every worker (`src/server/listener_tasks.rs::spawn_admin_service`, drained via `shutdown_and_join`). See `architecture/admin_control_plane_authority.md` | Yes — plus CI lanes drive the router directly |
 | TUN Device | `tun-rs` | TUN device support | Linux, macOS |
 | Buffer Pool | `buffer` | Sharded buffer pool with ABA-safe design | All |
 | rkyv Serialization | `rkyv` | Zero-copy serialization for DNS/DHT types | All |

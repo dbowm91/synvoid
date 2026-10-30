@@ -1,6 +1,6 @@
 # Phase 02 Plan: Wire `SiteAttackDetectionConfig` into WAF Dispatch
 
-Status: **PROPOSED**.
+Status: **IMPLEMENTED** (branch `plans/waf-admin-deployment-truthfulness`; `src/waf/site_attack_config.rs` merge helper, `site_attack_config` param threaded through `WafCore`/`BufferedRequestWaf`/`Http3RequestWaf` dispatch, helper unit tests, docs).
 
 Registered in: `plans/roadmap.md`.
 

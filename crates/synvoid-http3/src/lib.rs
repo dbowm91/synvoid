@@ -52,6 +52,7 @@ mod tests {
     use super::*;
     use std::net::IpAddr;
     use std::sync::Arc;
+    use synvoid_config::site::SiteAttackDetectionConfig;
     use synvoid_config::site::SiteBotConfig;
     use synvoid_waf::primitives::WafDecision;
     use synvoid_waf::ConnectionLimiter;
@@ -74,6 +75,7 @@ mod tests {
             _user_agent: Option<&str>,
             _ja4_hash: Option<&str>,
             _site_bot_config: Option<&SiteBotConfig>,
+            _site_attack_config: Option<&SiteAttackDetectionConfig>,
         ) -> WafDecision {
             WafDecision::Pass
         }

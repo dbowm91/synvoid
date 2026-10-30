@@ -88,6 +88,7 @@ pub struct UnifiedServer {
     pub(crate) https_addr_v6: Option<SocketAddr>,
     pub(crate) http3_addr: Option<SocketAddr>,
     pub(crate) http3_addr_v6: Option<SocketAddr>,
+    pub(crate) admin_addr: Option<SocketAddr>,
     pub(crate) tcp_pool: Option<TcpListenerPool>,
     pub(crate) udp_pool: Option<UdpListenerPool>,
     pub(crate) waf: Arc<WafCore>,
@@ -162,6 +163,7 @@ impl UnifiedServer {
             https_addr_v6: plan.https_addr_v6,
             http3_addr: plan.http3_addr,
             http3_addr_v6: plan.http3_addr_v6,
+            admin_addr: plan.admin_addr,
             tcp_pool: resources.tcp_pool,
             udp_pool: resources.udp_pool,
             waf: resources.waf,
@@ -444,6 +446,7 @@ impl UnifiedServer {
         listener_tasks::spawn_https_listeners(&mut handles, &shared_state, self).await;
         listener_tasks::spawn_http3_listeners(&mut handles, &shared_state, self);
         listener_tasks::spawn_aux_pools(&mut handles, self);
+        listener_tasks::spawn_admin_service(&mut handles, &shared_state, self).await;
 
         // ── DNS server (registered) ─────────────────────────────────
         #[cfg(feature = "dns")]

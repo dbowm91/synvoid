@@ -65,7 +65,7 @@ impl WafProcessor for RootWafProcessor {
         Ok(self
             .inner
             .check_request_full(
-                site_id, ip, method, path, query, &headers, None, ua, ja4_hash, None, None,
+                site_id, ip, method, path, query, &headers, None, ua, ja4_hash, None, None, None,
             )
             .await)
     }
@@ -93,7 +93,7 @@ impl WafProcessor for RootWafProcessor {
         Ok(self
             .inner
             .check_request_full(
-                site_id, ip, method, path, query, headers, body, ua, ja4_hash, None, None,
+                site_id, ip, method, path, query, headers, body, ua, ja4_hash, None, None, None,
             )
             .await)
     }

@@ -27,6 +27,12 @@ pub struct RfiDetector {
     inner: BasePatternDetector,
 }
 
+fn is_referer_or_origin(location: &InputLocation) -> bool {
+    location
+        .header_name()
+        .is_some_and(|n| n.eq_ignore_ascii_case("referer") || n.eq_ignore_ascii_case("origin"))
+}
+
 impl RfiDetector {
     pub fn new(paranoia_level: u8, custom_patterns: &[String]) -> Self {
         let inner = BasePatternDetector::new(
@@ -75,7 +81,7 @@ impl RfiDetector {
         }
 
         if let Some(ip_regex) = IP_REGEX.as_ref() {
-            if ip_regex.is_match(&decoded) {
+            if !is_referer_or_origin(&location) && ip_regex.is_match(&decoded) {
                 tracing::warn!(
                     attack_type = "rfi",
                     location = %location,
@@ -140,5 +146,33 @@ mod tests {
         assert!(detector
             .detect("/api/files?id=123", InputLocation::QueryString)
             .is_none());
+    }
+
+    #[test]
+    fn test_rfi_referer_ip_exempt() {
+        let detector = RfiDetector::new(2, &[]);
+        assert!(detector
+            .detect(
+                "http://192.168.182.143:8082/static/css/public.css",
+                InputLocation::Header("referer".into())
+            )
+            .is_none());
+        assert!(detector
+            .detect(
+                "http://192.168.182.143:8082/",
+                InputLocation::Header("origin".into())
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn test_rfi_referer_smuggled_pattern_still_blocked() {
+        let detector = RfiDetector::new(2, &[]);
+        assert!(detector
+            .detect(
+                "x?file=http://evil.com/shell.txt",
+                InputLocation::Header("referer".into())
+            )
+            .is_some());
     }
 }

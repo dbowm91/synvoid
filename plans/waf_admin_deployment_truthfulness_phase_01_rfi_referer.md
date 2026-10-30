@@ -1,6 +1,6 @@
 # Phase 01 Plan: RFI/SSRF `Referer` Same-Origin Exemption
 
-Status: **PROPOSED**.
+Status: **IMPLEMENTED** (branch `plans/waf-admin-deployment-truthfulness`; `is_referer_or_origin` gates in `rfi.rs`/`ssrf.rs`, unit tests, docs paragraph).
 
 Registered in: `plans/roadmap.md`.
 

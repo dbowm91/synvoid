@@ -40,6 +40,7 @@ pub use synvoid_waf::mitigation;
 pub mod probe_tracker;
 pub mod ratelimit;
 pub mod rule_feed;
+pub mod site_attack_config;
 pub mod threat_intel;
 pub mod threat_level;
 pub mod traffic_shaper;
@@ -252,6 +253,7 @@ impl synvoid_http3::Http3RequestWaf for WafCore {
         ua: Option<&str>,
         ja4_hash: Option<&str>,
         site_bot_config: Option<&synvoid_config::site::SiteBotConfig>,
+        site_attack_config: Option<&synvoid_config::site::SiteAttackDetectionConfig>,
     ) -> synvoid_proxy::WafDecision {
         WafCore::check_request_full(
             self,
@@ -265,6 +267,7 @@ impl synvoid_http3::Http3RequestWaf for WafCore {
             ua,
             ja4_hash,
             site_bot_config,
+            site_attack_config,
             None,
         )
         .await
@@ -351,6 +354,7 @@ impl WafCore {
         );
 
         // Stage 5: detector/policy setup (bot, endpoints, challenge, attack).
+        let attack_detection_snapshot = attack_detection_config.clone();
         let detectors =
             assembly::assemble_detectors(&bot_config, &endpoint_config, attack_detection_config);
 
@@ -370,7 +374,7 @@ impl WafCore {
             challenge_manager: detectors.challenge_manager,
             auth_manager: auth_manager_instance,
             attack_detector: ArcSwapOption::new(detectors.attack_detector),
-            attack_detection_config: ArcSwapOption::new(None),
+            attack_detection_config: ArcSwapOption::new(attack_detection_snapshot.map(Arc::new)),
             config: waf_config,
             whitelist: whitelist_set,
             _tarpit_generator: tarpit_generator,
@@ -424,6 +428,7 @@ impl WafCore {
         ua: Option<&str>,
         ja4_hash: Option<&str>,
         site_bot_config: Option<&crate::config::site::SiteBotConfig>,
+        site_attack_config: Option<&crate::config::site::SiteAttackDetectionConfig>,
         _ctx: Option<&RequestServices>,
     ) -> WafDecision {
         let mut best: Option<StagedOutcome> = None;
@@ -453,7 +458,7 @@ impl WafCore {
         if !interim_is_denied {
             best = fold_outcome(
                 best,
-                self.check_attack(ip, method, path, query, headers, body)
+                self.check_attack(ip, method, path, query, headers, body, site_attack_config)
                     .await,
             );
         }
@@ -479,7 +484,7 @@ impl WafCore {
     ) -> WafDecision {
         let headers = http::HeaderMap::new();
         self.check_request_full(
-            site_id, ip, method, path, None, &headers, None, ua, None, None, None,
+            site_id, ip, method, path, None, &headers, None, ua, None, None, None, None,
         )
         .await
     }
@@ -580,7 +585,20 @@ impl WafCore {
         query: Option<&str>,
         headers: &http::HeaderMap,
         body: Option<&[u8]>,
+        site_attack_config: Option<&crate::config::site::SiteAttackDetectionConfig>,
     ) -> Option<StagedOutcome> {
+        let loaded = self.attack_detection_config.load();
+        let fallback;
+        let global: &AttackDetectionConfig = match loaded.as_ref() {
+            Some(cfg) => cfg,
+            None => {
+                fallback = AttackDetectionConfig::default();
+                &fallback
+            }
+        };
+        if site_attack_config::attack_globally_disabled(site_attack_config, global) {
+            return None;
+        }
         if let Some(ad) = self.attack_detector.load().as_ref() {
             let http_method =
                 http::Method::from_bytes(method.as_bytes()).unwrap_or(http::Method::GET);
@@ -590,6 +608,13 @@ impl WafCore {
                 .await;
 
             if let Some(res) = result {
+                if !site_attack_config::attack_type_enabled(
+                    site_attack_config,
+                    global,
+                    res.attack_type,
+                ) {
+                    return None;
+                }
                 tracing::info!(
                     "Attack detected from {}: {:?} (score: {}) at {}",
                     ip,
@@ -1007,6 +1032,7 @@ impl synvoid_http::BufferedRequestWaf for WafCore {
         ua: Option<&str>,
         ja4_hash: Option<&str>,
         site_bot_config: Option<&crate::config::site::SiteBotConfig>,
+        site_attack_config: Option<&crate::config::site::SiteAttackDetectionConfig>,
     ) -> synvoid_waf::WafDecision {
         WafCore::check_request_full(
             self,
@@ -1020,6 +1046,7 @@ impl synvoid_http::BufferedRequestWaf for WafCore {
             ua,
             ja4_hash,
             site_bot_config,
+            site_attack_config,
             None,
         )
         .await
@@ -1037,6 +1064,7 @@ impl synvoid_http::BufferedRequestWaf for WafCore {
         ua: Option<String>,
         ja4_hash: Option<String>,
         site_bot_config: Option<crate::config::site::SiteBotConfig>,
+        site_attack_config: Option<crate::config::site::SiteAttackDetectionConfig>,
     ) -> synvoid_waf::WafDecision {
         WafCore::check_request_full(
             &self,
@@ -1050,6 +1078,7 @@ impl synvoid_http::BufferedRequestWaf for WafCore {
             ua.as_deref(),
             ja4_hash.as_deref(),
             site_bot_config.as_ref(),
+            site_attack_config.as_ref(),
             None,
         )
         .await
@@ -1271,6 +1300,7 @@ mod enforcement_pipeline_tests {
                 None,
                 None,
                 None,
+                None,
             )
             .await;
         assert!(matches!(first, WafDecision::Pass));
@@ -1288,6 +1318,7 @@ mod enforcement_pipeline_tests {
                 &headers(),
                 None,
                 Some(NORMAL_UA),
+                None,
                 None,
                 None,
                 None,
@@ -1321,6 +1352,7 @@ mod enforcement_pipeline_tests {
                 None,
                 None,
                 None,
+                None,
             )
             .await;
         assert!(
@@ -1345,6 +1377,7 @@ mod enforcement_pipeline_tests {
                 &headers(),
                 None,
                 Some(NORMAL_UA),
+                None,
                 None,
                 None,
                 None,

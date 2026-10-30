@@ -15,6 +15,12 @@ pub struct SsrfDetector {
     allowlist_only_mode: bool,
 }
 
+fn is_referer_or_origin(location: &InputLocation) -> bool {
+    location
+        .header_name()
+        .is_some_and(|n| n.eq_ignore_ascii_case("referer") || n.eq_ignore_ascii_case("origin"))
+}
+
 impl SsrfDetector {
     pub fn new(
         paranoia_level: u8,
@@ -468,7 +474,10 @@ impl SsrfDetector {
             });
         }
 
-        if self.block_private_ips && Self::contains_private_ip_or_localhost(&decoded_lower) {
+        if self.block_private_ips
+            && !is_referer_or_origin(&location)
+            && Self::contains_private_ip_or_localhost(&decoded_lower)
+        {
             tracing::warn!(
                 attack_type = "ssrf",
                 location = %location,
@@ -551,5 +560,33 @@ mod tests {
                 InputLocation::QueryString
             )
             .is_none());
+    }
+
+    #[test]
+    fn test_ssrf_referer_ip_exempt() {
+        let detector = SsrfDetector::new(2, &[], true, vec![], false);
+        assert!(detector
+            .detect(
+                "http://192.168.182.143:8082/static/css/public.css",
+                InputLocation::Header("referer".into())
+            )
+            .is_none());
+        assert!(detector
+            .detect(
+                "http://192.168.182.143:8082/",
+                InputLocation::Header("origin".into())
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn test_ssrf_referer_metadata_indicator_still_blocked() {
+        let detector = SsrfDetector::new(2, &[], true, vec![], false);
+        assert!(detector
+            .detect(
+                "http://169.254.169.254/latest/meta-data",
+                InputLocation::Header("referer".into())
+            )
+            .is_some());
     }
 }

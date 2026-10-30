@@ -141,6 +141,7 @@ impl synvoid_http::BufferedRequestWaf for StubWaf {
         _ua: Option<&str>,
         _ja4_hash: Option<&str>,
         _site_bot_config: Option<&synvoid_config::site::SiteBotConfig>,
+        _site_attack_config: Option<&synvoid_config::site::SiteAttackDetectionConfig>,
     ) -> synvoid_proxy::WafDecision {
         self.decide(path)
     }
@@ -157,6 +158,7 @@ impl synvoid_http::BufferedRequestWaf for StubWaf {
         _ua: Option<String>,
         _ja4_hash: Option<String>,
         _site_bot_config: Option<synvoid_config::site::SiteBotConfig>,
+        _site_attack_config: Option<synvoid_config::site::SiteAttackDetectionConfig>,
     ) -> synvoid_proxy::WafDecision {
         self.decide(&path)
     }

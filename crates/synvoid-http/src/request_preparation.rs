@@ -278,6 +278,7 @@ pub trait BufferedRequestWaf:
         ua: Option<&str>,
         ja4_hash: Option<&str>,
         site_bot_config: Option<&synvoid_config::site::SiteBotConfig>,
+        site_attack_config: Option<&synvoid_config::site::SiteAttackDetectionConfig>,
     ) -> synvoid_proxy::WafDecision;
 
     async fn check_request_full_owned(
@@ -292,6 +293,7 @@ pub trait BufferedRequestWaf:
         ua: Option<String>,
         ja4_hash: Option<String>,
         site_bot_config: Option<synvoid_config::site::SiteBotConfig>,
+        site_attack_config: Option<synvoid_config::site::SiteAttackDetectionConfig>,
     ) -> synvoid_proxy::WafDecision
     where
         Self: Sync;
@@ -543,6 +545,7 @@ where
                 user_agent,
                 ja4_hash,
                 Some(target.site_config.bot.clone()),
+                Some(target.site_config.attack_detection.clone()),
             )
             .await
         }

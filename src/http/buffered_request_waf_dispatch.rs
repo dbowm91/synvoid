@@ -48,6 +48,7 @@ where
     ElapsedFn: FnMut() -> u64,
 {
     let site_bot_config = Some(&target.site_config.bot);
+    let site_attack_config = Some(&target.site_config.attack_detection);
     synvoid_http::maybe_handle_buffered_request_waf(
         target.clone(),
         skip_waf,
@@ -74,6 +75,7 @@ where
                 user_agent,
                 None,
                 site_bot_config,
+                site_attack_config,
                 None,
             )
         },

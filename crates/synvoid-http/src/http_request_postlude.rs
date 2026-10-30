@@ -221,6 +221,7 @@ where
     // are gone: the canonical path calls the internal decision core directly.
     let headers_for_waf_for_check = parts_for_waf.headers.clone();
     let site_bot_config_for_waf = target_for_waf.site_config.bot.clone();
+    let site_attack_config_for_waf = target_for_waf.site_config.attack_detection.clone();
     let site_id_for_log = site_id.clone();
     let method_str_for_log = method_str.clone();
     let path_for_log = path.clone();
@@ -245,6 +246,7 @@ where
     let user_agent_for_closure = user_agent.clone();
     let headers_for_waf_for_check_for_closure = headers_for_waf_for_check.clone();
     let site_bot_config_for_waf_for_closure = site_bot_config_for_waf.clone();
+    let site_attack_config_for_waf_for_closure = site_attack_config_for_waf.clone();
     let query_string_for_closure = query_string.map(|s| s.to_string());
     let ja4_for_closure = ja4_hash.clone();
     let waf_for_closure = Arc::clone(&waf);
@@ -268,6 +270,7 @@ where
             let user_agent = user_agent_for_closure.clone();
             let headers_for_waf_for_check = headers_for_waf_for_check_for_closure.clone();
             let site_bot_config_for_waf = site_bot_config_for_waf_for_closure.clone();
+            let site_attack_config_for_waf = site_attack_config_for_waf_for_closure.clone();
             let query_string = query_string_for_closure.clone();
             let ja4_hash = ja4_for_closure.clone();
             async move {
@@ -282,6 +285,7 @@ where
                     user_agent,
                     ja4_hash,
                     Some(site_bot_config_for_waf),
+                    Some(site_attack_config_for_waf),
                 )
                 .await
             }

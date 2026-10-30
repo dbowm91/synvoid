@@ -152,6 +152,85 @@ pub(crate) fn spawn_http3_listeners(
     }
 }
 
+/// Spawn the admin HTTP API when `[admin] enabled=true`.
+///
+/// Serves `create_admin_router` on `bind_address:port` with the standard
+/// shutdown receiver, drained via `shutdown_and_join` like every other
+/// listener. `enabled=false` (or an unparseable/unbindable address)
+/// registers nothing and logs the reason.
+pub(crate) async fn spawn_admin_service(
+    handles: &mut UnifiedServerRuntimeHandles,
+    state: &Arc<ServerSharedState>,
+    server: &UnifiedServer,
+) {
+    let Some(addr) = server.admin_addr else {
+        return;
+    };
+
+    let admin_config = {
+        let cfg = server.config.read().await;
+        cfg.main.admin.clone()
+    };
+    if !admin_config
+        .bind_address
+        .parse::<std::net::IpAddr>()
+        .is_ok_and(|ip| ip.is_loopback())
+    {
+        tracing::warn!(
+            addr = %addr,
+            "Admin API bound to a non-loopback address; session cookies follow [admin] secure_cookie"
+        );
+    }
+
+    let std_listener = match synvoid_platform::socket_bind::bind_tcp_reuse(addr) {
+        Ok(listener) => listener,
+        Err(e) => {
+            tracing::error!(addr = %addr, error = %e, "Admin API failed to bind; control plane disabled");
+            return;
+        }
+    };
+    let listener = match tokio::net::TcpListener::from_std(std_listener) {
+        Ok(listener) => listener,
+        Err(e) => {
+            tracing::error!(addr = %addr, error = %e, "Admin API failed to adopt listener; control plane disabled");
+            return;
+        }
+    };
+
+    let router = crate::admin::create_admin_router(
+        state.config.clone(),
+        admin_config.resolve_token(),
+        admin_config.cors.clone(),
+        admin_config.rate_limit.clone(),
+        admin_config.trusted_proxies.clone(),
+        server.get_probe_tracker(),
+        server.get_suspicious_word_tracker(),
+        server.get_upstream_error_tracker(),
+        server.get_threat_level_manager(),
+        None,
+        #[cfg(feature = "mesh")]
+        None,
+        #[cfg(feature = "icmp-filter")]
+        None,
+    );
+
+    let mut shutdown_rx = server.shutdown_tx.subscribe();
+    tracing::info!(addr = %addr, "Starting admin API");
+    spawn_registered(
+        handles,
+        "admin",
+        RuntimeHandleClass::ProtocolListener,
+        async move {
+            axum::serve(listener, router)
+                .with_graceful_shutdown(async move {
+                    let _ = shutdown_rx.recv().await;
+                })
+                .await
+                .map_err(|e| e.to_string())
+        },
+    );
+}
+
 /// Spawn TCP/UDP pool tasks when present.
 pub(crate) fn spawn_aux_pools(handles: &mut UnifiedServerRuntimeHandles, server: &UnifiedServer) {
     if let Some(ref pool) = server.tcp_pool {

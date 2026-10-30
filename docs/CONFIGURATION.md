@@ -207,6 +207,25 @@ action = "stall"    # "stall", "block", or "log"
 - `paranoia_level = 2` (medium) catches common attacks without excessive false positives; level 3 is aggressive and may affect legitimate traffic
 - `action = "stall"` stalls suspicious requests instead of blocking—reduces false positives by forcing attackers to wait while allowing legitimate users with edge-case patterns through
 
+**Per-detector toggles and inheritance:** each site may disable individual
+detectors; an absent site key inherits the global detector state:
+
+```toml
+[attack_detection.rfi]
+enabled = false   # this site skips RFI; other detectors unchanged
+
+[attack_detection.ssrf]
+enabled = true
+block_private_ips = false
+```
+
+Detectors with no site subtable (`ssti`, `cmd_injection`, `xxe`, `jwt`,
+`request_smuggling`, `ldap`, `xpath`, `open_redirect`) always follow the
+global configuration. Site `custom_patterns`, `paranoia_level` and `action`
+overrides are parsed but do not yet alter detection; `ssrf.allowed_domains`
+likewise. Top-level site `enabled = false` suppresses all attack inspection
+for that site.
+
 ## Flood Protection Configuration
 
 Flood limits live under the top-level **`[tcp]`** section (`TcpDefaults`), not
