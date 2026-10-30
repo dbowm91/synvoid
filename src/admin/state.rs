@@ -893,7 +893,7 @@ impl AdminState {
 /// rate-limit) already ran in `send_request_log_with_sink`.
 impl RequestLogSink for AdminState {
     fn emit(&self, record: RequestLogRecord<'_>) {
-        self.add_request_log(RequestLogEntry::new(
+        let entry = RequestLogEntry::new(
             record.client_ip.to_string(),
             record.method.to_string(),
             record.path.to_string(),
@@ -903,7 +903,30 @@ impl RequestLogSink for AdminState {
             record.user_agent.map(|s| s.to_string()),
             0,
             0,
-        ));
+        );
+        // The WAF-logs tab streams this broadcaster over `/api/ws/logs`;
+        // the payload matches the UI `LogEntry` shape it parses.
+        let level = if entry.status >= 500 {
+            "error"
+        } else if entry.status >= 400 {
+            "warn"
+        } else {
+            "info"
+        };
+        let line = serde_json::json!({
+            "timestamp": entry.timestamp.to_rfc3339(),
+            "level": level,
+            "site_id": entry.site_id,
+            "message": format!(
+                "{} {} -> {} ({} ms)",
+                entry.method, entry.path, entry.status, entry.response_time_ms
+            ),
+            "client_ip": entry.client_ip,
+            "path": entry.path,
+            "status": entry.status,
+        });
+        self.metrics.logs_broadcaster.broadcast(line.to_string());
+        self.add_request_log(entry);
     }
 }
 

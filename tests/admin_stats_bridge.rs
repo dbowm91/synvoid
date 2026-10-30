@@ -223,6 +223,23 @@ async fn bridge_02_sink_records_reach_request_logs() {
         "emitted record must be listed: {}",
         logs
     );
+
+    // The WAF-logs tab reads `/api/logs` (initial load) and streams
+    // `/api/ws/logs` (same payload shape). Both must surface the record —
+    // `get_logs` was a hardcoded-empty stub and the broadcaster had no
+    // publisher.
+    let waf_logs = body_json(authed_get(&router, "/api/logs?limit=200").await).await;
+    let waf_entries = waf_logs
+        .get("entries")
+        .and_then(|e| e.as_array())
+        .expect("waf logs must carry entries");
+    let probed = waf_entries
+        .iter()
+        .find(|e| e["path"] == "/probed")
+        .expect("emitted record must be listed in waf logs");
+    assert_eq!(probed["status"], 200);
+    assert_eq!(probed["level"], "info");
+    assert!(probed["message"].as_str().unwrap_or("").contains("/probed"));
 }
 
 /// Standalone mode has no process manager: `/system/workers*` answer 404 by
