@@ -299,6 +299,12 @@ pub struct ThemeColorsResponse {
 pub struct ThemeResponse {
     pub preset: String,
     pub mode: String,
+    #[serde(default)]
+    pub dark_theme: String,
+    #[serde(default)]
+    pub light_theme: String,
+    #[serde(default)]
+    pub scheme: String,
     pub allow_only: String,
     pub colors: ThemeColorsResponse,
     pub presets_available: Vec<ThemePresetInfo>,
@@ -310,6 +316,12 @@ pub struct UpdateThemeRequest {
     pub preset: Option<String>,
     #[serde(default)]
     pub mode: Option<String>,
+    #[serde(default)]
+    pub dark_theme: Option<String>,
+    #[serde(default)]
+    pub light_theme: Option<String>,
+    #[serde(default)]
+    pub scheme: Option<String>,
     #[serde(default)]
     pub allow_only: Option<String>,
 }
@@ -1004,5 +1016,86 @@ mod admin_mutation_tests {
         )
         .expect("a numeric target must not break deserialization");
         assert_eq!(numeric.target_display(), "404");
+    }
+}
+
+#[cfg(test)]
+mod theme_dual_scheme_tests {
+    use super::*;
+
+    fn colors_json() -> serde_json::Value {
+        serde_json::json!({
+            "dark": {
+                "background": "#090808", "surface": "#12121a", "primary": "#E41951",
+                "text": "#f0f0f5", "border": "#2a2a3a", "accent": "#1a1a24",
+                "accent_primary": "#00d4aa", "accent_secondary": "#00b894"
+            },
+            "light": {
+                "background": "#f8fafc", "surface": "#ffffff", "primary": "#c41e3a",
+                "text": "#0f172a", "border": "#e2e8f0", "accent": "#f1f5f9",
+                "accent_primary": "#059669", "accent_secondary": "#10b981"
+            }
+        })
+    }
+
+    /// Pins the Phase 04 wire shape: `GET /api/theme` carries the dual-scheme
+    /// fields plus the `default` alias followed by the Halloy catalog.
+    #[test]
+    fn phase04_response_parses_with_dual_scheme_fields() {
+        let payload = serde_json::json!({
+            "preset": "default",
+            "mode": "auto",
+            "dark_theme": "Catppuccin Mocha",
+            "light_theme": "Catppuccin Latte",
+            "scheme": "system",
+            "allow_only": "both",
+            "colors": colors_json(),
+            "presets_available": [
+                {"id": "default", "name": "Default"},
+                {"id": "Nord", "name": "Nord"}
+            ]
+        });
+        let response: ThemeResponse =
+            serde_json::from_value(payload).expect("Phase 04 ThemeResponse must parse");
+        assert_eq!(response.dark_theme, "Catppuccin Mocha");
+        assert_eq!(response.light_theme, "Catppuccin Latte");
+        assert_eq!(response.scheme, "system");
+        assert_eq!(response.presets_available[0].id, "default");
+    }
+
+    /// Older backends omit the three fields; the pickers must still load
+    /// (with empty selections) instead of failing the whole fetch.
+    #[test]
+    fn legacy_response_without_new_fields_still_parses() {
+        let payload = serde_json::json!({
+            "preset": "dark",
+            "mode": "dark",
+            "allow_only": "both",
+            "colors": colors_json(),
+            "presets_available": []
+        });
+        let response: ThemeResponse =
+            serde_json::from_value(payload).expect("legacy ThemeResponse must not fail the fetch");
+        assert!(response.dark_theme.is_empty());
+        assert!(response.light_theme.is_empty());
+        assert!(response.scheme.is_empty());
+    }
+
+    /// The save path sends only the new fields (legacy `preset`/`mode` stay
+    /// absent so the backend keeps its compat resolution untouched).
+    #[test]
+    fn save_request_carries_new_fields_without_legacy_compat() {
+        let request = UpdateThemeRequest {
+            preset: None,
+            mode: None,
+            dark_theme: Some("Nord".to_string()),
+            light_theme: Some("Catppuccin Latte".to_string()),
+            scheme: Some("system".to_string()),
+            allow_only: None,
+        };
+        let body = serde_json::to_value(&request).expect("request must serialize");
+        assert_eq!(body["dark_theme"], "Nord");
+        assert_eq!(body["scheme"], "system");
+        assert!(body["preset"].is_null());
     }
 }

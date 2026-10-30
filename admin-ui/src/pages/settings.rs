@@ -3751,44 +3751,49 @@ fn UploadSection() -> Html {
 #[function_component]
 fn ThemeSection() -> Html {
     let theme_data = use_state(|| None::<ThemeResponse>);
-    let selected_preset = use_state(|| "default".to_string());
-    let selected_mode = use_state(|| "auto".to_string());
+    let selected_dark = use_state(String::new);
+    let selected_light = use_state(String::new);
+    let selected_scheme = use_state(|| "system".to_string());
     let preview_html = use_state(String::new);
     let preview_light = use_state(|| false);
     let saving = use_state(|| false);
     let loading = use_state(|| true);
-    let original_preset = use_state(|| "default".to_string());
-    let original_mode = use_state(|| "auto".to_string());
+    let original_dark = use_state(String::new);
+    let original_light = use_state(String::new);
+    let original_scheme = use_state(|| "system".to_string());
 
-    let is_dirty = *selected_preset != *original_preset || *selected_mode != *original_mode;
+    let is_dirty = *selected_dark != *original_dark
+        || *selected_light != *original_light
+        || *selected_scheme != *original_scheme;
 
     use_effect_with((), {
         let theme_data = theme_data.clone();
-        let selected_preset = selected_preset.clone();
-        let selected_mode = selected_mode.clone();
+        let selected_dark = selected_dark.clone();
+        let selected_light = selected_light.clone();
+        let selected_scheme = selected_scheme.clone();
         let preview_html = preview_html.clone();
         let preview_light = preview_light.clone();
         let loading = loading.clone();
-        let original_preset = original_preset.clone();
-        let original_mode = original_mode.clone();
+        let original_dark = original_dark.clone();
+        let original_light = original_light.clone();
+        let original_scheme = original_scheme.clone();
         move |_| {
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
                 let theme_result = api.get_theme().await;
-                let css_result = api.get_theme_css().await;
                 let use_light = *preview_light;
 
                 if let Ok(data) = theme_result {
-                    theme_data.set(Some(data.clone()));
-                    selected_preset.set(data.preset.clone());
-                    selected_mode.set(data.mode.clone());
-                    original_preset.set(data.preset.clone());
-                    original_mode.set(data.mode.clone());
+                    selected_dark.set(data.dark_theme.clone());
+                    selected_light.set(data.light_theme.clone());
+                    selected_scheme.set(data.scheme.clone());
+                    original_dark.set(data.dark_theme.clone());
+                    original_light.set(data.light_theme.clone());
+                    original_scheme.set(data.scheme.clone());
 
-                    if let Ok(css) = css_result {
-                        let html = generate_preview_html(&css, &data.colors, use_light);
-                        preview_html.set(html);
-                    }
+                    let html = generate_preview_html("", &data.colors, use_light);
+                    preview_html.set(html);
+                    theme_data.set(Some(data));
                 }
                 loading.set(false);
             });
@@ -3796,52 +3801,37 @@ fn ThemeSection() -> Html {
         }
     });
 
-    let on_preset_change = {
-        let selected_preset = selected_preset.clone();
-        let preview_html = preview_html.clone();
-        let theme_data = theme_data.clone();
-        let preview_light = preview_light.clone();
-        Callback::from(move |e: Event| {
-            let target = e.target().unwrap();
-            let value = target
-                .dyn_ref::<web_sys::HtmlSelectElement>()
-                .map(|el| el.value())
-                .unwrap_or_default();
-            selected_preset.set(value.clone());
-
-            if let Some(ref _data) = *theme_data {
-                let colors = get_preset_colors(&value);
-                let use_light = *preview_light;
-                let html = generate_preview_html("", &colors, use_light);
-                preview_html.set(html);
-            }
+    let on_dark_change = {
+        let selected_dark = selected_dark.clone();
+        Callback::from(move |value: String| {
+            selected_dark.set(value);
         })
     };
 
-    let on_mode_change = {
-        let selected_mode = selected_mode.clone();
-        Callback::from(move |e: Event| {
-            let target = e.target().unwrap();
-            let value = target
-                .dyn_ref::<web_sys::HtmlSelectElement>()
-                .map(|el| el.value())
-                .unwrap_or_default();
-            selected_mode.set(value);
+    let on_light_change = {
+        let selected_light = selected_light.clone();
+        Callback::from(move |value: String| {
+            selected_light.set(value);
+        })
+    };
+
+    let on_scheme_change = {
+        let selected_scheme = selected_scheme.clone();
+        Callback::from(move |value: String| {
+            selected_scheme.set(value);
         })
     };
 
     let on_toggle_preview = {
         let preview_light = preview_light.clone();
-        let selected_preset = selected_preset.clone();
         let theme_data = theme_data.clone();
         let preview_html = preview_html.clone();
         Callback::from(move |_| {
             let new_value = !*preview_light;
             preview_light.set(new_value);
 
-            if let Some(ref _data) = *theme_data {
-                let colors = get_preset_colors(&selected_preset);
-                let html = generate_preview_html("", &colors, new_value);
+            if let Some(ref data) = *theme_data {
+                let html = generate_preview_html("", &data.colors, new_value);
                 preview_html.set(html);
             }
         })
@@ -3849,51 +3839,49 @@ fn ThemeSection() -> Html {
 
     let on_save = {
         let saving = saving.clone();
-        let selected_preset = selected_preset.clone();
-        let selected_mode = selected_mode.clone();
+        let selected_dark = selected_dark.clone();
+        let selected_light = selected_light.clone();
+        let selected_scheme = selected_scheme.clone();
         let theme_data = theme_data.clone();
         let preview_html = preview_html.clone();
         let preview_light = preview_light.clone();
-        let original_preset = original_preset.clone();
-        let original_mode = original_mode.clone();
+        let original_dark = original_dark.clone();
+        let original_light = original_light.clone();
+        let original_scheme = original_scheme.clone();
         Callback::from(move |_| {
-            let preset = (*selected_preset).clone();
-            let mode = (*selected_mode).clone();
+            let dark = (*selected_dark).clone();
+            let light = (*selected_light).clone();
+            let scheme = (*selected_scheme).clone();
             let theme_data = theme_data.clone();
             let preview_html = preview_html.clone();
             let preview_light = *preview_light;
             let saving = saving.clone();
-            let original_preset = original_preset.clone();
-            let original_mode = original_mode.clone();
-            let preset_for_orig = preset.clone();
-            let mode_for_orig = mode.clone();
+            let original_dark = original_dark.clone();
+            let original_light = original_light.clone();
+            let original_scheme = original_scheme.clone();
 
             saving.set(true);
 
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
                 let request = UpdateThemeRequest {
-                    preset: Some(preset),
-                    mode: Some(mode),
+                    preset: None,
+                    mode: None,
+                    dark_theme: Some(dark),
+                    light_theme: Some(light),
+                    scheme: Some(scheme),
                     allow_only: None,
                 };
 
                 match api.update_theme(&request).await {
                     Ok(data) => {
-                        theme_data.set(Some(data.clone()));
-                        original_preset.set(preset_for_orig);
-                        original_mode.set(mode_for_orig);
+                        let html = generate_preview_html("", &data.colors, preview_light);
+                        preview_html.set(html);
+                        original_dark.set(data.dark_theme.clone());
+                        original_light.set(data.light_theme.clone());
+                        original_scheme.set(data.scheme.clone());
+                        theme_data.set(Some(data));
                         toast_success("Theme updated successfully");
-
-                        match api.get_theme_css().await {
-                            Ok(css) => {
-                                let html = generate_preview_html(&css, &data.colors, preview_light);
-                                preview_html.set(html);
-                            }
-                            Err(e) => {
-                                tracing::error!("Failed to fetch theme CSS: {}", e);
-                            }
-                        }
                     }
                     Err(e) => {
                         toast_error(&format!("Failed to update theme: {}", e));
@@ -3906,34 +3894,48 @@ fn ThemeSection() -> Html {
     };
 
     let on_reset = {
-        let selected_preset = selected_preset.clone();
-        let selected_mode = selected_mode.clone();
+        let selected_dark = selected_dark.clone();
+        let selected_light = selected_light.clone();
+        let selected_scheme = selected_scheme.clone();
         let theme_data = theme_data.clone();
         let preview_html = preview_html.clone();
         let preview_light = preview_light.clone();
+        let original_dark = original_dark.clone();
+        let original_light = original_light.clone();
+        let original_scheme = original_scheme.clone();
         Callback::from(move |_| {
-            selected_preset.set("default".to_string());
-            selected_mode.set("auto".to_string());
-
-            if let Some(ref _data) = *theme_data {
-                let colors = get_preset_colors("default");
-                let use_light = *preview_light;
-                let html = generate_preview_html("", &colors, use_light);
-                preview_html.set(html);
-            }
+            let theme_data = theme_data.clone();
+            let preview_html = preview_html.clone();
+            let preview_light = *preview_light;
+            let selected_dark = selected_dark.clone();
+            let selected_light = selected_light.clone();
+            let selected_scheme = selected_scheme.clone();
+            let original_dark = original_dark.clone();
+            let original_light = original_light.clone();
+            let original_scheme = original_scheme.clone();
 
             let request = UpdateThemeRequest {
                 preset: Some("default".to_string()),
                 mode: Some("auto".to_string()),
+                dark_theme: None,
+                light_theme: None,
+                scheme: None,
                 allow_only: None,
             };
 
-            let theme_data = theme_data.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
                 match api.update_theme(&request).await {
                     Ok(data) => {
-                        theme_data.set(Some(data.clone()));
+                        selected_dark.set(data.dark_theme.clone());
+                        selected_light.set(data.light_theme.clone());
+                        selected_scheme.set(data.scheme.clone());
+                        original_dark.set(data.dark_theme.clone());
+                        original_light.set(data.light_theme.clone());
+                        original_scheme.set(data.scheme.clone());
+                        let html = generate_preview_html("", &data.colors, preview_light);
+                        preview_html.set(html);
+                        theme_data.set(Some(data));
                         toast_success("Theme reset to default");
                     }
                     Err(e) => {
@@ -3944,19 +3946,19 @@ fn ThemeSection() -> Html {
         })
     };
 
-    let presets = [
-        ("default", "Default"),
-        ("dark", "Dark"),
-        ("light", "Light"),
-        ("ocean", "Ocean"),
-        ("forest", "Forest"),
-        ("sunset", "Sunset"),
-    ];
+    let theme_options: Vec<(String, String)> = match &*theme_data {
+        Some(data) => data
+            .presets_available
+            .iter()
+            .map(|entry| (entry.id.clone(), entry.name.clone()))
+            .collect(),
+        None => Vec::new(),
+    };
 
-    let modes = [
-        ("auto", "Auto (System)"),
-        ("dark", "Dark"),
-        ("light", "Light"),
+    let scheme_options = vec![
+        ("system".to_string(), "System".to_string()),
+        ("dark".to_string(), "Dark".to_string()),
+        ("light".to_string(), "Light".to_string()),
     ];
 
     if *loading {
@@ -3965,37 +3967,30 @@ fn ThemeSection() -> Html {
 
     html! {
         <div class="space-y-6">
-            <div>
-                <label class="block text-sm font-medium text-primary mb-2">{ "Theme Preset" }</label>
-                <select
-                    class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary"
-                    value={(*selected_preset).clone()}
-                    onchange={on_preset_change}
-                >
-                    { for presets.iter().map(|(value, label)| {
-                        html! {
-                            <option value={*value}>{*label}</option>
-                        }
-                    }) }
-                </select>
-                <p class="mt-1 text-sm text-secondary">{ "Choose a color scheme for the admin interface" }</p>
-            </div>
-
-            <div>
-                <label class="block text-sm font-medium text-primary mb-2">{ "Theme Mode" }</label>
-                <select
-                    class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary"
-                    value={(*selected_mode).clone()}
-                    onchange={on_mode_change}
-                >
-                    { for modes.iter().map(|(value, label)| {
-                        html! {
-                            <option value={*value}>{*label}</option>
-                        }
-                    }) }
-                </select>
-                <p class="mt-1 text-sm text-secondary">{ "How users can switch between light and dark themes" }</p>
-            </div>
+            <Select
+                label="Dark theme"
+                name="theme_dark"
+                value={(*selected_dark).clone()}
+                options={theme_options.clone()}
+                help="Block-page theme used for dark color schemes"
+                on_change={on_dark_change}
+            />
+            <Select
+                label="Light theme"
+                name="theme_light"
+                value={(*selected_light).clone()}
+                options={theme_options.clone()}
+                help="Block-page theme used for light color schemes"
+                on_change={on_light_change}
+            />
+            <Select
+                label="Color scheme"
+                name="theme_scheme"
+                value={(*selected_scheme).clone()}
+                options={scheme_options}
+                help="Follow the system preference or force dark / light"
+                on_change={on_scheme_change}
+            />
 
             <div>
                 <div class="flex items-center justify-between mb-2">
@@ -4651,121 +4646,6 @@ fn PluginsSection() -> Html {
                 </button>
             </div>
         </div>
-    }
-}
-
-fn get_preset_colors(preset: &str) -> crate::types::ThemeColorsResponse {
-    match preset {
-        "light" => crate::types::ThemeColorsResponse {
-            dark: crate::types::ThemeColors {
-                background: "#0a0a0f".to_string(),
-                surface: "#12121a".to_string(),
-                primary: "#e94560".to_string(),
-                text: "#f0f0f5".to_string(),
-                border: "#2a2a3a".to_string(),
-                accent: "#1a1a24".to_string(),
-                accent_primary: "#00d4aa".to_string(),
-                accent_secondary: "#00b894".to_string(),
-            },
-            light: crate::types::ThemeColors {
-                background: "#f8fafc".to_string(),
-                surface: "#ffffff".to_string(),
-                primary: "#c41e3a".to_string(),
-                text: "#0f172a".to_string(),
-                border: "#e2e8f0".to_string(),
-                accent: "#f1f5f9".to_string(),
-                accent_primary: "#059669".to_string(),
-                accent_secondary: "#10b981".to_string(),
-            },
-        },
-        "ocean" => crate::types::ThemeColorsResponse {
-            dark: crate::types::ThemeColors {
-                background: "#0c1929".to_string(),
-                surface: "#132f4c".to_string(),
-                primary: "#0ea5e9".to_string(),
-                text: "#e3f2fd".to_string(),
-                border: "#2d4a6f".to_string(),
-                accent: "#173a5e".to_string(),
-                accent_primary: "#0ea5e9".to_string(),
-                accent_secondary: "#38bdf8".to_string(),
-            },
-            light: crate::types::ThemeColors {
-                background: "#e3f2fd".to_string(),
-                surface: "#ffffff".to_string(),
-                primary: "#0284c7".to_string(),
-                text: "#0c1929".to_string(),
-                border: "#90caf9".to_string(),
-                accent: "#f1f5f9".to_string(),
-                accent_primary: "#0ea5e9".to_string(),
-                accent_secondary: "#38bdf8".to_string(),
-            },
-        },
-        "forest" => crate::types::ThemeColorsResponse {
-            dark: crate::types::ThemeColors {
-                background: "#0a1a0f".to_string(),
-                surface: "#132318".to_string(),
-                primary: "#22c55e".to_string(),
-                text: "#e8f5e9".to_string(),
-                border: "#2d4a3a".to_string(),
-                accent: "#1a2e21".to_string(),
-                accent_primary: "#22c55e".to_string(),
-                accent_secondary: "#4ade80".to_string(),
-            },
-            light: crate::types::ThemeColors {
-                background: "#e8f5e9".to_string(),
-                surface: "#ffffff".to_string(),
-                primary: "#16a34a".to_string(),
-                text: "#0a1a0f".to_string(),
-                border: "#a5d6a7".to_string(),
-                accent: "#f1f5f9".to_string(),
-                accent_primary: "#22c55e".to_string(),
-                accent_secondary: "#4ade80".to_string(),
-            },
-        },
-        "sunset" => crate::types::ThemeColorsResponse {
-            dark: crate::types::ThemeColors {
-                background: "#1a0f0a".to_string(),
-                surface: "#2a1a14".to_string(),
-                primary: "#f97316".to_string(),
-                text: "#fff1ec".to_string(),
-                border: "#4a3028".to_string(),
-                accent: "#3d261e".to_string(),
-                accent_primary: "#f97316".to_string(),
-                accent_secondary: "#fb923c".to_string(),
-            },
-            light: crate::types::ThemeColors {
-                background: "#fff1ec".to_string(),
-                surface: "#ffffff".to_string(),
-                primary: "#ea580c".to_string(),
-                text: "#1a0f0a".to_string(),
-                border: "#ffccbc".to_string(),
-                accent: "#f1f5f9".to_string(),
-                accent_primary: "#f97316".to_string(),
-                accent_secondary: "#fb923c".to_string(),
-            },
-        },
-        _ => crate::types::ThemeColorsResponse {
-            dark: crate::types::ThemeColors {
-                background: "#0a0a0f".to_string(),
-                surface: "#12121a".to_string(),
-                primary: "#e94560".to_string(),
-                text: "#f0f0f5".to_string(),
-                border: "#2a2a3a".to_string(),
-                accent: "#1a1a24".to_string(),
-                accent_primary: "#00d4aa".to_string(),
-                accent_secondary: "#00b894".to_string(),
-            },
-            light: crate::types::ThemeColors {
-                background: "#f8fafc".to_string(),
-                surface: "#ffffff".to_string(),
-                primary: "#c41e3a".to_string(),
-                text: "#0f172a".to_string(),
-                border: "#e2e8f0".to_string(),
-                accent: "#f1f5f9".to_string(),
-                accent_primary: "#059669".to_string(),
-                accent_secondary: "#10b981".to_string(),
-            },
-        },
     }
 }
 

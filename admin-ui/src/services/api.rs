@@ -528,7 +528,19 @@ impl ApiService {
         &self,
         request: &crate::types::UpdateThemeRequest,
     ) -> Result<crate::types::ThemeResponse, ApiError> {
-        self.put("/theme", request).await
+        let result: crate::types::AdminMutationResult = self.put("/theme", request).await?;
+        if !result.applied() {
+            let message = if result.message.is_empty() {
+                "Theme update was not applied".to_string()
+            } else {
+                result.message
+            };
+            return Err(ApiError {
+                status: 200,
+                message,
+            });
+        }
+        self.get("/theme").await
     }
 
     pub async fn put<T: DeserializeOwned, B: Serialize>(
@@ -571,6 +583,7 @@ impl ApiService {
         })
     }
 
+    #[allow(dead_code)]
     pub async fn get_theme_css(&self) -> Result<String, ApiError> {
         self.get_text("/theme/css").await
     }

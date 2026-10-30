@@ -179,6 +179,9 @@ pub fn App() -> Html {
             let request = UpdateThemeRequest {
                 preset: Some(new_theme.to_preset().to_string()),
                 mode: None,
+                dark_theme: None,
+                light_theme: None,
+                scheme: None,
                 allow_only: None,
             };
             update_theme.emit(request);

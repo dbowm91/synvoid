@@ -775,6 +775,9 @@ fn ErrorPagesTab(props: &ErrorPagesTabProps) -> Html {
                 let theme_request = crate::types::UpdateThemeRequest {
                     preset: Some(preset),
                     mode: None,
+                    dark_theme: None,
+                    light_theme: None,
+                    scheme: None,
                     allow_only: None,
                 };
 
@@ -889,7 +892,7 @@ fn ErrorPagesTab(props: &ErrorPagesTabProps) -> Html {
                     >
                         { for presets.iter().map(|(value, label)| {
                             html! {
-                                <option value={*value}>{*label}</option>
+                                <option value={*value} selected={selected_preset.as_str() == *value}>{*label}</option>
                             }
                         }) }
                     </select>
