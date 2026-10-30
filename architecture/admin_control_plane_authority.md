@@ -13,7 +13,7 @@ This document describes the typed authority, outcome, and audit model for admin 
 > serves `create_admin_router` (`src/admin/mod.rs`) with live probe/
 > suspicious-word/upstream-error/threat-level trackers from its own `WafCore`.
 > The task is registered as a `ProtocolListener` and drained via
-> `shutdown_and_drain` like every other listener. `enabled=false` registers
+> `wait_for_shutdown_and_drain` like every other listener. `enabled=false` registers
 > no listener (previous behavior).
 >
 > `RuleFeedManagerForWaf`, mesh transport and ICMP filter handles are not
@@ -21,7 +21,7 @@ This document describes the typed authority, outcome, and audit model for admin 
 > composition root does not own them. Threading them is follow-up work, not
 > a reason to unmount.
 >
-> The `admin_surface_is_not_mounted` guard in
+> The `admin_surface_mounting_pairing` guard in
 > `tools/synvoid-repo-guards/tests/admin_surface_truthfulness.rs` now
 > observes the mounted state: a production caller exists, so the NOT MOUNTED
 > notice must stay absent. Unmounting the router requires restoring that

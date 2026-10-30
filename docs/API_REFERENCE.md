@@ -8,7 +8,7 @@ SynVoid provides a RESTful Admin API for managing the WAF, configuring sites, mo
 http://127.0.0.1:8081/api
 ```
 
-The admin API runs on a separate port from the reverse proxy (default 8081) to allow direct access even when HTTP ports are under attack.
+The admin API runs on a separate port from the reverse proxy (default 8081) to allow direct access even when HTTP ports are under attack. It listens only when `[admin] enabled = true`; `enabled = false` registers no listener.
 
 ## Authentication
 

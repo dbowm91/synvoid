@@ -92,9 +92,9 @@ fn has_production_caller() -> (bool, String) {
     (mounted, callers.join(", "))
 }
 
-/// B-3: the unmounted-admin notice and the code must agree.
+/// B-3: the mounted-admin marker and the code must agree.
 #[test]
-fn admin_surface_is_not_mounted() {
+fn admin_surface_mounting_pairing() {
     let root = workspace_root();
     let doc_path = root.join(AUTHORITY_DOC);
     let mut violations = Violations::new();
@@ -104,7 +104,7 @@ fn admin_surface_is_not_mounted() {
             "{AUTHORITY_DOC} is in this guard's scope but no longer exists; \
              re-scope the gate rather than letting it silently stop covering it"
         ));
-        violations.assert_ok("admin_surface_is_not_mounted");
+        violations.assert_ok("admin_surface_mounting_pairing");
         return;
     }
 
