@@ -262,7 +262,10 @@ Anchored inclusion patterns (e.g. `?file=http://`) are still inspected in
 those headers, and IP detection in query strings and bodies is unchanged.
 The same exemption applies to open-redirect bare-URL matching: a plain
 absolute `Referer`/`Origin` is not a redirect, but a value carrying a
-redirect parameter (e.g. `?next=http://evil/`) still fires.
+redirect parameter (e.g. `?next=http://evil/`) still fires. The `Host`
+header is likewise exempt from the SSRF private-IP heuristic — it names
+the already-reached server, not a fetch target — while SSRF pattern
+matching stays active there.
 
 ### Header Validation
 

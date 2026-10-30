@@ -8,6 +8,13 @@ Status: **IMPLEMENTED** (branch `plans/waf-admin-deployment-truthfulness`; share
 > `http://`, ...) via a branch that ignores redirect-param context. Phase 01
 > therefore also gates that branch for `referer`/`origin` values that carry
 > no redirect parameter (`?next=` etc. smuggled payloads still fire).
+>
+> Enabling SSRF by default (Phase 02 follow-up) then exposed the same class
+> in the `Host` header: every request on IP-literal hosting carries a
+> private-IP `Host`, tripping the SSRF private-IP heuristic. The `Host`
+> header names the already-reached server the router matched — not a
+> server-side fetch target — so it is exempt from that heuristic too
+> (`is_host` in `detector_common.rs`); the Aho branch stays active.
 
 Registered in: `plans/roadmap.md`.
 

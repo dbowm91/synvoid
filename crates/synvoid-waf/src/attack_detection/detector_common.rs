@@ -172,6 +172,16 @@ pub(crate) fn is_referer_or_origin(location: &InputLocation) -> bool {
         .is_some_and(|n| n.eq_ignore_ascii_case("referer") || n.eq_ignore_ascii_case("origin"))
 }
 
+/// The `Host` header names the server the client already reached (and the
+/// site router already matched); it is not a server-side fetch target, so
+/// it carries no SSRF signal. IP-literal hosting would otherwise flag every
+/// request.
+pub(crate) fn is_host(location: &InputLocation) -> bool {
+    location
+        .header_name()
+        .is_some_and(|n| n.eq_ignore_ascii_case("host"))
+}
+
 pub fn detect_in_headers<F>(
     headers: &http::HeaderMap,
     mut check_header: F,
