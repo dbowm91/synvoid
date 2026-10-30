@@ -197,22 +197,40 @@ pub(crate) async fn spawn_admin_service(
         }
     };
 
-    let router = crate::admin::create_admin_router(
-        state.config.clone(),
-        admin_config.resolve_token(),
-        admin_config.cors.clone(),
-        admin_config.rate_limit.clone(),
-        admin_config.trusted_proxies.clone(),
-        server.get_probe_tracker(),
-        server.get_suspicious_word_tracker(),
-        server.get_upstream_error_tracker(),
-        server.get_threat_level_manager(),
-        None,
-        #[cfg(feature = "mesh")]
-        None,
-        #[cfg(feature = "icmp-filter")]
-        None,
-    );
+    // `create_admin_router` uses `blocking_read` on the config lock, which
+    // panics on a Tokio worker thread. Build it on the blocking pool; the
+    // stored `Arc<RwLock<ConfigManager>>` is only read asynchronously later.
+    let config_for_router = state.config.clone();
+    let probe_tracker = server.get_probe_tracker();
+    let suspicious_word_tracker = server.get_suspicious_word_tracker();
+    let upstream_error_tracker = server.get_upstream_error_tracker();
+    let threat_level_manager = server.get_threat_level_manager();
+    let router = match tokio::task::spawn_blocking(move || {
+        crate::admin::create_admin_router(
+            config_for_router,
+            admin_config.resolve_token(),
+            admin_config.cors.clone(),
+            admin_config.rate_limit.clone(),
+            admin_config.trusted_proxies.clone(),
+            probe_tracker,
+            suspicious_word_tracker,
+            upstream_error_tracker,
+            threat_level_manager,
+            None,
+            #[cfg(feature = "mesh")]
+            None,
+            #[cfg(feature = "icmp-filter")]
+            None,
+        )
+    })
+    .await
+    {
+        Ok(router) => router,
+        Err(e) => {
+            tracing::error!(error = %e, "Admin API router build panicked; control plane disabled");
+            return;
+        }
+    };
 
     let mut shutdown_rx = server.shutdown_tx.subscribe();
     tracing::info!(addr = %addr, "Starting admin API");
