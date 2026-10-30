@@ -40,6 +40,12 @@ owners = ["synvoid-admin", "admin-ui"]
 reason = "validates frontend/backend API contract alignment (route paths, HTTP methods)"
 
 [[test]]
+name = "admin_stats_bridge"
+class = "composition"
+owners = ["synvoid-admin", "synvoid-metrics"]
+reason = "validates Phase 04 metrics publisher feed and request-log sink bridge into admin-visible stats"
+
+[[test]]
 name = "admin_smoke_flow"
 class = "qualification"
 owners = ["synvoid-admin", "admin-ui"]

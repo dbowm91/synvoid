@@ -11,14 +11,14 @@ mod auth;
 mod handlers;
 pub mod metrics;
 pub mod metrics_events;
-mod middleware;
+pub(crate) mod middleware;
 pub mod openapi;
 mod prometheus_exporter;
 pub use openapi::synvoidOpenApi;
 mod rate_limit;
 mod routes;
 pub mod schema;
-mod state;
+pub mod state;
 #[allow(dead_code)]
 mod ws;
 
@@ -116,11 +116,90 @@ pub fn create_admin_router(
     #[cfg(feature = "mesh")] mesh_transport: Option<Arc<MeshTransport>>,
     #[cfg(feature = "icmp-filter")] icmp_filter: Option<Arc<TokioRwLock<IcmpFilterManager>>>,
 ) -> Router {
+    let (router, _) = create_admin_router_with_state(
+        config,
+        admin_token,
+        admin_cors_config,
+        admin_rate_limit_config,
+        trusted_proxies,
+        probe_tracker,
+        suspicious_word_tracker,
+        upstream_error_tracker,
+        threat_level_manager,
+        rule_feed_manager,
+        #[cfg(feature = "mesh")]
+        mesh_transport,
+        #[cfg(feature = "icmp-filter")]
+        icmp_filter,
+    );
+    router
+}
+
+/// [`create_admin_router`] plus the shared [`AdminState`], for tests that
+/// must drive the state directly (metrics publisher feed, request-log sink)
+/// and then observe the effect through the API. Production composition uses
+/// [`build_admin_state`] + [`build_router_from_state`] the same way.
+pub fn create_admin_router_with_state(
+    config: Arc<TokioRwLock<ConfigManager>>,
+    admin_token: String,
+    admin_cors_config: AdminCorsConfig,
+    admin_rate_limit_config: crate::config::admin::AdminRateLimitConfig,
+    trusted_proxies: Vec<String>,
+    probe_tracker: Option<Arc<ProbeTracker>>,
+    suspicious_word_tracker: Option<Arc<SuspiciousWordTracker>>,
+    upstream_error_tracker: Option<Arc<UpstreamErrorTracker>>,
+    threat_level_manager: Option<Arc<ThreatLevelManager>>,
+    rule_feed_manager: Option<Arc<RuleFeedManagerForWaf>>,
+    #[cfg(feature = "mesh")] mesh_transport: Option<Arc<MeshTransport>>,
+    #[cfg(feature = "icmp-filter")] icmp_filter: Option<Arc<TokioRwLock<IcmpFilterManager>>>,
+) -> (Router, Option<Arc<AdminState>>) {
+    match build_admin_state(
+        config,
+        admin_token,
+        probe_tracker,
+        suspicious_word_tracker,
+        upstream_error_tracker,
+        threat_level_manager,
+        rule_feed_manager,
+        #[cfg(feature = "mesh")]
+        mesh_transport,
+        #[cfg(feature = "icmp-filter")]
+        icmp_filter,
+    ) {
+        Some(state) => {
+            let router = build_router_from_state(
+                state.clone(),
+                admin_cors_config,
+                admin_rate_limit_config,
+                trusted_proxies.clone(),
+            );
+            middleware::set_trusted_proxies(trusted_proxies);
+            (router, Some(state))
+        }
+        None => (Router::new(), None),
+    }
+}
+
+/// Build the shared `AdminState` without serving it. The worker data-plane
+/// composition root calls this once and hands the same `Arc` to both the
+/// axum router (`build_router_from_state`) and the metrics publisher, so the
+/// panel observes the worker's own traffic and logs.
+pub(crate) fn build_admin_state(
+    config: Arc<TokioRwLock<ConfigManager>>,
+    admin_token: String,
+    probe_tracker: Option<Arc<ProbeTracker>>,
+    suspicious_word_tracker: Option<Arc<SuspiciousWordTracker>>,
+    upstream_error_tracker: Option<Arc<UpstreamErrorTracker>>,
+    threat_level_manager: Option<Arc<ThreatLevelManager>>,
+    rule_feed_manager: Option<Arc<RuleFeedManagerForWaf>>,
+    #[cfg(feature = "mesh")] mesh_transport: Option<Arc<MeshTransport>>,
+    #[cfg(feature = "icmp-filter")] icmp_filter: Option<Arc<TokioRwLock<IcmpFilterManager>>>,
+) -> Option<Arc<AdminState>> {
     let token_hash = match hash_admin_token(&admin_token) {
         Ok(h) => h,
         Err(e) => {
             tracing::error!("Failed to hash admin token: {}", e);
-            return Router::new();
+            return None;
         }
     };
 
@@ -145,16 +224,7 @@ pub fn create_admin_router(
     #[cfg(feature = "icmp-filter")]
     let state_builder = state_builder.with_icmp_filter(icmp_filter);
 
-    let state = Arc::new(state_builder);
-
-    let router = build_router_from_state(
-        state,
-        admin_cors_config,
-        admin_rate_limit_config,
-        trusted_proxies.clone(),
-    );
-    middleware::set_trusted_proxies(trusted_proxies);
-    router
+    Some(Arc::new(state_builder))
 }
 
 /// Resolve the admin UI asset directory deterministically, independent of process CWD.
@@ -269,7 +339,7 @@ async fn spa_fallback_handler(
     }
 }
 
-fn build_router_from_state(
+pub(crate) fn build_router_from_state(
     state: Arc<AdminState>,
     admin_cors_config: AdminCorsConfig,
     rate_limit_config: crate::config::admin::AdminRateLimitConfig,

@@ -67,6 +67,10 @@ pub(crate) struct ServerSharedState {
     pub(crate) metrics: Option<Arc<WorkerMetrics>>,
     pub(crate) ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
     pub(crate) worker_id: Option<WorkerId>,
+    /// Set-once handle to the worker-local request-log sink (the admin
+    /// `AdminState`). Registered by `spawn_admin_service` once the control
+    /// plane exists; read per request by the HTTP/HTTPS lanes.
+    pub(crate) request_log_sink: synvoid_http::RequestLogSinkHandle,
     pub(crate) serverless_manager: Option<Arc<crate::serverless::manager::ServerlessManager>>,
     pub(crate) app_servers: Arc<RwLock<HashMap<String, Arc<crate::app_server::GranianSupervisor>>>>,
     pub(crate) _http_runtime_context: Option<
@@ -430,6 +434,7 @@ impl UnifiedServer {
             metrics: self.metrics.clone(),
             ipc: self.ipc.clone(),
             worker_id: self.worker_id,
+            request_log_sink: synvoid_http::empty_sink_handle(),
             serverless_manager: self.serverless_manager.clone(),
             app_servers: self.app_servers.clone(),
             _http_runtime_context: http_runtime_context,
@@ -598,6 +603,8 @@ impl UnifiedServer {
             server = server.with_ipc(ipc, worker_id);
         }
 
+        server = server.with_request_log_sink(state.request_log_sink.clone());
+
         if let Some(sm) = state.serverless_manager.clone() {
             server = server.with_serverless_manager(sm);
         }
@@ -657,6 +664,7 @@ impl UnifiedServer {
         if let (Some(ipc), Some(worker_id)) = (state.ipc.clone(), state.worker_id) {
             server = server.with_ipc(ipc, worker_id);
         }
+        server = server.with_request_log_sink(state.request_log_sink.clone());
         if let Some(sm) = state.serverless_manager.clone() {
             server = server.with_serverless_manager(sm);
         }

@@ -275,6 +275,7 @@ fn lane_context(
         drain_state: Some(Arc::new(StubDrain)),
         upstream_client_registry: Arc::clone(&shared.registry),
         connection_limit: Arc::new(Semaphore::new(1024)),
+        request_log_sink: synvoid_http::empty_sink_handle(),
         app_servers: None,
         #[cfg(feature = "mesh")]
         mesh_config: None,

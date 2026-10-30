@@ -51,13 +51,37 @@ pub struct SiteStats {
     pub p50_latency_ms: f64,
     pub p95_latency_ms: f64,
     pub p99_latency_ms: f64,
-    pub upstream_healthy: bool,
+    // The backend serializes `HealthStatus` (`healthy`/`unhealthy`/`unknown`,
+    // lowercase) here — never a bool. A missing field degrades to `Unknown`
+    // rather than failing the whole dashboard fetch.
+    #[serde(default)]
+    pub upstream_healthy: UpstreamHealth,
     pub bytes_received: u64,
     pub bytes_sent: u64,
     pub proxied_bytes_sent: u64,
     pub proxied_bytes_received: u64,
     pub mesh_bytes_sent: u64,
     pub mesh_bytes_received: u64,
+}
+
+/// Upstream health as reported by `GET /api/stats/sites`.
+///
+/// Mirrors the backend `HealthStatus` enum. `Unknown` is the steady state for
+/// standalone mode (no health prober has reported yet) and must render as a
+/// neutral third state — never red, never green.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum UpstreamHealth {
+    Healthy,
+    Unhealthy,
+    #[default]
+    Unknown,
+}
+
+impl UpstreamHealth {
+    pub fn is_healthy(self) -> bool {
+        matches!(self, Self::Healthy)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -873,6 +897,64 @@ impl AdminMutationResult {
             serde_json::Value::Null => String::new(),
             other => other.to_string(),
         }
+    }
+}
+
+#[cfg(test)]
+mod upstream_health_tests {
+    use super::*;
+
+    fn site_stats_with(health_json: &str) -> SiteStats {
+        let payload = format!(
+            r#"{{"site_id":"blog","domains":["example.com"],"requests_per_second":0.0,
+            "active_connections":0,"blocked_requests":0,"challenged_requests":0,
+            "proxied_requests":0,"errors":0,"avg_response_time_ms":0.0,
+            "p50_latency_ms":0.0,"p95_latency_ms":0.0,"p99_latency_ms":0.0,
+            "upstream_healthy":{},"bytes_received":0,"bytes_sent":0,
+            "proxied_bytes_sent":0,"proxied_bytes_received":0,"mesh_bytes_sent":0,
+            "mesh_bytes_received":0}}"#,
+            health_json
+        );
+        serde_json::from_str(&payload).expect("SiteStats must parse")
+    }
+
+    /// Pins the backend contract: `/api/stats/sites` emits lowercase
+    /// `HealthStatus` strings, including `"unknown"` for sites no prober has
+    /// reported on. A `bool` here was the dashboard parse error.
+    #[test]
+    fn all_three_health_strings_parse() {
+        assert_eq!(
+            site_stats_with(r#""healthy""#).upstream_healthy,
+            UpstreamHealth::Healthy
+        );
+        assert_eq!(
+            site_stats_with(r#""unhealthy""#).upstream_healthy,
+            UpstreamHealth::Unhealthy
+        );
+        assert_eq!(
+            site_stats_with(r#""unknown""#).upstream_healthy,
+            UpstreamHealth::Unknown
+        );
+    }
+
+    #[test]
+    fn missing_health_degrades_to_unknown() {
+        let payload = r#"{"site_id":"blog","domains":[],"requests_per_second":0.0,
+            "active_connections":0,"blocked_requests":0,"challenged_requests":0,
+            "proxied_requests":0,"errors":0,"avg_response_time_ms":0.0,
+            "p50_latency_ms":0.0,"p95_latency_ms":0.0,"p99_latency_ms":0.0,
+            "bytes_received":0,"bytes_sent":0,"proxied_bytes_sent":0,
+            "proxied_bytes_received":0,"mesh_bytes_sent":0,"mesh_bytes_received":0}"#;
+        let stats: SiteStats =
+            serde_json::from_str(payload).expect("absent field must not fail the fetch");
+        assert_eq!(stats.upstream_healthy, UpstreamHealth::Unknown);
+    }
+
+    #[test]
+    fn only_healthy_counts_as_healthy() {
+        assert!(UpstreamHealth::Healthy.is_healthy());
+        assert!(!UpstreamHealth::Unhealthy.is_healthy());
+        assert!(!UpstreamHealth::Unknown.is_healthy());
     }
 }
 

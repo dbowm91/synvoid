@@ -23,6 +23,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::Instant;
 use subtle::ConstantTimeEq;
+use synvoid_http::{RequestLogRecord, RequestLogSink};
 use tokio::sync::RwLock as TokioRwLock;
 use utoipa::ToSchema;
 
@@ -882,6 +883,27 @@ impl AdminState {
 
     pub fn session_id_hash(session_id: &str) -> String {
         hex::encode(sha2::Sha256::digest(session_id.as_bytes()))
+    }
+}
+
+/// `synvoid_http::RequestLogSink` for the request path: the narrow seam
+/// through which the neutral pipeline records into this state without
+/// naming `AdminState`. Wired by the composition root
+/// (`src/server/listener_tasks.rs`); the gates (enabled, category,
+/// rate-limit) already ran in `send_request_log_with_sink`.
+impl RequestLogSink for AdminState {
+    fn emit(&self, record: RequestLogRecord<'_>) {
+        self.add_request_log(RequestLogEntry::new(
+            record.client_ip.to_string(),
+            record.method.to_string(),
+            record.path.to_string(),
+            record.status,
+            record.latency_ms.min(u32::MAX as u64) as u32,
+            record.site_id.to_string(),
+            record.user_agent.map(|s| s.to_string()),
+            0,
+            0,
+        ));
     }
 }
 

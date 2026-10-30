@@ -197,21 +197,24 @@ pub(crate) async fn spawn_admin_service(
         }
     };
 
-    // `create_admin_router` uses `blocking_read` on the config lock, which
+    // `build_admin_state` uses `blocking_read` on the config lock, which
     // panics on a Tokio worker thread. Build it on the blocking pool; the
     // stored `Arc<RwLock<ConfigManager>>` is only read asynchronously later.
+    // The same `Arc<AdminState>` feeds the router and the metrics publisher
+    // so the panel observes this worker's own traffic and logs.
     let config_for_router = state.config.clone();
     let probe_tracker = server.get_probe_tracker();
     let suspicious_word_tracker = server.get_suspicious_word_tracker();
     let upstream_error_tracker = server.get_upstream_error_tracker();
     let threat_level_manager = server.get_threat_level_manager();
-    let router = match tokio::task::spawn_blocking(move || {
-        crate::admin::create_admin_router(
+    let admin_token = admin_config.resolve_token();
+    let admin_cors = admin_config.cors.clone();
+    let admin_rate_limit = admin_config.rate_limit.clone();
+    let admin_trusted_proxies = admin_config.trusted_proxies.clone();
+    let admin_state = match tokio::task::spawn_blocking(move || {
+        crate::admin::build_admin_state(
             config_for_router,
-            admin_config.resolve_token(),
-            admin_config.cors.clone(),
-            admin_config.rate_limit.clone(),
-            admin_config.trusted_proxies.clone(),
+            admin_token,
             probe_tracker,
             suspicious_word_tracker,
             upstream_error_tracker,
@@ -225,12 +228,29 @@ pub(crate) async fn spawn_admin_service(
     })
     .await
     {
-        Ok(router) => router,
+        Ok(Some(admin_state)) => admin_state,
+        Ok(None) => {
+            tracing::error!("Admin API state build failed; control plane disabled");
+            return;
+        }
         Err(e) => {
-            tracing::error!(error = %e, "Admin API router build panicked; control plane disabled");
+            tracing::error!(error = %e, "Admin API state build panicked; control plane disabled");
             return;
         }
     };
+
+    // Register the worker-local request-log sink before serving: the
+    // HTTP/HTTPS lanes resolve it per request, so records flow even on
+    // keep-alive connections accepted before this point.
+    let _ = state.request_log_sink.set(admin_state.clone());
+
+    let router = crate::admin::build_router_from_state(
+        admin_state.clone(),
+        admin_cors,
+        admin_rate_limit,
+        admin_trusted_proxies.clone(),
+    );
+    crate::admin::middleware::set_trusted_proxies(admin_trusted_proxies);
 
     let mut shutdown_rx = server.shutdown_tx.subscribe();
     tracing::info!(addr = %addr, "Starting admin API");
@@ -245,6 +265,36 @@ pub(crate) async fn spawn_admin_service(
                 })
                 .await
                 .map_err(|e| e.to_string())
+        },
+    );
+
+    spawn_metrics_publisher_service(handles, state, &admin_state, server);
+}
+
+/// Publish this worker's own metrics and site stats into its `AdminState`
+/// once per second. Every worker (standalone or supervised) runs the same
+/// feed over its own `WorkerMetrics` — no cross-process sharing, no second
+/// metrics system. Drained via the standard shutdown like every other
+/// maintenance task.
+pub(crate) fn spawn_metrics_publisher_service(
+    handles: &mut UnifiedServerRuntimeHandles,
+    state: &Arc<ServerSharedState>,
+    admin_state: &Arc<crate::admin::state::AdminState>,
+    server: &UnifiedServer,
+) {
+    let feed = Arc::new(crate::admin::metrics::LocalMetricsFeed {
+        metrics: state.metrics.clone(),
+        worker_id: state.worker_id.unwrap_or(crate::process::WorkerId(0)),
+    });
+    let admin_state = admin_state.clone();
+    let shutdown_rx = server.shutdown_tx.subscribe();
+    spawn_registered_unit(
+        handles,
+        "admin_metrics_publisher",
+        RuntimeHandleClass::Maintenance,
+        async move {
+            crate::admin::metrics::start_metrics_publisher(admin_state, feed, None, shutdown_rx)
+                .await;
         },
     );
 }

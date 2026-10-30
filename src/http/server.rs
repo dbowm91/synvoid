@@ -37,7 +37,7 @@ mod connection_types;
 mod observability;
 
 pub(crate) use connection_types::DrainGuard;
-pub(crate) use observability::send_request_log_if_enabled;
+pub(crate) use observability::send_request_log_with_sink;
 
 use connection_types::*;
 
@@ -84,6 +84,9 @@ pub(crate) struct HttpServerRuntime {
     pub metrics: Option<Arc<WorkerMetrics>>,
     pub ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
     pub worker_id: Option<crate::process::ipc::WorkerId>,
+    /// Set-once handle to the worker-local request-log sink, cloned from
+    /// `ServerSharedState`. Resolved per request at emit time.
+    pub request_log_sink: synvoid_http::RequestLogSinkHandle,
     pub connection_limit: Arc<Semaphore>,
     pub upstream_client_registry: Arc<UpstreamClientRegistry>,
     pub backends: HttpAppBackends,
@@ -124,6 +127,7 @@ impl HttpServer {
             metrics: None,
             ipc: None,
             worker_id: None,
+            request_log_sink: synvoid_http::empty_sink_handle(),
             connection_limit: Arc::new(Semaphore::new(max_connections)),
             upstream_client_registry: Arc::new(UpstreamClientRegistry::new()),
             backends: HttpAppBackends::default(),
@@ -162,6 +166,11 @@ impl HttpServer {
     ) -> Self {
         self.runtime.ipc = Some(ipc);
         self.runtime.worker_id = Some(worker_id);
+        self
+    }
+
+    pub fn with_request_log_sink(mut self, sink: synvoid_http::RequestLogSinkHandle) -> Self {
+        self.runtime.request_log_sink = sink;
         self
     }
 

@@ -40,6 +40,12 @@ pub struct NeutralServiceContext<W, D> {
     pub drain_state: Option<Arc<D>>,
     pub upstream_client_registry: Arc<UpstreamClientRegistry>,
     pub connection_limit: Arc<Semaphore>,
+    /// Set-once handle to the worker-local request-log sink (the admin
+    /// `AdminState`). Resolved per request at emit time so a control plane
+    /// that starts after the listeners still receives records on already
+    /// accepted keep-alive connections. `None` until the admin service
+    /// registers its state (or when `[admin] enabled=false`).
+    pub request_log_sink: synvoid_http::RequestLogSinkHandle,
     #[allow(clippy::type_complexity)]
     // reason: nested Arc<RwLock<HashMap<...>>> composition root type (mirrors postlude context)
     pub app_servers:
@@ -117,7 +123,8 @@ where
         ctx.worker_id,
         start,
         Arc::clone(&request_drop),
-        super::server::send_request_log_if_enabled,
+        super::server::send_request_log_with_sink,
+        ctx.request_log_sink.clone(),
         #[cfg(feature = "mesh")]
         ctx.mesh_config.clone(),
         #[cfg(feature = "mesh")]
@@ -174,7 +181,8 @@ where
             plugin_backend: plugin_backend_arc,
             upstream_client_registry: Arc::clone(&ctx.upstream_client_registry),
             request_drop: Arc::clone(&request_drop),
-            request_log: super::server::send_request_log_if_enabled,
+            request_log: super::server::send_request_log_with_sink,
+            request_log_sink: ctx.request_log_sink.clone(),
             ja4_hash,
             forwarded_protocol,
             #[cfg(feature = "mesh")]

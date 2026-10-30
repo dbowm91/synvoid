@@ -106,6 +106,9 @@ pub struct HttpsServer {
     mesh_transport: Option<Arc<crate::mesh::transports::MeshTransportManager>>,
     ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
     worker_id: Option<crate::process::ipc::WorkerId>,
+    /// Set-once handle to the worker-local request-log sink, cloned from
+    /// `ServerSharedState`. Resolved per request at emit time.
+    request_log_sink: synvoid_http::RequestLogSinkHandle,
     serverless_manager: Option<Arc<crate::serverless::manager::ServerlessManager>>,
     connection_limit: Arc<tokio::sync::Semaphore>,
     app_servers: Option<
@@ -186,6 +189,7 @@ impl HttpsServer {
             mesh_transport: None,
             ipc: None,
             worker_id: None,
+            request_log_sink: synvoid_http::empty_sink_handle(),
             serverless_manager: None,
             connection_limit: Arc::new(tokio::sync::Semaphore::new(10000)),
             app_servers: None,
@@ -233,6 +237,11 @@ impl HttpsServer {
     ) -> Self {
         self.ipc = Some(ipc);
         self.worker_id = Some(worker_id);
+        self
+    }
+
+    pub fn with_request_log_sink(mut self, sink: synvoid_http::RequestLogSinkHandle) -> Self {
+        self.request_log_sink = sink;
         self
     }
 
@@ -306,6 +315,7 @@ impl HttpsServer {
         let mesh_transport = self.mesh_transport.clone();
         let ipc = self.ipc.clone();
         let worker_id = self.worker_id;
+        let request_log_sink = self.request_log_sink.clone();
         let serverless_manager = self.serverless_manager.clone();
         let connection_limit = self.connection_limit.clone();
         let app_servers = self.app_servers.clone();
@@ -368,6 +378,8 @@ impl HttpsServer {
                             let drain_state_h1 = drain_state.clone();
                             let ipc_h2 = ipc.clone();
                             let ipc_h1 = ipc.clone();
+                            let request_log_sink_h2 = request_log_sink.clone();
+                            let request_log_sink_h1 = request_log_sink.clone();
                             let worker_id_h2 = worker_id;
                             let worker_id_h1 = worker_id;
                             #[cfg(feature = "mesh")]
@@ -473,6 +485,7 @@ impl HttpsServer {
                                                         let mesh_transport = mesh_transport.clone();
                                                         let ipc = ipc.clone();
                                                         let worker_id = worker_id_h2;
+                                                        let request_log_sink = request_log_sink_h2.clone();
                                                         let serverless_manager = serverless_manager.clone();
                                                         let connection_limit = connection_limit.clone();
                                                         let app_servers = app_servers.clone();
@@ -480,11 +493,11 @@ impl HttpsServer {
                                                         async move {
                                                             #[cfg(feature = "mesh")]
                                                             {
-                                                                Self::handle_request_with_cache(req, client_addr, local_addr, router, waf, http_config, main_config, https_conn, metrics, drain_state, mesh_config, mesh_transport, ipc, worker_id, serverless_manager, connection_limit, app_servers, upstream_client_registry).await
+                                                                Self::handle_request_with_cache(req, client_addr, local_addr, router, waf, http_config, main_config, https_conn, metrics, drain_state, mesh_config, mesh_transport, ipc, worker_id, serverless_manager, connection_limit, app_servers, upstream_client_registry, request_log_sink.clone()).await
                                                             }
                                                             #[cfg(not(feature = "mesh"))]
                                                             {
-                                                                Self::handle_request_with_cache(req, client_addr, local_addr, router, waf, http_config, main_config, https_conn, metrics, drain_state, ipc, worker_id, serverless_manager, connection_limit, app_servers, upstream_client_registry).await
+                                                                Self::handle_request_with_cache(req, client_addr, local_addr, router, waf, http_config, main_config, https_conn, metrics, drain_state, ipc, worker_id, serverless_manager, connection_limit, app_servers, upstream_client_registry, request_log_sink.clone()).await
                                                             }
                                                         }
                                                     }
@@ -544,6 +557,7 @@ impl HttpsServer {
                                                 app_servers: app_servers_h1.clone(),
                                                 #[cfg(feature = "mesh")]
                                                 mesh_config: mesh_config_h1.clone(),
+                                                request_log_sink: request_log_sink_h1.clone(),
                                                 #[cfg(feature = "mesh")]
                                                 mesh_transport: mesh_transport_h1.clone(),
                                                 // The TLS path never wired
@@ -680,6 +694,7 @@ impl HttpsServer {
             >,
         >,
         upstream_client_registry: Arc<UpstreamClientRegistry>,
+        request_log_sink: synvoid_http::RequestLogSinkHandle,
     ) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error> {
         // Phase 01 (TLS convergence): converged request policy.
         //
@@ -764,7 +779,8 @@ impl HttpsServer {
             worker_id,
             start,
             Arc::clone(&request_drop),
-            crate::http::server::send_request_log_if_enabled,
+            crate::http::server::send_request_log_with_sink,
+            request_log_sink.clone(),
             #[cfg(feature = "mesh")]
             mesh_config.clone(),
             #[cfg(feature = "mesh")]
@@ -821,7 +837,8 @@ impl HttpsServer {
                 plugin_backend: plugin_backend_arc,
                 upstream_client_registry: Arc::clone(&upstream_client_registry),
                 request_drop: Arc::clone(&request_drop),
-                request_log: crate::http::server::send_request_log_if_enabled,
+                request_log: crate::http::server::send_request_log_with_sink,
+                request_log_sink: request_log_sink.clone(),
                 ja4_hash,
                 forwarded_protocol: synvoid_proxy::ForwardedProtocol::Https,
                 #[cfg(feature = "mesh")]

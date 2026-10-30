@@ -5,7 +5,7 @@ use crate::app::Route;
 use crate::components::confirm_dialog::{ConfirmDialog, ConfirmType};
 use crate::components::skeleton::LoadingSpinner;
 use crate::services::ApiService;
-use crate::types::{SiteInfo, SiteStats};
+use crate::types::{SiteInfo, SiteStats, UpstreamHealth};
 
 #[function_component]
 pub fn Sites() -> Html {
@@ -174,8 +174,11 @@ pub fn Sites() -> Html {
                         // green whenever the stats endpoint failed or had not
                         // reported yet.
                         let health = match site_stats.iter().find(|s| s.site_id == site_id) {
-                            Some(stats) if stats.upstream_healthy => Health::Healthy,
-                            Some(_) => Health::Unhealthy,
+                            Some(stats) => match stats.upstream_healthy {
+                                UpstreamHealth::Healthy => Health::Healthy,
+                                UpstreamHealth::Unhealthy => Health::Unhealthy,
+                                UpstreamHealth::Unknown => Health::Unknown,
+                            },
                             None => Health::Unknown,
                         };
                         html! {

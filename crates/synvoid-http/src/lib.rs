@@ -24,6 +24,7 @@ pub mod listener;
 pub mod mesh_backend_dispatch;
 pub mod plugin_backend;
 pub mod request_frontdoor;
+pub mod request_log_sink;
 pub mod request_parse;
 pub mod request_preparation;
 pub mod response_builder;
@@ -79,6 +80,9 @@ pub use internal_handlers::{
 pub use mesh_backend_dispatch::maybe_handle_mesh_backend;
 pub use request_frontdoor::{
     prepare_request_frontdoor, FrontdoorRequest, RequestFrontdoorContext, RequestFrontdoorOutcome,
+};
+pub use request_log_sink::{
+    empty_sink_handle, NoopRequestLogSink, RequestLogRecord, RequestLogSink, RequestLogSinkHandle,
 };
 pub use request_parse::{
     classify_internal_endpoint, early_waf_decision, extract_request_metadata, extract_trust_token,

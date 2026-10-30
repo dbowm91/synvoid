@@ -6,7 +6,7 @@ use crate::components::charts::Gauge;
 use crate::hooks::use_websocket::{use_websocket_or_poll, UseWebSocketState, WS_METRICS_PATH};
 use crate::services::api::POLL_STATS_SUMMARY_PATH;
 use crate::services::ApiService;
-use crate::types::{RealtimeMetrics, SiteStats};
+use crate::types::{RealtimeMetrics, SiteStats, UpstreamHealth};
 
 fn format_number(n: u64) -> String {
     if n >= 1_000_000_000 {
@@ -220,9 +220,17 @@ pub fn SiteDetail(props: &SiteDetailProps) -> Html {
                             unit=""
                         />
                         <div class="flex flex-col items-center">
-                            <span class={format!("w-4 h-4 rounded-full mb-2 {}", if current.map(|s| s.upstream_healthy).unwrap_or(false) { "bg-green-500" } else { "bg-red-500" })} />
+                            <span class={format!("w-4 h-4 rounded-full mb-2 {}", match current.map(|s| s.upstream_healthy).unwrap_or_default() {
+                                UpstreamHealth::Healthy => "bg-green-500",
+                                UpstreamHealth::Unhealthy => "bg-red-500",
+                                UpstreamHealth::Unknown => "bg-gray-500",
+                            })} />
                             <span class="text-sm text-secondary">
-                                { if current.map(|s| s.upstream_healthy).unwrap_or(false) { "Upstream Healthy" } else { "Upstream Unhealthy" } }
+                                { match current.map(|s| s.upstream_healthy).unwrap_or_default() {
+                                    UpstreamHealth::Healthy => "Upstream Healthy",
+                                    UpstreamHealth::Unhealthy => "Upstream Unhealthy",
+                                    UpstreamHealth::Unknown => "Health unknown",
+                                } }
                             </span>
                         </div>
                     </div>

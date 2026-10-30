@@ -116,6 +116,7 @@ pub(super) async fn run_accept_loop(
                         let metrics = runtime.metrics.clone();
                         let ipc = runtime.ipc.clone();
                         let worker_id = runtime.worker_id;
+                        let request_log_sink = runtime.request_log_sink.clone();
                         let serverless_manager = runtime.backends.serverless_manager.clone();
                         let connection_limit = runtime.connection_limit.clone();
                         let app_servers = runtime.backends.app_servers.clone();
@@ -187,6 +188,7 @@ pub(super) async fn run_accept_loop(
                             upstream_client_registry,
                             connection_limit,
                             app_servers,
+                            request_log_sink,
                             #[cfg(feature = "mesh")]
                             mesh_config,
                             #[cfg(feature = "mesh")]

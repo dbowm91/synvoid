@@ -5,7 +5,8 @@
   "scripts": {
     "build:css": "tailwindcss -i ./src/tailwind.css -o ./src/styles.css --minify",
     "build:bundle": "trunk build --release",
-    "build": "npm run build:css && npm run build:bundle",
+    "build:csp-bootstrap": "python3 ./scripts/extract-bootstrap.py",
+    "build": "npm run build:css && npm run build:bundle && npm run build:csp-bootstrap",
     "watch:css": "tailwindcss -i ./src/tailwind.css -o ./src/styles.css --watch"
   },
   "devDependencies": {

@@ -1,17 +1,73 @@
 use crate::admin::alerting::AlertManager;
 use crate::admin::state::{AdminState, AggregatedMetrics, SystemResources};
 use crate::metrics::payloads::{HealthStatus, SiteMetricsPayload};
-use crate::process::ProcessManager;
+use crate::metrics::{WorkerMetrics, WorkerMetricsPayload};
+use crate::process::{ProcessManager, WorkerId};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use sysinfo::System;
+use tokio::sync::broadcast;
 use tokio::time::interval;
+
+/// Narrow source of per-worker metric snapshots for
+/// [`start_metrics_publisher`]. The publisher only needs three reads; this
+/// trait keeps it independent of where the workers live (supervisor-owned
+/// `ProcessManager` vs. the worker's own `WorkerMetrics`), so every worker —
+/// supervised or standalone — runs the same publisher over its own traffic.
+pub trait MetricsFeed: Send + Sync + 'static {
+    fn worker_metrics(&self) -> Vec<(WorkerId, WorkerMetricsPayload)>;
+    fn is_worker_running(&self, worker_id: &WorkerId) -> bool;
+    fn cpu_worker_cache_stats(&self) -> (u64, u64);
+}
+
+impl MetricsFeed for ProcessManager {
+    fn worker_metrics(&self) -> Vec<(WorkerId, WorkerMetricsPayload)> {
+        self.get_worker_metrics()
+    }
+
+    fn is_worker_running(&self, worker_id: &WorkerId) -> bool {
+        ProcessManager::is_worker_running(self, worker_id)
+    }
+
+    fn cpu_worker_cache_stats(&self) -> (u64, u64) {
+        self.get_cpu_worker_cache_stats()
+    }
+}
+
+/// Single-worker feed for the worker data plane (standalone and supervised
+/// workers alike): the worker publishes its own `WorkerMetrics` snapshot.
+/// No second metrics system — this is the same `to_payload` conversion the
+/// IPC heartbeat path uses.
+pub struct LocalMetricsFeed {
+    pub metrics: Option<Arc<WorkerMetrics>>,
+    pub worker_id: WorkerId,
+}
+
+impl MetricsFeed for LocalMetricsFeed {
+    fn worker_metrics(&self) -> Vec<(WorkerId, WorkerMetricsPayload)> {
+        match &self.metrics {
+            // Worker-level uptime is not tracked by the feed; the published
+            // aggregate uses `AdminState::uptime()`. Nothing in the
+            // aggregation reads the per-worker `uptime_secs`.
+            Some(metrics) => vec![(self.worker_id, metrics.to_payload(0))],
+            None => Vec::new(),
+        }
+    }
+
+    fn is_worker_running(&self, _worker_id: &WorkerId) -> bool {
+        self.metrics.is_some()
+    }
+
+    fn cpu_worker_cache_stats(&self) -> (u64, u64) {
+        (0, 0)
+    }
+}
 
 pub async fn start_metrics_publisher(
     admin_state: Arc<AdminState>,
-    process_manager: Arc<ProcessManager>,
+    feed: Arc<dyn MetricsFeed>,
     alert_manager: Option<Arc<AlertManager>>,
-    mut shutdown_rx: tokio::sync::mpsc::Receiver<()>,
+    mut shutdown_rx: broadcast::Receiver<()>,
 ) {
     let mut ticker = interval(Duration::from_secs(1));
     let mut alert_ticker = interval(Duration::from_secs(60));
@@ -49,7 +105,7 @@ pub async fn start_metrics_publisher(
                     }
                 }
 
-                let worker_metrics = process_manager.get_worker_metrics();
+                let worker_metrics = feed.worker_metrics();
                 let now_ms = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_millis() as u64)
@@ -92,14 +148,14 @@ pub async fn start_metrics_publisher(
                         *blocked_by_type.entry(attack_type.clone()).or_insert(0) += count;
                     }
 
-                    if process_manager.is_worker_running(worker_id) {
+                    if feed.is_worker_running(worker_id) {
                         healthy_workers += 1;
                     } else {
                         unhealthy_workers += 1;
                     }
                 }
 
-                let (static_cache_hits, static_cache_misses) = process_manager.get_cpu_worker_cache_stats();
+                let (static_cache_hits, static_cache_misses) = feed.cpu_worker_cache_stats();
                 _total_static_cache_hits += static_cache_hits;
                 _total_static_cache_misses += static_cache_misses;
 
