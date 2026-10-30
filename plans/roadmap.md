@@ -2586,3 +2586,37 @@ different deque, and the deployment disables verbose request logging).
 
 Run 01 first (removes the 429 storm masking other tabs). 02–03 independent.
 04 independent but largest; may proceed in parallel. 05 requires 01–04.
+
+## Halloy Block-Page Themes Series — Ready
+
+Status: **READY** on branch `plans/halloy-block-page-themes`. Umbrella:
+`plans/halloy_block_page_themes_roadmap.md`.
+
+Origin: Settings → Theme offers 6 hardcoded presets driving the WAF
+block/error pages; no Halloy support exists anywhere in synvoid. Operator
+decisions (2026-10-30): (a) the 50 Halloy themes drive the block/error pages,
+optionally, and are NOT tied to admin-panel styling (panel scheme stays
+internal); (b) blog-style dual selection — a dark-theme picker and a
+light-theme picker plus scheme selector. Reuse: the 50-file set identical
+in eggpool (`rust/assets/dashboard/themes/`) and the blog
+(`app/themes/bundled/`), eggpool `theme.rs` (allowlist, `include_bytes!`
+embedding, fallbacks, color math, per-theme WCAG guard tests), blog
+`docs/themes/supported-schema.md` + `theme_settings.py` resolution.
+Research also found three prerequisite defects this series repairs: PUT
+`/theme` parsed as `ThemeResponse` instead of `AdminMutationResult`
+(saves "fail" while persisting), bare `value={...}` on ThemeSection
+`<select>`s (pickers show `Sunset`/`Light` regardless of state), and no
+`::selection` rule (unreadable selected text).
+
+| Phase | File | Status |
+|---|---|---|
+| 01 | `halloy_block_page_themes_phase_01_registry.md` | **Ready** — vendor 50 files + registry in `synvoid-theme`, guard tests |
+| 02 | `halloy_block_page_themes_phase_02_config.md` | **Ready** — `dark_theme`/`light_theme`/`scheme`, legacy compat |
+| 03 | `halloy_block_page_themes_phase_03_renderer.md` | **Ready** — per-scheme CSS + `::selection`, needs 01+02 |
+| 04 | `halloy_block_page_themes_phase_04_admin_api.md` | **Ready** — dynamic catalog + dual-scheme fields, needs 02 |
+| 05 | `halloy_block_page_themes_phase_05_admin_ui.md` | **Ready** — dual pickers + client fixes, needs 04 |
+| 06 | `halloy_block_page_themes_phase_06_verification_closeout.md` | **Ready** — terminal gate + live proof, runs last |
+
+01 and 02 independent of each other. Out of scope: panel internal styling,
+custom `themes_dir` override (deferred follow-up), per-site themes,
+admin-panel `::selection` (separate from block-page `::selection`).
