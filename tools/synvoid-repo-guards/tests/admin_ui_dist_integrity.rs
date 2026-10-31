@@ -278,10 +278,7 @@ fn admin_ui_text_tokens_resolve_to_text_vars() {
         let mut start = 0;
         while let Some(at) = css[start..].find(selector) {
             let abs = start + at;
-            let end = css[abs..]
-                .find('}')
-                .map(|o| abs + o)
-                .unwrap_or(css.len());
+            let end = css[abs..].find('}').map(|o| abs + o).unwrap_or(css.len());
             last = Some(&css[abs..end]);
             start = end;
         }
