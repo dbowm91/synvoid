@@ -146,27 +146,41 @@ pub fn App() -> Html {
         });
     }
 
-    // Fetch the server theme once and re-apply the panel palette whenever
-    // Settings → Theme saves (it dispatches `panel-theme-update`). A failed
-    // fetch (logged out, offline) simply leaves the static palette in place.
+    // Fetch the server theme and re-apply the panel palette whenever
+    // Settings → Theme saves (it dispatches `panel-theme-update`). The fetch
+    // is gated on authentication: firing it during `Restoring` races the
+    // session restore, loses with a 401, and leaves the saved palette
+    // unapplied until the next save. A failed fetch (logged out, offline)
+    // simply leaves the static palette in place.
+    let fetch_panel = *auth_state == AuthState::Authenticated;
     {
         let theme = theme.clone();
         let panel_theme = panel_theme.clone();
-        use_effect_with((), move |_| {
-            let theme_fetch = theme.clone();
-            let panel_theme_fetch = panel_theme.clone();
+        use_effect_with(fetch_panel, move |fetch| {
+            if !**fetch {
+                return || ();
+            }
+            let theme = theme.clone();
+            let panel_theme = panel_theme.clone();
             spawn_local(async move {
                 match ApiService::new().get_theme().await {
                     Ok(data) => {
-                        apply_panel_for_mode(*theme_fetch, &Some(data.clone()));
-                        panel_theme_fetch.set(Some(data));
+                        apply_panel_for_mode(*theme, &Some(data.clone()));
+                        panel_theme.set(Some(data));
                     }
                     Err(error) => {
                         tracing::debug!("panel theme unavailable: {}", error);
                     }
                 }
             });
+            || ()
+        });
+    }
 
+    {
+        let theme = theme.clone();
+        let panel_theme = panel_theme.clone();
+        use_effect_with((), move |_| {
             let panel_theme_for_listener = panel_theme.clone();
             let theme_for_listener = theme.clone();
             let closure = Closure::wrap(Box::new(move || {
