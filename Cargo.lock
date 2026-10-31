@@ -8246,7 +8246,7 @@ dependencies = [
  "axum-extra",
  "bcrypt",
  "chrono",
- "metrics 0.22.4",
+ "metrics 0.24.6",
  "parking_lot",
  "schemars 0.8.22",
  "serde",

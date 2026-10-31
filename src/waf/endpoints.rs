@@ -418,9 +418,9 @@ mod tests {
 
     #[test]
     fn default_theme_renders_minimal_page() {
-        let (manager, dir) = manager_with_template(ThemeConfig::default());        // ThemeConfig::default() carries the ("default", "default") pair:
-        // the SynVoid default is unstyled, so even a styled template
-        // directory renders the minimal page with no Halloy injection.
+        let (manager, dir) = manager_with_template(ThemeConfig::default()); // ThemeConfig::default() carries the ("default", "default") pair:
+                                                                            // the SynVoid default is unstyled, so even a styled template
+                                                                            // directory renders the minimal page with no Halloy injection.
         let page = manager.render_page(403, None);
         assert!(page.contains("<h1>403</h1>"), "unexpected page: {page}");
         assert!(
@@ -441,7 +441,10 @@ mod tests {
             page.contains("--waf-bg"),
             "named theme must inject Halloy CSS: {page}"
         );
-        assert!(!page.contains("{{theme_css}}"), "placeholder resolved: {page}");
+        assert!(
+            !page.contains("{{theme_css}}"),
+            "placeholder resolved: {page}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
