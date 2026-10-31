@@ -34,12 +34,13 @@ pub async fn maybe_handle_fastcgi_or_php_backend(
         alt_svc.clone(),
         Arc::clone(main_config),
         |status, message| {
+            let fallback_theme = waf.error_page_manager.theme();
             let site_theme = target
                 .site_config
                 .error_pages
                 .theme
                 .as_ref()
-                .map(|theme_config| theme_config.to_theme_config(waf.error_page_manager.theme()));
+                .map(|theme_config| theme_config.to_theme_config(&fallback_theme));
             waf.error_page_manager
                 .render_page_with_theme(status, message, site_theme.as_ref())
         },

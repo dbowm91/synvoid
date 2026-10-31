@@ -51,7 +51,7 @@ reference fails the guard until the row is reclassified with a reason.
 | regex | waf, logging, admin | composition_runtime | default | Pattern matching for WAF rules and log parsing | keep | admin, honeypot_port |
 | parking_lot | throughout | composition_runtime | default | Fast mutex and RwLock implementations | keep | admin, honeypot_port, http, log_controller, process, serverless, supervisor, tarpit, tcp, tls, udp, waf, worker |
 | dashmap | http_client, mesh | composition_runtime | default | Concurrent hash map for connection pools | keep | mesh, process, udp, waf, worker |
-| arc-swap | config, http_client | composition_runtime | default | Atomic Arc pointer swapping for hot config | keep | waf |
+| arc-swap | config, http_client | composition_runtime | default | Atomic Arc pointer swapping for hot config | keep | admin, waf |
 | moka | — | remove_candidate | — | Phase 31: removed from root (0 src uses) | removed Phase 31 | — |
 | memmap2 | — | remove_candidate | — | Phase 42: removed from root (0 src uses; mmap owned by synvoid-upstream) | removed Phase 42 | — |
 | metrics | metrics | composition_runtime | default | Metrics facade for observability | keep | admin, honeypot_port, http, icmp_filter, process, server, supervisor, tarpit, tcp, tls, udp, waf, worker |

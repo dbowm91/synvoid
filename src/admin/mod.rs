@@ -161,6 +161,8 @@ pub fn create_admin_router_with_state(
         upstream_error_tracker,
         threat_level_manager,
         rule_feed_manager,
+        // Test/standalone routers have no worker: no live theme handle.
+        None,
         #[cfg(feature = "mesh")]
         mesh_transport,
         #[cfg(feature = "icmp-filter")]
@@ -192,6 +194,7 @@ pub(crate) fn build_admin_state(
     upstream_error_tracker: Option<Arc<UpstreamErrorTracker>>,
     threat_level_manager: Option<Arc<ThreatLevelManager>>,
     rule_feed_manager: Option<Arc<RuleFeedManagerForWaf>>,
+    error_page_theme: Option<Arc<arc_swap::ArcSwap<crate::theme::ThemeConfig>>>,
     #[cfg(feature = "mesh")] mesh_transport: Option<Arc<MeshTransport>>,
     #[cfg(feature = "icmp-filter")] icmp_filter: Option<Arc<TokioRwLock<IcmpFilterManager>>>,
 ) -> Option<Arc<AdminState>> {
@@ -214,6 +217,7 @@ pub(crate) fn build_admin_state(
         .with_upstream_error_tracker(upstream_error_tracker)
         .with_threat_level_manager(threat_level_manager)
         .with_rule_feed_manager(rule_feed_manager)
+        .with_error_page_theme(error_page_theme)
         .with_secure_cookie(secure_cookie);
 
     #[cfg(feature = "mesh")]

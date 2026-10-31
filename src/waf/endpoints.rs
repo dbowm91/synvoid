@@ -1,5 +1,6 @@
 use crate::http::headers::generate_stealth_timestamp;
 use crate::theme::{ErrorPageTemplate, ThemeConfig, ThemeRenderer};
+use arc_swap::ArcSwap;
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -14,12 +15,20 @@ pub struct ErrorPageManager {
     custom_pages: Arc<RwLock<HashMap<u16, String>>>,
     enabled: bool,
     mode: ErrorPageMode,
-    theme: ThemeConfig,
+    // Shared handle to the live global theme (built from
+    // `[defaults.theme]`). The admin `PUT /theme` stores a fresh conversion
+    // here so served block pages follow settings without a restart; the
+    // per-request fallback is always read through this handle.
+    theme: Arc<ArcSwap<ThemeConfig>>,
 }
 
 impl ErrorPageManager {
-    pub fn theme(&self) -> &ThemeConfig {
-        &self.theme
+    pub fn theme(&self) -> Arc<ThemeConfig> {
+        self.theme.load_full()
+    }
+
+    pub fn theme_handle(&self) -> Arc<ArcSwap<ThemeConfig>> {
+        Arc::clone(&self.theme)
     }
 }
 
@@ -58,13 +67,7 @@ fn escape_html(s: &str) -> String {
 
 impl ErrorPageManager {
     pub fn new(default_dir: &str, custom_dir: Option<String>, enabled: bool) -> Self {
-        Self::with_theme_and_mode(
-            default_dir,
-            custom_dir,
-            enabled,
-            "generic",
-            ThemeConfig::default(),
-        )
+        Self::with_theme(default_dir, custom_dir, enabled, ThemeConfig::default())
     }
 
     pub fn with_theme(
@@ -73,7 +76,23 @@ impl ErrorPageManager {
         enabled: bool,
         theme: ThemeConfig,
     ) -> Self {
-        Self::with_theme_and_mode(default_dir, custom_dir, enabled, "generic", theme)
+        Self::with_theme_and_mode(
+            default_dir,
+            custom_dir,
+            enabled,
+            "generic",
+            Arc::new(ArcSwap::new(Arc::new(theme))),
+        )
+    }
+
+    pub fn with_shared_theme(
+        default_dir: &str,
+        custom_dir: Option<String>,
+        enabled: bool,
+        mode: &str,
+        theme: Arc<ArcSwap<ThemeConfig>>,
+    ) -> Self {
+        Self::with_theme_and_mode(default_dir, custom_dir, enabled, mode, theme)
     }
 
     pub fn with_theme_and_mode(
@@ -81,7 +100,7 @@ impl ErrorPageManager {
         custom_dir: Option<String>,
         enabled: bool,
         mode: &str,
-        theme: ThemeConfig,
+        theme: Arc<ArcSwap<ThemeConfig>>,
     ) -> Self {
         let error_page_mode = ErrorPageMode::from_mode_str(mode);
 
@@ -199,7 +218,9 @@ impl ErrorPageManager {
         message: Option<&str>,
         override_theme: Option<&ThemeConfig>,
     ) -> String {
-        let theme = override_theme.unwrap_or(&self.theme);
+        let live_theme = self.theme.load_full();
+        let theme: ThemeConfig =
+            override_theme.map_or_else(|| (*live_theme).clone(), |t| t.clone());
 
         if !self.enabled || self.default_pages.is_empty() {
             return Self::minimal_page(status_code, message);
@@ -211,7 +232,7 @@ impl ErrorPageManager {
 
         let Some(page) = page else {
             return if self.mode == ErrorPageMode::Styled {
-                Self::fallback_page(status_code, message, theme)
+                Self::fallback_page(status_code, message, &theme)
             } else {
                 Self::minimal_page(status_code, message)
             };

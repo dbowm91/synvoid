@@ -41,6 +41,7 @@ pub async fn handle_streaming_waf_upstream_pass(
     {
         Ok(resp) => Ok(resp),
         Err(synvoid_http::StreamingWafUpstreamError::PermissionDenied) => {
+            let fallback_theme = waf.error_page_manager.theme();
             let body = waf.error_page_manager.render_page_with_theme(
                 403,
                 Some("Forbidden"),
@@ -49,9 +50,7 @@ pub async fn handle_streaming_waf_upstream_pass(
                     .error_pages
                     .theme
                     .as_ref()
-                    .map(|theme_config| {
-                        theme_config.to_theme_config(waf.error_page_manager.theme())
-                    })
+                    .map(|theme_config| theme_config.to_theme_config(&fallback_theme))
                     .as_ref(),
             );
             Ok(crate::http::response_builder::build_response_with_alt_svc(

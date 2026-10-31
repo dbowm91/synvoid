@@ -247,7 +247,7 @@ pub enum RequestPreparationOutcome {
 pub trait BufferedRequestWaf:
     crate::EarlyWafHooks + RequestBodyWaf + ChallengePathWaf + Send + Sync
 {
-    fn error_page_theme(&self) -> &synvoid_config::theme::ThemeConfig;
+    fn error_page_theme(&self) -> std::sync::Arc<synvoid_config::theme::ThemeConfig>;
 
     fn render_page_with_theme(
         &self,

@@ -306,6 +306,8 @@ impl UnifiedServerResources {
             data_dir,
             test_mode: crate::waf::TestModeConfig::default(),
             tarpit_defaults: Some(main_config.tarpit.clone()),
+            error_pages: main_config.defaults.error_pages.clone(),
+            error_page_theme: main_config.defaults.theme.clone().into(),
         })
     }
 

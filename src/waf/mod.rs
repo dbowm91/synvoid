@@ -187,6 +187,14 @@ pub struct WafCoreConfig {
     pub data_dir: Option<PathBuf>,
     pub test_mode: TestModeConfig,
     pub tarpit_defaults: Option<crate::config::TarpitDefaults>,
+    /// Global `[defaults.error_pages]` (directory/mode/enabled). Previously
+    /// the manager hard-coded a relative `error_pages` dir and generic mode,
+    /// so operator-configured template directories were never loaded.
+    pub error_pages: crate::config::defaults::ErrorPagesDefaults,
+    /// Initial global block-page theme, converted from `[defaults.theme]`.
+    /// Served pages always read the live handle (see `ErrorPageManager`),
+    /// so the admin `PUT /theme` takes effect without a restart.
+    pub error_page_theme: crate::theme::ThemeConfig,
 }
 
 /// Root-owned WAF application composition over the canonical `synvoid-waf`
@@ -329,6 +337,8 @@ impl WafCore {
             data_dir,
             test_mode,
             tarpit_defaults,
+            error_pages,
+            error_page_theme,
         } = config;
 
         // Stage 1: rate limiter (no dependencies).
@@ -356,8 +366,13 @@ impl WafCore {
 
         // Stage 5: detector/policy setup (bot, endpoints, challenge, attack).
         let attack_detection_snapshot = attack_detection_config.clone();
-        let detectors =
-            assembly::assemble_detectors(&bot_config, &endpoint_config, attack_detection_config);
+        let detectors = assembly::assemble_detectors(
+            &bot_config,
+            &endpoint_config,
+            attack_detection_config,
+            &error_pages,
+            error_page_theme,
+        );
 
         // Stage 6: render/backends (tarpit, whitelist, auth, trust key).
         let tarpit_defaults = tarpit_defaults.unwrap_or_default();
@@ -1003,7 +1018,7 @@ impl synvoid_http::WafErrorPageRenderer for WafCore {
 
 #[async_trait]
 impl synvoid_http::BufferedRequestWaf for WafCore {
-    fn error_page_theme(&self) -> &crate::theme::ThemeConfig {
+    fn error_page_theme(&self) -> Arc<crate::theme::ThemeConfig> {
         self.error_page_manager.theme()
     }
 
@@ -1213,6 +1228,8 @@ mod enforcement_pipeline_tests {
             data_dir: Some(std::env::temp_dir().join("synvoid-enforcement-pipeline-test")),
             test_mode: TestModeConfig::default(),
             tarpit_defaults: None,
+            error_pages: crate::config::defaults::ErrorPagesDefaults::default(),
+            error_page_theme: crate::theme::ThemeConfig::default(),
         })
     }
 

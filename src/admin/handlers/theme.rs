@@ -265,6 +265,14 @@ pub async fn update_theme(
     let theme = config.main.defaults.theme.clone();
     let response = build_theme_response(&theme);
 
+    // Publish the new global theme to the worker's live render handle so
+    // served block pages follow settings without a restart. The on-disk
+    // write below keeps the file in sync for the next boot; if no worker
+    // handle is attached (tests), the file is still authoritative.
+    if let Some(handle) = &state.waf_tracking.error_page_theme {
+        handle.store(Arc::new(theme.clone().into()));
+    }
+
     let main_config = config.main.clone();
     let config_dir = config.config_dir.clone();
     drop(config);

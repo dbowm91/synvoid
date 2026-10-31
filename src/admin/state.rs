@@ -15,6 +15,7 @@ use crate::waf::{
     ProbeTracker, RuleFeedManagerForWaf, SuspiciousWordTracker, ThreatLevelManager,
     UpstreamErrorTracker,
 };
+use arc_swap::ArcSwap;
 use base64::Engine;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
@@ -207,6 +208,11 @@ pub struct WafTrackingState {
     pub upstream_error_tracker: Option<Arc<UpstreamErrorTracker>>,
     pub threat_level_manager: Option<Arc<ThreatLevelManager>>,
     pub rule_feed_manager: Option<Arc<RuleFeedManagerForWaf>>,
+    /// Shared handle to the live global block-page theme. The worker owns
+    /// the same `Arc` inside its `ErrorPageManager`; the admin `PUT /theme`
+    /// stores a fresh conversion here so served pages follow settings
+    /// without a restart. `None` in tests and builds without a WAF.
+    pub error_page_theme: Option<Arc<ArcSwap<crate::theme::ThemeConfig>>>,
     #[cfg(feature = "mesh")]
     pub yara_rules: Option<Arc<crate::mesh::yara_rules::YaraRulesManager>>,
     #[cfg(feature = "mesh")]
@@ -349,6 +355,7 @@ impl AdminState {
                 upstream_error_tracker: None,
                 threat_level_manager: None,
                 rule_feed_manager: None,
+                error_page_theme: None,
                 #[cfg(feature = "mesh")]
                 yara_rules: None,
                 #[cfg(feature = "mesh")]
@@ -447,6 +454,14 @@ impl AdminState {
 
     pub fn with_rule_feed_manager(mut self, manager: Option<Arc<RuleFeedManagerForWaf>>) -> Self {
         self.waf_tracking.rule_feed_manager = manager;
+        self
+    }
+
+    pub fn with_error_page_theme(
+        mut self,
+        theme: Option<Arc<ArcSwap<crate::theme::ThemeConfig>>>,
+    ) -> Self {
+        self.waf_tracking.error_page_theme = theme;
         self
     }
 

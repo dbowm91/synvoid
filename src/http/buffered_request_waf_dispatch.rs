@@ -86,6 +86,7 @@ where
         on_challenged,
         elapsed_ms,
         |status, message| {
+            let fallback_theme = waf.error_page_manager.theme();
             waf.error_page_manager.render_page_with_theme(
                 status,
                 Some(message),
@@ -94,9 +95,7 @@ where
                     .error_pages
                     .theme
                     .as_ref()
-                    .map(|theme_config| {
-                        theme_config.to_theme_config(waf.error_page_manager.theme())
-                    })
+                    .map(|theme_config| theme_config.to_theme_config(&fallback_theme))
                     .as_ref(),
             )
         },

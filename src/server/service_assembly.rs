@@ -268,6 +268,8 @@ mod tests {
             data_dir: None,
             test_mode: TestModeConfig::default(),
             tarpit_defaults: None,
+            error_pages: crate::config::defaults::ErrorPagesDefaults::default(),
+            error_page_theme: crate::theme::ThemeConfig::default(),
         }));
         let cfg = MainConfig::default_config();
         let mgr = Arc::new(crate::plugin::PluginManager::new());

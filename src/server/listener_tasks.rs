@@ -207,6 +207,10 @@ pub(crate) async fn spawn_admin_service(
     let suspicious_word_tracker = server.get_suspicious_word_tracker();
     let upstream_error_tracker = server.get_upstream_error_tracker();
     let threat_level_manager = server.get_threat_level_manager();
+    // Same Arc the worker's ErrorPageManager renders through: the admin
+    // PUT /theme stores here, served block pages read here. Hoisted out of
+    // the blocking closure (`server` is borrowed, not 'static).
+    let error_page_theme = Some(server.get_waf().error_page_manager.theme_handle());
     let admin_token = admin_config.resolve_token();
     let admin_cors = admin_config.cors.clone();
     let admin_rate_limit = admin_config.rate_limit.clone();
@@ -220,6 +224,7 @@ pub(crate) async fn spawn_admin_service(
             upstream_error_tracker,
             threat_level_manager,
             None,
+            error_page_theme,
             #[cfg(feature = "mesh")]
             None,
             #[cfg(feature = "icmp-filter")]
