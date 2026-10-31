@@ -115,7 +115,7 @@ Plus two supervised **sandbox jail** processes (dedicated `synvoid-wasm-jail` / 
 | Process | Flag | Purpose | Default |
 |---------|------|---------|---------|
 | **Supervisor** | (default) | Control plane, lifecycle, gRPC API | 1 |
-| **UnifiedServerWorker** | `--unified-server-worker` | Latency-sensitive HTTP/HTTPS/HTTP3 + WAF + proxy | 1 (code default; shipped `config/main.toml` sets 4) |
+| **UnifiedServerWorker** | `--unified-server-worker` | Latency-sensitive HTTP/HTTPS/HTTP3 + WAF + proxy | 1 (canonical; scale with `[process_manager].worker_threads`, not worker count — see `worker_architecture.md`) |
 | **CPU Offload Worker** | `--cpu-worker` | Bounded heavy transforms | 1 |
 | **Supervisor (legacy `--worker` alias)** | `--worker` | Deprecated alias for Supervisor (compat only; no `plan.rs` dispatch branch — falls through to Supervisor) | — |
 

@@ -237,7 +237,11 @@ scraper_patterns = [
 
 [defaults.worker_pool]
 mode = "shared"
-workers = 4
+# Canonical data plane is a single UnifiedServerWorker; this feeds the
+# supervisor's initial spawn count. Prefer [process_manager].worker_threads
+# (Tokio threads) over raising this. N>1 workers do not share sessions,
+# CSRF tokens, or the admin rate-limit budget.
+workers = 1
 worker_port_base = 9000
 auto_scale = true
 

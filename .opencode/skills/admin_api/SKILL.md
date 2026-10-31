@@ -388,7 +388,10 @@ Mutating operations in these handlers include audit logging (all call
 `state.audit.log_audit_event()`):
 - `config.rs` - config updates, reload, import
 - `system` (`synvoid-admin`, re-exported by `src/admin/handlers/mod.rs`) -
-  worker scale/restart
+  worker scale/restart (NOTE: these endpoints 404 unless the serving
+  process holds a `ProcessManager` — worker-served admin never does, so
+  today they are unreachable; canonical deployment is a single worker,
+  see `architecture/worker_architecture.md`)
 - `mesh_admin.rs` - ban/unban, organization creation
 - `yara_rules.rs` - submit, approve, reject, broadcast
 - `plugins.rs` - plugin reload
