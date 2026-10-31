@@ -317,6 +317,32 @@ impl ErrorPageManager {
 mod tests {
     use super::*;
 
+    fn manager_with_template(theme: ThemeConfig) -> (ErrorPageManager, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!(
+            "synvoid-error-pages-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let styled = dir.join("styled");
+        std::fs::create_dir_all(&styled).expect("styled template dir");
+        std::fs::write(
+            styled.join("403.html"),
+            "<html><head><style>{{theme_css}}</style></head><body>denied</body></html>",
+        )
+        .expect("styled template");
+        let manager = ErrorPageManager::with_shared_theme(
+            dir.to_str().expect("utf8 temp dir"),
+            None,
+            true,
+            "styled",
+            std::sync::Arc::new(arc_swap::ArcSwap::new(std::sync::Arc::new(theme))),
+        );
+        (manager, dir)
+    }
+
     #[test]
     fn test_status_text_all_known_codes() {
         assert_eq!(ErrorPageManager::status_text(400), "Bad Request");
@@ -388,5 +414,34 @@ mod tests {
             ErrorPageMode::from_mode_str("unknown"),
             ErrorPageMode::Generic
         ));
+    }
+
+    #[test]
+    fn default_theme_renders_minimal_page() {
+        let (manager, dir) = manager_with_template(ThemeConfig::default());        // ThemeConfig::default() carries the ("default", "default") pair:
+        // the SynVoid default is unstyled, so even a styled template
+        // directory renders the minimal page with no Halloy injection.
+        let page = manager.render_page(403, None);
+        assert!(page.contains("<h1>403</h1>"), "unexpected page: {page}");
+        assert!(
+            !page.contains("{{theme_css}}") && !page.contains("--waf-bg"),
+            "default theme must not inject Halloy CSS: {page}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn named_theme_renders_styled_template() {
+        let mut theme = ThemeConfig::default();
+        theme.dark_theme = "Nord".to_string();
+        theme.light_theme = "Nord".to_string();
+        let (manager, dir) = manager_with_template(theme);
+        let page = manager.render_page(403, None);
+        assert!(
+            page.contains("--waf-bg"),
+            "named theme must inject Halloy CSS: {page}"
+        );
+        assert!(!page.contains("{{theme_css}}"), "placeholder resolved: {page}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

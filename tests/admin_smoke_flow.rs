@@ -882,8 +882,10 @@ async fn smoke_theme_halloy_catalog_round_trip() {
 
     let initial = theme_get(&router).await;
     assert_eq!(initial["preset"], "default");
-    assert_eq!(initial["dark_theme"], "Catppuccin Mocha");
-    assert_eq!(initial["light_theme"], "Catppuccin Latte");
+    // The out-of-box block theme is unstyled ("SynVoid default"): no
+    // Halloy pair is selected until the operator picks one.
+    assert_eq!(initial["dark_theme"], "default");
+    assert_eq!(initial["light_theme"], "default");
     assert_eq!(initial["scheme"], "system");
     let catalog = initial["presets_available"]
         .as_array()
