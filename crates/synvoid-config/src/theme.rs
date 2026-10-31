@@ -128,15 +128,26 @@ impl ThemeDefaults {
     /// the boot.
     pub fn resolve_halloy_themes(&self) -> (String, String, ThemeScheme) {
         let scheme = ThemeScheme::from(self.scheme.as_str());
-        // Explicit Halloy picks always win. Both the shipped Halloy fallback
-        // pair and the unstyled `"default"` pair count as "at defaults" so a
-        // legacy `preset` still applies beneath either of them.
-        let new_fields_at_defaults = (self.dark_theme == default_dark_theme()
+        // An explicit unstyled pick beats everything, including a fossil
+        // legacy `preset` no UI writes anymore (the old header toggle used
+        // to store one). Otherwise an unreacheable legacy value would pin
+        // the pair to styled output with no way back to unstyled.
+        if self.dark_theme == default_block_theme_name()
+            && self.light_theme == default_block_theme_name()
+            && self.scheme == default_theme_scheme()
+        {
+            return (
+                default_block_theme_name(),
+                default_block_theme_name(),
+                scheme,
+            );
+        }
+        // Beneath the shipped Halloy fallback pair a legacy `preset` still
+        // applies, preserving pre-Halloy configs byte-for-byte.
+        let legacy_defaults = self.dark_theme == default_dark_theme()
             && self.light_theme == default_light_theme()
-            || self.dark_theme == default_block_theme_name()
-                && self.light_theme == default_block_theme_name())
             && self.scheme == default_theme_scheme();
-        if new_fields_at_defaults {
+        if legacy_defaults {
             if let Some((dark, light)) = legacy_halloy_equivalent(self.preset.as_str()) {
                 return (dark, light, ThemeScheme::from(self.mode.as_str()));
             }
@@ -643,12 +654,23 @@ mod tests {
     }
 
     #[test]
-    fn legacy_preset_still_applies_beneath_defaults() {
+    fn legacy_preset_still_applies_beneath_fallback_pair() {
         let mut theme = ThemeDefaults::default();
+        theme.dark_theme = default_dark_theme();
+        theme.light_theme = default_light_theme();
         theme.preset = "dark".to_string();
         let (dark, light, _) = theme.resolve_halloy_themes();
         assert_eq!(dark, default_dark_theme());
         assert_eq!(light, default_dark_theme());
+    }
+
+    #[test]
+    fn unstyled_default_beats_fossil_legacy_preset() {
+        let mut theme = ThemeDefaults::default();
+        theme.preset = "light".to_string();
+        let (dark, light, _) = theme.resolve_halloy_themes();
+        assert_eq!(dark, "default");
+        assert_eq!(light, "default");
     }
 
     #[test]
