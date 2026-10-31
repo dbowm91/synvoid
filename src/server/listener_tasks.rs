@@ -264,12 +264,20 @@ pub(crate) async fn spawn_admin_service(
         "admin",
         RuntimeHandleClass::ProtocolListener,
         async move {
-            axum::serve(listener, router)
-                .with_graceful_shutdown(async move {
-                    let _ = shutdown_rx.recv().await;
-                })
-                .await
-                .map_err(|e| e.to_string())
+            // `into_make_service_with_connect_info` is load-bearing: the
+            // admin rate limiter and audit log key by client IP from the
+            // `ConnectInfo` extension. Plain `axum::serve` never populates
+            // it, which collapsed every client into a single global
+            // "unknown" bucket (60/min shared across all operators/tabs).
+            axum::serve(
+                listener,
+                router.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .with_graceful_shutdown(async move {
+                let _ = shutdown_rx.recv().await;
+            })
+            .await
+            .map_err(|e| e.to_string())
         },
     );
 

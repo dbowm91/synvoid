@@ -88,11 +88,11 @@ fn default_admin_bind() -> String {
 }
 
 fn default_admin_rate_limit_requests() -> u32 {
-    60
+    600
 }
 
 fn default_admin_rate_limit_burst() -> u32 {
-    10
+    50
 }
 
 impl Default for AdminConfig {

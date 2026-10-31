@@ -25,7 +25,7 @@ utoipa-swagger-ui = { version = "9", features = ["axum", "vendored"], optional =
 chrono = { version = "0.4", features = ["serde"] }
 bcrypt = "0.19"
 parking_lot = "0.12"
-metrics = "0.22"
+metrics-024 = { package = "metrics", version = "0.24" }
 tower = { version = "0.5", features = ["util"] }
 tokio = { version = "1", features = ["rt", "time", "sync", "macros"] }
 tracing = "0.1"
