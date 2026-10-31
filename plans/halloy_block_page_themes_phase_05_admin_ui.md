@@ -1,6 +1,6 @@
 # Phase 05 — Admin UI: dual pickers + two client fixes
 
-Status: **Ready**. Needs Phase 04 (dynamic catalog + new fields).
+Status: **Implemented**. Needs Phase 04 (dynamic catalog + new fields).
 
 ## Goal
 

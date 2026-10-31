@@ -1,6 +1,6 @@
 # Phase 03 — Renderer: per-scheme CSS + `::selection`
 
-Status: **Ready**. Needs Phases 01 (registry) and 02 (resolved pair+scheme).
+Status: **Implemented**. Needs Phases 01 (registry) and 02 (resolved pair+scheme).
 
 ## Goal
 

@@ -1,6 +1,6 @@
 # Phase 06 — Verification + closeout
 
-Status: **Ready**. Runs last; needs Phases 01–05.
+Status: **Implemented**. Runs last; needs Phases 01–05.
 
 ## Goal
 

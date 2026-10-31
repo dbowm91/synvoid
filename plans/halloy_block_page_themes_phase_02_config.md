@@ -1,6 +1,6 @@
 # Phase 02 — Config: `dark_theme` / `light_theme` / `scheme`
 
-Status: **Ready**. Depends on nothing. Unblocks Phases 03 and 04.
+Status: **Implemented**. Depends on nothing. Unblocks Phases 03 and 04.
 
 ## Goal
 

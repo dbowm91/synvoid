@@ -1,6 +1,10 @@
 # Halloy Block-Page Themes Roadmap
 
-Status: **READY** (branch `plans/halloy-block-page-themes`; no phase started).
+Status: **IMPLEMENTED** (branch `plans/halloy-block-page-themes`;
+proof-bearing commits `a485c59` (plans), `705bd8f` (phases 01+02),
+`29b4079` (phases 03+04), `41529ff` (phase 05), `8d72e9f` (two
+pre-existing clippy blockers remediated); full gate and live deployment
+evidence in Phase 06).
 
 Registered in: `plans/roadmap.md`.
 

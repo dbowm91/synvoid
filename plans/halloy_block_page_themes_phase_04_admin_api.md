@@ -1,6 +1,6 @@
 # Phase 04 — Admin API: dynamic catalog + dual-scheme fields
 
-Status: **Ready**. Needs Phase 02 (config fields).
+Status: **Implemented**. Needs Phase 02 (config fields).
 
 ## Goal
 

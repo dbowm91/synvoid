@@ -1,6 +1,6 @@
 # Phase 01 — Vendor + Halloy Registry in `synvoid-theme`
 
-Status: **Ready**. Depends on nothing. Unblocks Phase 03.
+Status: **Implemented**. Depends on nothing. Unblocks Phase 03.
 
 ## Goal
 
