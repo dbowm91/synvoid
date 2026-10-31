@@ -303,7 +303,19 @@ pub async fn csrf_middleware(
 
     if state.validate_csrf(&csrf_token, &session_id) {
         super::auth::AUTH_RATE_LIMITER.record_success(client_ip);
-        return next.run(request).await;
+        // Single-use tokens: validation consumed the presented token, so the
+        // caller's stored token is dead regardless of what the handler
+        // returns. Mint the replacement here — one place covering every
+        // mutating endpoint — and publish it on the response. The UI adopts
+        // it for the next mutation; without this, every second write in a
+        // session 403s and the UI treats that as session expiry.
+        let mut response = next.run(request).await;
+        let fresh = state.generate_csrf_token(session_id);
+        response.headers_mut().insert(
+            "X-CSRF-Token",
+            HeaderValue::from_str(&fresh).unwrap_or_else(|_| HeaderValue::from_static("")),
+        );
+        return response;
     }
 
     tracing::warn!("CSRF validation failed for {} {}", method, path);
