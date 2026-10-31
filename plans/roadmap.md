@@ -2643,6 +2643,22 @@ Without it, every second write in a session 403'd and the UI logged out
 (reported live: save → token prompt; proven via audit/CSRF-failure log
 correlation). Live proof: three consecutive theme saves, all 200, session
 retained.
+Second follow-up on this branch (`4280ee1`): the panel stayed stuck light
+with a dead toggle even after rotation shipped. Root causes found live —
+(1) the panel forced its own light/dark class from the server's legacy
+`preset` on every mount (`use_api_theme`), so stored `preset="light"` pinned
+the whole panel light and no settings save (which sends `preset: None`)
+could clear it; (2) the header toggle was the only `preset` writer but
+round-tripped through the server, desynced from the actual class,
+re-clobbered on every render, and clobbered the Halloy pair via
+`apply_legacy_preset_selection`; (3) `ToastContainer` dropped its
+`CustomEvent` listener at mount (missing `closure.forget()`), so every
+save/failure toast vanished silently. Fix: panel chrome is purely
+client-side (localStorage + `<html>` class, instant toggle, reload-proof);
+server `preset`/`mode` left untouched for block-page compat; toasts deliver.
+Live proof on a `preset="light"` server: fresh login boots dark, toggle is
+instant and persistent, save shows a visible success toast and persists
+`dark_theme`, reload never flips the panel.
 
 01 and 02 independent of each other. Out of scope: panel internal styling,
 custom `themes_dir` override (deferred follow-up), per-site themes,
