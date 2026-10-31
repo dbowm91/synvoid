@@ -1,7 +1,9 @@
+use crate::app::Route;
 use crate::components::forms::Input;
 use crate::services::api::ApiService;
 use wasm_bindgen_futures::spawn_local;
 use yew::prelude::*;
+use yew_router::prelude::*;
 
 enum LoginState {
     Idle,
@@ -21,6 +23,7 @@ pub fn Login(props: &LoginProps) -> Html {
     let login_state = use_state(|| LoginState::Idle);
     let error_msg = use_state(String::new);
     let on_authenticated = props.on_authenticated.clone();
+    let navigator = use_navigator().expect("login renders inside a router");
 
     let on_token_change = {
         let token_input = token_input.clone();
@@ -47,10 +50,14 @@ pub fn Login(props: &LoginProps) -> Html {
             let login_state = login_state.clone();
             let error_msg = error_msg.clone();
             let on_authenticated = on_authenticated.clone();
+            let navigator = navigator.clone();
 
             spawn_local(async move {
                 match ApiService::login(&token).await {
                     Ok(_csrf_token) => {
+                        // Land on the dashboard: without this the shell
+                        // renders at `/login` with a stale URL.
+                        navigator.push(&Route::Home);
                         on_authenticated.emit(());
                     }
                     Err(msg) => {

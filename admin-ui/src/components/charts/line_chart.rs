@@ -1,3 +1,4 @@
+use crate::hooks::use_css::use_css_props;
 use yew::prelude::*;
 
 #[derive(Properties, PartialEq)]
@@ -14,10 +15,14 @@ pub struct LineChartProps {
 #[function_component]
 pub fn LineChart(props: &LineChartProps) -> Html {
     let height = props.height.as_deref().unwrap_or("200px");
+    // Dynamic height via the CSSOM: a `style` attribute would violate the
+    // admin document's `style-src 'self'` CSP and be dropped.
+    let node = use_node_ref();
+    use_css_props(node.clone(), vec![("height", height.to_string())]);
 
     if props.data.is_empty() {
         return html! {
-            <div class="bg-secondary rounded-lg p-4" style={format!("height: {}", height)}>
+            <div ref={node.clone()} class="bg-secondary rounded-lg p-4">
                 <p class="text-secondary text-center">{ "No data available" }</p>
             </div>
         };
@@ -50,7 +55,7 @@ pub fn LineChart(props: &LineChartProps) -> Html {
         });
 
     html! {
-        <div class="bg-secondary rounded-lg p-4" style={format!("height: {}", height)}>
+        <div ref={node.clone()} class="bg-secondary rounded-lg p-4">
             if let Some(title) = &props.title {
                 <h4 class="text-sm font-medium text-secondary mb-4">{ title }</h4>
             }

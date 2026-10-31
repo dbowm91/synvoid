@@ -192,7 +192,7 @@ pub(crate) fn assemble_detectors(
     bot_config: &BotDefaults,
     endpoint_config: &BlockedDefaults,
     attack_detection_config: Option<AttackDetectionConfig>,
-    error_pages: &crate::config::defaults::ErrorPagesDefaults,
+    error_pages: &ErrorPagesDefaults,
     error_page_theme: crate::theme::ThemeConfig,
 ) -> DetectorBundle {
     let bot_detector = BotDetector::new(

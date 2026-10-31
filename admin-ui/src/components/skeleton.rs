@@ -1,3 +1,4 @@
+use crate::hooks::use_css::use_css_props;
 use yew::prelude::*;
 
 #[derive(Properties, PartialEq)]
@@ -19,8 +20,19 @@ pub fn Skeleton(props: &SkeletonProps) -> Html {
         "animate-pulse bg-tertiary"
     };
 
+    // Dynamic size via the CSSOM: a `style` attribute would violate the
+    // admin document's `style-src 'self'` CSP and be dropped.
+    let node = use_node_ref();
+    use_css_props(
+        node.clone(),
+        vec![
+            ("width", props.width.clone()),
+            ("height", props.height.clone()),
+        ],
+    );
+
     html! {
-        <div class={class} style={format!("width: {}; height: {};", props.width, props.height)} />
+        <div ref={node} class={class} />
     }
 }
 
