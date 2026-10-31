@@ -9,10 +9,26 @@ use axum::{
 use parking_lot::RwLock;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::{collections::HashMap, sync::Arc, time::Instant};
 use tower::{util::ServiceExt, Layer, Service};
 
 const CLEANUP_INTERVAL_SECS: u64 = 60;
+
+/// Worker-local cumulative rejection counts. The Prometheus recorder lives
+/// in the supervisor, so worker-side `counter!` macros have no exporter;
+/// these atomics (same pattern as `crate::admin::metrics_events`) are the
+/// observable source of truth, bridged to `:9090` via the worker heartbeat.
+static ADMIN_RATE_LIMITED_MINUTE: AtomicU64 = AtomicU64::new(0);
+static ADMIN_RATE_LIMITED_SECOND: AtomicU64 = AtomicU64::new(0);
+
+/// Cumulative worker-local admin rate-limit rejections `(minute, second)`.
+pub fn admin_rate_limited_totals() -> (u64, u64) {
+    (
+        ADMIN_RATE_LIMITED_MINUTE.load(Ordering::Relaxed),
+        ADMIN_RATE_LIMITED_SECOND.load(Ordering::Relaxed),
+    )
+}
 
 pub struct AdminRateLimitConfig {
     pub requests_per_minute: u32,
@@ -96,11 +112,13 @@ impl AdminRateLimiter {
         }
 
         if entry.requests_per_minute >= self.inner.config.requests_per_minute {
+            ADMIN_RATE_LIMITED_MINUTE.fetch_add(1, Ordering::Relaxed);
             metrics_024::counter!("synvoid.admin.rate_limited.minute").increment(1);
             return false;
         }
 
         if !burst_exempt && entry.requests_per_second >= self.inner.config.requests_per_second {
+            ADMIN_RATE_LIMITED_SECOND.fetch_add(1, Ordering::Relaxed);
             metrics_024::counter!("synvoid.admin.rate_limited.second").increment(1);
             return false;
         }

@@ -211,6 +211,14 @@ pub fn spawn_heartbeat_task(
                 );
             }
 
+            // Admin limiter rejections are worker-local atomics (the
+            // Prometheus recorder lives in the supervisor); bridge them
+            // into the heartbeat so `:9090` exposes them.
+            let (admin_limited_minute, admin_limited_second) =
+                synvoid_admin::rate_limit::admin_rate_limited_totals();
+            payload.admin_rate_limited_minute_total = admin_limited_minute;
+            payload.admin_rate_limited_second_total = admin_limited_second;
+
             let timestamp = current_timestamp();
             let worker_id = state.worker_id;
 

@@ -688,6 +688,11 @@ impl WorkerMetrics {
             mesh_restart_attempts: 0,
             mesh_healthy: false,
             mesh_degraded: false,
+            // Admin limiter counts are worker-local to the process serving
+            // the admin API; populated by the unified-server heartbeat in
+            // `lifecycle.rs`, zero for payloads built elsewhere.
+            admin_rate_limited_minute_total: 0,
+            admin_rate_limited_second_total: 0,
         }
     }
 }
