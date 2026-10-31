@@ -125,6 +125,17 @@ impl SupervisorProcess {
             "Spawning {} unified server workers",
             config.unified_server_workers
         );
+        if config.unified_server_workers > 1 {
+            tracing::warn!(
+                "unified_server_workers = {}: the canonical data plane is a single \
+                 UnifiedServerWorker (one Tokio runtime; scale with worker threads, \
+                 see architecture/worker_architecture.md). Additional workers only \
+                 isolate faults — they do not share sessions, CSRF tokens, or the \
+                 admin rate-limit budget, and the admin panel observes one worker \
+                 at a time.",
+                config.unified_server_workers
+            );
+        }
         if let Err(e) = self
             .process_manager
             .spawn_unified_server_workers(config.unified_server_workers)

@@ -266,6 +266,12 @@ pub struct ProcessManager {
     metrics: Arc<ProcessManagerMetrics>,
     pending_thread_count: Arc<PLRwLock<Option<u32>>>,
     unified_server_port: Arc<PLRwLock<Option<u16>>>,
+    /// IPC session-key file path, written once per supervisor lifetime and
+    /// shared by all spawned children. The path is PID-scoped
+    /// (`synvoid_ipc_key_<supervisor-pid>`), so a second `create_new`
+    /// would fail against our own live file — without this cache, every
+    /// spawn after worker 0 aborted the whole batch.
+    ipc_key_file_path: std::sync::OnceLock<String>,
     _block_store: Option<Arc<dyn std::any::Any + Send + Sync>>,
     ipc_rate_limiter: IpcRateLimiter,
     ipc_signer: Option<Arc<IpcSigner>>,
@@ -375,6 +381,7 @@ impl ProcessManager {
                 metrics: Arc::new(ProcessManagerMetrics::default()),
                 pending_thread_count: Arc::new(PLRwLock::new(None)),
                 unified_server_port: Arc::new(PLRwLock::new(None)),
+                ipc_key_file_path: std::sync::OnceLock::new(),
                 _block_store: block_store,
                 ipc_rate_limiter,
                 ipc_signer,
@@ -556,7 +563,7 @@ impl ProcessManager {
         // in process listings (/proc/<pid>/environ, ps aux, etc.)
         if let Some(ref key) = self.config.ipc_session_key {
             let key_hex = key.iter().map(|b| format!("{:02x}", b)).collect::<String>();
-            match self.write_ipc_key_to_tempfile(&key_hex) {
+            match self.ipc_key_file_path(&key_hex) {
                 Ok(path) => {
                     cmd.env("SYNVOID_IPC_KEY_FILE", path);
                 }
@@ -593,6 +600,20 @@ impl ProcessManager {
             .stderr(Stdio::inherit());
 
         Ok(cmd)
+    }
+
+    /// Supervisor-lifetime-shared IPC key file path. Written once; every
+    /// spawned child (unified workers, CPU worker) receives the same path.
+    /// A second `create_new` against our own live PID-scoped file fails
+    /// `AlreadyExists` and would abort the spawn batch, so the path is
+    /// cached after the first successful write.
+    fn ipc_key_file_path(&self, key_hex: &str) -> std::io::Result<String> {
+        if let Some(path) = self.ipc_key_file_path.get() {
+            return Ok(path.clone());
+        }
+        let path = self.write_ipc_key_to_tempfile(key_hex)?;
+        let _ = self.ipc_key_file_path.set(path.clone());
+        Ok(self.ipc_key_file_path.get().cloned().unwrap_or(path))
     }
 
     fn write_ipc_key_to_tempfile(&self, key_hex: &str) -> std::io::Result<String> {
