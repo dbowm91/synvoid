@@ -360,6 +360,7 @@ impl ProcessManager {
             heartbeat_timeout_secs: config.heartbeat_timeout_secs,
             graceful_shutdown_timeout_secs: config.graceful_shutdown_timeout_secs,
             worker_port_base: config.worker_port_base,
+            worker_threads: config.worker_threads,
             pre_spawn_workers: config.pre_spawn_workers,
             warm_workers_target: config.warm_workers_target,
             health_check_interval_secs: config.health_check_interval_secs,
@@ -370,6 +371,8 @@ impl ProcessManager {
         let mut sys = sysinfo::System::new();
         sys.refresh_cpu_usage();
         let cpu_count = sys.cpus().len().max(1);
+        // Copy out before `config` moves into `Self` below.
+        let initial_worker_threads = config.worker_threads;
 
         (
             Self {
@@ -384,7 +387,7 @@ impl ProcessManager {
                 shutdown_tx,
                 event_tx,
                 metrics: Arc::new(ProcessManagerMetrics::default()),
-                pending_thread_count: Arc::new(PLRwLock::new(config.worker_threads)),
+                pending_thread_count: Arc::new(PLRwLock::new(initial_worker_threads)),
                 unified_server_port: Arc::new(PLRwLock::new(None)),
                 ipc_key_file_path: std::sync::OnceLock::new(),
                 _block_store: block_store,
@@ -542,6 +545,7 @@ impl ProcessManager {
             heartbeat_timeout_secs: dynamic.heartbeat_timeout_secs,
             graceful_shutdown_timeout_secs: dynamic.graceful_shutdown_timeout_secs,
             worker_port_base: dynamic.worker_port_base,
+            worker_threads: dynamic.worker_threads,
             pre_spawn_workers: dynamic.pre_spawn_workers,
             warm_workers_target: dynamic.warm_workers_target,
             health_check_interval_secs: dynamic.health_check_interval_secs,
