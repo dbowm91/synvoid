@@ -157,22 +157,21 @@ pub fn App() -> Html {
         let theme = theme.clone();
         let panel_theme = panel_theme.clone();
         use_effect_with(fetch_panel, move |fetch| {
-            if !**fetch {
-                return || ();
+            if *fetch {
+                let theme = theme.clone();
+                let panel_theme = panel_theme.clone();
+                spawn_local(async move {
+                    match ApiService::new().get_theme().await {
+                        Ok(data) => {
+                            apply_panel_for_mode(*theme, &Some(data.clone()));
+                            panel_theme.set(Some(data));
+                        }
+                        Err(error) => {
+                            tracing::debug!("panel theme unavailable: {}", error);
+                        }
+                    }
+                });
             }
-            let theme = theme.clone();
-            let panel_theme = panel_theme.clone();
-            spawn_local(async move {
-                match ApiService::new().get_theme().await {
-                    Ok(data) => {
-                        apply_panel_for_mode(*theme, &Some(data.clone()));
-                        panel_theme.set(Some(data));
-                    }
-                    Err(error) => {
-                        tracing::debug!("panel theme unavailable: {}", error);
-                    }
-                }
-            });
             || ()
         });
     }
