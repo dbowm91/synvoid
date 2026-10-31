@@ -442,7 +442,8 @@ fn BlockThemeSection() -> Html {
                         original_light.set(data.light_theme.clone());
                         original_scheme.set(data.scheme.clone());
                         theme_data.set(Some(data));
-                        toast_success("Block page theme updated successfully");
+                        // No success toast: the preview below updates
+                        // immediately, which is the confirmation.
                     }
                     Err(e) => {
                         toast_error(&format!("Failed to update theme: {}", e));
@@ -493,7 +494,8 @@ fn BlockThemeSection() -> Html {
                         original_light.set(data.light_theme.clone());
                         original_scheme.set(data.scheme.clone());
                         theme_data.set(Some(data));
-                        toast_success("Block page theme reset to default");
+                        // No success toast: the preview below updates
+                        // immediately, which is the confirmation.
                     }
                     Err(e) => {
                         toast_error(&format!("Failed to reset theme: {}", e));
@@ -563,15 +565,24 @@ fn BlockThemeSection() -> Html {
                 <div class="border border-default rounded-lg overflow-hidden">
                     {
                         if let Some(data) = (*theme_data).as_ref() {
-                            let c = if *preview_light { &data.colors.light } else { &data.colors.dark };
-                            html! {
-                                <ThemePreview
-                                    background={c.background.clone()}
-                                    surface={c.surface.clone()}
-                                    text={c.text.clone()}
-                                    border={c.border.clone()}
-                                    primary={c.primary.clone()}
-                                />
+                            let pick = if *preview_light { &data.light_theme } else { &data.dark_theme };
+                            if pick == "default" {
+                                html! {
+                                    <div class="p-6 text-center text-sm text-secondary">
+                                        { "SynVoid default: pages render unstyled, without Halloy colours. Pick a theme to preview it." }
+                                    </div>
+                                }
+                            } else {
+                                let c = if *preview_light { &data.colors.light } else { &data.colors.dark };
+                                html! {
+                                    <ThemePreview
+                                        background={c.background.clone()}
+                                        surface={c.surface.clone()}
+                                        text={c.text.clone()}
+                                        border={c.border.clone()}
+                                        primary={c.primary.clone()}
+                                    />
+                                }
                             }
                         } else {
                             html! { <LoadingSpinner /> }

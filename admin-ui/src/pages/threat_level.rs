@@ -622,7 +622,7 @@ fn ThreatSettingsTab() -> Html {
                                     "rounded-full",
                                     "transition-colors",
                                     "expand-hit",
-                                    if current_status.as_ref().is_some_and(|s| s.is_learning) { "bg-green-500" } else { "bg-gray-600" }
+                                    if current_status.as_ref().is_some_and(|s| s.is_learning) { "bg-green-500" } else { "bg-tertiary" }
                                 )}
                             >
                                 <span class={classes!(

@@ -362,7 +362,7 @@ pub fn App() -> Html {
         AuthState::Authenticated => html! {
             <BrowserRouter>
                 <ToastContainer />
-                <div class={classes!("min-h-screen", "flex", &theme_class)}>
+                <div class={classes!("min-h-screen", "flex", "bg-primary", &theme_class)}>
                     // Scrim only exists while the drawer is open; below `md` the
                     // nav is pinned and this never renders meaningfully.
                     if *sidebar_open {

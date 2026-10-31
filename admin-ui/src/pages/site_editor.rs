@@ -417,7 +417,7 @@ fn ToggleFieldWithTooltip(props: &ToggleFieldWithTooltipProps) -> Html {
     let bg_class = if *enabled {
         "bg-action-600"
     } else {
-        "bg-gray-600"
+        "bg-tertiary border border-default"
     };
     let translate_class = if *enabled {
         "translate-x-5"
@@ -614,7 +614,7 @@ fn ToggleField(props: &ToggleFieldProps) -> Html {
     let bg_class = if *enabled {
         "bg-action-600"
     } else {
-        "bg-gray-600"
+        "bg-tertiary border border-default"
     };
     let translate_class = if *enabled {
         "translate-x-5"

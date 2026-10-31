@@ -399,7 +399,14 @@ pub async fn get_theme_css(
     _auth: OptionalAuth,
 ) -> Result<String, StatusCode> {
     let config = state.process.config.read().await;
-    let theme_config: ThemeConfig = config.main.defaults.theme.clone().into();
+    let theme = &config.main.defaults.theme;
+    let (dark_theme, light_theme, _) = theme.resolve_halloy_themes();
+    // The unstyled default injects no CSS; callers linking this stylesheet
+    // get an empty sheet rather than fallback-theme colours.
+    if dark_theme == "default" && light_theme == "default" {
+        return Ok(String::new());
+    }
+    let theme_config: ThemeConfig = theme.clone().into();
     let renderer = ThemeRenderer::new(theme_config);
     Ok(renderer.generate_css())
 }
@@ -441,7 +448,10 @@ mod tests {
 
     #[test]
     fn response_carries_dual_scheme_fields() {
-        let response = build_theme_response(&ThemeDefaults::default());
+        let mut theme = ThemeDefaults::default();
+        theme.dark_theme = "Catppuccin Mocha".to_string();
+        theme.light_theme = "Catppuccin Latte".to_string();
+        let response = build_theme_response(&theme);
         assert_eq!(response.dark_theme, "Catppuccin Mocha");
         assert_eq!(response.light_theme, "Catppuccin Latte");
         assert_eq!(response.scheme, "system");
@@ -449,6 +459,13 @@ mod tests {
         assert_eq!(response.panel_dark_theme, "default");
         assert_eq!(response.panel_light_theme, "default");
         assert_eq!(response.presets_available.len(), HALLOY_NAMES.len() + 1);
+    }
+
+    #[test]
+    fn fresh_defaults_resolve_to_unstyled() {
+        let response = build_theme_response(&ThemeDefaults::default());
+        assert_eq!(response.dark_theme, "default");
+        assert_eq!(response.light_theme, "default");
     }
 
     #[test]

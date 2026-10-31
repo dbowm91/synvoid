@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
+use wasm_bindgen_futures::spawn_local;
 use yew::prelude::*;
 
 thread_local! {
@@ -171,6 +172,21 @@ struct ToastItemProps {
 
 #[function_component]
 fn ToastItem(props: &ToastItemProps) -> Html {
+    // Toasts clear themselves: without this every save piles another chip
+    // onto the stack (the reported "bunch of toasts" when trying themes).
+    // Errors use the same timeout — eight seconds is enough to read them,
+    // and the audit log keeps the record.
+    {
+        let id = props.toast.id;
+        use_effect_with((), move |_| {
+            spawn_local(async move {
+                gloo::timers::future::TimeoutFuture::new(8000).await;
+                remove_toast(id);
+            });
+            || ()
+        });
+    }
+
     let (bg_color, icon_color, icon) = match props.toast.toast_type {
         ToastType::Success => (
             "bg-green-900/90 border-green-500",

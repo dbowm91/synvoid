@@ -219,6 +219,16 @@ impl ErrorPageManager {
         override_theme: Option<&ThemeConfig>,
     ) -> String {
         let live_theme = self.theme.load_full();
+        // `"default"` (both sides) is the unstyled SynVoid default: no
+        // Halloy CSS is injected. Without a per-site override (and outside
+        // custom mode, where the operator's own HTML always renders) the
+        // minimal page is served, matching the pre-theme-system output.
+        let unstyled_global = override_theme.is_none()
+            && live_theme.dark_theme == "default"
+            && live_theme.light_theme == "default";
+        if unstyled_global && self.mode != ErrorPageMode::Custom {
+            return Self::minimal_page(status_code, message);
+        }
         let theme: ThemeConfig =
             override_theme.map_or_else(|| (*live_theme).clone(), |t| t.clone());
 
@@ -250,7 +260,13 @@ impl ErrorPageManager {
             .replace("{{timestamp}}", &escaped_timestamp);
 
         if result.contains("{{theme_css}}") {
-            let theme_css = ThemeRenderer::new(theme.clone()).generate_css();
+            let theme_css = if theme.dark_theme == "default" && theme.light_theme == "default" {
+                // Unstyled default with operator-authored (custom) HTML: keep
+                // the page, drop the Halloy injection.
+                String::new()
+            } else {
+                ThemeRenderer::new(theme.clone()).generate_css()
+            };
             result = result.replace("{{theme_css}}", &theme_css);
         }
 

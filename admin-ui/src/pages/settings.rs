@@ -1576,7 +1576,7 @@ fn MetricsSection() -> Html {
                     role="switch"
                     aria-checked={if *metrics_enabled { "true" } else { "false" }}
                     aria-label="Enable Metrics"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *metrics_enabled { "bg-action-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *metrics_enabled { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *metrics_enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -1739,7 +1739,7 @@ fn IpFeedsSection() -> Html {
                     role="switch"
                     aria-checked={if *enabled { "true" } else { "false" }}
                     aria-label="Enable IP Feeds"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-action-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -1922,7 +1922,7 @@ fn TlsSection() -> Html {
                     role="switch"
                     aria-checked={if *enabled { "true" } else { "false" }}
                     aria-label="Enable TLS"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-action-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -1977,7 +1977,7 @@ fn TlsSection() -> Html {
                         role="switch"
                         aria-checked={if *prefer_post_quantum { "true" } else { "false" }}
                         aria-label="Prefer Post-Quantum"
-                        class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *prefer_post_quantum { "bg-action-600" } else { "bg-gray-600" })}
+                        class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *prefer_post_quantum { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                     >
                         <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *prefer_post_quantum { "translate-x-5" } else { "translate-x-0" })} />
                     </button>
@@ -2124,7 +2124,7 @@ fn AcmeSection() -> Html {
                     role="switch"
                     aria-checked={if *enabled { "true" } else { "false" }}
                     aria-label="Enable ACME"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-action-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -2180,7 +2180,7 @@ fn AcmeSection() -> Html {
                         role="switch"
                         aria-checked={if *staging { "true" } else { "false" }}
                         aria-label="Staging Mode"
-                        class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *staging { "bg-action-600" } else { "bg-gray-600" })}
+                        class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *staging { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                     >
                         <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *staging { "translate-x-5" } else { "translate-x-0" })} />
                     </button>
@@ -2201,7 +2201,7 @@ fn AcmeSection() -> Html {
                         role="switch"
                         aria-checked={if *terms_of_service_agreed { "true" } else { "false" }}
                         aria-label="Agree to Terms of Service"
-                        class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *terms_of_service_agreed { "bg-action-600" } else { "bg-gray-600" })}
+                        class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *terms_of_service_agreed { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                     >
                         <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *terms_of_service_agreed { "translate-x-5" } else { "translate-x-0" })} />
                     </button>
@@ -2318,7 +2318,7 @@ fn Http3Section() -> Html {
                     role="switch"
                     aria-checked={if *enabled { "true" } else { "false" }}
                     aria-label="Enable HTTP/3 (QUIC)"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-action-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -3189,7 +3189,7 @@ fn BotSection() -> Html {
                     role="switch"
                     aria-checked={if *block_ai_crawlers { "true" } else { "false" }}
                     aria-label="Block AI Crawlers"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *block_ai_crawlers { "bg-action-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *block_ai_crawlers { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *block_ai_crawlers { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -3210,7 +3210,7 @@ fn BotSection() -> Html {
                     role="switch"
                     aria-checked={if *enable_css_honeypot { "true" } else { "false" }}
                     aria-label="Enable CSS Honeypot"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enable_css_honeypot { "bg-action-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enable_css_honeypot { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *enable_css_honeypot { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -3231,7 +3231,7 @@ fn BotSection() -> Html {
                     role="switch"
                     aria-checked={if *enable_js_challenge { "true" } else { "false" }}
                     aria-label="Enable JS Challenge"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enable_js_challenge { "bg-action-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enable_js_challenge { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *enable_js_challenge { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -3463,7 +3463,7 @@ fn TarpitSection() -> Html {
                     role="switch"
                     aria-checked={if *enabled { "true" } else { "false" }}
                     aria-label="Enable Tarpit"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-action-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -3705,7 +3705,7 @@ fn UploadSection() -> Html {
                     role="switch"
                     aria-checked={if *scan_with_yara { "true" } else { "false" }}
                     aria-label="Scan with YARA"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *scan_with_yara { "bg-action-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *scan_with_yara { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *scan_with_yara { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -3726,7 +3726,7 @@ fn UploadSection() -> Html {
                     role="switch"
                     aria-checked={if *sandbox_enabled { "true" } else { "false" }}
                     aria-label="Sandbox Files"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *sandbox_enabled { "bg-action-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *sandbox_enabled { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *sandbox_enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -3863,7 +3863,8 @@ fn ThemePanelSection() -> Html {
                         original_dark.set(data.panel_dark_theme.clone());
                         original_light.set(data.panel_light_theme.clone());
                         theme_data.set(Some(data));
-                        toast_success("Panel theme updated successfully");
+                        // No success toast: the whole panel restyles
+                        // immediately, which is the confirmation.
                         notify_panel_theme_updated();
                     }
                     Err(e) => {
@@ -3909,7 +3910,8 @@ fn ThemePanelSection() -> Html {
                         original_dark.set(data.panel_dark_theme.clone());
                         original_light.set(data.panel_light_theme.clone());
                         theme_data.set(Some(data));
-                        toast_success("Panel theme reset to default");
+                        // No success toast: the whole panel restyles
+                        // immediately, which is the confirmation.
                         notify_panel_theme_updated();
                     }
                     Err(e) => {
@@ -3973,15 +3975,24 @@ fn ThemePanelSection() -> Html {
                 <div class="border border-default rounded-lg overflow-hidden">
                     {
                         if let Some(colors) = (*theme_data).as_ref().and_then(|data| data.panel_colors.as_ref()) {
-                            let c = if *preview_light { &colors.light } else { &colors.dark };
-                            html! {
-                                <ThemePreview
-                                    background={c.background.clone()}
-                                    surface={c.surface.clone()}
-                                    text={c.text.clone()}
-                                    border={c.border.clone()}
-                                    primary={c.primary.clone()}
-                                />
+                            let pick = if *preview_light { &selected_light } else { &selected_dark };
+                            if pick.as_str() == "default" {
+                                html! {
+                                    <div class="p-6 text-center text-sm text-secondary">
+                                        { "SynVoid default: the built-in panel palette stays in place." }
+                                    </div>
+                                }
+                            } else {
+                                let c = if *preview_light { &colors.light } else { &colors.dark };
+                                html! {
+                                    <ThemePreview
+                                        background={c.background.clone()}
+                                        surface={c.surface.clone()}
+                                        text={c.text.clone()}
+                                        border={c.border.clone()}
+                                        primary={c.primary.clone()}
+                                    />
+                                }
                             }
                         } else {
                             html! { <LoadingSpinner /> }
@@ -4167,7 +4178,7 @@ fn SecuritySection() -> Html {
                     role="switch"
                     aria-checked={if *global_security_headers { "true" } else { "false" }}
                     aria-label="Global Security Headers"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *global_security_headers { "bg-action-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *global_security_headers { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *global_security_headers { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -4188,7 +4199,7 @@ fn SecuritySection() -> Html {
                     role="switch"
                     aria-checked={if *sanitize_forwarded_headers { "true" } else { "false" }}
                     aria-label="Sanitize Forwarded Headers"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *sanitize_forwarded_headers { "bg-action-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *sanitize_forwarded_headers { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *sanitize_forwarded_headers { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -4209,7 +4220,7 @@ fn SecuritySection() -> Html {
                     role="switch"
                     aria-checked={if *ipc_enforce_signing { "true" } else { "false" }}
                     aria-label="IPC Enforce Signing"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *ipc_enforce_signing { "bg-action-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *ipc_enforce_signing { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *ipc_enforce_signing { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -4230,7 +4241,7 @@ fn SecuritySection() -> Html {
                     role="switch"
                     aria-checked={if *allow_insecure_ipc_key { "true" } else { "false" }}
                     aria-label="Allow Insecure IPC Key"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *allow_insecure_ipc_key { "bg-action-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *allow_insecure_ipc_key { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *allow_insecure_ipc_key { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -4389,7 +4400,7 @@ fn TunnelSection() -> Html {
                     role="switch"
                     aria-checked={if *enabled { "true" } else { "false" }}
                     aria-label="Enable Tunnel"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-action-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -4410,7 +4421,7 @@ fn TunnelSection() -> Html {
                     role="switch"
                     aria-checked={if *vpn_enabled { "true" } else { "false" }}
                     aria-label="WireGuard VPN"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *vpn_enabled { "bg-action-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *vpn_enabled { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *vpn_enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -4431,7 +4442,7 @@ fn TunnelSection() -> Html {
                     role="switch"
                     aria-checked={if *quic_enabled { "true" } else { "false" }}
                     aria-label="QUIC Tunnel"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *quic_enabled { "bg-action-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *quic_enabled { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *quic_enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -5067,7 +5078,7 @@ fn MimeTypesSection() -> Html {
                     role="switch"
                     aria-checked={if *enabled { "true" } else { "false" }}
                     aria-label="Enable Custom MIME Types"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-action-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -5486,7 +5497,7 @@ fn TcpUdpDefaultsSection() -> Html {
                     role="switch"
                     aria-checked={if *tcp_enabled { "true" } else { "false" }}
                     aria-label="Enable TCP Proxy"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *tcp_enabled { "bg-action-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *tcp_enabled { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *tcp_enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -5503,7 +5514,7 @@ fn TcpUdpDefaultsSection() -> Html {
                         role="switch"
                         aria-checked={if *tcp_nodelay { "true" } else { "false" }}
                         aria-label="TCP Nodelay"
-                        class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *tcp_nodelay { "bg-action-600" } else { "bg-gray-600" })}
+                        class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *tcp_nodelay { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                     >
                         <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *tcp_nodelay { "translate-x-5" } else { "translate-x-0" })} />
                     </button>
@@ -5540,7 +5551,7 @@ fn TcpUdpDefaultsSection() -> Html {
                     role="switch"
                     aria-checked={if *udp_enabled { "true" } else { "false" }}
                     aria-label="Enable UDP Proxy"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *udp_enabled { "bg-action-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *udp_enabled { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *udp_enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>

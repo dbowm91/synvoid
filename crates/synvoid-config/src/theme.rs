@@ -25,17 +25,15 @@ pub struct ThemeDefaults {
     pub allow_only: String,
     /// Halloy theme used for the dark scheme of block/error pages.
     ///
-    /// Explicit values always win over the legacy `preset`. Validation here
-    /// is deliberately shallow (any non-empty string of at most
-    /// `MAX_THEME_NAME_BYTES` bytes); strict allowlist matching against the
-    /// 50 vendored Halloy themes lives in the `synvoid-theme` registry
-    /// layer (Phase 01 `selected_halloy_theme()`), which falls back to the
-    /// default at render time instead of failing the boot.
-    #[serde(default = "default_dark_theme")]
+    /// `"default"` means unstyled: the renderer serves the minimal/unstyled
+    /// pages instead of injecting Halloy CSS. Any other name resolves
+    /// through the registry (unknown names fall back to the default Halloy
+    /// document at render time, never an error).
+    #[serde(default = "default_block_theme_name")]
     pub dark_theme: String,
     /// Halloy theme used for the light scheme of block/error pages.
-    /// Same precedence and validation discipline as `dark_theme`.
-    #[serde(default = "default_light_theme")]
+    /// Same `"default"`-means-unstyled contract as `dark_theme`.
+    #[serde(default = "default_block_theme_name")]
     pub light_theme: String,
     /// Which scheme the block/error pages render: `"system"` (follow
     /// `prefers-color-scheme`), `"dark"`, or `"light"` (forced). Anything
@@ -70,8 +68,8 @@ impl Default for ThemeDefaults {
             preset: default_theme_preset(),
             mode: default_theme_mode(),
             allow_only: default_allow_only(),
-            dark_theme: default_dark_theme(),
-            light_theme: default_light_theme(),
+            dark_theme: default_block_theme_name(),
+            light_theme: default_block_theme_name(),
             scheme: default_theme_scheme(),
             panel_dark_theme: default_panel_theme(),
             panel_light_theme: default_panel_theme(),
@@ -130,8 +128,13 @@ impl ThemeDefaults {
     /// the boot.
     pub fn resolve_halloy_themes(&self) -> (String, String, ThemeScheme) {
         let scheme = ThemeScheme::from(self.scheme.as_str());
-        let new_fields_at_defaults = self.dark_theme == default_dark_theme()
+        // Explicit Halloy picks always win. Both the shipped Halloy fallback
+        // pair and the unstyled `"default"` pair count as "at defaults" so a
+        // legacy `preset` still applies beneath either of them.
+        let new_fields_at_defaults = (self.dark_theme == default_dark_theme()
             && self.light_theme == default_light_theme()
+            || self.dark_theme == default_block_theme_name()
+                && self.light_theme == default_block_theme_name())
             && self.scheme == default_theme_scheme();
         if new_fields_at_defaults {
             if let Some((dark, light)) = legacy_halloy_equivalent(self.preset.as_str()) {
@@ -148,6 +151,13 @@ impl ThemeDefaults {
 
 fn default_theme_mode() -> String {
     "auto".to_string()
+}
+
+/// The out-of-box block theme: unstyled. Kept distinct from
+/// `default_dark_theme()` / `default_light_theme()`, which remain the
+/// Halloy fallback pair used by the legacy preset mapping.
+fn default_block_theme_name() -> String {
+    "default".to_string()
 }
 
 fn default_allow_only() -> String {
@@ -195,9 +205,9 @@ fn normalize_theme_name(raw: &str, fallback: &str) -> String {
 /// Halloy counterpart, so the preset name is carried through verbatim on
 /// both sides and the registry layer falls back to the defaults at render
 /// time. Unknown preset strings yield `None` (no compat applied).
-fn legacy_halloy_equivalent(preset: &str) -> Option<(String, String)> {
+pub(crate) fn legacy_halloy_equivalent(preset: &str) -> Option<(String, String)> {
     match preset.to_lowercase().as_str() {
-        "default" => Some((default_dark_theme(), default_light_theme())),
+        // "default" names no mapping: it is the unstyled state itself.
         "dark" => Some((default_dark_theme(), default_dark_theme())),
         "light" => Some((default_light_theme(), default_light_theme())),
         "ocean" | "forest" | "sunset" => Some((preset.to_string(), preset.to_string())),
@@ -612,5 +622,43 @@ impl From<ThemeDefaults> for ThemeConfig {
 impl Default for ThemeConfig {
     fn default() -> Self {
         Self::from(ThemeDefaults::default())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fresh_defaults_are_unstyled() {
+        let theme = ThemeDefaults::default();
+        assert_eq!(
+            theme.resolve_halloy_themes(),
+            (
+                "default".to_string(),
+                "default".to_string(),
+                ThemeScheme::System
+            )
+        );
+    }
+
+    #[test]
+    fn legacy_preset_still_applies_beneath_defaults() {
+        let mut theme = ThemeDefaults::default();
+        theme.preset = "dark".to_string();
+        let (dark, light, _) = theme.resolve_halloy_themes();
+        assert_eq!(dark, default_dark_theme());
+        assert_eq!(light, default_dark_theme());
+    }
+
+    #[test]
+    fn explicit_names_win_over_legacy_preset() {
+        let mut theme = ThemeDefaults::default();
+        theme.preset = "dark".to_string();
+        theme.dark_theme = "Nord".to_string();
+        theme.light_theme = "Dracula".to_string();
+        let (dark, light, _) = theme.resolve_halloy_themes();
+        assert_eq!(dark, "Nord");
+        assert_eq!(light, "Dracula");
     }
 }
