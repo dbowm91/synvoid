@@ -124,6 +124,14 @@ pub fn ToastContainer() -> Html {
                 );
             }
 
+            // The listener must outlive this effect: dropping the `Closure`
+            // disconnects it, and every toast pushed after mount would vanish
+            // silently (the reported "nothing happens" on save). The container
+            // lives for the app lifetime; on unmount the forgotten closure
+            // keeps a harmless setter to dropped state, and the next mount
+            // re-reads pending toasts synchronously below.
+            closure.forget();
+
             toasts.set(get_toasts());
 
             move || {}

@@ -12,7 +12,6 @@ use crate::pages::{
     SystemStatus, TcpUdp, ThreatLevel, TierKeys, TrafficShaping, Upstreams, Workers,
 };
 use crate::services::api::{set_session_expired_handler, ApiService};
-use crate::types::UpdateThemeRequest;
 
 // `Debug` is asserted on in sidebar tests that verify nav active-state
 // resolution; it is not otherwise used by the router.
@@ -80,14 +79,25 @@ pub enum Route {
 
 #[function_component]
 pub fn App() -> Html {
-    let (_theme_data, update_theme) = use_api_theme();
-    let theme = use_state(|| Theme::Dark);
+    let theme = use_state(|| Theme::from_storage().unwrap_or_default());
     let auth_state = use_state(|| AuthState::Restoring);
     // `None` until `/system/capabilities` resolves. The route guard holds
     // capability-gated routes in a loading state while this is `None` so a
     // deep link cannot mount a page whose endpoints were never registered.
     let capabilities = use_state(|| Option::<Capabilities>::None);
     let sidebar_open = use_state(|| false);
+
+    // The panel's own light/dark chrome is purely client-side (localStorage
+    // + the `<html>` class). It must never round-trip through the server's
+    // theme settings: the stored legacy `preset` would force the panel light
+    // on every mount, and the toggle's PUT would clobber the block-page
+    // Halloy pair via `apply_legacy_preset_selection` as a side effect.
+    {
+        use_effect_with((), move |_| {
+            apply_theme_class(Theme::from_storage().unwrap_or_default());
+            || ()
+        });
+    }
 
     {
         let capabilities = capabilities.clone();
@@ -171,20 +181,11 @@ pub fn App() -> Html {
 
     let toggle_theme = {
         let theme = theme.clone();
-        let update_theme = update_theme.clone();
         Callback::from(move |_| {
             let new_theme = theme.toggle();
             theme.set(new_theme);
-
-            let request = UpdateThemeRequest {
-                preset: Some(new_theme.to_preset().to_string()),
-                mode: None,
-                dark_theme: None,
-                light_theme: None,
-                scheme: None,
-                allow_only: None,
-            };
-            update_theme.emit(request);
+            new_theme.save_to_storage();
+            apply_theme_class(new_theme);
         })
     };
 

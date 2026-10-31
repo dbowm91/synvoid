@@ -1,6 +1,3 @@
-use crate::types::{ThemeResponse, UpdateThemeRequest};
-use yew::prelude::*;
-
 const STORAGE_KEY: &str = "synvoid-theme";
 
 #[derive(Clone, Copy, PartialEq, Default)]
@@ -88,7 +85,7 @@ impl Theme {
     }
 }
 
-fn apply_theme_class(theme: Theme) {
+pub(crate) fn apply_theme_class(theme: Theme) {
     let document = match web_sys::window().and_then(|w| w.document()) {
         Some(d) => d,
         None => return,
@@ -98,68 +95,4 @@ fn apply_theme_class(theme: Theme) {
         let class = theme.class();
         root.set_class_name(class);
     }
-}
-
-#[hook]
-pub fn use_api_theme() -> (Option<ThemeResponse>, Callback<UpdateThemeRequest>) {
-    let theme_data = use_state(|| None::<ThemeResponse>);
-    let theme = use_state(|| Theme::from_storage().unwrap_or_default());
-
-    let initial_theme = *theme;
-
-    apply_theme_class(initial_theme);
-
-    let theme_data_clone = theme_data.clone();
-    let theme_clone = theme.clone();
-
-    use_effect_with((), move |_| {
-        wasm_bindgen_futures::spawn_local(async move {
-            let api = crate::services::ApiService::new();
-            match api.get_theme().await {
-                Ok(data) => {
-                    let theme_enum = Theme::from_preset(&data.preset);
-                    theme_clone.set(theme_enum);
-                    apply_theme_class(theme_enum);
-                    theme_data_clone.set(Some(data));
-                }
-                Err(e) => {
-                    tracing::error!("Failed to fetch theme: {}", e);
-                }
-            }
-        });
-        || {}
-    });
-
-    let update_callback = {
-        let theme_data = theme_data.clone();
-        let theme = theme.clone();
-        Callback::from(move |request: UpdateThemeRequest| {
-            let theme_data = theme_data.clone();
-            let theme = theme.clone();
-
-            if let Some(preset) = &request.preset {
-                let theme_enum = Theme::from_preset(preset);
-                theme_enum.save_to_storage();
-                apply_theme_class(theme_enum);
-            }
-
-            wasm_bindgen_futures::spawn_local(async move {
-                let api = crate::services::ApiService::new();
-                match api.update_theme(&request).await {
-                    Ok(data) => {
-                        let theme_enum = Theme::from_preset(&data.preset);
-                        theme.set(theme_enum);
-                        apply_theme_class(theme_enum);
-                        theme_enum.save_to_storage();
-                        theme_data.set(Some(data));
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to update theme: {}", e);
-                    }
-                }
-            });
-        })
-    };
-
-    ((*theme_data).clone(), update_callback)
 }
