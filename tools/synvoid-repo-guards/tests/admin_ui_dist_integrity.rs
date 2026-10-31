@@ -271,13 +271,19 @@ fn admin_ui_text_tokens_resolve_to_text_vars() {
         (".text-secondary{color:", "--text-secondary"),
         (".text-tertiary{color:", "--text-tertiary"),
     ] {
+        // Absolute offsets throughout: `find` on a subslice returns a
+        // relative index, so reslicing the remainder rewinds the scan and
+        // loops forever once a selector matches twice.
         let mut last: Option<&str> = None;
-        let mut rest = css.as_str();
-        while let Some(at) = rest.find(selector) {
-            let decl = &rest[at..];
-            let end = decl.find('}').map(|o| at + o).unwrap_or(css.len());
-            last = Some(&css[at..end]);
-            rest = &css[end..];
+        let mut start = 0;
+        while let Some(at) = css[start..].find(selector) {
+            let abs = start + at;
+            let end = css[abs..]
+                .find('}')
+                .map(|o| abs + o)
+                .unwrap_or(css.len());
+            last = Some(&css[abs..end]);
+            start = end;
         }
         let winning = last.unwrap_or_else(|| {
             panic!("admin_ui_text_tokens_resolve_to_text_vars: {selector}...}} absent")
