@@ -2636,6 +2636,13 @@ Live proof (`~/prodtest`, new release binary + rebuilt admin-ui dist):
 `::selection`; Chromium pass: pickers render server state on first paint,
 Gruvbox save succeeds with no error toast and survives reload.
 Prodtest theme left at dark=Gruvbox / light=Catppuccin Latte / system.
+Follow-up fix on this branch (`9051035`): single-use CSRF rotation —
+`csrf_middleware` now publishes a fresh `X-CSRF-Token` on every validated
+mutating response and the UI adopts it (plus one refresh-and-retry on 403).
+Without it, every second write in a session 403'd and the UI logged out
+(reported live: save → token prompt; proven via audit/CSRF-failure log
+correlation). Live proof: three consecutive theme saves, all 200, session
+retained.
 
 01 and 02 independent of each other. Out of scope: panel internal styling,
 custom `themes_dir` override (deferred follow-up), per-site themes,
