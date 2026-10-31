@@ -1,6 +1,7 @@
 use crate::components::forms::{Input, Select};
 use crate::components::layout::Capabilities;
 use crate::components::skeleton::LoadingSpinner;
+use crate::components::theme_preview::ThemePreview;
 use crate::components::{toast_error, toast_success};
 use crate::config_docs::get_section_doc;
 use crate::services::ApiService;
@@ -3754,7 +3755,6 @@ fn ThemeSection() -> Html {
     let selected_dark = use_state(String::new);
     let selected_light = use_state(String::new);
     let selected_scheme = use_state(|| "system".to_string());
-    let preview_html = use_state(String::new);
     let preview_light = use_state(|| false);
     let saving = use_state(|| false);
     let loading = use_state(|| true);
@@ -3771,8 +3771,6 @@ fn ThemeSection() -> Html {
         let selected_dark = selected_dark.clone();
         let selected_light = selected_light.clone();
         let selected_scheme = selected_scheme.clone();
-        let preview_html = preview_html.clone();
-        let preview_light = preview_light.clone();
         let loading = loading.clone();
         let original_dark = original_dark.clone();
         let original_light = original_light.clone();
@@ -3781,7 +3779,6 @@ fn ThemeSection() -> Html {
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
                 let theme_result = api.get_theme().await;
-                let use_light = *preview_light;
 
                 if let Ok(data) = theme_result {
                     selected_dark.set(data.dark_theme.clone());
@@ -3791,8 +3788,6 @@ fn ThemeSection() -> Html {
                     original_light.set(data.light_theme.clone());
                     original_scheme.set(data.scheme.clone());
 
-                    let html = generate_preview_html("", &data.colors, use_light);
-                    preview_html.set(html);
                     theme_data.set(Some(data));
                 }
                 loading.set(false);
@@ -3824,16 +3819,9 @@ fn ThemeSection() -> Html {
 
     let on_toggle_preview = {
         let preview_light = preview_light.clone();
-        let theme_data = theme_data.clone();
-        let preview_html = preview_html.clone();
         Callback::from(move |_| {
             let new_value = !*preview_light;
             preview_light.set(new_value);
-
-            if let Some(ref data) = *theme_data {
-                let html = generate_preview_html("", &data.colors, new_value);
-                preview_html.set(html);
-            }
         })
     };
 
@@ -3843,8 +3831,6 @@ fn ThemeSection() -> Html {
         let selected_light = selected_light.clone();
         let selected_scheme = selected_scheme.clone();
         let theme_data = theme_data.clone();
-        let preview_html = preview_html.clone();
-        let preview_light = preview_light.clone();
         let original_dark = original_dark.clone();
         let original_light = original_light.clone();
         let original_scheme = original_scheme.clone();
@@ -3853,8 +3839,6 @@ fn ThemeSection() -> Html {
             let light = (*selected_light).clone();
             let scheme = (*selected_scheme).clone();
             let theme_data = theme_data.clone();
-            let preview_html = preview_html.clone();
-            let preview_light = *preview_light;
             let saving = saving.clone();
             let original_dark = original_dark.clone();
             let original_light = original_light.clone();
@@ -3875,8 +3859,6 @@ fn ThemeSection() -> Html {
 
                 match api.update_theme(&request).await {
                     Ok(data) => {
-                        let html = generate_preview_html("", &data.colors, preview_light);
-                        preview_html.set(html);
                         original_dark.set(data.dark_theme.clone());
                         original_light.set(data.light_theme.clone());
                         original_scheme.set(data.scheme.clone());
@@ -3898,15 +3880,11 @@ fn ThemeSection() -> Html {
         let selected_light = selected_light.clone();
         let selected_scheme = selected_scheme.clone();
         let theme_data = theme_data.clone();
-        let preview_html = preview_html.clone();
-        let preview_light = preview_light.clone();
         let original_dark = original_dark.clone();
         let original_light = original_light.clone();
         let original_scheme = original_scheme.clone();
         Callback::from(move |_| {
             let theme_data = theme_data.clone();
-            let preview_html = preview_html.clone();
-            let preview_light = *preview_light;
             let selected_dark = selected_dark.clone();
             let selected_light = selected_light.clone();
             let selected_scheme = selected_scheme.clone();
@@ -3933,8 +3911,6 @@ fn ThemeSection() -> Html {
                         original_dark.set(data.dark_theme.clone());
                         original_light.set(data.light_theme.clone());
                         original_scheme.set(data.scheme.clone());
-                        let html = generate_preview_html("", &data.colors, preview_light);
-                        preview_html.set(html);
                         theme_data.set(Some(data));
                         toast_success("Theme reset to default");
                     }
@@ -4003,11 +3979,22 @@ fn ThemeSection() -> Html {
                     </button>
                 </div>
                 <div class="border border-default rounded-lg overflow-hidden">
-                    <iframe
-                        srcdoc={(*preview_html).clone()}
-                        class="w-full h-64"
-                        sandbox="allow-same-origin"
-                    />
+                    {
+                        if let Some(data) = (*theme_data).as_ref() {
+                            let c = if *preview_light { &data.colors.light } else { &data.colors.dark };
+                            html! {
+                                <ThemePreview
+                                    background={c.background.clone()}
+                                    surface={c.surface.clone()}
+                                    text={c.text.clone()}
+                                    border={c.border.clone()}
+                                    primary={c.primary.clone()}
+                                />
+                            }
+                        } else {
+                            html! { <LoadingSpinner /> }
+                        }
+                    }
                 </div>
                 <p class="mt-1 text-sm text-secondary">{ "Sample error page preview with current theme" }</p>
             </div>
@@ -4647,79 +4634,6 @@ fn PluginsSection() -> Html {
             </div>
         </div>
     }
-}
-
-fn generate_preview_html(
-    _css: &str,
-    colors: &crate::types::ThemeColorsResponse,
-    use_light: bool,
-) -> String {
-    let c = if use_light {
-        &colors.light
-    } else {
-        &colors.dark
-    };
-    format!(
-        r#"
-<!DOCTYPE html>
-<html>
-<head>
-    <style>
-        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-        body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background-color: {bg};
-            color: {text};
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }}
-        .card {{
-            background: {surface};
-            border: 1px solid {border};
-            border-radius: 12px;
-            padding: 2rem;
-            max-width: 400px;
-            text-align: center;
-        }}
-        .status {{
-            font-size: 4rem;
-            font-weight: bold;
-            color: {primary};
-            margin-bottom: 1rem;
-        }}
-        h1 {{
-            font-size: 1.5rem;
-            margin-bottom: 0.5rem;
-        }}
-        p {{
-            color: {text};
-            opacity: 0.8;
-        }}
-        .footer {{
-            margin-top: 1.5rem;
-            font-size: 0.75rem;
-            opacity: 0.5;
-        }}
-    </style>
-</head>
-<body>
-    <div class="card">
-        <div class="status">403</div>
-        <h1>Forbidden</h1>
-        <p>Access to this resource has been blocked by the WAF.</p>
-        <div class="footer">SynVoid</div>
-    </div>
-</body>
-</html>
-"#,
-        bg = c.background,
-        surface = c.surface,
-        text = c.text,
-        border = c.border,
-        primary = c.primary,
-    )
 }
 
 #[function_component]

@@ -5,6 +5,7 @@ pub mod layout;
 pub mod realtime_header;
 pub mod skeleton;
 pub mod tables;
+pub mod theme_preview;
 pub mod toast;
 pub mod tooltip;
 

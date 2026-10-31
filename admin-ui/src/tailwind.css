@@ -400,3 +400,50 @@
     animation: none;
   }
 }
+
+/* Inline block-page theme preview (components/theme_preview.rs). The
+ * colors arrive as `--tp-*` custom properties through the CSSOM hook
+ * because `style` attributes violate the admin `style-src 'self'` CSP.
+ * The `tp-` prefix keeps these rules from leaking into the panel. */
+.tp-body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background-color: var(--tp-bg);
+  color: var(--tp-text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  min-height: 16rem;
+}
+
+.tp-card {
+  background: var(--tp-surface);
+  border: 1px solid var(--tp-border);
+  border-radius: 12px;
+  padding: 2rem;
+  max-width: 400px;
+  text-align: center;
+}
+
+.tp-status {
+  font-size: 4rem;
+  font-weight: bold;
+  color: var(--tp-primary);
+  margin-bottom: 1rem;
+}
+
+.tp-title {
+  font-size: 1.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.tp-text {
+  color: var(--tp-text);
+  opacity: 0.8;
+}
+
+.tp-footer {
+  margin-top: 1.5rem;
+  font-size: 0.75rem;
+  opacity: 0.5;
+}
