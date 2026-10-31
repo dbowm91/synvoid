@@ -2659,6 +2659,24 @@ server `preset`/`mode` left untouched for block-page compat; toasts deliver.
 Live proof on a `preset="light"` server: fresh login boots dark, toggle is
 instant and persistent, save shows a visible success toast and persists
 `dark_theme`, reload never flips the panel.
+Block-page follow-through (`e4f6aeb`, `5903786`, `91de456`): the settings
+theme never reached served pages — `ErrorPageManager` was hard-wired to a
+relative `error_pages` dir (missing at runtime, so every block rendered the
+unstyled minimal page) and a `ThemeConfig::default()` snapshot the admin
+`PUT` never touched. Now `[defaults.error_pages]` (directory/mode/enabled)
+and `[defaults.theme]` feed the manager at startup, and the `PUT` stores a
+fresh conversion into a shared `ArcSwap` the render path reads per request:
+saving Nord flips the live `/.env` 403 page's CSS with no restart, in both
+forced schemes. Prodtest `[defaults.error_pages] mode` flipped
+`default`→`styled` (operator config change) so the themed templates render;
+`generic` templates carry no `{{theme_css}}` and are unaffected. Adjacent
+fixes on the same pass: post-login redirect to `/` (the shell rendered at
+`/login` with a stale URL), all nine admin `style=` attributes replaced
+(CSSOM hook + SVG presentation attributes; console is CSP-clean), and both
+`srcdoc` theme previews (settings + site editor, whose `<style>` blocks the
+inherited CSP dropped) replaced by an inline component. Gates on the final
+tree: fmt, workspace clippy `-D warnings`, repo-guards 169, admin contract
+69, admin-ui 50.
 
 01 and 02 independent of each other. Out of scope: panel internal styling,
 custom `themes_dir` override (deferred follow-up), per-site themes,
