@@ -78,12 +78,6 @@ pub enum UpstreamHealth {
     Unknown,
 }
 
-impl UpstreamHealth {
-    pub fn is_healthy(self) -> bool {
-        matches!(self, Self::Healthy)
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SiteInfo {
     pub id: String,
@@ -960,13 +954,6 @@ mod upstream_health_tests {
         let stats: SiteStats =
             serde_json::from_str(payload).expect("absent field must not fail the fetch");
         assert_eq!(stats.upstream_healthy, UpstreamHealth::Unknown);
-    }
-
-    #[test]
-    fn only_healthy_counts_as_healthy() {
-        assert!(UpstreamHealth::Healthy.is_healthy());
-        assert!(!UpstreamHealth::Unhealthy.is_healthy());
-        assert!(!UpstreamHealth::Unknown.is_healthy());
     }
 }
 

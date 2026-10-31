@@ -265,6 +265,9 @@ impl AttackDetector {
     /// lower-priority hit for an enabled one. `site_disabled` must only
     /// contain detectors with site subtables (Sqli, Xss, PathTraversal, Rfi,
     /// Ssrf); anything else is ignored by the dispatch gates.
+    // The 8-arg signature mirrors `check_request` plus the site-disabled
+    // filter; refactoring the shared parameter set is out of scope.
+    #[allow(clippy::too_many_arguments)]
     pub async fn check_request_with_site_disabled(
         &self,
         client_ip: std::net::IpAddr,
