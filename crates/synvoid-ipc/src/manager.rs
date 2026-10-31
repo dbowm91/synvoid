@@ -207,6 +207,10 @@ pub struct ProcessManagerConfig {
     pub log_level: Option<String>,
     pub pre_spawn_workers: usize,
     pub warm_workers_target: usize,
+    /// Tokio worker threads per UnifiedServerWorker. `None` keeps the
+    /// historical default of 2 at spawn; the live knob is
+    /// `pending_thread_count` (set by resize IPC or `update_config`).
+    pub worker_threads: Option<u32>,
     pub health_check_interval_secs: u64,
     pub control_api_addr: String,
     pub control_api_tls: Option<synvoid_tls::InternalTlsConfig>,
@@ -235,6 +239,7 @@ impl Default for ProcessManagerConfig {
             log_level: None,
             pre_spawn_workers: 0,
             warm_workers_target: 2,
+            worker_threads: None,
             health_check_interval_secs: 5,
             control_api_addr: "127.0.0.1:50051".to_string(),
             control_api_tls: None,
@@ -379,7 +384,7 @@ impl ProcessManager {
                 shutdown_tx,
                 event_tx,
                 metrics: Arc::new(ProcessManagerMetrics::default()),
-                pending_thread_count: Arc::new(PLRwLock::new(None)),
+                pending_thread_count: Arc::new(PLRwLock::new(config.worker_threads)),
                 unified_server_port: Arc::new(PLRwLock::new(None)),
                 ipc_key_file_path: std::sync::OnceLock::new(),
                 _block_store: block_store,
@@ -463,6 +468,9 @@ impl ProcessManager {
             dynamic.pre_spawn_workers = new_config.pre_spawn_workers;
             dynamic.warm_workers_target = new_config.warm_workers_target;
             dynamic.health_check_interval_secs = new_config.health_check_interval_secs;
+            dynamic.worker_threads = new_config.worker_threads;
+            // Future spawns/respawns read the live pending count.
+            *self.pending_thread_count.write() = new_config.worker_threads;
 
             let needed = if new_config.min_workers != dynamic.min_workers {
                 let old_min = dynamic.min_workers;

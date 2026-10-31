@@ -687,6 +687,7 @@ pub fn run_supervisor_mode(
     let pm_config = ProcessManagerConfig {
         config_path: config_dir.clone(),
         unified_server_workers: main_config.defaults.worker_pool.workers.max(1),
+        worker_threads: main_config.process_manager.worker_threads,
         supervisor_socket_path: pid_manager.socket_file_path(),
         control_api_addr: main_config.supervisor.control_api_addr.clone(),
         control_api_tls: main_config
