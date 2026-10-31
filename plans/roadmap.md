@@ -2694,6 +2694,25 @@ measured over all 50 bundled sides: translated text vs background ≥ 4.5 in
 every case, so the panel mapping reuses the text token for all three text
 levels. Prodtest left at block Gruvbox/Latte/system, panel
 default/default; `[defaults.error_pages]` mode stays `styled`.
+Audit follow-through (`d1f55cc`, `cd4b53f`, `7b6c0db`, `35dc0aa`, `e5a569d`,
+`c2dfc55`, `94e44f2`, `2606274`): error-page default is now unstyled —
+fresh `[defaults.theme]` resolves to `("default","default")`, an explicit
+unstyled pick beats even a fossil legacy `preset`, the render path serves
+the minimal page (custom templates still render, with empty `{{theme_css}}`),
+`/theme/css` returns empty, the site legacy preset now resolves to Halloy
+names so per-site overrides take effect again, and both previews show an
+"Unstyled default" note instead of misleading fallback colours. Panel audit:
+app shell gained the missing `bg-primary`; all switch off-tracks moved off
+hardcoded gray onto `bg-tertiary` with a defining border; logout rethemed
+off red; tooltip popup off accent/white; alerts primary button onto the
+action ramp. Deliberately unchanged (documented in the report): action ramp,
+status reds/greens/yellows/oranges/grays, scrims, switch knobs, toast chips,
+chart data colours. Toasts auto-dismiss after 8s; panel/block theme success
+toasts removed (the restyle/preview is the confirmation), errors still
+toast. Hover root cause fixed: generated `hover:text-primary` resolved to
+`var(--bg-primary)` and beat the custom correction — doubled specificity
+plus a dist guard. Gates: fmt, workspace clippy, guards 170, contract 69,
+admin-ui 50.
 
 01 and 02 independent of each other. Out of scope: panel internal styling,
 custom `themes_dir` override (deferred follow-up), per-site themes,
