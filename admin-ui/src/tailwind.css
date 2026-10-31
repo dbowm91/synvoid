@@ -228,6 +228,14 @@
  * resolves to `var(--bg-primary)` — a surface colour used as type. Those
  * utilities are re-pointed at the dedicated text tokens here; equal specificity
  * plus later source order wins.
+ *
+ * Exception: `hover:text-primary`. Tailwind sorts variant utilities
+ * (`hover:`, `focus:`, responsive) into a section AFTER this block, so the
+ * generated `var(--bg-primary)` hover rule would win on source order and
+ * paint near-black/off-white text on hover. The doubled class below raises
+ * specificity instead (0,2,1 beats the generated 0,1,1) so the correction
+ * holds regardless of output ordering. Do not simplify it back to a single
+ * class; see `admin_ui_text_tokens_resolve_to_text_vars`.
  * ------------------------------------------------------------------------ */
 .text-primary {
   color: var(--text-primary);
@@ -241,7 +249,7 @@
   color: var(--text-tertiary);
 }
 
-.hover\:text-primary:hover {
+.hover\:text-primary.hover\:text-primary:hover {
   color: var(--text-primary);
 }
 

@@ -42,6 +42,17 @@ pub struct ThemeDefaults {
     /// else falls back to `"system"` at resolution time.
     #[serde(default = "default_theme_scheme")]
     pub scheme: String,
+    /// Halloy theme used for the admin panel's dark mode.
+    ///
+    /// `"default"` (or empty) keeps the built-in SynVoid dark palette; any
+    /// other name resolves through the same Halloy registry as the block
+    /// pages. Read by the panel only — the block renderer ignores it.
+    #[serde(default = "default_panel_theme")]
+    pub panel_dark_theme: String,
+    /// Halloy theme used for the admin panel's light mode. Same
+    /// `"default"`-means-built-in contract as `panel_dark_theme`.
+    #[serde(default = "default_panel_theme")]
+    pub panel_light_theme: String,
     #[serde(default)]
     pub colors: ThemeColors,
     #[serde(default)]
@@ -62,6 +73,8 @@ impl Default for ThemeDefaults {
             dark_theme: default_dark_theme(),
             light_theme: default_light_theme(),
             scheme: default_theme_scheme(),
+            panel_dark_theme: default_panel_theme(),
+            panel_light_theme: default_panel_theme(),
             colors: preset.colors(),
             spacing: ThemeSpacing::default(),
             effects: ThemeEffects::default(),
@@ -151,6 +164,12 @@ fn default_light_theme() -> String {
 
 fn default_theme_scheme() -> String {
     "system".to_string()
+}
+
+/// Built-in SynVoid palettes stay the panel default: `"default"` (or empty)
+/// means "do not override the static dark/light palettes".
+fn default_panel_theme() -> String {
+    "default".to_string()
 }
 
 /// Maximum accepted theme-name length in bytes. This is a shallow

@@ -236,3 +236,68 @@ fn admin_ui_dist_has_no_inline_scripts() {
          boots. Move the bootstrap to an external file (see dist/bootstrap.js)."
     );
 }
+
+/// Text token utilities must resolve to text variables, not surfaces.
+///
+/// `tailwind.config.js` maps one colour entry to `bg-`, `text-` and
+/// `border-` utilities from a single variable, so generated `text-primary`
+/// (and `hover:text-primary`) resolve to `var(--bg-primary)`: near-black in
+/// dark mode, off-white in light mode. `tailwind.css` re-points the text
+/// utilities at the dedicated text tokens; the hover correction needs
+/// doubled specificity because Tailwind sorts variant utilities after the
+/// custom block. Assert on the *winning* (last) declaration of each rule:
+/// a reordering that lets the surface colour win back paints invisible
+/// text on hover.
+#[test]
+fn admin_ui_text_tokens_resolve_to_text_vars() {
+    let root = workspace_root();
+    let dist = root.join("admin-ui").join("dist");
+
+    let css_path = std::fs::read_dir(&dist)
+        .expect("read admin-ui/dist")
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().to_string())
+        .filter(|name| {
+            (name.starts_with("styles-") && name.ends_with(".css")) || name == "styles.css"
+        })
+        .map(|name| dist.join(name))
+        .next()
+        .expect("admin_ui_text_tokens_resolve_to_text_vars: no stylesheet in admin-ui/dist");
+
+    let css = std::fs::read_to_string(&css_path).expect("read built stylesheet");
+
+    for (selector, var) in [
+        (".text-primary{color:", "--text-primary"),
+        (".text-secondary{color:", "--text-secondary"),
+        (".text-tertiary{color:", "--text-tertiary"),
+    ] {
+        let mut last: Option<&str> = None;
+        let mut rest = css.as_str();
+        while let Some(at) = rest.find(selector) {
+            let decl = &rest[at..];
+            let end = decl.find('}').map(|o| at + o).unwrap_or(css.len());
+            last = Some(&css[at..end]);
+            rest = &css[end..];
+        }
+        let winning = last.unwrap_or_else(|| {
+            panic!("admin_ui_text_tokens_resolve_to_text_vars: {selector}...}} absent")
+        });
+        assert!(
+            winning.contains(var) && !winning.contains("--bg-"),
+            "admin_ui_text_tokens_resolve_to_text_vars: winning {selector}...}} \
+             resolves to a surface variable ({winning}); text would be invisible \
+             against panel surfaces. Re-point the token at {var} in tailwind.css."
+        );
+    }
+
+    // The hover correction must beat Tailwind's generated hover variant by
+    // specificity (doubled class), never by source order: generated variants
+    // sort after the custom block.
+    assert!(
+        css.contains(".hover\\:text-primary.hover\\:text-primary:hover"),
+        "admin_ui_text_tokens_resolve_to_text_vars: the doubled-specificity \
+         hover:text-primary correction is gone from the built stylesheet; the \
+         generated var(--bg-primary) hover rule wins and hover text turns \
+         invisible. Restore it in tailwind.css."
+    );
+}

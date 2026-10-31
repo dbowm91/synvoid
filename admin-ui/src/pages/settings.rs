@@ -735,7 +735,7 @@ pub fn Settings(props: &SettingsProps) -> Html {
                             "http3" => html! { <Http3Section /> },
                             "tunnel" => html! { <TunnelSection /> },
                             "plugins" => html! { <PluginsSection /> },
-                            "theme" => html! { <ThemeSection /> },
+                            "theme" => html! { <ThemePanelSection /> },
                             "mime_types" => html! { <MimeTypesSection /> },
                             "tcp_udp_defaults" => html! { <TcpUdpDefaultsSection /> },
                             "fallback" => html! { <FallbackSection /> },
@@ -3749,44 +3749,54 @@ fn UploadSection() -> Html {
     }
 }
 
+/// Tell the app shell to re-read the server theme and re-apply the panel
+/// palette. The shell listens for this (see `App`); a save that skipped
+/// the event would persist server-side while the panel kept stale colours.
+fn notify_panel_theme_updated() {
+    if let Some(window) = web_sys::window() {
+        if let Ok(event) = web_sys::CustomEvent::new("panel-theme-update") {
+            let _ = window.dispatch_event(&event);
+        }
+    }
+}
+
+/// Admin panel palette (dark pick, light pick).
+///
+/// This tab styles the panel itself: the saved dark pick supplies the
+/// surfaces when the sidebar switch is on dark, the light pick when it is
+/// on light. `"SynVoid default"` keeps the built-in palette. Block and
+/// error pages are styled separately under Error Pages and never read
+/// these values.
 #[function_component]
-fn ThemeSection() -> Html {
+fn ThemePanelSection() -> Html {
     let theme_data = use_state(|| None::<ThemeResponse>);
-    let selected_dark = use_state(String::new);
-    let selected_light = use_state(String::new);
-    let selected_scheme = use_state(|| "system".to_string());
+    let selected_dark = use_state(|| "default".to_string());
+    let selected_light = use_state(|| "default".to_string());
     let preview_light = use_state(|| false);
     let saving = use_state(|| false);
     let loading = use_state(|| true);
-    let original_dark = use_state(String::new);
-    let original_light = use_state(String::new);
-    let original_scheme = use_state(|| "system".to_string());
+    let original_dark = use_state(|| "default".to_string());
+    let original_light = use_state(|| "default".to_string());
 
-    let is_dirty = *selected_dark != *original_dark
-        || *selected_light != *original_light
-        || *selected_scheme != *original_scheme;
+    let is_dirty = *selected_dark != *original_dark || *selected_light != *original_light;
 
     use_effect_with((), {
         let theme_data = theme_data.clone();
         let selected_dark = selected_dark.clone();
         let selected_light = selected_light.clone();
-        let selected_scheme = selected_scheme.clone();
         let loading = loading.clone();
         let original_dark = original_dark.clone();
         let original_light = original_light.clone();
-        let original_scheme = original_scheme.clone();
         move |_| {
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
                 let theme_result = api.get_theme().await;
 
                 if let Ok(data) = theme_result {
-                    selected_dark.set(data.dark_theme.clone());
-                    selected_light.set(data.light_theme.clone());
-                    selected_scheme.set(data.scheme.clone());
-                    original_dark.set(data.dark_theme.clone());
-                    original_light.set(data.light_theme.clone());
-                    original_scheme.set(data.scheme.clone());
+                    selected_dark.set(data.panel_dark_theme.clone());
+                    selected_light.set(data.panel_light_theme.clone());
+                    original_dark.set(data.panel_dark_theme.clone());
+                    original_light.set(data.panel_light_theme.clone());
 
                     theme_data.set(Some(data));
                 }
@@ -3810,13 +3820,6 @@ fn ThemeSection() -> Html {
         })
     };
 
-    let on_scheme_change = {
-        let selected_scheme = selected_scheme.clone();
-        Callback::from(move |value: String| {
-            selected_scheme.set(value);
-        })
-    };
-
     let on_toggle_preview = {
         let preview_light = preview_light.clone();
         Callback::from(move |_| {
@@ -3829,20 +3832,16 @@ fn ThemeSection() -> Html {
         let saving = saving.clone();
         let selected_dark = selected_dark.clone();
         let selected_light = selected_light.clone();
-        let selected_scheme = selected_scheme.clone();
         let theme_data = theme_data.clone();
         let original_dark = original_dark.clone();
         let original_light = original_light.clone();
-        let original_scheme = original_scheme.clone();
         Callback::from(move |_| {
             let dark = (*selected_dark).clone();
             let light = (*selected_light).clone();
-            let scheme = (*selected_scheme).clone();
             let theme_data = theme_data.clone();
             let saving = saving.clone();
             let original_dark = original_dark.clone();
             let original_light = original_light.clone();
-            let original_scheme = original_scheme.clone();
 
             saving.set(true);
 
@@ -3851,23 +3850,25 @@ fn ThemeSection() -> Html {
                 let request = UpdateThemeRequest {
                     preset: None,
                     mode: None,
-                    dark_theme: Some(dark),
-                    light_theme: Some(light),
-                    scheme: Some(scheme),
+                    dark_theme: None,
+                    light_theme: None,
+                    scheme: None,
+                    panel_dark_theme: Some(dark),
+                    panel_light_theme: Some(light),
                     allow_only: None,
                 };
 
                 match api.update_theme(&request).await {
                     Ok(data) => {
-                        original_dark.set(data.dark_theme.clone());
-                        original_light.set(data.light_theme.clone());
-                        original_scheme.set(data.scheme.clone());
+                        original_dark.set(data.panel_dark_theme.clone());
+                        original_light.set(data.panel_light_theme.clone());
                         theme_data.set(Some(data));
-                        toast_success("Theme updated successfully");
+                        toast_success("Panel theme updated successfully");
+                        notify_panel_theme_updated();
                     }
                     Err(e) => {
-                        toast_error(&format!("Failed to update theme: {}", e));
-                        tracing::error!("Failed to update theme: {}", e);
+                        toast_error(&format!("Failed to update panel theme: {}", e));
+                        tracing::error!("Failed to update panel theme: {}", e);
                     }
                 }
                 saving.set(false);
@@ -3878,26 +3879,24 @@ fn ThemeSection() -> Html {
     let on_reset = {
         let selected_dark = selected_dark.clone();
         let selected_light = selected_light.clone();
-        let selected_scheme = selected_scheme.clone();
         let theme_data = theme_data.clone();
         let original_dark = original_dark.clone();
         let original_light = original_light.clone();
-        let original_scheme = original_scheme.clone();
         Callback::from(move |_| {
             let theme_data = theme_data.clone();
             let selected_dark = selected_dark.clone();
             let selected_light = selected_light.clone();
-            let selected_scheme = selected_scheme.clone();
             let original_dark = original_dark.clone();
             let original_light = original_light.clone();
-            let original_scheme = original_scheme.clone();
 
             let request = UpdateThemeRequest {
-                preset: Some("default".to_string()),
-                mode: Some("auto".to_string()),
+                preset: None,
+                mode: None,
                 dark_theme: None,
                 light_theme: None,
                 scheme: None,
+                panel_dark_theme: Some("default".to_string()),
+                panel_light_theme: Some("default".to_string()),
                 allow_only: None,
             };
 
@@ -3905,37 +3904,35 @@ fn ThemeSection() -> Html {
                 let api = ApiService::new();
                 match api.update_theme(&request).await {
                     Ok(data) => {
-                        selected_dark.set(data.dark_theme.clone());
-                        selected_light.set(data.light_theme.clone());
-                        selected_scheme.set(data.scheme.clone());
-                        original_dark.set(data.dark_theme.clone());
-                        original_light.set(data.light_theme.clone());
-                        original_scheme.set(data.scheme.clone());
+                        selected_dark.set(data.panel_dark_theme.clone());
+                        selected_light.set(data.panel_light_theme.clone());
+                        original_dark.set(data.panel_dark_theme.clone());
+                        original_light.set(data.panel_light_theme.clone());
                         theme_data.set(Some(data));
-                        toast_success("Theme reset to default");
+                        toast_success("Panel theme reset to default");
+                        notify_panel_theme_updated();
                     }
                     Err(e) => {
-                        toast_error(&format!("Failed to reset theme: {}", e));
+                        toast_error(&format!("Failed to reset panel theme: {}", e));
                     }
                 }
             });
         })
     };
 
-    let theme_options: Vec<(String, String)> = match &*theme_data {
+    let mut theme_options = vec![("default".to_string(), "SynVoid default".to_string())];
+    theme_options.extend(match &*theme_data {
         Some(data) => data
             .presets_available
             .iter()
+            // The catalogue carries its own "default" alias for the block
+            // pages; the panel's built-in entry above takes its place here
+            // so the dropdown never lists the same choice twice.
+            .filter(|entry| entry.id != "default")
             .map(|entry| (entry.id.clone(), entry.name.clone()))
-            .collect(),
+            .collect::<Vec<_>>(),
         None => Vec::new(),
-    };
-
-    let scheme_options = vec![
-        ("system".to_string(), "System".to_string()),
-        ("dark".to_string(), "Dark".to_string()),
-        ("light".to_string(), "Light".to_string()),
-    ];
+    });
 
     if *loading {
         return html! { <LoadingSpinner /> };
@@ -3943,12 +3940,15 @@ fn ThemeSection() -> Html {
 
     html! {
         <div class="space-y-6">
+            <p class="text-sm text-secondary">
+                { "Palette for the admin panel itself. The dark pick applies in dark mode, the light pick in light mode (sidebar switch); saving applies immediately. Block and error pages are styled separately under Error Pages." }
+            </p>
             <Select
                 label="Dark theme"
                 name="theme_dark"
                 value={(*selected_dark).clone()}
                 options={theme_options.clone()}
-                help="Block-page theme used for dark color schemes"
+                help="Panel palette used for dark mode (\"SynVoid default\" keeps the built-in palette)"
                 on_change={on_dark_change}
             />
             <Select
@@ -3956,16 +3956,8 @@ fn ThemeSection() -> Html {
                 name="theme_light"
                 value={(*selected_light).clone()}
                 options={theme_options.clone()}
-                help="Block-page theme used for light color schemes"
+                help="Panel palette used for light mode (\"SynVoid default\" keeps the built-in palette)"
                 on_change={on_light_change}
-            />
-            <Select
-                label="Color scheme"
-                name="theme_scheme"
-                value={(*selected_scheme).clone()}
-                options={scheme_options}
-                help="Follow the system preference or force dark / light"
-                on_change={on_scheme_change}
             />
 
             <div>
@@ -3980,8 +3972,8 @@ fn ThemeSection() -> Html {
                 </div>
                 <div class="border border-default rounded-lg overflow-hidden">
                     {
-                        if let Some(data) = (*theme_data).as_ref() {
-                            let c = if *preview_light { &data.colors.light } else { &data.colors.dark };
+                        if let Some(colors) = (*theme_data).as_ref().and_then(|data| data.panel_colors.as_ref()) {
+                            let c = if *preview_light { &colors.light } else { &colors.dark };
                             html! {
                                 <ThemePreview
                                     background={c.background.clone()}
@@ -3996,7 +3988,7 @@ fn ThemeSection() -> Html {
                         }
                     }
                 </div>
-                <p class="mt-1 text-sm text-secondary">{ "Sample error page preview with current theme" }</p>
+                <p class="mt-1 text-sm text-secondary">{ "Sample card preview with the saved panel palette" }</p>
             </div>
 
             <div class="flex justify-between gap-4">

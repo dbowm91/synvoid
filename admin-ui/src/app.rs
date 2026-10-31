@@ -1,4 +1,6 @@
 use gloo::timers::future::TimeoutFuture;
+use wasm_bindgen::closure::Closure;
+use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::spawn_local;
 use yew::prelude::*;
 use yew_router::prelude::*;
@@ -12,6 +14,7 @@ use crate::pages::{
     SystemStatus, TcpUdp, ThreatLevel, TierKeys, TrafficShaping, Upstreams, Workers,
 };
 use crate::services::api::{set_session_expired_handler, ApiService};
+use crate::types::ThemeResponse;
 
 // `Debug` is asserted on in sidebar tests that verify nav active-state
 // resolution; it is not otherwise used by the router.
@@ -77,10 +80,52 @@ pub enum Route {
     NotFound,
 }
 
+/// Apply the server-configured panel palette for `mode`, or clear the
+/// override when the pick is `"default"` (or the fetch has not completed).
+/// The light/dark mode itself stays client-side; this only layers the
+/// Halloy palette on top, so a server round-trip can never pin the panel.
+fn apply_panel_for_mode(mode: Theme, data: &Option<ThemeResponse>) {
+    let Some(data) = data else {
+        apply_panel_palette(None);
+        return;
+    };
+    let (pick, colors) = match mode {
+        Theme::Light => (
+            data.panel_light_theme.as_str(),
+            data.panel_colors.as_ref().map(|c| &c.light),
+        ),
+        _ => (
+            data.panel_dark_theme.as_str(),
+            data.panel_colors.as_ref().map(|c| &c.dark),
+        ),
+    };
+    if pick.is_empty() || pick == "default" {
+        apply_panel_palette(None);
+        return;
+    }
+    let Some(colors) = colors else {
+        apply_panel_palette(None);
+        return;
+    };
+    apply_panel_palette(Some(PanelPalette {
+        background: &colors.background,
+        surface: &colors.surface,
+        text: &colors.text,
+        border: &colors.border,
+        accent: &colors.accent,
+        accent_primary: &colors.accent_primary,
+        accent_secondary: &colors.accent_secondary,
+    }));
+}
+
 #[function_component]
 pub fn App() -> Html {
     let theme = use_state(|| Theme::from_storage().unwrap_or_default());
     let auth_state = use_state(|| AuthState::Restoring);
+    // Last fetched server theme (block pair, scheme, and the panel pair with
+    // its translated colors). Drives `apply_panel_for_mode` below; the
+    // light/dark mode itself stays client-side.
+    let panel_theme = use_state(|| None::<ThemeResponse>);
     // `None` until `/system/capabilities` resolves. The route guard holds
     // capability-gated routes in a loading state while this is `None` so a
     // deep link cannot mount a page whose endpoints were never registered.
@@ -92,9 +137,63 @@ pub fn App() -> Html {
     // theme settings: the stored legacy `preset` would force the panel light
     // on every mount, and the toggle's PUT would clobber the block-page
     // Halloy pair via `apply_legacy_preset_selection` as a side effect.
+    // The server's panel *palette* (Settings → Theme) is a separate,
+    // additive layer applied on top via CSS variables; see below.
     {
         use_effect_with((), move |_| {
             apply_theme_class(Theme::from_storage().unwrap_or_default());
+            || ()
+        });
+    }
+
+    // Fetch the server theme once and re-apply the panel palette whenever
+    // Settings → Theme saves (it dispatches `panel-theme-update`). A failed
+    // fetch (logged out, offline) simply leaves the static palette in place.
+    {
+        let theme = theme.clone();
+        let panel_theme = panel_theme.clone();
+        use_effect_with((), move |_| {
+            let theme_fetch = theme.clone();
+            let panel_theme_fetch = panel_theme.clone();
+            spawn_local(async move {
+                match ApiService::new().get_theme().await {
+                    Ok(data) => {
+                        apply_panel_for_mode(*theme_fetch, &Some(data.clone()));
+                        panel_theme_fetch.set(Some(data));
+                    }
+                    Err(error) => {
+                        tracing::debug!("panel theme unavailable: {}", error);
+                    }
+                }
+            });
+
+            let panel_theme_for_listener = panel_theme.clone();
+            let theme_for_listener = theme.clone();
+            let closure = Closure::wrap(Box::new(move || {
+                let panel_theme = panel_theme_for_listener.clone();
+                let theme = theme_for_listener.clone();
+                spawn_local(async move {
+                    match ApiService::new().get_theme().await {
+                        Ok(data) => {
+                            apply_panel_for_mode(*theme, &Some(data.clone()));
+                            panel_theme.set(Some(data));
+                        }
+                        Err(error) => {
+                            tracing::debug!("panel theme refresh failed: {}", error);
+                        }
+                    }
+                });
+            }) as Box<dyn FnMut()>);
+
+            if let Some(window) = web_sys::window() {
+                let _ = window.add_event_listener_with_callback(
+                    "panel-theme-update",
+                    closure.as_ref().unchecked_ref(),
+                );
+            }
+            // Same ownership discipline as the toast bus: the listener must
+            // outlive this effect or panel saves silently stop applying.
+            closure.forget();
             || ()
         });
     }
@@ -181,11 +280,13 @@ pub fn App() -> Html {
 
     let toggle_theme = {
         let theme = theme.clone();
+        let panel_theme = panel_theme.clone();
         Callback::from(move |_| {
             let new_theme = theme.toggle();
             theme.set(new_theme);
             new_theme.save_to_storage();
             apply_theme_class(new_theme);
+            apply_panel_for_mode(new_theme, &panel_theme);
         })
     };
 

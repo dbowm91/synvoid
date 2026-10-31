@@ -96,3 +96,85 @@ pub(crate) fn apply_theme_class(theme: Theme) {
         root.set_class_name(class);
     }
 }
+
+/// A translated Halloy side (dark or light) mapped onto the panel's surface
+/// tokens. Only surfaces, borders, text and accents are overridden: the
+/// action ramp and the status colors stay static so buttons, focus rings
+/// and severity cues never shift with the theme.
+///
+/// Contrast note: every text token resolves to the translated `text`
+/// colour, which the server derives for contrast against `background`.
+/// The de-emphasis hierarchy (secondary/tertiary) flattens under a Halloy
+/// theme rather than risk an unreadable muted tone.
+pub(crate) struct PanelPalette<'a> {
+    pub background: &'a str,
+    pub surface: &'a str,
+    pub text: &'a str,
+    pub border: &'a str,
+    pub accent: &'a str,
+    pub accent_primary: &'a str,
+    pub accent_secondary: &'a str,
+}
+
+/// Apply (`Some`) or clear (`None`, revealing the static palette) the
+/// panel's Halloy override. Applied as CSS custom properties through the
+/// CSSOM, which the admin `style-src 'self'` CSP permits; `None` removes
+/// each property so no stale value survives a switch back to built-in.
+pub(crate) fn apply_panel_palette(palette: Option<PanelPalette<'_>>) {
+    use wasm_bindgen::JsCast;
+    let root = match web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.document_element())
+        .and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok())
+    {
+        Some(root) => root,
+        None => return,
+    };
+    let style = root.style();
+    match palette {
+        Some(p) => {
+            let _ = style.set_property("--bg-primary", p.background);
+            let _ = style.set_property("--bg-secondary", p.surface);
+            let _ = style.set_property("--bg-card", p.surface);
+            let _ = style.set_property("--bg-tertiary", p.accent);
+            let _ = style.set_property("--border-color", p.border);
+            let _ = style.set_property("--text-primary", p.text);
+            let _ = style.set_property("--text-secondary", p.text);
+            let _ = style.set_property("--text-tertiary", p.text);
+            let _ = style.set_property("--accent-primary", p.accent_primary);
+            let _ = style.set_property("--accent-secondary", p.accent_secondary);
+            let _ = style.set_property("--accent-glow", &glow_from_hex(p.accent_primary));
+        }
+        None => {
+            for name in [
+                "--bg-primary",
+                "--bg-secondary",
+                "--bg-card",
+                "--bg-tertiary",
+                "--border-color",
+                "--text-primary",
+                "--text-secondary",
+                "--text-tertiary",
+                "--accent-primary",
+                "--accent-secondary",
+                "--accent-glow",
+            ] {
+                let _ = style.remove_property(name);
+            }
+        }
+    }
+}
+
+fn glow_from_hex(hex: &str) -> String {
+    let hex = hex.strip_prefix('#').unwrap_or(hex);
+    if hex.len() == 6 {
+        if let (Ok(r), Ok(g), Ok(b)) = (
+            u8::from_str_radix(&hex[0..2], 16),
+            u8::from_str_radix(&hex[2..4], 16),
+            u8::from_str_radix(&hex[4..6], 16),
+        ) {
+            return format!("rgba({r}, {g}, {b}, 0.35)");
+        }
+    }
+    "rgba(0, 212, 170, 0.35)".to_string()
+}

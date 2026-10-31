@@ -24,6 +24,15 @@ pub struct ThemeResponse {
     pub dark_theme: String,
     pub light_theme: String,
     pub scheme: String,
+    #[serde(default)]
+    pub panel_dark_theme: String,
+    #[serde(default)]
+    pub panel_light_theme: String,
+    /// Translated colors of the admin panel pair. The panel applies these
+    /// as CSS variables (dark side in dark mode, light side in light mode);
+    /// `"default"` picks resolve through the registry fallback and are
+    /// ignored client-side (the built-in palette shows instead).
+    pub panel_colors: ThemeColorsResponse,
     pub allow_only: String,
     pub colors: ThemeColorsResponse,
     pub presets_available: Vec<ThemePresetInfo>,
@@ -77,6 +86,12 @@ pub struct UpdateThemeRequest {
     pub light_theme: Option<String>,
     #[serde(default)]
     pub scheme: Option<String>,
+    /// Admin panel dark-mode palette (`"default"` keeps the built-in palette).
+    #[serde(default)]
+    pub panel_dark_theme: Option<String>,
+    /// Admin panel light-mode palette (`"default"` keeps the built-in palette).
+    #[serde(default)]
+    pub panel_light_theme: Option<String>,
     #[serde(default)]
     pub allow_only: Option<String>,
 }
@@ -163,39 +178,58 @@ fn translated_theme_colors(dark_name: &str, light_name: &str) -> Option<ThemeCol
     })
 }
 
+fn theme_or_default(raw: &str) -> String {
+    if raw.is_empty() {
+        "default".to_string()
+    } else {
+        raw.to_string()
+    }
+}
+
+fn theme_colors_response(colors: &ThemeColors) -> ThemeColorsResponse {
+    ThemeColorsResponse {
+        dark: DarkColors {
+            background: colors.dark_background.clone(),
+            surface: colors.dark_surface.clone(),
+            primary: colors.dark_primary.clone(),
+            text: colors.dark_text.clone(),
+            border: colors.dark_border.clone(),
+            accent: colors.dark_accent.clone(),
+            accent_primary: colors.dark_accent_primary.clone(),
+            accent_secondary: colors.dark_accent_secondary.clone(),
+        },
+        light: LightColors {
+            background: colors.light_background.clone(),
+            surface: colors.light_surface.clone(),
+            primary: colors.light_primary.clone(),
+            text: colors.light_text.clone(),
+            border: colors.light_border.clone(),
+            accent: colors.light_accent.clone(),
+            accent_primary: colors.light_accent_primary.clone(),
+            accent_secondary: colors.light_accent_secondary.clone(),
+        },
+    }
+}
+
 fn build_theme_response(theme: &ThemeDefaults) -> ThemeResponse {
     let (dark_theme, light_theme, scheme) = theme.resolve_halloy_themes();
     let colors =
         translated_theme_colors(&dark_theme, &light_theme).unwrap_or_else(|| theme.colors.clone());
+    let panel_dark = theme_or_default(&theme.panel_dark_theme);
+    let panel_light = theme_or_default(&theme.panel_light_theme);
+    let panel_colors =
+        translated_theme_colors(&panel_dark, &panel_light).unwrap_or_else(|| theme.colors.clone());
     ThemeResponse {
         preset: theme.preset.clone(),
         mode: theme.mode.clone(),
         dark_theme,
         light_theme,
         scheme: scheme.as_str().to_string(),
+        panel_dark_theme: panel_dark,
+        panel_light_theme: panel_light,
+        panel_colors: theme_colors_response(&panel_colors),
         allow_only: theme.allow_only.clone(),
-        colors: ThemeColorsResponse {
-            dark: DarkColors {
-                background: colors.dark_background.clone(),
-                surface: colors.dark_surface.clone(),
-                primary: colors.dark_primary.clone(),
-                text: colors.dark_text.clone(),
-                border: colors.dark_border.clone(),
-                accent: colors.dark_accent.clone(),
-                accent_primary: colors.dark_accent_primary.clone(),
-                accent_secondary: colors.dark_accent_secondary.clone(),
-            },
-            light: LightColors {
-                background: colors.light_background.clone(),
-                surface: colors.light_surface.clone(),
-                primary: colors.light_primary.clone(),
-                text: colors.light_text.clone(),
-                border: colors.light_border.clone(),
-                accent: colors.light_accent.clone(),
-                accent_primary: colors.light_accent_primary.clone(),
-                accent_secondary: colors.light_accent_secondary.clone(),
-            },
-        },
+        colors: theme_colors_response(&colors),
         presets_available: theme_catalog(),
     }
 }
@@ -258,6 +292,12 @@ pub async fn update_theme(
     if let Some(light_theme) = req.light_theme {
         config.main.defaults.theme.light_theme = light_theme;
     }
+    if let Some(panel_dark_theme) = req.panel_dark_theme {
+        config.main.defaults.theme.panel_dark_theme = panel_dark_theme;
+    }
+    if let Some(panel_light_theme) = req.panel_light_theme {
+        config.main.defaults.theme.panel_light_theme = panel_light_theme;
+    }
     if let Some(allow_only) = req.allow_only {
         config.main.defaults.theme.allow_only = allow_only;
     }
@@ -310,6 +350,8 @@ pub async fn update_theme(
             "dark_theme": response.dark_theme,
             "light_theme": response.light_theme,
             "scheme": response.scheme,
+            "panel_dark_theme": response.panel_dark_theme,
+            "panel_light_theme": response.panel_light_theme,
             "allow_only": response.allow_only,
         })),
         resulting_state: Some(serde_json::json!({
@@ -318,6 +360,8 @@ pub async fn update_theme(
             "dark_theme": response.dark_theme,
             "light_theme": response.light_theme,
             "scheme": response.scheme,
+            "panel_dark_theme": response.panel_dark_theme,
+            "panel_light_theme": response.panel_light_theme,
             "allow_only": response.allow_only,
         })),
         mutation_status: AdminMutationStatus::Applied,
@@ -402,7 +446,19 @@ mod tests {
         assert_eq!(response.light_theme, "Catppuccin Latte");
         assert_eq!(response.scheme, "system");
         assert_eq!(response.preset, "default");
+        assert_eq!(response.panel_dark_theme, "default");
+        assert_eq!(response.panel_light_theme, "default");
         assert_eq!(response.presets_available.len(), HALLOY_NAMES.len() + 1);
+    }
+
+    #[test]
+    fn panel_theme_names_round_trip_through_response() {
+        let mut theme = ThemeDefaults::default();
+        theme.panel_dark_theme = "Dracula".to_string();
+        theme.panel_light_theme = String::new();
+        let response = build_theme_response(&theme);
+        assert_eq!(response.panel_dark_theme, "Dracula");
+        assert_eq!(response.panel_light_theme, "default");
     }
 
     #[test]
@@ -431,5 +487,46 @@ mod tests {
             translated_theme_colors("missing-nope", "missing-nope"),
             Some(fallback)
         );
+    }
+
+    fn relative_luminance(hex: &str) -> f64 {
+        let channel = |byte: u8| {
+            let c = f64::from(byte) / 255.0;
+            if c <= 0.03928 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        let hex = hex.strip_prefix('#').unwrap_or(hex);
+        let bytes = (0..3)
+            .map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap_or(0))
+            .collect::<Vec<_>>();
+        0.2126 * channel(bytes[0]) + 0.7152 * channel(bytes[1]) + 0.0722 * channel(bytes[2])
+    }
+
+    fn contrast_ratio(a: &str, b: &str) -> f64 {
+        let (x, y) = (relative_luminance(a), relative_luminance(b));
+        (x.max(y) + 0.05) / (x.min(y) + 0.05)
+    }
+
+    /// The panel maps each translated side's `text` onto all three text
+    /// tokens, so every bundled theme must already carry a readable pair.
+    /// A failure here means a Halloy theme whose block pages are also
+    /// low-contrast — fix the translation, not the mapping.
+    #[test]
+    fn translated_text_contrasts_with_background_for_all_bundled_themes() {
+        for name in HALLOY_NAMES {
+            let colors = translated_theme_colors(name, name)
+                .unwrap_or_else(|| panic!("{name} must translate"));
+            assert!(
+                contrast_ratio(&colors.dark_text, &colors.dark_background) >= 4.5,
+                "{name} dark text/background contrast too low"
+            );
+            assert!(
+                contrast_ratio(&colors.light_text, &colors.light_background) >= 4.5,
+                "{name} light text/background contrast too low"
+            );
+        }
     }
 }

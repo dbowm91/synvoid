@@ -299,6 +299,16 @@ pub struct ThemeResponse {
     pub light_theme: String,
     #[serde(default)]
     pub scheme: String,
+    #[serde(default)]
+    pub panel_dark_theme: String,
+    #[serde(default)]
+    pub panel_light_theme: String,
+    /// Translated colors of the admin panel pair (`None` on older
+    /// backends). The panel applies the dark side in dark mode and the
+    /// light side in light mode; a `"default"` pick resolves server-side
+    /// but is ignored client-side so the built-in palette shows.
+    #[serde(default)]
+    pub panel_colors: Option<ThemeColorsResponse>,
     pub allow_only: String,
     pub colors: ThemeColorsResponse,
     pub presets_available: Vec<ThemePresetInfo>,
@@ -316,6 +326,10 @@ pub struct UpdateThemeRequest {
     pub light_theme: Option<String>,
     #[serde(default)]
     pub scheme: Option<String>,
+    #[serde(default)]
+    pub panel_dark_theme: Option<String>,
+    #[serde(default)]
+    pub panel_light_theme: Option<String>,
     #[serde(default)]
     pub allow_only: Option<String>,
 }
@@ -1078,6 +1092,8 @@ mod theme_dual_scheme_tests {
             dark_theme: Some("Nord".to_string()),
             light_theme: Some("Catppuccin Latte".to_string()),
             scheme: Some("system".to_string()),
+            panel_dark_theme: None,
+            panel_light_theme: None,
             allow_only: None,
         };
         let body = serde_json::to_value(&request).expect("request must serialize");

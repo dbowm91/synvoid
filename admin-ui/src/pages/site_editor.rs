@@ -760,6 +760,8 @@ fn ErrorPagesTab(props: &ErrorPagesTabProps) -> Html {
                     dark_theme: None,
                     light_theme: None,
                     scheme: None,
+                    panel_dark_theme: None,
+                    panel_light_theme: None,
                     allow_only: None,
                 };
 
