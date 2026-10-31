@@ -2674,9 +2674,26 @@ fixes on the same pass: post-login redirect to `/` (the shell rendered at
 `/login` with a stale URL), all nine admin `style=` attributes replaced
 (CSSOM hook + SVG presentation attributes; console is CSP-clean), and both
 `srcdoc` theme previews (settings + site editor, whose `<style>` blocks the
-inherited CSP dropped) replaced by an inline component. Gates on the final
-tree: fmt, workspace clippy `-D warnings`, repo-guards 169, admin contract
-69, admin-ui 50.
+inherited CSP dropped) replaced by an inline component. Gates on that tree:
+fmt, workspace clippy `-D warnings`, repo-guards 169, admin contract 69,
+admin-ui 50.
+Panel adoption + error-page regrouping (`5821a62`, `54176bb`, `35dc0aa`,
+`e5a569d`, `c2dfc55`): Settings → Theme is now the admin panel control
+(`panel_dark_theme` / `panel_light_theme` on `[defaults.theme]`,
+`"default"` keeps the built-in palette, Halloy names customize; the panel
+applies the translated side per mode as CSS variables, toggle still purely
+client-side, save re-applies live via a `panel-theme-update` event, and the
+mount fetch is gated on auth so it cannot lose the session race); the block
+dual pickers moved to a new section on the Error Pages page. Root-cause fix
+for invisible hover text: `tailwind.config.js` maps `primary` to
+`var(--bg-primary)`, so Tailwind's generated `hover:text-primary` (sorted
+after the custom correction in the v3 output) painted near-black/off-white
+text — the correction now wins by doubled specificity, guarded by
+`admin_ui_text_tokens_resolve_to_text_vars` (guards now 170). Contrast
+measured over all 50 bundled sides: translated text vs background ≥ 4.5 in
+every case, so the panel mapping reuses the text token for all three text
+levels. Prodtest left at block Gruvbox/Latte/system, panel
+default/default; `[defaults.error_pages]` mode stays `styled`.
 
 01 and 02 independent of each other. Out of scope: panel internal styling,
 custom `themes_dir` override (deferred follow-up), per-site themes,
