@@ -19,7 +19,7 @@ metrics = "0.22"
 # RUSTSEC-2026-0269; 36.0.16 fixes RUSTSEC-2026-0316; LTS supported through
 # 2027-08-20). No git patch: 36 coexists with the workspace bumpalo =3.19.0 pin
 # (see baseline §4).
-wasmtime = { version = "36.0.16", features = ["component-model"] }
+wasmtime = { version = "48.0.5", features = ["component-model"] }
 axum = "0.8"
 base64 = "0.22"
 bytes = "1"
