@@ -1350,6 +1350,14 @@ impl AttackDetector {
         StreamingWafCore::new(self)
     }
 
+    pub(crate) fn max_body_scan_bytes(&self) -> usize {
+        use crate::attack_detection::streaming::DEFAULT_MAX_BUFFERED_BYTES;
+
+        self.config
+            .max_request_body_size
+            .unwrap_or(DEFAULT_MAX_BUFFERED_BYTES)
+    }
+
     pub fn streaming_with_config(
         self: Arc<Self>,
         chunk_size: usize,

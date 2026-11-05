@@ -4,7 +4,7 @@ use crate::attack_detection::{AttackDetectionResult, AttackDetector};
 use synvoid_utils::buffer::pool::{BufferPool, PooledBuf};
 
 const DEFAULT_CHUNK_SIZE: usize = 4096;
-const DEFAULT_MAX_BUFFERED_BYTES: usize = 2 * 1024 * 1024;
+pub(crate) const DEFAULT_MAX_BUFFERED_BYTES: usize = 2 * 1024 * 1024;
 
 const SNIFF_CAP: usize = 512;
 const MAX_BOUNDARY_TOKEN_LEN: usize = 128;
@@ -99,10 +99,11 @@ const TRAILING_WINDOW_SIZE: usize = 512;
 
 impl StreamingWafCore {
     pub fn new(inner: Arc<AttackDetector>) -> Self {
+        let max_buffered_bytes = inner.max_body_scan_bytes();
         Self {
             inner,
             chunk_size: DEFAULT_CHUNK_SIZE,
-            max_buffered_bytes: DEFAULT_MAX_BUFFERED_BYTES,
+            max_buffered_bytes,
             state: StreamingState {
                 chunks_processed: 0,
                 last_result: None,
@@ -1295,6 +1296,75 @@ mod tests {
         assert!(
             matches!(second, StreamingWafDecision::Block(..)),
             "value attacks must still be caught across header splits: {second:?}"
+        );
+    }
+
+    fn big_benign_body(size: usize) -> Vec<u8> {
+        let boundary = "TESTBOUNDARY123";
+        let mut body = multipart_body(boundary, &[("f", None, None, b"")]);
+        body.truncate(body.len() - format!("--{boundary}--\r\n").len());
+        let fill = vec![b'a'; size];
+        body.extend_from_slice(&fill);
+        body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+        body
+    }
+
+    fn scan_all(streaming: &mut StreamingWafCore, body: &[u8]) -> StreamingWafDecision {
+        let mut off = 0;
+        let mut verdict = StreamingWafDecision::Continue;
+        while off < body.len() {
+            let end = (off + 16384).min(body.len());
+            verdict = streaming.scan_chunk(&body[off..end]);
+            if matches!(verdict, StreamingWafDecision::Block(..)) {
+                break;
+            }
+            off = end;
+        }
+        verdict
+    }
+
+    #[test]
+    fn test_body_cap_follows_detector_config() {
+        let mut streaming = multipart_streaming();
+        let body = big_benign_body(3 * 1024 * 1024);
+        let result = scan_all(&mut streaming, &body);
+        assert!(
+            matches!(result, StreamingWafDecision::Continue),
+            "default 10MB cap must admit a 3MB benign body: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_body_cap_respects_small_config() {
+        use crate::attack_detection::{AttackDetectionConfig, AttackDetector};
+
+        let config = AttackDetectionConfig {
+            max_request_body_size: Some(100),
+            ..Default::default()
+        };
+        let mut streaming = StreamingWafCore::new(std::sync::Arc::new(AttackDetector::new(config)));
+        let body = big_benign_body(1024);
+        let result = scan_all(&mut streaming, &body);
+        assert!(
+            matches!(result, StreamingWafDecision::Block(413, _)),
+            "configured cap must still bound the scan: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_body_cap_none_falls_back_to_default() {
+        use crate::attack_detection::{AttackDetectionConfig, AttackDetector};
+
+        let config = AttackDetectionConfig {
+            max_request_body_size: None,
+            ..Default::default()
+        };
+        let mut streaming = StreamingWafCore::new(std::sync::Arc::new(AttackDetector::new(config)));
+        let body = big_benign_body(3 * 1024 * 1024);
+        let result = scan_all(&mut streaming, &body);
+        assert!(
+            matches!(result, StreamingWafDecision::Block(413, _)),
+            "unset cap must fall back to the built-in bound: {result:?}"
         );
     }
 }
