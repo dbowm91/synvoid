@@ -6,6 +6,54 @@ use synvoid_utils::buffer::pool::{BufferPool, PooledBuf};
 const DEFAULT_CHUNK_SIZE: usize = 4096;
 const DEFAULT_MAX_BUFFERED_BYTES: usize = 2 * 1024 * 1024;
 
+const SNIFF_CAP: usize = 512;
+const MAX_BOUNDARY_TOKEN_LEN: usize = 128;
+
+const TEXT_PART_MARKERS: &[&str] = &[
+    "text/",
+    "json",
+    "xml",
+    "svg",
+    "javascript",
+    "ecmascript",
+    "urlencoded",
+    "+xml",
+    "csv",
+    "yaml",
+    "rtf",
+];
+
+const BINARY_PART_MARKERS: &[&str] = &[
+    "image/",
+    "video/",
+    "audio/",
+    "font/",
+    "model/",
+    "octet-stream",
+    "pdf",
+    "zip",
+    "gzip",
+    "x-tar",
+    "x-7z",
+    "x-rar",
+    "x-xz",
+    "x-bzip2",
+    "wasm",
+    "msword",
+    "vnd.",
+    "ogg",
+    "mp4",
+    "mpeg",
+    "quicktime",
+    "x-msvideo",
+    "x-shockwave",
+    "x-msdos",
+    "x-executable",
+    "x-object",
+    "x-sharedlib",
+    "x-archive",
+];
+
 #[derive(Debug, Clone)]
 pub enum StreamingWafDecision {
     Continue,
@@ -35,6 +83,9 @@ struct StreamingState {
     bytes_seen: usize,
     boundary: Option<String>,
     multipart_state: MultipartState,
+    sniff_done: bool,
+    sniff_buf: PooledBuf,
+    file_part_is_text: bool,
     trailing_window: PooledBuf,
     multipart_header_buffer: PooledBuf,
     multipart_field_buffer: PooledBuf,
@@ -55,6 +106,9 @@ impl StreamingWafCore {
                 bytes_seen: 0,
                 boundary: None,
                 multipart_state: MultipartState::None,
+                sniff_done: false,
+                sniff_buf: BufferPool::acquire(0),
+                file_part_is_text: true,
                 trailing_window: BufferPool::acquire(0),
                 multipart_header_buffer: BufferPool::acquire(0),
                 multipart_field_buffer: BufferPool::acquire(0),
@@ -78,6 +132,9 @@ impl StreamingWafCore {
                 bytes_seen: 0,
                 boundary: None,
                 multipart_state: MultipartState::None,
+                sniff_done: false,
+                sniff_buf: BufferPool::acquire(0),
+                file_part_is_text: true,
                 trailing_window: BufferPool::acquire(0),
                 multipart_header_buffer: BufferPool::acquire(0),
                 multipart_field_buffer: BufferPool::acquire(0),
@@ -103,11 +160,181 @@ impl StreamingWafCore {
         self.state.bytes_seen += chunk.len();
         self.state.chunks_processed += 1;
 
+        if self.state.boundary.is_none() && !self.state.sniff_done {
+            return self.resolve_sniff(chunk);
+        }
+
         if self.state.boundary.is_some() {
             self.process_multipart_chunk(chunk)
         } else {
             self.process_regular_chunk(chunk)
         }
+    }
+
+    fn resolve_sniff(&mut self, chunk: &[u8]) -> StreamingWafDecision {
+        let room = SNIFF_CAP.saturating_sub(self.state.sniff_buf.len());
+        let take = room.min(chunk.len());
+        self.state.sniff_buf.extend_from_slice(&chunk[..take]);
+
+        enum SniffDecision {
+            Wait,
+            NotMultipart,
+            MultipartBoundary,
+        }
+
+        let decision = {
+            let buf = self.state.sniff_buf.as_slice();
+            match Self::first_line_end(buf) {
+                Some(pos) => {
+                    if Self::head_is_boundary(&buf[..pos]) {
+                        SniffDecision::MultipartBoundary
+                    } else {
+                        SniffDecision::NotMultipart
+                    }
+                }
+                None => {
+                    let plausible = buf.is_empty()
+                        || buf == b"-"
+                        || (buf.starts_with(b"--") && buf.len() < SNIFF_CAP);
+                    if plausible {
+                        SniffDecision::Wait
+                    } else {
+                        SniffDecision::NotMultipart
+                    }
+                }
+            }
+        };
+
+        match decision {
+            SniffDecision::Wait => StreamingWafDecision::Continue,
+            SniffDecision::NotMultipart => {
+                self.state.sniff_done = true;
+                self.scan_stashed_as_regular(chunk, take)
+            }
+            SniffDecision::MultipartBoundary => {
+                let token = {
+                    let buf = self.state.sniff_buf.as_slice();
+                    let pos = Self::first_line_end(buf).unwrap_or(0);
+                    String::from_utf8_lossy(&buf[2..pos]).into_owned()
+                };
+                self.state.sniff_done = true;
+                self.state.boundary = Some(format!("--{token}"));
+                self.state.multipart_state = MultipartState::LookingForBoundary;
+                let stashed = std::mem::replace(&mut self.state.sniff_buf, BufferPool::acquire(0));
+                let first = self.process_multipart_chunk(stashed.as_slice());
+                if matches!(first, StreamingWafDecision::Block(..)) {
+                    return first;
+                }
+                if take < chunk.len() {
+                    return self.process_multipart_chunk(&chunk[take..]);
+                }
+                first
+            }
+        }
+    }
+
+    fn first_line_end(buf: &[u8]) -> Option<usize> {
+        let mut i = 0;
+        while i + 1 < buf.len() {
+            if buf[i] == b'\r' && buf[i + 1] == b'\n' {
+                return Some(i);
+            }
+            i += 1;
+        }
+        None
+    }
+
+    fn head_is_boundary(line: &[u8]) -> bool {
+        line.len() >= 3
+            && line[0] == b'-'
+            && line[1] == b'-'
+            && Self::valid_boundary_token(&line[2..])
+    }
+
+    fn scan_stashed_as_regular(&mut self, chunk: &[u8], take: usize) -> StreamingWafDecision {
+        let stashed = std::mem::replace(&mut self.state.sniff_buf, BufferPool::acquire(0));
+        let first = self.process_regular_chunk(stashed.as_slice());
+        if matches!(first, StreamingWafDecision::Block(..)) {
+            return first;
+        }
+        if take < chunk.len() {
+            return self.process_regular_chunk(&chunk[take..]);
+        }
+        first
+    }
+
+    fn valid_boundary_token(raw: &[u8]) -> bool {
+        if raw.is_empty() || raw.len() > MAX_BOUNDARY_TOKEN_LEN {
+            return false;
+        }
+        raw.iter().all(|b| {
+            matches!(
+                b,
+                b'A'..=b'Z'
+                    | b'a'..=b'z'
+                    | b'0'..=b'9'
+                    | b'\''
+                    | b'('
+                    | b')'
+                    | b'+'
+                    | b'_'
+                    | b','
+                    | b'-'
+                    | b'.'
+                    | b'/'
+                    | b':'
+                    | b'='
+                    | b'?'
+            )
+        })
+    }
+
+    fn header_param_value(headers: &str, param: &str) -> Option<String> {
+        let needle = format!("{param}=\"");
+        let mut start = 0;
+        while let Some(pos) = headers[start..].find(&needle) {
+            let abs_pos = start + pos;
+            let prev_ok = abs_pos == 0 || {
+                let prev = headers.as_bytes()[abs_pos - 1];
+                !prev.is_ascii_alphanumeric() && prev != b'-' && prev != b'_'
+            };
+            if prev_ok {
+                let val_start = abs_pos + needle.len();
+                if let Some(end) = headers[val_start..].find('"') {
+                    return Some(headers[val_start..val_start + end].to_string());
+                }
+                return None;
+            }
+            start = abs_pos + 1;
+        }
+        None
+    }
+
+    fn part_content_is_text(header_str: &str) -> bool {
+        let mut content_type = None;
+        for line in header_str.split("\r\n") {
+            if let Some(value) = line.strip_prefix("content-type:") {
+                content_type = Some(value.trim());
+                break;
+            }
+        }
+        let content_type = match content_type {
+            Some(ct) => ct,
+            None => return true,
+        };
+        if TEXT_PART_MARKERS
+            .iter()
+            .any(|marker| content_type.contains(marker))
+        {
+            return true;
+        }
+        if BINARY_PART_MARKERS
+            .iter()
+            .any(|marker| content_type.contains(marker))
+        {
+            return false;
+        }
+        true
     }
 
     fn process_regular_chunk(&mut self, chunk: &[u8]) -> StreamingWafDecision {
@@ -236,13 +463,44 @@ impl StreamingWafCore {
                         let header_str =
                             String::from_utf8_lossy(self.state.multipart_header_buffer.as_slice())
                                 .to_lowercase();
-                        if header_str.contains("filename=") {
+                        if header_str.contains("filename=\"") {
                             self.state.multipart_state = MultipartState::SkippingFile;
+                            self.state.file_part_is_text = Self::part_content_is_text(&header_str);
+                            if let Some(filename) =
+                                Self::header_param_value(&header_str, "filename")
+                            {
+                                if let Some(result) =
+                                    self.inner.check_body_fragments(&[filename.as_bytes()])
+                                {
+                                    self.state.last_result = Some(result.clone());
+                                    return StreamingWafDecision::Block(
+                                        result.get_block_status().unwrap_or(403),
+                                        format!(
+                                            "Attack detected in multipart filename: {:?}",
+                                            result.attack_type
+                                        ),
+                                    );
+                                }
+                            }
                         } else {
                             self.state.multipart_state = MultipartState::ReadingField;
                             // Phase 54: empty (not zeroize) before reuse.
                             self.state.multipart_field_buffer.resize(0);
                             self.state.field_trailing_window.resize(0);
+                            if let Some(name) = Self::header_param_value(&header_str, "name") {
+                                if let Some(result) =
+                                    self.inner.check_body_fragments(&[name.as_bytes()])
+                                {
+                                    self.state.last_result = Some(result.clone());
+                                    return StreamingWafDecision::Block(
+                                        result.get_block_status().unwrap_or(403),
+                                        format!(
+                                            "Attack detected in multipart field name: {:?}",
+                                            result.attack_type
+                                        ),
+                                    );
+                                }
+                            }
                         }
                     } else {
                         Self::copy_from_fragments(
@@ -342,7 +600,7 @@ impl StreamingWafCore {
                     {
                         // Scan file content before next boundary (H01)
                         let file_len = pos.saturating_sub(current_pos);
-                        if file_len > 0 {
+                        if file_len > 0 && self.state.file_part_is_text {
                             // Phase 54: empty before filling (see above).
                             let mut file_fragment = BufferPool::acquire(file_len);
                             file_fragment.resize(0);
@@ -372,7 +630,7 @@ impl StreamingWafCore {
                     } else {
                         // No boundary — scan file chunk incrementally (H01)
                         let file_len = total_len - current_pos;
-                        if file_len > 0 {
+                        if file_len > 0 && self.state.file_part_is_text {
                             // Phase 54: empty before filling (see above).
                             let mut file_fragment = BufferPool::acquire(file_len);
                             file_fragment.resize(0);
@@ -508,6 +766,9 @@ impl StreamingWafCore {
         state.bytes_seen = 0;
         state.boundary = None;
         state.multipart_state = MultipartState::None;
+        state.sniff_done = false;
+        state.sniff_buf.resize(0);
+        state.file_part_is_text = true;
         // Phase 54: `reset` must empty the windows (`clear()` only zeroizes
         // in place and keeps length).
         state.trailing_window.resize(0);
@@ -671,6 +932,209 @@ mod tests {
                 .iter()
                 .all(|b| *b == b'a'),
             "trailing window must contain only real trailing bytes"
+        );
+    }
+
+    fn multipart_streaming() -> StreamingWafCore {
+        use crate::attack_detection::AttackDetectionConfig;
+
+        let config = AttackDetectionConfig::default();
+        let detector = AttackDetector::new(config);
+        StreamingWafCore::new(Arc::new(detector))
+    }
+
+    fn multipart_body(
+        boundary: &str,
+        parts: &[(&str, Option<&str>, Option<&str>, &[u8])],
+    ) -> Vec<u8> {
+        let mut body = Vec::new();
+        for (name, filename, content_type, value) in parts {
+            body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
+            match filename {
+                Some(fname) => {
+                    body.extend_from_slice(
+                        format!("Content-Disposition: form-data; name=\"{name}\"; filename=\"{fname}\"\r\n")
+                            .as_bytes(),
+                    );
+                    if let Some(ct) = content_type {
+                        body.extend_from_slice(format!("Content-Type: {ct}\r\n").as_bytes());
+                    }
+                }
+                None => {
+                    body.extend_from_slice(
+                        format!("Content-Disposition: form-data; name=\"{name}\"\r\n").as_bytes(),
+                    );
+                }
+            }
+            body.extend_from_slice(b"\r\n");
+            body.extend_from_slice(value);
+            body.extend_from_slice(b"\r\n");
+        }
+        body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+        body
+    }
+
+    #[test]
+    fn test_multipart_framing_alone_passes() {
+        let mut streaming = multipart_streaming();
+        let body = multipart_body(
+            "TESTBOUNDARY123",
+            &[
+                ("csrf_token", None, None, b"abcdef0123456789"),
+                ("title", None, None, b"A benign post"),
+                ("body", None, None, b"Just some ordinary text."),
+                ("tags", None, None, b"test"),
+            ],
+        );
+        let result = streaming.scan_chunk(&body);
+        assert!(
+            matches!(result, StreamingWafDecision::Continue),
+            "benign multipart framing must not match body patterns: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_multipart_binary_file_bytes_skipped() {
+        let mut streaming = multipart_streaming();
+        let mut binary = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+        binary.extend_from_slice(b"\x24\x7b\x7d\x7d\x23\x7b\x25\x7dname=\x25\x3e");
+        binary.extend_from_slice(&[0xff, 0xd8, 0x00, 0x10, 0x4a, 0x46]);
+        let body = multipart_body(
+            "TESTBOUNDARY123",
+            &[
+                ("csrf_token", None, None, b"abcdef0123456789"),
+                ("image", Some("photo.png"), Some("image/png"), &binary),
+            ],
+        );
+        let result = streaming.scan_chunk(&body);
+        assert!(
+            matches!(result, StreamingWafDecision::Continue),
+            "binary file bytes must not match text patterns: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_multipart_text_file_still_scanned() {
+        let mut streaming = multipart_streaming();
+        let body = multipart_body(
+            "TESTBOUNDARY123",
+            &[(
+                "image",
+                Some("evil.svg"),
+                Some("image/svg+xml"),
+                b"<svg><script>alert(1)</script></svg>",
+            )],
+        );
+        let result = streaming.scan_chunk(&body);
+        assert!(
+            matches!(result, StreamingWafDecision::Block(..)),
+            "text file parts must still be scanned: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_multipart_field_value_still_scanned() {
+        let mut streaming = multipart_streaming();
+        let body = multipart_body(
+            "TESTBOUNDARY123",
+            &[("body", None, None, b"hello {{7*7}} world")],
+        );
+        let result = streaming.scan_chunk(&body);
+        assert!(
+            matches!(result, StreamingWafDecision::Block(..)),
+            "text field values must still be scanned: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_multipart_filename_scanned() {
+        let mut streaming = multipart_streaming();
+        let body = multipart_body(
+            "TESTBOUNDARY123",
+            &[(
+                "image",
+                Some("../../etc/passwd"),
+                Some("image/png"),
+                b"fake-bytes",
+            )],
+        );
+        let result = streaming.scan_chunk(&body);
+        assert!(
+            matches!(result, StreamingWafDecision::Block(..)),
+            "filenames must still be scanned: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_multipart_evil_field_name_blocked() {
+        let mut streaming = multipart_streaming();
+        let body = multipart_body(
+            "TESTBOUNDARY123",
+            &[("{{7*7}}", None, None, b"benign value")],
+        );
+        let result = streaming.scan_chunk(&body);
+        assert!(
+            matches!(result, StreamingWafDecision::Block(..)),
+            "attacker-controlled field names must still be scanned: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_multipart_split_chunks_pass() {
+        let body = multipart_body(
+            "TESTBOUNDARY123",
+            &[
+                ("csrf_token", None, None, b"abcdef0123456789"),
+                ("title", None, None, b"A benign post"),
+                ("body", None, None, b"Just some ordinary text."),
+            ],
+        );
+        for split in [1, 2, 3, 7, 13, 29, 64] {
+            let mut streaming = multipart_streaming();
+            let mut pos = 0;
+            let mut blocked = false;
+            while pos < body.len() {
+                let end = (pos + split).min(body.len());
+                if matches!(
+                    streaming.scan_chunk(&body[pos..end]),
+                    StreamingWafDecision::Block(..)
+                ) {
+                    blocked = true;
+                    break;
+                }
+                pos = end;
+            }
+            assert!(!blocked, "benign multipart must pass at split {split}");
+        }
+    }
+
+    #[test]
+    fn test_sniff_fallback_scans_non_multipart() {
+        let mut streaming = multipart_streaming();
+        let result = streaming.scan_chunk(b"just some plain text");
+        assert!(
+            matches!(result, StreamingWafDecision::Continue),
+            "benign non-multipart bodies pass: {result:?}"
+        );
+        let mut streaming = multipart_streaming();
+        let result = streaming.scan_chunk(b"-- not multipart at all\r\nmore text");
+        assert!(
+            matches!(result, StreamingWafDecision::Block(..)),
+            "rejected sniff input still gets a regular scan: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_sniff_deferred_first_line() {
+        let mut streaming = multipart_streaming();
+        let first = streaming.scan_chunk(b"--TESTBOUND");
+        assert!(matches!(first, StreamingWafDecision::Continue));
+        let body = multipart_body("TESTBOUNDARY123", &[("a", None, None, b"b")]);
+        let rest_start = b"--TESTBOUND".len();
+        let second = streaming.scan_chunk(&body[rest_start..]);
+        assert!(
+            matches!(second, StreamingWafDecision::Continue),
+            "split boundary head must still parse: {second:?}"
         );
     }
 }
