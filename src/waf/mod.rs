@@ -647,6 +647,16 @@ impl WafCore {
                 ) {
                     return None;
                 }
+                if site_attack_config::attack_log_only_for_path(path, site_attack_config) {
+                    tracing::warn!(
+                        ip = %ip,
+                        attack_type = ?res.attack_type,
+                        location = %res.input_location,
+                        path = %path,
+                        "attack-pattern match allowed by per-path log-only policy"
+                    );
+                    return None;
+                }
                 tracing::info!(
                     "Attack detected from {}: {:?} (score: {}) at {}",
                     ip,
@@ -1003,6 +1013,20 @@ impl synvoid_http::RequestBodyWaf for WafCore {
     fn streaming(&self) -> Option<Box<dyn synvoid_http::shared_handler::StreamingWafScanner>> {
         WafCore::streaming(self)
             .map(|s| Box::new(s) as Box<dyn synvoid_http::shared_handler::StreamingWafScanner>)
+    }
+
+    fn streaming_for_path(
+        &self,
+        path: &str,
+        site_attack_config: Option<&crate::config::site::SiteAttackDetectionConfig>,
+    ) -> Option<Box<dyn synvoid_http::shared_handler::StreamingWafScanner>> {
+        WafCore::streaming(self).map(|mut core| {
+            core.set_log_only(site_attack_config::attack_log_only_for_path(
+                path,
+                site_attack_config,
+            ));
+            Box::new(core) as Box<dyn synvoid_http::shared_handler::StreamingWafScanner>
+        })
     }
 
     fn check_request_body(&self, chunk: &[u8]) -> (bool, Option<synvoid_waf::WafDecision>) {

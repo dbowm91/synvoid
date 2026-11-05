@@ -30,8 +30,8 @@ mod upload;
 
 pub use app_server::SiteAppServerConfig;
 pub use attack_detection::{
-    SiteAttackDetectionConfig, SitePathTraversalConfig, SiteRfiConfig, SiteSqliConfig,
-    SiteSsrfConfig, SiteXssConfig,
+    SiteAttackDetectionConfig, SiteAttackPathRule, SitePathTraversalConfig, SiteRfiConfig,
+    SiteSqliConfig, SiteSsrfConfig, SiteXssConfig,
 };
 pub use backend::{
     BackendConfig, CgiConfig, CgiLocationConfig, FastCgiConfig, FastCgiLocationConfig,

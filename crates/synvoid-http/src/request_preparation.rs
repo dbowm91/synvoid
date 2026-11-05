@@ -351,6 +351,8 @@ where
         client_ip,
         content_length,
         http_config.max_streaming_body_size,
+        &path,
+        Some(&target.site_config.attack_detection),
     )
     .await
     {

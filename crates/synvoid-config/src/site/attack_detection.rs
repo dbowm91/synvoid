@@ -41,6 +41,13 @@ pub struct SiteSsrfConfig {
     pub allowed_domains: Vec<String>,
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
+pub struct SiteAttackPathRule {
+    pub path_prefix: String,
+    #[serde(default)]
+    pub action: Option<String>,
+}
+
 fn default_attack_detection_enabled() -> Option<bool> {
     Some(true)
 }
@@ -63,6 +70,8 @@ pub struct SiteAttackDetectionConfig {
     pub rfi: SiteRfiConfig,
     #[serde(default)]
     pub ssrf: SiteSsrfConfig,
+    #[serde(default)]
+    pub per_path: Vec<SiteAttackPathRule>,
 }
 
 impl SiteAttackDetectionConfig {
@@ -86,6 +95,70 @@ impl SiteAttackDetectionConfig {
                 });
             }
         }
+        for (index, rule) in self.per_path.iter().enumerate() {
+            if !rule.path_prefix.starts_with('/') {
+                return Err(crate::validation::ConfigValidationError {
+                    field: format!("attack_detection.per_path[{index}].path_prefix"),
+                    message: "Path prefix must start with '/'".to_string(),
+                });
+            }
+            match rule.action.as_deref() {
+                Some("block") | Some("log") => {}
+                _ => {
+                    return Err(crate::validation::ConfigValidationError {
+                        field: format!("attack_detection.per_path[{index}].action"),
+                        message: "Action must be 'block' or 'log'".to_string(),
+                    });
+                }
+            }
+        }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rule(prefix: &str, action: Option<&str>) -> SiteAttackPathRule {
+        SiteAttackPathRule {
+            path_prefix: prefix.to_string(),
+            action: action.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn per_path_defaults_to_empty_and_valid() {
+        let config = SiteAttackDetectionConfig::default();
+        assert!(config.per_path.is_empty());
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn per_path_accepts_log_rule() {
+        let mut config = SiteAttackDetectionConfig::default();
+        config.per_path = vec![rule("/admin/", Some("log"))];
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn per_path_rejects_relative_prefix() {
+        let mut config = SiteAttackDetectionConfig::default();
+        config.per_path = vec![rule("admin/", Some("log"))];
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn per_path_rejects_unknown_action() {
+        let mut config = SiteAttackDetectionConfig::default();
+        config.per_path = vec![rule("/admin/", Some("stall"))];
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn per_path_rejects_missing_action() {
+        let mut config = SiteAttackDetectionConfig::default();
+        config.per_path = vec![rule("/admin/", None)];
+        assert!(config.validate().is_err());
     }
 }

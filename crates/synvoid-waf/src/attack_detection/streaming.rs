@@ -87,6 +87,8 @@ struct StreamingState {
     sniff_buf: PooledBuf,
     file_part_is_text: bool,
     value_region_start: Option<usize>,
+    log_only: bool,
+    log_only_allowed: bool,
     trailing_window: PooledBuf,
     multipart_header_buffer: PooledBuf,
     multipart_field_buffer: PooledBuf,
@@ -111,6 +113,8 @@ impl StreamingWafCore {
                 sniff_buf: BufferPool::acquire(0),
                 file_part_is_text: true,
                 value_region_start: None,
+                log_only: false,
+                log_only_allowed: false,
                 trailing_window: BufferPool::acquire(0),
                 multipart_header_buffer: BufferPool::acquire(0),
                 multipart_field_buffer: BufferPool::acquire(0),
@@ -138,6 +142,8 @@ impl StreamingWafCore {
                 sniff_buf: BufferPool::acquire(0),
                 file_part_is_text: true,
                 value_region_start: None,
+                log_only: false,
+                log_only_allowed: false,
                 trailing_window: BufferPool::acquire(0),
                 multipart_header_buffer: BufferPool::acquire(0),
                 multipart_field_buffer: BufferPool::acquire(0),
@@ -152,6 +158,10 @@ impl StreamingWafCore {
         state.multipart_state = MultipartState::LookingForBoundary;
     }
 
+    pub fn set_log_only(&mut self, log_only: bool) {
+        self.state.log_only = log_only;
+    }
+
     pub fn scan_chunk(&mut self, chunk: &[u8]) -> StreamingWafDecision {
         if self.state.bytes_seen.saturating_add(chunk.len()) > self.max_buffered_bytes {
             return StreamingWafDecision::Block(
@@ -163,14 +173,37 @@ impl StreamingWafCore {
         self.state.bytes_seen += chunk.len();
         self.state.chunks_processed += 1;
 
-        if self.state.boundary.is_none() && !self.state.sniff_done {
-            return self.resolve_sniff(chunk);
+        if self.state.log_only_allowed {
+            return StreamingWafDecision::Continue;
         }
 
-        if self.state.boundary.is_some() {
+        if self.state.boundary.is_none() && !self.state.sniff_done {
+            let decision = self.resolve_sniff(chunk);
+            return self.apply_log_only(decision);
+        }
+
+        let decision = if self.state.boundary.is_some() {
             self.process_multipart_chunk(chunk)
         } else {
             self.process_regular_chunk(chunk)
+        };
+        self.apply_log_only(decision)
+    }
+
+    fn apply_log_only(&mut self, decision: StreamingWafDecision) -> StreamingWafDecision {
+        match decision {
+            StreamingWafDecision::Block(413, _) => decision,
+            StreamingWafDecision::Block(status, reason) if self.state.log_only => {
+                self.state.last_result = None;
+                self.state.log_only_allowed = true;
+                tracing::warn!(
+                    status = status,
+                    reason = %reason,
+                    "attack-pattern match allowed by per-path log-only policy"
+                );
+                StreamingWafDecision::Continue
+            }
+            _ => decision,
         }
     }
 
@@ -781,6 +814,7 @@ impl StreamingWafCore {
         state.sniff_buf.resize(0);
         state.file_part_is_text = true;
         state.value_region_start = None;
+        state.log_only_allowed = false;
         // Phase 54: `reset` must empty the windows (`clear()` only zeroizes
         // in place and keeps length).
         state.trailing_window.resize(0);
@@ -1186,6 +1220,60 @@ mod tests {
                 "framing bytes must never be scanned as values (split {split}): {second:?}"
             );
         }
+    }
+
+    #[test]
+    fn test_log_only_allows_attack_body() {
+        let mut streaming = multipart_streaming();
+        streaming.set_log_only(true);
+        let body = multipart_body(
+            "TESTBOUNDARY123",
+            &[
+                ("title", None, None, b"look at this {{7*7}} page=2"),
+                (
+                    "image",
+                    Some("photo.png"),
+                    Some("image/png"),
+                    b"\x89PNG\r\n${evil} name=",
+                ),
+            ],
+        );
+        let result = streaming.scan_chunk(&body);
+        assert!(
+            matches!(result, StreamingWafDecision::Continue),
+            "log-only must allow attack-pattern bodies: {result:?}"
+        );
+        assert!(streaming.state.log_only_allowed);
+        let again = streaming.scan_chunk(b"{{7*7}} ${evil}");
+        assert!(
+            matches!(again, StreamingWafDecision::Continue),
+            "log-only skips further scans after first downgrade: {again:?}"
+        );
+    }
+
+    #[test]
+    fn test_log_only_keeps_size_limit() {
+        let mut streaming = multipart_streaming();
+        streaming.set_log_only(true);
+        streaming.max_buffered_bytes = 12;
+        streaming.scan_chunk(b"chunk1");
+        streaming.scan_chunk(b"chunk2");
+        let result = streaming.scan_chunk(b"chunk3");
+        assert!(
+            matches!(result, StreamingWafDecision::Block(413, _)),
+            "log-only must keep the byte-limit block: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_log_only_off_blocks() {
+        let mut streaming = multipart_streaming();
+        let body = multipart_body(
+            "TESTBOUNDARY123",
+            &[("body", None, None, b"hello {{7*7}} world")],
+        );
+        let result = streaming.scan_chunk(&body);
+        assert!(matches!(result, StreamingWafDecision::Block(..)));
     }
 
     #[test]

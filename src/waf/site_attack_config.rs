@@ -60,6 +60,29 @@ pub fn attack_type_enabled(
     }
 }
 
+pub fn attack_log_only_for_path(
+    path: &str,
+    site: Option<&SiteAttackDetectionConfig>,
+) -> bool {
+    let site = match site {
+        Some(site) => site,
+        None => return false,
+    };
+    let mut best_action: Option<&str> = None;
+    let mut best_len = 0;
+    for rule in &site.per_path {
+        let prefix = rule.path_prefix.as_str();
+        let matches = path == prefix
+            || (path.starts_with(prefix)
+                && (prefix.ends_with('/') || path.as_bytes().get(prefix.len()) == Some(&b'/')));
+        if matches && prefix.len() >= best_len {
+            best_len = prefix.len();
+            best_action = rule.action.as_deref();
+        }
+    }
+    matches!(best_action, Some("log"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -77,6 +100,7 @@ mod tests {
                 custom_patterns: Vec::new(),
             },
             ssrf: Default::default(),
+            per_path: Vec::new(),
         }
     }
 
@@ -126,5 +150,51 @@ mod tests {
         let mut buf_default = [AttackType::Sqli; 5];
         let default_site = SiteAttackDetectionConfig::default();
         assert!(site_disabled_list(Some(&default_site), &global, &mut buf_default).is_empty());
+    }
+
+    fn site_with_per_path(rules: &[(&str, &str)]) -> SiteAttackDetectionConfig {
+        use crate::config::site::SiteAttackPathRule;
+
+        let mut site = SiteAttackDetectionConfig::default();
+        site.per_path = rules
+            .iter()
+            .map(|(prefix, action)| SiteAttackPathRule {
+                path_prefix: (*prefix).to_string(),
+                action: Some((*action).to_string()),
+            })
+            .collect();
+        site
+    }
+
+    #[test]
+    fn per_path_defaults_to_block() {
+        let site = SiteAttackDetectionConfig::default();
+        assert!(!attack_log_only_for_path("/admin/new", Some(&site)));
+        assert!(!attack_log_only_for_path("/admin/new", None));
+    }
+
+    #[test]
+    fn per_path_prefix_match_is_segment_aware() {
+        let site = site_with_per_path(&[("/admin/", "log")]);
+        let site = Some(&site);
+        assert!(attack_log_only_for_path("/admin/", site));
+        assert!(attack_log_only_for_path("/admin/new", site));
+        assert!(attack_log_only_for_path("/admin/posts/1", site));
+        assert!(!attack_log_only_for_path("/administrator", site));
+        assert!(!attack_log_only_for_path("/public", site));
+
+        let bare = site_with_per_path(&[("/admin", "log")]);
+        let bare = Some(&bare);
+        assert!(attack_log_only_for_path("/admin", bare));
+        assert!(attack_log_only_for_path("/admin/new", bare));
+        assert!(!attack_log_only_for_path("/administrator", bare));
+    }
+
+    #[test]
+    fn per_path_longest_prefix_wins() {
+        let site = site_with_per_path(&[("/admin/", "log"), ("/admin/login", "block")]);
+        let site = Some(&site);
+        assert!(attack_log_only_for_path("/admin/new", site));
+        assert!(!attack_log_only_for_path("/admin/login", site));
     }
 }

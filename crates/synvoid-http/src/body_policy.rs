@@ -53,6 +53,13 @@ impl BodyPolicyError {
 
 pub trait RequestBodyWaf {
     fn streaming(&self) -> Option<Box<dyn crate::shared_handler::StreamingWafScanner>>;
+    fn streaming_for_path(
+        &self,
+        _path: &str,
+        _site_attack_config: Option<&synvoid_config::site::SiteAttackDetectionConfig>,
+    ) -> Option<Box<dyn crate::shared_handler::StreamingWafScanner>> {
+        self.streaming()
+    }
     fn check_request_body(&self, chunk: &[u8]) -> (bool, Option<synvoid_waf::WafDecision>);
 }
 
@@ -66,6 +73,8 @@ pub async fn collect_and_scan_request_body<W>(
     client_ip: IpAddr,
     content_length: Option<usize>,
     max_streaming_body_size: usize,
+    path: &str,
+    site_attack_config: Option<&synvoid_config::site::SiteAttackDetectionConfig>,
 ) -> Result<(Bytes, u64), BodyPolicyError>
 where
     W: RequestBodyWaf,
@@ -75,7 +84,7 @@ where
         if cl > CHUNK_WAF_THRESHOLD {
             match collect_body_with_chunk_waf(
                 body,
-                waf.streaming(),
+                waf.streaming_for_path(path, site_attack_config),
                 client_ip,
                 BodyCollectionProtocol::Http,
                 Some(&mut request_body_size),
@@ -103,7 +112,7 @@ where
     } else {
         match collect_body_with_chunk_waf(
             body,
-            waf.streaming(),
+            waf.streaming_for_path(path, site_attack_config),
             client_ip,
             BodyCollectionProtocol::Http,
             Some(&mut request_body_size),
