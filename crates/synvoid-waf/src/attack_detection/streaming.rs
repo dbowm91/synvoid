@@ -86,6 +86,7 @@ struct StreamingState {
     sniff_done: bool,
     sniff_buf: PooledBuf,
     file_part_is_text: bool,
+    value_region_start: Option<usize>,
     trailing_window: PooledBuf,
     multipart_header_buffer: PooledBuf,
     multipart_field_buffer: PooledBuf,
@@ -109,6 +110,7 @@ impl StreamingWafCore {
                 sniff_done: false,
                 sniff_buf: BufferPool::acquire(0),
                 file_part_is_text: true,
+                value_region_start: None,
                 trailing_window: BufferPool::acquire(0),
                 multipart_header_buffer: BufferPool::acquire(0),
                 multipart_field_buffer: BufferPool::acquire(0),
@@ -135,6 +137,7 @@ impl StreamingWafCore {
                 sniff_done: false,
                 sniff_buf: BufferPool::acquire(0),
                 file_part_is_text: true,
+                value_region_start: None,
                 trailing_window: BufferPool::acquire(0),
                 multipart_header_buffer: BufferPool::acquire(0),
                 multipart_field_buffer: BufferPool::acquire(0),
@@ -379,6 +382,7 @@ impl StreamingWafCore {
         let combined_view = [trailing_slice, chunk];
         let total_len = combined_view[0].len() + combined_view[1].len();
         let mut current_pos = 0;
+        self.state.value_region_start = None;
 
         while current_pos < total_len {
             match self.state.multipart_state {
@@ -459,6 +463,7 @@ impl StreamingWafCore {
                             header_len,
                         );
                         current_pos = pos + 4;
+                        self.state.value_region_start = Some(current_pos);
 
                         let header_str =
                             String::from_utf8_lossy(self.state.multipart_header_buffer.as_slice())
@@ -664,7 +669,13 @@ impl StreamingWafCore {
         }
 
         let window_size = boundary.len() + 4;
-        let window_start = total_len.saturating_sub(window_size);
+        let mut window_start = total_len.saturating_sub(window_size);
+        if matches!(
+            self.state.multipart_state,
+            MultipartState::ReadingField | MultipartState::SkippingFile
+        ) {
+            window_start = window_start.max(self.state.value_region_start.unwrap_or(0));
+        }
         let window_len = total_len - window_start;
 
         let mut temp_buf = BufferPool::acquire(window_len);
@@ -769,6 +780,7 @@ impl StreamingWafCore {
         state.sniff_done = false;
         state.sniff_buf.resize(0);
         state.file_part_is_text = true;
+        state.value_region_start = None;
         // Phase 54: `reset` must empty the windows (`clear()` only zeroizes
         // in place and keeps length).
         state.trailing_window.resize(0);
@@ -1135,6 +1147,66 @@ mod tests {
         assert!(
             matches!(second, StreamingWafDecision::Continue),
             "split boundary head must still parse: {second:?}"
+        );
+    }
+
+    #[test]
+    fn test_multipart_split_after_headers_passes() {
+        let body = multipart_body(
+            "TESTBOUNDARY123",
+            &[
+                ("csrf_token", None, None, b"abcdef0123456789"),
+                ("title", None, None, b"A benign post"),
+                ("body", None, None, b"Just some ordinary text."),
+            ],
+        );
+        let raw = String::from_utf8_lossy(&body);
+        let mut offsets = Vec::new();
+        let mut search_from = 0;
+        while let Some(rel) = raw[search_from..].find("\r\n\r\n") {
+            let header_end = search_from + rel + 4;
+            for k in 0..=48 {
+                if header_end + k < body.len() {
+                    offsets.push(header_end + k);
+                }
+            }
+            search_from = header_end;
+        }
+        assert!(!offsets.is_empty());
+        for split in offsets {
+            let mut streaming = multipart_streaming();
+            let first = streaming.scan_chunk(&body[..split]);
+            assert!(
+                matches!(first, StreamingWafDecision::Continue),
+                "head must pass at split {split}: {first:?}"
+            );
+            let second = streaming.scan_chunk(&body[split..]);
+            assert!(
+                matches!(second, StreamingWafDecision::Continue),
+                "framing bytes must never be scanned as values (split {split}): {second:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_multipart_value_attack_after_header_split_blocked() {
+        let body = multipart_body(
+            "TESTBOUNDARY123",
+            &[
+                ("csrf_token", None, None, b"abcdef0123456789"),
+                ("body", None, None, b"prefix {{7*7}} suffix"),
+            ],
+        );
+        let raw = String::from_utf8_lossy(&body);
+        let header_end = raw.find("\r\n\r\n").unwrap() + 4;
+        let split = header_end + 3;
+        let mut streaming = multipart_streaming();
+        let first = streaming.scan_chunk(&body[..split]);
+        assert!(matches!(first, StreamingWafDecision::Continue));
+        let second = streaming.scan_chunk(&body[split..]);
+        assert!(
+            matches!(second, StreamingWafDecision::Block(..)),
+            "value attacks must still be caught across header splits: {second:?}"
         );
     }
 }
