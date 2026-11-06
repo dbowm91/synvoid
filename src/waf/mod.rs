@@ -455,10 +455,9 @@ impl WafCore {
 
         // Stage 2: challenge/bot/rate/flood candidates.
         best = fold_outcome(best, self.check_honeypot(ip, path, method, ua));
-        best = fold_outcome(
-            best,
-            self.check_bot_protection(ip, path, ua, ja4_hash, site_bot_config),
-        );
+        let (bot_outcome, bot_allowlisted) =
+            self.check_bot_protection(ip, path, ua, ja4_hash, site_bot_config);
+        best = fold_outcome(best, bot_outcome);
         best = fold_outcome(best, self.check_flood(ip));
 
         // Stage 3: expensive attack inspection (skipped on interim Drop/Block).
@@ -472,11 +471,27 @@ impl WafCore {
                 )
         );
         if !interim_is_denied {
-            best = fold_outcome(
-                best,
-                self.check_attack(ip, method, path, query, headers, body, site_attack_config)
-                    .await,
-            );
+            // An explicitly allowlisted client identifies itself in
+            // User-Agent by definition; mining that self-identification
+            // string for redirect targets is pure false-positive surface
+            // (every preview crawler ships a documentation URL in its UA).
+            // Path, query and body scanning stay fully active, so a spoofed
+            // crawler UA carrying a real attack payload still blocks.
+            if bot_allowlisted {
+                let mut filtered = headers.clone();
+                filtered.remove(http::header::USER_AGENT);
+                best = fold_outcome(
+                    best,
+                    self.check_attack(ip, method, path, query, &filtered, body, site_attack_config)
+                        .await,
+                );
+            } else {
+                best = fold_outcome(
+                    best,
+                    self.check_attack(ip, method, path, query, headers, body, site_attack_config)
+                        .await,
+                );
+            }
         }
 
         // Stage 5: deterministic reduction already folded above; observe.
@@ -738,7 +753,7 @@ impl WafCore {
         user_agent: Option<&str>,
         ja4_hash: Option<&str>,
         site_bot_config: Option<&crate::config::site::SiteBotConfig>,
-    ) -> Option<StagedOutcome> {
+    ) -> (Option<StagedOutcome>, bool) {
         let block_ai = site_bot_config.and_then(|c| c.block_ai_crawlers);
 
         // Use full fingerprinting check (JA3 is None here, JA4 is passed)
@@ -759,10 +774,13 @@ impl WafCore {
                     ja4_hash
                 );
                 crate::metrics::record_attack_type("Bots");
-                Some(StagedOutcome::new(
-                    WafDecision::Block(403, "Forbidden".to_string()),
-                    candidate.expect("blocked bot must yield a candidate"),
-                ))
+                (
+                    Some(StagedOutcome::new(
+                        WafDecision::Block(403, "Forbidden".to_string()),
+                        candidate.expect("blocked bot must yield a candidate"),
+                    )),
+                    false,
+                )
             }
             BotDetectionResult::Tarpit { reason, .. } => {
                 tracing::info!(
@@ -772,12 +790,15 @@ impl WafCore {
                     user_agent,
                     ja4_hash
                 );
-                Some(StagedOutcome::new(
-                    WafDecision::Tarpit(path.to_string()),
-                    candidate.expect("tarpitted scraper must yield a candidate"),
-                ))
+                (
+                    Some(StagedOutcome::new(
+                        WafDecision::Tarpit(path.to_string()),
+                        candidate.expect("tarpitted scraper must yield a candidate"),
+                    )),
+                    false,
+                )
             }
-            BotDetectionResult::Allowed { .. } => {
+            BotDetectionResult::Allowed { reason } => {
                 // Suspicious if it's a known automated tool but not explicitly blocked
                 let is_automated = user_agent.is_some_and(|ua| {
                     let ua_lower = ua.to_lowercase();
@@ -797,30 +818,38 @@ impl WafCore {
                         EnforcementReason::ChallengeRequired,
                     );
                     if let Some(sid) = session_id {
-                        return Some(StagedOutcome::new(
-                            WafDecision::ChallengeWithCookie {
-                                challenge_type: self.challenge_manager.get_challenge_type(),
-                                html,
-                                session_cookie_name: self
-                                    .challenge_manager
-                                    .css_session_cookie_name(),
-                                session_cookie_value: sid,
-                                session_cookie_max_age: self.challenge_manager.css_window_secs(),
-                            },
-                            candidate,
-                        ));
+                        return (
+                            Some(StagedOutcome::new(
+                                WafDecision::ChallengeWithCookie {
+                                    challenge_type: self.challenge_manager.get_challenge_type(),
+                                    html,
+                                    session_cookie_name: self
+                                        .challenge_manager
+                                        .css_session_cookie_name(),
+                                    session_cookie_value: sid,
+                                    session_cookie_max_age: self
+                                        .challenge_manager
+                                        .css_window_secs(),
+                                },
+                                candidate,
+                            )),
+                            false,
+                        );
                     } else {
-                        return Some(StagedOutcome::new(
-                            WafDecision::Challenge(
-                                self.challenge_manager.get_challenge_type(),
-                                html,
-                            ),
-                            candidate,
-                        ));
+                        return (
+                            Some(StagedOutcome::new(
+                                WafDecision::Challenge(
+                                    self.challenge_manager.get_challenge_type(),
+                                    html,
+                                ),
+                                candidate,
+                            )),
+                            false,
+                        );
                     }
                 }
 
-                None
+                (None, reason == "known_search_bot")
             }
         }
     }
@@ -1271,6 +1300,80 @@ mod enforcement_pipeline_tests {
 
     fn headers() -> http::HeaderMap {
         http::HeaderMap::new()
+    }
+
+    const FB_UA: &str = "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)";
+
+    fn headers_with_ua(ua: &str) -> http::HeaderMap {
+        let mut headers = http::HeaderMap::new();
+        headers.insert(
+            http::header::USER_AGENT,
+            ua.parse().expect("test UA must parse"),
+        );
+        headers
+    }
+
+    #[tokio::test]
+    async fn allowlisted_bot_ua_with_url_passes_attack_stage() {
+        // Every preview crawler ships a documentation URL in its UA; the
+        // open-redirect detector mines it and blocks. An explicitly
+        // allowlisted client must not be mined for redirect targets in its
+        // self-identification string.
+        let mut core = test_waf_core(permissive_ip_rate());
+        core.bot_detector = BotDetector::new(
+            vec!["facebookexternalhit".to_string()],
+            Vec::new(),
+            Vec::new(),
+            false,
+        );
+        let decision = core
+            .check_request_full(
+                None,
+                TEST_IP,
+                "GET",
+                "/static/uploads/abc123.jpeg",
+                None,
+                &headers_with_ua(FB_UA),
+                None,
+                Some(FB_UA),
+                None,
+                None,
+                None,
+                None,
+            )
+            .await;
+        assert!(
+            matches!(decision, WafDecision::Pass),
+            "allowlisted crawler UA must pass, got {decision:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn non_allowlisted_ua_with_url_still_blocks() {
+        // Same URL-bearing UA shape without an allowlist entry must still
+        // block: path/query/body scanning is untouched by the exemption.
+        let core = test_waf_core(permissive_ip_rate());
+        let ua = "Mozilla/5.0 (compatible; EvilClient/1.0; +http://evil.example/)";
+        let decision = core
+            .check_request_full(
+                None,
+                TEST_IP,
+                "GET",
+                "/static/uploads/abc123.jpeg",
+                None,
+                &headers_with_ua(ua),
+                None,
+                Some(ua),
+                None,
+                None,
+                None,
+                None,
+            )
+            .await;
+        assert!(
+            matches!(decision, WafDecision::Block(403, _)),
+            "non-allowlisted UA with URL must block, got {decision:?}"
+        );
     }
 
     #[test]
