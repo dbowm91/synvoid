@@ -357,6 +357,19 @@ fn default_known_bots_allow() -> Vec<String> {
         "bingbot".to_string(),
         "yandex".to_string(),
         "duckduckbot".to_string(),
+        // Link-preview fetchers: they retrieve og:image/thumbnails when a
+        // user shares a link. Blocking them breaks shared-link images while
+        // stopping no real abuse.
+        "facebookexternalhit".to_string(),
+        "twitterbot".to_string(),
+        "slackbot".to_string(),
+        "linkedinbot".to_string(),
+        "whatsapp".to_string(),
+        "discordbot".to_string(),
+        "telegrambot".to_string(),
+        // Sogou Mobile Browser is a real phone browser. Only its browser
+        // token is allowed: the "sogou" crawler family stays blocked.
+        "sogoumobilebrowser".to_string(),
     ]
 }
 

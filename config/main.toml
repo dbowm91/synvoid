@@ -199,6 +199,17 @@ known_bots_allow = [
     "bingbot",
     "yandex",
     "duckduckbot",
+    # Link-preview fetchers (og:image/thumbnails for shared links).
+    "facebookexternalhit",
+    "twitterbot",
+    "slackbot",
+    "linkedinbot",
+    "whatsapp",
+    "discordbot",
+    "telegrambot",
+    # Sogou Mobile Browser (browser token only; the sogou crawler family
+    # stays blocked).
+    "sogoumobilebrowser",
 ]
 
 ai_crawlers_block = [
