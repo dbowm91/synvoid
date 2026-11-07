@@ -182,6 +182,13 @@ pub(crate) fn is_host(location: &InputLocation) -> bool {
         .is_some_and(|n| n.eq_ignore_ascii_case("host"))
 }
 
+pub(crate) fn is_content_negotiation_header(name: &str) -> bool {
+    name.eq_ignore_ascii_case("accept")
+        || name.eq_ignore_ascii_case("accept-encoding")
+        || name.eq_ignore_ascii_case("accept-language")
+        || name.eq_ignore_ascii_case("accept-charset")
+}
+
 pub fn detect_in_headers<F>(
     headers: &http::HeaderMap,
     mut check_header: F,

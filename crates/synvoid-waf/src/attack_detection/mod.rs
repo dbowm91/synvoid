@@ -23,6 +23,7 @@ pub mod xxe;
 use std::sync::Arc;
 
 use crate::attack_detection::behavioral::BehavioralEngine;
+use crate::attack_detection::detector_common::is_content_negotiation_header;
 use crate::attack_detection::normalizer::{InputNormalizer, NormalizationFlags, NormalizedInputs};
 
 pub use cmd_injection::CmdInjectionDetector;
@@ -667,6 +668,9 @@ impl AttackDetector {
         }
 
         for (name, value) in &inputs.headers {
+            if is_content_negotiation_header(name) {
+                continue;
+            }
             if let Some(result) = detector.detect_normalized(value, InputLocation::header(name)) {
                 return Some(result);
             }
@@ -695,6 +699,9 @@ impl AttackDetector {
         }
 
         for (name, raw) in &inputs.headers_raw {
+            if is_content_negotiation_header(name) {
+                continue;
+            }
             if let Some(result) =
                 detector.detect_raw(raw.as_ref().as_bytes(), InputLocation::header(name))
             {
@@ -728,6 +735,9 @@ impl AttackDetector {
         }
 
         for (name, value) in &inputs.headers {
+            if is_content_negotiation_header(name) {
+                continue;
+            }
             if let Some(result) = detector.detect_normalized(value, InputLocation::header(name)) {
                 return Some(result);
             }
@@ -756,6 +766,9 @@ impl AttackDetector {
         }
 
         for (name, raw) in &inputs.headers_raw {
+            if is_content_negotiation_header(name) {
+                continue;
+            }
             if let Some(result) =
                 detector.detect_raw(raw.as_ref().as_bytes(), InputLocation::header(name))
             {
