@@ -207,6 +207,10 @@ pub struct ProcessManagerConfig {
     pub log_level: Option<String>,
     pub pre_spawn_workers: usize,
     pub warm_workers_target: usize,
+    /// Tokio worker threads per UnifiedServerWorker. `None` keeps the
+    /// historical default of 2 at spawn; the live knob is
+    /// `pending_thread_count` (set by resize IPC or `update_config`).
+    pub worker_threads: Option<u32>,
     pub health_check_interval_secs: u64,
     pub control_api_addr: String,
     pub control_api_tls: Option<synvoid_tls::InternalTlsConfig>,
@@ -235,6 +239,7 @@ impl Default for ProcessManagerConfig {
             log_level: None,
             pre_spawn_workers: 0,
             warm_workers_target: 2,
+            worker_threads: None,
             health_check_interval_secs: 5,
             control_api_addr: "127.0.0.1:50051".to_string(),
             control_api_tls: None,
@@ -266,6 +271,12 @@ pub struct ProcessManager {
     metrics: Arc<ProcessManagerMetrics>,
     pending_thread_count: Arc<PLRwLock<Option<u32>>>,
     unified_server_port: Arc<PLRwLock<Option<u16>>>,
+    /// IPC session-key file path, written once per supervisor lifetime and
+    /// shared by all spawned children. The path is PID-scoped
+    /// (`synvoid_ipc_key_<supervisor-pid>`), so a second `create_new`
+    /// would fail against our own live file — without this cache, every
+    /// spawn after worker 0 aborted the whole batch.
+    ipc_key_file_path: std::sync::OnceLock<String>,
     _block_store: Option<Arc<dyn std::any::Any + Send + Sync>>,
     ipc_rate_limiter: IpcRateLimiter,
     ipc_signer: Option<Arc<IpcSigner>>,
@@ -349,6 +360,7 @@ impl ProcessManager {
             heartbeat_timeout_secs: config.heartbeat_timeout_secs,
             graceful_shutdown_timeout_secs: config.graceful_shutdown_timeout_secs,
             worker_port_base: config.worker_port_base,
+            worker_threads: config.worker_threads,
             pre_spawn_workers: config.pre_spawn_workers,
             warm_workers_target: config.warm_workers_target,
             health_check_interval_secs: config.health_check_interval_secs,
@@ -359,6 +371,8 @@ impl ProcessManager {
         let mut sys = sysinfo::System::new();
         sys.refresh_cpu_usage();
         let cpu_count = sys.cpus().len().max(1);
+        // Copy out before `config` moves into `Self` below.
+        let initial_worker_threads = config.worker_threads;
 
         (
             Self {
@@ -373,8 +387,9 @@ impl ProcessManager {
                 shutdown_tx,
                 event_tx,
                 metrics: Arc::new(ProcessManagerMetrics::default()),
-                pending_thread_count: Arc::new(PLRwLock::new(None)),
+                pending_thread_count: Arc::new(PLRwLock::new(initial_worker_threads)),
                 unified_server_port: Arc::new(PLRwLock::new(None)),
+                ipc_key_file_path: std::sync::OnceLock::new(),
                 _block_store: block_store,
                 ipc_rate_limiter,
                 ipc_signer,
@@ -456,6 +471,9 @@ impl ProcessManager {
             dynamic.pre_spawn_workers = new_config.pre_spawn_workers;
             dynamic.warm_workers_target = new_config.warm_workers_target;
             dynamic.health_check_interval_secs = new_config.health_check_interval_secs;
+            dynamic.worker_threads = new_config.worker_threads;
+            // Future spawns/respawns read the live pending count.
+            *self.pending_thread_count.write() = new_config.worker_threads;
 
             let needed = if new_config.min_workers != dynamic.min_workers {
                 let old_min = dynamic.min_workers;
@@ -527,6 +545,7 @@ impl ProcessManager {
             heartbeat_timeout_secs: dynamic.heartbeat_timeout_secs,
             graceful_shutdown_timeout_secs: dynamic.graceful_shutdown_timeout_secs,
             worker_port_base: dynamic.worker_port_base,
+            worker_threads: dynamic.worker_threads,
             pre_spawn_workers: dynamic.pre_spawn_workers,
             warm_workers_target: dynamic.warm_workers_target,
             health_check_interval_secs: dynamic.health_check_interval_secs,
@@ -556,7 +575,7 @@ impl ProcessManager {
         // in process listings (/proc/<pid>/environ, ps aux, etc.)
         if let Some(ref key) = self.config.ipc_session_key {
             let key_hex = key.iter().map(|b| format!("{:02x}", b)).collect::<String>();
-            match self.write_ipc_key_to_tempfile(&key_hex) {
+            match self.ipc_key_file_path(&key_hex) {
                 Ok(path) => {
                     cmd.env("SYNVOID_IPC_KEY_FILE", path);
                 }
@@ -593,6 +612,20 @@ impl ProcessManager {
             .stderr(Stdio::inherit());
 
         Ok(cmd)
+    }
+
+    /// Supervisor-lifetime-shared IPC key file path. Written once; every
+    /// spawned child (unified workers, CPU worker) receives the same path.
+    /// A second `create_new` against our own live PID-scoped file fails
+    /// `AlreadyExists` and would abort the spawn batch, so the path is
+    /// cached after the first successful write.
+    fn ipc_key_file_path(&self, key_hex: &str) -> std::io::Result<String> {
+        if let Some(path) = self.ipc_key_file_path.get() {
+            return Ok(path.clone());
+        }
+        let path = self.write_ipc_key_to_tempfile(key_hex)?;
+        let _ = self.ipc_key_file_path.set(path.clone());
+        Ok(self.ipc_key_file_path.get().cloned().unwrap_or(path))
     }
 
     fn write_ipc_key_to_tempfile(&self, key_hex: &str) -> std::io::Result<String> {

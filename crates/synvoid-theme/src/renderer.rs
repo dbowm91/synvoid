@@ -1,7 +1,161 @@
-use synvoid_config::theme::{ThemeColors, ThemeConfig, ThemeRestriction};
+use synvoid_config::theme::{ThemeColors, ThemeConfig, ThemeRestriction, ThemeScheme};
+
+use super::halloy::{
+    halloy_bytes, halloy_lightness, halloy_pill_color, halloy_relative_luminance, halloy_value,
+    mix_halloy_colors, opaque_hex, selected_halloy_theme,
+};
 
 pub struct ThemeRenderer {
     config: ThemeConfig,
+}
+
+struct SchemeTokens {
+    bg: String,
+    surface: String,
+    primary: String,
+    text: String,
+    border: String,
+    accent: String,
+    accent_primary: String,
+    accent_secondary: String,
+    selection_background: String,
+    selection_text: String,
+}
+
+fn halloy_document(name: &str) -> Option<toml::Value> {
+    let bytes = halloy_bytes(selected_halloy_theme(name))?;
+    std::str::from_utf8(bytes).ok()?.parse::<toml::Value>().ok()
+}
+
+fn selection_pair(
+    document: &toml::Value,
+    text_primary: &str,
+    page_background: &str,
+) -> (String, String) {
+    let raw = halloy_value(document, &["buffer", "selection"], "");
+    let background = if halloy_relative_luminance(raw).is_some() {
+        raw.to_owned()
+    } else {
+        let highlight = halloy_value(document, &["buffer", "highlight"], "");
+        if halloy_relative_luminance(highlight).is_some() {
+            highlight.to_owned()
+        } else {
+            mix_halloy_colors(page_background, text_primary, 0.25)
+                .unwrap_or_else(|| page_background.to_owned())
+        }
+    };
+    let opaque_background = opaque_hex(&background);
+    let text = halloy_pill_color(text_primary, &opaque_background, 0.0)
+        .unwrap_or_else(|| text_primary.to_owned());
+    (background, text)
+}
+
+impl SchemeTokens {
+    fn for_theme(name: &str, colors: &ThemeColors, dark: bool) -> Self {
+        let parsed = halloy_document(name);
+        let empty = toml::Value::Table(toml::map::Map::new());
+        let document = parsed.as_ref().unwrap_or(&empty);
+        let (
+            legacy_bg,
+            legacy_surface,
+            legacy_text,
+            legacy_border,
+            legacy_accent_primary,
+            legacy_accent_secondary,
+        ) = if dark {
+            (
+                colors.dark_background.as_str(),
+                colors.dark_surface.as_str(),
+                colors.dark_text.as_str(),
+                colors.dark_border.as_str(),
+                colors.dark_accent_primary.as_str(),
+                colors.dark_accent_secondary.as_str(),
+            )
+        } else {
+            (
+                colors.light_background.as_str(),
+                colors.light_surface.as_str(),
+                colors.light_text.as_str(),
+                colors.light_border.as_str(),
+                colors.light_accent_primary.as_str(),
+                colors.light_accent_secondary.as_str(),
+            )
+        };
+        let general_background = halloy_value(document, &["general", "background"], legacy_bg);
+        let buffer_background = halloy_value(document, &["buffer", "background"], legacy_surface);
+        let page_background = opaque_hex(
+            if halloy_lightness(general_background).unwrap_or(0.0) < 0.5 {
+                buffer_background
+            } else {
+                general_background
+            },
+        );
+        let card_background = opaque_hex(buffer_background);
+        let text_primary = halloy_value(document, &["text", "primary"], legacy_text);
+        let text = opaque_hex(
+            &halloy_pill_color(text_primary, &page_background, 0.36)
+                .unwrap_or_else(|| text_primary.to_owned()),
+        );
+        let (selection_background, selection_text) =
+            selection_pair(document, text_primary, &page_background);
+        Self {
+            bg: page_background,
+            surface: card_background.clone(),
+            primary: opaque_hex(text_primary),
+            text,
+            border: opaque_hex(halloy_value(
+                document,
+                &["general", "border"],
+                legacy_border,
+            )),
+            accent: opaque_hex(halloy_value(
+                document,
+                &["buffer", "background_title_bar"],
+                card_background.as_str(),
+            )),
+            accent_primary: opaque_hex(halloy_value(
+                document,
+                &["buffer", "action"],
+                legacy_accent_primary,
+            )),
+            accent_secondary: opaque_hex(halloy_value(
+                document,
+                &["buffer", "url"],
+                legacy_accent_secondary,
+            )),
+            selection_background,
+            selection_text,
+        }
+    }
+
+    fn declarations(&self) -> String {
+        format!(
+            "    --waf-bg: {};\n    --waf-surface: {};\n    --waf-primary: {};\n    --waf-text: {};\n    --waf-border: {};\n    --waf-accent: {};\n    --waf-accent-primary: {};\n    --waf-accent-secondary: {};",
+            self.bg,
+            self.surface,
+            self.primary,
+            self.text,
+            self.border,
+            self.accent,
+            self.accent_primary,
+            self.accent_secondary,
+        )
+    }
+
+    fn selection_rule(&self) -> String {
+        format!(
+            "::selection {{\n    background: {};\n    color: {};\n}}",
+            self.selection_background, self.selection_text,
+        )
+    }
+}
+
+fn indented(block: &str) -> String {
+    block
+        .lines()
+        .map(|line| format!("    {line}"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 impl ThemeRenderer {
@@ -18,10 +172,14 @@ impl ThemeRenderer {
         let s = &self.config.spacing;
         let e = &self.config.effects;
 
-        let restriction_css = match self.config.restriction {
-            ThemeRestriction::DarkOnly => self.generate_dark_only_css(),
-            ThemeRestriction::LightOnly => self.generate_light_only_css(),
-            ThemeRestriction::Both => self.generate_auto_theme_css(),
+        let restriction_css = match (self.config.restriction, self.config.scheme) {
+            (ThemeRestriction::DarkOnly, _) | (ThemeRestriction::Both, ThemeScheme::Dark) => {
+                self.generate_dark_only_css()
+            }
+            (ThemeRestriction::LightOnly, _) | (ThemeRestriction::Both, ThemeScheme::Light) => {
+                self.generate_light_only_css()
+            }
+            (ThemeRestriction::Both, ThemeScheme::System) => self.generate_auto_theme_css(),
         };
 
         format!(
@@ -319,125 +477,101 @@ body {{
         )
     }
 
+    fn dark_tokens(&self) -> SchemeTokens {
+        SchemeTokens::for_theme(&self.config.dark_theme, &self.config.colors, true)
+    }
+
+    fn light_tokens(&self) -> SchemeTokens {
+        SchemeTokens::for_theme(&self.config.light_theme, &self.config.colors, false)
+    }
+
+    fn theme_toggle_enabled(&self) -> bool {
+        matches!(self.config.restriction, ThemeRestriction::Both)
+            && matches!(self.config.scheme, ThemeScheme::System)
+    }
+
     fn generate_auto_theme_css(&self) -> String {
-        let c = &self.config.colors;
+        let dark = self.dark_tokens();
+        let light = self.light_tokens();
+        let dark_vars = dark.declarations();
+        let light_vars = light.declarations();
+        let dark_selection = dark.selection_rule();
+        let light_selection = light.selection_rule();
 
         format!(
             r#"/* Dark Theme (Default) */
 :root {{
-    --waf-bg: {dark_bg};
-    --waf-surface: {dark_surface};
-    --waf-primary: {dark_primary};
-    --waf-text: {dark_text};
-    --waf-border: {dark_border};
-    --waf-accent: {dark_accent};
-    --waf-accent-primary: {dark_accent_primary};
-    --waf-accent-secondary: {dark_accent_secondary};
+{dark_vars}
 }}
+
+{dark_selection}
 
 /* Light Theme */
 @media (prefers-color-scheme: light) {{
-    :root {{
-        --waf-bg: {light_bg};
-        --waf-surface: {light_surface};
-        --waf-primary: {light_primary};
-        --waf-text: {light_text};
-        --waf-border: {light_border};
-        --waf-accent: {light_accent};
-        --waf-accent-primary: {light_accent_primary};
-        --waf-accent-secondary: {light_accent_secondary};
-    }}
+{light_root}
+{light_selection}
 }}
 
 /* Cookie Override - Dark */
 [data-waf-theme="dark"] {{
-    --waf-bg: {dark_bg};
-    --waf-surface: {dark_surface};
-    --waf-primary: {dark_primary};
-    --waf-text: {dark_text};
-    --waf-border: {dark_border};
-    --waf-accent: {dark_accent};
-    --waf-accent-primary: {dark_accent_primary};
-    --waf-accent-secondary: {dark_accent_secondary};
+{dark_vars}
+}}
+
+[data-waf-theme="dark"] ::selection {{
+    background: {dark_sel_bg};
+    color: {dark_sel_text};
 }}
 
 /* Cookie Override - Light */
 [data-waf-theme="light"] {{
-    --waf-bg: {light_bg};
-    --waf-surface: {light_surface};
-    --waf-primary: {light_primary};
-    --waf-text: {light_text};
-    --waf-border: {light_border};
-    --waf-accent: {light_accent};
-    --waf-accent-primary: {light_accent_primary};
-    --waf-accent-secondary: {light_accent_secondary};
+{light_vars}
+}}
+
+[data-waf-theme="light"] ::selection {{
+    background: {light_sel_bg};
+    color: {light_sel_text};
 }}"#,
-            dark_bg = c.dark_background,
-            dark_surface = c.dark_surface,
-            dark_primary = c.dark_primary,
-            dark_text = c.dark_text,
-            dark_border = c.dark_border,
-            dark_accent = c.dark_accent,
-            dark_accent_primary = c.dark_accent_primary,
-            dark_accent_secondary = c.dark_accent_secondary,
-            light_bg = c.light_background,
-            light_surface = c.light_surface,
-            light_primary = c.light_primary,
-            light_text = c.light_text,
-            light_border = c.light_border,
-            light_accent = c.light_accent,
-            light_accent_primary = c.light_accent_primary,
-            light_accent_secondary = c.light_accent_secondary,
+            dark_vars = dark_vars,
+            dark_selection = dark_selection,
+            light_root = indented(&format!(":root {{\n{light_vars}\n}}")),
+            light_selection = indented(&light_selection),
+            dark_sel_bg = dark.selection_background,
+            dark_sel_text = dark.selection_text,
+            light_vars = light_vars,
+            light_sel_bg = light.selection_background,
+            light_sel_text = light.selection_text,
         )
     }
 
     fn generate_dark_only_css(&self) -> String {
-        let c = &self.config.colors;
+        let dark = self.dark_tokens();
+        let vars = dark.declarations();
+        let selection = dark.selection_rule();
 
         format!(
             r#":root {{
-    --waf-bg: {dark_bg};
-    --waf-surface: {dark_surface};
-    --waf-primary: {dark_primary};
-    --waf-text: {dark_text};
-    --waf-border: {dark_border};
-    --waf-accent: {dark_accent};
-    --waf-accent-primary: {dark_accent_primary};
-    --waf-accent-secondary: {dark_accent_secondary};
-}}"#,
-            dark_bg = c.dark_background,
-            dark_surface = c.dark_surface,
-            dark_primary = c.dark_primary,
-            dark_text = c.dark_text,
-            dark_border = c.dark_border,
-            dark_accent = c.dark_accent,
-            dark_accent_primary = c.dark_accent_primary,
-            dark_accent_secondary = c.dark_accent_secondary,
+{vars}
+}}
+
+{selection}"#,
+            vars = vars,
+            selection = selection,
         )
     }
 
     fn generate_light_only_css(&self) -> String {
-        let c: &ThemeColors = &self.config.colors;
+        let light = self.light_tokens();
+        let vars = light.declarations();
+        let selection = light.selection_rule();
 
         format!(
             r#":root {{
-    --waf-bg: {light_bg};
-    --waf-surface: {light_surface};
-    --waf-primary: {light_primary};
-    --waf-text: {light_text};
-    --waf-border: {light_border};
-    --waf-accent: {light_accent};
-    --waf-accent-primary: {light_accent_primary};
-    --waf-accent-secondary: {light_accent_secondary};
-}}"#,
-            light_bg = c.light_background,
-            light_surface = c.light_surface,
-            light_primary = c.light_primary,
-            light_text = c.light_text,
-            light_border = c.light_border,
-            light_accent = c.light_accent,
-            light_accent_primary = c.light_accent_primary,
-            light_accent_secondary = c.light_accent_secondary,
+{vars}
+}}
+
+{selection}"#,
+            vars = vars,
+            selection = selection,
         )
     }
 
@@ -506,9 +640,8 @@ body {{
     }
 
     pub fn generate_theme_toggle_script(&self) -> String {
-        match self.config.restriction {
-            ThemeRestriction::Both => {
-                r#"<script>
+        if self.theme_toggle_enabled() {
+            r#"<script>
 (function() {
     const COOKIE_NAME = 'waf_theme';
     const COOKIE_MAX_AGE = 31536000;
@@ -568,20 +701,19 @@ body {{
     });
 })();
 </script>"#.to_string()
-            }
-            ThemeRestriction::DarkOnly | ThemeRestriction::LightOnly => "".to_string(),
+        } else {
+            "".to_string()
         }
     }
 
     pub fn generate_theme_toggle_button(&self) -> String {
-        match self.config.restriction {
-            ThemeRestriction::Both => {
-                r#"<button class="waf-theme-toggle" type="button" aria-label="Toggle theme">
+        if self.theme_toggle_enabled() {
+            r#"<button class="waf-theme-toggle" type="button" aria-label="Toggle theme">
     <svg viewBox="0 0 20 20"></svg>
 </button>"#
-                    .to_string()
-            }
-            ThemeRestriction::DarkOnly | ThemeRestriction::LightOnly => "".to_string(),
+                .to_string()
+        } else {
+            "".to_string()
         }
     }
 
@@ -943,5 +1075,212 @@ body {{
 impl Default for ThemeRenderer {
     fn default() -> Self {
         Self::new(ThemeConfig::default())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SchemeTokens, ThemeRenderer};
+    use crate::halloy::{halloy_relative_luminance, HALLOY_NAMES, PILL_MINIMUM_CONTRAST};
+    use synvoid_config::theme::{ThemeConfig, ThemeDefaults, ThemeScheme};
+
+    const TOKEN_VARS: [&str; 8] = [
+        "--waf-bg",
+        "--waf-surface",
+        "--waf-primary",
+        "--waf-text",
+        "--waf-border",
+        "--waf-accent",
+        "--waf-accent-primary",
+        "--waf-accent-secondary",
+    ];
+
+    fn config_for(dark: &str, light: &str, scheme: ThemeScheme) -> ThemeConfig {
+        ThemeConfig::from(ThemeDefaults {
+            dark_theme: dark.to_owned(),
+            light_theme: light.to_owned(),
+            scheme: scheme.as_str().to_owned(),
+            ..ThemeDefaults::default()
+        })
+    }
+
+    fn restricted_config(allow_only: &str, scheme: ThemeScheme) -> ThemeConfig {
+        ThemeConfig::from(ThemeDefaults {
+            allow_only: allow_only.to_owned(),
+            scheme: scheme.as_str().to_owned(),
+            ..ThemeDefaults::default()
+        })
+    }
+
+    fn selection_contrast_ratio(background: &str, foreground: &str) -> Option<f64> {
+        let bg = halloy_relative_luminance(background)?;
+        let fg = halloy_relative_luminance(foreground)?;
+        let (high, low) = if bg > fg { (bg, fg) } else { (fg, bg) };
+        Some((high + 0.05) / (low + 0.05))
+    }
+
+    #[test]
+    fn every_bundled_theme_renders_a_complete_token_set_per_scheme() {
+        for name in HALLOY_NAMES {
+            for scheme in [ThemeScheme::System, ThemeScheme::Dark, ThemeScheme::Light] {
+                let css = ThemeRenderer::new(config_for(name, name, scheme)).generate_css();
+                for var in TOKEN_VARS {
+                    assert!(
+                        css.contains(var),
+                        "theme {name:?} scheme {scheme:?} is missing {var}"
+                    );
+                }
+                assert!(
+                    css.contains("::selection"),
+                    "theme {name:?} scheme {scheme:?} is missing its selection rule"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn system_scheme_serves_both_sides_behind_the_media_query() {
+        let css = ThemeRenderer::new(config_for(
+            "Catppuccin Mocha",
+            "Catppuccin Latte",
+            ThemeScheme::System,
+        ))
+        .generate_css();
+        assert!(
+            css.contains("@media (prefers-color-scheme: light)"),
+            "system output must carry the light-scheme media query"
+        );
+        assert!(css.contains("[data-waf-theme=\"dark\"]"));
+        assert!(css.contains("[data-waf-theme=\"light\"]"));
+        assert!(
+            css.contains("#181825"),
+            "system output must carry the dark (Mocha) page background"
+        );
+        assert!(
+            css.contains("#DCE0E8"),
+            "system output must carry the light (Latte) page background"
+        );
+        assert_eq!(
+            css.matches("::selection").count(),
+            4,
+            "system output must scope one selection rule per scheme block"
+        );
+    }
+
+    #[test]
+    fn forced_schemes_emit_a_single_scheme() {
+        let dark = ThemeRenderer::new(config_for("Nord", "Catppuccin Latte", ThemeScheme::Dark))
+            .generate_css();
+        assert!(
+            !dark.contains("@media (prefers-color-scheme"),
+            "forced dark output must not carry the media query"
+        );
+        assert!(
+            !dark.contains("data-waf-theme"),
+            "forced dark output must not carry cookie overrides"
+        );
+        assert!(dark.contains("::selection"));
+        assert!(
+            dark.contains("#3B4252"),
+            "forced dark output must carry the Nord page background"
+        );
+        assert!(
+            !dark.contains("#DCE0E8"),
+            "forced dark output must not leak the light theme"
+        );
+
+        let light = ThemeRenderer::new(config_for("Nord", "Catppuccin Latte", ThemeScheme::Light))
+            .generate_css();
+        assert!(!light.contains("@media (prefers-color-scheme"));
+        assert!(!light.contains("data-waf-theme"));
+        assert!(light.contains("::selection"));
+        assert!(light.contains("#DCE0E8"));
+        assert!(!light.contains("#3B4252"));
+    }
+
+    #[test]
+    fn restriction_keeps_single_scheme_semantics() {
+        let dark_only =
+            ThemeRenderer::new(restricted_config("dark", ThemeScheme::System)).generate_css();
+        assert!(!dark_only.contains("@media (prefers-color-scheme"));
+        assert!(!dark_only.contains("data-waf-theme"));
+        assert!(dark_only.contains("::selection"));
+
+        let light_only =
+            ThemeRenderer::new(restricted_config("light", ThemeScheme::System)).generate_css();
+        assert!(!light_only.contains("@media (prefers-color-scheme"));
+        assert!(!light_only.contains("data-waf-theme"));
+        assert!(light_only.contains("::selection"));
+
+        let both_dark =
+            ThemeRenderer::new(restricted_config("both", ThemeScheme::Dark)).generate_css();
+        let dark_only_dark =
+            ThemeRenderer::new(restricted_config("dark", ThemeScheme::Dark)).generate_css();
+        assert_eq!(
+            both_dark, dark_only_dark,
+            "Both+Dark must collapse to the same single-scheme output as DarkOnly"
+        );
+    }
+
+    #[test]
+    fn theme_toggle_only_ships_with_dual_scheme_output() {
+        let system = ThemeRenderer::new(restricted_config("both", ThemeScheme::System));
+        assert!(!system.generate_theme_toggle_script().is_empty());
+        assert!(!system.generate_theme_toggle_button().is_empty());
+
+        let forced = ThemeRenderer::new(restricted_config("both", ThemeScheme::Dark));
+        assert!(forced.generate_theme_toggle_script().is_empty());
+        assert!(forced.generate_theme_toggle_button().is_empty());
+
+        let restricted = ThemeRenderer::new(restricted_config("dark", ThemeScheme::System));
+        assert!(restricted.generate_theme_toggle_script().is_empty());
+        assert!(restricted.generate_theme_toggle_button().is_empty());
+    }
+
+    #[test]
+    fn selection_pair_clears_the_contrast_floor_for_every_theme() {
+        let colors = ThemeConfig::default().colors;
+        for name in HALLOY_NAMES {
+            for dark in [true, false] {
+                let tokens = SchemeTokens::for_theme(name, &colors, dark);
+                let ratio =
+                    selection_contrast_ratio(&tokens.selection_background, &tokens.selection_text)
+                        .expect("the selection pair must be colours");
+                assert!(
+                    ratio >= PILL_MINIMUM_CONTRAST,
+                    "theme {name:?} dark={dark} selection {} on {} is {ratio:.2}:1",
+                    tokens.selection_text,
+                    tokens.selection_background,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn unknown_names_fall_back_to_the_default_theme() {
+        let scheme = ThemeScheme::System;
+        let expected =
+            ThemeRenderer::new(config_for("Cyber Red", "Cyber Red", scheme)).generate_css();
+        let unknown =
+            ThemeRenderer::new(config_for("missing-nope", "missing-nope", scheme)).generate_css();
+        assert_eq!(unknown, expected);
+        let empty = ThemeRenderer::new(config_for("", "", scheme)).generate_css();
+        let empty_expected =
+            ThemeRenderer::new(config_for("Catppuccin Mocha", "Catppuccin Latte", scheme))
+                .generate_css();
+        assert_eq!(empty, empty_expected);
+        let oversize = "x".repeat(129);
+        let oversize_css =
+            ThemeRenderer::new(config_for(&oversize, &oversize, scheme)).generate_css();
+        assert_eq!(
+            oversize_css, empty_expected,
+            "oversize names normalize to the defaults at the config layer"
+        );
+
+        let mixed = ThemeRenderer::new(config_for("Nord", "missing-nope", ThemeScheme::Dark))
+            .generate_css();
+        let mixed_expected =
+            ThemeRenderer::new(config_for("Nord", "Cyber Red", ThemeScheme::Dark)).generate_css();
+        assert_eq!(mixed, mixed_expected);
     }
 }

@@ -279,7 +279,12 @@ pub async fn inspect_zip_archive(
                 }
             };
 
-            let entry_name = entry.name().to_string();
+            let entry_name = entry
+                .name()
+                .map_err(|e| {
+                    ArchiveInspectionError::InvalidZip(format!("entry {i}: invalid name: {e}"))
+                })?
+                .to_string();
             let uncompressed_size = entry.size();
             let compressed_size = entry.compressed_size();
             result.entries_seen += 1;

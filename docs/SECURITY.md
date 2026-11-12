@@ -207,7 +207,13 @@ enabled = true
 enabled = true
 ```
 
-The code default for `action` is `stall`, not `block`.
+The code default for `action` is `block`. `stall` and `log` remain available
+per site; `log` observes without blocking and never records an escalation
+violation. Header payload scanning is intentionally narrow: `Cookie`,
+`Referer`/`Origin` and configured custom headers are scanned; browser metadata,
+framing, cache, `Host`, `Authorization`, `Content-*`, `Transfer-Encoding` and
+unknown headers are skipped by value detectors while structural header
+validation still runs on every header.
 
 ### Configure Rate Limiting
 
@@ -334,11 +340,24 @@ underscores and counters gain a `_total` suffix by the exporter):
 services:
   synvoid:
     image: synvoid:latest
-    user: "1000:1000"  # Run as non-root user
-    read_only: true    # Read-only filesystem
-    cap_drop:          # Drop capabilities
+    # The shipped image already defaults to this account; keep it explicit if
+    # your orchestrator overrides the image user.
+    user: "10001:10001"  # Non-root `synvoid` user created by the Dockerfile
+    read_only: true      # Read-only root filesystem
+    tmpfs:
+      - /run/synvoid
+    volumes:
+      - synvoid-data:/var/lib/synvoid
+      - synvoid-logs:/var/log/synvoid
+      - synvoid-cache:/var/cache/synvoid
+    cap_drop:            # No capabilities are needed for the default 8080 bind
       - ALL
 ```
+
+The host systemd unit applies the same posture without a container:
+`User=synvoid`, a single `CAP_NET_BIND_SERVICE`, `ProtectSystem=strict`, and a
+read-only `/opt/synvoid` install tree. See
+[DEPLOYMENT.md](./DEPLOYMENT.md#4-systemd-hardening-non-root).
 
 ### Use Secrets for Tokens
 

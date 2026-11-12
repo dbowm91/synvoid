@@ -170,6 +170,19 @@ pre-parse wire-byte ceiling; the transport parser's own memory ceiling
   HTTP peek. Enforcement phase: pre-parse. Failure: connection skipped
   before handshake/dispatch with `synvoid.http.*` counters. No change.
 
+### `listeners` — ACTIVE_EXACT
+
+- Default empty; an empty array selects the legacy `[server]`/`[tls]`/`[http3]`
+  synthesis path.
+- Consumers: `synvoid_config::normalize_http_listeners` →
+  `UnifiedServerStartupPlan` → `bind_http_listeners`; `Router` builds one
+  routing table per normalized listener.
+- Scope: startup. Listener definitions are restart-required; a reload that
+  changes them is reported as restart-required and does not rebind sockets.
+- Validation: names, literal addresses, ports, TLS/H2/H3 combinations,
+  wildcard/concrete overlap, cross-family conflicts, `default_site`, and
+  `[site].listeners` membership are rejected before any socket opens.
+
 ### `max_streaming_body_size` — ACTIVE_EXACT
 
 - Default 10485760 (10 MiB). Consumers: request preparation / body policy
@@ -210,7 +223,7 @@ justification (EggServe is not the production runtime).
 
 `tests/http_config_runtime_semantics.rs` (ownership: composition):
 
-- serializes `HttpConfig::default()` and requires the exact 13-field set —
+- serializes `HttpConfig::default()` and requires the exact 14-field set —
   a new field fails until the matrix and this table are extended;
 - requires every matrix entry to use the allowed disposition vocabulary;
 - spot-checks ACTIVE consumers exist in executable code;

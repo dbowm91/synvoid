@@ -53,6 +53,28 @@ impl BodyPolicyError {
 
 pub trait RequestBodyWaf {
     fn streaming(&self) -> Option<Box<dyn crate::shared_handler::StreamingWafScanner>>;
+    fn streaming_for_path(
+        &self,
+        _path: &str,
+        _site_attack_config: Option<&synvoid_config::site::SiteAttackDetectionConfig>,
+    ) -> Option<Box<dyn crate::shared_handler::StreamingWafScanner>> {
+        self.streaming()
+    }
+
+    /// Streaming scanner with an explicit request-body cap.
+    ///
+    /// The default delegates to [`RequestBodyWaf::streaming_for_path`] so
+    /// existing implementations keep their behavior. The application WAF
+    /// overrides it so the scanner's internal byte limit matches the resolved
+    /// per-site/global body policy instead of a second, unrelated default.
+    fn streaming_for_path_with_limit(
+        &self,
+        path: &str,
+        site_attack_config: Option<&synvoid_config::site::SiteAttackDetectionConfig>,
+        _max_body_size: usize,
+    ) -> Option<Box<dyn crate::shared_handler::StreamingWafScanner>> {
+        self.streaming_for_path(path, site_attack_config)
+    }
     fn check_request_body(&self, chunk: &[u8]) -> (bool, Option<synvoid_waf::WafDecision>);
 }
 
@@ -60,22 +82,53 @@ const MAX_WAF_BODY_SIZE: usize = 1024 * 1024;
 const CHUNK_WAF_SCAN_SIZE: usize = 64 * 1024;
 const CHUNK_WAF_THRESHOLD: usize = 256 * 1024;
 
+fn body_too_large() -> BodyPolicyError {
+    counter!("synvoid.http.body_too_large").increment(1);
+    BodyPolicyError::BodyTooLarge
+}
+
+fn map_collection_error(error: std::io::Error) -> BodyPolicyError {
+    match error.kind() {
+        std::io::ErrorKind::InvalidData => body_too_large(),
+        std::io::ErrorKind::PermissionDenied => BodyPolicyError::BlockedByWaf,
+        _ => BodyPolicyError::BodyReadFailed,
+    }
+}
+
 pub async fn collect_and_scan_request_body<W>(
     body: InboundBody,
     waf: &W,
     client_ip: IpAddr,
     content_length: Option<usize>,
     max_streaming_body_size: usize,
+    path: &str,
+    site_attack_config: Option<&synvoid_config::site::SiteAttackDetectionConfig>,
 ) -> Result<(Bytes, u64), BodyPolicyError>
 where
     W: RequestBodyWaf,
 {
     let mut request_body_size: u64 = 0;
+    if let Some(cl) = content_length {
+        if cl > max_streaming_body_size {
+            tracing::warn!(
+                client_ip = %client_ip,
+                declared = cl,
+                limit = max_streaming_body_size,
+                "Rejecting request body above the configured cap"
+            );
+            return Err(body_too_large());
+        }
+    }
+
     let full_body = if let Some(cl) = content_length {
         if cl > CHUNK_WAF_THRESHOLD {
             match collect_body_with_chunk_waf(
                 body,
-                waf.streaming(),
+                waf.streaming_for_path_with_limit(
+                    path,
+                    site_attack_config,
+                    max_streaming_body_size,
+                ),
                 client_ip,
                 BodyCollectionProtocol::Http,
                 Some(&mut request_body_size),
@@ -85,11 +138,17 @@ where
             .await
             {
                 Ok(body) => body,
-                Err(()) => return Err(BodyPolicyError::BlockedByWaf),
+                Err(error) => return Err(map_collection_error(error)),
             }
         } else {
             match body.collect().await {
-                Ok(collected) => collected.to_bytes(),
+                Ok(collected) => {
+                    let collected = collected.to_bytes();
+                    if collected.len() > max_streaming_body_size {
+                        return Err(body_too_large());
+                    }
+                    collected
+                }
                 Err(_) => {
                     // Never substitute an empty body here: the declared
                     // Content-Length would be silently dropped and the
@@ -103,7 +162,7 @@ where
     } else {
         match collect_body_with_chunk_waf(
             body,
-            waf.streaming(),
+            waf.streaming_for_path_with_limit(path, site_attack_config, max_streaming_body_size),
             client_ip,
             BodyCollectionProtocol::Http,
             Some(&mut request_body_size),
@@ -113,7 +172,7 @@ where
         .await
         {
             Ok(body) => body,
-            Err(()) => return Err(BodyPolicyError::BodyTooLarge),
+            Err(error) => return Err(map_collection_error(error)),
         }
     };
 
@@ -152,6 +211,36 @@ where
 mod tests {
     use super::*;
     use synvoid_core::enforcement::{EnforcementClass, EnforcementSource};
+
+    #[tokio::test]
+    async fn declared_content_length_above_cap_is_body_too_large() {
+        struct NoopWaf;
+        impl RequestBodyWaf for NoopWaf {
+            fn streaming(&self) -> Option<Box<dyn crate::shared_handler::StreamingWafScanner>> {
+                None
+            }
+            fn check_request_body(
+                &self,
+                _chunk: &[u8],
+            ) -> (bool, Option<synvoid_waf::WafDecision>) {
+                (false, None)
+            }
+        }
+
+        let body = crate::inbound::InboundBody::from_bytes(Bytes::from_static(b"hello"));
+        let error = collect_and_scan_request_body(
+            body,
+            &NoopWaf,
+            IpAddr::from([127, 0, 0, 1]),
+            Some(5),
+            4,
+            "/",
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error, BodyPolicyError::BodyTooLarge);
+    }
 
     #[test]
     fn body_policy_errors_are_terminal_and_fail_closed() {

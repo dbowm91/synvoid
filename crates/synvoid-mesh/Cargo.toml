@@ -72,14 +72,14 @@ parking_lot = "0.12"
 arc-swap = "1"
 moka = { version = "0.12", features = ["sync", "future"] }
 lru_time_cache = "0.11"
-rusqlite = { version = "0.32", features = ["bundled", "backup"] }
+rusqlite = { version = "0.41", features = ["bundled", "backup", "fallible_uint"] }
 
 # Time
 chrono = { version = "0.4", features = ["serde"] }
 
 # Schema
 schemars = "0.8"
-utoipa = { version = "5", features = ["axum_extras", "chrono"] }
+utoipa = { version = "6", features = ["axum_extras", "chrono"] }
 
 # Compression
 flate2 = "1"

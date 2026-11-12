@@ -6,8 +6,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=root
-Group=root
+User=synvoid
+Group=synvoid
+UMask=0077
 WorkingDirectory=/opt/synvoid
 
 # Plain `--foreground` runs the Supervisor: it spawns and supervises the
@@ -15,7 +16,7 @@ WorkingDirectory=/opt/synvoid
 # There is deliberately no `--overseer` flag — it was never defined in
 # `synvoid-cli` and clap rejected it, so the unit exited 2 before reading any
 # configuration. See architecture/quickstart_verification_findings.md (F-4).
-ExecStart=/usr/local/bin/synvoid --foreground --config-path /opt/synvoid/config
+ExecStart=/usr/local/bin/synvoid --foreground --config-path /etc/synvoid
 
 # `--config-path` takes the DIRECTORY that contains `main.toml` and `sites/`,
 # not the TOML file itself.
@@ -33,28 +34,63 @@ RestartSec=5s
 LimitNOFILE=65535
 LimitNPROC=65535
 
-# Security hardening
+# --- Least privilege ---------------------------------------------------------
+# The service runs as the dedicated `synvoid` account. Binding 80/443 is the
+# only privileged operation and is granted with an ambient capability; the WAF
+# needs no other root capability. `CAP_NET_ADMIN` is NOT granted by default;
+# opt-in eBPF/ICMP/WireGuard deployments must add it in a drop-in (see
+# docs/DEPLOYMENT.md and docs/SECURITY.md).
 NoNewPrivileges=true
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+# --- Filesystem and kernel hardening ----------------------------------------
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-# /opt/synvoid   — config, sites, minified-HTML cache
-# /var/log/synvoid — access logs (config `logging.access_log_dir`)
-# /var/lib/synvoid — threat-level SQLite history + backups, GeoIP database,
-#                    and (via XDG_DATA_HOME below) the Supervisor pidfile/socket.
-#                    /var/lib/synvoid was missing here, so threat-level
-#                    persistence could not write its database under
-#                    ProtectSystem=strict.
-ReadWritePaths=/opt/synvoid /var/log/synvoid /var/lib/synvoid
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+
+# `MemoryDenyWriteExecute` is deliberately NOT set: Wasmtime's JIT and the
+# dynamic plugin path need executable mappings. Deployments that disable both
+# may add it as a documented opt-in drop-in.
+
+# The install tree (/opt/synvoid) is read-only. State, logs, cache and runtime
+# data live in the directories below; systemd creates them with the right
+# ownership and they are the only writable paths besides /etc/synvoid.
+StateDirectory=synvoid
+StateDirectoryMode=0700
+LogsDirectory=synvoid
+LogsDirectoryMode=0750
+CacheDirectory=synvoid
+CacheDirectoryMode=0700
+RuntimeDirectory=synvoid
+RuntimeDirectoryMode=0700
+ReadWritePaths=/etc/synvoid /var/lib/synvoid /var/log/synvoid /var/cache/synvoid /run/synvoid
+
+# /etc/synvoid is writable so the admin config editor can save `main.toml` and
+# `sites/`. The install tree stays read-only; if the admin editor is not used,
+# make /etc/synvoid root-owned and read-only and remove it from ReadWritePaths.
 
 # Environment
+# Optional operator secrets (for example SYNVOID_ADMIN_TOKEN). The leading `-`
+# makes a missing file non-fatal.
+EnvironmentFile=-/etc/synvoid/secrets.env
 Environment=RUST_LOG=info
+Environment=SYNVOID_ADMIN_UI_DIR=/opt/synvoid/admin-ui/dist
 
 # `PidFileManager::new()` resolves its data directory via `dirs::data_dir()`,
 # which on Linux is `$XDG_DATA_HOME`. Left unset it resolves under `$HOME`, and
-# `ProtectHome=true` makes that path unreachable for `User=root` — the pidfile
-# and IPC socket could not be created, which breaks `--status`, `--stop` and
-# `--rehash`. There is no `SYNVOID_DATA_DIR` override, so XDG is the only lever.
+# `ProtectHome=true` makes that path unreachable for the service user — the
+# pidfile and IPC socket could not be created, which breaks `--status`,
+# `--stop` and `--rehash`. There is no `SYNVOID_DATA_DIR` override, so XDG is
+# the only lever. StateDirectory= creates the target directory.
 Environment=XDG_DATA_HOME=/var/lib/synvoid
 
 # NOTE: no `WatchdogSec`. SynVoid never calls `sd_notify(3)` — the `sd-notify`

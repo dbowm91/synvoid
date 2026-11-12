@@ -29,9 +29,9 @@ SynVoid uses a two-tier architecture (Supervisor control plane -> data-plane wor
 Use each knob for its specific scope:
 
 - `[tokio] worker_threads` configures tokio runtime parallelism inside a unified worker (`"auto"` or a number; a legacy `{ worker_threads = N }` table also parses).
-- `[tcp] worker_pool_size` scales the connection accept path.
+- `[tcp] worker_pool_size` scales the connection accept loops per bound TCP listener.
 - CPU worker count scales bounded heavy task throughput.
-- `[defaults.worker_pool] workers` is the effective `unified_server_workers` process count (the Supervisor copies it into `process_manager.unified_server_workers` at startup). It is advanced mode only and should not be treated as the primary throughput knob.
+- `[defaults.worker_pool] workers` is the effective `unified_server_workers` process count (the Supervisor copies it into `process_manager.unified_server_workers` at startup). The type and shipped defaults are `1`. It is advanced mode only, `workers > 1` requires `allow_multi_worker = true`, and it should not be treated as the primary throughput knob.
 
 ## Advanced Multi-Unified-Worker Mode
 
@@ -74,24 +74,52 @@ Supervisor/global state:
 
 ### Installation
 
-1. Create the runtime directories the unit expects. SynVoid writes access logs
-   to `/var/log/synvoid` and threat-level history to `/var/lib/synvoid`, and
-   `--configtest` fails if the access-log directory is missing:
+The unit runs as the dedicated `synvoid` account, not root, and grants only
+`CAP_NET_BIND_SERVICE` for ports below 1024. The install tree `/opt/synvoid` is
+read-only; `/etc/synvoid`, `/var/lib/synvoid`, `/var/log/synvoid`,
+`/var/cache/synvoid` and `/run/synvoid` belong to the service user. The
+complete layout, including the read-only relative-path support files, is in
+[DEPLOYMENT.md](./DEPLOYMENT.md#3-service-account-and-directory-ownership).
+
+1. Create the account and directories:
 ```bash
-sudo install -d -m 0755 /opt/synvoid /var/log/synvoid /var/lib/synvoid
+sudo groupadd --system synvoid
+sudo useradd --system --gid synvoid --home-dir /var/lib/synvoid \
+  --shell /usr/sbin/nologin synvoid
+sudo install -d -m 0755 -o root -g root /opt/synvoid /opt/synvoid/admin-ui /opt/synvoid/config
+sudo install -d -m 0700 -o synvoid -g synvoid \
+  /etc/synvoid /var/lib/synvoid /var/log/synvoid /var/cache/synvoid /run/synvoid
 ```
 
-2. Copy the service file:
+2. Install the binary, jail binaries, admin UI and configuration:
+```bash
+sudo install -m 0755 target/release/synvoid \
+  target/release/synvoid-wasm-jail target/release/synvoid-yara-jail /usr/local/bin/
+sudo install -d /opt/synvoid/admin-ui/dist
+sudo cp -a admin-ui/dist/. /opt/synvoid/admin-ui/dist/
+sudo cp -a static rules root.hints /opt/synvoid/
+sudo cp -a config/error_pages config/mimes /opt/synvoid/config/
+sudo install -m 0644 config/honeypot_endpoints.txt /opt/synvoid/config/honeypot_endpoints.txt
+sudo install -m 0644 config/honeypot_endpoints.txt /opt/synvoid/honeypot_endpoints.txt
+sudo install -d -o synvoid -g synvoid -m 0700 /etc/synvoid/sites
+sudo cp config/main.toml /etc/synvoid/main.toml
+sudo cp -a config/sites/. /etc/synvoid/sites/
+sudo chown -R synvoid:synvoid /etc/synvoid
+sudo chmod -R go-rwx /etc/synvoid
+```
+
+3. Copy the service file and validate it:
 ```bash
 sudo cp contrib/systemd/synvoid.service /etc/systemd/system/
+sudo systemd-analyze verify /etc/systemd/system/synvoid.service
 ```
 
-3. Reload systemd:
+4. Reload systemd:
 ```bash
 sudo systemctl daemon-reload
 ```
 
-4. Enable and start:
+5. Enable and start:
 ```bash
 sudo systemctl enable synvoid
 sudo systemctl start synvoid
@@ -118,7 +146,11 @@ sudo systemctl stop synvoid
 # `SupervisorCommand::ReloadConfig` over IPC. Do not `kill -HUP` the Supervisor —
 # SynVoid has no inbound SIGHUP handler (SIGHUP only appears as an *outbound*
 # signal inside `synvoid-ipc`), so a manual SIGHUP is a silent no-op.
-synvoid --rehash
+sudo systemctl reload synvoid
+
+# If you run the CLI directly, use the service account: the pidfile and IPC
+# socket live under /var/lib/synvoid/.synvoid (mode 0700).
+sudo -u synvoid synvoid --rehash
 ```
 
 ### systemd Watchdog

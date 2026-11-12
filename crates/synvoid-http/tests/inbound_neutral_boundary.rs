@@ -203,6 +203,8 @@ async fn body_policy_collects_small_neutral_body() {
         IpAddr::from([127, 0, 0, 1]),
         Some(5),
         1024 * 1024,
+        "",
+        None,
     )
     .await
     .unwrap();
@@ -224,6 +226,8 @@ async fn body_policy_rejects_oversize_unknown_length_body() {
         IpAddr::from([127, 0, 0, 1]),
         None,
         1024,
+        "",
+        None,
     )
     .await
     .unwrap_err();
@@ -241,6 +245,8 @@ async fn body_policy_waf_blocks_large_neutral_body() {
         IpAddr::from([127, 0, 0, 1]),
         Some(2 * 1024 * 1024),
         8 * 1024 * 1024,
+        "",
+        None,
     )
     .await
     .unwrap_err();
@@ -268,6 +274,8 @@ async fn body_policy_read_failure_is_terminal_not_empty_body() {
         // Under CHUNK_WAF_THRESHOLD, so this takes the `collect()` branch.
         Some(100),
         1024 * 1024,
+        "",
+        None,
     )
     .await
     .unwrap_err();

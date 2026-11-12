@@ -20,6 +20,8 @@ Complete configuration reference for SynVoid.
 - [HTTP/3](#http3-configuration)
 - [FastCGI](#fastcgi-configuration)
 - [WAF Mesh](#waf-mesh-configuration)
+- [TCP and UDP Proxying (Beta)](#tcp-and-udp-proxying-beta)
+- [Worker Pool](#worker-pool)
 - [Process Management](#process-management)
 - [CPU Offload IPC Pool Environment Overrides](#cpu-offload-ipc-pool-environment-overrides)
 - [Tarpit System](#tarpit-system)
@@ -166,6 +168,7 @@ max_header_size_ingress = 4096
 max_header_size_egress = 16384
 max_request_size = 1048576
 pipeline_limit = 32
+max_streaming_body_size = 10485760  # global request-body cap
 ```
 
 **Why these defaults:**
@@ -175,9 +178,26 @@ pipeline_limit = 32
 - `max_request_line_size = 8192` is currently not enforced: no runtime consumer reads this key (the H1 wire request line is not visible to policy code after parsing). It remains a parseable compatibility key.
 - `max_header_size_ingress = 4096` limits aggregate parsed request-header bytes (header-name + header-value bytes; framing overhead and the request line are not counted). Requests over the bound are rejected with `431` before routing/WAF/backend work on H1/H2 paths.
 - `max_header_size_egress = 16384` is currently not enforced: responses are never truncated to this bound. It remains a parseable compatibility key.
-- `max_request_size = 1048576` (1MB) is the H1 parser-buffer ceiling (`max_buf_size`), not a request-body limit: it bounds how much header/request-target bytes the H1 parser will buffer (minimum 8192, enforced by config validation). Body limits live in `max_streaming_body_size` and per-route upload policy.
+- `max_request_size = 1048576` (1MB) is the H1 parser-buffer ceiling (`max_buf_size`), not a request-body limit: it bounds how much header/request-target bytes the H1 parser will buffer (minimum 8192, enforced by config validation). The request-body cap is `max_streaming_body_size` (default 10 MiB), overridable per site with `[proxy] max_request_body_size`. A body above the resolved cap is rejected with `413` before it reaches an upstream; the WAF does not add a second body cap.
 - `pipeline_limit = 32` is currently not enforced: no H1 pipeline-depth control consumes this key. It remains a parseable compatibility key.
 - `max_connections = 10000` bounds concurrent HTTP request admission (per-request semaphore held for request lifetime), not accepted TCP connections.
+
+### Request Body Policy
+
+SynVoid resolves one body cap per request:
+
+1. `[proxy] max_request_body_size` in the site file, when set;
+2. `[http] max_streaming_body_size` in `main.toml` (default 10 MiB);
+3. the built-in 10 MiB default.
+
+A body whose declared `Content-Length` exceeds the cap, or a chunked body that
+grows past it, returns `413 Payload Too Large`. The cap applies before WAF
+inspection and before the upstream connection. `body_buffering_policy =
+"streaming"` opts a site into the streaming path; `streaming_threshold_bytes`
+also switches a buffered site to streaming when the known body size exceeds the
+threshold. Chunked bodies have no known size, so they require the explicit
+`streaming` policy. Body transforms (plugin/WASM, minification, image rights,
+compression) keep the buffered path.
 
 ### Fallback Mode
 
@@ -191,21 +211,88 @@ mode = "return_404"  # or "proxy" with upstream setting
 Attack detection is configured **per site** (`config/sites/<domain>.toml`), under
 `[attack_detection]`. There is **no `[defaults.attack_detection]` section** —
 `DefaultsConfig` has no `attack_detection` field, so a `[defaults.attack_detection]`
-block (including the one in `config/main.toml.example`) is silently ignored: the
-config crate does not use `deny_unknown_fields`.
+block would be silently ignored (the config crate does not use
+`deny_unknown_fields`). The application builds its global detector from built-in
+defaults and applies each site's overrides on top.
 
 ```toml
 # config/sites/example.com.toml
 [attack_detection]
 enabled = true
 paranoia_level = 2  # 1=low, 2=medium, 3=high
-action = "stall"    # "stall", "block", or "log"
+action = "block"    # "block" (default), "stall", or "log"
 ```
 
 **Why these defaults:**
 - Attack detection is enabled by default because it's the core WAF function—disabling it defeats the purpose of running a WAF
 - `paranoia_level = 2` (medium) catches common attacks without excessive false positives; level 3 is aggressive and may affect legitimate traffic
-- `action = "stall"` stalls suspicious requests instead of blocking—reduces false positives by forcing attackers to wait while allowing legitimate users with edge-case patterns through
+- `action = "block"` preserves the long-standing 403 behavior and avoids making the stall budget a resource-exhaustion lever. `stall` and `log` remain available per site.
+- `log` observes a match (warning/metric) but does not block and does not record an escalation violation. Per-path `log` rules do the same and take precedence over the site action.
+
+**Per-site overrides are enforced.** `paranoia_level`, `action`,
+`custom_patterns` (on `sqli`, `xss`, `path_traversal`, `rfi`, `ssrf`), and the
+SSRF controls (`allowed_domains`, `block_private_ips`, `allowlist_only_mode`)
+are merged over the global detector configuration for that site. A site that
+changes detector construction inputs gets an immutable detector variant from a
+bounded LRU cache (64 entries, keyed by a policy fingerprint that includes the
+configuration generation); sites with no detector-affecting overrides continue
+to share the single global detector. Reloading the detector clears that cache.
+
+```toml
+[attack_detection]
+paranoia_level = 3          # this site only
+
+[attack_detection.sqli]
+enabled = true
+custom_patterns = ["tenant_specific_sqli_token"]
+
+[attack_detection.ssrf]
+enabled = true
+block_private_ips = false   # this site opts out of the private-IP heuristic
+allowlist_only_mode = false
+allowed_domains = ["api.example.com"]
+```
+
+**Per-detector toggles and inheritance:** each site may disable individual
+detectors; an absent site key inherits the global detector state:
+
+```toml
+[attack_detection.rfi]
+enabled = false   # this site skips RFI; other detectors unchanged
+```
+
+Detectors with no site subtable (`ssti`, `cmd_injection`, `xxe`, `jwt`,
+`request_smuggling`, `ldap`, `xpath`, `open_redirect`) always follow the
+global configuration. Top-level site `enabled = false` suppresses all attack
+inspection for that site.
+
+**Per-path log-only rules** override the site action:
+
+```toml
+[[attack_detection.per_path]]
+path_prefix = "/admin/import"
+action = "log"      # "log" or "block"; longest matching prefix wins
+```
+
+**Header payload scanning** is deliberately narrow. The SQLi/XSS/value
+detectors scan `Cookie`, `Referer`, `Origin`, and explicitly configured custom
+headers. Content negotiation (`Accept-*`), browser metadata/framing/cache
+validators (`Sec-*`, `Priority`, `Upgrade-*`, `Range`, `If-*`,
+`Cache-Control`, `Pragma`, `DNT`, `TE`, `Connection`), `Host`, `Authorization`
+(JWT detector only), `Content-Type`, `Content-Length` and
+`Transfer-Encoding` are skipped by the payload detectors. `HeaderValidator`
+still validates every header structurally (size, CRLF, invalid characters,
+duplicates, smuggling conflicts).
+
+```toml
+[attack_detection.headers]
+scan = ["x-app-user"]           # extra user-controlled headers to inspect
+skip = ["x-internal-trace"]     # never payload-scan these (wins over scan)
+```
+
+On-disk configuration changes apply on restart. Rule-feed pattern updates are
+merged into the detector and applied through the control-plane reload path
+without a restart.
 
 ## Flood Protection Configuration
 
@@ -216,7 +303,8 @@ under `[defaults.flood]`, which does not exist. The keys below are the real
 ```toml
 [tcp]
 enabled = true
-worker_pool_size = 4
+worker_pool_size = 4           # accept loops per bound TCP listener
+idle_timeout_secs = 300        # close a proxied connection with no traffic
 syn_rate_per_ip = 50           # SYN packets per second per IP
 syn_rate_global = 10000        # Global SYN rate limit
 connection_rate_per_ip = 100   # Connections per second per IP
@@ -228,7 +316,17 @@ half_open_per_ip_max = 10     # Max half-open per IP
 enabled = true
 rate_per_ip = 1000       # UDP packets per second per IP
 rate_global = 100000     # Global UDP rate
+max_packet_size = 4096   # largest client datagram accepted
+max_flows = 4096         # concurrent request/response flows per listener
+flow_idle_timeout_secs = 60  # reap a flow with no traffic for this long
 ```
+
+> An explicit `[tcp]`/`[udp]` table that omits `protocols` still receives the
+> built-in default protocol map (SMTP/IMAP/POP3/MySQL/Postgres for TCP, DNS for
+> UDP). If you only want the flood-limit keys, keep the section disabled or
+> declare the ports you actually want. `configtest` rejects an explicitly
+> **empty** protocol map, an empty port list, port `0`, duplicate ports and an
+> invalid upstream.
 
 **There is no `blackhole_threshold` or `blackhole_duration_secs` config key.**
 No `[tcp]`, `[udp]`, or `[defaults]` field by those names exists anywhere in
@@ -332,6 +430,78 @@ Site-level sections are written **without** the `site.` prefix inside
 `config/sites/*.toml`; the prefix shown in `[site.upstream]` above applies to the
 nested tables. `SiteRateLimitConfig::validate` accepts only `shared` and
 `isolated`.
+
+### HTTP listener model
+
+Listeners are process-wide resources. The canonical model declares them once
+in `main.toml`; sites reference listeners by name and never own sockets.
+
+```toml
+[[http.listeners]]
+name = "public-http"
+address = "0.0.0.0"
+port = 80
+default_site = "example.com"
+
+[[http.listeners]]
+name = "public-https"
+address = "0.0.0.0"
+port = 443
+tls = true
+http2 = true
+http3 = true
+
+[[http.listeners]]
+name = "internal-https"
+address = "127.0.0.1"
+port = 8443
+tls = true
+http2 = true
+```
+
+- `name` is required, stable, and case-insensitively unique. Names become the
+  routing/metrics/admin identity.
+- `address` must be a literal IPv4/IPv6 address. `ipv6_only` is valid only on
+  an IPv6 listener.
+- `tls = true` requires `[tls].enabled = true` and a usable certificate source.
+- `http2 = true` requires TLS; cleartext HTTP/2 (h2c) is not supported.
+- `http3 = true` requires TLS. HTTPS/TCP and HTTP/3/UDP may share a port
+  (`443/tcp` plus `443/udp`); collisions within the same transport are
+  rejected.
+- When `[[http.listeners]]` is present, `[server]` host/port, `[tls].port`, and
+  `[http3].port` are compatibility defaults only and bind nothing.
+- Listener definitions are startup state. Changing a name, address, port,
+  TLS/ALPN setting, or H3 pairing requires a restart.
+
+When the array is omitted, SynVoid synthesizes the legacy listeners from
+`[server]`, `[tls]`, and `[http3]`, so existing single-listener configurations
+keep working. `[http3].enabled` still creates the legacy H3 listener in that
+synthesis path; in the explicit array only `http3 = true` does.
+
+Sites select listeners with an optional allowlist:
+
+```toml
+[site]
+domains = ["example.com", "www.example.com"]
+listeners = ["public-http", "public-https"]
+```
+
+Omitting `listeners` makes the site a candidate on every listener. An empty
+list is rejected. A listener's `default_site` must be a member of that listener
+and applies to any unmatched Host on that listener; otherwise the global
+`[fallback]` applies. A request never falls through to another listener's site
+table.
+
+`[[site.listen]]` remains retired and rejected. It never bound its declared
+sockets and its flags had no runtime consumer. Use `[[http.listeners]]` plus
+`[site].listeners`.
+
+TCP/UDP listeners remain global `[tcp.protocols.*]` / `[udp.protocols.*]`
+maps. Per-site TCP/UDP ownership is not part of this model.
+
+Multi-worker deployments share the same listener plan. HTTP/3 with
+`unified_server_workers > 1` is rejected until single-owner/migration-safe
+behavior is qualified; keep one worker when H3 is enabled.
 
 ## HTTP/3 Configuration
 
@@ -478,6 +648,31 @@ per_minute = 100
 ```
 
 Enable this option in hardened production environments after auditing all passthrough site configurations.
+
+### Worker Filesystem Sandbox
+
+Controls the in-process Landlock filesystem sandbox applied to the
+`UnifiedServerWorker` (the process that parses untrusted HTTP, runs the WAF and
+terminates TLS).
+
+```toml
+[security]
+worker_sandbox = "off"  # "off" | "auto" | "required" — Default: "off"
+```
+
+| Value | Behavior |
+|-------|----------|
+| `off` (default) | No in-process filesystem confinement is applied. The worker relies on the service account and the systemd sandbox from Phase 07. |
+| `auto` | Applies the worker filesystem sandbox only when the backend fully enforces the requested filesystem guarantees. If it cannot, the enforcement report is logged and the worker continues without the in-process sandbox. A failure after entry (partial enforcement) fails startup instead of running in an unknown state. |
+| `required` | Fails worker startup unless `AmbientFilesystemDenied`, `FilesystemReadAllowlist`, `FilesystemWriteAllowlist`, `InheritedIpcUsable` and `DescendantsConfined` are all fully enforced. |
+
+Linux (Landlock) is the only qualified backend for the required filesystem
+guarantees; a backend that cannot enforce them makes `required` fail startup.
+The sandbox is entered before the worker creates its Tokio runtime, so a change
+to this setting takes effect when the worker restarts. It is filesystem
+confinement only (no network/exec denial, no seccomp). See
+[`docs/SANDBOXING.md`](SANDBOXING.md) for the guarantee matrix and the
+allowlist sources.
 
 ### ACME (Let's Encrypt)
 
@@ -639,26 +834,100 @@ update_interval_hours = 6
 max_permanent_blocks = 100000
 ```
 
-## TCP Protocol Filtering
+## TCP and UDP Proxying (Beta)
+
+The global **top-level** `[tcp.protocols.*]` and `[udp.protocols.*]` maps are the
+runtime listener definitions. Each entry expands into one listener per declared
+port and address family (`[server] host`, plus `host_v6` when set):
 
 ```toml
 # Top-level [tcp] (also documented above under Flood Protection)
 [tcp]
 enabled = true
-worker_pool_size = 4
+worker_pool_size = 4          # accept loops per bound listener
+idle_timeout_secs = 300       # per-connection idle timeout
 
 [tcp.protocols.smtp]
 ports = [25, 587]
 upstream_format = "127.0.0.1:{port}"
-
-[tcp.protocols.imap]
-ports = [143, 993]
-upstream_format = "127.0.0.1:{port}"
+upstream_format_v6 = "[::1]:{port}"
 
 [tcp.protocols.mysql]
 ports = [3306]
 upstream_format = "127.0.0.1:{port}"
+
+# Custom protocol the detector does not know: disable the detector or it
+# will classify the first bytes as "unknown" and stall/close the connection.
+[tcp.protocols.custom]
+ports = [9000]
+upstream_format = "127.0.0.1:{port}"
+filter_enabled = false
+
+[udp]
+enabled = false               # opt-in; the shipped config leaves this off
+worker_pool_size = 4          # receive loops per bound listener
+max_packet_size = 4096
+max_flows = 4096
+flow_idle_timeout_secs = 60
+
+[udp.protocols.dns]
+ports = [5353]
+upstream_format = "127.0.0.1:53"
+upstream_format_v6 = "[::1]:53"
 ```
+
+`{port}` substitutes the **listener port** in `upstream_format` /
+`upstream_format_v6`. Startup and `configtest` reject an enabled section with
+no protocols, an empty port list, port `0`, a duplicate port across protocols,
+a missing upstream format, or a format that cannot produce a socket address.
+A privileged port is allowed but needs root or `CAP_NET_BIND_SERVICE`.
+`filter_enabled` (default `true`) controls the protocol detector; set it to
+`false` for a custom protocol the detector does not recognize. `strict_mode`
+(default `true`) controls whether a mismatch is rejected or only logged.
+
+TCP and UDP listeners are **Beta**. TCP runs `worker_pool_size` accept loops per
+listener over one bound socket, applies the declared protocol filter, and closes
+an idle proxied connection after `idle_timeout_secs`. UDP maintains a bounded
+per-client request/response flow with a connected upstream socket, enforces
+`max_packet_size`, `max_flows`, `flow_idle_timeout_secs`, the per-IP rate limit
+and the global flood limits, and returns upstream replies to the original
+client.
+
+The retired site-level `[tcp]` / `[udp]` tables inside
+`config/sites/*.toml` are rejected at validation; raw TCP/UDP has no `Host`
+header and cannot be routed per site. The admin TCP/UDP page is a read-only
+inventory of the listeners this process actually bound; changing a definition
+requires editing `main.toml` and restarting.
+
+**Migration note:** delete `[tcp]` and `[udp]` from every
+`config/sites/*.toml`, then declare the same ports once under the global
+top-level `[tcp.protocols.<name>]` / `[udp.protocols.<name>]` maps in
+`main.toml`. A site file that still carries the old tables fails `configtest`
+with `site-level TCP listeners are retired` / `site-level UDP listeners are
+retired` rather than silently ignoring them.
+
+## Worker Pool
+
+```toml
+[defaults.worker_pool]
+mode = "shared"              # "shared" or "isolated"
+workers = 1                  # UnifiedServerWorker processes
+allow_multi_worker = false   # required acknowledgement for workers > 1
+worker_port_base = 9000
+auto_scale = true
+```
+
+The canonical data plane is **one** `UnifiedServerWorker` with one Tokio
+runtime. Omit the section and one worker starts. Scale throughput with
+`[process_manager].worker_threads` and `[tcp].worker_pool_size`, not with
+`workers`.
+
+`workers > 1` is an advanced fault-isolation mode. It fails validation unless
+`allow_multi_worker = true`, and that opt-in is mandatory when `[admin]` is
+enabled. Sessions, CSRF tokens, the admin rate-limit budget, the admin metrics
+feed and request logs are worker-local: a browser can authenticate on worker A
+and land on worker B with no session, and the panel observes one worker at a
+time. SynVoid does not provide a distributed session store.
 
 ## Process Management
 
@@ -962,7 +1231,8 @@ token = "<64 hex characters from `synvoid --generatetoken`>"
 #   action = "block"
 
 [tcp]
-enabled = true
+# Raw TCP proxying is opt-in and requires [tcp.protocols.<name>] entries.
+enabled = false
 syn_rate_per_ip = 20
 connection_rate_per_ip = 50
 
@@ -997,7 +1267,7 @@ token = "<64 hex characters from `synvoid --generatetoken`>"
 #   [attack_detection]
 #   enabled = true
 #   paranoia_level = 2
-#   action = "stall"
+#   action = "block"   # or "stall" / "log"
 
 [defaults.ratelimit]
 mode = "isolated"
@@ -1031,10 +1301,11 @@ port = 80
 #   [attack_detection]
 #   enabled = true
 #   paranoia_level = 3
-#   action = "stall"
+#   action = "block"   # or "stall" / "log"
 
 [tcp]
-enabled = true
+# Raw TCP proxying is opt-in and requires [tcp.protocols.<name>] entries.
+enabled = false
 syn_rate_per_ip = 10
 syn_rate_global = 5000
 connection_rate_per_ip = 10

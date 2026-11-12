@@ -338,7 +338,7 @@ pub fn TrafficShaping() -> Html {
                             role="switch"
                             aria-checked={if *global_enabled { "true" } else { "false" }}
                             aria-label="Enable Global Limits"
-                            class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *global_enabled { "bg-action-600" } else { "bg-gray-600" })}
+                            class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *global_enabled { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                         >
                             <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *global_enabled { "translate-x-5" } else { "translate-x-0" })} />
                         </button>

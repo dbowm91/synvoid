@@ -1,4 +1,6 @@
-use crate::attack_detection::config::{AttackDetectionResult, AttackType, InputLocation};
+use crate::attack_detection::config::{
+    AttackDetectionConfig, AttackDetectionResult, AttackType, HeaderScanConfig, InputLocation,
+};
 use crate::attack_detection::normalizer::InputNormalizer;
 use aho_corasick::AhoCorasick;
 use std::sync::Arc;
@@ -163,6 +165,114 @@ const SECURITY_HEADERS: &[&str] = &[
     "proxy-authorization",
 ];
 
+/// `Referer`/`Origin` legitimately carry absolute same-site URLs. Detectors
+/// skip their bare-URL heuristics there while keeping anchored/smuggled
+/// pattern matching active.
+pub(crate) fn is_referer_or_origin(location: &InputLocation) -> bool {
+    location
+        .header_name()
+        .is_some_and(|n| n.eq_ignore_ascii_case("referer") || n.eq_ignore_ascii_case("origin"))
+}
+
+/// The `Host` header names the server the client already reached (and the
+/// site router already matched); it is not a server-side fetch target, so
+/// it carries no SSRF signal. IP-literal hosting would otherwise flag every
+/// request.
+pub(crate) fn is_host(location: &InputLocation) -> bool {
+    location
+        .header_name()
+        .is_some_and(|n| n.eq_ignore_ascii_case("host"))
+}
+
+/// How a request header participates in payload (SQLi/XSS/etc.) detection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeaderScanClass {
+    /// Not a payload sink; skip value detectors.
+    Skip,
+    /// URL-bearing header (`Referer`, `Origin`); existing URL-aware detector
+    /// exemptions still apply.
+    Url,
+    /// User-controlled value (`Cookie`, configured custom headers).
+    UserValue,
+    /// Credential (`Authorization`); handled by the JWT detector instead.
+    Credential,
+    /// Automated-client identification (`User-Agent`); handled by bot policy.
+    UserAgent,
+}
+
+/// Central header scan policy.
+///
+/// The default is deliberately narrow: only `Cookie`, `Referer`, `Origin` and
+/// explicitly configured custom headers are payload scanned. Content
+/// negotiation, browser metadata, framing, cache validators and proxy
+/// metadata are skipped. `HeaderValidator` is structural and still validates
+/// every header independently of this policy.
+#[derive(Debug, Clone, Default)]
+pub struct HeaderScanPolicy {
+    custom_scan: Vec<String>,
+    custom_skip: Vec<String>,
+}
+
+impl HeaderScanPolicy {
+    pub fn new(scan: &[String], skip: &[String]) -> Self {
+        Self {
+            custom_scan: normalize_header_names(scan),
+            custom_skip: normalize_header_names(skip),
+        }
+    }
+
+    pub fn from_config(config: &AttackDetectionConfig) -> Self {
+        let HeaderScanConfig { scan, skip } = &config.header_scan;
+        Self::new(scan, skip)
+    }
+
+    pub fn classify(&self, name: &str) -> HeaderScanClass {
+        if contains_header(&self.custom_skip, name) {
+            return HeaderScanClass::Skip;
+        }
+        if contains_header(&self.custom_scan, name) {
+            return HeaderScanClass::UserValue;
+        }
+        if name.eq_ignore_ascii_case("cookie") {
+            return HeaderScanClass::UserValue;
+        }
+        if name.eq_ignore_ascii_case("referer") || name.eq_ignore_ascii_case("origin") {
+            return HeaderScanClass::Url;
+        }
+        if name.eq_ignore_ascii_case("authorization")
+            || name.eq_ignore_ascii_case("proxy-authorization")
+        {
+            return HeaderScanClass::Credential;
+        }
+        if name.eq_ignore_ascii_case("user-agent") {
+            return HeaderScanClass::UserAgent;
+        }
+        HeaderScanClass::Skip
+    }
+
+    /// Whether value detectors should run on this header at all.
+    pub fn allows_payload_scan(&self, name: &str) -> bool {
+        matches!(
+            self.classify(name),
+            HeaderScanClass::Url | HeaderScanClass::UserValue
+        )
+    }
+}
+
+fn normalize_header_names(names: &[String]) -> Vec<String> {
+    names
+        .iter()
+        .map(|name| name.trim().to_ascii_lowercase())
+        .filter(|name| !name.is_empty())
+        .collect()
+}
+
+fn contains_header(names: &[String], name: &str) -> bool {
+    names
+        .iter()
+        .any(|candidate| candidate.eq_ignore_ascii_case(name))
+}
+
 pub fn detect_in_headers<F>(
     headers: &http::HeaderMap,
     mut check_header: F,
@@ -172,8 +282,9 @@ pub fn detect_in_headers<F>(
 where
     F: FnMut(&str) -> bool,
 {
+    let policy = HeaderScanPolicy::default();
     for header_name in SECURITY_HEADERS {
-        if !check_header(header_name) {
+        if !policy.allows_payload_scan(header_name) || !check_header(header_name) {
             continue;
         }
 
@@ -216,7 +327,11 @@ pub trait PatternDetector: Send + Sync {
         headers: &http::HeaderMap,
         normalizer: Option<&InputNormalizer>,
     ) -> Option<AttackDetectionResult> {
+        let policy = HeaderScanPolicy::default();
         for header_name in SECURITY_HEADERS {
+            if !policy.allows_payload_scan(header_name) {
+                continue;
+            }
             if let Some(value) = headers.get(*header_name) {
                 if let Ok(value_str) = value.to_str() {
                     let location = InputLocation::Header((*header_name).into());
@@ -254,8 +369,9 @@ pub trait PatternDetector: Send + Sync {
     where
         F: FnMut(&str) -> bool,
     {
+        let policy = HeaderScanPolicy::default();
         for header_name in SECURITY_HEADERS {
-            if !check_header(header_name) {
+            if !policy.allows_payload_scan(header_name) || !check_header(header_name) {
                 continue;
             }
             if let Some(value) = headers.get(*header_name) {
@@ -291,7 +407,11 @@ pub trait PatternDetector: Send + Sync {
         headers: &http::HeaderMap,
         normalizer: Option<&InputNormalizer>,
     ) -> Option<AttackDetectionResult> {
+        let policy = HeaderScanPolicy::default();
         for (header_name, header_value) in headers.iter() {
+            if !policy.allows_payload_scan(header_name.as_str()) {
+                continue;
+            }
             if let Ok(value) = header_value.to_str() {
                 let location = InputLocation::Header(header_name.as_str().into());
                 if let Some(r) = self.detect(value, location.clone()) {
@@ -539,4 +659,81 @@ where
         });
     }
     None
+}
+
+#[cfg(test)]
+mod header_scan_policy_tests {
+    use super::*;
+
+    #[test]
+    fn cookie_referer_and_origin_are_scanned() {
+        let policy = HeaderScanPolicy::default();
+        assert_eq!(policy.classify("cookie"), HeaderScanClass::UserValue);
+        assert_eq!(policy.classify("Referer"), HeaderScanClass::Url);
+        assert_eq!(policy.classify("origin"), HeaderScanClass::Url);
+        assert!(policy.allows_payload_scan("cookie"));
+    }
+
+    #[test]
+    fn browser_and_framing_headers_are_skipped() {
+        let policy = HeaderScanPolicy::default();
+        for name in [
+            "accept",
+            "accept-language",
+            "sec-fetch-dest",
+            "priority",
+            "upgrade-insecure-requests",
+            "range",
+            "if-none-match",
+            "cache-control",
+            "pragma",
+            "dnt",
+            "te",
+            "connection",
+            "host",
+            "content-type",
+            "content-length",
+            "transfer-encoding",
+        ] {
+            assert!(
+                !policy.allows_payload_scan(name),
+                "{name} must be skipped by payload detectors"
+            );
+        }
+    }
+
+    #[test]
+    fn authorization_and_user_agent_are_not_payload_scanned() {
+        let policy = HeaderScanPolicy::default();
+        assert_eq!(
+            policy.classify("authorization"),
+            HeaderScanClass::Credential
+        );
+        assert_eq!(policy.classify("user-agent"), HeaderScanClass::UserAgent);
+        assert!(!policy.allows_payload_scan("authorization"));
+        assert!(!policy.allows_payload_scan("user-agent"));
+    }
+
+    #[test]
+    fn unknown_headers_are_skip_by_default() {
+        let policy = HeaderScanPolicy::default();
+        assert!(!policy.allows_payload_scan("x-custom"));
+    }
+
+    #[test]
+    fn configured_scan_adds_and_skip_wins() {
+        let policy = HeaderScanPolicy::new(
+            &["X-App-User".to_string(), "x-blocked".to_string()],
+            &["X-Blocked".to_string()],
+        );
+        assert!(policy.allows_payload_scan("x-app-user"));
+        assert_eq!(policy.classify("x-blocked"), HeaderScanClass::Skip);
+        assert!(!policy.allows_payload_scan("x-blocked"));
+    }
+
+    #[test]
+    fn configured_scan_can_override_a_default_skip() {
+        let policy = HeaderScanPolicy::new(&["x-forwarded-for".to_string()], &[]);
+        assert!(policy.allows_payload_scan("X-Forwarded-For"));
+    }
 }

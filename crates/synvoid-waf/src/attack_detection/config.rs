@@ -52,6 +52,19 @@ impl Default for AnomalyScoringConfig {
     }
 }
 
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct HeaderScanConfig {
+    /// Extra headers to scan as user-controlled payloads. Built-in classes
+    /// (Cookie, Referer/Origin) are always scanned; everything else is skipped
+    /// unless explicitly listed here.
+    #[serde(default)]
+    pub scan: Vec<String>,
+    /// Headers to exclude from payload scans. Wins over `scan`, but the
+    /// structural `HeaderValidator` still validates every header.
+    #[serde(default)]
+    pub skip: Vec<String>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct AttackDetectionConfig {
     #[serde(default = "default_true")]
@@ -68,6 +81,8 @@ pub struct AttackDetectionConfig {
     pub max_headers: usize,
     #[serde(default = "default_max_body_size")]
     pub max_request_body_size: Option<usize>,
+    #[serde(default)]
+    pub header_scan: HeaderScanConfig,
     #[serde(default)]
     pub anomaly_scoring: AnomalyScoringConfig,
     #[serde(default)]
@@ -103,7 +118,7 @@ fn default_paranoia_level() -> u8 {
 }
 
 fn default_action() -> String {
-    "stall".to_string()
+    "block".to_string()
 }
 
 fn default_max_header_size() -> usize {
@@ -115,7 +130,12 @@ fn default_max_headers() -> usize {
 }
 
 fn default_max_body_size() -> Option<usize> {
-    Some(10485760) // 10MB default
+    // A standalone detector keeps its historical 10 MiB inspection cap. The
+    // application WAF overrides this with `None` because the request pipeline
+    // owns the body policy (`[http] max_streaming_body_size` plus an optional
+    // `[site.proxy] max_request_body_size`), and the streaming scanner receives
+    // the resolved cap explicitly.
+    Some(10485760)
 }
 
 impl Default for AttackDetectionConfig {
@@ -128,6 +148,7 @@ impl Default for AttackDetectionConfig {
             max_header_size: default_max_header_size(),
             max_headers: default_max_headers(),
             max_request_body_size: default_max_body_size(),
+            header_scan: HeaderScanConfig::default(),
             anomaly_scoring: AnomalyScoringConfig::default(),
             sqli: DetectorConfig::default(),
             xss: DetectorConfig::default(),
@@ -146,7 +167,7 @@ impl Default for AttackDetectionConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct SsrfConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
@@ -158,6 +179,18 @@ pub struct SsrfConfig {
     pub allowed_domains: Vec<String>,
     #[serde(default)]
     pub allowlist_only_mode: bool,
+}
+
+impl Default for SsrfConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            custom_patterns: Vec::new(),
+            block_private_ips: default_block_private_ips(),
+            allowed_domains: Vec::new(),
+            allowlist_only_mode: false,
+        }
+    }
 }
 
 fn default_block_private_ips() -> bool {
@@ -183,6 +216,67 @@ pub struct AttackDetectionResult {
     pub fingerprint: Option<String>,
     pub matched_pattern: Option<String>,
     pub input_location: InputLocation,
+}
+
+/// Confidence of a detector result, used to calibrate violation escalation.
+///
+/// Pattern matches and structural validators (request smuggling, XXE, command
+/// injection) are high confidence. Libinjection-only hits outside headers are
+/// medium confidence, and libinjection-only hits in headers/cookies are low
+/// confidence because those inputs routinely contain arbitrary punctuation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AttackConfidence {
+    Low,
+    Medium,
+    High,
+}
+
+impl AttackConfidence {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+        }
+    }
+}
+
+impl AttackDetectionResult {
+    pub fn confidence(&self) -> AttackConfidence {
+        if self.matched_pattern.is_some()
+            || matches!(
+                self.attack_type,
+                AttackType::RequestSmuggling | AttackType::Xxe | AttackType::CmdInjection
+            )
+        {
+            return AttackConfidence::High;
+        }
+
+        match self.input_location {
+            InputLocation::Header(_) | InputLocation::Cookie(_) => AttackConfidence::Low,
+            InputLocation::QueryString | InputLocation::PostBody | InputLocation::Path => {
+                AttackConfidence::Medium
+            }
+        }
+    }
+
+    /// Weight applied to violation-based escalation: `0` never records a
+    /// violation, `1` records one, `2` is a structural/high-confidence hit.
+    pub fn escalation_weight(&self) -> u8 {
+        match self.confidence() {
+            AttackConfidence::High => 2,
+            AttackConfidence::Medium => 1,
+            AttackConfidence::Low => 0,
+        }
+    }
+
+    /// Whether this result may contribute to the IP violation tracker.
+    ///
+    /// Low-confidence libinjection-only header/URL matches still block when
+    /// the resolved action is `block`, but they never accumulate toward a ban.
+    pub fn should_record_violation(&self) -> bool {
+        self.escalation_weight() > 0
+    }
 }
 
 /// Attack classification categories returned by the detection engine.
@@ -317,6 +411,18 @@ impl InputLocation {
         }
     }
 
+    /// Bounded location class for metrics. Never contains the header/cookie
+    /// name, so attacker-controlled names cannot inflate label cardinality.
+    pub const fn class(&self) -> &'static str {
+        match self {
+            InputLocation::QueryString => "query_string",
+            InputLocation::PostBody => "post_body",
+            InputLocation::Header(_) => "header",
+            InputLocation::Path => "path",
+            InputLocation::Cookie(_) => "cookie",
+        }
+    }
+
     pub fn header(name: &Arc<str>) -> Self {
         InputLocation::Header(name.clone())
     }
@@ -342,5 +448,76 @@ impl std::fmt::Display for InputLocation {
             InputLocation::Path => write!(f, "path"),
             InputLocation::Cookie(name) => write!(f, "cookie:{}", name),
         }
+    }
+}
+
+#[cfg(test)]
+mod confidence_tests {
+    use super::*;
+
+    fn result(
+        attack_type: AttackType,
+        matched_pattern: Option<&str>,
+        location: InputLocation,
+    ) -> AttackDetectionResult {
+        AttackDetectionResult {
+            attack_type,
+            fingerprint: None,
+            matched_pattern: matched_pattern.map(str::to_string),
+            input_location: location,
+        }
+    }
+
+    #[test]
+    fn default_action_is_block() {
+        assert_eq!(AttackDetectionConfig::default().action, "block");
+    }
+
+    #[test]
+    fn pattern_matches_are_high_confidence() {
+        let r = result(
+            AttackType::Sqli,
+            Some("' OR '1'='1"),
+            InputLocation::Header("cookie".into()),
+        );
+        assert_eq!(r.confidence(), AttackConfidence::High);
+        assert!(r.should_record_violation());
+    }
+
+    #[test]
+    fn libinjection_in_header_is_non_escalating() {
+        let r = result(
+            AttackType::Xss,
+            None,
+            InputLocation::Header("referer".into()),
+        );
+        assert_eq!(r.confidence(), AttackConfidence::Low);
+        assert_eq!(r.escalation_weight(), 0);
+        assert!(!r.should_record_violation());
+    }
+
+    #[test]
+    fn libinjection_in_query_is_medium_confidence() {
+        let r = result(AttackType::Sqli, None, InputLocation::QueryString);
+        assert_eq!(r.confidence(), AttackConfidence::Medium);
+        assert_eq!(r.escalation_weight(), 1);
+        assert!(r.should_record_violation());
+    }
+
+    #[test]
+    fn structural_classes_are_high_confidence() {
+        let r = result(
+            AttackType::RequestSmuggling,
+            None,
+            InputLocation::Header("content-length".into()),
+        );
+        assert_eq!(r.confidence(), AttackConfidence::High);
+    }
+
+    #[test]
+    fn location_class_is_bounded() {
+        assert_eq!(InputLocation::Header("x-custom".into()).class(), "header");
+        assert_eq!(InputLocation::Cookie("session".into()).class(), "cookie");
+        assert_eq!(InputLocation::QueryString.class(), "query_string");
     }
 }

@@ -242,7 +242,45 @@ impl ApiService {
         }
     }
 
-    async fn request(&self, method: &str, path: &str) -> Result<Response, ApiError> {
+    /// Adopt a rotated CSRF token published on a mutating response. The
+    /// server mints a fresh single-use token for every validated mutation
+    /// (`csrf_middleware`); without adopting it here, the next write in this
+    /// session 403s and the UI treats that as session expiry.
+    fn adopt_rotated_token(response: &Response) {
+        let rotated: String = response.headers().get("X-CSRF-Token").unwrap_or_default();
+        if !rotated.is_empty() {
+            set_csrf_token(Some(rotated));
+        }
+    }
+
+    /// Fetch a fresh single-use CSRF token for the current session without
+    /// disturbing auth state. Recovers from a 403 on a mutating request
+    /// (token consumed elsewhere, e.g. a concurrent tab): returns true and
+    /// stores the token on success, false otherwise — the caller then runs
+    /// the normal 403 path.
+    async fn refresh_csrf_token(&self) -> bool {
+        let response = Request::get(&format!("{}{}", self.base_url, "/auth/csrf"))
+            .credentials(web_sys::RequestCredentials::Include)
+            .send()
+            .await;
+        let response = match response {
+            Ok(r) if r.ok() => r,
+            _ => return false,
+        };
+        let body: serde_json::Value = match response.json().await {
+            Ok(b) => b,
+            _ => return false,
+        };
+        match body.get("csrf_token").and_then(|v| v.as_str()) {
+            Some(token) if !token.is_empty() => {
+                set_csrf_token(Some(token.to_string()));
+                true
+            }
+            _ => false,
+        }
+    }
+
+    async fn send_request(&self, method: &str, path: &str) -> Result<Response, ApiError> {
         let url = format!("{}{}", self.base_url, path);
 
         let mut builder = match method {
@@ -272,22 +310,32 @@ impl ApiService {
             })
     }
 
-    async fn request_with_body<B: Serialize>(
+    async fn request(&self, method: &str, path: &str) -> Result<Response, ApiError> {
+        let mut response = self.send_request(method, path).await?;
+        Self::adopt_rotated_token(&response);
+        // A 403 on a mutating request usually means our single-use token was
+        // consumed elsewhere — refresh once and retry before treating it as
+        // session expiry. Exactly one retry: a second 403 runs the normal
+        // logout path via the caller.
+        if response.status() == 403
+            && matches!(method, "POST" | "PUT" | "PATCH" | "DELETE")
+            && self.refresh_csrf_token().await
+        {
+            response = self.send_request(method, path).await?;
+            Self::adopt_rotated_token(&response);
+        }
+        Ok(response)
+    }
+
+    async fn send_with_body(
         &self,
         method: &str,
-        path: &str,
-        body: &B,
+        url: &str,
+        body: &str,
     ) -> Result<Response, ApiError> {
-        let url = format!("{}{}", self.base_url, path);
-
-        let body_str = serde_json::to_string(body).map_err(|e| ApiError {
-            status: 0,
-            message: format!("Serialization error: {}", e),
-        })?;
-
         let mut builder = match method {
-            "POST" => Request::post(&url),
-            "PUT" => Request::put(&url),
+            "POST" => Request::post(url),
+            "PUT" => Request::put(url),
             _ => {
                 return Err(ApiError {
                     status: 0,
@@ -305,7 +353,7 @@ impl ApiService {
             .credentials(web_sys::RequestCredentials::Include);
 
         builder
-            .body(body_str)
+            .body(body.to_string())
             .map_err(|e| ApiError {
                 status: 0,
                 message: format!("Request failed: {}", e),
@@ -316,6 +364,33 @@ impl ApiService {
                 status: 0,
                 message: format!("Request failed: {}", e),
             })
+    }
+
+    async fn request_with_body<B: Serialize>(
+        &self,
+        method: &str,
+        path: &str,
+        body: &B,
+    ) -> Result<Response, ApiError> {
+        let url = format!("{}{}", self.base_url, path);
+
+        let body_str = serde_json::to_string(body).map_err(|e| ApiError {
+            status: 0,
+            message: format!("Serialization error: {}", e),
+        })?;
+
+        let mut response = self.send_with_body(method, &url, &body_str).await?;
+        Self::adopt_rotated_token(&response);
+        // Same single-use recovery as `request`: exactly one retry, then the
+        // caller runs the normal 401/403 path.
+        if response.status() == 403
+            && matches!(method, "POST" | "PUT" | "PATCH" | "DELETE")
+            && self.refresh_csrf_token().await
+        {
+            response = self.send_with_body(method, &url, &body_str).await?;
+            Self::adopt_rotated_token(&response);
+        }
+        Ok(response)
     }
 
     fn handle_auth_error(status: u16) -> Result<(), ApiError> {
@@ -528,7 +603,19 @@ impl ApiService {
         &self,
         request: &crate::types::UpdateThemeRequest,
     ) -> Result<crate::types::ThemeResponse, ApiError> {
-        self.put("/theme", request).await
+        let result: crate::types::AdminMutationResult = self.put("/theme", request).await?;
+        if !result.applied() {
+            let message = if result.message.is_empty() {
+                "Theme update was not applied".to_string()
+            } else {
+                result.message
+            };
+            return Err(ApiError {
+                status: 200,
+                message,
+            });
+        }
+        self.get("/theme").await
     }
 
     pub async fn put<T: DeserializeOwned, B: Serialize>(
@@ -571,6 +658,7 @@ impl ApiService {
         })
     }
 
+    #[allow(dead_code)]
     pub async fn get_theme_css(&self) -> Result<String, ApiError> {
         self.get_text("/theme/css").await
     }
@@ -1097,9 +1185,9 @@ impl ApiService {
     }
 
     // ── TCP/UDP listeners (`src/admin/handlers/tcp_udp.rs`) ────────────
-    // These are plain `AdminMutationResult` responses, not `{"success": true}`.
-    // `NoOpAlreadyAbsent` / `InvalidRejected` arrive as HTTP 200 and are
-    // surfaced as non-applied by `AdminMutationResult::applied()`.
+    // Read-only inventory of the listeners this process actually bound.
+    // Listener definitions live in the global [tcp.protocols]/[udp.protocols]
+    // maps and require a restart to change.
 
     pub async fn list_tcp_udp_listeners(
         &self,
@@ -1107,40 +1195,14 @@ impl ApiService {
         self.get("/tcp-udp/listeners").await
     }
 
+    pub async fn list_http_listeners(&self) -> Result<crate::types::HttpListenerList, ApiError> {
+        self.get("/http/listeners").await
+    }
+
     pub async fn list_tcp_udp_protocols(
         &self,
     ) -> Result<Vec<crate::types::TcpUdpProtocolInfo>, ApiError> {
         self.get("/tcp-udp/protocols").await
-    }
-
-    pub async fn create_tcp_udp_listener(
-        &self,
-        site_id: &str,
-        port: u16,
-        protocol: &str,
-        upstream: &str,
-    ) -> Result<crate::types::AdminMutationResult, ApiError> {
-        self.post(
-            "/tcp-udp/listeners",
-            &serde_json::json!({
-                "site_id": site_id,
-                "port": port,
-                "protocol": protocol,
-                "upstream": upstream,
-            }),
-        )
-        .await
-    }
-
-    pub async fn delete_tcp_udp_listener(
-        &self,
-        listener_id: &str,
-    ) -> Result<crate::types::AdminMutationResult, ApiError> {
-        self.delete(&format!(
-            "/tcp-udp/listeners/{}",
-            encode_path_segment(listener_id)
-        ))
-        .await
     }
 
     // ── Observability (`src/admin/handlers/observability.rs`) ──────────────

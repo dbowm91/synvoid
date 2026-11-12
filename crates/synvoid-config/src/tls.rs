@@ -89,6 +89,12 @@ fn default_prefer_post_quantum() -> bool {
 impl TlsConfig {
     pub fn validate(&self) -> Result<(), ConfigValidationError> {
         if self.enabled {
+            if self.port == 0 {
+                return Err(ConfigValidationError {
+                    field: "tls.port".to_string(),
+                    message: "TLS port cannot be 0 when enabled".to_string(),
+                });
+            }
             if self.cert_path.is_none() && !self.acme.enabled {
                 return Err(ConfigValidationError {
                     field: "tls.cert_path".to_string(),

@@ -178,11 +178,88 @@ Strict requires a read allowlist, so Strict on Windows always fails closed. Jail
 
 ## Configuration
 
-There is no sandbox section in `main.toml` or site config. `[worker] sandbox_level`, `sandbox_read_paths`, `sandbox_write_paths`, and `sandbox_no_access_paths` do not exist as config keys — `MainConfig` has no `worker` section, so those lines are silently ignored (and the section itself is rejected only for the missing required `[server]` block).
+The main data-plane Worker has one operator-facing sandbox key:
 
-Sandbox selection is made in composition code, not by operators, through two surfaces:
+```toml
+[security]
+worker_sandbox = "off"  # "off" | "auto" | "required"
+```
 
-- **Jail children**: `synvoid_platform::sandbox::jail_guarantee_request()` (`crates/synvoid-platform/src/sandbox.rs:2738`) constructs the fixed guarantee set the jail uses — ambient-filesystem deny, read allowlist, inherited IPC usable, descendants confined, plus `NetworkDenied` / `ChildCreationDenied` / `ExecDenied`, scoped to `CurrentThreadPlusDescendants` with three preopened resources (`stdin-ipc`, `stdout-ipc`, `stderr-log`).
+The default is `off`. Phase 08 deliberately does not default to `auto`: the
+worker spawns jail/app-server children and serves operator-provided static,
+rule, YARA and certificate paths, and those deployment shapes have not been
+qualified under Landlock for every configuration. Enable `auto`/`required`
+only after qualifying your paths. `[worker] sandbox_level`,
+`sandbox_read_paths`, `sandbox_write_paths`, and
+`sandbox_no_access_paths` still do not exist as config keys; do not invent
+them.
+
+### Worker policy (`worker_sandbox`)
+
+- `off` — explicit no-op. No in-process filesystem confinement is claimed.
+- `auto` — prepare the worker request and enter only when the backend fully
+  enforces every requested filesystem guarantee. When the backend is
+  unavailable or a required guarantee is unsupported, the enforcement report
+  is logged and the worker continues without the in-process sandbox. A failure
+  after entry (partial enforcement) fails startup: the worker never continues
+  in an unknown confinement state.
+- `required` — fail worker startup unless every requested guarantee is fully
+  enforced. On a host without Landlock, or on any backend that cannot express
+  the requested guarantees, this is a startup failure. Linux Landlock is the
+  only qualified worker backend.
+
+The request is applied in the `UnifiedServerWorker` process entry
+(`src/commands/runtime_launch.rs`) **before** the Tokio runtime is built, so
+`ThreadScope::CurrentThreadPlusDescendants` covers the runtime threads, CPU
+offload work and jail children created later. The `EnteredSandbox` witness is
+retained for the whole worker lifetime. The worker request uses
+`AmbientFilesystemDenied`, `FilesystemReadAllowlist`,
+`FilesystemWriteAllowlist`, `InheritedIpcUsable` and
+`DescendantsConfined`. It deliberately does **not** require `NetworkDenied`
+(the worker is a proxy) or `ExecDenied` (it may spawn child binaries).
+
+The allowlist is derived from `PlatformPaths` and the effective configuration:
+read roots include the config directory, configured certificate/ACME/OCSP/CA
+files, rule-feed and YARA rule directories, GeoIP database, DNS root hints and
+trust anchor, the installation directory (so sibling jail binaries are
+executable), static/admin-UI assets (executable directory, development
+manifest directory, CWD and site `static.default_root` / location roots),
+system CA/loader paths, `/dev/urandom` and the process's IPC key file. Write
+roots include the data, log, cache and runtime directories (plus configured
+`persistence.data_dir`, `logging.access_log_dir`, ACME cache, rule-feed
+storage, upload sandbox/quarantine, minified-asset cache). The config
+directory is writable only when `[admin].enabled` is true, because the admin
+config editor persists `main.toml`. There is no blanket `/` or `$HOME` read
+grant.
+
+**Limitations (do not overclaim):**
+
+- This is filesystem confinement only. Seccomp/systemd syscall filtering is
+  **not** implemented by the worker sandbox; systemd hardening belongs to
+  Phase 07.
+- Child processes inherit the Landlock domain and cannot widen it. A jail or
+  app-server child that needs paths outside this allowlist will fail under
+  `auto`/`required`; test every enabled child path first. In particular, a
+  Granian/Python app-server child needs its interpreter, virtualenv,
+  site-packages and working directory allowlisted; this module does not
+  discover those paths, so app-server deployments are not qualified for
+  `auto`/`required` yet.
+- `/tmp` is not granted. Children or libraries that require a writable temp
+  directory outside the configured cache/data directories are not qualified.
+- Landlock cannot represent explicit deny paths under an allowed ancestor;
+  the worker request uses allowlists only.
+- The startup log is the enforcement report. There is no admin/doctor status
+  page for the worker sandbox yet, so do not treat the admin API as proof of
+  enforcement.
+
+Jail children keep their own fixed policy:
+
+- **Jail children**: `synvoid_platform::sandbox::jail_guarantee_request()`
+  constructs the fixed guarantee set the jail uses — ambient-filesystem deny,
+  read allowlist, inherited IPC usable, descendants confined, plus
+  `NetworkDenied` / `ChildCreationDenied` / `ExecDenied`, scoped to
+  `CurrentThreadPlusDescendants` with three preopened resources (`stdin-ipc`,
+  `stdout-ipc`, `stderr-log`).
 - **Legacy adapter**: `SandboxLevel` (`Off` / `Basic` / `Strict`) is selected at the call site in Rust, `as_str()` values being `"off"` / `"basic"` / `"strict"`.
 
 Whether isolation is *demanded* per jail is decided by `synvoid_ipc::IsolationPolicy`; `IsolationPolicy::Required` fails closed when the guarantees cannot be enforced.

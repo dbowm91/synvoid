@@ -107,10 +107,16 @@ logic never touches `WafCoreConfig` (the crate does not import root).
   write block history. Timed blocks remain the worker admission /
   control-plane's job via `block_ip_with_provenance` with `BlockProvenanceKind`.
 - Remaining non-hot-path placeholders (`record_suspicious_words`,
-  `start_background_tasks`, `reload_attack_detector`, `set_request_services`,
-  `set_threat_intel`, `set_yara_rules`, `get_yara_rules`,
-  `check_request_body` pass-through) are documented as deprecated no-ops and
-  covered by `tests/waf_ownership_guard.rs` (no new production callers).
+  `start_background_tasks`, `set_request_services`, `set_threat_intel`,
+  `set_yara_rules`, `get_yara_rules`, `check_request_body` pass-through) are
+  documented as deprecated no-ops and covered by
+  `tests/waf_ownership_guard.rs` (no new production callers).
+- `reload_attack_detector` is **no longer a no-op** (Phase 05, production
+  readiness): it rebuilds the global detector from the effective configuration
+  plus the current rule-feed patterns, swaps it through `ArcSwapOption`, bumps
+  the configuration generation, and clears the bounded per-site detector
+  cache. The unified-worker rule-pattern handler calls it after merging feed
+  patterns.
 
 ## 4. Enforcement pipeline (Phase 17 applied)
 

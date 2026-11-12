@@ -2,12 +2,57 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use super::validation::ConfigValidationError;
+
 fn default_ipc_enforce_signing() -> bool {
     true
 }
 
 fn default_global_security_headers() -> bool {
     true
+}
+
+/// Worker filesystem-sandbox policy (`[security] worker_sandbox`).
+///
+/// Phase 08 (production-readiness remediation) makes the main data-plane
+/// Worker's in-process filesystem confinement an explicit, typed choice
+/// instead of an undocumented composition decision.
+///
+/// The default is `Off`: the worker has not been qualified under Landlock for
+/// every deployment shape (child jail/app-server processes, custom static
+/// roots, operator-provided YARA/rule directories), so silently enabling it
+/// would be a startup-risk regression. `Auto` and `Required` are opt-in and
+/// are enforced only when the platform backend can express the requested
+/// filesystem guarantees.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema, ToSchema,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum WorkerSandboxMode {
+    /// No in-process filesystem sandbox is applied.
+    #[default]
+    Off,
+    /// Apply the worker filesystem sandbox when the backend fully enforces
+    /// the requested filesystem guarantees; otherwise log the enforcement
+    /// report and continue without it.
+    Auto,
+    /// Fail worker startup unless the backend fully enforces the requested
+    /// filesystem guarantees.
+    Required,
+}
+
+impl WorkerSandboxMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Auto => "auto",
+            Self::Required => "required",
+        }
+    }
+}
+
+fn default_worker_sandbox() -> WorkerSandboxMode {
+    WorkerSandboxMode::default()
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
@@ -26,6 +71,9 @@ pub struct MainSecurityConfig {
     pub allow_insecure_ipc_key: bool,
     #[serde(default)]
     pub strict_tls_passthrough_policy: bool,
+    /// Worker filesystem-sandbox policy. See [`WorkerSandboxMode`].
+    #[serde(default = "default_worker_sandbox")]
+    pub worker_sandbox: WorkerSandboxMode,
 }
 
 impl Default for MainSecurityConfig {
@@ -45,7 +93,21 @@ impl Default for MainSecurityConfig {
             ipc_session_key_env: None,
             allow_insecure_ipc_key: false,
             strict_tls_passthrough_policy: false,
+            worker_sandbox: default_worker_sandbox(),
         }
+    }
+}
+
+impl MainSecurityConfig {
+    /// Validate the security section.
+    ///
+    /// `worker_sandbox` is a typed enum, so an unknown TOML value is rejected
+    /// by deserialization; the runtime backend probe (not this parser) decides
+    /// whether `required` can actually be enforced. Keeping the method here
+    /// makes the section part of the top-level validation chain and gives
+    /// future security constraints a single home.
+    pub fn validate(&self) -> Result<(), ConfigValidationError> {
+        Ok(())
     }
 }
 
@@ -107,5 +169,54 @@ strict_tls_passthrough_policy = true
 "#;
         let config: MainSecurityConfig = toml::from_str(toml_str).unwrap();
         assert!(config.strict_tls_passthrough_policy);
+    }
+
+    #[test]
+    fn worker_sandbox_default_is_off() {
+        assert_eq!(
+            MainSecurityConfig::default().worker_sandbox,
+            WorkerSandboxMode::Off
+        );
+        let parsed: MainSecurityConfig = toml::from_str("").unwrap();
+        assert_eq!(parsed.worker_sandbox, WorkerSandboxMode::Off);
+    }
+
+    #[test]
+    fn worker_sandbox_parses_every_documented_mode() {
+        for (text, expected) in [
+            ("off", WorkerSandboxMode::Off),
+            ("auto", WorkerSandboxMode::Auto),
+            ("required", WorkerSandboxMode::Required),
+        ] {
+            let toml_str = format!("worker_sandbox = \"{text}\"");
+            let parsed: MainSecurityConfig = toml::from_str(&toml_str)
+                .unwrap_or_else(|error| panic!("worker_sandbox = {text} must parse: {error}"));
+            assert_eq!(parsed.worker_sandbox, expected);
+            assert_eq!(parsed.worker_sandbox.as_str(), text);
+        }
+    }
+
+    #[test]
+    fn worker_sandbox_rejects_unknown_mode() {
+        let error = toml::from_str::<MainSecurityConfig>("worker_sandbox = \"sometimes\"")
+            .expect_err("unknown worker_sandbox values must be rejected");
+        let message = error.to_string();
+        assert!(
+            message.contains("worker_sandbox") || message.contains("unknown variant"),
+            "unexpected error: {message}"
+        );
+    }
+
+    #[test]
+    fn worker_sandbox_survives_serialization_round_trip() {
+        let config = MainSecurityConfig {
+            worker_sandbox: WorkerSandboxMode::Required,
+            ..Default::default()
+        };
+        let serialized = toml::to_string(&config).expect("security config must serialize");
+        assert!(serialized.contains("worker_sandbox = \"required\""));
+        let reparsed: MainSecurityConfig =
+            toml::from_str(&serialized).expect("serialized security config must parse");
+        assert_eq!(reparsed.worker_sandbox, WorkerSandboxMode::Required);
     }
 }

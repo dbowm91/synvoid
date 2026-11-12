@@ -111,6 +111,8 @@ pub enum OwnerMetric {
     OffloadTimeoutsTotal,
     OffloadRejectionsTotal,
     OffloadFallbacksTotal,
+    AdminRateLimitedMinuteTotal,
+    AdminRateLimitedSecondTotal,
     CpuWorkerRssBytes,
     WorkerMetricResetsTotal,
 }
@@ -133,6 +135,8 @@ impl OwnerMetric {
             Self::OffloadTimeoutsTotal => "synvoid_subject_offload_timeouts_total",
             Self::OffloadRejectionsTotal => "synvoid_subject_offload_rejections_total",
             Self::OffloadFallbacksTotal => "synvoid_subject_offload_fallbacks_total",
+            Self::AdminRateLimitedMinuteTotal => "synvoid_subject_admin_rate_limited_minute_total",
+            Self::AdminRateLimitedSecondTotal => "synvoid_subject_admin_rate_limited_second_total",
             Self::CpuWorkerRssBytes => "synvoid_subject_cpu_worker_rss_bytes",
             Self::WorkerMetricResetsTotal => "synvoid_subject_worker_metric_resets_total",
         }
@@ -152,6 +156,8 @@ impl OwnerMetric {
             | Self::OffloadTimeoutsTotal
             | Self::OffloadRejectionsTotal
             | Self::OffloadFallbacksTotal
+            | Self::AdminRateLimitedMinuteTotal
+            | Self::AdminRateLimitedSecondTotal
             | Self::WorkerMetricResetsTotal => OwnerMetricKind::Counter,
         }
     }
@@ -174,6 +180,8 @@ impl OwnerMetric {
             | Self::OffloadTimeoutsTotal
             | Self::OffloadRejectionsTotal
             | Self::OffloadFallbacksTotal
+            | Self::AdminRateLimitedMinuteTotal
+            | Self::AdminRateLimitedSecondTotal
             | Self::WorkerMetricResetsTotal => "count",
         }
     }
@@ -206,7 +214,9 @@ impl OwnerMetric {
             | Self::OffloadSubmissionsTotal
             | Self::OffloadTimeoutsTotal
             | Self::OffloadRejectionsTotal
-            | Self::OffloadFallbacksTotal => "supervisor_lifetime_monotonic_bridge",
+            | Self::OffloadFallbacksTotal
+            | Self::AdminRateLimitedMinuteTotal
+            | Self::AdminRateLimitedSecondTotal => "supervisor_lifetime_monotonic_bridge",
             Self::CpuWorkerRssBytes => "latest_ready",
             Self::WorkerMetricResetsTotal => "supervisor_lifetime_monotonic_bridge",
         }
@@ -231,6 +241,8 @@ impl OwnerMetric {
             | Self::OffloadTimeoutsTotal
             | Self::OffloadRejectionsTotal
             | Self::OffloadFallbacksTotal
+            | Self::AdminRateLimitedMinuteTotal
+            | Self::AdminRateLimitedSecondTotal
             | Self::WorkerMetricResetsTotal => None,
         }
     }
@@ -248,6 +260,12 @@ impl OwnerMetric {
             Self::OffloadTimeoutsTotal => "WorkerMetricsPayload::offload_timeouts_total",
             Self::OffloadRejectionsTotal => "WorkerMetricsPayload::offload_rejections_total",
             Self::OffloadFallbacksTotal => "WorkerMetricsPayload::offload_fallbacks_total",
+            Self::AdminRateLimitedMinuteTotal => {
+                "WorkerMetricsPayload::admin_rate_limited_minute_total"
+            }
+            Self::AdminRateLimitedSecondTotal => {
+                "WorkerMetricsPayload::admin_rate_limited_second_total"
+            }
             Self::CpuWorkerRssBytes => "CpuOffloadStats::worker_rss_bytes",
             Self::WorkerMetricResetsTotal => "internal_counter",
         }
@@ -267,6 +285,8 @@ impl OwnerMetric {
             | Self::OffloadTimeoutsTotal
             | Self::OffloadRejectionsTotal
             | Self::OffloadFallbacksTotal
+            | Self::AdminRateLimitedMinuteTotal
+            | Self::AdminRateLimitedSecondTotal
             | Self::WorkerMetricResetsTotal => {
                 "supervisor_lifetime_monotonic_with_reset_boundary_observation"
             }
@@ -300,6 +320,12 @@ impl OwnerMetric {
             Self::OffloadFallbacksTotal => {
                 "Supervisor-lifetime monotonic bridge of offload_fallbacks_total."
             }
+            Self::AdminRateLimitedMinuteTotal => {
+                "Supervisor-lifetime monotonic bridge of admin_rate_limited_minute_total."
+            }
+            Self::AdminRateLimitedSecondTotal => {
+                "Supervisor-lifetime monotonic bridge of admin_rate_limited_second_total."
+            }
             Self::CpuWorkerRssBytes => "Latest ready CPU-worker worker_rss_bytes (bytes).",
             Self::WorkerMetricResetsTotal => {
                 "Total worker counter reset boundaries observed during bridging."
@@ -315,6 +341,8 @@ impl OwnerMetric {
             Self::OffloadTimeoutsTotal => payload.offload_timeouts_total,
             Self::OffloadRejectionsTotal => payload.offload_rejections_total,
             Self::OffloadFallbacksTotal => payload.offload_fallbacks_total,
+            Self::AdminRateLimitedMinuteTotal => payload.admin_rate_limited_minute_total,
+            Self::AdminRateLimitedSecondTotal => payload.admin_rate_limited_second_total,
             _ => 0,
         }
     }
@@ -333,6 +361,8 @@ pub const OWNER_INVENTORY: &[OwnerMetric] = &[
     OwnerMetric::OffloadTimeoutsTotal,
     OwnerMetric::OffloadRejectionsTotal,
     OwnerMetric::OffloadFallbacksTotal,
+    OwnerMetric::AdminRateLimitedMinuteTotal,
+    OwnerMetric::AdminRateLimitedSecondTotal,
     OwnerMetric::CpuWorkerRssBytes,
     OwnerMetric::WorkerMetricResetsTotal,
 ];
@@ -434,6 +464,8 @@ impl BridgeState {
             OwnerMetric::OffloadTimeoutsTotal,
             OwnerMetric::OffloadRejectionsTotal,
             OwnerMetric::OffloadFallbacksTotal,
+            OwnerMetric::AdminRateLimitedMinuteTotal,
+            OwnerMetric::AdminRateLimitedSecondTotal,
         ];
         let generation = generation.max(1);
         let is_first = !self.worker_counter_state.contains_key(&id);
@@ -499,6 +531,12 @@ impl BridgeState {
                 OwnerMetric::OffloadFallbacksTotal => {
                     deltas.offload_fallbacks = delta;
                 }
+                OwnerMetric::AdminRateLimitedMinuteTotal => {
+                    deltas.admin_rate_limited_minute = delta;
+                }
+                OwnerMetric::AdminRateLimitedSecondTotal => {
+                    deltas.admin_rate_limited_second = delta;
+                }
                 _ => {}
             }
         }
@@ -529,6 +567,14 @@ impl BridgeState {
             .cumulative
             .offload_fallbacks
             .saturating_add(deltas.offload_fallbacks);
+        self.cumulative.admin_rate_limited_minute = self
+            .cumulative
+            .admin_rate_limited_minute
+            .saturating_add(deltas.admin_rate_limited_minute);
+        self.cumulative.admin_rate_limited_second = self
+            .cumulative
+            .admin_rate_limited_second
+            .saturating_add(deltas.admin_rate_limited_second);
         deltas
     }
 
@@ -556,6 +602,8 @@ struct CounterDeltas {
     offload_timeouts: u64,
     offload_rejections: u64,
     offload_fallbacks: u64,
+    admin_rate_limited_minute: u64,
+    admin_rate_limited_second: u64,
 }
 
 /// Aggregator: pure function from worker payloads + CPU-worker snapshot
@@ -577,6 +625,8 @@ pub struct BridgeSnapshot {
     pub offload_timeouts_total: u64,
     pub offload_rejections_total: u64,
     pub offload_fallbacks_total: u64,
+    pub admin_rate_limited_minute_total: u64,
+    pub admin_rate_limited_second_total: u64,
     pub cpu_worker_rss_bytes: Option<u64>,
     pub worker_metric_resets_total: u64,
 }
@@ -764,6 +814,8 @@ impl BridgeAggregator {
         snapshot.offload_timeouts_total = self.state.cumulative.offload_timeouts;
         snapshot.offload_rejections_total = self.state.cumulative.offload_rejections;
         snapshot.offload_fallbacks_total = self.state.cumulative.offload_fallbacks;
+        snapshot.admin_rate_limited_minute_total = self.state.cumulative.admin_rate_limited_minute;
+        snapshot.admin_rate_limited_second_total = self.state.cumulative.admin_rate_limited_second;
         snapshot.worker_metric_resets_total = self.state.total_resets;
 
         publish_snapshot(handle, &snapshot);
@@ -922,6 +974,10 @@ fn publish_snapshot(handle: &PrometheusHandle, snapshot: &BridgeSnapshot) {
         .absolute(snapshot.offload_rejections_total);
     counter_macro!(OwnerMetric::OffloadFallbacksTotal.prometheus_name())
         .absolute(snapshot.offload_fallbacks_total);
+    counter_macro!(OwnerMetric::AdminRateLimitedMinuteTotal.prometheus_name())
+        .absolute(snapshot.admin_rate_limited_minute_total);
+    counter_macro!(OwnerMetric::AdminRateLimitedSecondTotal.prometheus_name())
+        .absolute(snapshot.admin_rate_limited_second_total);
     counter_macro!(OwnerMetric::WorkerMetricResetsTotal.prometheus_name())
         .absolute(snapshot.worker_metric_resets_total);
 }
@@ -954,6 +1010,8 @@ mod tests {
                 "synvoid_subject_offload_timeouts_total",
                 "synvoid_subject_offload_rejections_total",
                 "synvoid_subject_offload_fallbacks_total",
+                "synvoid_subject_admin_rate_limited_minute_total",
+                "synvoid_subject_admin_rate_limited_second_total",
                 "synvoid_subject_cpu_worker_rss_bytes",
                 "synvoid_subject_worker_metric_resets_total",
             ]
@@ -972,8 +1030,8 @@ mod tests {
     fn required_metrics_count_matches_v2_inventory() {
         let required = OWNER_INVENTORY.iter().filter(|m| m.required()).count();
         assert_eq!(
-            required, 10,
-            "10 required metrics in v2 (CPU-worker RSS + resets optional)"
+            required, 12,
+            "12 required metrics in v2 (CPU-worker RSS + resets optional)"
         );
     }
 
@@ -1206,6 +1264,8 @@ mod tests {
             OwnerMetric::OffloadTimeoutsTotal,
             OwnerMetric::OffloadRejectionsTotal,
             OwnerMetric::OffloadFallbacksTotal,
+            OwnerMetric::AdminRateLimitedMinuteTotal,
+            OwnerMetric::AdminRateLimitedSecondTotal,
             OwnerMetric::WorkerMetricResetsTotal,
         ] {
             assert_eq!(m.unit(), "count", "{:?} must use count", m);
@@ -1233,6 +1293,8 @@ mod tests {
             OwnerMetric::OffloadTimeoutsTotal,
             OwnerMetric::OffloadRejectionsTotal,
             OwnerMetric::OffloadFallbacksTotal,
+            OwnerMetric::AdminRateLimitedMinuteTotal,
+            OwnerMetric::AdminRateLimitedSecondTotal,
             OwnerMetric::WorkerMetricResetsTotal,
         ] {
             assert_eq!(
@@ -1294,6 +1356,8 @@ mod tests {
                                 | OwnerMetric::OffloadTimeoutsTotal
                                 | OwnerMetric::OffloadRejectionsTotal
                                 | OwnerMetric::OffloadFallbacksTotal
+                                | OwnerMetric::AdminRateLimitedMinuteTotal
+                                | OwnerMetric::AdminRateLimitedSecondTotal
                                 | OwnerMetric::WorkerMetricResetsTotal
                         ),
                         "{:?} is marked counter but is not in counter set",

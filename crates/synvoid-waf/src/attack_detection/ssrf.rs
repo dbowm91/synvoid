@@ -4,7 +4,9 @@ use std::net::IpAddr;
 use std::sync::Arc;
 
 use crate::attack_detection::config::{AttackDetectionResult, AttackType, InputLocation};
-use crate::attack_detection::detector_common::{BasePatternDetector, PatternDetector};
+use crate::attack_detection::detector_common::{
+    is_host, is_referer_or_origin, BasePatternDetector, PatternDetector,
+};
 use crate::attack_detection::patterns::DefaultPatterns;
 use synvoid_core::url::url_decode_all;
 
@@ -468,7 +470,11 @@ impl SsrfDetector {
             });
         }
 
-        if self.block_private_ips && Self::contains_private_ip_or_localhost(&decoded_lower) {
+        if self.block_private_ips
+            && !is_referer_or_origin(&location)
+            && !is_host(&location)
+            && Self::contains_private_ip_or_localhost(&decoded_lower)
+        {
             tracing::warn!(
                 attack_type = "ssrf",
                 location = %location,
@@ -551,5 +557,44 @@ mod tests {
                 InputLocation::QueryString
             )
             .is_none());
+    }
+
+    #[test]
+    fn test_ssrf_referer_ip_exempt() {
+        let detector = SsrfDetector::new(2, &[], true, vec![], false);
+        assert!(detector
+            .detect(
+                "http://192.168.182.143:8082/static/css/public.css",
+                InputLocation::Header("referer".into())
+            )
+            .is_none());
+        assert!(detector
+            .detect(
+                "http://192.168.182.143:8082/",
+                InputLocation::Header("origin".into())
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn test_ssrf_referer_metadata_indicator_still_blocked() {
+        let detector = SsrfDetector::new(2, &[], true, vec![], false);
+        assert!(detector
+            .detect(
+                "http://169.254.169.254/latest/meta-data",
+                InputLocation::Header("referer".into())
+            )
+            .is_some());
+    }
+
+    #[test]
+    fn test_ssrf_host_ip_exempt_but_metadata_indicator_still_blocked() {
+        let detector = SsrfDetector::new(2, &[], true, vec![], false);
+        assert!(detector
+            .detect("127.0.0.1:8082", InputLocation::Header("host".into()))
+            .is_none());
+        assert!(detector
+            .detect("169.254.169.254", InputLocation::Header("host".into()))
+            .is_some());
     }
 }

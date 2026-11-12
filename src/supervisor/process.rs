@@ -125,6 +125,17 @@ impl SupervisorProcess {
             "Spawning {} unified server workers",
             config.unified_server_workers
         );
+        if config.unified_server_workers > 1 {
+            tracing::warn!(
+                "unified_server_workers = {}: the canonical data plane is a single \
+                 UnifiedServerWorker (one Tokio runtime; scale with worker threads, \
+                 see architecture/worker_architecture.md). Additional workers only \
+                 isolate faults — they do not share sessions, CSRF tokens, or the \
+                 admin rate-limit budget, and the admin panel observes one worker \
+                 at a time.",
+                config.unified_server_workers
+            );
+        }
         if let Err(e) = self
             .process_manager
             .spawn_unified_server_workers(config.unified_server_workers)
@@ -607,6 +618,22 @@ pub fn run_supervisor_mode(
 
     let main_config = config_manager.main.clone();
 
+    // Phase 04 defense in depth: validation rejects this combination, but the
+    // supervisor must not start a multi-worker fleet just because a caller
+    // bypassed `MainConfig::validate`. The warning below remains for the
+    // acknowledged opt-in path.
+    if main_config.defaults.worker_pool.workers > 1
+        && !main_config.defaults.worker_pool.allow_multi_worker
+    {
+        tracing::error!(
+            workers = main_config.defaults.worker_pool.workers,
+            "refusing to start: [defaults.worker_pool].workers > 1 requires \
+             allow_multi_worker = true (sessions, CSRF tokens, the admin rate-limit \
+             budget, metrics and request logs are worker-local)"
+        );
+        std::process::exit(1);
+    }
+
     // Initialize core subsystems (ported from Supervisor)
     let data_dir = main_config.persistence.data_dir.as_ref().map(PathBuf::from);
     let block_store = Arc::new(BlockStore::new(
@@ -676,6 +703,7 @@ pub fn run_supervisor_mode(
     let pm_config = ProcessManagerConfig {
         config_path: config_dir.clone(),
         unified_server_workers: main_config.defaults.worker_pool.workers.max(1),
+        worker_threads: main_config.process_manager.worker_threads,
         supervisor_socket_path: pid_manager.socket_file_path(),
         control_api_addr: main_config.supervisor.control_api_addr.clone(),
         control_api_tls: main_config

@@ -53,14 +53,55 @@ pub struct LogsResponse {
     tag = "logs"
 )]
 pub async fn get_logs<S: AdminStateProvider>(
-    State(_state): State<Arc<S>>,
+    State(state): State<Arc<S>>,
     _auth: OptionalAuth,
-    Query(_query): Query<LogsQuery>,
+    Query(query): Query<LogsQuery>,
 ) -> Result<Json<LogsResponse>, StatusCode> {
+    // Serve the worker-local request-log deque (fed by the request-log sink
+    // the composition root registers). `error`/`warn` map to 5xx/4xx status
+    // prefixes; anything else returns everything and lets the UI filter.
+    let status_prefix = match query.level.as_deref() {
+        Some("error") => Some("5"),
+        Some("warn") => Some("4"),
+        _ => None,
+    };
+    let limit = query.limit.unwrap_or(200).min(1000);
+    let offset = query.offset.unwrap_or(0);
+    let (entries, total, has_more) = state.get_request_logs(
+        query.site_id.as_deref(),
+        None,
+        status_prefix,
+        query.search.as_deref(),
+        None,
+        None,
+        limit,
+        offset,
+    );
+    let entries = entries
+        .into_iter()
+        .map(|e| LogEntry {
+            timestamp: e.timestamp.to_rfc3339(),
+            level: if e.status >= 500 {
+                "error".to_string()
+            } else if e.status >= 400 {
+                "warn".to_string()
+            } else {
+                "info".to_string()
+            },
+            site_id: Some(e.site_id),
+            message: format!(
+                "{} {} -> {} ({} ms)",
+                e.method, e.path, e.status, e.response_time_ms
+            ),
+            client_ip: Some(e.client_ip),
+            path: Some(e.path),
+            status: Some(e.status),
+        })
+        .collect();
     Ok(Json(LogsResponse {
-        entries: vec![],
-        total: 0,
-        has_more: false,
+        entries,
+        total,
+        has_more,
     }))
 }
 

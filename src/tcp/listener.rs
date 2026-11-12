@@ -1,8 +1,10 @@
 use metrics::{counter, gauge, histogram};
 use parking_lot::RwLock as PLRwLock;
 use std::net::SocketAddr;
-use std::sync::Arc;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, LazyLock};
+use std::time::Duration;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UnixStream};
 use tokio::sync::{broadcast, Semaphore};
 
@@ -13,7 +15,6 @@ use crate::buffer::BufferPool;
 use crate::metrics::bandwidth::{
     get_global_bandwidth_tracker_or_log, BandwidthProtocol, EgressDirection,
 };
-use crate::streaming::copy_bidirectional_native;
 use crate::tcp::filter::{FilterAction, ProtocolFilter};
 use crate::tcp::protocol::ProtocolDetector;
 use crate::tunnel;
@@ -157,6 +158,14 @@ fn attach_reuseport_ebpf(
     Ok(())
 }
 
+fn format_bind_address(host: &str, port: u16) -> String {
+    if host.contains(':') && !host.starts_with('[') {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct TcpListenerConfig {
     pub port: u16,
@@ -169,6 +178,8 @@ pub struct TcpListenerConfig {
     pub strict_mode: bool,
     pub socket_options: TcpSocketOptions,
     pub tcp_backlog: Option<u32>,
+    /// Idle timeout for proxied traffic. Not a whole-connection lifetime cap.
+    pub idle_timeout_secs: u64,
 }
 
 impl Default for TcpListenerConfig {
@@ -184,6 +195,7 @@ impl Default for TcpListenerConfig {
             strict_mode: true,
             socket_options: TcpSocketOptions::default(),
             tcp_backlog: None,
+            idle_timeout_secs: 300,
         }
     }
 }
@@ -191,10 +203,10 @@ impl Default for TcpListenerConfig {
 #[derive(Clone)]
 pub struct TcpListenerPool {
     config: TcpListenerPoolConfig,
-    listeners: Arc<PLRwLock<Vec<TcpListenerInstance>>>,
+    registered: Arc<PLRwLock<Vec<RegisteredTcpListener>>>,
+    bound: Arc<PLRwLock<Vec<BoundTcpListener>>>,
     shutdown_tx: broadcast::Sender<()>,
     protocol_detector: ProtocolDetector,
-    protocol_filter: ProtocolFilter,
     rate_limiter: Option<Arc<RateLimiterManager>>,
     flood_protector: Option<Arc<FloodProtector>>,
     socket_options: TcpSocketOptions,
@@ -227,19 +239,74 @@ impl Default for TcpListenerPoolConfig {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("failed to bind TCP listener {address}: {source}")]
+pub struct TcpListenerBindError {
+    pub address: String,
+    #[source]
+    pub source: std::io::Error,
+}
+
 #[derive(Debug, Clone)]
-struct TcpListenerInstance {
+struct RegisteredTcpListener {
     config: TcpListenerConfig,
-    // SAFETY_REASON: Debugging - stored for introspection
-    #[allow(dead_code)]
-    listen_addr: SocketAddr,
+    active_connections: Arc<AtomicUsize>,
+}
+
+#[derive(Debug, Clone)]
+struct BoundTcpListener {
+    registered: RegisteredTcpListener,
+    listener: Arc<TcpListener>,
+    local_addr: SocketAddr,
+}
+
+/// Process-local view of the bound TCP listeners, used by the admin API.
+///
+/// The admin control plane runs in the same process as the data plane, so a
+/// read-only snapshot is the truthful source for "what is actually listening"
+/// and "how many connections are active right now". It is not a control
+/// channel and it does not pretend to aggregate remote workers.
+#[derive(Debug, Clone)]
+pub struct TcpListenerSnapshot {
+    pub protocol: String,
+    pub bind_address: String,
+    pub port: u16,
+    pub upstream: String,
+    pub bound: bool,
+    pub active_connections: usize,
+    pub workers: usize,
+}
+
+struct TcpRegistryEntry {
+    snapshot: TcpListenerSnapshot,
+    active_connections: Arc<AtomicUsize>,
+}
+
+static TCP_LISTENER_REGISTRY: LazyLock<PLRwLock<Vec<TcpRegistryEntry>>> =
+    LazyLock::new(|| PLRwLock::new(Vec::new()));
+
+pub fn tcp_listener_snapshots() -> Vec<TcpListenerSnapshot> {
+    TCP_LISTENER_REGISTRY
+        .read()
+        .iter()
+        .map(|entry| {
+            let mut snapshot = entry.snapshot.clone();
+            snapshot.active_connections = entry.active_connections.load(Ordering::Relaxed);
+            snapshot
+        })
+        .collect()
+}
+
+struct ActiveConnectionGuard(Arc<AtomicUsize>);
+
+impl Drop for ActiveConnectionGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
+    }
 }
 
 impl TcpListenerPool {
-    pub fn new(
-        pool_config: TcpListenerPoolConfig,
-        filter_config: crate::tcp::filter::FilterConfig,
-    ) -> Self {
+    pub fn new(pool_config: TcpListenerPoolConfig) -> Self {
         let (shutdown_tx, _) = broadcast::channel(1);
         let socket_options = pool_config.socket_options.clone();
         let buffer_size = pool_config.buffer_size;
@@ -251,10 +318,10 @@ impl TcpListenerPool {
 
         Self {
             config: pool_config,
-            listeners: Arc::new(PLRwLock::new(Vec::new())),
+            registered: Arc::new(PLRwLock::new(Vec::new())),
+            bound: Arc::new(PLRwLock::new(Vec::new())),
             shutdown_tx,
             protocol_detector: ProtocolDetector::new(),
-            protocol_filter: ProtocolFilter::new(filter_config),
             rate_limiter: None,
             flood_protector: None,
             socket_options,
@@ -273,17 +340,17 @@ impl TcpListenerPool {
         self
     }
 
-    pub async fn add_listener(
-        &self,
-        listener_config: TcpListenerConfig,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    /// Register a listener definition. No socket is opened here.
+    ///
+    /// `bind_all` performs the single bind, so a registration failure cannot
+    /// leave a half-open socket behind and `start` cannot bind a second one.
+    pub fn add_listener(&self, listener_config: TcpListenerConfig) {
         if listener_config.port < 1024 {
             #[cfg(unix)]
             {
                 if unsafe { libc::getuid() != 0 && libc::geteuid() != 0 } {
                     tracing::warn!(
-                        "Binding to privileged port {} requires root. \
-                         This may fail if the process lacks CAP_NET_BIND_SERVICE.",
+                        "Binding to privileged port {} requires root or CAP_NET_BIND_SERVICE.",
                         listener_config.port
                     );
                 }
@@ -297,71 +364,244 @@ impl TcpListenerPool {
             }
         }
 
-        let bind_addr = format!("{}:{}", listener_config.bind_address, listener_config.port);
-        let listener = TcpListener::bind(&bind_addr).await?;
-        let local_addr = listener.local_addr()?;
-
-        tracing::info!(
-            "TCP listener bound to {} for protocol {}",
-            local_addr,
-            listener_config.expected_protocol
-        );
-
-        let instance = TcpListenerInstance {
+        self.registered.write().push(RegisteredTcpListener {
             config: listener_config,
-            listen_addr: local_addr,
-        };
+            active_connections: Arc::new(AtomicUsize::new(0)),
+        });
+    }
 
-        self.listeners.write().push(instance);
+    /// Bind every registered listener exactly once.
+    ///
+    /// Startup calls this before spawning tasks and treats an error as fatal.
+    /// Calling it again after a successful bind is a no-op.
+    pub async fn bind_all(&self) -> Result<(), TcpListenerBindError> {
+        if !self.bound.read().is_empty() {
+            return Ok(());
+        }
 
+        let registered = self.registered.read().clone();
+        let mut bound = Vec::with_capacity(registered.len());
+        let mut registry_entries = Vec::with_capacity(registered.len());
+        let workers = self.config.worker_pool_size.max(1);
+
+        for entry in registered {
+            let bind_addr = format_bind_address(&entry.config.bind_address, entry.config.port);
+
+            #[cfg(unix)]
+            let listener = {
+                let addr: SocketAddr =
+                    bind_addr
+                        .parse::<SocketAddr>()
+                        .map_err(|e| TcpListenerBindError {
+                            address: bind_addr.clone(),
+                            source: std::io::Error::new(
+                                std::io::ErrorKind::InvalidInput,
+                                e.to_string(),
+                            ),
+                        })?;
+
+                let socket =
+                    create_socket_with_options(addr, &self.socket_options).map_err(|e| {
+                        TcpListenerBindError {
+                            address: bind_addr.clone(),
+                            source: e,
+                        }
+                    })?;
+                socket
+                    .bind(&addr.into())
+                    .map_err(|e| TcpListenerBindError {
+                        address: bind_addr.clone(),
+                        source: e,
+                    })?;
+                let backlog = entry.config.tcp_backlog.unwrap_or(4096);
+                socket
+                    .listen(backlog as i32)
+                    .map_err(|e| TcpListenerBindError {
+                        address: bind_addr.clone(),
+                        source: e,
+                    })?;
+                let std_listener: std::net::TcpListener = socket.into();
+                TcpListener::from_std(std_listener).map_err(|e| TcpListenerBindError {
+                    address: bind_addr.clone(),
+                    source: e,
+                })?
+            };
+
+            #[cfg(not(unix))]
+            let listener =
+                TcpListener::bind(&bind_addr)
+                    .await
+                    .map_err(|e| TcpListenerBindError {
+                        address: bind_addr.clone(),
+                        source: e,
+                    })?;
+
+            let local_addr = listener.local_addr().map_err(|e| TcpListenerBindError {
+                address: bind_addr.clone(),
+                source: e,
+            })?;
+
+            tracing::info!(
+                address = %local_addr,
+                protocol = %entry.config.expected_protocol,
+                upstream = %entry.config.upstream_address,
+                workers,
+                "TCP listener bound"
+            );
+
+            registry_entries.push(TcpRegistryEntry {
+                snapshot: TcpListenerSnapshot {
+                    protocol: entry.config.expected_protocol.clone(),
+                    bind_address: entry.config.bind_address.clone(),
+                    port: local_addr.port(),
+                    upstream: entry.config.upstream_address.clone(),
+                    bound: true,
+                    active_connections: 0,
+                    workers,
+                },
+                active_connections: entry.active_connections.clone(),
+            });
+
+            bound.push(BoundTcpListener {
+                registered: entry,
+                listener: Arc::new(listener),
+                local_addr,
+            });
+        }
+
+        *self.bound.write() = bound;
+        {
+            // The registry is process-wide and may already hold listeners from
+            // another pool (tests, or a future multi-pool composition). Merge
+            // this pool's entries instead of replacing the whole inventory.
+            let mut registry = TCP_LISTENER_REGISTRY.write();
+            for entry in registry_entries {
+                let existing = registry.iter_mut().find(|current| {
+                    current.snapshot.port == entry.snapshot.port
+                        && current.snapshot.bind_address == entry.snapshot.bind_address
+                        && current.snapshot.protocol == entry.snapshot.protocol
+                });
+                if let Some(current) = existing {
+                    *current = entry;
+                } else {
+                    registry.push(entry);
+                }
+            }
+        }
         Ok(())
     }
 
     pub async fn start(&self) {
-        let listeners = self.listeners.read().clone();
-        let listener_count = listeners.len();
+        if self.bound.read().is_empty() && !self.registered.read().is_empty() {
+            if let Err(e) = self.bind_all().await {
+                tracing::error!("TCP listener pool failed to bind: {}", e);
+                return;
+            }
+        }
+
+        let bound = self.bound.read().clone();
+        let listener_count = bound.len();
+        let workers_per_listener = self.config.worker_pool_size.max(1);
         let socket_options = self.socket_options.clone();
         let connection_semaphore = self.connection_semaphore.clone();
         let buffer_size = self.buffer_size;
+        let connection_timeout_secs = self.config.connection_timeout_secs;
 
         gauge!("synvoid.tcp.pool.max_connections").set(self.config.max_connections as f64);
 
-        for instance in listeners {
-            let config = instance.config.clone();
-            let shutdown_rx = self.shutdown_tx.subscribe();
-            let detector = self.protocol_detector.clone();
-            let filter = self.protocol_filter.clone();
-            let rate_limiter = self.rate_limiter.clone();
-            let flood_protector = self.flood_protector.clone();
-            let sock_opts = socket_options.clone();
-            let semaphore = connection_semaphore.clone();
-
-            tokio::spawn(async move {
-                Self::listen_loop(
-                    config,
-                    shutdown_rx,
-                    detector,
-                    filter,
-                    rate_limiter,
-                    flood_protector,
-                    sock_opts,
-                    semaphore,
-                    buffer_size,
-                )
-                .await;
+        for instance in bound {
+            let filter = ProtocolFilter::new(crate::tcp::filter::FilterConfig {
+                enabled: instance.registered.config.filter_enabled,
+                strict_mode: instance.registered.config.strict_mode,
+                ..Default::default()
             });
+
+            for worker_id in 0..workers_per_listener {
+                let config = instance.registered.config.clone();
+                let active = instance.registered.active_connections.clone();
+                let listener = instance.listener.clone();
+                let shutdown_rx = self.shutdown_tx.subscribe();
+                let detector = self.protocol_detector.clone();
+                let filter = filter.clone();
+                let rate_limiter = self.rate_limiter.clone();
+                let flood_protector = self.flood_protector.clone();
+                let sock_opts = socket_options.clone();
+                let semaphore = connection_semaphore.clone();
+
+                tokio::spawn(async move {
+                    Self::listen_loop(
+                        listener,
+                        config,
+                        active,
+                        worker_id,
+                        shutdown_rx,
+                        detector,
+                        filter,
+                        rate_limiter,
+                        flood_protector,
+                        sock_opts,
+                        semaphore,
+                        buffer_size,
+                        connection_timeout_secs,
+                    )
+                    .await;
+                });
+            }
         }
 
         tracing::info!(
-            "TCP listener pool started with {} listeners (max_conns: {}, buffer: {}KB)",
+            "TCP listener pool started with {} listeners x {} accept loops (max_conns: {}, buffer: {}KB)",
             listener_count,
+            workers_per_listener,
             self.config.max_connections,
             buffer_size / 1024
         );
     }
 
+    async fn copy_direction<R, W>(
+        reader: &mut R,
+        writer: &mut W,
+        idle: Duration,
+    ) -> std::io::Result<u64>
+    where
+        R: AsyncRead + Unpin,
+        W: AsyncWrite + Unpin,
+    {
+        let mut buffer = BufferPool::acquire_medium();
+        let mut total = 0u64;
+        loop {
+            let n = match tokio::time::timeout(idle, reader.read(buffer.as_mut_slice())).await {
+                Err(_) => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "proxied connection idle timeout",
+                    ));
+                }
+                Ok(Ok(0)) => {
+                    let _ = writer.shutdown().await;
+                    return Ok(total);
+                }
+                Ok(Ok(n)) => n,
+                Ok(Err(e)) => return Err(e),
+            };
+            tokio::time::timeout(idle, writer.write_all(&buffer.as_slice()[..n]))
+                .await
+                .map_err(|_| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "proxied connection write idle timeout",
+                    )
+                })??;
+            writer.flush().await?;
+            total = total.saturating_add(n as u64);
+        }
+    }
+
     async fn listen_loop(
+        listener: Arc<TcpListener>,
         config: TcpListenerConfig,
+        active_connections: Arc<AtomicUsize>,
+        worker_id: usize,
         mut shutdown_rx: broadcast::Receiver<()>,
         detector: ProtocolDetector,
         filter: ProtocolFilter,
@@ -370,65 +610,15 @@ impl TcpListenerPool {
         socket_options: TcpSocketOptions,
         connection_semaphore: Option<Arc<Semaphore>>,
         buffer_size: usize,
+        connection_timeout_secs: u64,
     ) {
-        let bind_addr = format!("{}:{}", config.bind_address, config.port);
-
-        #[cfg(unix)]
-        let listener = {
-            let addr: SocketAddr = match bind_addr.parse() {
-                Ok(a) => a,
-                Err(e) => {
-                    tracing::error!("Failed to parse bind address {}: {}", bind_addr, e);
-                    return;
-                }
-            };
-
-            let socket = match create_socket_with_options(addr, &socket_options) {
-                Ok(s) => s,
-                Err(e) => {
-                    tracing::error!("Failed to create socket for {}: {}", bind_addr, e);
-                    return;
-                }
-            };
-
-            if let Err(e) = socket.bind(&addr.into()) {
-                tracing::error!("Failed to bind socket to {}: {}", bind_addr, e);
-                return;
-            }
-
-            let backlog = config.tcp_backlog.unwrap_or(4096);
-            if let Err(e) = socket.listen(backlog as i32) {
-                tracing::error!("Failed to listen on {}: {}", bind_addr, e);
-                return;
-            }
-
-            let std_listener: std::net::TcpListener = socket.into();
-            match TcpListener::from_std(std_listener) {
-                Ok(l) => l,
-                Err(e) => {
-                    tracing::error!(
-                        "Failed to convert to tokio listener for {}: {}",
-                        bind_addr,
-                        e
-                    );
-                    return;
-                }
-            }
-        };
-
-        #[cfg(not(unix))]
-        let listener = match TcpListener::bind(&bind_addr).await {
-            Ok(l) => l,
-            Err(e) => {
-                tracing::error!("Failed to bind TCP listener on {}: {}", bind_addr, e);
-                return;
-            }
-        };
+        let bind_addr = format_bind_address(&config.bind_address, config.port);
 
         tracing::info!(
-            "TCP listener running on {} for protocol {}",
-            bind_addr,
-            config.expected_protocol
+            address = %bind_addr,
+            protocol = %config.expected_protocol,
+            worker = worker_id,
+            "TCP listener accept loop running"
         );
 
         loop {
@@ -495,12 +685,28 @@ impl TcpListenerPool {
                             let rate_limiter = rate_limiter.clone();
                             let flood_protector = flood_protector.clone();
                             let sock_opts = socket_options.clone();
+                            let active = active_connections.clone();
 
                             let _ = apply_tcp_socket_options(&stream, &sock_opts);
 
+                            active.fetch_add(1, Ordering::Relaxed);
                             tokio::spawn(async move {
+                                let _active = ActiveConnectionGuard(active);
                                 let _permit = permit;
-                                if let Err(e) = Self::handle_connection(stream, client_addr, &config, &detector, &filter, rate_limiter.as_ref(), flood_protector.as_ref(), &sock_opts, buffer_size).await {
+                                if let Err(e) = Self::handle_connection(
+                                    stream,
+                                    client_addr,
+                                    &config,
+                                    &detector,
+                                    &filter,
+                                    rate_limiter.as_ref(),
+                                    flood_protector.as_ref(),
+                                    &sock_opts,
+                                    buffer_size,
+                                    connection_timeout_secs,
+                                )
+                                .await
+                                {
                                     tracing::debug!("Connection handling error: {}", e);
                                 }
                             });
@@ -524,6 +730,7 @@ impl TcpListenerPool {
         flood_protector: Option<&Arc<FloodProtector>>,
         socket_options: &TcpSocketOptions,
         buffer_size: usize,
+        connection_timeout_secs: u64,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let start = std::time::Instant::now();
         let client_ip = client_addr.ip();
@@ -602,12 +809,18 @@ impl TcpListenerPool {
         match upstream_addr {
             UpstreamAddress::Tcp(addr) => {
                 let mut stream = tokio::time::timeout(
-                    std::time::Duration::from_secs(5),
+                    Duration::from_secs(connection_timeout_secs),
                     TcpStream::connect(addr),
                 )
                 .await??;
                 let _ = apply_tcp_socket_options(&stream, socket_options);
-                match copy_bidirectional_native(&mut client_stream, &mut stream).await {
+                match copy_bidirectional_idle(
+                    &mut client_stream,
+                    &mut stream,
+                    Duration::from_secs(config.idle_timeout_secs.max(1)),
+                )
+                .await
+                {
                     Ok((client_bytes, upstream_bytes)) => {
                         if let Some(bandwidth) = &bandwidth {
                             bandwidth.record_ingress(client_bytes, BandwidthProtocol::Tcp);
@@ -630,11 +843,17 @@ impl TcpListenerPool {
             }
             UpstreamAddress::Unix(path) => {
                 let mut stream = tokio::time::timeout(
-                    std::time::Duration::from_secs(5),
+                    Duration::from_secs(connection_timeout_secs),
                     UnixStream::connect(&path),
                 )
                 .await??;
-                match copy_bidirectional_native(&mut client_stream, &mut stream).await {
+                match copy_bidirectional_idle(
+                    &mut client_stream,
+                    &mut stream,
+                    Duration::from_secs(config.idle_timeout_secs.max(1)),
+                )
+                .await
+                {
                     Ok((client_bytes, upstream_bytes)) => {
                         let path_str = path.to_string_lossy().to_string();
                         if let Some(bandwidth) = &bandwidth {
@@ -837,6 +1056,22 @@ impl TcpListenerPool {
         Ok(())
     }
 
+    pub fn bound_addresses(&self) -> Vec<SocketAddr> {
+        self.bound.read().iter().map(|b| b.local_addr).collect()
+    }
+
+    pub fn worker_accept_loop_count(&self) -> usize {
+        self.bound.read().len() * self.config.worker_pool_size.max(1)
+    }
+
+    pub fn active_connection_count(&self) -> usize {
+        self.registered
+            .read()
+            .iter()
+            .map(|r| r.active_connections.load(Ordering::Relaxed))
+            .sum()
+    }
+
     async fn stall_connection(mut stream: TcpStream, socket_options: &TcpSocketOptions) {
         if socket_options.nodelay {
             let _ = stream.set_nodelay(true);
@@ -860,10 +1095,41 @@ impl TcpListenerPool {
 
     pub async fn shutdown(&self) {
         let _ = self.shutdown_tx.send(());
+        let bound = self.bound.read().clone();
+        {
+            let mut registry = TCP_LISTENER_REGISTRY.write();
+            registry.retain(|entry| {
+                !bound.iter().any(|listener| {
+                    listener.local_addr.port() == entry.snapshot.port
+                        && listener.registered.config.bind_address == entry.snapshot.bind_address
+                        && listener.registered.config.expected_protocol == entry.snapshot.protocol
+                })
+            });
+        }
         tracing::info!("TCP listener pool shutdown initiated");
     }
 
     pub fn listener_count(&self) -> usize {
-        self.listeners.read().len()
+        self.registered.read().len()
     }
+}
+
+async fn copy_bidirectional_idle<A, B>(
+    client: &mut A,
+    upstream: &mut B,
+    idle: Duration,
+) -> std::io::Result<(u64, u64)>
+where
+    A: AsyncRead + AsyncWrite + Unpin,
+    B: AsyncRead + AsyncWrite + Unpin,
+{
+    let (mut client_read, mut client_write) = tokio::io::split(&mut *client);
+    let (mut upstream_read, mut upstream_write) = tokio::io::split(&mut *upstream);
+
+    let client_to_upstream =
+        TcpListenerPool::copy_direction(&mut client_read, &mut upstream_write, idle);
+    let upstream_to_client =
+        TcpListenerPool::copy_direction(&mut upstream_read, &mut client_write, idle);
+
+    tokio::try_join!(client_to_upstream, upstream_to_client)
 }

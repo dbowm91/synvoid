@@ -67,20 +67,30 @@ There is no `quic_enable_0rtt` on `[http3]`, and `prefer_post_quantum` belongs t
 There is no `[site.http3]` section — it parses but is silently ignored (`SiteConfig` has no `http3` field). Per-listener HTTP/3 is declared on the listen entry as `http3 = true`:
 
 ```toml
-# config/sites/example.com.toml
-[site]
-domains = ["example.com", "www.example.com"]
-
-[site.upstream]
-default = "http://127.0.0.1:8000"
-
-[[site.listen]]
+# config/main.toml
+[[http.listeners]]
+name = "public-https"
+address = "0.0.0.0"
 port = 443
-ssl = true
+tls = true
+http2 = true
 http3 = true
+
+[tls]
+enabled = true
+cert_path = "/etc/synvoid/certs/server.crt"
+key_path = "/etc/synvoid/certs/server.key"
 ```
 
-HTTP/3 bind addresses are derived solely from `[http3]` and `[server] host` (`UnifiedServerStartupPlan::build`, `src/server/startup_plan.rs:120`): the listener spawns when `http3_config.enabled` is true, and per-site `http3` flags are not consulted. `SiteListenConfig::is_http3_enabled()` (`crates/synvoid-config/src/site/listen.rs:57`) is the only accessor for the per-listen field and has **zero callers** in the workspace, so treat `[[site.listen]] http3` as currently unreachable rather than as a working per-site control.
+One listener with `tls = true, http3 = true` owns HTTPS/TCP and HTTP/3/UDP on
+the same address and port. HTTP/3 is advertised with `Alt-Svc` only when its
+QUIC endpoint bound successfully. The legacy `[http3] enabled = true` path
+still synthesizes an H3 listener when no `[[http.listeners]]` array is present;
+in the explicit array only `http3 = true` creates a QUIC endpoint.
+`[[site.listen]]` remains rejected. HTTP/3 with
+`defaults.worker_pool.workers > 1` is rejected until a single-owner or
+migration-safe multi-worker QUIC design is qualified; keep one worker when H3
+is enabled. HTTP/3 connection counts feed the worker drain state.
 
 ## How It Works
 

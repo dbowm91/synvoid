@@ -13,6 +13,7 @@ use utoipa::ToSchema;
 pub struct SiteInfo {
     pub id: String,
     pub domains: Vec<String>,
+    pub listeners: Vec<String>,
     pub default_upstream: String,
     pub routes: std::collections::HashMap<String, String>,
 }
@@ -45,6 +46,7 @@ pub async fn list_sites(
         .map(|(id, site)| SiteInfo {
             id: id.clone(),
             domains: site.site.domains.clone(),
+            listeners: site.site.listeners.clone(),
             default_upstream: site.site.upstream.default.clone(),
             routes: site.site.upstream.routes.clone(),
         })
@@ -122,7 +124,8 @@ pub async fn create_site(
     let site_config = crate::config::site::SiteConfig {
         site: crate::config::site::SiteInfo {
             domains: req.domains,
-            listen: Vec::new(),
+            listen: (),
+            listeners: Vec::new(),
             upstream: crate::config::site::UpstreamConfig {
                 default: req.default_upstream,
                 routes: std::collections::HashMap::new(),

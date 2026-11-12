@@ -23,18 +23,22 @@ pub enum RuntimeHandleClass {
 }
 
 pub struct NamedRuntimeHandle {
-    pub name: &'static str,
+    pub name: String,
     pub class: RuntimeHandleClass,
     join: tokio::task::JoinHandle<ServerTaskResult>,
 }
 
 impl NamedRuntimeHandle {
     pub fn new(
-        name: &'static str,
+        name: impl Into<String>,
         class: RuntimeHandleClass,
         join: tokio::task::JoinHandle<ServerTaskResult>,
     ) -> Self {
-        Self { name, class, join }
+        Self {
+            name: name.into(),
+            class,
+            join,
+        }
     }
 }
 
@@ -67,8 +71,11 @@ impl UnifiedServerRuntimeHandles {
         self.handles.len()
     }
 
-    pub fn names(&self) -> Vec<(&'static str, RuntimeHandleClass)> {
-        self.handles.iter().map(|h| (h.name, h.class)).collect()
+    pub fn names(&self) -> Vec<(String, RuntimeHandleClass)> {
+        self.handles
+            .iter()
+            .map(|h| (h.name.clone(), h.class))
+            .collect()
     }
 
     pub async fn shutdown_and_join(
@@ -76,11 +83,13 @@ impl UnifiedServerRuntimeHandles {
         timeout: Duration,
     ) -> UnifiedServerRuntimeShutdownReport {
         let mut report = UnifiedServerRuntimeShutdownReport::default();
+        let deadline = tokio::time::Instant::now() + timeout;
 
         for handle in self.handles.drain(..) {
             let name = handle.name;
             let class = handle.class;
-            let result = tokio::time::timeout(timeout, handle.join).await;
+            let mut join = handle.join;
+            let result = tokio::time::timeout_at(deadline, &mut join).await;
             match result {
                 Ok(Ok(Ok(()))) => {
                     report.completed += 1;
@@ -111,6 +120,8 @@ impl UnifiedServerRuntimeHandles {
                 }
                 Err(_) => {
                     tracing::warn!(task = name, "task timed out, aborting");
+                    join.abort();
+                    let _ = join.await;
                     report.timed_out += 1;
                     counter!("synvoid_runtime_task_exit_total", "owner" => "unified_server", "class" => format!("{:?}", class), "status" => "timed_out").increment(1);
                     if class == RuntimeHandleClass::CriticalServer {
@@ -139,7 +150,7 @@ pub struct UnifiedServerRuntimeShutdownReport {
 /// Spawn a future that returns `Result<(), E>` and register it with the handles.
 pub fn spawn_registered<F, E>(
     handles: &mut UnifiedServerRuntimeHandles,
-    name: &'static str,
+    name: impl Into<String>,
     class: RuntimeHandleClass,
     fut: F,
 ) where
@@ -155,7 +166,7 @@ pub fn spawn_registered<F, E>(
 /// Spawn a unit future and register it with the handles.
 pub fn spawn_registered_unit<F>(
     handles: &mut UnifiedServerRuntimeHandles,
-    name: &'static str,
+    name: impl Into<String>,
     class: RuntimeHandleClass,
     fut: F,
 ) where
@@ -286,7 +297,9 @@ mod tests {
 
         let names = handles.names();
         assert_eq!(names.len(), 2);
-        assert_eq!(names[0], ("task_a", RuntimeHandleClass::CriticalServer));
-        assert_eq!(names[1], ("task_b", RuntimeHandleClass::Maintenance));
+        assert_eq!(names[0].0, "task_a");
+        assert_eq!(names[0].1, RuntimeHandleClass::CriticalServer);
+        assert_eq!(names[1].0, "task_b");
+        assert_eq!(names[1].1, RuntimeHandleClass::Maintenance);
     }
 }

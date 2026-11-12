@@ -13,6 +13,7 @@ pub mod honeypot_port;
 pub mod http;
 pub mod icmp_filter;
 pub mod limits;
+pub mod listener;
 pub mod logging;
 pub mod main_config;
 pub mod mesh;
@@ -50,7 +51,7 @@ pub use dns::{
 };
 pub use theme::{
     ThemeBranding, ThemeColors, ThemeConfig, ThemeDefaults, ThemeEffects, ThemeMode, ThemePreset,
-    ThemeRestriction, ThemeSpacing,
+    ThemeRestriction, ThemeScheme, ThemeSpacing,
 };
 
 pub use defaults::{
@@ -59,6 +60,10 @@ pub use defaults::{
 pub use http::{Http3Config, HttpConfig, TokioConfig};
 pub use limits::{
     BlocklistLimitsConfig as DenyListLimitsConfig, ProxyLimitsConfig, RateLimitMemoryConfig,
+};
+pub use listener::{
+    normalize_http_listeners, validate_listener_declarations, HttpListenerConfig, HttpListenerPlan,
+    ListenerId,
 };
 pub use logging::{
     ElasticsearchConfig, LogExporterConfig, LoggingConfig, LokiConfig, RequestBodyLoggingConfig,
@@ -77,7 +82,7 @@ pub use protection::{
     ThreatLevelConfig, ThreatLevelEscalation, ThreatLevelGlobalLimits, YaraRuleFeedConfig,
     YaraRulesMeshConfig,
 };
-pub use security::{MainSecurityConfig, MainStaticConfig};
+pub use security::{MainSecurityConfig, MainStaticConfig, WorkerSandboxMode};
 pub use server::{FallbackConfig, ServerConfig};
 pub use serverless::{FunctionDefinition, ServerlessConfig};
 pub use tls::{AcmeChallengeType, AcmeConfig, ClientAuthConfig, TlsConfig};
@@ -260,9 +265,6 @@ domains = ["example.com"]
 
 [site.upstream]
 default = "http://localhost:3000"
-
-[[site.listen]]
-port = 8080
 "#;
 
     const VALID_SITE_TOML_2: &str = r#"
@@ -271,9 +273,6 @@ domains = ["other.com"]
 
 [site.upstream]
 default = "http://localhost:3001"
-
-[[site.listen]]
-port = 8081
 "#;
 
     const INVALID_SITE_TOML: &str = r#"
@@ -425,7 +424,6 @@ default = "http://localhost:3000"
 
         let config = SiteConfig::from_file(&path).unwrap();
         assert_eq!(config.site.domains, vec!["example.com"]);
-        assert_eq!(config.site.listen[0].port, Some(8080));
     }
 
     #[test]

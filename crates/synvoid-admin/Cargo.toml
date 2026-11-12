@@ -20,12 +20,12 @@ tower-http = { version = "0.6", features = ["cors"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 schemars = "0.8"
-utoipa = { version = "5", features = ["axum_extras", "chrono"] }
-utoipa-swagger-ui = { version = "9", features = ["axum", "vendored"], optional = true }
+utoipa = { version = "6", features = ["axum_extras", "chrono"] }
+utoipa-swagger-ui = { version = "10", features = ["axum", "vendored"], optional = true }
 chrono = { version = "0.4", features = ["serde"] }
 bcrypt = "0.19"
 parking_lot = "0.12"
-metrics = "0.22"
+metrics-024 = { package = "metrics", version = "0.24" }
 tower = { version = "0.5", features = ["util"] }
 tokio = { version = "1", features = ["rt", "time", "sync", "macros"] }
 tracing = "0.1"

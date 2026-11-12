@@ -4,9 +4,9 @@ Record of the three open Dependabot alerts that were resolved on 2026-10-06, the
 evidence for each resolution, and the one dev-scope advisory that is **recorded
 rather than suppressed** because upstream has no patch.
 
-This is a present-state remediation record. The historical baseline it updates is
-`architecture/dependency_security_baseline_phase25.md` (re-audit 2026-10-01);
-that document is unchanged by this pass and remains the binding baseline for
+This 2026-10-06 record is historical. The binding baseline it updated is
+`architecture/dependency_security_baseline_phase25.md`; the current evidence is
+its §15 (Phase 01, 2026-11-10). The baseline remains the authority for
 `deny.toml` ignore metadata, the `third-party/` fork policy, and the wasmtime
 version baseline.
 
@@ -118,3 +118,56 @@ This pass adds one item: dependency advisories must be classified by **scope and
 reachability**, not severity alone, before a remediation is chosen — a
 build-time-only advisory with no upstream patch is recorded, not suppressed and
 not silently ignored.
+## Phase 01 production-readiness refresh (2026-11-10)
+
+The 2026-10-06 record above is historical. A later advisory-database update
+(2026-10-14 through 2026-10-30) found 53 vulnerabilities; the Phase 01 refresh
+remediated all of them by version upgrade, not by suppression:
+
+| Crate family | Landed version | Findings cleared |
+|---|---|---|
+| `rustls` / `rustls-webpki` | 0.23.46 / 0.103.16 | RUSTSEC-2026-0346…-0349, -0382 |
+| `webpki-roots` / `webpki-root-certs` | 1.0.11 / 1.0.11 | RUSTSEC-2026-0381, -0383 |
+| `quinn` / `quinn-proto` | 0.11.12 / 0.11.19 | RUSTSEC-2026-0338…-0342 |
+| `rusqlite` / `libsqlite3-sys` | 0.41.1 / 0.39.1 | RUSTSEC-2026-0459 |
+| `wasmtime` (direct / YARA) | 36.0.20 / 48.0.8 | RUSTSEC-2026-0353…-0364, -0378…-0380, -0422…-0424 |
+| `yara-x` | 1.23.0 (official; fork retired) | resolves Wasmtime 48.0.8 + zip 9.0.5 |
+| `zip` (runtime + swagger build) | 9.5.0 | RUSTSEC-2026-0367…-0369, -0429 |
+| `utoipa` / `utoipa-swagger-ui` | 6.0.0 / 10.0.2 (2026-11-12 follow-up) | removed the build-only zip 3.0.0 edge |
+| `zstd` / `zstd-safe` / `zstd-sys` | 0.13.4 + 0.14.3 / 7.4.0 + 8.2.0 / 2.1.2 | RUSTSEC-2026-0391, -0395…-0410 |
+| `tokio` | 1.54.1 | RUSTSEC-2026-0386 |
+| `pulldown-cmark` | 0.13.6 (build-time via prost) | RUSTSEC-2026-0414, -0433 |
+| `crypto-bigint` / `ctutils` | 0.7.11 / 0.4.8 (via yara-x 1.23) | RUSTSEC-2026-0387, -0385 |
+
+`cargo audit --file Cargo.lock` now exits 0 with no findings; `cargo deny check`
+exits 0. The remaining documented exceptions are:
+
+- `RUSTSEC-2023-0071` (`rsa 0.9.10`, direct DNS/DNSSEC/TLS paths; verify,
+  sign and key-parse only, zero decrypt call sites). The yara-x path now uses
+  patched `rsa 0.10.0`.
+- `RUSTSEC-2026-0235` (`rkyv 0.7.46` via the retained minify-html chain).
+- Six unmaintained-only notices with no patched release (`atomic-polyfill`,
+  `basic-toml`, `bincode` 1.3.3 + 2.0.1, `fxhash`, `proc-macro-error`,
+  `proc-macro-error2`), each recorded with path/capability/exposure/owner and
+  a 2027-04-10 re-audit date in `deny.toml` and `.cargo/audit.toml`.
+
+The npm `braces` decision is unchanged (no upstream patch; dev-only Tailwind
+toolchain). Full evidence: `architecture/dependency_security_baseline_phase25.md`
+§15.
+
+## Dependabot follow-up (2026-11-12)
+
+The 23 open Dependabot alerts all mapped to three families already upgraded in
+the Phase 01 refresh, plus the build-only zip 3.0.0 edge that Phase 01 had
+excepted. This follow-up closes the remaining edge and refreshes the standalone
+transport benchmark lock:
+
+- `zip` is now **9.5.0 only**; the `zip 3.0.0` build dependency disappeared
+  with `utoipa 6.0.0` / `utoipa-swagger-ui 10.0.2`.
+- `wasmtime` is 36.0.20 (direct) and 48.0.8 (YARA), both above the fixed
+  thresholds.
+- `rustls` is 0.23.46 in both `Cargo.lock` and
+  `benchmarks/http_transport/Cargo.lock`; the benchmark lock also advances
+  `rustls-webpki` to 0.103.16, `webpki-roots` to 1.0.12 and tokio to 1.54.1.
+- `cargo audit` and `cargo deny check` pass. `cargo audit` in the benchmark
+  harness exits 0 with only the recorded `rustls-pemfile` unmaintained notice.

@@ -348,6 +348,26 @@ authoritative no-network/no-child/no-exec) in exactly one irreversible entry.
 `SandboxRequest::intersect()` was removed (Phase 89: unsafe policy algebra);
 composition is explicit. Extraction: DEFERRED (closeout §8 + Phase 89 addendum).
 
+**Main data-plane Worker consumer (Phase 08):** `src/server/worker_sandbox.rs`
+is the root-composition policy resolver. `[security] worker_sandbox`
+(`off` | `auto` | `required`, default `off`) is applied in
+`src/commands/runtime_launch.rs` **before** the UnifiedServerWorker builds its
+Tokio runtime. The request requires `AmbientFilesystemDenied`,
+`FilesystemReadAllowlist`, `FilesystemWriteAllowlist`, `InheritedIpcUsable`
+and `DescendantsConfined` under `ThreadScope::CurrentThreadPlusDescendants`;
+it does not request network/exec denial (the worker proxies traffic and may
+spawn jail/app-server children). Read/write roots are derived from
+`PlatformPaths` and the effective `MainConfig` (config, certs/ACME, rules /
+YARA, static/admin assets, GeoIP, DNS root hints/trust anchor, system CA,
+data/log/cache/runtime, and the config directory only when the admin editor is
+enabled); there is no blanket `/` or `$HOME`. `required` fails startup when
+the report is incomplete (Linux Landlock is the qualified worker backend);
+`auto` logs the report and continues only when the backend fully enforces the
+filesystem layer, and fails startup on a post-entry partial enforcement. The startup log carries the
+`EnforcementReport`; no admin/doctor surface claims worker enforcement yet.
+This layer is filesystem-only — seccomp is not implemented here and systemd
+hardening remains Phase 07.
+
 `SandboxCapabilities::process_limits` means numeric resource bounds only. `Platform::supports_sandbox()` is a coarse Linux/BSD gate; macOS/Windows availability is per-backend `is_supported()`.
 
 **Landlock Constants (Linux):**

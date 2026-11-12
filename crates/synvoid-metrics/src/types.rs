@@ -12,6 +12,34 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 const MAX_BLOCKED_TYPE_LABELS: usize = 16;
 
+/// Worker-local cumulative admin API rate-limit rejections. The Prometheus
+/// recorder lives in the supervisor, so these process-global atomics (same
+/// pattern as the admin metrics-events module) are the observable source of
+/// truth: the admin limiter increments them, the unified-server heartbeat
+/// bridges them to `:9090`. Kept in this low-level crate so both the admin
+/// crate (producer) and worker composition roots (consumer) can share them
+/// without crossing the admin/control-plane dependency boundary.
+static ADMIN_RATE_LIMITED_MINUTE: AtomicU64 = AtomicU64::new(0);
+static ADMIN_RATE_LIMITED_SECOND: AtomicU64 = AtomicU64::new(0);
+
+/// Record one admin rate-limit rejection in the given window.
+pub fn record_admin_rate_limited_minute() {
+    ADMIN_RATE_LIMITED_MINUTE.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record one admin rate-limit rejection in the given window.
+pub fn record_admin_rate_limited_second() {
+    ADMIN_RATE_LIMITED_SECOND.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Cumulative worker-local admin rate-limit rejections `(minute, second)`.
+pub fn admin_rate_limited_totals() -> (u64, u64) {
+    (
+        ADMIN_RATE_LIMITED_MINUTE.load(Ordering::Relaxed),
+        ADMIN_RATE_LIMITED_SECOND.load(Ordering::Relaxed),
+    )
+}
+
 fn summarize_timing_samples(samples: &[u64]) -> TimingStatsPayload {
     if samples.is_empty() {
         return TimingStatsPayload::default();
@@ -688,6 +716,11 @@ impl WorkerMetrics {
             mesh_restart_attempts: 0,
             mesh_healthy: false,
             mesh_degraded: false,
+            // Admin limiter counts are worker-local to the process serving
+            // the admin API; populated by the unified-server heartbeat in
+            // `lifecycle.rs`, zero for payloads built elsewhere.
+            admin_rate_limited_minute_total: 0,
+            admin_rate_limited_second_total: 0,
         }
     }
 }

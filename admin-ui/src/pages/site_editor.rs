@@ -4,6 +4,7 @@ use yew_router::prelude::*;
 
 use crate::app::Route;
 use crate::components::forms::Input;
+use crate::components::theme_preview::ThemePreview;
 use crate::components::tooltip::{HelpIcon, Tooltip, TooltipPosition};
 use crate::components::{toast_error, toast_success};
 use crate::services::ApiService;
@@ -416,7 +417,7 @@ fn ToggleFieldWithTooltip(props: &ToggleFieldWithTooltipProps) -> Html {
     let bg_class = if *enabled {
         "bg-action-600"
     } else {
-        "bg-gray-600"
+        "bg-tertiary border border-default"
     };
     let translate_class = if *enabled {
         "translate-x-5"
@@ -613,7 +614,7 @@ fn ToggleField(props: &ToggleFieldProps) -> Html {
     let bg_class = if *enabled {
         "bg-action-600"
     } else {
-        "bg-gray-600"
+        "bg-tertiary border border-default"
     };
     let translate_class = if *enabled {
         "translate-x-5"
@@ -645,7 +646,6 @@ pub struct ErrorPagesTabProps {
 #[function_component]
 fn ErrorPagesTab(props: &ErrorPagesTabProps) -> Html {
     let selected_preset = use_state(|| "default".to_string());
-    let preview_html = use_state(String::new);
     let preview_light = use_state(|| false);
     let saving = use_state(|| false);
     let inherit = use_state(|| true);
@@ -654,8 +654,6 @@ fn ErrorPagesTab(props: &ErrorPagesTabProps) -> Html {
 
     {
         let selected_preset = selected_preset.clone();
-        let preview_html = preview_html.clone();
-        let preview_light = preview_light.clone();
         let inherit = inherit.clone();
         let mode = mode.clone();
         let custom_directory = custom_directory.clone();
@@ -673,10 +671,6 @@ fn ErrorPagesTab(props: &ErrorPagesTabProps) -> Html {
                 if let Ok(Some(theme)) = theme_result {
                     let preset = theme.preset.unwrap_or_else(|| "default".to_string());
                     selected_preset.set(preset.clone());
-                    let colors = get_preset_colors(&preset);
-                    let use_light = *preview_light;
-                    let html = generate_error_page_preview("", &colors, use_light);
-                    preview_html.set(html);
                 } else {
                     tracing::error!("Failed to fetch site theme: {:?}", theme_result.err());
                 }
@@ -698,33 +692,21 @@ fn ErrorPagesTab(props: &ErrorPagesTabProps) -> Html {
 
     let on_preset_change = {
         let selected_preset = selected_preset.clone();
-        let preview_html = preview_html.clone();
-        let preview_light = preview_light.clone();
         Callback::from(move |e: Event| {
             let target = e.target().unwrap();
             let value = target
                 .dyn_ref::<web_sys::HtmlSelectElement>()
                 .map(|el| el.value())
                 .unwrap_or_default();
-            selected_preset.set(value.clone());
-            let colors = get_preset_colors(&value);
-            let use_light = *preview_light;
-            let html = generate_error_page_preview("", &colors, use_light);
-            preview_html.set(html);
+            selected_preset.set(value);
         })
     };
 
     let on_toggle_preview = {
         let preview_light = preview_light.clone();
-        let selected_preset = selected_preset.clone();
-        let preview_html = preview_html.clone();
         Callback::from(move |_| {
             let new_value = !*preview_light;
             preview_light.set(new_value);
-
-            let colors = get_preset_colors(&selected_preset);
-            let html = generate_error_page_preview("", &colors, new_value);
-            preview_html.set(html);
         })
     };
 
@@ -775,6 +757,11 @@ fn ErrorPagesTab(props: &ErrorPagesTabProps) -> Html {
                 let theme_request = crate::types::UpdateThemeRequest {
                     preset: Some(preset),
                     mode: None,
+                    dark_theme: None,
+                    light_theme: None,
+                    scheme: None,
+                    panel_dark_theme: None,
+                    panel_light_theme: None,
                     allow_only: None,
                 };
 
@@ -889,7 +876,7 @@ fn ErrorPagesTab(props: &ErrorPagesTabProps) -> Html {
                     >
                         { for presets.iter().map(|(value, label)| {
                             html! {
-                                <option value={*value}>{*label}</option>
+                                <option value={*value} selected={selected_preset.as_str() == *value}>{*label}</option>
                             }
                         }) }
                     </select>
@@ -907,11 +894,21 @@ fn ErrorPagesTab(props: &ErrorPagesTabProps) -> Html {
                         </button>
                     </div>
                     <div class="border border-default rounded-lg overflow-hidden">
-                        <iframe
-                            srcdoc={(*preview_html).clone()}
-                            class="w-full h-64"
-                            sandbox="allow-same-origin"
-                        />
+                        {
+                            {
+                                let colors = get_preset_colors(&selected_preset);
+                                let c = if *preview_light { &colors.light } else { &colors.dark };
+                                html! {
+                                    <ThemePreview
+                                        background={c.background.clone()}
+                                        surface={c.surface.clone()}
+                                        text={c.text.clone()}
+                                        border={c.border.clone()}
+                                        primary={c.primary.clone()}
+                                    />
+                                }
+                            }
+                        }
                     </div>
                     <p class="mt-1 text-sm text-secondary">{ "Preview of the error page with selected theme" }</p>
                 </div>
@@ -1043,79 +1040,6 @@ fn get_preset_colors(preset: &str) -> crate::types::ThemeColorsResponse {
             },
         },
     }
-}
-
-fn generate_error_page_preview(
-    _css: &str,
-    colors: &crate::types::ThemeColorsResponse,
-    use_light: bool,
-) -> String {
-    let c = if use_light {
-        &colors.light
-    } else {
-        &colors.dark
-    };
-    format!(
-        r#"
-<!DOCTYPE html>
-<html>
-<head>
-    <style>
-        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-        body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background-color: {bg};
-            color: {text};
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }}
-        .card {{
-            background: {surface};
-            border: 1px solid {border};
-            border-radius: 12px;
-            padding: 2rem;
-            max-width: 400px;
-            text-align: center;
-        }}
-        .status {{
-            font-size: 4rem;
-            font-weight: bold;
-            color: {primary};
-            margin-bottom: 1rem;
-        }}
-        h1 {{
-            font-size: 1.5rem;
-            margin-bottom: 0.5rem;
-        }}
-        p {{
-            color: {text};
-            opacity: 0.8;
-        }}
-        .footer {{
-            margin-top: 1.5rem;
-            font-size: 0.75rem;
-            opacity: 0.5;
-        }}
-    </style>
-</head>
-<body>
-    <div class="card">
-        <div class="status">403</div>
-        <h1>Forbidden</h1>
-        <p>Access to this resource has been blocked by the WAF.</p>
-        <div class="footer">SynVoid</div>
-    </div>
-</body>
-</html>
-"#,
-        bg = c.background,
-        surface = c.surface,
-        text = c.text,
-        border = c.border,
-        primary = c.primary,
-    )
 }
 
 #[derive(Properties, PartialEq)]

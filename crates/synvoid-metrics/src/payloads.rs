@@ -120,6 +120,12 @@ pub struct WorkerMetricsPayload {
     pub mesh_restart_attempts: u32,
     pub mesh_healthy: bool,
     pub mesh_degraded: bool,
+    /// Worker-local admin API rate-limit rejections, bridged to `:9090`.
+    /// `#[serde(default)]` keeps mixed-version IPC decodable.
+    #[serde(default)]
+    pub admin_rate_limited_minute_total: u64,
+    #[serde(default)]
+    pub admin_rate_limited_second_total: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

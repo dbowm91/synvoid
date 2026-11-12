@@ -2946,6 +2946,8 @@ mod tests {
             mesh_restart_attempts: 0,
             mesh_healthy: false,
             mesh_degraded: false,
+            admin_rate_limited_minute_total: 0,
+            admin_rate_limited_second_total: 0,
         };
         let msg = Message::WorkerHeartbeat {
             id: WorkerId(1),

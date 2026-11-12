@@ -82,12 +82,21 @@ Current HTTP/2 scope note:
 - HTTP/2 upstream support is available via the typed client path.
 - Full erased-client HTTP/2 streaming pooling is not the default request path and remains an advanced/deferred optimization.
 
+HTTP listener model: listeners are process-wide resources declared by
+`[[http.listeners]]` in `main.toml`; sites reference them through
+`[site].listeners` and remain virtual hosts selected by `[site] domains`.
+Multiple HTTP/HTTPS/HTTP3 sockets are supported, including HTTPS/TCP and
+HTTP/3/UDP on the same numeric port. When the array is absent, the legacy
+`[server]`, `[tls]`, and `[http3]` listeners are synthesized. The retired
+`[[site.listen]]` surface is rejected and never opens a socket. SynVoid does
+not implement the PROXY protocol.
+
 ### Request Flow Through Components
 
 When a request arrives, it passes through these components in sequence within the unified worker:
 
 ```
-1. Listener (TCP/UDP/QUIC)
+1. Listener (listener plan plus TCP/UDP/QUIC pools)
       │
       ▼
 2. Connection Handler (TLS termination, HTTP parsing)

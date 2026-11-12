@@ -281,13 +281,40 @@ impl MainConfig {
     pub fn validate(&self) -> Result<(), ConfigValidationError> {
         self.server.validate()?;
         self.http.validate()?;
+        self.http3.validate()?;
+        crate::listener::validate_listener_declarations(self)?;
         self.tls.validate()?;
         self.threat_level.validate()?;
         self.fallback.validate()?;
         self.logging.validate()?;
         self.admin.validate()?;
+        // Phase 04: the admin panel is worker-local. Make the multi-worker
+        // acknowledgement explicit at the top level so a config that also
+        // enables `[admin]` gets the admin-specific limitation in the error.
+        if self.defaults.worker_pool.workers > 1
+            && !self.defaults.worker_pool.allow_multi_worker
+            && self.admin.enabled
+        {
+            return Err(ConfigValidationError {
+                field: "defaults.worker_pool.allow_multi_worker".to_string(),
+                message: format!(
+                    "workers = {} with [admin].enabled = true requires \
+                     allow_multi_worker = true. Admin sessions, CSRF tokens, the rate-limit \
+                     budget, metrics and request logs are per worker, so the panel observes \
+                     and authenticates against one worker at a time. Keep workers = 1 or \
+                     acknowledge the limitation explicitly.",
+                    self.defaults.worker_pool.workers
+                ),
+            });
+        }
         self.metrics.validate()?;
+        self.security.validate()?;
         self.defaults.validate()?;
+        // The runtime listener definitions live in the top-level [tcp]/[udp]
+        // sections (the duplicate [defaults.tcp]/[defaults.udp] surface is
+        // validated above for schema parity but is not consumed).
+        self.tcp.validate()?;
+        self.udp.validate()?;
         self.tunnel.validate()?;
         // Phase 41: process/supervisor capacities are operator-reachable and
         // feed derived runtime capacities. Validate before use.
@@ -437,9 +464,9 @@ impl Default for MainConfig {
 mod tests {
     use super::*;
 
-    /// Fixed strong token (40 hex chars, no weak patterns) so seam tests are
-    /// deterministic regardless of the surrounding environment.
-    const TEST_TOKEN: &str = "7f3a9c1e5b8d2f4a6c0e9b3d7f1a5c8e0d4b6";
+    /// Deliberately low-entropy test token so secret scanners do not classify
+    /// the fixture as a credential; it is still long enough for validation.
+    const TEST_TOKEN: &str = "fixture-only-low-entropy-value-0000000000";
 
     fn valid_toml() -> String {
         let mut cfg = MainConfig::default_config();
@@ -601,6 +628,22 @@ mod tests {
             "expected restart rejection, got: {}",
             err
         );
+    }
+
+    #[test]
+    fn worker_sandbox_round_trips_through_the_main_config() {
+        use crate::security::WorkerSandboxMode;
+
+        let mut cfg = MainConfig::default_config();
+        cfg.admin.token = TEST_TOKEN.to_string();
+        cfg.admin.token_env_var = None;
+        cfg.security.worker_sandbox = WorkerSandboxMode::Required;
+
+        let text = toml::to_string(&cfg).expect("main config must serialize");
+        assert!(text.contains("worker_sandbox = \"required\""));
+        let parsed = MainConfig::from_toml_str(&text).expect("main config must parse");
+        assert_eq!(parsed.security.worker_sandbox, WorkerSandboxMode::Required);
+        assert!(parsed.validate().is_ok());
     }
 
     #[test]

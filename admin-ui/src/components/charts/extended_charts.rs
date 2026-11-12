@@ -1,3 +1,4 @@
+use crate::hooks::use_css::use_css_props;
 use std::collections::HashMap;
 use yew::prelude::*;
 
@@ -29,10 +30,19 @@ const COLORS: &[&str] = &[
 #[function_component]
 pub fn MultiSeriesLineChart(props: &MultiSeriesLineChartProps) -> Html {
     let height = props.height.as_deref().unwrap_or("250px");
+    // Dynamic geometry via the CSSOM: `style` attributes violate the admin
+    // document's `style-src 'self'` CSP and are dropped.
+    let container = use_node_ref();
+    use_css_props(container.clone(), vec![("height", height.to_string())]);
+    let plot = use_node_ref();
+    use_css_props(
+        plot.clone(),
+        vec![("height", format!("calc({height} - 50px)"))],
+    );
 
     if props.data_series.is_empty() || props.labels.is_empty() {
         return html! {
-            <div class="bg-secondary rounded-lg p-4" style={format!("height: {}", height)}>
+            <div ref={container.clone()} class="bg-secondary rounded-lg p-4">
                 <p class="text-secondary text-center">{ "No data available" }</p>
             </div>
         };
@@ -89,18 +99,25 @@ pub fn MultiSeriesLineChart(props: &MultiSeriesLineChartProps) -> Html {
         })
         .collect();
 
-    let legend_items: Vec<_> = props.data_series.iter().enumerate().map(|(idx, (name, _))| {
-        let color = COLORS[idx % COLORS.len()];
-        html! {
-            <div class="flex items-center gap-2">
-                <span class="w-3 h-3 rounded-full" style={format!("background-color: {}", color)} />
-                <span class="text-xs text-secondary">{ name }</span>
-            </div>
-        }
-    }).collect();
+    let legend_items: Vec<_> = props
+        .data_series
+        .iter()
+        .enumerate()
+        .map(|(idx, (name, _))| {
+            let color = COLORS[idx % COLORS.len()];
+            html! {
+                <div class="flex items-center gap-2">
+                    <svg class="w-3 h-3" viewBox="0 0 12 12" aria-hidden="true">
+                        <circle cx="6" cy="6" r="6" fill={color} />
+                    </svg>
+                    <span class="text-xs text-secondary">{ name }</span>
+                </div>
+            }
+        })
+        .collect();
 
     html! {
-        <div class="bg-secondary rounded-lg p-4" style={format!("height: {}", height)}>
+        <div ref={container.clone()} class="bg-secondary rounded-lg p-4">
             if let Some(title) = &props.title {
                 <div class="flex justify-between items-center mb-4">
                     <h4 class="text-sm font-medium text-secondary">{ title }</h4>
@@ -109,11 +126,11 @@ pub fn MultiSeriesLineChart(props: &MultiSeriesLineChartProps) -> Html {
                     }
                 </div>
             }
-            <svg class="w-full" style={format!("height: calc({} - 50px)", height)} viewBox="0 0 100 100" preserveAspectRatio="none">
+            <svg ref={plot.clone()} class="w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
                 <defs>
                     <linearGradient id="gridGradient" x1="0%" y1="0%" x2="0%" y2="100%">
-                        <stop offset="0%" style="stop-color:currentColor;stop-opacity:0.1" />
-                        <stop offset="100%" style="stop-color:currentColor;stop-opacity:0.05" />
+                        <stop offset="0%" stop-color="currentColor" stop-opacity="0.1" />
+                        <stop offset="100%" stop-color="currentColor" stop-opacity="0.05" />
                     </linearGradient>
                 </defs>
                 {paths}
@@ -142,10 +159,19 @@ pub struct StackedAreaChartProps {
 #[function_component]
 pub fn StackedAreaChart(props: &StackedAreaChartProps) -> Html {
     let height = props.height.as_deref().unwrap_or("250px");
+    // Dynamic geometry via the CSSOM: `style` attributes violate the admin
+    // document's `style-src 'self'` CSP and are dropped.
+    let container = use_node_ref();
+    use_css_props(container.clone(), vec![("height", height.to_string())]);
+    let plot = use_node_ref();
+    use_css_props(
+        plot.clone(),
+        vec![("height", format!("calc({height} - 50px)"))],
+    );
 
     if props.data_series.is_empty() || props.labels.is_empty() {
         return html! {
-            <div class="bg-secondary rounded-lg p-4" style={format!("height: {}", height)}>
+            <div ref={container.clone()} class="bg-secondary rounded-lg p-4">
                 <p class="text-secondary text-center">{ "No data available" }</p>
             </div>
         };
@@ -204,7 +230,7 @@ pub fn StackedAreaChart(props: &StackedAreaChartProps) -> Html {
         .collect();
 
     html! {
-        <div class="bg-secondary rounded-lg p-4" style={format!("height: {}", height)}>
+        <div ref={container.clone()} class="bg-secondary rounded-lg p-4">
             if let Some(title) = &props.title {
                 <div class="flex justify-between items-center mb-4">
                     <h4 class="text-sm font-medium text-secondary">{ title }</h4>
@@ -213,7 +239,7 @@ pub fn StackedAreaChart(props: &StackedAreaChartProps) -> Html {
                     }
                 </div>
             }
-            <svg class="w-full" style={format!("height: calc({} - 50px)", height)} viewBox="0 0 100 100" preserveAspectRatio="none">
+            <svg ref={plot.clone()} class="w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
                 {stacked_paths}
             </svg>
         </div>

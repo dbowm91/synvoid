@@ -15,6 +15,7 @@ use crate::waf::{
     ProbeTracker, RuleFeedManagerForWaf, SuspiciousWordTracker, ThreatLevelManager,
     UpstreamErrorTracker,
 };
+use arc_swap::ArcSwap;
 use base64::Engine;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
@@ -23,6 +24,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::Instant;
 use subtle::ConstantTimeEq;
+use synvoid_http::{RequestLogRecord, RequestLogSink};
 use tokio::sync::RwLock as TokioRwLock;
 use utoipa::ToSchema;
 
@@ -206,6 +208,11 @@ pub struct WafTrackingState {
     pub upstream_error_tracker: Option<Arc<UpstreamErrorTracker>>,
     pub threat_level_manager: Option<Arc<ThreatLevelManager>>,
     pub rule_feed_manager: Option<Arc<RuleFeedManagerForWaf>>,
+    /// Shared handle to the live global block-page theme. The worker owns
+    /// the same `Arc` inside its `ErrorPageManager`; the admin `PUT /theme`
+    /// stores a fresh conversion here so served pages follow settings
+    /// without a restart. `None` in tests and builds without a WAF.
+    pub error_page_theme: Option<Arc<ArcSwap<crate::theme::ThemeConfig>>>,
     #[cfg(feature = "mesh")]
     pub yara_rules: Option<Arc<crate::mesh::yara_rules::YaraRulesManager>>,
     #[cfg(feature = "mesh")]
@@ -348,6 +355,7 @@ impl AdminState {
                 upstream_error_tracker: None,
                 threat_level_manager: None,
                 rule_feed_manager: None,
+                error_page_theme: None,
                 #[cfg(feature = "mesh")]
                 yara_rules: None,
                 #[cfg(feature = "mesh")]
@@ -446,6 +454,14 @@ impl AdminState {
 
     pub fn with_rule_feed_manager(mut self, manager: Option<Arc<RuleFeedManagerForWaf>>) -> Self {
         self.waf_tracking.rule_feed_manager = manager;
+        self
+    }
+
+    pub fn with_error_page_theme(
+        mut self,
+        theme: Option<Arc<ArcSwap<crate::theme::ThemeConfig>>>,
+    ) -> Self {
+        self.waf_tracking.error_page_theme = theme;
         self
     }
 
@@ -882,6 +898,50 @@ impl AdminState {
 
     pub fn session_id_hash(session_id: &str) -> String {
         hex::encode(sha2::Sha256::digest(session_id.as_bytes()))
+    }
+}
+
+/// `synvoid_http::RequestLogSink` for the request path: the narrow seam
+/// through which the neutral pipeline records into this state without
+/// naming `AdminState`. Wired by the composition root
+/// (`src/server/listener_tasks.rs`); the gates (enabled, category,
+/// rate-limit) already ran in `send_request_log_with_sink`.
+impl RequestLogSink for AdminState {
+    fn emit(&self, record: RequestLogRecord<'_>) {
+        let entry = RequestLogEntry::new(
+            record.client_ip.to_string(),
+            record.method.to_string(),
+            record.path.to_string(),
+            record.status,
+            record.latency_ms.min(u32::MAX as u64) as u32,
+            record.site_id.to_string(),
+            record.user_agent.map(|s| s.to_string()),
+            0,
+            0,
+        );
+        // The WAF-logs tab streams this broadcaster over `/api/ws/logs`;
+        // the payload matches the UI `LogEntry` shape it parses.
+        let level = if entry.status >= 500 {
+            "error"
+        } else if entry.status >= 400 {
+            "warn"
+        } else {
+            "info"
+        };
+        let line = serde_json::json!({
+            "timestamp": entry.timestamp.to_rfc3339(),
+            "level": level,
+            "site_id": entry.site_id,
+            "message": format!(
+                "{} {} -> {} ({} ms)",
+                entry.method, entry.path, entry.status, entry.response_time_ms
+            ),
+            "client_ip": entry.client_ip,
+            "path": entry.path,
+            "status": entry.status,
+        });
+        self.metrics.logs_broadcaster.broadcast(line.to_string());
+        self.add_request_log(entry);
     }
 }
 

@@ -13,143 +13,265 @@ use super::runtime_handles::{
 };
 use super::{ServerSharedState, UnifiedServer};
 
-/// Spawn HTTP/1 listeners (v4 mandatory, v6 optional).
-pub(crate) fn spawn_http_listeners(
-    handles: &mut UnifiedServerRuntimeHandles,
-    state: &Arc<ServerSharedState>,
-    shutdown_tx: &tokio::sync::broadcast::Sender<()>,
-    http_addr: SocketAddr,
-    http_addr_v6: Option<SocketAddr>,
-) {
-    let shutdown_rx = shutdown_tx.subscribe();
-    let st = state.clone();
-    spawn_registered(
-        handles,
-        "http_v4",
-        RuntimeHandleClass::CriticalServer,
-        async move { UnifiedServer::run_http_server_inner(st, http_addr, shutdown_rx).await },
-    );
-
-    if let Some(addr_v6) = http_addr_v6 {
-        let shutdown_rx = shutdown_tx.subscribe();
-        let st = state.clone();
-        spawn_registered(
-            handles,
-            "http_v6",
-            RuntimeHandleClass::ProtocolListener,
-            async move {
-                tracing::info!("Starting HTTP server on IPv6 {}", addr_v6);
-                UnifiedServer::run_http_server_inner(st, addr_v6, shutdown_rx).await
-            },
-        );
-    }
-}
-
-/// Spawn HTTPS listeners when TLS + cert resolver are present.
-pub(crate) async fn spawn_https_listeners(
+/// Spawn every bound HTTP/HTTPS/HTTP3 listener.
+pub(crate) async fn spawn_http_listeners(
     handles: &mut UnifiedServerRuntimeHandles,
     state: &Arc<ServerSharedState>,
     server: &UnifiedServer,
+    bound: &[super::listener_binding::BoundHttpListener],
 ) {
     let cert_resolver = server.cert_resolver.clone();
     let tls_config = server.tls_config.clone();
+    let (main_config, http_config) = {
+        let cfg = server.config.read().await;
+        (cfg.main.clone(), cfg.main.http.clone())
+    };
 
-    if let (Some(addr), Some(resolver)) = (server.https_addr, cert_resolver.clone()) {
-        let shutdown_rx = server.shutdown_tx.subscribe();
-        let st = state.clone();
-        let main_config = {
-            let cfg = server.config.read().await;
-            cfg.main.clone()
-        };
-        let http_config = main_config.http.clone();
-        let tls_cfg = tls_config.clone();
-        spawn_registered(
-            handles,
-            "https_v4",
-            RuntimeHandleClass::CriticalServer,
-            async move {
-                UnifiedServer::run_https_server_inner(
-                    st,
-                    addr,
-                    resolver,
-                    tls_cfg,
-                    http_config,
-                    main_config,
-                    shutdown_rx,
-                )
-                .await
-            },
-        );
-    }
+    for listener in bound {
+        let plan = listener.plan.clone();
+        let id = plan.name().to_string();
 
-    if let (Some(addr_v6), Some(resolver)) = (server.https_addr_v6, cert_resolver.clone()) {
-        let shutdown_rx = server.shutdown_tx.subscribe();
-        let st = state.clone();
-        let main_config = {
-            let cfg = server.config.read().await;
-            cfg.main.clone()
-        };
-        let http_config = main_config.http.clone();
-        let tls_cfg = tls_config.clone();
-        spawn_registered(
-            handles,
-            "https_v6",
-            RuntimeHandleClass::ProtocolListener,
-            async move {
-                tracing::info!("Starting HTTPS server on IPv6 {}", addr_v6);
-                UnifiedServer::run_https_server_inner(
-                    st,
-                    addr_v6,
-                    resolver,
-                    tls_cfg,
-                    http_config,
-                    main_config,
-                    shutdown_rx,
-                )
-                .await
-            },
-        );
+        if let Some(std_listener) = listener
+            .tcp
+            .as_ref()
+            .and_then(|socket| socket.try_clone().ok())
+        {
+            let shutdown_rx = server.shutdown_tx.subscribe();
+            let st = state.clone();
+            let name = format!("{}:{id}", if plan.tls { "https" } else { "http" });
+            let class = RuntimeHandleClass::CriticalServer;
+            if plan.tls {
+                let Some(resolver) = cert_resolver.clone() else {
+                    tracing::error!(listener = %id, "TLS listener has no certificate resolver");
+                    continue;
+                };
+                let tls_cfg = tls_config.clone();
+                let http_cfg = http_config.clone();
+                let main_cfg = main_config.clone();
+                let listener_plan = plan.clone();
+                spawn_registered(handles, name, class, async move {
+                    UnifiedServer::run_https_server_inner(
+                        st,
+                        std_listener,
+                        listener_plan,
+                        resolver,
+                        tls_cfg,
+                        http_cfg,
+                        main_cfg,
+                        shutdown_rx,
+                    )
+                    .await
+                });
+            } else {
+                let http_cfg = http_config.clone();
+                let main_cfg = main_config.clone();
+                let listener_plan = plan.clone();
+                spawn_registered(handles, name, class, async move {
+                    UnifiedServer::run_http_server_inner(
+                        st,
+                        std_listener,
+                        listener_plan,
+                        http_cfg,
+                        main_cfg,
+                        shutdown_rx,
+                    )
+                    .await
+                });
+            }
+        }
+
+        if let Some(std_socket) = listener
+            .udp
+            .as_ref()
+            .and_then(|socket| socket.try_clone().ok())
+        {
+            let Some(resolver) = cert_resolver.clone() else {
+                tracing::error!(listener = %id, "HTTP/3 listener has no certificate resolver");
+                continue;
+            };
+            let shutdown_rx = server.shutdown_tx.subscribe();
+            let st = state.clone();
+            let h3_cfg = server.http3_config.clone();
+            let name = format!("h3:{id}");
+            let listener_plan = plan.clone();
+            spawn_registered(
+                handles,
+                name,
+                RuntimeHandleClass::ProtocolListener,
+                async move {
+                    UnifiedServer::run_http3_server_inner(
+                        st,
+                        std_socket,
+                        listener_plan,
+                        resolver,
+                        h3_cfg,
+                        shutdown_rx,
+                    )
+                    .await
+                },
+            );
+        }
     }
 }
 
-/// Spawn HTTP/3 listeners when configured.
-pub(crate) fn spawn_http3_listeners(
+/// Spawn the admin HTTP API when `[admin] enabled=true`.
+///
+/// Serves `create_admin_router` on `bind_address:port` with the standard
+/// shutdown receiver, drained via `shutdown_and_join` like every other
+/// listener. `enabled=false` (or an unparseable/unbindable address)
+/// registers nothing and logs the reason.
+pub(crate) async fn spawn_admin_service(
     handles: &mut UnifiedServerRuntimeHandles,
     state: &Arc<ServerSharedState>,
     server: &UnifiedServer,
 ) {
-    let cert_resolver = server.cert_resolver.clone();
-    let http3_config = server.http3_config.clone();
+    let Some(addr) = server.admin_addr else {
+        return;
+    };
 
-    if let (Some(addr), Some(resolver)) = (server.http3_addr, cert_resolver.clone()) {
-        let shutdown_rx = server.shutdown_tx.subscribe();
-        let st = state.clone();
-        let h3_cfg = http3_config.clone();
-        spawn_registered(
-            handles,
-            "http3_v4",
-            RuntimeHandleClass::ProtocolListener,
-            async move {
-                UnifiedServer::run_http3_server_inner(st, addr, resolver, h3_cfg, shutdown_rx).await
-            },
+    let admin_config = {
+        let cfg = server.config.read().await;
+        cfg.main.admin.clone()
+    };
+    if !admin_config
+        .bind_address
+        .parse::<std::net::IpAddr>()
+        .is_ok_and(|ip| ip.is_loopback())
+    {
+        tracing::warn!(
+            addr = %addr,
+            "Admin API bound to a non-loopback address; session cookies follow [admin] secure_cookie"
         );
     }
 
-    if let (Some(addr_v6), Some(resolver)) = (server.http3_addr_v6, cert_resolver.clone()) {
-        let shutdown_rx = server.shutdown_tx.subscribe();
-        let st = state.clone();
-        let h3_cfg = http3_config.clone();
-        spawn_registered(
-            handles,
-            "http3_v6",
-            RuntimeHandleClass::ProtocolListener,
-            async move {
-                tracing::info!("Starting HTTP/3 server on IPv6 {}", addr_v6);
-                UnifiedServer::run_http3_server_inner(st, addr_v6, resolver, h3_cfg, shutdown_rx)
-                    .await
-            },
-        );
-    }
+    let std_listener = match synvoid_platform::socket_bind::bind_tcp_reuse(addr) {
+        Ok(listener) => listener,
+        Err(e) => {
+            tracing::error!(addr = %addr, error = %e, "Admin API failed to bind; control plane disabled");
+            return;
+        }
+    };
+    let listener = match tokio::net::TcpListener::from_std(std_listener) {
+        Ok(listener) => listener,
+        Err(e) => {
+            tracing::error!(addr = %addr, error = %e, "Admin API failed to adopt listener; control plane disabled");
+            return;
+        }
+    };
+
+    // `build_admin_state` uses `blocking_read` on the config lock, which
+    // panics on a Tokio worker thread. Build it on the blocking pool; the
+    // stored `Arc<RwLock<ConfigManager>>` is only read asynchronously later.
+    // The same `Arc<AdminState>` feeds the router and the metrics publisher
+    // so the panel observes this worker's own traffic and logs.
+    let config_for_router = state.config.clone();
+    let probe_tracker = server.get_probe_tracker();
+    let suspicious_word_tracker = server.get_suspicious_word_tracker();
+    let upstream_error_tracker = server.get_upstream_error_tracker();
+    let threat_level_manager = server.get_threat_level_manager();
+    // Same Arc the worker's ErrorPageManager renders through: the admin
+    // PUT /theme stores here, served block pages read here. Hoisted out of
+    // the blocking closure (`server` is borrowed, not 'static).
+    let error_page_theme = Some(server.get_waf().error_page_manager.theme_handle());
+    let admin_token = admin_config.resolve_token();
+    let admin_cors = admin_config.cors.clone();
+    let admin_rate_limit = admin_config.rate_limit.clone();
+    let admin_trusted_proxies = admin_config.trusted_proxies.clone();
+    let admin_state = match tokio::task::spawn_blocking(move || {
+        crate::admin::build_admin_state(
+            config_for_router,
+            admin_token,
+            probe_tracker,
+            suspicious_word_tracker,
+            upstream_error_tracker,
+            threat_level_manager,
+            None,
+            error_page_theme,
+            #[cfg(feature = "mesh")]
+            None,
+            #[cfg(feature = "icmp-filter")]
+            None,
+        )
+    })
+    .await
+    {
+        Ok(Some(admin_state)) => admin_state,
+        Ok(None) => {
+            tracing::error!("Admin API state build failed; control plane disabled");
+            return;
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "Admin API state build panicked; control plane disabled");
+            return;
+        }
+    };
+
+    // Register the worker-local request-log sink before serving: the
+    // HTTP/HTTPS lanes resolve it per request, so records flow even on
+    // keep-alive connections accepted before this point.
+    let _ = state.request_log_sink.set(admin_state.clone());
+
+    let router = crate::admin::build_router_from_state(
+        admin_state.clone(),
+        admin_cors,
+        admin_rate_limit,
+        admin_trusted_proxies.clone(),
+    );
+    crate::admin::middleware::set_trusted_proxies(admin_trusted_proxies);
+
+    let mut shutdown_rx = server.shutdown_tx.subscribe();
+    tracing::info!(addr = %addr, "Starting admin API");
+    spawn_registered(
+        handles,
+        "admin",
+        RuntimeHandleClass::ProtocolListener,
+        async move {
+            // `into_make_service_with_connect_info` is load-bearing: the
+            // admin rate limiter and audit log key by client IP from the
+            // `ConnectInfo` extension. Plain `axum::serve` never populates
+            // it, which collapsed every client into a single global
+            // "unknown" bucket (60/min shared across all operators/tabs).
+            axum::serve(
+                listener,
+                router.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .with_graceful_shutdown(async move {
+                let _ = shutdown_rx.recv().await;
+            })
+            .await
+            .map_err(|e| e.to_string())
+        },
+    );
+
+    spawn_metrics_publisher_service(handles, state, &admin_state, server);
+}
+
+/// Publish this worker's own metrics and site stats into its `AdminState`
+/// once per second. Every worker (standalone or supervised) runs the same
+/// feed over its own `WorkerMetrics` — no cross-process sharing, no second
+/// metrics system. Drained via the standard shutdown like every other
+/// maintenance task.
+pub(crate) fn spawn_metrics_publisher_service(
+    handles: &mut UnifiedServerRuntimeHandles,
+    state: &Arc<ServerSharedState>,
+    admin_state: &Arc<crate::admin::state::AdminState>,
+    server: &UnifiedServer,
+) {
+    let feed = Arc::new(crate::admin::metrics::LocalMetricsFeed {
+        metrics: state.metrics.clone(),
+        worker_id: state.worker_id.unwrap_or(crate::process::WorkerId(0)),
+    });
+    let admin_state = admin_state.clone();
+    let shutdown_rx = server.shutdown_tx.subscribe();
+    spawn_registered_unit(
+        handles,
+        "admin_metrics_publisher",
+        RuntimeHandleClass::Maintenance,
+        async move {
+            crate::admin::metrics::start_metrics_publisher(admin_state, feed, None, shutdown_rx)
+                .await;
+        },
+    );
 }
 
 /// Spawn TCP/UDP pool tasks when present.

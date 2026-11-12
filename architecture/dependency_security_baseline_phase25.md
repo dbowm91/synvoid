@@ -1,13 +1,16 @@
-# Dependency Security Baseline — Phase 25 Evidence (current through Phase 123)
+# Dependency Security Baseline — Phase 25 Evidence (current through Phase 01)
 
 Status: binding evidence for Track 4 Phase 25 (`plans/phase_25_dependency_security_baseline_and_entitlement.md`).
-Owner: security / release. Reviewed: 2026-10-02 (Phase 123: Wasmtime
-RUSTSEC-2026-0326 / -0327 remediation — transitive YARA line 48.0.3 → 48.0.5
-(48.0.4 advisory minimum);
-direct runtime remains 36.0.16; minify-html fork retained, upstream still
-0.18.1; two retained advisory exceptions re-triaged).
-Re-audit: 2026-11-01 (machine-enforced via `effective_review_date()` +
-`SYNVOID_SECURITY_REVIEW_AS_OF`).
+Owner: security / release. Reviewed: 2026-11-10 (Phase 01 production-readiness
+dependency refresh: rustls 0.23.46, rustls-webpki 0.103.16, webpki-roots /
+webpki-root-certs 1.0.11, quinn-proto 0.11.19, rusqlite 0.41.1 /
+libsqlite3-sys 0.39.1, Wasmtime 36.0.20 + 48.0.8, zip 9.5.0, zstd 0.13.4 /
+zstd-safe 7.4.0 / zstd-sys 2.1.2, tokio 1.54.1, crypto-bigint 0.7.11,
+ctutils 0.4.8, yara-x 1.23.0; the temporary YARA-X compat fork was retired
+because the official release satisfied its removal condition).
+Re-audit: 2027-02-10 (machine-enforced via `effective_review_date()` +
+`SYNVOID_SECURITY_REVIEW_AS_OF`; the unmaintained-only exceptions carry
+2027-04-10).
 
 This file records version, features, and reachable capability **separately** for every
 security-relevant dependency decision. It is the authority the repo guards check
@@ -26,10 +29,10 @@ Tool versions frozen by this phase (see `docs/testing/verification-contract.md`)
 Evidence commands (run 2026-10-01 for the Phase 103 closeout, advisory DB current at run time):
 
 ```bash
-cargo tree -i wasmtime@36.0.16 --workspace
-cargo tree -e features -i wasmtime@36.0.16 --workspace
-cargo tree -i wasmtime@48.0.5 --workspace
-cargo tree -e features -i wasmtime@48.0.5 --workspace
+cargo tree -i wasmtime@36.0.20 --workspace
+cargo tree -e features -i wasmtime@36.0.20 --workspace
+cargo tree -i wasmtime@48.0.8 --workspace
+cargo tree -e features -i wasmtime@48.0.8 --workspace
 cargo tree -i yara-x --workspace
 cargo tree -i wasmtime-wasi --workspace        # expect: no match
 cargo tree -i wasi-filesystem --workspace      # expect: no match
@@ -39,20 +42,20 @@ cargo deny check
 
 ## 1. Direct Wasmtime path (plugin runtime)
 
-<!-- guard-anchor: wasmtime-direct-version = "36.0.16" -->
-<!-- guard-anchor: wasmtime-transitive-version = "48.0.5" -->
+<!-- guard-anchor: wasmtime-direct-version = "36.0.20" -->
+<!-- guard-anchor: wasmtime-transitive-version = "48.0.8" -->
 <!-- guard-anchor: wasmtime-wasi-absent-from-lock = true -->
 
-- Version: **36.0.16** (Wasmtime 36 LTS line, supported through 2027-08-20),
-  from crates.io. Phase 103 in-line LTS patch update from 36.0.15 to clear
-  RUSTSEC-2026-0316 (dynamic component-record lifting fuel-limit bypass).
-  No `[patch.crates-io]` entry, no git source (Phase 37 removed the 42.0.2
-  git patch; `Cargo.lock` contains no `git+` source).
+- Version: **36.0.20** (Wasmtime 36 LTS line, supported through 2027-08-20),
+  from crates.io. Phase 103 moved 36.0.15 to 36.0.16; Phase 01 moves to
+  36.0.20 for RUSTSEC-2026-0380 / -0379 / -0363 / -0424 (advisory minimum
+  36.0.20). No `[patch.crates-io]` entry, no git source (Phase 37 removed the
+  42.0.2 git patch; `Cargo.lock` contains no `git+` source).
 - Requested features (`crates/synvoid-plugin-runtime/Cargo.toml`): `component-model` only
   (default features still enabled; minimization evaluated and deferred — see §8).
-- Consumers (`cargo tree -i wasmtime@36.0.16`, verified 2026-10-01): exactly
+- Consumers (`cargo tree -i wasmtime@36.0.20`, verified 2026-11-10): exactly
   `synvoid-plugin-runtime` (plus the root dev-dependency used by
-  `benches/bench_wasm.rs`, pinned to the same 36.0.16).
+  `benches/bench_wasm.rs`, pinned to the same 36.0.20).
 - Reachable capability: core WASM compilation/execution + component model.
   **WASI filesystem is absent**: `synvoid-plugin-runtime` does not depend on
   `wasmtime-wasi`, no `wasmtime_wasi::` import exists in `crates/synvoid-plugin-runtime/src/`
@@ -64,14 +67,13 @@ cargo deny check
 
 ## 2. Transitive Wasmtime path (YARA compilation)
 
-- Version: **48.0.5** from crates.io, via **yara-x 1.20.0** as vendored in the
-  temporary manifest-only compat fork `third-party/yara-x-compat/` (exact
-  upstream 1.20.0 sources; only the Phase 40 + Phase 103 + Phase 123 manifest
-  delta: wasmtime 45.0.3 → 47.0.4 → 48.0.3 → 48.0.5, rust-version 1.93 → 1.94 → 1.95). Wasmtime
-  40.0.4 is absent from the graph (Phase 40); Wasmtime 47.0.4 is absent
-  from the graph (Phase 103). No source divergence — `src/` and `build.rs`
-  remain byte-identical to upstream 1.20.0.
-- Consumers (`cargo tree -i wasmtime@48.0.5`, verified 2026-10-02): `synvoid-yara`
+- Version: **48.0.8** from crates.io, via **official yara-x 1.23.0**
+  (released 2026-11-05). Phase 01 deleted the temporary
+  `third-party/yara-x-compat/` fork after the official release resolved
+  Wasmtime `^48.0.8` and zip `^9.0.5`, which satisfies the fork's documented
+  removal condition. Wasmtime 40.x and 47.x are absent from the graph. No
+  source divergence remains because no vendored source is used.
+- Consumers (`cargo tree -i wasmtime@48.0.8`, verified 2026-11-10): `synvoid-yara`
   (single owner since Phase 26) → `synvoid-upload`, `synvoid-jail-runtime`, root.
   `synvoid-mesh` no longer links `yara-x`.
 - Enabled features (via yara-x `default-modules`; the upstream-removed `linkme`
@@ -155,10 +157,10 @@ an upstream minify-html/oxc release.
 - `wasmtime_transitive_matches_baseline` (`dependency_security.rs`, Phase 40):
   the non-direct resolved wasmtime version must equal the transitive anchor
   recorded here, and no 40.x instance may resolve.
-- `yara_fork_is_temporary_guard` (`dependency_security.rs`, Phase 40): the
-  `yara-x` path-patch entry, fork manifest pins (1.20.0 / wasmtime 47.0.4),
-  owner + re-audit + removal metadata, and the `linkme`-free consumer
-  requirement stay narrow until an official release replaces the fork.
+- `yara_fork_is_retired_after_official_upgrade` (`dependency_security.rs`,
+  Phase 01; was `yara_fork_is_temporary_guard`): the retired fork must stay
+  absent (no `[patch]` path, no git source), `synvoid-yara` must require the
+  official 1.23 line, and `Cargo.lock` must resolve yara-x from crates.io.
 - `deny_ignore_metadata_guard` (`dependency_security.rs`): every `RUSTSEC-*`/`GHSA-*`
   ignore in `deny.toml` must carry `Owner:`, `Reviewed:`, a single future
   `Re-audit: YYYY-MM-DD`, and a `Remove condition:`; `Re-audit` dates on or before
@@ -183,7 +185,7 @@ exists), follow-up (owner + Re-audit date).
 | `notify 9.0.0-rc.3` (prerelease, direct root + plugin-runtime) | No stable 9.x line published; config hot-reload watcher | justified — keep; reassess when stable 9.x ships (owner: config) |
 | `openraft 0.10.0-alpha.18` (prerelease, optional root + mesh) | 0.x line is inherently pre-1.0; mesh Raft control plane | justified — keep; track upstream stable (owner: mesh; Re-audit: 2026-10-01) |
 | Duplicated `ahash` 0.7.8 / 0.8.12 | 0.7 via `parcel_sourcemap` (lightningcss chain); 0.8 direct | justified — minor build cost only, no security impact; collapses if lightningcss drops `parcel_sourcemap` |
-| Duplicated `wasmtime` 47.0.4 / 36.0.15 | 47.0.4 via yara-x 1.20.0 compat fork (single `synvoid-yara` owner); 36.0.15 direct LTS runtime (crates.io, no patch) | follow-up — collapses to one line when an official fixed yara-x release replaces the fork; neither line needs a wasmtime advisory ignore (Re-audit: 2026-10-01) |
+| Duplicated `wasmtime` 48.0.8 / 36.0.20 | 48.0.8 via official yara-x 1.23.0 (single `synvoid-yara` owner); 36.0.20 direct LTS runtime (crates.io, no patch) | justified — two supported LTS lines with distinct owners; neither line needs a wasmtime advisory ignore (Re-audit: 2027-02-10) |
 | Duplicated `rkyv` 0.7.46 / 0.8.x | 0.7 via `parcel_sourcemap`; direct code on 0.8 | follow-up — collapses with the same lightningcss change; 0.7 covered by RUSTSEC-2026-0235 ignore with review date |
 | Native/FFI (`aws-lc-rs`, `ring` transitive, `libloading`, `bumpalo`-linked compiles) | TLS PQC backend, DNS/QUIC crypto, native-extension loading (compiled out by default + disabled by default + allowlisted) | justified — each has an owning security invariant (see `AGENTS.md`); `libloading` plugin-loader isolation complete in Phase 28 (`synvoid-native-extension` + `unsafe-native-extensions` feature, off by default) |
 | Git sources | none (Phase 37 removed the wasmtime 42.0.2 patch) | justified — `deny.toml` sets `unknown-git = "deny"` with no `allow-git`; re-adding one requires baseline evidence |
@@ -595,8 +597,9 @@ Closeout evidence: `architecture/dependency_security_reaudit_phase103_closeout.m
   0315/0316. The resolved transitive line has since advanced to **48.0.5**
   for RUSTSEC-2026-0326/-0327 (§12), which still satisfies every patched
   range listed above. 48.0.5 is the current anchor
-  (`guard-anchor: wasmtime-transitive-version = "48.0.5"`, enforced by
-  `wasmtime_transitive_matches_baseline`). The 48.0.3 wording above is
+  (`guard-anchor: wasmtime-transitive-version = "48.0.5"` at that time;
+  Phase 01 moved the anchor to `48.0.8` — see §15 — and
+  `wasmtime_transitive_matches_baseline` enforces the current anchor). The 48.0.3 wording above is
   retained deliberately because the guard asserts that literal substring; do
   not "correct" it without updating the guard assertion in the same change.
   See also `architecture/dependency_advisory_remediation.md`.
@@ -625,3 +628,80 @@ plugin-runtime Wasmtime remains 36.0.16. `cargo deny check`, `cargo audit`,
 and the transitive-version repository guard pass on the updated graph.
 This is a dependency-only YARA security update: source remains byte-identical
 to official yara-x 1.20.0. Re-audit remains 2026-11-01.
+
+## 15. Phase 01 addendum (2026-11-10): production-readiness dependency refresh
+
+Closeout evidence for `plans/production_readiness_phase_01_dependency_security.md`.
+This is the present-state section; earlier sections are retained as historical
+evidence of how the graph reached this point.
+
+- Landed security-relevant versions (verified from `Cargo.lock`, 2026-11-10):
+  `rustls 0.23.46`, `rustls-webpki 0.103.16`, `webpki-roots 1.0.11` (+ the
+  `0.26.11` compatibility shim), `webpki-root-certs 1.0.11`,
+  `quinn 0.11.12` / `quinn-proto 0.11.19` (with `h3-quinn 0.0.10`),
+  `rusqlite 0.41.1` / `libsqlite3-sys 0.39.1`,
+  `wasmtime 36.0.20` (direct) + `wasmtime 48.0.8` (YARA transitive),
+  `yara-x 1.23.0` (official crates.io release), `zip 9.5.0` (runtime paths),
+  `utoipa 6.0.0` + `utoipa-swagger-ui 10.0.2` (2026-11-12 follow-up),
+  `zstd 0.13.4` + `0.14.3`, `zstd-safe 7.4.0` + `8.2.0`,
+  `zstd-sys 2.1.2+zstd.1.5.7`, `tokio 1.54.1`, `prost-build 0.14.4`,
+  `tonic-prost-build 0.14.9`, `pulldown-cmark 0.13.6`,
+  `crypto-bigint 0.7.11`, `ctutils 0.4.8`.
+- Advisory remediation (all version-remediated, no ignore):
+  RUSTSEC-2026-0346/-0347/-0348/-0349 (rustls), -0382 (rustls-webpki),
+  -0381/-0383 (webpki-roots/-root-certs), -0338/-0339/-0340/-0341/-0342
+  (quinn-proto), -0459 (libsqlite3-sys), -0363/-0379/-0380/-0424 (direct
+  wasmtime), -0353…-0364/-0378/-0379/-0422/-0423/-0424 (transitive wasmtime),
+  -0367/-0368/-0369/-0429 (runtime zip 9.x), -0391/-0395…-0410 (zstd family),
+  -0385 (ctutils), -0387 (crypto-bigint), -0414/-0433 (pulldown-cmark),
+  -0386 (tokio). The direct 36.0.20 LTS line is patched for the 2026 Wasmtime advisories,
+  and the transitive 48.0.8 line is patched for the same set; `wasmtime-wasi` remains absent from `Cargo.lock`, so the
+  filesystem-preopen class remains capability-absent as well.
+- YARA fork retirement: official `yara-x 1.23.0` (2026-11-05) declares
+  `wasmtime ^48.0.8` and `zip ^9.0.5`, satisfying the removal condition
+  recorded in §11/§12. `third-party/yara-x-compat/` was deleted; the root
+  `[patch.crates-io]` section now holds only `minify-html`. `YARA_ENGINE_VERSION`
+  is `yara-x/1.23`. `synvoid-yara` declares a direct `rsa 0.10` edge with the
+  `pkcs1v15` feature because yara-x 1.23.0's `rsa ^0.10.0-rc.19` requirement
+  resolves final rsa 0.10.0, which gates `Pkcs1v15Sign`; the feature edge keeps
+  the patched final release instead of the vulnerable release candidate.
+- `crypto-bigint`/`ctutils`: the only `crypto-bigint 0.5.x` path was the
+  yara-x 1.20 → `p256 0.13`/`ecdsa 0.16` → `elliptic-curve 0.13` chain.
+  yara-x 1.23 resolves `p256 0.14`/`ecdsa 0.17` → `elliptic-curve 0.14` →
+  `crypto-bigint 0.7.11`; `ctutils` is now 0.4.8. Both are patched.
+- `pulldown-cmark` 0.13.6 is build-time only (prost/tonic protobuf codegen).
+  `prost-build 0.14.4` keeps `^0.13`, so the patched release resolves without
+  a source change.
+- Remaining documented exceptions:
+  1. `RUSTSEC-2023-0071` (`rsa 0.9.10`, direct in `synvoid-dns`,
+     `synvoid-dnssec-keystore`, `synvoid-tls`). The yara-x path now uses
+     patched `rsa 0.10.0`. Direct RSA use remains verify/sign/key-parse only;
+     zero decrypt call sites. Reviewed: 2026-11-10; Re-audit: 2027-02-10.
+  2. `RUSTSEC-2026-0235` (`rkyv 0.7.46` via the retained minify-html chain).
+     Minifier-internal sourcemaps only; official minify-html is still 0.18.1.
+     Reviewed: 2026-11-10; Re-audit: 2027-02-10.
+  3. Unmaintained-only notices with no patched release:
+     `RUSTSEC-2023-0089` (atomic-polyfill via cranelift/postcard/heapless 0.7),
+     `RUSTSEC-2026-0374` (basic-toml via uniffi/askama build codegen),
+     `RUSTSEC-2025-0141` (bincode 1.3.3 in admin-ui wasm glue + bincode 2.0.1
+     in yara-x), `RUSTSEC-2025-0057` (fxhash via wasmtime's profiling feature),
+     `RUSTSEC-2024-0370` (proc-macro-error via yew-macro 0.23),
+     `RUSTSEC-2026-0173` (proc-macro-error2 via libcrux/hax). Each has a
+     `deny.toml` metadata block with path, capability, exposure, owner and
+     removal condition. Reviewed: 2026-11-10; Re-audit: 2027-04-10.
+- Dependabot follow-up (2026-11-12): adopted utoipa 6.0.0 and
+  utoipa-swagger-ui 10.0.2, removing the build-only `zip 3.0.0` edge that the
+  2026-11-10 pass had excepted. `zip 9.5.0` remains the only resolved zip.
+  The standalone `benchmarks/http_transport/Cargo.lock` was advanced to
+  `rustls 0.23.46` / `rustls-webpki 0.103.16`. This clears all 23 open
+  Dependabot alerts once the fix reaches the default branch.
+- Evidence (2026-11-10): `cargo audit --file Cargo.lock` exits 0 with no
+  vulnerability or warning output; `cargo deny check` exits 0
+  (`advisories ok, bans ok, licenses ok, sources ok`) with six
+  `advisory-not-detected` warnings caused by the intentionally
+  `unmaintained = "workspace"` scope, not by a failing advisory.
+  `cargo check --workspace --profile ci` is clean.
+- Targeted suites re-run green: `synvoid-upload` (124), `synvoid-platform`
+  (11), `synvoid-honeypot` (220), `synvoid-mesh` (912 + 14 + 18 + 77 + 55 +
+  6 + 11), `synvoid-dns`, `synvoid-yara` (54 unit + 8 boundary),
+  `synvoid-plugin-runtime` (351 + 7 + 6).

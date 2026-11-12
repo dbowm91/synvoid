@@ -30,9 +30,8 @@ fn disabled_rate_limit() -> AdminRateLimitConfig {
     }
 }
 
-async fn build_router() -> Router {
+async fn build_router_with_dir(config_dir: std::path::PathBuf) -> Router {
     tokio::task::spawn_blocking(|| {
-        let config_dir = std::env::temp_dir();
         let config = std::sync::Arc::new(tokio::sync::RwLock::new(ConfigManager::new(config_dir)));
         create_admin_router(
             config,
@@ -53,6 +52,10 @@ async fn build_router() -> Router {
     })
     .await
     .expect("spawn_blocking should not panic")
+}
+
+async fn build_router() -> Router {
+    build_router_with_dir(std::env::temp_dir()).await
 }
 
 fn extract_cookie(response: &Response<Body>, cookie_name: &str) -> Option<String> {
@@ -814,4 +817,147 @@ async fn http3_config_validation_accepts_default() {
         "HTTP/3 config with valid defaults should succeed, got {}",
         resp.status()
     );
+}
+
+// ── Theme Halloy catalog + dual-scheme round-trip (Phase 04) ─────────────────
+
+async fn theme_get(router: &Router) -> serde_json::Value {
+    let mut resp = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/theme")
+                .header("authorization", format!("Bearer {}", TEST_TOKEN))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "GET /api/theme should succeed"
+    );
+    let body = body_string(&mut resp).await;
+    serde_json::from_str(&body).expect("theme response must be JSON")
+}
+
+async fn theme_put(router: &Router, payload: serde_json::Value) -> serde_json::Value {
+    let mut resp = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/theme")
+                .header("authorization", format!("Bearer {}", TEST_TOKEN))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_string(&payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "PUT /api/theme should succeed, payload={}",
+        payload
+    );
+    let body = body_string(&mut resp).await;
+    serde_json::from_str(&body).expect("mutation result must be JSON")
+}
+
+#[tokio::test]
+async fn smoke_theme_halloy_catalog_round_trip() {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let config_dir = std::env::temp_dir().join(format!(
+        "synvoid-theme-smoke-{}-{}",
+        std::process::id(),
+        nanos
+    ));
+    std::fs::create_dir_all(&config_dir).expect("theme smoke dir");
+    let router = build_router_with_dir(config_dir.clone()).await;
+
+    let initial = theme_get(&router).await;
+    assert_eq!(initial["preset"], "default");
+    // The out-of-box block theme is unstyled ("SynVoid default"): no
+    // Halloy pair is selected until the operator picks one.
+    assert_eq!(initial["dark_theme"], "default");
+    assert_eq!(initial["light_theme"], "default");
+    assert_eq!(initial["scheme"], "system");
+    let catalog = initial["presets_available"]
+        .as_array()
+        .expect("catalog array");
+    assert_eq!(
+        catalog.len(),
+        51,
+        "50 registry themes plus the default alias"
+    );
+    assert_eq!(catalog[0]["id"], "default");
+    assert!(catalog.iter().any(|entry| entry["id"] == "Nord"));
+    assert!(
+        initial["colors"]["dark"]["background"]
+            .as_str()
+            .is_some_and(|color| color.starts_with('#')),
+        "colors must carry the resolved dark-theme translation"
+    );
+
+    let mutation = theme_put(
+        &router,
+        serde_json::json!({
+            "dark_theme": "Nord",
+            "light_theme": "Gruvbox",
+            "scheme": "dark",
+        }),
+    )
+    .await;
+    assert_eq!(mutation["target"], "theme");
+    assert_eq!(mutation["local_store_mutated"], true);
+    assert!(
+        mutation["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("Nord")),
+        "mutation message names the new selection, got {}",
+        mutation
+    );
+
+    let updated = theme_get(&router).await;
+    assert_eq!(updated["dark_theme"], "Nord");
+    assert_eq!(updated["light_theme"], "Gruvbox");
+    assert_eq!(updated["scheme"], "dark");
+
+    let persisted =
+        std::fs::read_to_string(config_dir.join("main.toml")).expect("main.toml written");
+    assert!(
+        persisted.contains("dark_theme = \"Nord\""),
+        "new fields must persist to main.toml"
+    );
+
+    let legacy = theme_put(
+        &router,
+        serde_json::json!({ "preset": "ocean", "mode": "dark" }),
+    )
+    .await;
+    assert_eq!(legacy["target"], "theme");
+    let compat = theme_get(&router).await;
+    assert_eq!(compat["preset"], "ocean");
+    assert_eq!(compat["mode"], "dark");
+    assert_eq!(compat["dark_theme"], "ocean");
+    assert_eq!(compat["light_theme"], "ocean");
+    assert_eq!(compat["scheme"], "dark");
+
+    let unknown = theme_put(&router, serde_json::json!({ "dark_theme": "missing-nope" })).await;
+    assert_eq!(unknown["target"], "theme", "unknown names must not 500");
+    let echoed = theme_get(&router).await;
+    assert_eq!(echoed["dark_theme"], "missing-nope");
+    assert!(
+        echoed["colors"]["dark"]["background"]
+            .as_str()
+            .is_some_and(|color| color.starts_with('#')),
+        "unknown names fall back to a translated default"
+    );
+
+    let _ = std::fs::remove_dir_all(&config_dir);
 }

@@ -223,9 +223,9 @@ fn removed_hot_path_placeholders_stay_removed() {
 
 /// 5. Deprecated no-op shims gain no new production callers.
 ///
-/// Allowlist covers definitions, doc-comment mentions, the one retained
-/// compatibility delegation (`UnifiedServer::reload_attack_detector`
-/// forwards to the WAF handle), and the retained `early_waf_decision`
+/// `reload_attack_detector` is no longer a no-op (Phase 05), so it is not
+/// checked here; it rebuilds the detector and clears the site-variant cache.
+/// Allowlist covers definitions and the retained `early_waf_decision`
 /// compatibility helper. Every other production file calling these shims
 /// fails this guard.
 #[test]
@@ -234,14 +234,6 @@ fn deprecated_noop_shims_gain_no_new_callers() {
     let allow: &[(&str, &[&str])] = &[
         ("record_suspicious_words(", &["src/waf/mod.rs"]),
         ("set_request_services(", &["src/waf/mod.rs"]),
-        (
-            "reload_attack_detector(",
-            &[
-                "src/waf/mod.rs",
-                "src/waf/rule_feed.rs",
-                "src/server/mod.rs",
-            ],
-        ),
         (
             "early_waf_decision(",
             &[

@@ -223,8 +223,9 @@ fn execute_config_test(config_path: Option<PathBuf>) -> Result<OneShotOutcome, O
         )));
     }
 
-    let _config = synvoid_config::MainConfig::from_file(&main_config_path)
+    let main_config = synvoid_config::MainConfig::from_file(&main_config_path)
         .map_err(|e| OneShotError::ConfigInvalid(format!("main.toml: {}", e)))?;
+    let mut loaded_sites = std::collections::HashMap::new();
 
     let sites_dir = config_dir.join("sites");
     if sites_dir.exists() {
@@ -241,7 +242,7 @@ fn execute_config_test(config_path: Option<PathBuf>) -> Result<OneShotOutcome, O
 
         for entry in entries {
             let path = entry.path();
-            crate::config::site::SiteConfig::from_file(&path).map_err(|e| {
+            let site = crate::config::site::SiteConfig::from_file(&path).map_err(|e| {
                 OneShotError::ConfigInvalid(format!(
                     "{}: {}",
                     path.file_name()
@@ -250,8 +251,12 @@ fn execute_config_test(config_path: Option<PathBuf>) -> Result<OneShotOutcome, O
                     e
                 ))
             })?;
+            loaded_sites.insert(site.site_id(), site);
         }
     }
+
+    synvoid_config::normalize_http_listeners(&main_config, &loaded_sites)
+        .map_err(|e| OneShotError::ConfigInvalid(format!("{}: {}", e.field, e.message)))?;
 
     Ok(OneShotOutcome::ConfigValid)
 }
@@ -464,7 +469,8 @@ block_methods = ["GET", "POST", "PUT", "DELETE"]
 
 [defaults.worker_pool]
 mode = "shared"
-workers = 4
+workers = 1
+allow_multi_worker = false
 worker_port_base = 9000
 auto_scale = true
 "#,

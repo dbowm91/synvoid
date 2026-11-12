@@ -40,6 +40,12 @@ owners = ["synvoid-admin", "admin-ui"]
 reason = "validates frontend/backend API contract alignment (route paths, HTTP methods)"
 
 [[test]]
+name = "admin_stats_bridge"
+class = "composition"
+owners = ["synvoid-admin", "synvoid-metrics"]
+reason = "validates Phase 04 metrics publisher feed and request-log sink bridge into admin-visible stats"
+
+[[test]]
 name = "admin_smoke_flow"
 class = "qualification"
 owners = ["synvoid-admin", "admin-ui"]
@@ -350,3 +356,9 @@ name = "unified_server_heartbeat_dispatch"
 class = "composition"
 owners = ["synvoid-ipc", "synvoid-metrics"]
 reason = "validates the M003 telemetry heartbeat-dispatch corrective composition chain: a real Message::UnifiedServerWorkerHeartbeat written on a real IpcStream through handle_worker_connection into ProcessManager's generation-aware snapshot and out through the synvoid.eggbench-telemetry.v2 bridge as Prometheus samples, plus per-worker identity/rate-limit classification, same-generation replacement, and unowned-worker refusal"
+
+[[test]]
+name = "tcp_udp_service_test"
+class = "composition"
+owners = ["synvoid"]
+reason = "validates Phase 02 real TCP/UDP listener pools: bind lifecycle, protocol filter, idle timeout, UDP request/response flows, flow cap, rate limit and IPv6"

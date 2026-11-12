@@ -50,6 +50,7 @@ where
     let headers_for_check = parts.headers.clone();
     let user_agent_for_check = user_agent.map(str::to_string);
     let site_bot_config_for_check = target.site_config.bot.clone();
+    let site_attack_config_for_check = target.site_config.attack_detection.clone();
     let waf_for_check = Arc::clone(waf);
 
     synvoid_http::maybe_handle_streaming_request_fast_path(
@@ -70,6 +71,7 @@ where
                 user_agent_for_check.clone(),
                 None,
                 Some(site_bot_config_for_check.clone()),
+                Some(site_attack_config_for_check.clone()),
             )
         },
         move |body| async move { Ok(StreamingRequestFastPathOutcome::Continue(body)) },

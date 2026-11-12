@@ -76,7 +76,7 @@ The `synvoid-config` crate (`crates/synvoid-config/`) owns configuration loading
 
 | Module | File | Responsibility |
 |--------|------|----------------|
-| **listen** | `site/listen.rs` | `SiteInfo`, `SiteListenConfig`, `UpstreamConfig` |
+| **listen** | `site/listen.rs` | `SiteInfo`, `UpstreamConfig`; retired `site.listen` rejection |
 | **security** | `site/security.rs` | CORS, cookies, basic auth, TLS verification, headers |
 | **proxy** | `site/proxy.rs` | Upstream proxy, caching, headers, retry config |
 | **backend** | `site/backend.rs` | Backend location routing, FastCGI, PHP |
@@ -710,7 +710,7 @@ crates/synvoid-config/src/
 ├── icmp_filter.rs          # ICMP filtering (feature-gated)
 ├── site/
 │   ├── mod.rs              # SiteConfig, SiteInfo
-│   ├── listen.rs           # SiteListenConfig, UpstreamConfig
+│   ├── listen.rs           # SiteInfo membership, UpstreamConfig
 │   ├── security.rs         # SiteSecurityConfig, CORS, cookies
 │   ├── proxy.rs            # SiteProxyConfig
 │   ├── backend.rs          # Backend configs

@@ -215,13 +215,21 @@ pub async fn reload_config(
     {
         let _ = &state;
         #[allow(unreachable_code)]
-        return Ok(Json(config_mutation("Configuration reloaded successfully")));
+        return Ok(Json(config_mutation(
+            "Configuration reload accepted. Listener definitions are startup state; \
+             restart the worker to apply [[http.listeners]]/TLS/H3 changes.",
+        )));
     }
 
     #[cfg(feature = "mesh")]
     {
         let mut config = state.process.config.write().await;
+        let listeners_before =
+            synvoid_config::normalize_http_listeners(&config.main, &config.sites).ok();
         let results = config.reload_all();
+        let listeners_after =
+            synvoid_config::normalize_http_listeners(&config.main, &config.sites).ok();
+        let listener_changes_require_restart = listeners_before != listeners_after;
 
         let loaded = results.iter().filter(|r| r.1.is_ok()).count();
         let failed = results.iter().filter(|r| r.1.is_err()).count();
@@ -253,7 +261,11 @@ pub async fn reload_config(
             }
         }
 
-        let message = if mimes_reloaded {
+        let message = if listener_changes_require_restart {
+            format!(
+                "Configuration reloaded, but listener changes are restart-required;                  existing sockets were not rebound ({loaded} loaded, {failed} failed)"
+            )
+        } else if mimes_reloaded {
             if broadcast_success {
                 format!(
                 "Hot reload applied: {} configs reloaded, {} failed, mimes reloaded, workers notified",

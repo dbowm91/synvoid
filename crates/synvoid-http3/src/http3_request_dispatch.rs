@@ -19,7 +19,7 @@ use async_trait::async_trait;
 use http::{HeaderMap, Method};
 use metrics::counter;
 
-use synvoid_config::{site::SiteBotConfig, MainConfig};
+use synvoid_config::{site::SiteAttackDetectionConfig, site::SiteBotConfig, MainConfig};
 use synvoid_metrics::bandwidth::{BandwidthProtocol, BandwidthTracker};
 use synvoid_metrics::WorkerMetrics;
 use synvoid_proxy::client_registry::UpstreamClientRegistry;
@@ -92,6 +92,7 @@ pub trait Http3RequestWaf: Send + Sync {
         user_agent: Option<&str>,
         ja4_hash: Option<&str>,
         site_bot_config: Option<&SiteBotConfig>,
+        site_attack_config: Option<&SiteAttackDetectionConfig>,
     ) -> WafDecision;
 
     fn generate_tarpit_response(&self, path: &str) -> String;
@@ -168,6 +169,20 @@ where
         _ => false,
     };
 
+    // Resolve the same body policy as HTTP/1/2: per-site override, then the
+    // global HTTP body cap, bounded by the HTTP/3 transport ceiling.
+    let max_request_size = match &route_result {
+        RouteResult::Found(route_target) => route_target
+            .site_config
+            .proxy
+            .max_request_body_size(main_config.http.max_streaming_body_size)
+            .min(max_request_size),
+        _ => main_config
+            .http
+            .max_streaming_body_size
+            .min(max_request_size),
+    };
+
     let body_collection = collect_http3_request_body(
         stream_scanned_upstream_mode,
         max_request_size,
@@ -212,12 +227,13 @@ where
         "HTTP/3 request body read"
     );
 
-    let (waf_site_id, waf_bot_config) = match &route_result {
+    let (waf_site_id, waf_bot_config, waf_attack_config) = match &route_result {
         RouteResult::Found(route_target) => (
             Some(route_target.site_id.as_ref()),
             Some(&route_target.site_config.bot),
+            Some(&route_target.site_config.attack_detection),
         ),
-        _ => (Some(host.as_str()), None),
+        _ => (Some(host.as_str()), None, None),
     };
 
     let waf_decision = waf
@@ -232,6 +248,7 @@ where
             user_agent.as_deref(),
             None,
             waf_bot_config,
+            waf_attack_config,
         )
         .await;
 

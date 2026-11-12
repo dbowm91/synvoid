@@ -35,7 +35,7 @@ Use this skill when:
 | `src/supervisor/mesh.rs` | Mesh agent-mode composition |
 | `src/supervisor/drain_manager.rs` | Drain-aware shutdown coordination |
 | `src/supervisor/task_registry.rs` | Supervised task registry |
-| `crates/synvoid-ipc/src/manager.rs` | Child process manager (passes `--worker` etc.) |
+| `crates/synvoid-ipc/src/manager.rs` | Child process manager (spawns `--unified-server-worker` / `--cpu-worker`; the legacy `--worker` flag is a deprecated supervisor alias, never passed to children) |
 | `crates/synvoid-ipc/src/jail_binary.rs` | Deterministic jail binary resolution (`resolve_jail_binary`, exe-dir only, no CWD/PATH search) |
 | `crates/synvoid-jail-runtime/` | Child-side jail execution + dedicated `synvoid-*-jail` binaries (parent policy stays in `src/sandbox/policy.rs` `JailClient::spawn_resolved`) |
 | `src/sandbox/policy.rs` | Parent jail policy/composition (`JailClient`); child services are facades over `synvoid-jail-runtime` |

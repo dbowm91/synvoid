@@ -227,7 +227,7 @@ pub fn Alerts() -> Html {
                 <button
                     onclick={on_save}
                     disabled={*saving}
-                    class="px-4 py-2 bg-accent text-[#0a0a0f] rounded-lg hover:opacity-80 disabled:opacity-50"
+                    class="px-4 py-2 bg-action-600 text-white rounded-lg hover:bg-action-700 disabled:opacity-50"
                 >
                     { if *saving { "Saving..." } else { "Save Changes" } }
                 </button>

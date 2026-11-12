@@ -86,6 +86,8 @@ impl DefaultsConfig {
         self.ratelimit.validate()?;
         self.upload.validate()?;
         self.worker_pool.validate()?;
+        self.tcp.validate()?;
+        self.udp.validate()?;
         self.bot.validate()?;
         Ok(())
     }
@@ -357,6 +359,19 @@ fn default_known_bots_allow() -> Vec<String> {
         "bingbot".to_string(),
         "yandex".to_string(),
         "duckduckbot".to_string(),
+        // Link-preview fetchers: they retrieve og:image/thumbnails when a
+        // user shares a link. Blocking them breaks shared-link images while
+        // stopping no real abuse.
+        "facebookexternalhit".to_string(),
+        "twitterbot".to_string(),
+        "slackbot".to_string(),
+        "linkedinbot".to_string(),
+        "whatsapp".to_string(),
+        "discordbot".to_string(),
+        "telegrambot".to_string(),
+        // Sogou Mobile Browser is a real phone browser. Only its browser
+        // token is allowed: the "sogou" crawler family stays blocked.
+        "sogoumobilebrowser".to_string(),
     ]
 }
 
@@ -1047,15 +1062,25 @@ pub struct WorkerPoolDefaults {
     pub worker_port_base: u16,
     #[serde(default = "default_auto_scale")]
     pub auto_scale: bool,
+    /// Explicit acknowledgement that running more than one
+    /// `UnifiedServerWorker` process is an advanced fault-isolation mode.
+    ///
+    /// Sessions, CSRF tokens, the admin rate-limit budget, the metrics feed and
+    /// the request-log sink are worker-local, so a multi-worker deployment
+    /// cannot share them. `workers > 1` therefore fails validation unless this
+    /// is set (see `architecture/worker_architecture.md`).
+    #[serde(default = "default_allow_multi_worker")]
+    pub allow_multi_worker: bool,
 }
 
 impl Default for WorkerPoolDefaults {
     fn default() -> Self {
         Self {
             mode: "shared".to_string(),
-            workers: 4,
+            workers: 1,
             worker_port_base: 9000,
             auto_scale: true,
+            allow_multi_worker: false,
         }
     }
 }
@@ -1074,7 +1099,19 @@ impl WorkerPoolDefaults {
         if self.workers == 0 {
             return Err(ConfigValidationError {
                 field: "defaults.worker_pool.workers".to_string(),
-                message: "Worker count must be greater than 0".to_string(),
+                message: "Worker count must be at least 1".to_string(),
+            });
+        }
+        if self.workers > 1 && !self.allow_multi_worker {
+            return Err(ConfigValidationError {
+                field: "defaults.worker_pool.allow_multi_worker".to_string(),
+                message: format!(
+                    "workers = {} requires allow_multi_worker = true. The canonical data plane is \
+                     one UnifiedServerWorker: sessions, CSRF tokens, the admin rate-limit budget, \
+                     the metrics feed and request logs are worker-local. Scale with \
+                     [process_manager].worker_threads instead (see architecture/worker_architecture.md).",
+                    self.workers
+                ),
             });
         }
         Ok(())
@@ -1085,7 +1122,10 @@ fn default_worker_pool_mode() -> String {
     "shared".to_string()
 }
 fn default_workers() -> usize {
-    4
+    1
+}
+fn default_allow_multi_worker() -> bool {
+    false
 }
 fn default_worker_port_base() -> u16 {
     9000

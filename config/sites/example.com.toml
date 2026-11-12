@@ -11,6 +11,9 @@
 # Domains this configuration applies to
 # The first domain is used as the site identifier
 domains = ["example.com", "www.example.com"]
+# Optional allowlist of process-wide [[http.listeners]] names. Omit to make
+# this site a candidate on every listener.
+# listeners = ["public-http", "public-https"]
 
 # =============================================================================
 # UPSTREAM CONFIGURATION
@@ -83,21 +86,29 @@ block_response_code = 403
 # =============================================================================
 
 [attack_detection]
-# Enable attack detection for this site
+# Enable attack detection for this site (absent keys inherit global defaults)
 enabled = true
 
 # Paranoia level: 1 (low), 2 (medium), 3 (high)
 paranoia_level = 2
 
-# Action: "stall", "block", "log"
-action = "stall"
+# Action when a match is accepted: "block" (default), "stall", or "log".
+# "log" observes without blocking and never records a violation.
+action = "block"
 
-# Individual attack type controls
+# Individual attack type controls. Site custom_patterns are added to the
+# global/default pattern set for this site only.
 [attack_detection.sqli]
 enabled = true
+custom_patterns = [
+    # Add site-specific SQLi patterns here
+]
 
 [attack_detection.xss]
 enabled = true
+custom_patterns = [
+    # Add site-specific XSS patterns here
+]
 
 [attack_detection.path_traversal]
 enabled = true
@@ -113,6 +124,8 @@ custom_patterns = []
 [attack_detection.ssrf]
 enabled = true
 block_private_ips = true
+# When true, only allowed_domains may appear in URL parameters.
+allowlist_only_mode = false
 # Domains allowed in URL parameters
 allowed_domains = [
     "api.stripe.com",
@@ -120,6 +133,13 @@ allowed_domains = [
     "api.slack.com",
 ]
 custom_patterns = []
+
+# Header payload scanning. Cookie, Referer and Origin are always scanned.
+# Unknown headers are skipped by default; list application-specific
+# user-controlled headers here to scan them, or skip a default-scanned one.
+[attack_detection.headers]
+scan = []
+skip = []
 
 # =============================================================================
 # BOT PROTECTION
@@ -210,20 +230,6 @@ inherit = true
 custom_directory = "config/error_pages/example.com"
 
 # =============================================================================
-# TCP PROTOCOL
-# =============================================================================
-
-[tcp]
-# Enable TCP protocol filtering for this site
-enabled = false
-
-# Port-specific upstream overrides
-[tcp.ports.smtp]
-port = 25
-upstream = "mail.internal:25"
-filter = "drop"  # Drop protocol mismatches
-
-# =============================================================================
 # TARPIT
 # =============================================================================
 
@@ -254,6 +260,13 @@ format = "json"
 [proxy]
 # Maximum response size from upstream
 max_response_size = 20971520  # 20MB
+
+# Per-site request-body cap. Overrides the global
+# [http] max_streaming_body_size. Bodies above this cap return HTTP 413.
+# max_request_body_size = 10485760  # 10MB
+
+# Stream bodies above this known Content-Length instead of buffering them.
+# streaming_threshold_bytes = 1048576
 
 # Backend configuration (one of: upstream, fastcgi, app-server, static)
 # Example: Use app-server (Granian) for Python ASGI/RSGI/WSGI apps

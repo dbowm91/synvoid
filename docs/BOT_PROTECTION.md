@@ -74,8 +74,11 @@ known_bots_allow = [
 ]
 ```
 
-The shipped default is `["googlebot", "bingbot", "yandex", "duckduckbot"]`; the wider list
-above is opt-in.
+The shipped default is `["googlebot", "bingbot", "yandex", "duckduckbot",
+"facebookexternalhit", "twitterbot", "slackbot", "linkedinbot", "whatsapp",
+"discordbot", "telegrambot", "sogoumobilebrowser"]`: search indexers plus the
+major link-preview fetchers and the Sogou mobile browser token (the `sogou`
+crawler family itself stays blocked). The wider list above is opt-in.
 
 ### AI Crawler Blocking
 

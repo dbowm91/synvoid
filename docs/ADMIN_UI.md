@@ -4,7 +4,8 @@ SynVoid includes a comprehensive web-based admin interface built with Yew (WebAs
 
 ## Access
 
-The admin UI is served on the admin port (default 8081):
+The admin UI is served on the admin port (default 8081). It listens only
+when `[admin] enabled = true`; `enabled = false` registers no listener.
 
 ```
 http://localhost:8081

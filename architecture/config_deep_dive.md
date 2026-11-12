@@ -95,7 +95,8 @@ SiteConfig (per-domain)
 ├── site_id(): String                   # Method: returns site.domains.first() (used as HashMap key in ConfigManager)
 ├── site: SiteInfo
 │   ├── domains: Vec<String>           # Primary and alias domains
-│   ├── listen: Vec<SiteListenConfig>  # Port, SSL, HTTP2/3, proxy protocol
+│   ├── listen: ()                     # Retired per-site socket declaration (always rejected)
+│   ├── listeners: Vec<String>         # Optional [[http.listeners]] allowlist
 │   └── upstream: UpstreamConfig        # Default + path-based routing, tunnel mappings
 ├── app_server: SiteAppServerConfig     # Python ASGI/RSGI/WSGI (optional)
 ├── ratelimit: SiteRateLimitConfig      # Per-site rate limits

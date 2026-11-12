@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use synvoid_config::MainConfig;
+use synvoid_http::{RequestLogRecord, RequestLogSink};
 use synvoid_ipc::AsyncIpcStream as IpcStream;
 use synvoid_ipc::WorkerId;
 use synvoid_metrics::RequestLogPayload;
@@ -15,8 +16,14 @@ use synvoid_utils::current_timestamp;
 static REQUEST_LOG_RATE_LIMITER: AtomicU32 = AtomicU32::new(0);
 static REQUEST_LOG_RATE_LIMITER_RESET: AtomicU64 = AtomicU64::new(0);
 
+/// Request-log entry point used by the neutral pipeline. The
+/// `[logging.verbose_request_logging]` category and per-second rate-limit
+/// gates run first, exactly once; afterwards the record goes to the IPC
+/// supervisor channel when one exists **and** to the worker-local
+/// control-plane sink when one is set, so a worker's own admin panel sees
+/// its own traffic in every mode (standalone has no IPC channel).
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn send_request_log_if_enabled(
+pub(crate) fn send_request_log_with_sink(
     ipc: Option<Arc<tokio::sync::Mutex<IpcStream>>>,
     worker_id: Option<WorkerId>,
     main_config: &Arc<MainConfig>,
@@ -28,6 +35,7 @@ pub(crate) fn send_request_log_if_enabled(
     site_id: &str,
     user_agent: Option<&str>,
     is_internal: bool,
+    sink: Option<Arc<dyn RequestLogSink>>,
 ) {
     let verbose_config = &main_config.logging.verbose_request_logging;
     if !verbose_config.enabled {
@@ -90,6 +98,22 @@ pub(crate) fn send_request_log_if_enabled(
             if let Err(e) = ipc_guard.send(&msg).await {
                 tracing::warn!("Failed to send request log: {}", e);
             }
+        });
+    }
+
+    // Worker-local control-plane sink (independent of IPC): a worker's own
+    // admin panel sees its own traffic. Standalone mode has no IPC channel,
+    // so this is the only path there.
+    if let Some(sink) = sink {
+        sink.emit(RequestLogRecord {
+            client_ip,
+            method,
+            path,
+            status,
+            latency_ms,
+            site_id,
+            user_agent,
+            is_internal,
         });
     }
 }

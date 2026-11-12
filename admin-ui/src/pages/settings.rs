@@ -1,6 +1,7 @@
 use crate::components::forms::{Input, Select};
 use crate::components::layout::Capabilities;
 use crate::components::skeleton::LoadingSpinner;
+use crate::components::theme_preview::ThemePreview;
 use crate::components::{toast_error, toast_success};
 use crate::config_docs::get_section_doc;
 use crate::services::ApiService;
@@ -734,7 +735,7 @@ pub fn Settings(props: &SettingsProps) -> Html {
                             "http3" => html! { <Http3Section /> },
                             "tunnel" => html! { <TunnelSection /> },
                             "plugins" => html! { <PluginsSection /> },
-                            "theme" => html! { <ThemeSection /> },
+                            "theme" => html! { <ThemePanelSection /> },
                             "mime_types" => html! { <MimeTypesSection /> },
                             "tcp_udp_defaults" => html! { <TcpUdpDefaultsSection /> },
                             "fallback" => html! { <FallbackSection /> },
@@ -1575,7 +1576,7 @@ fn MetricsSection() -> Html {
                     role="switch"
                     aria-checked={if *metrics_enabled { "true" } else { "false" }}
                     aria-label="Enable Metrics"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *metrics_enabled { "bg-action-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *metrics_enabled { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *metrics_enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -1738,7 +1739,7 @@ fn IpFeedsSection() -> Html {
                     role="switch"
                     aria-checked={if *enabled { "true" } else { "false" }}
                     aria-label="Enable IP Feeds"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-action-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -1921,7 +1922,7 @@ fn TlsSection() -> Html {
                     role="switch"
                     aria-checked={if *enabled { "true" } else { "false" }}
                     aria-label="Enable TLS"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-action-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -1976,7 +1977,7 @@ fn TlsSection() -> Html {
                         role="switch"
                         aria-checked={if *prefer_post_quantum { "true" } else { "false" }}
                         aria-label="Prefer Post-Quantum"
-                        class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *prefer_post_quantum { "bg-action-600" } else { "bg-gray-600" })}
+                        class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *prefer_post_quantum { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                     >
                         <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *prefer_post_quantum { "translate-x-5" } else { "translate-x-0" })} />
                     </button>
@@ -2123,7 +2124,7 @@ fn AcmeSection() -> Html {
                     role="switch"
                     aria-checked={if *enabled { "true" } else { "false" }}
                     aria-label="Enable ACME"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-action-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -2179,7 +2180,7 @@ fn AcmeSection() -> Html {
                         role="switch"
                         aria-checked={if *staging { "true" } else { "false" }}
                         aria-label="Staging Mode"
-                        class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *staging { "bg-action-600" } else { "bg-gray-600" })}
+                        class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *staging { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                     >
                         <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *staging { "translate-x-5" } else { "translate-x-0" })} />
                     </button>
@@ -2200,7 +2201,7 @@ fn AcmeSection() -> Html {
                         role="switch"
                         aria-checked={if *terms_of_service_agreed { "true" } else { "false" }}
                         aria-label="Agree to Terms of Service"
-                        class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *terms_of_service_agreed { "bg-action-600" } else { "bg-gray-600" })}
+                        class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *terms_of_service_agreed { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                     >
                         <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *terms_of_service_agreed { "translate-x-5" } else { "translate-x-0" })} />
                     </button>
@@ -2317,7 +2318,7 @@ fn Http3Section() -> Html {
                     role="switch"
                     aria-checked={if *enabled { "true" } else { "false" }}
                     aria-label="Enable HTTP/3 (QUIC)"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-action-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -3188,7 +3189,7 @@ fn BotSection() -> Html {
                     role="switch"
                     aria-checked={if *block_ai_crawlers { "true" } else { "false" }}
                     aria-label="Block AI Crawlers"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *block_ai_crawlers { "bg-action-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *block_ai_crawlers { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *block_ai_crawlers { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -3209,7 +3210,7 @@ fn BotSection() -> Html {
                     role="switch"
                     aria-checked={if *enable_css_honeypot { "true" } else { "false" }}
                     aria-label="Enable CSS Honeypot"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enable_css_honeypot { "bg-action-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enable_css_honeypot { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *enable_css_honeypot { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -3230,7 +3231,7 @@ fn BotSection() -> Html {
                     role="switch"
                     aria-checked={if *enable_js_challenge { "true" } else { "false" }}
                     aria-label="Enable JS Challenge"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enable_js_challenge { "bg-action-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enable_js_challenge { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *enable_js_challenge { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -3462,7 +3463,7 @@ fn TarpitSection() -> Html {
                     role="switch"
                     aria-checked={if *enabled { "true" } else { "false" }}
                     aria-label="Enable Tarpit"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-action-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -3704,7 +3705,7 @@ fn UploadSection() -> Html {
                     role="switch"
                     aria-checked={if *scan_with_yara { "true" } else { "false" }}
                     aria-label="Scan with YARA"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *scan_with_yara { "bg-action-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *scan_with_yara { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *scan_with_yara { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -3725,7 +3726,7 @@ fn UploadSection() -> Html {
                     role="switch"
                     aria-checked={if *sandbox_enabled { "true" } else { "false" }}
                     aria-label="Sandbox Files"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *sandbox_enabled { "bg-action-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *sandbox_enabled { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *sandbox_enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -3748,47 +3749,56 @@ fn UploadSection() -> Html {
     }
 }
 
+/// Tell the app shell to re-read the server theme and re-apply the panel
+/// palette. The shell listens for this (see `App`); a save that skipped
+/// the event would persist server-side while the panel kept stale colours.
+fn notify_panel_theme_updated() {
+    if let Some(window) = web_sys::window() {
+        if let Ok(event) = web_sys::CustomEvent::new("panel-theme-update") {
+            let _ = window.dispatch_event(&event);
+        }
+    }
+}
+
+/// Admin panel palette (dark pick, light pick).
+///
+/// This tab styles the panel itself: the saved dark pick supplies the
+/// surfaces when the sidebar switch is on dark, the light pick when it is
+/// on light. `"SynVoid default"` keeps the built-in palette. Block and
+/// error pages are styled separately under Error Pages and never read
+/// these values.
 #[function_component]
-fn ThemeSection() -> Html {
+fn ThemePanelSection() -> Html {
     let theme_data = use_state(|| None::<ThemeResponse>);
-    let selected_preset = use_state(|| "default".to_string());
-    let selected_mode = use_state(|| "auto".to_string());
-    let preview_html = use_state(String::new);
+    let selected_dark = use_state(|| "default".to_string());
+    let selected_light = use_state(|| "default".to_string());
     let preview_light = use_state(|| false);
     let saving = use_state(|| false);
     let loading = use_state(|| true);
-    let original_preset = use_state(|| "default".to_string());
-    let original_mode = use_state(|| "auto".to_string());
+    let original_dark = use_state(|| "default".to_string());
+    let original_light = use_state(|| "default".to_string());
 
-    let is_dirty = *selected_preset != *original_preset || *selected_mode != *original_mode;
+    let is_dirty = *selected_dark != *original_dark || *selected_light != *original_light;
 
     use_effect_with((), {
         let theme_data = theme_data.clone();
-        let selected_preset = selected_preset.clone();
-        let selected_mode = selected_mode.clone();
-        let preview_html = preview_html.clone();
-        let preview_light = preview_light.clone();
+        let selected_dark = selected_dark.clone();
+        let selected_light = selected_light.clone();
         let loading = loading.clone();
-        let original_preset = original_preset.clone();
-        let original_mode = original_mode.clone();
+        let original_dark = original_dark.clone();
+        let original_light = original_light.clone();
         move |_| {
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
                 let theme_result = api.get_theme().await;
-                let css_result = api.get_theme_css().await;
-                let use_light = *preview_light;
 
                 if let Ok(data) = theme_result {
-                    theme_data.set(Some(data.clone()));
-                    selected_preset.set(data.preset.clone());
-                    selected_mode.set(data.mode.clone());
-                    original_preset.set(data.preset.clone());
-                    original_mode.set(data.mode.clone());
+                    selected_dark.set(data.panel_dark_theme.clone());
+                    selected_light.set(data.panel_light_theme.clone());
+                    original_dark.set(data.panel_dark_theme.clone());
+                    original_light.set(data.panel_light_theme.clone());
 
-                    if let Ok(css) = css_result {
-                        let html = generate_preview_html(&css, &data.colors, use_light);
-                        preview_html.set(html);
-                    }
+                    theme_data.set(Some(data));
                 }
                 loading.set(false);
             });
@@ -3796,108 +3806,70 @@ fn ThemeSection() -> Html {
         }
     });
 
-    let on_preset_change = {
-        let selected_preset = selected_preset.clone();
-        let preview_html = preview_html.clone();
-        let theme_data = theme_data.clone();
-        let preview_light = preview_light.clone();
-        Callback::from(move |e: Event| {
-            let target = e.target().unwrap();
-            let value = target
-                .dyn_ref::<web_sys::HtmlSelectElement>()
-                .map(|el| el.value())
-                .unwrap_or_default();
-            selected_preset.set(value.clone());
-
-            if let Some(ref _data) = *theme_data {
-                let colors = get_preset_colors(&value);
-                let use_light = *preview_light;
-                let html = generate_preview_html("", &colors, use_light);
-                preview_html.set(html);
-            }
+    let on_dark_change = {
+        let selected_dark = selected_dark.clone();
+        Callback::from(move |value: String| {
+            selected_dark.set(value);
         })
     };
 
-    let on_mode_change = {
-        let selected_mode = selected_mode.clone();
-        Callback::from(move |e: Event| {
-            let target = e.target().unwrap();
-            let value = target
-                .dyn_ref::<web_sys::HtmlSelectElement>()
-                .map(|el| el.value())
-                .unwrap_or_default();
-            selected_mode.set(value);
+    let on_light_change = {
+        let selected_light = selected_light.clone();
+        Callback::from(move |value: String| {
+            selected_light.set(value);
         })
     };
 
     let on_toggle_preview = {
         let preview_light = preview_light.clone();
-        let selected_preset = selected_preset.clone();
-        let theme_data = theme_data.clone();
-        let preview_html = preview_html.clone();
         Callback::from(move |_| {
             let new_value = !*preview_light;
             preview_light.set(new_value);
-
-            if let Some(ref _data) = *theme_data {
-                let colors = get_preset_colors(&selected_preset);
-                let html = generate_preview_html("", &colors, new_value);
-                preview_html.set(html);
-            }
         })
     };
 
     let on_save = {
         let saving = saving.clone();
-        let selected_preset = selected_preset.clone();
-        let selected_mode = selected_mode.clone();
+        let selected_dark = selected_dark.clone();
+        let selected_light = selected_light.clone();
         let theme_data = theme_data.clone();
-        let preview_html = preview_html.clone();
-        let preview_light = preview_light.clone();
-        let original_preset = original_preset.clone();
-        let original_mode = original_mode.clone();
+        let original_dark = original_dark.clone();
+        let original_light = original_light.clone();
         Callback::from(move |_| {
-            let preset = (*selected_preset).clone();
-            let mode = (*selected_mode).clone();
+            let dark = (*selected_dark).clone();
+            let light = (*selected_light).clone();
             let theme_data = theme_data.clone();
-            let preview_html = preview_html.clone();
-            let preview_light = *preview_light;
             let saving = saving.clone();
-            let original_preset = original_preset.clone();
-            let original_mode = original_mode.clone();
-            let preset_for_orig = preset.clone();
-            let mode_for_orig = mode.clone();
+            let original_dark = original_dark.clone();
+            let original_light = original_light.clone();
 
             saving.set(true);
 
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
                 let request = UpdateThemeRequest {
-                    preset: Some(preset),
-                    mode: Some(mode),
+                    preset: None,
+                    mode: None,
+                    dark_theme: None,
+                    light_theme: None,
+                    scheme: None,
+                    panel_dark_theme: Some(dark),
+                    panel_light_theme: Some(light),
                     allow_only: None,
                 };
 
                 match api.update_theme(&request).await {
                     Ok(data) => {
-                        theme_data.set(Some(data.clone()));
-                        original_preset.set(preset_for_orig);
-                        original_mode.set(mode_for_orig);
-                        toast_success("Theme updated successfully");
-
-                        match api.get_theme_css().await {
-                            Ok(css) => {
-                                let html = generate_preview_html(&css, &data.colors, preview_light);
-                                preview_html.set(html);
-                            }
-                            Err(e) => {
-                                tracing::error!("Failed to fetch theme CSS: {}", e);
-                            }
-                        }
+                        original_dark.set(data.panel_dark_theme.clone());
+                        original_light.set(data.panel_light_theme.clone());
+                        theme_data.set(Some(data));
+                        // No success toast: the whole panel restyles
+                        // immediately, which is the confirmation.
+                        notify_panel_theme_updated();
                     }
                     Err(e) => {
-                        toast_error(&format!("Failed to update theme: {}", e));
-                        tracing::error!("Failed to update theme: {}", e);
+                        toast_error(&format!("Failed to update panel theme: {}", e));
+                        tracing::error!("Failed to update panel theme: {}", e);
                     }
                 }
                 saving.set(false);
@@ -3906,58 +3878,63 @@ fn ThemeSection() -> Html {
     };
 
     let on_reset = {
-        let selected_preset = selected_preset.clone();
-        let selected_mode = selected_mode.clone();
+        let selected_dark = selected_dark.clone();
+        let selected_light = selected_light.clone();
         let theme_data = theme_data.clone();
-        let preview_html = preview_html.clone();
-        let preview_light = preview_light.clone();
+        let original_dark = original_dark.clone();
+        let original_light = original_light.clone();
         Callback::from(move |_| {
-            selected_preset.set("default".to_string());
-            selected_mode.set("auto".to_string());
-
-            if let Some(ref _data) = *theme_data {
-                let colors = get_preset_colors("default");
-                let use_light = *preview_light;
-                let html = generate_preview_html("", &colors, use_light);
-                preview_html.set(html);
-            }
+            let theme_data = theme_data.clone();
+            let selected_dark = selected_dark.clone();
+            let selected_light = selected_light.clone();
+            let original_dark = original_dark.clone();
+            let original_light = original_light.clone();
 
             let request = UpdateThemeRequest {
-                preset: Some("default".to_string()),
-                mode: Some("auto".to_string()),
+                preset: None,
+                mode: None,
+                dark_theme: None,
+                light_theme: None,
+                scheme: None,
+                panel_dark_theme: Some("default".to_string()),
+                panel_light_theme: Some("default".to_string()),
                 allow_only: None,
             };
 
-            let theme_data = theme_data.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
                 match api.update_theme(&request).await {
                     Ok(data) => {
-                        theme_data.set(Some(data.clone()));
-                        toast_success("Theme reset to default");
+                        selected_dark.set(data.panel_dark_theme.clone());
+                        selected_light.set(data.panel_light_theme.clone());
+                        original_dark.set(data.panel_dark_theme.clone());
+                        original_light.set(data.panel_light_theme.clone());
+                        theme_data.set(Some(data));
+                        // No success toast: the whole panel restyles
+                        // immediately, which is the confirmation.
+                        notify_panel_theme_updated();
                     }
                     Err(e) => {
-                        toast_error(&format!("Failed to reset theme: {}", e));
+                        toast_error(&format!("Failed to reset panel theme: {}", e));
                     }
                 }
             });
         })
     };
 
-    let presets = [
-        ("default", "Default"),
-        ("dark", "Dark"),
-        ("light", "Light"),
-        ("ocean", "Ocean"),
-        ("forest", "Forest"),
-        ("sunset", "Sunset"),
-    ];
-
-    let modes = [
-        ("auto", "Auto (System)"),
-        ("dark", "Dark"),
-        ("light", "Light"),
-    ];
+    let mut theme_options = vec![("default".to_string(), "SynVoid default".to_string())];
+    theme_options.extend(match &*theme_data {
+        Some(data) => data
+            .presets_available
+            .iter()
+            // The catalogue carries its own "default" alias for the block
+            // pages; the panel's built-in entry above takes its place here
+            // so the dropdown never lists the same choice twice.
+            .filter(|entry| entry.id != "default")
+            .map(|entry| (entry.id.clone(), entry.name.clone()))
+            .collect::<Vec<_>>(),
+        None => Vec::new(),
+    });
 
     if *loading {
         return html! { <LoadingSpinner /> };
@@ -3965,37 +3942,25 @@ fn ThemeSection() -> Html {
 
     html! {
         <div class="space-y-6">
-            <div>
-                <label class="block text-sm font-medium text-primary mb-2">{ "Theme Preset" }</label>
-                <select
-                    class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary"
-                    value={(*selected_preset).clone()}
-                    onchange={on_preset_change}
-                >
-                    { for presets.iter().map(|(value, label)| {
-                        html! {
-                            <option value={*value}>{*label}</option>
-                        }
-                    }) }
-                </select>
-                <p class="mt-1 text-sm text-secondary">{ "Choose a color scheme for the admin interface" }</p>
-            </div>
-
-            <div>
-                <label class="block text-sm font-medium text-primary mb-2">{ "Theme Mode" }</label>
-                <select
-                    class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary"
-                    value={(*selected_mode).clone()}
-                    onchange={on_mode_change}
-                >
-                    { for modes.iter().map(|(value, label)| {
-                        html! {
-                            <option value={*value}>{*label}</option>
-                        }
-                    }) }
-                </select>
-                <p class="mt-1 text-sm text-secondary">{ "How users can switch between light and dark themes" }</p>
-            </div>
+            <p class="text-sm text-secondary">
+                { "Palette for the admin panel itself. The dark pick applies in dark mode, the light pick in light mode (sidebar switch); saving applies immediately. Block and error pages are styled separately under Error Pages." }
+            </p>
+            <Select
+                label="Dark theme"
+                name="theme_dark"
+                value={(*selected_dark).clone()}
+                options={theme_options.clone()}
+                help="Panel palette used for dark mode (\"SynVoid default\" keeps the built-in palette)"
+                on_change={on_dark_change}
+            />
+            <Select
+                label="Light theme"
+                name="theme_light"
+                value={(*selected_light).clone()}
+                options={theme_options.clone()}
+                help="Panel palette used for light mode (\"SynVoid default\" keeps the built-in palette)"
+                on_change={on_light_change}
+            />
 
             <div>
                 <div class="flex items-center justify-between mb-2">
@@ -4008,13 +3973,33 @@ fn ThemeSection() -> Html {
                     </button>
                 </div>
                 <div class="border border-default rounded-lg overflow-hidden">
-                    <iframe
-                        srcdoc={(*preview_html).clone()}
-                        class="w-full h-64"
-                        sandbox="allow-same-origin"
-                    />
+                    {
+                        if let Some(colors) = (*theme_data).as_ref().and_then(|data| data.panel_colors.as_ref()) {
+                            let pick = if *preview_light { &selected_light } else { &selected_dark };
+                            if pick.as_str() == "default" {
+                                html! {
+                                    <div class="p-6 text-center text-sm text-secondary">
+                                        { "SynVoid default: the built-in panel palette stays in place." }
+                                    </div>
+                                }
+                            } else {
+                                let c = if *preview_light { &colors.light } else { &colors.dark };
+                                html! {
+                                    <ThemePreview
+                                        background={c.background.clone()}
+                                        surface={c.surface.clone()}
+                                        text={c.text.clone()}
+                                        border={c.border.clone()}
+                                        primary={c.primary.clone()}
+                                    />
+                                }
+                            }
+                        } else {
+                            html! { <LoadingSpinner /> }
+                        }
+                    }
                 </div>
-                <p class="mt-1 text-sm text-secondary">{ "Sample error page preview with current theme" }</p>
+                <p class="mt-1 text-sm text-secondary">{ "Sample card preview with the saved panel palette" }</p>
             </div>
 
             <div class="flex justify-between gap-4">
@@ -4193,7 +4178,7 @@ fn SecuritySection() -> Html {
                     role="switch"
                     aria-checked={if *global_security_headers { "true" } else { "false" }}
                     aria-label="Global Security Headers"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *global_security_headers { "bg-action-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *global_security_headers { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *global_security_headers { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -4214,7 +4199,7 @@ fn SecuritySection() -> Html {
                     role="switch"
                     aria-checked={if *sanitize_forwarded_headers { "true" } else { "false" }}
                     aria-label="Sanitize Forwarded Headers"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *sanitize_forwarded_headers { "bg-action-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *sanitize_forwarded_headers { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *sanitize_forwarded_headers { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -4235,7 +4220,7 @@ fn SecuritySection() -> Html {
                     role="switch"
                     aria-checked={if *ipc_enforce_signing { "true" } else { "false" }}
                     aria-label="IPC Enforce Signing"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *ipc_enforce_signing { "bg-action-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *ipc_enforce_signing { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *ipc_enforce_signing { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -4256,7 +4241,7 @@ fn SecuritySection() -> Html {
                     role="switch"
                     aria-checked={if *allow_insecure_ipc_key { "true" } else { "false" }}
                     aria-label="Allow Insecure IPC Key"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *allow_insecure_ipc_key { "bg-action-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *allow_insecure_ipc_key { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *allow_insecure_ipc_key { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -4415,7 +4400,7 @@ fn TunnelSection() -> Html {
                     role="switch"
                     aria-checked={if *enabled { "true" } else { "false" }}
                     aria-label="Enable Tunnel"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-action-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -4436,7 +4421,7 @@ fn TunnelSection() -> Html {
                     role="switch"
                     aria-checked={if *vpn_enabled { "true" } else { "false" }}
                     aria-label="WireGuard VPN"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *vpn_enabled { "bg-action-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *vpn_enabled { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *vpn_enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -4457,7 +4442,7 @@ fn TunnelSection() -> Html {
                     role="switch"
                     aria-checked={if *quic_enabled { "true" } else { "false" }}
                     aria-label="QUIC Tunnel"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *quic_enabled { "bg-action-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *quic_enabled { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *quic_enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -4652,194 +4637,6 @@ fn PluginsSection() -> Html {
             </div>
         </div>
     }
-}
-
-fn get_preset_colors(preset: &str) -> crate::types::ThemeColorsResponse {
-    match preset {
-        "light" => crate::types::ThemeColorsResponse {
-            dark: crate::types::ThemeColors {
-                background: "#0a0a0f".to_string(),
-                surface: "#12121a".to_string(),
-                primary: "#e94560".to_string(),
-                text: "#f0f0f5".to_string(),
-                border: "#2a2a3a".to_string(),
-                accent: "#1a1a24".to_string(),
-                accent_primary: "#00d4aa".to_string(),
-                accent_secondary: "#00b894".to_string(),
-            },
-            light: crate::types::ThemeColors {
-                background: "#f8fafc".to_string(),
-                surface: "#ffffff".to_string(),
-                primary: "#c41e3a".to_string(),
-                text: "#0f172a".to_string(),
-                border: "#e2e8f0".to_string(),
-                accent: "#f1f5f9".to_string(),
-                accent_primary: "#059669".to_string(),
-                accent_secondary: "#10b981".to_string(),
-            },
-        },
-        "ocean" => crate::types::ThemeColorsResponse {
-            dark: crate::types::ThemeColors {
-                background: "#0c1929".to_string(),
-                surface: "#132f4c".to_string(),
-                primary: "#0ea5e9".to_string(),
-                text: "#e3f2fd".to_string(),
-                border: "#2d4a6f".to_string(),
-                accent: "#173a5e".to_string(),
-                accent_primary: "#0ea5e9".to_string(),
-                accent_secondary: "#38bdf8".to_string(),
-            },
-            light: crate::types::ThemeColors {
-                background: "#e3f2fd".to_string(),
-                surface: "#ffffff".to_string(),
-                primary: "#0284c7".to_string(),
-                text: "#0c1929".to_string(),
-                border: "#90caf9".to_string(),
-                accent: "#f1f5f9".to_string(),
-                accent_primary: "#0ea5e9".to_string(),
-                accent_secondary: "#38bdf8".to_string(),
-            },
-        },
-        "forest" => crate::types::ThemeColorsResponse {
-            dark: crate::types::ThemeColors {
-                background: "#0a1a0f".to_string(),
-                surface: "#132318".to_string(),
-                primary: "#22c55e".to_string(),
-                text: "#e8f5e9".to_string(),
-                border: "#2d4a3a".to_string(),
-                accent: "#1a2e21".to_string(),
-                accent_primary: "#22c55e".to_string(),
-                accent_secondary: "#4ade80".to_string(),
-            },
-            light: crate::types::ThemeColors {
-                background: "#e8f5e9".to_string(),
-                surface: "#ffffff".to_string(),
-                primary: "#16a34a".to_string(),
-                text: "#0a1a0f".to_string(),
-                border: "#a5d6a7".to_string(),
-                accent: "#f1f5f9".to_string(),
-                accent_primary: "#22c55e".to_string(),
-                accent_secondary: "#4ade80".to_string(),
-            },
-        },
-        "sunset" => crate::types::ThemeColorsResponse {
-            dark: crate::types::ThemeColors {
-                background: "#1a0f0a".to_string(),
-                surface: "#2a1a14".to_string(),
-                primary: "#f97316".to_string(),
-                text: "#fff1ec".to_string(),
-                border: "#4a3028".to_string(),
-                accent: "#3d261e".to_string(),
-                accent_primary: "#f97316".to_string(),
-                accent_secondary: "#fb923c".to_string(),
-            },
-            light: crate::types::ThemeColors {
-                background: "#fff1ec".to_string(),
-                surface: "#ffffff".to_string(),
-                primary: "#ea580c".to_string(),
-                text: "#1a0f0a".to_string(),
-                border: "#ffccbc".to_string(),
-                accent: "#f1f5f9".to_string(),
-                accent_primary: "#f97316".to_string(),
-                accent_secondary: "#fb923c".to_string(),
-            },
-        },
-        _ => crate::types::ThemeColorsResponse {
-            dark: crate::types::ThemeColors {
-                background: "#0a0a0f".to_string(),
-                surface: "#12121a".to_string(),
-                primary: "#e94560".to_string(),
-                text: "#f0f0f5".to_string(),
-                border: "#2a2a3a".to_string(),
-                accent: "#1a1a24".to_string(),
-                accent_primary: "#00d4aa".to_string(),
-                accent_secondary: "#00b894".to_string(),
-            },
-            light: crate::types::ThemeColors {
-                background: "#f8fafc".to_string(),
-                surface: "#ffffff".to_string(),
-                primary: "#c41e3a".to_string(),
-                text: "#0f172a".to_string(),
-                border: "#e2e8f0".to_string(),
-                accent: "#f1f5f9".to_string(),
-                accent_primary: "#059669".to_string(),
-                accent_secondary: "#10b981".to_string(),
-            },
-        },
-    }
-}
-
-fn generate_preview_html(
-    _css: &str,
-    colors: &crate::types::ThemeColorsResponse,
-    use_light: bool,
-) -> String {
-    let c = if use_light {
-        &colors.light
-    } else {
-        &colors.dark
-    };
-    format!(
-        r#"
-<!DOCTYPE html>
-<html>
-<head>
-    <style>
-        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-        body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background-color: {bg};
-            color: {text};
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }}
-        .card {{
-            background: {surface};
-            border: 1px solid {border};
-            border-radius: 12px;
-            padding: 2rem;
-            max-width: 400px;
-            text-align: center;
-        }}
-        .status {{
-            font-size: 4rem;
-            font-weight: bold;
-            color: {primary};
-            margin-bottom: 1rem;
-        }}
-        h1 {{
-            font-size: 1.5rem;
-            margin-bottom: 0.5rem;
-        }}
-        p {{
-            color: {text};
-            opacity: 0.8;
-        }}
-        .footer {{
-            margin-top: 1.5rem;
-            font-size: 0.75rem;
-            opacity: 0.5;
-        }}
-    </style>
-</head>
-<body>
-    <div class="card">
-        <div class="status">403</div>
-        <h1>Forbidden</h1>
-        <p>Access to this resource has been blocked by the WAF.</p>
-        <div class="footer">SynVoid</div>
-    </div>
-</body>
-</html>
-"#,
-        bg = c.background,
-        surface = c.surface,
-        text = c.text,
-        border = c.border,
-        primary = c.primary,
-    )
 }
 
 #[function_component]
@@ -5281,7 +5078,7 @@ fn MimeTypesSection() -> Html {
                     role="switch"
                     aria-checked={if *enabled { "true" } else { "false" }}
                     aria-label="Enable Custom MIME Types"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-action-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *enabled { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -5700,7 +5497,7 @@ fn TcpUdpDefaultsSection() -> Html {
                     role="switch"
                     aria-checked={if *tcp_enabled { "true" } else { "false" }}
                     aria-label="Enable TCP Proxy"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *tcp_enabled { "bg-action-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *tcp_enabled { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *tcp_enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
@@ -5717,7 +5514,7 @@ fn TcpUdpDefaultsSection() -> Html {
                         role="switch"
                         aria-checked={if *tcp_nodelay { "true" } else { "false" }}
                         aria-label="TCP Nodelay"
-                        class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *tcp_nodelay { "bg-action-600" } else { "bg-gray-600" })}
+                        class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *tcp_nodelay { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                     >
                         <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *tcp_nodelay { "translate-x-5" } else { "translate-x-0" })} />
                     </button>
@@ -5754,7 +5551,7 @@ fn TcpUdpDefaultsSection() -> Html {
                     role="switch"
                     aria-checked={if *udp_enabled { "true" } else { "false" }}
                     aria-label="Enable UDP Proxy"
-                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *udp_enabled { "bg-action-600" } else { "bg-gray-600" })}
+                    class={format!("relative w-10 h-6 rounded-full expand-hit {}", if *udp_enabled { "bg-action-600" } else {         "bg-tertiary border border-default" })}
                 >
                     <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *udp_enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>

@@ -1107,7 +1107,7 @@ pub async fn run_key_exchange_server(
         let resolver = synvoid_tls::CertResolver::new(tls_config);
         resolver.load_certificates()?;
 
-        let server_config = resolver.build_server_config()?;
+        let server_config = resolver.build_server_config(&[])?;
         Some(TlsAcceptor::from(server_config))
     } else {
         None

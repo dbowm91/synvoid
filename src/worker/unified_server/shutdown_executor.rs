@@ -197,6 +197,12 @@ pub async fn execute_worker_shutdown(
     drop(tx_guard);
     state.stopped_accepting.start_drain();
 
+    // Step 2.5: close every data-plane listener and let the server's own
+    // shutdown path broadcast to its registered tasks. Without this the
+    // server_run task only observes a signal when the process is torn down,
+    // so detached listener tasks can outlive the drain window.
+    state.unified_server.shutdown().await;
+
     // Step 3: Graceful drain (if requested and nonzero timeout).
     if graceful && !drain_timeout.is_zero() {
         tracing::info!(

@@ -1,6 +1,8 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::validation::ConfigValidationError;
+
 #[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteTcpConfig {
     #[serde(default)]
@@ -65,4 +67,35 @@ pub struct SiteTunnelConfig {
     pub enabled: Option<bool>,
     #[serde(default)]
     pub mappings: std::collections::HashMap<String, u16>,
+}
+
+impl SiteTcpConfig {
+    /// Reject the retired per-site listener schema.
+    ///
+    /// Raw TCP has no `Host` header, so a site cannot select a listener the way
+    /// an HTTP vhost selects a domain. Listener definitions live in the global
+    /// `[tcp.protocols.*]` map; accepting this table would silently do nothing.
+    pub fn validate_retired(&self) -> Result<(), ConfigValidationError> {
+        if self.enabled.is_some() || !self.ports.is_empty() || self.filter.is_some() {
+            return Err(ConfigValidationError {
+                field: "site.tcp".to_string(),
+                message: "site-level TCP listeners are retired: declare listener ports,                           upstreams and filters in the global [tcp.protocols.*] map"
+                    .to_string(),
+            });
+        }
+        Ok(())
+    }
+}
+
+impl SiteUdpConfig {
+    pub fn validate_retired(&self) -> Result<(), ConfigValidationError> {
+        if self.enabled.is_some() || !self.ports.is_empty() || self.filter.is_some() {
+            return Err(ConfigValidationError {
+                field: "site.udp".to_string(),
+                message: "site-level UDP listeners are retired: declare listener ports,                           upstreams and filters in the global [udp.protocols.*] map"
+                    .to_string(),
+            });
+        }
+        Ok(())
+    }
 }

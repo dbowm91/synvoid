@@ -30,8 +30,8 @@ mod upload;
 
 pub use app_server::SiteAppServerConfig;
 pub use attack_detection::{
-    SiteAttackDetectionConfig, SitePathTraversalConfig, SiteRfiConfig, SiteSqliConfig,
-    SiteSsrfConfig, SiteXssConfig,
+    SiteAttackDetectionConfig, SiteAttackPathRule, SiteHeaderScanConfig, SitePathTraversalConfig,
+    SiteRfiConfig, SiteSqliConfig, SiteSsrfConfig, SiteXssConfig,
 };
 pub use backend::{
     BackendConfig, CgiConfig, CgiLocationConfig, FastCgiConfig, FastCgiLocationConfig,
@@ -42,7 +42,7 @@ pub use defensive::{
 };
 pub use error_pages::{SiteErrorPagesConfig, SiteThemeConfig};
 pub use file_manager::SiteFileManagerConfig;
-pub use listen::{SiteInfo, SiteListenConfig, UpstreamConfig};
+pub use listen::{SiteInfo, UpstreamConfig};
 pub use misc::{
     SiteImagePoisonConfig, SiteImageRightsConfig, SiteLoggingConfig, SiteWorkerPoolConfig,
 };
@@ -90,9 +90,13 @@ pub struct SiteConfig {
     pub logging: SiteLoggingConfig,
     #[serde(default)]
     pub proxy: SiteProxyConfig,
-    #[serde(default)]
+    // Retired listener schema: parsed only so validation can reject it with a
+    // typed error, never serialized or published in the JSON schema.
+    #[serde(default, skip_serializing)]
+    #[schemars(skip)]
     pub tcp: SiteTcpConfig,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
+    #[schemars(skip)]
     pub udp: SiteUdpConfig,
     #[serde(default)]
     pub tarpit: SiteTarpitConfig,
@@ -134,7 +138,8 @@ impl SiteConfig {
         SiteConfig {
             site: crate::site::SiteInfo {
                 domains: vec!["_fallback_".to_string()],
-                listen: Vec::new(),
+                listen: (),
+                listeners: Vec::new(),
                 upstream: crate::site::UpstreamConfig {
                     default: upstream,
                     routes: HashMap::new(),
@@ -178,8 +183,7 @@ impl SiteConfig {
     /// `config_parse_validation` fuzz target: no filesystem reads, no
     /// environment access, no randomness, no socket creation.
     pub fn from_toml_str(input: &str) -> Result<Self> {
-        let config: SiteConfig =
-            toml::from_str(input).context("Failed to parse site config TOML")?;
+        let config: SiteConfig = toml::from_str(input)?;
 
         if config.site.domains.is_empty() {
             anyhow::bail!("Site config must have at least one domain");
@@ -203,12 +207,15 @@ impl SiteConfig {
         self.site.validate()?;
         self.ratelimit.validate()?;
         self.attack_detection.validate()?;
+        self.proxy.validate()?;
         self.upload.validate()?;
         self.security_headers.validate()?;
         self.app_server.validate()?;
         self.grpc.validate()?;
         self.websocket.validate()?;
         self.file_manager.validate()?;
+        self.tcp.validate_retired()?;
+        self.udp.validate_retired()?;
         Ok(())
     }
 
@@ -282,15 +289,43 @@ domains = ["example.com"]
 
 [site.upstream]
 default = "http://localhost:3000"
-
-[[site.listen]]
-port = 8080
 "#;
 
     #[test]
     fn from_toml_str_accepts_valid_site() {
         let parsed = SiteConfig::from_toml_str(VALID_SITE_TOML).expect("valid TOML must parse");
         assert_eq!(parsed.site_id(), "example.com");
+    }
+
+    #[test]
+    fn per_site_listen_is_rejected_with_typed_error() {
+        let toml = format!("{VALID_SITE_TOML}\n[[site.listen]]\nport = 8081\n");
+        let err = SiteConfig::from_toml_str(&toml)
+            .expect_err("per-site listen must be rejected, not silently routed");
+        let text = err.to_string();
+        assert!(
+            text.contains("site.listen is retired")
+                && text.contains("[[http.listeners]]")
+                && text.contains("[site].listeners"),
+            "error must name the canonical listener schema, got: {text}"
+        );
+    }
+
+    #[test]
+    fn per_site_listen_rejects_every_legacy_field() {
+        for field in [
+            "address = \"127.0.0.1\"",
+            "ssl = true",
+            "http2 = false",
+            "http3 = true",
+            "default_server = true",
+            "proxy_protocol = true",
+        ] {
+            let toml = format!("{VALID_SITE_TOML}\n[[site.listen]]\n{field}\n");
+            let err = SiteConfig::from_toml_str(&toml)
+                .expect_err("every per-site listen claim must be rejected");
+            assert!(err.to_string().contains("site.listen is retired"));
+        }
     }
 
     #[test]

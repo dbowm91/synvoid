@@ -1,0 +1,206 @@
+{
+  "admin_stats": {
+    "attacks": {
+      "by_type": {},
+      "total_blocked": 0
+    },
+    "errors": [],
+    "sites": [
+      {
+        "active_connections": 7,
+        "avg_response_time_ms": 0.44,
+        "blocked_requests": 0,
+        "bytes_received": 0,
+        "bytes_sent": 0,
+        "challenged_requests": 0,
+        "domains": [
+          "bench-0000.local"
+        ],
+        "errors": 0,
+        "healthy_backends": 0,
+        "mesh_bytes_received": 0,
+        "mesh_bytes_sent": 0,
+        "p50_latency_ms": 0.0,
+        "p95_latency_ms": 2.0,
+        "p99_latency_ms": 4.0,
+        "proxied_bytes_received": 0,
+        "proxied_bytes_sent": 0,
+        "proxied_requests": 14020,
+        "requests_per_second": 7010.0,
+        "site_id": "bench-0000.local",
+        "total_backends": 0,
+        "unhealthy_backends": 0,
+        "upstream_healthy": "healthy"
+      }
+    ],
+    "sites_total": 1,
+    "sites_truncated": false,
+    "summary": {
+      "active_connections": 7,
+      "avg_latency_ms": 0.44,
+      "blocked_per_second": 0.0,
+      "blocked_total": 0,
+      "challenged_total": 0,
+      "cpu_usage_percent": 0.0,
+      "errors_total": 0,
+      "healthy_backends": 0,
+      "healthy_workers": 1,
+      "memory_total_mb": 15852,
+      "memory_used_mb": 10887,
+      "metrics_timestamp_ms": 1794346638674,
+      "p50_latency_ms": 0.44,
+      "p95_latency_ms": 0.528,
+      "p99_latency_ms": 0.66,
+      "peak_concurrent": 8,
+      "proxied_total": 14020,
+      "requests_per_second": 6851.3585000095545,
+      "sites_loaded": 1,
+      "time_validation_errors": 0,
+      "total_requests": 7010,
+      "unhealthy_backends": 0,
+      "unhealthy_workers": 0,
+      "uptime_secs": 1
+    }
+  },
+  "build_profile": "release",
+  "client": {
+    "tool": "oha"
+  },
+  "command": [
+    "/usr/local/bin/oha",
+    "--no-tui",
+    "--output-format",
+    "json",
+    "--ipv4",
+    "-z",
+    "1.0s",
+    "-c",
+    "8",
+    "-H",
+    "User-Agent: Mozilla/5.0 (X11; Linux x86_64) SynVoidBench/1.0",
+    "--urls-from-file",
+    "/tmp/synvoid-ms-2026-11-10T213716Z-274cb3/server-default-1-0-main-1/vhost-1-urls.txt",
+    "--connect-to",
+    "bench-0000.local:80:127.0.0.1:33009"
+  ],
+  "generated_at": "2026-11-10T21:37:19.263509Z",
+  "host": {
+    "arch": "x86_64",
+    "cpu_count": 16,
+    "cpu_model": "Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz",
+    "kernel": "6.8.0-147-generic",
+    "memory_bytes": 16622407680,
+    "os": "Linux"
+  },
+  "http": {
+    "concurrency": 8,
+    "duration_secs": 1.0,
+    "host_header": "bench-0000.local",
+    "method": "GET",
+    "url": "<urls-file:vhost-1-urls.txt>"
+  },
+  "metrics": {
+    "bytes_total": 252036,
+    "error_distribution": {
+      "aborted due to deadline": 8
+    },
+    "error_rate": 0.001141,
+    "errors": 8,
+    "latency_ms": {
+      "p50": 0.963,
+      "p95": 2.287,
+      "p99": 4.52
+    },
+    "requests": 7009,
+    "requests_per_sec": 6966.996,
+    "status_codes": {
+      "200": 7001
+    },
+    "success_rate": 1.0
+  },
+  "process_profile": {
+    "name": "default",
+    "waf_profile": "on",
+    "worker_processes": 1,
+    "worker_threads": 16
+  },
+  "run_id": "2026-11-10T213716Z-274cb3",
+  "schema_version": "synvoid.multi-service-benchmark.v1",
+  "subject": {
+    "binary": "/home/sugarwookie/prodtest/synvoid/target/release/synvoid",
+    "binary_sha256": "fc843af70863d9b2a9ff0b64fccc5f509efe51848f15f194dc3757cc41d71f3e",
+    "build_profile": "release",
+    "harness_sha": "72e4b44aa3e78552dc1b464acda42c8af205556ed7533921035cb6f7e5b0988b",
+    "revision_sha": "d507fefaa9b9586a16ac978ec34f2765be237d04"
+  },
+  "supported": true,
+  "synvoid_metrics": {
+    "after": {
+      "synvoid_subject_admin_rate_limited_minute_total": 0.0,
+      "synvoid_subject_admin_rate_limited_second_total": 0.0,
+      "synvoid_subject_body_buffering_bytes_total": 0.0,
+      "synvoid_subject_offload_fallbacks_total": 0.0,
+      "synvoid_subject_offload_rejections_total": 0.0,
+      "synvoid_subject_offload_submissions_total": 0.0,
+      "synvoid_subject_offload_timeouts_total": 0.0,
+      "synvoid_subject_worker_metric_resets_total": 0.0
+    },
+    "before": {
+      "synvoid_subject_admin_rate_limited_minute_total": 0.0,
+      "synvoid_subject_admin_rate_limited_second_total": 0.0,
+      "synvoid_subject_body_buffering_bytes_total": 0.0,
+      "synvoid_subject_offload_fallbacks_total": 0.0,
+      "synvoid_subject_offload_rejections_total": 0.0,
+      "synvoid_subject_offload_submissions_total": 0.0,
+      "synvoid_subject_offload_timeouts_total": 0.0,
+      "synvoid_subject_worker_metric_resets_total": 0.0
+    }
+  },
+  "system": {
+    "cpu_percent": 164.825,
+    "cpu_seconds": 1.78,
+    "fd_end": 1796,
+    "fd_peak": 1811,
+    "fd_start": 763,
+    "process_count": 2,
+    "rss_bytes_end": 129236992,
+    "rss_bytes_peak": 129236992,
+    "rss_bytes_start": 94646272
+  },
+  "toolchain": {
+    "cargo": "cargo 1.98.1 (797e8a9bc 2026-08-05)",
+    "load_tool": "auto",
+    "python": "3.12.3",
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "tools": {
+      "curl": {
+        "path": "/usr/bin/curl",
+        "version": "curl 8.5.0 (x86_64-pc-linux-gnu) libcurl/8.5.0 OpenSSL/3.0.13 zlib/1.3 brotli/1.1.0 zstd/1.5.5 libidn2/2.3.7 libpsl/0.21.2 (+libidn2/2.3.7) libssh/0.10.6/openssl/zlib nghttp2/1.59.0 librtmp/2.3 OpenLDAP/2.6.10"
+      },
+      "h2load": {
+        "path": "/usr/bin/h2load",
+        "version": "h2load nghttp2/1.59.0"
+      },
+      "oha": {
+        "path": "/usr/local/bin/oha",
+        "version": "oha 1.16.0"
+      },
+      "openssl": {
+        "path": "/usr/bin/openssl",
+        "version": null
+      },
+      "wrk": {
+        "path": null,
+        "version": null
+      }
+    }
+  },
+  "topology": {
+    "client_host": "127.0.0.1",
+    "kind": "loopback-same-host",
+    "notes": "loopback hides the NIC and network RTT; never compare across hosts",
+    "server_host": "127.0.0.1"
+  },
+  "unsupported_reason": null,
+  "workload": "vhost-1"
+}

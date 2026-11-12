@@ -188,6 +188,11 @@ pub struct ProcessManagerConfig {
     pub control_api_addr: String,
     #[serde(default)]
     pub control_api_tls: Option<TlsConfig>,
+    /// Tokio worker threads per UnifiedServerWorker. `None` (default)
+    /// keeps the historical 2. This is the canonical data-plane scaling
+    /// knob: prefer raising it over adding worker processes.
+    #[serde(default)]
+    pub worker_threads: Option<u32>,
 }
 
 impl Default for ProcessManagerConfig {
@@ -207,6 +212,7 @@ impl Default for ProcessManagerConfig {
             health_check_interval_secs: 5,
             control_api_addr: default_control_api_addr(),
             control_api_tls: None,
+            worker_threads: None,
         }
     }
 }
@@ -355,6 +361,9 @@ impl SupervisorConfigBuilder {
 pub const MAX_WORKERS: usize = 1024;
 /// Independent hard maximum for the unified data-plane pool.
 pub const MAX_UNIFIED_SERVER_WORKERS: usize = 256;
+/// Hard maximum for Tokio worker threads per UnifiedServerWorker. Well
+/// above core counts; the bound guards against typo-scale thread pools.
+pub const MAX_WORKER_THREADS_PER_WORKER: u32 = 1024;
 pub const MAX_RESTART_ATTEMPTS: u32 = 1000;
 /// Upper bound for second-granularity timeouts (24h). Prevents accidental
 /// zero/infinite durations where the runtime assumes a sane interval.
@@ -454,6 +463,14 @@ impl ProcessManagerConfig {
                 "process_manager.unified_server_workers",
                 format!("unified_server_workers exceeds hard maximum {MAX_UNIFIED_SERVER_WORKERS}"),
             ));
+        }
+        if let Some(threads) = self.worker_threads {
+            if threads == 0 || threads > MAX_WORKER_THREADS_PER_WORKER {
+                return Err(invalid(
+                    "process_manager.worker_threads",
+                    format!("worker_threads must be 1..={MAX_WORKER_THREADS_PER_WORKER}"),
+                ));
+            }
         }
         // Warm/pre-spawn targets belong to the legacy worker pool governed by
         // max_workers (see `ensure_warm_workers`: `pre_spawn.max(min)` feeds

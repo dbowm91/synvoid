@@ -48,7 +48,7 @@ Observability makes security-relevant state transitions visible for diagnostics 
 
 | Prefix | Subsystem |
 |--------|-----------|
-| `synvoid.http.*` | HTTP/1 request pipeline |
+| `synvoid.http.*` | HTTP/1 request pipeline; `synvoid.http.listener_bound_total` / `listener_bind_failures_total` carry the validated configured listener name and transport |
 | `synvoid.http3.*` | HTTP/3 QUIC pipeline |
 | `synvoid.waf.*` | WAF rule evaluation |
 | `synvoid.dns.*` | DNS server |

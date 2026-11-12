@@ -5,7 +5,9 @@ use std::sync::Arc;
 use std::sync::LazyLock;
 
 use crate::attack_detection::config::{AttackDetectionResult, AttackType, InputLocation};
-use crate::attack_detection::detector_common::{BasePatternDetector, PatternDetector};
+use crate::attack_detection::detector_common::{
+    is_referer_or_origin, BasePatternDetector, PatternDetector,
+};
 use crate::attack_detection::patterns::DefaultPatterns;
 use synvoid_core::url::{check_regex_complexity, url_decode_all};
 
@@ -75,7 +77,7 @@ impl RfiDetector {
         }
 
         if let Some(ip_regex) = IP_REGEX.as_ref() {
-            if ip_regex.is_match(&decoded) {
+            if !is_referer_or_origin(&location) && ip_regex.is_match(&decoded) {
                 tracing::warn!(
                     attack_type = "rfi",
                     location = %location,
@@ -140,5 +142,33 @@ mod tests {
         assert!(detector
             .detect("/api/files?id=123", InputLocation::QueryString)
             .is_none());
+    }
+
+    #[test]
+    fn test_rfi_referer_ip_exempt() {
+        let detector = RfiDetector::new(2, &[]);
+        assert!(detector
+            .detect(
+                "http://192.168.182.143:8082/static/css/public.css",
+                InputLocation::Header("referer".into())
+            )
+            .is_none());
+        assert!(detector
+            .detect(
+                "http://192.168.182.143:8082/",
+                InputLocation::Header("origin".into())
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn test_rfi_referer_smuggled_pattern_still_blocked() {
+        let detector = RfiDetector::new(2, &[]);
+        assert!(detector
+            .detect(
+                "x?file=http://evil.com/shell.txt",
+                InputLocation::Header("referer".into())
+            )
+            .is_some());
     }
 }

@@ -126,7 +126,11 @@ action = "stall"  # Hold attack payloads; tarpit scrapers via [bot]/[tarpit]
 ### SQL Injection (SQLi)
 
 Uses libinjection for detection with fingerprinting:
-- Tests query strings, POST bodies, headers, and cookies
+- Tests query strings, POST bodies, and the scanned header set (Cookie,
+  Referer, Origin, configured custom headers)
+- Does **not** run on content negotiation, browser metadata/framing/cache
+  headers, `Host`, `Authorization`, `Content-Type`, `Content-Length` or
+  `Transfer-Encoding` (see [Header Scan Scope](#header-scan-scope))
 - Handles URL-encoded and double-encoded payloads
 - Returns fingerprint for logging and analysis
 
@@ -256,12 +260,53 @@ HTTP Request Smuggling detection:
 - PHP-specific RFI vectors
 - Protocol handlers in parameters
 
+`Referer` and `Origin` headers are exempt from the bare-IP heuristic
+(`ip_in_url`): browsers legitimately echo same-site intranet URLs there.
+Anchored inclusion patterns (e.g. `?file=http://`) are still inspected in
+those headers, and IP detection in query strings and bodies is unchanged.
+The same exemption applies to open-redirect bare-URL matching: a plain
+absolute `Referer`/`Origin` is not a redirect, but a value carrying a
+redirect parameter (e.g. `?next=http://evil/`) still fires. The `Host`
+header is likewise exempt from the SSRF private-IP heuristic — it names
+the already-reached server, not a fetch target — while SSRF pattern
+matching stays active there.
+
+### Header Scan Scope
+
+Header **payload** detection is deliberately narrow; it is not "scan every
+header". The value detectors (SQLi, XSS, SSTI, command injection, path
+traversal, RFI, SSRF, XXE, LDAP, XPath, open redirect) scan:
+
+| Header class | Headers | Treatment |
+|---|---|---|
+| User-controlled value | `Cookie` | Scanned (primary SQLi/XSS sink) |
+| URL-bearing | `Referer`, `Origin` | Scanned with URL-aware exemptions: a plain absolute URL is not a redirect and bare-IP heuristics are skipped; anchored/inclusion patterns and embedded external targets still fire |
+| Configured custom | `[attack_detection.headers].scan` | Scanned as user-controlled values |
+| Credential | `Authorization`, `Proxy-Authorization` | SQLi/XSS skipped; `Authorization` goes to the JWT detector |
+| Automated-client ID | `User-Agent` | SQLi/XSS skipped; used by bot/fingerprint detection |
+| Everything else | `Accept-*`, `Sec-*`, `Priority`, `Upgrade-*`, `Range`, `If-*`, `Cache-Control`, `Pragma`, `DNT`, `TE`, `Connection`, `Host`, `Content-Type`, `Content-Length`, `Transfer-Encoding`, proxy/trace metadata, unknown headers | Skipped by value detectors |
+
+`[attack_detection.headers].skip` removes a header from value scanning even if
+it would otherwise be scanned; `scan` adds an application-specific header.
+`HeaderValidator` still runs on every header independently: maximum size,
+header count, CRLF, invalid control characters, duplicate headers, and
+smuggling-oriented framing conflicts.
+
+Ambiguous libinjection-only matches in header/URL inputs are non-escalating
+(they still block under `action = "block"` but never count toward an IP ban).
+Pattern matches and structural classes (request smuggling, XXE, command
+injection) remain high-confidence and count normally.
+
 ### Header Validation
 
 Validates incoming HTTP headers:
 - Maximum header length enforcement
 - Invalid characters detection
 - Known malicious header patterns
+- Duplicate/framing conflict detection
+
+This structural validator runs on every header regardless of the payload scan
+policy above.
 
 ## Configuration
 
@@ -292,24 +337,39 @@ Configure response to detected attacks:
 
 ```toml
 [attack_detection]
-action = "stall"  # "stall", "block", or "log"
+action = "block"  # "block" (default), "stall", or "log"
 ```
 
+- **block**: Return an error response (default)
 - **stall**: Hold connection indefinitely (stealth mode)
-- **block**: Return error response
-- **log**: Log but allow request
+- **log**: Log/metric the match, allow the request, and do not record an
+  escalation violation
+
+Per-path rules (`[[attack_detection.per_path]]` with `action = "log"`) override
+the site action. CLI/config changes to attack detection apply on restart;
+rule-feed pattern updates are applied through the control-plane reload path.
 
 With `action = "block"`, a detected SQLi, XSS, or path-traversal payload returns
 **HTTP 403** with the body `Attack Detected`; a clean request is forwarded upstream
 and returns its normal response.
 
-### Custom Patterns
+### Per-Site Overrides and Custom Patterns
 
-Add site-specific detection patterns to the detectors that support them.
-`custom_patterns` exists on `path_traversal`, `rfi`, and `ssrf`; the `sqli` and `xss`
-tables only carry an `enabled` toggle:
+`paranoia_level`, `action`, and detector `custom_patterns` are enforced per
+site. A site's patterns are added to the global/default set for that site only;
+another site is unaffected. Custom patterns are supported on `sqli`, `xss`,
+`path_traversal`, `rfi`, and `ssrf`.
 
 ```toml
+[attack_detection]
+paranoia_level = 3
+
+[attack_detection.sqli]
+custom_patterns = ["tenant_specific_token"]
+
+[attack_detection.xss]
+custom_patterns = ["<tenant-frame"]
+
 [attack_detection.path_traversal]
 custom_patterns = ["etc/passwd"]
 
@@ -320,6 +380,10 @@ custom_patterns = ["nmap", "nc "]
 custom_patterns = ["metadata.google"]
 ```
 
+A site that changes detector construction inputs uses a cached immutable
+detector variant (bounded to 64 policies, LRU); sites with no such overrides
+share the single global detector. Detector reload clears the variant cache.
+
 ### Domain Allowlists
 
 `allowed_domains` is an SSRF-only option. The open redirect detector has no per-site
@@ -329,7 +393,11 @@ allowlist key:
 [attack_detection.ssrf]
 allowed_domains = ["api.stripe.com", "api.github.com"]
 block_private_ips = true
+allowlist_only_mode = false   # true = only allowed_domains may appear
 ```
+
+`allowed_domains`, `block_private_ips` and `allowlist_only_mode` are all
+per-site overrides.
 
 ## Debugging Detection Issues
 
@@ -492,7 +560,12 @@ a dedicated `synvoid_attack_detected` Prometheus family — no such metric is re
 
 ### Key Metrics
 
-Attack detection counts reach operators through the admin metrics API
+`synvoid_waf_attack_detection_total{detector,location,confidence}` counts
+detections with bounded labels (`detector` = attack type, `location` =
+`query_string`/`post_body`/`header`/`path`/`cookie`, `confidence` =
+`low`/`medium`/`high`). No header names, IPs, URLs or user agents are labels.
+
+Attack detection counts also reach operators through the admin metrics API
 (`/api/metrics`), which reports aggregate counters such as:
 
 | Field | Description |

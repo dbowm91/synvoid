@@ -92,6 +92,7 @@ mod tests {
             health_check_interval_secs: 5,
             control_api_addr: "127.0.0.1:50051".to_string(),
             control_api_tls: None,
+            worker_threads: None,
             ipc_session_key: None,
             ipc_enforce_signing: false,
             ipc_rate_limit: Default::default(),
@@ -4531,7 +4532,7 @@ mod waf_attack_detection_tests {
     }
 
     #[tokio::test]
-    async fn test_xss_in_user_agent_header() {
+    async fn test_xss_in_user_agent_header_is_not_payload_scanned() {
         let detector = create_attack_detector();
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -4542,15 +4543,10 @@ mod waf_attack_detection_tests {
         let result = detector
             .check_request(client_ip, &http::Method::GET, "/", None, &headers, None)
             .await;
-        assert!(result.0.is_some());
-        assert!(matches!(
-            result.0.as_ref().unwrap().attack_type,
-            AttackType::Xss
-        ));
-        assert!(matches!(
-            result.0.as_ref().unwrap().input_location,
-            InputLocation::Header(_)
-        ));
+        assert!(
+            result.0.is_none(),
+            "User-Agent is bot/fingerprint input, not a SQLi/XSS payload sink"
+        );
     }
 
     #[tokio::test]

@@ -1,8 +1,11 @@
 use crate::components::confirm_dialog::{ConfirmDialog, ConfirmType};
+use crate::components::forms::Select;
+use crate::components::skeleton::LoadingSpinner;
+use crate::components::theme_preview::ThemePreview;
 use crate::components::toast::{toast_error, toast_success};
 use crate::components::tooltip::HelpIcon;
 use crate::services::ApiService;
-use crate::types::ErrorPageResponse;
+use crate::types::{ErrorPageResponse, ThemeResponse, UpdateThemeRequest};
 use yew::prelude::*;
 
 /// Custom error page editor.
@@ -169,9 +172,13 @@ pub fn ErrorPages() -> Html {
             <header>
                 <h1 class="text-2xl font-bold">{ "Error Pages" }</h1>
                 <p class="text-sm text-secondary">
-                    { "Custom HTML served for the status codes SynVoid can intercept." }
+                    { "Halloy theme and custom HTML served for the status codes SynVoid can intercept." }
                 </p>
             </header>
+
+            <section class="bg-secondary rounded-lg border border-default p-4">
+                <BlockThemeSection />
+            </section>
 
             if let Some(err) = (*error).clone() {
                 <div class="p-4 rounded-lg bg-red-500/10 border border-red-500">
@@ -309,6 +316,302 @@ pub fn ErrorPages() -> Html {
                 on_confirm={on_confirm_save}
                 on_cancel={on_cancel_save}
             />
+        </div>
+    }
+}
+
+/// Global block/error-page Halloy theme (dark pick, light pick, scheme).
+///
+/// Moved here from Settings → Theme so every error-page control lives in
+/// one place: this section owns the palette the styled templates render
+/// with. The admin panel's own palette is configured separately under
+/// Settings → Theme and never affects these values.
+#[function_component]
+fn BlockThemeSection() -> Html {
+    let theme_data = use_state(|| None::<ThemeResponse>);
+    let selected_dark = use_state(String::new);
+    let selected_light = use_state(String::new);
+    let selected_scheme = use_state(|| "system".to_string());
+    let preview_light = use_state(|| false);
+    let saving = use_state(|| false);
+    let loading = use_state(|| true);
+    let original_dark = use_state(String::new);
+    let original_light = use_state(String::new);
+    let original_scheme = use_state(|| "system".to_string());
+
+    let is_dirty = *selected_dark != *original_dark
+        || *selected_light != *original_light
+        || *selected_scheme != *original_scheme;
+
+    use_effect_with((), {
+        let theme_data = theme_data.clone();
+        let selected_dark = selected_dark.clone();
+        let selected_light = selected_light.clone();
+        let selected_scheme = selected_scheme.clone();
+        let loading = loading.clone();
+        let original_dark = original_dark.clone();
+        let original_light = original_light.clone();
+        let original_scheme = original_scheme.clone();
+        move |_| {
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+                let theme_result = api.get_theme().await;
+
+                if let Ok(data) = theme_result {
+                    selected_dark.set(data.dark_theme.clone());
+                    selected_light.set(data.light_theme.clone());
+                    selected_scheme.set(data.scheme.clone());
+                    original_dark.set(data.dark_theme.clone());
+                    original_light.set(data.light_theme.clone());
+                    original_scheme.set(data.scheme.clone());
+
+                    theme_data.set(Some(data));
+                }
+                loading.set(false);
+            });
+            || {}
+        }
+    });
+
+    let on_dark_change = {
+        let selected_dark = selected_dark.clone();
+        Callback::from(move |value: String| {
+            selected_dark.set(value);
+        })
+    };
+
+    let on_light_change = {
+        let selected_light = selected_light.clone();
+        Callback::from(move |value: String| {
+            selected_light.set(value);
+        })
+    };
+
+    let on_scheme_change = {
+        let selected_scheme = selected_scheme.clone();
+        Callback::from(move |value: String| {
+            selected_scheme.set(value);
+        })
+    };
+
+    let on_toggle_preview = {
+        let preview_light = preview_light.clone();
+        Callback::from(move |_| {
+            let new_value = !*preview_light;
+            preview_light.set(new_value);
+        })
+    };
+
+    let on_save = {
+        let saving = saving.clone();
+        let selected_dark = selected_dark.clone();
+        let selected_light = selected_light.clone();
+        let selected_scheme = selected_scheme.clone();
+        let theme_data = theme_data.clone();
+        let original_dark = original_dark.clone();
+        let original_light = original_light.clone();
+        let original_scheme = original_scheme.clone();
+        Callback::from(move |_| {
+            let dark = (*selected_dark).clone();
+            let light = (*selected_light).clone();
+            let scheme = (*selected_scheme).clone();
+            let theme_data = theme_data.clone();
+            let saving = saving.clone();
+            let original_dark = original_dark.clone();
+            let original_light = original_light.clone();
+            let original_scheme = original_scheme.clone();
+
+            saving.set(true);
+
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+                let request = UpdateThemeRequest {
+                    preset: None,
+                    mode: None,
+                    dark_theme: Some(dark),
+                    light_theme: Some(light),
+                    scheme: Some(scheme),
+                    panel_dark_theme: None,
+                    panel_light_theme: None,
+                    allow_only: None,
+                };
+
+                match api.update_theme(&request).await {
+                    Ok(data) => {
+                        original_dark.set(data.dark_theme.clone());
+                        original_light.set(data.light_theme.clone());
+                        original_scheme.set(data.scheme.clone());
+                        theme_data.set(Some(data));
+                        // No success toast: the preview below updates
+                        // immediately, which is the confirmation.
+                    }
+                    Err(e) => {
+                        toast_error(&format!("Failed to update theme: {}", e));
+                        tracing::error!("Failed to update theme: {}", e);
+                    }
+                }
+                saving.set(false);
+            });
+        })
+    };
+
+    let on_reset = {
+        let selected_dark = selected_dark.clone();
+        let selected_light = selected_light.clone();
+        let selected_scheme = selected_scheme.clone();
+        let theme_data = theme_data.clone();
+        let original_dark = original_dark.clone();
+        let original_light = original_light.clone();
+        let original_scheme = original_scheme.clone();
+        Callback::from(move |_| {
+            let theme_data = theme_data.clone();
+            let selected_dark = selected_dark.clone();
+            let selected_light = selected_light.clone();
+            let selected_scheme = selected_scheme.clone();
+            let original_dark = original_dark.clone();
+            let original_light = original_light.clone();
+            let original_scheme = original_scheme.clone();
+
+            let request = UpdateThemeRequest {
+                preset: Some("default".to_string()),
+                mode: Some("auto".to_string()),
+                dark_theme: None,
+                light_theme: None,
+                scheme: None,
+                panel_dark_theme: None,
+                panel_light_theme: None,
+                allow_only: None,
+            };
+
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+                match api.update_theme(&request).await {
+                    Ok(data) => {
+                        selected_dark.set(data.dark_theme.clone());
+                        selected_light.set(data.light_theme.clone());
+                        selected_scheme.set(data.scheme.clone());
+                        original_dark.set(data.dark_theme.clone());
+                        original_light.set(data.light_theme.clone());
+                        original_scheme.set(data.scheme.clone());
+                        theme_data.set(Some(data));
+                        // No success toast: the preview below updates
+                        // immediately, which is the confirmation.
+                    }
+                    Err(e) => {
+                        toast_error(&format!("Failed to reset theme: {}", e));
+                    }
+                }
+            });
+        })
+    };
+
+    let theme_options: Vec<(String, String)> = match &*theme_data {
+        Some(data) => data
+            .presets_available
+            .iter()
+            .map(|entry| (entry.id.clone(), entry.name.clone()))
+            .collect(),
+        None => Vec::new(),
+    };
+
+    let scheme_options = vec![
+        ("system".to_string(), "System".to_string()),
+        ("dark".to_string(), "Dark".to_string()),
+        ("light".to_string(), "Light".to_string()),
+    ];
+
+    if *loading {
+        return html! { <LoadingSpinner /> };
+    }
+
+    html! {
+        <div class="space-y-6">
+            <h2 class="text-lg font-semibold">{ "Block page theme" }</h2>
+            <Select
+                label="Dark theme"
+                name="theme_dark"
+                value={(*selected_dark).clone()}
+                options={theme_options.clone()}
+                help="Block-page theme used for dark color schemes"
+                on_change={on_dark_change}
+            />
+            <Select
+                label="Light theme"
+                name="theme_light"
+                value={(*selected_light).clone()}
+                options={theme_options.clone()}
+                help="Block-page theme used for light color schemes"
+                on_change={on_light_change}
+            />
+            <Select
+                label="Color scheme"
+                name="theme_scheme"
+                value={(*selected_scheme).clone()}
+                options={scheme_options}
+                help="Follow the system preference or force dark / light"
+                on_change={on_scheme_change}
+            />
+
+            <div>
+                <div class="flex items-center justify-between mb-2">
+                    <label class="block text-sm font-medium text-primary">{ "Preview" }</label>
+                    <button
+                        onclick={on_toggle_preview}
+                        class="px-3 py-1 text-sm bg-tertiary border border-default rounded-lg text-primary hover:opacity-80"
+                    >
+                        { if *preview_light { "🌙 Dark" } else { "☀️ Light" } }
+                    </button>
+                </div>
+                <div class="border border-default rounded-lg overflow-hidden">
+                    {
+                        if let Some(data) = (*theme_data).as_ref() {
+                            let pick = if *preview_light { &data.light_theme } else { &data.dark_theme };
+                            if pick == "default" {
+                                html! {
+                                    <div class="p-6 text-center text-sm text-secondary">
+                                        { "SynVoid default: pages render unstyled, without Halloy colours. Pick a theme to preview it." }
+                                    </div>
+                                }
+                            } else {
+                                let c = if *preview_light { &data.colors.light } else { &data.colors.dark };
+                                html! {
+                                    <ThemePreview
+                                        background={c.background.clone()}
+                                        surface={c.surface.clone()}
+                                        text={c.text.clone()}
+                                        border={c.border.clone()}
+                                        primary={c.primary.clone()}
+                                    />
+                                }
+                            }
+                        } else {
+                            html! { <LoadingSpinner /> }
+                        }
+                    }
+                </div>
+                <p class="mt-1 text-sm text-secondary">{ "Sample error page preview with current theme" }</p>
+            </div>
+
+            <div class="flex justify-between gap-4">
+                <button
+                    onclick={on_reset}
+                    disabled={*saving}
+                    class="px-4 py-2 bg-tertiary text-primary rounded-lg hover:opacity-80 disabled:opacity-50"
+                >
+                    { "Reset to default" }
+                </button>
+                <button
+                    onclick={on_save}
+                    disabled={*saving}
+                    class={if is_dirty {
+                        "px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50"
+                    } else {
+                        "px-4 py-2 bg-action-600 text-white rounded-lg hover:bg-action-700 disabled:opacity-50"
+                    }}
+                >
+                    { if *saving { "Saving..." } else if is_dirty { "Save*" } else { "Save" } }
+                </button>
+            </div>
         </div>
     }
 }

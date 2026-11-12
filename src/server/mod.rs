@@ -29,8 +29,11 @@ use crate::worker::drain_state::WorkerDrainState;
 use std::sync::Mutex as StdMutex;
 use synvoid_http::runtime::HttpRuntimeContext;
 
+pub mod aux_listener_config;
+
 #[cfg(feature = "dns")]
 pub mod dns_runtime_config;
+pub mod listener_binding;
 pub mod listener_tasks;
 pub mod plugin_runtime;
 pub mod resources;
@@ -38,12 +41,14 @@ pub mod runtime_handles;
 pub mod service_assembly;
 pub mod startup_plan;
 pub mod waf_handler;
+pub mod worker_sandbox;
 
 #[cfg(feature = "dns")]
 pub use dns_runtime_config::{
     dns_runtime_config_from_persisted, DnsRuntimeConversionError, DnsServerRuntimeConfig,
 };
 
+pub use listener_binding::{http_listener_snapshots, BoundHttpListener, HttpListenerSnapshot};
 pub use plugin_runtime::{PluginRuntimeOwner, PluginRuntimeReport};
 pub use resources::{UnifiedServerResourceError, UnifiedServerResources};
 pub use runtime_handles::{
@@ -67,6 +72,10 @@ pub(crate) struct ServerSharedState {
     pub(crate) metrics: Option<Arc<WorkerMetrics>>,
     pub(crate) ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
     pub(crate) worker_id: Option<WorkerId>,
+    /// Set-once handle to the worker-local request-log sink (the admin
+    /// `AdminState`). Registered by `spawn_admin_service` once the control
+    /// plane exists; read per request by the HTTP/HTTPS lanes.
+    pub(crate) request_log_sink: synvoid_http::RequestLogSinkHandle,
     pub(crate) serverless_manager: Option<Arc<crate::serverless::manager::ServerlessManager>>,
     pub(crate) app_servers: Arc<RwLock<HashMap<String, Arc<crate::app_server::GranianSupervisor>>>>,
     pub(crate) _http_runtime_context: Option<
@@ -82,12 +91,8 @@ pub(crate) struct ServerSharedState {
 #[derive(Clone)]
 pub struct UnifiedServer {
     pub(crate) config: Arc<RwLock<ConfigManager>>,
-    pub(crate) http_addr: SocketAddr,
-    pub(crate) http_addr_v6: Option<SocketAddr>,
-    pub(crate) https_addr: Option<SocketAddr>,
-    pub(crate) https_addr_v6: Option<SocketAddr>,
-    pub(crate) http3_addr: Option<SocketAddr>,
-    pub(crate) http3_addr_v6: Option<SocketAddr>,
+    pub(crate) bound_http_listeners: Arc<Vec<BoundHttpListener>>,
+    pub(crate) admin_addr: Option<SocketAddr>,
     pub(crate) tcp_pool: Option<TcpListenerPool>,
     pub(crate) udp_pool: Option<UdpListenerPool>,
     pub(crate) waf: Arc<WafCore>,
@@ -140,28 +145,41 @@ impl UnifiedServer {
         // Build startup plan from config
         let plan = {
             let cfg = config.read().await;
-            UnifiedServerStartupPlan::from_config_snapshot(&cfg.main, worker_count)
-                .map_err(|e| format!("Startup plan validation failed: {}", e))?
+            UnifiedServerStartupPlan::from_config_snapshot_with_sites(
+                &cfg.main,
+                &cfg.sites,
+                worker_count,
+            )
+            .map_err(|e| format!("Startup plan validation failed: {}", e))?
         };
 
         // Build resources from plan
         let resources = {
             let cfg = config.read().await;
             UnifiedServerResources::build(&cfg.main, &plan, config.clone())
+                .await
                 .map_err(|e| format!("Resource construction failed: {}", e))?
         };
+
+        if plan.http_listeners.iter().any(|listener| listener.tls)
+            && resources.cert_resolver.is_none()
+        {
+            return Err("TLS listener configured without a loaded certificate resolver".into());
+        }
+
+        // Bind every data-plane listener before the worker can report ready.
+        let reuse_port = worker_count > 1 && synvoid_platform::is_reuse_port_supported();
+        let bound_http_listeners =
+            listener_binding::bind_http_listeners(&plan.http_listeners, reuse_port)
+                .map_err(|e| format!("HTTP listener bind failed: {}", e))?;
 
         let (shutdown_tx, _) = broadcast::channel(1);
         let (stop_accepting_tx, _) = broadcast::channel(1);
 
         Ok(Self {
             config,
-            http_addr: plan.http_addr,
-            http_addr_v6: plan.http_addr_v6,
-            https_addr: plan.https_addr,
-            https_addr_v6: plan.https_addr_v6,
-            http3_addr: plan.http3_addr,
-            http3_addr_v6: plan.http3_addr_v6,
+            bound_http_listeners,
+            admin_addr: plan.admin_addr,
             tcp_pool: resources.tcp_pool,
             udp_pool: resources.udp_pool,
             waf: resources.waf,
@@ -352,9 +370,9 @@ impl UnifiedServer {
         self.waf.threat_level.clone()
     }
 
-    /// Deprecated no-op (Phase 19): rule-pattern merges go through the global
-    /// rule-pattern store; detector reloads need no explicit step. Retained
-    /// for API compatibility; always returns `Ok`. No new callers.
+    /// Rebuild the global attack detector from the effective configuration and
+    /// current rule-feed patterns. Per-site detector variants are invalidated
+    /// and rebuilt lazily; streaming scanner settings are preserved.
     pub fn reload_attack_detector(&self) -> Result<(), String> {
         self.waf.reload_attack_detector()
     }
@@ -428,22 +446,40 @@ impl UnifiedServer {
             metrics: self.metrics.clone(),
             ipc: self.ipc.clone(),
             worker_id: self.worker_id,
+            request_log_sink: synvoid_http::empty_sink_handle(),
             serverless_manager: self.serverless_manager.clone(),
             app_servers: self.app_servers.clone(),
             _http_runtime_context: http_runtime_context,
         });
 
+        // Bridge the stop-accepting signal into the server shutdown path.
+        // This turns the previously dropped-receiver channel into a real
+        // subscriber: listeners close before connection drain begins.
+        {
+            let mut stop_rx = self.stop_accepting_tx.subscribe();
+            let shutdown_tx = self.shutdown_tx.clone();
+            crate::server::runtime_handles::spawn_registered_unit(
+                &mut handles,
+                "stop_accepting_bridge",
+                crate::server::runtime_handles::RuntimeHandleClass::Maintenance,
+                async move {
+                    if stop_rx.recv().await.is_ok() {
+                        let _ = shutdown_tx.send(());
+                    }
+                },
+            );
+        }
+
         // ── Protocol listener tasks (registered, in startup order) ──
         listener_tasks::spawn_http_listeners(
             &mut handles,
             &shared_state,
-            &self.shutdown_tx,
-            self.http_addr,
-            self.http_addr_v6,
-        );
-        listener_tasks::spawn_https_listeners(&mut handles, &shared_state, self).await;
-        listener_tasks::spawn_http3_listeners(&mut handles, &shared_state, self);
+            self,
+            self.bound_http_listeners.as_ref(),
+        )
+        .await;
         listener_tasks::spawn_aux_pools(&mut handles, self);
+        listener_tasks::spawn_admin_service(&mut handles, &shared_state, self).await;
 
         // ── DNS server (registered) ─────────────────────────────────
         #[cfg(feature = "dns")]
@@ -523,43 +559,32 @@ impl UnifiedServer {
 
     pub(crate) async fn run_http_server_inner(
         state: Arc<ServerSharedState>,
-        http_addr: SocketAddr,
+        std_listener: std::net::TcpListener,
+        plan: crate::config::HttpListenerPlan,
+        http_config: crate::config::HttpConfig,
+        main_config: crate::config::MainConfig,
         shutdown_rx: broadcast::Receiver<()>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let (http_config, alt_svc, main_config, mesh_config) = {
+        let mesh_config = {
             let cfg = state.config.read().await;
-            let http_config = cfg.main.http.clone();
-            let http3_config = &cfg.main.http3;
-            let main_config = cfg.main.clone();
             #[cfg(feature = "mesh")]
             let mesh_config = cfg.main.tunnel.mesh.clone();
             #[cfg(not(feature = "mesh"))]
             let mesh_config: Option<()> = None;
-
-            let alt_svc = if http3_config.enabled {
-                Some(format!(
-                    "h3=\":{}\"; ma={}",
-                    http3_config.port, http3_config.alt_svc_max_age
-                ))
-            } else {
-                None
-            };
-            (http_config, alt_svc, main_config, mesh_config)
+            mesh_config
         };
         let _ = &mesh_config;
 
         let mut server = HttpServer::new(
-            http_addr,
+            plan.addr,
             (*state.router).clone(),
             state.waf.clone(),
             http_config,
             shutdown_rx,
             main_config,
-        );
-
-        if let Some(alt_svc) = alt_svc {
-            server = server.with_alt_svc(alt_svc);
-        }
+        )
+        .with_tcp_listener(std_listener)
+        .with_listener_plan(plan);
 
         if let Some(fp) = state.flood_protector.clone() {
             server = server.with_flood_protector(fp);
@@ -595,6 +620,8 @@ impl UnifiedServer {
             server = server.with_ipc(ipc, worker_id);
         }
 
+        server = server.with_request_log_sink(state.request_log_sink.clone());
+
         if let Some(sm) = state.serverless_manager.clone() {
             server = server.with_serverless_manager(sm);
         }
@@ -610,7 +637,8 @@ impl UnifiedServer {
 
     pub(crate) async fn run_https_server_inner(
         state: Arc<ServerSharedState>,
-        https_addr: SocketAddr,
+        std_listener: std::net::TcpListener,
+        plan: crate::config::HttpListenerPlan,
         cert_resolver: Arc<CertResolver>,
         tls_config: InternalTlsConfig,
         http_config: crate::config::HttpConfig,
@@ -619,8 +647,18 @@ impl UnifiedServer {
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         use crate::tls::HttpsServer;
 
+        let alt_svc = if plan.http3 {
+            let cfg = state.config.read().await;
+            Some(format!(
+                "h3=\":{}\"; ma={}",
+                plan.addr.port(),
+                cfg.main.http3.alt_svc_max_age
+            ))
+        } else {
+            None
+        };
         let mut server = HttpsServer::new(
-            https_addr,
+            plan.addr,
             tls_config,
             cert_resolver,
             (*state.router).clone(),
@@ -628,7 +666,13 @@ impl UnifiedServer {
             http_config,
             main_config,
             shutdown_rx,
-        );
+        )
+        .with_tcp_listener(std_listener)
+        .with_listener_plan(plan);
+
+        if let Some(alt_svc) = alt_svc {
+            server = server.with_alt_svc(alt_svc);
+        }
 
         if let Some(fp) = state.flood_protector.clone() {
             server = server.with_flood_protector(fp);
@@ -654,6 +698,7 @@ impl UnifiedServer {
         if let (Some(ipc), Some(worker_id)) = (state.ipc.clone(), state.worker_id) {
             server = server.with_ipc(ipc, worker_id);
         }
+        server = server.with_request_log_sink(state.request_log_sink.clone());
         if let Some(sm) = state.serverless_manager.clone() {
             server = server.with_serverless_manager(sm);
         }
@@ -664,7 +709,8 @@ impl UnifiedServer {
 
     pub(crate) async fn run_http3_server_inner(
         state: Arc<ServerSharedState>,
-        http3_addr: SocketAddr,
+        std_socket: std::net::UdpSocket,
+        plan: crate::config::HttpListenerPlan,
         cert_resolver: Arc<CertResolver>,
         http3_config: Http3Config,
         shutdown_rx: broadcast::Receiver<()>,
@@ -674,13 +720,23 @@ impl UnifiedServer {
         let main_config = state.config.read().await.main.clone();
 
         let mut server = Http3Server::new(
-            http3_addr,
+            plan.addr,
             http3_config,
             (*state.router).clone(),
             state.waf.clone(),
             main_config,
             shutdown_rx,
-        );
+        )
+        .with_udp_socket(std_socket)
+        .with_listener_plan(plan);
+        if let Some(drain_state) = state.drain_state.clone() {
+            let opened_state = drain_state.clone();
+            let closed_state = drain_state;
+            server = server.with_connection_callbacks(
+                Arc::new(move || opened_state.increment_active()),
+                Arc::new(move || closed_state.decrement_active()),
+            );
+        }
 
         if let Some(fp) = state.flood_protector.clone() {
             server = server.with_flood_protector(fp);
@@ -690,7 +746,7 @@ impl UnifiedServer {
             server = server.with_metrics(metrics);
         }
 
-        let tls_config = cert_resolver.build_server_config()?;
+        let tls_config = cert_resolver.build_server_config(&[b"h3"])?;
         server.serve(tls_config).await
     }
 
@@ -704,7 +760,15 @@ impl UnifiedServer {
 
     pub async fn reload_config(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut cfg = self.config.write().await;
+        let before = synvoid_config::normalize_http_listeners(&cfg.main, &cfg.sites).ok();
         cfg.reload_all();
+        let after = synvoid_config::normalize_http_listeners(&cfg.main, &cfg.sites).ok();
+        if before != after {
+            tracing::warn!(
+                "Listener configuration changed; sockets are startup state and require a restart"
+            );
+            return Err("listener configuration changed; restart the worker to apply it".into());
+        }
 
         tracing::info!("Configuration reloaded");
         Ok(())

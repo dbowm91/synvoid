@@ -1,6 +1,6 @@
 # SynVoid Architecture Overview
 
-SynVoid is a high-performance, multi-process Web Application Firewall (WAF) and reverse proxy written in Rust. It provides Layer 7 request filtering, attack detection, load balancing, TLS termination, and optional mesh networking — designed for 1M+ RPS with millions of tenants.
+SynVoid is a high-performance, multi-process Web Application Firewall (WAF) and reverse proxy written in Rust. It provides Layer 7 request filtering, attack detection, load balancing, TLS termination, and optional mesh networking. It is designed for high-throughput, multi-tenant deployment, but the repository does **not** publish a verified end-to-end RPS figure: throughput is workload- and host-dependent, and the only supported evidence is a dated run of the manual multi-service harness in [`benchmarks/multi_service/`](../benchmarks/multi_service/README.md). Treat any headline number as a design target, not a release claim.
 
 **Key Capabilities:**
 - Layer 7 WAF with **13 policy detectors + HeaderValidator + behavioral engine + fast-path prefilter**, normalization (incl. overlong UTF-8), bot detection, rate limiting, anomaly scoring, traffic shaping
@@ -115,7 +115,7 @@ Plus two supervised **sandbox jail** processes (dedicated `synvoid-wasm-jail` / 
 | Process | Flag | Purpose | Default |
 |---------|------|---------|---------|
 | **Supervisor** | (default) | Control plane, lifecycle, gRPC API | 1 |
-| **UnifiedServerWorker** | `--unified-server-worker` | Latency-sensitive HTTP/HTTPS/HTTP3 + WAF + proxy | 1 (code default; shipped `config/main.toml` sets 4) |
+| **UnifiedServerWorker** | `--unified-server-worker` | Latency-sensitive HTTP/HTTPS/HTTP3 + WAF + proxy | 1 (canonical; scale with `[process_manager].worker_threads`, not worker count — see `worker_architecture.md`) |
 | **CPU Offload Worker** | `--cpu-worker` | Bounded heavy transforms | 1 |
 | **Supervisor (legacy `--worker` alias)** | `--worker` | Deprecated alias for Supervisor (compat only; no `plan.rs` dispatch branch — falls through to Supervisor) | — |
 
@@ -318,7 +318,7 @@ These are discrete review surfaces in their own right — build/verify tooling, 
 | **Integrity browser client** | `clients/integrity-client.js` | X25519+ML-KEM key exchange, Ed25519 signing, PoW solving for frontends | [`integrity_deep_dive.md`](./integrity_deep_dive.md) |
 | **Shipped config** | `config/` | `main.toml` + `sites/`, error pages, `mime.types`, honeypot paths | [`config.md`](./config.md) |
 | **YARA rules** | `rules/default.yar` | 14 upload/content rules (executables, macros, webshells, bombs) | [`upload_deep_dive.md`](./upload_deep_dive.md) |
- | **Benches** | `benches/` + `benchmarks/` | Criterion hot-path benches (16 files: attack detection ×2, normalization, proxy cache ×2, proxy headers, ratelimit, routing, broadcast, DNS, WASM, upstream selection, metrics hot-path, buffer pool, honeypot persistence + `run_benchmarks.rs` runner; 12 registered `[[bench]]` targets) + historical result tracking; `benchmarks/http_transport/` is the Phase 63 manual-only eggfetch/legacy comparison harness (never CI) | [`track3_performance_report.md`](./track3_performance_report.md) · [`performance_optimization_baseline.md`](./performance_optimization_baseline.md) · [`performance_optimization_closeout.md`](./performance_optimization_closeout.md) · [`performance_optimization_corrective_closeout.md`](./performance_optimization_corrective_closeout.md) · [`eggfetch_0_2_transport_performance_requalification.md`](./eggfetch_0_2_transport_performance_requalification.md) |
+ | **Benches** | `benches/` + `benchmarks/` | Criterion hot-path benches (16 files: attack detection ×2, normalization, proxy cache ×2, proxy headers, ratelimit, routing, broadcast, DNS, WASM, upstream selection, metrics hot-path, buffer pool, honeypot persistence + `run_benchmarks.rs` runner; 12 registered `[[bench]]` targets) + historical result tracking; `benchmarks/http_transport/` is the Phase 63 manual-only eggfetch/legacy comparison harness, and `benchmarks/multi_service/` is the Phase 10 manual-only multi-service harness (vhost-1/100/1000, TLS/H2, WAF body, TCP/UDP probes, soak; never CI) — see [`multi_service/README.md`](../benchmarks/multi_service/README.md) | [`track3_performance_report.md`](./track3_performance_report.md) · [`performance_optimization_baseline.md`](./performance_optimization_baseline.md) · [`performance_optimization_closeout.md`](./performance_optimization_closeout.md) · [`performance_optimization_corrective_closeout.md`](./performance_optimization_corrective_closeout.md) · [`eggfetch_0_2_transport_performance_requalification.md`](./eggfetch_0_2_transport_performance_requalification.md) |
 | **Examples** | `examples/` | Embedded-app, dynamic-plugin, DNS profile configs | [`plugin_wasm.md`](./plugin_wasm.md) · [`dns_production_profiles.md`](./dns_production_profiles.md) |
 | **Scripts** | `scripts/` | `verify_architecture.sh`, DNS conformance/stress/bench, import checks | [`developer_tooling.md`](./developer_tooling.md) |
 

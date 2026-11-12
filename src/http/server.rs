@@ -37,7 +37,7 @@ mod connection_types;
 mod observability;
 
 pub(crate) use connection_types::DrainGuard;
-pub(crate) use observability::send_request_log_if_enabled;
+pub(crate) use observability::send_request_log_with_sink;
 
 use connection_types::*;
 
@@ -84,8 +84,12 @@ pub(crate) struct HttpServerRuntime {
     pub metrics: Option<Arc<WorkerMetrics>>,
     pub ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
     pub worker_id: Option<crate::process::ipc::WorkerId>,
+    /// Set-once handle to the worker-local request-log sink, cloned from
+    /// `ServerSharedState`. Resolved per request at emit time.
+    pub request_log_sink: synvoid_http::RequestLogSinkHandle,
     pub connection_limit: Arc<Semaphore>,
     pub upstream_client_registry: Arc<UpstreamClientRegistry>,
+    pub listener_id: Option<String>,
     pub backends: HttpAppBackends,
     #[cfg(feature = "mesh")]
     pub mesh_config: Option<Arc<MeshConfig>>,
@@ -100,6 +104,7 @@ pub struct HttpServer {
     addr: SocketAddr,
     shutdown_rx: broadcast::Receiver<()>,
     runtime: HttpServerRuntime,
+    prebound_listener: Option<std::net::TcpListener>,
 }
 
 impl HttpServer {
@@ -124,8 +129,10 @@ impl HttpServer {
             metrics: None,
             ipc: None,
             worker_id: None,
+            request_log_sink: synvoid_http::empty_sink_handle(),
             connection_limit: Arc::new(Semaphore::new(max_connections)),
             upstream_client_registry: Arc::new(UpstreamClientRegistry::new()),
+            listener_id: None,
             backends: HttpAppBackends::default(),
             #[cfg(feature = "mesh")]
             mesh_config: None,
@@ -139,7 +146,18 @@ impl HttpServer {
             addr,
             shutdown_rx,
             runtime,
+            prebound_listener: None,
         }
+    }
+
+    pub fn with_tcp_listener(mut self, listener: std::net::TcpListener) -> Self {
+        self.prebound_listener = Some(listener);
+        self
+    }
+
+    pub fn with_listener_plan(mut self, plan: synvoid_config::HttpListenerPlan) -> Self {
+        self.runtime.listener_id = Some(plan.id.to_string());
+        self
     }
 
     pub fn with_serverless_manager(
@@ -162,6 +180,11 @@ impl HttpServer {
     ) -> Self {
         self.runtime.ipc = Some(ipc);
         self.runtime.worker_id = Some(worker_id);
+        self
+    }
+
+    pub fn with_request_log_sink(mut self, sink: synvoid_http::RequestLogSinkHandle) -> Self {
+        self.runtime.request_log_sink = sink;
         self
     }
 
@@ -215,7 +238,13 @@ impl HttpServer {
     // fields inside are individually cfg-gated). Gating this on mesh
     // silently reduced minimal binaries to no-listen stubs.
     pub async fn serve(self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        accept_loop::run_accept_loop(self.addr, self.shutdown_rx, self.runtime).await
+        accept_loop::run_accept_loop(
+            self.addr,
+            self.shutdown_rx,
+            self.runtime,
+            self.prebound_listener,
+        )
+        .await
     }
 }
 

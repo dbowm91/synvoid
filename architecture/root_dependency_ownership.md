@@ -32,7 +32,7 @@ reference fails the guard until the row is reclassified with a reason.
 | hyper-rustls | — | remove_candidate | — | Phase 31: removed from root (0 src uses; egress TLS owned by synvoid-http-client) | removed Phase 31 | — |
 | tower | tests | remove_candidate | — | Phase 31: moved from [dependencies] to [dev-dependencies] (test-only: tower::ServiceExt::oneshot) | moved to dev-deps Phase 31 | — |
 | tower-http | http, admin | composition_runtime | default | HTTP middleware (filesystem, CORS) | keep | admin |
-| axum | admin, http | composition_runtime | default | REST API framework for admin endpoints | keep | admin, bin, http |
+| axum | admin, http, server | composition_runtime | default | REST API framework for admin endpoints + worker data-plane admin listener | keep | admin, bin, http, server |
 | axum-extra | — | remove_candidate | — | Phase 31: removed from root (0 src uses; canonical use in domain crates) | removed Phase 31 | — |
 | http-body | http | composition_runtime | default | Phase 75: frame polling/mapping in the EggServe direct-H1 adapter (`src/http/eggserve_h1.rs` only) | keep | http |
 | http-body-util | http, http_client | composition_runtime | default | HTTP body adapter utilities | keep | honeypot_port, http, server, tls |
@@ -41,7 +41,7 @@ reference fails the guard until the row is reclassified with a reason.
 | serde_json | config, admin, logging | composition_runtime | default | JSON serialization | keep | admin, bin, commands, honeypot_port, http, icmp_filter, platform, process, sandbox, server, serverless, supervisor, waf, worker |
 | postcard | utils, mesh | composition_runtime | default | Compact binary serialization for distributed state | keep | supervisor, worker |
 | rkyv | — | remove_candidate | — | Phase 31: removed from root (0 src uses; canonical rkyv 0.8 use in domain crates) | removed Phase 31 | — |
-| toml | config | composition_runtime | default | TOML config file parsing | keep | admin, bin |
+| toml | config | composition_runtime | default | TOML config file parsing | keep | admin, bin, server |
 | anyhow | throughout | composition_runtime | default | Error context and chaining | keep | http_client, server |
 | bitflags | — | remove_candidate | — | Phase 31: removed from root (0 src uses) | removed Phase 31 | — |
 | tracing | throughout | composition_runtime | default | Structured logging framework | keep | admin, bin, commands, common, geo, honeypot_port, http, icmp_filter, log_controller, mesh, plugin, process, sandbox, server, serverless, startup, supervisor, tcp, tls, udp, utils, waf, worker |
@@ -51,7 +51,7 @@ reference fails the guard until the row is reclassified with a reason.
 | regex | waf, logging, admin | composition_runtime | default | Pattern matching for WAF rules and log parsing | keep | admin, honeypot_port |
 | parking_lot | throughout | composition_runtime | default | Fast mutex and RwLock implementations | keep | admin, honeypot_port, http, log_controller, process, serverless, supervisor, tarpit, tcp, tls, udp, waf, worker |
 | dashmap | http_client, mesh | composition_runtime | default | Concurrent hash map for connection pools | keep | mesh, process, udp, waf, worker |
-| arc-swap | config, http_client | composition_runtime | default | Atomic Arc pointer swapping for hot config | keep | waf |
+| arc-swap | config, http_client | composition_runtime | default | Atomic Arc pointer swapping for hot config | keep | admin, waf |
 | moka | — | remove_candidate | — | Phase 31: removed from root (0 src uses) | removed Phase 31 | — |
 | memmap2 | — | remove_candidate | — | Phase 42: removed from root (0 src uses; mmap owned by synvoid-upstream) | removed Phase 42 | — |
 | metrics | metrics | composition_runtime | default | Metrics facade for observability | keep | admin, honeypot_port, http, icmp_filter, process, server, supervisor, tarpit, tcp, tls, udp, waf, worker |
@@ -81,12 +81,12 @@ reference fails the guard until the row is reclassified with a reason.
 | synvoid-yara | worker, supervisor | composition_runtime | default | Canonical YARA engine for CPU worker + mesh validator injection (Phase 26 single yara-x owner; Phase 29 jail service lives in synvoid-jail-runtime) | keep | supervisor, worker |
 | synvoid-ipc | process | composition_runtime | default | IPC transport abstractions | keep | http, process, sandbox, supervisor, worker |
 | synvoid-http-client | http_client | composition_runtime | default | HTTP client pool and QUIC dispatch | keep | http, http_client, tls |
-| synvoid-platform | platform facade + http, startup, supervisor, tls, worker | composition_runtime | default | Platform detection and OS abstractions (Phase 32: single owner; root internals import the crate directly) | keep | http, platform, startup, supervisor, tls, worker |
+| synvoid-platform | platform facade + http, server, startup, supervisor, tls, worker | composition_runtime | default | Platform detection and OS abstractions (Phase 32: single owner; root internals import the crate directly) | keep | http, platform, server, startup, supervisor, tls, worker |
 | synvoid-upstream | upstream | composition_runtime | default | Upstream server selection | keep | lib |
 | synvoid-tunnel | tunnel | composition_runtime | default | Tunnel backend routing | keep | tunnel |
 | hickory-proto | — | remove_candidate | — | Phase 31: removed from root + dns feature (0 src uses; DNS wire owned by synvoid-dns) | removed Phase 31 | — |
 | hickory-resolver | — | remove_candidate | — | Phase 31: removed from root + dns feature (0 src uses; resolution owned by synvoid-dns) | removed Phase 31 | — |
-| thiserror | throughout | composition_runtime | default | Derive macro for error types | keep | admin, honeypot_port, icmp_filter, mesh, process, server, serverless |
+| thiserror | throughout | composition_runtime | default | Derive macro for error types | keep | admin, honeypot_port, icmp_filter, mesh, process, server, serverless, tcp, udp |
 | getrandom | — | remove_candidate | — | Phase 31: removed from root + dns feature (0 `getrandom::` uses) | removed Phase 31 | — |
 | clap | commands | composition_runtime | default | CLI subcommand parsing | keep | bin, main |
 | tempfile | tests | remove_candidate | — | Phase 31: moved from [dependencies] to [dev-dependencies] (test fixtures + src unit tests) | moved to dev-deps Phase 31 | — |
@@ -125,7 +125,7 @@ reference fails the guard until the row is reclassified with a reason.
 | synvoid-proxy-cache | — | remove_candidate | — | Phase 31: removed from root (0 src uses; root proxy_cache/ removed Phase 03) | removed Phase 31 | — |
 | synvoid-admin | admin | composition_runtime | default | Admin API handler types | keep | admin |
 | synvoid-proxy | proxy | composition_runtime | default | Reverse proxy routing and location matching | keep | http, location_matcher, protocol, proxy, router, router_adapter, streaming, tls, waf |
-| synvoid-http | http | composition_runtime | default | Canonical HTTP parsing/normalization/body-policy/dispatch; root `http` is application composition over it (Phase 20); root `http_client` shim re-exports the Phase 34 WAF-body owner (Phase 34) | keep | http, http_client, listener, server, tls, waf, worker |
+| synvoid-http | http | composition_runtime | default | Canonical HTTP parsing/normalization/body-policy/dispatch; root `http` is application composition over it (Phase 20); root `http_client` shim re-exports the Phase 34 WAF-body owner (Phase 34); root `admin` implements the crate-owned `RequestLogSink` trait for `AdminState` (admin-panel operator-correctness Phase 04: the request path names the trait, never the state) | keep | admin, http, http_client, listener, server, tls, waf, worker |
 | synvoid-http3 | http3, waf | composition_runtime | default | HTTP/3 QUIC server; root WAF adapter implements the crate-owned narrow service trait | keep | http3, waf |
 | synvoid-serverless | serverless | composition_runtime | default | Serverless WASM function runtime | keep | serverless, worker |
 | synvoid-geoip | geoip | composition_runtime | default | GeoIP database lookups; `geo` holds the adapter that presents the provider as the DNS-owned `CountryLookup` capability (Phase 135). **Phase 138: composition builds the `GeoIpManager` from `[geoip]`** via `crate::geo::country_lookup_from_config`, so the capability is wired end-to-end | keep | admin, geo, lib |

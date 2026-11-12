@@ -294,8 +294,8 @@ fn omitted_admin_rate_limit_does_not_reject_every_request() {
 
     let parsed: AdminRateLimitConfig =
         serde_json::from_str("{}").expect("an empty [admin.rate_limit] must parse");
-    assert_eq!(parsed.requests_per_minute, 60);
-    assert_eq!(parsed.burst, 10);
+    assert_eq!(parsed.requests_per_minute, 600);
+    assert_eq!(parsed.burst, 50);
     assert!(
         parsed.requests_per_minute > 0,
         "a zero limit rejects 100% of admin requests, including the first"

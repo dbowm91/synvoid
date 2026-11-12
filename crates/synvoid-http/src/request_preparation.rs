@@ -62,7 +62,8 @@ pub fn request_headers_ingress_size(headers: &http::HeaderMap) -> usize {
 pub async fn prepare_request_preflight<W, LogFn, DropFn>(
     req: InboundRequest,
     client_ip: IpAddr,
-    local_addr: Option<SocketAddr>,
+    _local_addr: Option<SocketAddr>,
+    listener_id: Option<&str>,
     router: Arc<Router>,
     waf: Arc<W>,
     alt_svc: Option<String>,
@@ -164,7 +165,7 @@ where
         );
     }
 
-    let route = router.route_with_local_addr(&host, &path, local_addr);
+    let route = router.route_with_listener_id(&host, &path, listener_id);
     let target = match route {
         RouteResult::Found(target) => target,
         RouteResult::NotFound(msg) => {
@@ -247,7 +248,7 @@ pub enum RequestPreparationOutcome {
 pub trait BufferedRequestWaf:
     crate::EarlyWafHooks + RequestBodyWaf + ChallengePathWaf + Send + Sync
 {
-    fn error_page_theme(&self) -> &synvoid_config::theme::ThemeConfig;
+    fn error_page_theme(&self) -> std::sync::Arc<synvoid_config::theme::ThemeConfig>;
 
     fn render_page_with_theme(
         &self,
@@ -278,6 +279,7 @@ pub trait BufferedRequestWaf:
         ua: Option<&str>,
         ja4_hash: Option<&str>,
         site_bot_config: Option<&synvoid_config::site::SiteBotConfig>,
+        site_attack_config: Option<&synvoid_config::site::SiteAttackDetectionConfig>,
     ) -> synvoid_proxy::WafDecision;
 
     async fn check_request_full_owned(
@@ -292,6 +294,7 @@ pub trait BufferedRequestWaf:
         ua: Option<String>,
         ja4_hash: Option<String>,
         site_bot_config: Option<synvoid_config::site::SiteBotConfig>,
+        site_attack_config: Option<synvoid_config::site::SiteAttackDetectionConfig>,
     ) -> synvoid_proxy::WafDecision
     where
         Self: Sync;
@@ -343,12 +346,19 @@ where
             }
         };
 
+    let max_request_body_size = target
+        .site_config
+        .proxy
+        .max_request_body_size(http_config.max_streaming_body_size);
+
     let (full_body, request_body_size) = match collect_and_scan_request_body(
         body,
         waf.as_ref(),
         client_ip,
         content_length,
-        http_config.max_streaming_body_size,
+        max_request_body_size,
+        &path,
+        Some(&target.site_config.attack_detection),
     )
     .await
     {
@@ -543,6 +553,7 @@ where
                 user_agent,
                 ja4_hash,
                 Some(target.site_config.bot.clone()),
+                Some(target.site_config.attack_detection.clone()),
             )
             .await
         }
@@ -636,6 +647,7 @@ pub async fn prepare_request_before_buffered_waf<
     req: InboundRequest,
     client_ip: IpAddr,
     local_addr: Option<SocketAddr>,
+    listener_id: Option<&str>,
     router: Arc<Router>,
     waf: Arc<W>,
     alt_svc: Option<String>,
@@ -672,6 +684,7 @@ where
         req,
         client_ip,
         local_addr,
+        listener_id,
         router,
         waf,
         alt_svc,

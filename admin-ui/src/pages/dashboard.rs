@@ -8,7 +8,7 @@ use crate::components::realtime_header::RealtimeHeader;
 use crate::hooks::use_websocket::{use_websocket_or_poll, UseWebSocketState, WS_METRICS_PATH};
 use crate::services::api::POLL_STATS_SUMMARY_PATH;
 use crate::services::ApiService;
-use crate::types::{RealtimeMetrics, SiteStats, SystemStats};
+use crate::types::{RealtimeMetrics, SiteStats, SystemStats, UpstreamHealth};
 
 fn export_to_json(data: &serde_json::Value, filename: &str) {
     let json = serde_json::to_string_pretty(data).unwrap_or_default();
@@ -623,7 +623,7 @@ pub fn Dashboard() -> Html {
                                     >
                                         <SiteStatusItem
                                             domain={site.domains.first().unwrap_or(&site.site_id).clone()}
-                                            healthy={site.upstream_healthy}
+                                            health={site.upstream_healthy}
                                             requests={format_number((site.requests_per_second * 60.0) as u64)}
                                             blocked={format_number(site.blocked_requests)}
                                             bytes_received={site.bytes_received}
@@ -715,7 +715,7 @@ fn StatRow(props: &StatRowProps) -> Html {
 #[derive(Properties, PartialEq)]
 struct SiteStatusItemProps {
     domain: String,
-    healthy: bool,
+    health: UpstreamHealth,
     requests: String,
     blocked: String,
     bytes_received: u64,
@@ -737,15 +737,10 @@ fn SiteStatusItem(props: &SiteStatusItemProps) -> Html {
         })
     };
 
-    let status_class = if props.healthy {
-        "bg-green-500"
-    } else {
-        "bg-red-500"
-    };
-    let status_text = if props.healthy {
-        "Healthy"
-    } else {
-        "Unhealthy"
+    let (status_class, status_text) = match props.health {
+        UpstreamHealth::Healthy => ("bg-green-500", "Healthy"),
+        UpstreamHealth::Unhealthy => ("bg-red-500", "Unhealthy"),
+        UpstreamHealth::Unknown => ("bg-gray-500", "Unknown"),
     };
 
     let total_ingress =

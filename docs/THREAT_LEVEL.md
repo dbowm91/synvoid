@@ -98,11 +98,46 @@ is present, and `GET /api/threat-level` returns `404` when no manager was built.
 | Option | Default | Description |
 |--------|---------|-------------|
 | `enabled` | `true` | Enable automatic escalation |
-| `violations_before_block` | `3` | Violations before level increase |
+| `violations_before_block` | `3` | Recorded violations before the IP is blocked |
 | `violation_window_secs` | `300` | Time window for violations |
 | `excluded_ips` | `["127.0.0.1", "::1"]` | IPs excluded from escalation |
 
 `excluded_ips` is a plain list key (`excluded_ips = [...]`), not a sub-table.
+
+### Which Detections Count
+
+The violation tracker counts an attack detection only when it is
+escalation-eligible:
+
+| Detection | Counts as a violation? |
+|---|---|
+| Pattern matches (SQLi, XSS, traversal, RFI, SSRF, …) | Yes (high confidence) |
+| Structural validators (request smuggling, XXE, command injection) | Yes (high confidence) |
+| Libinjection-only match in query string, body or path | Yes (medium confidence) |
+| Libinjection-only match in a header, Referer/Origin URL or Cookie | **No** (low confidence) |
+| Any detection under `action = "log"` or a per-path `log` rule | **No** |
+
+Low-confidence header/URL matches still block when the resolved action is
+`block`; they are simply never accumulated toward an IP ban. This prevents a
+benign browser header sequence from reaching `violations_before_block` through
+libinjection noise alone.
+
+### Unbanning an IP
+
+Operator bans are removed through the admin API; the mutation returns a typed
+result and emits an `AdminAuditEvent`:
+
+```bash
+# Remove a block for an IP (admin bearer token; query parameters)
+curl -X DELETE -H "Authorization: Bearer <token>" \
+  "http://127.0.0.1:8081/mesh/ban?ban_type=ip&identifier=203.0.113.9"
+```
+
+For a mesh-ID ban use `ban_type=mesh_id` with the mesh ID as `identifier`.
+
+Use the admin UI/API ban listing to confirm the entry is gone before closing an
+incident. Escalation violations themselves expire after
+`violation_window_secs`.
 
 ### Learning Options
 

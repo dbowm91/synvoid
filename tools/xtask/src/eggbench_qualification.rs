@@ -1543,11 +1543,6 @@ pub fn build_site_toml(inputs: &BuildInputs) -> String {
 # the site explicitly accepts the loopback Host.
 domains = ["loopback.qualification.local", "127.0.0.1", "127.0.0.1:{listen_port}", "localhost", "localhost:{listen_port}"]
 
-[[site.listen]]
-address = "127.0.0.1"
-port = {listen_port}
-default_server = true
-
 [site.upstream]
 default = "http://127.0.0.1:{origin_port}"
 
@@ -2599,19 +2594,15 @@ mod tests {
             "site.toml must not bind public"
         );
         // Loopback Host acceptance: the natural Host the driver sends
-        // (`127.0.0.1:<listen-port>`) must be an explicit site domain, and
-        // the site must be the default server on its loopback listen entry.
+        // (`127.0.0.1:<listen-port>`) must be an explicit site domain. The
+        // legacy per-site listen surface is retired; [server] owns the socket.
         assert!(
             site_toml.contains("\"127.0.0.1:18181\""),
             "site.toml must accept the loopback Host with port"
         );
         assert!(
-            site_toml.contains("[[site.listen]]"),
-            "site.toml must declare its loopback listen entry"
-        );
-        assert!(
-            site_toml.contains("default_server = true"),
-            "site.toml listen entry must be the default server"
+            !site_toml.contains("[[site.listen]]"),
+            "site.toml must not use the retired per-site listen surface"
         );
         // The whitelist must stay empty: whitelisted IPs bypass all WAF
         // checks, which would mask Detect cases driven from loopback.

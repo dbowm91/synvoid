@@ -22,6 +22,7 @@ use crate::backend_dispatch::{
 };
 use crate::buffered_request_waf_dispatch::maybe_handle_buffered_request_waf_core;
 use crate::http_request_flow::RequestLogFn;
+use crate::request_log_sink::RequestLogSinkHandle;
 use crate::request_preparation::PreparedRequest;
 use crate::upload_validation_dispatch::UploadValidationWaf;
 use crate::wasm_filter_dispatch::WafErrorPageRenderer;
@@ -110,6 +111,7 @@ pub struct HttpRequestPostludeContext<W> {
     pub upstream_client_registry: Arc<UpstreamClientRegistry>,
     pub request_drop: Arc<dyn Fn() + Send + Sync>,
     pub request_log: RequestLogFn,
+    pub request_log_sink: RequestLogSinkHandle,
     /// Phase 01 (TLS convergence): JA4 fingerprint from the TLS handshake.
     /// `None` on plaintext HTTP; `Some` on HTTPS so the buffered WAF check
     /// keeps the same signal `HttpsServer` previously passed directly.
@@ -187,6 +189,7 @@ where
         upstream_client_registry,
         request_drop,
         request_log,
+        request_log_sink,
         ja4_hash,
         forwarded_protocol,
         #[cfg(feature = "mesh")]
@@ -221,6 +224,7 @@ where
     // are gone: the canonical path calls the internal decision core directly.
     let headers_for_waf_for_check = parts_for_waf.headers.clone();
     let site_bot_config_for_waf = target_for_waf.site_config.bot.clone();
+    let site_attack_config_for_waf = target_for_waf.site_config.attack_detection.clone();
     let site_id_for_log = site_id.clone();
     let method_str_for_log = method_str.clone();
     let path_for_log = path.clone();
@@ -245,6 +249,7 @@ where
     let user_agent_for_closure = user_agent.clone();
     let headers_for_waf_for_check_for_closure = headers_for_waf_for_check.clone();
     let site_bot_config_for_waf_for_closure = site_bot_config_for_waf.clone();
+    let site_attack_config_for_waf_for_closure = site_attack_config_for_waf.clone();
     let query_string_for_closure = query_string.map(|s| s.to_string());
     let ja4_for_closure = ja4_hash.clone();
     let waf_for_closure = Arc::clone(&waf);
@@ -268,6 +273,7 @@ where
             let user_agent = user_agent_for_closure.clone();
             let headers_for_waf_for_check = headers_for_waf_for_check_for_closure.clone();
             let site_bot_config_for_waf = site_bot_config_for_waf_for_closure.clone();
+            let site_attack_config_for_waf = site_attack_config_for_waf_for_closure.clone();
             let query_string = query_string_for_closure.clone();
             let ja4_hash = ja4_for_closure.clone();
             async move {
@@ -282,6 +288,7 @@ where
                     user_agent,
                     ja4_hash,
                     Some(site_bot_config_for_waf),
+                    Some(site_attack_config_for_waf),
                 )
                 .await
             }
@@ -299,6 +306,7 @@ where
             let method_str = method_str_for_log.clone();
             let path = path_for_log.clone();
             let user_agent = user_agent_for_log.clone();
+            let request_log_sink = request_log_sink.get().cloned();
             move |status, latency_ms| {
                 request_log(
                     ipc.clone(),
@@ -312,6 +320,7 @@ where
                     &site_id,
                     user_agent.as_deref(),
                     false,
+                    request_log_sink.clone(),
                 );
             }
         },
@@ -425,10 +434,39 @@ where
         mesh_backend_pool,
     };
 
+    // Capture the worker-local sink once: the backend dispatcher's `OnLogFn`
+    // stays an 11-argument callable while the 12th argument (the sink) rides
+    // along in the closure.
+    let backend_log_sink = request_log_sink.get().cloned();
     let response = handle_pass_backend_dispatch(
         upgrade,
         backend_ctx,
-        request_log,
+        move |ipc,
+              worker_id,
+              main_config,
+              client_ip,
+              method,
+              path,
+              status,
+              latency_ms,
+              site_id,
+              user_agent,
+              is_internal| {
+            request_log(
+                ipc,
+                worker_id,
+                main_config,
+                client_ip,
+                method,
+                path,
+                status,
+                latency_ms,
+                site_id,
+                user_agent,
+                is_internal,
+                backend_log_sink.clone(),
+            );
+        },
         quic_tunnel_request,
         mark_image_rights,
     )
@@ -459,6 +497,7 @@ where
         &site_id,
         user_agent.as_deref(),
         false,
+        request_log_sink.get().cloned(),
     );
 
     Ok(response)

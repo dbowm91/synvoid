@@ -4,7 +4,7 @@
 //! Each stage maps to the shared vocabulary in `architecture/http_request_pipeline.md`:
 //!
 //! 1. **Metadata Normalization** — `request_frontdoor::prepare_request_frontdoor()` + `request_parse::extract_request_metadata()`
-//! 2. **Route Resolution** — `request_preparation::prepare_request_preflight()` → `router.route_with_local_addr()`
+//! 2. **Route Resolution** — `request_preparation::prepare_request_preflight()` → `router.route_with_listener_id()`
 //! 3. **Body Policy** — `body_policy::collect_and_scan_request_body()`
 //! 4. **WAF Evaluation** — `buffered_request_waf_dispatch::maybe_handle_buffered_request_waf()` (trust-token bypass via `request_parse::should_skip_waf_from_trust_cookie()`; the former always-`Pass` early stage was removed in Phase 19)
 //! 5. **Terminal Response** — `request_frontdoor::dispatch_internal_endpoint()`
@@ -24,6 +24,7 @@ use tokio::sync::Mutex;
 use crate::request_frontdoor::{
     prepare_request_frontdoor, RequestFrontdoorContext, RequestFrontdoorOutcome,
 };
+use crate::request_log_sink::{RequestLogSink, RequestLogSinkHandle};
 use crate::request_preparation::{
     prepare_request_after_preflight, prepare_request_preflight, RequestPreflight,
     RequestPreflightOutcome, RequestPreparationOutcome,
@@ -45,6 +46,7 @@ pub type RequestLogFn = fn(
     &str,
     Option<&str>,
     bool,
+    Option<Arc<dyn RequestLogSink>>,
 );
 
 pub struct HttpRequestFlowOutcome {
@@ -57,6 +59,7 @@ pub async fn prepare_http_request_flow<W, D>(
     req: crate::inbound::InboundRequest,
     client_ip: IpAddr,
     local_addr: Option<SocketAddr>,
+    listener_id: Option<&str>,
     drain_state: Option<Arc<D>>,
     router: Arc<Router>,
     waf: Arc<W>,
@@ -69,6 +72,7 @@ pub async fn prepare_http_request_flow<W, D>(
     start: Instant,
     request_drop: Arc<dyn Fn() + Send + Sync>,
     request_log: RequestLogFn,
+    request_log_sink: RequestLogSinkHandle,
     #[cfg(feature = "mesh")] mesh_config: Option<Arc<synvoid_mesh::MeshConfig>>,
     #[cfg(feature = "mesh")] mesh_transport: Option<
         Arc<synvoid_mesh::transports::MeshTransportManager>,
@@ -121,6 +125,7 @@ where
     let main_config_for_traffic_fn = Arc::clone(&main_config);
     let main_config_for_traffic_cb = Arc::clone(&main_config);
     let ipc_for_traffic = ipc.clone();
+    let request_log_sink_for_traffic = request_log_sink.get().cloned();
     let conn_guard = match maybe_enforce_request_traffic_limits(
         waf.connection_limiter(),
         client_ip,
@@ -142,6 +147,7 @@ where
                 site_id,
                 user_agent,
                 is_internal,
+                request_log_sink_for_traffic.clone(),
             );
         },
     )
@@ -167,10 +173,12 @@ where
     let router_for_preflight = Arc::clone(&router);
     let waf_for_preflight = Arc::clone(&waf);
     let ipc_for_preflight = ipc.clone();
+    let request_log_sink_for_preflight = request_log_sink.get().cloned();
     let preflight = match prepare_request_preflight(
         frontdoor_req,
         client_ip,
         local_addr,
+        listener_id,
         router_for_preflight,
         waf_for_preflight,
         alt_svc_for_preflight,
@@ -189,6 +197,7 @@ where
                 site_id,
                 user_agent,
                 bypassed,
+                request_log_sink_for_preflight.clone(),
             );
         },
         {
@@ -238,8 +247,10 @@ where
     let main_config_for_after = main_config;
     let metrics_for_after = metrics.clone();
     let ipc_for_after_limit = ipc.clone();
+    let request_log_sink_for_after_limit = request_log_sink.get().cloned();
     let main_config_for_after_limit = Arc::clone(&main_config_for_after);
     let ipc_for_after_final = ipc.clone();
+    let request_log_sink_for_after_final = request_log_sink.get().cloned();
     let main_config_for_after_final = Arc::clone(&main_config_for_after);
     let outcome = prepare_request_after_preflight(
         RequestPreflight {
@@ -275,6 +286,7 @@ where
                 site_id,
                 user_agent,
                 is_internal,
+                request_log_sink_for_after_limit.clone(),
             );
         },
         move |status, bypassed| {
@@ -290,6 +302,7 @@ where
                 &site_id_for_log,
                 user_agent_for_log.as_deref(),
                 bypassed,
+                request_log_sink_for_after_final.clone(),
             );
         },
         handle_pass,

@@ -27,6 +27,10 @@ pub struct Http3Server {
     shutdown_rx: broadcast::Receiver<()>,
     trusted_proxies: Vec<String>,
     main_config: Arc<MainConfig>,
+    prebound_socket: Option<std::net::UdpSocket>,
+    listener_id: Option<synvoid_config::ListenerId>,
+    connection_opened: Option<Arc<dyn Fn() + Send + Sync>>,
+    connection_closed: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl Http3Server {
@@ -51,7 +55,31 @@ impl Http3Server {
             shutdown_rx,
             trusted_proxies,
             main_config: Arc::new(main_config),
+            prebound_socket: None,
+            listener_id: None,
+            connection_opened: None,
+            connection_closed: None,
         }
+    }
+
+    pub fn with_udp_socket(mut self, socket: std::net::UdpSocket) -> Self {
+        self.prebound_socket = Some(socket);
+        self
+    }
+
+    pub fn with_listener_plan(mut self, plan: synvoid_config::HttpListenerPlan) -> Self {
+        self.listener_id = Some(plan.id.clone());
+        self
+    }
+
+    pub fn with_connection_callbacks(
+        mut self,
+        opened: Arc<dyn Fn() + Send + Sync>,
+        closed: Arc<dyn Fn() + Send + Sync>,
+    ) -> Self {
+        self.connection_opened = Some(opened);
+        self.connection_closed = Some(closed);
+        self
     }
 
     pub fn with_flood_protector(mut self, flood_protector: Arc<FloodProtector>) -> Self {
@@ -65,13 +93,9 @@ impl Http3Server {
     }
 
     pub async fn serve(
-        self,
+        mut self,
         tls_config: Arc<rustls::ServerConfig>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        if !self.config.enabled {
-            return Ok(());
-        }
-
         let quic_server_config = quinn::crypto::rustls::QuicServerConfig::try_from(tls_config)
             .map_err(|e| format!("Failed to create QUIC server config: {}", e))?;
 
@@ -86,7 +110,10 @@ impl Http3Server {
             .map_err(|e| format!("Failed to create idle timeout: {}", e))?;
         transport_config.max_idle_timeout(Some(idle_timeout));
 
-        let std_socket = bind_udp_reuse(self.addr)?;
+        let std_socket = match self.prebound_socket.take() {
+            Some(socket) => socket,
+            None => bind_udp_reuse(self.addr)?,
+        };
         let endpoint = quinn::Endpoint::new(
             quinn::EndpointConfig::default(),
             Some(server_config),
@@ -142,6 +169,14 @@ impl Http3Server {
         let remote_addr = connection.remote_address();
         let client_ip = remote_addr.ip();
 
+        if let Some(listener_id) = self.listener_id.as_ref() {
+            counter!(
+                "synvoid.http.listener_accepted_total",
+                "listener" => listener_id.to_string(),
+                "transport" => "http3"
+            )
+            .increment(1);
+        }
         tracing::debug!("HTTP/3 connection from {}", remote_addr);
 
         if let Some(ref fp) = self.flood_protector {
@@ -158,9 +193,6 @@ impl Http3Server {
             }
         }
 
-        gauge!("synvoid.http3.connections").increment(1.0);
-        counter!("synvoid.http3.connections.total").increment(1);
-
         let server_builder = h3::server::builder();
         let mut h3_conn = server_builder
             .build(h3_quinn::Connection::new(connection))
@@ -169,6 +201,12 @@ impl Http3Server {
                 counter!("synvoid.http3.connection.errors").increment(1);
                 format!("Failed to create H3 connection: {}", e)
             })?;
+
+        gauge!("synvoid.http3.connections").increment(1.0);
+        counter!("synvoid.http3.connections.total").increment(1);
+        if let Some(opened) = self.connection_opened.as_ref() {
+            opened();
+        }
 
         loop {
             match h3_conn.accept().await {
@@ -193,6 +231,9 @@ impl Http3Server {
         }
 
         gauge!("synvoid.http3.connections").decrement(1.0);
+        if let Some(closed) = self.connection_closed.as_ref() {
+            closed();
+        }
         Ok(())
     }
 
@@ -208,6 +249,7 @@ impl Http3Server {
             resolver,
             remote_addr,
             &self.trusted_proxies,
+            self.listener_id.as_ref().map(|id| id.as_str()),
             &self.router,
             self.waf.connection_limiter().as_ref(),
             self.waf.is_over_bandwidth_limit(),
@@ -274,16 +316,5 @@ impl Http3Server {
         .await?;
 
         Ok(())
-    }
-
-    pub fn alt_svc_header(&self) -> String {
-        if self.config.enabled {
-            format!(
-                "h3=\":{}\"; ma={}",
-                self.config.port, self.config.alt_svc_max_age
-            )
-        } else {
-            String::new()
-        }
     }
 }

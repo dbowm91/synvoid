@@ -18,6 +18,24 @@ max_header_size_egress = 16384
 max_request_size = 1048576
 pipeline_limit = 32
 
+# Canonical process-wide listeners. When this array is present it is the only
+# socket authority; [server] host/port remain compatibility defaults.
+# Multiple HTTP/HTTPS/HTTP3 listeners may be declared. A listener with
+# tls = true and http3 = true owns HTTPS/TCP and HTTP/3/UDP on the same port.
+#
+# [[http.listeners]]
+# name = "public-http"
+# address = "0.0.0.0"
+# port = 80
+#
+# [[http.listeners]]
+# name = "public-https"
+# address = "0.0.0.0"
+# port = 443
+# tls = true
+# http2 = true
+# http3 = true
+
 [threat_level]
 initial = 1
 auto_scale = true
@@ -199,6 +217,17 @@ known_bots_allow = [
     "bingbot",
     "yandex",
     "duckduckbot",
+    # Link-preview fetchers (og:image/thumbnails for shared links).
+    "facebookexternalhit",
+    "twitterbot",
+    "slackbot",
+    "linkedinbot",
+    "whatsapp",
+    "discordbot",
+    "telegrambot",
+    # Sogou Mobile Browser (browser token only; the sogou crawler family
+    # stays blocked).
+    "sogoumobilebrowser",
 ]
 
 ai_crawlers_block = [
@@ -237,7 +266,13 @@ scraper_patterns = [
 
 [defaults.worker_pool]
 mode = "shared"
-workers = 4
+# Canonical data plane is a single UnifiedServerWorker; this feeds the
+# supervisor's initial spawn count. Prefer [process_manager].worker_threads
+# (Tokio threads) over raising this. N>1 workers do not share sessions,
+# CSRF tokens, the admin rate-limit budget, metrics or request logs, and
+# require allow_multi_worker = true.
+workers = 1
+allow_multi_worker = false
 worker_port_base = 9000
 auto_scale = true
 

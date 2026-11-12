@@ -1,21 +1,19 @@
-//! B-3 — the admin HTTP control plane is compiled but never mounted.
+//! B-3 — the admin HTTP control plane mount state.
 //!
-//! ## The defect this pins
+//! ## History
 //!
 //! `src/admin/` (~20k lines: router, middleware, handlers, OpenAPI, state,
-//! alerting, metrics publisher) plus `crates/synvoid-admin/` compile into every
-//! worker. The single public entry point, `create_admin_router`
-//! (`src/admin/mod.rs`), has no production caller — its only references are the
-//! three root test files that drive it through `ServiceExt::oneshot`.
-//! `start_metrics_publisher` has no caller at all.
+//! alerting, metrics publisher) plus `crates/synvoid-admin/` compiled into every
+//! worker while the single public entry point, `create_admin_router`
+//! (`src/admin/mod.rs`), had no production caller. The WAF/Admin
+//! deployment-truthfulness campaign mounted it
+//! (`src/server/listener_tasks.rs::spawn_admin_service`, per-worker listener
+//! on `[admin] bind_address:port`, drained via `shutdown_and_drain`).
+//! `start_metrics_publisher` still has no caller.
 //!
 //! The binding doc `architecture/admin_control_plane_authority.md` (and
 //! `AGENTS.md`) describe this API as *the* control plane, with authority,
-//! propagation and audit semantics. None of it is reachable, and the
-//! verification contract's three `admin-contract` lanes certify the router
-//! rather than the binary — they can go green while the shipped surface is
-//! absent. That is the "silent skip" failure mode the F-1 post-mortem warns
-//! about.
+//! propagation and audit semantics.
 //!
 //! ## What this gate enforces
 //!
@@ -94,9 +92,9 @@ fn has_production_caller() -> (bool, String) {
     (mounted, callers.join(", "))
 }
 
-/// B-3: the unmounted-admin notice and the code must agree.
+/// B-3: the mounted-admin marker and the code must agree.
 #[test]
-fn admin_surface_is_not_mounted() {
+fn admin_surface_mounting_pairing() {
     let root = workspace_root();
     let doc_path = root.join(AUTHORITY_DOC);
     let mut violations = Violations::new();
@@ -106,7 +104,7 @@ fn admin_surface_is_not_mounted() {
             "{AUTHORITY_DOC} is in this guard's scope but no longer exists; \
              re-scope the gate rather than letting it silently stop covering it"
         ));
-        violations.assert_ok("admin_surface_is_not_mounted");
+        violations.assert_ok("admin_surface_mounting_pairing");
         return;
     }
 
@@ -134,33 +132,41 @@ fn admin_surface_is_not_mounted() {
     violations.assert_ok("admin_surface_is_not_mounted");
 }
 
-/// The operator-facing feature matrix must not advertise the admin API as
-/// available. This is the document an operator reads to decide what a build
-/// actually does.
+/// The operator-facing feature matrix must describe the admin API as
+/// shipped. This is the document an operator reads to decide what a build
+/// actually does. Since the router is mounted, a stale "Not shipped" marker
+/// is the drift this gate refuses.
 #[test]
-fn feature_status_does_not_advertise_the_admin_api() {
+fn feature_status_advertises_the_mounted_admin_api() {
     let root = workspace_root();
     let rel = "docs/FEATURE_STATUS.md";
     let mut violations = Violations::new();
 
     let Ok(text) = fs::read_to_string(root.join(rel)) else {
         violations.push(format!("{rel} could not be read"));
-        violations.assert_ok("feature_status_does_not_advertise_the_admin_api");
+        violations.assert_ok("feature_status_advertises_the_mounted_admin_api");
         return;
     };
 
+    let mut saw_row = false;
     for line in text.lines() {
         let trimmed = line.trim_start();
         if !trimmed.starts_with('|') || !trimmed.contains("Admin HTTP API") {
             continue;
         }
-        if !trimmed.contains("Not shipped") {
+        saw_row = true;
+        if trimmed.contains("Not shipped") {
             violations.push(format!(
-                "{rel} advertises the Admin HTTP API without a \"Not shipped\" \
-                 marker: {trimmed}"
+                "{rel} still marks the Admin HTTP API \"Not shipped\" although \
+                 `{ROUTER_FN}` is mounted: {trimmed}"
             ));
         }
     }
+    if !saw_row {
+        violations.push(format!(
+            "{rel} has no Admin HTTP API row; the mounted control plane must be documented"
+        ));
+    }
 
-    violations.assert_ok("feature_status_does_not_advertise_the_admin_api");
+    violations.assert_ok("feature_status_advertises_the_mounted_admin_api");
 }

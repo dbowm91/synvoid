@@ -9,6 +9,50 @@ Scope: this roadmap covers architecture hardening, trust-boundary closure, verif
 Primary principle: request path remains local, narrow, and capability-driven; control plane remains explicit, audited, and provenance-carrying; distributed mesh data remains policy-gated before it mutates enforcement state; runtime tasks remain owned and drainable; the root crate remains composition, not domain logic; public stability claims remain conservative until verified by tests and release policy.
 
 
+## Production Readiness Remediation — Complete
+
+Status: **COMPLETE** (implemented 2026-11-11; evidence in each phase plan). Audited
+baseline `d507fefa` (SynVoid 1.1.0). Ten phase plans convert the
+production-readiness audit into ordered work: dependency security, TCP/UDP
+services, HTTP listener truthfulness, worker defaults/state, per-site WAF
+policy, header false positives/escalation, packaging, main data-plane
+sandboxing, body policy, and multi-service benchmarks.
+
+Plan: `plans/production_readiness_remediation_roadmap.md`.
+Phase plans: `plans/production_readiness_phase_01_dependency_security.md`
+through `plans/production_readiness_phase_10_multi_service_benchmarks.md`.
+
+The roadmap records decision gates D1–D6, recommended choices, binding
+constraints and the final verification matrix. Dependency security is the
+release blocker; Phases 02 and 03 must either implement or explicitly remove
+the service capabilities that the current configuration only documents.
+
+## Multi-Listener Canonical Support — Complete
+
+Status: **COMPLETE** (2026-11-11). All six phases are implemented; `cargo xtask
+verify` passes and the focused benchmark records both planned listeners.
+
+Plan: `plans/multi_listener_canonical_roadmap.md`.
+Phase plans: `plans/multi_listener_phase_01_configuration_model.md` through
+`plans/multi_listener_phase_06_multiworker_and_qualification.md`.
+
+This campaign reverses production-readiness decision **D2** and supersedes the
+terminal product choice in Phase 03A. 03A remains the truthful remediation of
+the old unbound `[[site.listen]]` surface; it is not the target model.
+Multi-listener support is canonical:
+
+- global `[[http.listeners]]` owns HTTP/HTTPS/HTTP3 sockets;
+- sites reference listener ids instead of declaring sockets;
+- TCP/UDP remain configured through `[tcp.protocols.*]` / `[udp.protocols.*]`;
+- every listener family shares one conflict matrix;
+- HTTPS TCP and HTTP/3 UDP may share a port;
+- listener binding precedes worker readiness and listener failure fails startup;
+- listener changes are restart-required in this campaign.
+
+The old `[[site.listen]]` implementation never bound its entries and its
+routing maps did not match wildcard local addresses. The campaign builds a
+working model rather than reverting the 03A validation change.
+
 ## Documentation Corrective: Root README Public-Support Boundary — Ready
 
 Status: **READY** (2026-10-06).
@@ -2524,3 +2568,196 @@ Binding constraints:
   `synvoid-mesh`;
 - historical closeouts are corrected by pointer only, never rewritten;
 - every skipped verification lane is recorded as not-run with its reason.
+
+## WAF/Admin Deployment-Truthfulness Series — Implemented
+
+Status: **IMPLEMENTED** on branch `plans/waf-admin-deployment-truthfulness`. Umbrella:
+`plans/waf_admin_deployment_truthfulness_roadmap.md`.
+
+Origin: IP-based test deployment (blog direct `0.0.0.0:5000`, WAF data plane
+`0.0.0.0:8082`, no domain). Browser asset loads carry same-site IP
+`Referer` and are blocked as `Rfi ... at header:referer` while `curl`
+without `Referer` passes; site `[attack_detection.rfi] enabled=false` has
+no effect; `[admin] port 8081` never listens.
+
+| Phase | File | Status |
+|---|---|---|
+| 01 | `waf_admin_deployment_truthfulness_phase_01_rfi_referer.md` | **Implemented** — skip RFI/SSRF bare-IP branch for `referer`/`origin`, keep Aho patterns |
+| 02 | `waf_admin_deployment_truthfulness_phase_02_site_attack_config_wiring.md` | **Implemented** — thread `SiteAttackDetectionConfig` into WAF dispatch (per-request gate) |
+| 03 | `waf_admin_deployment_truthfulness_phase_03_admin_mounting.md` | **Implemented** — mount `create_admin_router` in worker data-plane composition root |
+
+Run 01 first (unblocks browser testing). 02 needs 01 only for clean
+verification. 03 is independent, may proceed in parallel.
+
+Re-verified live 2026-10-30 (commit `2553e52`): fresh
+`cargo build --release --no-default-features` redeployed to the operator-local
+`~/prodtest` stack (blog `:5000`, WAF `:8082`, admin `:8081`, standalone
+supervisor+worker). Blog via WAF 200 with browser UA + IP `Referer`; SQLi,
+XSS, traversal, SSRF-metadata and blocked-path probes all 403; admin summary
+401/200, panel `/` 200 as a browser with external `bootstrap.js`, supervisor
+reports Standalone/Unified. Phase-02 A/B on the live site toggle:
+`?file=http://evil.example/shell.txt` logs `Rfi (score: 80) at query_string`
+with `[attack_detection.rfi] enabled=true` and `OpenRedirect (score: 30) at
+path` (still 403 via the open-redirect `file=` backstop) with
+`enabled=false`. Residuals, not blockers (detector coverage for a future
+pass, no unit coverage today): `php://`/`data:`/`expect://` wrapper RFI
+patterns do not fire on query strings at paranoia 2 (only `=http(s)://` and
+`=ftp://` encoded forms match there); POST bodies pass uninspected through
+the fallback-proxy path (query/headers/path are inspected).
+
+## Admin Panel Operator-Correctness Series — Implemented
+
+Status: **IMPLEMENTED** on branch `plans/admin-panel-operator-correctness`. Umbrella:
+`plans/admin_panel_operator_correctness_roadmap.md`.
+
+Origin: operating the panel in a real browser against the `~/prodtest`
+deployment (standalone single-process mode). Four defects no gate covers:
+Workers tab `HTTP 404:` (no process manager in standalone); Upstreams tab
+`HTTP 429` + endless refetch (bare `use_effect` infinite loop burning the
+per-IP budget, self-sustaining); Dashboard `upstream_healthy` bool-vs-enum
+parse error at `/api/stats/sites` column 470; zero stats and empty request
+logs in every mode (`start_metrics_publisher` has no production caller,
+`AdminState.request_logs` has no writer, the IPC log path lands in a
+different deque, and the deployment disables verbose request logging).
+
+| Phase | File | Status |
+|---|---|---|
+| 01 | `admin_panel_operator_correctness_phase_01_upstreams_polling_loop.md` | **Implemented** (`d2cc5cd`) — `use_effect` → `use_effect_with(())`, run first |
+| 02 | `admin_panel_operator_correctness_phase_02_upstream_healthy_contract.md` | **Implemented** (`d2cc5cd`) — UI tri-state for backend `HealthStatus` |
+| 03 | `admin_panel_operator_correctness_phase_03_workers_standalone.md` | **Implemented** (`d2cc5cd`) — standalone empty-state, no contract change |
+| 04 | `admin_panel_operator_correctness_phase_04_metrics_logs_bridge.md` | **Implemented** (`d2cc5cd` + `1146ab7` + `ef75889` + `49c324b`) — spawn publisher, standalone feed + log sinks + per-site-derived totals + state-backed `/api/logs` |
+| 05 | `admin_panel_operator_correctness_phase_05_verification_closeout.md` | **Implemented** (2026-10-30) — terminal gate + live deployment proof, runs last |
+
+Run 01 first (removes the 429 storm masking other tabs). 02–03 independent.
+04 independent but largest; may proceed in parallel. 05 requires 01–04.
+
+## Halloy Block-Page Themes Series — Implemented
+
+Status: **IMPLEMENTED** on branch `plans/halloy-block-page-themes`.
+Umbrella: `plans/halloy_block_page_themes_roadmap.md`.
+Proof-bearing commits: `a485c59` (plans + registration), `705bd8f`
+(phases 01 registry + 02 config), `29b4079` (phases 03 renderer + 04 API),
+`41529ff` (phase 05 UI), `8d72e9f` (two pre-existing clippy blockers
+remediated: dead `UpstreamHealth::is_healthy`, waf `too_many_arguments`
+allow), plus the closeout commit flipping these statuses.
+
+Origin: Settings → Theme offers 6 hardcoded presets driving the WAF
+block/error pages; no Halloy support exists anywhere in synvoid. Operator
+decisions (2026-10-30): (a) the 50 Halloy themes drive the block/error pages,
+optionally, and are NOT tied to admin-panel styling (panel scheme stays
+internal); (b) blog-style dual selection — a dark-theme picker and a
+light-theme picker plus scheme selector. Reuse: the 50-file set identical
+in eggpool (`rust/assets/dashboard/themes/`) and the blog
+(`app/themes/bundled/`), eggpool `theme.rs` (allowlist, `include_bytes!`
+embedding, fallbacks, color math, per-theme WCAG guard tests), blog
+`docs/themes/supported-schema.md` + `theme_settings.py` resolution.
+Research also found three prerequisite defects this series repairs: PUT
+`/theme` parsed as `ThemeResponse` instead of `AdminMutationResult`
+(saves "fail" while persisting), bare `value={...}` on ThemeSection
+`<select>`s (pickers show `Sunset`/`Light` regardless of state), and no
+`::selection` rule (unreadable selected text).
+
+| Phase | File | Status |
+|---|---|---|
+| 01 | `halloy_block_page_themes_phase_01_registry.md` | **Implemented** (`705bd8f`) — vendor 50 files + registry in `synvoid-theme`, guard tests |
+| 02 | `halloy_block_page_themes_phase_02_config.md` | **Implemented** (`705bd8f`) — `dark_theme`/`light_theme`/`scheme`, legacy compat |
+| 03 | `halloy_block_page_themes_phase_03_renderer.md` | **Implemented** (`29b4079`) — per-scheme CSS + `::selection`, needs 01+02 |
+| 04 | `halloy_block_page_themes_phase_04_admin_api.md` | **Implemented** (`29b4079`) — dynamic catalog + dual-scheme fields, needs 02 |
+| 05 | `halloy_block_page_themes_phase_05_admin_ui.md` | **Implemented** (`41529ff`) — dual pickers + client fixes, needs 04 |
+| 06 | `halloy_block_page_themes_phase_06_verification_closeout.md` | **Implemented** (closeout commit) — terminal gate + live proof, runs last |
+
+Gate evidence (series head, 2026-10-31): fmt ✓; workspace clippy ✓
+(after remediating the two pre-existing blockers above);
+`dependency-policy` (`cargo deny check`) red — **pre-existing at base
+`3136d50a`** (fresh upstream RUSTSEC batch: crypto-bigint/quinn/pulldown-cmark
+et al.; series Cargo.lock delta is one added edge to an already-present
+package version); core-compile ✓; repo-guards 169 ✓;
+security_regression 15 ✓; root guards 647 ✓; core-admin 16 ✓;
+admin-contract 69 ✓; failure-injection 10 ✓.
+Live proof (`~/prodtest`, new release binary + rebuilt admin-ui dist):
+`GET /api/theme` serves 51-entry catalog + `dark_theme`/`light_theme`/
+`scheme`; PUT round-trips; `/theme/css` serves dual-scheme output with
+`::selection`; Chromium pass: pickers render server state on first paint,
+Gruvbox save succeeds with no error toast and survives reload.
+Prodtest theme left at dark=Gruvbox / light=Catppuccin Latte / system.
+Follow-up fix on this branch (`9051035`): single-use CSRF rotation —
+`csrf_middleware` now publishes a fresh `X-CSRF-Token` on every validated
+mutating response and the UI adopts it (plus one refresh-and-retry on 403).
+Without it, every second write in a session 403'd and the UI logged out
+(reported live: save → token prompt; proven via audit/CSRF-failure log
+correlation). Live proof: three consecutive theme saves, all 200, session
+retained.
+Second follow-up on this branch (`4280ee1`): the panel stayed stuck light
+with a dead toggle even after rotation shipped. Root causes found live —
+(1) the panel forced its own light/dark class from the server's legacy
+`preset` on every mount (`use_api_theme`), so stored `preset="light"` pinned
+the whole panel light and no settings save (which sends `preset: None`)
+could clear it; (2) the header toggle was the only `preset` writer but
+round-tripped through the server, desynced from the actual class,
+re-clobbered on every render, and clobbered the Halloy pair via
+`apply_legacy_preset_selection`; (3) `ToastContainer` dropped its
+`CustomEvent` listener at mount (missing `closure.forget()`), so every
+save/failure toast vanished silently. Fix: panel chrome is purely
+client-side (localStorage + `<html>` class, instant toggle, reload-proof);
+server `preset`/`mode` left untouched for block-page compat; toasts deliver.
+Live proof on a `preset="light"` server: fresh login boots dark, toggle is
+instant and persistent, save shows a visible success toast and persists
+`dark_theme`, reload never flips the panel.
+Block-page follow-through (`e4f6aeb`, `5903786`, `91de456`): the settings
+theme never reached served pages — `ErrorPageManager` was hard-wired to a
+relative `error_pages` dir (missing at runtime, so every block rendered the
+unstyled minimal page) and a `ThemeConfig::default()` snapshot the admin
+`PUT` never touched. Now `[defaults.error_pages]` (directory/mode/enabled)
+and `[defaults.theme]` feed the manager at startup, and the `PUT` stores a
+fresh conversion into a shared `ArcSwap` the render path reads per request:
+saving Nord flips the live `/.env` 403 page's CSS with no restart, in both
+forced schemes. Prodtest `[defaults.error_pages] mode` flipped
+`default`→`styled` (operator config change) so the themed templates render;
+`generic` templates carry no `{{theme_css}}` and are unaffected. Adjacent
+fixes on the same pass: post-login redirect to `/` (the shell rendered at
+`/login` with a stale URL), all nine admin `style=` attributes replaced
+(CSSOM hook + SVG presentation attributes; console is CSP-clean), and both
+`srcdoc` theme previews (settings + site editor, whose `<style>` blocks the
+inherited CSP dropped) replaced by an inline component. Gates on that tree:
+fmt, workspace clippy `-D warnings`, repo-guards 169, admin contract 69,
+admin-ui 50.
+Panel adoption + error-page regrouping (`5821a62`, `54176bb`, `35dc0aa`,
+`e5a569d`, `c2dfc55`): Settings → Theme is now the admin panel control
+(`panel_dark_theme` / `panel_light_theme` on `[defaults.theme]`,
+`"default"` keeps the built-in palette, Halloy names customize; the panel
+applies the translated side per mode as CSS variables, toggle still purely
+client-side, save re-applies live via a `panel-theme-update` event, and the
+mount fetch is gated on auth so it cannot lose the session race); the block
+dual pickers moved to a new section on the Error Pages page. Root-cause fix
+for invisible hover text: `tailwind.config.js` maps `primary` to
+`var(--bg-primary)`, so Tailwind's generated `hover:text-primary` (sorted
+after the custom correction in the v3 output) painted near-black/off-white
+text — the correction now wins by doubled specificity, guarded by
+`admin_ui_text_tokens_resolve_to_text_vars` (guards now 170). Contrast
+measured over all 50 bundled sides: translated text vs background ≥ 4.5 in
+every case, so the panel mapping reuses the text token for all three text
+levels. Prodtest left at block Gruvbox/Latte/system, panel
+default/default; `[defaults.error_pages]` mode stays `styled`.
+Audit follow-through (`d1f55cc`, `cd4b53f`, `7b6c0db`, `35dc0aa`, `e5a569d`,
+`c2dfc55`, `94e44f2`, `2606274`): error-page default is now unstyled —
+fresh `[defaults.theme]` resolves to `("default","default")`, an explicit
+unstyled pick beats even a fossil legacy `preset`, the render path serves
+the minimal page (custom templates still render, with empty `{{theme_css}}`),
+`/theme/css` returns empty, the site legacy preset now resolves to Halloy
+names so per-site overrides take effect again, and both previews show an
+"Unstyled default" note instead of misleading fallback colours. Panel audit:
+app shell gained the missing `bg-primary`; all switch off-tracks moved off
+hardcoded gray onto `bg-tertiary` with a defining border; logout rethemed
+off red; tooltip popup off accent/white; alerts primary button onto the
+action ramp. Deliberately unchanged (documented in the report): action ramp,
+status reds/greens/yellows/oranges/grays, scrims, switch knobs, toast chips,
+chart data colours. Toasts auto-dismiss after 8s; panel/block theme success
+toasts removed (the restyle/preview is the confirmation), errors still
+toast. Hover root cause fixed: generated `hover:text-primary` resolved to
+`var(--bg-primary)` and beat the custom correction — doubled specificity
+plus a dist guard. Gates: fmt, workspace clippy, guards 170, contract 69,
+admin-ui 50.
+
+01 and 02 independent of each other. Out of scope: panel internal styling,
+custom `themes_dir` override (deferred follow-up), per-site themes,
+admin-panel `::selection` (separate from block-page `::selection`).

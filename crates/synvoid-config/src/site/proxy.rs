@@ -23,10 +23,17 @@ pub enum BodyBufferingPolicy {
 }
 
 impl BodyBufferingPolicy {
-    pub fn should_stream(&self, _body_size: u64, _threshold: Option<usize>) -> bool {
+    /// Whether the request body should bypass full buffering.
+    ///
+    /// `streaming` is an explicit opt-in. `buffered` (the default) still
+    /// streams when the caller supplies a threshold and the known body size
+    /// exceeds it; an unknown size never streams on the default policy.
+    pub fn should_stream(&self, body_size: u64, threshold: Option<usize>) -> bool {
         match self {
             BodyBufferingPolicy::Streaming => true,
-            BodyBufferingPolicy::Buffered => false,
+            BodyBufferingPolicy::Buffered => threshold
+                .map(|limit| body_size > limit as u64)
+                .unwrap_or(false),
         }
     }
 }
@@ -41,6 +48,12 @@ pub struct SiteProxyConfig {
 
     #[serde(default)]
     pub streaming_threshold_bytes: Option<usize>,
+
+    /// Per-site request-body cap. Overrides the global
+    /// `[http] max_streaming_body_size` for this site. A body above the
+    /// resolved cap is rejected with HTTP 413 before it reaches an upstream.
+    #[serde(default)]
+    pub max_request_body_size: Option<usize>,
 
     #[serde(default)]
     pub headers: Option<ProxyHeadersConfig>,
@@ -92,7 +105,25 @@ impl SiteProxyConfig {
             .should_stream(body_size.unwrap_or(0), threshold)
     }
 
+    pub fn max_request_body_size(&self, global_default: usize) -> usize {
+        self.max_request_body_size.unwrap_or(global_default)
+    }
+
     pub fn validate(&self) -> Result<(), crate::validation::ConfigValidationError> {
+        if self.max_request_body_size == Some(0) {
+            return Err(crate::validation::ConfigValidationError {
+                field: "proxy.max_request_body_size".to_string(),
+                message: "max_request_body_size must be greater than 0".to_string(),
+            });
+        }
+        if let Some(limit) = self.max_request_body_size {
+            if limit > 1024 * 1024 * 1024 {
+                return Err(crate::validation::ConfigValidationError {
+                    field: "proxy.max_request_body_size".to_string(),
+                    message: "max_request_body_size must not exceed 1 GiB".to_string(),
+                });
+            }
+        }
         Ok(())
     }
 }
@@ -373,4 +404,32 @@ pub struct UpstreamTlsConfig {
 
     #[serde(default)]
     pub skip_verify_reason: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn streaming_threshold_enables_streaming_for_buffered_policy() {
+        let policy = BodyBufferingPolicy::Buffered;
+        assert!(!policy.should_stream(1024, None));
+        assert!(!policy.should_stream(1024, Some(2048)));
+        assert!(policy.should_stream(4096, Some(2048)));
+        assert!(BodyBufferingPolicy::Streaming.should_stream(1, None));
+    }
+
+    #[test]
+    fn per_site_body_limit_overrides_global_and_is_validated() {
+        let mut proxy = SiteProxyConfig::default();
+        assert_eq!(proxy.max_request_body_size(10), 10);
+        proxy.max_request_body_size = Some(20);
+        assert_eq!(proxy.max_request_body_size(10), 20);
+        assert!(proxy.validate().is_ok());
+
+        proxy.max_request_body_size = Some(0);
+        assert!(proxy.validate().is_err());
+        proxy.max_request_body_size = Some(2 * 1024 * 1024 * 1024);
+        assert!(proxy.validate().is_err());
+    }
 }

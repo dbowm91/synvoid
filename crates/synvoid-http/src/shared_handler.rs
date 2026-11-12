@@ -304,7 +304,6 @@ where
     WafStreamedBody::new(body, streaming_waf, client_ip, protocol, max_body_size)
 }
 
-#[allow(clippy::result_unit_err)] // reason: unit error preserved for API stability; callers distinguish BlockedByWaf vs BodyTooLarge by collection context in body_policy.rs
 pub async fn collect_body_with_chunk_waf<B, S>(
     body: B,
     streaming_waf: Option<S>,
@@ -313,21 +312,18 @@ pub async fn collect_body_with_chunk_waf<B, S>(
     request_body_size: Option<&mut u64>,
     _content_length: Option<usize>,
     max_body_size: usize,
-) -> Result<Bytes, ()>
+) -> Result<Bytes, std::io::Error>
 where
     B: http_body::Body<Data = Bytes> + Unpin,
     B::Error: std::fmt::Debug,
     S: StreamingWafScanner + Unpin,
 {
     let streaming = stream_body_with_waf(body, streaming_waf, client_ip, protocol, max_body_size);
-    let result = match streaming.collect().await {
-        Ok(c) => Ok(c.to_bytes()),
-        Err(_) => Err(()),
-    };
+    let result = streaming.collect().await.map(|c| c.to_bytes());
     if let Some(size) = request_body_size {
         *size = match &result {
             Ok(body) => body.len() as u64,
-            Err(()) => 0,
+            Err(_) => 0,
         };
     }
     result

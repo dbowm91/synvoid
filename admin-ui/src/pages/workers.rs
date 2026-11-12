@@ -33,14 +33,30 @@ pub fn Workers() -> Html {
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
 
+                // Standalone mode has no process manager, so
+                // `/system/workers*` answer 404 by design (backend contract,
+                // pinned in `admin_route_contract`). Detect the mode first
+                // and skip those calls instead of surfacing a bare
+                // `HTTP 404:`. The backend sends `mode: "Standalone"`.
+                let standalone = match api.get_supervisor_status().await {
+                    Ok(s) => {
+                        let standalone = s.mode.eq_ignore_ascii_case("standalone");
+                        supervisor.set(Some(s));
+                        standalone
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to get supervisor status: {}", e);
+                        false
+                    }
+                };
+
+                if standalone {
+                    return;
+                }
+
                 match api.get_workers_status().await {
                     Ok(w) => workers.set(w),
                     Err(e) => error.set(Some(e.to_string())),
-                }
-
-                match api.get_supervisor_status().await {
-                    Ok(s) => supervisor.set(Some(s)),
-                    Err(e) => tracing::error!("Failed to get supervisor status: {}", e),
                 }
 
                 match api.get_worker_count().await {
@@ -259,6 +275,15 @@ pub fn Workers() -> Html {
         }
     };
 
+    // Standalone mode (single process, no supervised pool) has no workers
+    // to list, restart, or scale. The fetch above already skipped the
+    // `/system/workers*` calls; this keeps the controls from implying
+    // otherwise.
+    let standalone = supervisor
+        .as_ref()
+        .map(|s| s.mode.eq_ignore_ascii_case("standalone"))
+        .unwrap_or(false);
+
     html! {
         <div class="space-y-6">
             <ConfirmDialog
@@ -289,7 +314,7 @@ pub fn Workers() -> Html {
                 <h1 class="text-2xl font-bold">{ "Workers & Supervisor" }</h1>
                 <button
                     onclick={on_request_batch_restart}
-                    disabled={*restarting_all}
+                    disabled={*restarting_all || standalone}
                     class="px-4 py-2 rounded-lg bg-red-600/20 text-red-400 hover:bg-red-600/30 disabled:opacity-50 transition expand-hit"
                 >
                     { if *restarting_all { "Restarting all…" } else { "Restart all workers" } }
@@ -438,7 +463,12 @@ pub fn Workers() -> Html {
             <div class="bg-secondary rounded-lg border border-default p-6">
                 <h2 class="text-lg font-semibold mb-4">{ "Worker Processes" }</h2>
 
-                if workers.is_empty() {
+                if standalone {
+                    <div class="text-center py-8">
+                        <p class="text-primary font-medium mb-2">{ "Worker management is unavailable in standalone mode" }</p>
+                        <p class="text-secondary text-sm">{ "This server runs as a single process with no supervised worker pool. Restart and scaling controls require a supervised multi-worker deployment." }</p>
+                    </div>
+                } else if workers.is_empty() {
                     <p class="text-secondary">{ "No workers found" }</p>
                 } else {
                     <div class="overflow-x-auto">

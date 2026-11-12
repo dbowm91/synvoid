@@ -5,7 +5,9 @@ use std::sync::LazyLock;
 use synvoid_core::url::url_decode_all;
 
 use crate::attack_detection::config::{AttackDetectionResult, AttackType, InputLocation};
-use crate::attack_detection::detector_common::{BasePatternDetector, PatternDetector};
+use crate::attack_detection::detector_common::{
+    is_referer_or_origin, BasePatternDetector, PatternDetector,
+};
 use crate::attack_detection::patterns::DefaultPatterns;
 
 #[allow(dead_code)]
@@ -223,6 +225,34 @@ impl OpenRedirectDetector {
         false
     }
 
+    fn contains_embedded_redirect(input_lower: &str) -> bool {
+        if let Some(scheme_end) = input_lower.find("://") {
+            let scheme = &input_lower[..scheme_end];
+            let is_outer_scheme = !scheme.is_empty()
+                && scheme
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.'));
+            if is_outer_scheme {
+                let rest = &input_lower[scheme_end + 3..];
+                let Some(pos) = rest.find(['/', '?', '#']) else {
+                    return false;
+                };
+                let tail = &rest[pos..];
+                return Self::contains_dangerous_target(tail);
+            }
+        }
+        Self::contains_dangerous_target(input_lower)
+    }
+
+    fn contains_dangerous_target(input_lower: &str) -> bool {
+        input_lower.contains("://")
+            || input_lower.contains("//")
+            || input_lower.contains("\\\\")
+            || input_lower.contains("javascript:")
+            || input_lower.contains("vbscript:")
+            || input_lower.contains("data:")
+    }
+
     fn is_external_redirect(&self, input_lower: &str) -> bool {
         if input_lower.contains('\n') || input_lower.contains('\r') {
             return true;
@@ -310,6 +340,17 @@ impl OpenRedirectDetector {
         }
 
         let is_redirect_param = self.is_redirect_param(decoded_lower.as_ref());
+
+        // `Referer`/`Origin` legitimately carry absolute URLs, and the pattern
+        // list matches any of them (`://`, `http://`, ...). A plain URL is not
+        // a redirect, even when it has generic query keys like `?page=2` or
+        // `?c=2`; only a value carrying an embedded external/dangerous target
+        // next to a redirect parameter is a smuggled redirect payload.
+        if is_referer_or_origin(&location)
+            && (!is_redirect_param || !Self::contains_embedded_redirect(decoded_lower.as_ref()))
+        {
+            return None;
+        }
 
         if let Some(mat) = self.inner.patterns_ref().find(decoded_lower.as_ref()) {
             let matched = decoded_lower[mat.start()..mat.end()].to_string();
@@ -507,5 +548,62 @@ mod tests {
         let detector = OpenRedirectDetector::new(2, &[]);
         let input = "URL=JAVASCRIPT:ALERT(1)";
         assert!(detector.detect(input, InputLocation::QueryString).is_some());
+    }
+
+    #[test]
+    fn test_open_redirect_referer_absolute_url_exempt() {
+        let detector = OpenRedirectDetector::new(2, &[]);
+        assert!(detector
+            .detect(
+                "http://192.168.182.143:8082/static/css/public.css",
+                InputLocation::Header("referer".into())
+            )
+            .is_none());
+        assert!(detector
+            .detect(
+                "http://192.168.182.143:8082/",
+                InputLocation::Header("origin".into())
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn test_open_redirect_referer_smuggled_param_still_blocked() {
+        let detector = OpenRedirectDetector::new(2, &[]);
+        assert!(detector
+            .detect(
+                "/login?next=http://evil.com",
+                InputLocation::Header("referer".into())
+            )
+            .is_some());
+        assert!(detector
+            .detect(
+                "https://example.com/login?next=https://evil.com",
+                InputLocation::Header("referer".into())
+            )
+            .is_some());
+        assert!(detector
+            .detect(
+                "https://example.com/login?url=//evil.com",
+                InputLocation::Header("origin".into())
+            )
+            .is_some());
+    }
+
+    #[test]
+    fn test_open_redirect_benign_referer_query_is_exempt() {
+        let detector = OpenRedirectDetector::new(2, &[]);
+        for value in [
+            "https://example.com/a?b=1&c=2",
+            "https://example.com/search?page=2&sort=name",
+            "http://192.168.182.143:8082/static/css/public.css",
+        ] {
+            assert!(
+                detector
+                    .detect(value, InputLocation::Header("referer".into()))
+                    .is_none(),
+                "benign Referer must be exempt: {value}"
+            );
+        }
     }
 }

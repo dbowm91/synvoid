@@ -1,5 +1,6 @@
 use crate::http::headers::generate_stealth_timestamp;
 use crate::theme::{ErrorPageTemplate, ThemeConfig, ThemeRenderer};
+use arc_swap::ArcSwap;
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -14,12 +15,20 @@ pub struct ErrorPageManager {
     custom_pages: Arc<RwLock<HashMap<u16, String>>>,
     enabled: bool,
     mode: ErrorPageMode,
-    theme: ThemeConfig,
+    // Shared handle to the live global theme (built from
+    // `[defaults.theme]`). The admin `PUT /theme` stores a fresh conversion
+    // here so served block pages follow settings without a restart; the
+    // per-request fallback is always read through this handle.
+    theme: Arc<ArcSwap<ThemeConfig>>,
 }
 
 impl ErrorPageManager {
-    pub fn theme(&self) -> &ThemeConfig {
-        &self.theme
+    pub fn theme(&self) -> Arc<ThemeConfig> {
+        self.theme.load_full()
+    }
+
+    pub fn theme_handle(&self) -> Arc<ArcSwap<ThemeConfig>> {
+        Arc::clone(&self.theme)
     }
 }
 
@@ -58,13 +67,7 @@ fn escape_html(s: &str) -> String {
 
 impl ErrorPageManager {
     pub fn new(default_dir: &str, custom_dir: Option<String>, enabled: bool) -> Self {
-        Self::with_theme_and_mode(
-            default_dir,
-            custom_dir,
-            enabled,
-            "generic",
-            ThemeConfig::default(),
-        )
+        Self::with_theme(default_dir, custom_dir, enabled, ThemeConfig::default())
     }
 
     pub fn with_theme(
@@ -73,7 +76,23 @@ impl ErrorPageManager {
         enabled: bool,
         theme: ThemeConfig,
     ) -> Self {
-        Self::with_theme_and_mode(default_dir, custom_dir, enabled, "generic", theme)
+        Self::with_theme_and_mode(
+            default_dir,
+            custom_dir,
+            enabled,
+            "generic",
+            Arc::new(ArcSwap::new(Arc::new(theme))),
+        )
+    }
+
+    pub fn with_shared_theme(
+        default_dir: &str,
+        custom_dir: Option<String>,
+        enabled: bool,
+        mode: &str,
+        theme: Arc<ArcSwap<ThemeConfig>>,
+    ) -> Self {
+        Self::with_theme_and_mode(default_dir, custom_dir, enabled, mode, theme)
     }
 
     pub fn with_theme_and_mode(
@@ -81,7 +100,7 @@ impl ErrorPageManager {
         custom_dir: Option<String>,
         enabled: bool,
         mode: &str,
-        theme: ThemeConfig,
+        theme: Arc<ArcSwap<ThemeConfig>>,
     ) -> Self {
         let error_page_mode = ErrorPageMode::from_mode_str(mode);
 
@@ -199,7 +218,19 @@ impl ErrorPageManager {
         message: Option<&str>,
         override_theme: Option<&ThemeConfig>,
     ) -> String {
-        let theme = override_theme.unwrap_or(&self.theme);
+        let live_theme = self.theme.load_full();
+        // `"default"` (both sides) is the unstyled SynVoid default: no
+        // Halloy CSS is injected. Without a per-site override (and outside
+        // custom mode, where the operator's own HTML always renders) the
+        // minimal page is served, matching the pre-theme-system output.
+        let unstyled_global = override_theme.is_none()
+            && live_theme.dark_theme == "default"
+            && live_theme.light_theme == "default";
+        if unstyled_global && self.mode != ErrorPageMode::Custom {
+            return Self::minimal_page(status_code, message);
+        }
+        let theme: ThemeConfig =
+            override_theme.map_or_else(|| (*live_theme).clone(), |t| t.clone());
 
         if !self.enabled || self.default_pages.is_empty() {
             return Self::minimal_page(status_code, message);
@@ -211,7 +242,7 @@ impl ErrorPageManager {
 
         let Some(page) = page else {
             return if self.mode == ErrorPageMode::Styled {
-                Self::fallback_page(status_code, message, theme)
+                Self::fallback_page(status_code, message, &theme)
             } else {
                 Self::minimal_page(status_code, message)
             };
@@ -229,7 +260,13 @@ impl ErrorPageManager {
             .replace("{{timestamp}}", &escaped_timestamp);
 
         if result.contains("{{theme_css}}") {
-            let theme_css = ThemeRenderer::new(theme.clone()).generate_css();
+            let theme_css = if theme.dark_theme == "default" && theme.light_theme == "default" {
+                // Unstyled default with operator-authored (custom) HTML: keep
+                // the page, drop the Halloy injection.
+                String::new()
+            } else {
+                ThemeRenderer::new(theme.clone()).generate_css()
+            };
             result = result.replace("{{theme_css}}", &theme_css);
         }
 
@@ -279,6 +316,32 @@ impl ErrorPageManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn manager_with_template(theme: ThemeConfig) -> (ErrorPageManager, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!(
+            "synvoid-error-pages-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let styled = dir.join("styled");
+        std::fs::create_dir_all(&styled).expect("styled template dir");
+        std::fs::write(
+            styled.join("403.html"),
+            "<html><head><style>{{theme_css}}</style></head><body>denied</body></html>",
+        )
+        .expect("styled template");
+        let manager = ErrorPageManager::with_shared_theme(
+            dir.to_str().expect("utf8 temp dir"),
+            None,
+            true,
+            "styled",
+            std::sync::Arc::new(arc_swap::ArcSwap::new(std::sync::Arc::new(theme))),
+        );
+        (manager, dir)
+    }
 
     #[test]
     fn test_status_text_all_known_codes() {
@@ -351,5 +414,37 @@ mod tests {
             ErrorPageMode::from_mode_str("unknown"),
             ErrorPageMode::Generic
         ));
+    }
+
+    #[test]
+    fn default_theme_renders_minimal_page() {
+        let (manager, dir) = manager_with_template(ThemeConfig::default()); // ThemeConfig::default() carries the ("default", "default") pair:
+                                                                            // the SynVoid default is unstyled, so even a styled template
+                                                                            // directory renders the minimal page with no Halloy injection.
+        let page = manager.render_page(403, None);
+        assert!(page.contains("<h1>403</h1>"), "unexpected page: {page}");
+        assert!(
+            !page.contains("{{theme_css}}") && !page.contains("--waf-bg"),
+            "default theme must not inject Halloy CSS: {page}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn named_theme_renders_styled_template() {
+        let mut theme = ThemeConfig::default();
+        theme.dark_theme = "Nord".to_string();
+        theme.light_theme = "Nord".to_string();
+        let (manager, dir) = manager_with_template(theme);
+        let page = manager.render_page(403, None);
+        assert!(
+            page.contains("--waf-bg"),
+            "named theme must inject Halloy CSS: {page}"
+        );
+        assert!(
+            !page.contains("{{theme_css}}"),
+            "placeholder resolved: {page}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

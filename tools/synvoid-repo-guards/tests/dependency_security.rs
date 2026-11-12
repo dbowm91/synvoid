@@ -57,16 +57,14 @@ fn wasmtime_direct_version_matches_baseline() {
         "root Cargo.toml must not carry a wasmtime git patch (direct LTS resolves from crates.io)"
     );
 
-    // 3. Phase 103: RUSTSEC-2026-0269 is version-remediated on BOTH resolved
-    // Wasmtime lines (direct 36.0.16 LTS via >=36.0.14, transitive 48.0.3 via
-    // >=48.0.3), and RUSTSEC-2026-0315 / -0316 are also version-remediated
-    // (0315 affects only 47.0.4 which is gone; 0316 affects 36.0.15 / 47.0.4
-    // — both remediated via Phase 103). No policy file may carry a live
-    // ignore entry for any of these three findings; the retired 40.0.4 / 47.0.4
-    // paths must not be re-ignored without an affected version in the graph.
-    // (Prose mentions in comments do not count — only parsed `ignore`
-    // entries.) The baseline must record both lines as patched — never as
-    // affected.
+    // 3. Phase 01: RUSTSEC-2026-0269 is version-remediated on BOTH resolved
+    // Wasmtime lines (direct 36.0.20 LTS via >=36.0.14, transitive 48.0.8 via
+    // >=48.0.3), and the later Wasmtime advisories are also version-remediated
+    // on both lines. No policy file may carry a live ignore entry for any of
+    // these findings; retired 40.x / 47.x paths must not be re-ignored without
+    // an affected version in the graph. (Prose mentions in comments do not
+    // count — only parsed `ignore` entries.) The baseline must record both
+    // lines as patched — never as affected.
     let deny = read_repo("deny.toml");
     let audit = read_repo(".cargo/audit.toml");
     for (name, content) in [
@@ -88,12 +86,12 @@ fn wasmtime_direct_version_matches_baseline() {
         "baseline must not describe 42.0.2 as patched for RUSTSEC-2026-0269"
     );
     assert!(
-        baseline.contains("direct 36.0.16 LTS line is patched"),
-        "baseline must record the direct 36.0.16 LTS line as patched for RUSTSEC-2026-0269"
+        baseline.contains("direct 36.0.20 LTS line is patched"),
+        "baseline must record the direct 36.0.20 LTS line as patched"
     );
     assert!(
-        baseline.contains("transitive 48.0.3 line is patched"),
-        "baseline must record the transitive 48.0.3 line as patched for RUSTSEC-2026-0269"
+        baseline.contains("transitive 48.0.8 line is patched"),
+        "baseline must record the transitive 48.0.8 line as patched"
     );
 }
 
@@ -121,12 +119,12 @@ fn wasmtime_wasi_stays_absent_without_exposure_update() {
 // ---------------------------------------------------------------------------
 // Phase 38 Part E (Phase 40 + Phase 103 update): supported Wasmtime ownership guards
 //
-// The direct plugin runtime is Wasmtime 36 LTS (36.0.16+ patched for
-// RUSTSEC-2026-0269 and RUSTSEC-2026-0316); the transitive YARA engine
-// is a separate 48.0.3 instance (Phase 40 + Phase 103: temporary
-// `third-party/yara-x-compat` fork of official yara-x 1.20.0; wasmtime
-// 40.0.4 and 47.0.4 are gone). These guards keep the two lines from being
-// confused and fail closed on ownership/source drift.
+// The direct plugin runtime is Wasmtime 36 LTS (36.0.20+ patched for the
+// 2026 advisories); the transitive YARA engine is a separate 48.0.8 instance
+// (Phase 01: official yara-x 1.23.0, after the temporary
+// `third-party/yara-x-compat` fork was retired; wasmtime 40.x and 47.x are
+// gone). These guards keep the two lines from being confused and fail closed
+// on ownership/source drift.
 // ---------------------------------------------------------------------------
 
 /// Extract `wasmtime` dependency declarations as (manifest-rel, version-req).
@@ -411,6 +409,9 @@ fn ignore_comment_blocks(deny: &str) -> std::collections::BTreeMap<String, Strin
     let mut map = BTreeMap::new();
     let mut pending: Vec<&str> = Vec::new();
     let mut in_ignore = false;
+    // A comment block that starts after an ID begins a new run; a comment
+    // block immediately preceding consecutive IDs applies to all of them.
+    let mut seen_id_since_comment = false;
     for line in deny.lines() {
         let t = line.trim();
         if t == "ignore = [" {
@@ -424,6 +425,10 @@ fn ignore_comment_blocks(deny: &str) -> std::collections::BTreeMap<String, Strin
             break;
         }
         if t.starts_with('#') {
+            if seen_id_since_comment {
+                pending.clear();
+                seen_id_since_comment = false;
+            }
             pending.push(t);
             continue;
         }
@@ -435,12 +440,14 @@ fn ignore_comment_blocks(deny: &str) -> std::collections::BTreeMap<String, Strin
                 if let Some(q2) = t[q1 + 1..].find('"') {
                     let id = t[q1 + 1..q1 + 1 + q2].to_string();
                     map.insert(id, pending.join("\n"));
+                    seen_id_since_comment = true;
                     continue;
                 }
             }
         }
         // Any other line ends the pending block without consuming it as metadata.
         pending.clear();
+        seen_id_since_comment = false;
     }
     map
 }
@@ -1275,8 +1282,8 @@ fn mesh_dns_test_imports_are_gated_or_declared() {
 fn minify_fork_is_temporary_guard() {
     // The vendored `minify-html` compat fork is a temporary Oxc/bumpalo
     // resolver unblock, not a standing vendoring policy. This guard keeps it
-    // narrow: exactly one `[patch]` section (shared with the Phase 40/103
-    // `yara-x` entry, which has its own guard below), the `minify-html`
+    // narrow: exactly one `[patch]` section (the Phase 01 yara-x fork was
+    // retired, so minify-html is now the only entry), the `minify-html`
     // entry via a workspace path (no git source), with owner + reviewed +
     // re-audit + removal metadata in both the root manifest and the fork
     // manifest (semantically time-aware via the shared
@@ -1289,7 +1296,7 @@ fn minify_fork_is_temporary_guard() {
         .count();
     assert_eq!(
         patch_sections, 1,
-        "workspace must carry exactly one [patch.crates-io] (temporary minify-html + yara-x entries); found {patch_sections}"
+        "workspace must carry exactly one [patch.crates-io] (the temporary minify-html entry; yara-x was retired); found {patch_sections}"
     );
     assert!(
         root_manifest.contains("third-party/minify-html-compat"),
@@ -1417,129 +1424,55 @@ fn minify_fork_is_temporary_guard() {
 }
 
 // ---------------------------------------------------------------------------
-// yara_fork_is_temporary_guard (Phase 40 Part B/C)
+// yara_fork_is_retired_after_official_upgrade (Phase 01; was Phase 40)
 // ---------------------------------------------------------------------------
 
 #[test]
-fn yara_fork_is_temporary_guard() {
-    // The vendored `yara-x` compat fork is a temporary Wasmtime-line fix
-    // (official 1.20.0 resolves affected wasmtime 45.0.3; stock 1.21.0
-    // also resolves 45.0.3; the fork pins Wasmtime 48.0.3 to clear
-    // RUSTSEC-2026-0315/0316), not a standing vendoring policy. This
-    // guard keeps it narrow: entry in the single shared `[patch.crates-io]`
-    // (no new section, no git source), exact upstream 1.20.0 sources with
-    // only the manifest delta, owner + reviewed + re-audit + removal
-    // metadata (Phase 103: time-aware via the shared
-    // `evaluate_fork_block` helper), and a `synvoid-yara` requirement that
-    // matches the fork (without the upstream-removed `linkme` feature).
+fn yara_fork_is_retired_after_official_upgrade() {
+    // Phase 01: official yara-x 1.23.0 resolves Wasmtime ^48.0.8 and zip
+    // ^9.0.5, satisfying the temporary compat fork's documented removal
+    // condition. The fork must stay absent (no [patch] path redirect, no
+    // vendored directory dependency) and the single consumer must track the
+    // official release without the upstream-removed `linkme` feature.
     let root_manifest = read_repo("Cargo.toml");
     assert!(
-        root_manifest.contains("third-party/yara-x-compat"),
-        "root [patch.crates-io] must point at third-party/yara-x-compat"
+        !root_manifest.contains("third-party/yara-x-compat"),
+        "the retired yara-x compat fork must not reappear in the root manifest"
     );
-    let code_lines: Vec<String> = root_manifest
+    let code: String = root_manifest
         .lines()
         .map(|l| l.split('#').next().unwrap_or("").to_string())
-        .collect();
-    let code = code_lines.join("\n");
+        .collect::<Vec<_>>()
+        .join("\n");
     assert!(
-        code.contains("yara-x = { path = \"third-party/yara-x-compat\" }"),
-        "root [patch.crates-io] must carry the yara-x path entry (code, not prose)"
+        !code.contains("yara-x = { path ="),
+        "no [patch.crates-io] path may redirect yara-x away from crates.io"
     );
     assert!(
         !code.contains("git ="),
-        "temporary yara-x fork must not introduce a git source (path patch only)"
-    );
-    // Phase 103: the fork-review metadata is now time-aware (the literal
-    // "Re-audit: 2026-10-01" needle is replaced by a semantic check via
-    // `evaluate_fork_block`). The literal "Phase 40" needle is kept so the
-    // patch metadata still links back to the fork's origin phase.
-    let as_of = effective_review_date();
-    let root_block = patch_section_metadata_block(&root_manifest);
-    let root_violations = evaluate_fork_block("yara-x-compat (root patch)", &root_block, as_of);
-    assert!(
-        root_violations.is_empty(),
-        "root patch fork metadata violations (as of {}):\n{}",
-        as_of.format("%Y-%m-%d"),
-        root_violations.join("\n")
-    );
-    for needle in ["Phase 40", "Removal condition", "third-party/yara-x-compat"] {
-        assert!(
-            root_manifest.contains(needle),
-            "root manifest yara patch metadata must contain {needle:?}"
-        );
-    }
-
-    let fork_manifest = read_repo("third-party/yara-x-compat/Cargo.toml");
-    assert!(
-        fork_manifest.contains("name = \"yara-x\""),
-        "vendored fork must keep the upstream package name for [patch] override"
-    );
-    assert!(
-        fork_manifest.contains("version = \"1.20.0\""),
-        "vendored fork must keep version 1.20.0 to satisfy the \"1.20\" requirement"
-    );
-    assert!(
-        fork_manifest.contains("version = \"48.0.5\""),
-        "vendored fork must pin wasmtime to 48.0.5 (Phase 123 clears 0326/0327)"
-    );
-    assert!(
-        !fork_manifest.contains("version = \"47.0.4\"")
-            || !fork_manifest.contains("version = \"45.0.3\""),
-        "vendored fork must not retain the prior affected wasmtime requirements (45.0.3 / 47.0.4)"
-    );
-    assert!(
-        fork_manifest.contains("SYNVOID-PHASE40"),
-        "vendored fork manifest must mark the Phase 40 delta lines"
-    );
-    assert!(
-        fork_manifest.contains("SYNVOID-PHASE103"),
-        "vendored fork manifest must mark the Phase 103 delta lines"
-    );
-    assert!(
-        fork_manifest.contains("SYNVOID-PHASE123"),
-        "vendored fork manifest must mark the Phase 123 delta line"
-    );
-    let fork_block = fork_metadata_block(&fork_manifest);
-    let fork_violations = evaluate_fork_block("yara-x-compat (fork manifest)", &fork_block, as_of);
-    assert!(
-        fork_violations.is_empty(),
-        "fork manifest metadata violations (as of {}):\n{}",
-        as_of.format("%Y-%m-%d"),
-        fork_violations.join("\n")
-    );
-    for needle in ["Owner:", "Removal condition", "VirusTotal/yara-x"] {
-        assert!(
-            fork_manifest.contains(needle),
-            "fork manifest metadata must contain {needle:?}"
-        );
-    }
-    assert!(
-        read_repo("third-party/yara-x-compat/README.SYNVOID.md").contains("Removal"),
-        "fork must carry README.SYNVOID.md with removal metadata"
+        "yara-x must not introduce a git source"
     );
 
-    // The consumer requirement must track the forked line and must not
-    // request the upstream-removed `linkme` feature (unknown features fail
-    // the build; re-adding it would also desync the engine tag guard).
     let consumer = read_repo("crates/synvoid-yara/Cargo.toml");
     assert!(
-        consumer.contains("version = \"1.20\""),
-        "synvoid-yara must require yara-x 1.20 (the forked line)"
+        consumer.contains("yara-x = { version = \"1.23\""),
+        "synvoid-yara must require official yara-x 1.23 (the fork-removal line)"
     );
-    let consumer_code: Vec<String> = consumer
+    let consumer_code: String = consumer
         .lines()
         .map(|l| l.split('#').next().unwrap_or("").to_string())
-        .collect();
-    let consumer_code = consumer_code.join("\n");
+        .collect::<Vec<_>>()
+        .join("\n");
     assert!(
         !consumer_code.contains("linkme"),
         "synvoid-yara must not request the upstream-removed yara-x `linkme` feature"
     );
 
-    // No git source may appear for the forked packages (lock or manifests).
+    // The lock entry must be the crates.io release, never a path or git source.
     let lock = read_repo("Cargo.lock");
     let mut in_scope = false;
+    let mut saw_yara = false;
+    let mut registry_source = false;
     for line in lock.lines() {
         let t = line.trim();
         if t == "[[package]]" {
@@ -1548,16 +1481,30 @@ fn yara_fork_is_temporary_guard() {
         }
         if t == "name = \"yara-x\"" {
             in_scope = true;
+            saw_yara = true;
             continue;
         }
         if t.starts_with("name = ") {
             in_scope = false;
             continue;
         }
-        if in_scope && t.contains("git+") {
-            panic!("vendored yara-x lock entry must not have a git source: {t}");
+        if in_scope && t == "version = \"1.23.0\"" {
+            continue;
+        }
+        if in_scope
+            && t.starts_with("source = \"registry+https://github.com/rust-lang/crates.io-index\"")
+        {
+            registry_source = true;
+        }
+        if in_scope && (t.contains("git+") || t.starts_with("source = \"path")) {
+            panic!("retired yara-x fork source reappeared in Cargo.lock: {t}");
         }
     }
+    assert!(saw_yara, "Cargo.lock must resolve yara-x from crates.io");
+    assert!(
+        registry_source,
+        "Cargo.lock yara-x entry must carry the crates.io registry source"
+    );
 }
 
 // ---------------------------------------------------------------------------

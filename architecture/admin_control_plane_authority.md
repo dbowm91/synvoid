@@ -2,32 +2,35 @@
 
 This document describes the typed authority, outcome, and audit model for admin and control-plane mutations.
 
-## Shipping status: NOT MOUNTED IN THE BINARY
+## Shipping status: MOUNTED IN THE WORKER DATA PLANE
 
-> **The admin HTTP control plane described below is compiled but not reachable.**
-> `create_admin_router` (`src/admin/mod.rs`) is the single public entry point of
-> `src/admin/`, and it has **no production caller**: as of `f5f940b3` its only
-> references are `tests/admin_smoke_flow.rs`, `tests/admin_router_composition.rs`
-> and `tests/admin_route_contract.rs`. `AdminState::new` is likewise only reached
-> from that router and from test code, and `start_metrics_publisher`
-> (`src/admin/metrics.rs`) has no caller at all.
+> **The admin HTTP control plane described below is served.** Since the
+> WAF/Admin deployment-truthfulness campaign,
+> `UnifiedServer::run` (`src/server/mod.rs`) calls
+> `spawn_admin_service` (`src/server/listener_tasks.rs`) when
+> `[admin] enabled=true`: each worker binds `bind_address:port` (parsed and
+> conflict-checked in `UnifiedServerStartupPlan::from_config_snapshot`) and
+> serves `create_admin_router` (`src/admin/mod.rs`) with live probe/
+> suspicious-word/upstream-error/threat-level trackers from its own `WafCore`.
+> The task is registered as a `ProtocolListener` and drained via
+> `wait_for_shutdown_and_drain` like every other listener. `enabled=false` registers
+> no listener (previous behavior).
 >
-> Everything below therefore specifies the **intended** control plane. It is a
-> binding contract for the day the router is mounted, and it is the reason the
-> authority/outcome/audit model is shaped the way it is — but none of it is
-> served today. Do not read the rest of this document as a statement about the
-> shipped binary.
+> `RuleFeedManagerForWaf`, mesh transport and ICMP filter handles are not
+> threaded yet — the router receives `None` for those — because the worker
+> composition root does not own them. Threading them is follow-up work, not
+> a reason to unmount.
 >
-> The `admin_surface_is_not_mounted` guard in
-> `tools/synvoid-repo-guards/tests/admin_surface_truthfulness.rs` enforces the
-> pairing: while the router is unmounted, this notice must be present. Mounting
-> the router (or removing this claim) requires updating that guard in the same
-> commit.
+> The `admin_surface_mounting_pairing` guard in
+> `tools/synvoid-repo-guards/tests/admin_surface_truthfulness.rs` now
+> observes the mounted state: a production caller exists, so the NOT MOUNTED
+> notice must stay absent. Unmounting the router requires restoring that
+> notice in the same commit.
 >
-> Note also that the three `admin-contract` lanes in the verification contract
-> drive `create_admin_router` directly through `ServiceExt::oneshot` and pass
-> `u32::MAX` as the rate-limit ceiling. They characterize this router, not the
-> shipped binary.
+> The three `admin-contract` lanes in the verification contract still drive
+> `create_admin_router` directly through `ServiceExt::oneshot` and pass
+> `u32::MAX` as the rate-limit ceiling. They characterize this router, not
+> the shipped binary.
 
 ## Overview
 
@@ -165,7 +168,7 @@ modules.
 |----------|------|--------|
 | `create_session`, `delete_session` | auth.rs | Audit events added, responses use `AdminMutationResult` |
 | `update_theme` | theme.rs | Converted from `ThemeResponse` to `AdminMutationResult`, audit event added |
-| `create_listener`, `delete_listener` | tcp_udp.rs | Converted to `AdminMutationResult`, audit events added |
+| `create_listener`, `delete_listener` | tcp_udp.rs | Converted to `AdminMutationResult` in Phase 12; **removed** in production-readiness Phase 02 because they edited a site-local schema no runtime listener consumed. Listener definitions are the global `[tcp.protocols.*]`/`[udp.protocols.*]` maps and require a restart. |
 | `derive_signing_key`, `submit_audit_report`, `report_signature_failure`, `create_organization` | mesh_admin.rs | Converted from custom response types to `AdminMutationResult`, audit events added |
 | `restart_worker`, `batch_restart_workers` | system.rs | Converted from `StatusResponse`/`BatchRestartResponse` to `AdminMutationResult`, audit events added |
 | `scale_workers` | system.rs | Audit event added (already had `AdminMutationResult`) |

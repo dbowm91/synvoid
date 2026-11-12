@@ -401,7 +401,11 @@ mod waf_streaming_tests {
 
     #[test]
     fn test_streaming_waf_binary_data() {
-        let config = AttackDetectionConfig::default();
+        // SSRF is on by default and its streaming heuristic flags the raw
+        // 0..255 soup (`http` + digit/dot runs); disable it here so this
+        // test keeps covering binary-data plumbing, not SSRF tuning.
+        let mut config = AttackDetectionConfig::default();
+        config.ssrf.enabled = false;
         let detector = Arc::new(AttackDetector::new(config));
         let mut streaming = detector.streaming();
 

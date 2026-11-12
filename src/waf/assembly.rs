@@ -11,7 +11,9 @@ use std::net::IpAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::config::defaults::{AsnScrapingConfig, BlockedDefaults, BotDefaults};
+use crate::config::defaults::{
+    AsnScrapingConfig, BlockedDefaults, BotDefaults, ErrorPagesDefaults,
+};
 use crate::config::limits::RateLimitMemoryConfig;
 use crate::config::traffic::{BandwidthConfig, TrafficShapingConfig};
 use crate::config::{SuspiciousWordsConfig, UpstreamErrorsConfig};
@@ -190,6 +192,8 @@ pub(crate) fn assemble_detectors(
     bot_config: &BotDefaults,
     endpoint_config: &BlockedDefaults,
     attack_detection_config: Option<AttackDetectionConfig>,
+    error_pages: &ErrorPagesDefaults,
+    error_page_theme: crate::theme::ThemeConfig,
 ) -> DetectorBundle {
     let bot_detector = BotDetector::new(
         bot_config.known_bots_allow.clone(),
@@ -207,7 +211,19 @@ pub(crate) fn assemble_detectors(
     );
 
     let sensitive_endpoint_manager = SensitiveEndpointManager::from_file("honeypot_endpoints.txt");
-    let error_page_manager = ErrorPageManager::new("error_pages", None, true);
+    // The operator's `[defaults.error_pages]` directory/mode and the global
+    // `[defaults.theme]` conversion feed the manager. A relative `directory`
+    // resolves against the process working directory, matching the previous
+    // hard-coded `"error_pages"` behaviour for default configs.
+    let error_page_manager = ErrorPageManager::with_shared_theme(
+        &error_pages.directory,
+        None,
+        error_pages.enabled,
+        &error_pages.mode,
+        std::sync::Arc::new(arc_swap::ArcSwap::new(std::sync::Arc::new(
+            error_page_theme,
+        ))),
+    );
     let challenge_manager = ChallengeManager::new(ChallengeConfig {
         cookie_name: bot_config.challenge_cookie_name.clone(),
         pow_enabled: false,
@@ -365,7 +381,13 @@ mod tests {
 
     #[test]
     fn detectors_build_with_defaults() {
-        let bundle = assemble_detectors(&BotDefaults::default(), &BlockedDefaults::default(), None);
+        let bundle = assemble_detectors(
+            &BotDefaults::default(),
+            &BlockedDefaults::default(),
+            None,
+            &ErrorPagesDefaults::default(),
+            crate::theme::ThemeConfig::default(),
+        );
         assert!(bundle.attack_detector.is_none());
         let _ = bundle.bot_detector;
     }
@@ -376,6 +398,8 @@ mod tests {
             &BotDefaults::default(),
             &BlockedDefaults::default(),
             Some(AttackDetectionConfig::default()),
+            &ErrorPagesDefaults::default(),
+            crate::theme::ThemeConfig::default(),
         );
         assert!(bundle.attack_detector.is_some());
     }

@@ -12,6 +12,9 @@ This guide covers production deployment of SynVoid with security hardening, perf
 - [ ] Validate upstream connectivity
 - [ ] Configure firewall rules
 - [ ] Set up monitoring alerts
+- [ ] Create the dedicated `synvoid` service account and set directory ownership
+- [ ] Run `systemd-analyze verify` and `systemd-analyze security` on the unit
+- [ ] Build and scan the container image (if you deploy with Docker/Kubernetes)
 
 ## Security Hardening
 
@@ -66,22 +69,119 @@ iptables -A INPUT -p tcp --dport 8081 -j DROP
 # tunnel over SSH — do not add a firewall rule expecting remote scrapes.
 ```
 
-### 3. File Permissions
+### 3. Service Account and Directory Ownership
+
+The shipped unit runs as the dedicated `synvoid` account, not root. Binding
+ports 80/443 is the only privileged operation, and it is granted with
+`CAP_NET_BIND_SERVICE`.
 
 ```bash
-# Create synvoid user
-useradd -r -s /bin/false synvoid
+# Dedicated system account and group.
+sudo groupadd --system synvoid
+sudo useradd --system --gid synvoid --home-dir /var/lib/synvoid \
+  --shell /usr/sbin/nologin synvoid
 
-# Set permissions
-chown -R synvoid:synvoid /opt/synvoid
-chown -R synvoid:synvoid /var/log/synvoid
-chown -R synvoid:synvoid /etc/synvoid
+# Read-only install tree.
+sudo install -d -m 0755 -o root -g root /opt/synvoid
+sudo install -d -m 0755 -o root -g root /opt/synvoid/admin-ui /opt/synvoid/config
 
-# Restrict config access
-chmod 600 /etc/synvoid/main.toml
+# Writable state, log, cache and runtime directories.
+sudo install -d -m 0700 -o synvoid -g synvoid \
+  /etc/synvoid /var/lib/synvoid /var/log/synvoid /var/cache/synvoid /run/synvoid
+
+# Binary and jail binaries must stay in the same directory: the jail resolver
+# searches only next to the executable, never PATH or the working directory.
+sudo install -m 0755 target/release/synvoid /usr/local/bin/synvoid
+sudo install -m 0755 target/release/synvoid-wasm-jail /usr/local/bin/synvoid-wasm-jail
+sudo install -m 0755 target/release/synvoid-yara-jail /usr/local/bin/synvoid-yara-jail
+
+# Admin UI, static assets, YARA rules and DNS root hints.
+sudo install -d /opt/synvoid/admin-ui/dist
+sudo cp -a admin-ui/dist/. /opt/synvoid/admin-ui/dist/
+sudo cp -a static rules root.hints /opt/synvoid/
+
+# The unit's WorkingDirectory is /opt/synvoid, so relative paths in the
+# shipped config (config/error_pages, config/mimes, and the legacy
+# honeypot_endpoints.txt lookup) resolve inside the read-only install tree.
+sudo cp -a config/error_pages config/mimes /opt/synvoid/config/
+sudo install -m 0644 config/honeypot_endpoints.txt /opt/synvoid/config/honeypot_endpoints.txt
+sudo install -m 0644 config/honeypot_endpoints.txt /opt/synvoid/honeypot_endpoints.txt
+
+# Authoritative configuration consumed by --config-path /etc/synvoid.
+sudo install -d -o synvoid -g synvoid -m 0700 /etc/synvoid/sites
+sudo cp config/main.toml /etc/synvoid/main.toml
+sudo cp -a config/sites/. /etc/synvoid/sites/
+sudo chown -R synvoid:synvoid /etc/synvoid
+sudo chmod -R go-rwx /etc/synvoid
 ```
 
-### 4. Secrets Management
+**Why two config locations?** `/etc/synvoid` is what `--config-path` reads and
+what the admin config editor rewrites. `/opt/synvoid/config` holds the shipped
+relative-path defaults (`error_pages`, `mimes`) that the process resolves
+against its working directory. Keep `/opt/synvoid` root-owned and read-only;
+never make the whole install tree writable.
+
+If the admin config editor is **not** used, `/etc/synvoid` may stay root-owned
+and read-only: remove it from the unit's `ReadWritePaths=` and do not chown it
+to `synvoid`. If the editor **is** used, `/etc/synvoid` must be owned by
+`synvoid` (as above) so the service can write `main.toml` and `sites/`.
+The editor also writes a legacy `.worker_reload` marker into the working
+directory; because `/opt/synvoid` is read-only that marker write logs a
+warning, but the handler still calls the Supervisor reload path and the
+configuration change is applied through IPC.
+
+### 4. systemd Hardening (Non-Root)
+
+Install and start the shipped unit:
+
+```bash
+sudo cp contrib/systemd/synvoid.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now synvoid
+```
+
+The unit sets `User=synvoid`, `Group=synvoid`, `UMask=0077`,
+`NoNewPrivileges=true`, `CapabilityBoundingSet=CAP_NET_BIND_SERVICE`,
+`AmbientCapabilities=CAP_NET_BIND_SERVICE`, `ProtectSystem=strict`,
+`ProtectHome=true`, `PrivateTmp=true`, `PrivateDevices=true`,
+`ProtectKernelTunables=true`, `ProtectKernelModules=true`,
+`ProtectControlGroups=true`, `RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX`,
+`LockPersonality=true`, `RestrictRealtime=true`, and
+`SystemCallArchitectures=native`. It creates `/var/lib/synvoid`,
+`/var/log/synvoid`, `/var/cache/synvoid` and `/run/synvoid` with the correct
+ownership through `StateDirectory=`, `LogsDirectory=`, `CacheDirectory=` and
+`RuntimeDirectory=`.
+
+`MemoryDenyWriteExecute` is deliberately **not** set: Wasmtime's JIT and the
+dynamic plugin path require executable mappings. Deployments that disable both
+may add it as an explicit drop-in.
+
+**Opt-in capabilities.** `CAP_NET_ADMIN` is not granted by default. eBPF
+flood/ICMP filtering and WireGuard tunnels need it, plus the matching address
+families. Add a drop-in only for those deployments:
+
+```ini
+# /etc/systemd/system/synvoid.service.d/capabilities.conf
+[Service]
+AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_NET_ADMIN
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK AF_PACKET
+```
+
+**Verification evidence.** Validate the unit and record the exposure score on
+the target host:
+
+```bash
+sudo systemd-analyze verify /etc/systemd/system/synvoid.service
+systemd-analyze security --offline=yes --no-pager /etc/systemd/system/synvoid.service
+```
+
+Measured against this unit on systemd 255: `Overall exposure level …: 4.4 OK`.
+The score varies slightly with the systemd version; the properties that matter
+are the non-root account, the single capability, the read-only system
+filesystem, and the absence of `AF_PACKET`/`AF_NETLINK`.
+
+### 5. Secrets Management
 
 Never commit secrets to version control. Use environment variables or secrets management:
 
@@ -89,9 +189,9 @@ Never commit secrets to version control. Use environment variables or secrets ma
 # Environment variable
 export SYNVOID_ADMIN_TOKEN=$(cat /run/secrets/admin_token)
 
-# In systemd service
-[Service]
-EnvironmentFile=/etc/synvoid/secrets.env
+# The shipped unit reads this optional file (a missing file is ignored):
+#   EnvironmentFile=-/etc/synvoid/secrets.env
+sudo install -m 0600 -o synvoid -g synvoid /dev/null /etc/synvoid/secrets.env
 ```
 
 ## Performance Tuning
@@ -285,14 +385,30 @@ output.elasticsearch:
 
 ### Throughput Estimates
 
-| Hardware | Requests/sec | Connections |
-|----------|--------------|-------------|
-| 2 vCPU, 2GB | ~10,000 | ~5,000 |
-| 4 vCPU, 4GB | ~25,000 | ~10,000 |
-| 8 vCPU, 8GB | ~50,000 | ~20,000 |
-| 16 vCPU, 16GB | ~100,000 | ~50,000 |
+The repository does not publish an unqualified requests/sec table. Throughput
+depends on the WAF policy, TLS, body size, cache hit rate, CPU/kernel and network
+topology. For measured, same-host evidence:
 
-*Estimates based on simple requests with attack detection enabled*
+```bash
+python3 benchmarks/multi_service/driver.py \
+  --workloads vhost-1,vhost-100,vhost-1000,h1-concurrent,waf-small,waf-body
+```
+
+Cite the dated directory under `benchmarks/multi_service/results/YYYY-MM-DD/`
+together with the revision SHA, host CPU model, build profile and topology.
+Loopback results are not production capacity and must not be compared across
+hosts, kernels, architectures, build profiles or container runtimes.
+
+### Process Model Assumptions
+
+Capacity planning assumes **one `UnifiedServerWorker` per process**. The
+`[defaults.worker_pool].workers` type default is `1`; values above `1` require
+`allow_multi_worker = true` and are an advanced fault-isolation mode, not a
+capacity lever. Scale a single process with `[process_manager].worker_threads`,
+then tune `[tcp].worker_pool_size` for TCP accept concurrency. If one host must
+serve more than one process, run separate instances with separate config
+directories behind a load balancer and do not expect shared admin sessions,
+CSRF tokens, rate-limit budgets, metrics or request logs.
 
 ### Capacity Calculations
 
@@ -335,22 +451,17 @@ Rate Limit Buckets:
 
 #### Throughput Scaling
 
-```
-Baseline (per 2 vCPU):
-  Simple requests: ~10,000 req/sec
-  With attack detection: ~8,000 req/sec (-15-20%)
+Measure the target host instead of extrapolating from vCPU count:
 
-Scaling factors:
-  +1 vCPU ≈ +40-50% throughput (diminishing returns after 8 cores)
-  +1 GB RAM ≈ +20% connection capacity
-  Enable caching: +100-300% effective throughput for cached content
+- `--process-profiles threads-1,threads-4,threads-8` for Tokio-thread scaling;
+- `--process-profiles default` for the canonical single-worker profile;
+- `--waf-profile off|on|block` to separate proxy cost from detection/action
+  cost;
+- report medians over at least three repetitions and include the spread.
 
-Real-world example:
-  Hardware: 8 vCPU, 8 GB RAM
-  Expected: 50,000 req/sec simple, 40,000 req/sec with WAF
-  Peak memory: ~4 GB (leaving headroom)
-  Connection limit: ~52,000 (with 65K fds)
-```
+Keep the memory/file-descriptor calculations in this section, but feed them
+connection rates measured on the target host. Do not present
+`+1 vCPU ≈ +40–50% throughput` as a validated scaling law.
 
 #### Estimating Requirements
 
@@ -358,9 +469,10 @@ Real-world example:
 Step 1: Determine peak requests per second
   Example: 25,000 req/sec expected
 
-Step 2: Calculate required cores
-  With WAF overhead: 25,000 / 8,000 per core = ~3.2 cores
-  Safety factor 1.5×: 3.2 × 1.5 = ~5 cores → use 8 vCPU
+Step 2: Measure requests/sec per core on the target host
+  Run the multi-service harness against the target CPU class and WAF policy.
+  Use the measured p95 latency and error rate, not a per-core estimate.
+  Apply a 1.5× safety factor to the measured concurrency.
 
 Step 3: Calculate memory needs
   Rate limit (1M IPs): 100 MB
@@ -486,56 +598,84 @@ systemctl restart synvoid
 
 ## Docker Deployment
 
-### Basic Docker Run
-
-> **Unverified:** this repository contains no `Dockerfile` and its CI workflow
-> builds no image, so `synvoid/synvoid:latest` cannot be confirmed to exist.
-> Build your own from the release binary (see `RELEASE.md`) and substitute that
-> image name everywhere below.
+The repository ships a multi-stage `Dockerfile`. CI builds it in the
+`docker-build` job (with a `--configtest` smoke run) but **does not publish
+it**. There is no verified public image under `synvoid/synvoid`; build and tag
+the image yourself, or push it to your own registry and substitute that
+reference below.
 
 ```bash
-# Run with basic config. `--config-path` takes the DIRECTORY that holds
-# main.toml + sites/, not the toml file. Without it SynVoid looks for ./config
-# relative to the working directory.
+docker build -t synvoid:latest .
+```
+
+The image:
+
+- runs as the unprivileged `synvoid` user (UID/GID 10001), never root;
+- ships the Supervisor and both jail binaries (`synvoid-wasm-jail`,
+  `synvoid-yara-jail`) in `/usr/local/bin`;
+- keeps `/opt/synvoid` read-only and writes state to `/var/lib/synvoid`,
+  logs to `/var/log/synvoid`, cache to `/var/cache/synvoid`, and runtime data
+  to `/run/synvoid`;
+- reads configuration from `/etc/synvoid` and defaults to
+  `--foreground --config-path /etc/synvoid`;
+- exposes only the data-plane port `8080`. Admin (`127.0.0.1:8081`) and metrics
+  (`127.0.0.1:9090`) stay loopback inside the container. Publish them only with
+  a deliberate, authenticated front door.
+
+Because the container runs as non-root, map host port 80 to container port
+8080 as shown below. Binding a port below 1024 *inside* the container would
+require `--cap-add NET_BIND_SERVICE`; the default image does not need it.
+
+### Basic Docker Run
+
+```bash
 docker run -d \
   --name synvoid \
   -p 80:8080 \
-  -p 443:443 \
-  -p 8081:8081 \
+  -e SYNVOID_ADMIN_TOKEN="$(openssl rand -hex 32)" \
   -v /path/to/config:/etc/synvoid \
-  synvoid/synvoid:latest --config-path /etc/synvoid
+  -v synvoid-data:/var/lib/synvoid \
+  -v synvoid-logs:/var/log/synvoid \
+  synvoid:latest
 ```
+
+`--config-path` is the config **DIRECTORY** (`main.toml` + `sites/`), and the
+image default already passes `/etc/synvoid`. `SYNVOID_ADMIN_TOKEN` is only
+consulted when the config opts in with
+`[admin] token_env_var = "SYNVOID_ADMIN_TOKEN"` (the shipped config does).
+
+If `/path/to/config` is a host bind mount, the runtime user must be able to
+read it. Chown it to `10001:10001` only if the admin config editor also needs
+to write `main.toml`/`sites/`; otherwise a root-owned, read-only mount is
+correct. The built-in healthcheck runs `synvoid --status` over the private
+pidfile/IPC socket, so it works whether or not the admin listener is enabled
+and never exposes the admin API.
 
 ### Docker Compose
 
 ```yaml
 # docker-compose.yml
-version: '3.8'
-
 services:
   synvoid:
-    image: synvoid/synvoid:latest
+    image: synvoid:latest
     container_name: synvoid
-    # --config-path is the config DIRECTORY (main.toml + sites/), not the file
-    command: ["synvoid", "--config-path", "/etc/synvoid"]
+    # The image CMD already runs `--foreground --config-path /etc/synvoid`.
+    command: ["--foreground", "--config-path", "/etc/synvoid"]
     ports:
       - "80:8080"
-      - "443:443"
-      - "8081:8081"
+      # Do not publish 8081/9090 here. Admin and metrics bind loopback inside
+      # the container; reach them through an SSH tunnel or an authenticating
+      # proxy if remote access is required.
     volumes:
       - ./config:/etc/synvoid
-      - ./certs:/etc/synvoid/certs
-      - ./logs:/var/log/synvoid
+      - synvoid-data:/var/lib/synvoid
+      - synvoid-logs:/var/log/synvoid
     environment:
       - RUST_LOG=info
+      - SYNVOID_ADMIN_TOKEN=${SYNVOID_ADMIN_TOKEN}
     restart: unless-stopped
-    healthcheck:
-      # The admin API serves /health (public, unauthenticated). There is no
-      # /api/health route.
-      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+    # The image healthcheck uses `synvoid --status`, which does not require the
+    # admin listener. Override only if you need a different liveness policy.
     networks:
       - waf-network
 
@@ -545,9 +685,27 @@ services:
     networks:
       - waf-network
 
+volumes:
+  synvoid-data:
+  synvoid-logs:
+
 networks:
   waf-network:
     driver: bridge
+```
+
+For a read-only root filesystem, mount every writable path and add a tmpfs for
+the runtime directory (and the cache, unless it is mounted):
+
+```yaml
+    read_only: true
+    tmpfs:
+      - /run/synvoid
+    volumes:
+      - ./config:/etc/synvoid
+      - synvoid-data:/var/lib/synvoid
+      - synvoid-logs:/var/log/synvoid
+      - synvoid-cache:/var/cache/synvoid
 ```
 
 ### Docker with Environment Variables
@@ -556,10 +714,11 @@ networks:
 docker run -d \
   --name synvoid \
   -p 80:8080 \
-  -p 443:443 \
   -e RUST_LOG=info \
   -e SYNVOID_ADMIN_TOKEN=${SYNVOID_ADMIN_TOKEN} \
-  synvoid/synvoid:latest --config-path /etc/synvoid
+  -v synvoid-data:/var/lib/synvoid \
+  -v synvoid-logs:/var/log/synvoid \
+  synvoid:latest
 ```
 
 `SYNVOID_ADMIN_TOKEN` is only consulted when the config opts in via
@@ -589,16 +748,30 @@ spec:
       labels:
         app: synvoid
     spec:
+      # The image already defaults to UID/GID 10001; the explicit context keeps
+      # the pod non-root even if a cluster policy overrides the image user.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
       containers:
       - name: synvoid
-        image: synvoid/synvoid:latest
-        # --config-path takes the config DIRECTORY
-        args: ["--config-path", "/etc/synvoid"]
+        image: synvoid:latest
+        imagePullPolicy: IfNotPresent
+        # --config-path takes the config DIRECTORY (main.toml + sites/).
+        args: ["--foreground", "--config-path", "/etc/synvoid"]
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
         ports:
         - containerPort: 8080
           name: http
         - containerPort: 443
           name: https
+        # Admin stays on 127.0.0.1:8081 inside the pod and is intentionally
+        # absent from the Service below.
         - containerPort: 8081
           name: admin
         env:
@@ -614,6 +787,14 @@ spec:
           mountPath: /etc/synvoid
         - name: certs
           mountPath: /etc/synvoid/certs
+        - name: data
+          mountPath: /var/lib/synvoid
+        - name: logs
+          mountPath: /var/log/synvoid
+        - name: cache
+          mountPath: /var/cache/synvoid
+        - name: run
+          mountPath: /run/synvoid
         resources:
           requests:
             memory: "256Mi"
@@ -622,25 +803,35 @@ spec:
             memory: "512Mi"
             cpu: "500m"
         livenessProbe:
-          httpGet:
-            # Public admin liveness route; it is /health, not /api/health.
-            path: /health
-            port: 8081
+          # Do not probe the loopback-only admin port from the kubelet. The
+          # private status check works with the admin listener enabled or not.
+          exec:
+            command: ["/bin/sh", "-c", "synvoid --status | grep -q 'Supervisor PID'"]
           initialDelaySeconds: 30
           periodSeconds: 10
         readinessProbe:
-          httpGet:
-            path: /health
-            port: 8081
+          exec:
+            command: ["/bin/sh", "-c", "synvoid --status | grep -q 'Supervisor PID'"]
           initialDelaySeconds: 5
           periodSeconds: 5
       volumes:
       - name: config
+        # A ConfigMap is read-only. Use a PersistentVolumeClaim for
+        # /etc/synvoid if the admin config editor must persist changes.
         configMap:
           name: synvoid-config
       - name: certs
         secret:
           secretName: synvoid-certs
+      - name: data
+        persistentVolumeClaim:
+          claimName: synvoid-data
+      - name: logs
+        emptyDir: {}
+      - name: cache
+        emptyDir: {}
+      - name: run
+        emptyDir: {}
 ```
 
 ### Service YAML
@@ -680,6 +871,7 @@ data:
 
     [admin]
     enabled = true
+    bind_address = "127.0.0.1"
     port = 8081
     token_env_var = "SYNVOID_ADMIN_TOKEN"
 

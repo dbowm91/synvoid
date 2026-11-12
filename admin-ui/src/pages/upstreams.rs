@@ -18,7 +18,11 @@ pub fn Upstreams() -> Html {
         let upstreams = upstreams.clone();
         let loading = loading.clone();
         let error = error.clone();
-        use_effect(move || {
+        // Fetch once on mount. A bare `use_effect` re-ran after every render
+        // and each fetch triggered a re-render: a hot loop that burned the
+        // shared per-IP rate budget in about a second, 429ing this page and
+        // every other tab with it (the 429 then retried forever).
+        use_effect_with((), move |_| {
             let upstreams = upstreams.clone();
             let loading = loading.clone();
             let error = error.clone();
@@ -35,7 +39,7 @@ pub fn Upstreams() -> Html {
                 }
                 loading.set(false);
             });
-            || ()
+            || {}
         });
     }
 

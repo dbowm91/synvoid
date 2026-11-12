@@ -86,7 +86,7 @@ pub fn Tooltip(props: &TooltipProps) -> Html {
 
             if *visible {
                 <div id={tooltip_id.clone()} role="tooltip" class={format!("absolute z-50 {}", position_class)}>
-                    <div class="bg-accent text-white text-xs rounded-lg shadow-lg p-3 max-w-xs whitespace-normal border border-secondary animate-fade-in">
+                    <div class="bg-secondary text-primary text-xs rounded-lg shadow-lg p-3 max-w-xs whitespace-normal border border-default animate-fade-in">
                         if let Some(title) = &props.title {
                             <div class="font-semibold mb-1 text-sm">{ title }</div>
                         }

@@ -1,0 +1,37 @@
+# VCS and CI metadata
+.git
+.gitignore
+.github
+.opencode
+
+# Build outputs
+target
+**/target
+admin-ui/dist
+admin-ui/node_modules
+admin-ui/.trunk
+
+# Local/untracked configuration, secrets, databases and logs
+.env
+.env.*
+config/*.local.toml
+config/local.toml
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.log
+logs/
+
+# Documentation, plans and benchmarks are not build inputs
+architecture
+docs
+plans
+benchmarks
+clients
+CHANGELOG.md
+CODE_OF_CONDUCT.md
+CONTRIBUTING.md
+SECURITY.md
+WINDOWS_TESTING.md

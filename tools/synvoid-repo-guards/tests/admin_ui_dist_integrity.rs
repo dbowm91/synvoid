@@ -139,10 +139,11 @@ fn admin_ui_dist_has_no_orphan_bundles() {
 
 /// The stylesheet must be present and linked.
 ///
-/// The stylesheet is produced by `npm run build:css` (Tailwind) and copied
-/// into `dist` separately from the Trunk bundle, so it is the component most
-/// likely to be regenerated alone — exactly how the artifact came to hold a
-/// current CSS beside a months-old WASM.
+/// Trunk emits the `rel="css"` stylesheet content-hashed
+/// (`styles-<hash>.css`), so both the hashed and the unhashed (`styles.css`,
+/// from a standalone `npm run build:css` copy) layouts are accepted. Either
+/// way the two properties must hold: the file is on disk and `index.html`
+/// links it. A missing or unlinked stylesheet ships the panel unstyled.
 #[test]
 fn admin_ui_dist_stylesheet_is_present_and_linked() {
     let root = workspace_root();
@@ -153,17 +154,153 @@ fn admin_ui_dist_stylesheet_is_present_and_linked() {
         return;
     }
 
-    let stylesheet = dist.join("styles.css");
+    let html = std::fs::read_to_string(&index).expect("read admin-ui/dist/index.html");
+    let mut linked = Vec::new();
+    if html.contains("styles.css") {
+        linked.push("styles.css".to_string());
+    }
+    if let Ok(entries) = std::fs::read_dir(&dist) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name != "styles.css"
+                && name.starts_with("styles-")
+                && name.ends_with(".css")
+                && html.contains(&name)
+            {
+                linked.push(name);
+            }
+        }
+    }
+
     assert!(
-        stylesheet.is_file(),
-        "admin_ui_dist_stylesheet_is_present_and_linked: admin-ui/dist/styles.css is missing. \
-         Rebuild with `cd admin-ui && npm run build`."
+        !linked.is_empty(),
+        "admin_ui_dist_stylesheet_is_present_and_linked: dist/index.html links no \
+         stylesheet (neither styles.css nor a styles-<hash>.css present on disk), \
+         so the committed stylesheet would never load."
     );
+}
+
+/// No inline scripts in `dist/index.html`.
+///
+/// The admin server sends `script-src 'self'` with no `'unsafe-inline'`
+/// (`security_headers_middleware`), so an inline `<script>` — including
+/// Trunk's default inline WASM bootstrap — is refused and the panel sticks
+/// on its loading screen with no login form. The bootstrap must stay an
+/// external file (`bootstrap.js`). A Trunk rebuild reintroduces the inline
+/// bootstrap; extract it again instead of loosening the CSP.
+#[test]
+fn admin_ui_dist_has_no_inline_scripts() {
+    let root = workspace_root();
+    let dist = root.join("admin-ui").join("dist");
+    let index = dist.join("index.html");
+
+    if !index.exists() {
+        // Covered by admin_ui_dist_referenced_assets_exist.
+        return;
+    }
 
     let html = std::fs::read_to_string(&index).expect("read admin-ui/dist/index.html");
+
+    // Scan absolute offsets; skip `<!-- -->` comments so prose naming the
+    // rejected pattern (like this comment) is not itself a violation.
+    // `str::get` keeps the scan total on non-ASCII input.
+    let mut inline = 0;
+    let mut i = 0;
+    while i < html.len() {
+        let Some(tail) = html.get(i..) else {
+            i += 1;
+            continue;
+        };
+        if let Some(after_open) = tail.strip_prefix("<!--") {
+            if let Some(end) = after_open.find("-->") {
+                i += "<!--".len() + end + "-->".len();
+                continue;
+            }
+            break;
+        }
+        if tail.starts_with("<script") {
+            let tag_end = tail.find('>').map(|o| i + o).unwrap_or(html.len());
+            if !html[i..tag_end].contains("src=") {
+                inline += 1;
+            }
+            i = (tag_end + 1).min(html.len());
+            continue;
+        }
+        i += 1;
+    }
+
+    assert_eq!(
+        inline, 0,
+        "admin_ui_dist_has_no_inline_scripts: dist/index.html contains {inline} inline \
+         <script> block(s). The admin CSP refuses inline scripts, so the panel never \
+         boots. Move the bootstrap to an external file (see dist/bootstrap.js)."
+    );
+}
+
+/// Text token utilities must resolve to text variables, not surfaces.
+///
+/// `tailwind.config.js` maps one colour entry to `bg-`, `text-` and
+/// `border-` utilities from a single variable, so generated `text-primary`
+/// (and `hover:text-primary`) resolve to `var(--bg-primary)`: near-black in
+/// dark mode, off-white in light mode. `tailwind.css` re-points the text
+/// utilities at the dedicated text tokens; the hover correction needs
+/// doubled specificity because Tailwind sorts variant utilities after the
+/// custom block. Assert on the *winning* (last) declaration of each rule:
+/// a reordering that lets the surface colour win back paints invisible
+/// text on hover.
+#[test]
+fn admin_ui_text_tokens_resolve_to_text_vars() {
+    let root = workspace_root();
+    let dist = root.join("admin-ui").join("dist");
+
+    let css_path = std::fs::read_dir(&dist)
+        .expect("read admin-ui/dist")
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().to_string())
+        .filter(|name| {
+            (name.starts_with("styles-") && name.ends_with(".css")) || name == "styles.css"
+        })
+        .map(|name| dist.join(name))
+        .next()
+        .expect("admin_ui_text_tokens_resolve_to_text_vars: no stylesheet in admin-ui/dist");
+
+    let css = std::fs::read_to_string(&css_path).expect("read built stylesheet");
+
+    for (selector, var) in [
+        (".text-primary{color:", "--text-primary"),
+        (".text-secondary{color:", "--text-secondary"),
+        (".text-tertiary{color:", "--text-tertiary"),
+    ] {
+        // Absolute offsets throughout: `find` on a subslice returns a
+        // relative index, so reslicing the remainder rewinds the scan and
+        // loops forever once a selector matches twice.
+        let mut last: Option<&str> = None;
+        let mut start = 0;
+        while let Some(at) = css[start..].find(selector) {
+            let abs = start + at;
+            let end = css[abs..].find('}').map(|o| abs + o).unwrap_or(css.len());
+            last = Some(&css[abs..end]);
+            start = end;
+        }
+        let winning = last.unwrap_or_else(|| {
+            panic!("admin_ui_text_tokens_resolve_to_text_vars: {selector}...}} absent")
+        });
+        assert!(
+            winning.contains(var) && !winning.contains("--bg-"),
+            "admin_ui_text_tokens_resolve_to_text_vars: winning {selector}...}} \
+             resolves to a surface variable ({winning}); text would be invisible \
+             against panel surfaces. Re-point the token at {var} in tailwind.css."
+        );
+    }
+
+    // The hover correction must beat Tailwind's generated hover variant by
+    // specificity (doubled class), never by source order: generated variants
+    // sort after the custom block.
     assert!(
-        html.contains("styles.css"),
-        "admin_ui_dist_stylesheet_is_present_and_linked: dist/index.html does not link styles.css, \
-         so the committed stylesheet would never load."
+        css.contains(".hover\\:text-primary.hover\\:text-primary:hover"),
+        "admin_ui_text_tokens_resolve_to_text_vars: the doubled-specificity \
+         hover:text-primary correction is gone from the built stylesheet; the \
+         generated var(--bg-primary) hover rule wins and hover text turns \
+         invisible. Restore it in tailwind.css."
     );
 }

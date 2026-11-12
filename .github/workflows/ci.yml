@@ -76,11 +76,13 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      # No `toolchain:` input: rust-toolchain.toml is authoritative. The pinned
-      # 1.98.1 is what makes the rebuilt bundle byte-comparable to the committed
-      # one, so the drift check below is not noise.
+      # The action's default toolchain is `stable`, while rust-toolchain.toml
+      # selects 1.98.1. Name the pinned version here so the wasm target is
+      # installed on the toolchain cargo actually uses (the drift check depends
+      # on that exact compiler).
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable as of 2026-09-12
         with:
+          toolchain: "1.98.1"
           targets: wasm32-unknown-unknown
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -94,6 +96,16 @@ jobs:
         working-directory: admin-ui
         run: npm ci && npm run build
 
+      # When the artifact drifts, expose the exact bundle this runner produced
+      # so it can be adopted without guessing at hash-name differences.
+      - name: Upload built admin UI
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: admin-ui-dist-${{ github.run_id }}
+          path: admin-ui/dist
+          if-no-files-found: error
+
       # `git status --porcelain` rather than `git diff`: Trunk renames the
       # bundle on every build, so drift shows up as an untracked new hash plus a
       # deleted old one. `git diff` alone only sees the deleted half.
@@ -106,6 +118,28 @@ jobs:
             echo "$drift"
             exit 1
           fi
+
+  # Phase 07 packaging: build the container artifact but never publish it.
+  # The smoke run proves the image carries a valid config and that the binary
+  # parses it as the unprivileged runtime user. Publishing stays release-only.
+  docker-build:
+    name: docker-build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # A release Rust build plus the image layers exceeds the default runner
+      # disk budget. Remove preinstalled toolchains the job does not use.
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost
+          sudo docker image prune -af
+
+      - name: Build image
+        run: docker build --tag synvoid:ci .
+
+      - name: Config smoke test (non-root)
+        run: docker run --rm synvoid:ci --configtest --config-path /etc/synvoid
 
   dependency-security:
     name: dependency-security

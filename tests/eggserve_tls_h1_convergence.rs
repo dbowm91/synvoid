@@ -92,8 +92,8 @@ impl synvoid_http::challenge_paths::ChallengePathWaf for StubWaf {
 
 #[async_trait::async_trait]
 impl synvoid_http::BufferedRequestWaf for StubWaf {
-    fn error_page_theme(&self) -> &ThemeConfig {
-        &self.theme
+    fn error_page_theme(&self) -> std::sync::Arc<ThemeConfig> {
+        std::sync::Arc::new(self.theme.clone())
     }
 
     fn render_page_with_theme(
@@ -137,6 +137,7 @@ impl synvoid_http::BufferedRequestWaf for StubWaf {
         _ua: Option<&str>,
         _ja4_hash: Option<&str>,
         _site_bot_config: Option<&synvoid_config::site::SiteBotConfig>,
+        _site_attack_config: Option<&synvoid_config::site::SiteAttackDetectionConfig>,
     ) -> synvoid_proxy::WafDecision {
         self.decide(path)
     }
@@ -153,6 +154,7 @@ impl synvoid_http::BufferedRequestWaf for StubWaf {
         _ua: Option<String>,
         _ja4_hash: Option<String>,
         _site_bot_config: Option<synvoid_config::site::SiteBotConfig>,
+        _site_attack_config: Option<synvoid_config::site::SiteAttackDetectionConfig>,
     ) -> synvoid_proxy::WafDecision {
         self.decide(&path)
     }
@@ -262,6 +264,7 @@ fn lane_context(
     http_config: synvoid_config::http::HttpConfig,
 ) -> NeutralServiceContext<StubWaf, StubDrain> {
     NeutralServiceContext {
+        listener_id: None,
         router: Arc::clone(&shared.router),
         waf: Arc::clone(&shared.waf),
         alt_svc: None,
@@ -273,6 +276,7 @@ fn lane_context(
         drain_state: Some(Arc::new(StubDrain)),
         upstream_client_registry: Arc::clone(&shared.registry),
         connection_limit: Arc::new(Semaphore::new(1024)),
+        request_log_sink: synvoid_http::empty_sink_handle(),
         app_servers: None,
         #[cfg(feature = "mesh")]
         mesh_config: None,

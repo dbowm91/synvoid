@@ -20,6 +20,8 @@ pub async fn collect_and_scan_request_body(
         client_ip,
         content_length,
         max_streaming_body_size,
+        "",
+        None,
     )
     .await
 }

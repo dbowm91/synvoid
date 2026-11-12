@@ -247,6 +247,21 @@ pub fn execute_runtime_launch(plan: RuntimeLaunchPlan) -> RuntimeLaunchOutcome {
                 reuse_port,
             );
 
+            // Phase 08: the worker filesystem sandbox must be entered before
+            // the Tokio runtime creates threads (Landlock's
+            // CurrentThreadPlusDescendants scope covers only future threads).
+            // The witness is retained for the whole worker lifetime below.
+            let _worker_sandbox_guard =
+                match crate::server::worker_sandbox::apply_worker_sandbox_for_config(
+                    &unified_worker_args.config_path,
+                ) {
+                    Ok(guard) => guard,
+                    Err(error) => {
+                        tracing::error!("Refusing to start unified server worker: {error}");
+                        return RuntimeLaunchOutcome::Failed(error.to_string());
+                    }
+                };
+
             let rt = match tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(worker_threads)
                 .enable_all()

@@ -46,7 +46,15 @@ pub fn is_reuse_port_available() -> bool {
 /// is unsupported"). Returning a blocking socket here silently broke all
 /// listener paths built on this helper (found via the eggbench minimal
 /// qualification runtime).
+pub fn bind_tcp(addr: SocketAddr) -> io::Result<std::net::TcpListener> {
+    bind_tcp_with_reuse(addr, false)
+}
+
 pub fn bind_tcp_reuse(addr: SocketAddr) -> io::Result<std::net::TcpListener> {
+    bind_tcp_with_reuse(addr, true)
+}
+
+fn bind_tcp_with_reuse(addr: SocketAddr, reuse_port: bool) -> io::Result<std::net::TcpListener> {
     let domain = if addr.is_ipv6() {
         Domain::IPV6
     } else {
@@ -57,7 +65,7 @@ pub fn bind_tcp_reuse(addr: SocketAddr) -> io::Result<std::net::TcpListener> {
 
     socket.set_reuse_address(true)?;
     #[cfg(unix)]
-    if is_reuse_port_available() {
+    if reuse_port && is_reuse_port_available() {
         socket.set_reuse_port(true)?;
     }
 
@@ -73,7 +81,15 @@ pub fn bind_tcp_reuse(addr: SocketAddr) -> io::Result<std::net::TcpListener> {
 ///
 /// Nonblocking for the same reason as [`bind_tcp_reuse`]: callers convert
 /// with `tokio::net::UdpSocket::from_std`, which rejects blocking sockets.
+pub fn bind_udp(addr: SocketAddr) -> io::Result<std::net::UdpSocket> {
+    bind_udp_with_reuse(addr, false)
+}
+
 pub fn bind_udp_reuse(addr: SocketAddr) -> io::Result<std::net::UdpSocket> {
+    bind_udp_with_reuse(addr, true)
+}
+
+fn bind_udp_with_reuse(addr: SocketAddr, reuse_port: bool) -> io::Result<std::net::UdpSocket> {
     let domain = if addr.is_ipv6() {
         Domain::IPV6
     } else {
@@ -84,7 +100,7 @@ pub fn bind_udp_reuse(addr: SocketAddr) -> io::Result<std::net::UdpSocket> {
 
     socket.set_reuse_address(true)?;
     #[cfg(unix)]
-    if is_reuse_port_available() {
+    if reuse_port && is_reuse_port_available() {
         socket.set_reuse_port(true)?;
     }
 

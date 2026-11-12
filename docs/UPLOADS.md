@@ -10,6 +10,12 @@ SynVoid provides comprehensive file upload validation with optional YARA-based m
 - **Quarantine** - Isolate suspicious files for review
 - **Multi-part Handling** - Full support for multipart form uploads
 
+> **Request body cap:** upload requests still pass through the HTTP body policy.
+> The default cap is 10 MiB (`[http] max_streaming_body_size`). A site can raise
+> it with `[proxy] max_request_body_size`, or use the chunked/resumable upload
+> protocol so each request stays below the cap. A direct body above the resolved
+> cap returns `413`, not an upload-validation verdict.
+
 ## Configuration
 
 ### Basic Upload Configuration

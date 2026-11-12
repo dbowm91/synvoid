@@ -16,10 +16,11 @@ unsafe-native-extensions = ["dep:synvoid-native-extension"]
 [dependencies]
 metrics = "0.22"
 # Phase 37/103: direct runtime is Wasmtime 36 LTS from crates.io (36.0.14+ fixes
-# RUSTSEC-2026-0269; 36.0.16 fixes RUSTSEC-2026-0316; LTS supported through
+# RUSTSEC-2026-0269; 36.0.16 fixes RUSTSEC-2026-0316; 36.0.20 fixes the
+# October 2026 advisories; LTS supported through
 # 2027-08-20). No git patch: 36 coexists with the workspace bumpalo =3.19.0 pin
 # (see baseline §4).
-wasmtime = { version = "36.0.16", features = ["component-model"] }
+wasmtime = { version = "36.0.20", features = ["component-model"] }
 axum = "0.8"
 base64 = "0.22"
 bytes = "1"

@@ -43,7 +43,7 @@ impl CertResolverTransport {
 impl SecureTransportConfig for CertResolverTransport {
     fn server_config(&self) -> Result<Arc<rustls::ServerConfig>, String> {
         self.resolver
-            .build_server_config()
+            .build_server_config(&[])
             .map_err(|e| e.to_string())
     }
 }

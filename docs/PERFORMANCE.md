@@ -30,13 +30,21 @@ The default unified worker runs the latency-sensitive HTTP path on a tokio runti
 Tune runtime and accept-path knobs first, then CPU worker count for heavy transforms.
 
 ```toml
-[server]
+[process_manager]
 worker_threads = 0         # 0 = tokio auto (recommended default)
-unified_server_workers = 1 # default data-plane model
+
+[defaults.worker_pool]
+workers = 1                # type default and shipped default
+allow_multi_worker = false # required acknowledgement above 1
 
 [tcp]
-worker_pool_size = 4       # tune accept path throughput
+worker_pool_size = 4       # accept loops per bound TCP listener
 ```
+
+`workers > 1` is an isolation opt-in, not a throughput knob: sessions, CSRF
+tokens, the admin rate-limit budget, the metrics feed and request logs stay
+per worker. For HTTP throughput raise `worker_threads` first, then tune the
+accept path; for TCP services raise `[tcp].worker_pool_size`.
 
 ### 2. gRPC Control Plane Efficiency
 The Supervisor handles all administrative tasks (status, reloads, mesh sync) via gRPC. By relegating these tasks to a separate process, the Workers can dedicate 100% of their CPU time to request inspection and proxying.
@@ -81,15 +89,73 @@ I/O stalls from offload saturation, task latency regressions, and process growth
 
 ## Benchmarking
 
-Use tools like `wrk` or `oha` to benchmark. Expect improvements when tuning the right knob for the bottleneck:
+**The repository does not publish a cross-host headline RPS claim.** The
+"1M+ RPS" wording that appeared in early design notes is a design target, not a
+measured release property. A throughput number is only meaningful with the host,
+kernel, CPU, build profile, concurrency, workload and network topology attached;
+the repository therefore records dated, reproducible runs instead of a single
+marketing figure.
+
+Use the manual multi-service harness for end-to-end evidence:
+
+```bash
+# Smoke: validates the harness pipeline only. Never adjudication evidence.
+python3 benchmarks/multi_service/driver.py --smoke
+
+# Focused run: one process profile, named workloads, 15 s each.
+python3 benchmarks/multi_service/driver.py \
+  --process-profiles default \
+  --workloads vhost-1,vhost-100,vhost-1000,h1-concurrent,waf-small,waf-body \
+  --duration 15
+
+# Tokio thread scaling curve.
+python3 benchmarks/multi_service/driver.py \
+  --process-profiles threads-1,threads-4,threads-8 --workloads h1-concurrent
+```
+
+The harness starts SynVoid and its local upstreams, records the revision SHA,
+harness SHA, toolchain, host CPU/kernel, build profile, topology, command line
+and concurrency, and writes JSON + Markdown under
+[`benchmarks/multi_service/results/YYYY-MM-DD/`](../benchmarks/multi_service/results/).
+The latest full smoke run (pipeline check, not adjudication evidence) is
+`benchmarks/multi_service/results/2026-11-11/2026-11-11T050811Z-85cd26-summary.md`;
+it predates canonical multi-listener support. The focused post-change
+multi-listener run is
+`benchmarks/multi_service/results/2026-11-11/2026-11-11T230416Z-fe8be0-summary.md`,
+which probes and measures both the main and extra `[[http.listeners]]` entries.
+`multi-listener` is now classified as supported by the harness; a fresh full
+matrix run is still required before using counts from the older summary.
+See [`benchmarks/multi_service/README.md`](../benchmarks/multi_service/README.md)
+for the workload matrix, result schema and the unsupported-workload contract.
+
+`wrk` or `oha` are still useful for quick tuning loops. Expect improvements
+when tuning the right knob for the bottleneck:
+
 - `worker_threads` for runtime scheduling parallelism
-- `tcp.worker_pool_size` for accept throughput
+- `tcp.worker_pool_size` for TCP accept-loop concurrency
+- `[udp].worker_pool_size` for UDP receive-loop concurrency
 - CPU worker count for heavy transform throughput
 
 ```bash
-# Benchmark with 100 concurrent connections
+# Quick local check, not evidence: 100 concurrent connections.
 wrk -t4 -c100 -d30s http://localhost:80/
 ```
+
+### How to reproduce and what loopback means
+
+1. Build the subject from the SHA you will record (`cargo build --release`) and
+   do not rebuild during a run.
+2. Run the harness on an otherwise idle host. Do not run a container build,
+   browser or another load generator at the same time.
+3. Keep a no-WAF baseline (`--waf-profile off`) beside the WAF run
+   (`--waf-profile on`) and the terminal-action run (`--waf-profile block`).
+4. Keep the dated result directory; never overwrite a prior run.
+
+The harness is loopback-only: client, SynVoid and upstream share `127.0.0.1`.
+That removes the NIC, the network RTT and most kernel packet processing, so real
+deployments normally show lower request rates and higher tail latency. **Never
+compare results across hosts, kernels, CPU models, build profiles or container
+runtimes.** The result files record the exact host and topology for this reason.
 
 ## Campaign Evidence (Phases 49-55, 2026-09)
 

@@ -163,7 +163,17 @@ pub async fn auth_middleware_with_state(
                 )
                     .into_response();
             }
-            super::auth::AdminTokenResult::Invalid => {}
+            super::auth::AdminTokenResult::Invalid => {
+                // Only a presented-but-wrong bearer counts as a failed login:
+                // it is the brute-force vector against the bcrypt admin token.
+                // A missing or invalid session is not credential-guessing
+                // (session IDs are unguessable randoms; expiry is normal), so
+                // it must not consume the lockout budget — otherwise the
+                // panel's own logged-out boot traffic (theme, capabilities,
+                // session restore: 5 failures) locks the operator's IP out
+                // for 5 minutes before they can even log in.
+                super::auth::AUTH_RATE_LIMITER.record_failure(client_ip);
+            }
         }
     }
 
@@ -180,7 +190,9 @@ pub async fn auth_middleware_with_state(
         }
     }
 
-    super::auth::AUTH_RATE_LIMITER.record_failure(client_ip);
+    // No failure is recorded here: reaching this point with no valid bearer
+    // and no valid session means no credential-guessing happened (see above).
+    // The failure metric is still emitted for observability.
     super::metrics_events::record_auth_failure();
     tracing::warn!("Auth middleware: authentication failed for {}", client_ip);
     StatusCode::UNAUTHORIZED.into_response()
@@ -252,7 +264,7 @@ pub async fn csrf_middleware(
                 method,
                 path
             );
-            super::auth::AUTH_RATE_LIMITER.record_failure(client_ip);
+            // No credential presented: not credential-guessing, no lockout.
             super::metrics_events::record_csrf_failure();
             return StatusCode::FORBIDDEN.into_response();
         }
@@ -264,7 +276,7 @@ pub async fn csrf_middleware(
             method,
             path
         );
-        super::auth::AUTH_RATE_LIMITER.record_failure(client_ip);
+        // A stale session is expiry, not guessing: no lockout.
         super::metrics_events::record_csrf_failure();
         return StatusCode::FORBIDDEN.into_response();
     }
@@ -283,7 +295,7 @@ pub async fn csrf_middleware(
                 method,
                 path
             );
-            super::auth::AUTH_RATE_LIMITER.record_failure(client_ip);
+            // No mutation credential presented: not guessing, no lockout.
             super::metrics_events::record_csrf_failure();
             return StatusCode::FORBIDDEN.into_response();
         }
@@ -291,7 +303,19 @@ pub async fn csrf_middleware(
 
     if state.validate_csrf(&csrf_token, &session_id) {
         super::auth::AUTH_RATE_LIMITER.record_success(client_ip);
-        return next.run(request).await;
+        // Single-use tokens: validation consumed the presented token, so the
+        // caller's stored token is dead regardless of what the handler
+        // returns. Mint the replacement here — one place covering every
+        // mutating endpoint — and publish it on the response. The UI adopts
+        // it for the next mutation; without this, every second write in a
+        // session 403s and the UI treats that as session expiry.
+        let mut response = next.run(request).await;
+        let fresh = state.generate_csrf_token(session_id);
+        response.headers_mut().insert(
+            "X-CSRF-Token",
+            HeaderValue::from_str(&fresh).unwrap_or_else(|_| HeaderValue::from_static("")),
+        );
+        return response;
     }
 
     tracing::warn!("CSRF validation failed for {} {}", method, path);
@@ -338,7 +362,11 @@ pub async fn security_headers_middleware(request: Request, next: Next) -> Respon
         HeaderValue::from_static(
             // L-02: Removed 'unsafe-inline' for styles; admin UI now serves styles
             // via external sheets. If inline styles are required, use a nonce.
-            "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' ws: wss:; frame-ancestors 'none'"
+            // L-03: 'wasm-unsafe-eval' allows the Yew/WASM bundle to compile
+            // (WebAssembly.instantiateStreaming falls under script-src) without
+            // permitting eval()/JS codegen. The bootstrap is an external file
+            // (admin-ui/dist/bootstrap.js); inline scripts stay refused.
+            "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; connect-src 'self' ws: wss:; frame-ancestors 'none'"
         )
     });
 

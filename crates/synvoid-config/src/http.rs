@@ -2,6 +2,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use super::listener::HttpListenerConfig;
 use super::validation::ConfigValidationError;
 
 #[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
@@ -32,6 +33,13 @@ pub struct HttpConfig {
     pub strict_protocol_validation: bool,
     #[serde(default = "default_max_streaming_body_size")]
     pub max_streaming_body_size: usize,
+    /// Canonical process-wide HTTP/HTTPS/HTTP3 listener declarations.
+    ///
+    /// When empty, the legacy `[server]`, `[tls]` and `[http3]` scalar
+    /// listeners are synthesized exactly as before. When non-empty, this array
+    /// is the only socket authority.
+    #[serde(default)]
+    pub listeners: Vec<HttpListenerConfig>,
 }
 
 impl Default for HttpConfig {
@@ -50,6 +58,7 @@ impl Default for HttpConfig {
             max_connections: default_max_connections(),
             strict_protocol_validation: default_strict_protocol_validation(),
             max_streaming_body_size: default_max_streaming_body_size(),
+            listeners: Vec::new(),
         }
     }
 }
@@ -183,6 +192,34 @@ fn default_alt_svc_max_age() -> u64 {
 
 fn default_http3_max_request_size() -> usize {
     10 * 1024 * 1024 // 10MB default for HTTP/3
+}
+
+impl Http3Config {
+    pub fn validate(&self) -> Result<(), ConfigValidationError> {
+        if self.enabled {
+            if self.port == 0 {
+                return Err(ConfigValidationError {
+                    field: "http3.port".to_string(),
+                    message: "HTTP/3 port cannot be 0 when enabled".to_string(),
+                });
+            }
+            if self.max_request_size == 0 {
+                return Err(ConfigValidationError {
+                    field: "http3.max_request_size".to_string(),
+                    message: "max_request_size must be greater than 0".to_string(),
+                });
+            }
+        }
+        if let Some(host_v6) = self.host_v6.as_deref() {
+            if host_v6.parse::<std::net::IpAddr>().is_err() {
+                return Err(ConfigValidationError {
+                    field: "http3.host_v6".to_string(),
+                    message: format!("Invalid IPv6 address: {host_v6}"),
+                });
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, JsonSchema, ToSchema)]

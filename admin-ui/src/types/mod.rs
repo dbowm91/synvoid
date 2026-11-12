@@ -51,13 +51,31 @@ pub struct SiteStats {
     pub p50_latency_ms: f64,
     pub p95_latency_ms: f64,
     pub p99_latency_ms: f64,
-    pub upstream_healthy: bool,
+    // The backend serializes `HealthStatus` (`healthy`/`unhealthy`/`unknown`,
+    // lowercase) here — never a bool. A missing field degrades to `Unknown`
+    // rather than failing the whole dashboard fetch.
+    #[serde(default)]
+    pub upstream_healthy: UpstreamHealth,
     pub bytes_received: u64,
     pub bytes_sent: u64,
     pub proxied_bytes_sent: u64,
     pub proxied_bytes_received: u64,
     pub mesh_bytes_sent: u64,
     pub mesh_bytes_received: u64,
+}
+
+/// Upstream health as reported by `GET /api/stats/sites`.
+///
+/// Mirrors the backend `HealthStatus` enum. `Unknown` is the steady state for
+/// standalone mode (no health prober has reported yet) and must render as a
+/// neutral third state — never red, never green.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum UpstreamHealth {
+    Healthy,
+    Unhealthy,
+    #[default]
+    Unknown,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -275,6 +293,22 @@ pub struct ThemeColorsResponse {
 pub struct ThemeResponse {
     pub preset: String,
     pub mode: String,
+    #[serde(default)]
+    pub dark_theme: String,
+    #[serde(default)]
+    pub light_theme: String,
+    #[serde(default)]
+    pub scheme: String,
+    #[serde(default)]
+    pub panel_dark_theme: String,
+    #[serde(default)]
+    pub panel_light_theme: String,
+    /// Translated colors of the admin panel pair (`None` on older
+    /// backends). The panel applies the dark side in dark mode and the
+    /// light side in light mode; a `"default"` pick resolves server-side
+    /// but is ignored client-side so the built-in palette shows.
+    #[serde(default)]
+    pub panel_colors: Option<ThemeColorsResponse>,
     pub allow_only: String,
     pub colors: ThemeColorsResponse,
     pub presets_available: Vec<ThemePresetInfo>,
@@ -286,6 +320,16 @@ pub struct UpdateThemeRequest {
     pub preset: Option<String>,
     #[serde(default)]
     pub mode: Option<String>,
+    #[serde(default)]
+    pub dark_theme: Option<String>,
+    #[serde(default)]
+    pub light_theme: Option<String>,
+    #[serde(default)]
+    pub scheme: Option<String>,
+    #[serde(default)]
+    pub panel_dark_theme: Option<String>,
+    #[serde(default)]
+    pub panel_light_theme: Option<String>,
     #[serde(default)]
     pub allow_only: Option<String>,
 }
@@ -805,6 +849,27 @@ pub struct DeriveSigningKeyResponse {
     pub message: String,
 }
 
+// ── HTTP listeners (`/api/http/listeners`) ──────────────────────────────
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct HttpListener {
+    pub id: String,
+    pub transport: String,
+    pub configured_addr: String,
+    pub bound_addr: Option<String>,
+    pub tls: bool,
+    pub http2: bool,
+    pub http3: bool,
+    pub default_site: Option<String>,
+    pub site_count: usize,
+    pub state: String,
+    pub active_connections: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct HttpListenerList {
+    pub listeners: Vec<HttpListener>,
+}
+
 // ── TCP/UDP listeners (`/api/tcp-udp/*`) ────────────────────────────────
 // Mirrors `src/admin/handlers/tcp_udp.rs`. Note `protocol` is the site's TCP
 // port *name* (the map key in `SiteTcpConfig::ports`), not a transport
@@ -812,10 +877,12 @@ pub struct DeriveSigningKeyResponse {
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct TcpUdpListener {
     pub id: String,
+    pub transport: String,
     pub port: u16,
     pub protocol: String,
     pub upstream: String,
     pub enabled: bool,
+    pub bound: bool,
     pub active_connections: usize,
 }
 
@@ -877,6 +944,57 @@ impl AdminMutationResult {
 }
 
 #[cfg(test)]
+mod upstream_health_tests {
+    use super::*;
+
+    fn site_stats_with(health_json: &str) -> SiteStats {
+        let payload = format!(
+            r#"{{"site_id":"blog","domains":["example.com"],"requests_per_second":0.0,
+            "active_connections":0,"blocked_requests":0,"challenged_requests":0,
+            "proxied_requests":0,"errors":0,"avg_response_time_ms":0.0,
+            "p50_latency_ms":0.0,"p95_latency_ms":0.0,"p99_latency_ms":0.0,
+            "upstream_healthy":{},"bytes_received":0,"bytes_sent":0,
+            "proxied_bytes_sent":0,"proxied_bytes_received":0,"mesh_bytes_sent":0,
+            "mesh_bytes_received":0}}"#,
+            health_json
+        );
+        serde_json::from_str(&payload).expect("SiteStats must parse")
+    }
+
+    /// Pins the backend contract: `/api/stats/sites` emits lowercase
+    /// `HealthStatus` strings, including `"unknown"` for sites no prober has
+    /// reported on. A `bool` here was the dashboard parse error.
+    #[test]
+    fn all_three_health_strings_parse() {
+        assert_eq!(
+            site_stats_with(r#""healthy""#).upstream_healthy,
+            UpstreamHealth::Healthy
+        );
+        assert_eq!(
+            site_stats_with(r#""unhealthy""#).upstream_healthy,
+            UpstreamHealth::Unhealthy
+        );
+        assert_eq!(
+            site_stats_with(r#""unknown""#).upstream_healthy,
+            UpstreamHealth::Unknown
+        );
+    }
+
+    #[test]
+    fn missing_health_degrades_to_unknown() {
+        let payload = r#"{"site_id":"blog","domains":[],"requests_per_second":0.0,
+            "active_connections":0,"blocked_requests":0,"challenged_requests":0,
+            "proxied_requests":0,"errors":0,"avg_response_time_ms":0.0,
+            "p50_latency_ms":0.0,"p95_latency_ms":0.0,"p99_latency_ms":0.0,
+            "bytes_received":0,"bytes_sent":0,"proxied_bytes_sent":0,
+            "proxied_bytes_received":0,"mesh_bytes_sent":0,"mesh_bytes_received":0}"#;
+        let stats: SiteStats =
+            serde_json::from_str(payload).expect("absent field must not fail the fetch");
+        assert_eq!(stats.upstream_healthy, UpstreamHealth::Unknown);
+    }
+}
+
+#[cfg(test)]
 mod admin_mutation_tests {
     use super::*;
 
@@ -922,5 +1040,88 @@ mod admin_mutation_tests {
         )
         .expect("a numeric target must not break deserialization");
         assert_eq!(numeric.target_display(), "404");
+    }
+}
+
+#[cfg(test)]
+mod theme_dual_scheme_tests {
+    use super::*;
+
+    fn colors_json() -> serde_json::Value {
+        serde_json::json!({
+            "dark": {
+                "background": "#090808", "surface": "#12121a", "primary": "#E41951",
+                "text": "#f0f0f5", "border": "#2a2a3a", "accent": "#1a1a24",
+                "accent_primary": "#00d4aa", "accent_secondary": "#00b894"
+            },
+            "light": {
+                "background": "#f8fafc", "surface": "#ffffff", "primary": "#c41e3a",
+                "text": "#0f172a", "border": "#e2e8f0", "accent": "#f1f5f9",
+                "accent_primary": "#059669", "accent_secondary": "#10b981"
+            }
+        })
+    }
+
+    /// Pins the Phase 04 wire shape: `GET /api/theme` carries the dual-scheme
+    /// fields plus the `default` alias followed by the Halloy catalog.
+    #[test]
+    fn phase04_response_parses_with_dual_scheme_fields() {
+        let payload = serde_json::json!({
+            "preset": "default",
+            "mode": "auto",
+            "dark_theme": "Catppuccin Mocha",
+            "light_theme": "Catppuccin Latte",
+            "scheme": "system",
+            "allow_only": "both",
+            "colors": colors_json(),
+            "presets_available": [
+                {"id": "default", "name": "Default"},
+                {"id": "Nord", "name": "Nord"}
+            ]
+        });
+        let response: ThemeResponse =
+            serde_json::from_value(payload).expect("Phase 04 ThemeResponse must parse");
+        assert_eq!(response.dark_theme, "Catppuccin Mocha");
+        assert_eq!(response.light_theme, "Catppuccin Latte");
+        assert_eq!(response.scheme, "system");
+        assert_eq!(response.presets_available[0].id, "default");
+    }
+
+    /// Older backends omit the three fields; the pickers must still load
+    /// (with empty selections) instead of failing the whole fetch.
+    #[test]
+    fn legacy_response_without_new_fields_still_parses() {
+        let payload = serde_json::json!({
+            "preset": "dark",
+            "mode": "dark",
+            "allow_only": "both",
+            "colors": colors_json(),
+            "presets_available": []
+        });
+        let response: ThemeResponse =
+            serde_json::from_value(payload).expect("legacy ThemeResponse must not fail the fetch");
+        assert!(response.dark_theme.is_empty());
+        assert!(response.light_theme.is_empty());
+        assert!(response.scheme.is_empty());
+    }
+
+    /// The save path sends only the new fields (legacy `preset`/`mode` stay
+    /// absent so the backend keeps its compat resolution untouched).
+    #[test]
+    fn save_request_carries_new_fields_without_legacy_compat() {
+        let request = UpdateThemeRequest {
+            preset: None,
+            mode: None,
+            dark_theme: Some("Nord".to_string()),
+            light_theme: Some("Catppuccin Latte".to_string()),
+            scheme: Some("system".to_string()),
+            panel_dark_theme: None,
+            panel_light_theme: None,
+            allow_only: None,
+        };
+        let body = serde_json::to_value(&request).expect("request must serialize");
+        assert_eq!(body["dark_theme"], "Nord");
+        assert_eq!(body["scheme"], "system");
+        assert!(body["preset"].is_null());
     }
 }
