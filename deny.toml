@@ -1,5 +1,9 @@
 # SynVoid dependency policy (Phase 25 baseline; Phases 26-31 landed; Phases 37/40
-# corrected; Phase 103 re-audit; Phase 01 production-readiness refresh).
+# corrected; Phase 103 re-audit; Phase 01 production-readiness refresh;
+# 2026-11-12 Dependabot follow-up).
+# Reviewed: 2026-11-12 (utoipa 6.0.0 + utoipa-swagger-ui 10.0.2 removed the
+# build-only zip 3.0.0 edge; benchmark transport lock advanced to rustls
+# 0.23.46 / rustls-webpki 0.103.16).
 # Reviewed: 2026-11-10 (Phase 01: rustls 0.23.46, rustls-webpki 0.103.16,
 #   webpki-roots/-root-certs 1.0.11, quinn-proto 0.11.19, rusqlite 0.41.1 /
 #   libsqlite3-sys 0.39.1, Wasmtime 36.0.20 + 48.0.8, zip 9.5.0, zstd 0.13.4 /
@@ -125,33 +129,6 @@ ignore = [
     #   rkyv 0.7 transitive (lightningcss/parcel_sourcemap drop rkyv 0.7),
     #   or SynVoid removes its minify-html consumer.
     "RUSTSEC-2026-0235",
-
-    # RUSTSEC-2026-0367 / -0368 / -0369 / -0429: zip <9.0.0 extraction
-    # (symlink targets outside destination, SUID/SGID preservation, process
-    # abort on large declared symlink size, permissions applied through
-    # symlinks).
-    # Dependency path: synvoid -> utoipa-swagger-ui 9.0.2 -> (build) zip 3.0.0.
-    #   The runtime/extraction-capability `zip 9.5.0` used by
-    #   synvoid-upload/synvoid-platform/yara-x is patched and is NOT ignored.
-    # Affected capability: `ZipArchive::extract` / `ZipStreamReader::extract`
-    #   on an archive with attacker-controlled entries.
-    # Exposure: NONE at runtime. `zip 3.0.0` is a build dependency of
-    #   utoipa-swagger-ui only. Its build script reads the crate's own pinned
-    #   `utoipa-swagger-ui-vendored` static archive and extracts `dist/`
-    #   entries through `by_index` + `enclosed_name`; it never calls
-    #   `extract`, never creates symlinks, and never consumes operator or
-    #   network input. Nothing from this path ships in a SynVoid binary.
-    # Upstream: utoipa-swagger-ui 10.0.2 moves the build dep to zip ^9.0, but
-    #   requires utoipa 6.x; the 5.x -> 6.x API migration is out of scope here.
-    # Owner: security / release.
-    # Reviewed: 2026-11-10.
-    # Re-audit: 2027-02-10.
-    # Remove condition: adopt utoipa 6 / utoipa-swagger-ui >=10.0.2 (zip ^9),
-    #   or drop the `swagger-ui` feature.
-    "RUSTSEC-2026-0367",
-    "RUSTSEC-2026-0368",
-    "RUSTSEC-2026-0369",
-    "RUSTSEC-2026-0429",
 
     # RUSTSEC-2023-0089: atomic-polyfill 1.0.3 is unmaintained.
     # Dependency path: synvoid-yara -> yara-x 1.23.0 -> cranelift-codegen 0.135.8

@@ -641,8 +641,8 @@ evidence of how the graph reached this point.
   `quinn 0.11.12` / `quinn-proto 0.11.19` (with `h3-quinn 0.0.10`),
   `rusqlite 0.41.1` / `libsqlite3-sys 0.39.1`,
   `wasmtime 36.0.20` (direct) + `wasmtime 48.0.8` (YARA transitive),
-  `yara-x 1.23.0` (official crates.io release), `zip 9.5.0` (runtime paths)
-  + `zip 3.0.0` (utoipa-swagger-ui build-only, excepted below),
+  `yara-x 1.23.0` (official crates.io release), `zip 9.5.0` (runtime paths),
+  `utoipa 6.0.0` + `utoipa-swagger-ui 10.0.2` (2026-11-12 follow-up),
   `zstd 0.13.4` + `0.14.3`, `zstd-safe 7.4.0` + `8.2.0`,
   `zstd-sys 2.1.2+zstd.1.5.7`, `tokio 1.54.1`, `prost-build 0.14.4`,
   `tonic-prost-build 0.14.9`, `pulldown-cmark 0.13.6`,
@@ -680,14 +680,7 @@ evidence of how the graph reached this point.
   2. `RUSTSEC-2026-0235` (`rkyv 0.7.46` via the retained minify-html chain).
      Minifier-internal sourcemaps only; official minify-html is still 0.18.1.
      Reviewed: 2026-11-10; Re-audit: 2027-02-10.
-  3. `RUSTSEC-2026-0367/-0368/-0369/-0429` (`zip 3.0.0`, build dependency of
-     `utoipa-swagger-ui 9.0.2`). It extracts only the crate's pinned
-     `utoipa-swagger-ui-vendored` archive through `by_index` + `enclosed_name`
-     and never calls `extract`; no runtime or operator input. The runtime
-     `zip 9.5.0` paths are patched and not covered by this exception.
-     Reviewed: 2026-11-10; Re-audit: 2027-02-10. Remove by adopting utoipa 6 /
-     utoipa-swagger-ui >=10.0.2 or dropping the `swagger-ui` feature.
-  4. Unmaintained-only notices with no patched release:
+  3. Unmaintained-only notices with no patched release:
      `RUSTSEC-2023-0089` (atomic-polyfill via cranelift/postcard/heapless 0.7),
      `RUSTSEC-2026-0374` (basic-toml via uniffi/askama build codegen),
      `RUSTSEC-2025-0141` (bincode 1.3.3 in admin-ui wasm glue + bincode 2.0.1
@@ -696,6 +689,12 @@ evidence of how the graph reached this point.
      `RUSTSEC-2026-0173` (proc-macro-error2 via libcrux/hax). Each has a
      `deny.toml` metadata block with path, capability, exposure, owner and
      removal condition. Reviewed: 2026-11-10; Re-audit: 2027-04-10.
+- Dependabot follow-up (2026-11-12): adopted utoipa 6.0.0 and
+  utoipa-swagger-ui 10.0.2, removing the build-only `zip 3.0.0` edge that the
+  2026-11-10 pass had excepted. `zip 9.5.0` remains the only resolved zip.
+  The standalone `benchmarks/http_transport/Cargo.lock` was advanced to
+  `rustls 0.23.46` / `rustls-webpki 0.103.16`. This clears all 23 open
+  Dependabot alerts once the fix reaches the default branch.
 - Evidence (2026-11-10): `cargo audit --file Cargo.lock` exits 0 with no
   vulnerability or warning output; `cargo deny check` exits 0
   (`advisories ok, bans ok, licenses ok, sources ok`) with six

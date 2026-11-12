@@ -132,7 +132,8 @@ remediated all of them by version upgrade, not by suppression:
 | `rusqlite` / `libsqlite3-sys` | 0.41.1 / 0.39.1 | RUSTSEC-2026-0459 |
 | `wasmtime` (direct / YARA) | 36.0.20 / 48.0.8 | RUSTSEC-2026-0353…-0364, -0378…-0380, -0422…-0424 |
 | `yara-x` | 1.23.0 (official; fork retired) | resolves Wasmtime 48.0.8 + zip 9.0.5 |
-| `zip` (runtime paths) | 9.5.0 | RUSTSEC-2026-0367…-0369, -0429 |
+| `zip` (runtime + swagger build) | 9.5.0 | RUSTSEC-2026-0367…-0369, -0429 |
+| `utoipa` / `utoipa-swagger-ui` | 6.0.0 / 10.0.2 (2026-11-12 follow-up) | removed the build-only zip 3.0.0 edge |
 | `zstd` / `zstd-safe` / `zstd-sys` | 0.13.4 + 0.14.3 / 7.4.0 + 8.2.0 / 2.1.2 | RUSTSEC-2026-0391, -0395…-0410 |
 | `tokio` | 1.54.1 | RUSTSEC-2026-0386 |
 | `pulldown-cmark` | 0.13.6 (build-time via prost) | RUSTSEC-2026-0414, -0433 |
@@ -145,9 +146,6 @@ exits 0. The remaining documented exceptions are:
   sign and key-parse only, zero decrypt call sites). The yara-x path now uses
   patched `rsa 0.10.0`.
 - `RUSTSEC-2026-0235` (`rkyv 0.7.46` via the retained minify-html chain).
-- `RUSTSEC-2026-0367/-0368/-0369/-0429` (`zip 3.0.0` as a **build** dependency
-  of `utoipa-swagger-ui 9.0.2`; it extracts only the crate's pinned vendored
-  archive, never runtime/operator input).
 - Six unmaintained-only notices with no patched release (`atomic-polyfill`,
   `basic-toml`, `bincode` 1.3.3 + 2.0.1, `fxhash`, `proc-macro-error`,
   `proc-macro-error2`), each recorded with path/capability/exposure/owner and
@@ -156,3 +154,20 @@ exits 0. The remaining documented exceptions are:
 The npm `braces` decision is unchanged (no upstream patch; dev-only Tailwind
 toolchain). Full evidence: `architecture/dependency_security_baseline_phase25.md`
 §15.
+
+## Dependabot follow-up (2026-11-12)
+
+The 23 open Dependabot alerts all mapped to three families already upgraded in
+the Phase 01 refresh, plus the build-only zip 3.0.0 edge that Phase 01 had
+excepted. This follow-up closes the remaining edge and refreshes the standalone
+transport benchmark lock:
+
+- `zip` is now **9.5.0 only**; the `zip 3.0.0` build dependency disappeared
+  with `utoipa 6.0.0` / `utoipa-swagger-ui 10.0.2`.
+- `wasmtime` is 36.0.20 (direct) and 48.0.8 (YARA), both above the fixed
+  thresholds.
+- `rustls` is 0.23.46 in both `Cargo.lock` and
+  `benchmarks/http_transport/Cargo.lock`; the benchmark lock also advances
+  `rustls-webpki` to 0.103.16, `webpki-roots` to 1.0.12 and tokio to 1.54.1.
+- `cargo audit` and `cargo deny check` pass. `cargo audit` in the benchmark
+  harness exits 0 with only the recorded `rustls-pemfile` unmaintained notice.

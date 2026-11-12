@@ -1,5 +1,6 @@
 # cargo-audit configuration (Phase 25 baseline; Phases 26-31 landed; Phases 37/40
-# corrected; Phase 103 re-audit; Phase 01 production-readiness refresh).
+# corrected; Phase 103 re-audit; Phase 01 production-readiness refresh;
+# 2026-11-12 Dependabot follow-up).
 # Mirrors the narrow advisory ignores in deny.toml so the blocking `cargo audit`
 # gate (CI `dependency-security` job, `cargo xtask verify-release`) agrees with
 # dependency policy. Each ignore MUST match a deny.toml entry with full exposure
@@ -24,12 +25,6 @@ ignore = [
     "RUSTSEC-2023-0071",
     # RUSTSEC-2026-0235 (rkyv 0.7.46 via parcel_sourcemap; minifier-internal sourcemaps only).
     "RUSTSEC-2026-0235",
-    # zip 3.0.0 is a utoipa-swagger-ui build dependency only; the runtime zip
-    # 9.5.0 paths are patched. See deny.toml for the full capability assessment.
-    "RUSTSEC-2026-0367",
-    "RUSTSEC-2026-0368",
-    "RUSTSEC-2026-0369",
-    "RUSTSEC-2026-0429",
     # Unmaintained notices with no patched release; each has a deny.toml entry
     # carrying the dependency path, exposure and removal condition.
     "RUSTSEC-2023-0089",

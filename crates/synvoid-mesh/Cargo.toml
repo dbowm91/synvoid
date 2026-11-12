@@ -79,7 +79,7 @@ chrono = { version = "0.4", features = ["serde"] }
 
 # Schema
 schemars = "0.8"
-utoipa = { version = "5", features = ["axum_extras", "chrono"] }
+utoipa = { version = "6", features = ["axum_extras", "chrono"] }
 
 # Compression
 flate2 = "1"
