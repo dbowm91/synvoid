@@ -168,7 +168,7 @@ modules.
 |----------|------|--------|
 | `create_session`, `delete_session` | auth.rs | Audit events added, responses use `AdminMutationResult` |
 | `update_theme` | theme.rs | Converted from `ThemeResponse` to `AdminMutationResult`, audit event added |
-| `create_listener`, `delete_listener` | tcp_udp.rs | Converted to `AdminMutationResult`, audit events added |
+| `create_listener`, `delete_listener` | tcp_udp.rs | Converted to `AdminMutationResult` in Phase 12; **removed** in production-readiness Phase 02 because they edited a site-local schema no runtime listener consumed. Listener definitions are the global `[tcp.protocols.*]`/`[udp.protocols.*]` maps and require a restart. |
 | `derive_signing_key`, `submit_audit_report`, `report_signature_failure`, `create_organization` | mesh_admin.rs | Converted from custom response types to `AdminMutationResult`, audit events added |
 | `restart_worker`, `batch_restart_workers` | system.rs | Converted from `StatusResponse`/`BatchRestartResponse` to `AdminMutationResult`, audit events added |
 | `scale_workers` | system.rs | Audit event added (already had `AdminMutationResult`) |

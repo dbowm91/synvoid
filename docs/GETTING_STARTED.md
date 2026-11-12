@@ -9,6 +9,8 @@ For the design rationale and performance tuning, see [ARCHITECTURE.md](./ARCHITE
 - [What is SynVoid?](#what-is-synvoid)
 - [Quick Start](#quick-start)
 - [Verifying it works](#verifying-it-works)
+- [Install as a System Service (Non-Root)](#install-as-a-system-service-non-root)
+- [Run in a Container](#run-in-a-container)
 - [Practical Workflows](#practical-workflows)
   - [Protect a PHP Application](#workflow-1-protect-a-php-application)
   - [Set Up a High-Availability Mesh](#workflow-2-set-up-a-high-availability-mesh)
@@ -152,6 +154,96 @@ curl http://127.0.0.1:9090/metrics
 ```
 
 Use a browser-like `User-Agent`. The default bot `scraper_patterns` include `curl`, so an unmodified `curl` is tarpitted and returns HTTP 200 with the body `Tarpit active` instead of your upstream's response.
+
+## Install as a System Service (Non-Root)
+
+The shipped unit (`contrib/systemd/synvoid.service`) runs as a dedicated
+`synvoid` account, with `CAP_NET_BIND_SERVICE` as its only capability. The
+install tree is read-only; state, logs, cache and runtime data live in
+`/var/lib/synvoid`, `/var/log/synvoid`, `/var/cache/synvoid` and
+`/run/synvoid`.
+
+Build the jail binaries as well as the main binary:
+
+```bash
+cargo build --release
+cargo build --release -p synvoid-jail-runtime --bins
+```
+
+Install into the layout the unit expects:
+
+```bash
+sudo groupadd --system synvoid
+sudo useradd --system --gid synvoid --home-dir /var/lib/synvoid \
+  --shell /usr/sbin/nologin synvoid
+
+sudo install -d -m 0755 -o root -g root /opt/synvoid /opt/synvoid/admin-ui /opt/synvoid/config
+sudo install -d -m 0700 -o synvoid -g synvoid \
+  /etc/synvoid /var/lib/synvoid /var/log/synvoid /var/cache/synvoid /run/synvoid
+
+sudo install -m 0755 target/release/synvoid \
+  target/release/synvoid-wasm-jail target/release/synvoid-yara-jail /usr/local/bin/
+sudo install -d /opt/synvoid/admin-ui/dist
+sudo cp -a admin-ui/dist/. /opt/synvoid/admin-ui/dist/
+sudo cp -a static rules root.hints /opt/synvoid/
+
+# Relative defaults (config/error_pages, config/mimes and the legacy
+# honeypot_endpoints.txt lookup) resolve against WorkingDirectory=/opt/synvoid.
+sudo cp -a config/error_pages config/mimes /opt/synvoid/config/
+sudo install -m 0644 config/honeypot_endpoints.txt /opt/synvoid/config/honeypot_endpoints.txt
+sudo install -m 0644 config/honeypot_endpoints.txt /opt/synvoid/honeypot_endpoints.txt
+
+# Authoritative config read by --config-path /etc/synvoid. Owned by synvoid so
+# the admin config editor can save main.toml and sites/.
+sudo install -d -o synvoid -g synvoid -m 0700 /etc/synvoid/sites
+sudo cp config/main.toml /etc/synvoid/main.toml
+sudo cp -a config/sites/. /etc/synvoid/sites/
+sudo chown -R synvoid:synvoid /etc/synvoid
+sudo chmod -R go-rwx /etc/synvoid
+
+sudo cp contrib/systemd/synvoid.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now synvoid
+```
+
+If the admin config editor is not used, keep `/etc/synvoid` root-owned and
+read-only and remove it from the unit's `ReadWritePaths=`. Never make
+`/opt/synvoid` writable as a shortcut.
+
+Validate the unit and record the exposure score:
+
+```bash
+sudo systemd-analyze verify /etc/systemd/system/synvoid.service
+systemd-analyze security --offline=yes --no-pager /etc/systemd/system/synvoid.service
+```
+
+Measured against this unit on systemd 255: `Overall exposure level …: 4.4 OK`.
+See [DEPLOYMENT.md](./DEPLOYMENT.md) for capability drop-ins
+(`CAP_NET_ADMIN` for eBPF/ICMP/WireGuard only) and the full hardening notes.
+
+## Run in a Container
+
+The repository ships a multi-stage `Dockerfile`; CI builds it (build only, no
+publish), so tag it for your own registry:
+
+```bash
+docker build -t synvoid:latest .
+
+docker run -d \
+  --name synvoid \
+  -p 80:8080 \
+  -e SYNVOID_ADMIN_TOKEN="$(openssl rand -hex 32)" \
+  -v "$PWD/config:/etc/synvoid:ro" \
+  -v synvoid-data:/var/lib/synvoid \
+  -v synvoid-logs:/var/log/synvoid \
+  synvoid:latest
+```
+
+The image runs as UID/GID 10001, keeps `/opt/synvoid` read-only, and publishes
+only the data-plane port 8080. Admin (`127.0.0.1:8081`) and metrics
+(`127.0.0.1:9090`) stay loopback inside the container. A read-only config mount
+is fine unless the admin config editor must write. The built-in healthcheck
+uses `synvoid --status`, so it does not require the admin listener.
 
 ## Practical Workflows
 

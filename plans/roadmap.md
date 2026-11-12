@@ -9,6 +9,50 @@ Scope: this roadmap covers architecture hardening, trust-boundary closure, verif
 Primary principle: request path remains local, narrow, and capability-driven; control plane remains explicit, audited, and provenance-carrying; distributed mesh data remains policy-gated before it mutates enforcement state; runtime tasks remain owned and drainable; the root crate remains composition, not domain logic; public stability claims remain conservative until verified by tests and release policy.
 
 
+## Production Readiness Remediation — Complete
+
+Status: **COMPLETE** (implemented 2026-11-11; evidence in each phase plan). Audited
+baseline `d507fefa` (SynVoid 1.1.0). Ten phase plans convert the
+production-readiness audit into ordered work: dependency security, TCP/UDP
+services, HTTP listener truthfulness, worker defaults/state, per-site WAF
+policy, header false positives/escalation, packaging, main data-plane
+sandboxing, body policy, and multi-service benchmarks.
+
+Plan: `plans/production_readiness_remediation_roadmap.md`.
+Phase plans: `plans/production_readiness_phase_01_dependency_security.md`
+through `plans/production_readiness_phase_10_multi_service_benchmarks.md`.
+
+The roadmap records decision gates D1–D6, recommended choices, binding
+constraints and the final verification matrix. Dependency security is the
+release blocker; Phases 02 and 03 must either implement or explicitly remove
+the service capabilities that the current configuration only documents.
+
+## Multi-Listener Canonical Support — Complete
+
+Status: **COMPLETE** (2026-11-11). All six phases are implemented; `cargo xtask
+verify` passes and the focused benchmark records both planned listeners.
+
+Plan: `plans/multi_listener_canonical_roadmap.md`.
+Phase plans: `plans/multi_listener_phase_01_configuration_model.md` through
+`plans/multi_listener_phase_06_multiworker_and_qualification.md`.
+
+This campaign reverses production-readiness decision **D2** and supersedes the
+terminal product choice in Phase 03A. 03A remains the truthful remediation of
+the old unbound `[[site.listen]]` surface; it is not the target model.
+Multi-listener support is canonical:
+
+- global `[[http.listeners]]` owns HTTP/HTTPS/HTTP3 sockets;
+- sites reference listener ids instead of declaring sockets;
+- TCP/UDP remain configured through `[tcp.protocols.*]` / `[udp.protocols.*]`;
+- every listener family shares one conflict matrix;
+- HTTPS TCP and HTTP/3 UDP may share a port;
+- listener binding precedes worker readiness and listener failure fails startup;
+- listener changes are restart-required in this campaign.
+
+The old `[[site.listen]]` implementation never bound its entries and its
+routing maps did not match wildcard local addresses. The campaign builds a
+working model rather than reverting the 03A validation change.
+
 ## Documentation Corrective: Root README Public-Support Boundary — Ready
 
 Status: **READY** (2026-10-06).

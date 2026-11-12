@@ -41,7 +41,7 @@ tokio = { version = "1", features = ["rt", "signal"] }
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading", "Win32_System_Console", "Win32_System_Pipes", "Win32_System_Memory", "Win32_Networking_WinSock", "Win32_System_JobObjects", "Win32_System_SystemServices"] }
 # Wintun DLL loading only (never plugin loading; see root Cargo.toml libloading edge note).
 libloading = "0.8"
-zip = "2"
+zip = "9"
 
 [dev-dependencies]
 tempfile = "3"

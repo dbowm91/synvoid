@@ -1185,9 +1185,9 @@ impl ApiService {
     }
 
     // ── TCP/UDP listeners (`src/admin/handlers/tcp_udp.rs`) ────────────
-    // These are plain `AdminMutationResult` responses, not `{"success": true}`.
-    // `NoOpAlreadyAbsent` / `InvalidRejected` arrive as HTTP 200 and are
-    // surfaced as non-applied by `AdminMutationResult::applied()`.
+    // Read-only inventory of the listeners this process actually bound.
+    // Listener definitions live in the global [tcp.protocols]/[udp.protocols]
+    // maps and require a restart to change.
 
     pub async fn list_tcp_udp_listeners(
         &self,
@@ -1195,40 +1195,14 @@ impl ApiService {
         self.get("/tcp-udp/listeners").await
     }
 
+    pub async fn list_http_listeners(&self) -> Result<crate::types::HttpListenerList, ApiError> {
+        self.get("/http/listeners").await
+    }
+
     pub async fn list_tcp_udp_protocols(
         &self,
     ) -> Result<Vec<crate::types::TcpUdpProtocolInfo>, ApiError> {
         self.get("/tcp-udp/protocols").await
-    }
-
-    pub async fn create_tcp_udp_listener(
-        &self,
-        site_id: &str,
-        port: u16,
-        protocol: &str,
-        upstream: &str,
-    ) -> Result<crate::types::AdminMutationResult, ApiError> {
-        self.post(
-            "/tcp-udp/listeners",
-            &serde_json::json!({
-                "site_id": site_id,
-                "port": port,
-                "protocol": protocol,
-                "upstream": upstream,
-            }),
-        )
-        .await
-    }
-
-    pub async fn delete_tcp_udp_listener(
-        &self,
-        listener_id: &str,
-    ) -> Result<crate::types::AdminMutationResult, ApiError> {
-        self.delete(&format!(
-            "/tcp-udp/listeners/{}",
-            encode_path_segment(listener_id)
-        ))
-        .await
     }
 
     // ── Observability (`src/admin/handlers/observability.rs`) ──────────────

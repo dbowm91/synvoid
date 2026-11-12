@@ -1,0 +1,21 @@
+# UDP service example for the multi-service harness.
+#
+# This is illustrative configuration only. The driver generates the real
+# config with dynamic ports under a temporary work directory.
+#
+# `filter_enabled = false` because "echo" is a custom protocol the built-in
+# detector does not recognize; the listener still proxies real datagrams.
+
+[udp]
+enabled = true
+worker_pool_size = 2
+
+[udp.protocols.echo]
+ports = [19011]
+upstream_format = "127.0.0.1:19111"
+filter_enabled = false
+
+[udp.protocols.echo_multi]
+ports = [19012, 19013, 19014]
+upstream_format = "127.0.0.1:19111"
+filter_enabled = false

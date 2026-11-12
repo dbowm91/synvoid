@@ -332,13 +332,10 @@ pub(crate) fn config_routes() -> AdminRouter {
 /// TCP/UDP listeners + probes/threat/rules (always available).
 pub(crate) fn infra_probes_threat_rules_routes() -> AdminRouter {
     Router::new()
+        .route("/tcp-udp/listeners", get(handlers::tcp_udp::list_listeners))
         .route(
-            "/tcp-udp/listeners",
-            get(handlers::tcp_udp::list_listeners).post(handlers::tcp_udp::create_listener),
-        )
-        .route(
-            "/tcp-udp/listeners/{listener_id}",
-            delete(handlers::tcp_udp::delete_listener),
+            "/http/listeners",
+            get(handlers::tcp_udp::list_http_listeners),
         )
         .route("/tcp-udp/protocols", get(handlers::tcp_udp::list_protocols))
         .route("/probes", get(handlers::probes::list_probes))

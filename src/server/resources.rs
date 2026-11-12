@@ -43,7 +43,11 @@ pub enum UnifiedServerResourceError {
 
 impl UnifiedServerResources {
     /// Construct all resources from config without spawning tasks.
-    pub fn build(
+    ///
+    /// Auxiliary TCP/UDP listeners are bound here, before `run()` spawns any
+    /// accept loop, so a bad bind address or a port that cannot be claimed
+    /// fails startup instead of leaving an empty pool.
+    pub async fn build(
         main_config: &MainConfig,
         plan: &UnifiedServerStartupPlan,
         _config: Arc<RwLock<ConfigManager>>,
@@ -57,18 +61,47 @@ impl UnifiedServerResources {
             &plan.scaled_global_rate_limit,
         ));
 
-        // TCP pool + flood protector
+        // TCP pool + flood protector. Listeners are built from the global
+        // [tcp.protocols.*] map and bound exactly once here.
         let (tcp_pool, flood_protector) = if plan.tcp_enabled {
             let (pool, fp) = Self::create_tcp_pool(main_config, waf.clone())
+                .map_err(|e| UnifiedServerResourceError::TcpPool(e.to_string()))?;
+            for listener in
+                crate::server::aux_listener_config::build_tcp_listener_configs(main_config)
+                    .map_err(|e| UnifiedServerResourceError::TcpPool(e.to_string()))?
+            {
+                pool.add_listener(listener);
+            }
+            if pool.listener_count() == 0 {
+                return Err(UnifiedServerResourceError::TcpPool(
+                    "tcp.enabled = true but no listener specifications were produced".to_string(),
+                ));
+            }
+            pool.bind_all()
+                .await
                 .map_err(|e| UnifiedServerResourceError::TcpPool(e.to_string()))?;
             (Some(pool), Some(fp))
         } else {
             (None, None)
         };
 
-        // UDP pool (listeners registered later in run())
+        // UDP pool (bound here, receive loops started in run())
         let udp_pool = if plan.udp_enabled {
-            let pool = Self::create_udp_pool(main_config, waf.clone())
+            let pool = Self::create_udp_pool(main_config)
+                .map_err(|e| UnifiedServerResourceError::UdpPool(e.to_string()))?;
+            for listener in
+                crate::server::aux_listener_config::build_udp_listener_configs(main_config)
+                    .map_err(|e| UnifiedServerResourceError::UdpPool(e.to_string()))?
+            {
+                pool.add_listener(listener);
+            }
+            if pool.listener_count() == 0 {
+                return Err(UnifiedServerResourceError::UdpPool(
+                    "udp.enabled = true but no listener specifications were produced".to_string(),
+                ));
+            }
+            pool.bind_all()
+                .await
                 .map_err(|e| UnifiedServerResourceError::UdpPool(e.to_string()))?;
             Some(pool)
         } else {
@@ -81,9 +114,15 @@ impl UnifiedServerResources {
                 tls_config.clone(),
             ));
             match resolver.load_certificates() {
+                Err(e) if !tls_config.acme.enabled => {
+                    return Err(UnifiedServerResourceError::Tls(format!(
+                        "failed to load TLS certificates: {e}"
+                    )));
+                }
                 Err(e) => {
                     tracing::warn!(
-                        "Failed to load TLS certificates: {}. TLS will not be available.",
+                        "Failed to load TLS certificates yet (ACME enabled): {}. \
+                         HTTPS listeners will start once ACME installs a certificate.",
                         e
                     );
                     None
@@ -292,7 +331,15 @@ impl UnifiedServerResources {
                 css_exempt_paths: main_config.defaults.css_challenge.exempt_paths.clone(),
             },
             whitelist: Vec::new(),
-            attack_detection_config: Some(crate::waf::AttackDetectionConfig::default()),
+            attack_detection_config: {
+                // Body limits are enforced once by the request body policy
+                // (`http.max_streaming_body_size` plus the per-site proxy cap).
+                // Do not let the detector impose a second default cap that
+                // would disagree with an explicit per-site value.
+                let mut config = crate::waf::AttackDetectionConfig::default();
+                config.max_request_body_size = None;
+                Some(config)
+            },
             auth_manager: None,
             threat_level_config: Some(main_config.threat_level.clone()),
             ip_feed_config: Some(main_config.ip_feeds.clone()),
@@ -335,7 +382,7 @@ impl UnifiedServerResources {
         };
 
         let pool_config = TcpListenerPoolConfig {
-            worker_pool_size: main_config.tcp.worker_pool_size,
+            worker_pool_size: main_config.tcp.worker_pool_size.max(1),
             connection_timeout_secs: 5,
             max_connections: 10000,
             socket_options,
@@ -354,7 +401,7 @@ impl UnifiedServerResources {
         };
         let flood_protector = Arc::new(FloodProtector::new(flood_config));
 
-        let pool = crate::tcp::listener::TcpListenerPool::new(pool_config, Default::default())
+        let pool = crate::tcp::listener::TcpListenerPool::new(pool_config)
             .with_rate_limiter(Arc::new(waf.rate_limiter.clone()))
             .with_flood_protector(flood_protector.clone());
 
@@ -363,7 +410,6 @@ impl UnifiedServerResources {
 
     fn create_udp_pool(
         main_config: &MainConfig,
-        _waf: Arc<WafCore>,
     ) -> Result<crate::udp::listener::UdpListenerPool, Box<dyn std::error::Error + Send + Sync>>
     {
         use crate::udp::listener::UdpListenerPoolConfig;
@@ -377,11 +423,9 @@ impl UnifiedServerResources {
         };
 
         let pool_config = UdpListenerPoolConfig {
-            worker_pool_size: main_config.udp.worker_pool_size,
+            worker_pool_size: main_config.udp.worker_pool_size.max(1),
             buffer_size: 8192,
-            max_packets_per_second: 10000,
             socket_options,
-            workers_per_listener: 1,
         };
 
         let flood_config = FloodConfig {
@@ -391,7 +435,7 @@ impl UnifiedServerResources {
         };
         let flood_protector = Arc::new(FloodProtector::new(flood_config));
 
-        let pool = crate::udp::listener::UdpListenerPool::new(pool_config, Default::default())
+        let pool = crate::udp::listener::UdpListenerPool::new(pool_config)
             .with_flood_protector(flood_protector);
 
         Ok(pool)
@@ -447,6 +491,45 @@ mod tests {
         let tunnel_config = main_config.tunnel.clone();
         let manager = TunnelManager::new(tunnel_config);
         assert!(Arc::strong_count(&Arc::new(manager)) >= 1);
+    }
+
+    #[tokio::test]
+    async fn enabled_tcp_binds_a_listener_from_global_protocols() {
+        let free = std::net::TcpListener::bind("127.0.0.1:0").expect("probe bind");
+        let port = free.local_addr().expect("probe addr").port();
+        drop(free);
+
+        let mut main_config = MainConfig::default_config();
+        main_config.server.host = "127.0.0.1".to_string();
+        main_config.server.host_v6 = None;
+        main_config.tcp.enabled = true;
+        main_config.tcp.protocols.clear();
+        main_config.tcp.protocols.insert(
+            "http".to_string(),
+            crate::config::network::TcpProtocolConfig {
+                ports: vec![port],
+                upstream_format: Some("127.0.0.1:{port}".to_string()),
+                upstream_format_v6: None,
+                ..Default::default()
+            },
+        );
+
+        let plan =
+            UnifiedServerStartupPlan::from_config_snapshot(&main_config, 1).expect("plan builds");
+        let config = Arc::new(tokio::sync::RwLock::new(crate::config::ConfigManager::new(
+            std::env::temp_dir(),
+        )));
+        let resources = UnifiedServerResources::build(&main_config, &plan, config)
+            .await
+            .expect("resources build");
+        let pool = resources.tcp_pool.expect("tcp pool");
+        assert_eq!(pool.listener_count(), 1);
+        assert_eq!(
+            pool.bound_addresses(),
+            vec![format!("127.0.0.1:{port}")
+                .parse::<std::net::SocketAddr>()
+                .unwrap()]
+        );
     }
 
     #[test]

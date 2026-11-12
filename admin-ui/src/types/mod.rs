@@ -849,6 +849,27 @@ pub struct DeriveSigningKeyResponse {
     pub message: String,
 }
 
+// ── HTTP listeners (`/api/http/listeners`) ──────────────────────────────
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct HttpListener {
+    pub id: String,
+    pub transport: String,
+    pub configured_addr: String,
+    pub bound_addr: Option<String>,
+    pub tls: bool,
+    pub http2: bool,
+    pub http3: bool,
+    pub default_site: Option<String>,
+    pub site_count: usize,
+    pub state: String,
+    pub active_connections: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct HttpListenerList {
+    pub listeners: Vec<HttpListener>,
+}
+
 // ── TCP/UDP listeners (`/api/tcp-udp/*`) ────────────────────────────────
 // Mirrors `src/admin/handlers/tcp_udp.rs`. Note `protocol` is the site's TCP
 // port *name* (the map key in `SiteTcpConfig::ports`), not a transport
@@ -856,10 +877,12 @@ pub struct DeriveSigningKeyResponse {
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct TcpUdpListener {
     pub id: String,
+    pub transport: String,
     pub port: u16,
     pub protocol: String,
     pub upstream: String,
     pub enabled: bool,
+    pub bound: bool,
     pub active_connections: usize,
 }
 

@@ -1,7 +1,10 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use utoipa::ToSchema;
+
+use crate::validation::ConfigValidationError;
 
 #[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct TcpDefaults {
@@ -25,6 +28,12 @@ pub struct TcpDefaults {
     pub half_open_max: u32,
     #[serde(default = "default_half_open_per_ip_max")]
     pub half_open_per_ip_max: u32,
+    /// Idle timeout applied to a proxied TCP connection. A connection that
+    /// sends no data in either direction for this long is closed. This is not
+    /// a whole-connection lifetime limit, so long-lived protocols survive as
+    /// long as they stay active.
+    #[serde(default = "default_tcp_idle_timeout_secs")]
+    pub idle_timeout_secs: u64,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
@@ -75,6 +84,9 @@ fn default_half_open_max() -> u32 {
 fn default_half_open_per_ip_max() -> u32 {
     10
 }
+fn default_tcp_idle_timeout_secs() -> u64 {
+    300
+}
 
 impl Default for TcpDefaults {
     fn default() -> Self {
@@ -89,6 +101,7 @@ impl Default for TcpDefaults {
             connection_rate_global: default_connection_rate_global(),
             half_open_max: default_half_open_max(),
             half_open_per_ip_max: default_half_open_per_ip_max(),
+            idle_timeout_secs: default_tcp_idle_timeout_secs(),
         }
     }
 }
@@ -119,6 +132,7 @@ impl TcpDefaults {
                 ports: vec![25, 587],
                 upstream_format: Some("127.0.0.1:{port}".to_string()),
                 upstream_format_v6: Some("[::1]:{port}".to_string()),
+                ..Default::default()
             },
         );
         protocols.insert(
@@ -127,6 +141,7 @@ impl TcpDefaults {
                 ports: vec![143, 993],
                 upstream_format: Some("127.0.0.1:{port}".to_string()),
                 upstream_format_v6: Some("[::1]:{port}".to_string()),
+                ..Default::default()
             },
         );
         protocols.insert(
@@ -135,6 +150,7 @@ impl TcpDefaults {
                 ports: vec![110, 995],
                 upstream_format: Some("127.0.0.1:{port}".to_string()),
                 upstream_format_v6: Some("[::1]:{port}".to_string()),
+                ..Default::default()
             },
         );
         protocols.insert(
@@ -143,6 +159,7 @@ impl TcpDefaults {
                 ports: vec![3306],
                 upstream_format: Some("127.0.0.1:{port}".to_string()),
                 upstream_format_v6: Some("[::1]:{port}".to_string()),
+                ..Default::default()
             },
         );
         protocols.insert(
@@ -151,13 +168,14 @@ impl TcpDefaults {
                 ports: vec![5432],
                 upstream_format: Some("127.0.0.1:{port}".to_string()),
                 upstream_format_v6: Some("[::1]:{port}".to_string()),
+                ..Default::default()
             },
         );
         protocols
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema, ToSchema)]
 pub struct TcpProtocolConfig {
     #[serde(default)]
     pub ports: Vec<u16>,
@@ -165,6 +183,13 @@ pub struct TcpProtocolConfig {
     pub upstream_format: Option<String>,
     #[serde(default)]
     pub upstream_format_v6: Option<String>,
+    /// Run the protocol detector/filter for this listener. Defaults to true;
+    /// set false for a custom protocol the detector does not know.
+    #[serde(default)]
+    pub filter_enabled: Option<bool>,
+    /// Reject rather than only log a protocol mismatch. Defaults to true.
+    #[serde(default)]
+    pub strict_mode: Option<bool>,
 }
 
 fn default_tcp_enabled() -> bool {
@@ -190,6 +215,15 @@ pub struct UdpDefaults {
     pub rate_per_ip: u32,
     #[serde(default = "default_udp_rate_global")]
     pub rate_global: u32,
+    /// Largest client datagram accepted by a UDP listener.
+    #[serde(default = "default_udp_max_packet_size")]
+    pub max_packet_size: usize,
+    /// Maximum concurrent request/response flows per UDP listener.
+    #[serde(default = "default_udp_max_flows")]
+    pub max_flows: usize,
+    /// A flow with no client or upstream datagram for this long is reaped.
+    #[serde(default = "default_udp_flow_idle_timeout_secs")]
+    pub flow_idle_timeout_secs: u64,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
@@ -225,6 +259,9 @@ impl Default for UdpDefaults {
             socket: UdpSocketConfig::default(),
             rate_per_ip: default_udp_rate_per_ip(),
             rate_global: default_udp_rate_global(),
+            max_packet_size: default_udp_max_packet_size(),
+            max_flows: default_udp_max_flows(),
+            flow_idle_timeout_secs: default_udp_flow_idle_timeout_secs(),
         }
     }
 }
@@ -238,13 +275,14 @@ impl UdpDefaults {
                 ports: vec![53],
                 upstream_format: Some("127.0.0.1:5353".to_string()),
                 upstream_format_v6: Some("[::1]:5353".to_string()),
+                ..Default::default()
             },
         );
         protocols
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema, ToSchema)]
 pub struct UdpProtocolConfig {
     #[serde(default)]
     pub ports: Vec<u16>,
@@ -252,6 +290,12 @@ pub struct UdpProtocolConfig {
     pub upstream_format: Option<String>,
     #[serde(default)]
     pub upstream_format_v6: Option<String>,
+    /// Run the protocol detector/filter for this listener. Defaults to true.
+    #[serde(default)]
+    pub filter_enabled: Option<bool>,
+    /// Reject rather than only log a protocol mismatch. Defaults to true.
+    #[serde(default)]
+    pub strict_mode: Option<bool>,
 }
 
 fn default_udp_enabled() -> bool {
@@ -265,6 +309,209 @@ fn default_udp_rate_per_ip() -> u32 {
 }
 fn default_udp_rate_global() -> u32 {
     100000
+}
+fn default_udp_max_packet_size() -> usize {
+    4096
+}
+fn default_udp_max_flows() -> usize {
+    4096
+}
+fn default_udp_flow_idle_timeout_secs() -> u64 {
+    60
+}
+
+impl TcpDefaults {
+    /// Validate the listener definitions this section declares.
+    ///
+    /// `configtest` and startup run this: an enabled pool with no ports, a
+    /// duplicate port, or an upstream template that cannot produce a socket
+    /// address is a configuration error, not a first-packet surprise.
+    pub fn validate(&self) -> Result<(), ConfigValidationError> {
+        if !self.enabled {
+            return Ok(());
+        }
+        if self.protocols.is_empty() {
+            return Err(ConfigValidationError {
+                field: "tcp.protocols".to_string(),
+                message: "tcp.enabled = true but no [tcp.protocols.*] entries are defined"
+                    .to_string(),
+            });
+        }
+
+        let mut seen_ports: HashMap<u16, String> = HashMap::new();
+        for (name, protocol) in &self.protocols {
+            if protocol.ports.is_empty() {
+                return Err(ConfigValidationError {
+                    field: format!("tcp.protocols.{name}.ports"),
+                    message: "at least one port is required when the protocol is enabled"
+                        .to_string(),
+                });
+            }
+            for &port in &protocol.ports {
+                if port == 0 {
+                    return Err(ConfigValidationError {
+                        field: format!("tcp.protocols.{name}.ports"),
+                        message: "port 0 is not a usable listener port".to_string(),
+                    });
+                }
+                if let Some(existing) = seen_ports.insert(port, name.clone()) {
+                    return Err(ConfigValidationError {
+                        field: format!("tcp.protocols.{name}.ports"),
+                        message: format!("port {port} is already claimed by protocol '{existing}'"),
+                    });
+                }
+            }
+            let upstream =
+                protocol
+                    .upstream_format
+                    .as_deref()
+                    .ok_or_else(|| ConfigValidationError {
+                        field: format!("tcp.protocols.{name}.upstream_format"),
+                        message: "upstream_format is required".to_string(),
+                    })?;
+            for &port in &protocol.ports {
+                validate_upstream_template("tcp", name, port, upstream)?;
+            }
+            if let Some(v6) = protocol.upstream_format_v6.as_deref() {
+                for &port in &protocol.ports {
+                    validate_upstream_template("tcp", name, port, v6)?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl UdpDefaults {
+    pub fn validate(&self) -> Result<(), ConfigValidationError> {
+        if !self.enabled {
+            return Ok(());
+        }
+        if self.protocols.is_empty() {
+            return Err(ConfigValidationError {
+                field: "udp.protocols".to_string(),
+                message: "udp.enabled = true but no [udp.protocols.*] entries are defined"
+                    .to_string(),
+            });
+        }
+        if self.max_packet_size == 0 {
+            return Err(ConfigValidationError {
+                field: "udp.max_packet_size".to_string(),
+                message: "max_packet_size must be greater than 0".to_string(),
+            });
+        }
+        if self.max_flows == 0 {
+            return Err(ConfigValidationError {
+                field: "udp.max_flows".to_string(),
+                message: "max_flows must be greater than 0".to_string(),
+            });
+        }
+        if self.flow_idle_timeout_secs == 0 {
+            return Err(ConfigValidationError {
+                field: "udp.flow_idle_timeout_secs".to_string(),
+                message: "flow_idle_timeout_secs must be greater than 0".to_string(),
+            });
+        }
+
+        let mut seen_ports: HashMap<u16, String> = HashMap::new();
+        for (name, protocol) in &self.protocols {
+            if protocol.ports.is_empty() {
+                return Err(ConfigValidationError {
+                    field: format!("udp.protocols.{name}.ports"),
+                    message: "at least one port is required when the protocol is enabled"
+                        .to_string(),
+                });
+            }
+            for &port in &protocol.ports {
+                if port == 0 {
+                    return Err(ConfigValidationError {
+                        field: format!("udp.protocols.{name}.ports"),
+                        message: "port 0 is not a usable listener port".to_string(),
+                    });
+                }
+                if let Some(existing) = seen_ports.insert(port, name.clone()) {
+                    return Err(ConfigValidationError {
+                        field: format!("udp.protocols.{name}.ports"),
+                        message: format!("port {port} is already claimed by protocol '{existing}'"),
+                    });
+                }
+            }
+            let upstream =
+                protocol
+                    .upstream_format
+                    .as_deref()
+                    .ok_or_else(|| ConfigValidationError {
+                        field: format!("udp.protocols.{name}.upstream_format"),
+                        message: "upstream_format is required".to_string(),
+                    })?;
+            for &port in &protocol.ports {
+                validate_upstream_template("udp", name, port, upstream)?;
+            }
+            if let Some(v6) = protocol.upstream_format_v6.as_deref() {
+                for &port in &protocol.ports {
+                    validate_upstream_template("udp", name, port, v6)?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn validate_upstream_template(
+    section: &str,
+    protocol: &str,
+    port: u16,
+    template: &str,
+) -> Result<(), ConfigValidationError> {
+    let rendered = template.replace("{port}", &port.to_string());
+    let field = format!("{section}.protocols.{protocol}.upstream_format");
+    if rendered.is_empty() {
+        return Err(ConfigValidationError {
+            field,
+            message: "upstream_format cannot be empty".to_string(),
+        });
+    }
+    if rendered.contains("{port}") {
+        return Err(ConfigValidationError {
+            field,
+            message: "upstream_format contains an unresolved {port} placeholder".to_string(),
+        });
+    }
+
+    let valid = if rendered.starts_with("quictunnel:") {
+        let rest = rendered
+            .trim_start_matches("quictunnel://")
+            .trim_start_matches("quictunnel:");
+        rest.rsplit_once(':')
+            .is_some_and(|(peer, port)| !peer.is_empty() && port.parse::<u16>().is_ok())
+    } else if rendered.starts_with("unix:")
+        || rendered.starts_with("http+unix:")
+        || rendered.starts_with('/')
+        || rendered.starts_with("./")
+    {
+        true
+    } else {
+        let socket = if let Some(rest) = rendered
+            .strip_prefix("http://")
+            .or_else(|| rendered.strip_prefix("https://"))
+        {
+            rest.split('/').next().unwrap_or(rest)
+        } else {
+            rendered.as_str()
+        };
+        socket.parse::<SocketAddr>().is_ok()
+    };
+
+    if valid {
+        Ok(())
+    } else {
+        Err(ConfigValidationError {
+            field,
+            message: format!(
+                "upstream_format '{template}' cannot produce a socket address for port {port}                  (rendered: '{rendered}')"
+            ),
+        })
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]

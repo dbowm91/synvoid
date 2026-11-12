@@ -13,142 +13,104 @@ use super::runtime_handles::{
 };
 use super::{ServerSharedState, UnifiedServer};
 
-/// Spawn HTTP/1 listeners (v4 mandatory, v6 optional).
-pub(crate) fn spawn_http_listeners(
-    handles: &mut UnifiedServerRuntimeHandles,
-    state: &Arc<ServerSharedState>,
-    shutdown_tx: &tokio::sync::broadcast::Sender<()>,
-    http_addr: SocketAddr,
-    http_addr_v6: Option<SocketAddr>,
-) {
-    let shutdown_rx = shutdown_tx.subscribe();
-    let st = state.clone();
-    spawn_registered(
-        handles,
-        "http_v4",
-        RuntimeHandleClass::CriticalServer,
-        async move { UnifiedServer::run_http_server_inner(st, http_addr, shutdown_rx).await },
-    );
-
-    if let Some(addr_v6) = http_addr_v6 {
-        let shutdown_rx = shutdown_tx.subscribe();
-        let st = state.clone();
-        spawn_registered(
-            handles,
-            "http_v6",
-            RuntimeHandleClass::ProtocolListener,
-            async move {
-                tracing::info!("Starting HTTP server on IPv6 {}", addr_v6);
-                UnifiedServer::run_http_server_inner(st, addr_v6, shutdown_rx).await
-            },
-        );
-    }
-}
-
-/// Spawn HTTPS listeners when TLS + cert resolver are present.
-pub(crate) async fn spawn_https_listeners(
+/// Spawn every bound HTTP/HTTPS/HTTP3 listener.
+pub(crate) async fn spawn_http_listeners(
     handles: &mut UnifiedServerRuntimeHandles,
     state: &Arc<ServerSharedState>,
     server: &UnifiedServer,
+    bound: &[super::listener_binding::BoundHttpListener],
 ) {
     let cert_resolver = server.cert_resolver.clone();
     let tls_config = server.tls_config.clone();
+    let (main_config, http_config) = {
+        let cfg = server.config.read().await;
+        (cfg.main.clone(), cfg.main.http.clone())
+    };
 
-    if let (Some(addr), Some(resolver)) = (server.https_addr, cert_resolver.clone()) {
-        let shutdown_rx = server.shutdown_tx.subscribe();
-        let st = state.clone();
-        let main_config = {
-            let cfg = server.config.read().await;
-            cfg.main.clone()
-        };
-        let http_config = main_config.http.clone();
-        let tls_cfg = tls_config.clone();
-        spawn_registered(
-            handles,
-            "https_v4",
-            RuntimeHandleClass::CriticalServer,
-            async move {
-                UnifiedServer::run_https_server_inner(
-                    st,
-                    addr,
-                    resolver,
-                    tls_cfg,
-                    http_config,
-                    main_config,
-                    shutdown_rx,
-                )
-                .await
-            },
-        );
-    }
+    for listener in bound {
+        let plan = listener.plan.clone();
+        let id = plan.name().to_string();
 
-    if let (Some(addr_v6), Some(resolver)) = (server.https_addr_v6, cert_resolver.clone()) {
-        let shutdown_rx = server.shutdown_tx.subscribe();
-        let st = state.clone();
-        let main_config = {
-            let cfg = server.config.read().await;
-            cfg.main.clone()
-        };
-        let http_config = main_config.http.clone();
-        let tls_cfg = tls_config.clone();
-        spawn_registered(
-            handles,
-            "https_v6",
-            RuntimeHandleClass::ProtocolListener,
-            async move {
-                tracing::info!("Starting HTTPS server on IPv6 {}", addr_v6);
-                UnifiedServer::run_https_server_inner(
-                    st,
-                    addr_v6,
-                    resolver,
-                    tls_cfg,
-                    http_config,
-                    main_config,
-                    shutdown_rx,
-                )
-                .await
-            },
-        );
-    }
-}
-
-/// Spawn HTTP/3 listeners when configured.
-pub(crate) fn spawn_http3_listeners(
-    handles: &mut UnifiedServerRuntimeHandles,
-    state: &Arc<ServerSharedState>,
-    server: &UnifiedServer,
-) {
-    let cert_resolver = server.cert_resolver.clone();
-    let http3_config = server.http3_config.clone();
-
-    if let (Some(addr), Some(resolver)) = (server.http3_addr, cert_resolver.clone()) {
-        let shutdown_rx = server.shutdown_tx.subscribe();
-        let st = state.clone();
-        let h3_cfg = http3_config.clone();
-        spawn_registered(
-            handles,
-            "http3_v4",
-            RuntimeHandleClass::ProtocolListener,
-            async move {
-                UnifiedServer::run_http3_server_inner(st, addr, resolver, h3_cfg, shutdown_rx).await
-            },
-        );
-    }
-
-    if let (Some(addr_v6), Some(resolver)) = (server.http3_addr_v6, cert_resolver.clone()) {
-        let shutdown_rx = server.shutdown_tx.subscribe();
-        let st = state.clone();
-        let h3_cfg = http3_config.clone();
-        spawn_registered(
-            handles,
-            "http3_v6",
-            RuntimeHandleClass::ProtocolListener,
-            async move {
-                tracing::info!("Starting HTTP/3 server on IPv6 {}", addr_v6);
-                UnifiedServer::run_http3_server_inner(st, addr_v6, resolver, h3_cfg, shutdown_rx)
+        if let Some(std_listener) = listener
+            .tcp
+            .as_ref()
+            .and_then(|socket| socket.try_clone().ok())
+        {
+            let shutdown_rx = server.shutdown_tx.subscribe();
+            let st = state.clone();
+            let name = format!("{}:{id}", if plan.tls { "https" } else { "http" });
+            let class = RuntimeHandleClass::CriticalServer;
+            if plan.tls {
+                let Some(resolver) = cert_resolver.clone() else {
+                    tracing::error!(listener = %id, "TLS listener has no certificate resolver");
+                    continue;
+                };
+                let tls_cfg = tls_config.clone();
+                let http_cfg = http_config.clone();
+                let main_cfg = main_config.clone();
+                let listener_plan = plan.clone();
+                spawn_registered(handles, name, class, async move {
+                    UnifiedServer::run_https_server_inner(
+                        st,
+                        std_listener,
+                        listener_plan,
+                        resolver,
+                        tls_cfg,
+                        http_cfg,
+                        main_cfg,
+                        shutdown_rx,
+                    )
                     .await
-            },
-        );
+                });
+            } else {
+                let http_cfg = http_config.clone();
+                let main_cfg = main_config.clone();
+                let listener_plan = plan.clone();
+                spawn_registered(handles, name, class, async move {
+                    UnifiedServer::run_http_server_inner(
+                        st,
+                        std_listener,
+                        listener_plan,
+                        http_cfg,
+                        main_cfg,
+                        shutdown_rx,
+                    )
+                    .await
+                });
+            }
+        }
+
+        if let Some(std_socket) = listener
+            .udp
+            .as_ref()
+            .and_then(|socket| socket.try_clone().ok())
+        {
+            let Some(resolver) = cert_resolver.clone() else {
+                tracing::error!(listener = %id, "HTTP/3 listener has no certificate resolver");
+                continue;
+            };
+            let shutdown_rx = server.shutdown_tx.subscribe();
+            let st = state.clone();
+            let h3_cfg = server.http3_config.clone();
+            let name = format!("h3:{id}");
+            let listener_plan = plan.clone();
+            spawn_registered(
+                handles,
+                name,
+                RuntimeHandleClass::ProtocolListener,
+                async move {
+                    UnifiedServer::run_http3_server_inner(
+                        st,
+                        std_socket,
+                        listener_plan,
+                        resolver,
+                        h3_cfg,
+                        shutdown_rx,
+                    )
+                    .await
+                },
+            );
+        }
     }
 }
 

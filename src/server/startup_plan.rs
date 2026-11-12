@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::net::SocketAddr;
 
 use crate::config::defaults::{GlobalRateLimitConfig, IpRateLimitConfig};
@@ -11,12 +12,7 @@ use crate::utils::parse_host_port;
 /// sockets or spawning background tasks.
 #[derive(Debug, Clone)]
 pub struct UnifiedServerStartupPlan {
-    pub http_addr: SocketAddr,
-    pub http_addr_v6: Option<SocketAddr>,
-    pub https_addr: Option<SocketAddr>,
-    pub https_addr_v6: Option<SocketAddr>,
-    pub http3_addr: Option<SocketAddr>,
-    pub http3_addr_v6: Option<SocketAddr>,
+    pub http_listeners: Vec<crate::config::HttpListenerPlan>,
     pub admin_addr: Option<SocketAddr>,
     pub tls_enabled: bool,
     pub dns_enabled: bool,
@@ -58,93 +54,73 @@ pub enum UnifiedServerStartupPlanError {
 }
 
 impl UnifiedServerStartupPlan {
-    /// Build a validated startup plan from a config snapshot.
-    ///
-    /// This performs address parsing, worker count normalization, and rate-limit
-    /// scaling without opening any sockets or spawning tasks.
+    /// Build a validated startup plan from a config snapshot without site
+    /// membership. Explicit `[[http.listeners]]` entries that require site
+    /// resolution should use [`Self::from_config_snapshot_with_sites`].
     pub fn from_config_snapshot(
         main_config: &MainConfig,
         worker_count: usize,
     ) -> Result<Self, UnifiedServerStartupPlanError> {
-        // 1. Parse HTTP addr
-        let http_addr = parse_host_port(&main_config.server.host, main_config.server.port)
-            .map_err(|e| {
-                UnifiedServerStartupPlanError::InvalidHttpAddress(format!(
-                    "host={}, port={}: {}",
-                    main_config.server.host, main_config.server.port, e
-                ))
-            })?;
+        Self::from_config_snapshot_with_sites(main_config, &HashMap::new(), worker_count)
+    }
 
-        // 2. Parse HTTP IPv6 addr
-        let http_addr_v6 = main_config
-            .server
-            .host_v6
-            .as_ref()
-            .map(|h| {
-                parse_host_port(h, main_config.server.port).map_err(|e| {
-                    UnifiedServerStartupPlanError::InvalidHttpAddress(format!(
-                        "host_v6={}, port={}: {}",
-                        h, main_config.server.port, e
-                    ))
-                })
-            })
-            .transpose()?;
-
-        // 3-4. Parse HTTPS addr if TLS enabled
-        let tls_config = InternalTlsConfig::from(main_config.tls.clone());
-        let (https_addr, https_addr_v6) = if tls_config.enabled {
-            let https =
-                parse_host_port(&main_config.server.host, tls_config.port).map_err(|e| {
-                    UnifiedServerStartupPlanError::InvalidHttpsAddress(format!(
-                        "host={}, port={}: {}",
-                        main_config.server.host, tls_config.port, e
-                    ))
-                })?;
-            let https_v6 = main_config
-                .server
-                .host_v6
-                .as_ref()
-                .map(|h| {
-                    parse_host_port(h, tls_config.port).map_err(|e| {
-                        UnifiedServerStartupPlanError::InvalidHttpsAddress(format!(
-                            "host_v6={}, port={}: {}",
-                            h, tls_config.port, e
+    /// Build a validated startup plan from the main config and loaded sites.
+    ///
+    /// This performs listener normalization, address parsing, worker count
+    /// normalization, and rate-limit scaling without opening any sockets or
+    /// spawning tasks.
+    pub fn from_config_snapshot_with_sites(
+        main_config: &MainConfig,
+        sites: &HashMap<String, crate::config::SiteConfig>,
+        worker_count: usize,
+    ) -> Result<Self, UnifiedServerStartupPlanError> {
+        let http_listeners =
+            synvoid_config::normalize_http_listeners(main_config, sites).map_err(|e| {
+                match e.field.as_str() {
+                    field if field.starts_with("server.") => {
+                        UnifiedServerStartupPlanError::InvalidHttpAddress(format!(
+                            "{}: {}",
+                            e.field, e.message
                         ))
-                    })
-                })
-                .transpose()?;
-            (Some(https), https_v6)
-        } else {
-            (None, None)
-        };
-
-        // 5-6. Parse HTTP/3 addr if HTTP/3 enabled
-        let http3_config = main_config.http3.clone();
-        let (http3_addr, http3_addr_v6) = if http3_config.enabled {
-            let h3 = parse_host_port(&main_config.server.host, http3_config.port).map_err(|e| {
-                UnifiedServerStartupPlanError::InvalidHttp3Address(format!(
-                    "host={}, port={}: {}",
-                    main_config.server.host, http3_config.port, e
-                ))
-            })?;
-            let h3_v6 = http3_config
-                .host_v6
-                .as_ref()
-                .map(|h| {
-                    parse_host_port(h, http3_config.port).map_err(|e| {
+                    }
+                    field if field.starts_with("http3.") => {
                         UnifiedServerStartupPlanError::InvalidHttp3Address(format!(
-                            "host_v6={}, port={}: {}",
-                            h, http3_config.port, e
+                            "{}: {}",
+                            e.field, e.message
                         ))
-                    })
-                })
-                .transpose()?;
-            (Some(h3), h3_v6)
-        } else {
-            (None, None)
-        };
+                    }
+                    field if field.starts_with("admin.") => {
+                        UnifiedServerStartupPlanError::InvalidAdminAddress(format!(
+                            "{}: {}",
+                            e.field, e.message
+                        ))
+                    }
+                    field
+                        if field.starts_with("http.listeners")
+                            || field.starts_with("tls.")
+                            || field.starts_with("site.listeners") =>
+                    {
+                        UnifiedServerStartupPlanError::ListenerConflict(format!(
+                            "{}: {}",
+                            e.field, e.message
+                        ))
+                    }
+                    _ => UnifiedServerStartupPlanError::InvalidFeatureCombination(format!(
+                        "{}: {}",
+                        e.field, e.message
+                    )),
+                }
+            })?;
 
-        // 7. Parse admin addr when the control plane is enabled
+        if worker_count > 1 && http_listeners.iter().any(|listener| listener.http3) {
+            return Err(UnifiedServerStartupPlanError::InvalidFeatureCombination(
+                "HTTP/3 with unified_server_workers > 1 is not qualified; keep one worker or disable http3"
+                    .to_string(),
+            ));
+        }
+
+        let tls_config = InternalTlsConfig::from(main_config.tls.clone());
+
         let admin_addr = if main_config.admin.enabled {
             Some(
                 parse_host_port(&main_config.admin.bind_address, main_config.admin.port).map_err(
@@ -160,66 +136,15 @@ impl UnifiedServerStartupPlan {
             None
         };
 
-        // 8. Normalize worker count
         let worker_count = worker_count.max(1);
-
-        // 8. Scale rate limits by worker count (ceiling division)
         let scaled_ip = scale_ip_rate_limit(&main_config.defaults.ratelimit.ip, worker_count);
         let scaled_global =
             scale_global_rate_limit(&main_config.defaults.ratelimit.global, worker_count);
 
-        // 9. Check for listener conflicts (renumbered: admin parse is 7,
-        //    worker normalization is 8)
-        if let Some(https) = https_addr {
-            if https == http_addr {
-                return Err(UnifiedServerStartupPlanError::ListenerConflict(format!(
-                    "HTTPS addr {} conflicts with HTTP addr {}",
-                    https, http_addr
-                )));
-            }
-        }
-        if let Some(h3) = http3_addr {
-            if h3 == http_addr {
-                return Err(UnifiedServerStartupPlanError::ListenerConflict(format!(
-                    "HTTP/3 addr {} conflicts with HTTP addr {}",
-                    h3, http_addr
-                )));
-            }
-            if let Some(https) = https_addr {
-                if h3 == https {
-                    return Err(UnifiedServerStartupPlanError::ListenerConflict(format!(
-                        "HTTP/3 addr {} conflicts with HTTPS addr {}",
-                        h3, https
-                    )));
-                }
-            }
-        }
-        if let Some(admin) = admin_addr {
-            for (name, other) in [
-                ("HTTP", Some(http_addr)),
-                ("HTTPS", https_addr),
-                ("HTTP/3", http3_addr),
-            ]
-            .into_iter()
-            .filter_map(|(name, addr)| addr.map(|a| (name, a)))
-            {
-                if admin == other {
-                    return Err(UnifiedServerStartupPlanError::ListenerConflict(format!(
-                        "Admin addr {} conflicts with {} addr {}",
-                        admin, name, other
-                    )));
-                }
-            }
-        }
+        let http3_config = main_config.http3.clone();
 
-        // 10. Build plan
         Ok(Self {
-            http_addr,
-            http_addr_v6,
-            https_addr,
-            https_addr_v6,
-            http3_addr,
-            http3_addr_v6,
+            http_listeners,
             admin_addr,
             tls_enabled: tls_config.enabled,
             #[cfg(feature = "dns")]
@@ -337,8 +262,7 @@ mod tests {
 
         let plan =
             UnifiedServerStartupPlan::from_config_snapshot(&cfg, 1).expect("plan should build");
-        assert!(plan.http3_addr.is_none());
-        assert!(plan.http3_addr_v6.is_none());
+        assert!(plan.http_listeners.iter().all(|listener| !listener.http3));
     }
 
     #[test]
@@ -377,13 +301,18 @@ mod tests {
         let plan =
             UnifiedServerStartupPlan::from_config_snapshot(&cfg, 1).expect("plan should build");
         assert!(plan.tls_enabled);
-        assert!(plan.https_addr.is_some());
-        assert_eq!(plan.https_addr.unwrap().port(), 8443);
+        let https = plan
+            .http_listeners
+            .iter()
+            .find(|listener| listener.tls && !listener.http3)
+            .expect("HTTPS listener plan");
+        assert_eq!(https.addr.port(), 8443);
     }
 
     #[test]
     fn http3_enabled_invalid_v6_addr_returns_typed_error() {
         let mut cfg = make_test_main_config();
+        cfg.tls.enabled = true;
         cfg.http3.enabled = true;
         cfg.http3.host_v6 = Some("not-a-valid-ipv6".to_string());
 
@@ -397,20 +326,23 @@ mod tests {
     }
 
     #[test]
-    fn listener_conflict_detected_for_h3_and_https_same_port() {
+    fn h3_and_https_may_share_the_same_numeric_port() {
         let mut cfg = make_test_main_config();
         cfg.tls.enabled = true;
         cfg.tls.port = 8443;
         cfg.http3.enabled = true;
         cfg.http3.port = 8443;
 
-        let err = UnifiedServerStartupPlan::from_config_snapshot(&cfg, 1)
-            .expect_err("should fail on H3/HTTPS conflict");
-        assert!(
-            matches!(err, UnifiedServerStartupPlanError::ListenerConflict(_)),
-            "expected ListenerConflict, got: {:?}",
-            err
-        );
+        let plan = UnifiedServerStartupPlan::from_config_snapshot(&cfg, 1)
+            .expect("TCP HTTPS and UDP HTTP/3 may share a port");
+        assert!(plan
+            .http_listeners
+            .iter()
+            .any(|listener| listener.tls && listener.tcp && !listener.http3));
+        assert!(plan
+            .http_listeners
+            .iter()
+            .any(|listener| listener.http3 && !listener.tcp));
     }
 
     #[test]
@@ -451,6 +383,26 @@ mod tests {
         assert!(
             matches!(err, UnifiedServerStartupPlanError::ListenerConflict(_)),
             "expected ListenerConflict, got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn multi_worker_http3_is_rejected_until_qualified() {
+        let mut cfg = make_test_main_config();
+        cfg.tls.enabled = true;
+        cfg.http3.enabled = true;
+        cfg.http3.port = 8443;
+        cfg.tls.port = 9443;
+
+        let err = UnifiedServerStartupPlan::from_config_snapshot(&cfg, 2)
+            .expect_err("multi-worker H3 must be rejected");
+        assert!(
+            matches!(
+                err,
+                UnifiedServerStartupPlanError::InvalidFeatureCombination(_)
+            ),
+            "expected InvalidFeatureCombination, got: {:?}",
             err
         );
     }

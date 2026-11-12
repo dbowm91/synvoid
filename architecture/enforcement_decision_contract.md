@@ -50,7 +50,7 @@ Every enum/type that can affect request disposition:
 | `FloodDecision` (`crates/synvoid-waf/src/flood/mod.rs`, re-exported by `src/waf/flood`) | synvoid-waf | SYN/connection/UDP flood outcome | `RateLimited`/`Blackholed` | No | Detector result; `synvoid_waf::enforcement::flood_candidate` |
 | `BotDetectionResult` (`crates/synvoid-waf/src/bot.rs`) | synvoid-waf | Bot/scraper/fingerprint outcome | `Blocked`/`Tarpit` | No | Detector result; `synvoid_waf::enforcement::bot_candidate` |
 | `EndpointCheckResult` (`crates/synvoid-waf/src/endpoints/blocker.rs`, re-exported by `src/waf/endpoints.rs`) | synvoid-waf | Static endpoint policy outcome | `Blocked` | No (optional HTML fragment) | Detector result; `synvoid_waf::enforcement::endpoint_candidate` |
-| `AttackDetectionResult` (`crates/synvoid-waf/src/attack_detection/config.rs`, re-exported by `src/waf/attack_detection`) | synvoid-waf | Rule-match evidence (type, location) | Always (detection ⇒ deny) | No | Detector result; `synvoid_waf::enforcement::attack_candidate` → `Block/AttackDetection/attack_detected` |
+| `AttackDetectionResult` (`crates/synvoid-waf/src/attack_detection/config.rs`, re-exported by `src/waf/attack_detection`) | synvoid-waf | Rule-match evidence (type, location, confidence) | Depends on resolved site/global action (`block`, `stall`, `log`); `log` makes no terminal claim | No | Detector result; `synvoid_waf::enforcement::attack_candidate` → `Block/AttackDetection/attack_detected`; `attack_candidate_with_class(..., Stall)` for the stall action |
 | `synvoid_core::streaming_waf::StreamingWafDecision` (`crates/synvoid-core/src/streaming_waf.rs`) | synvoid-core | Streaming chunk scan outcome | `Block` | No | **Streaming adapter** shared by `synvoid-http` (body adapter) and `synvoid-waf` without cycles (Phase 34: transport no longer carries it) |
 | `synvoid_waf::attack_detection::streaming::StreamingWafDecision` (`crates/synvoid-waf/src/attack_detection/streaming.rs`) | synvoid-waf | Internal streaming-core chunk outcome | `Block` | No | Detector-internal; adapted to the core decision at `StreamingWafCore::scan_chunk` boundary |
 | `BodyPolicyError` (`crates/synvoid-http/src/body_policy.rs`) | synvoid-http | Buffered body policy failure | Always (both variants deny: 403/413) | No | **HTTP adapter**: exhaustive `candidate()` mapping, fail-closed |
@@ -205,6 +205,12 @@ document):
 - `src/waf/ratelimit.rs` — `RateLimitResult` (detector result; distinct from
   the neutral `synvoid_rate_limit::RateLimitResult` mechanism vocabulary).
 - `src/waf/ratelimit/core.rs` — `RateLimitDecision` (detector-internal core).
+- `src/waf/site_attack_config.rs` — `AttackAction` (`Block`/`Stall`/`Log`)
+  resolved from site > global > built-in policy. Mapping is exhaustive in
+  `WafCore::check_attack`: `Block`→`Block` + `attack_candidate`,
+  `Stall`→`Stall` + `attack_candidate_with_class`, `Log`→no terminal claim
+  (observation only, no violation). Covered by `site_policy` tests in
+  `src/waf/mod.rs`.
 
 ## 8. Benchmarks
 

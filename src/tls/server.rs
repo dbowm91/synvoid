@@ -122,6 +122,10 @@ pub struct HttpsServer {
         >,
     >,
     upstream_client_registry: Arc<UpstreamClientRegistry>,
+    prebound_listener: Option<std::net::TcpListener>,
+    listener_id: Option<String>,
+    listener_http2: bool,
+    alt_svc: Option<String>,
 }
 
 /// Describe the TLS profile this listener actually offers, for the startup banner.
@@ -194,7 +198,27 @@ impl HttpsServer {
             connection_limit: Arc::new(tokio::sync::Semaphore::new(10000)),
             app_servers: None,
             upstream_client_registry: Arc::new(UpstreamClientRegistry::new()),
+            prebound_listener: None,
+            listener_id: None,
+            listener_http2: true,
+            alt_svc: None,
         }
+    }
+
+    pub fn with_tcp_listener(mut self, listener: std::net::TcpListener) -> Self {
+        self.prebound_listener = Some(listener);
+        self
+    }
+
+    pub fn with_listener_plan(mut self, plan: crate::config::HttpListenerPlan) -> Self {
+        self.listener_id = Some(plan.id.to_string());
+        self.listener_http2 = plan.http2;
+        self
+    }
+
+    pub fn with_alt_svc(mut self, alt_svc: String) -> Self {
+        self.alt_svc = Some(alt_svc);
+        self
     }
 
     pub fn with_flood_protector(mut self, flood_protector: Arc<FloodProtector>) -> Self {
@@ -284,15 +308,28 @@ impl HttpsServer {
         #[cfg(not(feature = "post-quantum"))]
         tracing::info!("Post-quantum cryptography: disabled (feature not enabled)");
 
-        let server_config = self.cert_resolver.build_server_config()?;
+        let alpn: &[&[u8]] = if self.listener_http2 {
+            &[b"h2", b"http/1.1"]
+        } else {
+            &[b"http/1.1"]
+        };
+        let server_config = self.cert_resolver.build_server_config(alpn)?;
         let acceptor = TlsAcceptor::from(server_config);
 
-        let std_listener = synvoid_platform::socket_bind::bind_tcp_reuse(self.addr)?;
+        let std_listener = match self.prebound_listener.take() {
+            Some(listener) => listener,
+            None => synvoid_platform::socket_bind::bind_tcp_reuse(self.addr)?,
+        };
         let listener = TcpListener::from_std(std_listener)?;
         tracing::info!(
-            "HTTPS server listening on {} ({}) (HTTP/1.1 + HTTP/2) [SO_REUSEPORT]",
+            "HTTPS server listening on {} ({}) alpn={} [SO_REUSEPORT]",
             self.addr,
             tls_profile_description(&self.config),
+            if self.listener_http2 {
+                "h2,http/1.1"
+            } else {
+                "http/1.1"
+            },
         );
 
         if let Some(watch_dir) = &self.config.watch_dir {
@@ -320,6 +357,8 @@ impl HttpsServer {
         let connection_limit = self.connection_limit.clone();
         let app_servers = self.app_servers.clone();
         let upstream_client_registry = self.upstream_client_registry.clone();
+        let listener_id = self.listener_id.clone();
+        let alt_svc = self.alt_svc.clone();
 
         let max_headers = self.http_config.max_headers;
         // Phase 70: TLS-H1 parser controls are applied per-connection through
@@ -345,6 +384,13 @@ impl HttpsServer {
                 result = listener.accept() => {
                     match result {
                         Ok((stream, client_addr)) => {
+                            if let Some(listener_id) = listener_id.as_ref() {
+                                counter!(
+                                    "synvoid.http.listener_accepted_total",
+                                    "listener" => listener_id.to_string()
+                                )
+                                .increment(1);
+                            }
                             let client_ip = client_addr.ip();
 
                             // L3/L4 flood protection BEFORE TLS handshake (fixes bug
@@ -427,7 +473,11 @@ impl HttpsServer {
                                 }
                             }
 
+                            let listener_id_conn = listener_id.clone();
+                            let alt_svc_conn = alt_svc.clone();
                             tokio::spawn(async move {
+                                let listener_id = listener_id_conn;
+                                let alt_svc = alt_svc_conn;
                                 match acceptor.accept(stream).await {
                                     Ok(tls_stream) => {
                                         counter!("synvoid.tls.handshakes").increment(1);
@@ -470,6 +520,8 @@ impl HttpsServer {
                                                     let app_servers = app_servers_h2.clone();
                                                     let upstream_client_registry = upstream_client_registry.clone();
                                                     move |req| {
+                                                        let listener_id = listener_id.clone();
+                                                        let alt_svc = alt_svc.clone();
                                                         let router = router.clone();
                                                         let waf = waf.clone();
                                                         let http_config = http_config.clone();
@@ -493,11 +545,11 @@ impl HttpsServer {
                                                         async move {
                                                             #[cfg(feature = "mesh")]
                                                             {
-                                                                Self::handle_request_with_cache(req, client_addr, local_addr, router, waf, http_config, main_config, https_conn, metrics, drain_state, mesh_config, mesh_transport, ipc, worker_id, serverless_manager, connection_limit, app_servers, upstream_client_registry, request_log_sink.clone()).await
+                                                                Self::handle_request_with_cache(req, client_addr, local_addr, listener_id.clone(), alt_svc.clone(), router, waf, http_config, main_config, https_conn, metrics, drain_state, mesh_config, mesh_transport, ipc, worker_id, serverless_manager, connection_limit, app_servers, upstream_client_registry, request_log_sink.clone()).await
                                                             }
                                                             #[cfg(not(feature = "mesh"))]
                                                             {
-                                                                Self::handle_request_with_cache(req, client_addr, local_addr, router, waf, http_config, main_config, https_conn, metrics, drain_state, ipc, worker_id, serverless_manager, connection_limit, app_servers, upstream_client_registry, request_log_sink.clone()).await
+                                                                Self::handle_request_with_cache(req, client_addr, local_addr, listener_id.clone(), alt_svc.clone(), router, waf, http_config, main_config, https_conn, metrics, drain_state, ipc, worker_id, serverless_manager, connection_limit, app_servers, upstream_client_registry, request_log_sink.clone()).await
                                                             }
                                                         }
                                                     }
@@ -545,13 +597,14 @@ impl HttpsServer {
                                                 // Alt-Svc stays an
                                                 // HTTP-plane concern (None
                                                 // here, as before).
-                                                alt_svc: None,
+                                                alt_svc: alt_svc.clone(),
                                                 main_config: main_config.clone(),
                                                 http_config: http_config.clone(),
                                                 metrics: metrics_h1.clone(),
                                                 ipc: ipc_h1.clone(),
                                                 worker_id: worker_id_h1,
                                                 drain_state: drain_state_h1.clone(),
+                                                listener_id: listener_id.clone(),
                                                 upstream_client_registry: upstream_client_registry.clone(),
                                                 connection_limit: connection_limit_h1.clone(),
                                                 app_servers: app_servers_h1.clone(),
@@ -671,6 +724,8 @@ impl HttpsServer {
         req: hyper::Request<hyper::body::Incoming>,
         client_addr: SocketAddr,
         local_addr: Option<SocketAddr>,
+        listener_id: Option<String>,
+        alt_svc: Option<String>,
         router: Arc<Router>,
         waf: Arc<WafCore>,
         http_config: HttpConfig,
@@ -738,7 +793,6 @@ impl HttpsServer {
         //   `WorkerMetrics`/`BandwidthProtocol::Http` path. TLS-handshake,
         //   ALPN, and flood counters (`synvoid.tls.*`) remain
         //   transport-specific above.
-        let alt_svc: Option<String> = None;
         let request_queue_started_at = Instant::now();
         let _permit = match connection_limit.clone().acquire_owned().await {
             Ok(p) => p,
@@ -768,6 +822,7 @@ impl HttpsServer {
             synvoid_http::hyper_adapter::adapt_hyper_request(req),
             client_addr.ip(),
             local_addr,
+            listener_id.as_deref(),
             drain_state.clone(),
             Arc::clone(&router),
             Arc::clone(&waf),
@@ -895,7 +950,7 @@ pub fn create_tls_acceptor(
     _config: &InternalTlsConfig,
     cert_resolver: &CertResolver,
 ) -> Result<TlsAcceptor, Box<dyn std::error::Error + Send + Sync>> {
-    let server_config = cert_resolver.build_server_config()?;
+    let server_config = cert_resolver.build_server_config(&[])?;
     Ok(TlsAcceptor::from(server_config))
 }
 

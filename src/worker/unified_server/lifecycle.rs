@@ -193,7 +193,7 @@ pub fn spawn_heartbeat_task(
             #[cfg(feature = "mesh")]
             let mut payload = state.metrics.to_payload(uptime);
             #[cfg(not(feature = "mesh"))]
-            let payload = state.metrics.to_payload(uptime);
+            let mut payload = state.metrics.to_payload(uptime);
 
             // Mesh health snapshot
             #[cfg(feature = "mesh")]
@@ -694,13 +694,20 @@ pub fn spawn_ipc_loop(
                         );
                     }
 
-                    // Phase 19: patterns merge via the global rule-pattern store
-                    // above; `reload_attack_detector` is a deprecated no-op that
-                    // always reports Ok, so it is no longer called here.
-                    tracing::info!(
-                        "Merged rule patterns update v{} into the global pattern store",
-                        version
-                    );
+                    // The global pattern store is the feed source; rebuild the
+                    // detector so the merged patterns take effect without a
+                    // restart, and invalidate per-site variants.
+                    match state.unified_server.reload_attack_detector() {
+                        Ok(()) => tracing::info!(
+                            "Merged rule patterns update v{} and rebuilt the attack detector",
+                            version
+                        ),
+                        Err(error) => tracing::error!(
+                            "Failed to rebuild the attack detector for rule patterns update v{}: {}",
+                            version,
+                            error
+                        ),
+                    }
                 }
                 #[cfg(feature = "mesh")]
                 Some(Message::ThreatFeedUpdate {

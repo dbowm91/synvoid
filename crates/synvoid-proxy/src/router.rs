@@ -1,10 +1,11 @@
 //! Request routing and domain resolution.
 //!
-//! Maps incoming requests to site configurations based on the `Host`
-//! header, supporting exact domain matching, suffix/wildcard matching,
-//! and per-listener default sites. Resolves backend targets (upstream
-//! pools, FastCGI, static files, QUIC tunnels) and integrates with
-//! the static file handler and minifier.
+//! Maps incoming requests to site configurations based on the `ListenerId`
+//! that accepted them and the `Host` header, supporting exact domain
+//! matching, suffix/wildcard matching, and per-listener default sites.
+//! Sites are candidate virtual hosts; they never own sockets. Resolves
+//! backend targets (upstream pools, FastCGI, static files, QUIC tunnels) and
+//! integrates with the static file handler and minifier.
 
 use matchit::Router as MatchRouter;
 use std::any::Any;
@@ -16,7 +17,7 @@ use std::sync::Arc;
 use synvoid_config::site::BackendConfig;
 use synvoid_config::site::PhpLocationConfig;
 use synvoid_config::theme::ThemeConfig;
-use synvoid_config::{MainConfig, SiteConfig};
+use synvoid_config::{ListenerId, MainConfig, SiteConfig};
 #[cfg(feature = "mesh")]
 use synvoid_config::{MeshCompressionConfig, MeshImageProtectionConfig, MeshMinificationConfig};
 use synvoid_platform::fs::PlatformPaths;
@@ -29,6 +30,13 @@ use synvoid_static_files::{
 use crate::location_matcher::LocationMatcher;
 
 #[derive(Clone)]
+pub struct ListenerRoutingTable {
+    exact: HashMap<Arc<str>, Arc<SiteConfig>>,
+    wildcard: Arc<MatchRouter<Arc<SiteConfig>>>,
+    default_site: Option<Arc<SiteConfig>>,
+}
+
+#[derive(Clone)]
 pub struct Router {
     domain_map: HashMap<Arc<str>, Arc<SiteConfig>>,
     wildcard_domain_router: Arc<MatchRouter<Arc<SiteConfig>>>,
@@ -37,16 +45,12 @@ pub struct Router {
     static_handlers: HashMap<String, Arc<StaticFileHandler>>,
     minifier_client: Option<MinifierClient>,
     async_minifier_client: Option<AsyncMinifierClient>,
-    listen_map: HashMap<SocketAddr, Vec<String>>,
-    default_servers: HashMap<SocketAddr, String>,
-    ip_domain_map: HashMap<(SocketAddr, Arc<str>), Arc<SiteConfig>>,
-    ip_wildcard_routers: HashMap<SocketAddr, Arc<MatchRouter<Arc<SiteConfig>>>>,
     plugin_manager: Option<Arc<dyn Any + Send + Sync>>,
     cleaned_site_domains: HashMap<String, Vec<Arc<str>>>,
     cleaned_site_domain_suffixes: HashMap<String, Vec<Arc<str>>>,
     location_matchers: HashMap<String, LocationMatcher>,
     site_map: HashMap<String, Arc<SiteConfig>>,
-    _server_port: u16,
+    listener_tables: HashMap<ListenerId, ListenerRoutingTable>,
 }
 
 type SiteMaps = (
@@ -55,14 +59,10 @@ type SiteMaps = (
     HashMap<String, Vec<Arc<str>>>,
     HashMap<String, Vec<Arc<str>>>,
     HashMap<String, Arc<StaticFileHandler>>,
-    HashMap<SocketAddr, Vec<String>>,
-    HashMap<SocketAddr, String>,
-    HashMap<(SocketAddr, Arc<str>), Arc<SiteConfig>>,
-    HashMap<SocketAddr, Arc<MatchRouter<Arc<SiteConfig>>>>,
     HashMap<String, Arc<SiteConfig>>,
 );
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum BackendType {
     Upstream,
     FastCgi,
@@ -93,17 +93,40 @@ pub struct RouteTarget {
     pub spin_app_name: Option<Arc<str>>,
 }
 
-#[derive(Clone)]
+impl std::fmt::Debug for RouteTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RouteTarget")
+            .field("site_id", &self.site_id)
+            .field("upstream", &self.upstream)
+            .field("backend_type", &self.backend_type)
+            .field("tunnel_peer", &self.tunnel_peer)
+            .field("tunnel_port", &self.tunnel_port)
+            .finish_non_exhaustive()
+    }
+}
+
 #[allow(clippy::large_enum_variant)]
+#[derive(Clone)]
 pub enum RouteResult {
     Found(RouteTarget),
     NotFound(String),
     Error(String),
 }
 
+impl std::fmt::Debug for RouteResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Found(target) => f.debug_tuple("Found").field(target).finish(),
+            Self::NotFound(message) => f.debug_tuple("NotFound").field(message).finish(),
+            Self::Error(message) => f.debug_tuple("Error").field(message).finish(),
+        }
+    }
+}
+
 impl Router {
     pub fn new(main_config: &MainConfig, sites: HashMap<String, SiteConfig>) -> Self {
         let sites_clone = sites.clone();
+        let sites_for_listeners = sites.clone();
         let cpu_worker_socket = Self::resolve_cpu_worker_socket(main_config);
         let minifier_client = MinifierClient::new(cpu_worker_socket.clone());
         let async_minifier_client = AsyncMinifierClient::new(cpu_worker_socket);
@@ -117,10 +140,6 @@ impl Router {
             cleaned_site_domains,
             cleaned_site_domain_suffixes,
             static_handlers,
-            listen_map,
-            default_servers,
-            ip_domain_map,
-            ip_wildcard_routers,
             site_map,
         ) = Self::build_all_maps(
             main_config,
@@ -130,7 +149,10 @@ impl Router {
             &default_theme_config,
         );
 
-        let router = Router {
+        let listener_tables =
+            Self::build_listener_tables(main_config, &sites_for_listeners, &site_map);
+
+        Router {
             domain_map,
             wildcard_domain_router,
             fallback_mode: main_config.fallback.mode.clone(),
@@ -138,20 +160,64 @@ impl Router {
             static_handlers,
             minifier_client: Some(minifier_client),
             async_minifier_client: Some(async_minifier_client),
-            listen_map: listen_map.clone(),
-            default_servers,
-            ip_domain_map,
-            ip_wildcard_routers,
             plugin_manager: None,
             cleaned_site_domains,
             cleaned_site_domain_suffixes,
             location_matchers,
             site_map,
-            _server_port: main_config.server.port,
+            listener_tables,
+        }
+    }
+
+    fn build_listener_tables(
+        main_config: &MainConfig,
+        sites: &HashMap<String, SiteConfig>,
+        site_map: &HashMap<String, Arc<SiteConfig>>,
+    ) -> HashMap<ListenerId, ListenerRoutingTable> {
+        let plans = match synvoid_config::normalize_http_listeners(main_config, sites) {
+            Ok(plans) => plans,
+            Err(error) => {
+                tracing::error!(
+                    field = %error.field,
+                    "Cannot build listener routing tables: {}",
+                    error.message
+                );
+                return HashMap::new();
+            }
         };
 
-        Self::log_configuration(&listen_map, &router.default_servers);
-        router
+        let mut tables = HashMap::new();
+        for plan in plans {
+            let mut exact = HashMap::new();
+            let mut wildcard = MatchRouter::new();
+            let mut cleaned = HashMap::new();
+            let mut suffixes = HashMap::new();
+            for site_id in &plan.site_ids {
+                let Some(site) = site_map.get(site_id) else {
+                    continue;
+                };
+                Self::build_domain_map_entry(
+                    site,
+                    &mut exact,
+                    &mut wildcard,
+                    &mut cleaned,
+                    &mut suffixes,
+                );
+            }
+            let default_site = plan
+                .default_site
+                .as_ref()
+                .and_then(|site_id| site_map.get(site_id).cloned());
+            tables.insert(
+                plan.id.clone(),
+                ListenerRoutingTable {
+                    exact,
+                    wildcard: Arc::new(wildcard),
+                    default_site,
+                },
+            );
+        }
+        tables
     }
 
     #[inline]
@@ -169,7 +235,7 @@ impl Router {
     }
 
     fn build_all_maps(
-        main_config: &MainConfig,
+        _main_config: &MainConfig,
         sites: HashMap<String, SiteConfig>,
         minifier_client: &MinifierClient,
         async_minifier_client: &AsyncMinifierClient,
@@ -178,11 +244,6 @@ impl Router {
         let mut domain_map = HashMap::new();
         let mut wildcard_domain_router = MatchRouter::new();
         let mut static_handlers = HashMap::new();
-        let mut listen_map: HashMap<SocketAddr, Vec<String>> = HashMap::new();
-        let mut default_servers: HashMap<SocketAddr, String> = HashMap::new();
-        let mut ip_domain_map = HashMap::new();
-        let mut ip_wildcard_routers_raw: HashMap<SocketAddr, MatchRouter<Arc<SiteConfig>>> =
-            HashMap::new();
         let mut cleaned_site_domains: HashMap<String, Vec<Arc<str>>> = HashMap::new();
         let mut cleaned_site_domain_suffixes: HashMap<String, Vec<Arc<str>>> = HashMap::new();
         let mut site_map: HashMap<String, Arc<SiteConfig>> = HashMap::new();
@@ -210,28 +271,7 @@ impl Router {
                     &mut static_handlers,
                 );
             }
-
-            if !config_arc.site.listen.is_empty() {
-                Self::build_listen_map_entry(
-                    &config_arc,
-                    main_config,
-                    &mut listen_map,
-                    &mut default_servers,
-                );
-
-                Self::build_ip_domain_maps(
-                    &config_arc,
-                    main_config,
-                    &mut ip_domain_map,
-                    &mut ip_wildcard_routers_raw,
-                );
-            }
         }
-
-        let ip_wildcard_routers = ip_wildcard_routers_raw
-            .into_iter()
-            .map(|(addr, router)| (addr, Arc::new(router)))
-            .collect();
 
         (
             domain_map,
@@ -239,10 +279,6 @@ impl Router {
             cleaned_site_domains,
             cleaned_site_domain_suffixes,
             static_handlers,
-            listen_map,
-            default_servers,
-            ip_domain_map,
-            ip_wildcard_routers,
             site_map,
         )
     }
@@ -351,104 +387,6 @@ impl Router {
         }
     }
 
-    fn build_ip_domain_maps(
-        config_arc: &Arc<SiteConfig>,
-        main_config: &MainConfig,
-        ip_domain_map: &mut HashMap<(SocketAddr, Arc<str>), Arc<SiteConfig>>,
-        ip_wildcard_routers: &mut HashMap<SocketAddr, MatchRouter<Arc<SiteConfig>>>,
-    ) {
-        let cleaned: Vec<Arc<str>> = config_arc
-            .site
-            .domains
-            .iter()
-            .map(|d| Arc::from(Self::clean_domain(d).as_str()))
-            .collect();
-
-        for listen_config in &config_arc.site.listen {
-            if let Some(addr) = listen_config.to_socket_addr(main_config.server.port) {
-                let bind_addr = if let Some(p) = listen_config.port {
-                    SocketAddr::new(addr.ip(), p)
-                } else {
-                    addr
-                };
-
-                for clean_domain in &cleaned {
-                    if clean_domain.starts_with('.') || clean_domain.contains('*') {
-                        let mut pattern = clean_domain.trim_start_matches('.').to_string();
-                        if let Some(stripped) = pattern.strip_prefix("*.") {
-                            pattern = stripped.to_string();
-                        }
-
-                        let reversed = Self::reverse_domain_for_router(&pattern);
-                        let router = ip_wildcard_routers.entry(bind_addr).or_default();
-                        if let Err(e) = router.insert(reversed.clone(), config_arc.clone()) {
-                            tracing::error!(
-                                "Failed to insert IP wildcard route for {} on {}: {}",
-                                pattern,
-                                bind_addr,
-                                e
-                            );
-                        }
-                        if let Err(e) =
-                            router.insert(format!("{}/{}", reversed, "*sub"), config_arc.clone())
-                        {
-                            tracing::error!(
-                                "Failed to insert IP wildcard sub route for {} on {}: {}",
-                                pattern,
-                                bind_addr,
-                                e
-                            );
-                        }
-                    } else {
-                        ip_domain_map.insert((bind_addr, clean_domain.clone()), config_arc.clone());
-                    }
-                }
-            }
-        }
-    }
-
-    fn build_listen_map_entry(
-        config_arc: &Arc<SiteConfig>,
-        main_config: &MainConfig,
-        listen_map: &mut HashMap<SocketAddr, Vec<String>>,
-        default_servers: &mut HashMap<SocketAddr, String>,
-    ) {
-        for listen_config in &config_arc.site.listen {
-            if let Some(addr) = listen_config.to_socket_addr(main_config.server.port) {
-                let http_port = if listen_config.is_ssl() {
-                    main_config.tls.port
-                } else {
-                    main_config.server.port
-                };
-                let _actual_port = listen_config.port.unwrap_or(http_port);
-
-                let bind_addr = if let Some(p) = listen_config.port {
-                    SocketAddr::new(addr.ip(), p)
-                } else {
-                    addr
-                };
-
-                listen_map
-                    .entry(bind_addr)
-                    .or_default()
-                    .push(config_arc.site_id());
-
-                if listen_config.is_default_server() {
-                    if let Some(existing) = default_servers.get(&bind_addr) {
-                        tracing::error!(
-                            "Multiple default servers configured for {}: {} and {}",
-                            bind_addr,
-                            existing,
-                            config_arc.site_id()
-                        );
-                    } else {
-                        default_servers.insert(bind_addr, config_arc.site_id());
-                    }
-                }
-            }
-        }
-    }
-
     fn build_location_matchers(
         sites: &HashMap<String, SiteConfig>,
     ) -> HashMap<String, LocationMatcher> {
@@ -465,25 +403,6 @@ impl Router {
             }
         }
         location_matchers
-    }
-
-    fn log_configuration(
-        listen_map: &HashMap<SocketAddr, Vec<String>>,
-        default_servers: &HashMap<SocketAddr, String>,
-    ) {
-        if !listen_map.is_empty() {
-            tracing::info!("IP-based virtual hosts configured:");
-            for (addr, site_ids) in listen_map {
-                tracing::info!("  {} -> {:?}", addr, site_ids);
-            }
-        }
-
-        if !default_servers.is_empty() {
-            tracing::info!("Default servers configured:");
-            for (addr, site_id) in default_servers {
-                tracing::info!("  {} -> {}", addr, site_id);
-            }
-        }
     }
 
     #[inline]
@@ -1145,62 +1064,59 @@ impl Router {
         self.route_with_local_addr(host, path, None)
     }
 
-    pub fn route_with_local_addr(
+    /// Route a request through the table for the listener that accepted it.
+    ///
+    /// `None` keeps the combined compatibility table used by internal callers
+    /// and tests. Production requests always pass the listener id.
+    pub fn route_with_listener_id(
         &self,
         host: &str,
         path: &str,
-        local_addr: Option<SocketAddr>,
+        listener_id: Option<&str>,
+    ) -> RouteResult {
+        let Some(listener_id) = listener_id else {
+            return self.route_with_local_addr(host, path, None);
+        };
+        let Some(table) = self.listener_tables.get(&ListenerId::new(listener_id)) else {
+            return RouteResult::NotFound(format!("No routing table for listener: {listener_id}"));
+        };
+        self.route_with_table(
+            host,
+            path,
+            &table.exact,
+            &table.wildcard,
+            table.default_site.as_ref(),
+        )
+    }
+
+    fn route_with_table(
+        &self,
+        host: &str,
+        path: &str,
+        exact: &HashMap<Arc<str>, Arc<SiteConfig>>,
+        wildcard: &MatchRouter<Arc<SiteConfig>>,
+        default_site: Option<&Arc<SiteConfig>>,
     ) -> RouteResult {
         let clean_host = Self::clean_domain(host);
         let clean_host_arc: Arc<str> = Arc::from(clean_host.as_str());
 
-        if let Some(addr) = local_addr {
-            if let Some(site_config) = self.ip_domain_map.get(&(addr, clean_host_arc.clone())) {
-                return self.route_to_target(site_config, path, &clean_host);
-            }
-
-            if let Some(router) = self.ip_wildcard_routers.get(&addr) {
-                let reversed = Self::reverse_domain_for_router(&clean_host);
-                if let Ok(m) = router.at(&reversed) {
-                    return self.route_to_target(m.value, path, &clean_host);
-                }
-            }
-
-            if let Some(site_ids) = self.listen_map.get(&addr) {
-                for site_id in site_ids {
-                    if let Some(site_config) = self.site_map.get(site_id) {
-                        if site_config.site.domains.is_empty() {
-                            return self.route_to_target(site_config, path, &clean_host);
-                        }
-                    }
-                }
-            }
-        }
-
-        if let Some(site_config) = self.domain_map.get(clean_host_arc.as_ref()) {
+        if let Some(site_config) = exact.get(clean_host_arc.as_ref()) {
             return self.route_to_target(site_config, path, &clean_host);
         }
 
         let reversed = Self::reverse_domain_for_router(&clean_host);
-        if let Ok(m) = self.wildcard_domain_router.at(&reversed) {
+        if let Ok(m) = wildcard.at(&reversed) {
             return self.route_to_target(m.value, path, &clean_host);
         }
 
-        if clean_host.is_empty() || clean_host == "*" {
-            if let Some(addr) = local_addr {
-                if let Some(default_site_id) = self.default_servers.get(&addr) {
-                    if let Some(site_config) = self.site_map.get(default_site_id) {
-                        return self.route_to_target(site_config, path, &clean_host);
-                    }
-                }
-            }
-            if let Some(default_site_id) = self.default_servers.values().next() {
-                if let Some(site_config) = self.site_map.get(default_site_id) {
-                    return self.route_to_target(site_config, path, &clean_host);
-                }
-            }
+        if let Some(site_config) = default_site {
+            return self.route_to_target(site_config, path, &clean_host);
         }
 
+        self.fallback_route(host)
+    }
+
+    fn fallback_route(&self, host: &str) -> RouteResult {
         match self.fallback_mode.as_str() {
             "return_404" => RouteResult::NotFound(format!("No site configured for host: {}", host)),
             "proxy_to" => {
@@ -1233,18 +1149,43 @@ impl Router {
         }
     }
 
-    pub fn update_sites(&mut self, sites: HashMap<String, SiteConfig>, server_port: u16) {
+    /// Route a request through the combined compatibility table.
+    ///
+    /// `local_addr` is diagnostic only. Production callers use
+    /// [`Self::route_with_listener_id`] so a request cannot resolve a site
+    /// from another listener's membership.
+    pub fn route_with_local_addr(
+        &self,
+        host: &str,
+        path: &str,
+        _local_addr: Option<SocketAddr>,
+    ) -> RouteResult {
+        let clean_host = Self::clean_domain(host);
+        let clean_host_arc: Arc<str> = Arc::from(clean_host.as_str());
+
+        if let Some(site_config) = self.domain_map.get(clean_host_arc.as_ref()) {
+            return self.route_to_target(site_config, path, &clean_host);
+        }
+
+        let reversed = Self::reverse_domain_for_router(&clean_host);
+        if let Ok(m) = self.wildcard_domain_router.at(&reversed) {
+            return self.route_to_target(m.value, path, &clean_host);
+        }
+
+        self.fallback_route(host)
+    }
+
+    pub fn update_sites(&mut self, sites: HashMap<String, SiteConfig>, _server_port: u16) {
         self.domain_map.clear();
         let mut wildcard_domain_router = MatchRouter::new();
         self.static_handlers.clear();
-        self.listen_map.clear();
-        self.default_servers.clear();
-        self.ip_domain_map.clear();
-        let mut ip_wildcard_routers_raw: HashMap<SocketAddr, MatchRouter<Arc<SiteConfig>>> =
-            HashMap::new();
         self.cleaned_site_domains.clear();
         self.cleaned_site_domain_suffixes.clear();
         self.site_map.clear();
+        // Listener definitions are startup state; a live site update must not
+        // silently keep serving an old per-listener table. Runtime reload is
+        // restart-required for listener membership changes.
+        self.listener_tables.clear();
 
         for (_site_id, config) in sites {
             let config_arc = Arc::new(config);
@@ -1337,61 +1278,9 @@ impl Router {
                     }
                 }
             }
-
-            if !config_arc.site.listen.is_empty() {
-                for listen_config in &config_arc.site.listen {
-                    if let Some(addr) = listen_config.to_socket_addr(server_port) {
-                        let bind_addr = if let Some(p) = listen_config.port {
-                            SocketAddr::new(addr.ip(), p)
-                        } else {
-                            addr
-                        };
-
-                        self.listen_map
-                            .entry(bind_addr)
-                            .or_default()
-                            .push(site_id_str.clone());
-
-                        if listen_config.is_default_server() {
-                            if let Some(existing) = self.default_servers.get(&bind_addr) {
-                                tracing::error!(
-                                    "Multiple default servers configured for {}: {} and {}",
-                                    bind_addr,
-                                    existing,
-                                    site_id_str
-                                );
-                            } else {
-                                self.default_servers.insert(bind_addr, site_id_str.clone());
-                            }
-                        }
-
-                        for clean_domain in &cleaned {
-                            if clean_domain.starts_with('.') || clean_domain.contains('*') {
-                                let mut pattern = clean_domain.trim_start_matches('.').to_string();
-                                if let Some(stripped) = pattern.strip_prefix("*.") {
-                                    pattern = stripped.to_string();
-                                }
-
-                                let reversed = Self::reverse_domain_for_router(&pattern);
-                                let router = ip_wildcard_routers_raw.entry(bind_addr).or_default();
-                                let _ = router.insert(reversed.clone(), config_arc.clone());
-                                let _ = router
-                                    .insert(format!("{}/{{*sub}}", reversed), config_arc.clone());
-                            } else {
-                                self.ip_domain_map
-                                    .insert((bind_addr, clean_domain.clone()), config_arc.clone());
-                            }
-                        }
-                    }
-                }
-            }
         }
 
         self.wildcard_domain_router = Arc::new(wildcard_domain_router);
-        self.ip_wildcard_routers = ip_wildcard_routers_raw
-            .into_iter()
-            .map(|(addr, router)| (addr, Arc::new(router)))
-            .collect();
     }
 
     fn reverse_domain_for_router(domain: &str) -> String {
@@ -1428,16 +1317,12 @@ impl Default for Router {
             static_handlers: HashMap::new(),
             minifier_client: None,
             async_minifier_client: None,
-            listen_map: HashMap::new(),
-            default_servers: HashMap::new(),
-            ip_domain_map: HashMap::new(),
-            ip_wildcard_routers: HashMap::new(),
             plugin_manager: None,
             cleaned_site_domains: HashMap::new(),
             cleaned_site_domain_suffixes: HashMap::new(),
             location_matchers: HashMap::new(),
             site_map: HashMap::new(),
-            _server_port: 80,
+            listener_tables: HashMap::new(),
         }
     }
 }

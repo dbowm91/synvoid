@@ -126,9 +126,17 @@ pub mod wintun {
                 let mut file = archive
                     .by_index(i)
                     .map_err(|e| WintunError::ExtractFailed(e.to_string()))?;
-                let outpath = extract_dir.join(file.mangled_name());
+                let mangled_name = file
+                    .mangled_name()
+                    .map_err(|e| WintunError::ExtractFailed(e.to_string()))?;
+                let outpath = extract_dir.join(mangled_name);
 
-                if file.name().ends_with('/') {
+                let is_directory = file
+                    .name()
+                    .map_err(|e| WintunError::ExtractFailed(e.to_string()))?
+                    .ends_with('/');
+
+                if is_directory {
                     std::fs::create_dir_all(&outpath)
                         .map_err(|e| WintunError::ExtractFailed(e.to_string()))?;
                 } else {

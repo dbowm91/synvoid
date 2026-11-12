@@ -16,11 +16,14 @@
 use std::collections::HashSet;
 use std::net::IpAddr;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use arc_swap::ArcSwapOption;
 use async_trait::async_trait;
 use http::HeaderMap;
+use lru_time_cache::LruCache;
+use parking_lot::Mutex;
 pub use synvoid_block_store::{BlockProvenance, BlockProvenanceKind};
 use synvoid_core::enforcement::{
     EnforcementCandidate, EnforcementClass, EnforcementReason, EnforcementSource,
@@ -77,6 +80,7 @@ use crate::waf::endpoints::{
     EndpointBlockerManager, EndpointCheckResult, ErrorPageManager, SensitiveEndpointManager,
 };
 use crate::waf::ip_feed::IpFeedManager;
+use crate::waf::site_attack_config::{AttackAction, ResolvedAttackPolicy};
 pub use request_sanitization::RequestSanitizer;
 use synvoid_auth::AuthManager;
 use synvoid_challenge::ChallengeManager;
@@ -209,6 +213,14 @@ pub struct WafCoreConfig {
 /// upload validator, `RequestServices`). Field classification lives in
 /// `architecture/waf_ownership_convergence.md`. Request-path code must consume
 /// narrow traits (`WafProcessor`, `WafAccess`), never this concrete type.
+/// Upper bound on per-site detector variants. Each entry owns compiled
+/// Aho-Corasick/regex structures, so this is a memory-budget boundary, not a
+/// tuning knob. Least-recently-used variants are evicted.
+const SITE_DETECTOR_CACHE_CAPACITY: usize = 64;
+
+/// Historical scanner ceiling when no per-request body cap is supplied.
+const DEFAULT_WAF_STREAMING_BODY_LIMIT: usize = 10 * 1024 * 1024;
+
 pub struct WafCore {
     pub rate_limiter: RateLimiterManager,
     pub bot_detector: BotDetector,
@@ -219,6 +231,8 @@ pub struct WafCore {
     pub auth_manager: Arc<AuthManager>,
     pub attack_detector: ArcSwapOption<AttackDetector>,
     pub attack_detection_config: ArcSwapOption<AttackDetectionConfig>,
+    attack_config_generation: AtomicU64,
+    site_detector_cache: Mutex<LruCache<u64, Arc<AttackDetector>>>,
     pub config: WafConfig,
     pub whitelist: Arc<HashSet<IpAddr>>,
     _tarpit_generator: Arc<crate::tarpit::MarkovChain>,
@@ -391,6 +405,8 @@ impl WafCore {
             auth_manager: auth_manager_instance,
             attack_detector: ArcSwapOption::new(detectors.attack_detector),
             attack_detection_config: ArcSwapOption::new(attack_detection_snapshot.map(Arc::new)),
+            attack_config_generation: AtomicU64::new(0),
+            site_detector_cache: Mutex::new(LruCache::with_capacity(SITE_DETECTOR_CACHE_CAPACITY)),
             config: waf_config,
             whitelist: whitelist_set,
             _tarpit_generator: tarpit_generator,
@@ -627,74 +643,150 @@ impl WafCore {
                 &fallback
             }
         };
-        if site_attack_config::attack_globally_disabled(site_attack_config, global) {
+
+        let generation = self.attack_config_generation.load(Ordering::Relaxed);
+        let policy =
+            site_attack_config::resolve_attack_policy(site_attack_config, global, path, generation);
+        if !policy.enabled {
             return None;
         }
-        if let Some(ad) = self.attack_detector.load().as_ref() {
-            let http_method =
-                http::Method::from_bytes(method.as_bytes()).unwrap_or(http::Method::GET);
 
-            // Site-disabled detectors neither report nor score, so a disabled
-            // detector cannot mask a lower-priority hit for an enabled one.
-            let mut disabled_buf = [AttackType::Sqli; 5];
-            let site_disabled = site_attack_config::site_disabled_list(
-                site_attack_config,
-                global,
-                &mut disabled_buf,
+        let Some(ad) = self.detector_for_policy(&policy) else {
+            return None;
+        };
+
+        let http_method = http::Method::from_bytes(method.as_bytes()).unwrap_or(http::Method::GET);
+
+        // Site-disabled detectors neither report nor score, so a disabled
+        // detector cannot mask a lower-priority hit for an enabled one.
+        let mut disabled_buf = [AttackType::Sqli; 5];
+        let site_disabled =
+            site_attack_config::site_disabled_list(site_attack_config, global, &mut disabled_buf);
+        let (result, score) = ad
+            .check_request_with_site_disabled(
+                ip,
+                &http_method,
+                path,
+                query,
+                headers,
+                body,
+                site_disabled,
+            )
+            .await;
+
+        let res = result?;
+        if !site_attack_config::attack_type_enabled(site_attack_config, global, res.attack_type) {
+            return None;
+        }
+
+        // The body cap is enforced before the detector on the normal request
+        // path, but a detector constructed with an explicit lower cap can
+        // still report `body_size`. It is a request-body limit, not an attack,
+        // so render 413 and do not count it as an attack violation.
+        if res
+            .fingerprint
+            .as_deref()
+            .is_some_and(|fingerprint| fingerprint.starts_with("body_size:"))
+        {
+            tracing::warn!(
+                ip = %ip,
+                path = %path,
+                fingerprint = ?res.fingerprint,
+                "request body exceeds the WAF body cap"
             );
-            let (result, score) = ad
-                .check_request_with_site_disabled(
-                    ip,
-                    &http_method,
-                    path,
-                    query,
-                    headers,
-                    body,
-                    site_disabled,
-                )
-                .await;
+            return Some(StagedOutcome::new(
+                WafDecision::Block(413, "Payload Too Large".to_string()),
+                EnforcementCandidate::new(
+                    EnforcementClass::Block,
+                    EnforcementSource::StreamingBodyScan,
+                    EnforcementReason::BodyTooLarge,
+                ),
+            ));
+        }
 
-            if let Some(res) = result {
-                if !site_attack_config::attack_type_enabled(
-                    site_attack_config,
-                    global,
-                    res.attack_type,
-                ) {
-                    return None;
-                }
-                if site_attack_config::attack_log_only_for_path(path, site_attack_config) {
-                    tracing::warn!(
-                        ip = %ip,
-                        attack_type = ?res.attack_type,
-                        location = %res.input_location,
-                        path = %path,
-                        "attack-pattern match allowed by per-path log-only policy"
-                    );
-                    return None;
-                }
-                tracing::info!(
-                    "Attack detected from {}: {:?} (score: {}) at {}",
-                    ip,
-                    res.attack_type,
-                    score,
-                    res.input_location
-                );
+        if policy.is_log() {
+            tracing::warn!(
+                ip = %ip,
+                attack_type = ?res.attack_type,
+                location = %res.input_location,
+                path = %path,
+                action = policy.action.as_str(),
+                confidence = res.confidence().as_str(),
+                "attack-pattern match observed under log-only policy"
+            );
+            return None;
+        }
 
-                if let Some(ref tl) = self.threat_level {
-                    tl.record_attack();
-                }
+        tracing::info!(
+            "Attack detected from {}: {:?} (score: {}) at {} (action: {}, confidence: {})",
+            ip,
+            res.attack_type,
+            score,
+            res.input_location,
+            policy.action.as_str(),
+            res.confidence().as_str()
+        );
 
-                if let Some(ref violation_tracker) = self.violation_tracker {
-                    violation_tracker.record_violation(ip, "attack_detected", 3);
-                }
+        if res.should_record_violation() {
+            if let Some(ref tl) = self.threat_level {
+                tl.record_attack();
+            }
 
-                return Some(StagedOutcome::new(
-                    WafDecision::Block(403, "Attack Detected".to_string()),
-                    attack_candidate(&res),
-                ));
+            if let Some(ref violation_tracker) = self.violation_tracker {
+                violation_tracker.record_violation(ip, "attack_detected", 3);
             }
         }
-        None
+
+        let (decision, candidate) = match policy.action {
+            AttackAction::Block => (
+                WafDecision::Block(403, "Attack Detected".to_string()),
+                attack_candidate(&res),
+            ),
+            AttackAction::Stall => (
+                WafDecision::Stall,
+                synvoid_waf::enforcement::attack_candidate_with_class(
+                    &res,
+                    EnforcementClass::Stall,
+                ),
+            ),
+            AttackAction::Log => unreachable!("log action returned above"),
+        };
+
+        Some(StagedOutcome::new(decision, candidate))
+    }
+
+    /// Select the immutable detector for a resolved policy.
+    ///
+    /// The no-override path returns the single global detector. A per-site
+    /// policy is built once and cached under a bounded LRU keyed by the policy
+    /// fingerprint (which includes the configuration generation).
+    fn detector_for_policy(
+        &self,
+        policy: &ResolvedAttackPolicy<'_>,
+    ) -> Option<Arc<AttackDetector>> {
+        let Some(fingerprint) = policy.fingerprint else {
+            return self.attack_detector.load().as_ref().cloned();
+        };
+
+        {
+            let mut cache = self.site_detector_cache.lock();
+            if let Some(detector) = cache.get(&fingerprint).cloned() {
+                metrics::counter!("synvoid_waf_site_detector_cache_hits_total").increment(1);
+                return Some(detector);
+            }
+        }
+        metrics::counter!("synvoid_waf_site_detector_cache_misses_total").increment(1);
+
+        // Site variants consume the same global rule-feed patterns as the
+        // global detector; reload clears the cache so they are rebuilt.
+        let detector_config = config_with_rule_feed_patterns(policy.detector_config.as_ref());
+        let detector = Arc::new(AttackDetector::new(detector_config));
+        metrics::counter!("synvoid_waf_site_detector_rebuilds_total").increment(1);
+
+        let mut cache = self.site_detector_cache.lock();
+        cache.insert(fingerprint, detector.clone());
+        metrics::gauge!("synvoid_waf_site_detector_cache_size").set(cache.len() as f64);
+        Some(detector)
     }
 
     fn check_honeypot(
@@ -882,10 +974,46 @@ impl WafCore {
     }
 
     pub fn streaming(&self) -> Option<crate::waf::attack_detection::StreamingWafCore> {
-        self.attack_detector
-            .load()
-            .as_ref()
-            .map(|ad| ad.clone().streaming())
+        // The application detector intentionally leaves the body cap to the
+        // request pipeline. Scanners built without a per-request site context
+        // (HTTP/3 body/upstream paths) use the historical 10 MiB scan ceiling;
+        // `streaming_for_path_with_limit` overrides it with the resolved cap.
+        self.attack_detector.load().as_ref().map(|ad| {
+            ad.clone()
+                .streaming_with_fallback_body_limit(DEFAULT_WAF_STREAMING_BODY_LIMIT)
+        })
+    }
+
+    fn streaming_scanner_for_path(
+        &self,
+        path: &str,
+        site_attack_config: Option<&crate::config::site::SiteAttackDetectionConfig>,
+        max_body_size: Option<usize>,
+    ) -> Option<Box<dyn synvoid_http::shared_handler::StreamingWafScanner>> {
+        let loaded = self.attack_detection_config.load();
+        let fallback;
+        let global: &AttackDetectionConfig = match loaded.as_ref() {
+            Some(cfg) => cfg,
+            None => {
+                fallback = AttackDetectionConfig::default();
+                &fallback
+            }
+        };
+
+        let generation = self.attack_config_generation.load(Ordering::Relaxed);
+        let policy =
+            site_attack_config::resolve_attack_policy(site_attack_config, global, path, generation);
+        if !policy.enabled {
+            return None;
+        }
+
+        let detector = self.detector_for_policy(&policy)?;
+        let mut core = match max_body_size {
+            Some(limit) => detector.streaming_with_body_limit(limit),
+            None => detector.streaming_with_fallback_body_limit(DEFAULT_WAF_STREAMING_BODY_LIMIT),
+        };
+        core.set_log_only(policy.is_log());
+        Some(Box::new(core) as Box<dyn synvoid_http::shared_handler::StreamingWafScanner>)
     }
 
     pub fn set_flood_protector(&mut self, protector: Arc<FloodProtector>) {
@@ -965,10 +1093,31 @@ impl WafCore {
         (false, None)
     }
 
-    /// Deprecated no-op placeholder (Phase 19): attack-detector reloads go
-    /// through the rule-feed/control-plane path. Always returns `Ok`.
+    /// Rebuild the global attack detector from the effective configuration and
+    /// the current global rule-feed patterns, then invalidate the per-site
+    /// detector cache.
+    ///
+    /// Site variants are rebuilt lazily on their next request. Streaming
+    /// scanner settings (`max_request_body_size` and per-path log-only policy)
+    /// are preserved because they come from the same configuration snapshot
+    /// and request policy resolution.
     pub fn reload_attack_detector(&self) -> Result<(), String> {
-        // Placeholder
+        let Some(base) = self.attack_detection_config.load().as_ref().cloned() else {
+            return Ok(());
+        };
+
+        let merged = config_with_rule_feed_patterns(&base);
+        let detector = Arc::new(AttackDetector::new(merged));
+
+        self.attack_detector.store(Some(detector));
+        self.attack_config_generation.fetch_add(1, Ordering::SeqCst);
+
+        let mut cache = self.site_detector_cache.lock();
+        cache.clear();
+        metrics::gauge!("synvoid_waf_site_detector_cache_size").set(0.0);
+        drop(cache);
+        metrics::counter!("synvoid_waf_detector_reloads_total").increment(1);
+
         Ok(())
     }
 
@@ -1049,13 +1198,16 @@ impl synvoid_http::RequestBodyWaf for WafCore {
         path: &str,
         site_attack_config: Option<&crate::config::site::SiteAttackDetectionConfig>,
     ) -> Option<Box<dyn synvoid_http::shared_handler::StreamingWafScanner>> {
-        WafCore::streaming(self).map(|mut core| {
-            core.set_log_only(site_attack_config::attack_log_only_for_path(
-                path,
-                site_attack_config,
-            ));
-            Box::new(core) as Box<dyn synvoid_http::shared_handler::StreamingWafScanner>
-        })
+        self.streaming_scanner_for_path(path, site_attack_config, None)
+    }
+
+    fn streaming_for_path_with_limit(
+        &self,
+        path: &str,
+        site_attack_config: Option<&crate::config::site::SiteAttackDetectionConfig>,
+        max_body_size: usize,
+    ) -> Option<Box<dyn synvoid_http::shared_handler::StreamingWafScanner>> {
+        self.streaming_scanner_for_path(path, site_attack_config, Some(max_body_size))
     }
 
     fn check_request_body(&self, chunk: &[u8]) -> (bool, Option<synvoid_waf::WafDecision>) {
@@ -1185,6 +1337,34 @@ impl synvoid_waf::access::WafAccess for WafCore {
     }
 }
 
+fn config_with_rule_feed_patterns(base: &AttackDetectionConfig) -> AttackDetectionConfig {
+    fn merge(category: &str, target: &mut Vec<String>) {
+        for pattern in crate::waf::rule_feed::get_custom_patterns_for_category(category, None) {
+            if !target.iter().any(|existing| existing == &pattern) {
+                target.push(pattern);
+            }
+        }
+    }
+
+    let mut config = base.clone();
+    merge("sqli", &mut config.sqli.custom_patterns);
+    merge("xss", &mut config.xss.custom_patterns);
+    merge("cmd_injection", &mut config.cmd_injection.custom_patterns);
+    merge("path_traversal", &mut config.path_traversal.custom_patterns);
+    merge("ssrf", &mut config.ssrf.custom_patterns);
+    merge("ssti", &mut config.ssti.custom_patterns);
+    merge("open_redirect", &mut config.open_redirect.custom_patterns);
+    merge("xxe", &mut config.xxe.custom_patterns);
+    merge("rfi", &mut config.rfi.custom_patterns);
+    merge("ldap_injection", &mut config.ldap_injection.custom_patterns);
+    merge(
+        "xpath_injection",
+        &mut config.xpath_injection.custom_patterns,
+    );
+    merge("jwt", &mut config.jwt.custom_patterns);
+    config
+}
+
 pub static UPLOAD_VALIDATOR: std::sync::OnceLock<Arc<synvoid_upload::UploadValidator>> =
     std::sync::OnceLock::new();
 
@@ -1242,6 +1422,13 @@ mod enforcement_pipeline_tests {
     const TEST_IP: IpAddr = IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1));
 
     fn test_waf_core(ip_rate: IpRateLimitConfig) -> WafCore {
+        test_waf_core_with_attack_config(ip_rate, AttackDetectionConfig::default())
+    }
+
+    fn test_waf_core_with_attack_config(
+        ip_rate: IpRateLimitConfig,
+        attack_detection_config: AttackDetectionConfig,
+    ) -> WafCore {
         WafCore::new(WafCoreConfig {
             rate_config: RateLimitConfigStore {
                 ip: ip_rate,
@@ -1267,7 +1454,7 @@ mod enforcement_pipeline_tests {
                 3600,
             ),
             whitelist: Vec::new(),
-            attack_detection_config: Some(AttackDetectionConfig::default()),
+            attack_detection_config: Some(attack_detection_config),
             auth_manager: None,
             threat_level_config: None,
             ip_feed_config: None,
@@ -1553,5 +1740,443 @@ mod enforcement_pipeline_tests {
             }
             other => panic!("expected endpoint 403 block, got {other:?}"),
         }
+    }
+
+    use crate::config::site::{SiteAttackDetectionConfig, SiteAttackPathRule};
+    use synvoid_core::enforcement::{EnforcementClass, EnforcementReason, EnforcementSource};
+
+    fn site_with_action(action: &str) -> SiteAttackDetectionConfig {
+        let mut site = SiteAttackDetectionConfig::default();
+        site.action = Some(action.to_string());
+        site
+    }
+
+    fn sqli_query() -> &'static str {
+        "id=1' OR '1'='1"
+    }
+
+    #[tokio::test]
+    async fn default_and_global_action_block() {
+        let core = test_waf_core(permissive_ip_rate());
+        let outcome = core
+            .check_attack(
+                TEST_IP,
+                "GET",
+                "/search",
+                Some(sqli_query()),
+                &headers(),
+                None,
+                None,
+            )
+            .await
+            .expect("default action must block");
+        assert!(matches!(outcome.decision, WafDecision::Block(403, _)));
+        assert_eq!(outcome.candidate.class, EnforcementClass::Block);
+        assert_eq!(outcome.candidate.source, EnforcementSource::AttackDetection);
+        assert_eq!(outcome.candidate.reason, EnforcementReason::AttackDetected);
+
+        let mut global = AttackDetectionConfig::default();
+        global.action = "stall".to_string();
+        let core = test_waf_core_with_attack_config(permissive_ip_rate(), global);
+        let outcome = core
+            .check_attack(
+                TEST_IP,
+                "GET",
+                "/search",
+                Some(sqli_query()),
+                &headers(),
+                None,
+                None,
+            )
+            .await
+            .expect("global stall action must stall");
+        assert_eq!(outcome.decision, WafDecision::Stall);
+        assert_eq!(outcome.candidate.class, EnforcementClass::Stall);
+        assert_eq!(outcome.candidate.source, EnforcementSource::AttackDetection);
+        assert_eq!(outcome.candidate.reason, EnforcementReason::AttackDetected);
+    }
+
+    #[tokio::test]
+    async fn site_action_log_observes_without_blocking_or_escalating() {
+        let mut core = test_waf_core(permissive_ip_rate());
+        core.violation_tracker = Some(ViolationTracker::new(
+            crate::config::ThreatLevelEscalation {
+                enabled: true,
+                violations_before_block: 1,
+                violation_window_secs: 300,
+                excluded_ips: Vec::new(),
+            },
+            None,
+            60,
+            10,
+        ));
+        let site = site_with_action("log");
+
+        for _ in 0..3 {
+            let outcome = core
+                .check_attack(
+                    TEST_IP,
+                    "GET",
+                    "/search",
+                    Some(sqli_query()),
+                    &headers(),
+                    None,
+                    Some(&site),
+                )
+                .await;
+            assert!(outcome.is_none(), "log action must not block");
+        }
+
+        assert_eq!(
+            core.violation_tracker
+                .as_ref()
+                .expect("tracker")
+                .check_violations(TEST_IP),
+            0,
+            "log action must not record violations"
+        );
+    }
+
+    #[tokio::test]
+    async fn site_action_stall_returns_stall_candidate() {
+        let core = test_waf_core(permissive_ip_rate());
+        let site = site_with_action("stall");
+        let outcome = core
+            .check_attack(
+                TEST_IP,
+                "GET",
+                "/search",
+                Some(sqli_query()),
+                &headers(),
+                None,
+                Some(&site),
+            )
+            .await
+            .expect("stall action must stall");
+        assert_eq!(outcome.decision, WafDecision::Stall);
+        assert_eq!(outcome.candidate.class, EnforcementClass::Stall);
+        assert_eq!(outcome.candidate.source, EnforcementSource::AttackDetection);
+        assert_eq!(outcome.candidate.reason, EnforcementReason::AttackDetected);
+    }
+
+    #[tokio::test]
+    async fn per_path_log_beats_site_block_action() {
+        let core = test_waf_core(permissive_ip_rate());
+        let mut site = site_with_action("block");
+        site.per_path = vec![SiteAttackPathRule {
+            path_prefix: "/admin".to_string(),
+            action: Some("log".to_string()),
+        }];
+
+        let logged = core
+            .check_attack(
+                TEST_IP,
+                "GET",
+                "/admin/new",
+                Some(sqli_query()),
+                &headers(),
+                None,
+                Some(&site),
+            )
+            .await;
+        assert!(logged.is_none(), "per-path log must beat site block");
+
+        let blocked = core
+            .check_attack(
+                TEST_IP,
+                "GET",
+                "/public",
+                Some(sqli_query()),
+                &headers(),
+                None,
+                Some(&site),
+            )
+            .await
+            .expect("other paths keep the site block action");
+        assert!(matches!(blocked.decision, WafDecision::Block(403, _)));
+    }
+
+    #[tokio::test]
+    async fn site_paranoia_variant_is_site_scoped() {
+        // "http://" keeps the request on the detector path (fast-path prefilter);
+        // the SQLi `0x` token is a level-3-only pattern.
+        let mut global = AttackDetectionConfig::default();
+        global.open_redirect.enabled = false;
+        global.rfi.enabled = false;
+        let core = test_waf_core_with_attack_config(permissive_ip_rate(), global);
+        let mut site = SiteAttackDetectionConfig::default();
+        site.paranoia_level = Some(3);
+        let query = Some("q=x+http://example.com/0x41");
+
+        let global_result = core
+            .check_attack(TEST_IP, "GET", "/files", query, &headers(), None, None)
+            .await;
+        assert!(
+            global_result.is_none(),
+            "default paranoia 2 must not match a level-3 pattern"
+        );
+
+        let site_result = core
+            .check_attack(
+                TEST_IP,
+                "GET",
+                "/files",
+                query,
+                &headers(),
+                None,
+                Some(&site),
+            )
+            .await
+            .expect("site paranoia 3 must detect the high pattern");
+        assert!(matches!(site_result.decision, WafDecision::Block(403, _)));
+
+        let other_site = SiteAttackDetectionConfig::default();
+        let other_result = core
+            .check_attack(
+                TEST_IP,
+                "GET",
+                "/files",
+                query,
+                &headers(),
+                None,
+                Some(&other_site),
+            )
+            .await;
+        assert!(
+            other_result.is_none(),
+            "another site must not inherit paranoia 3"
+        );
+    }
+
+    #[tokio::test]
+    async fn site_custom_patterns_are_site_scoped() {
+        // The fast-path prefilter needs a token it recognises; the custom
+        // pattern itself remains site-only.
+        let mut global = AttackDetectionConfig::default();
+        global.open_redirect.enabled = false;
+        global.rfi.enabled = false;
+        let core = test_waf_core_with_attack_config(permissive_ip_rate(), global);
+        let mut site = SiteAttackDetectionConfig::default();
+        site.sqli.custom_patterns = vec!["http://SITE_ONLY_SQLI_ABC".to_string()];
+        let query = Some("q=http://SITE_ONLY_SQLI_ABC");
+
+        let global_result = core
+            .check_attack(TEST_IP, "GET", "/search", query, &headers(), None, None)
+            .await;
+        assert!(
+            global_result.is_none(),
+            "global detector must not see the site pattern"
+        );
+
+        let site_result = core
+            .check_attack(
+                TEST_IP,
+                "GET",
+                "/search",
+                query,
+                &headers(),
+                None,
+                Some(&site),
+            )
+            .await
+            .expect("site custom pattern must fire");
+        assert!(matches!(site_result.decision, WafDecision::Block(403, _)));
+    }
+
+    #[tokio::test]
+    async fn site_ssrf_override_is_honored() {
+        let mut global = AttackDetectionConfig::default();
+        global.rfi.enabled = false;
+        global.open_redirect.enabled = false;
+        global.path_traversal.enabled = false;
+        let core = test_waf_core_with_attack_config(permissive_ip_rate(), global);
+
+        let query = Some("target=http://192.168.1.1/secret");
+        let global_result = core
+            .check_attack(TEST_IP, "GET", "/fetch", query, &headers(), None, None)
+            .await
+            .expect("global SSRF policy must block private IPs");
+        assert!(matches!(global_result.decision, WafDecision::Block(403, _)));
+
+        let mut site = SiteAttackDetectionConfig::default();
+        site.ssrf.block_private_ips = Some(false);
+        let site_result = core
+            .check_attack(
+                TEST_IP,
+                "GET",
+                "/fetch",
+                query,
+                &headers(),
+                None,
+                Some(&site),
+            )
+            .await;
+        assert!(
+            site_result.is_none(),
+            "site block_private_ips = false must be honored"
+        );
+    }
+
+    #[tokio::test]
+    async fn detector_cache_is_bounded_and_invalidated_on_reload() {
+        let core = test_waf_core(permissive_ip_rate());
+
+        for index in 0..(SITE_DETECTOR_CACHE_CAPACITY + 6) {
+            let mut site = SiteAttackDetectionConfig::default();
+            site.sqli.custom_patterns = vec![format!("SITE_CACHE_PATTERN_{index}")];
+            let _ = core
+                .check_attack(
+                    TEST_IP,
+                    "GET",
+                    "/search",
+                    Some("q=benign"),
+                    &headers(),
+                    None,
+                    Some(&site),
+                )
+                .await;
+        }
+
+        assert!(
+            core.site_detector_cache.lock().len() <= SITE_DETECTOR_CACHE_CAPACITY,
+            "site detector cache must stay bounded"
+        );
+
+        core.reload_attack_detector()
+            .expect("reload without a rule feed must succeed");
+        assert_eq!(core.site_detector_cache.lock().len(), 0);
+        assert_eq!(core.attack_config_generation.load(Ordering::SeqCst), 1);
+        assert!(core.attack_detector.load().is_some());
+    }
+
+    #[tokio::test]
+    async fn identical_site_policy_reuses_one_cached_detector() {
+        let core = test_waf_core(permissive_ip_rate());
+        let mut site = SiteAttackDetectionConfig::default();
+        site.paranoia_level = Some(3);
+
+        let _ = core
+            .check_attack(
+                TEST_IP,
+                "GET",
+                "/files",
+                Some("file=/var/log/syslog"),
+                &headers(),
+                None,
+                Some(&site),
+            )
+            .await;
+        let _ = core
+            .check_attack(
+                TEST_IP,
+                "GET",
+                "/files",
+                Some("file=/var/log/syslog"),
+                &headers(),
+                None,
+                Some(&site),
+            )
+            .await;
+
+        assert_eq!(
+            core.site_detector_cache.lock().len(),
+            1,
+            "identical policies share one immutable detector"
+        );
+    }
+
+    #[tokio::test]
+    async fn streaming_scanner_uses_resolved_action() {
+        let core = test_waf_core(permissive_ip_rate());
+        let log_site = site_with_action("log");
+        let mut logged =
+            synvoid_http::RequestBodyWaf::streaming_for_path(&core, "/upload", Some(&log_site))
+                .expect("streaming scanner");
+        assert!(matches!(
+            logged.scan_chunk(sqli_query().as_bytes()),
+            synvoid_core::streaming_waf::StreamingWafDecision::Continue
+        ));
+
+        let block_site = site_with_action("block");
+        let mut blocked =
+            synvoid_http::RequestBodyWaf::streaming_for_path(&core, "/upload", Some(&block_site))
+                .expect("streaming scanner");
+        assert!(matches!(
+            blocked.scan_chunk(sqli_query().as_bytes()),
+            synvoid_core::streaming_waf::StreamingWafDecision::Block(..)
+        ));
+    }
+
+    #[tokio::test]
+    async fn three_benign_header_variants_do_not_escalate() {
+        let mut core = test_waf_core(permissive_ip_rate());
+        core.violation_tracker = Some(ViolationTracker::new(
+            crate::config::ThreatLevelEscalation {
+                enabled: true,
+                violations_before_block: 3,
+                violation_window_secs: 300,
+                excluded_ips: Vec::new(),
+            },
+            None,
+            60,
+            10,
+        ));
+
+        let variants = [
+            vec![
+                ("accept", "text/html,application/xhtml+xml"),
+                ("sec-fetch-dest", "document"),
+                ("sec-fetch-mode", "navigate"),
+                ("cache-control", "max-age=0"),
+                ("referer", "https://example.test/a?b=1&c=2"),
+            ],
+            vec![
+                ("accept", "image/avif,image/webp,*/*"),
+                ("sec-fetch-dest", "image"),
+                ("if-none-match", "\"abc123\""),
+                ("range", "bytes=0-1023"),
+                ("origin", "https://example.test"),
+            ],
+            vec![
+                ("accept", "application/json"),
+                ("priority", "u=0, i"),
+                ("dnt", "1"),
+                ("te", "trailers"),
+                ("cookie", "session=abc; theme=dark"),
+            ],
+        ];
+
+        for pairs in variants {
+            let mut map = http::HeaderMap::new();
+            for (name, value) in pairs {
+                map.insert(name, value.parse().expect("header value"));
+            }
+            let decision = core
+                .check_request_full(
+                    None,
+                    TEST_IP,
+                    "GET",
+                    "/",
+                    None,
+                    &map,
+                    None,
+                    Some(NORMAL_UA),
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .await;
+            assert!(matches!(decision, WafDecision::Pass));
+        }
+
+        assert_eq!(
+            core.violation_tracker
+                .as_ref()
+                .expect("tracker")
+                .check_violations(TEST_IP),
+            0,
+            "benign header variants must not accumulate violations"
+        );
     }
 }

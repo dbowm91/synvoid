@@ -15,10 +15,15 @@ Before configuring protection, it's helpful to understand the types of floods:
 
 ## SYN Flood Protection
 
+Flood limits live in the top-level `[tcp]` / `[udp]` sections. Enabling
+`[tcp]` also enables raw TCP proxying (Beta), so a real configuration must
+declare at least one `[tcp.protocols.<name>]` port/upstream entry; the
+snippets below show the flood keys only.
+
 Tracks half-open connections to detect and mitigate SYN floods:
 
 ```toml
-[defaults.tcp]
+[tcp]
 enabled = true
 syn_rate_per_ip = 50         # SYN packets per second per IP
 syn_rate_global = 10000     # Global SYN rate limit
@@ -55,7 +60,7 @@ When a client initiates a TCP connection, it sends a SYN packet. The server resp
 Prevents connection exhaustion:
 
 ```toml
-[defaults.tcp]
+[tcp]
 enabled = true
 connection_rate_per_ip = 100    # Connections per second per IP
 connection_rate_global = 20000  # Global connection rate
@@ -82,14 +87,14 @@ Start with defaults and adjust based on your legitimate traffic patterns.
 Rate limits UDP traffic with per-port granularity:
 
 ```toml
-[defaults.udp]
+[udp]
 enabled = true
 rate_per_ip = 1000      # UDP packets per second per IP
 rate_global = 100000    # Global UDP rate
 ```
 
 The keys are `rate_per_ip` / `rate_global` (not `udp_rate_per_ip` / `udp_rate_global`), and
-they live under `[defaults.udp]`.
+they live under `[udp]`.
 
 ### When to Use UDP Protection
 
@@ -223,7 +228,7 @@ synvoid.http.flood_limited                  # HTTP requests flood limited
 ### High Traffic Sites
 
 ```toml
-[defaults.tcp]
+[tcp]
 enabled = true
 syn_rate_global = 50000
 connection_rate_global = 100000
@@ -237,7 +242,7 @@ max_connections = 50000
 ### Low Traffic Sites
 
 ```toml
-[defaults.tcp]
+[tcp]
 enabled = true
 syn_rate_global = 5000
 connection_rate_global = 5000
@@ -253,7 +258,7 @@ max_connections = 1000
 For sites requiring DDoS protection:
 
 ```toml
-[defaults.tcp]
+[tcp]
 enabled = true
 syn_rate_per_ip = 10
 syn_rate_global = 5000

@@ -1,0 +1,25 @@
+# TLS + ALPN HTTP/2 example for the multi-service harness.
+#
+# Generate a local throwaway certificate before use:
+#   openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+#     -keyout /tmp/bench-key.pem -out /tmp/bench-cert.pem \
+#     -subj "/CN=localhost" \
+#     -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
+#
+# `tls.cert_path` and `tls.key_path` must exist at config-validation time.
+# The committed harness never writes secrets or certificates into the repo.
+
+[server]
+host = "127.0.0.1"
+port = 18080
+
+[tls]
+enabled = true
+cert_path = "/tmp/bench-cert.pem"
+key_path = "/tmp/bench-key.pem"
+port = 18443
+tls_1_3_only = true
+
+[http3]
+enabled = true
+port = 18444

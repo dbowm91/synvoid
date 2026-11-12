@@ -54,6 +54,7 @@ fn is_registered_adapter(relative: &str) -> bool {
         "src/waf/asn_tracker.rs",
         "src/waf/ratelimit.rs",
         "src/waf/ratelimit/core.rs",
+        "src/waf/site_attack_config.rs",
         // This guard test itself.
         "tests/enforcement_decision_contract_guard.rs",
     ];
@@ -306,6 +307,7 @@ fn registered_adapters_exist_and_are_documented() {
         "src/waf/asn_tracker.rs",
         "src/waf/ratelimit.rs",
         "src/waf/ratelimit/core.rs",
+        "src/waf/site_attack_config.rs",
     ] {
         if !workspace_root.join(file).exists() {
             problems.push(format!("allowlisted file no longer exists: {file}"));

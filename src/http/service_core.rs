@@ -38,6 +38,7 @@ pub struct NeutralServiceContext<W, D> {
     pub ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
     pub worker_id: Option<crate::process::ipc::WorkerId>,
     pub drain_state: Option<Arc<D>>,
+    pub listener_id: Option<String>,
     pub upstream_client_registry: Arc<UpstreamClientRegistry>,
     pub connection_limit: Arc<Semaphore>,
     /// Set-once handle to the worker-local request-log sink (the admin
@@ -112,6 +113,7 @@ where
         inbound,
         client_ip,
         local_addr,
+        ctx.listener_id.as_deref(),
         ctx.drain_state.clone(),
         Arc::clone(&ctx.router),
         Arc::clone(&ctx.waf),

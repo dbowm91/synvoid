@@ -203,7 +203,7 @@ synvoid_subject_cpu_worker_rss_bytes
 ### Production Checklist
 
 - [ ] Enable TLS for the gRPC control plane. The listener is `127.0.0.1:50051` by default (`[supervisor] control_api_addr`), not 9443. TLS is **server-authenticated only** — `src/supervisor/api.rs` sets `ServerTlsConfig::new().identity(...)` and never requests client certs, so there is no mTLS option today.
-- [ ] Size the worker pool deliberately (`[defaults.worker_pool] workers`; shipped `config/main.toml` sets 4, code default is 1) — more workers add throughput, not isolation.
+- [ ] Keep `[defaults.worker_pool] workers = 1` (the shipped and code default). More workers are an explicit `allow_multi_worker = true` fault-isolation mode, not a throughput lever; scale with `[process_manager].worker_threads`.
 - [ ] Enable Landlock sandboxing on Linux for workers.
 
 ## Troubleshooting

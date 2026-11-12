@@ -8,12 +8,22 @@ The `Router` is responsible for determining the `RouteTarget` for every incoming
 
 ### Matching Hierarchy
 
-1.  **IP-Based Routing:** First, the router checks `ip_domain_map` (`crates/synvoid-proxy/src/router.rs:42`) for exact (SocketAddr, Host) matches, then `ip_wildcard_routers` (`crates/synvoid-proxy/src/router.rs:43`) for wildcard patterns on the bind address. This enables multi-tenant deployments where different sites share the same IP:port but serve different domains based on SNI or Host headers.
-2.  **Listener-Level Default:** If a request arrives on a listener (IP:Port) that has a `default_server` configured, it may fallback to that site if no other matches are found.
-3.  **Exact Domain Matching:** The router first checks for an exact match of the `Host` header in the `domain_map`.
-4.  **Wildcard/Suffix Matching:** If no exact match is found, it uses a reversed-domain Radix tree to match wildcard patterns.
-5.  **Default Server Fallback:** If no domain matches, falls back to the listener's default server or the global default.
-6.  **Path-Based Matching (Locations):** Once a site is identified, the `LocationMatcher` evaluates the request path against defined `location` blocks (e.g., `/api`, `/static`).
+Listeners are process-wide resources. The canonical `[[http.listeners]]` plan
+binds each socket once; a request carries the `ListenerId` that accepted it.
+Sites are selected inside that listener's table from the `Host` header:
+
+1.  **Exact Domain Matching:** exact match in the listener's `exact` map.
+2.  **Wildcard/Suffix Matching:** reversed-domain Radix tree for that listener.
+3.  **Listener Default Site:** `default_site`, when configured.
+4.  **Path-Based Matching (Locations):** once a site is identified, the
+    `LocationMatcher` evaluates the request path against `location` blocks.
+5.  **Fallback:** the global `[fallback] mode`.
+
+`[site].listeners` restricts a site to named listeners; omitted membership
+makes it a candidate on every listener. A request never falls through to
+another listener's table. `local_addr` is diagnostic only and is not listener
+identity. `route()` remains a combined compatibility table for internal callers
+and tests; production uses `route_with_listener_id()`.
 
 ### Reverse-Domain Radix Tree for Wildcard/Suffix Matching
 

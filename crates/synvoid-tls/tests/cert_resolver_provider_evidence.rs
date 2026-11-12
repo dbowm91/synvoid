@@ -410,7 +410,7 @@ fn exact_sni_match_selects_that_domain_certificate() {
     let pki = pki("sni-exact");
     let resolver = loaded_resolver(&pki, |_| {});
     let server_config = resolver
-        .build_server_config()
+        .build_server_config(&[])
         .expect("server config builds");
 
     let handshake = handshake(
@@ -443,7 +443,7 @@ fn unmatched_label_falls_back_to_the_wildcard_certificate() {
     let pki = pki("sni-wildcard");
     let resolver = loaded_resolver(&pki, |_| {});
     let server_config = resolver
-        .build_server_config()
+        .build_server_config(&[])
         .expect("server config builds");
 
     let handshake = handshake(
@@ -473,7 +473,7 @@ fn unknown_sni_falls_back_to_the_default_certificate() {
     let pki = pki("sni-unknown");
     let resolver = loaded_resolver(&pki, |_| {});
     let server_config = resolver
-        .build_server_config()
+        .build_server_config(&[])
         .expect("server config builds");
 
     let handshake = handshake(
@@ -510,7 +510,7 @@ fn a_resolver_with_no_certificates_fails_the_handshake() {
         ..Default::default()
     });
     let server_config = resolver
-        .build_server_config()
+        .build_server_config(&[])
         .expect("config builds regardless");
 
     let handshake = handshake(
@@ -529,44 +529,34 @@ fn a_resolver_with_no_certificates_fails_the_handshake() {
 
 // ---- Workstream A.4 — ALPN -------------------------------------------------
 
-/// A-4a (F-6): `build_server_config` configures protocol versions, an optional
-/// client verifier, and the certificate resolver — and **no ALPN**. The
-/// configured list is empty, so rustls performs no ALPN negotiation at all.
 #[test]
-fn build_server_config_configures_no_alpn_protocols() {
+fn build_server_config_sets_requested_alpn_protocols() {
     let pki = pki("alpn-config");
     let resolver = loaded_resolver(&pki, |_| {});
     let server_config = resolver
-        .build_server_config()
+        .build_server_config(&[b"h2", b"http/1.1"])
         .expect("server config builds");
 
-    assert!(
-        server_config.alpn_protocols.is_empty(),
-        "no ALPN protocol is configured, so none is advertised"
+    assert_eq!(
+        server_config.alpn_protocols,
+        vec![b"h2".to_vec(), b"http/1.1".to_vec()],
+        "the caller's ALPN offer must be installed on the server config"
     );
 }
 
-/// A-4b: the absence is observable on the wire. Even a client that offers
-/// `h2` and `doq` receives no negotiated protocol.
-///
-/// Consequence for the encrypted transports, recorded rather than changed:
-/// DoT and DoQ are connection-oriented and DoH is HTTP/2-based, so a client
-/// that requires ALPN negotiation cannot use this listener. Adding ALPN here
-/// would be a protocol behavior change and belongs in its own phase, not in
-/// an evidence gate.
 #[test]
-fn no_alpn_is_negotiated_even_when_the_client_offers_one() {
+fn configured_alpn_is_negotiated_on_the_wire() {
     let pki = pki("alpn-wire");
     let resolver = loaded_resolver(&pki, |_| {});
     let server_config = resolver
-        .build_server_config()
+        .build_server_config(&[b"h2", b"http/1.1"])
         .expect("server config builds");
 
     let handshake = handshake(
         Arc::clone(&server_config),
         ClientOptions {
             server_name: "example.com",
-            alpn: vec![b"h2".to_vec(), b"doq".to_vec()],
+            alpn: vec![b"h2".to_vec(), b"http/1.1".to_vec()],
             ..Default::default()
         },
     );
@@ -576,9 +566,32 @@ fn no_alpn_is_negotiated_even_when_the_client_offers_one() {
         .as_ref()
         .unwrap_or_else(|e| panic!("client handshake must succeed: {e}"));
     assert_eq!(
-        handshake.alpn, None,
-        "the server must select no ALPN protocol"
+        handshake.alpn,
+        Some(b"h2".to_vec()),
+        "the server must select the first mutually supported ALPN protocol"
     );
+}
+
+#[test]
+fn empty_alpn_offer_negotiates_nothing() {
+    let pki = pki("alpn-empty");
+    let resolver = loaded_resolver(&pki, |_| {});
+    let server_config = resolver
+        .build_server_config(&[])
+        .expect("server config builds");
+    let handshake = handshake(
+        Arc::clone(&server_config),
+        ClientOptions {
+            server_name: "example.com",
+            alpn: vec![b"h2".to_vec()],
+            ..Default::default()
+        },
+    );
+    handshake
+        .client
+        .as_ref()
+        .unwrap_or_else(|e| panic!("client handshake must succeed: {e}"));
+    assert_eq!(handshake.alpn, None);
 }
 
 // ---- Workstream A.7 — protocol version policy ------------------------------
@@ -591,7 +604,7 @@ fn tls_1_3_only_admits_1_3_and_refuses_1_2() {
     let pki = pki("versions-13-only");
     let resolver = loaded_resolver(&pki, |config| config.tls_1_3_only = true);
     let server_config = resolver
-        .build_server_config()
+        .build_server_config(&[])
         .expect("server config builds");
 
     let admitted = handshake(
@@ -630,7 +643,7 @@ fn tls_1_2_fallback_admits_both_versions() {
         config.enable_tls_12_fallback = true;
     });
     let server_config = resolver
-        .build_server_config()
+        .build_server_config(&[])
         .expect("server config builds");
 
     for (label, versions) in [
@@ -665,7 +678,7 @@ fn neither_version_flag_admits_both_versions() {
         config.enable_tls_12_fallback = false;
     });
     let server_config = resolver
-        .build_server_config()
+        .build_server_config(&[])
         .expect("server config builds");
 
     for versions in [vec![&rustls::version::TLS13], vec![&rustls::version::TLS12]] {
@@ -719,7 +732,7 @@ fn prefer_post_quantum_does_not_gate_the_hybrid_key_exchange() {
         config.tls_1_3_only = true;
     });
     let server_config = resolver
-        .build_server_config()
+        .build_server_config(&[])
         .expect("server config builds");
 
     let handshake = handshake(
@@ -759,7 +772,7 @@ fn client_auth_without_a_ca_path_is_a_hard_error_with_a_stable_message() {
     });
 
     let error = resolver
-        .build_server_config()
+        .build_server_config(&[])
         .expect_err("client auth without a CA must fail");
     assert_eq!(
         error.to_string(),
@@ -790,7 +803,7 @@ fn client_auth_with_an_empty_ca_file_is_a_hard_error() {
     });
 
     let error = resolver
-        .build_server_config()
+        .build_server_config(&[])
         .expect_err("an empty CA file must fail");
     assert_eq!(error.to_string(), "No CA certificates found in file");
 }
@@ -812,7 +825,7 @@ fn a_malformed_ca_file_is_rejected_before_the_verifier_is_built() {
     });
 
     let error = resolver
-        .build_server_config()
+        .build_server_config(&[])
         .expect_err("a malformed CA file must fail");
     // The PEM iterator yields no certificates, so this is the same path as the
     // empty file.
@@ -836,7 +849,7 @@ fn a_missing_ca_file_reports_the_io_failure() {
     });
 
     let error = resolver
-        .build_server_config()
+        .build_server_config(&[])
         .expect_err("a missing CA file must fail");
     assert!(
         error.to_string().contains("No such file or directory"),
@@ -856,7 +869,7 @@ fn a_valid_ca_installs_a_working_client_verifier() {
             ca_cert_path: Some(pki.dir.join("ca.pem")),
         };
     });
-    let server_config = resolver.build_server_config().expect("valid CA builds");
+    let server_config = resolver.build_server_config(&[]).expect("valid CA builds");
 
     let anonymous = handshake(
         Arc::clone(&server_config),
@@ -951,7 +964,7 @@ fn a_reload_is_visible_through_an_already_built_server_config() {
     let resolver = CertResolver::new(tls_config(&pki, |config| config.watch_dir = None));
     resolver.load_certificates().expect("initial load succeeds");
     let server_config = resolver
-        .build_server_config()
+        .build_server_config(&[])
         .expect("server config builds");
 
     let first = handshake(
@@ -1014,7 +1027,10 @@ fn the_provider_boundary_exposes_only_an_arc_server_config() {
     /// The seam's exact shape, named so a signature change fails to compile
     /// here rather than silently widening the boundary.
     type BuildServerConfig =
-        fn(&CertResolver) -> Result<Arc<ServerConfig>, Box<dyn std::error::Error + Send + Sync>>;
+        fn(
+            &CertResolver,
+            &[&[u8]],
+        ) -> Result<Arc<ServerConfig>, Box<dyn std::error::Error + Send + Sync>>;
 
     let build: BuildServerConfig = CertResolver::build_server_config;
     let _ = build;

@@ -2,73 +2,59 @@ use anyhow::Result;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 
 use crate::validation::ConfigValidationError;
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
-pub struct SiteListenConfig {
-    #[serde(default)]
-    pub address: Option<String>,
-    #[serde(default)]
-    pub port: Option<u16>,
-    #[serde(default)]
-    pub ssl: Option<bool>,
-    #[serde(default)]
-    pub http2: Option<bool>,
-    #[serde(default)]
-    pub http3: Option<bool>,
-    #[serde(default)]
-    pub default_server: Option<bool>,
-    #[serde(default)]
-    pub proxy_protocol: Option<bool>,
-}
-
-impl SiteListenConfig {
-    pub fn to_socket_addr(&self, default_port: u16) -> Option<SocketAddr> {
-        let port = self.port.unwrap_or(default_port);
-        let addr = self.address.as_deref().unwrap_or("0.0.0.0");
-
-        let addr_clean = addr.trim_start_matches('[').trim_end_matches(']');
-
-        if let Ok(ip) = addr_clean.parse::<IpAddr>() {
-            return Some(SocketAddr::new(ip, port));
-        }
-
-        if let Ok(mut addrs) = (addr_clean, port).to_socket_addrs() {
-            return addrs.next();
-        }
-
-        None
-    }
-
-    pub fn is_ssl(&self) -> bool {
-        self.ssl.unwrap_or(false)
-    }
-
-    pub fn is_default_server(&self) -> bool {
-        self.default_server.unwrap_or(false)
-    }
-
-    pub fn is_http2_enabled(&self) -> bool {
-        self.http2.unwrap_or(true)
-    }
-
-    pub fn is_http3_enabled(&self) -> bool {
-        self.http3.unwrap_or(false)
-    }
-
-    pub fn is_proxy_protocol(&self) -> bool {
-        self.proxy_protocol.unwrap_or(false)
-    }
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteInfo {
     pub domains: Vec<String>,
-    #[serde(default)]
-    pub listen: Vec<SiteListenConfig>,
+    /// Canonical listener membership allowlist.
+    ///
+    /// Omitted means "candidate on every `[[http.listeners]]` entry". A
+    /// present list restricts the site to the named listeners. The legacy
+    /// per-site `[[site.listen]]` socket declaration remains rejected; sites
+    /// reference process-wide listeners instead.
+    #[serde(
+        default,
+        rename = "listen",
+        deserialize_with = "reject_site_listen",
+        skip_serializing
+    )]
+    #[schemars(skip)]
+    pub listen: (),
+    #[serde(
+        default,
+        deserialize_with = "deserialize_listeners",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub listeners: Vec<String>,
     pub upstream: UpstreamConfig,
+}
+
+fn deserialize_listeners<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error as _;
+    let listeners = Vec::<String>::deserialize(deserializer)?;
+    if listeners.is_empty() {
+        return Err(D::Error::custom(
+            "site.listeners cannot be empty; omit it to allow every listener",
+        ));
+    }
+    Ok(listeners)
+}
+
+fn reject_site_listen<'de, D>(deserializer: D) -> Result<(), D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error as _;
+    serde::de::IgnoredAny::deserialize(deserializer)?;
+    Err(D::Error::custom(
+        "site.listen is retired: declare process-wide sockets with [[http.listeners]] \
+         and select them with [site].listeners; [site] domains remain the virtual-host names",
+    ))
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
@@ -132,6 +118,14 @@ impl SiteInfo {
                 return Err(ConfigValidationError {
                     field: "site.domains".to_string(),
                     message: format!("Domain too long: {}", domain),
+                });
+            }
+        }
+        for listener in &self.listeners {
+            if listener.trim().is_empty() {
+                return Err(ConfigValidationError {
+                    field: "site.listeners".to_string(),
+                    message: "Listener name cannot be empty".to_string(),
                 });
             }
         }

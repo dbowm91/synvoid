@@ -76,9 +76,18 @@ pub fn endpoint_candidate(result: &EndpointCheckResult) -> Option<EnforcementCan
 /// 403-class block. Diagnostic detail (attack type, input location) stays in
 /// tracing, never in metric labels.
 pub fn attack_candidate(result: &AttackDetectionResult) -> EnforcementCandidate {
+    attack_candidate_with_class(result, EnforcementClass::Block)
+}
+
+/// Map a detected attack to a candidate with an explicit class, preserving the
+/// canonical source/reason codes for block and stall actions.
+pub fn attack_candidate_with_class(
+    result: &AttackDetectionResult,
+    class: EnforcementClass,
+) -> EnforcementCandidate {
     let _ = result;
     EnforcementCandidate::new(
-        EnforcementClass::Block,
+        class,
         EnforcementSource::AttackDetection,
         EnforcementReason::AttackDetected,
     )

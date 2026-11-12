@@ -1,5 +1,200 @@
-use crate::config::site::SiteAttackDetectionConfig;
+use crate::config::site::{SiteAttackDetectionConfig, SiteHeaderScanConfig};
 use crate::waf::attack_detection::{AttackDetectionConfig, AttackType};
+
+use std::borrow::Cow;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+
+/// Resolved action for a detected attack.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum AttackAction {
+    #[default]
+    Block,
+    Stall,
+    Log,
+}
+
+impl AttackAction {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "block" => Some(Self::Block),
+            "stall" => Some(Self::Stall),
+            "log" => Some(Self::Log),
+            _ => None,
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Block => "block",
+            Self::Stall => "stall",
+            Self::Log => "log",
+        }
+    }
+}
+
+/// One resolved attack policy: site value > global value > built-in default.
+///
+/// `detector_config` borrows the global config on the no-override path, so the
+/// common case keeps using the single global detector. A site that changes
+/// detector construction inputs gets an owned merged config and a per-policy
+/// fingerprint for the bounded detector cache.
+pub struct ResolvedAttackPolicy<'a> {
+    pub enabled: bool,
+    pub action: AttackAction,
+    pub detector_config: Cow<'a, AttackDetectionConfig>,
+    pub log_only: bool,
+    /// `None` means use the global detector; `Some` keys the site detector
+    /// cache and includes the configuration generation.
+    pub fingerprint: Option<u64>,
+}
+
+impl ResolvedAttackPolicy<'_> {
+    /// Log-only includes both the explicit `log` action and the higher-priority
+    /// per-path `log` rule.
+    pub fn is_log(&self) -> bool {
+        self.action == AttackAction::Log || self.log_only
+    }
+
+    pub fn uses_global_detector(&self) -> bool {
+        self.fingerprint.is_none()
+    }
+}
+
+pub fn resolve_attack_policy<'a>(
+    site: Option<&SiteAttackDetectionConfig>,
+    global: &'a AttackDetectionConfig,
+    path: &str,
+    config_generation: u64,
+) -> ResolvedAttackPolicy<'a> {
+    let enabled = effective_flag(site.and_then(|s| s.enabled), global.enabled);
+    let action = resolve_action(site, global);
+    let log_only = attack_log_only_for_path(path, site) || action == AttackAction::Log;
+
+    if !has_detector_overrides(site, global) {
+        return ResolvedAttackPolicy {
+            enabled,
+            action,
+            detector_config: Cow::Borrowed(global),
+            log_only,
+            fingerprint: None,
+        };
+    }
+
+    let detector_config = merge_detector_config(global, site);
+    let fingerprint = policy_fingerprint(site, config_generation);
+    ResolvedAttackPolicy {
+        enabled,
+        action,
+        detector_config: Cow::Owned(detector_config),
+        log_only,
+        fingerprint: Some(fingerprint),
+    }
+}
+
+fn resolve_action(
+    site: Option<&SiteAttackDetectionConfig>,
+    global: &AttackDetectionConfig,
+) -> AttackAction {
+    site.and_then(|s| s.action.as_deref())
+        .and_then(AttackAction::parse)
+        .or_else(|| AttackAction::parse(&global.action))
+        .unwrap_or_default()
+}
+
+fn has_detector_overrides(
+    site: Option<&SiteAttackDetectionConfig>,
+    global: &AttackDetectionConfig,
+) -> bool {
+    let Some(site) = site else {
+        return false;
+    };
+
+    site.paranoia_level
+        .is_some_and(|level| level != global.paranoia_level)
+        || !site.sqli.custom_patterns.is_empty()
+        || !site.xss.custom_patterns.is_empty()
+        || !site.path_traversal.custom_patterns.is_empty()
+        || !site.rfi.custom_patterns.is_empty()
+        || !site.ssrf.custom_patterns.is_empty()
+        || site
+            .ssrf
+            .block_private_ips
+            .is_some_and(|value| value != global.ssrf.block_private_ips)
+        || !site.ssrf.allowed_domains.is_empty()
+        || site
+            .ssrf
+            .allowlist_only_mode
+            .is_some_and(|value| value != global.ssrf.allowlist_only_mode)
+        || !site.headers.scan.is_empty()
+        || !site.headers.skip.is_empty()
+}
+
+fn merge_detector_config(
+    global: &AttackDetectionConfig,
+    site: Option<&SiteAttackDetectionConfig>,
+) -> AttackDetectionConfig {
+    let mut merged = global.clone();
+    let Some(site) = site else {
+        return merged;
+    };
+
+    if let Some(level) = site.paranoia_level {
+        merged.paranoia_level = level;
+    }
+
+    append_unique(&mut merged.sqli.custom_patterns, &site.sqli.custom_patterns);
+    append_unique(&mut merged.xss.custom_patterns, &site.xss.custom_patterns);
+    append_unique(
+        &mut merged.path_traversal.custom_patterns,
+        &site.path_traversal.custom_patterns,
+    );
+    append_unique(&mut merged.rfi.custom_patterns, &site.rfi.custom_patterns);
+    append_unique(&mut merged.ssrf.custom_patterns, &site.ssrf.custom_patterns);
+
+    if let Some(block_private_ips) = site.ssrf.block_private_ips {
+        merged.ssrf.block_private_ips = block_private_ips;
+    }
+    append_unique(&mut merged.ssrf.allowed_domains, &site.ssrf.allowed_domains);
+    if let Some(allowlist_only_mode) = site.ssrf.allowlist_only_mode {
+        merged.ssrf.allowlist_only_mode = allowlist_only_mode;
+    }
+
+    let SiteHeaderScanConfig { scan, skip } = &site.headers;
+    append_unique(&mut merged.header_scan.scan, scan);
+    append_unique(&mut merged.header_scan.skip, skip);
+
+    merged
+}
+
+fn append_unique(target: &mut Vec<String>, values: &[String]) {
+    for value in values {
+        if !target.iter().any(|existing| existing == value) {
+            target.push(value.clone());
+        }
+    }
+}
+
+fn policy_fingerprint(site: Option<&SiteAttackDetectionConfig>, config_generation: u64) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    config_generation.hash(&mut hasher);
+
+    if let Some(site) = site {
+        site.paranoia_level.hash(&mut hasher);
+        site.sqli.custom_patterns.hash(&mut hasher);
+        site.xss.custom_patterns.hash(&mut hasher);
+        site.path_traversal.custom_patterns.hash(&mut hasher);
+        site.rfi.custom_patterns.hash(&mut hasher);
+        site.ssrf.custom_patterns.hash(&mut hasher);
+        site.ssrf.block_private_ips.hash(&mut hasher);
+        site.ssrf.allowed_domains.hash(&mut hasher);
+        site.ssrf.allowlist_only_mode.hash(&mut hasher);
+        site.headers.scan.hash(&mut hasher);
+        site.headers.skip.hash(&mut hasher);
+    }
+
+    hasher.finish()
+}
 
 pub fn effective_flag(site: Option<bool>, global: bool) -> bool {
     site.unwrap_or(global)
@@ -60,10 +255,7 @@ pub fn attack_type_enabled(
     }
 }
 
-pub fn attack_log_only_for_path(
-    path: &str,
-    site: Option<&SiteAttackDetectionConfig>,
-) -> bool {
+pub fn attack_log_only_for_path(path: &str, site: Option<&SiteAttackDetectionConfig>) -> bool {
     let site = match site {
         Some(site) => site,
         None => return false,
@@ -100,6 +292,7 @@ mod tests {
                 custom_patterns: Vec::new(),
             },
             ssrf: Default::default(),
+            headers: Default::default(),
             per_path: Vec::new(),
         }
     }
@@ -196,5 +389,101 @@ mod tests {
         let site = Some(&site);
         assert!(attack_log_only_for_path("/admin/new", site));
         assert!(!attack_log_only_for_path("/admin/login", site));
+    }
+
+    #[test]
+    fn action_precedence_is_site_then_global_then_block() {
+        let global = AttackDetectionConfig::default();
+        let empty = SiteAttackDetectionConfig::default();
+
+        let resolved = resolve_attack_policy(None, &global, "/", 0);
+        assert_eq!(resolved.action, AttackAction::Block);
+        assert!(resolved.uses_global_detector());
+
+        let resolved = resolve_attack_policy(Some(&empty), &global, "/", 0);
+        assert_eq!(resolved.action, AttackAction::Block);
+
+        let mut global_stall = global.clone();
+        global_stall.action = "stall".to_string();
+        let resolved = resolve_attack_policy(Some(&empty), &global_stall, "/", 0);
+        assert_eq!(resolved.action, AttackAction::Stall);
+
+        let mut site_log = empty.clone();
+        site_log.action = Some("log".to_string());
+        let resolved = resolve_attack_policy(Some(&site_log), &global_stall, "/", 0);
+        assert_eq!(resolved.action, AttackAction::Log);
+        assert!(resolved.is_log());
+    }
+
+    #[test]
+    fn per_path_log_beats_site_action() {
+        let global = AttackDetectionConfig::default();
+        let site = site_with_per_path(&[("/admin", "log")]);
+        let resolved = resolve_attack_policy(Some(&site), &global, "/admin/new", 0);
+        assert_eq!(resolved.action, AttackAction::Block);
+        assert!(resolved.log_only);
+        assert!(resolved.is_log());
+    }
+
+    #[test]
+    fn site_detector_overrides_merge_with_global() {
+        let mut global = AttackDetectionConfig::default();
+        global.sqli.custom_patterns = vec!["global-pattern".to_string()];
+        global.ssrf.allowed_domains = vec!["global.example".to_string()];
+
+        let mut site = SiteAttackDetectionConfig::default();
+        site.paranoia_level = Some(3);
+        site.sqli.custom_patterns = vec!["site-pattern".to_string()];
+        site.ssrf.block_private_ips = Some(false);
+        site.ssrf.allowed_domains = vec!["site.example".to_string()];
+        site.ssrf.allowlist_only_mode = Some(true);
+        site.headers.scan = vec!["x-app-header".to_string()];
+
+        let resolved = resolve_attack_policy(Some(&site), &global, "/", 7);
+        assert!(!resolved.uses_global_detector());
+        let config = resolved.detector_config.as_ref();
+        assert_eq!(config.paranoia_level, 3);
+        assert_eq!(
+            config.sqli.custom_patterns,
+            vec!["global-pattern".to_string(), "site-pattern".to_string()]
+        );
+        assert!(!config.ssrf.block_private_ips);
+        assert_eq!(
+            config.ssrf.allowed_domains,
+            vec!["global.example".to_string(), "site.example".to_string()]
+        );
+        assert!(config.ssrf.allowlist_only_mode);
+        assert_eq!(config.header_scan.scan, vec!["x-app-header".to_string()]);
+        assert!(resolved.fingerprint.is_some());
+    }
+
+    #[test]
+    fn action_only_override_keeps_global_detector() {
+        let global = AttackDetectionConfig::default();
+        let mut site = SiteAttackDetectionConfig::default();
+        site.action = Some("stall".to_string());
+        let resolved = resolve_attack_policy(Some(&site), &global, "/", 0);
+        assert_eq!(resolved.action, AttackAction::Stall);
+        assert!(resolved.uses_global_detector());
+    }
+
+    #[test]
+    fn fingerprint_changes_with_generation_and_policy() {
+        let global = AttackDetectionConfig::default();
+        let mut site = SiteAttackDetectionConfig::default();
+        site.paranoia_level = Some(3);
+        let a = resolve_attack_policy(Some(&site), &global, "/", 1)
+            .fingerprint
+            .expect("override");
+        let b = resolve_attack_policy(Some(&site), &global, "/", 2)
+            .fingerprint
+            .expect("override");
+        assert_ne!(a, b);
+
+        site.paranoia_level = Some(1);
+        let c = resolve_attack_policy(Some(&site), &global, "/", 1)
+            .fingerprint
+            .expect("override");
+        assert_ne!(a, c);
     }
 }

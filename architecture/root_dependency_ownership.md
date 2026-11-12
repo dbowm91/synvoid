@@ -41,7 +41,7 @@ reference fails the guard until the row is reclassified with a reason.
 | serde_json | config, admin, logging | composition_runtime | default | JSON serialization | keep | admin, bin, commands, honeypot_port, http, icmp_filter, platform, process, sandbox, server, serverless, supervisor, waf, worker |
 | postcard | utils, mesh | composition_runtime | default | Compact binary serialization for distributed state | keep | supervisor, worker |
 | rkyv | — | remove_candidate | — | Phase 31: removed from root (0 src uses; canonical rkyv 0.8 use in domain crates) | removed Phase 31 | — |
-| toml | config | composition_runtime | default | TOML config file parsing | keep | admin, bin |
+| toml | config | composition_runtime | default | TOML config file parsing | keep | admin, bin, server |
 | anyhow | throughout | composition_runtime | default | Error context and chaining | keep | http_client, server |
 | bitflags | — | remove_candidate | — | Phase 31: removed from root (0 src uses) | removed Phase 31 | — |
 | tracing | throughout | composition_runtime | default | Structured logging framework | keep | admin, bin, commands, common, geo, honeypot_port, http, icmp_filter, log_controller, mesh, plugin, process, sandbox, server, serverless, startup, supervisor, tcp, tls, udp, utils, waf, worker |
@@ -86,7 +86,7 @@ reference fails the guard until the row is reclassified with a reason.
 | synvoid-tunnel | tunnel | composition_runtime | default | Tunnel backend routing | keep | tunnel |
 | hickory-proto | — | remove_candidate | — | Phase 31: removed from root + dns feature (0 src uses; DNS wire owned by synvoid-dns) | removed Phase 31 | — |
 | hickory-resolver | — | remove_candidate | — | Phase 31: removed from root + dns feature (0 src uses; resolution owned by synvoid-dns) | removed Phase 31 | — |
-| thiserror | throughout | composition_runtime | default | Derive macro for error types | keep | admin, honeypot_port, icmp_filter, mesh, process, server, serverless |
+| thiserror | throughout | composition_runtime | default | Derive macro for error types | keep | admin, honeypot_port, icmp_filter, mesh, process, server, serverless, tcp, udp |
 | getrandom | — | remove_candidate | — | Phase 31: removed from root + dns feature (0 `getrandom::` uses) | removed Phase 31 | — |
 | clap | commands | composition_runtime | default | CLI subcommand parsing | keep | bin, main |
 | tempfile | tests | remove_candidate | — | Phase 31: moved from [dependencies] to [dev-dependencies] (test fixtures + src unit tests) | moved to dev-deps Phase 31 | — |

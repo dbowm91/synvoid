@@ -618,6 +618,22 @@ pub fn run_supervisor_mode(
 
     let main_config = config_manager.main.clone();
 
+    // Phase 04 defense in depth: validation rejects this combination, but the
+    // supervisor must not start a multi-worker fleet just because a caller
+    // bypassed `MainConfig::validate`. The warning below remains for the
+    // acknowledged opt-in path.
+    if main_config.defaults.worker_pool.workers > 1
+        && !main_config.defaults.worker_pool.allow_multi_worker
+    {
+        tracing::error!(
+            workers = main_config.defaults.worker_pool.workers,
+            "refusing to start: [defaults.worker_pool].workers > 1 requires \
+             allow_multi_worker = true (sessions, CSRF tokens, the admin rate-limit \
+             budget, metrics and request logs are worker-local)"
+        );
+        std::process::exit(1);
+    }
+
     // Initialize core subsystems (ported from Supervisor)
     let data_dir = main_config.persistence.data_dir.as_ref().map(PathBuf::from);
     let block_store = Arc::new(BlockStore::new(

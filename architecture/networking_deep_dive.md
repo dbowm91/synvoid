@@ -17,11 +17,37 @@ SynVoid features native HTTP/3 support via the **Quinn** library.
 - **Independence:** QUIC streams are independent, meaning packet loss on one stream doesn't stall others (eliminating Head-of-Line blocking).
 - **QUIC Tunnel Datagrams:** Maximum datagram payload size is **1200 bytes** (per `crates/synvoid-tunnel/src/quic/messages.rs:4` `MAX_DATAGRAM_PAYLOAD`).
 
-### 3. TCP & UDP Listeners
-Beyond HTTP, SynVoid can act as a generic proxy for any TCP or UDP service.
-- **TCP Listener:** Uses `src/tcp/listener.rs` for connection management with `TcpSocketOptions` for socket configuration (reuse_port, send/recv buffer sizes, keepalive, nodelay).
-- **UDP Handling:** Built-in protections against amplification attacks.
-- **Listener Configuration:** `crates/synvoid-http/src/listener/common.rs` defines `ConnectionContext` for connection handling. TCP socket options are configured via `TcpSocketOptions` in `src/tcp/listener.rs`.
+### 3. TCP & UDP Listeners (Beta)
+
+Beyond HTTP, SynVoid can proxy configured TCP and UDP services. The listener
+definitions live in the global top-level `[tcp.protocols.*]` and
+`[udp.protocols.*]` maps; the site-level `[tcp]`/`[udp]` tables are retired and
+rejected. `src/server/aux_listener_config.rs` expands each protocol entry into
+one listener per port and address family (bind address from `[server] host` and
+`host_v6`, expected protocol from the map key, upstream from
+`upstream_format`/`upstream_format_v6` with `{port}` substituted, strict
+protocol filtering, socket options and timeouts). Invalid upstreams, duplicate
+ports and empty port lists fail startup and `configtest`.
+
+- **TCP:** `src/tcp/listener.rs` registers definitions, binds each socket once
+  in `bind_all` before tasks start, then runs `worker_pool_size` accept loops
+  over one `Arc<TcpListener>` per listener. The upstream connect uses the pool
+  connection timeout; proxied copies use a per-direction idle timeout
+  (`[tcp].idle_timeout_secs`) rather than a whole-connection deadline. The
+  protocol filter is built per listener from the configured expected protocol.
+  The QUIC-tunnel upstream path keeps its existing framing.
+- **UDP:** `src/udp/listener.rs` shares one `Arc<UdpSocket>` across receive
+  loops per listener. The first client datagram creates a bounded flow keyed by
+  client/upstream/port, with a connected upstream socket and a reply task that
+  sends upstream responses back to the client. `max_packet_size`, `max_flows`,
+  `flow_idle_timeout_secs`, the per-IP rate limit and the shared flood limits
+  are enforced. Metrics: `synvoid.udp.flows.active`,
+  `synvoid.udp.flows.reaped`, `synvoid.udp.replies_sent`,
+  `synvoid.udp.reply_errors`. The QUIC-tunnel datagram path remains available.
+
+The admin TCP/UDP inventory reports the listeners actually bound in this
+process and their live active connection/flow counts; create/delete endpoints
+were removed because listener definitions require a restart.
 
 ---
 

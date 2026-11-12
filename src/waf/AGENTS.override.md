@@ -43,10 +43,16 @@ The WAF module (`src/waf/`) is root application composition over the canonical
 
 ### Attack Detection Action Semantics
 
-`check_attack_patterns()` reads action from config:
-- `stall` (default): returns `WafDecision::Stall`
-- `block`: returns `WafDecision::Block(403, "Forbidden")`
-- `log`: records metrics but returns `None` (request passes)
+`WafCore::check_attack` resolves site > global > built-in policy
+(`ResolvedAttackPolicy`):
+- `block` (default): returns `WafDecision::Block(403, "Attack Detected")`
+- `stall`: returns `WafDecision::Stall`
+- `log`, or a per-path `log` rule: records metrics and returns `None` without
+  recording an escalation violation
+
+Detector-affecting site overrides (paranoia, custom patterns, SSRF controls,
+header scan lists) use a bounded per-policy detector cache; overrides that do
+not affect construction keep the single global detector.
 
 ### Trusted Proxy XFF Handling
 

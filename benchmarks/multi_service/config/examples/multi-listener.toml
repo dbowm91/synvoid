@@ -1,0 +1,26 @@
+# Canonical multi-listener example for the multi-service harness.
+#
+# Process-wide sockets are declared once in [[http.listeners]]; sites select
+# them with [site].listeners. Listener changes are restart-required.
+
+[server]
+host = "127.0.0.1"
+port = 18080
+trusted_proxies = ["127.0.0.1", "::1"]
+
+[[http.listeners]]
+name = "bench-public"
+address = "127.0.0.1"
+port = 18080
+
+[[http.listeners]]
+name = "bench-extra-0"
+address = "127.0.0.1"
+port = 18090
+
+[site]
+domains = ["bench-0000.local"]
+listeners = ["bench-public", "bench-extra-0"]
+
+[site.upstream]
+default = "http://127.0.0.1:18100"

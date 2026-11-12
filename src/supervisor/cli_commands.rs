@@ -377,7 +377,8 @@ block_methods = ["GET", "POST", "PUT", "DELETE"]
 
 [defaults.worker_pool]
 mode = "shared"
-workers = 4
+workers = 1
+allow_multi_worker = false
 worker_port_base = 9000
 auto_scale = true
 "#,

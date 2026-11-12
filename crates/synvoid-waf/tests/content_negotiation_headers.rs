@@ -59,7 +59,26 @@ async fn sqli_in_cookie_is_still_detected() {
 }
 
 #[tokio::test]
-async fn sqli_in_other_header_is_still_detected() {
+async fn sqli_in_configured_custom_header_is_still_detected() {
+    let mut config = AttackDetectionConfig::default();
+    config.header_scan.scan = vec!["x-custom".to_string()];
+    let detector = AttackDetector::new(config);
+
+    let headers = headers_with(&[
+        ("referer", "http://example.test/post/example"),
+        ("x-custom", "1' OR '1'='1"),
+    ]);
+
+    let (result, _score) = detector
+        .check_request(TEST_IP, &Method::GET, "/post/example", None, &headers, None)
+        .await;
+
+    let result = result.expect("configured custom-header SQL injection must still be detected");
+    assert_eq!(result.attack_type, AttackType::Sqli);
+}
+
+#[tokio::test]
+async fn unconfigured_custom_header_is_not_payload_scanned() {
     let headers = headers_with(&[
         ("referer", "http://example.test/post/example"),
         ("x-custom", "1' OR '1'='1"),
@@ -69,6 +88,25 @@ async fn sqli_in_other_header_is_still_detected() {
         .check_request(TEST_IP, &Method::GET, "/post/example", None, &headers, None)
         .await;
 
-    let result = result.expect("custom-header SQL injection must still be detected");
-    assert_eq!(result.attack_type, AttackType::Sqli);
+    assert!(
+        result.is_none(),
+        "unknown headers are skip-by-default; configure [attack_detection.headers].scan to inspect them: {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn authorization_is_not_sqli_scanned_by_default() {
+    let headers = headers_with(&[
+        ("referer", "http://example.test/post/example"),
+        ("authorization", "Bearer 1' OR '1'='1"),
+    ]);
+
+    let (result, _score) = detector()
+        .check_request(TEST_IP, &Method::GET, "/post/example", None, &headers, None)
+        .await;
+
+    assert!(
+        result.is_none(),
+        "Authorization belongs to the JWT detector, not SQLi/XSS: {result:?}"
+    );
 }

@@ -62,7 +62,8 @@ pub fn request_headers_ingress_size(headers: &http::HeaderMap) -> usize {
 pub async fn prepare_request_preflight<W, LogFn, DropFn>(
     req: InboundRequest,
     client_ip: IpAddr,
-    local_addr: Option<SocketAddr>,
+    _local_addr: Option<SocketAddr>,
+    listener_id: Option<&str>,
     router: Arc<Router>,
     waf: Arc<W>,
     alt_svc: Option<String>,
@@ -164,7 +165,7 @@ where
         );
     }
 
-    let route = router.route_with_local_addr(&host, &path, local_addr);
+    let route = router.route_with_listener_id(&host, &path, listener_id);
     let target = match route {
         RouteResult::Found(target) => target,
         RouteResult::NotFound(msg) => {
@@ -345,12 +346,17 @@ where
             }
         };
 
+    let max_request_body_size = target
+        .site_config
+        .proxy
+        .max_request_body_size(http_config.max_streaming_body_size);
+
     let (full_body, request_body_size) = match collect_and_scan_request_body(
         body,
         waf.as_ref(),
         client_ip,
         content_length,
-        http_config.max_streaming_body_size,
+        max_request_body_size,
         &path,
         Some(&target.site_config.attack_detection),
     )
@@ -641,6 +647,7 @@ pub async fn prepare_request_before_buffered_waf<
     req: InboundRequest,
     client_ip: IpAddr,
     local_addr: Option<SocketAddr>,
+    listener_id: Option<&str>,
     router: Arc<Router>,
     waf: Arc<W>,
     alt_svc: Option<String>,
@@ -677,6 +684,7 @@ where
         req,
         client_ip,
         local_addr,
+        listener_id,
         router,
         waf,
         alt_svc,

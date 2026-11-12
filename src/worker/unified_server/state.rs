@@ -217,6 +217,13 @@ pub async fn validate_ports_or_skip_for_shared_port(
     let config_guard = config.read().await;
     let main_config = &config_guard.main;
 
+    synvoid_config::normalize_http_listeners(main_config, &config_guard.sites).map_err(|e| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("listener plan: {}: {}", e.field, e.message),
+        )
+    })?;
+
     let mut ports_to_check = Vec::new();
     let mut port_labels = std::collections::HashMap::new();
 

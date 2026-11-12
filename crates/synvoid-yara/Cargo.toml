@@ -22,20 +22,20 @@ parking_lot = "0.12"
 hex = "0.4"
 subtle = "2"
 async-trait = "0.1"
-# Phase 40 + Phase 103: yara-x 1.20.0 via the temporary manifest-only
-# compat fork in `third-party/yara-x-compat` (root `[patch.crates-io]`;
-# exact upstream 1.20.0 sources). Phase 40's manifest delta advanced the
-# transitive Wasmtime line from 45.0.3 to 47.0.4 (tracking upstream PR
-# #769). Phase 103 advanced the same line from 47.0.4 to 48.0.3 to
-# remediate RUSTSEC-2026-0315 (47.0.4 affected) and RUSTSEC-2026-0316
-# (47.0.4 + 36.0.15 affected; the direct runtime moved to 36.0.16 LTS
-# in the same phase). Stock yara-x 1.21.0 (released 2026-09-29) still
-# resolves wasmtime ^45.0.3, so it does not satisfy the removal condition.
-# The `linkme` feature was removed upstream after 1.15, so only
-# `default-modules` is requested. Removal: replace with an official
-# fixed yara-x release per the fork's README.SYNVOID.md; enforced by
-# `yara_fork_is_temporary_guard`.
-yara-x = { version = "1.20", default-features = false, features = ["default-modules"] }
+# Phase 01 (2026-11-10): official yara-x 1.23.0 (released 2026-11-05)
+# replaces the temporary manifest-only compat fork. It resolves Wasmtime
+# ^48.0.8 (RUSTSEC-2026-0424 / -0423 / -0422 and the 2026-10 component-model
+# batch) and zip ^9.0.5, satisfying the fork's documented removal condition.
+# No `[patch.crates-io]` entry and no git source remain. The `linkme` feature
+# was removed upstream after 1.15, so only `default-modules` is requested.
+yara-x = { version = "1.23", default-features = false, features = ["default-modules"] }
+# yara-x 1.23.0 declares `rsa = ^0.10.0-rc.19` and uses `rsa::Pkcs1v15Sign`,
+# but rsa 0.10.0 final gates that item behind its `pkcs1v15` feature while the
+# rc did not. Enabling the feature here keeps the resolved patched rsa 0.10.0
+# (RUSTSEC-2023-0071 fixed) instead of pinning the vulnerable rc. This direct
+# edge only turns on a feature of yara-x's own transitive dependency; remove
+# it when yara-x declares the feature itself.
+rsa = { version = "0.10", features = ["pkcs1v15"] }
 
 [dev-dependencies]
 tempfile = "3"

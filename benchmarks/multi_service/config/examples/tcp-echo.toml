@@ -1,0 +1,21 @@
+# TCP service example for the multi-service harness.
+#
+# This is illustrative configuration only. The driver generates the real
+# config with dynamic ports under a temporary work directory.
+#
+# `filter_enabled = false` because "echo" is a custom protocol the built-in
+# detector does not recognize; the listener still proxies real bytes.
+
+[tcp]
+enabled = true
+worker_pool_size = 2
+
+[tcp.protocols.echo]
+ports = [19001]
+upstream_format = "127.0.0.1:19101"
+filter_enabled = false
+
+[tcp.protocols.echo_multi]
+ports = [19002, 19003, 19004]
+upstream_format = "127.0.0.1:19101"
+filter_enabled = false

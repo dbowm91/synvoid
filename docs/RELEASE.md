@@ -155,7 +155,11 @@ Full details in [`docs/PLATFORM_SUPPORT.md`](PLATFORM_SUPPORT.md).
 
 ### What is not automated
 
-Binary artifacts, checksums, signatures, and Docker images are not produced by CI. If binary distribution is desired, it must be built and published separately by the maintainer.
+Binary artifacts, checksums, and signatures are not produced by CI. CI does
+build the container image (`.github/workflows/ci.yml`, `docker-build`) and runs
+a `--configtest` smoke test, but it never publishes the image; publishing is a
+release-only maintainer action. If binary distribution is desired, it must be
+built and published separately by the maintainer.
 
 ### Where artifacts are published
 
@@ -265,7 +269,7 @@ The following items are known limitations or tracked exceptions that operators s
 | `flood-ebpf` eBPF/XDP flood protection | **Unreachable** | Advertised feature that is not built or constructed | `ebpf-flood/` is not a workspace member, `flood-ebpf` is not a default feature, and `EbpfFlood` has no construction site. Do not list it as a capability. |
 | `icmp-ebpf` eBPF ICMP filter | **Beta** | Feature-gated, not in default profile | Requires Linux with kernel BTF, CAP_NET_ADMIN or root, precompiled eBPF object. Falls back to nftables when unavailable |
 | `--all-features` workspace check | **Tracked exception** | Does not pass `cargo check --all-features` | `synvoid-icmp-filter` eBPF dependency resolution fails in `--all-features` mode. Individual crate checks pass. Not in default profile |
-| wasmtime 48.0.5 (via yara-x 1.20 compat fork); direct 36.0.16 LTS | **Tracked** | 2 advisory ignores in `deny.toml` (mirrored in `.cargo/audit.toml`) | YARA compilation only for the transitive line; both lines version-patched (direct 36.0.16 LTS for RUSTSEC-2026-0269 + -0316; transitive 48.0.5 for 0222/0269/0315/0316 + 2026-04 batch, advanced from 48.0.3 for RUSTSEC-2026-0326/-0327). Remaining ignores: `rsa` 0071 (no upstream fix; Marvin decrypt unreachable across all four resolve paths — re-triaged Phase 103), `rkyv` 0235 (minifier-internal sourcemaps only). Reviewed: 2026-10-01; Re-audit: 2026-11-01. See `architecture/dependency_security_baseline_phase25.md` §11/§12 |
+| wasmtime 48.0.8 (via official yara-x 1.23.0); direct 36.0.20 LTS | **Tracked** | Named exceptions in `deny.toml` (mirrored in `.cargo/audit.toml`) | YARA compilation only for the transitive line; both lines version-patched (direct 36.0.20 LTS and transitive 48.0.8 for the October 2026 Wasmtime batch, RUSTSEC-2026-0269/-0316/-0315/-0326/-0327). The temporary yara-x compat fork was retired in Phase 01. Remaining exceptions: `rsa` 0071 (direct 0.9 paths; Marvin decrypt unreachable — yara-x now uses patched rsa 0.10), `rkyv` 0235 (minifier-internal sourcemaps only), build-only `zip 3.0.0` via utoipa-swagger-ui, and six unmaintained notices. Reviewed: 2026-11-10; Re-audit: 2027-02-10 (unmaintained: 2027-04-10). See `architecture/dependency_security_baseline_phase25.md` §15 |
 | Email alerting | **Not implemented** | No such channel exists | `src/admin/alerting/mod.rs` implements **webhook delivery only** (`send_webhook_internal`, `pending_webhooks`). There is no SMTP/email transport and no email config key — the previously cited "stub at mod.rs:349" no longer matches the file. Use a webhook receiver. |
 | `spin` idle instance eviction | **Closed** | Idle instances are evicted | `SpinRuntime` performs lazy eviction of idle instances from both the instance and cache maps before each insert (`crates/synvoid-plugin-runtime/src/spin/runtime.rs`, `is_idle` + `retain`). The old "old UUID entries are never cleaned up" gap no longer applies. |
 | Archive inspection | **Limitation** | ZIP-only, non-recursive | `inspect_zip_archive` scans entries of a single ZIP; a nested archive is *detected and reported*, not descended into |

@@ -4,9 +4,6 @@ domains = ["test.localhost"]
 [site.upstream]
 default = "http://127.0.0.1:19999"
 
-[[site.listen]]
-port = 18080
-
 [ratelimit]
 mode = "isolated"
 

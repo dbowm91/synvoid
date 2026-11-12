@@ -21,11 +21,11 @@ use crate::engine::{compute_sha256, YaraError};
 /// yara-x line that produced the current engine. Bumped when `yara-x` is
 /// upgraded; locally compiled blobs carrying a different engine tag are
 /// rejected deterministically by [`CompiledArtifact::verify_binding`].
-/// Phase 40: `yara-x/1.20` via the temporary manifest-only compat fork
-/// (`third-party/yara-x-compat`; exact upstream 1.20.0 sources, wasmtime
-/// 47.0.4). 1.15-tagged artifacts reject deterministically through the
-/// same binding check (see `old_engine_line_rejected_deterministically`).
-pub const YARA_ENGINE_VERSION: &str = "yara-x/1.20";
+/// Phase 01: `yara-x/1.23` from official crates.io yara-x 1.23.0 (the
+/// temporary compat fork was removed once it resolved Wasmtime 48.0.8).
+/// 1.15-tagged artifacts reject deterministically through the same binding
+/// check (see `old_engine_line_rejected_deterministically`).
+pub const YARA_ENGINE_VERSION: &str = "yara-x/1.23";
 
 /// Local serialization envelope version for [`CompiledArtifact`].
 /// Increment when the envelope layout/meaning changes; binding checks reject
@@ -173,7 +173,7 @@ mod tests {
     #[test]
     fn old_engine_line_rejected_deterministically() {
         // Phase 40: pre-upgrade 1.15-tagged artifacts reject deterministically
-        // under the 1.20 engine tag (binding-only, never deserialized).
+        // under the current engine tag (binding-only, never deserialized).
         // Local compiled bytes are metadata; execution always recompiles
         // approved source, so no migration path executes old blobs.
         let mut artifact = CompiledArtifact::compile("rule a { condition: false }").unwrap();

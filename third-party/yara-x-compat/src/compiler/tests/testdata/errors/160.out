@@ -1,5 +1,0 @@
-error[E047]: too many variables
- --> line:6:7
-  |
-6 |       1 of ($a)
-  |       ^^^^^^^^ too many local variables

@@ -19,6 +19,15 @@ port = 8080
 trusted_proxies = ["127.0.0.1", "::1", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
 
 # =============================================================================
+# HTTP / REQUEST BODY POLICY
+# =============================================================================
+
+[http]
+# Global request-body cap. A site can override it with
+# [proxy] max_request_body_size. Bodies above the resolved cap return 413.
+max_streaming_body_size = 10485760
+
+# =============================================================================
 # ADMIN API CONFIGURATION
 # =============================================================================
 
@@ -87,13 +96,20 @@ mode = "return_404"
 # Enable TCP protocol filtering
 enabled = true
 
-# Worker pool size for TCP connections
+# Accept loops per bound TCP listener
 worker_pool_size = 4
 
-# TCP protocol definitions
+# Close a proxied connection that has no traffic in either direction for this
+# long. This is not a whole-connection lifetime cap.
+idle_timeout_secs = 300
+
+# TCP protocol definitions. Each entry expands into one listener per port and
+# address family ([server] host, plus host_v6). {port} is the listener port.
+# Invalid upstreams, duplicate ports and empty port lists fail configtest.
 [tcp.protocols.smtp]
 ports = [25, 587, 465]
 upstream_format = "127.0.0.1:{port}"
+upstream_format_v6 = "[::1]:{port}"
 
 [tcp.protocols.imap]
 ports = [143, 993]
@@ -110,6 +126,32 @@ upstream_format = "127.0.0.1:{port}"
 [tcp.protocols.postgres]
 ports = [5432]
 upstream_format = "127.0.0.1:{port}"
+
+# Custom protocol: disable the built-in detector for bytes it does not know.
+# [tcp.protocols.custom]
+# ports = [9000]
+# upstream_format = "127.0.0.1:{port}"
+# filter_enabled = false
+
+# =============================================================================
+# UDP PROXYING (BETA)
+# =============================================================================
+
+[udp]
+# UDP proxying is opt-in. When enabled, each protocol entry becomes a listener
+# with a bounded request/response flow map.
+enabled = false
+worker_pool_size = 4
+max_packet_size = 4096
+max_flows = 4096
+flow_idle_timeout_secs = 60
+rate_per_ip = 1000
+rate_global = 100000
+
+[udp.protocols.dns]
+ports = [5353]
+upstream_format = "127.0.0.1:53"
+upstream_format_v6 = "[::1]:53"
 
 # =============================================================================
 # TARPIT CONFIGURATION
@@ -197,50 +239,35 @@ blackhole_threshold = 0.9         # Enter blackhole at 90% capacity
 blackhole_duration_secs = 60      # Blackhole duration
 
 # =============================================================================
-# ATTACK DETECTION DEFAULTS
+# ATTACK DETECTION
 # =============================================================================
-
-[defaults.attack_detection]
-# Enable attack detection
-enabled = true
-
-# Paranoia level: 1 (low), 2 (medium), 3 (high)
-# Higher levels have more patterns but may cause false positives
-paranoia_level = 2
-
-# Action when attack detected: "stall", "block", "log"
-# "stall" - Hold connection indefinitely (recommended for stealth)
-# "block" - Return 403 response
-# "log" - Log only, allow request through
-action = "stall"
-
-# SQL Injection detection
-[defaults.attack_detection.sqli]
-enabled = true
-
-# Cross-Site Scripting detection
-[defaults.attack_detection.xss]
-enabled = true
-
-# Path Traversal detection
-[defaults.attack_detection.path_traversal]
-enabled = true
-# Additional patterns to detect (added to defaults)
-custom_patterns = []
-
-# Remote File Inclusion detection
-[defaults.attack_detection.rfi]
-enabled = true
-custom_patterns = []
-
-# Server-Side Request Forgery detection
-[defaults.attack_detection.ssrf]
-enabled = true
-# Block requests to private IP addresses
-block_private_ips = true
-# Whitelist of allowed domains for SSRF checks
-allowed_domains = []
-custom_patterns = []
+#
+# Attack detection is configured per site (config/sites/<domain>.toml). There
+# is no [defaults.attack_detection] table in main.toml; the application builds
+# its global detector from built-in defaults (paranoia_level = 2, action
+# = "block") and applies each site's overrides on top.
+#
+# Site keys (all optional; absent keys inherit the global value):
+#
+#   [attack_detection]
+#   enabled = true
+#   paranoia_level = 2          # 1 (low), 2 (medium), 3 (high)
+#   action = "block"            # "block" (default), "stall", or "log"
+#
+#   [attack_detection.sqli]                 # enabled + custom_patterns
+#   [attack_detection.xss]                  # enabled + custom_patterns
+#   [attack_detection.path_traversal]       # enabled + custom_patterns
+#   [attack_detection.rfi]                  # enabled + custom_patterns
+#   [attack_detection.ssrf]                 # enabled + custom_patterns +
+#                                           # block_private_ips +
+#                                           # allowed_domains +
+#                                           # allowlist_only_mode
+#
+#   [attack_detection.headers]              # payload-scan allow/deny lists
+#   scan = ["x-app-user"]                   # extra user-controlled headers
+#   skip = ["x-internal-trace"]             # never payload-scan these
+#
+# See config/sites/example.com.toml and docs/ATTACK_DETECTION.md.
 
 # =============================================================================
 # BOT PROTECTION DEFAULTS
@@ -472,11 +499,18 @@ persistence_file = "/var/lib/synvoid/blocked_ips.json"
 # =============================================================================
 
 [defaults.worker_pool]
-# Mode: "auto" (based on CPU cores), "fixed"
-mode = "auto"
+# Mode: "shared" or "isolated"
+mode = "shared"
 
-# Fixed worker count (when mode = "fixed")
-workers = 4
+# UnifiedServerWorker process count. The canonical data plane is ONE worker
+# (one Tokio runtime; scale with [process_manager].worker_threads). A value
+# greater than 1 is an explicit fault-isolation opt-in: admin sessions, CSRF
+# tokens, the admin rate-limit budget, metrics and request logs are
+# worker-local. Keep this at 1 unless you accept that limitation.
+workers = 1
+
+# Required acknowledgement for workers > 1. Startup fails without it.
+allow_multi_worker = false
 
 # =============================================================================
 # PERSISTENCE CONFIGURATION
@@ -488,3 +522,22 @@ enabled = true
 
 # Directory for persistent data
 data_dir = "/var/lib/synvoid"
+
+# =============================================================================
+# SECURITY
+# =============================================================================
+
+[security]
+# Worker filesystem sandbox policy (Linux Landlock):
+#   "off"      - explicit: no in-process filesystem confinement (default)
+#   "auto"     - apply the sandbox only when the backend fully enforces the
+#                requested filesystem guarantees; otherwise log the enforcement
+#                report and continue without it
+#   "required" - fail worker startup unless every requested filesystem
+#                guarantee is fully enforced
+#
+# The default is "off": child jail/app-server processes, custom static roots
+# and operator-provided rule/YARA directories must be qualified for your
+# deployment before enabling "auto" or "required". This is filesystem
+# confinement only; syscall filtering is not implemented here.
+worker_sandbox = "off"

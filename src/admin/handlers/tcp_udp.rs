@@ -1,26 +1,28 @@
+//! Read-only TCP/UDP listener inventory.
+//!
+//! The runtime listener definitions live in the top-level `[tcp.protocols.*]`
+//! and `[udp.protocols.*]` maps. This surface reports what the pools actually
+//! bound in this process and the real active connection/flow counts. There is
+//! no create/delete endpoint: mutating a running listener requires a restart
+//! (or a deliberate reload feature), and a handler that wrote a site-local
+//! config no runtime code consumed was a lie.
+
 use super::super::state::AdminState;
 use super::common::OptionalAuth;
-use axum::{
-    extract::{Path, State},
-    http::StatusCode,
-    Json,
-};
-use serde::{Deserialize, Serialize};
+use axum::{extract::State, http::StatusCode, Json};
+use serde::Serialize;
 use std::sync::Arc;
-use synvoid_config::site::SitePortConfig;
-use synvoid_core::admin_mutation::{
-    AdminActor, AdminAuditEvent, AdminMutationAuthority, AdminMutationResult, AdminMutationStatus,
-    PropagationStatus,
-};
 use utoipa::ToSchema;
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct TcpUdpListener {
     pub id: String,
+    pub transport: String,
     pub port: u16,
     pub protocol: String,
     pub upstream: String,
     pub enabled: bool,
+    pub bound: bool,
     pub active_connections: usize,
 }
 
@@ -33,223 +35,111 @@ pub struct ListListenersResponse {
     get,
     path = "/tcp-udp/listeners",
     responses(
-        (status = 200, description = "List of TCP/UDP listeners", body = ListListenersResponse),
+        (status = 200, description = "Bound TCP/UDP listeners", body = ListListenersResponse),
         (status = 401, description = "Unauthorized"),
         (status = 500, description = "Internal server error")
     ),
     tag = "tcp_udp"
 )]
 pub async fn list_listeners(
-    State(state): State<Arc<AdminState>>,
+    State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<ListListenersResponse>, StatusCode> {
-    let config = state.process.config.read().await;
     let mut listeners = Vec::new();
 
-    for (site_id, site_config) in &config.sites {
-        for (name, port_config) in &site_config.tcp.ports {
-            if let (Some(port), Some(upstream)) = (port_config.port, &port_config.upstream) {
-                listeners.push(TcpUdpListener {
-                    id: format!("{}-{}", site_id, name),
-                    port,
-                    protocol: name.clone(),
-                    upstream: upstream.clone(),
-                    enabled: site_config.tcp.enabled.unwrap_or(false),
-                    active_connections: 0,
-                });
-            }
-        }
+    for listener in crate::tcp::listener::tcp_listener_snapshots() {
+        listeners.push(TcpUdpListener {
+            id: format!(
+                "tcp:{}:{}:{}",
+                listener.protocol, listener.bind_address, listener.port
+            ),
+            transport: "tcp".to_string(),
+            port: listener.port,
+            protocol: listener.protocol,
+            upstream: listener.upstream,
+            enabled: true,
+            bound: listener.bound,
+            active_connections: listener.active_connections,
+        });
     }
+
+    for listener in crate::udp::listener::udp_listener_snapshots() {
+        listeners.push(TcpUdpListener {
+            id: format!(
+                "udp:{}:{}:{}",
+                listener.protocol, listener.bind_address, listener.port
+            ),
+            transport: "udp".to_string(),
+            port: listener.port,
+            protocol: listener.protocol,
+            upstream: listener.upstream,
+            enabled: true,
+            bound: listener.bound,
+            active_connections: listener.active_flows,
+        });
+    }
+
+    listeners.sort_by(|a, b| {
+        a.transport
+            .cmp(&b.transport)
+            .then(a.port.cmp(&b.port))
+            .then(a.protocol.cmp(&b.protocol))
+    });
 
     Ok(Json(ListListenersResponse { listeners }))
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
-pub struct CreateListenerRequest {
-    pub site_id: String,
-    pub port: u16,
-    pub protocol: String,
-    pub upstream: String,
+#[derive(Debug, Serialize, ToSchema)]
+pub struct HttpListener {
+    pub id: String,
+    pub transport: String,
+    pub configured_addr: String,
+    pub bound_addr: Option<String>,
+    pub tls: bool,
+    pub http2: bool,
+    pub http3: bool,
+    pub default_site: Option<String>,
+    pub site_count: usize,
+    pub state: String,
+    pub active_connections: usize,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
-pub struct CreateListenerResponse {
-    pub listener: TcpUdpListener,
+pub struct ListHttpListenersResponse {
+    pub listeners: Vec<HttpListener>,
 }
 
 #[utoipa::path(
-    post,
-    path = "/tcp-udp/listeners",
-    request_body = CreateListenerRequest,
+    get,
+    path = "/http/listeners",
     responses(
-        (status = 200, description = "Listener created"),
+        (status = 200, description = "Bound HTTP/HTTPS/HTTP3 listeners", body = ListHttpListenersResponse),
         (status = 401, description = "Unauthorized"),
-        (status = 404, description = "Site not found"),
-        (status = 400, description = "Invalid request"),
         (status = 500, description = "Internal server error")
     ),
     tag = "tcp_udp"
 )]
-pub async fn create_listener(
-    State(state): State<Arc<AdminState>>,
+pub async fn list_http_listeners(
+    State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
-    Json(req): Json<CreateListenerRequest>,
-) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
-    let mut config = state.process.config.write().await;
-    let site_config = config
-        .sites
-        .get_mut(&req.site_id)
-        .ok_or(StatusCode::NOT_FOUND)?;
-
-    let listener_id = format!("{}-{}", req.site_id, req.protocol);
-
-    tracing::info!(
-        "Creating TCP/UDP listener {} on port {} for site {} -> upstream {}",
-        listener_id,
-        req.port,
-        req.site_id,
-        req.upstream
-    );
-
-    if !site_config.tcp.enabled.unwrap_or(false) {
-        site_config.tcp.enabled = Some(true);
-    }
-
-    // The port must actually land in the site config. This handler previously
-    // set `tcp.enabled` and then reported `Applied` + wrote an audit event
-    // without inserting anything, so the created listener never appeared in
-    // `list_listeners` — a success response for a mutation that did not happen.
-    site_config.tcp.ports.insert(
-        req.protocol.clone(),
-        SitePortConfig {
-            port: Some(req.port),
-            upstream: Some(req.upstream.clone()),
-            filter: None,
-        },
-    );
-
-    let audit_id = uuid::Uuid::new_v4().to_string();
-
-    let audit_event = AdminAuditEvent {
-        audit_id: audit_id.clone(),
-        timestamp: synvoid_utils::safe_unix_timestamp(),
-        actor: AdminActor::new(AdminMutationAuthority::AdminManual),
-        action: "create_tcp_udp_listener".to_string(),
-        target_kind: "tcp_udp_listener".to_string(),
-        target_id: listener_id.clone(),
-        prior_state: None,
-        requested_state: Some(serde_json::json!({
-            "site_id": req.site_id,
-            "port": req.port,
-            "protocol": req.protocol,
-            "upstream": req.upstream,
-        })),
-        resulting_state: Some(serde_json::json!({
-            "listener_id": listener_id,
-            "port": req.port,
-            "protocol": req.protocol,
-            "upstream": req.upstream,
-        })),
-        mutation_status: AdminMutationStatus::Applied,
-        propagation_status: PropagationStatus::AppliedLocalOnly,
-        event_id: None,
-    };
-    state.audit.log_audit_event(&audit_event);
-
-    Ok(Json(AdminMutationResult {
-        status: AdminMutationStatus::Applied,
-        target: format!("{}:{}", req.site_id, req.protocol),
-        local_store_mutated: true,
-        propagation: PropagationStatus::AppliedLocalOnly,
-        event_id: None,
-        audit_id: Some(audit_id),
-        message: format!("TCP/UDP listener created on port {}", req.port),
-    }))
-}
-
-#[utoipa::path(
-    delete,
-    path = "/tcp-udp/listeners/{listener_id}",
-    params(
-        ("listener_id" = String, Path, description = "Listener ID to delete")
-    ),
-    responses(
-        (status = 200, description = "Listener deleted"),
-        (status = 401, description = "Unauthorized"),
-        (status = 404, description = "Listener not found"),
-        (status = 400, description = "Invalid listener ID format"),
-        (status = 500, description = "Internal server error")
-    ),
-    tag = "tcp_udp"
-)]
-pub async fn delete_listener(
-    State(state): State<Arc<AdminState>>,
-    _auth: OptionalAuth,
-    Path(listener_id): Path<String>,
-) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
-    let mut config = state.process.config.write().await;
-
-    // Listener ids are `{site_id}-{protocol}`. Site ids routinely contain a
-    // dash, so the split must be on the LAST one: `splitn(2, '-')` turned
-    // `my-site-http` into site `my` + protocol `site-http`. Protocol names
-    // never contain a dash, which makes `rsplit_once` the correct cut.
-    let Some((site_id, protocol_name)) = listener_id.rsplit_once('-') else {
-        return Ok(Json(AdminMutationResult {
-            status: AdminMutationStatus::InvalidRejected,
-            target: listener_id,
-            local_store_mutated: false,
-            propagation: PropagationStatus::NotApplicable,
-            event_id: None,
-            audit_id: None,
-            message: "Invalid listener ID format".to_string(),
-        }));
-    };
-
-    let site_config = config.sites.get_mut(site_id).ok_or(StatusCode::NOT_FOUND)?;
-
-    if site_config.tcp.ports.remove(protocol_name).is_some() {
-        let audit_id = uuid::Uuid::new_v4().to_string();
-
-        let audit_event = AdminAuditEvent {
-            audit_id: audit_id.clone(),
-            timestamp: synvoid_utils::safe_unix_timestamp(),
-            actor: AdminActor::new(AdminMutationAuthority::AdminManual),
-            action: "delete_tcp_udp_listener".to_string(),
-            target_kind: "tcp_udp_listener".to_string(),
-            target_id: listener_id.clone(),
-            prior_state: None,
-            requested_state: None,
-            resulting_state: Some(serde_json::json!({
-                "listener_id": listener_id,
-                "removed": true,
-            })),
-            mutation_status: AdminMutationStatus::Applied,
-            propagation_status: PropagationStatus::AppliedLocalOnly,
-            event_id: None,
-        };
-        state.audit.log_audit_event(&audit_event);
-
-        tracing::info!("Deleted TCP/UDP listener {}", listener_id);
-        Ok(Json(AdminMutationResult {
-            status: AdminMutationStatus::Applied,
-            target: listener_id,
-            local_store_mutated: true,
-            propagation: PropagationStatus::AppliedLocalOnly,
-            event_id: None,
-            audit_id: Some(audit_id),
-            message: "TCP/UDP listener deleted".to_string(),
-        }))
-    } else {
-        Ok(Json(AdminMutationResult {
-            status: AdminMutationStatus::NoOpAlreadyAbsent,
-            target: listener_id,
-            local_store_mutated: false,
-            propagation: PropagationStatus::NotApplicable,
-            event_id: None,
-            audit_id: None,
-            message: "Listener not found".to_string(),
-        }))
-    }
+) -> Result<Json<ListHttpListenersResponse>, StatusCode> {
+    let listeners = crate::server::http_listener_snapshots()
+        .into_iter()
+        .map(|listener| HttpListener {
+            id: listener.id,
+            transport: listener.transport,
+            configured_addr: listener.configured_addr,
+            bound_addr: listener.bound_addr,
+            tls: listener.tls,
+            http2: listener.http2,
+            http3: listener.http3,
+            default_site: listener.default_site,
+            site_count: listener.site_count,
+            state: listener.state,
+            active_connections: listener.active_connections,
+        })
+        .collect();
+    Ok(Json(ListHttpListenersResponse { listeners }))
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -263,33 +153,34 @@ pub struct ProtocolInfo {
     get,
     path = "/tcp-udp/protocols",
     responses(
-        (status = 200, description = "List of supported protocols", body = Vec<ProtocolInfo>),
+        (status = 200, description = "Configured TCP/UDP protocol profiles", body = Vec<ProtocolInfo>),
         (status = 401, description = "Unauthorized"),
         (status = 500, description = "Internal server error")
     ),
     tag = "tcp_udp"
 )]
 pub async fn list_protocols(
-    State(_state): State<Arc<AdminState>>,
+    State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<Vec<ProtocolInfo>>, StatusCode> {
-    let protocols = vec![
-        ProtocolInfo {
-            name: "http".to_string(),
-            description: "HTTP/1.1 proxy".to_string(),
+    let config = state.process.config.read().await;
+    let mut protocols = Vec::new();
+    for name in config.main.tcp.protocols.keys() {
+        protocols.push(ProtocolInfo {
+            name: name.clone(),
+            description: "TCP protocol profile from [tcp.protocols]".to_string(),
             supported: true,
-        },
-        ProtocolInfo {
-            name: "http2".to_string(),
-            description: "HTTP/2 proxy".to_string(),
+        });
+    }
+    for name in config.main.udp.protocols.keys() {
+        protocols.push(ProtocolInfo {
+            name: name.clone(),
+            description: "UDP protocol profile from [udp.protocols]".to_string(),
             supported: true,
-        },
-        ProtocolInfo {
-            name: "tls".to_string(),
-            description: "TLS/SSL proxy".to_string(),
-            supported: true,
-        },
-    ];
+        });
+    }
+    protocols.sort_by(|a, b| a.name.cmp(&b.name));
+    protocols.dedup_by(|a, b| a.name == b.name);
 
     Ok(Json(protocols))
 }

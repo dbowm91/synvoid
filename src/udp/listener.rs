@@ -1,13 +1,14 @@
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicI64, AtomicU32, AtomicU64, Ordering};
-use std::sync::Arc;
-use tokio::net::{UdpSocket, UnixDatagram};
-use tokio::sync::broadcast;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicI64, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, LazyLock};
+use std::time::Duration;
 
 use dashmap::DashMap;
 use metrics::{counter, gauge, histogram};
 use parking_lot::RwLock as PLRwLock;
-use std::sync::LazyLock;
+use tokio::net::{UdpSocket, UnixDatagram};
+use tokio::sync::broadcast;
 
 #[cfg(unix)]
 use socket2::{Domain, Protocol, Socket, Type};
@@ -57,6 +58,14 @@ impl Default for UdpSocketOptions {
     }
 }
 
+fn format_bind_address(host: &str, port: u16) -> String {
+    if host.contains(':') && !host.starts_with('[') {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct UdpListenerConfig {
     pub port: u16,
@@ -70,6 +79,8 @@ pub struct UdpListenerConfig {
     pub max_packet_size: usize,
     pub rate_limit_per_ip: u32,
     pub socket_options: UdpSocketOptions,
+    pub max_flows: usize,
+    pub flow_idle_timeout_secs: u64,
 }
 
 impl Default for UdpListenerConfig {
@@ -86,6 +97,8 @@ impl Default for UdpListenerConfig {
             max_packet_size: 4096,
             rate_limit_per_ip: 100,
             socket_options: UdpSocketOptions::default(),
+            max_flows: 4096,
+            flow_idle_timeout_secs: 60,
         }
     }
 }
@@ -93,21 +106,21 @@ impl Default for UdpListenerConfig {
 #[derive(Clone)]
 pub struct UdpListenerPool {
     config: UdpListenerPoolConfig,
-    listeners: Arc<PLRwLock<Vec<UdpListenerInstance>>>,
+    registered: Arc<PLRwLock<Vec<RegisteredUdpListener>>>,
+    bound: Arc<PLRwLock<Vec<BoundUdpListener>>>,
     shutdown_tx: broadcast::Sender<()>,
     protocol_detector: UdpProtocolDetector,
-    protocol_filter: UdpProtocolFilter,
     flood_protector: Option<Arc<FloodProtector>>,
     socket_options: UdpSocketOptions,
 }
 
 #[derive(Debug, Clone)]
 pub struct UdpListenerPoolConfig {
+    /// Number of concurrent receive loops per listener. Each loop shares the
+    /// listener's `Arc<UdpSocket>` and bounded flow map.
     pub worker_pool_size: usize,
     pub buffer_size: usize,
-    pub max_packets_per_second: u32,
     pub socket_options: UdpSocketOptions,
-    pub workers_per_listener: usize,
 }
 
 impl Default for UdpListenerPoolConfig {
@@ -115,29 +128,112 @@ impl Default for UdpListenerPoolConfig {
         Self {
             worker_pool_size: 4,
             buffer_size: 8192,
-            max_packets_per_second: 10000,
             socket_options: UdpSocketOptions::default(),
-            workers_per_listener: 1,
         }
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("failed to bind UDP listener {address}: {source}")]
+pub struct UdpListenerBindError {
+    pub address: String,
+    #[source]
+    pub source: std::io::Error,
+}
+
 #[derive(Debug, Clone)]
-struct UdpListenerInstance {
+struct RegisteredUdpListener {
     config: UdpListenerConfig,
+    active_flows: Arc<AtomicUsize>,
+}
+
+#[derive(Debug, Clone)]
+struct BoundUdpListener {
+    registered: RegisteredUdpListener,
+    socket: Arc<UdpSocket>,
+    upstream: UpstreamAddress,
+    local_addr: SocketAddr,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+enum FlowKey {
+    Udp {
+        client: SocketAddr,
+        upstream: SocketAddr,
+    },
+    Unix {
+        client: SocketAddr,
+        path: PathBuf,
+    },
+}
+
+enum FlowUpstream {
+    Udp(Arc<UdpSocket>),
+    Unix(Arc<UnixDatagram>),
+}
+
+struct UdpFlow {
+    upstream: FlowUpstream,
+    last_activity: AtomicI64,
+}
+
+impl UdpFlow {
+    fn touch(&self) {
+        self.last_activity.store(now_secs(), Ordering::Relaxed);
+    }
+
+    fn idle_for(&self) -> i64 {
+        now_secs().saturating_sub(self.last_activity.load(Ordering::Relaxed))
+    }
+}
+
+fn now_secs() -> i64 {
+    i64::try_from(crate::utils::safe_unix_timestamp()).unwrap_or(i64::MAX)
+}
+
+/// Process-local view of the bound UDP listeners, used by the admin API.
+#[derive(Debug, Clone)]
+pub struct UdpListenerSnapshot {
+    pub protocol: String,
+    pub bind_address: String,
+    pub port: u16,
+    pub upstream: String,
+    pub bound: bool,
+    pub workers: usize,
+    pub active_flows: usize,
+}
+
+struct UdpRegistryEntry {
+    snapshot: UdpListenerSnapshot,
+    flows: Arc<DashMap<FlowKey, Arc<UdpFlow>>>,
+}
+
+static UDP_LISTENER_REGISTRY: LazyLock<PLRwLock<Vec<UdpRegistryEntry>>> =
+    LazyLock::new(|| PLRwLock::new(Vec::new()));
+
+pub fn udp_listener_snapshots() -> Vec<UdpListenerSnapshot> {
+    UDP_LISTENER_REGISTRY
+        .read()
+        .iter()
+        .map(|entry| {
+            let mut snapshot = entry.snapshot.clone();
+            snapshot.active_flows = entry.flows.len();
+            snapshot
+        })
+        .collect()
 }
 
 impl UdpListenerPool {
-    pub fn new(pool_config: UdpListenerPoolConfig, filter_config: UdpFilterConfig) -> Self {
+    pub fn new(pool_config: UdpListenerPoolConfig) -> Self {
         let (shutdown_tx, _) = broadcast::channel(1);
         let socket_options = pool_config.socket_options.clone();
 
         Self {
             config: pool_config,
-            listeners: Arc::new(PLRwLock::new(Vec::new())),
+            registered: Arc::new(PLRwLock::new(Vec::new())),
+            bound: Arc::new(PLRwLock::new(Vec::new())),
             shutdown_tx,
             protocol_detector: UdpProtocolDetector::new(),
-            protocol_filter: UdpProtocolFilter::new(filter_config),
             flood_protector: None,
             socket_options,
         }
@@ -148,55 +244,212 @@ impl UdpListenerPool {
         self
     }
 
-    pub async fn add_listener(
-        &self,
-        listener_config: UdpListenerConfig,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let bind_addr = format!("{}:{}", listener_config.bind_address, listener_config.port);
-        let socket = UdpSocket::bind(&bind_addr).await?;
-        let local_addr = socket.local_addr()?;
-
-        tracing::info!(
-            "UDP listener bound to {} for protocol {}",
-            local_addr,
-            listener_config.expected_protocol
-        );
-
-        let instance = UdpListenerInstance {
+    /// Register a listener definition. No socket is opened here.
+    pub fn add_listener(&self, listener_config: UdpListenerConfig) {
+        self.registered.write().push(RegisteredUdpListener {
             config: listener_config,
-        };
+            active_flows: Arc::new(AtomicUsize::new(0)),
+        });
+    }
 
-        self.listeners.write().push(instance);
+    /// Bind every registered listener exactly once.
+    pub async fn bind_all(&self) -> Result<(), UdpListenerBindError> {
+        if !self.bound.read().is_empty() {
+            return Ok(());
+        }
 
+        let registered = self.registered.read().clone();
+        let mut bound = Vec::with_capacity(registered.len());
+        let mut registry_entries = Vec::with_capacity(registered.len());
+        let workers = self.config.worker_pool_size.max(1);
+
+        for entry in registered {
+            let bind_addr = format_bind_address(&entry.config.bind_address, entry.config.port);
+
+            #[cfg(unix)]
+            let socket = {
+                let addr: SocketAddr =
+                    bind_addr
+                        .parse::<SocketAddr>()
+                        .map_err(|e| UdpListenerBindError {
+                            address: bind_addr.clone(),
+                            source: std::io::Error::new(
+                                std::io::ErrorKind::InvalidInput,
+                                e.to_string(),
+                            ),
+                        })?;
+
+                let domain = if addr.is_ipv6() {
+                    Domain::IPV6
+                } else {
+                    Domain::IPV4
+                };
+                let sock = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP)).map_err(|e| {
+                    UdpListenerBindError {
+                        address: bind_addr.clone(),
+                        source: e,
+                    }
+                })?;
+                sock.set_reuse_address(true).ok();
+                if self.socket_options.reuse_port {
+                    #[cfg(target_os = "linux")]
+                    sock.set_reuse_port(true).ok();
+                }
+                sock.set_nonblocking(true)
+                    .map_err(|e| UdpListenerBindError {
+                        address: bind_addr.clone(),
+                        source: e,
+                    })?;
+                if let Err(e) = sock.set_recv_buffer_size(self.socket_options.recv_buffer_size) {
+                    tracing::warn!("Failed to set UDP recv buffer size: {}", e);
+                }
+                if let Err(e) = sock.set_send_buffer_size(self.socket_options.send_buffer_size) {
+                    tracing::warn!("Failed to set UDP send buffer size: {}", e);
+                }
+                sock.bind(&addr.into()).map_err(|e| UdpListenerBindError {
+                    address: bind_addr.clone(),
+                    source: e,
+                })?;
+                let std_socket: std::net::UdpSocket = sock.into();
+                UdpSocket::from_std(std_socket).map_err(|e| UdpListenerBindError {
+                    address: bind_addr.clone(),
+                    source: e,
+                })?
+            };
+
+            #[cfg(not(unix))]
+            let socket = UdpSocket::bind(&bind_addr)
+                .await
+                .map_err(|e| UdpListenerBindError {
+                    address: bind_addr.clone(),
+                    source: e,
+                })?;
+
+            let local_addr = socket.local_addr().map_err(|e| UdpListenerBindError {
+                address: bind_addr.clone(),
+                source: e,
+            })?;
+            let upstream = UpstreamAddress::parse(&entry.config.upstream_address).map_err(|e| {
+                UdpListenerBindError {
+                    address: bind_addr.clone(),
+                    source: std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!("invalid upstream '{}': {e}", entry.config.upstream_address),
+                    ),
+                }
+            })?;
+
+            tracing::info!(
+                address = %local_addr,
+                protocol = %entry.config.expected_protocol,
+                upstream = %entry.config.upstream_address,
+                workers,
+                "UDP listener bound"
+            );
+
+            registry_entries.push(UdpRegistryEntry {
+                snapshot: UdpListenerSnapshot {
+                    protocol: entry.config.expected_protocol.clone(),
+                    bind_address: entry.config.bind_address.clone(),
+                    port: local_addr.port(),
+                    upstream: entry.config.upstream_address.clone(),
+                    bound: true,
+                    workers,
+                    active_flows: 0,
+                },
+                flows: Arc::new(DashMap::new()),
+            });
+
+            bound.push(BoundUdpListener {
+                registered: entry,
+                socket: Arc::new(socket),
+                upstream,
+                local_addr,
+            });
+        }
+
+        *self.bound.write() = bound;
+        {
+            // Merge into the process-wide inventory; see the TCP pool.
+            let mut registry = UDP_LISTENER_REGISTRY.write();
+            for entry in registry_entries {
+                let existing = registry.iter_mut().find(|current| {
+                    current.snapshot.port == entry.snapshot.port
+                        && current.snapshot.bind_address == entry.snapshot.bind_address
+                        && current.snapshot.protocol == entry.snapshot.protocol
+                });
+                if let Some(current) = existing {
+                    *current = entry;
+                } else {
+                    registry.push(entry);
+                }
+            }
+        }
         Ok(())
     }
 
     pub async fn start(&self) {
-        let listeners = self.listeners.read().clone();
-        let listener_count = listeners.len();
-        let workers_per_listener = self.config.workers_per_listener;
-        let socket_options = self.socket_options.clone();
+        if self.bound.read().is_empty() && !self.registered.read().is_empty() {
+            if let Err(e) = self.bind_all().await {
+                tracing::error!("UDP listener pool failed to bind: {}", e);
+                return;
+            }
+        }
 
-        for instance in listeners {
+        let bound = self.bound.read().clone();
+        let listener_count = bound.len();
+        let workers_per_listener = self.config.worker_pool_size.max(1);
+
+        for instance in bound {
+            let filter = UdpProtocolFilter::new(UdpFilterConfig {
+                enabled: instance.registered.config.filter_enabled,
+                strict_mode: instance.registered.config.strict_mode,
+                ..Default::default()
+            });
+            let flows: Arc<DashMap<FlowKey, Arc<UdpFlow>>> = Arc::new(DashMap::new());
+            {
+                let mut registry = UDP_LISTENER_REGISTRY.write();
+                if let Some(entry) = registry.iter_mut().find(|e| {
+                    e.snapshot.port == instance.local_addr.port()
+                        && e.snapshot.bind_address == instance.registered.config.bind_address
+                }) {
+                    entry.flows = flows.clone();
+                }
+            }
+            let rate_limiter = Arc::new(UdpRateLimiter::new(
+                instance.registered.config.rate_limit_per_ip,
+            ));
+
+            let receive_buffer = self
+                .config
+                .buffer_size
+                .max(instance.registered.config.max_packet_size);
             for worker_id in 0..workers_per_listener {
-                let config = instance.config.clone();
+                let config = instance.registered.config.clone();
+                let active_flows = instance.registered.active_flows.clone();
+                let socket = instance.socket.clone();
+                let upstream = instance.upstream.clone();
                 let shutdown_rx = self.shutdown_tx.subscribe();
                 let detector = self.protocol_detector.clone();
-                let filter = self.protocol_filter.clone();
+                let filter = filter.clone();
                 let flood_protector = self.flood_protector.clone();
-                let buffer_size = self.config.buffer_size;
-                let sock_opts = socket_options.clone();
+                let flows = flows.clone();
+                let rate_limiter = rate_limiter.clone();
 
                 tokio::spawn(async move {
                     Self::listen_loop(
+                        socket,
                         config,
+                        active_flows,
+                        worker_id,
+                        upstream,
                         shutdown_rx,
                         detector,
                         filter,
                         flood_protector,
-                        buffer_size,
-                        sock_opts,
-                        worker_id,
+                        flows,
+                        rate_limiter,
+                        receive_buffer,
                     )
                     .await;
                 });
@@ -211,126 +464,31 @@ impl UdpListenerPool {
         );
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn listen_loop(
+        socket: Arc<UdpSocket>,
         config: UdpListenerConfig,
+        active_flows: Arc<AtomicUsize>,
+        worker_id: usize,
+        upstream_addr: UpstreamAddress,
         mut shutdown_rx: broadcast::Receiver<()>,
         detector: UdpProtocolDetector,
         filter: UdpProtocolFilter,
         flood_protector: Option<Arc<FloodProtector>>,
+        flows: Arc<DashMap<FlowKey, Arc<UdpFlow>>>,
+        rate_limiter: Arc<UdpRateLimiter>,
         buffer_size: usize,
-        socket_options: UdpSocketOptions,
-        worker_id: usize,
     ) {
-        let bind_addr = format!("{}:{}", config.bind_address, config.port);
-
-        #[cfg(unix)]
-        let socket = {
-            let addr: SocketAddr = match bind_addr.parse() {
-                Ok(a) => a,
-                Err(e) => {
-                    tracing::error!("Failed to parse bind address {}: {}", bind_addr, e);
-                    return;
-                }
-            };
-
-            let domain = if addr.is_ipv6() {
-                Domain::IPV6
-            } else {
-                Domain::IPV4
-            };
-
-            let sock = match Socket::new(domain, Type::DGRAM, Some(Protocol::UDP)) {
-                Ok(s) => s,
-                Err(e) => {
-                    tracing::error!("Failed to create UDP socket for {}: {}", bind_addr, e);
-                    return;
-                }
-            };
-
-            sock.set_reuse_address(true).ok();
-
-            if socket_options.reuse_port {
-                #[cfg(target_os = "linux")]
-                sock.set_reuse_port(true).ok();
-            }
-
-            sock.set_nonblocking(true).ok();
-
-            if let Err(e) = sock.set_recv_buffer_size(socket_options.recv_buffer_size) {
-                tracing::warn!("Failed to set UDP recv buffer size: {}", e);
-            }
-            if let Err(e) = sock.set_send_buffer_size(socket_options.send_buffer_size) {
-                tracing::warn!("Failed to set UDP send buffer size: {}", e);
-            }
-
-            if let Err(e) = sock.bind(&addr.into()) {
-                tracing::error!("Failed to bind UDP socket to {}: {}", bind_addr, e);
-                return;
-            }
-
-            let std_socket: std::net::UdpSocket = sock.into();
-            match UdpSocket::from_std(std_socket) {
-                Ok(s) => s,
-                Err(e) => {
-                    tracing::error!(
-                        "Failed to convert to tokio UDP socket for {}: {}",
-                        bind_addr,
-                        e
-                    );
-                    return;
-                }
-            }
-        };
-
-        #[cfg(not(unix))]
-        let socket = match UdpSocket::bind(&bind_addr).await {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::error!("Failed to bind UDP listener on {}: {}", bind_addr, e);
-                return;
-            }
-        };
-
-        let upstream_addr = match UpstreamAddress::parse(&config.upstream_address) {
-            Ok(addr) => addr,
-            Err(e) => {
-                tracing::error!(
-                    "Invalid upstream address {}: {}",
-                    config.upstream_address,
-                    e
-                );
-                return;
-            }
-        };
-
-        let mut upstream_unix_socket: Option<UnixDatagram> = match &upstream_addr {
-            UpstreamAddress::Tcp(_) => None,
-            UpstreamAddress::Unix(path) => Self::connect_unix_datagram(path),
-            UpstreamAddress::QuicTunnel { .. } => None,
-        };
-
-        let tcp_upstream_socket: Option<UdpSocket> = match upstream_addr {
-            UpstreamAddress::Tcp(_) => match UdpSocket::bind("0.0.0.0:0").await {
-                Ok(s) => Some(s),
-                Err(e) => {
-                    tracing::error!("Failed to bind upstream UDP socket: {}", e);
-                    None
-                }
-            },
-            UpstreamAddress::Unix(_) => None,
-            UpstreamAddress::QuicTunnel { .. } => None,
-        };
+        let bind_addr = format_bind_address(&config.bind_address, config.port);
+        let mut pooled_buf = BufferPool::acquire(buffer_size);
+        let mut cleanup_counter: u32 = 0;
 
         tracing::info!(
-            "UDP listener running on {} for protocol {} (worker {})",
-            bind_addr,
-            config.expected_protocol,
-            worker_id
+            address = %bind_addr,
+            protocol = %config.expected_protocol,
+            worker = worker_id,
+            "UDP listener receive loop running"
         );
-
-        let mut pooled_buf = BufferPool::acquire(buffer_size);
-        let rate_limiter = UdpRateLimiter::new(config.rate_limit_per_ip);
-        let mut cleanup_counter: u32 = 0;
 
         loop {
             tokio::select! {
@@ -375,25 +533,26 @@ impl UdpListenerPool {
                                 continue;
                             }
 
+                            // Enforce the configured maximum before protocol
+                            // detection or flow allocation: an oversized
+                            // datagram must not consume per-flow resources.
+                            if n > config.max_packet_size {
+                                counter!("synvoid.udp.oversized_packet").increment(1);
+                                continue;
+                            }
+
                             if config.filter_enabled {
                                 let detection_result = detector.detect_from_bytes(data);
-                                let action = filter.check(&config.expected_protocol, &detection_result.protocol);
+                                let action =
+                                    filter.check(&config.expected_protocol, &detection_result.protocol);
 
                                 match action {
                                     UdpFilterAction::Drop => {
-                                        tracing::debug!(
-                                            "UDP protocol mismatch on port {}: expected {} but detected {} from {}",
-                                            config.port,
-                                            config.expected_protocol,
-                                            detection_result.protocol.as_str(),
-                                            client_addr
-                                        );
                                         counter!("synvoid.udp.protocol_rejected").increment(1);
-                                        histogram!("synvoid.udp.packet_duration").record(start.elapsed());
                                         continue;
                                     }
                                     UdpFilterAction::RateLimit { rate } => {
-                                        if rate_limiter.check_with_limit(client_ip, rate) {
+                                        if !rate_limiter.check_with_limit(client_ip, rate) {
                                             counter!("synvoid.udp.protocol_rate_limited").increment(1);
                                             continue;
                                         }
@@ -408,153 +567,59 @@ impl UdpListenerPool {
                                 }
                             }
 
-                            if n > config.max_packet_size {
-                                counter!("synvoid.udp.oversized_packet").increment(1);
-                                continue;
-                            }
-
-                            let send_result: Result<usize, std::io::Error> = match &upstream_addr {
-                                UpstreamAddress::Tcp(addr) => {
-                                    if let Some(ref socket) = tcp_upstream_socket {
-                                        socket.send_to(data, *addr).await
-                                    } else {
-                                        Err(std::io::Error::new(
-                                            std::io::ErrorKind::NotConnected,
-                                            "TCP upstream socket not available"
-                                        ))
-                                    }
+                            match &upstream_addr {
+                                UpstreamAddress::Tcp(upstream) => {
+                                    Self::forward_udp_datagram(
+                                        data,
+                                        n,
+                                        client_addr,
+                                        *upstream,
+                                        &socket,
+                                        &config,
+                                        &flows,
+                                        &active_flows,
+                                        bandwidth.as_ref(),
+                                    )
+                                    .await;
                                 }
                                 UpstreamAddress::Unix(path) => {
-                                    let needs_reconnect = upstream_unix_socket.is_none();
-                                    if needs_reconnect {
-                                        upstream_unix_socket = Self::connect_unix_datagram(path);
-                                    }
-
-                                    if let Some(ref socket) = upstream_unix_socket {
-                                        match socket.send(data).await {
-                                            Ok(sent) => Ok(sent),
-                                            Err(e) => {
-                                                if matches!(
-                                                    e.kind(),
-                                                    std::io::ErrorKind::NotConnected
-                                                        | std::io::ErrorKind::ConnectionRefused
-                                                        | std::io::ErrorKind::AddrNotAvailable
-                                                ) {
-                                                    tracing::warn!(
-                                                        "Unix datagram send failed for {}: {}, retrying connect",
-                                                        path.display(),
-                                                        e
-                                                    );
-                                                    upstream_unix_socket = Self::connect_unix_datagram(path);
-                                                    if let Some(ref socket) = upstream_unix_socket {
-                                                        socket.send(data).await
-                                                    } else {
-                                                        Err(std::io::Error::new(
-                                                            std::io::ErrorKind::NotConnected,
-                                                            format!(
-                                                                "Unix upstream socket not available for {}",
-                                                                path.display()
-                                                            ),
-                                                        ))
-                                                    }
-                                                } else {
-                                                    Err(e)
-                                                }
-                                            }
-                                        }
-                                    } else {
-                                        Err(std::io::Error::new(
-                                            std::io::ErrorKind::NotConnected,
-                                            format!(
-                                                "Unix upstream socket not available for {}",
-                                                path.display()
-                                            ),
-                                        ))
-                                    }
+                                    Self::forward_unix_datagram(
+                                        data,
+                                        n,
+                                        client_addr,
+                                        path,
+                                        &socket,
+                                        &config,
+                                        &flows,
+                                        &active_flows,
+                                        bandwidth.as_ref(),
+                                    )
+                                    .await;
                                 }
                                 UpstreamAddress::QuicTunnel { peer, port } => {
-                                    match get_udp_tunnel_manager() {
-                                        Some(manager) => {
-                                            match manager.send(peer, *port, data, client_addr).await {
-                                                Ok(_) => {
-                                                    counter!("synvoid.udp.quic_tunnel.packets_sent").increment(1);
-                                                    counter!("synvoid.udp.quic_tunnel.datagram_used").increment(1);
-                                                    Ok(n)
-                                                }
-                                                Err(e) => {
-                                                    Err(std::io::Error::new(
-                                                        std::io::ErrorKind::NotConnected,
-                                                        format!("Failed to send via UDP tunnel manager: {}", e)
-                                                    ))
-                                                }
+                                    let send_result = Self::forward_quic_tunnel(
+                                        data, peer, *port, client_addr,
+                                    )
+                                    .await;
+                                    match send_result {
+                                        Ok(_) => {
+                                            counter!("synvoid.udp.packets_forwarded").increment(1);
+                                            gauge!("synvoid.udp.packet_size").set(n as f64);
+                                            if let Some(ref bw) = bandwidth {
+                                                let upstream_str = format!("{}:{}", peer, port);
+                                                bw.record_proxied(n as u64, 0, &upstream_str);
+                                                bw.record_egress(
+                                                    n as u64,
+                                                    BandwidthProtocol::Udp,
+                                                    EgressDirection::Proxied,
+                                                );
                                             }
                                         }
-                                        None => {
-                                            let registry = tunnel::QUIC_TUNNEL_REGISTRY.clone();
-                                            match registry.get_runtime().await {
-                                                Some(runtime) => {
-                                                    let identifier = format!("udp-port-{}", port);
-
-                                                    match runtime.open_tunnel_stream_to_peer(peer, &identifier).await {
-                                                        Ok((mut send_stream, _recv_stream)) => {
-                                                            match TunnelMessage::write_data_chunk_zero_copy(
-                                                                &mut send_stream,
-                                                                &identifier,
-                                                                0,
-                                                                data,
-                                                                false,
-                                                            ).await {
-                                                                Ok(_) => {
-                                                                    counter!("synvoid.udp.quic_tunnel.packets_sent").increment(1);
-                                                                    counter!("synvoid.udp.quic_tunnel.stream_fallback").increment(1);
-                                                                    Ok(n)
-                                                                }
-                                                                Err(e) => {
-                                                                    Err(std::io::Error::new(
-                                                                        std::io::ErrorKind::InvalidData,
-                                                                        format!("Zero-copy write error: {}", e)
-                                                                    ))
-                                                                }
-                                                            }
-                                                        }
-                                                        Err(e) => {
-                                                            Err(std::io::Error::new(
-                                                                std::io::ErrorKind::NotConnected,
-                                                                format!("Failed to open QUIC stream: {}", e)
-                                                            ))
-                                                        }
-                                                    }
-                                                }
-                                                None => {
-                                                    Err(std::io::Error::new(
-                                                        std::io::ErrorKind::NotConnected,
-                                                        "QUIC tunnel runtime not available"
-                                                    ))
-                                                }
-                                            }
+                                        Err(e) => {
+                                            tracing::debug!("Failed to forward UDP packet: {}", e);
+                                            counter!("synvoid.udp.forward_error").increment(1);
                                         }
                                     }
-                                }
-                            };
-
-                            match send_result {
-                                Ok(_sent) => {
-                                    counter!("synvoid.udp.packets_forwarded").increment(1);
-                                    gauge!("synvoid.udp.packet_size").set(n as f64);
-
-                                    let upstream_str = match &upstream_addr {
-                                        UpstreamAddress::Tcp(addr) => addr.to_string(),
-                                        UpstreamAddress::Unix(path) => path.to_string_lossy().to_string(),
-                                        UpstreamAddress::QuicTunnel { peer, port } => format!("{}:{}", peer, port),
-                                    };
-                                    if let Some(ref bw) = bandwidth {
-                                        bw.record_proxied(n as u64, 0, &upstream_str);
-                                        bw.record_egress(n as u64, BandwidthProtocol::Udp, EgressDirection::Proxied);
-                                    }
-                                }
-                                Err(e) => {
-                                    tracing::debug!("Failed to forward UDP packet: {}", e);
-                                    counter!("synvoid.udp.forward_error").increment(1);
                                 }
                             }
 
@@ -567,35 +632,380 @@ impl UdpListenerPool {
                 }
             }
         }
+
+        flows.clear();
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn forward_udp_datagram(
+        data: &[u8],
+        n: usize,
+        client_addr: SocketAddr,
+        upstream_addr: SocketAddr,
+        listener_socket: &Arc<UdpSocket>,
+        config: &UdpListenerConfig,
+        flows: &Arc<DashMap<FlowKey, Arc<UdpFlow>>>,
+        active_flows: &Arc<AtomicUsize>,
+        bandwidth: Option<&Arc<crate::metrics::bandwidth::BandwidthTracker>>,
+    ) {
+        let key = FlowKey::Udp {
+            client: client_addr,
+            upstream: upstream_addr,
+        };
+
+        if let Some(flow) = flows.get(&key).map(|f| f.clone()) {
+            flow.touch();
+            if let FlowUpstream::Udp(socket) = &flow.upstream {
+                match socket.send(data).await {
+                    Ok(_) => {
+                        counter!("synvoid.udp.packets_forwarded").increment(1);
+                        gauge!("synvoid.udp.packet_size").set(n as f64);
+                        if let Some(bw) = bandwidth {
+                            bw.record_proxied(n as u64, 0, &upstream_addr.to_string());
+                            bw.record_egress(
+                                n as u64,
+                                BandwidthProtocol::Udp,
+                                EgressDirection::Proxied,
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        tracing::debug!("Failed to forward UDP packet: {}", e);
+                        counter!("synvoid.udp.forward_error").increment(1);
+                    }
+                }
+            }
+            return;
+        }
+
+        if flows.len() >= config.max_flows {
+            counter!("synvoid.udp.flows.rejected").increment(1);
+            tracing::debug!(
+                client = %client_addr,
+                upstream = %upstream_addr,
+                "UDP flow cap reached; dropping datagram"
+            );
+            return;
+        }
+
+        let bind_wildcard = if upstream_addr.is_ipv6() {
+            "[::]:0"
+        } else {
+            "0.0.0.0:0"
+        };
+        let socket = match UdpSocket::bind(bind_wildcard).await {
+            Ok(socket) => socket,
+            Err(e) => {
+                tracing::debug!("Failed to bind UDP upstream socket: {}", e);
+                counter!("synvoid.udp.forward_error").increment(1);
+                return;
+            }
+        };
+        if let Err(e) = socket.connect(upstream_addr).await {
+            tracing::debug!("Failed to connect UDP upstream {}: {}", upstream_addr, e);
+            counter!("synvoid.udp.forward_error").increment(1);
+            return;
+        }
+        if let Err(e) = socket.send(data).await {
+            tracing::debug!("Failed to forward UDP packet: {}", e);
+            counter!("synvoid.udp.forward_error").increment(1);
+            return;
+        }
+
+        counter!("synvoid.udp.packets_forwarded").increment(1);
+        gauge!("synvoid.udp.packet_size").set(n as f64);
+        if let Some(bw) = bandwidth {
+            bw.record_proxied(n as u64, 0, &upstream_addr.to_string());
+            bw.record_egress(n as u64, BandwidthProtocol::Udp, EgressDirection::Proxied);
+        }
+
+        let flow = Arc::new(UdpFlow {
+            upstream: FlowUpstream::Udp(Arc::new(socket)),
+            last_activity: AtomicI64::new(now_secs()),
+        });
+        flows.insert(key.clone(), flow.clone());
+        active_flows.fetch_add(1, Ordering::Relaxed);
+        gauge!(
+            "synvoid.udp.flows.active",
+            "protocol" => config.expected_protocol.clone(),
+            "port" => config.port.to_string()
+        )
+        .set(flows.len() as f64);
+
+        Self::spawn_reply_task(
+            listener_socket.clone(),
+            client_addr,
+            config.port,
+            config.expected_protocol.clone(),
+            config.flow_idle_timeout_secs.max(1),
+            key,
+            flow,
+            flows.clone(),
+            active_flows.clone(),
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn forward_unix_datagram(
+        data: &[u8],
+        n: usize,
+        client_addr: SocketAddr,
+        path: &std::path::Path,
+        listener_socket: &Arc<UdpSocket>,
+        config: &UdpListenerConfig,
+        flows: &Arc<DashMap<FlowKey, Arc<UdpFlow>>>,
+        active_flows: &Arc<AtomicUsize>,
+        bandwidth: Option<&Arc<crate::metrics::bandwidth::BandwidthTracker>>,
+    ) {
+        let key = FlowKey::Unix {
+            client: client_addr,
+            path: path.to_path_buf(),
+        };
+
+        if let Some(flow) = flows.get(&key).map(|f| f.clone()) {
+            flow.touch();
+            if let FlowUpstream::Unix(socket) = &flow.upstream {
+                match socket.send(data).await {
+                    Ok(_) => {
+                        counter!("synvoid.udp.packets_forwarded").increment(1);
+                        if let Some(bw) = bandwidth {
+                            bw.record_proxied(n as u64, 0, &path.to_string_lossy());
+                            bw.record_egress(
+                                n as u64,
+                                BandwidthProtocol::Udp,
+                                EgressDirection::Proxied,
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        tracing::debug!("Failed to forward Unix datagram: {}", e);
+                        counter!("synvoid.udp.forward_error").increment(1);
+                    }
+                }
+            }
+            return;
+        }
+
+        if flows.len() >= config.max_flows {
+            counter!("synvoid.udp.flows.rejected").increment(1);
+            return;
+        }
+
+        let socket = match UnixDatagram::unbound() {
+            Ok(socket) => socket,
+            Err(e) => {
+                tracing::debug!("Failed to create Unix datagram socket: {}", e);
+                counter!("synvoid.udp.forward_error").increment(1);
+                return;
+            }
+        };
+        if let Err(e) = socket.connect(path) {
+            tracing::warn!(
+                "Failed to connect Unix datagram to {}: {}",
+                path.display(),
+                e
+            );
+            counter!("synvoid.udp.forward_error").increment(1);
+            return;
+        }
+        if let Err(e) = socket.send(data).await {
+            tracing::debug!("Failed to forward Unix datagram: {}", e);
+            counter!("synvoid.udp.forward_error").increment(1);
+            return;
+        }
+
+        counter!("synvoid.udp.packets_forwarded").increment(1);
+        let flow = Arc::new(UdpFlow {
+            upstream: FlowUpstream::Unix(Arc::new(socket)),
+            last_activity: AtomicI64::new(now_secs()),
+        });
+        flows.insert(key.clone(), flow.clone());
+        active_flows.fetch_add(1, Ordering::Relaxed);
+        gauge!(
+            "synvoid.udp.flows.active",
+            "protocol" => config.expected_protocol.clone(),
+            "port" => config.port.to_string()
+        )
+        .set(flows.len() as f64);
+
+        Self::spawn_reply_task(
+            listener_socket.clone(),
+            client_addr,
+            config.port,
+            config.expected_protocol.clone(),
+            config.flow_idle_timeout_secs.max(1),
+            key,
+            flow,
+            flows.clone(),
+            active_flows.clone(),
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn spawn_reply_task(
+        listener_socket: Arc<UdpSocket>,
+        client_addr: SocketAddr,
+        listener_port: u16,
+        protocol: String,
+        idle_timeout_secs: u64,
+        key: FlowKey,
+        flow: Arc<UdpFlow>,
+        flows: Arc<DashMap<FlowKey, Arc<UdpFlow>>>,
+        active_flows: Arc<AtomicUsize>,
+    ) {
+        tokio::spawn(async move {
+            let mut buf = vec![0u8; 65535];
+            loop {
+                let idle = flow.idle_for();
+                if idle >= idle_timeout_secs as i64 {
+                    break;
+                }
+                let remaining = Duration::from_secs((idle_timeout_secs as i64 - idle) as u64);
+                let result = tokio::select! {
+                    result = async {
+                        match &flow.upstream {
+                            FlowUpstream::Udp(socket) => socket.recv(&mut buf).await,
+                            FlowUpstream::Unix(socket) => socket.recv(&mut buf).await,
+                        }
+                    } => result,
+                    _ = tokio::time::sleep(remaining) => {
+                        continue;
+                    }
+                };
+
+                match result {
+                    Ok(n) => {
+                        flow.touch();
+                        match listener_socket.send_to(&buf[..n], client_addr).await {
+                            Ok(_) => {
+                                counter!("synvoid.udp.responses_sent").increment(1);
+                                gauge!("synvoid.udp.response_size").set(n as f64);
+                                if let Some(bw) = get_global_bandwidth_tracker_or_log() {
+                                    bw.record_egress(
+                                        n as u64,
+                                        BandwidthProtocol::Udp,
+                                        EgressDirection::Proxied,
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                tracing::debug!(
+                                    "Failed to send UDP response to {}: {}",
+                                    client_addr,
+                                    e
+                                );
+                                counter!(
+                                    "synvoid.udp.reply_errors",
+                                    "protocol" => protocol.clone(),
+                                    "port" => listener_port.to_string()
+                                )
+                                .increment(1);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::debug!(
+                            "Failed to receive UDP upstream response for {}: {}",
+                            client_addr,
+                            e
+                        );
+                        counter!(
+                            "synvoid.udp.reply_errors",
+                            "protocol" => protocol.clone(),
+                            "port" => listener_port.to_string()
+                        )
+                        .increment(1);
+                        break;
+                    }
+                }
+            }
+
+            flows.remove(&key);
+            active_flows.fetch_sub(1, Ordering::Relaxed);
+            counter!(
+                "synvoid.udp.flows.reaped",
+                "protocol" => protocol.clone(),
+                "port" => listener_port.to_string()
+            )
+            .increment(1);
+            gauge!(
+                "synvoid.udp.flows.active",
+                "protocol" => protocol.clone(),
+                "port" => listener_port.to_string()
+            )
+            .set(flows.len() as f64);
+            tracing::debug!(
+                port = listener_port,
+                protocol = %protocol,
+                client = %client_addr,
+                "UDP flow reaped"
+            );
+        });
+    }
+
+    async fn forward_quic_tunnel(
+        data: &[u8],
+        peer: &str,
+        port: u16,
+        client_addr: SocketAddr,
+    ) -> Result<usize, String> {
+        if let Some(manager) = get_udp_tunnel_manager() {
+            manager
+                .send(peer, port, data, client_addr)
+                .await
+                .map_err(|e| format!("Failed to send via UDP tunnel manager: {e}"))?;
+            counter!("synvoid.udp.quic_tunnel.packets_sent").increment(1);
+            counter!("synvoid.udp.quic_tunnel.datagram_used").increment(1);
+            return Ok(data.len());
+        }
+
+        let registry = tunnel::QUIC_TUNNEL_REGISTRY.clone();
+        let Some(runtime) = registry.get_runtime().await else {
+            return Err("QUIC tunnel runtime not available".to_string());
+        };
+        let identifier = format!("udp-port-{port}");
+        let (mut send_stream, _recv_stream) = runtime
+            .open_tunnel_stream_to_peer(peer, &identifier)
+            .await
+            .map_err(|e| format!("Failed to open QUIC stream: {e}"))?;
+        TunnelMessage::write_data_chunk_zero_copy(&mut send_stream, &identifier, 0, data, false)
+            .await
+            .map_err(|e| format!("Zero-copy write error: {e}"))?;
+        counter!("synvoid.udp.quic_tunnel.packets_sent").increment(1);
+        counter!("synvoid.udp.quic_tunnel.stream_fallback").increment(1);
+        Ok(data.len())
     }
 
     pub async fn shutdown(&self) {
         let _ = self.shutdown_tx.send(());
+        let bound = self.bound.read().clone();
+        {
+            let mut registry = UDP_LISTENER_REGISTRY.write();
+            registry.retain(|entry| {
+                !bound.iter().any(|listener| {
+                    listener.local_addr.port() == entry.snapshot.port
+                        && listener.registered.config.bind_address == entry.snapshot.bind_address
+                        && listener.registered.config.expected_protocol == entry.snapshot.protocol
+                })
+            });
+        }
         tracing::info!("UDP listener pool shutdown initiated");
     }
 
     pub fn listener_count(&self) -> usize {
-        self.listeners.read().len()
+        self.registered.read().len()
     }
 
-    fn connect_unix_datagram(path: &std::path::Path) -> Option<UnixDatagram> {
-        match UnixDatagram::unbound() {
-            Ok(socket) => match socket.connect(path) {
-                Ok(()) => Some(socket),
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to connect Unix datagram to {}: {}",
-                        path.display(),
-                        e
-                    );
-                    None
-                }
-            },
-            Err(e) => {
-                tracing::warn!("Failed to create Unix datagram socket: {}", e);
-                None
-            }
-        }
+    pub fn bound_addresses(&self) -> Vec<SocketAddr> {
+        self.bound.read().iter().map(|b| b.local_addr).collect()
+    }
+
+    pub fn active_flow_count(&self) -> usize {
+        self.registered
+            .read()
+            .iter()
+            .map(|r| r.active_flows.load(Ordering::Relaxed))
+            .sum()
     }
 }
 
@@ -615,9 +1025,7 @@ impl RateEntry {
     fn new() -> Self {
         Self {
             count: AtomicU32::new(1),
-            window_start: AtomicI64::new(
-                i64::try_from(crate::utils::safe_unix_timestamp()).unwrap_or(i64::MAX),
-            ),
+            window_start: AtomicI64::new(now_secs()),
         }
     }
 }
@@ -645,7 +1053,7 @@ impl UdpRateLimiter {
     }
 
     fn check_with_limit(&self, ip: std::net::IpAddr, limit: u32) -> bool {
-        let now = i64::try_from(crate::utils::safe_unix_timestamp()).unwrap_or(i64::MAX);
+        let now = now_secs();
 
         let window_secs: i64 = 1;
         let shard_idx = hash_ip(&ip);
@@ -679,7 +1087,7 @@ impl UdpRateLimiter {
     }
 
     fn cleanup_stale(&self, max_age_secs: i64) {
-        let now = i64::try_from(crate::utils::safe_unix_timestamp()).unwrap_or(i64::MAX);
+        let now = now_secs();
 
         let mut total_removed = 0u64;
         for shard in &self.shards {
@@ -723,5 +1131,6 @@ mod tests {
         assert_eq!(config.port, 53);
         assert_eq!(config.expected_protocol, "dns");
         assert!(config.filter_enabled);
+        assert!(config.max_flows > 0);
     }
 }

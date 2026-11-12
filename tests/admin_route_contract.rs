@@ -438,8 +438,7 @@ const CONFIG_ROUTES: &[(&str, &str)] = &[
 /// TCP/UDP listeners, probes, threat-level, and rule-feed surface.
 const INFRA_PROBES_THREAT_RULES_ROUTES: &[(&str, &str)] = &[
     ("GET", "/api/tcp-udp/listeners"),
-    ("POST", "/api/tcp-udp/listeners"),
-    ("DELETE", "/api/tcp-udp/listeners/listener-1"),
+    ("GET", "/api/http/listeners"),
     ("GET", "/api/tcp-udp/protocols"),
     ("GET", "/api/probes"),
     ("GET", "/api/probes/stats"),
@@ -1053,30 +1052,30 @@ async fn admin_route_contract_fails_on_wrong_fixture() {
 
 /// Behavioral contract for the TCP/UDP listener family.
 ///
-/// The registration tests above only prove the routes exist. These drive the
-/// real handlers to pin the two defects that made the admin UI for this family
-/// unshippable while still looking correct:
-///
-/// 1. `create_listener` returned `Applied` and wrote an audit event but never
-///    inserted the port, so a created listener never appeared in `list_listeners`.
-/// 2. `delete_listener` split the `{site_id}-{protocol}` id on the FIRST dash,
-///    so any site id containing a dash resolved to the wrong site.
+/// The family is read-only: listener definitions live in the global
+/// `[tcp.protocols.*]` / `[udp.protocols.*]` maps, the pools bind once at
+/// startup, and the old site-local create/delete surface is gone. A create or
+/// delete request must therefore not reach a handler that pretends to mutate a
+/// dead schema.
 #[tokio::test]
-async fn admin_route_contract_tcp_udp_listener_round_trip() {
+async fn admin_route_contract_tcp_udp_listener_inventory_is_read_only() {
     use axum::http::header::{AUTHORIZATION, CONTENT_TYPE};
 
     let config = std::sync::Arc::new(tokio::sync::RwLock::new(ConfigManager::new(
         std::env::temp_dir(),
     )));
-
-    // Site ids containing a dash are the norm, not the exception.
-    let site_id = "acme-mail";
     {
         let mut guard = config.write().await;
-        let mut site =
-            synvoid::config::SiteConfig::default_fallback_site("http://127.0.0.1:1".to_string());
-        site.site.domains = vec!["mail.example.com".to_string()];
-        guard.sites.insert(site_id.to_string(), site);
+        guard.main.tcp.protocols.clear();
+        guard.main.tcp.protocols.insert(
+            "smtp".to_string(),
+            synvoid::config::network::TcpProtocolConfig {
+                ports: vec![2525],
+                upstream_format: Some("127.0.0.1:{port}".to_string()),
+                upstream_format_v6: None,
+                ..Default::default()
+            },
+        );
     }
 
     let router = tokio::task::spawn_blocking({
@@ -1103,8 +1102,6 @@ async fn admin_route_contract_tcp_udp_listener_round_trip() {
     .await
     .expect("spawn_blocking should not panic");
 
-    // Mutating admin endpoints require a browser-shaped session: cookie + CSRF
-    // header, not a bearer token (bearer is only for session exchange).
     let session = router
         .clone()
         .oneshot(
@@ -1117,16 +1114,7 @@ async fn admin_route_contract_tcp_udp_listener_round_trip() {
         )
         .await
         .unwrap();
-    assert_eq!(
-        session.status(),
-        StatusCode::OK,
-        "session exchange body: {:?}",
-        session
-            .headers()
-            .get("content-type")
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string())
-    );
+    assert_eq!(session.status(), StatusCode::OK);
     let cookie = session
         .headers()
         .get(axum::http::header::SET_COOKIE)
@@ -1153,7 +1141,52 @@ async fn admin_route_contract_tcp_udp_listener_round_trip() {
         req
     };
 
-    // ── Create ──────────────────────────────────────────────────────────
+    // The list comes from live pools; none are started in this router test.
+    let list = authed(
+        Request::builder()
+            .method("GET")
+            .uri("/api/tcp-udp/listeners")
+            .body(Body::empty())
+            .unwrap(),
+    );
+    let listed = router.clone().oneshot(list).await.unwrap();
+    assert_eq!(listed.status(), StatusCode::OK);
+    let listed: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(listed.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        listed["listeners"].as_array().map(Vec::len),
+        Some(0),
+        "no runtime listener may be reported before a pool binds"
+    );
+
+    // The protocol catalog is the configured global source of truth.
+    let protocols = authed(
+        Request::builder()
+            .method("GET")
+            .uri("/api/tcp-udp/protocols")
+            .body(Body::empty())
+            .unwrap(),
+    );
+    let protocols = router.clone().oneshot(protocols).await.unwrap();
+    assert_eq!(protocols.status(), StatusCode::OK);
+    let protocols: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(protocols.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(
+        protocols
+            .as_array()
+            .is_some_and(|p| p.iter().any(|entry| entry["name"] == "smtp")),
+        "configured global protocol must be listed, got: {protocols}"
+    );
+
+    // Create/delete are removed, not reimplemented against a dead schema.
     let create = authed(
         Request::builder()
             .method("POST")
@@ -1161,7 +1194,7 @@ async fn admin_route_contract_tcp_udp_listener_round_trip() {
             .header(CONTENT_TYPE, "application/json")
             .body(Body::from(
                 serde_json::json!({
-                    "site_id": site_id,
+                    "site_id": "acme-mail",
                     "port": 2525,
                     "protocol": "smtps",
                     "upstream": "mail.internal:25",
@@ -1171,53 +1204,13 @@ async fn admin_route_contract_tcp_udp_listener_round_trip() {
             .unwrap(),
     );
     let created = router.clone().oneshot(create).await.unwrap();
-    assert_eq!(created.status(), StatusCode::OK);
-    let created: serde_json::Value = serde_json::from_slice(
-        &axum::body::to_bytes(created.into_body(), usize::MAX)
-            .await
-            .unwrap(),
-    )
-    .unwrap();
-    assert_eq!(created["status"], "applied", "create must report applied");
-    assert_eq!(created["local_store_mutated"], true);
-
-    // The insert is the regression: `Applied` alone proved nothing.
-    {
-        let guard = config.read().await;
-        let ports = &guard.sites.get(site_id).expect("site").tcp.ports;
-        let entry = ports
-            .get("smtps")
-            .expect("created listener must be inserted into SiteTcpConfig::ports");
-        assert_eq!(entry.port, Some(2525));
-        assert_eq!(entry.upstream.as_deref(), Some("mail.internal:25"));
-    }
-
-    // ── It is listed ────────────────────────────────────────────────────
-    let list = authed(
-        Request::builder()
-            .method("GET")
-            .uri("/api/tcp-udp/listeners")
-            .body(Body::empty())
-            .unwrap(),
-    );
-    let listed: serde_json::Value = serde_json::from_slice(
-        &axum::body::to_bytes(
-            router.clone().oneshot(list).await.unwrap().into_body(),
-            usize::MAX,
-        )
-        .await
-        .unwrap(),
-    )
-    .unwrap();
-    let listeners = listed["listeners"].as_array().expect("listeners array");
     assert!(
-        listeners
-            .iter()
-            .any(|l| l["id"] == "acme-mail-smtps" && l["port"] == 2525),
-        "created listener must appear in list_listeners, got: {listeners:?}"
+        created.status() == StatusCode::METHOD_NOT_ALLOWED
+            || created.status() == StatusCode::NOT_FOUND,
+        "create must be absent, got {}",
+        created.status()
     );
 
-    // ── Delete round-trips the dashed site id ───────────────────────────
     let delete = authed(
         Request::builder()
             .method("DELETE")
@@ -1226,29 +1219,10 @@ async fn admin_route_contract_tcp_udp_listener_round_trip() {
             .unwrap(),
     );
     let deleted = router.oneshot(delete).await.unwrap();
-    assert_eq!(deleted.status(), StatusCode::OK);
-    let deleted: serde_json::Value = serde_json::from_slice(
-        &axum::body::to_bytes(deleted.into_body(), usize::MAX)
-            .await
-            .unwrap(),
-    )
-    .unwrap();
-    assert_eq!(
-        deleted["status"], "applied",
-        "deleting acme-mail-smtps must resolve site `acme-mail`, not `acme`"
+    assert!(
+        deleted.status() == StatusCode::METHOD_NOT_ALLOWED
+            || deleted.status() == StatusCode::NOT_FOUND,
+        "delete must be absent, got {}",
+        deleted.status()
     );
-
-    {
-        let guard = config.read().await;
-        assert!(
-            !guard
-                .sites
-                .get(site_id)
-                .expect("site")
-                .tcp
-                .ports
-                .contains_key("smtps"),
-            "listener must be removed from the correct site"
-        );
-    }
 }

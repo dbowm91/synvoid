@@ -32,6 +32,14 @@ impl ServerConfig {
                 message: "Port cannot be 0".to_string(),
             });
         }
+        if let Some(host_v6) = self.host_v6.as_deref() {
+            if host_v6.parse::<std::net::IpAddr>().is_err() {
+                return Err(ConfigValidationError {
+                    field: "server.host_v6".to_string(),
+                    message: format!("Invalid IPv6 address: {host_v6}"),
+                });
+            }
+        }
         for proxy in &self.trusted_proxies {
             if proxy.parse::<std::net::IpAddr>().is_err()
                 && proxy.parse::<ipnetwork::IpNetwork>().is_err()

@@ -263,15 +263,17 @@ impl CertResolver {
 
     pub fn build_server_config(
         &self,
+        alpn: &[&[u8]],
     ) -> Result<Arc<ServerConfig>, Box<dyn std::error::Error + Send + Sync>> {
-        let provider = default_provider();
+        let provider = std::sync::Arc::new(default_provider());
 
         if self.config.prefer_post_quantum {
             tracing::debug!("TLS: post-quantum hybrid key exchange enabled (TLS 1.3)");
             counter!("synvoid.tls.post_quantum").increment(1);
         }
 
-        let versions: &[&SupportedProtocolVersion] = if self.config.tls_1_3_only {
+        let is_quic_h3 = alpn.iter().any(|protocol| *protocol == b"h3");
+        let versions: &[&SupportedProtocolVersion] = if is_quic_h3 || self.config.tls_1_3_only {
             tracing::info!("TLS: enforcing TLS 1.3 only (secure mode)");
             counter!("synvoid.tls.config").increment(1);
             &[&TLS13]
@@ -299,17 +301,20 @@ impl CertResolver {
                 let ca_certs = load_ca_certs(ca_cert_path)?;
                 if !ca_certs.is_empty() {
                     // For proper mTLS, use the CA certs to verify clients
-                    let verifier = rustls::server::WebPkiClientVerifier::builder(
+                    let verifier = rustls::server::WebPkiClientVerifier::builder_with_provider(
                         std::sync::Arc::new(ca_certs),
+                        provider.clone(),
                     )
                     .build()
                     .map_err(|e| format!("Failed to build client cert verifier: {}", e))?;
 
-                    let server_config = ServerConfig::builder_with_provider(Arc::new(provider))
+                    let mut server_config = ServerConfig::builder_with_provider(provider)
                         .with_protocol_versions(versions)
                         .map_err(|e| format!("Failed to set protocol versions: {}", e))?
                         .with_client_cert_verifier(verifier)
                         .with_cert_resolver(Arc::new(self.clone()));
+                    server_config.alpn_protocols =
+                        alpn.iter().map(|protocol| protocol.to_vec()).collect();
 
                     tracing::info!("mTLS enabled with CA certificate: {:?}", ca_cert_path);
                     return Ok(Arc::new(server_config));
@@ -322,11 +327,12 @@ impl CertResolver {
         }
 
         // Default: no client authentication (server-only TLS)
-        let server_config = ServerConfig::builder_with_provider(Arc::new(provider))
+        let mut server_config = ServerConfig::builder_with_provider(provider)
             .with_protocol_versions(versions)
             .map_err(|e| format!("Failed to set protocol versions: {}", e))?
             .with_no_client_auth()
             .with_cert_resolver(Arc::new(self.clone()));
+        server_config.alpn_protocols = alpn.iter().map(|protocol| protocol.to_vec()).collect();
 
         Ok(Arc::new(server_config))
     }

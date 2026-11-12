@@ -1,0 +1,319 @@
+{
+  "args": {
+    "binary": null,
+    "build_profile": "ci",
+    "concurrency": 2,
+    "duration": 1.0,
+    "keep_work": false,
+    "list_workloads": false,
+    "out": "/home/sugarwookie/prodtest/synvoid/benchmarks/multi_service/results",
+    "process_profiles": [
+      "default"
+    ],
+    "skip_server": false,
+    "smoke": false,
+    "soak_seconds": 1800.0,
+    "threads": 4,
+    "tool": "python",
+    "waf_profile": "on",
+    "work_root": "/tmp",
+    "workloads": [
+      "multi-listener"
+    ]
+  },
+  "metadata": {
+    "host": {
+      "arch": "x86_64",
+      "cpu_count": 16,
+      "cpu_model": "Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz",
+      "kernel": "6.8.0-147-generic",
+      "memory_bytes": 16622407680,
+      "os": "Linux"
+    },
+    "run_id": "2026-11-11T203035Z-3507bd",
+    "started_at": "2026-11-11T20:30:35.317368Z",
+    "subject": {
+      "binary": "/home/sugarwookie/prodtest/synvoid/target/ci/synvoid",
+      "binary_sha256": "4bb4dd922d2446f414fd650c19168069eb649496333d200f440e3f96381a4f78",
+      "build_profile": "ci",
+      "harness_sha": "4771847871829b2d7383b598c190e8916876c69cfc8213580e448d6d6dacdfb3",
+      "revision_sha": "d507fefaa9b9586a16ac978ec34f2765be237d04"
+    },
+    "toolchain": {
+      "cargo": "cargo 1.98.1 (797e8a9bc 2026-08-05)",
+      "load_tool": "python",
+      "python": "3.12.3",
+      "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+      "tools": {
+        "curl": {
+          "path": "/usr/bin/curl",
+          "version": "curl 8.5.0 (x86_64-pc-linux-gnu) libcurl/8.5.0 OpenSSL/3.0.13 zlib/1.3 brotli/1.1.0 zstd/1.5.5 libidn2/2.3.7 libpsl/0.21.2 (+libidn2/2.3.7) libssh/0.10.6/openssl/zlib nghttp2/1.59.0 librtmp/2.3 OpenLDAP/2.6.10"
+        },
+        "h2load": {
+          "path": "/usr/bin/h2load",
+          "version": "h2load nghttp2/1.59.0"
+        },
+        "oha": {
+          "path": "/usr/local/bin/oha",
+          "version": "oha 1.16.0"
+        },
+        "openssl": {
+          "path": "/usr/bin/openssl",
+          "version": null
+        },
+        "wrk": {
+          "path": null,
+          "version": null
+        }
+      }
+    },
+    "topology": {
+      "client_host": "127.0.0.1",
+      "kind": "loopback-same-host",
+      "notes": "loopback hides the NIC and network RTT; never compare across hosts",
+      "server_host": "127.0.0.1"
+    }
+  },
+  "ports": {
+    "admin": 53759,
+    "dynamic_upstream": 45785,
+    "extra": [
+      47139
+    ],
+    "h3": 44229,
+    "http": 52059,
+    "metrics": 60703,
+    "static_upstream": 49707,
+    "tcp_multi": [
+      33383,
+      44053,
+      37457,
+      38307
+    ],
+    "tcp_single": 43165,
+    "tcp_upstream": 39169,
+    "tls": 35613,
+    "udp_multi": [
+      46292,
+      51983,
+      41743,
+      46733
+    ],
+    "udp_single": 40757,
+    "udp_upstream": 39791
+  },
+  "results": [
+    {
+      "admin_stats": {
+        "attacks": {
+          "by_type": {},
+          "total_blocked": 0
+        },
+        "errors": [],
+        "sites": [
+          {
+            "active_connections": 0,
+            "avg_response_time_ms": 0.0,
+            "blocked_requests": 0,
+            "bytes_received": 0,
+            "bytes_sent": 0,
+            "challenged_requests": 0,
+            "domains": [
+              "bench-0000.local"
+            ],
+            "errors": 0,
+            "healthy_backends": 0,
+            "mesh_bytes_received": 0,
+            "mesh_bytes_sent": 0,
+            "p50_latency_ms": 0.0,
+            "p95_latency_ms": 0.0,
+            "p99_latency_ms": 0.0,
+            "proxied_bytes_received": 0,
+            "proxied_bytes_sent": 0,
+            "proxied_requests": 47966,
+            "requests_per_second": 2398.3,
+            "site_id": "bench-0000.local",
+            "total_backends": 0,
+            "unhealthy_backends": 0,
+            "upstream_healthy": "healthy"
+          }
+        ],
+        "sites_total": 1,
+        "sites_truncated": false,
+        "summary": {
+          "active_connections": 0,
+          "avg_latency_ms": 0.0,
+          "blocked_per_second": 0.0,
+          "blocked_total": 0,
+          "challenged_total": 0,
+          "cpu_usage_percent": 17.065262,
+          "errors_total": 0,
+          "healthy_backends": 0,
+          "healthy_workers": 1,
+          "memory_total_mb": 15852,
+          "memory_used_mb": 5675,
+          "metrics_timestamp_ms": 1794429047585,
+          "p50_latency_ms": 0.0,
+          "p95_latency_ms": 0.0,
+          "p99_latency_ms": 0.0,
+          "peak_concurrent": 1,
+          "proxied_total": 47966,
+          "requests_per_second": 2194.744944300533,
+          "sites_loaded": 1,
+          "time_validation_errors": 0,
+          "total_requests": 23983,
+          "unhealthy_backends": 0,
+          "unhealthy_workers": 0,
+          "uptime_secs": 10
+        }
+      },
+      "build_profile": "ci",
+      "client": {
+        "tool": "python"
+      },
+      "command": [
+        "/usr/bin/python3",
+        "benchmarks/multi_service/driver.py",
+        "python-http-client"
+      ],
+      "generated_at": "2026-11-11T20:30:48.091922Z",
+      "host": {
+        "arch": "x86_64",
+        "cpu_count": 16,
+        "cpu_model": "Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz",
+        "kernel": "6.8.0-147-generic",
+        "memory_bytes": 16622407680,
+        "os": "Linux"
+      },
+      "listeners": [
+        {
+          "bytes_total": 423540,
+          "error_rate": 0.0,
+          "errors": 0,
+          "host_header": "bench-0000.local",
+          "latency_ms": {
+            "p50": 0.415,
+            "p95": 0.522,
+            "p99": 0.597
+          },
+          "port": 52059,
+          "requests": 11765,
+          "requests_per_sec": 2352.847,
+          "status_codes": {
+            "200": 11765
+          },
+          "url": "http://127.0.0.1:52059/"
+        },
+        {
+          "bytes_total": 439812,
+          "error_rate": 0.0,
+          "errors": 0,
+          "host_header": "bench-0000.local",
+          "latency_ms": {
+            "p50": 0.404,
+            "p95": 0.478,
+            "p99": 0.518
+          },
+          "port": 47139,
+          "requests": 12217,
+          "requests_per_sec": 2443.303,
+          "status_codes": {
+            "200": 12217
+          },
+          "url": "http://127.0.0.1:47139/"
+        }
+      ],
+      "process_profile": {
+        "name": "default",
+        "waf_profile": "on",
+        "worker_processes": 1,
+        "worker_threads": 16
+      },
+      "run_id": "2026-11-11T203035Z-3507bd",
+      "schema_version": "synvoid.multi-service-benchmark.v1",
+      "subject": {
+        "binary": "/home/sugarwookie/prodtest/synvoid/target/ci/synvoid",
+        "binary_sha256": "4bb4dd922d2446f414fd650c19168069eb649496333d200f440e3f96381a4f78",
+        "build_profile": "ci",
+        "harness_sha": "4771847871829b2d7383b598c190e8916876c69cfc8213580e448d6d6dacdfb3",
+        "revision_sha": "d507fefaa9b9586a16ac978ec34f2765be237d04"
+      },
+      "supported": true,
+      "synvoid_metrics": {
+        "after": {
+          "synvoid_subject_active_connections": 0.0,
+          "synvoid_subject_admin_rate_limited_minute_total": 0.0,
+          "synvoid_subject_admin_rate_limited_second_total": 0.0,
+          "synvoid_subject_body_buffering_bytes_total": 0.0,
+          "synvoid_subject_event_loop_lag_ms": 0.0,
+          "synvoid_subject_offload_fallbacks_total": 0.0,
+          "synvoid_subject_offload_rejections_total": 0.0,
+          "synvoid_subject_offload_submissions_total": 0.0,
+          "synvoid_subject_offload_timeouts_total": 0.0,
+          "synvoid_subject_request_queue_p95_ms": 0.0,
+          "synvoid_subject_worker_cpu_percent": 2.911628826041124e-06,
+          "synvoid_subject_worker_memory_bytes": 132493312.0,
+          "synvoid_subject_worker_metric_resets_total": 0.0
+        },
+        "before": {
+          "synvoid_subject_admin_rate_limited_minute_total": 0.0,
+          "synvoid_subject_admin_rate_limited_second_total": 0.0,
+          "synvoid_subject_body_buffering_bytes_total": 0.0,
+          "synvoid_subject_offload_fallbacks_total": 0.0,
+          "synvoid_subject_offload_rejections_total": 0.0,
+          "synvoid_subject_offload_submissions_total": 0.0,
+          "synvoid_subject_offload_timeouts_total": 0.0,
+          "synvoid_subject_worker_metric_resets_total": 0.0
+        }
+      },
+      "system": {
+        "cpu_percent": 62.041,
+        "cpu_seconds": 6.22,
+        "fd_end": 3597,
+        "fd_peak": 3597,
+        "fd_start": 525,
+        "process_count": 2,
+        "rss_bytes_end": 184102912,
+        "rss_bytes_peak": 184102912,
+        "rss_bytes_start": 137703424
+      },
+      "toolchain": {
+        "cargo": "cargo 1.98.1 (797e8a9bc 2026-08-05)",
+        "load_tool": "python",
+        "python": "3.12.3",
+        "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+        "tools": {
+          "curl": {
+            "path": "/usr/bin/curl",
+            "version": "curl 8.5.0 (x86_64-pc-linux-gnu) libcurl/8.5.0 OpenSSL/3.0.13 zlib/1.3 brotli/1.1.0 zstd/1.5.5 libidn2/2.3.7 libpsl/0.21.2 (+libidn2/2.3.7) libssh/0.10.6/openssl/zlib nghttp2/1.59.0 librtmp/2.3 OpenLDAP/2.6.10"
+          },
+          "h2load": {
+            "path": "/usr/bin/h2load",
+            "version": "h2load nghttp2/1.59.0"
+          },
+          "oha": {
+            "path": "/usr/local/bin/oha",
+            "version": "oha 1.16.0"
+          },
+          "openssl": {
+            "path": "/usr/bin/openssl",
+            "version": null
+          },
+          "wrk": {
+            "path": null,
+            "version": null
+          }
+        }
+      },
+      "topology": {
+        "client_host": "127.0.0.1",
+        "kind": "loopback-same-host",
+        "notes": "loopback hides the NIC and network RTT; never compare across hosts",
+        "server_host": "127.0.0.1"
+      },
+      "unsupported_reason": null,
+      "workload": "multi-listener"
+    }
+  ],
+  "schema_version": "synvoid.multi-service-benchmark.v1"
+}

@@ -35,11 +35,13 @@ pub trait Http3RequestResolver: Send {
         -> Result<(http::Request<()>, Self::RequestStream), Self::Error>;
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn prepare_http3_request_dispatch<R>(
     start: Instant,
     resolver: R,
     remote_addr: SocketAddr,
     trusted_proxies: &[String],
+    listener_id: Option<&str>,
     router: &Arc<Router>,
     connection_limiter: Option<&Arc<ConnectionLimiter>>,
     over_bandwidth_limit: bool,
@@ -75,6 +77,7 @@ where
         request,
         remote_addr,
         trusted_proxies,
+        listener_id,
         router,
         over_bandwidth_limit,
     ) {

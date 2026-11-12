@@ -42,6 +42,7 @@ pub fn prepare_http3_request_prelude<B>(
     request: http::Request<B>,
     remote_addr: SocketAddr,
     trusted_proxies: &[String],
+    listener_id: Option<&str>,
     router: &Arc<Router>,
     over_bandwidth_limit: bool,
 ) -> Http3RequestPreludeOutcome {
@@ -66,7 +67,7 @@ pub fn prepare_http3_request_prelude<B>(
     let query_string = parts.uri.query().map(String::from);
     let host = extract_host(&parts.headers);
     let user_agent = extract_user_agent(&parts.headers);
-    let route_result = router.route(&host, &path);
+    let route_result = router.route_with_listener_id(&host, &path, listener_id);
 
     Http3RequestPreludeOutcome::Continue(Box::new(Http3RequestPrelude {
         parts,

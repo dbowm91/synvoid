@@ -124,6 +124,13 @@ impl StreamingWafCore {
         }
     }
 
+    /// Construct a scanner whose byte cap is the caller's resolved request
+    /// body limit. Used by the application body policy so the scanner and the
+    /// buffered path cannot disagree about the cap.
+    pub fn with_body_limit(inner: Arc<AttackDetector>, max_buffered_bytes: usize) -> Self {
+        Self::with_config(inner, DEFAULT_CHUNK_SIZE, max_buffered_bytes)
+    }
+
     pub fn with_config(
         inner: Arc<AttackDetector>,
         chunk_size: usize,
@@ -990,10 +997,9 @@ mod tests {
         StreamingWafCore::new(Arc::new(detector))
     }
 
-    fn multipart_body(
-        boundary: &str,
-        parts: &[(&str, Option<&str>, Option<&str>, &[u8])],
-    ) -> Vec<u8> {
+    type MultipartPart<'a> = (&'a str, Option<&'a str>, Option<&'a str>, &'a [u8]);
+
+    fn multipart_body(boundary: &str, parts: &[MultipartPart<'_>]) -> Vec<u8> {
         let mut body = Vec::new();
         for (name, filename, content_type, value) in parts {
             body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());

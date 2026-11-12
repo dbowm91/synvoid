@@ -236,6 +236,36 @@ fn child_main() -> i32 {
                 2
             }
         }
+        "worker-required-allowed-read" => {
+            if enter_worker_request(&allowed, &write_dir).is_err() {
+                return 1;
+            }
+            match std::fs::read(allowed.join("read.txt")) {
+                Ok(_) => 0,
+                Err(_) => 2,
+            }
+        }
+        "worker-required-denied-read" => {
+            if enter_worker_request(&allowed, &write_dir).is_err() {
+                return 1;
+            }
+            match std::fs::read(denied.join("secret.txt")) {
+                Ok(_) => 2,  // NOT enforced
+                Err(_) => 0, // enforced
+            }
+        }
+        "worker-required-unsupported-guarantee" => {
+            // A required guarantee that Landlock cannot express must fail
+            // closed before the worker workload starts.
+            let mut request = worker_request(&allowed, &write_dir);
+            request = request.require(synvoid_platform::sandbox::Guarantee::NetworkTcpRestricted);
+            match synvoid_platform::sandbox::prepare_sandbox(request)
+                .and_then(|prepared| prepared.enter())
+            {
+                Ok(_) => 2,  // silently accepted => BAD
+                Err(_) => 0, // refused before workload => GOOD
+            }
+        }
         "seccomp-thread-clone-works" => {
             let _entered =
                 match enter_guarantee(synvoid_platform::sandbox::Guarantee::ChildCreationDenied) {
@@ -261,6 +291,36 @@ fn enter_guarantee(
 ) -> Result<synvoid_platform::sandbox::EnteredSandbox, String> {
     use synvoid_platform::sandbox::{prepare_sandbox, SandboxRequest};
     prepare_sandbox(SandboxRequest::new().require(guarantee))
+        .and_then(|prepared| prepared.enter())
+        .map_err(|error| error.to_string())
+}
+
+/// The worker's production guarantee shape (Phase 08): filesystem policy only,
+/// no network/exec denial, calling thread plus future descendants.
+fn worker_request(
+    allowed: &std::path::Path,
+    write: &std::path::Path,
+) -> synvoid_platform::sandbox::SandboxRequest {
+    use synvoid_platform::sandbox::{Guarantee, SandboxRequest, ThreadScope};
+
+    SandboxRequest::new()
+        .require(Guarantee::AmbientFilesystemDenied)
+        .require(Guarantee::FilesystemReadAllowlist)
+        .require(Guarantee::FilesystemWriteAllowlist)
+        .require(Guarantee::InheritedIpcUsable)
+        .require(Guarantee::DescendantsConfined)
+        .scope(ThreadScope::CurrentThreadPlusDescendants)
+        .read_path(allowed)
+        .write_path(write)
+}
+
+fn enter_worker_request(
+    allowed: &std::path::Path,
+    write: &std::path::Path,
+) -> Result<synvoid_platform::sandbox::EnteredSandbox, String> {
+    use synvoid_platform::sandbox::prepare_sandbox;
+
+    prepare_sandbox(worker_request(allowed, write))
         .and_then(|prepared| prepared.enter())
         .map_err(|error| error.to_string())
 }
@@ -493,6 +553,47 @@ fn linux_seccomp_preserves_thread_creation() {
     let (_tmp, allowed, denied, write) = fixture_dirs();
     assert_eq!(
         run_probe("seccomp-thread-clone-works", &allowed, &denied, &write),
+        0
+    );
+}
+
+#[test]
+fn linux_worker_required_allows_allowlisted_read() {
+    if std::env::var(PROBE_ENV).is_ok() || !requires_landlock() {
+        return;
+    }
+    let (_tmp, allowed, denied, write) = fixture_dirs();
+    assert_eq!(
+        run_probe("worker-required-allowed-read", &allowed, &denied, &write),
+        0
+    );
+}
+
+#[test]
+fn linux_worker_required_denies_unlisted_read() {
+    if std::env::var(PROBE_ENV).is_ok() || !requires_landlock() {
+        return;
+    }
+    let (_tmp, allowed, denied, write) = fixture_dirs();
+    assert_eq!(
+        run_probe("worker-required-denied-read", &allowed, &denied, &write),
+        0
+    );
+}
+
+#[test]
+fn linux_worker_required_unsupported_guarantee_fails_closed() {
+    if std::env::var(PROBE_ENV).is_ok() || !requires_landlock() {
+        return;
+    }
+    let (_tmp, allowed, denied, write) = fixture_dirs();
+    assert_eq!(
+        run_probe(
+            "worker-required-unsupported-guarantee",
+            &allowed,
+            &denied,
+            &write
+        ),
         0
     );
 }

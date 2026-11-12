@@ -53,8 +53,12 @@ pub(super) async fn run_accept_loop(
     addr: SocketAddr,
     mut shutdown_rx: broadcast::Receiver<()>,
     runtime: HttpServerRuntime,
+    prebound_listener: Option<std::net::TcpListener>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let std_listener = synvoid_platform::socket_bind::bind_tcp_reuse(addr)?;
+    let std_listener = match prebound_listener {
+        Some(listener) => listener,
+        None => synvoid_platform::socket_bind::bind_tcp_reuse(addr)?,
+    };
     let listener = TcpListener::from_std(std_listener)?;
     // Phase 76: plaintext H1 is driven by the qualified direct runtime
     // (no cleartext HTTP/2). The TLS listener keeps its own H1+H2 claim
@@ -85,6 +89,13 @@ pub(super) async fn run_accept_loop(
             result = listener.accept() => {
                 match result {
                     Ok((stream, client_addr)) => {
+                        if let Some(listener_id) = runtime.listener_id.as_ref() {
+                            counter!(
+                                "synvoid.http.listener_accepted_total",
+                                "listener" => listener_id.to_string()
+                            )
+                            .increment(1);
+                        }
                         let client_ip = client_addr.ip();
 
                         let local_addr = stream.local_addr().ok();
@@ -185,6 +196,7 @@ pub(super) async fn run_accept_loop(
                             ipc,
                             worker_id,
                             drain_state: drain_state.clone(),
+                            listener_id: runtime.listener_id.clone(),
                             upstream_client_registry,
                             connection_limit,
                             app_servers,

@@ -9,13 +9,31 @@ The `worker_pool` configuration (`tcp.worker_pool_size`) controls the **number o
 | Component | Purpose | Configuration |
 |-----------|---------|---------------|
 | **UnifiedServerWorker** | Single process handling HTTP/HTTPS/HTTP3 + WAF + proxy via Tokio async runtime | `--unified-server-worker` flag |
-| **`tcp.worker_pool_size`** | Number of connection-accepting threads within the unified event loop | `tcp.worker_pool_size` config |
-| **`unified_server_workers`** | Number of unified worker processes (advanced isolation mode) | `defaults.worker_pool.workers` config. Shipped `config/main.toml` sets 4 and `WorkerPoolDefaults::default()` also sets 4 (`crates/synvoid-config/src/defaults.rs:972`). The literal `1` is only `ProcessManagerConfig::default().unified_server_workers` (`manager.rs:226`), which `run_supervisor_mode` always overrides with `main_config.defaults.worker_pool.workers.max(1)` (`src/supervisor/process.rs`). |
+| **`tcp.worker_pool_size`** | Number of accept loops per bound TCP service listener in the auxiliary TCP pool | `tcp.worker_pool_size` config |
+| **`unified_server_workers`** | Number of unified worker processes (advanced isolation mode) | `defaults.worker_pool.workers`. The type default and the shipped `config/main.toml` are both **1**. `run_supervisor_mode` derives the value from `main_config.defaults.worker_pool.workers.max(1)` (`src/supervisor/process.rs`). `workers > 1` fails config validation unless `allow_multi_worker = true`; the supervisor also refuses to start without the opt-in as defense in depth. |
 
 **Scaling Guidance:**
-- For HTTP scaling, tune `tcp.worker_pool_size` (connection accepting threads) or use async primitives within the existing event loop
+- For HTTP scaling, raise `[process_manager].worker_threads` (Tokio threads) and tune `[tcp].worker_pool_size` (accept loops per TCP listener)
 - **Do NOT increase `unified_server_workers` for normal scaling** — it increases process count for advanced isolation; use `worker_threads` for runtime parallelism and `tcp.worker_pool_size` for accept throughput
 - The unified worker uses a single Tokio runtime optimized for millions of tenants via O(1) domain-based routing
+
+### Multi-Worker State Limits
+
+`workers > 1` is an explicit opt-in (`allow_multi_worker = true`) and is
+mandatory when `[admin].enabled = true`. The following state is worker-local
+and is **not** shared across worker processes:
+
+- admin session map and CSRF-token map (`src/admin/state.rs`);
+- the in-memory admin rate-limit budget;
+- the admin metrics feed and request-log sink (`src/server/listener_tasks.rs`);
+- violation/threat-level state unless a shared path explicitly covers it.
+
+The admin listener binds with `SO_REUSEPORT` on every worker, so a browser can
+land on a different worker on the next request. A login can succeed on worker A
+and the next request can arrive at worker B with no session. Prometheus and the
+admin panel observe one worker at a time. There is no distributed session store
+in this release; do not describe multi-worker deployments as sharing sessions or
+cluster-wide metrics.
 
 ### Inline vs Offload Boundary
 
@@ -57,7 +75,7 @@ The Unified Server is designed to handle multiple protocols and transport layers
   - **HTTP/1.1:** Fully supported.
   - **HTTP/2:** Enabled via ALPN negotiation on server side (`src/tls/server.rs` `serve()` ALPN branch). `ProxyServer::with_http2()` still exists (`crates/synvoid-proxy/src/server.rs:283`) but is a **retained no-op**: the field it sets is `#[allow(dead_code)]` and the source comment states the legacy transport only used it as a pool-lookup hint, never for protocol switching — the egress lane negotiates via ALPN.
   - **HTTP/3 (QUIC):** Handled via `Quinn`, providing 0-RTT handshakes and improved performance on lossy networks.
-  - **TCP & UDP Proxying:** Generic stream and packet proxying with WAF protections.
+  - **TCP & UDP Proxying (Beta):** Configured stream and packet proxying from the global `[tcp.protocols.*]` / `[udp.protocols.*]` maps, with protocol filtering and bounded UDP request/response flows.
 - **Unified Event Loop:** A single `tokio::select!` based loop (or multiple spawned tasks) manages all incoming connections across all listeners.
 - **Dynamic Site Configuration:** The Unified Server can handle thousands of domains (sites) concurrently, each with its own WAF rules, upstreams, and security policies.
 
@@ -66,8 +84,8 @@ The Unified Server is designed to handle multiple protocols and transport layers
 ## Internal Components
 
 ### 1. Listener Pools
-- **`TcpListenerPool`:** Manages a collection of TCP listeners. It handles auto-tuning based on available parallelism and manages TLS termination.
-- **`UdpListenerPool`:** Handles UDP packet reception, protocol detection, and forwarding. Includes protection against reflection/amplification attacks.
+- **`TcpListenerPool` (Beta):** Registers listener definitions, binds each socket once, and runs `worker_pool_size` accept loops per listener. Protocol filtering, upstream connect timeout and per-connection idle timeout are enforced.
+- **`UdpListenerPool` (Beta):** Shares one client socket across receive loops and maintains bounded per-client request/response flows with connected upstream sockets, reply tasks, idle reaping and metrics.
 
 ### 2. WAF Pipeline
  Every request passing through the Unified Server is processed by the **WAF Pipeline**. This pipeline is modular and executes in stages (verified order in `WafCore::check_request_full`):

@@ -92,8 +92,8 @@ impl synvoid_http::challenge_paths::ChallengePathWaf for StubWaf {
 
 #[async_trait::async_trait]
 impl synvoid_http::BufferedRequestWaf for StubWaf {
-    fn error_page_theme(&self) -> &ThemeConfig {
-        &self.theme
+    fn error_page_theme(&self) -> std::sync::Arc<ThemeConfig> {
+        std::sync::Arc::new(self.theme.clone())
     }
 
     fn render_page_with_theme(
@@ -264,6 +264,7 @@ fn lane_context(
     http_config: synvoid_config::http::HttpConfig,
 ) -> NeutralServiceContext<StubWaf, StubDrain> {
     NeutralServiceContext {
+        listener_id: None,
         router: Arc::clone(&shared.router),
         waf: Arc::clone(&shared.waf),
         alt_svc: None,

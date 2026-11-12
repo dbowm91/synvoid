@@ -96,8 +96,8 @@ impl synvoid_http::challenge_paths::ChallengePathWaf for StubWaf {
 
 #[async_trait::async_trait]
 impl synvoid_http::BufferedRequestWaf for StubWaf {
-    fn error_page_theme(&self) -> &ThemeConfig {
-        &self.theme
+    fn error_page_theme(&self) -> std::sync::Arc<ThemeConfig> {
+        std::sync::Arc::new(self.theme.clone())
     }
 
     fn render_page_with_theme(
@@ -378,6 +378,7 @@ fn lane_context(
     permits: usize,
 ) -> NeutralServiceContext<StubWaf, StubDrain> {
     NeutralServiceContext {
+        listener_id: None,
         router: Arc::clone(&shared.router),
         waf: Arc::clone(&shared.waf),
         alt_svc: Some("h3=\":443\"".to_string()),
@@ -1185,11 +1186,10 @@ async fn adversarial_oversized_body() {
         normalize_wire(&egg_wire),
         "lane divergence"
     );
-    // Pinned current behavior: declared-length oversize fails on the chunk
-    // path, which body_policy maps to BlockedByWaf (403); unknown-length
-    // oversize maps to BodyTooLarge (413). Identical on both lanes;
-    // relabeling belongs to a separate plan.
-    assert!(hyper_wire.starts_with("HTTP/1.1 403"), "{hyper_wire}");
+    // Phase 09 body policy: both declared-length and unknown-length oversize
+    // bodies are request-body limits, not WAF verdicts, so both lanes return
+    // 413 (never 403).
+    assert!(hyper_wire.starts_with("HTTP/1.1 413"), "{hyper_wire}");
 }
 
 #[tokio::test]

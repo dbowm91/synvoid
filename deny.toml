@@ -1,7 +1,11 @@
 # SynVoid dependency policy (Phase 25 baseline; Phases 26-31 landed; Phases 37/40
-# corrected; Phase 103 re-audit).
-# Reviewed: 2026-10-01 (Phase 103: 0315/0316 fixed by Wasmtime 36.0.16 / 48.0.3;
-#   two retained ignores refreshed with re-triaged capability evidence).
+# corrected; Phase 103 re-audit; Phase 01 production-readiness refresh).
+# Reviewed: 2026-11-10 (Phase 01: rustls 0.23.46, rustls-webpki 0.103.16,
+#   webpki-roots/-root-certs 1.0.11, quinn-proto 0.11.19, rusqlite 0.41.1 /
+#   libsqlite3-sys 0.39.1, Wasmtime 36.0.20 + 48.0.8, zip 9.5.0, zstd 0.13.4 /
+#   zstd-safe 7.4.0 / zstd-sys 2.1.2, tokio 1.54.1, yara-x 1.23.0; the YARA
+#   compat fork was removed because the official release satisfies its removal
+#   condition).
 # Run: cargo deny check && cargo audit
 # Owner: security / release
 # Pinned tool: cargo-deny 0.20.2 (see docs/testing/verification-contract.md)
@@ -9,14 +13,13 @@
 # version/feature/capability separation; this file summarizes, that file proves).
 # Phase 26: `yara-x` single owner is `synvoid-yara`; `synvoid-mesh` no longer
 # links it, `synvoid-upload` consumes it only via `synvoid-yara` (guard:
-# yara_execution_boundary.rs). Phase 40 + Phase 103: the YARA transitive
-# Wasmtime line is 48.0.3 (via the temporary `third-party/yara-x-compat` fork
-# of official yara-x 1.20.0; see its README.SYNVOID.md). The direct plugin
-# runtime is 36.0.16 LTS (Phase 103: in-line LTS patch update from 36.0.15
-# for RUSTSEC-2026-0316). Both resolved Wasmtime lines are version-patched
-# for the relevant advisories (RUSTSEC-2026-0315 affects 47.0.4 only;
-# RUSTSEC-2026-0316 affected 36.0.15 and 47.0.4 — both remediated; see
-# architecture/dependency_security_baseline_phase25.md §4/§6/§11/§12).
+# yara_execution_boundary.rs). Phase 01: the YARA transitive Wasmtime line is
+# 48.0.8 via official yara-x 1.23.0 (the temporary
+# `third-party/yara-x-compat` fork was deleted after the official release
+# satisfied its documented removal condition). The direct plugin runtime is
+# 36.0.20 LTS. Both resolved Wasmtime lines are version-patched for the
+# relevant advisories (see architecture/dependency_security_baseline_phase25.md
+# §4/§6/§11/§12 and §15).
 #
 # Advisory-ignore metadata rule (enforced by deny_ignore_metadata_guard):
 # every ignored advisory MUST state dependency path, affected capability,
@@ -39,6 +42,8 @@ allow = [
     "BSL-1.0",
     "CDLA-Permissive-2.0",
     "IJG",
+    # zip 9.x default features pull bzip2 0.6 -> libbz2-rs-sys (bzip2-1.0.6).
+    "bzip2-1.0.6",
 ]
 confidence-threshold = 0.8
 
@@ -47,12 +52,9 @@ confidence-threshold = 0.8
 # Ignored advisories are re-audited on each major release.
 ignore = [
     # RUSTSEC-2023-0071: rsa Marvin Attack (Bleichenbacher timing on PKCS#1 v1.5 decryption).
-    # Dependency paths (Phase 103 re-audit):
-    #   - synvoid-yara -> yara-x 1.20.0 (compat fork) -> rsa 0.9.10 (transitive);
-    #     used in third-party/yara-x-compat/src/modules/utils/crypto.rs for
-    #     RSA signature VERIFICATION (`rsa::RsaPublicKey`, `rsa::Pkcs1v15Sign`,
-    #     `rsa::pkcs8::DecodePublicKey`) — public key only; YARA-X's signing
-    #     path is not invoked from SynVoid's source-only YARA execution model.
+    # Dependency paths (Phase 01 re-audit):
+    #   - synvoid-yara -> yara-x 1.23.0 -> rsa 0.10.0 (transitive) — PATCHED
+    #     (>=0.10.0) and therefore not this ignore's target.
     #   - synvoid-dns (mesh_dnssec.rs) -> rsa 0.9.10 (RSA `RsaPublicKey`
     #     verification; signing not invoked).
     #   - synvoid-dnssec-keystore (key.rs, keystore.rs) -> rsa 0.9.10
@@ -72,9 +74,10 @@ ignore = [
     # No fixed upgrade available upstream: the rsa crate has no patched
     #   release for RUSTSEC-2023-0071.
     # Owner: security.
-    # Reviewed: 2026-10-01.
-    # Re-audit: 2026-11-01.
-    # Remove condition: rsa crate releases a 0.9.x or 0.10.x version that
+    # Reviewed: 2026-11-10.
+    # Re-audit: 2027-02-10.
+    # Remove condition: the direct rsa 0.9 edge is migrated to rsa 0.10+, or
+    #   rsa crate releases a 0.9.x or 0.10.x version that
     #   constant-time-patches the PKCS#1 v1.5 decrypt operations, or
     #   SynVoid stops linking RSA entirely (would require migrating DNSSEC
     #   RSA keys and any X.509 certificates carrying RSA keys off RSA —
@@ -116,24 +119,137 @@ ignore = [
     #   still 0.18.1; no upstream release removes the rkyv 0.7 instance
     #   while preserving SynVoid's current minification behavior.
     # Owner: security.
-    # Reviewed: 2026-10-01.
-    # Re-audit: 2026-11-01.
+    # Reviewed: 2026-11-10.
+    # Re-audit: 2027-02-10.
     # Remove condition: an official minify-html release eliminates the
     #   rkyv 0.7 transitive (lightningcss/parcel_sourcemap drop rkyv 0.7),
     #   or SynVoid removes its minify-html consumer.
     "RUSTSEC-2026-0235",
+
+    # RUSTSEC-2026-0367 / -0368 / -0369 / -0429: zip <9.0.0 extraction
+    # (symlink targets outside destination, SUID/SGID preservation, process
+    # abort on large declared symlink size, permissions applied through
+    # symlinks).
+    # Dependency path: synvoid -> utoipa-swagger-ui 9.0.2 -> (build) zip 3.0.0.
+    #   The runtime/extraction-capability `zip 9.5.0` used by
+    #   synvoid-upload/synvoid-platform/yara-x is patched and is NOT ignored.
+    # Affected capability: `ZipArchive::extract` / `ZipStreamReader::extract`
+    #   on an archive with attacker-controlled entries.
+    # Exposure: NONE at runtime. `zip 3.0.0` is a build dependency of
+    #   utoipa-swagger-ui only. Its build script reads the crate's own pinned
+    #   `utoipa-swagger-ui-vendored` static archive and extracts `dist/`
+    #   entries through `by_index` + `enclosed_name`; it never calls
+    #   `extract`, never creates symlinks, and never consumes operator or
+    #   network input. Nothing from this path ships in a SynVoid binary.
+    # Upstream: utoipa-swagger-ui 10.0.2 moves the build dep to zip ^9.0, but
+    #   requires utoipa 6.x; the 5.x -> 6.x API migration is out of scope here.
+    # Owner: security / release.
+    # Reviewed: 2026-11-10.
+    # Re-audit: 2027-02-10.
+    # Remove condition: adopt utoipa 6 / utoipa-swagger-ui >=10.0.2 (zip ^9),
+    #   or drop the `swagger-ui` feature.
+    "RUSTSEC-2026-0367",
+    "RUSTSEC-2026-0368",
+    "RUSTSEC-2026-0369",
+    "RUSTSEC-2026-0429",
+
+    # RUSTSEC-2023-0089: atomic-polyfill 1.0.3 is unmaintained.
+    # Dependency path: synvoid-yara -> yara-x 1.23.0 -> cranelift-codegen 0.135.8
+    #   -> postcard 1.1.3 -> heapless 0.7.17 -> atomic-polyfill 1.0.3.
+    # Affected capability: none (informational unmaintained notice); the crate
+    #   supplies atomics shims for targets without native atomics.
+    # Exposure: NONE on supported Linux/macOS/Windows targets; no SynVoid code
+    #   calls atomic-polyfill directly. postcard 1.1.3 still requires heapless
+    #   0.7 (no patched release removes the edge).
+    # Owner: security / release.
+    # Reviewed: 2026-11-10.
+    # Re-audit: 2027-04-10.
+    # Remove condition: postcard or cranelift drops heapless 0.7 / atomic-polyfill,
+    #   or a maintained replacement is published.
+    "RUSTSEC-2023-0089",
+
+    # RUSTSEC-2026-0374: basic-toml 0.1.10 is unmaintained.
+    # Dependency path: synvoid-tunnel -> defguard_boringtun 0.6.5
+    #   -> (build) uniffi 0.31.1 -> uniffi_bindgen 0.31.1 -> askama 0.14.0
+    #   -> askama_derive 0.14.0 -> basic-toml 0.1.10.
+    # Affected capability: none (informational unmaintained notice); TOML
+    #   parsing for build-time code generation.
+    # Exposure: NONE at runtime. Build-time only, on checked-in/generated
+    #   templates, never operator input.
+    # Owner: security / release.
+    # Reviewed: 2026-11-10.
+    # Re-audit: 2027-04-10.
+    # Remove condition: defguard_boringtun/uniffi moves to askama >=0.15 (which
+    #   drops basic-toml), or the wireguard feature is removed.
+    "RUSTSEC-2026-0374",
+
+    # RUSTSEC-2025-0141: bincode 1.3.3 and 2.0.1 are unmaintained.
+    # Dependency paths: admin-ui -> gloo 0.11/0.12 -> gloo-worker 0.5/0.6 ->
+    #   bincode 1.3.3 (WASM worker messaging); and
+    #   synvoid-yara -> yara-x 1.23.0 -> bincode 2.0.1 (serde feature).
+    # Affected capability: none (informational unmaintained notice).
+    # Exposure: LOW. bincode 1.3.3 is frontend WASM glue; bincode 2.0.1 is used
+    #   by yara-x for local rule metadata, never a SynVoid wire format
+    #   (distributed state uses postcard/rkyv per AGENTS.md). No patched
+    #   release exists for either line (the maintainer archived the project).
+    # Owner: security / release.
+    # Reviewed: 2026-11-10.
+    # Re-audit: 2027-04-10.
+    # Remove condition: gloo-worker or yara-x drops bincode, or a maintained
+    #   fork/replacement is adopted.
+    "RUSTSEC-2025-0141",
+
+    # RUSTSEC-2025-0057: fxhash 0.2.1 is unmaintained.
+    # Dependency path: synvoid-plugin-runtime -> wasmtime 36.0.20 (default
+    #   `profiling` feature) -> fxprof-processed-profile 0.6.0 -> fxhash 0.2.1.
+    # Affected capability: none (informational unmaintained notice); profiler
+    #   sample hashing, not security-sensitive.
+    # Exposure: NONE in production; Wasmtime profiling is not enabled by
+    #   SynVoid configuration. No patched release removes the edge.
+    # Owner: security / release.
+    # Reviewed: 2026-11-10.
+    # Re-audit: 2027-04-10.
+    # Remove condition: Wasmtime drops fxprof-processed-profile/fxhash, or the
+    #   direct runtime minimizes the `profiling` feature.
+    "RUSTSEC-2025-0057",
+
+    # RUSTSEC-2024-0370: proc-macro-error 1.0.4 is unmaintained.
+    # Dependency path: admin-ui -> yew 0.23.0 -> yew-macro 0.23.0
+    #   -> proc-macro-error 1.0.4 (compile-time macro helper).
+    # Affected capability: none (informational unmaintained notice).
+    # Exposure: NONE at runtime; proc-macro code runs only during the
+    #   `admin-ui` build. yew 0.23.0 is the latest published release.
+    # Owner: security / release.
+    # Reviewed: 2026-11-10.
+    # Re-audit: 2027-04-10.
+    # Remove condition: yew-macro moves off proc-macro-error in a published
+    #   yew release.
+    "RUSTSEC-2024-0370",
+
+    # RUSTSEC-2026-0173: proc-macro-error2 2.0.1 is unmaintained.
+    # Dependency path: pqc -> libcrux-ml-dsa -> hax-lib 0.3.7
+    #   -> hax-lib-macros 0.3.7 -> proc-macro-error2 2.0.1.
+    # Affected capability: none (informational unmaintained notice).
+    # Exposure: NONE at runtime; proc-macro code runs only while compiling
+    #   the PQ crypto dependency chain. No newer hax-lib release is published.
+    # Owner: security / release.
+    # Reviewed: 2026-11-10.
+    # Re-audit: 2027-04-10.
+    # Remove condition: libcrux/hax moves off proc-macro-error2, or pqc updates
+    #   to a release that does.
+    "RUSTSEC-2026-0173",
 ]
 
 # Deny yanked crates (prevents accidental use of withdrawn versions)
 yanked = "deny"
-# Phase 25: scope unmaintained/unsound gating to workspace crates (cargo-deny 0.20
-# schema: all | workspace | transitive | none). Rationale: "all" renders every
-# transitive notice (bincode-compat, yew-chain proc-macro-error, im-rc/sized-chunks
-# via admin-ui) as a hard error, which would force broader ignores — explicitly a
-# Phase 25 rejection criterion. "workspace" keeps teeth where we have agency (our
-# own crates must never go unmaintained/unsound without failing this gate) while
-# transitive notices stay visible via `cargo audit` warnings + the SECURITY.md
-# triage table. This is a reassessment, not silencing: "none" checked nothing.
+# Phase 25/Phase 01: scope unmaintained/unsound gating to workspace crates
+# (cargo-deny 0.20 schema: all | workspace | transitive | none). "workspace"
+# keeps teeth where we have agency (our own crates must never go unmaintained or
+# unsound without failing this gate). Transitive unmaintained findings are
+# recorded individually above with path/capability/exposure/owner/removal
+# metadata rather than being promoted to a blanket hard error; the six
+# `advisory-not-detected` warnings emitted here are the expected consequence of
+# auditing a narrower scope than the ignore list, not a policy failure.
 unmaintained = "workspace"
 unsound = "workspace"
 
@@ -143,23 +259,23 @@ multiple-versions = "warn"
 # No workspace manifest uses `*` (verified 2026-09-12); verify-release rejects them too.
 wildcards = "deny"
 
-# Duplicate-version allowlist (narrow): the wasmtime 48.0.3 (YARA transitive,
-# via the temporary `third-party/yara-x-compat` fork of official yara-x
-# 1.20.0) + 36.0.16 (direct LTS runtime) split is documented in
-# architecture/dependency_security_baseline_phase25.md §4/§6/§11 and
-# collapses to a single supported line when an official fixed yara-x
-# release replaces the fork.
+# Duplicate-version allowlist (narrow): the wasmtime 48.0.8 (YARA transitive,
+# via official yara-x 1.23.0) + 36.0.20 (direct LTS runtime) split is
+# documented in architecture/dependency_security_baseline_phase25.md
+# §4/§6/§11/§15 and collapses to a single supported line only after a
+# capability-driven migration (the 36 LTS line is supported through
+# 2027-08-20).
 # The skip silences only the multiple-versions warning for the direct runtime pin.
 [[bans.skip]]
 name = "wasmtime"
-version = "=36.0.16"
+version = "=36.0.20"
 
 [sources]
 # Phase 37 + Phase 103: unknown registries are denied (crates.io only). Unknown
-# git sources are denied with NO exceptions: the wasmtime 42.0.2 git patch is
-# removed (direct runtime is 36.0.16 LTS from crates.io) and no other git
-# dependency remains (verified: no `git =` in any manifest, no `git+` source in
-# Cargo.lock). Re-adding any git source requires an allow-git entry plus
-# baseline evidence.
+# git sources are denied with NO exceptions: the wasmtime git patch is long
+# removed (direct runtime is 36.0.20 LTS from crates.io), the yara-x path fork
+# was retired in Phase 01, and no other git dependency remains (verified: no
+# `git =` in any manifest, no `git+` source in Cargo.lock). Re-adding any git
+# source requires an allow-git entry plus baseline evidence.
 unknown-registry = "deny"
 unknown-git = "deny"

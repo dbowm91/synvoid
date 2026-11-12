@@ -681,6 +681,10 @@ fn get_api_endpoints() -> Vec<ApiCategory> {
                     method: "GET".to_string(),
                 },
                 ApiEndpoint {
+                    path: "/http/listeners".to_string(),
+                    method: "GET".to_string(),
+                },
+                ApiEndpoint {
                     path: "/tcp-udp/listeners".to_string(),
                     method: "POST".to_string(),
                 },

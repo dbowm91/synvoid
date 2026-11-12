@@ -60,7 +60,7 @@ rand = "0.9"
 # `synvoid-dnssec-keystore`; `cryptoki`, `rand_core_06`, and `zeroize`
 # moved there with the custody boundary.
 rsa = "0.9"
-rusqlite = { version = "0.32", features = ["bundled", "backup"] }
+rusqlite = { version = "0.41", features = ["bundled", "backup", "fallible_uint"] }
 subtle = "2"
 uuid = { version = "1", features = ["v4"] }
 

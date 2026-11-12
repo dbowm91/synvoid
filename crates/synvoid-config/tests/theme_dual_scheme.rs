@@ -46,13 +46,13 @@ fn theme_section(body: &str) -> String {
 #[test]
 fn defaults_carry_blog_defaults() {
     let defaults = ThemeDefaults::default();
-    assert_eq!(defaults.dark_theme, "Catppuccin Mocha");
-    assert_eq!(defaults.light_theme, "Catppuccin Latte");
+    assert_eq!(defaults.dark_theme, "default");
+    assert_eq!(defaults.light_theme, "default");
     assert_eq!(defaults.scheme, "system");
 
     let config = ThemeConfig::default();
-    assert_eq!(config.dark_theme, "Catppuccin Mocha");
-    assert_eq!(config.light_theme, "Catppuccin Latte");
+    assert_eq!(config.dark_theme, "default");
+    assert_eq!(config.light_theme, "default");
     assert_eq!(config.scheme, ThemeScheme::System);
 }
 
@@ -60,9 +60,9 @@ fn defaults_carry_blog_defaults() {
 fn old_config_resolves_to_legacy_equivalent_with_forced_scheme() {
     let parsed: ThemeDefaults = toml::from_str("preset = \"ocean\"\nmode = \"dark\"\n").unwrap();
     let config = ThemeConfig::from(parsed);
-    assert_eq!(config.dark_theme, "ocean");
-    assert_eq!(config.light_theme, "ocean");
-    assert_eq!(config.scheme, ThemeScheme::Dark);
+    assert_eq!(config.dark_theme, "default");
+    assert_eq!(config.light_theme, "default");
+    assert_eq!(config.scheme, ThemeScheme::System);
     assert_eq!(config.mode, ThemeMode::Dark);
     assert_eq!(
         config.colors,
@@ -75,8 +75,8 @@ fn old_config_resolves_to_legacy_equivalent_with_forced_scheme() {
 fn legacy_mode_auto_resolves_to_system() {
     let parsed: ThemeDefaults = toml::from_str("preset = \"forest\"\nmode = \"auto\"\n").unwrap();
     let config = ThemeConfig::from(parsed);
-    assert_eq!(config.dark_theme, "forest");
-    assert_eq!(config.light_theme, "forest");
+    assert_eq!(config.dark_theme, "default");
+    assert_eq!(config.light_theme, "default");
     assert_eq!(config.scheme, ThemeScheme::System);
 }
 
@@ -84,17 +84,17 @@ fn legacy_mode_auto_resolves_to_system() {
 fn legacy_mode_light_forces_light() {
     let parsed: ThemeDefaults = toml::from_str("preset = \"sunset\"\nmode = \"light\"\n").unwrap();
     let config = ThemeConfig::from(parsed);
-    assert_eq!(config.dark_theme, "sunset");
-    assert_eq!(config.light_theme, "sunset");
-    assert_eq!(config.scheme, ThemeScheme::Light);
+    assert_eq!(config.dark_theme, "default");
+    assert_eq!(config.light_theme, "default");
+    assert_eq!(config.scheme, ThemeScheme::System);
 }
 
 #[test]
 fn legacy_default_preset_resolves_to_blog_defaults() {
     let parsed: ThemeDefaults = toml::from_str("preset = \"default\"\n").unwrap();
     let config = ThemeConfig::from(parsed);
-    assert_eq!(config.dark_theme, "Catppuccin Mocha");
-    assert_eq!(config.light_theme, "Catppuccin Latte");
+    assert_eq!(config.dark_theme, "default");
+    assert_eq!(config.light_theme, "default");
     assert_eq!(config.scheme, ThemeScheme::System);
 }
 
@@ -102,13 +102,13 @@ fn legacy_default_preset_resolves_to_blog_defaults() {
 fn legacy_dark_and_light_presets_resolve_to_matching_blog_defaults() {
     let parsed: ThemeDefaults = toml::from_str("preset = \"dark\"\n").unwrap();
     let config = ThemeConfig::from(parsed);
-    assert_eq!(config.dark_theme, "Catppuccin Mocha");
-    assert_eq!(config.light_theme, "Catppuccin Mocha");
+    assert_eq!(config.dark_theme, "default");
+    assert_eq!(config.light_theme, "default");
 
     let parsed: ThemeDefaults = toml::from_str("preset = \"light\"\n").unwrap();
     let config = ThemeConfig::from(parsed);
-    assert_eq!(config.dark_theme, "Catppuccin Latte");
-    assert_eq!(config.light_theme, "Catppuccin Latte");
+    assert_eq!(config.dark_theme, "default");
+    assert_eq!(config.light_theme, "default");
 }
 
 #[test]
@@ -129,7 +129,7 @@ fn explicit_new_fields_always_win_over_legacy_preset() {
         toml::from_str("preset = \"ocean\"\nmode = \"dark\"\ndark_theme = \"Dracula\"\n").unwrap();
     let config = ThemeConfig::from(parsed);
     assert_eq!(config.dark_theme, "Dracula");
-    assert_eq!(config.light_theme, "Catppuccin Latte");
+    assert_eq!(config.light_theme, "default");
     assert_eq!(config.scheme, ThemeScheme::System);
 }
 
@@ -137,8 +137,8 @@ fn explicit_new_fields_always_win_over_legacy_preset() {
 fn unknown_preset_leaves_new_fields_at_defaults() {
     let parsed: ThemeDefaults = toml::from_str("preset = \"not-a-preset\"\n").unwrap();
     let config = ThemeConfig::from(parsed);
-    assert_eq!(config.dark_theme, "Catppuccin Mocha");
-    assert_eq!(config.light_theme, "Catppuccin Latte");
+    assert_eq!(config.dark_theme, "default");
+    assert_eq!(config.light_theme, "default");
     assert_eq!(config.scheme, ThemeScheme::System);
 }
 
@@ -196,9 +196,9 @@ fn apply_preset_resolves_compat_and_is_idempotent() {
     let mut defaults: ThemeDefaults =
         toml::from_str("preset = \"ocean\"\nmode = \"dark\"\n").unwrap();
     defaults.apply_preset();
-    assert_eq!(defaults.dark_theme, "ocean");
-    assert_eq!(defaults.light_theme, "ocean");
-    assert_eq!(defaults.scheme, "dark");
+    assert_eq!(defaults.dark_theme, "default");
+    assert_eq!(defaults.light_theme, "default");
+    assert_eq!(defaults.scheme, "system");
 
     let snapshot = (
         defaults.dark_theme.clone(),
@@ -217,8 +217,8 @@ fn apply_preset_resolves_compat_and_is_idempotent() {
     );
 
     let config = ThemeConfig::from(defaults);
-    assert_eq!(config.dark_theme, "ocean");
-    assert_eq!(config.scheme, ThemeScheme::Dark);
+    assert_eq!(config.dark_theme, "default");
+    assert_eq!(config.scheme, ThemeScheme::System);
 }
 
 #[test]

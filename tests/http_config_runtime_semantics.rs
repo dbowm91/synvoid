@@ -87,8 +87,8 @@ impl ChallengePathWaf for StubWaf {
 
 #[async_trait::async_trait]
 impl BufferedRequestWaf for StubWaf {
-    fn error_page_theme(&self) -> &ThemeConfig {
-        &self.theme
+    fn error_page_theme(&self) -> std::sync::Arc<ThemeConfig> {
+        std::sync::Arc::new(self.theme.clone())
     }
 
     fn render_page_with_theme(
@@ -184,6 +184,7 @@ async fn spawn_preflight_server(http_config: HttpConfig) -> std::net::SocketAddr
                             let outcome = prepare_request_preflight(
                                 synvoid_http::hyper_adapter::adapt_hyper_request(req),
                                 IpAddr::V4(Ipv4Addr::LOCALHOST),
+                                None,
                                 None,
                                 router,
                                 waf,
@@ -296,6 +297,7 @@ const EXPECTED_FIELDS: &[(&str, &str)] = &[
     ("max_connections", "ACTIVE_NARROWER_THAN_DOCS"),
     ("strict_protocol_validation", "ACTIVE_EXACT"),
     ("max_streaming_body_size", "ACTIVE_EXACT"),
+    ("listeners", "ACTIVE_EXACT"),
 ];
 
 const ALLOWED_DISPOSITIONS: &[&str] = &[

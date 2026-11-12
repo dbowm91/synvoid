@@ -23,15 +23,15 @@ pub mod xxe;
 use std::sync::Arc;
 
 use crate::attack_detection::behavioral::BehavioralEngine;
-use crate::attack_detection::detector_common::is_content_negotiation_header;
+use crate::attack_detection::detector_common::HeaderScanPolicy;
 use crate::attack_detection::normalizer::{InputNormalizer, NormalizationFlags, NormalizedInputs};
 
 pub use cmd_injection::CmdInjectionDetector;
 pub use config::{
-    AnomalyScoringConfig, AttackDetectionConfig, AttackDetectionResult, AttackType, DetectorConfig,
-    InputLocation, SimpleDetectorConfig,
+    AnomalyScoringConfig, AttackConfidence, AttackDetectionConfig, AttackDetectionResult,
+    AttackType, DetectorConfig, HeaderScanConfig, InputLocation, SimpleDetectorConfig,
 };
-pub use detector_common::{BasePatternDetector, PatternDetector};
+pub use detector_common::{BasePatternDetector, HeaderScanClass, PatternDetector};
 pub use header_validation::HeaderValidator;
 pub use jwt::JwtDetector;
 pub use ldap_injection::LdapInjectionDetector;
@@ -68,6 +68,7 @@ pub struct AttackDetector {
     open_redirect_detector: Arc<OpenRedirectDetector>,
     fast_path_detector: Option<regex::RegexSet>,
     behavioral_engine: Arc<BehavioralEngine>,
+    header_scan_policy: HeaderScanPolicy,
 }
 
 impl AttackDetector {
@@ -206,6 +207,7 @@ impl AttackDetector {
             r#"content-length"#,
         ];
         let fast_path_detector = regex::RegexSet::new(fast_path_patterns).ok();
+        let header_scan_policy = HeaderScanPolicy::from_config(&config);
 
         Self {
             config,
@@ -226,6 +228,7 @@ impl AttackDetector {
             open_redirect_detector,
             fast_path_detector,
             behavioral_engine: Arc::new(BehavioralEngine::new()),
+            header_scan_policy,
         }
     }
 
@@ -258,7 +261,9 @@ impl AttackDetector {
         // No per-request `JoinSet` fanout, no `Arc` snapshots, no
         // `NormalizedInputs::into_owned()` for task ownership. The async
         // signature is preserved for caller compatibility.
-        self.check_request_sync(client_ip, path, query_string, headers, body, &[])
+        let outcome = self.check_request_sync(client_ip, path, query_string, headers, body, &[]);
+        Self::record_detection_metric(outcome.0.as_ref());
+        outcome
     }
 
     /// Same as [`Self::check_request`], but detectors the site turned off
@@ -279,7 +284,23 @@ impl AttackDetector {
         body: Option<&[u8]>,
         site_disabled: &[AttackType],
     ) -> (Option<AttackDetectionResult>, u32) {
-        self.check_request_sync(client_ip, path, query_string, headers, body, site_disabled)
+        let outcome =
+            self.check_request_sync(client_ip, path, query_string, headers, body, site_disabled);
+        Self::record_detection_metric(outcome.0.as_ref());
+        outcome
+    }
+
+    fn record_detection_metric(result: Option<&AttackDetectionResult>) {
+        let Some(result) = result else {
+            return;
+        };
+        metrics::counter!(
+            "synvoid_waf_attack_detection_total",
+            "detector" => result.attack_type.metrics_label(),
+            "location" => result.input_location.class(),
+            "confidence" => result.confidence().as_str()
+        )
+        .increment(1);
     }
 
     /// Borrowed synchronous evaluation core for `check_request`.
@@ -458,7 +479,7 @@ impl AttackDetector {
             let mut inline_results: Vec<(AttackDetectionResult, u32)> = Vec::new();
 
             if site_on(AttackType::Sqli, self.config.sqli.enabled) {
-                if let Some(r) = Self::check_sqli_internal(&self.sqli_detector, &inputs) {
+                if let Some(r) = self.check_sqli_internal(&inputs) {
                     let score = match r.attack_type {
                         AttackType::Sqli => 50,
                         _ => 30,
@@ -468,7 +489,7 @@ impl AttackDetector {
             }
 
             if site_on(AttackType::Xss, self.config.xss.enabled) {
-                if let Some(r) = Self::check_xss_internal(&self.xss_detector, &inputs) {
+                if let Some(r) = self.check_xss_internal(&inputs) {
                     let score = match r.attack_type {
                         AttackType::Xss => 50,
                         _ => 30,
@@ -478,15 +499,13 @@ impl AttackDetector {
             }
 
             if self.config.ssti.enabled {
-                if let Some(r) = Self::check_ssti_internal(&self.ssti_detector, &inputs) {
+                if let Some(r) = self.check_ssti_internal(&inputs) {
                     inline_results.push((r, 40));
                 }
             }
 
             if self.config.cmd_injection.enabled {
-                if let Some(r) =
-                    Self::check_cmd_injection_internal(&self.cmd_injection_detector, &inputs)
-                {
+                if let Some(r) = self.check_cmd_injection_internal(&inputs) {
                     inline_results.push((r, 50));
                 }
             }
@@ -495,51 +514,43 @@ impl AttackDetector {
                 AttackType::PathTraversal,
                 self.config.path_traversal.enabled,
             ) {
-                if let Some(r) =
-                    Self::check_path_traversal_internal(&self.path_traversal_detector, &inputs)
-                {
+                if let Some(r) = self.check_path_traversal_internal(&inputs) {
                     inline_results.push((r, 40));
                 }
             }
 
             if site_on(AttackType::Rfi, self.config.rfi.enabled) {
-                if let Some(r) = Self::check_rfi_internal(&self.rfi_detector, &inputs) {
+                if let Some(r) = self.check_rfi_internal(&inputs) {
                     inline_results.push((r, 50));
                 }
             }
 
             if site_on(AttackType::Ssrf, self.config.ssrf.enabled) {
-                if let Some(r) = Self::check_ssrf_internal(&self.ssrf_detector, &inputs) {
+                if let Some(r) = self.check_ssrf_internal(&inputs) {
                     inline_results.push((r, 50));
                 }
             }
 
             if self.config.xxe.enabled {
-                if let Some(r) = Self::check_xxe_internal(&self.xxe_detector, &inputs) {
+                if let Some(r) = self.check_xxe_internal(&inputs) {
                     inline_results.push((r, 50));
                 }
             }
 
             if self.config.ldap_injection.enabled {
-                if let Some(r) =
-                    Self::check_ldap_injection_internal(&self.ldap_injection_detector, &inputs)
-                {
+                if let Some(r) = self.check_ldap_injection_internal(&inputs) {
                     inline_results.push((r, 40));
                 }
             }
 
             if self.config.xpath_injection.enabled {
-                if let Some(r) =
-                    Self::check_xpath_injection_internal(&self.xpath_injection_detector, &inputs)
-                {
+                if let Some(r) = self.check_xpath_injection_internal(&inputs) {
                     inline_results.push((r, 40));
                 }
             }
 
             if self.config.open_redirect.enabled {
-                if let Some(r) =
-                    Self::check_open_redirect_internal(&self.open_redirect_detector, &inputs)
-                {
+                if let Some(r) = self.check_open_redirect_internal(&inputs) {
                     inline_results.push((r, 30));
                 }
             }
@@ -651,66 +662,81 @@ impl AttackDetector {
         }
     }
 
-    fn check_sqli_internal(
-        detector: &SqliDetector,
-        inputs: &NormalizedInputs,
-    ) -> Option<AttackDetectionResult> {
+    fn check_sqli_internal(&self, inputs: &NormalizedInputs) -> Option<AttackDetectionResult> {
         if let Some(ref path) = inputs.path {
-            if let Some(result) = detector.detect_normalized(path, InputLocation::Path) {
+            if let Some(result) = self
+                .sqli_detector
+                .detect_normalized(path, InputLocation::Path)
+            {
                 return Some(result);
             }
         }
 
         if let Some(ref qs) = inputs.query_string {
-            if let Some(result) = detector.detect_normalized(qs, InputLocation::QueryString) {
+            if let Some(result) = self
+                .sqli_detector
+                .detect_normalized(qs, InputLocation::QueryString)
+            {
                 return Some(result);
             }
         }
 
         for (name, value) in &inputs.headers {
-            if is_content_negotiation_header(name) {
+            if !self.header_scan_policy.allows_payload_scan(name) {
                 continue;
             }
-            if let Some(result) = detector.detect_normalized(value, InputLocation::header(name)) {
+            if let Some(result) = self
+                .sqli_detector
+                .detect_normalized(value, InputLocation::header(name))
+            {
                 return Some(result);
             }
         }
 
         if let Some(ref body) = inputs.body {
-            if let Some(result) = detector.detect_normalized(body, InputLocation::PostBody) {
+            if let Some(result) = self
+                .sqli_detector
+                .detect_normalized(body, InputLocation::PostBody)
+            {
                 return Some(result);
             }
         }
 
         if let Some(ref path_raw) = inputs.path_raw {
-            if let Some(result) =
-                detector.detect_raw(path_raw.as_ref().as_bytes(), InputLocation::Path)
+            if let Some(result) = self
+                .sqli_detector
+                .detect_raw(path_raw.as_ref().as_bytes(), InputLocation::Path)
             {
                 return Some(result);
             }
         }
 
         if let Some(ref qs_raw) = inputs.query_string_raw {
-            if let Some(result) =
-                detector.detect_raw(qs_raw.as_ref().as_bytes(), InputLocation::QueryString)
+            if let Some(result) = self
+                .sqli_detector
+                .detect_raw(qs_raw.as_ref().as_bytes(), InputLocation::QueryString)
             {
                 return Some(result);
             }
         }
 
         for (name, raw) in &inputs.headers_raw {
-            if is_content_negotiation_header(name) {
+            if !self.header_scan_policy.allows_payload_scan(name) {
                 continue;
             }
-            if let Some(result) =
-                detector.detect_raw(raw.as_ref().as_bytes(), InputLocation::header(name))
+            if let Some(result) = self
+                .sqli_detector
+                .detect_raw(raw.as_ref().as_bytes(), InputLocation::header(name))
             {
                 return Some(result);
             }
         }
 
         if let Some(body_bytes) = inputs.body_bytes.as_deref() {
-            if let Some(result) = detector.detect_raw(body_bytes, InputLocation::PostBody) {
+            if let Some(result) = self
+                .sqli_detector
+                .detect_raw(body_bytes, InputLocation::PostBody)
+            {
                 return Some(result);
             }
         }
@@ -718,66 +744,81 @@ impl AttackDetector {
         None
     }
 
-    fn check_xss_internal(
-        detector: &XssDetector,
-        inputs: &NormalizedInputs,
-    ) -> Option<AttackDetectionResult> {
+    fn check_xss_internal(&self, inputs: &NormalizedInputs) -> Option<AttackDetectionResult> {
         if let Some(ref path) = inputs.path {
-            if let Some(result) = detector.detect_normalized(path, InputLocation::Path) {
+            if let Some(result) = self
+                .xss_detector
+                .detect_normalized(path, InputLocation::Path)
+            {
                 return Some(result);
             }
         }
 
         if let Some(ref qs) = inputs.query_string {
-            if let Some(result) = detector.detect_normalized(qs, InputLocation::QueryString) {
+            if let Some(result) = self
+                .xss_detector
+                .detect_normalized(qs, InputLocation::QueryString)
+            {
                 return Some(result);
             }
         }
 
         for (name, value) in &inputs.headers {
-            if is_content_negotiation_header(name) {
+            if !self.header_scan_policy.allows_payload_scan(name) {
                 continue;
             }
-            if let Some(result) = detector.detect_normalized(value, InputLocation::header(name)) {
+            if let Some(result) = self
+                .xss_detector
+                .detect_normalized(value, InputLocation::header(name))
+            {
                 return Some(result);
             }
         }
 
         if let Some(ref body) = inputs.body {
-            if let Some(result) = detector.detect_normalized(body, InputLocation::PostBody) {
+            if let Some(result) = self
+                .xss_detector
+                .detect_normalized(body, InputLocation::PostBody)
+            {
                 return Some(result);
             }
         }
 
         if let Some(ref path_raw) = inputs.path_raw {
-            if let Some(result) =
-                detector.detect_raw(path_raw.as_ref().as_bytes(), InputLocation::Path)
+            if let Some(result) = self
+                .xss_detector
+                .detect_raw(path_raw.as_ref().as_bytes(), InputLocation::Path)
             {
                 return Some(result);
             }
         }
 
         if let Some(ref qs_raw) = inputs.query_string_raw {
-            if let Some(result) =
-                detector.detect_raw(qs_raw.as_ref().as_bytes(), InputLocation::QueryString)
+            if let Some(result) = self
+                .xss_detector
+                .detect_raw(qs_raw.as_ref().as_bytes(), InputLocation::QueryString)
             {
                 return Some(result);
             }
         }
 
         for (name, raw) in &inputs.headers_raw {
-            if is_content_negotiation_header(name) {
+            if !self.header_scan_policy.allows_payload_scan(name) {
                 continue;
             }
-            if let Some(result) =
-                detector.detect_raw(raw.as_ref().as_bytes(), InputLocation::header(name))
+            if let Some(result) = self
+                .xss_detector
+                .detect_raw(raw.as_ref().as_bytes(), InputLocation::header(name))
             {
                 return Some(result);
             }
         }
 
         if let Some(body_bytes) = inputs.body_bytes.as_deref() {
-            if let Some(result) = detector.detect_raw(body_bytes, InputLocation::PostBody) {
+            if let Some(result) = self
+                .xss_detector
+                .detect_raw(body_bytes, InputLocation::PostBody)
+            {
                 return Some(result);
             }
         }
@@ -785,30 +826,42 @@ impl AttackDetector {
         None
     }
 
-    fn check_ssti_internal(
-        detector: &SstiDetector,
-        inputs: &NormalizedInputs,
-    ) -> Option<AttackDetectionResult> {
+    fn check_ssti_internal(&self, inputs: &NormalizedInputs) -> Option<AttackDetectionResult> {
         if let Some(ref path) = inputs.path {
-            if let Some(result) = detector.detect(path.as_str(), InputLocation::Path) {
+            if let Some(result) = self
+                .ssti_detector
+                .detect(path.as_str(), InputLocation::Path)
+            {
                 return Some(result);
             }
         }
 
         if let Some(ref qs) = inputs.query_string {
-            if let Some(result) = detector.detect(qs.as_str(), InputLocation::QueryString) {
+            if let Some(result) = self
+                .ssti_detector
+                .detect(qs.as_str(), InputLocation::QueryString)
+            {
                 return Some(result);
             }
         }
 
         for (name, value) in &inputs.headers {
-            if let Some(result) = detector.detect(value.as_str(), InputLocation::header(name)) {
+            if !self.header_scan_policy.allows_payload_scan(name) {
+                continue;
+            }
+            if let Some(result) = self
+                .ssti_detector
+                .detect(value.as_str(), InputLocation::header(name))
+            {
                 return Some(result);
             }
         }
 
         if let Some(ref body) = inputs.body {
-            if let Some(result) = detector.detect(body.as_str(), InputLocation::PostBody) {
+            if let Some(result) = self
+                .ssti_detector
+                .detect(body.as_str(), InputLocation::PostBody)
+            {
                 return Some(result);
             }
         }
@@ -817,29 +870,44 @@ impl AttackDetector {
     }
 
     fn check_cmd_injection_internal(
-        detector: &CmdInjectionDetector,
+        &self,
         inputs: &NormalizedInputs,
     ) -> Option<AttackDetectionResult> {
         if let Some(ref path) = inputs.path {
-            if let Some(result) = detector.detect(path.as_str(), InputLocation::Path) {
+            if let Some(result) = self
+                .cmd_injection_detector
+                .detect(path.as_str(), InputLocation::Path)
+            {
                 return Some(result);
             }
         }
 
         if let Some(ref qs) = inputs.query_string {
-            if let Some(result) = detector.detect(qs.as_str(), InputLocation::QueryString) {
+            if let Some(result) = self
+                .cmd_injection_detector
+                .detect(qs.as_str(), InputLocation::QueryString)
+            {
                 return Some(result);
             }
         }
 
         for (name, value) in &inputs.headers {
-            if let Some(result) = detector.detect(value.as_str(), InputLocation::header(name)) {
+            if !self.header_scan_policy.allows_payload_scan(name) {
+                continue;
+            }
+            if let Some(result) = self
+                .cmd_injection_detector
+                .detect(value.as_str(), InputLocation::header(name))
+            {
                 return Some(result);
             }
         }
 
         if let Some(ref body) = inputs.body {
-            if let Some(result) = detector.detect(body.as_str(), InputLocation::PostBody) {
+            if let Some(result) = self
+                .cmd_injection_detector
+                .detect(body.as_str(), InputLocation::PostBody)
+            {
                 return Some(result);
             }
         }
@@ -848,29 +916,44 @@ impl AttackDetector {
     }
 
     fn check_path_traversal_internal(
-        detector: &PathTraversalDetector,
+        &self,
         inputs: &NormalizedInputs,
     ) -> Option<AttackDetectionResult> {
         if let Some(ref path) = inputs.path {
-            if let Some(result) = detector.detect(path.as_str(), InputLocation::Path) {
+            if let Some(result) = self
+                .path_traversal_detector
+                .detect(path.as_str(), InputLocation::Path)
+            {
                 return Some(result);
             }
         }
 
         if let Some(ref qs) = inputs.query_string {
-            if let Some(result) = detector.detect(qs.as_str(), InputLocation::QueryString) {
+            if let Some(result) = self
+                .path_traversal_detector
+                .detect(qs.as_str(), InputLocation::QueryString)
+            {
                 return Some(result);
             }
         }
 
         for (name, value) in &inputs.headers {
-            if let Some(result) = detector.detect(value.as_str(), InputLocation::header(name)) {
+            if !self.header_scan_policy.allows_payload_scan(name) {
+                continue;
+            }
+            if let Some(result) = self
+                .path_traversal_detector
+                .detect(value.as_str(), InputLocation::header(name))
+            {
                 return Some(result);
             }
         }
 
         if let Some(ref body) = inputs.body {
-            if let Some(result) = detector.detect(body.as_str(), InputLocation::PostBody) {
+            if let Some(result) = self
+                .path_traversal_detector
+                .detect(body.as_str(), InputLocation::PostBody)
+            {
                 return Some(result);
             }
         }
@@ -878,24 +961,33 @@ impl AttackDetector {
         None
     }
 
-    fn check_rfi_internal(
-        detector: &RfiDetector,
-        inputs: &NormalizedInputs,
-    ) -> Option<AttackDetectionResult> {
+    fn check_rfi_internal(&self, inputs: &NormalizedInputs) -> Option<AttackDetectionResult> {
         if let Some(ref qs) = inputs.query_string {
-            if let Some(result) = detector.detect(qs.as_str(), InputLocation::QueryString) {
+            if let Some(result) = self
+                .rfi_detector
+                .detect(qs.as_str(), InputLocation::QueryString)
+            {
                 return Some(result);
             }
         }
 
         for (name, value) in &inputs.headers {
-            if let Some(result) = detector.detect(value.as_str(), InputLocation::header(name)) {
+            if !self.header_scan_policy.allows_payload_scan(name) {
+                continue;
+            }
+            if let Some(result) = self
+                .rfi_detector
+                .detect(value.as_str(), InputLocation::header(name))
+            {
                 return Some(result);
             }
         }
 
         if let Some(ref body) = inputs.body {
-            if let Some(result) = detector.detect(body.as_str(), InputLocation::PostBody) {
+            if let Some(result) = self
+                .rfi_detector
+                .detect(body.as_str(), InputLocation::PostBody)
+            {
                 return Some(result);
             }
         }
@@ -903,24 +995,33 @@ impl AttackDetector {
         None
     }
 
-    fn check_ssrf_internal(
-        detector: &SsrfDetector,
-        inputs: &NormalizedInputs,
-    ) -> Option<AttackDetectionResult> {
+    fn check_ssrf_internal(&self, inputs: &NormalizedInputs) -> Option<AttackDetectionResult> {
         if let Some(ref qs) = inputs.query_string {
-            if let Some(result) = detector.detect(qs.as_str(), InputLocation::QueryString) {
+            if let Some(result) = self
+                .ssrf_detector
+                .detect(qs.as_str(), InputLocation::QueryString)
+            {
                 return Some(result);
             }
         }
 
         for (name, value) in &inputs.headers {
-            if let Some(result) = detector.detect(value.as_str(), InputLocation::header(name)) {
+            if !self.header_scan_policy.allows_payload_scan(name) {
+                continue;
+            }
+            if let Some(result) = self
+                .ssrf_detector
+                .detect(value.as_str(), InputLocation::header(name))
+            {
                 return Some(result);
             }
         }
 
         if let Some(ref body) = inputs.body {
-            if let Some(result) = detector.detect(body.as_str(), InputLocation::PostBody) {
+            if let Some(result) = self
+                .ssrf_detector
+                .detect(body.as_str(), InputLocation::PostBody)
+            {
                 return Some(result);
             }
         }
@@ -928,24 +1029,33 @@ impl AttackDetector {
         None
     }
 
-    fn check_xxe_internal(
-        detector: &XxeDetector,
-        inputs: &NormalizedInputs,
-    ) -> Option<AttackDetectionResult> {
+    fn check_xxe_internal(&self, inputs: &NormalizedInputs) -> Option<AttackDetectionResult> {
         if let Some(ref qs) = inputs.query_string {
-            if let Some(result) = detector.detect(qs.as_str(), InputLocation::QueryString) {
+            if let Some(result) = self
+                .xxe_detector
+                .detect(qs.as_str(), InputLocation::QueryString)
+            {
                 return Some(result);
             }
         }
 
         for (name, value) in &inputs.headers {
-            if let Some(result) = detector.detect(value.as_str(), InputLocation::header(name)) {
+            if !self.header_scan_policy.allows_payload_scan(name) {
+                continue;
+            }
+            if let Some(result) = self
+                .xxe_detector
+                .detect(value.as_str(), InputLocation::header(name))
+            {
                 return Some(result);
             }
         }
 
         if let Some(ref body) = inputs.body {
-            if let Some(result) = detector.detect(body.as_str(), InputLocation::PostBody) {
+            if let Some(result) = self
+                .xxe_detector
+                .detect(body.as_str(), InputLocation::PostBody)
+            {
                 return Some(result);
             }
         }
@@ -954,29 +1064,44 @@ impl AttackDetector {
     }
 
     fn check_ldap_injection_internal(
-        detector: &LdapInjectionDetector,
+        &self,
         inputs: &NormalizedInputs,
     ) -> Option<AttackDetectionResult> {
         if let Some(ref path) = inputs.path {
-            if let Some(result) = detector.detect(path.as_str(), InputLocation::Path) {
+            if let Some(result) = self
+                .ldap_injection_detector
+                .detect(path.as_str(), InputLocation::Path)
+            {
                 return Some(result);
             }
         }
 
         if let Some(ref qs) = inputs.query_string {
-            if let Some(result) = detector.detect(qs.as_str(), InputLocation::QueryString) {
+            if let Some(result) = self
+                .ldap_injection_detector
+                .detect(qs.as_str(), InputLocation::QueryString)
+            {
                 return Some(result);
             }
         }
 
         for (name, value) in &inputs.headers {
-            if let Some(result) = detector.detect(value.as_str(), InputLocation::header(name)) {
+            if !self.header_scan_policy.allows_payload_scan(name) {
+                continue;
+            }
+            if let Some(result) = self
+                .ldap_injection_detector
+                .detect(value.as_str(), InputLocation::header(name))
+            {
                 return Some(result);
             }
         }
 
         if let Some(ref body) = inputs.body {
-            if let Some(result) = detector.detect(body.as_str(), InputLocation::PostBody) {
+            if let Some(result) = self
+                .ldap_injection_detector
+                .detect(body.as_str(), InputLocation::PostBody)
+            {
                 return Some(result);
             }
         }
@@ -985,29 +1110,44 @@ impl AttackDetector {
     }
 
     fn check_xpath_injection_internal(
-        detector: &XPathInjectionDetector,
+        &self,
         inputs: &NormalizedInputs,
     ) -> Option<AttackDetectionResult> {
         if let Some(ref path) = inputs.path {
-            if let Some(result) = detector.detect(path.as_str(), InputLocation::Path) {
+            if let Some(result) = self
+                .xpath_injection_detector
+                .detect(path.as_str(), InputLocation::Path)
+            {
                 return Some(result);
             }
         }
 
         if let Some(ref qs) = inputs.query_string {
-            if let Some(result) = detector.detect(qs.as_str(), InputLocation::QueryString) {
+            if let Some(result) = self
+                .xpath_injection_detector
+                .detect(qs.as_str(), InputLocation::QueryString)
+            {
                 return Some(result);
             }
         }
 
         for (name, value) in &inputs.headers {
-            if let Some(result) = detector.detect(value.as_str(), InputLocation::header(name)) {
+            if !self.header_scan_policy.allows_payload_scan(name) {
+                continue;
+            }
+            if let Some(result) = self
+                .xpath_injection_detector
+                .detect(value.as_str(), InputLocation::header(name))
+            {
                 return Some(result);
             }
         }
 
         if let Some(ref body) = inputs.body {
-            if let Some(result) = detector.detect(body.as_str(), InputLocation::PostBody) {
+            if let Some(result) = self
+                .xpath_injection_detector
+                .detect(body.as_str(), InputLocation::PostBody)
+            {
                 return Some(result);
             }
         }
@@ -1016,29 +1156,44 @@ impl AttackDetector {
     }
 
     fn check_open_redirect_internal(
-        detector: &OpenRedirectDetector,
+        &self,
         inputs: &NormalizedInputs,
     ) -> Option<AttackDetectionResult> {
         if let Some(ref path) = inputs.path {
-            if let Some(result) = detector.detect(path.as_str(), InputLocation::Path) {
+            if let Some(result) = self
+                .open_redirect_detector
+                .detect(path.as_str(), InputLocation::Path)
+            {
                 return Some(result);
             }
         }
 
         if let Some(ref qs) = inputs.query_string {
-            if let Some(result) = detector.detect(qs.as_str(), InputLocation::QueryString) {
+            if let Some(result) = self
+                .open_redirect_detector
+                .detect(qs.as_str(), InputLocation::QueryString)
+            {
                 return Some(result);
             }
         }
 
         for (name, value) in &inputs.headers {
-            if let Some(result) = detector.detect(value.as_str(), InputLocation::header(name)) {
+            if !self.header_scan_policy.allows_payload_scan(name) {
+                continue;
+            }
+            if let Some(result) = self
+                .open_redirect_detector
+                .detect(value.as_str(), InputLocation::header(name))
+            {
                 return Some(result);
             }
         }
 
         if let Some(ref body) = inputs.body {
-            if let Some(result) = detector.detect(body.as_str(), InputLocation::PostBody) {
+            if let Some(result) = self
+                .open_redirect_detector
+                .detect(body.as_str(), InputLocation::PostBody)
+            {
                 return Some(result);
             }
         }
@@ -1369,6 +1524,26 @@ impl AttackDetector {
         self.config
             .max_request_body_size
             .unwrap_or(DEFAULT_MAX_BUFFERED_BYTES)
+    }
+
+    /// Build a streaming scanner with the caller's resolved body cap.
+    pub fn streaming_with_body_limit(
+        self: Arc<Self>,
+        max_buffered_bytes: usize,
+    ) -> StreamingWafCore {
+        StreamingWafCore::with_body_limit(self, max_buffered_bytes)
+    }
+
+    /// Build a streaming scanner using an explicit detector cap when set, or
+    /// `fallback` when the detector intentionally leaves the cap to the request
+    /// pipeline. Used by composition for scanners that have no per-request
+    /// site context.
+    pub fn streaming_with_fallback_body_limit(
+        self: Arc<Self>,
+        fallback: usize,
+    ) -> StreamingWafCore {
+        let limit = self.config.max_request_body_size.unwrap_or(fallback);
+        StreamingWafCore::with_body_limit(self, limit)
     }
 
     pub fn streaming_with_config(

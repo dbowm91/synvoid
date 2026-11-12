@@ -4,7 +4,7 @@
 //! Each stage maps to the shared vocabulary in `architecture/http_request_pipeline.md`:
 //!
 //! 1. **Metadata Normalization** — `request_frontdoor::prepare_request_frontdoor()` + `request_parse::extract_request_metadata()`
-//! 2. **Route Resolution** — `request_preparation::prepare_request_preflight()` → `router.route_with_local_addr()`
+//! 2. **Route Resolution** — `request_preparation::prepare_request_preflight()` → `router.route_with_listener_id()`
 //! 3. **Body Policy** — `body_policy::collect_and_scan_request_body()`
 //! 4. **WAF Evaluation** — `buffered_request_waf_dispatch::maybe_handle_buffered_request_waf()` (trust-token bypass via `request_parse::should_skip_waf_from_trust_cookie()`; the former always-`Pass` early stage was removed in Phase 19)
 //! 5. **Terminal Response** — `request_frontdoor::dispatch_internal_endpoint()`
@@ -59,6 +59,7 @@ pub async fn prepare_http_request_flow<W, D>(
     req: crate::inbound::InboundRequest,
     client_ip: IpAddr,
     local_addr: Option<SocketAddr>,
+    listener_id: Option<&str>,
     drain_state: Option<Arc<D>>,
     router: Arc<Router>,
     waf: Arc<W>,
@@ -177,6 +178,7 @@ where
         frontdoor_req,
         client_ip,
         local_addr,
+        listener_id,
         router_for_preflight,
         waf_for_preflight,
         alt_svc_for_preflight,

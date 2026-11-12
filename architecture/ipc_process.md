@@ -54,7 +54,7 @@ The IPC & Process stack is responsible for:
 **ProcessManagerConfig** (`manager.rs:195-217`):
 - `min_workers: usize` - Minimum worker count
 - `max_workers: usize` - Maximum worker count
-- `unified_server_workers: usize` - Unified server worker process count (advanced isolation mode). The struct default is 1 (`manager.rs:226`), but `run_supervisor_mode` always overwrites it from `main_config.defaults.worker_pool.workers.max(1)` (`src/supervisor/process.rs`), whose serde/Default value is 4 (`crates/synvoid-config/src/defaults.rs:972`)
+- `unified_server_workers: usize` - Unified server worker process count (advanced isolation mode). The struct default is 1, and `run_supervisor_mode` derives it from `main_config.defaults.worker_pool.workers.max(1)` (`src/supervisor/process.rs`). `WorkerPoolDefaults::default()` and its serde default are both 1; `workers > 1` requires `allow_multi_worker = true`.
 - `max_restart_attempts: u32` - Max restart attempts before giving up
 - `restart_cooldown_secs: u64` - Base cooldown between restarts
 - `restart_backoff_max_secs: u64` - Maximum restart backoff

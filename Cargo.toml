@@ -175,7 +175,7 @@ mime_guess = "2"
 # File system utilities (Phase 31: walkdir removed; 0 root src uses)
 
 # Database
-rusqlite = { version = "0.32", features = ["bundled", "backup"] }
+rusqlite = { version = "0.41", features = ["bundled", "backup", "fallible_uint"] }
 
 # TLS + Post-Quantum Cryptography (Phase 31: rustls/rustls-pki-types/aws-lc-rs
 # removed from root; 0 direct `rustls::` uses — PQ/TLS features owned by
@@ -349,11 +349,11 @@ libfuzzer-sys = "0.4"
 proptest = "1.5"
 proptest-derive = "0.4"
 criterion = { version = "0.5", features = ["html_reports"] }
-# Phase 37/103: direct Wasmtime is the 36 LTS line from crates.io (36.0.14+ carries
-# the RUSTSEC-2026-0269 fix; 36.0.16 carries the RUSTSEC-2026-0316 fix; supported
-# through 2027-08-20). Used by benches/bench_wasm.rs; must match
-# synvoid-plugin-runtime's direct version.
-wasmtime = "36.0.16"
+# Phase 01/103: direct Wasmtime is the 36 LTS line from crates.io (36.0.14+
+# carries the RUSTSEC-2026-0269 fix; 36.0.20 carries the RUSTSEC-2026-0380 /
+# -0379 / -0363 / -0424 fixes; supported through 2027-08-20). Used by
+# benches/bench_wasm.rs; must match synvoid-plugin-runtime's direct version.
+wasmtime = "36.0.20"
 wat = "1"
 # Phase 125: DNS runtime-DTO adapter parity fixtures deserialize the shipped
 # `examples/dns/*.toml` profiles. Already in Cargo.lock via synvoid-dns dev-deps;
@@ -463,35 +463,17 @@ required-features = ["dns"]
 # 0.95 -> 0.111; Oxc 0.111 `oxc_allocator` has no external bumpalo edge).
 # No git source is introduced: `deny.toml` keeps `unknown-git = "deny"` with
 # zero allows. Owner: security / static-files. Added: 2026-09-18.
-# Reviewed: 2026-10-01. Re-audit: 2026-11-01. Removal condition: delete
+# Reviewed: 2026-11-10. Re-audit: 2027-02-10. Removal condition: delete
 # this section and `third-party/minify-html-compat/` as soon as an official
 # minify-html release eliminates the Oxc 0.95 / external bumpalo 3.19 path
 # and passes `crates/synvoid-static-files/tests/minify_parity.rs`. This must
-# remain the only `[patch]` section in the workspace (it may carry both
-# temporary entries below; adding a third entry requires a new
+# remain the only `[patch]` section in the workspace (it carries the single
+# temporary minify-html entry; adding another entry requires a new
 # removal-tracked phase).
 [patch.crates-io]
 minify-html = { path = "third-party/minify-html-compat" }
-# Phase 40 (temporary): YARA-X security upgrade. Phase 103 advances the
-# transitive Wasmtime line from 47.0.4 to 48.0.3; Phase 123 moves to 48.0.5
-# (48.0.4 is the advisory minimum) for RUSTSEC-2026-0326/-0327.
-# RUSTSEC-2026-0315 (47.0.4 affected) and RUSTSEC-2026-0316 (47.0.4 + 36.0.15
-# affected; direct 36 LTS advanced to 36.0.16). Official `yara-x 1.20.0`
-# (crates.io) still resolves wasmtime 45.0.3; stock `yara-x 1.21.0`
-# (released 2026-09-29) also resolves wasmtime ^45.0.3 and does not
-# satisfy the removal condition. Upstream PR #769 (wasmtime 47.0.4, MSRV
-# 1.94) is now closed-unmerged (2026-09-22). This path patch redirects the
-# single `yara-x` consumer (`synvoid-yara`) at workspace builds to the
-# vendored manifest-only compat fork in `third-party/yara-x-compat` (exact
-# 1.20.0 `src/`/`build.rs`, wasmtime 45.0.3 -> 47.0.4 -> 48.0.3 -> 48.0.5,
-# rust-version 1.93 -> 1.94 -> 1.95 — no source divergence; see the fork
-# Cargo.toml SYNVOID-PHASE40/SYNVOID-PHASE103 markers). No git source is
-# introduced: `deny.toml` keeps `unknown-git = "deny"` with zero allows.
-# Owner: security / yara. Added: 2026-09-18 (Phase 40); refreshed
-# 2026-10-01 (Phase 103). Reviewed: 2026-10-01. Re-audit: 2026-11-01.
-# Removal condition: delete this entry and `third-party/yara-x-compat/`
-# as soon as an official crates.io yara-x release >=1.19 resolves a
-# Wasmtime line patched for all advisories relevant to the enabled feature
-# set (see third-party/yara-x-compat/README.SYNVOID.md and
-# `yara_fork_is_temporary_guard`).
-yara-x = { path = "third-party/yara-x-compat" }
+# Phase 01 (2026-11-10): the temporary YARA-X compat fork was removed after
+# official crates.io yara-x 1.23.0 (2026-11-05) resolved Wasmtime ^48.0.8 and
+# zip ^9.0.5, satisfying the fork's removal condition. `synvoid-yara` now
+# consumes the official release directly; no `[patch.crates-io]` entry and no
+# git source are required.

@@ -335,7 +335,7 @@ There is no `verify_certificates` or `enable_post_quantum` field on `[mesh.tls]`
 
 By default, enabling `tls_passthrough = true` keeps L7 WAF inspection enabled. Set `tls_passthrough_enforce_waf = false` only for an intentional bypass; encrypted traffic is then forwarded directly to the origin without inspection.
 
-To force WAF L7 inspection even with TLS passthrough enabled, use `tls_passthrough_enforce_waf`. These keys live in the site file's top-level `[proxy]` section (`SiteConfig.proxy`), not in `main.toml`; the site is identified by `[site] domains` and listens via `[[site.listen]]`:
+To force WAF L7 inspection even with TLS passthrough enabled, use `tls_passthrough_enforce_waf`. These keys live in the site file's top-level `[proxy]` section (`SiteConfig.proxy`), not in `main.toml`; the site is identified by `[site] domains` on the single process-wide HTTP listener (`[server]`/`[tls]`):
 
 ```toml
 # config/sites/example.com.toml
@@ -344,11 +344,6 @@ domains = ["example.com"]
 
 [site.upstream]
 default = "http://127.0.0.1:8000"
-
-[[site.listen]]
-address = "0.0.0.0"
-port = 443
-ssl = true
 
 [proxy]
 tls_passthrough = true

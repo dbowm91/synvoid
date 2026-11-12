@@ -655,10 +655,12 @@ mod tests {
 
     #[test]
     fn legacy_preset_still_applies_beneath_fallback_pair() {
-        let mut theme = ThemeDefaults::default();
-        theme.dark_theme = default_dark_theme();
-        theme.light_theme = default_light_theme();
-        theme.preset = "dark".to_string();
+        let theme = ThemeDefaults {
+            dark_theme: default_dark_theme(),
+            light_theme: default_light_theme(),
+            preset: "dark".to_string(),
+            ..Default::default()
+        };
         let (dark, light, _) = theme.resolve_halloy_themes();
         assert_eq!(dark, default_dark_theme());
         assert_eq!(light, default_dark_theme());
@@ -666,8 +668,10 @@ mod tests {
 
     #[test]
     fn unstyled_default_beats_fossil_legacy_preset() {
-        let mut theme = ThemeDefaults::default();
-        theme.preset = "light".to_string();
+        let theme = ThemeDefaults {
+            preset: "light".to_string(),
+            ..Default::default()
+        };
         let (dark, light, _) = theme.resolve_halloy_themes();
         assert_eq!(dark, "default");
         assert_eq!(light, "default");
@@ -675,10 +679,12 @@ mod tests {
 
     #[test]
     fn explicit_names_win_over_legacy_preset() {
-        let mut theme = ThemeDefaults::default();
-        theme.preset = "dark".to_string();
-        theme.dark_theme = "Nord".to_string();
-        theme.light_theme = "Dracula".to_string();
+        let theme = ThemeDefaults {
+            preset: "dark".to_string(),
+            dark_theme: "Nord".to_string(),
+            light_theme: "Dracula".to_string(),
+            ..Default::default()
+        };
         let (dark, light, _) = theme.resolve_halloy_themes();
         assert_eq!(dark, "Nord");
         assert_eq!(light, "Dracula");

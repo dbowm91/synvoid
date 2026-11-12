@@ -169,6 +169,20 @@ where
         _ => false,
     };
 
+    // Resolve the same body policy as HTTP/1/2: per-site override, then the
+    // global HTTP body cap, bounded by the HTTP/3 transport ceiling.
+    let max_request_size = match &route_result {
+        RouteResult::Found(route_target) => route_target
+            .site_config
+            .proxy
+            .max_request_body_size(main_config.http.max_streaming_body_size)
+            .min(max_request_size),
+        _ => main_config
+            .http
+            .max_streaming_body_size
+            .min(max_request_size),
+    };
+
     let body_collection = collect_http3_request_body(
         stream_scanned_upstream_mode,
         max_request_size,
