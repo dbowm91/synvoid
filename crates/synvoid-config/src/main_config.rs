@@ -464,8 +464,8 @@ impl Default for MainConfig {
 mod tests {
     use super::*;
 
-    /// Fixed strong token (40 hex chars, no weak patterns) so seam tests are
-    /// deterministic regardless of the surrounding environment.
+    /// Deliberately low-entropy test token so secret scanners do not classify
+    /// the fixture as a credential; it is still long enough for validation.
     const TEST_TOKEN: &str = "fixture-only-low-entropy-value-0000000000";
 
     fn valid_toml() -> String {

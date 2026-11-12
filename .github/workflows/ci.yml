@@ -76,11 +76,13 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      # No `toolchain:` input: rust-toolchain.toml is authoritative. The pinned
-      # 1.98.1 is what makes the rebuilt bundle byte-comparable to the committed
-      # one, so the drift check below is not noise.
+      # The action's default toolchain is `stable`, while rust-toolchain.toml
+      # selects 1.98.1. Name the pinned version here so the wasm target is
+      # installed on the toolchain cargo actually uses (the drift check depends
+      # on that exact compiler).
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable as of 2026-09-12
         with:
+          toolchain: "1.98.1"
           targets: wasm32-unknown-unknown
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
