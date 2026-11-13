@@ -222,3 +222,48 @@ derivation and how to read the real value.
 4. Re-run this topology once 1–3 land; the matrix in `qualify.sh` (service
    selection per listener, unauthorized peer → 403, unknown service → 502, 4 MiB
    fixed and chunked bodies, 40 MiB response, failover) is ready to execute.
+
+## Implementation round (same day, after D3 was taken on)
+
+Wiring the QUIC runtime exposed one further defect per run. All are fixed in
+the working tree unless marked otherwise:
+
+| # | Defect | Evidence |
+|---|--------|----------|
+| D5 | `[tunnel.mesh.tls] mode` existed only on the mesh-side DTO. The config crate had no `mode`, so `mode = "permissive"` was silently ignored and strict was enforced, which then failed for want of certificates. | `unknown variant ''`-class failure replaced by `Missing server certificate path` |
+| D6 | The tunnel client ignored `server_ca` entirely and always used the platform verifier; it also never presented a client certificate. A private CA could therefore never be trusted. | `UnknownIssuer` against our own CA |
+| D7 | `require_client_cert` never installed a client verifier; mTLS was a log line. | server built with `with_single_cert` only |
+| D8 | `WebPkiClientVerifier::builder` resolves the process-default provider and panics when the feature set cannot pick one. | worker panic at `rustls/…/crypto/mod.rs:249` |
+| D9 | PoW nonces were mined from a base64 decoding of a hex key (48 bytes), so no receiver could verify them. | `Edge node … PoW verification failed` |
+| D10 | `HelloAck` has no signature field, while `validate_peer_role` demands one for an origin; no acknowledgement could ever pass. | `validate_origin_node` requires `peer_signature` |
+| D11 | Strict peer-identity check downcast to a bare `CertificateDer`; quinn yields `Vec<CertificateDer>`. | `TLS identity is not CertificateDer` |
+| D12 | `MeshCertManager::ensure_certs` (which loads `ca_path` into the mesh trust store) had no caller. | `No CA certificates configured but mesh.tls.mode=strict` |
+| D13 | The mesh cert manager's own rustls builders resolved the process default. | same provider panic, inbound path |
+
+Fixes: explicit `mode` field plus validation; client config built from
+`server_ca` with client-auth certificates; real client verifier; explicit crypto
+provider at every mesh/tunnel builder and once at process start; PoW mined over
+the decoded 32-byte key; TLS-bound responder check in place of the
+unsatisfiable signature contract; certificate-chain downcast; `ensure_certs`
+called when the transport is constructed.
+
+What the topology now demonstrably does: both nodes bind their QUIC ports,
+complete a mutually verified TLS handshake against an operator CA, mine and
+verify PoW, bind the claimed node id to the presented key, and register the
+session (`Connected to seed node: 127.0.0.1:50052`).
+
+Certificates must carry the peer's **node id** as a DNS SAN, because the mesh
+certificate manager verifies the chain against `ServerName = node_id`. A
+certificate that only names the IP is rejected with
+`certificate not valid for name "node-…"`. Loopback certificates therefore need
+`IP:127.0.0.1` (what the transport dials) *and* `DNS:node-<hash>` (what the
+identity binding checks).
+
+Remaining blocker after that point: the edge's seed-list request fails with
+`Failed to request seed list from 127.0.0.1:50052: Peer not found:
+node-52e05c773f48c92d` and the mesh task group then closes the connection. The
+node id is known (it appears in the error), so the seed connection is not yet
+visible in the peer registry at the moment `request_seed_list` runs — an
+ordering defect in seed bootstrap rather than a transport defect. End-to-end
+forwarding therefore still does not complete, and the `qualify.sh` matrix
+remains unexecuted.

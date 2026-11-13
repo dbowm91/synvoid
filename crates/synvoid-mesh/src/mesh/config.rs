@@ -1484,6 +1484,41 @@ fn derive_node_id(private_key: &[u8]) -> String {
     format!("node-{}", hex::encode(&node_hash[..8]))
 }
 
+/// The node id a published node key derives to.
+///
+/// `derive_node_id_hash` publishes `sha256("public-key-from:" || secret)` as
+/// the node's public key, and the id is `node-<first 8 bytes hex>`. A peer can
+/// therefore verify a claimed node id from the key alone, without the secret.
+pub fn node_id_from_public_key(public_key: &[u8]) -> Option<String> {
+    if public_key.len() < 8 {
+        return None;
+    }
+    Some(format!("node-{}", hex::encode(&public_key[..8])))
+}
+
+/// Decode a peer's advertised public key.
+///
+/// Mesh senders have emitted both hex (`public_key_hex`) and base64
+/// (`URL_SAFE_NO_PAD`). Accept either form so the handshake cannot fail on an
+/// encoding disagreement alone, and require the 32-byte length both must
+/// carry.
+pub fn decode_node_public_key(encoded: &str) -> Result<Vec<u8>, String> {
+    use base64::Engine;
+    let bytes = match hex::decode(encoded) {
+        Ok(bytes) if bytes.len() == 32 => bytes,
+        _ => base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(encoded)
+            .map_err(|e| format!("invalid public key encoding: {e}"))?,
+    };
+    if bytes.len() != 32 {
+        return Err(format!(
+            "public key has invalid length: {} (expected 32)",
+            bytes.len()
+        ));
+    }
+    Ok(bytes)
+}
+
 pub fn derive_router_id(private_key: &[u8]) -> String {
     let node_hash = derive_node_id_hash(private_key);
     let mut hasher = Sha256::new();

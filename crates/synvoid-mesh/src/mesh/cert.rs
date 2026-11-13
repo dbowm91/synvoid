@@ -212,6 +212,19 @@ impl std::fmt::Debug for MeshCertManager {
     }
 }
 
+/// Install the process-wide rustls crypto provider once.
+///
+/// Several rustls builders in this module resolve the process default. When
+/// more than one provider feature is present in the dependency graph,
+/// `from_crate_features()` cannot choose and the builder panics — which killed
+/// the worker the first time a peer certificate was verified.
+fn install_crypto_provider() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    });
+}
+
 impl MeshCertManager {
     pub fn new(config: &MeshConfig) -> Self {
         let is_global = config.role.is_global();
@@ -389,16 +402,17 @@ impl MeshCertManager {
                     }
                 }
             }
-            let client_cert_verifier =
-                rustls::server::WebPkiClientVerifier::builder(std::sync::Arc::new(root_store))
-                    .build()
-                    .map_err(|e| {
-                        MeshCertError::ConfigError(format!(
-                            "Failed to build client verifier: {}",
-                            e
-                        ))
-                    })?;
+            install_crypto_provider();
+            let client_cert_verifier = rustls::server::WebPkiClientVerifier::builder_with_provider(
+                std::sync::Arc::new(root_store),
+                std::sync::Arc::new(rustls::crypto::aws_lc_rs::default_provider()),
+            )
+            .build()
+            .map_err(|e| {
+                MeshCertError::ConfigError(format!("Failed to build client verifier: {}", e))
+            })?;
 
+            install_crypto_provider();
             rustls::ServerConfig::builder()
                 .with_client_cert_verifier(client_cert_verifier)
                 .with_single_cert(cert_chain, private_key)
@@ -406,6 +420,7 @@ impl MeshCertManager {
                     MeshCertError::ConfigError(format!("Failed to build server config: {}", e))
                 })?
         } else {
+            install_crypto_provider();
             rustls::ServerConfig::builder()
                 .with_no_client_auth()
                 .with_single_cert(cert_chain, private_key)
@@ -466,6 +481,7 @@ impl MeshCertManager {
 
         let (cert_chain, private_key) = Self::load_cert_chain_and_key(cert_path, key_path)?;
 
+        install_crypto_provider();
         let mut client_config = rustls::ClientConfig::builder()
             .with_root_certificates({
                 let mut root_store = rustls::RootCertStore::empty();

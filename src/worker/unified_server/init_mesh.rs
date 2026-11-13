@@ -234,6 +234,15 @@ pub async fn init_mesh_and_threat_intel(
         // EdgeReplicaManager — the snapshot arrives later via IPC
         // (CanonicalTrustSnapshotUpdate) and is handled in lifecycle.rs.
         let node_id = mesh_config.node_id();
+        // The realized identity is derived from the signing key, not taken
+        // from `[tunnel.mesh] node_id`. Peers must allowlist this exact value
+        // in their `peered_wafs`, so make it observable at startup.
+        tracing::info!(
+            node_id = %node_id,
+            role = ?mesh_config.role,
+            mesh_port = mesh_config.port,
+            "Mesh node identity realized"
+        );
         let mesh_config_arc = Arc::new(mesh_config.clone());
 
         let topology = Arc::new(crate::mesh::topology::MeshTopology::new(
@@ -544,6 +553,7 @@ pub async fn init_mesh_and_threat_intel(
                 backend_pool,
                 Some(threat_intel.clone()),
                 Some(Arc::new(signer_for_mesh)),
+                true,
             )
             .await
             {
@@ -571,6 +581,7 @@ pub async fn init_mesh_and_threat_intel(
                 backend_pool,
                 Some(threat_intel.clone()),
                 Some(Arc::new(signer_for_mesh)),
+                true,
             )
             .await
             {

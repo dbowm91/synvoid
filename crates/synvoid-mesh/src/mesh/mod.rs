@@ -30,6 +30,7 @@ pub mod passover_key_exchange;
 pub mod peer_auth;
 pub mod protocol;
 pub mod proxy;
+pub mod quic_runtime;
 pub mod raft;
 pub mod task_group;
 // Domain: canonical. Read-only trust seam over Raft/global-node canonical state.

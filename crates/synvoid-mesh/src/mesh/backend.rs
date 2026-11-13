@@ -379,6 +379,9 @@ pub async fn initialize_mesh_transports(
     mesh_signer: Option<Arc<crate::protocol::MeshMessageSigner>>,
     #[cfg(feature = "dns")] dns_resolver: Option<Arc<dyn synvoid_dns::resolver::DnsResolver>>,
     #[cfg(feature = "dns")] dns_registry: Option<Arc<synvoid_dns::MeshDnsRegistry>>,
+    // Whether this process owns the UDP endpoint. Only one process per node
+    // may bind it; the worker listens and the supervisor dials.
+    listen_endpoint: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let config = Arc::new(config.clone());
     let topology = transport_manager.get_topology();
@@ -502,6 +505,12 @@ pub async fn initialize_mesh_transports(
             .session_reaper_shutdown
             .subscribe(),
     );
+
+    // Without a runtime the transport binds nothing and every dial returns
+    // `RuntimeNotSet`, while startup still reports success. Building it here
+    // makes that a startup error instead.
+    let runtime = crate::mesh::quic_runtime::create_runtime(&config, listen_endpoint)?;
+    quic_transport_inner.set_runtime(runtime);
 
     transport_manager.set_quic_transport(quic_transport);
 

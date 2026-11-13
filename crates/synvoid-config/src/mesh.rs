@@ -300,6 +300,15 @@ pub struct MeshTlsConfig {
     pub certificate_pin_public_keys: Vec<String>,
     #[serde(default)]
     pub quic_enable_0rtt: bool,
+    /// Mesh TLS policy: `strict` (default), `tofu`, or `permissive`.
+    ///
+    /// `strict` verifies peer certificates against `ca_path` and requires the
+    /// certificate SAN to carry the peer's node id. `permissive` accepts any
+    /// peer and is an explicit operator downgrade; it is the only mode in
+    /// which auto-generated certificates are used, because a self-signed leaf
+    /// cannot satisfy a verified trust store.
+    #[serde(default)]
+    pub mode: Option<String>,
     #[serde(default = "default_true")]
     pub strict_certificate_validation: bool,
 }
@@ -323,6 +332,7 @@ impl Default for MeshTlsConfig {
             min_tls_version: "1.3".to_string(),
             certificate_pin_public_keys: Vec::new(),
             quic_enable_0rtt: false,
+            mode: None,
             strict_certificate_validation: true,
         }
     }
@@ -903,7 +913,18 @@ impl MeshConfig {
     /// (`enabled = false`) still validates supervision so staged restart
     /// tuning cannot hide behind a disabled flag.
     pub fn validate(&self) -> Result<(), crate::validation::ConfigValidationError> {
+        use crate::validation::ConfigValidationError;
         self.supervision.validate()?;
+        if let Some(ref mode) = self.tls.mode {
+            if !matches!(mode.as_str(), "strict" | "tofu" | "permissive") {
+                return Err(ConfigValidationError {
+                    field: "tunnel.mesh.tls.mode".to_string(),
+                    message: format!(
+                        "unknown mesh TLS mode '{mode}'; expected strict, tofu, or permissive"
+                    ),
+                });
+            }
+        }
         Ok(())
     }
 }

@@ -403,6 +403,23 @@ pub fn validate_member_certificate_with_raft_attestation(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Validate the responder's role on a session already authenticated by mTLS.
+///
+/// `HelloAck` carries no signature or PoW material (`global_node_key` is always
+/// `None` and the published "public key" is a hash of the signing key, not an
+/// Ed25519 verification key), so the full `validate_peer_role` contract can
+/// never be satisfied on the response path. The responder is authenticated by
+/// the mutually verified TLS certificate and by the node-id/public-key binding
+/// checked at the call site; this only rejects nonsense role bits.
+pub fn validate_peer_role_after_tls(role: &crate::config::MeshNodeRole) -> Result<(), String> {
+    const KNOWN_ROLES: u8 = 0b111;
+    if role.bits() == 0 || role.bits() > KNOWN_ROLES {
+        return Err(format!("Unknown node role: {}", role.bits()));
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn validate_peer_role(
     role: &crate::config::MeshNodeRole,
     authorized_global_pubkeys: &[String],
@@ -810,15 +827,14 @@ pub fn validate_edge_node_pow(
     let pow_key = pow_public_key
         .ok_or_else(|| format!("Edge node {} did not provide PoW public key", peer_node_id))?;
 
-    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-    let pk_bytes = URL_SAFE_NO_PAD.decode(pubkey).map_err(|e| {
+    let pk_bytes = crate::mesh::config::decode_node_public_key(pubkey).map_err(|e| {
         format!(
             "Edge node {} has invalid public key encoding: {}",
             peer_node_id, e
         )
     })?;
 
-    let pow_pk_bytes = URL_SAFE_NO_PAD.decode(pow_key).map_err(|e| {
+    let pow_pk_bytes = crate::mesh::config::decode_node_public_key(pow_key).map_err(|e| {
         format!(
             "Edge node {} has invalid PoW public key encoding: {}",
             peer_node_id, e

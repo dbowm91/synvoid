@@ -362,3 +362,15 @@ name = "tcp_udp_service_test"
 class = "composition"
 owners = ["synvoid"]
 reason = "validates Phase 02 real TCP/UDP listener pools: bind lifecycle, protocol filter, idle timeout, UDP request/response flows, flow cap, rate limit and IPv6"
+
+[[test]]
+name = "mesh_config_realization"
+class = "composition"
+owners = ["synvoid-config", "synvoid-mesh"]
+reason = "validates [tunnel.mesh] DTO -> mesh runtime config realization (TLS/authority-freshness defaults)"
+
+[[test]]
+name = "mesh_proxy_feature_guard"
+class = "static_policy"
+owners = ["synvoid-proxy"]
+reason = "pins the root mesh feature edge that makes BackendType::Mesh routable instead of silently proxying"

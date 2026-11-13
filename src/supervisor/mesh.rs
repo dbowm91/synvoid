@@ -323,6 +323,7 @@ pub async fn init_mesh_control_plane(
         Some(Arc::new(crate::mesh::protocol::MeshMessageSigner::new(
             signer_key,
         ))),
+        false,
     )
     .await
     {
@@ -338,6 +339,7 @@ pub async fn init_mesh_control_plane(
         Some(Arc::new(crate::mesh::protocol::MeshMessageSigner::new(
             signer_key,
         ))),
+        false,
     )
     .await
     {

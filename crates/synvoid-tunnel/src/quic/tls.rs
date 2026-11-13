@@ -97,40 +97,53 @@ impl QuicTlsConfig {
         let certs = load_certs(cert_path)?;
         let key = load_private_key(key_path)?;
 
-        let mut server_config = ServerConfig::with_single_cert(certs, key)
+        // `require_client_cert` used to only log a warning: no client
+        // verifier was installed, so the server accepted any peer while the
+        // logs claimed mutual TLS. Install a real verifier, and fail closed
+        // when the CA needed to check peers was not configured.
+        let server_config = if self.require_client_cert {
+            let ca_path = self.client_ca_path.as_ref().ok_or_else(|| {
+                QuicTlsError::ConfigError(
+                    "require_client_cert = true needs client_ca to verify peer certificates"
+                        .to_string(),
+                )
+            })?;
+            let roots = load_roots(ca_path)?;
+            // Use the explicit provider: `WebPkiClientVerifier::builder`
+            // resolves the process-default provider and panics when the crate
+            // feature set cannot pick one, which killed the worker at startup.
+            let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+            let verifier = rustls::server::WebPkiClientVerifier::builder_with_provider(
+                Arc::new(roots),
+                provider.clone(),
+            )
+            .build()
             .map_err(|e| QuicTlsError::ConfigError(e.to_string()))?;
+            let tls = rustls::ServerConfig::builder_with_provider(provider)
+                .with_safe_default_protocol_versions()
+                .map_err(|e| QuicTlsError::ConfigError(e.to_string()))?
+                .with_client_cert_verifier(verifier)
+                .with_single_cert(certs, key)
+                .map_err(|e| QuicTlsError::ConfigError(e.to_string()))?;
+            let quic = quinn::crypto::rustls::QuicServerConfig::try_from(tls)
+                .map_err(|e| QuicTlsError::ConfigError(e.to_string()))?;
+            ServerConfig::with_crypto(Arc::new(quic))
+        } else {
+            ServerConfig::with_single_cert(certs, key)
+                .map_err(|e| QuicTlsError::ConfigError(e.to_string()))?
+        };
 
         if self.require_client_cert {
-            if !self.has_client_ca() {
-                tracing::error!(
-                    "SECURITY MISCONFIGURATION: require_client_cert=true but client_ca is not set. \
-                    Client certificate verification will NOT be performed. \
-                    To enable mTLS, set client_ca to the path of your CA certificate that signed client certificates."
-                );
-            } else {
-                tracing::warn!(
-                    "QUIC mTLS: require_client_cert is enabled with client_ca at {:?}. \
-                    NOTE: Quinn's rustls integration performs basic client cert verification. \
-                    For advanced mTLS features (CRL checking, OCSP, certificate policies), \
-                    consider implementing application-level certificate validation.",
-                    self.client_ca_path
-                );
-            }
+            tracing::info!(
+                "QUIC mTLS enforced: peer certificates are verified against {:?}",
+                self.client_ca_path
+            );
         } else {
             tracing::info!(
                 "QUIC server TLS configured without client certificate requirement. \
-                Any client can connect (subject to auth_token validation)."
+                 Any client can connect (subject to auth_token validation)."
             );
         }
-
-        tracing::info!(
-            "QUIC server TLS configured (client_cert_required={}, client_ca={})",
-            self.require_client_cert,
-            self.client_ca_path
-                .as_ref()
-                .map(|p| p.display().to_string())
-                .unwrap_or_default()
-        );
 
         Ok(server_config)
     }
@@ -147,10 +160,7 @@ impl QuicTlsConfig {
         server_name: Option<&str>,
         transport_config: Option<Arc<quinn::TransportConfig>>,
     ) -> Result<ClientConfig, QuicTlsError> {
-        let mut client_config = if self.verify_server {
-            ClientConfig::try_with_platform_verifier()
-                .map_err(|e| QuicTlsError::ConfigError(e.to_string()))?
-        } else {
+        if !self.verify_server {
             if let Some(name) = server_name {
                 tracing::warn!(
                     "TLS server verification DISABLED for {}. This is insecure!",
@@ -162,6 +172,44 @@ impl QuicTlsConfig {
                  Set verify_server: true in config."
                     .to_string(),
             ));
+        }
+
+        // A configured `server_ca` is the trust anchor. Using the platform
+        // verifier unconditionally made a private CA (and therefore mesh,
+        // whose peers are issued by the operator's CA) impossible to trust.
+        let mut client_config = match self.server_ca_path.as_ref() {
+            Some(ca_path) => {
+                let roots = load_roots(ca_path)?;
+                let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+                let builder = rustls::ClientConfig::builder_with_provider(provider)
+                    .with_safe_default_protocol_versions()
+                    .map_err(|e| QuicTlsError::ConfigError(e.to_string()))?
+                    .with_root_certificates(roots);
+
+                // The peer may require mutual TLS; present this node's
+                // certificate. Quinn's platform-verifier convenience
+                // constructor cannot carry client auth, which is why the CA
+                // path builds the rustls config explicitly.
+                let tls = match (
+                    self.client_cert_path.as_ref(),
+                    self.client_key_path.as_ref(),
+                ) {
+                    (Some(cert_path), Some(key_path)) => {
+                        let certs = load_certs(cert_path)?;
+                        let key = load_private_key(key_path)?;
+                        builder
+                            .with_client_auth_cert(certs, key)
+                            .map_err(|e| QuicTlsError::ConfigError(e.to_string()))?
+                    }
+                    _ => builder.with_no_client_auth(),
+                };
+
+                let quic_tls = quinn::crypto::rustls::QuicClientConfig::try_from(tls)
+                    .map_err(|e| QuicTlsError::ConfigError(e.to_string()))?;
+                ClientConfig::new(Arc::new(quic_tls))
+            }
+            None => ClientConfig::try_with_platform_verifier()
+                .map_err(|e| QuicTlsError::ConfigError(e.to_string()))?,
         };
 
         if let Some(transport) = transport_config {
@@ -181,6 +229,20 @@ impl QuicTlsConfig {
     pub fn server_cert_path(&self) -> Option<&PathBuf> {
         self.server_cert_path.as_ref()
     }
+}
+
+fn load_roots(path: &PathBuf) -> Result<rustls::RootCertStore, QuicTlsError> {
+    let certs = load_certs(path)?;
+    let mut roots = rustls::RootCertStore::empty();
+    for cert in certs {
+        roots
+            .add(cert)
+            .map_err(|e| QuicTlsError::ConfigError(e.to_string()))?;
+    }
+    if roots.is_empty() {
+        return Err(QuicTlsError::NoCertificates(path.display().to_string()));
+    }
+    Ok(roots)
 }
 
 fn load_certs(path: &PathBuf) -> Result<Vec<CertificateDer<'static>>, QuicTlsError> {

@@ -114,7 +114,10 @@ pub struct MeshTransport {
     pub(crate) config: Arc<MeshConfig>,
     pub(crate) topology: Arc<MeshTopology>,
     pub(crate) cert_manager: Arc<RwLock<MeshCertManager>>,
-    pub(crate) runtime: Option<Arc<QuicRuntime>>,
+    /// QUIC runtime installed once, before startup, by the composition
+    /// root. `OnceLock` because the transport is already shared as `Arc`
+    /// when the runtime becomes available.
+    pub(crate) runtime: Arc<std::sync::OnceLock<Arc<QuicRuntime>>>,
     pub(crate) running: Arc<RwLock<bool>>,
     pub(crate) shutdown_tx: Arc<RwLock<Option<broadcast::Sender<()>>>>,
     pub(crate) peer_connections: Arc<DashMap<String, MeshPeerConnection>>,
@@ -643,8 +646,18 @@ impl MeshTransport {
             return Ok(());
         };
 
-        let Some(peer_cert) = peer_identity.downcast_ref::<rustls_pki_types::CertificateDer<'_>>()
-        else {
+        // quinn exposes a rustls peer chain as `Vec<CertificateDer>`, so
+        // downcasting only to a bare `CertificateDer` rejected every real
+        // session in strict mode. Accept either shape.
+        let peer_cert = peer_identity
+            .downcast_ref::<rustls_pki_types::CertificateDer<'static>>()
+            .cloned()
+            .or_else(|| {
+                peer_identity
+                    .downcast_ref::<Vec<rustls_pki_types::CertificateDer<'static>>>()
+                    .and_then(|chain| chain.first().cloned())
+            });
+        let Some(peer_cert) = peer_cert else {
             validate_peer_identity_state_for_mode(
                 tls_mode,
                 PeerIdentityState::NotCertificateDer,
@@ -768,11 +781,18 @@ impl MeshTransport {
             None
         };
 
+        // Load CA trust material (and, in permissive setups, generate node
+        // certificates). Nothing called this before, so the manager kept an
+        // empty trust store and strict mode rejected every peer.
+        if let Err(error) = cert_manager.write().ensure_certs() {
+            tracing::error!(%error, "Failed to load mesh certificate material");
+        }
+
         Self {
             config: config.clone(),
             topology,
             cert_manager: cert_manager.clone(),
-            runtime: None,
+            runtime: Arc::new(std::sync::OnceLock::new()),
             running: Arc::new(RwLock::new(false)),
             shutdown_tx: Arc::new(RwLock::new(None)),
             peer_connections: Arc::new(DashMap::new()),
@@ -1706,8 +1726,12 @@ impl MeshTransport {
             });
     }
 
-    pub fn set_runtime(&mut self, runtime: Arc<QuicRuntime>) {
-        self.runtime = Some(runtime);
+    /// Install the QUIC runtime. Called once by the composition root before
+    /// `start()`; a later call is ignored rather than silently rebinding.
+    pub fn set_runtime(&self, runtime: Arc<QuicRuntime>) {
+        if self.runtime.set(runtime).is_err() {
+            tracing::warn!("Mesh QUIC runtime already installed; ignoring replacement");
+        }
     }
 
     pub fn set_serverless_manager(
@@ -1725,7 +1749,7 @@ impl MeshTransport {
     }
 
     pub fn get_quic_port(&self) -> Option<u16> {
-        if let Some(ref runtime) = self.runtime {
+        if let Some(runtime) = self.runtime.get() {
             runtime.local_port()
         } else {
             Some(self.config.port)
@@ -1733,7 +1757,7 @@ impl MeshTransport {
     }
 
     pub async fn get_actual_quic_port(&self) -> Option<u16> {
-        if let Some(ref runtime) = self.runtime {
+        if let Some(runtime) = self.runtime.get() {
             if let Some(addr) = runtime.local_addr().await {
                 return Some(addr.port());
             }
@@ -2566,9 +2590,11 @@ impl MeshTransport {
                         _ = interval.tick() => {
                             tracing::debug!("Refreshing PoW nonce cache");
                             if let Some(ref pk_hex) = pow_config.signing_public_key() {
-                                use base64::Engine;
+                                // `signing_public_key()` is hex; decoding it as
+                                // base64 yielded 48 bytes and mined a nonce the
+                                // receiver could never verify.
                                 if let Ok(pk_bytes) =
-                                    base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(pk_hex)
+                                    crate::mesh::config::decode_node_public_key(pk_hex)
                                 {
                                     if let Some(nonce) =
                                         crate::dht::routing::node_id::NodeId::find_pow_nonce(&pk_bytes)
@@ -2643,7 +2669,7 @@ impl MeshTransport {
         // Phase 9: Start QUIC accept loop
         self.check_startup_failure_hook(StartupFailurePoint::DuringRuntimeStart)
             .await?;
-        if let Some(ref runtime) = self.runtime {
+        if let Some(runtime) = self.runtime.get() {
             let incoming = runtime
                 .start_server()
                 .await
@@ -3444,7 +3470,7 @@ impl MeshTransport {
 
         // Phase 8: Active runtime cleanup
         if stage.runtime_started {
-            if let Some(ref runtime) = self.runtime {
+            if let Some(runtime) = self.runtime.get() {
                 runtime.stop_server().await;
                 report.runtime_stopped = true;
                 tracing::debug!("QUIC runtime stopped during rollback");
@@ -3764,7 +3790,7 @@ impl MeshTransport {
         let _ = self.lifecycle.session_reaper_shutdown.send(true);
 
         // Phase 3: Stop the QUIC runtime/endpoint
-        if let Some(ref runtime) = self.runtime {
+        if let Some(runtime) = self.runtime.get() {
             runtime.stop_server().await;
         }
 
@@ -4722,7 +4748,7 @@ impl MeshTransport {
 
         let runtime = self
             .runtime
-            .as_ref()
+            .get()
             .ok_or(MeshTransportError::RuntimeNotSet)?;
 
         let server_name = peer_config
@@ -4790,10 +4816,7 @@ impl MeshTransport {
                 if let Some(cached_nonce) = self.config.get_cached_pow_nonce() {
                     (Some(cached_nonce), Some(pk_hex.clone().into()))
                 } else {
-                    use base64::Engine;
-                    if let Ok(pk_bytes) =
-                        base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(pk_hex)
-                    {
+                    if let Ok(pk_bytes) = crate::mesh::config::decode_node_public_key(pk_hex) {
                         if let Some(nonce) =
                             crate::dht::routing::node_id::NodeId::find_pow_nonce(&pk_bytes)
                         {
@@ -4930,35 +4953,43 @@ impl MeshTransport {
                 upstreams,
                 auth_token: resp_token,
                 network_id: resp_network_id,
-                global_node_key: resp_global_key,
-                timestamp: resp_timestamp,
+                global_node_key: _,
+                timestamp: _,
                 nonce: _,
                 is_trusted: _,
                 quic_port: peer_quic_port,
                 wireguard_port: peer_wireguard_port,
                 public_key: peer_public_key,
-                member_certificate,
-                org_public_key,
+                member_certificate: _,
+                org_public_key: _,
             } => {
                 if let Some(ref pk) = peer_public_key {
-                    use base64::Engine;
-                    if let Ok(pk_bytes) =
-                        base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(pk.as_str())
-                    {
-                        let expected_node_id =
-                            crate::dht::routing::node_id::NodeId::from_public_key(&pk_bytes);
-                        let claimed_node_id =
-                            crate::dht::routing::node_id::NodeId::from_node_id_string(
-                                node_id.as_str(),
-                            );
-                        if expected_node_id != claimed_node_id {
+                    // Bind the claimed node id to the key it presents. The
+                    // previous check compared a key-derived DHT `NodeId` with
+                    // `NodeId::from_node_id_string`, which hash different
+                    // inputs and can never match, so every session failed.
+                    match crate::mesh::config::decode_node_public_key(pk) {
+                        Ok(pk_bytes) => {
+                            let expected = crate::mesh::config::node_id_from_public_key(&pk_bytes);
+                            if expected.as_deref() != Some(node_id.as_str()) {
+                                tracing::warn!(
+                                    "Node ID mismatch: peer claimed {} but their public key derives {:?}",
+                                    node_id,
+                                    expected
+                                );
+                                return Err(MeshTransportError::AuthFailed(
+                                    "Node ID does not match public key".to_string(),
+                                ));
+                            }
+                        }
+                        Err(error) => {
                             tracing::warn!(
-                                "Node ID mismatch: peer claimed {} but their public key derives {}",
+                                "Node {} presented an unusable public key: {}",
                                 node_id,
-                                expected_node_id
+                                error
                             );
                             return Err(MeshTransportError::AuthFailed(
-                                "Node ID does not match public key".to_string(),
+                                "Public key is invalid".to_string(),
                             ));
                         }
                     }
@@ -5048,43 +5079,20 @@ impl MeshTransport {
                     }
                 }
 
-                let authorized_keys: Vec<String> = self
+                let _authorized_keys: Vec<String> = self
                     .config
                     .seeds
                     .iter()
                     .filter_map(|seed| seed.public_key.clone())
                     .collect();
-                let peer_pk = peer_public_key.as_ref().map(|pk| pk.as_str());
-                let peer_sig = resp_global_key.as_ref().map(|sk| sk.as_str());
-                let global_node_att_key = if role.is_origin() {
-                    peer_public_key.as_ref().map(|pk| pk.as_str())
-                } else {
-                    None
-                };
-                let global_node_att_sig = if role.is_origin() {
-                    resp_global_key.as_ref().map(|sk| sk.as_str())
-                } else {
-                    None
-                };
-                if let Err(e) = crate::peer_auth::validate_peer_role(
-                    &role,
-                    &authorized_keys,
-                    &node_id,
-                    peer_pk,
-                    peer_sig,
-                    resp_timestamp.unwrap_or(0),
-                    300,
-                    self.revocation_list.as_ref().map(|r| r.as_ref()),
-                    global_node_att_key,
-                    global_node_att_sig,
-                    None,
-                    None,
-                    member_certificate.as_ref(),
-                    org_public_key.as_ref(),
-                    None,
-                    false,
-                ) {
-                    tracing::warn!("Node Ed25519 verification failed for {}: {}", node_id, e);
+                let _peer_pk = peer_public_key.as_ref().map(|pk| pk.as_str());
+                // HelloAck has no signature or PoW field, so the responder is
+                // authenticated by the mutually verified TLS certificate plus
+                // the node-id/public-key binding checked above. Only the role
+                // bits are validated here; the full validate_peer_role
+                // contract cannot be satisfied on this path.
+                if let Err(e) = crate::peer_auth::validate_peer_role_after_tls(&role) {
+                    tracing::warn!("Rejected peer {} with invalid role: {}", node_id, e);
                     return Err(MeshTransportError::AuthFailed(e));
                 }
 

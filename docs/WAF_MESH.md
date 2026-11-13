@@ -556,6 +556,19 @@ certificate_pin_public_keys = ["base64-encoded-spki-pin-..."]
 
 There is no `verify_certificates` or `enable_post_quantum` field on `[mesh.tls]`. Certificate verification is not optional — it is `strict_certificate_validation` (default `true`); disabling it is an explicit operator downgrade.
 
+**Peer certificates must name the peer's node id.** The mesh certificate
+manager verifies a peer chain against `ServerName = <peer node_id>`, so the
+leaf's SAN must contain that id (as a DNS name), in addition to whatever
+address the peers dial (`IP:127.0.0.1` for loopback). A certificate that only
+covers the dialed address is rejected with
+`certificate not valid for name "node-…"`.
+
+**Server verification is mandatory.** quinn refuses a client configuration
+with server verification disabled, so `mode` selects how the mesh treats peer
+identity; it cannot disable transport verification. `ca_path` is therefore
+required whenever mesh is enabled, and a configured `ca_path` is now used as
+the client's trust anchor instead of the platform store.
+
 ### TLS Passthrough and WAF Enforcement
 
 By default, enabling `tls_passthrough = true` keeps L7 WAF inspection enabled. Set `tls_passthrough_enforce_waf = false` only for an intentional bypass; encrypted traffic is then forwarded directly to the origin without inspection.
