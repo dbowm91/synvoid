@@ -163,7 +163,7 @@ impl HttpServer {
     pub fn with_mesh_config(self, mesh_config: Option<Arc<MeshConfig>>) -> Self;
     pub fn with_mesh_transport(self, transport: Option<Arc<MeshTransportManager>>) -> Self;
     pub fn with_app_servers(self, app_servers: Option<Arc<RwLock<HashMap<String, Arc<GranianSupervisor>>>>>) -> Self;
-    pub fn with_mesh_backend_pool(self, pool: Option<Arc<MeshBackendPool>>) -> Self;
+    pub fn with_mesh_proxy(self, proxy: Option<Arc<MeshProxy>>) -> Self;
 }
 ```
 Builder pattern for optional components.

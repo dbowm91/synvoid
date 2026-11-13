@@ -185,6 +185,15 @@ pub async fn build_worker_startup(
     )
     .await;
 
+    // ---- Phase 8.1: install the mesh egress handle ----
+    // `BackendType::Mesh` sites forward through this worker-local proxy. The
+    // worker exists before the mesh transport, so mesh init returns the handle
+    // and the server reads it from shared state for every listener.
+    #[cfg(feature = "mesh")]
+    if let Some(proxy) = mesh_init.mesh_proxy.clone() {
+        unified_server.set_mesh_proxy(proxy);
+    }
+
     // ---- Phase 8.5: validate support components against enabled state ----
     #[cfg(all(feature = "mesh", feature = "dns"))]
     {

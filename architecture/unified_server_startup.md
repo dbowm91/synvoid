@@ -92,7 +92,7 @@ watcher remains alive for the full server runtime lifetime.
 **The HTTP listener serves on all feature profiles**, mesh or not.
 `run_http_server_inner()` (`src/server/mod.rs:524`) unconditionally builds the
 `HttpServer` and calls `server.serve().await`; the mesh-specific wiring
-(`with_mesh_config` / `with_mesh_transport` / `with_mesh_backend_pool`) is the
+(`with_mesh_config` / `with_mesh_transport` / `with_mesh_proxy`) is the
 only part behind `#[cfg(feature = "mesh")]`. The source carries an explicit
 qualification comment at `src/server/mod.rs:604-607`:
 

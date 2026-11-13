@@ -5863,10 +5863,15 @@ impl MeshTransport {
             .collect()
     }
 
+    /// Forward one HTTP/1.x request to `peer_id` over the mesh.
+    ///
+    /// `service_id` is the origin's `local_upstreams` key. It travels as a
+    /// typed, versioned preface ahead of the HTTP bytes so the origin resolves
+    /// the operator-configured upstream instead of inferring it from `Host`.
     pub async fn proxy_http_request<B>(
         &self,
         peer_id: &str,
-        _target_url: &str,
+        service_id: &str,
         request: Request<B>,
     ) -> Result<Response<BoxBody<Bytes, Infallible>>, MeshTransportError>
     where
@@ -5875,6 +5880,9 @@ impl MeshTransport {
         B::Error: std::fmt::Debug + Send,
     {
         use http_body_util::BodyExt;
+
+        let preface = crate::service_target::encode_service_preface(service_id)
+            .map_err(|e| MeshTransportError::SendFailed(format!("invalid mesh service ID: {e}")))?;
 
         let peer = match self.peer_connections.get(peer_id) {
             Some(p) => p,
@@ -5912,6 +5920,13 @@ impl MeshTransport {
         let method = request.method().to_string();
         let uri = request.uri().to_string();
         let headers = request.headers();
+
+        // Service-target preface first: the peer validates it before parsing
+        // the HTTP request. `Host` stays untouched in the request headers.
+        send_stream
+            .write_all(&preface)
+            .await
+            .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
 
         let mut header_str = format!("{} {} HTTP/1.1\r\n", method, uri);
         for (name, value) in headers.iter() {

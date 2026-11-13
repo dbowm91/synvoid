@@ -1,194 +1,188 @@
 # Mesh Network CDN Configuration Example
-# Add this to config/main.toml to enable mesh networking
+# Add this to config/main.toml to enable mesh networking.
 #
 # Mesh networking allows WAF instances to:
-# - Route traffic to upstream servers hosted on other WAF nodes
+# - Route HTTP requests to services hosted on other WAF nodes
 # - Distribute load across geographic regions
-# - Provide zero-trust access to origins (IP never exposed)
-# - Failover automatically when nodes go down
+# - Keep origin addresses operator-controlled: peers send a service ID and
+#   never choose the upstream URL
+#
+# The mesh runtime and the HTTP forwarding config are read from [tunnel.mesh].
+# A top-level [mesh] section does not start the mesh subsystem.
 
-[mesh]
+[tunnel.mesh]
 enabled = true
 
 # Unique node identifier (auto-generated if not set)
-# node_id = "edge-us-east-1"
+# node_id = "origin-us-east-1"
 
-# Node role: "edge", "global", or "origin"
-# - edge: Routes traffic, doesn't host upstreams directly
-# - global: Full topology view, CA for certificate verification
-# - origin: Hosts actual upstream services
-role = "origin"
+# Node role is a numeric bitmask: EDGE=1, GLOBAL=2, ORIGIN=4, GLOBAL|EDGE=3.
+# String values such as role = "origin" fail to parse.
+role = 4
 
-# Bind address for mesh traffic (reuse QUIC tunnel port by default)
+# Mesh QUIC bind address/port
 # bind_address = "0.0.0.0"
-port = 5001
+port = 50051
 
 # ============================================================================
-# Seed Nodes (Global Nodes) - Required for bootstrap
+# Seed Nodes (Global Nodes) - Required for bootstrap on edge nodes
 # ============================================================================
-# Edge nodes use these to discover the network and verify certificates
-# Global nodes should be well-known, highly available servers
+# `public_key` authorizes the global node used for discovery.
 
-[[mesh.seeds]]
-# address = "203.0.113.1:5001"
-# public_key = "base64-encoded-certificate-public-key"
-
-# [[mesh.seeds]]
-# address = "203.0.113.2:5001"
-# public_key = "base64-encoded-certificate-public-key"
+[[tunnel.mesh.seeds]]
+address = "203.0.113.1:50051"
+public_key = "base64-encoded-global-node-public-key"
+node_id = "global-1"
+network_id = "production"
 
 # ============================================================================
-# Peers (Direct connections for low-latency routing)
+# Local Upstreams (only for nodes that host services)
 # ============================================================================
-# These are direct QUIC connections to other WAF instances. Used for:
-# - Low-latency routing to nearby edge nodes
-# - Direct upstream access without going through global nodes
-# Each peer requires auth_token for mutual authentication
-
-# [[mesh.peers]]
-# address = "10.0.2.20:5001"
-# auth_token = "peer-auth-token"
-
-# ============================================================================
-# Local Upstreams (Only for origin nodes)
-# ============================================================================
-# These are the actual backend services this node hosts
-# Each upstream gets a unique ID that other nodes use to route to it
+# Keys are service IDs. A site selects a service with
+# `[proxy.backend] type = "mesh"` and `upstream = "<service-id>"`.
 #
-# SECURITY: Use `peered_wafs` to restrict which WAF nodes can route to this
-# upstream. Only these WAFs will receive the actual upstream URL. Other WAFs
-# will receive "route not found" - the origin IP is never exposed.
+# SECURITY: peers never supply these URLs, and an unauthorized peer never
+# receives the route or the URL. Only `local_upstreams` entries are connectable,
+# and a peer may use a service only when `peered_wafs` lists it. Private,
+# loopback, RFC1918, and ULA upstreams are allowed because the URL is
+# operator-controlled.
+#
+# An empty `peered_wafs` list means "not restricted" (legacy semantics), so do
+# not use `peered_wafs = []` to mean local-only. Entries with `allowed = false`
+# are discarded.
 
-[mesh.local_upstreams]
-# upstream-id = { upstream_url = "http://...", geo = "...", peered_wafs = [...] }
+[tunnel.mesh.local_upstreams.blog-public]
+upstream_url = "http://10.0.1.10:8080"
+geo = "us-east"
+priority_tier = 0
+allowed_protocols = ["http"]
 
-# Example: Main API service - only edge-us-east-1 and edge-eu-west-1 can route
-# shop-api = { 
-#     upstream_url = "http://10.0.1.5:8080", 
-#     geo = "us-east",
-#     peered_wafs = [
-#         { node_id = "edge-us-east-1", allowed = true },
-#         { node_id = "edge-eu-west-1", allowed = true }
-#     ]
-# }
+[[tunnel.mesh.local_upstreams.blog-public.peered_wafs]]
+node_id = "edge-us-east-1"
+allowed = true
 
-# Example: Static assets CDN - open to all mesh peers (no peering restriction)
-# cdn-assets = { upstream_url = "http://10.0.1.10:80", geo = "us-east" }
+[[tunnel.mesh.local_upstreams.blog-public.peered_wafs]]
+node_id = "edge-eu-west-1"
+allowed = true
 
-# Example: Admin panel - only local access, not exposed to mesh
-# admin-api = { upstream_url = "http://10.0.2.1:8080", geo = "us-east", peered_wafs = [] }
+# Per-service body policy. Caps left unset inherit
+# [tunnel.mesh.connection].max_peer_http_body_bytes /
+# max_peer_http_response_body_bytes (64 KiB defaults).
+# End-to-end ceilings today: the edge proxy buffers the request body for
+# provider retry (8 MiB) and the response body (50 MiB). Service caps above
+# those values are accepted but are not reachable through an edge until the
+# edge forwards bodies incrementally. Keep the example inside those bounds.
+[tunnel.mesh.local_upstreams.blog-public.body_policy]
+max_request_body_bytes = 8388608      # 8 MiB; matches the edge retry replay cap
+max_response_body_bytes = 33554432    # 32 MiB; stays under the 50 MiB edge buffer
+streaming = true                      # default: true
+allow_chunked = true                  # default: true
+allow_transforms = true               # default: true
+
+[tunnel.mesh.local_upstreams.cdn-assets]
+upstream_url = "http://10.0.1.20:80"
+geo = "us-east"
+allowed_protocols = ["http"]
+
+[[tunnel.mesh.local_upstreams.cdn-assets.peered_wafs]]
+node_id = "edge-us-east-1"
+allowed = true
+
+# CSS/JS minification is not useful for this service; the default 64 KiB caps
+# still apply to its bodies.
+[tunnel.mesh.local_upstreams.cdn-assets.body_policy]
+allow_transforms = false
+
+# Compatibility service ID: legacy peers that do not send the typed
+# service-target preface are resolved as `http://<Host header>`. Prefer
+# explicit IDs for new deployments.
+[tunnel.mesh.local_upstreams."http://blog.example.com"]
+upstream_url = "http://10.0.1.10:8080"
+
+[[tunnel.mesh.local_upstreams."http://blog.example.com".peered_wafs]]
+node_id = "edge-us-east-1"
+allowed = true
 
 # ============================================================================
-# Service Policy - Multi-tenant filtering
+# Service Policy - forwarding allow/deny
 # ============================================================================
-# Control which services this node will forward for other nodes
+# Precedence: deny, then allow (empty = all), then [tunnel.mesh.routing].
 
-[mesh.service_policy]
-# Allow specific services (empty = allow all)
-# allow = ["shop-api", "cdn-assets"]
-
-# Deny specific services (node will never forward these)
-deny = ["admin-panel", "internal-ops", "debug"]
+[tunnel.mesh.service_policy]
+# allow = ["blog-public", "cdn-assets"]
+deny = ["admin-api", "internal-ops", "debug"]
 
 # ============================================================================
 # Routing Configuration
 # ============================================================================
 
-[mesh.routing]
-# Maximum hops for route discovery
+[tunnel.mesh.routing]
 max_hops = 3
-
-# Timeout for route queries (milliseconds)
 query_timeout_ms = 5000
-
-# Number of retries on failure
 retry_attempts = 2
-
-# Number of peers to query before falling back to global node
 peer_query_count = 3
+allow_all_services = true
+# allowed_services = ["blog-public", "cdn-assets"]
+
+# ============================================================================
+# Connection Defaults
+# ============================================================================
+# Body caps for services without an explicit body_policy.
+
+[tunnel.mesh.connection]
+max_peer_http_body_bytes = 65536            # 64 KiB
+max_peer_http_response_body_bytes = 65536   # 64 KiB
 
 # ============================================================================
 # TLS Configuration
 # ============================================================================
 
-[mesh.tls]
-# Path to certificate and key (auto-generated if not set)
+[tunnel.mesh.tls]
 # cert_path = "/path/to/mesh-node.crt"
 # key_path = "/path/to/mesh-node.key"
-
-# CA certificate for verifying peer certificates
 # ca_path = "/path/to/mesh-ca.crt"
-
-# Auto-generate self-signed certificates on startup
 auto_generate_certs = true
+
+# ============================================================================
+# Site-side example (config/sites/blog.example.com.toml)
+# ============================================================================
+# [site]
+# domains = ["blog.example.com"]
+# listeners = ["public-http", "public-alt"]
+#
+# [proxy.backend]
+# type = "mesh"
+# upstream = "blog-public"
+#
+# [proxy.listener_backends]
+# public-http = "blog-public"
+# public-alt = "cdn-assets"
 
 # ============================================================================
 # Example: Complete Edge Node Configuration
 # ============================================================================
-# This node routes traffic but doesn't host any upstreams
+# This node routes traffic and hosts no services.
 
-# [mesh]
+# [tunnel.mesh]
 # enabled = true
 # node_id = "edge-us-east-1"
-# role = "edge"
-# port = 5001
-
-# [[mesh.seeds]]
-# address = "203.0.113.1:5001"
-# public_key = "..."
-
-# [[mesh.seeds]]
-# address = "203.0.113.2:5001"
-# public_key = "..."
-
-# [[mesh.peers]]
-# address = "10.0.2.20:5001"
-# auth_token = "..."
-
-# [mesh.service_policy]
-# allow = ["shop-api", "cdn-assets"]
-# deny = []
-
-# ============================================================================
-# Example: Complete Origin Node Configuration
-# ============================================================================
-# This node hosts actual backend services with peering restrictions
-
-# [mesh]
-# enabled = true
-# node_id = "origin-us-east-1"
-# role = "origin"
-# port = 5001
-
-# [[mesh.seeds]]
-# address = "203.0.113.1:5001"
-# public_key = "..."
-
-# [mesh.local_upstreams]
-# shop-api = { 
-#     upstream_url = "http://10.0.1.5:8080", 
-#     geo = "us-east",
-#     peered_wafs = [
-#         { node_id = "edge-us-east-1", allowed = true },
-#         { node_id = "edge-us-west-1", allowed = true }
-#     ]
-# }
-# cdn-assets = { upstream_url = "http://10.0.1.10:80", geo = "us-east" }
+# role = 1
+# port = 50051
+#
+# [[tunnel.mesh.seeds]]
+# address = "203.0.113.1:50051"
+# public_key = "base64-encoded-global-node-public-key"
 
 # ============================================================================
 # Example: Complete Global Node Configuration
 # ============================================================================
-# Global nodes have full topology view and verify certificates
+# Global nodes keep the full topology view. They may also host services.
 
-# [mesh]
+# [tunnel.mesh]
 # enabled = true
 # node_id = "global-1"
-# role = "global"
-# port = 5001
-
-# # No seeds needed - this is a seed node itself
-# # Other nodes configure this as their seed
-
-# [mesh.local_upstreams]
-# # Global nodes can also host upstreams if needed
-# # monitoring-api = { upstream_url = "http://10.0.3.1:9090", geo = "us-east" }
+# role = 2
+# port = 50051
+#
+# [tunnel.mesh.global_node]
+# invite_tokens = ["secure-one-time-token"]

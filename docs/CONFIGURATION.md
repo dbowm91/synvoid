@@ -1112,17 +1112,17 @@ ban_duration = "24h"
 Mesh and DHT security-sensitive options:
 
 ```toml
-[mesh]
+[tunnel.mesh]
 enabled = true
-role = "global"                      # or "edge", "origin", etc.
+role = 2                             # GLOBAL; EDGE=1, ORIGIN=4, GLOBAL|EDGE=3
 network_id = "prod-mesh"
 
-[mesh.tls]
+[tunnel.mesh.tls]
 enforce_mutual_tls = true
 mode = "strict"                     # strict | tofu | permissive
 strict_certificate_validation = true
 
-[mesh.dht]
+[tunnel.mesh.dht]
 enabled = true
 require_signed_sync_requests = true  # default-deny for unsigned DhtSyncRequest
 ```
@@ -1159,6 +1159,105 @@ require_signed_sync_requests = true  # default-deny for unsigned DhtSyncRequest
 Legacy compatibility:
 - If `mesh.tls.mode` is omitted, SynVoid falls back to `mesh.tls.strict_certificate_validation` for backward compatibility.
 - Prefer setting `mesh.tls.mode` explicitly in all new configs.
+
+### Mesh HTTP Forwarding
+
+A site forwards through the mesh by declaring a mesh backend with an explicit
+service ID. The ID is the origin's `local_upstreams` key, not a URL:
+
+```toml
+# config/sites/blog.example.com.toml
+[proxy.backend]
+type = "mesh"
+upstream = "blog-public"
+```
+
+On the origin node, publish the service under the same key:
+
+```toml
+[tunnel.mesh.local_upstreams.blog-public]
+upstream_url = "http://10.0.1.10:8080"
+
+[[tunnel.mesh.local_upstreams.blog-public.peered_wafs]]
+node_id = "edge-us-east-1"
+allowed = true
+```
+
+The client `Host` is preserved to the backend but does not select the service
+when an explicit ID is present. An unknown service ID returns `502`; it never
+falls back to `Host` or to a peer-supplied URL. `http://host[:port]` remains
+accepted as a compatibility service ID for legacy peers that do not send the
+typed service-target preface.
+
+Only operator-configured `local_upstreams` are connectable, so private,
+loopback, RFC1918, and ULA origins are valid for configured services. A peer
+can never supply a URL. `peered_wafs` is an allowlist of node IDs enforced on
+route disclosure (a denied query returns no route) and again on the forwarded
+request (`403` on denial, with no upstream URL in the response); an empty list
+keeps the legacy "not restricted" semantics. Service policy precedence is
+`service_policy.deny`, then `service_policy.allow` (empty = all), then
+`routing.allow_all_services` / `routing.allowed_services`.
+
+### Listener-Scoped Mesh Services
+
+`[site].listeners` is the allowlist of local listener names that may serve the
+site. `[proxy.listener_backends]` optionally maps those local listener names to
+mesh service IDs:
+
+```toml
+[proxy.backend]
+type = "mesh"
+upstream = "blog-public"
+
+[proxy.listener_backends]
+public-http = "blog-public"
+public-alt = "blog-alt"
+```
+
+Selection precedence is location backend, then listener override, then site
+backend. The site-level `proxy.backend.upstream` remains the default when a
+listener has no entry. `listener_backends` is valid only when the site backend
+is `type = "mesh"`; a location-level backend always wins and is not remapped per
+listener. Listener names are local and are never sent over the mesh. Listener
+bind, mesh service, and listener/service mapping changes are restart-required,
+and the supported mesh data plane is one `UnifiedServerWorker` per node
+(multi-worker mesh state is not supported).
+
+### Mesh Body Policy
+
+Per-service body limits and streaming behavior live under `body_policy`:
+
+```toml
+[tunnel.mesh.local_upstreams.blog-public.body_policy]
+max_request_body_bytes = 8388608      # 8 MiB; omit to inherit 64 KiB
+max_response_body_bytes = 33554432    # 32 MiB; omit to inherit 64 KiB
+streaming = true                      # default: true
+allow_chunked = true                  # default: true
+allow_transforms = true               # default: true
+```
+
+- Caps not set inherit `connection.max_peer_http_body_bytes` /
+  `connection.max_peer_http_response_body_bytes` (default 64 KiB each).
+- Streaming relays request and response bodies incrementally with the original
+  framing and bounded per-stream memory (16 KiB copy buffers). Fixed-length
+  bodies over the cap return `413` (request) or `502` (response); chunked bodies
+  are enforced while copying and abort when the cap is crossed.
+- `allow_chunked = false` rejects chunked requests with `501`. Chunked
+  responses continue to be relayed.
+- With `streaming = true`, response transforms need a buffered, fixed-length
+  body no larger than `min(service response cap, 1 MiB)`. Larger or chunked
+  responses stream and bypass transforms; the bypass is recorded by
+  `synvoid.mesh.proxy.transforms_bypassed_streaming`. With `streaming = false`,
+  the whole response is buffered and transforms apply to fixed-length bodies
+  up to the service cap (chunked responses skip transforms).
+- Multi-provider retry requires a replayable buffered request body capped at
+  8 MiB and does not apply to streamed bodies.
+- End-to-end ceilings today are 8 MiB for request bodies and 50 MiB for
+  response bodies, because the edge buffers both. Origin-side streaming bounds
+  origin memory but does not remove the edge buffer; service caps above those
+  values are not reachable through an edge.
+- WebSocket and `CONNECT` are not supported over mesh; both are rejected with
+  `503`.
 
 ## Threat Level System
 

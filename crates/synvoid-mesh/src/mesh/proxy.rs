@@ -1494,7 +1494,7 @@ impl MeshProxy {
         }
 
         let response = transport
-            .proxy_http_request(peer_node_id, &target_url, req)
+            .proxy_http_request(peer_node_id, upstream_id, req)
             .await
             .map_err(|e| MeshProxyError::ConnectionFailed(e.to_string()))?;
 

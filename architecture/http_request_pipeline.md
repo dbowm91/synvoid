@@ -26,7 +26,7 @@ Every inbound HTTP request — whether plaintext HTTP/1.1 over TCP, HTTPS
 | **Body Policy** | Resolve `proxy.max_request_body_size` > `http.max_streaming_body_size`; collect, stream through WAF, or reject with `413` before upstream dispatch. | `body_policy.rs` → `collect_and_scan_request_body()` | `http3_body.rs` → `collect_http3_request_body()` |
 | **WAF Evaluation** | Run WAF checks (trust-token bypass, streaming, buffered) and produce a decision. | `buffered_request_waf_dispatch.rs` → `full_request_waf_decision()` (+ `request_parse.rs` trust-cookie bypass, `waf_decision.rs` mapping) | `http3_request_dispatch.rs` → `waf.check_request_full()`, `http3_waf_dispatch.rs` → `maybe_handle_http3_waf_decision()` |
 | **Terminal Response** | Handle terminal decisions (not-found, error, blocked) before upstream dispatch. | `internal_endpoint_dispatch.rs` → `dispatch_internal_endpoint()` | `http3_terminal.rs` → `maybe_handle_http3_terminal_route_result()` |
-| **Backend Dispatch** | Route to the correct backend (upstream, app server, static, serverless, WASM, etc.). | `backend_dispatch.rs` → `handle_pass_backend_dispatch()` | `http3_route_dispatch.rs` → `handle_http3_found_route()` → `http3_buffered_upstream_dispatch.rs` / `http3_streaming_upstream_dispatch.rs` |
+| **Backend Dispatch** | Route to the correct backend (upstream, app server, static, serverless, WASM, mesh service on the HTTP/1 path, etc.). | `backend_dispatch.rs` → `handle_pass_backend_dispatch()`; mesh uses `mesh_backend_dispatch.rs` → `maybe_handle_mesh_backend()` | `http3_route_dispatch.rs` → `handle_http3_found_route()` → `http3_buffered_upstream_dispatch.rs` / `http3_streaming_upstream_dispatch.rs` |
 | **Accounting** | Record bandwidth, metrics, latency, and request logs. | `http_request_postlude.rs` → `RequestMetricsAdapter` | Inline in dispatch and upstream modules |
 
 ## HTTP-vs-HTTPS Stage Matrix (Phase 01)
@@ -68,7 +68,10 @@ Remaining transport-specific differences (by design, tested):
   header that differs; pinned by `forwarded_headers_agree_except_scheme`).
 - `alt_svc`: `None` on TLS (Alt-Svc advertisement stays an HTTP-plane
   concern); the canonical builder omits the header.
-- `mesh_backend_pool`: `None` on TLS (never wired there); preserved as-is.
+- `mesh_backend_pool` is retired as an HTTP dispatch requirement. The worker
+  installs the `MeshProxy` egress handle on the unified server and
+  `BackendType::Mesh` dispatches through it on both HTTP and HTTPS; the target's
+  service ID is sent as the typed service-target preface.
 - Listener lifecycle, `SO_REUSEPORT` bind, cert-watch reload, and
   TLS-passthrough raw-TCP proxy (`proxy_raw_tcp`) are untouched.
 

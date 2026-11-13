@@ -132,7 +132,7 @@ pub(super) async fn run_accept_loop(
                         let connection_limit = runtime.connection_limit.clone();
                         let app_servers = runtime.backends.app_servers.clone();
                         #[cfg(feature = "mesh")]
-                        let mesh_backend_pool = runtime.mesh_backend_pool.clone();
+                        let mesh_proxy = runtime.mesh_proxy.clone();
                         let upstream_client_registry = runtime.upstream_client_registry.clone();
 
                         let (initial_bytes, stream_for_conn) = if http_config.strict_protocol_validation {
@@ -206,7 +206,7 @@ pub(super) async fn run_accept_loop(
                             #[cfg(feature = "mesh")]
                             mesh_transport,
                             #[cfg(feature = "mesh")]
-                            mesh_backend_pool,
+                            mesh_proxy,
                             serverless_manager,
                         };
                         let service = crate::http::eggserve_h1::EggserveH1Service::new(

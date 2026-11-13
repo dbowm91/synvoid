@@ -277,3 +277,34 @@ pub struct SpinLocationConfig {
     #[serde(default)]
     pub spin_app_name: Option<String>,
 }
+
+/// Maximum explicit mesh service-ID length.
+///
+/// Mirrors `synvoid_mesh::service_target::MAX_SERVICE_ID_BYTES`; the mesh crate
+/// cannot be a dependency of `synvoid-config` (it already consumes it), so the
+/// bound and the character rules are duplicated here and pinned by tests in
+/// both crates.
+pub const MAX_MESH_SERVICE_ID_BYTES: usize = 255;
+
+/// Validate the `upstream` field of `BackendConfig::Mesh` at config load.
+///
+/// The value is the origin's `local_upstreams` key, or the compatibility
+/// `http://host[:port]` form. An empty value, a control character, or an
+/// over-long ID is a configuration error: the request path must never guess a
+/// service from the client `Host`.
+pub fn validate_mesh_service_id(service_id: &str) -> Result<(), String> {
+    if service_id.is_empty() {
+        return Err("mesh service ID must not be empty".to_string());
+    }
+    if service_id.len() > MAX_MESH_SERVICE_ID_BYTES {
+        return Err(format!(
+            "mesh service ID is {} bytes, maximum is {}",
+            service_id.len(),
+            MAX_MESH_SERVICE_ID_BYTES
+        ));
+    }
+    if service_id.bytes().any(|byte| byte < 0x20 || byte == 0x7f) {
+        return Err("mesh service ID must not contain control characters".to_string());
+    }
+    Ok(())
+}

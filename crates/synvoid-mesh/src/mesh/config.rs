@@ -712,7 +712,58 @@ pub struct MeshUpstreamConfig {
     pub compression: Option<MeshCompressionConfig>,
     #[serde(default)]
     pub minification: Option<MeshMinificationConfig>,
+    #[serde(default)]
+    pub body_policy: MeshServiceBodyPolicy,
 }
+
+/// Per-service mesh HTTP body policy (mirrors the operator schema).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct MeshServiceBodyPolicy {
+    #[serde(default)]
+    pub max_request_body_bytes: Option<usize>,
+    #[serde(default)]
+    pub max_response_body_bytes: Option<usize>,
+    #[serde(default = "default_true")]
+    pub streaming: bool,
+    #[serde(default = "default_true")]
+    pub allow_chunked: bool,
+    #[serde(default = "default_true")]
+    pub allow_transforms: bool,
+}
+
+impl Default for MeshServiceBodyPolicy {
+    fn default() -> Self {
+        Self {
+            max_request_body_bytes: None,
+            max_response_body_bytes: None,
+            streaming: true,
+            allow_chunked: true,
+            allow_transforms: true,
+        }
+    }
+}
+
+impl MeshServiceBodyPolicy {
+    /// Effective request-body cap for this service.
+    pub fn request_cap(&self, connection_default: usize) -> usize {
+        self.max_request_body_bytes.unwrap_or(connection_default)
+    }
+
+    /// Effective response-body cap for this service.
+    pub fn response_cap(&self, connection_default: usize) -> usize {
+        self.max_response_body_bytes.unwrap_or(connection_default)
+    }
+
+    /// Buffer cap for transform-capable responses. Larger bodies stream and
+    /// bypass transforms (never silently: the caller records a metric/log).
+    pub fn transform_buffer_cap(&self, connection_default: usize) -> usize {
+        self.response_cap(connection_default)
+            .min(TRANSFORM_BUFFER_CAP_BYTES)
+    }
+}
+
+/// Maximum response size that may be buffered for full-body transforms.
+pub const TRANSFORM_BUFFER_CAP_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 pub struct MeshImageProtectionConfig {

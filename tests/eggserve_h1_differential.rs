@@ -397,7 +397,7 @@ fn lane_context(
         #[cfg(feature = "mesh")]
         mesh_transport: None,
         #[cfg(feature = "mesh")]
-        mesh_backend_pool: None,
+        mesh_proxy: None,
         serverless_manager: None,
     }
 }

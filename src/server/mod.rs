@@ -68,7 +68,7 @@ pub(crate) struct ServerSharedState {
     #[cfg(feature = "mesh")]
     pub(crate) mesh_transport: Option<Arc<crate::mesh::transport::MeshTransportManager>>,
     #[cfg(feature = "mesh")]
-    pub(crate) mesh_backend_pool: Option<Arc<crate::mesh::MeshBackendPool>>,
+    pub(crate) mesh_proxy: Arc<std::sync::OnceLock<Arc<crate::mesh::MeshProxy>>>,
     pub(crate) metrics: Option<Arc<WorkerMetrics>>,
     pub(crate) ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
     pub(crate) worker_id: Option<WorkerId>,
@@ -111,7 +111,7 @@ pub struct UnifiedServer {
     #[cfg(feature = "mesh")]
     pub(crate) mesh_transport: Option<Arc<crate::mesh::transport::MeshTransportManager>>,
     #[cfg(feature = "mesh")]
-    pub(crate) mesh_backend_pool: Option<Arc<crate::mesh::MeshBackendPool>>,
+    pub(crate) mesh_proxy: Arc<std::sync::OnceLock<Arc<crate::mesh::MeshProxy>>>,
     pub(crate) metrics: Option<Arc<WorkerMetrics>>,
     pub(crate) ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
     pub(crate) worker_id: Option<WorkerId>,
@@ -196,7 +196,7 @@ impl UnifiedServer {
             #[cfg(feature = "mesh")]
             mesh_transport,
             #[cfg(feature = "mesh")]
-            mesh_backend_pool: None,
+            mesh_proxy: Arc::new(std::sync::OnceLock::new()),
             metrics: None,
             ipc: None,
             worker_id: None,
@@ -255,14 +255,26 @@ impl UnifiedServer {
     }
 
     #[cfg(feature = "mesh")]
-    pub fn with_mesh_backend_pool(mut self, pool: Arc<crate::mesh::MeshBackendPool>) -> Self {
-        self.mesh_backend_pool = Some(pool);
+    pub fn with_mesh_proxy(self, proxy: Arc<crate::mesh::MeshProxy>) -> Self {
+        self.set_mesh_proxy(proxy);
         self
     }
 
+    /// Install the worker-local mesh egress handle after mesh startup.
+    ///
+    /// The unified worker is built before the mesh transport exists, so the
+    /// handle is installed once and read by every listener through the shared
+    /// server state.
     #[cfg(feature = "mesh")]
-    pub fn get_mesh_backend_pool(&self) -> Option<Arc<crate::mesh::MeshBackendPool>> {
-        self.mesh_backend_pool.clone()
+    pub fn set_mesh_proxy(&self, proxy: Arc<crate::mesh::MeshProxy>) {
+        if self.mesh_proxy.set(proxy).is_err() {
+            tracing::warn!("mesh proxy already installed; ignoring duplicate");
+        }
+    }
+
+    #[cfg(feature = "mesh")]
+    pub fn get_mesh_proxy(&self) -> Option<Arc<crate::mesh::MeshProxy>> {
+        self.mesh_proxy.get().cloned()
     }
 
     pub fn get_serverless_manager(
@@ -442,7 +454,7 @@ impl UnifiedServer {
             #[cfg(feature = "mesh")]
             mesh_transport: self.mesh_transport.clone(),
             #[cfg(feature = "mesh")]
-            mesh_backend_pool: self.mesh_backend_pool.clone(),
+            mesh_proxy: self.mesh_proxy.clone(),
             metrics: self.metrics.clone(),
             ipc: self.ipc.clone(),
             worker_id: self.worker_id,
@@ -608,8 +620,8 @@ impl UnifiedServer {
         }
 
         #[cfg(feature = "mesh")]
-        if let Some(pool) = state.mesh_backend_pool.clone() {
-            server = server.with_mesh_backend_pool(Some(pool));
+        if let Some(proxy) = state.mesh_proxy.get().cloned() {
+            server = server.with_mesh_proxy(Some(proxy));
         }
 
         if let Some(m) = state.metrics.clone() {
@@ -694,6 +706,11 @@ impl UnifiedServer {
             }
             drop(config_guard);
             server = server.with_mesh_transport(mt);
+        }
+
+        #[cfg(feature = "mesh")]
+        if let Some(proxy) = state.mesh_proxy.get().cloned() {
+            server = server.with_mesh_proxy(proxy);
         }
         if let (Some(ipc), Some(worker_id)) = (state.ipc.clone(), state.worker_id) {
             server = server.with_ipc(ipc, worker_id);

@@ -104,6 +104,69 @@ impl MeshTransport {
         Ok(())
     }
 
+    /// Peering authorization for route disclosure.
+    ///
+    /// Route hints are advisory, but a denied peer must still learn neither a
+    /// provider nor an upstream URL. Both the authenticated immediate sender
+    /// and the declared initiator must be allowed when they differ, so a peer
+    /// cannot borrow another node's identity to disclose a restricted service.
+    /// Unknown services return `true`: they are not this node's to disclose and
+    /// the node that owns them enforces its own policy.
+    async fn route_disclosure_allowed(
+        &self,
+        topology: &MeshTopology,
+        upstream_id: &str,
+        requester: &str,
+        initiator: &str,
+    ) -> bool {
+        use crate::mesh::topology::LocalUpstreamAuthorization;
+
+        match topology
+            .authorize_local_upstream(upstream_id, requester)
+            .await
+        {
+            LocalUpstreamAuthorization::UnknownService => true,
+            LocalUpstreamAuthorization::Allowed(_) => {
+                if initiator == requester {
+                    return true;
+                }
+                matches!(
+                    topology
+                        .authorize_local_upstream(upstream_id, initiator)
+                        .await,
+                    LocalUpstreamAuthorization::Allowed(_)
+                )
+            }
+            LocalUpstreamAuthorization::PeerNotAuthorized
+            | LocalUpstreamAuthorization::ServiceNotAllowed => false,
+        }
+    }
+
+    async fn write_route_not_found(
+        &self,
+        send_stream: &mut SendStream,
+        query_id: &str,
+        upstream_id: &str,
+    ) -> Result<(), MeshTransportError> {
+        let response = MeshMessage::RouteNotFound {
+            query_id: query_id.into(),
+            upstream_id: upstream_id.into(),
+        };
+        let encoded = response
+            .encode()
+            .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
+        let len = (encoded.len() as u32).to_be_bytes();
+        send_stream
+            .write_all(&len)
+            .await
+            .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
+        send_stream
+            .write_all(&encoded)
+            .await
+            .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
+        Ok(())
+    }
+
     pub(crate) async fn handle_route_query_datagram(
         &self,
         from_peer: &str,
@@ -154,6 +217,24 @@ impl MeshTransport {
 
         if self.is_global_rate_limit_exceeded() {
             tracing::warn!("Route query rate limited: {}", query_key);
+            let not_found = MeshMessage::RouteNotFound {
+                query_id: query_id.into(),
+                upstream_id: upstream_id.into(),
+            };
+            let _ = self.send_datagram_to_peer(from_peer, &not_found).await;
+            return;
+        }
+
+        if !self
+            .route_disclosure_allowed(&self.topology, upstream_id, from_peer, initiator)
+            .await
+        {
+            tracing::warn!(
+                service_id = %upstream_id,
+                peer = %from_peer,
+                initiator = %initiator,
+                "route query rejected: peer not authorized for service"
+            );
             let not_found = MeshMessage::RouteNotFound {
                 query_id: query_id.into(),
                 upstream_id: upstream_id.into(),
@@ -396,22 +477,48 @@ impl MeshTransport {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn handle_route_query(
         &self,
         send_stream: &mut SendStream,
         query_id: String,
         upstream_id: String,
         max_hops: u8,
-        _initiator: String,
+        initiator: String,
+        requester: &str,
         topology: &MeshTopology,
     ) -> Result<(), MeshTransportError> {
+        use crate::mesh::topology::LocalUpstreamAuthorization;
+
         let upstream_id_for_log = upstream_id.clone();
-        if let Some(upstream_info) = topology.get_upstream_info(&upstream_id).await {
-            if upstream_info.is_local || topology.can_forward_service(&upstream_id) {
+        match topology
+            .authorize_local_upstream(&upstream_id, requester)
+            .await
+        {
+            LocalUpstreamAuthorization::Allowed(upstream_info) => {
+                if initiator != requester
+                    && !matches!(
+                        topology
+                            .authorize_local_upstream(&upstream_id, &initiator)
+                            .await,
+                        LocalUpstreamAuthorization::Allowed(_)
+                    )
+                {
+                    tracing::warn!(
+                        service_id = %upstream_id,
+                        requester = %requester,
+                        initiator = %initiator,
+                        "route query rejected: initiator not authorized for service"
+                    );
+                    return self
+                        .write_route_not_found(send_stream, &query_id, &upstream_id)
+                        .await;
+                }
+
                 let sequence = 0;
                 let timestamp = MeshMessage::generate_timestamp();
                 let nonce = MeshMessage::generate_nonce();
-                let hops: u8 = if upstream_info.is_local { 0 } else { 1 };
+                let hops: u8 = 0;
                 let signature = self.sign_route_response(
                     &query_id,
                     &upstream_id,
@@ -419,6 +526,10 @@ impl MeshTransport {
                     hops as u32,
                     timestamp,
                 );
+                // A forwarded query response omits the operator's upstream URL:
+                // only the direct requester sees it, and even then the data
+                // path re-authorizes before connecting.
+                let disclose_url = initiator == requester;
                 let response = MeshMessage::RouteResponse {
                     query_id: query_id.into(),
                     upstream_id: upstream_id.into(),
@@ -429,8 +540,10 @@ impl MeshTransport {
                     sequence,
                     timestamp,
                     nonce,
-                    upstream_url: Some(upstream_info.upstream_url.clone().into()),
-                    waf_policy: upstream_info.waf_policy.clone(),
+                    upstream_url: disclose_url.then(|| upstream_info.upstream_url.clone().into()),
+                    waf_policy: disclose_url
+                        .then(|| upstream_info.waf_policy.clone())
+                        .flatten(),
                     priority_tier: upstream_info.priority_tier,
                     tier_claim: None,
                     org_id: None,
@@ -454,10 +567,22 @@ impl MeshTransport {
                     "Responded to route query for {}: {} (hops: {})",
                     upstream_id_for_log,
                     topology.node_id(),
-                    if upstream_info.is_local { 0 } else { 1 }
+                    hops
                 );
                 return Ok(());
             }
+            LocalUpstreamAuthorization::PeerNotAuthorized
+            | LocalUpstreamAuthorization::ServiceNotAllowed => {
+                tracing::warn!(
+                    service_id = %upstream_id,
+                    requester = %requester,
+                    "route query rejected: peer not authorized for service"
+                );
+                return self
+                    .write_route_not_found(send_stream, &query_id, &upstream_id)
+                    .await;
+            }
+            LocalUpstreamAuthorization::UnknownService => {}
         }
 
         if max_hops > 1 {

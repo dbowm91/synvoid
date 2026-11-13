@@ -1,5 +1,6 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use utoipa::ToSchema;
 
 use super::backend::{BackendConfig, CgiConfig, FastCgiConfig, LocationConfig, PhpConfig};
@@ -73,6 +74,16 @@ pub struct SiteProxyConfig {
     #[serde(default)]
     pub backend: Option<BackendConfig>,
 
+    /// Listener-scoped mesh service overrides: listener name -> mesh service ID.
+    ///
+    /// The base `backend` stays the default for every listener. An entry here
+    /// applies only to the named listener and only when the site-level backend
+    /// is `type = "mesh"`; a location-level backend always wins. Listener names
+    /// are local configuration and never travel over the mesh — the router
+    /// resolves the override to a service ID before forwarding.
+    #[serde(default)]
+    pub listener_backends: HashMap<String, String>,
+
     #[serde(default)]
     pub locations: Vec<LocationConfig>,
 
@@ -122,6 +133,54 @@ impl SiteProxyConfig {
                     field: "proxy.max_request_body_size".to_string(),
                     message: "max_request_body_size must not exceed 1 GiB".to_string(),
                 });
+            }
+        }
+        self.validate_mesh_backends()?;
+        Ok(())
+    }
+
+    /// Validate every mesh backend service ID, including location overrides.
+    fn validate_mesh_backends(&self) -> Result<(), crate::validation::ConfigValidationError> {
+        if let Some(BackendConfig::Mesh { upstream }) = self.backend.as_ref() {
+            super::backend::validate_mesh_service_id(upstream).map_err(|message| {
+                crate::validation::ConfigValidationError {
+                    field: "proxy.backend.upstream".to_string(),
+                    message,
+                }
+            })?;
+        }
+        if !self.listener_backends.is_empty()
+            && !matches!(self.backend, Some(BackendConfig::Mesh { .. }))
+        {
+            return Err(crate::validation::ConfigValidationError {
+                field: "proxy.listener_backends".to_string(),
+                message: "listener_backends requires a site-level mesh backend \
+                          (listener overrides never apply to location backends)"
+                    .to_string(),
+            });
+        }
+        for (listener, service_id) in &self.listener_backends {
+            if listener.trim().is_empty() {
+                return Err(crate::validation::ConfigValidationError {
+                    field: "proxy.listener_backends".to_string(),
+                    message: "listener_backends contains an empty listener name".to_string(),
+                });
+            }
+            super::backend::validate_mesh_service_id(service_id).map_err(|message| {
+                crate::validation::ConfigValidationError {
+                    field: format!("proxy.listener_backends.{listener}"),
+                    message,
+                }
+            })?;
+        }
+        for (index, location) in self.locations.iter().enumerate() {
+            if let Some(BackendConfig::Mesh { upstream }) = location.backend.as_ref() {
+                super::backend::validate_mesh_service_id(upstream).map_err(|message| {
+                    crate::validation::ConfigValidationError {
+                        field: format!("proxy.locations[{index}].backend.upstream"),
+                        message,
+                    }
+                })?;
             }
         }
         Ok(())

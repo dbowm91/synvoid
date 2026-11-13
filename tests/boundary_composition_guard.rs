@@ -410,27 +410,18 @@ struct BoundaryException {
 /// Scoped exceptions for pass-through concrete types that are intentionally
 /// threaded through request dispatch contexts.
 const BOUNDARY_EXCEPTIONS: &[BoundaryException] = &[
-    // MeshTransportManager/MeshBackendPool are pass-through types in HTTP dispatch
-    // — received from composition root, not constructed or owned
+    // MeshTransportManager is a pass-through type in HTTP dispatch — received
+    // from the composition root, not constructed or owned. MeshBackendPool no
+    // longer appears in HTTP dispatch (mesh egress is MeshProxy).
     BoundaryException {
         path_suffix: "crates/synvoid-http/src/",
         token: "MeshTransportManager",
         reason: "Pass-through: received from composition root for serverless routing, not owned",
     },
     BoundaryException {
-        path_suffix: "crates/synvoid-http/src/",
-        token: "MeshBackendPool",
-        reason: "Pass-through: received from composition root for backend routing, not owned",
-    },
-    BoundaryException {
         path_suffix: "src/http/server.rs",
         token: "MeshTransportManager",
         reason: "Pass-through: received from composition root for serverless routing, not owned",
-    },
-    BoundaryException {
-        path_suffix: "src/http/server.rs",
-        token: "MeshBackendPool",
-        reason: "Pass-through: received from composition root for backend routing, not owned",
     },
     // Phase 76: `src/http/server/` no longer names these tokens (the
     // EggServe-driven accept loop threads untyped handles into the shared
@@ -1171,11 +1162,6 @@ const CAPABILITY_BOUNDARY_EXCEPTIONS: &[CapabilityBoundaryException] = &[
     },
     CapabilityBoundaryException {
         path_suffix: "crates/synvoid-http/src/",
-        token: "MeshBackendPool",
-        reason: "Pass-through: received from composition root for backend routing",
-    },
-    CapabilityBoundaryException {
-        path_suffix: "crates/synvoid-http/src/",
         token: "synvoid_mesh::mesh::transport",
         reason: "Pass-through: transport module import for MeshTransportManager type alias",
     },
@@ -1204,19 +1190,9 @@ const CAPABILITY_BOUNDARY_EXCEPTIONS: &[CapabilityBoundaryException] = &[
     // EggServe-driven accept loop threads untyped handles); entries removed
     // as stale by liveness.
     CapabilityBoundaryException {
-        path_suffix: "src/http/server.rs",
-        token: "MeshBackendPool",
-        reason: "Pass-through: received from composition root for backend pool",
-    },
-    CapabilityBoundaryException {
         path_suffix: "src/http/service_core.rs",
         token: "MeshTransportManager",
         reason: "Pass-through: received from composition root for upstream routing (shared neutral pipeline context)",
-    },
-    CapabilityBoundaryException {
-        path_suffix: "src/http/service_core.rs",
-        token: "MeshBackendPool",
-        reason: "Pass-through: received from composition root for backend pool (shared neutral pipeline context)",
     },
     CapabilityBoundaryException {
         path_suffix: "src/http/",

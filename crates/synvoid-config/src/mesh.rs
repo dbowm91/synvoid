@@ -328,6 +328,45 @@ impl Default for MeshTlsConfig {
     }
 }
 
+/// Per-service HTTP body policy for mesh forwarding.
+///
+/// Caps are explicit per service. `None` inherits the connection defaults
+/// (`connection.max_peer_http_body_bytes` / `..._response_body_bytes`), which
+/// stay at 64 KiB for text/API safety; a service that carries media must raise
+/// them deliberately.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
+pub struct MeshServiceBodyPolicy {
+    /// Request body cap. `None` inherits the connection cap.
+    #[serde(default)]
+    pub max_request_body_bytes: Option<usize>,
+    /// Response body cap. `None` inherits the connection cap.
+    #[serde(default)]
+    pub max_response_body_bytes: Option<usize>,
+    /// Stream request/response bodies instead of buffering them whole.
+    #[serde(default = "default_true")]
+    pub streaming: bool,
+    /// Accept `Transfer-Encoding: chunked` request bodies by forwarding them
+    /// incrementally. When false, chunked requests are rejected with 501.
+    #[serde(default = "default_true")]
+    pub allow_chunked: bool,
+    /// Allow response transforms. Transformable bodies are buffered only up to
+    /// the transform buffer cap; larger bodies stream and bypass transforms.
+    #[serde(default = "default_true")]
+    pub allow_transforms: bool,
+}
+
+impl Default for MeshServiceBodyPolicy {
+    fn default() -> Self {
+        Self {
+            max_request_body_bytes: None,
+            max_response_body_bytes: None,
+            streaming: true,
+            allow_chunked: true,
+            allow_transforms: true,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
 pub struct MeshUpstreamConfig {
     pub upstream_url: String,
@@ -341,6 +380,8 @@ pub struct MeshUpstreamConfig {
     pub priority_tier: u32,
     #[serde(default)]
     pub allowed_protocols: Vec<String>,
+    #[serde(default)]
+    pub body_policy: MeshServiceBodyPolicy,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]

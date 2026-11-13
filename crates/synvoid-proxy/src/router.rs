@@ -774,7 +774,11 @@ impl Router {
         site_config: &Arc<SiteConfig>,
         path: &str,
         clean_host: &str,
+        listener_id: Option<&str>,
     ) -> RouteResult {
+        // Only mesh backends consume the listener override; keep the parameter
+        // meaningful (and warning-free) in non-mesh builds too.
+        let _ = listener_id;
         let site_id = site_config.site_id();
 
         if site_config.security.reject_unknown_hosts.unwrap_or(false)
@@ -930,7 +934,15 @@ impl Router {
                 }
                 #[cfg(feature = "mesh")]
                 BackendConfig::Mesh { upstream } => {
-                    let upstream_id = upstream.clone();
+                    // Phase 03 precedence: the location-level backend already
+                    // returned above; this is the site-level default. A
+                    // listener-scoped override replaces the service ID for the
+                    // listener that accepted the request. `ListenerId` stays
+                    // local: only the resolved service ID is forwarded.
+                    let upstream_id = listener_id
+                        .and_then(|id| site_config.proxy.listener_backends.get(id))
+                        .cloned()
+                        .unwrap_or_else(|| upstream.clone());
                     return RouteResult::Found(RouteTarget {
                         site_id: Arc::from(site_id.as_str()),
                         upstream: Arc::from(upstream_id.as_str()),
@@ -1086,6 +1098,7 @@ impl Router {
             &table.exact,
             &table.wildcard,
             table.default_site.as_ref(),
+            Some(listener_id),
         )
     }
 
@@ -1096,21 +1109,22 @@ impl Router {
         exact: &HashMap<Arc<str>, Arc<SiteConfig>>,
         wildcard: &MatchRouter<Arc<SiteConfig>>,
         default_site: Option<&Arc<SiteConfig>>,
+        listener_id: Option<&str>,
     ) -> RouteResult {
         let clean_host = Self::clean_domain(host);
         let clean_host_arc: Arc<str> = Arc::from(clean_host.as_str());
 
         if let Some(site_config) = exact.get(clean_host_arc.as_ref()) {
-            return self.route_to_target(site_config, path, &clean_host);
+            return self.route_to_target(site_config, path, &clean_host, listener_id);
         }
 
         let reversed = Self::reverse_domain_for_router(&clean_host);
         if let Ok(m) = wildcard.at(&reversed) {
-            return self.route_to_target(m.value, path, &clean_host);
+            return self.route_to_target(m.value, path, &clean_host, listener_id);
         }
 
         if let Some(site_config) = default_site {
-            return self.route_to_target(site_config, path, &clean_host);
+            return self.route_to_target(site_config, path, &clean_host, listener_id);
         }
 
         self.fallback_route(host)
@@ -1164,12 +1178,12 @@ impl Router {
         let clean_host_arc: Arc<str> = Arc::from(clean_host.as_str());
 
         if let Some(site_config) = self.domain_map.get(clean_host_arc.as_ref()) {
-            return self.route_to_target(site_config, path, &clean_host);
+            return self.route_to_target(site_config, path, &clean_host, None);
         }
 
         let reversed = Self::reverse_domain_for_router(&clean_host);
         if let Ok(m) = self.wildcard_domain_router.at(&reversed) {
-            return self.route_to_target(m.value, path, &clean_host);
+            return self.route_to_target(m.value, path, &clean_host, None);
         }
 
         self.fallback_route(host)

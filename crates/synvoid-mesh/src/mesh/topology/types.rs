@@ -564,6 +564,23 @@ impl UpstreamInfoInternal {
     }
 }
 
+/// Outcome of authorizing a peer against an origin's local upstream.
+///
+/// The origin is the enforcement boundary: it must distinguish an unknown
+/// service from an unauthorized peer and from a service blocked by policy, and
+/// it must never leak the configured upstream URL on denial.
+#[derive(Debug, Clone)]
+pub enum LocalUpstreamAuthorization {
+    /// The service exists and the peer may use it.
+    Allowed(Box<UpstreamInfoInternal>),
+    /// No `local_upstreams` entry exists for the requested service ID.
+    UnknownService,
+    /// The service exists but `peered_wafs` excludes the requesting peer.
+    PeerNotAuthorized,
+    /// The service exists but the mesh service policy denies it.
+    ServiceNotAllowed,
+}
+
 #[derive(Debug, Clone)]
 pub struct PeerSelectionWeights {
     pub random: f64,

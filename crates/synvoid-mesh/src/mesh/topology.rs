@@ -1094,6 +1094,32 @@ impl MeshTopology {
         None
     }
 
+    /// Authorize a peer for one of this node's configured local upstreams.
+    ///
+    /// Unlike [`Self::get_upstream_for_peer`], this is the origin-side data-path
+    /// check: it does not short-circuit on `is_local`, because the requesting
+    /// peer is never the owner of the upstream. `peered_wafs` is an allowlist;
+    /// an empty list keeps the documented legacy "not restricted" semantics.
+    /// The service policy and routing allowlist are the single forwarding
+    /// policy decision, and both are enforced here.
+    pub async fn authorize_local_upstream(
+        &self,
+        upstream_id: &str,
+        peer_node_id: &str,
+    ) -> LocalUpstreamAuthorization {
+        let upstreams = self.local_upstreams.read().await;
+        let Some(upstream) = upstreams.get(upstream_id) else {
+            return LocalUpstreamAuthorization::UnknownService;
+        };
+        if !self.can_forward_service(upstream_id) {
+            return LocalUpstreamAuthorization::ServiceNotAllowed;
+        }
+        if !upstream.can_be_routed_by(peer_node_id) {
+            return LocalUpstreamAuthorization::PeerNotAuthorized;
+        }
+        LocalUpstreamAuthorization::Allowed(Box::new(upstream.clone()))
+    }
+
     pub async fn get_best_peers_for_query(
         &self,
         upstream_id: &str,
@@ -1250,7 +1276,17 @@ impl MeshTopology {
         pending.insert(query.query_id.clone(), query);
     }
 
+    /// Single forwarding-policy decision for mesh services.
+    ///
+    /// Precedence (documented in `docs/WAF_MESH.md`):
+    /// 1. `[tunnel.mesh.service_policy].deny` always wins;
+    /// 2. `service_policy.allow` (empty = every service) must contain it;
+    /// 3. the routing allowlist applies (`allow_all_services` or
+    ///    `allowed_services`).
     pub fn can_forward_service(&self, service_id: &str) -> bool {
+        if !self.config.service_policy.can_forward(service_id) {
+            return false;
+        }
         let config = &self.config.routing;
         if config.allow_all_services {
             return true;

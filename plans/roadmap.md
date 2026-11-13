@@ -53,6 +53,37 @@ The old `[[site.listen]]` implementation never bound its entries and its
 routing maps did not match wildcard local addresses. The campaign builds a
 working model rather than reverting the 03A validation change.
 
+## Mesh Multi-Upstream Forwarding — In Progress
+
+Status: **IN PROGRESS** (2026-11-13). Phases 01–04 implemented; Phase 05
+in qualification.
+Research baseline: `8cbf8639`.
+
+Plan: `plans/mesh_multi_upstream_forwarding_roadmap.md`.
+Results: `plans/mesh_multi_upstream_forwarding_results.md`.
+Phase plans:
+`plans/mesh_multi_upstream_phase_01_service_id_and_http_wiring.md` through
+`plans/mesh_multi_upstream_phase_05_qualification_and_docs.md`.
+
+The original mesh design advertised multiple domain-based
+`local_upstreams` (`http://host:port`). The multi-listener campaign restored
+`[[http.listeners]]`, but the mesh data path was not revisited: the HTTP
+`BackendType::Mesh` dispatch required a `MeshBackendPool` that was never
+populated, the selected service ID was discarded at the peer boundary, private
+local origins were rejected, and the default mesh body cap was 64 KiB.
+
+Phases 01–04 are implemented: an explicit, typed service-target preface carries
+the origin's `local_upstreams` key (with `http://host:port` retained as a
+compatibility ID); the origin resolves and authorizes that ID against
+`peered_wafs`, `service_policy`, and the routing allowlist without accepting a
+peer-supplied URL; `listener_backends` maps local listener names to service IDs
+with location → listener → site precedence; and per-service `body_policy`
+provides bounded streaming, chunked support, and explicit media caps.
+`BackendType::Mesh` now dispatches directly through the worker-local
+`MeshProxy`; the `MeshBackendPool` HTTP role is retired. Phase 05
+(end-to-end multi-node qualification and documentation truth) is in
+qualification, and the campaign is not closed until that evidence is recorded.
+
 ## Documentation Corrective: Root README Public-Support Boundary — Ready
 
 Status: **READY** (2026-10-06).

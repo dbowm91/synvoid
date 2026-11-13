@@ -9,6 +9,7 @@ The Mesh module (`crates/synvoid-mesh/src/mesh/`, re-exported via `src/mesh/mod.
 The Mesh module is responsible for:
 
 - **Peer-to-peer connectivity**: Establishing encrypted QUIC tunnels between SynVoid nodes across the internet, even behind NATs. (WireGuard: mesh holds port plumbing only; real WireGuard client/server lives in `synvoid-tunnel` behind the root `wireguard` feature.)
+- **HTTP egress for mesh services**: Forwarding an edge request for an explicit service ID to an origin that resolves the ID against its operator-configured `local_upstreams`. The origin enforces service policy and `peered_wafs` before connecting; a peer never supplies the upstream URL.
 - **Service discovery via DHT**: Distributing signed or Raft-attested records (routing policies, provider info, DNS records) via a Kademlia-style distributed hash table. DHT records are advisory and TTL-bound; DHT does not decide trust, ownership, or global policy.
 - **Distributed consensus**: Global nodes participate in a Raft cluster to commit canonical authority records (OrgPublicKey, ThreatIntel, GlobalNodeRevocationList) with strong consistency guarantees. Raft is the only source of canonical global trust state.
 - **Organization management**: Managing multi-tenant isolation using tiered keys, member certificates, and capability attestations.
@@ -36,7 +37,8 @@ crates/synvoid-mesh/src/mesh/
 ├── transports/          # Transport abstraction layer (MeshTransportManager, QuicMeshTransport)
 ├── transport_*.rs      # Feature-gated transport extensions (DHT, DNS, Org, peer, etc.)
 ├── proxy.rs             # Mesh proxy for request forwarding between peers
-├── backend.rs           # Backend pool and initialization helpers
+├── service_target.rs    # Typed service-target preface for mesh HTTP forwarding
+├── backend.rs           # Mesh initialization helpers; MeshBackendPool has no HTTP dispatch role
 ├── topology.rs          # Network topology, routing cache, peer state
 ├── protocol.rs          # MeshMessage, signing, serialization
 ├── config.rs            # MeshConfig, MeshNodeRole, transport preferences
@@ -206,7 +208,7 @@ See `architecture/mesh_transport_lifecycle.md` for the full task inventory and i
 
 | Type | Location | Purpose |
 |------|----------|---------|
-| `MeshProxy` | `crates/synvoid-mesh/src/mesh/proxy.rs:76` | Request forwarding between mesh peers. Maintains policy cache, provider stats, failed provider cooldown, tiered transform cache. |
+| `MeshProxy` | `crates/synvoid-mesh/src/mesh/proxy.rs:76` | Forwards an explicit service ID to a mesh peer, sends the service-target preface, and maintains policy/provider/transform caches. No `MeshBackendPool` involvement. |
 
 ### DHT
 
@@ -231,7 +233,7 @@ See `architecture/mesh_transport_lifecycle.md` for the full task inventory and i
 | Type | Location | Purpose |
 |------|----------|---------|
 | `RaftInstance` | `crates/synvoid-mesh/src/mesh/raft/instance.rs:32` | Lifecycle manager for a Raft node. Owns the `openraft::Raft` instance, state machine, network factory, and shutdown sender. |
-| `MeshRaftNetwork` | `crates/synvoid-mesh/src/mesh/raft/network.rs` | Network implementation for Raft (wraps MeshBackendPool). |
+| `MeshRaftNetwork` | `crates/synvoid-mesh/src/mesh/raft/network.rs` | Per-peer Raft network implementation over `ConsensusTransport`. |
 | `MeshRaftNetworkFactory` | `crates/synvoid-mesh/src/mesh/raft/network.rs` | Factory for creating per-peer Raft network handlers. |
 | `GlobalRegistryStateMachine` | `crates/synvoid-mesh/src/mesh/raft/state_machine.rs` | State machine for global registry (OrgPublicKey, ThreatIntel, Revocation). |
 | `GlobalNodeRevocationList` | `crates/synvoid-mesh/src/mesh/raft/state_machine.rs` | Revocation list stored in Raft state machine. |
@@ -523,6 +525,46 @@ pub fn get_global_record_store() -> Option<Arc<RecordStoreManager>> { ... }
 5. Optionally create Raft instance via `RaftInstance::new()`.
 6. Wire transport into proxy and topology.
 
+### Mesh HTTP Egress (Multi-Upstream Forwarding)
+
+`BackendType::Mesh` dispatches directly through the worker-local `MeshProxy`.
+`MeshBackendPool` still exists in `backend.rs`, but its HTTP dispatch role is
+retired and it does not need to be populated for mesh sites to work.
+
+1. The router resolves a service ID and stores it in `RouteTarget::upstream`.
+   Precedence is location backend, then `proxy.listener_backends` for the
+   accepting listener, then the site `proxy.backend`. Listener identity stays
+   local and is never sent over the mesh.
+2. `maybe_handle_mesh_backend` calls `MeshProxy::route_request`, which selects
+   a provider for the service and calls `MeshTransport::proxy_http_request`.
+3. The transport writes a typed service-target preface and then the HTTP/1.x
+   request. `service_target.rs` defines the wire form: 4-byte magic
+   `0x1f 'M' 'S' 'V'`, 1-byte version `1`, 1 reserved flags byte that must be
+   zero, a 2-byte big-endian length, and the UTF-8 service ID (non-empty, at
+   most 255 bytes, no control characters). The client `Host` header is
+   preserved verbatim.
+4. The origin peer handler reads the preface when the first byte matches and
+   uses the explicit ID as the service key; it does not derive a service from
+   `Host` in that case. Peers that send no preface keep the legacy
+   compatibility key `http://<Host header>`.
+5. `MeshTopology::authorize_local_upstream` is the single origin-side policy
+   point. The service must exist in the origin's operator-configured
+   `local_upstreams`, pass `service_policy` then the routing allowlist
+   (`can_forward_service`), and the requesting peer must pass the `peered_wafs`
+   allowlist (route disclosure applies the same peering check). On the
+   forwarded request, an unknown service returns `502` and peer or service
+   denial returns `403`; a denied route query returns no route. The backend URL
+   comes only from local configuration, never from the peer, so configured
+   private origins stay reachable while peer-supplied addresses are impossible.
+6. The origin opens the configured upstream and relays bodies according to the
+   service `body_policy`: incremental streaming with the original framing by
+   default, or whole-body buffering when `streaming = false`.
+
+Only one `UnifiedServerWorker` data plane per node is supported for mesh. The
+egress handle and transport are worker-local; multi-worker mesh session or
+route-cache sharing is out of scope, and listener/service changes are
+restart-required.
+
 ### DHT + Raft Chaining
 
 When a value is committed through Raft:
@@ -570,7 +612,7 @@ All persisted and network timestamps use `u64` Unix epoch via `crate::mesh::safe
 | `RecordStoreManager` | `Arc<RwLock<...>>` | Access via global static |
 | `SessionManager<MlKem768>` | `Arc<SessionManager<MlKem768>>` | Thread-safe via interior mutability |
 | DHT routing table | `Arc<DashMap<...>>` | Concurrent k-bucket access |
-| Raft `MeshRaftNetwork` | `Arc<MeshBackendPool>` | Network factory is cloneable |
+| Raft `MeshRaftNetwork` | `Arc<dyn ConsensusTransport>` | Per-peer handler; the network factory is cloneable |
 
 The single-threaded I/O model for QUIC is handled by `QuicRuntime` from `crate::tunnel::quic::runtime`.
 
@@ -618,6 +660,7 @@ crates/synvoid-mesh/src/mesh/
 │   ├── error.rs
 │   └── time.rs
 ├── proxy.rs                           (2121 lines - mesh proxy)
+├── service_target.rs                  # typed service-target preface (version 1)
 ├── topology.rs                        (1926 lines - network topology)
 ├── protocol.rs                        (1932 lines - messages, signing)
 ├── config.rs
@@ -719,7 +762,7 @@ crates/synvoid-mesh/src/mesh/
 
 | Module | Relationship |
 |--------|-------------|
-| `src/proxy/` | `MeshProxy` wraps `MeshTransport` and uses it to forward requests between peers. The proxy's `BackendType` enum includes `Mesh` variant for mesh-based routing. |
+| `src/proxy/` | `MeshProxy` is the mesh egress for an explicit service ID; the origin resolves it against its `local_upstreams`. `BackendType::Mesh` dispatches directly; `MeshBackendPool` has no HTTP role. |
 | `crates/synvoid-dns/` | DNS declares an **optional, one-way** `synvoid-mesh` edge (`mesh` feature). Since Phase 139 the DHT seam is inverted: DNS owns `DhtRecordStore` / `DhtGlobalLocator` (`crates/synvoid-dns/src/mesh_sync/dht_capability.rs`) and composition implements them in `src/worker/unified_server/mesh_dht_capability.rs`. DNS consumes advertised DNS state as **advisory only** under `architecture/distributed_state_contract.md` §3e (DHT-A1..A7) — never zone authority, never a resolution fallback. `DnsConfig.validate()` is called from `MainConfig::validate()`. Note the reverse feature `synvoid-mesh`'s empty `dns = []` does not compile and is recorded, not fixed. |
 | `src/config/` | `MeshConfig` lives here; `ConfigManager` in `crates/synvoid-config/src/lib.rs`. |
 | `src/supervisor/` | Supervisor manages `UnifiedServerWorker` which uses mesh transport for inter-node communication. |

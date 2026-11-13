@@ -87,6 +87,12 @@ pub struct MeshInit {
     /// Topology for background tasks.
     #[cfg(feature = "mesh")]
     pub topology: Option<Arc<crate::mesh::topology::MeshTopology>>,
+    /// Worker-local mesh egress handle for `BackendType::Mesh` sites.
+    ///
+    /// Carries the service ID to the selected origin over QUIC. Installed on
+    /// the unified server after mesh startup so every listener can dispatch.
+    #[cfg(feature = "mesh")]
+    pub mesh_proxy: Option<Arc<crate::mesh::proxy::MeshProxy>>,
 }
 
 impl MeshInit {
@@ -106,6 +112,8 @@ impl MeshInit {
             yara_broadcast: None,
             #[cfg(feature = "mesh")]
             topology: None,
+            #[cfg(feature = "mesh")]
+            mesh_proxy: None,
         }
     }
 }
@@ -314,6 +322,8 @@ pub async fn init_mesh_and_threat_intel(
                 yara_broadcast: None,
                 #[cfg(feature = "mesh")]
                 topology: None,
+                #[cfg(feature = "mesh")]
+                mesh_proxy: None,
             };
         };
 
@@ -651,6 +661,21 @@ pub async fn init_mesh_and_threat_intel(
             }
         }
 
+        // Mesh multi-upstream forwarding: route_request/proxy_http_request need
+        // the QUIC transport. It exists only after transport initialization, so
+        // bind the worker-local egress handle here, before the server starts.
+        match transport_manager.get_quic_transport() {
+            Some(quic_transport) => {
+                proxy.set_transport(quic_transport.get_inner());
+                tracing::debug!("Mesh egress handle bound to the worker QUIC transport");
+            }
+            None => {
+                tracing::warn!(
+                    "Mesh egress handle has no QUIC transport; BackendType::Mesh requests will fail closed"
+                );
+            }
+        }
+
         tracing::info!("Mesh and threat intelligence initialized in UnifiedServer Worker");
 
         let is_global = mesh_config_arc.role.is_global();
@@ -680,6 +705,8 @@ pub async fn init_mesh_and_threat_intel(
             yara_broadcast,
             #[cfg(feature = "mesh")]
             topology: Some(topology),
+            #[cfg(feature = "mesh")]
+            mesh_proxy: Some(proxy),
         }
     }
 

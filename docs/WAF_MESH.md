@@ -6,7 +6,7 @@ SynVoid supports peer-to-peer mesh networking for distributed DDoS mitigation, t
 
 **Mesh networking is disabled by default.** A standalone SynVoid instance operates completely independently without any WAF-to-WAF, server-WAF, or VPN-WAF connections. (The `mesh` Cargo feature is compiled in by default, but runtime participation requires `enabled = true` below — `MeshConfig::enabled` defaults to `false`.)
 
-> **Section location:** the mesh runtime is initialized from the nested `[tunnel.mesh]` section (`MainConfig::tunnel.mesh`, read by `init_mesh_control_plane`, the worker's `init_mesh_and_threat_intel`, and `--mesh-agent`). A top-level `[mesh]` section is also accepted by the parser and is what the HTTP server uses for mesh proxy config, but it does **not** by itself start the mesh subsystem. Write every example below under `[tunnel.mesh]`.
+> **Section location:** the mesh runtime and the mesh forwarding config are read from the nested `[tunnel.mesh]` section (`MainConfig::tunnel.mesh`, read by `init_mesh_control_plane`, the worker's `init_mesh_and_threat_intel`, and `--mesh-agent`). A top-level `[mesh]` section is still accepted by the parser, but it does **not** start the mesh subsystem and is not the source of the worker's mesh forwarding config. Listener-to-service mapping is site configuration (`[proxy.listener_backends]`). Write every mesh example below under `[tunnel.mesh]`, and site-side examples under the site file's `[proxy]`.
 
 To enable mesh networking:
 
@@ -307,7 +307,209 @@ peer_query_count = 3       # default: 3
 allow_all_services = true  # default: true
 route_queries_per_minute = 6000     # default: 6000
 mesh_messages_per_sec = 10000       # default: 10000
+
+[tunnel.mesh.service_policy]
+deny = ["admin-api"]                  # always wins
+# allow = ["blog-public", "blog-alt"] # empty = every service
 ```
+
+## HTTP Mesh Proxying
+
+A site can forward HTTP requests through the mesh to a service hosted by an
+origin node. The edge selects a service ID; the origin resolves that ID against
+its own operator-configured `local_upstreams` and opens the backend connection.
+`BackendType::Mesh` dispatches directly through the worker-local mesh proxy —
+the `MeshBackendPool` HTTP dispatch role is retired, so no backend pool needs to
+be populated.
+
+### Service Identity
+
+Configure the site backend with `type = "mesh"` and an explicit service ID:
+
+```toml
+# config/sites/blog.example.com.toml
+[site]
+domains = ["blog.example.com"]
+
+[proxy.backend]
+type = "mesh"
+upstream = "blog-public"
+```
+
+`blog-public` is the origin's `[tunnel.mesh.local_upstreams.blog-public]` key.
+The edge sends it ahead of the HTTP/1.x request as a typed, versioned
+service-target preface. The client `Host` header is preserved to the backend,
+but it does **not** select the service when the preface is present. An unknown
+service ID fails closed with `502 Bad Gateway`; the origin never falls back to
+`Host` and never connects to a URL supplied by a peer.
+
+`http://host[:port]` remains accepted as a compatibility service ID. Legacy
+peers that do not send the preface are resolved as `http://<Host header>`, so a
+service can be published under both forms while peers migrate:
+
+```toml
+[tunnel.mesh.local_upstreams.blog-public]
+upstream_url = "http://10.0.1.10:8080"
+
+[tunnel.mesh.local_upstreams."http://blog.example.com"]
+upstream_url = "http://10.0.1.10:8080"
+```
+
+Do not use the compatibility form for new deployments: it reconstructs the key
+from the request `Host`, so a client-controlled `Host` decides which configured
+service is used.
+
+### Listener, Site, and Service Mapping
+
+`[[http.listeners]]` names are local configuration. They select the site and
+the listener-scoped mesh service, but listener identity is never sent over the
+mesh. Optional `[proxy.listener_backends]` maps a listener name to a mesh
+service ID for a site whose backend is `type = "mesh"`:
+
+```toml
+[[http.listeners]]
+name = "public-http"
+address = "0.0.0.0"
+port = 80
+
+[[http.listeners]]
+name = "public-alt"
+address = "0.0.0.0"
+port = 8081
+
+# config/sites/blog.example.com.toml
+[site]
+domains = ["blog.example.com"]
+listeners = ["public-http", "public-alt"]
+
+[proxy.backend]
+type = "mesh"
+upstream = "blog-public"
+
+[proxy.listener_backends]
+public-http = "blog-public"
+public-alt = "blog-alt"
+```
+
+Precedence is: location backend, then listener override, then site backend.
+The site-level `proxy.backend.upstream` remains the default when a listener has
+no entry. `listener_backends` is valid only with a site-level mesh backend; a
+location-level backend always wins and is never remapped per listener.
+
+Listener bind changes, mesh service changes, and listener/service mapping
+changes are restart-required. The supported mesh data plane is one
+`UnifiedServerWorker` per node; the mesh egress handle is worker-local and
+multi-worker mesh state is not supported.
+
+### Origin Trust and Peering
+
+Only the origin's operator-configured `local_upstreams` are connectable. A
+configured service may point at a private, loopback, RFC1918, or ULA address;
+that is allowed because the target is operator-controlled. A peer can never
+supply a URL, so no peer-controlled address reaches the backend connection.
+
+`peered_wafs` is an allowlist of node IDs enforced on route disclosure and
+again on the forwarded request. An unlisted peer does not receive the route
+when it queries; if it sends a request anyway, the origin returns `403
+Forbidden` with a short text body and never includes the upstream URL. An empty
+`peered_wafs` list keeps the legacy "not restricted" semantics. Entries with
+`allowed = false` are discarded, so a list containing only denied entries ends
+up empty — configure at least one `allowed = true` peer if you intend to
+restrict the service.
+
+```toml
+[tunnel.mesh.local_upstreams.blog-public]
+upstream_url = "http://10.0.1.10:8080"
+
+[[tunnel.mesh.local_upstreams.blog-public.peered_wafs]]
+node_id = "edge-us-east-1"
+allowed = true
+
+[[tunnel.mesh.local_upstreams.blog-public.peered_wafs]]
+node_id = "edge-eu-west-1"
+allowed = true
+```
+
+Service policy precedence is:
+
+1. `[tunnel.mesh.service_policy].deny` always wins.
+2. `[tunnel.mesh.service_policy].allow` must contain the service when the list
+   is non-empty; an empty `allow` means every service.
+3. `[tunnel.mesh.routing].allow_all_services` / `allowed_services` applies
+   last.
+
+On the forwarded request, unknown services return `502`, service-policy or
+peering denials return `403`, and neither response exposes the configured
+upstream URL. A denied route query returns no route at all.
+
+### Body and Media Policy
+
+Each service has its own body policy:
+
+```toml
+[tunnel.mesh.local_upstreams.blog-public.body_policy]
+max_request_body_bytes = 8388608      # 8 MiB; matches the retry replay cap
+max_response_body_bytes = 268435456   # 256 MiB
+streaming = true                      # default: true
+allow_chunked = true                  # default: true
+allow_transforms = true               # default: true
+```
+
+- `max_request_body_bytes` / `max_response_body_bytes` cap the relayed body.
+  When a cap is omitted (internal `None`), it inherits
+  `connection.max_peer_http_body_bytes` /
+  `max_peer_http_response_body_bytes`, whose defaults stay at 64 KiB.
+- `streaming = true` relays request and response bodies incrementally between
+  the QUIC stream and the origin connection, preserving the original framing
+  (fixed-length, chunked, or close-delimited). Memory stays bounded per stream
+  (16 KiB copy buffers) rather than scaling with body size.
+- `streaming = false` buffers the whole body at the origin rather than relaying
+  it incrementally.
+- `allow_chunked = false` rejects chunked requests with `501`. Chunked
+  responses continue to be relayed.
+- `allow_transforms` controls the text/CSS/JS response transforms. A
+  streaming-mode response is buffered for transforms only when it is
+  fixed-length and no larger than the transform buffer cap
+  (`min(service response cap, 1 MiB)`); larger and chunked responses stream and
+  bypass transforms, recorded by
+  `synvoid.mesh.proxy.transforms_bypassed_streaming` and a log line.
+
+Fixed-length bodies over the service cap are rejected before forwarding: `413`
+for a request and `502` for a response. Chunked bodies cannot be sized up
+front, so the cap is enforced while copying; crossing it aborts the stream (a
+chunked request receives `413`, a chunked response body is truncated).
+WebSocket and `CONNECT` requests are rejected with `503` over mesh.
+
+End-to-end ceilings: the edge proxy currently buffers the request body for
+provider fanout/retry (8 MiB) and buffers the response body before returning it
+to the client (50 MiB). A per-service cap above those values is accepted by the
+origin but is not reachable through an edge, and an over-limit request fails
+before the service cap can apply. Keep service caps at or below 8 MiB
+(request) and 50 MiB (response) until the edge forwards bodies incrementally.
+Origin-side streaming still bounds origin memory, but it does not remove the
+edge buffer.
+
+### Support Statement
+
+- Supported HTTP methods and body sizes are governed by the per-service and
+  per-location policy; body caps come from the per-service `body_policy` and
+  default to 64 KiB in each direction.
+- Chunked request and response bodies are supported; chunked requests are
+  `501` when `allow_chunked = false`.
+- WebSocket and `CONNECT` are not supported over mesh; both are rejected with
+  `503`.
+- Private, loopback, RFC1918, and ULA origins are supported only for services
+  configured in `local_upstreams` and requested by an authorized peer.
+- Blog media and uploads are supported only up to the effective end-to-end
+  ceilings (8 MiB request, 50 MiB response at the edge) and the configured
+  per-service caps. The 666 MB video and full-size media uploads are not
+  supported through mesh; keep them direct to the origin until an end-to-end
+  edge-streaming qualification exists.
+- Multiple listeners can select different mesh services through
+  `listener_backends`; listener identity itself never crosses the mesh.
+- Multi-worker mesh is not supported: the mesh egress handle is worker-local.
+- Mesh-backed sites are served on HTTP/1.1 and HTTP/2 listeners (plaintext and
+  TLS). The HTTP/3 client ingress pipeline does not dispatch mesh backends.
 
 ## Security
 
@@ -501,17 +703,24 @@ Origin nodes are WAFs with direct upstream server connections:
 enabled = true
 role = 4       # ORIGIN
 
-# Announced upstreams are declared explicitly; `peered_wafs` is the
-# authorization list, so an unlisted node receives "route not found"
-# rather than the real origin URL.
-[tunnel.mesh.local_upstreams.web]
+# Announced upstreams are declared explicitly. `peered_wafs` is the
+# authorization list: an unlisted peer is not given the route when it queries
+# and receives 403 if it forwards a request for the service. An empty list
+# keeps the legacy "not restricted" semantics.
+[tunnel.mesh.local_upstreams.blog-public]
 upstream_url = "http://10.0.1.10:8080"
 priority_tier = 0
 allowed_protocols = ["http"]
 
-[[tunnel.mesh.local_upstreams.web.peered_wafs]]
+[[tunnel.mesh.local_upstreams.blog-public.peered_wafs]]
 node_id = "edge-us-east-1"
 allowed = true
+
+[tunnel.mesh.local_upstreams.blog-public.body_policy]
+max_request_body_bytes = 8388608
+max_response_body_bytes = 268435456
+streaming = true
+allow_chunked = true
 ```
 
 `MeshNodeRole` is a bitmask, not an enum, so `GLOBAL | EDGE` (3) and the other combinations in `MeshNodeRole` are also valid values.
@@ -650,7 +859,7 @@ Choose the right architecture for your deployment:
 | **Complexity** | Low (centralized) | Medium (distributed) |
 | **Use Case** | Scale single WAF instance | Distribute across regions |
 | **Threat Sharing** | No | Yes (blocklists, patterns) |
-| **Origin Lookup** | Per-instance | Routed through the mesh routing layer (`[tunnel.mesh.routing]`, `local_upstreams`, `peered_wafs`) |
+| **Origin Lookup** | Per-instance | Operator-configured `local_upstreams`; an explicit service ID, not the client `Host`, selects the service |
 | **Setup Effort** | Minutes | Hours |
 
 ### Use Supervisor-Worker Clustering When:

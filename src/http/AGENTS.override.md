@@ -38,7 +38,7 @@ Guard: `cargo test --test http_normalization_ownership_guard`.
 same canonical stages (`prepare_http_request_flow` +
 `handle_http_request_postlude`) with boundary adaptations
 (`ForwardedProtocol::Https`, handshake JA4, `alt_svc: None`, pre-handshake
-`local_addr`, `mesh_backend_pool: None`). Do not fork routing/body/WAF/
+`local_addr`, worker-local `mesh_proxy`). Do not fork routing/body/WAF/
 challenge/upstream logic back into `src/tls/server.rs` — the
 `tls_request_flow_stays_converged` guard fails on it. Parity:
 `cargo test --test http_tls_parity`. Stage matrix:
@@ -53,11 +53,14 @@ challenge/upstream logic back into `src/tls/server.rs` — the
 
 ## Module-Specific Patterns
 
-### Mesh Backend Pool
+### Mesh Egress
 
-`BackendType::Mesh` variant is dispatched via `mesh_backend_pool`. Key files:
-- `crates/synvoid-mesh/src/mesh/backend.rs` — `MeshBackend`/`MeshBackendPool`
-- `crates/synvoid-mesh/src/mesh/proxy.rs` — `MeshProxy` for routing
+`BackendType::Mesh` dispatches through the worker-local `MeshProxy` (installed
+on `UnifiedServer` by mesh init and threaded through both the plaintext and
+TLS lanes). `MeshBackendPool` has no HTTP dispatch role. Key files:
+- `crates/synvoid-http/src/mesh_backend_dispatch.rs` — site dispatch
+- `crates/synvoid-mesh/src/mesh/proxy.rs` — `MeshProxy::route_request`
+- `crates/synvoid-mesh/src/mesh/service_target.rs` — typed service-ID preface
 
 ## Known File Path Corrections
 

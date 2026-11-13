@@ -411,6 +411,25 @@ fn validate_site_membership(
                 ));
             }
         }
+        for listener in site.proxy.listener_backends.keys() {
+            if !names.contains(listener.as_str()) {
+                return Err(err(
+                    "site.proxy.listener_backends",
+                    format!("site '{id}' references unknown listener '{listener}'"),
+                ));
+            }
+            let is_member = site.site.listeners.is_empty()
+                || site.site.listeners.iter().any(|name| name == listener);
+            if !is_member {
+                return Err(err(
+                    "site.proxy.listener_backends",
+                    format!(
+                        "site '{id}' sets a mesh service override for listener '{listener}' \
+                         but is not a member of that listener"
+                    ),
+                ));
+            }
+        }
     }
     Ok(())
 }

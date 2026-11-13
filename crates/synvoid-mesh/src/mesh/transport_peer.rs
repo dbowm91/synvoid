@@ -1243,6 +1243,322 @@ async fn read_exact_with_timeout(
         .map_err(|e| MeshTransportError::ReceiveFailed(e.to_string()))
 }
 
+/// Read the remainder of a typed service-target preface.
+///
+/// The caller has already consumed `first_byte`, which must satisfy
+/// [`crate::service_target::is_service_preface_start`]. On success the stream
+/// is positioned at the first byte of the HTTP/1.x request.
+pub async fn read_service_preface<R: tokio::io::AsyncRead + Unpin>(
+    reader: &mut R,
+    first_byte: u8,
+    idle_timeout: Duration,
+) -> Result<String, MeshTransportError> {
+    use crate::service_target::{
+        decode_service_preface, MAX_SERVICE_ID_BYTES, SERVICE_PREFACE_FLAGS,
+        SERVICE_PREFACE_HEADER_BYTES, SERVICE_PREFACE_MAGIC, SERVICE_PREFACE_VERSION,
+    };
+    use tokio::io::AsyncReadExt;
+
+    let read_all = async {
+        let mut header = [0u8; SERVICE_PREFACE_HEADER_BYTES];
+        header[0] = first_byte;
+        reader.read_exact(&mut header[1..]).await.map_err(|e| {
+            MeshTransportError::ReceiveFailed(format!("service preface header: {e}"))
+        })?;
+
+        if header[..4] != SERVICE_PREFACE_MAGIC {
+            return Err(MeshTransportError::ReceiveFailed(
+                "service preface magic mismatch".to_string(),
+            ));
+        }
+        if header[4] != SERVICE_PREFACE_VERSION {
+            return Err(MeshTransportError::ReceiveFailed(format!(
+                "unsupported service preface version {}",
+                header[4]
+            )));
+        }
+        if header[5] != SERVICE_PREFACE_FLAGS {
+            return Err(MeshTransportError::ReceiveFailed(format!(
+                "unsupported service preface flags {:#04x}",
+                header[5]
+            )));
+        }
+        let len = u16::from_be_bytes([header[6], header[7]]) as usize;
+        if len == 0 || len > MAX_SERVICE_ID_BYTES {
+            return Err(MeshTransportError::ReceiveFailed(format!(
+                "invalid service preface length {}",
+                len
+            )));
+        }
+
+        let mut wire = Vec::with_capacity(SERVICE_PREFACE_HEADER_BYTES + len);
+        wire.extend_from_slice(&header);
+        wire.resize(SERVICE_PREFACE_HEADER_BYTES + len, 0);
+        reader
+            .read_exact(&mut wire[SERVICE_PREFACE_HEADER_BYTES..])
+            .await
+            .map_err(|e| {
+                MeshTransportError::ReceiveFailed(format!("service preface payload: {e}"))
+            })?;
+
+        decode_service_preface(&wire)
+            .map(|(service_id, _)| service_id)
+            .map_err(|e| MeshTransportError::ReceiveFailed(format!("invalid service preface: {e}")))
+    };
+
+    tokio::time::timeout(idle_timeout, read_all)
+        .await
+        .map_err(|_| MeshTransportError::Timeout)?
+}
+
+/// Copy a fixed-length HTTP body to `writer` incrementally.
+///
+/// The caller has already validated framing; this helper enforces the
+/// per-service cap before forwarding any bytes and applies end-to-end
+/// backpressure by awaiting each write.
+pub async fn stream_fixed_http_body<R, W>(
+    reader: R,
+    prefix: Vec<u8>,
+    declared: usize,
+    writer: &mut W,
+    idle_timeout: Duration,
+    total_timeout: Duration,
+    max_bytes: usize,
+) -> Result<usize, HttpResponseFramingError>
+where
+    R: tokio::io::AsyncRead + Unpin,
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    use tokio::io::AsyncWriteExt;
+
+    if declared > max_bytes {
+        return Err(HttpResponseFramingError::BodyTooLarge {
+            limit: max_bytes,
+            declared,
+        });
+    }
+    if prefix.len() > declared {
+        return Err(
+            HttpResponseFramingError::ResponseBodyPrefixExceedsContentLength {
+                prefix: prefix.len(),
+                declared,
+            },
+        );
+    }
+
+    let deadline = tokio::time::Instant::now() + total_timeout;
+    let mut written = 0usize;
+    if !prefix.is_empty() {
+        writer
+            .write_all(&prefix)
+            .await
+            .map_err(|e| HttpResponseFramingError::Io(e.to_string()))?;
+        written += prefix.len();
+    }
+
+    let mut reader = PrefixReader::new(Vec::new(), reader);
+    let mut buf = vec![0u8; STREAM_COPY_CHUNK_BYTES];
+    while written < declared {
+        let remaining = declared - written;
+        let want = remaining.min(buf.len());
+        reader
+            .read_exact_with_timeout(&mut buf[..want], deadline, idle_timeout)
+            .await?;
+        writer
+            .write_all(&buf[..want])
+            .await
+            .map_err(|e| HttpResponseFramingError::Io(e.to_string()))?;
+        written += want;
+    }
+    Ok(written)
+}
+
+/// Forward a chunked HTTP body (framing included) incrementally.
+///
+/// Enforces the total wire-byte cap and trailer cap while preserving the
+/// sender's chunk extensions and trailers.
+pub async fn stream_chunked_http_body<R, W>(
+    reader: R,
+    prefix: Vec<u8>,
+    writer: &mut W,
+    idle_timeout: Duration,
+    total_timeout: Duration,
+    max_body_bytes: usize,
+    max_trailer_bytes: usize,
+) -> Result<usize, HttpResponseFramingError>
+where
+    R: tokio::io::AsyncRead + Unpin,
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    use tokio::io::AsyncWriteExt;
+
+    let deadline = tokio::time::Instant::now() + total_timeout;
+    let mut total_wire_bytes = 0usize;
+    let mut line_buf: Vec<u8> = Vec::with_capacity(64);
+    let mut reader = PrefixReader::new(prefix, reader);
+
+    loop {
+        line_buf.clear();
+        loop {
+            if line_buf.len() >= 2 && line_buf[line_buf.len() - 2..] == *b"\r\n" {
+                break;
+            }
+            if line_buf.len() >= max_trailer_bytes {
+                return Err(HttpResponseFramingError::TrailerTooLarge {
+                    limit: max_trailer_bytes,
+                    observed: line_buf.len(),
+                });
+            }
+            let byte = reader
+                .read_byte_with_timeout(deadline, idle_timeout)
+                .await?;
+            line_buf.push(byte);
+        }
+
+        total_wire_bytes += line_buf.len();
+        if total_wire_bytes > max_body_bytes {
+            return Err(HttpResponseFramingError::BodyTooLarge {
+                limit: max_body_bytes,
+                declared: total_wire_bytes,
+            });
+        }
+        writer
+            .write_all(&line_buf)
+            .await
+            .map_err(|e| HttpResponseFramingError::Io(e.to_string()))?;
+
+        let line_str = String::from_utf8_lossy(&line_buf);
+        let size_str = line_str.trim_end_matches("\r\n");
+        let size_str = size_str.split(';').next().unwrap_or("").trim();
+        let chunk_size = usize::from_str_radix(size_str, 16).map_err(|_| {
+            HttpResponseFramingError::MalformedChunkedBody(format!(
+                "invalid chunk size: {size_str}"
+            ))
+        })?;
+
+        if chunk_size == 0 {
+            // Trailer section, independently bounded. Seed the terminator
+            // window with the zero-chunk line's trailing CRLF, so an empty
+            // trailer section ("0\r\n\r\n") terminates immediately.
+            let mut trailer_bytes = 0usize;
+            let mut tail: Vec<u8> = line_buf[line_buf.len() - 2..].to_vec();
+            loop {
+                let byte = reader
+                    .read_byte_with_timeout(deadline, idle_timeout)
+                    .await?;
+                trailer_bytes += 1;
+                if trailer_bytes > max_trailer_bytes {
+                    return Err(HttpResponseFramingError::TrailerTooLarge {
+                        limit: max_trailer_bytes,
+                        observed: trailer_bytes,
+                    });
+                }
+                total_wire_bytes += 1;
+                if total_wire_bytes > max_body_bytes {
+                    return Err(HttpResponseFramingError::BodyTooLarge {
+                        limit: max_body_bytes,
+                        declared: total_wire_bytes,
+                    });
+                }
+                writer
+                    .write_all(&[byte])
+                    .await
+                    .map_err(|e| HttpResponseFramingError::Io(e.to_string()))?;
+                tail.push(byte);
+                if tail.len() >= 4 {
+                    let n = tail.len();
+                    if tail[n - 4..] == *b"\r\n\r\n" {
+                        return Ok(total_wire_bytes);
+                    }
+                }
+            }
+        }
+
+        total_wire_bytes += chunk_size + 2;
+        if total_wire_bytes > max_body_bytes {
+            return Err(HttpResponseFramingError::BodyTooLarge {
+                limit: max_body_bytes,
+                declared: total_wire_bytes,
+            });
+        }
+        let mut chunk_buf = vec![0u8; STREAM_COPY_CHUNK_BYTES.min(chunk_size + 2)];
+        let mut remaining = chunk_size + 2;
+        while remaining > 0 {
+            let want = remaining.min(chunk_buf.len());
+            reader
+                .read_exact_with_timeout(&mut chunk_buf[..want], deadline, idle_timeout)
+                .await?;
+            writer
+                .write_all(&chunk_buf[..want])
+                .await
+                .map_err(|e| HttpResponseFramingError::Io(e.to_string()))?;
+            remaining -= want;
+        }
+    }
+}
+
+/// Copy a close-delimited HTTP body to `writer` incrementally until EOF.
+pub async fn stream_close_delimited_http_body<R, W>(
+    mut reader: R,
+    prefix: Vec<u8>,
+    writer: &mut W,
+    idle_timeout: Duration,
+    total_timeout: Duration,
+    max_bytes: usize,
+) -> Result<usize, HttpResponseFramingError>
+where
+    R: tokio::io::AsyncRead + Unpin,
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let deadline = tokio::time::Instant::now() + total_timeout;
+    let mut total = 0usize;
+    if !prefix.is_empty() {
+        if prefix.len() > max_bytes {
+            return Err(HttpResponseFramingError::BodyTooLarge {
+                limit: max_bytes,
+                declared: prefix.len(),
+            });
+        }
+        writer
+            .write_all(&prefix)
+            .await
+            .map_err(|e| HttpResponseFramingError::Io(e.to_string()))?;
+        total += prefix.len();
+    }
+
+    let mut buf = vec![0u8; STREAM_COPY_CHUNK_BYTES];
+    loop {
+        let now = tokio::time::Instant::now();
+        if now >= deadline {
+            return Err(HttpResponseFramingError::Io("read timeout".to_string()));
+        }
+        let effective = idle_timeout.min(deadline.duration_since(now));
+        let n = tokio::time::timeout(effective, reader.read(&mut buf))
+            .await
+            .map_err(|_| HttpResponseFramingError::Io("read timeout".to_string()))?
+            .map_err(|e| HttpResponseFramingError::Io(e.to_string()))?;
+        if n == 0 {
+            return Ok(total);
+        }
+        total += n;
+        if total > max_bytes {
+            return Err(HttpResponseFramingError::BodyTooLarge {
+                limit: max_bytes,
+                declared: total,
+            });
+        }
+        writer
+            .write_all(&buf[..n])
+            .await
+            .map_err(|e| HttpResponseFramingError::Io(e.to_string()))?;
+    }
+}
+
+/// Backpressure-friendly copy granularity for mesh body streaming.
+pub const STREAM_COPY_CHUNK_BYTES: usize = 16 * 1024;
+
 impl MeshTransport {
     pub(crate) async fn send_keepalive_datagram(
         &self,
@@ -4262,6 +4578,18 @@ impl MeshTransport {
         let mut first_byte = [0u8; 1];
         read_exact_with_timeout(recv_stream, &mut first_byte, read_timeout).await?;
 
+        // Mesh multi-upstream forwarding: an explicit service-target preface
+        // may precede the HTTP request. It carries the operator-configured
+        // `local_upstreams` key, so the origin does not infer the service from
+        // `Host`. Legacy peers omit it and keep the Host-derived key.
+        let service_id = if crate::service_target::is_service_preface_start(first_byte[0]) {
+            let service_id = read_service_preface(recv_stream, first_byte[0], read_timeout).await?;
+            read_exact_with_timeout(recv_stream, &mut first_byte, read_timeout).await?;
+            Some(service_id)
+        } else {
+            None
+        };
+
         let http_methods = [
             b'G', // GET
             b'P', // POST, PUT, PATCH
@@ -4289,8 +4617,7 @@ impl MeshTransport {
             .await?;
 
             // Reject CONNECT and upgrade requests — not supported.
-            let mut request_bytes = head.header_bytes;
-            let parsed_meta = parse_http_request_meta(&request_bytes)?;
+            let parsed_meta = parse_http_request_meta(&head.header_bytes)?;
             if parsed_meta.method.eq_ignore_ascii_case("CONNECT") {
                 let resp = b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
                 send_stream
@@ -4310,73 +4637,29 @@ impl MeshTransport {
                 return Ok(());
             }
 
-            // Determine body kind and read body if present.
-            let body_kind = match (head.content_length, head.chunked) {
-                (Some(len), false) => HttpBodyKind::ContentLength(len),
-                (None, true) => HttpBodyKind::Chunked,
-                (None, false) => HttpBodyKind::None,
-                // parse_http_body_framing already rejects (Some, true).
-                _ => unreachable!(),
-            };
-
-            match body_kind {
-                HttpBodyKind::None => {
-                    if !head.body_prefix.is_empty() {
-                        let resp = b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-                        send_stream
-                            .write_all(resp)
-                            .await
-                            .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
-                        let _ = send_stream.finish();
-                        return Ok(());
-                    }
-                }
-                HttpBodyKind::ContentLength(content_length) => {
-                    let max_body = self.config.connection.max_peer_http_body_bytes;
-                    if content_length > max_body {
-                        let resp = b"HTTP/1.1 413 Payload Too Large\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-                        send_stream
-                            .write_all(resp)
-                            .await
-                            .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
-                        let _ = send_stream.finish();
-                        return Ok(());
-                    }
-
-                    let body_total_timeout = Duration::from_secs(
-                        self.config.connection.peer_http_body_total_timeout_secs,
-                    );
-                    let body = read_fixed_http_body(
-                        recv_stream,
-                        head.body_prefix,
-                        content_length,
-                        read_timeout,
-                        body_total_timeout,
-                    )
-                    .await?;
-                    request_bytes.extend_from_slice(&body);
-                }
-                HttpBodyKind::Chunked => {
-                    // Explicitly reject chunked requests for now.
-                    let resp = b"HTTP/1.1 501 Not Implemented\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-                    send_stream
-                        .write_all(resp)
-                        .await
-                        .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
-                    let _ = send_stream.finish();
-                    return Ok(());
-                }
-            }
-
             return self
                 .handle_http_proxy_stream(
                     &parsed_meta,
-                    request_bytes,
+                    head,
+                    recv_stream,
                     send_stream,
                     topology,
                     peer_node_id,
+                    service_id.as_deref(),
                 )
                 .await;
+        }
+
+        if service_id.is_some() {
+            // A service-target preface must be followed by an HTTP request.
+            let resp =
+                b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+            send_stream
+                .write_all(resp)
+                .await
+                .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
+            let _ = send_stream.finish();
+            return Ok(());
         }
 
         let mut len_buf = [0u8; 3];
@@ -4413,6 +4696,7 @@ impl MeshTransport {
                     upstream_id.to_string(),
                     max_hops,
                     initiator.to_string(),
+                    &peer_node_id,
                     topology,
                 )
                 .await?;
@@ -5503,33 +5787,157 @@ impl MeshTransport {
         None
     }
 
+    /// Serve one HTTP/1.x request from the mesh on the configured local
+    /// upstream.
+    ///
+    /// Phase 01/02: the service ID from the typed preface is resolved against
+    /// the operator's `local_upstreams` and authorized against `peered_wafs`
+    /// plus the service policy before any backend connection is opened.
+    ///
+    /// Phase 04: bodies follow the per-service body policy. Streaming copies
+    /// bytes incrementally with the original framing and bounded memory;
+    /// buffered mode keeps the legacy whole-body path for small APIs and
+    /// transform-capable responses.
+    #[allow(clippy::too_many_arguments)]
     async fn handle_http_proxy_stream(
         &self,
         parsed_meta: &ParsedHttpRequestMeta,
-        http_data: Vec<u8>,
+        head: FramedHttpRequestHead,
+        recv_stream: &mut RecvStream,
         send_stream: &mut SendStream,
         topology: &MeshTopology,
         peer_node_id: String,
+        service_id: Option<&str>,
     ) -> Result<(), MeshTransportError> {
-        if parsed_meta.host.is_empty() {
+        use crate::mesh::topology::LocalUpstreamAuthorization;
+        use tokio::io::AsyncWriteExt;
+        use tokio::net::TcpStream;
+
+        if parsed_meta.host.is_empty() && service_id.is_none() {
             return Err(MeshTransportError::ReceiveFailed(
                 "No Host header found in HTTP request".to_string(),
             ));
         }
-        let upstream_id = format!("http://{}", parsed_meta.host);
 
-        let upstream_info = topology.get_upstream_info(&upstream_id).await;
-        let backend_url = match upstream_info {
-            Some(info) => info.upstream_url,
-            None => {
-                tracing::debug!("No local backend found for {}", upstream_id);
-                let not_found = b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n";
-                send_stream
-                    .write_all(not_found)
-                    .await
-                    .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
-                let _ = send_stream.finish();
-                return Ok(());
+        // The typed preface is authoritative. Legacy peers keep the
+        // `http://host` key of the original domain-based model.
+        let service_key = match service_id {
+            Some(id) => id.to_string(),
+            None => format!("http://{}", parsed_meta.host),
+        };
+
+        let connection = &self.config.connection;
+        let stream_timeout = Duration::from_secs(connection.peer_message_timeout_secs);
+        let body_total_timeout = Duration::from_secs(connection.peer_http_body_total_timeout_secs);
+        let body_kind = match (head.content_length, head.chunked) {
+            (Some(len), false) => HttpBodyKind::ContentLength(len),
+            (None, true) => HttpBodyKind::Chunked,
+            (None, false) => HttpBodyKind::None,
+            // parse_http_body_framing already rejects (Some, true).
+            _ => unreachable!(),
+        };
+
+        if service_key.starts_with("serverless_function:") {
+            // Serverless dispatch still consumes the whole request buffer.
+            let mut http_data = head.header_bytes.clone();
+            match body_kind {
+                HttpBodyKind::None => {}
+                HttpBodyKind::ContentLength(len) => {
+                    let cap = connection.max_peer_http_body_bytes;
+                    if len > cap {
+                        return self
+                            .write_mesh_http_error(
+                                send_stream,
+                                "413 Payload Too Large",
+                                "Request body exceeds the mesh body cap",
+                            )
+                            .await;
+                    }
+                    let body = read_fixed_http_body(
+                        recv_stream,
+                        head.body_prefix,
+                        len,
+                        stream_timeout,
+                        body_total_timeout,
+                    )
+                    .await?;
+                    http_data.extend_from_slice(&body);
+                }
+                HttpBodyKind::Chunked => {
+                    return self
+                        .write_mesh_http_error(
+                            send_stream,
+                            "501 Not Implemented",
+                            "Chunked requests are not supported for serverless dispatch",
+                        )
+                        .await;
+                }
+            }
+            return self
+                .handle_serverless_proxy_stream(
+                    &service_key,
+                    parsed_meta,
+                    &http_data,
+                    send_stream,
+                    peer_node_id,
+                )
+                .await;
+        }
+
+        // Phase 02 trust boundary: the only connectable targets are the
+        // origin operator's configured `local_upstreams`, and only for peers
+        // authorized by `peered_wafs` plus the service allowlist. A URL is
+        // never taken from the peer, so no peer-controlled address reaches
+        // `TcpStream::connect` and private origins stay operator-scoped.
+        let backend_url = match topology
+            .authorize_local_upstream(&service_key, &peer_node_id)
+            .await
+        {
+            LocalUpstreamAuthorization::Allowed(info) => info.upstream_url,
+            LocalUpstreamAuthorization::UnknownService => {
+                tracing::warn!(
+                    service_id = %service_key,
+                    peer = %peer_node_id,
+                    host = %parsed_meta.host,
+                    "mesh proxy rejected unknown service"
+                );
+                return self
+                    .write_mesh_http_error(
+                        send_stream,
+                        "502 Bad Gateway",
+                        "Mesh service unknown on this origin",
+                    )
+                    .await;
+            }
+            LocalUpstreamAuthorization::PeerNotAuthorized => {
+                tracing::warn!(
+                    service_id = %service_key,
+                    peer = %peer_node_id,
+                    host = %parsed_meta.host,
+                    "mesh proxy rejected peer not authorized for service"
+                );
+                return self
+                    .write_mesh_http_error(
+                        send_stream,
+                        "403 Forbidden",
+                        "Mesh peer is not authorized for this service",
+                    )
+                    .await;
+            }
+            LocalUpstreamAuthorization::ServiceNotAllowed => {
+                tracing::warn!(
+                    service_id = %service_key,
+                    peer = %peer_node_id,
+                    host = %parsed_meta.host,
+                    "mesh proxy rejected service denied by service policy"
+                );
+                return self
+                    .write_mesh_http_error(
+                        send_stream,
+                        "403 Forbidden",
+                        "Mesh service is denied by policy",
+                    )
+                    .await;
             }
         };
 
@@ -5562,14 +5970,50 @@ impl MeshTransport {
             }
         }
 
-        if upstream_id.starts_with("serverless_function:") {
+        let body_policy = self
+            .config
+            .local_upstreams
+            .get(&service_key)
+            .map(|upstream| upstream.body_policy.clone())
+            .unwrap_or_default();
+        let request_cap = body_policy.request_cap(connection.max_peer_http_body_bytes);
+        let response_cap = body_policy.response_cap(connection.max_peer_http_response_body_bytes);
+        let transform_cap =
+            body_policy.transform_buffer_cap(connection.max_peer_http_response_body_bytes);
+
+        // Validate the request body framing before touching the backend.
+        if matches!(body_kind, HttpBodyKind::None) && !head.body_prefix.is_empty() {
             return self
-                .handle_serverless_proxy_stream(
-                    &upstream_id,
-                    parsed_meta,
-                    &http_data,
+                .write_mesh_http_error(
                     send_stream,
-                    peer_node_id,
+                    "400 Bad Request",
+                    "Request carries body bytes without body framing",
+                )
+                .await;
+        }
+        if let HttpBodyKind::ContentLength(len) = body_kind {
+            if len > request_cap {
+                tracing::warn!(
+                    service_id = %service_key,
+                    declared = len,
+                    limit = request_cap,
+                    "mesh proxy rejected oversized request body"
+                );
+                return self
+                    .write_mesh_http_error(
+                        send_stream,
+                        "413 Payload Too Large",
+                        "Request body exceeds the service cap",
+                    )
+                    .await;
+            }
+        }
+        if matches!(body_kind, HttpBodyKind::Chunked) && !body_policy.allow_chunked {
+            return self
+                .write_mesh_http_error(
+                    send_stream,
+                    "501 Not Implemented",
+                    "Chunked requests are disabled for this mesh service",
                 )
                 .await;
         }
@@ -5578,103 +6022,157 @@ impl MeshTransport {
             Ok(u) => u,
             Err(e) => {
                 tracing::warn!("Failed to parse backend URL {}: {}", backend_url, e);
-                let error_resp = b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n";
-                send_stream
-                    .write_all(error_resp)
-                    .await
-                    .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
-                let _ = send_stream.finish();
-                return Ok(());
+                return self
+                    .write_mesh_http_error(
+                        send_stream,
+                        "500 Internal Server Error",
+                        "Mesh upstream URL is invalid",
+                    )
+                    .await;
             }
         };
 
         let host_str = parsed_url.host_str().unwrap_or("127.0.0.1");
         let port = parsed_url.port().unwrap_or(80);
-
-        if let Ok(ip) = host_str.parse::<std::net::IpAddr>() {
-            if synvoid_core::net::is_restricted_ip(&ip) {
-                tracing::warn!(
-                    "SSRF prevention: rejecting connection to private IP {} via mesh proxy",
-                    ip
-                );
-                let forbidden = b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n";
-                send_stream
-                    .write_all(forbidden)
-                    .await
-                    .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
-                let _ = send_stream.finish();
-                return Ok(());
-            }
-        } else {
-            match tokio::net::lookup_host(format!("{}:{}", host_str, port)).await {
-                Ok(ips) => {
-                    for ip in ips {
-                        let ip_addr = ip.ip();
-                        if synvoid_core::net::is_restricted_ip(&ip_addr) {
-                            tracing::warn!(
-                                "SSRF prevention: rejecting connection to private IP {} resolved from domain {} via mesh proxy",
-                                ip_addr,
-                                host_str
-                            );
-                            let forbidden = b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n";
-                            send_stream
-                                .write_all(forbidden)
-                                .await
-                                .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
-                            let _ = send_stream.finish();
-                            return Ok(());
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to resolve domain {} for SSRF check: {}",
-                        host_str,
-                        e
-                    );
-                }
-            }
-        }
-
         let addr = format!("{}:{}", host_str, port);
-
-        use tokio::io::AsyncWriteExt;
-        use tokio::net::TcpStream;
 
         let mut backend_conn = match TcpStream::connect(&addr).await {
             Ok(c) => c,
             Err(e) => {
                 tracing::warn!("Failed to connect to backend {}: {}", addr, e);
-                let bad_gateway = b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n";
-                send_stream
-                    .write_all(bad_gateway)
-                    .await
-                    .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
-                let _ = send_stream.finish();
-                return Ok(());
+                return self
+                    .write_mesh_http_error(
+                        send_stream,
+                        "502 Bad Gateway",
+                        "Mesh backend unavailable",
+                    )
+                    .await;
             }
         };
 
+        // Request: header first, then the body per the service policy.
         backend_conn
-            .write_all(&http_data)
+            .write_all(&head.header_bytes)
             .await
             .map_err(|e| MeshTransportError::SendFailed(format!("Backend write failed: {}", e)))?;
 
-        let idle_timeout =
-            Duration::from_secs(self.config.connection.peer_http_backend_idle_timeout_secs);
-        let header_total_timeout = Duration::from_secs(
-            self.config
-                .connection
-                .peer_http_response_header_total_timeout_secs,
-        );
-        let body_total_timeout = Duration::from_secs(
-            self.config
-                .connection
-                .peer_http_response_body_total_timeout_secs,
-        );
-        let max_header_bytes = self.config.connection.max_peer_http_response_header_bytes;
-        let max_body_bytes = self.config.connection.max_peer_http_response_body_bytes;
-        let max_trailer_bytes = self.config.connection.max_peer_http_response_trailer_bytes;
+        match body_kind {
+            HttpBodyKind::None => {}
+            HttpBodyKind::ContentLength(len) => {
+                let result = if body_policy.streaming {
+                    stream_fixed_http_body(
+                        &mut *recv_stream,
+                        head.body_prefix,
+                        len,
+                        &mut backend_conn,
+                        stream_timeout,
+                        body_total_timeout,
+                        request_cap,
+                    )
+                    .await
+                    .map(|_| ())
+                } else {
+                    match read_fixed_http_body(
+                        recv_stream,
+                        head.body_prefix,
+                        len,
+                        stream_timeout,
+                        body_total_timeout,
+                    )
+                    .await
+                    {
+                        Ok(body) => backend_conn
+                            .write_all(&body)
+                            .await
+                            .map_err(|e| HttpResponseFramingError::Io(e.to_string())),
+                        Err(e) => Err(HttpResponseFramingError::Io(e.to_string())),
+                    }
+                };
+                if let Err(e) = result {
+                    tracing::warn!(
+                        service_id = %service_key,
+                        "mesh request body forwarding failed: {}",
+                        e
+                    );
+                    drop(backend_conn);
+                    let status = if matches!(
+                        e,
+                        HttpResponseFramingError::BodyTooLarge { .. }
+                            | HttpResponseFramingError::PrematureEof { .. }
+                            | HttpResponseFramingError::BackendClosedBeforeCompleteResponse
+                            | HttpResponseFramingError::ResponseBodyPrefixExceedsContentLength { .. }
+                    ) {
+                        "413 Payload Too Large"
+                    } else {
+                        "400 Bad Request"
+                    };
+                    return self
+                        .write_mesh_http_error(send_stream, status, "Mesh request body rejected")
+                        .await;
+                }
+            }
+            HttpBodyKind::Chunked => {
+                let trailer_cap = connection.max_peer_http_response_trailer_bytes;
+                let result = if body_policy.streaming {
+                    stream_chunked_http_body(
+                        &mut *recv_stream,
+                        head.body_prefix,
+                        &mut backend_conn,
+                        stream_timeout,
+                        body_total_timeout,
+                        request_cap,
+                        trailer_cap,
+                    )
+                    .await
+                    .map(|_| ())
+                } else {
+                    match read_chunked_http_response_body(
+                        recv_stream,
+                        head.body_prefix,
+                        stream_timeout,
+                        body_total_timeout,
+                        request_cap,
+                        trailer_cap,
+                    )
+                    .await
+                    {
+                        Ok(body) => backend_conn
+                            .write_all(&body)
+                            .await
+                            .map_err(|e| HttpResponseFramingError::Io(e.to_string())),
+                        Err(e) => Err(e),
+                    }
+                };
+                if let Err(e) = result {
+                    tracing::warn!(
+                        service_id = %service_key,
+                        "mesh chunked request body forwarding failed: {}",
+                        e
+                    );
+                    drop(backend_conn);
+                    let status = if matches!(
+                        e,
+                        HttpResponseFramingError::BodyTooLarge { .. }
+                            | HttpResponseFramingError::TrailerTooLarge { .. }
+                    ) {
+                        "413 Payload Too Large"
+                    } else {
+                        "400 Bad Request"
+                    };
+                    return self
+                        .write_mesh_http_error(send_stream, status, "Mesh request body rejected")
+                        .await;
+                }
+            }
+        }
+
+        let idle_timeout = Duration::from_secs(connection.peer_http_backend_idle_timeout_secs);
+        let header_total_timeout =
+            Duration::from_secs(connection.peer_http_response_header_total_timeout_secs);
+        let response_body_total_timeout =
+            Duration::from_secs(connection.peer_http_response_body_total_timeout_secs);
+        let max_header_bytes = connection.max_peer_http_response_header_bytes;
+        let max_trailer_bytes = connection.max_peer_http_response_trailer_bytes;
 
         let resp_head = match read_http_response_sequence(
             &mut backend_conn,
@@ -5687,13 +6185,13 @@ impl MeshTransport {
             Ok(h) => h,
             Err(e) => {
                 tracing::warn!("Backend response header read error: {}", e);
-                let err_resp = b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n";
-                send_stream
-                    .write_all(err_resp)
-                    .await
-                    .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
-                let _ = send_stream.finish();
-                return Ok(());
+                return self
+                    .write_mesh_http_error(
+                        send_stream,
+                        "502 Bad Gateway",
+                        "Mesh backend returned an invalid response",
+                    )
+                    .await;
             }
         };
 
@@ -5702,15 +6200,139 @@ impl MeshTransport {
             || resp_head.status_code == 204
             || resp_head.status_code == 304;
 
-        let body_bytes = if is_head || is_no_body_status {
-            Vec::new()
-        } else if resp_head.chunked {
+        if is_head || is_no_body_status {
+            send_stream
+                .write_all(&resp_head.header_bytes)
+                .await
+                .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
+            let _ = send_stream.finish();
+            return Ok(());
+        }
+
+        // Transforms need a complete body. Small fixed-length responses keep
+        // the buffered transform path; everything else streams.
+        let transformable = body_policy.allow_transforms
+            && !resp_head.chunked
+            && resp_head
+                .content_length
+                .map(|cl| cl <= transform_cap)
+                .unwrap_or(false);
+        let buffer_body = !body_policy.streaming || transformable;
+
+        if !buffer_body {
+            if let Some(cl) = resp_head.content_length {
+                if cl > response_cap {
+                    tracing::warn!(
+                        service_id = %service_key,
+                        declared = cl,
+                        limit = response_cap,
+                        "mesh proxy rejected oversized backend response"
+                    );
+                    return self
+                        .write_mesh_http_error(
+                            send_stream,
+                            "502 Bad Gateway",
+                            "Mesh backend response exceeds the service cap",
+                        )
+                        .await;
+                }
+            }
+
+            // Close-delimited HTTP/1.1 responses are only unambiguous with
+            // `Connection: close`.
+            if resp_head.content_length.is_none() && !resp_head.chunked {
+                let allowed_close_delimited = match resp_head.http_version {
+                    HttpVersion::Http10 => true,
+                    HttpVersion::Http11 => resp_head.connection_close,
+                };
+                if !allowed_close_delimited {
+                    tracing::warn!(
+                        "HTTP/1.1 response with no Content-Length, no chunked encoding,                          and no Connection: close — ambiguous framing rejected"
+                    );
+                    return self
+                        .write_mesh_http_error(
+                            send_stream,
+                            "502 Bad Gateway",
+                            "Mesh backend response framing is ambiguous",
+                        )
+                        .await;
+                }
+            }
+
+            if body_policy.allow_transforms {
+                metrics::counter!("synvoid.mesh.proxy.transforms_bypassed_streaming").increment(1);
+                tracing::debug!(
+                    service_id = %service_key,
+                    "streaming response bypasses transforms (body not buffered)"
+                );
+            }
+
+            send_stream
+                .write_all(&resp_head.header_bytes)
+                .await
+                .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
+
+            let stream_result = if resp_head.chunked {
+                stream_chunked_http_body(
+                    &mut backend_conn,
+                    resp_head.body_prefix.clone(),
+                    send_stream,
+                    idle_timeout,
+                    response_body_total_timeout,
+                    response_cap,
+                    max_trailer_bytes,
+                )
+                .await
+            } else if let Some(cl) = resp_head.content_length {
+                stream_fixed_http_body(
+                    &mut backend_conn,
+                    resp_head.body_prefix.clone(),
+                    cl,
+                    send_stream,
+                    idle_timeout,
+                    response_body_total_timeout,
+                    response_cap,
+                )
+                .await
+            } else {
+                stream_close_delimited_http_body(
+                    &mut backend_conn,
+                    resp_head.body_prefix.clone(),
+                    send_stream,
+                    idle_timeout,
+                    response_body_total_timeout,
+                    response_cap,
+                )
+                .await
+            };
+
+            match stream_result {
+                Ok(_) => {
+                    let _ = send_stream.finish();
+                }
+                Err(e) => {
+                    // Headers are already on the wire: the only safe signal is
+                    // an aborted body, which the peer detects as truncated.
+                    metrics::counter!("synvoid.mesh.proxy.streaming_body_failed").increment(1);
+                    tracing::warn!(
+                        service_id = %service_key,
+                        "streaming response body failed: {}",
+                        e
+                    );
+                    let _ = send_stream.finish();
+                }
+            }
+            return Ok(());
+        }
+
+        let mut full_response = resp_head.header_bytes;
+        let body_bytes = if resp_head.chunked {
             match read_chunked_http_response_body(
                 backend_conn,
                 resp_head.body_prefix,
                 idle_timeout,
-                body_total_timeout,
-                max_body_bytes,
+                response_body_total_timeout,
+                response_cap,
                 max_trailer_bytes,
             )
             .await
@@ -5718,13 +6340,13 @@ impl MeshTransport {
                 Ok(b) => b,
                 Err(e) => {
                     tracing::warn!("Backend chunked body read error: {}", e);
-                    let err_resp = b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n";
-                    send_stream
-                        .write_all(err_resp)
-                        .await
-                        .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
-                    let _ = send_stream.finish();
-                    return Ok(());
+                    return self
+                        .write_mesh_http_error(
+                            send_stream,
+                            "502 Bad Gateway",
+                            "Mesh backend response body failed",
+                        )
+                        .await;
                 }
             }
         } else if let Some(cl) = resp_head.content_length {
@@ -5733,88 +6355,55 @@ impl MeshTransport {
                 resp_head.body_prefix,
                 cl,
                 idle_timeout,
-                body_total_timeout,
-                max_body_bytes,
+                response_body_total_timeout,
+                response_cap,
             )
             .await
             {
                 Ok(b) => b,
                 Err(e) => {
                     tracing::warn!("Backend fixed body read error: {}", e);
-                    let err_resp = b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n";
-                    send_stream
-                        .write_all(err_resp)
-                        .await
-                        .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
-                    let _ = send_stream.finish();
-                    return Ok(());
+                    return self
+                        .write_mesh_http_error(
+                            send_stream,
+                            "502 Bad Gateway",
+                            "Mesh backend response body failed",
+                        )
+                        .await;
                 }
             }
         } else {
-            let allowed_close_delimited = match resp_head.http_version {
-                HttpVersion::Http10 => true,
-                HttpVersion::Http11 => resp_head.connection_close,
-            };
-            if !allowed_close_delimited {
-                tracing::warn!(
-                    "HTTP/1.1 response with no Content-Length, no chunked encoding, \
-                     and no Connection: close — ambiguous framing rejected"
-                );
-                let err_resp = b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n";
-                send_stream
-                    .write_all(err_resp)
-                    .await
-                    .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
-                let _ = send_stream.finish();
-                return Ok(());
-            }
             match read_close_delimited_http_response_body(
                 &mut backend_conn,
                 resp_head.body_prefix,
                 idle_timeout,
-                body_total_timeout,
-                max_body_bytes,
+                response_body_total_timeout,
+                response_cap,
             )
             .await
             {
                 Ok(body) => body,
-                Err(HttpResponseFramingError::BodyTooLarge { limit, declared }) => {
-                    tracing::warn!(
-                        "Backend close-delimited body exceeded limit ({declared} > {limit})"
-                    );
-                    return Err(MeshTransportError::ReceiveFailed(format!(
-                        "Close-delimited body exceeded limit: {declared} > {limit}"
-                    )));
-                }
-                Err(HttpResponseFramingError::Io(msg)) => {
-                    if msg.contains("timeout") {
-                        tracing::warn!("Backend close-delimited body timed out: {}", msg);
-                        return Err(MeshTransportError::ReceiveFailed(format!(
-                            "Close-delimited body timeout: {msg}"
-                        )));
-                    }
-                    tracing::warn!("Backend close-delimited body read error: {}", msg);
-                    return Err(MeshTransportError::ReceiveFailed(format!(
-                        "Close-delimited body error: {msg}"
-                    )));
-                }
                 Err(e) => {
                     tracing::warn!("Backend close-delimited body error: {}", e);
-                    return Err(MeshTransportError::ReceiveFailed(format!(
-                        "Close-delimited body error: {e}"
-                    )));
+                    return self
+                        .write_mesh_http_error(
+                            send_stream,
+                            "502 Bad Gateway",
+                            "Mesh backend response body failed",
+                        )
+                        .await;
                 }
             }
         };
 
-        let mut full_response = resp_head.header_bytes;
         full_response.extend_from_slice(&body_bytes);
 
-        let skip_transforms = resp_head.body_encoding == HttpResponseBodyEncoding::Chunked;
+        let skip_transforms = !body_policy.allow_transforms
+            || resp_head.body_encoding == HttpResponseBodyEncoding::Chunked;
         if skip_transforms {
             tracing::debug!(
-                "Skipping response transforms for chunked body from {}",
-                upstream_id
+                "Skipping response transforms for {} (policy or chunked body)",
+                service_key
             );
         }
 
@@ -5822,12 +6411,12 @@ impl MeshTransport {
             (full_response, false)
         } else {
             match self
-                .apply_response_transforms(&full_response, &upstream_id)
+                .apply_response_transforms(&full_response, &service_key)
                 .await
             {
                 Ok((resp, transformed)) => (resp, transformed),
                 Err(e) => {
-                    tracing::warn!("Transform error for {}: {}", upstream_id, e);
+                    tracing::warn!("Transform error for {}: {}", service_key, e);
                     (full_response, false)
                 }
             }
@@ -5839,11 +6428,36 @@ impl MeshTransport {
             .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
 
         if did_transform {
-            tracing::debug!("Sent transformed response for {}", upstream_id);
+            tracing::debug!("Sent transformed response for {}", service_key);
         }
 
         let _ = send_stream.finish();
 
+        Ok(())
+    }
+
+    /// Write a small, URL-free mesh HTTP error response and finish the stream.
+    async fn write_mesh_http_error(
+        &self,
+        send_stream: &mut SendStream,
+        status_line: &str,
+        message: &str,
+    ) -> Result<(), MeshTransportError> {
+        let body = message.as_bytes();
+        let head = format!(
+            "HTTP/1.1 {}\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            status_line,
+            body.len()
+        );
+        send_stream
+            .write_all(head.as_bytes())
+            .await
+            .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
+        send_stream
+            .write_all(body)
+            .await
+            .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
+        let _ = send_stream.finish();
         Ok(())
     }
 

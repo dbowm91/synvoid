@@ -56,7 +56,7 @@ pub struct NeutralServiceContext<W, D> {
     #[cfg(feature = "mesh")]
     pub mesh_transport: Option<Arc<synvoid_mesh::transports::MeshTransportManager>>,
     #[cfg(feature = "mesh")]
-    pub mesh_backend_pool: Option<Arc<synvoid_mesh::MeshBackendPool>>,
+    pub mesh_proxy: Option<Arc<synvoid_mesh::MeshProxy>>,
     pub serverless_manager: Option<Arc<crate::serverless::manager::ServerlessManager>>,
 }
 
@@ -192,7 +192,7 @@ where
             #[cfg(feature = "mesh")]
             mesh_transport: ctx.mesh_transport.clone(),
             #[cfg(feature = "mesh")]
-            mesh_backend_pool: ctx.mesh_backend_pool.clone(),
+            mesh_proxy: ctx.mesh_proxy.clone(),
         },
         |method, url, headers, body, timeout| {
             let url = url.to_string();

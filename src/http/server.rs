@@ -29,7 +29,7 @@ use synvoid_mesh::config::MeshConfig;
 #[cfg(feature = "mesh")]
 use synvoid_mesh::transports::MeshTransportManager;
 #[cfg(feature = "mesh")]
-use synvoid_mesh::MeshBackendPool;
+use synvoid_mesh::MeshProxy;
 use tokio::sync::RwLock;
 
 mod accept_loop;
@@ -96,7 +96,7 @@ pub(crate) struct HttpServerRuntime {
     #[cfg(feature = "mesh")]
     pub mesh_transport: Option<Arc<MeshTransportManager>>,
     #[cfg(feature = "mesh")]
-    pub mesh_backend_pool: Option<Arc<MeshBackendPool>>,
+    pub mesh_proxy: Option<Arc<MeshProxy>>,
 }
 
 #[allow(dead_code)]
@@ -139,7 +139,7 @@ impl HttpServer {
             #[cfg(feature = "mesh")]
             mesh_transport: None,
             #[cfg(feature = "mesh")]
-            mesh_backend_pool: None,
+            mesh_proxy: None,
         };
 
         Self {
@@ -226,8 +226,8 @@ impl HttpServer {
     }
 
     #[cfg(feature = "mesh")]
-    pub fn with_mesh_backend_pool(mut self, pool: Option<Arc<MeshBackendPool>>) -> Self {
-        self.runtime.mesh_backend_pool = pool;
+    pub fn with_mesh_proxy(mut self, pool: Option<Arc<MeshProxy>>) -> Self {
+        self.runtime.mesh_proxy = pool;
         self
     }
 

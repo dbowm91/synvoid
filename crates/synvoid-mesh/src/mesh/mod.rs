@@ -37,6 +37,7 @@ pub mod canonical;
 pub mod reputation;
 pub mod security;
 pub mod security_challenge;
+pub mod service_target;
 pub mod session;
 pub mod threat_intel;
 pub mod threat_intel_policy;

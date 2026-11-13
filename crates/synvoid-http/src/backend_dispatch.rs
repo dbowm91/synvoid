@@ -78,7 +78,7 @@ pub struct BackendDispatchContext<W> {
     #[cfg(feature = "mesh")]
     pub mesh_transport: Option<Arc<synvoid_mesh::mesh::transports::MeshTransportManager>>,
     #[cfg(feature = "mesh")]
-    pub mesh_backend_pool: Option<Arc<synvoid_mesh::mesh::MeshBackendPool>>,
+    pub mesh_proxy: Option<Arc<synvoid_mesh::MeshProxy>>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -243,7 +243,7 @@ where
         #[cfg(feature = "mesh")]
         mesh_transport,
         #[cfg(feature = "mesh")]
-        mesh_backend_pool,
+        mesh_proxy,
     } = dispatch_ctx;
 
     let req_metrics = req_metrics;
@@ -436,7 +436,7 @@ where
 
     #[cfg(feature = "mesh")]
     if let Some(response) = maybe_handle_mesh_backend(
-        &mesh_backend_pool,
+        mesh_proxy.as_ref(),
         &target,
         &site_id,
         &path,

@@ -104,6 +104,8 @@ pub struct HttpsServer {
     mesh_config: Option<Arc<crate::mesh::config::MeshConfig>>,
     #[cfg(feature = "mesh")]
     mesh_transport: Option<Arc<crate::mesh::transports::MeshTransportManager>>,
+    #[cfg(feature = "mesh")]
+    mesh_proxy: Option<Arc<crate::mesh::MeshProxy>>,
     ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
     worker_id: Option<crate::process::ipc::WorkerId>,
     /// Set-once handle to the worker-local request-log sink, cloned from
@@ -191,6 +193,8 @@ impl HttpsServer {
             mesh_config: None,
             #[cfg(feature = "mesh")]
             mesh_transport: None,
+            #[cfg(feature = "mesh")]
+            mesh_proxy: None,
             ipc: None,
             worker_id: None,
             request_log_sink: synvoid_http::empty_sink_handle(),
@@ -251,6 +255,13 @@ impl HttpsServer {
         mesh_transport: Arc<crate::mesh::transports::MeshTransportManager>,
     ) -> Self {
         self.mesh_transport = Some(mesh_transport);
+        self
+    }
+
+    /// Install the worker-local mesh egress handle for `BackendType::Mesh`.
+    #[cfg(feature = "mesh")]
+    pub fn with_mesh_proxy(mut self, mesh_proxy: Arc<crate::mesh::MeshProxy>) -> Self {
+        self.mesh_proxy = Some(mesh_proxy);
         self
     }
 
@@ -350,6 +361,8 @@ impl HttpsServer {
         let mesh_config = self.mesh_config.clone();
         #[cfg(feature = "mesh")]
         let mesh_transport = self.mesh_transport.clone();
+        #[cfg(feature = "mesh")]
+        let mesh_proxy = self.mesh_proxy.clone();
         let ipc = self.ipc.clone();
         let worker_id = self.worker_id;
         let request_log_sink = self.request_log_sink.clone();
@@ -436,6 +449,10 @@ impl HttpsServer {
                             let mesh_transport_h2 = mesh_transport.clone();
                             #[cfg(feature = "mesh")]
                             let mesh_transport_h1 = mesh_transport.clone();
+                            #[cfg(feature = "mesh")]
+                            let mesh_proxy_h2 = mesh_proxy.clone();
+                            #[cfg(feature = "mesh")]
+                            let mesh_proxy_h1 = mesh_proxy.clone();
                             let serverless_manager_h2 = serverless_manager.clone();
                             let serverless_manager_h1 = serverless_manager.clone();
                             let connection_limit_h2 = connection_limit.clone();
@@ -514,6 +531,8 @@ impl HttpsServer {
                                                     let mesh_config = mesh_config_h2.clone();
                                                     #[cfg(feature = "mesh")]
                                                     let mesh_transport = mesh_transport_h2.clone();
+                                                    #[cfg(feature = "mesh")]
+                                                    let mesh_proxy = mesh_proxy_h2.clone();
                                                     let ipc = ipc_h2.clone();
                                                     let serverless_manager = serverless_manager_h2.clone();
                                                     let connection_limit = connection_limit_h2.clone();
@@ -535,6 +554,8 @@ impl HttpsServer {
                                                         let mesh_config = mesh_config.clone();
                                                         #[cfg(feature = "mesh")]
                                                         let mesh_transport = mesh_transport.clone();
+                                                        #[cfg(feature = "mesh")]
+                                                        let mesh_proxy = mesh_proxy.clone();
                                                         let ipc = ipc.clone();
                                                         let worker_id = worker_id_h2;
                                                         let request_log_sink = request_log_sink_h2.clone();
@@ -545,7 +566,7 @@ impl HttpsServer {
                                                         async move {
                                                             #[cfg(feature = "mesh")]
                                                             {
-                                                                Self::handle_request_with_cache(req, client_addr, local_addr, listener_id.clone(), alt_svc.clone(), router, waf, http_config, main_config, https_conn, metrics, drain_state, mesh_config, mesh_transport, ipc, worker_id, serverless_manager, connection_limit, app_servers, upstream_client_registry, request_log_sink.clone()).await
+                                                                Self::handle_request_with_cache(req, client_addr, local_addr, listener_id.clone(), alt_svc.clone(), router, waf, http_config, main_config, https_conn, metrics, drain_state, mesh_config, mesh_transport, mesh_proxy, ipc, worker_id, serverless_manager, connection_limit, app_servers, upstream_client_registry, request_log_sink.clone()).await
                                                             }
                                                             #[cfg(not(feature = "mesh"))]
                                                             {
@@ -613,10 +634,8 @@ impl HttpsServer {
                                                 request_log_sink: request_log_sink_h1.clone(),
                                                 #[cfg(feature = "mesh")]
                                                 mesh_transport: mesh_transport_h1.clone(),
-                                                // The TLS path never wired
-                                                // a mesh backend pool.
                                                 #[cfg(feature = "mesh")]
-                                                mesh_backend_pool: None,
+                                                mesh_proxy: mesh_proxy_h1.clone(),
                                                 serverless_manager: serverless_manager_h1.clone(),
                                             };
                                             let service = crate::http::eggserve_h1::EggserveH1Service::new(
@@ -737,6 +756,7 @@ impl HttpsServer {
         #[cfg(feature = "mesh")] mesh_transport: Option<
             Arc<crate::mesh::transports::MeshTransportManager>,
         >,
+        #[cfg(feature = "mesh")] mesh_proxy: Option<Arc<crate::mesh::MeshProxy>>,
         ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
         worker_id: Option<crate::process::ipc::WorkerId>,
         serverless_manager: Option<Arc<crate::serverless::manager::ServerlessManager>>,
@@ -773,8 +793,9 @@ impl HttpsServer {
         // - `local_addr` captured before the handshake (previously the peer
         //   address was mis-passed as local, breaking IP-based vhost
         //   selection; now matches the HTTP accept-loop behavior);
-        // - `mesh_backend_pool: None` (the TLS path never wired a mesh
-        //   backend pool; preserved as-is rather than inventing one).
+        // - `mesh_proxy` (the worker-local egress handle, installed by the
+        //   HTTPS server builder, so `BackendType::Mesh` works on TLS
+        //   listeners too).
         //
         // Intentional convergences (behavior changes vs the old HTTPS-local
         // pipeline, each covered by the stage matrix in
@@ -901,7 +922,7 @@ impl HttpsServer {
                 #[cfg(feature = "mesh")]
                 mesh_transport: mesh_transport.clone(),
                 #[cfg(feature = "mesh")]
-                mesh_backend_pool: None,
+                mesh_proxy: mesh_proxy.clone(),
             },
             |method, url, headers, body, timeout| {
                 let url = url.to_string();

@@ -125,7 +125,7 @@ pub struct HttpRequestPostludeContext<W> {
     #[cfg(feature = "mesh")]
     pub mesh_transport: Option<Arc<synvoid_mesh::mesh::transports::MeshTransportManager>>,
     #[cfg(feature = "mesh")]
-    pub mesh_backend_pool: Option<Arc<synvoid_mesh::mesh::MeshBackendPool>>,
+    pub mesh_proxy: Option<Arc<synvoid_mesh::MeshProxy>>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -197,7 +197,7 @@ where
         #[cfg(feature = "mesh")]
         mesh_transport,
         #[cfg(feature = "mesh")]
-        mesh_backend_pool,
+        mesh_proxy,
     } = ctx;
 
     let PreparedRequest {
@@ -431,7 +431,7 @@ where
         #[cfg(feature = "mesh")]
         mesh_transport,
         #[cfg(feature = "mesh")]
-        mesh_backend_pool,
+        mesh_proxy,
     };
 
     // Capture the worker-local sink once: the backend dispatcher's `OnLogFn`

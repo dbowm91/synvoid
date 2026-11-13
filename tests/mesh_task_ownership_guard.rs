@@ -2577,15 +2577,27 @@ fn iter78_content_length_parsed_or_chunked_rejected() {
 fn iter78_complete_request_forwarded_not_headers_only() {
     let src = std::fs::read_to_string("crates/synvoid-mesh/src/mesh/transport_peer.rs")
         .expect("read transport_peer.rs");
-    // The HTTP framing path must construct request_bytes that includes body
+    // The peer handler receives the framed head plus the receive stream, so the
+    // body is forwarded at the backend boundary instead of being dropped after
+    // the headers. (Phase 04 moved body reads into the handler to apply the
+    // per-service policy and streaming.)
     assert!(
-        src.contains("request_bytes"),
-        "must construct request_bytes with headers + body"
+        src.contains("head: FramedHttpRequestHead") && src.contains("recv_stream: &mut RecvStream"),
+        "handle_http_proxy_stream must receive the head and the request stream"
     );
-    // Must pass request_bytes (not just headers) to handle_http_proxy_stream
     assert!(
-        src.contains("request_bytes") && src.contains("handle_http_proxy_stream"),
-        "must forward complete request_bytes to handle_http_proxy_stream"
+        src.contains("handle_http_proxy_stream("),
+        "must forward the complete request to handle_http_proxy_stream"
+    );
+    assert!(
+        src.contains("write_all(&head.header_bytes)"),
+        "the backend write must include the request header"
+    );
+    assert!(
+        src.contains("stream_fixed_http_body(")
+            && src.contains("stream_chunked_http_body(")
+            && src.contains("read_fixed_http_body("),
+        "must forward the request body, not headers only"
     );
 }
 

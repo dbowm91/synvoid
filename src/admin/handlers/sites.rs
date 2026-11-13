@@ -16,6 +16,12 @@ pub struct SiteInfo {
     pub listeners: Vec<String>,
     pub default_upstream: String,
     pub routes: std::collections::HashMap<String, String>,
+    /// Site-level mesh service ID (present only when the site backend is
+    /// `type = "mesh"`).
+    pub mesh_service_id: Option<String>,
+    /// Listener-scoped mesh service overrides. Listener names are local
+    /// configuration; each entry is the service ID that listener forwards to.
+    pub mesh_listener_backends: std::collections::HashMap<String, String>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -49,6 +55,13 @@ pub async fn list_sites(
             listeners: site.site.listeners.clone(),
             default_upstream: site.site.upstream.default.clone(),
             routes: site.site.upstream.routes.clone(),
+            mesh_service_id: match site.proxy.backend.as_ref() {
+                Some(synvoid_config::site::BackendConfig::Mesh { upstream }) => {
+                    Some(upstream.clone())
+                }
+                _ => None,
+            },
+            mesh_listener_backends: site.proxy.listener_backends.clone(),
         })
         .collect();
 
