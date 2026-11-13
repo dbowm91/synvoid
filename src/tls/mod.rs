@@ -26,3 +26,15 @@ pub use synvoid_tls::AcmeDnsChallenge;
 pub use synvoid_tls::AcmeManager;
 pub use synvoid_tls::CertResolver;
 pub use synvoid_tls::InternalTlsConfig as ServerTlsConfig;
+
+/// Select the process-wide rustls crypto provider.
+///
+/// Several rustls builders (including `WebPkiClientVerifier::builder`) resolve
+/// the process default and panic when the crate feature set cannot pick one.
+/// Call this once at process start, before any consumer builds a TLS config.
+pub fn install_process_crypto_provider() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    });
+}
