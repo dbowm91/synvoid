@@ -272,9 +272,20 @@ bind_address = "0.0.0.0"
 port = 50051          # default: 50051
 role = 1              # EDGE; GLOBAL=2, ORIGIN=4, GLOBAL|EDGE=3
 
-# Optional: human-readable node identity
-# node_id = "edge-us-east-1"
+# Optional: network name. This is NOT the node's mesh identity.
 # network_id = "production"
+#
+# `node_id` here is only a fallback. `MeshConfig::node_id()` prefers
+# `[tunnel.mesh.node_identity] node_id`, and `load_node_identity()` overwrites
+# both from the signing key (`derive_node_id`, yielding `node-<hash>`, or
+# `mesh-<uuid>` when no identity material exists). Read the realized value from
+# `GET /api/mesh/status` (`node_id`) before writing it into a peer's
+# `peered_wafs`, or the allowlist will never match.
+# node_id = "edge-us-east-1"
+
+# A two- or three-node topology cannot satisfy the default minimum of 3.
+[tunnel.mesh.connection]
+min_peer_connections = 0
 
 # Seeds are a LIST of tables (MeshSeedNode), not a key/value map.
 # `public_key` supplies the authorized global-node key used for discovery.
@@ -330,6 +341,12 @@ Configure the site backend with `type = "mesh"` and an explicit service ID:
 # config/sites/blog.example.com.toml
 [site]
 domains = ["blog.example.com"]
+
+# Required by the site schema even when the backend is mesh. It is not used for
+# the mesh hop (the origin resolves the service ID), but a site file without it
+# fails to load with "missing field `upstream`".
+[site.upstream]
+default = "http://10.0.1.10:8080"
 
 [proxy.backend]
 type = "mesh"
@@ -416,6 +433,12 @@ Forbidden` with a short text body and never includes the upstream URL. An empty
 `allowed = false` are discarded, so a list containing only denied entries ends
 up empty — configure at least one `allowed = true` peer if you intend to
 restrict the service.
+
+The `node_id` values must be the peers' **realized** mesh identities, which are
+derived from their signing keys rather than taken from `[tunnel.mesh] node_id`.
+Query `GET /api/mesh/status` on the peer (field `node_id`) and use that value;
+a hand-picked label silently matches nothing, and an allowlist that matches
+nothing refuses every peer.
 
 ```toml
 [tunnel.mesh.local_upstreams.blog-public]

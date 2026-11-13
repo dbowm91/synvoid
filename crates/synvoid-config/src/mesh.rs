@@ -689,7 +689,7 @@ pub struct MeshMinificationConfig {
 /// The `canonical_snapshot_*` fields configure the worker-side freshness
 /// policy for IPC-exported snapshots. Invalid configurations (e.g.
 /// stale_grace < fresh_max_age) are normalized at conversion time.
-#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AuthorityFreshnessConfig {
     /// Grace period for normal global policy updates before fail-closed.
     /// Default: 3600 (1 hour)
@@ -726,6 +726,30 @@ pub struct AuthorityFreshnessConfig {
     /// Default: "fail_open_defer".
     #[serde(default = "default_canonical_snapshot_stale_mode")]
     pub canonical_snapshot_stale_mode: String,
+}
+
+// A derived `Default` produced `""` for `canonical_snapshot_stale_mode`,
+// which is not a valid `CanonicalSnapshotStaleMode` on the mesh side. Because
+// `[tunnel.mesh.authority_freshness]` itself is `#[serde(default)]`, an
+// operator who omitted the table (the documented Basic Mesh Setup) serialised
+// the empty string into `realize_mesh_runtime_config` and the whole mesh
+// subsystem refused to start. Mirror the serde defaults here so the struct's
+// `Default` can never contradict the field defaults.
+impl Default for AuthorityFreshnessConfig {
+    fn default() -> Self {
+        Self {
+            global_policy_grace_secs: default_global_policy_grace_secs(),
+            revocation_hard_limit_secs: default_revocation_hard_limit_secs(),
+            ca_epoch_hard_limit_secs: default_ca_epoch_hard_limit_secs(),
+            threat_intel_stale_local: default_threat_intel_stale_local(),
+            peer_discovery_degraded: default_peer_discovery_degraded(),
+            dht_soft_state_ttl_secs: default_dht_soft_state_ttl_secs(),
+            canonical_snapshot_fresh_max_age_ms: default_canonical_snapshot_fresh_max_age_ms(),
+            canonical_snapshot_stale_grace_max_age_ms:
+                default_canonical_snapshot_stale_grace_max_age_ms(),
+            canonical_snapshot_stale_mode: default_canonical_snapshot_stale_mode(),
+        }
+    }
 }
 
 fn default_global_policy_grace_secs() -> u64 {

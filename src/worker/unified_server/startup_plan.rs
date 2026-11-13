@@ -147,6 +147,29 @@ pub async fn build_worker_startup(
         .await
         .unwrap_or_else(super::init_apps::build_default_serverless_manager);
 
+    // ---- Phase 4.5: worker-local block store ----
+    // `UnifiedServer::with_block_store` had no caller, so `get_block_store()`
+    // was always `None`. Mesh init then returned an empty `MeshInit` after
+    // logging "BlockStore not initialized, skipping threat intelligence
+    // setup", and `validate_mesh_runtime_inputs` refused to run the worker
+    // ("mesh supervision policy present but no transport") — so enabling mesh
+    // could never start. Blocklist IPC requests were dropped for the same
+    // reason.
+    //
+    // The worker keeps its own in-memory store: the Supervisor persists the
+    // authoritative copy and broadcasts events over IPC, and two processes
+    // opening the same `blocks.json` concurrently is exactly the hazard we do
+    // not want to introduce here.
+    let blocklist_limits = {
+        let config = shared_config.read().await;
+        config.main.blocklist_limits.clone()
+    };
+    let block_store = Arc::new(crate::block_store::BlockStore::new(
+        true,
+        None,
+        blocklist_limits,
+    ));
+
     let unified_server = UnifiedServer::new(
         shared_config.clone(),
         None,
@@ -157,6 +180,7 @@ pub async fn build_worker_startup(
     .with_drain_state(drain_state.clone())
     .with_metrics(metrics.clone())
     .with_ipc(ipc_for_server, worker_id_for_server)
+    .with_block_store(block_store)
     .with_serverless_manager(serverless_manager.clone());
     let unified_server: SharedUnifiedServer = Arc::new(unified_server);
 
