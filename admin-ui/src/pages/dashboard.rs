@@ -441,7 +441,8 @@ pub fn Dashboard() -> Html {
                 }
             }
 
-            <RealtimeHeader />
+            // Keep the realtime strip aligned with the dashboard selector.
+            <RealtimeHeader window_secs={window_to_seconds(&selected_window)} />
 
             <div class="mb-6 flex flex-wrap justify-between items-center gap-3">
                 <div class="flex flex-wrap gap-2">
@@ -749,12 +750,13 @@ fn SiteStatusItem(props: &SiteStatusItemProps) -> Html {
 
     html! {
         <div>
-            <div class="flex items-center justify-between py-3 border-b border-default last:border-b-0 cursor-pointer" onclick={toggle_expanded}>
-                <div class="flex items-center gap-3">
-                    <span class={format!("w-2 h-2 rounded-full {}", status_class)} />
-                    <span class="text-primary">{ &props.domain }</span>
+            // Let the domain shrink and wrap the summary on narrow screens.
+            <div class="flex flex-wrap items-center justify-between gap-2 py-3 border-b border-default last:border-b-0 cursor-pointer" onclick={toggle_expanded}>
+                <div class="flex items-center gap-3 min-w-0">
+                    <span class={format!("w-2 h-2 rounded-full {} shrink-0", status_class)} />
+                    <span class="text-primary truncate">{ &props.domain }</span>
                 </div>
-                <div class="flex items-center gap-4 text-sm">
+                <div class="flex items-center gap-4 text-sm shrink-0">
                     <span class="text-secondary">{ format!("{} req", props.requests) }</span>
                     <span class="text-red-500">{ format!("{} blocked", props.blocked) }</span>
                     <span class="text-secondary text-xs">{ status_text }</span>

@@ -53,7 +53,7 @@ trusted_proxies = ["127.0.0.1", "::1"]
 - `0.0.0.0` binds to all interfaces, allowing external connections (change to `127.0.0.1` for localhost-only)
 - Port 8080 avoids requiring root privileges while remaining a common HTTP port
 - IPv6 `::` binds to all IPv6 addresses for dual-stack support
-- `trusted_proxies` defaults to localhost only—extending this to include public load balancers is required for proper client IP detection via X-Forwarded-For
+- `trusted_proxies` defaults to localhost only. Add public load balancers to this list for correct client IP detection via X-Forwarded-For.
 
 ### Admin API
 
@@ -70,14 +70,14 @@ token = "<64 hex characters from `synvoid --generatetoken`>"
 - Port 8081 is used (instead of 8080) to separate it from traffic serving and reduce attack surface
 - `bind_address` defaults to `127.0.0.1`; widen it only behind a trusted network boundary
 - If `token` is omitted entirely, the serde default generates a **random 32-character
-  alphanumeric token at each config load** — not a usable stable secret, and it changes
+  alphanumeric token at each config load**. It is not a stable secret and changes
   on restart. Always set it explicitly or use `token_env_var`.
 - A configured token must be **at least 32 characters** and must not contain a weak
   pattern (`changeme`, `password`, `admin`, `123456`, …). A short placeholder such as
   `"your-secure-token"` is **rejected at config load**, not warned about.
 - Generate a token with `synvoid --generatetoken` (prints 64 hex characters, does not
   save). `synvoid --generatenewtoken` writes a **plaintext** token into `main.toml`
-  (`0600` on Unix) — it is not hashed at rest.
+  (`0600` on Unix). It is not hashed at rest.
 
 ### Logging
 
@@ -151,7 +151,7 @@ See `config/mimes/mime.types` for a complete example.
 
 MIME types can be reloaded without restarting the server:
 
-- **CLI**: `synvoid rehash`
+- **CLI**: `synvoid --rehash`
 - **Admin API**: `POST /api/config/reload`
 
 This is useful when you've added new MIME type mappings and want to apply them without downtime.
@@ -209,10 +209,9 @@ mode = "return_404"  # or "proxy" with upstream setting
 ## Attack Detection Configuration
 
 Attack detection is configured **per site** (`config/sites/<domain>.toml`), under
-`[attack_detection]`. There is **no `[defaults.attack_detection]` section** —
-`DefaultsConfig` has no `attack_detection` field, so a `[defaults.attack_detection]`
-block would be silently ignored (the config crate does not use
-`deny_unknown_fields`). The application builds its global detector from built-in
+`[attack_detection]`. There is **no `[defaults.attack_detection]` section**. `DefaultsConfig` has no
+`attack_detection` field, so a `[defaults.attack_detection]` block would be
+silently ignored (the config crate does not use `deny_unknown_fields`). The application builds its global detector from built-in
 defaults and applies each site's overrides on top.
 
 ```toml
@@ -224,7 +223,7 @@ action = "block"    # "block" (default), "stall", or "log"
 ```
 
 **Why these defaults:**
-- Attack detection is enabled by default because it's the core WAF function—disabling it defeats the purpose of running a WAF
+- Attack detection is enabled by default because it is the core WAF function. Disabling it defeats the purpose of running a WAF.
 - `paranoia_level = 2` (medium) catches common attacks without excessive false positives; level 3 is aggressive and may affect legitimate traffic
 - `action = "block"` preserves the long-standing 403 behavior and avoids making the stall budget a resource-exhaustion lever. `stall` and `log` remain available per site.
 - `log` observes a match (warning/metric) but does not block and does not record an escalation violation. Per-path `log` rules do the same and take precedence over the site action.
@@ -352,26 +351,15 @@ per_second = 500
 per_minute = 5000
 ```
 
-> **Rate-limit defaults are optional, but they are not inert.**
-> `DefaultsConfig` carries a struct-level `#[serde(default)]`, so an omitted
-> `[defaults]` table is resolved through the Rust `Default` impls rather than
-> through the per-field serde defaults. These two paths used to disagree:
-> `IpRateLimitConfig` derived `Default` (all zeros) while its serde fields
-> defaulted to `per_second = 10`, so omitting `[defaults.ratelimit.ip]` made the
-> site check `len() >= per_second` collapse to `len() >= 0` and **100% of
-> requests were answered with HTTP 429**.
->
-> That is fixed — `IpRateLimitConfig` and `GlobalRateLimitConfig` now have
-> hand-written `Default` impls that reuse the same `default_*` functions as the
-> serde attributes, and `crates/synvoid-config/tests/serde_defaults_match_rust_defaults.rs`
-> pins the parity across the whole `[defaults]` subtree. Writing the values
-> explicitly, as above, is still good practice and is what the shipped
-> `config/main.toml` does; it is no longer a workaround for a defect.
+> Rate-limit tables are optional. If omitted, SynVoid applies its built-in
+> defaults, including 10 requests per second and 60 per minute per IP. The
+> explicit values above make the policy clear but are not required for safe
+> defaults.
 
 **Why these defaults:**
 - `mode = "shared"` uses a global rate limit pool, protecting the system as a whole rather than per-site; use `isolated` when you want each site to have its own independent limit bucket
 - `mode` accepts only `shared` or `isolated`; anything else fails `RateLimitDefaults::validate`. In particular `token_bucket` is **not** a valid value.
-- Default limits (10/sec, 60/min) are conservative for most applications—legitimate users won't notice, but automated scanners will be throttled
+- Default limits (10/sec, 60/min) are conservative for most applications. Legitimate users should not notice them, while automated scanners are throttled.
 - `burst = 20` allows brief traffic spikes without blocking, while sustained abuse triggers limits
 - Global limits (500/sec, 5000/min) protect the WAF itself from being overwhelmed
 
@@ -386,9 +374,9 @@ js_difficulty = 3
 ```
 
 **Why these defaults:**
-- `block_ai_crawlers = true` blocks AI training crawlers (GPTBot, ClaudeBot, etc.) by default—these are increasingly used without compensation to scrape content
+- `block_ai_crawlers = true` blocks AI training crawlers such as GPTBot and ClaudeBot by default.
 - `enable_css_honeypot = true` adds invisible honeypot links that catch bots but not humans; no impact on legitimate traffic
-- `enable_js_challenge = false` is conservative—JS challenges may affect crawlers and some legitimate users; enable when dealing with sophisticated bots
+- `enable_js_challenge = false` is conservative. JS challenges may affect crawlers and legitimate users; enable them only when needed.
 - `js_difficulty = 3` (medium) provides reasonable protection without excessive CPU usage on the WAF
 
 ## Site Configuration (`config/sites/example.com.toml`)
@@ -405,7 +393,7 @@ default = "http://127.0.0.1:8000"
 "/static" = "http://cdn.internal:8002"
 
 [ratelimit]
-mode = "isolated"   # "isolated" or "shared" — "token_bucket" is invalid
+mode = "isolated"   # Use "isolated" or "shared"; "token_bucket" is invalid
 
 [ratelimit.ip]
 per_second = 20
@@ -534,7 +522,7 @@ against quantum computers, **and it is always available on inbound HTTPS**:
 
 ```toml
 [tls]
-# Telemetry only — this value selects nothing. Present for compatibility and
+# Telemetry only: this value selects nothing. Present for compatibility and
 # intent visibility. See "Post-Quantum TLS" below.
 prefer_post_quantum = true
 ```
@@ -546,25 +534,17 @@ decided at compile time: `synvoid-tls` unconditionally enables rustls's
 is available in every build, and a client that offers only that group will
 complete a handshake regardless of this setting.
 
-The field is read in exactly one place — a debug log and the
+The field is read in exactly one place: a debug log and the
 `synvoid.tls.post_quantum` counter. It is kept so existing configuration keeps
 parsing and the intent stays visible, not because it has an effect.
 
-> **On the root `post-quantum` feature.** That feature is a marker covering
-> *outbound* http-client and admin TLS egress. It does **not** gate inbound TLS:
-> the hybrid key exchange described above is always compiled in. A build without
-> the marker feature still negotiates post-quantum inbound. Earlier wording here
-> said this setting "requires a `--features post-quantum` build to take effect"
-> and told operators to disable it for legacy-client interop; both were wrong,
-> and the guide's own examples did not match the shipped binary. Corrected in
-> Phase 140 (`architecture/dns_provider_inversion_phase140_closeout.md`).
+> The root `post-quantum` feature affects outbound http-client and admin TLS.
+> It does not gate the inbound hybrid key exchange described above.
 
 **Why these defaults:**
 - Hybrid PQ key exchange is on by default because there is no configuration cost
   to it; clients that do not offer a hybrid group simply negotiate a classical
   one through normal TLS 1.3 negotiation.
-- Only disable `prefer_post_quantum` if a downstream tool parses logs; it has no
-  effect on behaviour.
 
 ### 0-RTT (Early Data)
 
@@ -617,10 +597,10 @@ strict_tls_passthrough_policy = false  # Default: false (warn-only)
 
 **Allowed configurations under strict mode:**
 
-- Passthrough with the default or `tls_passthrough_enforce_waf = true` — WAF inspects L7 traffic despite passthrough.
-- Passthrough bypass with configured rate limiting — L7 inspection is bypassed, but the site is still protected by layer 3/4 rate limiting. A warning is still logged that L7 WAF inspection is bypassed.
+- Passthrough with the default setting or `tls_passthrough_enforce_waf = true` keeps L7 WAF inspection enabled.
+- Passthrough bypass with rate limiting skips L7 WAF inspection but retains layer 3/4 rate limits. SynVoid logs a warning.
 
-**Site-level remediation (option A — enable WAF enforcement):**
+**Site-level remediation (option A: enable WAF enforcement):**
 
 ```toml
 [[site.proxy]]
@@ -630,7 +610,7 @@ tls_passthrough = true
 tls_passthrough_enforce_waf = true
 ```
 
-**Site-level remediation (option B — configure rate limiting):**
+**Site-level remediation (option B: configure rate limiting):**
 
 ```toml
 [[site.proxy]]
@@ -640,7 +620,7 @@ tls_passthrough = true
 
 # config/sites/example.com.toml
 [ratelimit]
-mode = "isolated"   # "shared" | "isolated" — "token_bucket" is invalid
+mode = "isolated"   # Values: "shared" or "isolated"; "token_bucket" is invalid
 
 [ratelimit.ip]
 per_second = 10
@@ -657,12 +637,12 @@ terminates TLS).
 
 ```toml
 [security]
-worker_sandbox = "off"  # "off" | "auto" | "required" — Default: "off"
+worker_sandbox = "off"  # Values: "off", "auto", or "required"; default: "off"
 ```
 
 | Value | Behavior |
 |-------|----------|
-| `off` (default) | No in-process filesystem confinement is applied. The worker relies on the service account and the systemd sandbox from Phase 07. |
+| `off` (default) | No in-process filesystem confinement is applied. The worker relies on its service account and the systemd unit sandbox. |
 | `auto` | Applies the worker filesystem sandbox only when the backend fully enforces the requested filesystem guarantees. If it cannot, the enforcement report is logged and the worker continues without the in-process sandbox. A failure after entry (partial enforcement) fails startup instead of running in an unknown state. |
 | `required` | Fails worker startup unless `AmbientFilesystemDenied`, `FilesystemReadAllowlist`, `FilesystemWriteAllowlist`, `InheritedIpcUsable` and `DescendantsConfined` are all fully enforced. |
 
@@ -703,7 +683,7 @@ ca_cert_path = "/etc/synvoid/certs/ca.crt"
 
 Global traffic shaping is a **top-level `[traffic_shaping]`** section. The
 `[defaults.traffic_shaping]` section that also exists only carries `enabled` and
-a `site` sub-table — it has no `global` block, so the `max_rate_mbps` /
+a `site` sub-table. It has no `global` block, so the `max_rate_mbps` /
 `burst_mbps` keys shown below were never real.
 
 ```toml
@@ -938,7 +918,7 @@ max_workers = 16
 unified_server_workers = 1
 ```
 
-Bounds (fail-closed, Phase 41 — see `architecture/config_feature_contract.md`):
+Bounds are validated fail-closed. See `architecture/config_feature_contract.md`:
 
 - Legacy pool: `min_workers`/`max_workers` `1..=1024`, `min <= max`.
 - Data-plane pool: `unified_server_workers` `1..=256`, independent of
@@ -964,7 +944,7 @@ Rebuild with the named feature or remove the unsupported section. Mesh
 `restart_enabled = true` and any non-default restart tuning (restart is not
 implemented).
 
-## DNS deferred features (fail-closed, Phase 45)
+## DNS features that fail closed
 
 Inside the `dns` section, deferred features reject *activation* with a typed
 `Unsupported { path }` error instead of being silently ignored. Defaults and
@@ -987,9 +967,9 @@ the same validation (400):
 - Enabled DoT/DoH/DoQ transports require an explicit parseable
   `bind_address` and non-zero port (validated before listener startup).
 
-Full mapping: `architecture/dns_config_runtime_matrix.md` (Phase 45 section).
-Example profiles: `examples/dns/` (`transfer_primary.toml` is a deferred
-design reference — it parses but fails validation).
+For the full mapping, see `architecture/dns_config_runtime_matrix.md`. The
+`examples/dns/transfer_primary.toml` file is a design reference; it parses but
+fails validation.
 
 ## CPU Offload IPC Pool Environment Overrides
 
@@ -1068,15 +1048,14 @@ fields (`synvoid_config_model::honeypot_port::HoneypotPortConfig`, which is what
 |---|---|---|
 | `enabled` | bool | **`true`** |
 | `ports` | `Vec<u16>` | `[8080, 8443, 9090]` |
-| `protocols` | `Vec<String>` | `["tcp", "udp"]` |
+| `protocols` | `Vec<String>` | `["tcp", "udp"]` (TCP only; UDP is not served) |
 | `site_scope` | String | `"global"` |
 
-> **The port honeypot is enabled by default.** A stock install therefore attempts to bind
-> deception listeners on **8080, 8443 and 9090** — 8080 being the default HTTP data plane
-> port and 9090 the default metrics port. On an unprivileged process the bind fails and
-> SynVoid logs `Failed to initialize port honeypot runner: Permission denied` and continues;
-> as root it can succeed and contend with those ports. If you do not want this, set
-> `enabled = false` explicitly.
+> **The port honeypot is enabled by default.** It selects and rotates among the
+> configured ports. The defaults (`8080`, `8443`, and `9090`) overlap with common
+> HTTP and metrics ports. Occupied ports cannot be bound, while an available port
+> can start an additional listener. Disable the honeypot or choose dedicated ports
+> if you do not want this behavior.
 
 ```toml
 [honeypot_port]
@@ -1087,8 +1066,8 @@ site_scope = "global"
 ```
 
 There is **no** `[honeypot]` section, and none of `bind_address`, `min_port`, `max_port`,
-`num_honeypot_ports`, or `rotation_interval_secs` is a config key — those were never
-configurable and are silently ignored. Runtime-only settings such as `[honeypot.storage]`,
+`num_honeypot_ports`, or `rotation_interval_secs` is a config key. These fields
+were never configurable and are silently ignored. Runtime-only settings such as `[honeypot.storage]`,
 `[honeypot.response_mode]`, `[honeypot.ai]`, and `[honeypot.threat_intel.scoring]` are
 constructed in code, not read from TOML.
 
@@ -1278,7 +1257,7 @@ auto_deescalate_timeout_mins = 15
 **Why these defaults:**
 - `initial = 1` starts at minimum threat level, avoiding false positives on startup
 - Auto-scaling is enabled so the system responds to attack intensity automatically
-- `scale_up_attacks_per_min = 50` triggers escalation when attack rate exceeds 50/min (1 per second)—prevents triggering on normal traffic spikes
+- `scale_up_attacks_per_min = 50` triggers escalation above 50 attacks per minute, reducing triggers from normal traffic spikes.
 - `scale_down_attacks_per_min = 10` only deescalates when attacks drop to near-zero, preventing oscillation
 - `auto_deescalate_timeout_mins = 15` returns to normal after 15 minutes of low attack activity
 
@@ -1323,7 +1302,7 @@ enabled = true
 port = 8081
 token = "<64 hex characters from `synvoid --generatetoken`>"
 
-# Attack detection is site-scoped — set it in config/sites/<domain>.toml:
+# Set attack detection per site in config/sites/<domain>.toml:
 #   [attack_detection]
 #   enabled = true
 #   paranoia_level = 2
@@ -1362,7 +1341,7 @@ enabled = true
 port = 8081
 token = "<64 hex characters from `synvoid --generatetoken`>"
 
-# Attack detection is site-scoped — set it in config/sites/<domain>.toml:
+# Set attack detection per site in config/sites/<domain>.toml:
 #   [attack_detection]
 #   enabled = true
 #   paranoia_level = 2
@@ -1396,7 +1375,7 @@ A service requiring aggressive DDoS protection:
 host = "0.0.0.0"
 port = 80
 
-# Attack detection is site-scoped — set it in config/sites/<domain>.toml:
+# Set attack detection per site in config/sites/<domain>.toml:
 #   [attack_detection]
 #   enabled = true
 #   paranoia_level = 3
@@ -1447,7 +1426,7 @@ per_minute = 100
 
 ## File Structure
 
-`--config-path` takes the **directory** containing `main.toml` and `sites/` — not
+`--config-path` expects the **directory** containing `main.toml` and `sites/`, not
 the TOML file itself. Without the flag it defaults to the CWD-relative `./config/`.
 `synvoid --configtest <dir>` validates `<dir>/main.toml` plus `<dir>/sites/*.toml`.
 

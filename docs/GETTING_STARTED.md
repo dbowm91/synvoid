@@ -1,44 +1,24 @@
-# Getting Started with SynVoid
+# Getting Started
 
-This guide builds SynVoid, runs it in front of a real upstream, and points at the deeper configuration and operations references.
+This guide builds SynVoid, configures one site, and verifies that requests reach an upstream. Use [DEPLOYMENT.md](./DEPLOYMENT.md) for production, systemd, and container setup.
 
-For the design rationale and performance tuning, see [ARCHITECTURE.md](./ARCHITECTURE.md) and [DEVELOPER.md](./DEVELOPER.md).
+## What SynVoid does
 
-## Table of Contents
+SynVoid is a reverse proxy and web application firewall. A Supervisor manages process lifecycle, while a unified worker handles HTTP, WAF inspection, and proxying. Selected CPU-intensive work runs in separate CPU workers. Optional features add DNS, mesh networking, and other services.
 
-- [What is SynVoid?](#what-is-synvoid)
-- [Quick Start](#quick-start)
-- [Verifying it works](#verifying-it-works)
-- [Install as a System Service (Non-Root)](#install-as-a-system-service-non-root)
-- [Run in a Container](#run-in-a-container)
-- [Practical Workflows](#practical-workflows)
-  - [Protect a PHP Application](#workflow-1-protect-a-php-application)
-  - [Set Up a High-Availability Mesh](#workflow-2-set-up-a-high-availability-mesh)
-- [Build Profiles](#build-profiles)
-- [Configuration Gotchas](#configuration-gotchas)
-- [Command Line Options](#command-line-options)
-- [Next Steps](#next-steps)
+## Prerequisites
 
-## What is SynVoid?
+- A supported Rust toolchain.
+- `protoc` (Protocol Buffers compiler). The default build enables mesh and runs protobuf code generation.
+- An upstream application to proxy, such as one listening on `127.0.0.1:8000`.
 
-- **Unified Data Plane** — one latency-sensitive unified worker per process group, plus bounded CPU offload workers.
-- **Supervisor Control Plane** — centralizes process lifecycle and control-plane state.
-- **WAF Protection** — multi-layer detection against common web attacks, evaluated inline on the request path.
-- **Reverse Proxy** — HTTP/1.1 and HTTP/2 upstream support, plus HTTP/3 over QUIC.
-- **Application Server** — FastCGI (PHP), Python/Granian app handlers, and static files.
-
-## Quick Start
-
-### 1. Install build dependencies
-
-The default feature set includes `mesh`, which runs protobuf codegen at build time. Without `protoc` the build fails with a confusing error:
+On Debian or Ubuntu, install `protoc` with:
 
 ```bash
-# Debian/Ubuntu (what CI does); use the equivalent elsewhere.
 sudo apt-get install -y protobuf-compiler
 ```
 
-### 2. Build
+## Build
 
 ```bash
 git clone https://github.com/dbowm91/synvoid.git
@@ -46,20 +26,20 @@ cd synvoid
 cargo build --release
 ```
 
-The binary lands at `./target/release/synvoid`. Paths below assume that location.
+The main binary is `target/release/synvoid`. The default feature set is `socket-handoff, mesh, dns, erased_pool, swagger-ui`.
 
-### 3. Generate secrets
+## Configure one site
+
+Generate an admin token and an IPC key in the shell where SynVoid will run:
 
 ```bash
 export SYNVOID_ADMIN_TOKEN="$(./target/release/synvoid --generatetoken)"
 export SYNVOID_IPC_KEY="$(openssl rand -hex 32)"
 ```
 
-The admin token must be **at least 32 characters** and must not contain obvious placeholder words such as `changeme`, `password`, or `admin`. A shorter token is rejected during config validation. `--generatetoken` emits a 64-character hex token.
+The admin token must be at least 32 characters and must not contain a rejected placeholder pattern. `--generatetoken` prints a 64-character hexadecimal token. The IPC key must be 32 random bytes encoded as 64 hexadecimal characters.
 
-### 4. Write `config/main.toml`
-
-Six top-level sections are required because they carry no serde default: `server`, `fallback`, `admin`, `logging`, `metrics`, and `defaults`. Everything else is optional.
+Create `config/main.toml`:
 
 ```toml
 [server]
@@ -84,6 +64,11 @@ port = 9090
 [http]
 strict_protocol_validation = true
 
+[security]
+ipc_enforce_signing = true
+ipc_session_key_env = "SYNVOID_IPC_KEY"
+
+[defaults]
 [defaults.ratelimit]
 mode = "shared"
 
@@ -95,9 +80,14 @@ per_minute = 60
 per_second = 500
 per_minute = 5000
 max_connections = 1000
+
+[honeypot_port]
+enabled = false
 ```
 
-### 5. Add a site: `config/sites/example.com.toml`
+The six required top-level sections are `server`, `fallback`, `admin`, `logging`, `metrics`, and `defaults`. The other sections in this example are optional.
+
+Create `config/sites/example.com.toml`:
 
 ```toml
 [site]
@@ -112,245 +102,67 @@ paranoia_level = 2
 action = "block"
 ```
 
-### 6. Validate
+`--config-path` takes the directory containing `main.toml` and `sites/`, not the path to `main.toml` itself. The default is `./config/` relative to the current working directory.
+
+## Validate and start
+
+Run the config test from the repository root:
 
 ```bash
 ./target/release/synvoid --configtest --config-path ./config
 ```
 
-`--configtest` validates `<dir>/main.toml` and `<dir>/sites/*.toml`, where `<dir>` is `--config-path` when given and `./config/` relative to the current directory otherwise. A passing test covers only that directory.
-
-### 7. Start
+Then start the Supervisor in the foreground:
 
 ```bash
 ./target/release/synvoid --foreground --config-path ./config
 ```
 
-`--foreground` keeps the Supervisor attached to your terminal; without it, the Supervisor daemonizes itself.
+`--foreground` keeps the Supervisor attached to the terminal. Without it, the Supervisor daemonizes.
 
-## Verifying it works
+## Verify the proxy
 
-With an upstream listening on `127.0.0.1:8000`:
+With the upstream listening on `127.0.0.1:8000`, send a request with a browser-like user agent:
 
 ```bash
 UA="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
-
-# Proxied to your upstream -> 200
-curl -A "$UA" -H "Host: example.com" http://127.0.0.1:8080/
-
-# SQL injection -> 403 "Attack Detected"
-curl -A "$UA" -H "Host: example.com" \
-  'http://127.0.0.1:8080/?id=1%20OR%201=1%20UNION%20SELECT%20u,p,3%20FROM%20users--'
-
-# XSS -> 403
-curl -A "$UA" -H "Host: example.com" \
-  'http://127.0.0.1:8080/?q=%3Cscript%3Ealert(1)%3C/script%3E'
-
-# Host matching no site -> 404 from [fallback]
-curl -A "$UA" -H "Host: nope.invalid" http://127.0.0.1:8080/
-
-# Prometheus metrics -> 200
-curl http://127.0.0.1:9090/metrics
+curl -i -A "$UA" -H "Host: example.com" http://127.0.0.1:8080/
 ```
 
-Use a browser-like `User-Agent`. The default bot `scraper_patterns` include `curl`, so an unmodified `curl` is tarpitted and returns HTTP 200 with the body `Tarpit active` instead of your upstream's response.
+A successful request returns the upstream response. The default bot scraper patterns include `curl`, so plain `curl` requests may be tarpitted instead. A host that matches no configured site receives the `[fallback]` response.
 
-## Install as a System Service (Non-Root)
+## Default endpoints
 
-The shipped unit (`contrib/systemd/synvoid.service`) runs as a dedicated
-`synvoid` account, with `CAP_NET_BIND_SERVICE` as its only capability. The
-install tree is read-only; state, logs, cache and runtime data live in
-`/var/lib/synvoid`, `/var/log/synvoid`, `/var/cache/synvoid` and
-`/run/synvoid`.
+| Service | Default address | Notes |
+|---|---|---|
+| HTTP data plane | `127.0.0.1:8080` in this example | Configurable in `[server]` |
+| Admin UI and API | `127.0.0.1:8081` | Keep restricted to a trusted management network |
+| Prometheus metrics | `127.0.0.1:9090` | Non-loopback binds are rejected |
 
-Build the jail binaries as well as the main binary:
+## Build profiles
+
+The default build enables `socket-handoff, mesh, dns, erased_pool, swagger-ui`. To build the minimal WAF and proxy data plane without default features:
 
 ```bash
-cargo build --release
-cargo build --release -p synvoid-jail-runtime --bins
+cargo build --release --no-default-features
 ```
 
-Install into the layout the unit expects:
+A reduced-feature binary rejects configuration sections for capabilities it was not built to support, including `[dns]`, `[mesh]`, `[tunnel.mesh]`, and `[icmp_filter]`. Remove unsupported sections or rebuild with the required feature. See [FEATURE_STATUS.md](./FEATURE_STATUS.md) for current capability status.
 
-```bash
-sudo groupadd --system synvoid
-sudo useradd --system --gid synvoid --home-dir /var/lib/synvoid \
-  --shell /usr/sbin/nologin synvoid
+## Common gotchas
 
-sudo install -d -m 0755 -o root -g root /opt/synvoid /opt/synvoid/admin-ui /opt/synvoid/config
-sudo install -d -m 0700 -o synvoid -g synvoid \
-  /etc/synvoid /var/lib/synvoid /var/log/synvoid /var/cache/synvoid /run/synvoid
+- `--config-path` is a directory. It must contain `main.toml` and, when used, a `sites/` directory.
+- `--configtest` checks only the selected configuration directory.
+- The port honeypot is enabled by default. This example disables it; see [HONEYPOT.md](./HONEYPOT.md) to configure it.
+- The shipped config writes logs under `/var/log/synvoid` and data under `/var/lib/synvoid`. Create those paths for a service install; `--configtest` rejects a missing `logging.access_log_dir`.
+- The admin token and IPC key must be available in the process environment. Exporting them in a shell does not configure a system service; see [DEPLOYMENT.md](./DEPLOYMENT.md) for service configuration.
+- Keep the auxiliary `synvoid-wasm-jail` and `synvoid-yara-jail` binaries beside the main binary. The Supervisor starts them when needed; do not run them manually.
 
-sudo install -m 0755 target/release/synvoid \
-  target/release/synvoid-wasm-jail target/release/synvoid-yara-jail /usr/local/bin/
-sudo install -d /opt/synvoid/admin-ui/dist
-sudo cp -a admin-ui/dist/. /opt/synvoid/admin-ui/dist/
-sudo cp -a static rules root.hints /opt/synvoid/
+## Next steps
 
-# Relative defaults (config/error_pages, config/mimes and the legacy
-# honeypot_endpoints.txt lookup) resolve against WorkingDirectory=/opt/synvoid.
-sudo cp -a config/error_pages config/mimes /opt/synvoid/config/
-sudo install -m 0644 config/honeypot_endpoints.txt /opt/synvoid/config/honeypot_endpoints.txt
-sudo install -m 0644 config/honeypot_endpoints.txt /opt/synvoid/honeypot_endpoints.txt
-
-# Authoritative config read by --config-path /etc/synvoid. Owned by synvoid so
-# the admin config editor can save main.toml and sites/.
-sudo install -d -o synvoid -g synvoid -m 0700 /etc/synvoid/sites
-sudo cp config/main.toml /etc/synvoid/main.toml
-sudo cp -a config/sites/. /etc/synvoid/sites/
-sudo chown -R synvoid:synvoid /etc/synvoid
-sudo chmod -R go-rwx /etc/synvoid
-
-sudo cp contrib/systemd/synvoid.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now synvoid
-```
-
-If the admin config editor is not used, keep `/etc/synvoid` root-owned and
-read-only and remove it from the unit's `ReadWritePaths=`. Never make
-`/opt/synvoid` writable as a shortcut.
-
-Validate the unit and record the exposure score:
-
-```bash
-sudo systemd-analyze verify /etc/systemd/system/synvoid.service
-systemd-analyze security --offline=yes --no-pager /etc/systemd/system/synvoid.service
-```
-
-Measured against this unit on systemd 255: `Overall exposure level …: 4.4 OK`.
-See [DEPLOYMENT.md](./DEPLOYMENT.md) for capability drop-ins
-(`CAP_NET_ADMIN` for eBPF/ICMP/WireGuard only) and the full hardening notes.
-
-## Run in a Container
-
-The repository ships a multi-stage `Dockerfile`; CI builds it (build only, no
-publish), so tag it for your own registry:
-
-```bash
-docker build -t synvoid:latest .
-
-docker run -d \
-  --name synvoid \
-  -p 80:8080 \
-  -e SYNVOID_ADMIN_TOKEN="$(openssl rand -hex 32)" \
-  -v "$PWD/config:/etc/synvoid:ro" \
-  -v synvoid-data:/var/lib/synvoid \
-  -v synvoid-logs:/var/log/synvoid \
-  synvoid:latest
-```
-
-The image runs as UID/GID 10001, keeps `/opt/synvoid` read-only, and publishes
-only the data-plane port 8080. Admin (`127.0.0.1:8081`) and metrics
-(`127.0.0.1:9090`) stay loopback inside the container. A read-only config mount
-is fine unless the admin config editor must write. The built-in healthcheck
-uses `synvoid --status`, so it does not require the admin listener.
-
-## Practical Workflows
-
-### Workflow 1: Protect a PHP Application
-
-Ensure PHP-FPM is running:
-
-```bash
-systemctl status php-fpm
-```
-
-Then create `config/sites/myapp.toml`:
-
-```toml
-[site]
-domains = ["myapp.local"]
-
-[site.fastcgi]
-enabled = true
-socket = "/var/run/php/php-fpm.sock"
-
-[attack_detection]
-enabled = true
-paranoia_level = 2
-```
-
-See [FASTCGI.md](./FASTCGI.md) for FastCGI routing and streaming options.
-
-### Workflow 2: Set Up a High-Availability Mesh
-
-Supervisors coordinate through Raft consensus, which is the authoritative distributed state; the DHT is advisory and is never a resolution fallback. Quorum loss surfaces as `PropagationStatus::QuorumUnavailable` rather than a silent success.
-
-On each node in `config/main.toml`:
-
-```toml
-[mesh]
-enabled = true
-node_id = "node-1"   # unique per node
-seeds = ["10.0.0.1:5001", "10.0.0.2:5001"]
-```
-
-Then start and check status:
-
-```bash
-./target/release/synvoid --foreground --config-path ./config
-./target/release/synvoid --status
-```
-
-See [WAF_MESH.md](./WAF_MESH.md) and [THREAT_INTEL.md](./THREAT_INTEL.md).
-
-## Build Profiles
-
-| Command | Result |
-|---|---|
-| `cargo build --release` | Defaults: `socket-handoff, mesh, dns, erased_pool, swagger-ui` |
-| `cargo build --release --no-default-features` | Minimal hardened profile: data plane only |
-| `cargo build --release --no-default-features --features mesh` | Mesh without DNS |
-| `cargo build --release --no-default-features --features dns` | DNS without mesh |
-
-The minimal profile is a supported, continuously compiled and tested target: no mesh (DHT/Raft/gRPC), no DNS (hickory/DNSSEC), no socket-handoff FD passing, no Swagger UI. It is the right choice for single-node deployments that do not need distributed coordination or DNS serving.
-
-A reduced-feature binary **rejects** capability-bearing sections it was not built with — `[dns]`, `[mesh]`, `[tunnel.mesh]`, `[icmp_filter]` — instead of ignoring them, and it refuses them even when they are inert (`enabled = false`). Rebuild with the named feature, or remove the unsupported section.
-
-Defaults are deliberately left full-featured for operator compatibility. Prefer enabling only what a deployment needs rather than treating `--all-features` as a deployment profile. The complete flag list is in the root `Cargo.toml`; [FEATURE_STATUS.md](./FEATURE_STATUS.md) records which are live, beta, or unreachable.
-
-## Configuration Gotchas
-
-- **Rate-limit defaults are optional and correct.** `[defaults.ratelimit.ip]` used to be effectively required: omitting it resolved `per_second = 0` (a derived `Default` behind a struct-level `#[serde(default)]`) and answered every request with HTTP 429. That is fixed and pinned by `crates/synvoid-config/tests/serde_defaults_match_rust_defaults.rs`; the explicit values in the config above are good practice, not a workaround.
-- **Set `[http] strict_protocol_validation = true`** unless you have a specific reason not to. With it off, the data plane accepts the connection but writes no response (observed on macOS/darwin x86_64; curl exits 56 with an empty reply).
-- **A short admin token is rejected.** `admin.token` must be at least 32 characters and free of placeholder words. Prefer `token_env_var` over writing a token into `main.toml`.
-- **Metrics binds loopback only.** A non-loopback `metrics.bind_address` is rejected at config load.
-- **The shipped `config/main.toml` does not validate on a clean machine** — it points `logging.access_log_dir` and the persistence `data_dir` at `/var/log/synvoid` and `/var/lib/synvoid`. Create those directories, or override the paths, before running `--configtest`.
-- **`--config-path` is a directory**, not a path to `main.toml`.
-- **eBPF/XDP flood protection is not a working capability.** `EbpfFlood` has no construction site, `flood-ebpf` is not a default feature, and `ebpf-flood/` is not a workspace member. See [FLOOD_PROTECTION.md](./FLOOD_PROTECTION.md) for what is actually installed.
-
-## Command Line Options
-
-SynVoid uses flags rather than positional subcommands (see the [README](../README.md) for the full common-command table).
-
-```bash
-./target/release/synvoid                       # start Supervisor (default mode)
-./target/release/synvoid --foreground          # stay attached to the terminal
-./target/release/synvoid --status              # status of a running instance
-./target/release/synvoid --rehash              # reload config, propagate to workers
-./target/release/synvoid --restart             # stop, then start again
-./target/release/synvoid --stop                # stop a running instance
-./target/release/synvoid --configtest          # validate config and exit
-./target/release/synvoid --config-path ./config  # DIRECTORY with main.toml + sites/
-./target/release/synvoid --version
-./target/release/synvoid --help                 # complete flag set
-```
-
-Internal worker and sandbox modes (`--unified-server-worker`, `--cpu-worker`, `--wasm-jail`, `--yara-jail`) are spawned by the Supervisor, not run by hand — a worker started standalone fails to reach its Supervisor and exits.
-
-### Test Modes
-
-`--test` requires `--force`; it is refused without it:
-
-```bash
-./target/release/synvoid --test all-off --force
-```
-
-## Next Steps
-
-- [CONFIGURATION.md](./CONFIGURATION.md) — the full configuration reference
-- [DEPLOYMENT.md](./DEPLOYMENT.md) — production deployment and hardening
-- [ADMIN_UI.md](./ADMIN_UI.md) / [API_REFERENCE.md](./API_REFERENCE.md) — operator interface
-- [ARCHITECTURE.md](./ARCHITECTURE.md) — how SynVoid works
-- [PROCESS_MANAGEMENT.md](./PROCESS_MANAGEMENT.md) — Supervisor and worker detail
-- [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) — common problems
+- [CONFIGURATION.md](./CONFIGURATION.md) for the full configuration reference.
+- [DEPLOYMENT.md](./DEPLOYMENT.md) for production hardening, systemd, and containers.
+- [ADMIN_UI.md](./ADMIN_UI.md) and [API_REFERENCE.md](./API_REFERENCE.md) for administration.
+- [FASTCGI.md](./FASTCGI.md) for PHP-FPM integration.
+- [WAF_MESH.md](./WAF_MESH.md) for mesh setup.
+- [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) for common problems.

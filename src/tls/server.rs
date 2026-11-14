@@ -93,11 +93,8 @@ pub struct HttpsServer {
     flood_protector: Option<Arc<FloodProtector>>,
     metrics: Option<Arc<crate::metrics::WorkerMetrics>>,
     shutdown_rx: broadcast::Receiver<()>,
-    // Phase 01: retained for compatibility but no longer consulted by the
-    // converged request path. Per-site proxy-cache dispatch now flows through
-    // the same canonical `synvoid-http` backend stages as plaintext HTTP
-    // (which never used this map). Kept as a field so existing builders keep
-    // compiling; will be removed once external callers stop constructing it.
+    // Legacy field retained for compatibility; request dispatch uses the
+    // canonical `synvoid-http` backend stages.
     proxy_servers: Arc<tokio::sync::RwLock<std::collections::HashMap<String, Arc<ProxyServer>>>>,
     drain_state: Option<Arc<crate::worker::drain_state::WorkerDrainState>>,
     #[cfg(feature = "mesh")]

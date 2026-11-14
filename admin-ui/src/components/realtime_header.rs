@@ -1,7 +1,5 @@
 use crate::components::charts::Sparkline;
-use crate::hooks::use_websocket::{
-    range_to_seconds, use_websocket_or_poll, UseWebSocketState, WS_METRICS_PATH,
-};
+use crate::hooks::use_websocket::{use_websocket_or_poll, UseWebSocketState, WS_METRICS_PATH};
 use crate::services::api::{ApiService, POLL_STATS_SUMMARY_PATH};
 use crate::types::RealtimeMetrics;
 use gloo::timers::callback::Interval;
@@ -9,6 +7,27 @@ use yew::prelude::*;
 
 const STALE_THRESHOLD_MS: u32 = 15_000;
 const STALE_CHECK_INTERVAL_MS: u32 = 3_000;
+
+/// Human-readable label for a window length in seconds, matching the buttons
+/// offered by the dashboard's window selector.
+fn format_window_label(secs: u64) -> String {
+    match secs {
+        s if s < 3600 => format!("{}m", s / 60),
+        s => format!("{}h", s / 3600),
+    }
+}
+
+/// Success rate as a percentage, or undefined when there is no traffic.
+fn success_rate_label(total: u64, blocked: u64, errors: u64) -> String {
+    if total == 0 {
+        return "—".to_string();
+    }
+    let numerator = total.saturating_sub(blocked).saturating_sub(errors);
+    format!(
+        "{:.1}%",
+        (numerator as f64 / total as f64 * 100.0).clamp(0.0, 100.0)
+    )
+}
 
 fn get_threat_level_color_and_label(level: u8) -> (&'static str, &'static str) {
     match level {
@@ -21,8 +40,14 @@ fn get_threat_level_color_and_label(level: u8) -> (&'static str, &'static str) {
     }
 }
 
-#[function_component]
-pub fn RealtimeHeader() -> Html {
+#[derive(Properties, PartialEq)]
+pub struct RealtimeHeaderProps {
+    /// Dashboard-selected time window in seconds.
+    pub window_secs: u64,
+}
+
+#[function_component(RealtimeHeader)]
+pub fn realtime_header(props: &RealtimeHeaderProps) -> Html {
     // WS path is the full `/api/ws/...` path; poll paths omit `/api` because
     // `ApiService` prepends it.
     let metrics_state =
@@ -34,7 +59,6 @@ pub fn RealtimeHeader() -> Html {
     let blocked_history = use_state(|| vec![0.0; 10]);
     let current_metrics = use_state(|| None::<RealtimeMetrics>);
     let last_updated = use_state(|| String::from("--:--:--"));
-    let selected_range = use_state(|| 60u64);
     let last_received_ms = use_state(|| 0u64);
     let is_stale = use_state(|| false);
 
@@ -70,15 +94,14 @@ pub fn RealtimeHeader() -> Html {
         });
     }
 
-    // Fetch historical data when range changes
+    // Fetch historical data when the dashboard's time window changes
     {
-        let selected_range = selected_range.clone();
         let set_req_history = req_history.clone();
         let set_blocked_history = blocked_history.clone();
         let set_current_metrics = current_metrics.clone();
 
-        use_effect_with(*selected_range, move |range| {
-            let secs = range_to_seconds(*range);
+        use_effect_with(props.window_secs, move |secs| {
+            let secs = *secs;
             let set_req_history = set_req_history.clone();
             let set_blocked_history = set_blocked_history.clone();
             let set_current_metrics = set_current_metrics.clone();
@@ -138,28 +161,20 @@ pub fn RealtimeHeader() -> Html {
 
     let (req_per_sec, blocked_per_sec, connections, success_rate, avg_latency) =
         if let Some(ref m) = metrics {
-            let total = m.total_requests;
-            let blocked = m.blocked;
-            let errors = m.errors;
-            let success_numerator = total.saturating_sub(blocked).saturating_sub(errors);
-            let success_pct = if total > 0 {
-                (success_numerator as f64 / total as f64 * 100.0).clamp(0.0, 100.0)
-            } else {
-                100.0
-            };
             (
                 format!("{:.1}", m.requests_per_second),
                 format!("{:.1}", m.blocked_per_second),
                 m.current_concurrent.to_string(),
-                format!("{:.1}%", success_pct),
+                success_rate_label(m.total_requests, m.blocked, m.errors),
                 format!("{:.0}ms", m.avg_latency_ms),
             )
         } else {
+            // No sample means the success rate is undefined, not 100%.
             (
                 "0".to_string(),
                 "0".to_string(),
                 "0".to_string(),
-                "100%".to_string(),
+                "—".to_string(),
                 "0ms".to_string(),
             )
         };
@@ -197,47 +212,21 @@ pub fn RealtimeHeader() -> Html {
         UseWebSocketState::Error(_) => ("w-2 h-2 rounded-full bg-red-500", "Error"),
     };
 
-    let on_range_change = {
-        let selected_range = selected_range.clone();
-        Callback::from(move |secs: u64| {
-            selected_range.set(secs);
-        })
-    };
+    let window_label = format_window_label(props.window_secs);
 
     html! {
         <div class="bg-secondary rounded-lg border border-default p-4 mb-6">
-            // The status text plus the four range buttons need ~390px side by side, which
-            // overflows a 360px phone. Wrapping lets the range selector drop to
-            // its own line instead of pushing the whole card into a horizontal
-            // scroll.
+            // Show the selected window; the dashboard owns the only selector.
             <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
                 <div class="flex items-center gap-2 min-w-0">
                     <div class={connection_status.0} />
                     <span class="text-sm text-secondary">{ connection_status.1 }</span>
                     <span class="text-xs text-secondary ml-2 truncate">{ format!("Updated: {}", *last_updated) }</span>
                 </div>
-                <div class="flex items-center gap-2">
-                    <button
-                        onclick={let cb = on_range_change.clone(); move |_| cb.emit(60)}
-                        class={if *selected_range == 60 { "px-3 py-1 text-xs bg-action-600 text-white rounded expand-hit" } else { "px-3 py-1 text-xs bg-tertiary rounded hover:opacity-80 expand-hit" }}>
-                        { "1m" }
-                    </button>
-                    <button
-                        onclick={let cb = on_range_change.clone(); move |_| cb.emit(300)}
-                        class={if *selected_range == 300 { "px-3 py-1 text-xs bg-action-600 text-white rounded expand-hit" } else { "px-3 py-1 text-xs bg-tertiary rounded hover:opacity-80 expand-hit" }}>
-                        { "5m" }
-                    </button>
-                    <button
-                        onclick={let cb = on_range_change.clone(); move |_| cb.emit(900)}
-                        class={if *selected_range == 900 { "px-3 py-1 text-xs bg-action-600 text-white rounded expand-hit" } else { "px-3 py-1 text-xs bg-tertiary rounded hover:opacity-80 expand-hit" }}>
-                        { "15m" }
-                    </button>
-                    <button
-                        onclick={let cb = on_range_change.clone(); move |_| cb.emit(3600)}
-                        class={if *selected_range == 3600 { "px-3 py-1 text-xs bg-action-600 text-white rounded expand-hit" } else { "px-3 py-1 text-xs bg-tertiary rounded hover:opacity-80 expand-hit" }}>
-                        { "1h" }
-                    </button>
-                </div>
+                <span class="text-xs text-secondary shrink-0">
+                    { "Window: " }
+                    <span class="text-primary font-medium">{ window_label }</span>
+                </span>
             </div>
 
             <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
@@ -284,4 +273,43 @@ fn chrono_lite() -> String {
     let minutes = now.get_minutes();
     let seconds = now.get_seconds();
     format!("{:02}:{:02}:{:02}", hours, minutes, seconds)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Keep labels aligned with the Dashboard window buttons.
+    #[test]
+    fn window_label_matches_dashboard_window_buttons() {
+        for (label, secs) in [
+            ("1m", 60u64),
+            ("5m", 300),
+            ("15m", 900),
+            ("1h", 3600),
+            ("6h", 21600),
+            ("24h", 86400),
+        ] {
+            assert_eq!(format_window_label(secs), label, "window {secs}s");
+        }
+    }
+
+    /// No traffic has no success rate, not a perfect score.
+    #[test]
+    fn success_rate_is_undefined_rather_than_perfect_without_traffic() {
+        assert_eq!(success_rate_label(0, 0, 0), "—");
+    }
+
+    #[test]
+    fn success_rate_excludes_blocked_and_errored_requests() {
+        assert_eq!(success_rate_label(100, 10, 10), "80.0%");
+        assert_eq!(success_rate_label(3, 0, 0), "100.0%");
+        assert_eq!(success_rate_label(10, 0, 0), "100.0%");
+    }
+
+    /// Overlapping counters must floor at zero, not underflow.
+    #[test]
+    fn success_rate_clamps_at_zero_when_counter_streams_overlap() {
+        assert_eq!(success_rate_label(10, 8, 8), "0.0%");
+    }
 }

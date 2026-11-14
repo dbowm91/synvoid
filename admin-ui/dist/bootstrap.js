@@ -1,5 +1,5 @@
-import init, * as bindings from '/admin-ui-5fcde02bd4dd84ea.js';
-const wasm = await init({ module_or_path: '/admin-ui-5fcde02bd4dd84ea_bg.wasm' });
+import init, * as bindings from '/admin-ui-7f92cf9edcb3335e.js';
+const wasm = await init({ module_or_path: '/admin-ui-7f92cf9edcb3335e_bg.wasm' });
 
 
 window.wasmBindings = bindings;

@@ -31,13 +31,8 @@ pub fn Input(props: &InputProps) -> Html {
     let label = props.label.clone();
     let help = props.help.clone();
 
-    // `oninput`, not `onchange`: a controlled Yew input only re-renders when
-    // its state changes, and the DOM `change` event fires on blur/commit
-    // rather than per keystroke. With `onchange`, typing left the bound state
-    // stale, so pressing Enter submitted a form whose state still held the
-    // previous (empty) value — the login screen reported "Please enter a
-    // token" no matter what was typed, and validation/derived UI in the 140
-    // call sites of this component only refreshed after blur.
+    // `oninput` keeps controlled state current while typing; `onchange` fires
+    // only on blur or commit, so forms would otherwise submit stale values.
     let on_change = props.on_change.reform(|e: InputEvent| {
         let input: web_sys::HtmlInputElement = e.target_unchecked_into();
         input.value()
@@ -61,6 +56,10 @@ pub fn Input(props: &InputProps) -> Html {
                 placeholder={placeholder}
                 oninput={on_change}
                 autocomplete="off"
+                // Preserve exact field values on mobile keyboards.
+                autocapitalize="none"
+                autocorrect="off"
+                spellcheck="false"
                 class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary focus:outline-none focus:ring-2 focus:ring-action-500"
             />
             if let Some(help_text) = help {

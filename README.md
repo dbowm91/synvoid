@@ -2,7 +2,7 @@
 
 **A multi-process Web Application Firewall and reverse proxy written in Rust.**
 
-SynVoid sits in front of web applications and services. It combines reverse proxying, streaming WAF inspection, rate limiting, bot controls, an operator admin API and UI, and feature-gated DNS and mesh services — in one Rust workspace.
+SynVoid sits in front of web applications and services. It combines reverse proxying, streaming WAF inspection, rate limiting, bot controls, an operator admin API and UI, plus optional DNS and mesh services.
 
 Linux is the primary deployment target.
 
@@ -38,7 +38,7 @@ The admin token must be **at least 32 characters** and must not contain obvious 
 
 ### 4. Write a configuration tree
 
-`main.toml` — global policy. Six sections are required (`server`, `fallback`, `admin`, `logging`, `metrics`, `defaults`); the rest are optional:
+`main.toml` contains global policy. Six sections are required (`server`, `fallback`, `admin`, `logging`, `metrics`, and `defaults`); the rest are optional:
 
 ```toml
 [server]
@@ -74,9 +74,14 @@ per_minute = 60
 per_second = 500
 per_minute = 5000
 max_connections = 1000
+
+[honeypot_port]
+enabled = false
 ```
 
-`sites/example.com.toml` — one file per site:
+The port honeypot is enabled by default; this local example disables it to avoid opening extra listeners.
+
+Create one site file, such as `sites/example.com.toml`:
 
 ```toml
 [site]
@@ -97,7 +102,7 @@ action = "block"
 ./target/release/synvoid --configtest --config-path ./config
 ```
 
-`--config-path` takes the **directory** holding `main.toml` and `sites/` — not the TOML file. It defaults to `./config/` relative to the current directory.
+`--config-path` expects the **directory** containing `main.toml` and `sites/`, not the TOML file. It defaults to `./config/` relative to the current directory.
 
 ### 6. Run
 
@@ -164,7 +169,7 @@ The sandboxed WASM/YARA jails (`synvoid-wasm-jail`, `synvoid-yara-jail`) are sep
 
 ## Build profiles
 
-Defaults are `socket-handoff, mesh, dns, erased_pool, swagger-ui`. `--no-default-features` is the supported minimal profile (WAF/proxy data plane only). A reduced-feature binary **rejects** capability-bearing config sections it lacks — `[dns]`, `[mesh]`, `[tunnel.mesh]`, `[icmp_filter]` — rather than ignoring them, and it refuses to start on them even when they say `enabled = false`.
+Default features are `socket-handoff, mesh, dns, erased_pool, swagger-ui`. `--no-default-features` builds the supported minimal profile with the WAF and proxy data plane only. A reduced-feature binary **rejects** unsupported capability sections (`[dns]`, `[mesh]`, `[tunnel.mesh]`, and `[icmp_filter]`) rather than ignoring them, even when they say `enabled = false`.
 
 See [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md) for build profiles and the full feature-flag inventory, and [`docs/FEATURE_STATUS.md`](docs/FEATURE_STATUS.md) for which capabilities are live, partial, or deliberately unreachable.
 
@@ -201,20 +206,7 @@ The configuration above is a working starting point, not a production policy.
 
 ### Library crates
 
-Most of the workspace is internal. Being reusable, packageable, or independently
-buildable is not an external support promise: only **`synvoid-rate-limit`** is an
-**externally supported** release (Phase 47, class 3), and it alone carries the
-semver/MSRV support promise. Every other `synvoid-*` crate stays class 1 or
-class 2 — including honeypot, DNSSEC keystore, mesh protocol, DNS and
-http-client — and carries no external support promise unless a later policy
-decision explicitly promotes it. The standalone-crate campaign promoted nothing
-further.
-
-The binding support/semver policy is
-[`architecture/public_crate_release_policy.md`](architecture/public_crate_release_policy.md).
-Release order and publishing guidance are in
-[`docs/releasing.md`](docs/releasing.md) §1a; publication remains manual via
-`cargo publish`.
+Most workspace crates are internal implementation details. **`synvoid-rate-limit` is the only externally supported crate** and the only one covered by public semver and MSRV commitments. See the [public crate policy](architecture/public_crate_release_policy.md) for support criteria and [release guide](docs/releasing.md) for manual publication with `cargo publish`.
 
 ## License
 

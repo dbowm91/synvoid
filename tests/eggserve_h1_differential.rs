@@ -1,13 +1,8 @@
 //! Root-test ownership: QUALIFICATION
-//! Rationale: Phase 75 Track K differential qualification. The same scripted
-//! corpus runs through the Hyper H1 lane and the EggServe direct H1 lane,
-//! both sharing the neutral pipeline via `service_core`; only transport
-//! capture differs. Production stays on Hyper throughout.
+//! Rationale: compare Hyper H1 and EggServe on the same neutral request corpus;
+//! production remains on Hyper.
 //!
-//! Note (Phase 76 Track H): the Hyper lane harness here doubles as the
-//! narrow test-only differential lane for the adoption phases; it is not
-//! an operator config, flag, fallback, or second listener, and is removable
-//! at Phase 78 after final A/B evidence is captured.
+//! This test-only differential harness is not an operator mode, fallback, or listener.
 
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};

@@ -305,16 +305,6 @@ pub fn use_websocket_or_poll<T: DeserializeOwned + Clone + 'static>(
     ((*state).clone(), refresh)
 }
 
-pub fn range_to_seconds(secs: u64) -> u64 {
-    match secs {
-        60 => 60,
-        300 => 300,
-        900 => 900,
-        3600 => 3600,
-        _ => 60,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -368,20 +358,5 @@ mod tests {
             derive_ws_url_from_href("not-a-url", "/api/ws/metrics"),
             "/api/ws/metrics"
         );
-    }
-
-    #[test]
-    fn range_to_seconds_maps_correctly() {
-        assert_eq!(range_to_seconds(60), 60);
-        assert_eq!(range_to_seconds(300), 300);
-        assert_eq!(range_to_seconds(900), 900);
-        assert_eq!(range_to_seconds(3600), 3600);
-    }
-
-    #[test]
-    fn range_to_seconds_default_fallback() {
-        assert_eq!(range_to_seconds(0), 60);
-        assert_eq!(range_to_seconds(999), 60);
-        assert_eq!(range_to_seconds(u64::MAX), 60);
     }
 }

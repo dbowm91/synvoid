@@ -16,22 +16,16 @@ pub struct Capabilities {
     pub honeypot: bool,
     #[serde(default)]
     pub process_manager: bool,
-    /// Gates the plugin runtime surfaces (`/api/plugins/*`) and the YARA
-    /// submission workflow (`/api/yara/*`). The backend derives both from
-    /// `cfg!(feature = "mesh")`, so they are currently equal to `mesh_admin`
-    /// — but they are separate fields upstream and could diverge, so the UI
-    /// keys off the field that actually describes the route family.
+    /// Gates plugin and YARA APIs, whose UI lives in Settings rather than the sidebar.
     #[serde(default)]
     pub plugins: bool,
-    /// Gates the serverless/Spin application surface (`/api/spin/*`,
-    /// `/api/serverless/*`), also `cfg!(feature = "mesh")` upstream.
+    /// Gates serverless/Spin APIs and the Settings tab.
     #[serde(default)]
     pub serverless: bool,
 }
 
-/// Pure gating decision: which nav families are visible for a capability set.
-/// Kept free of browser I/O so the contract can be unit-tested at the
-/// data/decision level (no full-browser suite required).
+/// Pure sidebar gating, kept free of browser I/O for unit testing.
+/// Plugin, YARA, and serverless Settings tabs are gated separately.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SidebarVisibility {
     pub show_mesh: bool,
@@ -40,9 +34,6 @@ pub struct SidebarVisibility {
     pub show_process_management: bool,
     pub show_honeypot: bool,
     pub show_icmp: bool,
-    pub show_plugins: bool,
-    pub show_yara: bool,
-    pub show_serverless: bool,
 }
 
 pub fn sidebar_visibility(cap: &Capabilities) -> SidebarVisibility {
@@ -53,9 +44,6 @@ pub fn sidebar_visibility(cap: &Capabilities) -> SidebarVisibility {
         show_process_management: cap.process_manager,
         show_honeypot: cap.honeypot,
         show_icmp: cap.icmp_admin,
-        show_plugins: cap.plugins,
-        show_yara: cap.plugins,
-        show_serverless: cap.serverless,
     }
 }
 

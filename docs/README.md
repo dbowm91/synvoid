@@ -1,119 +1,89 @@
 # SynVoid Documentation
 
-Welcome to the SynVoid documentation. This index provides quick access to all documentation.
+Use these guides to install SynVoid, configure a site, and operate the service. For a first deployment, follow the guides in order:
 
-## Quick Links
+1. [Getting Started](GETTING_STARTED.md) builds SynVoid and proxies one site.
+2. [Configuration](CONFIGURATION.md) explains the available settings.
+3. [Deployment](DEPLOYMENT.md) covers production hardening and service installation.
 
-| Topic | Documentation |
-|-------|--------------|
-| Quick Start | [GETTING_STARTED.md](GETTING_STARTED.md) |
-| Architecture | [ARCHITECTURE.md](ARCHITECTURE.md) |
-| Configuration | [CONFIGURATION.md](CONFIGURATION.md) |
-| Deployment | [DEPLOYMENT.md](DEPLOYMENT.md) |
-| API Reference | [API_REFERENCE.md](API_REFERENCE.md) |
+## Core guides
 
-## Getting Started
+| Guide | Purpose |
+|---|---|
+| [README](../README.md) | Project overview and quick start |
+| [Getting Started](GETTING_STARTED.md) | Build, configure, and test a local proxy |
+| [Configuration](CONFIGURATION.md) | Main and site configuration reference |
+| [Deployment](DEPLOYMENT.md) | Production deployment and hardening |
+| [Admin UI](ADMIN_UI.md) | Browser-based administration |
+| [API Reference](API_REFERENCE.md) | Admin API endpoints |
+| [Troubleshooting](TROUBLESHOOTING.md) | Diagnose common problems |
+| [FAQ](FAQ.md) | Frequently asked questions |
+| [Feature Status](FEATURE_STATUS.md) | Current capability status and limitations |
+| [Security](SECURITY.md) | Security guidance and threat model |
 
-- [README.md](../README.md) - Project overview with quick start
-- [GETTING_STARTED.md](GETTING_STARTED.md) - Detailed quick start guide with CLI options
+## WAF and traffic management
 
-## Architecture
+| Guide | Purpose |
+|---|---|
+| [Attack Detection](ATTACK_DETECTION.md) | WAF detection coverage and policy |
+| [Bot Protection](BOT_PROTECTION.md) | Bot detection and crawler controls |
+| [Rate Limiting](RATE_LIMITING.md) | Request rate limits |
+| [Flood Protection](FLOOD_PROTECTION.md) | Network flood protection status and configuration |
+| [Request Sanitization](REQUEST_SANITIZATION.md) | Request normalization and header handling |
+| [Threat Intelligence](THREAT_INTEL.md) | Threat feeds and enforcement |
+| [Threat Level](THREAT_LEVEL.md) | Adaptive threat-level behavior |
+| [Signed Rule Feed](SIGNED_RULE_FEED.md) | Signed WAF rule distribution |
+| [Tarpit](TARPIT.md) | Anti-scraping behavior |
+| [Traffic Shaping](TRAFFIC_SHAPING.md) | Bandwidth and connection shaping |
 
-- [ARCHITECTURE.md](ARCHITECTURE.md) - System architecture and design overview
-- [DEVELOPER.md](DEVELOPER.md) - Developer & DevOps technical guide
-- [PROCESS_MANAGEMENT.md](PROCESS_MANAGEMENT.md) - Process management details
+## Proxy and application features
 
-## Configuration
+| Guide | Purpose |
+|---|---|
+| [Upstream Health](UPSTREAM_HEALTH.md) | Upstream health checks |
+| [Proxy Cache](PROXY_CACHE.md) | Response caching |
+| [Static Files](STATIC_FILES.md) | Static file serving |
+| [FastCGI](FASTCGI.md) | FastCGI and PHP-FPM integration |
+| [HTTP/3](HTTP3.md) | HTTP/3 support and configuration |
+| [Tunnels](TUNNELS.md) | QUIC and site-to-site tunnels |
+| [Serverless](SERVERLESS.md) | WASM serverless functions |
+| [Uploads](UPLOADS.md) | Upload validation and malware scanning |
+| [Honeypot](HONEYPOT.md) | Deception listeners and storage |
 
-- [CONFIGURATION.md](CONFIGURATION.md) - Complete configuration reference
-- [GETTING_STARTED.md](GETTING_STARTED.md) - Configuration examples
-- [DEPLOYMENT.md](DEPLOYMENT.md) - Production configuration
+## Optional services and integrations
 
-## Core Features
+| Guide | Purpose |
+|---|---|
+| [WAF Mesh](WAF_MESH.md) | Mesh networking and distributed coordination |
+| [DNS and DNSSEC](dns-dnssec-architecture.md) | DNS and DNSSEC design and operation |
+| [DNS Mesh Integration](dns-mesh-integration.md) | DNS integration with mesh services |
+| [RFC 5011 Trust Anchors](RFC5011_TRUST_ANCHOR.md) | Automated DNSSEC trust-anchor updates |
+| [Global Node CA](global-node-ca.md) | Global node certificate authority |
+| [Plugins](PLUGINS.md) | WASM plugins and extensions |
+| [Plugin Configuration](PLUGIN_CONFIG_REFERENCE.md) | Plugin settings reference |
+| [Plugin Operations](PLUGIN_OPERATOR_RUNBOOK.md) | Plugin operations and troubleshooting |
+| [WASM ABI](WASM-ABI.md) | Plugin ABI specification |
+| [Sandboxing](SANDBOXING.md) | Platform sandbox support and limits |
+| [Platform Support](PLATFORM_SUPPORT.md) | Operating system support details |
+| [Process Management](PROCESS_MANAGEMENT.md) | Supervisor and worker lifecycle |
 
-| Document | Description |
-|----------|-------------|
-| [ATTACK_DETECTION.md](ATTACK_DETECTION.md) | Attack detection (SQLi, XSS, SSRF, etc.) |
-| [BOT_PROTECTION.md](BOT_PROTECTION.md) | Bot detection and AI crawler blocking |
-| [FLOOD_PROTECTION.md](FLOOD_PROTECTION.md) | SYN/UDP flood and connection protection |
-| [RATE_LIMITING.md](RATE_LIMITING.md) | Request rate limiting |
-| [REQUEST_SANITIZATION.md](REQUEST_SANITIZATION.md) | Request sanitization and header handling |
-| [STATIC_FILES.md](STATIC_FILES.md) | Static file serving and optimization |
-| [TARPIT.md](TARPIT.md) | Anti-scraping tarpit behavior |
-| [HONEYPOT.md](HONEYPOT.md) | Deception listeners, honeypot ports, and storage |
-| [FEATURE_STATUS.md](FEATURE_STATUS.md) | Which features are live, partial, or fail-closed |
+## Operations and maintenance
 
-## Upstream Management
+| Guide | Purpose |
+|---|---|
+| [Upgrade](UPGRADE.md) | Upgrade steps and compatibility notes |
+| [Release](RELEASE.md) | Release lifecycle and versioning |
+| [Release Checklist](RELEASE_CHECKLIST.md) | Release qualification checklist |
+| [Performance](PERFORMANCE.md) | Measurement and performance tuning |
+| [Contributing](../CONTRIBUTING.md) | Contribution guidelines |
+| [Changelog](../CHANGELOG.md) | Version history |
 
-- [UPSTREAM_HEALTH.md](UPSTREAM_HEALTH.md) - Health checking and upstream monitoring
+## Developer references
 
-## Advanced Features
+- [Architecture](ARCHITECTURE.md) describes the system design.
+- [Developer Guide](DEVELOPER.md) covers local development and verification.
+- [Architecture overview](../architecture/overview.md) indexes binding design documents. The `plans/` directory retains phase handoff history.
+- [Testing contracts](testing/verification-contract.md) and [test ownership rules](testing/root-test-ownership.md) describe repository verification requirements.
+- [Architecture decision records](adr/) preserve historical design rationale. They are not a statement of current behavior.
 
-SynVoid includes additional features for specific use cases:
-
-| Document | Description |
-|----------|-------------|
-| [HTTP3.md](HTTP3.md) | HTTP/3 (QUIC) support for lower latency |
-| [TUNNELS.md](TUNNELS.md) | QUIC tunnels and site-to-site connectivity |
-| [WAF_MESH.md](WAF_MESH.md) | Peer-to-peer mesh networking for DDoS mitigation |
-| [THREAT_INTEL.md](THREAT_INTEL.md) | Threat intelligence feeds and mesh sharing |
-| [SIGNED_RULE_FEED.md](SIGNED_RULE_FEED.md) | Cryptographically signed WAF rule distribution |
-| [UPLOADS.md](UPLOADS.md) | File upload validation and malware scanning |
-| [FASTCGI.md](FASTCGI.md) | FastCGI proxy support for PHP, Python, etc. |
-| [PLUGINS.md](PLUGINS.md) | WASM plugin system for custom extensions |
-| [PLUGIN_CONFIG_REFERENCE.md](PLUGIN_CONFIG_REFERENCE.md) | Plugin configuration reference |
-| [PLUGIN_OPERATOR_RUNBOOK.md](PLUGIN_OPERATOR_RUNBOOK.md) | Plugin operational runbook |
-| [SERVERLESS.md](SERVERLESS.md) | Serverless WASM function execution |
-| [WASM-ABI.md](WASM-ABI.md) | Plugin WASM ABI specification |
-| [SANDBOXING.md](SANDBOXING.md) | OS-level process sandboxing |
-| [THREAT_LEVEL.md](THREAT_LEVEL.md) | Adaptive threat detection with auto-escalation |
-| [TRAFFIC_SHAPING.md](TRAFFIC_SHAPING.md) | Bandwidth limiting and rate shaping |
-| [PROXY_CACHE.md](PROXY_CACHE.md) | Response caching for performance |
-| [ADMIN_UI.md](ADMIN_UI.md) | Web-based admin interface |
-
-## DNS
-
-- [RFC5011_TRUST_ANCHOR.md](RFC5011_TRUST_ANCHOR.md) - DNSSEC trust anchor automation
-- [dns-dnssec-architecture.md](dns-dnssec-architecture.md) - DNSSEC validation architecture
-- [dns-mesh-integration.md](dns-mesh-integration.md) - DNS subsystem mesh integration
-- [global-node-ca.md](global-node-ca.md) - Global node certificate authority
-
-## Operations
-
-- [DEPLOYMENT.md](DEPLOYMENT.md) - Production deployment guide
-- [UPGRADE.md](UPGRADE.md) - Upgrade guide and breaking changes
-- [RELEASE.md](RELEASE.md) - Release lifecycle and versioning policy
-- [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) - Pre-release verification checklist
-- [releasing.md](releasing.md) - Manual crate publication mechanics
-- [PERFORMANCE.md](PERFORMANCE.md) - Performance tuning and latency optimization
-- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - Common issues and solutions
-- [FAQ.md](FAQ.md) - Frequently asked questions
-- [API_REFERENCE.md](API_REFERENCE.md) - Admin API documentation
-- [PLATFORM_SUPPORT.md](PLATFORM_SUPPORT.md) - Platform-specific notes
-- [SECURITY.md](SECURITY.md) - Security hardening guide
-
-## Architecture Decisions & Testing Contracts
-
-Architecture decision records (historical rationale — not current behavior):
-
-- [adr/ADR-001-global-nodes-trust-anchors.md](adr/ADR-001-global-nodes-trust-anchors.md) — global-node trust anchors
-- [adr/ADR-002-dnssec-validation-recursive-only.md](adr/ADR-002-dnssec-validation-recursive-only.md) — DNSSEC validation is recursive-only
-- [adr/ADR-003-unified-worker-process.md](adr/ADR-003-unified-worker-process.md) — one unified worker process
-- [adr/ADR-004-module-split-pattern.md](adr/ADR-004-module-split-pattern.md) — the module split pattern
-
-Testing contracts and policies:
-
-- [testing/verification-contract.md](testing/verification-contract.md) — **frozen** verification contract (`cargo xtask verify` lanes)
-- [testing/nextest-policy.md](testing/nextest-policy.md) — cargo-nextest version pinning and invocation
-- [testing/root-test-ownership.md](testing/root-test-ownership.md) — where a test belongs (root `tests/` vs owning crate)
-- [testing/test-resource-inventory.md](testing/test-resource-inventory.md) — test suite resource inventory
-
-For the internal design record, start at [`architecture/overview.md`](../architecture/overview.md) — it indexes all 224 architecture docs. Binding design docs live in `architecture/`; `plans/` is retained phase-handoff history.
-
-## Additional Resources
-
-- [GitHub Repository](https://github.com/dbowm91/synvoid)
-- [Example Configurations](../config/)
-- [Example Sites](../config/sites/)
-- [CONTRIBUTING.md](../CONTRIBUTING.md) - Contribution guidelines
-- [CHANGELOG.md](../CHANGELOG.md) - Version history
+The source repository is available at [github.com/dbowm91/synvoid](https://github.com/dbowm91/synvoid).
