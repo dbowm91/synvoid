@@ -561,7 +561,6 @@ impl MeshTopology {
         let existing_first_seen = existing.as_ref().map(|p| p.first_seen);
         let existing_previous_reputation = existing.as_ref().and_then(|p| p.previous_reputation);
         let existing_geo = existing.as_ref().and_then(|p| p.geo.clone());
-        let existing_trusted = existing.as_ref().map(|p| p.is_trusted).unwrap_or(false);
         let existing_audit_successes = existing.as_ref().map(|p| p.audit_successes).unwrap_or(0);
         let existing_audit_failures = existing.as_ref().map(|p| p.audit_failures).unwrap_or(0);
         let existing_perf_successes = existing
@@ -585,7 +584,10 @@ impl MeshTopology {
             first_seen: existing_first_seen.unwrap_or_else(synvoid_utils::safe_unix_timestamp),
             last_seen: synvoid_utils::safe_unix_timestamp(),
             is_global: peer_info.is_global,
-            is_trusted: peer_info.is_trusted || existing_trusted,
+            // Recomputed on every update: trust is a property of the current
+            // session and local config, never a sticky flag a peer can inherit
+            // from an earlier (or forged) announcement.
+            is_trusted: peer_info.is_trusted,
             connection_handle: None,
             geo: existing_geo,
             audit_successes: existing_audit_successes,

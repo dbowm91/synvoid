@@ -39,6 +39,7 @@ use crate::config::MeshConfig;
 use crate::dht::RecordStoreManager;
 use crate::organization::OrganizationManager;
 use crate::protocol::{ProviderInfo, UpstreamProtocol, WafPolicy};
+use crate::service_target::ClientMetadata;
 use crate::stubs::metrics::bandwidth::get_global_bandwidth_tracker_or_log;
 use crate::topology::MeshTopology;
 use crate::transport::MeshTransport;
@@ -60,17 +61,6 @@ pub const BLOCK_BROADCAST_FAILURE_THRESHOLD: u32 = 5;
 /// we block locally and inform global peers. The actual ratelimit block duration
 /// from the origin WAF is preserved when we receive blocks from other nodes.
 const BLOCK_DURATION_SECS: u64 = 300;
-const MAX_PROVIDER_FANOUT: usize = 16;
-
-struct ProviderTaskGuard(Vec<tokio::task::JoinHandle<()>>);
-
-impl Drop for ProviderTaskGuard {
-    fn drop(&mut self) {
-        for task in &self.0 {
-            task.abort();
-        }
-    }
-}
 
 #[derive(Clone)]
 pub struct MeshProxy {
@@ -848,12 +838,34 @@ impl MeshProxy {
         weighted_shuffle(providers)
     }
 
-    // Response transform holds a cache lock across an await; low contention expected.
-    #[allow(clippy::await_holding_lock)]
+    /// Route one request without client metadata.
+    ///
+    /// Callers that know the real client address must use
+    /// [`Self::route_request_with_meta`]: the provider-fallback path rebuilds
+    /// the request and drops extensions, so client identity cannot survive in
+    /// request extensions.
     pub async fn route_request<B>(
         &self,
         upstream_id: &str,
         req: Request<B>,
+    ) -> Result<Response<BoxBody<Bytes, Infallible>>, MeshProxyError>
+    where
+        B: HttpBody + Send,
+        B::Data: Send,
+        B::Error: std::fmt::Debug + Send,
+    {
+        self.route_request_with_meta(upstream_id, req, None).await
+    }
+
+    /// Route one request, carrying the authenticated client identity into the
+    /// service-target preface of every provider attempt.
+    // Response transform holds a cache lock across an await; low contention expected.
+    #[allow(clippy::await_holding_lock)]
+    pub async fn route_request_with_meta<B>(
+        &self,
+        upstream_id: &str,
+        req: Request<B>,
+        meta: Option<&ClientMetadata>,
     ) -> Result<Response<BoxBody<Bytes, Infallible>>, MeshProxyError>
     where
         B: HttpBody + Send,
@@ -960,6 +972,7 @@ impl MeshProxy {
                         method,
                         uri,
                         headers,
+                        meta,
                     )
                     .await;
             }
@@ -986,6 +999,7 @@ impl MeshProxy {
                                 upstream_id,
                                 cached.upstream_url.clone(),
                                 req,
+                                meta,
                             )
                             .await;
                     }
@@ -1018,6 +1032,7 @@ impl MeshProxy {
                     method_for_cache,
                     uri_for_cache,
                     headers_for_cache,
+                    meta,
                 )
                 .await;
         }
@@ -1033,6 +1048,7 @@ impl MeshProxy {
         request_method: http::Method,
         request_uri: http::Uri,
         request_headers: http::HeaderMap,
+        meta: Option<&ClientMetadata>,
     ) -> Result<Response<BoxBody<Bytes, Infallible>>, MeshProxyError>
     where
         B: HttpBody + Send,
@@ -1081,121 +1097,112 @@ impl MeshProxy {
             )));
         }
 
-        let (result_tx, mut result_rx) = tokio::sync::mpsc::channel::<(
-            String,
-            Result<Response<BoxBody<Bytes, Infallible>>, MeshProxyError>,
-        )>(providers.len());
-        let provider_limit = Arc::new(tokio::sync::Semaphore::new(MAX_PROVIDER_FANOUT));
-        let mut provider_tasks = ProviderTaskGuard(Vec::with_capacity(providers.len()));
-
-        for provider in &providers {
-            let permit =
-                provider_limit.clone().acquire_owned().await.map_err(|_| {
-                    MeshProxyError::SendFailed("provider fanout closed".to_string())
-                })?;
-            let result_tx = result_tx.clone();
+        // Phase 06 (C7): one provider at a time, in preference order. A
+        // non-idempotent request is never replayed, so a `POST` executes on at
+        // most one origin.
+        let providers_for_cache = providers.clone();
+        let walk = walk_providers_in_order(providers, &method, |provider| {
             let upstream_id = upstream_id.to_string();
-            let node_id = provider.node_id.clone();
-            let upstream_url = provider.upstream_url.clone();
             let body = body_bytes.clone();
-            let method_clone = method.clone();
-            let uri_clone = uri.clone();
-            let headers_clone = headers.clone();
-            let proxy = self.clone();
+            let method = method.clone();
+            let uri = uri.clone();
+            let headers = headers.clone();
 
-            provider_tasks.0.push(tokio::spawn(async move {
-                let _permit = permit;
+            async move {
+                let node_id = provider.node_id.clone();
                 tracing::debug!("Trying provider {} for {}", node_id, upstream_id);
 
                 // Build request with original method/URI/headers, preserving client's path
                 let request_body = http_body_util::Full::new(body);
-                let mut retry_req = Request::builder().method(method_clone).uri(uri_clone);
-                for (name, value) in headers_clone.iter() {
+                let mut retry_req = Request::builder().method(method).uri(uri);
+                for (name, value) in headers.iter() {
                     retry_req = retry_req.header(name.as_str(), value.to_str().unwrap_or(""));
                 }
                 let retry_req = match retry_req.body(request_body) {
                     Ok(req) => req,
                     Err(e) => {
-                        let _ = result_tx
-                            .send((node_id, Err(MeshProxyError::SendFailed(e.to_string()))))
-                            .await;
-                        return;
+                        return ProviderAttempt::Failed {
+                            error: MeshProxyError::SendFailed(e.to_string()),
+                            response_started: false,
+                        };
                     }
                 };
 
-                let result = proxy
-                    .proxy_to_peer(&node_id, &upstream_id, upstream_url, retry_req)
-                    .await;
-                let _ = result_tx.send((node_id, result)).await;
-            }));
-        }
-
-        drop(result_tx);
-
-        let mut last_error = None;
-        let mut successful_provider: Option<String> = None;
-        let mut successful_resp: Option<Response<BoxBody<Bytes, Infallible>>> = None;
-
-        while let Some((provider_node_id, result)) = result_rx.recv().await {
-            match result {
-                Ok(resp) => {
-                    self.record_provider_success(&provider_node_id);
-                    successful_provider = Some(provider_node_id.clone());
-                    successful_resp = Some(resp);
-                    break;
-                }
-                Err(e) => {
-                    let failure_count = self.record_provider_failure(&provider_node_id);
-
-                    let tm = {
-                        let guard = self.transport_manager.read();
-                        guard.clone()
-                    };
-                    if let Some(ref tm) = tm {
-                        tm.report_reachability(
-                            upstream_id,
-                            &provider_node_id,
-                            crate::dht::ReachabilityStatus::Failed,
-                            0,
-                            0.0,
-                            failure_count,
-                        );
+                // `proxy_to_peer` yields either a complete buffered response or
+                // an error, so an error never carries response bytes to the
+                // caller. The method check in `walk_providers_in_order` is the
+                // binding replay guard.
+                match self
+                    .proxy_to_peer(
+                        &node_id,
+                        &upstream_id,
+                        provider.upstream_url,
+                        retry_req,
+                        meta,
+                    )
+                    .await
+                {
+                    Ok(resp) => {
+                        self.record_provider_success(&node_id);
+                        ProviderAttempt::Succeeded(resp)
                     }
+                    Err(e) => {
+                        let failure_count = self.record_provider_failure(&node_id);
 
-                    if failure_count >= BLOCK_BROADCAST_FAILURE_THRESHOLD
-                        && !self.topology.is_upstream_blocked(upstream_id).await
-                    {
-                        tracing::warn!(
-                            upstream_id,
-                            failure_count,
-                            "Upstream {} has {} consecutive failures - broadcasting block to mesh",
-                            upstream_id,
-                            failure_count
-                        );
-                        self.block_and_broadcast_upstream(
-                            upstream_id,
-                            "provider_consecutive_failures",
-                            BLOCK_DURATION_SECS,
-                        )
-                        .await;
+                        let tm = {
+                            let guard = self.transport_manager.read();
+                            guard.clone()
+                        };
+                        if let Some(ref tm) = tm {
+                            tm.report_reachability(
+                                &upstream_id,
+                                &node_id,
+                                crate::dht::ReachabilityStatus::Failed,
+                                0,
+                                0.0,
+                                failure_count,
+                            );
+                        }
+
+                        if failure_count >= BLOCK_BROADCAST_FAILURE_THRESHOLD
+                            && !self.topology.is_upstream_blocked(&upstream_id).await
+                        {
+                            tracing::warn!(
+                                upstream_id = %upstream_id,
+                                failure_count,
+                                "Upstream {} has {} consecutive failures - broadcasting block to mesh",
+                                upstream_id,
+                                failure_count
+                            );
+                            self.block_and_broadcast_upstream(
+                                &upstream_id,
+                                "provider_consecutive_failures",
+                                BLOCK_DURATION_SECS,
+                            )
+                            .await;
+                        }
+
+                        tracing::warn!("Provider {} failed for {}: {}", node_id, upstream_id, e);
+                        ProviderAttempt::Failed {
+                            error: e,
+                            response_started: false,
+                        }
                     }
-
-                    tracing::warn!(
-                        "Provider {} failed for {}: {}",
-                        provider_node_id,
-                        upstream_id,
-                        e
-                    );
-                    last_error = Some(e);
                 }
             }
-        }
+        })
+        .await;
 
-        if let Some((provider_node_id, resp)) = successful_provider.zip(successful_resp) {
+        let mut walk = walk;
+        let last_error = walk.last_error();
+        let selected = walk.selected.take();
+
+        if let Some((provider_node_id, resp)) = selected {
             if let Some(cached) = self.get_cached_policy(upstream_id) {
                 if cached.provider_node_id != provider_node_id {
-                    if let Some(provider_info) =
-                        providers.iter().find(|p| p.node_id == provider_node_id)
+                    if let Some(provider_info) = providers_for_cache
+                        .iter()
+                        .find(|p| p.node_id == provider_node_id)
                     {
                         let updated = CachedPolicy {
                             provider_node_id: provider_node_id.clone(),
@@ -1378,6 +1385,7 @@ impl MeshProxy {
                             upstream_id,
                             cached.upstream_url.clone(),
                             req,
+                            None,
                         )
                         .await;
                     return response.map(|r| (r, cached.waf_policy));
@@ -1395,7 +1403,16 @@ impl MeshProxy {
         let headers = req.headers().clone();
 
         let response = self
-            .proxy_to_peer_with_fallback(upstream_id, providers, req, site_id, method, uri, headers)
+            .proxy_to_peer_with_fallback(
+                upstream_id,
+                providers,
+                req,
+                site_id,
+                method,
+                uri,
+                headers,
+                None,
+            )
             .await;
 
         match response {
@@ -1410,6 +1427,7 @@ impl MeshProxy {
         upstream_id: &str,
         provider_upstream_url: String,
         mut req: Request<B>,
+        meta: Option<&ClientMetadata>,
     ) -> Result<Response<BoxBody<Bytes, Infallible>>, MeshProxyError>
     where
         B: HttpBody + Send,
@@ -1494,7 +1512,7 @@ impl MeshProxy {
         }
 
         let response = transport
-            .proxy_http_request(peer_node_id, upstream_id, req)
+            .proxy_http_request(peer_node_id, upstream_id, meta, req)
             .await
             .map_err(|e| MeshProxyError::ConnectionFailed(e.to_string()))?;
 
@@ -1978,6 +1996,93 @@ impl MeshProxy {
 
         Ok(())
     }
+}
+
+/// Whether a method may be replayed on another provider after a failed
+/// attempt.
+///
+/// Phase 06 (C7): a non-idempotent request is written to exactly one origin.
+/// `POST`/`PUT`/`PATCH`/`DELETE` can have executed on the first provider even
+/// when the response never arrived, so they are never replayed.
+pub fn is_replayable_method(method: &http::Method) -> bool {
+    matches!(
+        *method,
+        http::Method::GET | http::Method::HEAD | http::Method::OPTIONS | http::Method::TRACE
+    )
+}
+
+/// Result of one provider attempt inside [`walk_providers_in_order`].
+pub enum ProviderAttempt<T, E> {
+    /// The provider produced a response; the walk stops here.
+    Succeeded(T),
+    /// The attempt failed.
+    Failed {
+        error: E,
+        /// True once any response byte was received. A partially-read response
+        /// is never replayed, whatever the method.
+        response_started: bool,
+    },
+}
+
+/// What [`walk_providers_in_order`] settled on.
+pub struct ProviderWalk<T, E> {
+    /// The provider that answered, and its value. `None` when every attempt
+    /// that was allowed to run failed.
+    pub selected: Option<(String, T)>,
+    /// Failed attempts in order: `(provider node id, error)`.
+    pub failures: Vec<(String, E)>,
+}
+
+impl<T, E> ProviderWalk<T, E> {
+    /// The error from the last failed attempt, for the caller's return value.
+    pub fn last_error(&mut self) -> Option<E> {
+        self.failures.pop().map(|(_, error)| error)
+    }
+}
+
+/// Try `providers` in order, one at a time, stopping at the first success.
+///
+/// Phase 06 (C7): the previous implementation spawned every provider up front
+/// and raced them, so a `POST` could execute on up to sixteen origins. This
+/// walk is strictly sequential: a provider is attempted only after the
+/// previous one failed before producing response bytes, and only when the
+/// method is replayable (see [`is_replayable_method`]). Otherwise the first
+/// provider is authoritative.
+pub async fn walk_providers_in_order<T, E, F, Fut>(
+    providers: Vec<crate::protocol::ProviderInfo>,
+    method: &http::Method,
+    mut attempt: F,
+) -> ProviderWalk<T, E>
+where
+    F: FnMut(crate::protocol::ProviderInfo) -> Fut,
+    Fut: std::future::Future<Output = ProviderAttempt<T, E>>,
+{
+    let replayable = is_replayable_method(method);
+    let mut walk = ProviderWalk {
+        selected: None,
+        failures: Vec::new(),
+    };
+
+    for provider in providers {
+        let node_id = provider.node_id.clone();
+        match attempt(provider).await {
+            ProviderAttempt::Succeeded(value) => {
+                walk.selected = Some((node_id, value));
+                break;
+            }
+            ProviderAttempt::Failed {
+                error,
+                response_started,
+            } => {
+                walk.failures.push((node_id, error));
+                if response_started || !replayable {
+                    break;
+                }
+            }
+        }
+    }
+
+    walk
 }
 
 fn weighted_shuffle(

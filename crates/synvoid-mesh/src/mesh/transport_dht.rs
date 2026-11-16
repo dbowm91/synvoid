@@ -439,23 +439,24 @@ impl MeshTransport {
                     return;
                 }
 
-                let replay_state = self
-                    .peer_connections
-                    .get(from_peer)
-                    .map(|conn| conn.replay_protection.clone());
-                if let Some(replay_protection) = replay_state {
-                    let replay_result = replay_protection
-                        .write()
-                        .await
-                        .check_and_add(nonce, timestamp);
-                    if !matches!(replay_result, crate::protocol::ReplayResult::Valid) {
-                        tracing::warn!(
-                            "DHT sync request from {} rejected: replay protection {}",
-                            from_peer,
-                            replay_result_reason(replay_result)
-                        );
-                        return;
-                    }
+                let Some(replay_protection) = self.replay_state_for_peer(from_peer) else {
+                    tracing::warn!(
+                        "DHT sync request from {} rejected: no session or retained replay state",
+                        from_peer
+                    );
+                    return;
+                };
+                let replay_result = replay_protection
+                    .write()
+                    .await
+                    .check_and_add(nonce, timestamp);
+                if !matches!(replay_result, crate::protocol::ReplayResult::Valid) {
+                    tracing::warn!(
+                        "DHT sync request from {} rejected: replay protection {}",
+                        from_peer,
+                        replay_result_reason(replay_result)
+                    );
+                    return;
                 }
 
                 let signature_valid = verify_dht_sync_request_signature(
@@ -678,23 +679,24 @@ impl MeshTransport {
             }
         }
 
-        let replay_state = self
-            .peer_connections
-            .get(from_peer)
-            .map(|conn| conn.replay_protection.clone());
-        if let Some(replay_protection) = replay_state {
-            let replay_result = replay_protection
-                .write()
-                .await
-                .check_and_add(nonce, timestamp);
-            if !matches!(replay_result, crate::protocol::ReplayResult::Valid) {
-                tracing::warn!(
-                    "DHT anti-entropy request from {} rejected: replay protection {}",
-                    from_peer,
-                    replay_result_reason(replay_result)
-                );
-                return;
-            }
+        let Some(replay_protection) = self.replay_state_for_peer(from_peer) else {
+            tracing::warn!(
+                "DHT anti-entropy request from {} rejected: no session or retained replay state",
+                from_peer
+            );
+            return;
+        };
+        let replay_result = replay_protection
+            .write()
+            .await
+            .check_and_add(nonce, timestamp);
+        if !matches!(replay_result, crate::protocol::ReplayResult::Valid) {
+            tracing::warn!(
+                "DHT anti-entropy request from {} rejected: replay protection {}",
+                from_peer,
+                replay_result_reason(replay_result)
+            );
+            return;
         }
 
         // MESH-14: If require_pki_binding, verify node has a cert binding
@@ -955,10 +957,11 @@ impl MeshTransport {
 
             // Get connected global nodes
             let global_nodes: Vec<String> = self
-                .peer_connections
-                .iter()
-                .filter(|e| e.value().role.is_global())
-                .map(|e| e.key().clone())
+                .peers
+                .snapshot()
+                .into_iter()
+                .filter(|peer| peer.role.is_global())
+                .map(|peer| peer.node_id.clone())
                 .collect();
 
             if global_nodes.is_empty() {

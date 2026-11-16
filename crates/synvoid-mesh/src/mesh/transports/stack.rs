@@ -91,7 +91,7 @@ impl MeshTransportStack {
         }
 
         if let Some(ref quic) = self.quic_transport {
-            if quic.inner.peer_connections.contains_key(peer_id) {
+            if quic.inner.peers.get(peer_id).is_some() {
                 return quic
                     .inner
                     .send_message_to_peer(peer_id, message)
@@ -109,7 +109,7 @@ impl MeshTransportStack {
         message: &MeshMessage,
     ) -> Result<(), MeshTransportError> {
         if let Some(ref quic) = self.quic_transport {
-            if quic.inner.peer_connections.contains_key(peer_id) {
+            if quic.inner.peers.get(peer_id).is_some() {
                 return quic
                     .inner
                     .send_datagram_to_peer(peer_id, message)
@@ -128,12 +128,7 @@ impl MeshTransportStack {
         let mut errors = Vec::new();
 
         if let Some(ref quic) = self.quic_transport {
-            let peers: Vec<String> = quic
-                .inner
-                .peer_connections
-                .iter()
-                .map(|e| e.key().clone())
-                .collect();
+            let peers: Vec<String> = quic.inner.connected_peer_ids();
 
             for peer_id in peers {
                 if let Err(e) = quic.inner.send_datagram_to_peer(&peer_id, message).await {
@@ -153,8 +148,8 @@ impl MeshTransportStack {
         let mut peers = Vec::new();
 
         if let Some(ref quic) = self.quic_transport {
-            for entry in quic.inner.peer_connections.iter() {
-                peers.push((entry.key().clone(), MeshTransportType::Quic));
+            for node_id in quic.inner.connected_peer_ids() {
+                peers.push((node_id, MeshTransportType::Quic));
             }
         }
 
@@ -163,7 +158,7 @@ impl MeshTransportStack {
 
     pub fn is_peer_connected(&self, peer_id: &str) -> bool {
         if let Some(ref quic) = self.quic_transport {
-            if quic.inner.peer_connections.contains_key(peer_id) {
+            if quic.inner.peers.get(peer_id).is_some() {
                 return true;
             }
         }
@@ -173,7 +168,7 @@ impl MeshTransportStack {
 
     pub fn get_peer_address(&self, peer_id: &str) -> Option<String> {
         if let Some(ref quic) = self.quic_transport {
-            if let Some(conn) = quic.inner.peer_connections.get(peer_id) {
+            if let Some(conn) = quic.inner.peers.get(peer_id) {
                 return Some(conn.address.clone());
             }
         }

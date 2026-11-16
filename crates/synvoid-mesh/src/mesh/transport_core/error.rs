@@ -51,6 +51,15 @@ pub enum MeshTransportError {
     ShutdownTimeout(Duration),
     #[error("Already starting")]
     AlreadyStarting,
+    /// Startup completed its bootstrap steps without a single live session
+    /// while the policy required one.
+    #[error("No peer connected")]
+    NoPeerConnected,
+    /// A site configuration is larger than the mesh message limit. Raised
+    /// before any send so the caller can name the cause instead of surfacing a
+    /// generic transport failure.
+    #[error("Site config too large: {size} bytes (max {max})")]
+    SiteConfigTooLarge { size: usize, max: usize },
 }
 
 impl From<quinn::ConnectionError> for MeshTransportError {

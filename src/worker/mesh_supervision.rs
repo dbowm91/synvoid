@@ -149,6 +149,12 @@ pub struct WorkerMeshStatus {
     pub last_exit: Option<MeshTaskExit>,
     pub restart_attempts: u32,
     pub last_transition: Instant,
+    /// Sessions in the node-keyed peer registry at the last startup report.
+    /// Never a configured seed/peer count.
+    pub connected_peer_count: usize,
+    /// Non-fatal startup findings (zero peers under a lenient policy, DHT
+    /// degradation, ...). Empty when mesh started cleanly.
+    pub degraded_reasons: Vec<String>,
 }
 
 impl std::fmt::Debug for WorkerMeshStatus {
@@ -162,6 +168,8 @@ impl std::fmt::Debug for WorkerMeshStatus {
             .field("last_exit", &self.last_exit)
             .field("restart_attempts", &self.restart_attempts)
             .field("last_transition", &self.last_transition)
+            .field("connected_peer_count", &self.connected_peer_count)
+            .field("degraded_reasons", &self.degraded_reasons)
             .finish()
     }
 }
@@ -174,6 +182,8 @@ impl Default for WorkerMeshStatus {
             last_exit: None,
             restart_attempts: 0,
             last_transition: Instant::now(),
+            connected_peer_count: 0,
+            degraded_reasons: Vec::new(),
         }
     }
 }
@@ -230,6 +240,21 @@ impl WorkerMeshStatus {
         self.last_exit = Some(exit);
         self.last_transition = Instant::now();
     }
+
+    /// Fold a startup report into the worker-owned status projection.
+    ///
+    /// `connected_peer_count` and `degraded_reasons` are kept even when a
+    /// later event changes the phase, so status readers can still explain why
+    /// a running mesh is degraded.
+    pub fn record_startup_report(&mut self, report: &synvoid_mesh::lifecycle::MeshStartupReport) {
+        self.connected_peer_count = report.connected_peer_count;
+        self.degraded_reasons = report.degraded_reasons.clone();
+        if report.degraded_reasons.is_empty() {
+            self.transition_running();
+        } else {
+            self.transition_degraded(report.degraded_reasons.join("; "));
+        }
+    }
 }
 
 /// Events from the mesh observer to the supervision coordinator.
@@ -281,7 +306,13 @@ impl std::fmt::Debug for MeshSupervisorDecision {
 pub fn apply_mesh_event_to_status(status: &mut WorkerMeshStatus, event: &MeshSupervisionEvent) {
     match event {
         MeshSupervisionEvent::Started => {
-            status.transition_running();
+            // A report that carried degradation must not be overwritten by the
+            // start event: the reasons stay visible until a clean restart.
+            if status.degraded_reasons.is_empty() {
+                status.transition_running();
+            } else {
+                status.transition_degraded(status.degraded_reasons.join("; "));
+            }
         }
         MeshSupervisionEvent::StartupFailed(reason) => {
             status.transition_failed(format!("startup failed: {reason}"));
@@ -884,16 +915,37 @@ pub fn build_mesh_supervision_policy(
 pub async fn start_mesh_generation(
     transport: &std::sync::Arc<synvoid_mesh::MeshTransport>,
     generation: u64,
-) -> Result<(), MeshFailureCause> {
-    let result = transport.start().await;
-    match result {
-        Ok(()) => {
-            tracing::info!(generation, "Mesh transport started successfully");
-            Ok(())
+) -> Result<synvoid_mesh::lifecycle::MeshStartupReport, MeshFailureCause> {
+    // Production startup: a node with configured seeds or peers must have a
+    // live session within the bound. The lenient default stays available to
+    // embedders and unit tests, but not to the worker's real mesh.
+    let policy = synvoid_mesh::lifecycle::MeshStartupPolicy::require_peers(30);
+    match transport.start_with_policy(policy).await {
+        Ok(report) => {
+            if report.degraded_reasons.is_empty() {
+                tracing::info!(
+                    generation,
+                    connected_peers = report.connected_peer_count,
+                    "Mesh transport started successfully"
+                );
+            } else {
+                tracing::warn!(
+                    generation,
+                    connected_peers = report.connected_peer_count,
+                    degraded = ?report.degraded_reasons,
+                    "Mesh transport started degraded"
+                );
+            }
+            Ok(report)
         }
         Err(e) => {
             let reason = e.to_string();
-            tracing::error!(generation, "Mesh startup failed: {}", e);
+            tracing::error!(
+                generation,
+                connected_peers = transport.peer_count(),
+                "Mesh startup failed: {}",
+                e
+            );
             Err(MeshFailureCause::StartupFailed(reason))
         }
     }

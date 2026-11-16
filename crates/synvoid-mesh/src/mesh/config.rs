@@ -236,8 +236,23 @@ fn default_require_explicit_fingerprint() -> bool {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MeshPeerConfig {
     pub address: String,
+    /// Retained for config compatibility; never sent and no longer checked.
     #[serde(default)]
     pub auth_token: Option<String>,
+}
+
+/// The role an operator grants a peer in [`MeshUpstreamPeer`].
+///
+/// Mirrors the operator-schema type of the same name. The DTO is bridged into
+/// this struct through a JSON round-trip, so the serde representation must stay
+/// `"edge" | "origin" | "global"`. `MeshNodeRole` cannot be reused here: it
+/// serializes as a numeric bitmask.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum MeshPeerRoleGrant {
+    Edge,
+    Origin,
+    Global,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -245,6 +260,9 @@ pub struct MeshUpstreamPeer {
     pub node_id: String,
     #[serde(default)]
     pub allowed: bool,
+    /// Role granted to this peer; absent means `edge`.
+    #[serde(default)]
+    pub role: Option<MeshPeerRoleGrant>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
@@ -1472,28 +1490,41 @@ pub struct NodeIdentityConfig {
     pub minting_proof: Option<GenesisMintingProof>,
 }
 
-fn derive_node_id_hash(private_key: &[u8]) -> Vec<u8> {
-    let mut hasher = sha2::Sha256::new();
-    hasher.update(b"public-key-from:");
-    hasher.update(private_key);
-    hasher.finalize().to_vec()
-}
+/// Domain tag mixed into a published key before it becomes a node id.
+const NODE_ID_KEY_DOMAIN: &[u8] = b"public-key-from:";
 
-fn derive_node_id(private_key: &[u8]) -> String {
-    let node_hash = derive_node_id_hash(private_key);
-    format!("node-{}", hex::encode(&node_hash[..8]))
+/// The key the node publishes, derived from its 32-byte identity seed.
+///
+/// The seed is an Ed25519 seed and the published key is the verifying key it
+/// signs with. Publishing that key is what makes the handshake binding
+/// meaningful: the id a peer accepts is derived from the same key its message
+/// signatures verify against.
+pub fn derive_identity_public_key(seed: &[u8; 32]) -> [u8; 32] {
+    ed25519_dalek::SigningKey::from_bytes(seed)
+        .verifying_key()
+        .to_bytes()
 }
 
 /// The node id a published node key derives to.
 ///
-/// `derive_node_id_hash` publishes `sha256("public-key-from:" || secret)` as
-/// the node's public key, and the id is `node-<first 8 bytes hex>`. A peer can
-/// therefore verify a claimed node id from the key alone, without the secret.
+/// The id is `sha256("public-key-from:" || public_key)[..8]` as hex, so a peer
+/// can recompute it from the key alone. The key is the node's Ed25519
+/// verifying key; the id does not depend on the seed.
 pub fn node_id_from_public_key(public_key: &[u8]) -> Option<String> {
-    if public_key.len() < 8 {
+    if public_key.len() != 32 {
         return None;
     }
-    Some(format!("node-{}", hex::encode(&public_key[..8])))
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(NODE_ID_KEY_DOMAIN);
+    hasher.update(public_key);
+    let digest = hasher.finalize();
+    Some(format!("node-{}", hex::encode(&digest[..8])))
+}
+
+/// The node id for an identity seed: the id its published key derives to.
+fn derive_node_id(seed: &[u8; 32]) -> String {
+    let public_key = derive_identity_public_key(seed);
+    node_id_from_public_key(&public_key).expect("a verifying key is always 32 bytes")
 }
 
 /// Decode a peer's advertised public key.
@@ -1519,10 +1550,10 @@ pub fn decode_node_public_key(encoded: &str) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
-pub fn derive_router_id(private_key: &[u8]) -> String {
-    let node_hash = derive_node_id_hash(private_key);
+pub fn derive_router_id(seed: &[u8; 32]) -> String {
+    let public_key = derive_identity_public_key(seed);
     let mut hasher = Sha256::new();
-    hasher.update(&node_hash);
+    hasher.update(public_key);
     let hash = hasher.finalize();
     base32::encode(
         base32::Alphabet::Rfc4648Lower { padding: false },

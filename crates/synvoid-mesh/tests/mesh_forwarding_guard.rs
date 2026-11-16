@@ -48,8 +48,16 @@ fn http_dispatch_uses_the_mesh_proxy_not_the_backend_pool() {
         "mesh HTTP dispatch must carry the mesh proxy handle"
     );
     assert!(
-        dispatch.contains("route_request(service_id"),
-        "mesh HTTP dispatch must forward the selected service ID through MeshProxy::route_request"
+        dispatch.contains("route_request_with_meta(service_id"),
+        "mesh HTTP dispatch must forward the selected service ID with the authenticated client metadata"
+    );
+    assert!(
+        dispatch.contains("client_ip: IpAddr"),
+        "the dispatch must take the client address from the request context"
+    );
+    assert!(
+        dispatch.contains("ClientMetadata"),
+        "the dispatch must carry the authenticated client identity in the preface"
     );
     assert!(
         !dispatch.contains("MeshBackendPool"),
@@ -78,8 +86,8 @@ fn egress_writes_the_typed_service_preface() {
         "fn check_rate_limit(",
     );
     assert!(
-        proxy_http.contains("encode_service_preface(service_id)"),
-        "proxy_http_request must encode the service ID as a typed preface"
+        proxy_http.contains("encode_service_preface(service_id, meta)"),
+        "proxy_http_request must encode the service ID and client metadata as a typed preface"
     );
     assert!(
         proxy_http.contains("write_all(&preface)"),
@@ -168,8 +176,8 @@ fn route_disclosure_is_authorized_on_both_paths() {
 fn proxy_to_peer_sends_the_service_id() {
     let proxy = crate_file("src/mesh/proxy.rs");
     assert!(
-        proxy.contains("proxy_http_request(peer_node_id, upstream_id, req)"),
-        "proxy_to_peer must send the service ID, not a resolved target URL"
+        proxy.contains("proxy_http_request(peer_node_id, upstream_id, meta, req)"),
+        "proxy_to_peer must send the service ID and the threaded client metadata"
     );
 }
 

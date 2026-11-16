@@ -96,13 +96,53 @@ pub fn run_mesh_agent_mode(config_path: Option<PathBuf>, _foreground: bool) {
             main_config.blocklist_limits.clone(),
         ));
 
-        let _cp = match init_mesh_control_plane(&main_config, block_store).await {
+        let cp = match init_mesh_control_plane(&main_config, block_store).await {
             Some(cp) => cp,
             None => {
                 tracing::error!("Mesh is disabled or failed to initialize. Mesh agent exiting.");
                 return;
             }
         };
+
+        // The agent exists to serve the mesh control plane. Starting it is the
+        // work that makes "active" true; skipping it and logging success was
+        // how a zero-peer agent passed for healthy.
+        let Some(transport) = cp
+            .transport_manager
+            .get_quic_transport()
+            .map(|transport| transport.get_inner())
+        else {
+            tracing::error!("Mesh Agent has no QUIC transport after initialization");
+            eprintln!("Mesh Agent failed: no QUIC transport");
+            std::process::exit(1);
+        };
+
+        match transport
+            .start_with_policy(synvoid_mesh::lifecycle::MeshStartupPolicy::require_peers(
+                30,
+            ))
+            .await
+        {
+            Ok(report) => {
+                if report.degraded_reasons.is_empty() {
+                    tracing::info!(
+                        connected_peers = report.connected_peer_count,
+                        "Mesh Agent transport started"
+                    );
+                } else {
+                    tracing::warn!(
+                        connected_peers = report.connected_peer_count,
+                        degraded = ?report.degraded_reasons,
+                        "Mesh Agent transport started degraded"
+                    );
+                }
+            }
+            Err(error) => {
+                tracing::error!("Mesh Agent transport failed to start: {}", error);
+                eprintln!("Mesh Agent transport failed to start: {}", error);
+                std::process::exit(1);
+            }
+        }
 
         // Mesh agent handles gRPC control API for mesh-related queries
         let grpc_addr: Result<std::net::SocketAddr, _> =
@@ -219,25 +259,18 @@ pub async fn init_mesh_control_plane(
 
     let backend_pool = Arc::new(MeshBackendPool::new(proxy.clone(), topology.clone()));
 
-    let signer_key = if let Some(ref key) = mesh_config.global_node_key {
-        let mut key_bytes = [0u8; 32];
-        let key_str = key.as_bytes();
-        let len = key_str.len().min(32);
-        key_bytes[..len].copy_from_slice(&key_str[..len]);
-        key_bytes
-    } else {
-        use hkdf::Hkdf;
-        use sha2::Sha256;
-        let ikm = node_id.as_bytes();
-        let hk = Hkdf::<Sha256>::new(None, ikm);
-        let mut okm = [0u8; 32];
-        if hk.expand(b"synvoid-mesh-signer", &mut okm).is_err() {
+    // The signer is the node identity itself: its verifying key is the
+    // published `public_key` peers bind in the handshake, so signatures verify
+    // against the identity that was authenticated. No subkey, no fallback.
+    let signer_seed = match mesh_config.signing_seed() {
+        Ok(seed) => seed,
+        Err(error) => {
             tracing::error!(
-                "HKDF expand failed for mesh signer key derivation; aborting mesh startup"
+                "Mesh signer unavailable: {error}. Refusing to start the mesh with an unbound \
+                 signing identity."
             );
             return None;
         }
-        okm
     };
 
     let threat_config = ThreatIntelligenceConfig {
@@ -260,7 +293,7 @@ pub async fn init_mesh_control_plane(
         high_severity_threshold: mesh_config.threat_intel.high_severity_threshold,
     };
 
-    let signer_for_threat = crate::mesh::protocol::MeshMessageSigner::new(signer_key)
+    let signer_for_threat = crate::mesh::protocol::MeshMessageSigner::from_secret(signer_seed)
         .with_verification_pool(verification_pool.clone());
 
     let threat_intel = Arc::new(ThreatIntelligenceManager::from_external_config(
@@ -320,9 +353,9 @@ pub async fn init_mesh_control_plane(
         transport_manager.clone(),
         backend_pool.clone(),
         Some(threat_intel.clone()),
-        Some(Arc::new(crate::mesh::protocol::MeshMessageSigner::new(
-            signer_key,
-        ))),
+        Some(Arc::new(
+            crate::mesh::protocol::MeshMessageSigner::from_secret(signer_seed),
+        )),
         false,
     )
     .await
@@ -336,9 +369,9 @@ pub async fn init_mesh_control_plane(
         transport_manager.clone(),
         backend_pool.clone(),
         Some(threat_intel.clone()),
-        Some(Arc::new(crate::mesh::protocol::MeshMessageSigner::new(
-            signer_key,
-        ))),
+        Some(Arc::new(
+            crate::mesh::protocol::MeshMessageSigner::from_secret(signer_seed),
+        )),
         false,
     )
     .await

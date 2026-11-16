@@ -182,11 +182,36 @@ pub struct BanListResponse {
     pub total: usize,
 }
 
+/// One live peer session as seen by the node-keyed registry.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct MeshPeerSessionStatus {
+    pub node_id: String,
+    pub role: String,
+    pub address: String,
+    /// Seconds since the session was established.
+    pub session_age_secs: u64,
+    /// Seconds since the peer last sent anything.
+    pub last_seen_age_secs: u64,
+}
+
 #[derive(Debug, Serialize, ToSchema)]
 pub struct MeshAdminStatusResponse {
     pub is_global_node: bool,
+    /// Origin mesh id, kept for compatibility; `None` when no origin key is
+    /// configured.
     pub node_id: Option<String>,
+    /// Identity realized from the node key, which is what peers see.
+    pub realized_node_id: Option<String>,
+    /// Realized role of this node.
+    pub role: Option<String>,
+    /// Port the mesh endpoint actually bound.
+    pub mesh_port: Option<u16>,
+    /// Sessions in the peer registry. Never the configured seed/peer count.
     pub connected_peers: usize,
+    /// Per-session detail: node id, role, address, and age.
+    pub peers: Vec<MeshPeerSessionStatus>,
+    /// Non-fatal startup findings. Empty when mesh started cleanly.
+    pub degraded_reasons: Vec<String>,
     pub global_nodes: usize,
     pub edge_nodes: usize,
     pub genesis_key_configured: bool,
@@ -1011,7 +1036,12 @@ pub async fn get_mesh_status(
 ) -> Result<Json<MeshAdminStatusResponse>, StatusCode> {
     let mut is_global_node = false;
     let mut node_id = None;
+    let mut realized_node_id = None;
+    let mut role = None;
+    let mut mesh_port = None;
     let mut connected_peers = 0;
+    let mut peers = Vec::new();
+    let mut degraded_reasons = Vec::new();
     let mut global_nodes = 0;
     let mut edge_nodes = 0;
     let mut genesis_key_configured = false;
@@ -1024,12 +1054,31 @@ pub async fn get_mesh_status(
     if let Some(transport) = &state.mesh.mesh_transport {
         is_global_node = transport.is_global_node();
         node_id = transport.get_node_mesh_id();
+        realized_node_id = Some(transport.get_node_id());
+        role = Some(format!("{:?}", transport.get_mesh_config().role).to_lowercase());
+        mesh_port = transport.get_actual_quic_port().await;
         connected_peers = transport.connected_peer_count();
 
-        let topology = transport.get_topology();
-        let peers = topology.get_all_peers().await;
+        peers = transport
+            .connected_peer_sessions()
+            .into_iter()
+            .map(|session| MeshPeerSessionStatus {
+                node_id: session.node_id,
+                role: format!("{:?}", session.role).to_lowercase(),
+                address: session.address,
+                session_age_secs: session.session_age_secs,
+                last_seen_age_secs: session.last_seen_age_secs,
+            })
+            .collect();
+        degraded_reasons = transport
+            .startup_report()
+            .map(|report| report.degraded_reasons)
+            .unwrap_or_default();
 
-        for peer in peers {
+        let topology = transport.get_topology();
+        let topology_peers = topology.get_all_peers().await;
+
+        for peer in topology_peers {
             if peer.role.is_global() {
                 global_nodes += 1;
             } else {
@@ -1068,7 +1117,12 @@ pub async fn get_mesh_status(
     Ok(Json(MeshAdminStatusResponse {
         is_global_node,
         node_id,
+        realized_node_id,
+        role,
+        mesh_port,
         connected_peers,
+        peers,
+        degraded_reasons,
         global_nodes,
         edge_nodes,
         genesis_key_configured,

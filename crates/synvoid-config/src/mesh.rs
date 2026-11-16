@@ -186,8 +186,26 @@ pub struct MeshSeedNode {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
 pub struct MeshPeerConfig {
     pub address: String,
+    /// Retained for config compatibility. No token is sent or checked: peers
+    /// authenticate with mutual TLS, the node-id/key binding and the
+    /// `peered_wafs` role grant.
     #[serde(default)]
     pub auth_token: Option<String>,
+}
+
+/// The role an operator grants a peer in [`MeshUpstreamPeer`].
+///
+/// This is an allowlist grant, not a wire value: the handshake reads the
+/// peer's claimed role, resolves it through this grant, and rejects a claim
+/// that does not match. `MeshNodeRole` cannot be used here because it
+/// serializes as a numeric bitmask, which would make `role = "origin"`
+/// unparseable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum MeshPeerRoleGrant {
+    Edge,
+    Origin,
+    Global,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
@@ -195,6 +213,9 @@ pub struct MeshUpstreamPeer {
     pub node_id: String,
     #[serde(default)]
     pub allowed: bool,
+    /// Role granted to this peer; absent means `edge`.
+    #[serde(default)]
+    pub role: Option<MeshPeerRoleGrant>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]

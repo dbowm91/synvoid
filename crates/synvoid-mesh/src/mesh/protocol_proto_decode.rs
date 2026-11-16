@@ -1410,6 +1410,13 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                     }
                 }),
             }),
+            proto::mesh_message::Payload::SiteConfigAck(r) => Ok(MeshMessage::SiteConfigAck {
+                request_id: r.request_id.into(),
+                site_id: r.site_id.into(),
+                applied_version: r.applied_version,
+                accepted: r.accepted,
+                reason: r.reason.into(),
+            }),
             proto::mesh_message::Payload::WasmModuleAnnounce(r) => {
                 Ok(MeshMessage::WasmModuleAnnounce {
                     request_id: r.request_id.into(),

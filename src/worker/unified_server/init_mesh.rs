@@ -297,25 +297,21 @@ pub async fn init_mesh_and_threat_intel(
         ));
         let _ = &proxy;
 
-        // Use global_node_key if available, otherwise HKDF-derive from node_id.
-        let signer_key = if let Some(ref key) = mesh_config.global_node_key {
-            let mut key_bytes = [0u8; 32];
-            let key_str = key.as_bytes();
-            let len = key_str.len().min(32);
-            key_bytes[..len].copy_from_slice(&key_str[..len]);
-            key_bytes
-        } else {
-            use hkdf::Hkdf;
-            use sha2::Sha256;
-            let ikm = node_id.as_bytes();
-            let hk = Hkdf::<Sha256>::new(None, ikm);
-            let mut okm = [0u8; 32];
-            if let Err(e) = hk.expand(b"synvoid-mesh-signer", &mut okm) {
+        // The signer is the node identity itself. Its verifying key is the
+        // published `public_key` peers bind in the handshake, so a message
+        // signature verifies against the identity that was authenticated.
+        // There is no subkey derivation and no fallback: without a 32-byte
+        // seed the mesh must not start with an unsigned (or differently keyed)
+        // signer.
+        let signer_seed = match mesh_config.signing_seed() {
+            Ok(seed) => seed,
+            Err(error) => {
                 tracing::error!(
-                    "HKDF expand failed for mesh signer key derivation: {e:?}; signer will be disabled"
+                    "Mesh signer unavailable: {error}. Refusing to start the mesh with an unbound \
+                     signing identity."
                 );
+                return MeshInit::disabled();
             }
-            okm
         };
 
         let Some(block_store) = unified_server.get_block_store() else {
@@ -358,9 +354,8 @@ pub async fn init_mesh_and_threat_intel(
             high_severity_threshold: mesh_threat_intel.high_severity_threshold,
         };
 
-        let signer_for_threat = crate::mesh::protocol::MeshMessageSigner::new(signer_key)
+        let signer_for_threat = crate::mesh::protocol::MeshMessageSigner::from_secret(signer_seed)
             .with_verification_pool(verification_pool.clone());
-        let signer_key_clone = signer_key;
 
         let threat_intel = Arc::new(ThreatIntelligenceManager::from_external_config(
             threat_config.clone(),
@@ -401,8 +396,9 @@ pub async fn init_mesh_and_threat_intel(
                 proxy.clone(),
                 topology.clone(),
             ));
-            let signer_for_mesh = crate::mesh::protocol::MeshMessageSigner::new(signer_key_clone)
-                .with_verification_pool(verification_pool.clone());
+            let signer_for_mesh =
+                crate::mesh::protocol::MeshMessageSigner::from_secret(signer_seed)
+                    .with_verification_pool(verification_pool.clone());
 
             {
                 let config = shared_config.read().await;
@@ -573,8 +569,9 @@ pub async fn init_mesh_and_threat_intel(
                 proxy.clone(),
                 topology.clone(),
             ));
-            let signer_for_mesh = crate::mesh::protocol::MeshMessageSigner::new(signer_key_clone)
-                .with_verification_pool(verification_pool.clone());
+            let signer_for_mesh =
+                crate::mesh::protocol::MeshMessageSigner::from_secret(signer_seed)
+                    .with_verification_pool(verification_pool.clone());
             if let Err(e) = crate::mesh::backend::initialize_mesh_transports(
                 &mesh_config,
                 transport_manager.clone(),
@@ -706,9 +703,9 @@ pub async fn init_mesh_and_threat_intel(
         MeshInit {
             transport_manager: Some(transport_manager),
             threat_intel: Some(threat_intel),
-            mesh_signer: Some(Arc::new(crate::mesh::protocol::MeshMessageSigner::new(
-                signer_key_clone,
-            ))),
+            mesh_signer: Some(Arc::new(
+                crate::mesh::protocol::MeshMessageSigner::from_secret(signer_seed),
+            )),
             canonical_snapshot: None,
             #[cfg(all(feature = "mesh", feature = "dns"))]
             dns_verification_registries,

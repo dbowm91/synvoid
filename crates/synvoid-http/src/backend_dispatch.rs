@@ -440,6 +440,8 @@ where
         &target,
         &site_id,
         &path,
+        client_ip,
+        forwarded_protocol,
         &parts,
         &full_body_arc,
         &main_config,

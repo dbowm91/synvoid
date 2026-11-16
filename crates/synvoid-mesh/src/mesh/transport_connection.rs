@@ -1,11 +1,13 @@
 #![allow(dead_code)]
 // SAFETY_REASON: Reserved for future mesh connection handling
 
-use crate::transport::{MeshPeerConnection, MeshTransport, MeshTransportError, MAX_MESSAGE_SIZE};
+use crate::transport::{MeshTransport, MeshTransportError, MAX_MESSAGE_SIZE};
+use crate::transport_types::{
+    MeshPeerRegistry, ReplayStateRegistry, DEFAULT_REPLAY_STATE_RETENTION,
+};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use dashmap::DashMap;
 use parking_lot::RwLock;
 use tokio::sync::watch;
 
@@ -26,8 +28,8 @@ impl MeshTransport {
             runtime: self.runtime.clone(),
             running: self.running.clone(),
             shutdown_tx: self.shutdown_tx.clone(),
-            peer_connections: self.peer_connections.clone(),
-            auth_keys: self.auth_keys.clone(),
+            peers: self.peers.clone(),
+            replay_states: self.replay_states.clone(),
             connection_times: self.connection_times.clone(),
             pending: crate::transport::MeshPendingRequests {
                 query_dedup: self.pending.query_dedup.clone(),
@@ -69,6 +71,9 @@ impl MeshTransport {
             dns_zones: self.dns_zones.clone(),
             site_config_sync_tx: self.site_config_sync_tx.clone(),
             verification_manager: self.verification_manager.clone(),
+            site_config_applied_versions: self.site_config_applied_versions.clone(),
+            site_config_next_versions: self.site_config_next_versions.clone(),
+            last_startup_report: self.last_startup_report.clone(),
             revocation_list: self.revocation_list.clone(),
             #[cfg(feature = "dns")]
             ownership_challenge_store: self.ownership_challenge_store.clone(),
@@ -104,7 +109,7 @@ impl MeshTransport {
     }
 
     pub(crate) async fn datagram_listener_loop(
-        peer_connections: Arc<DashMap<String, MeshPeerConnection>>,
+        peers: Arc<MeshPeerRegistry>,
         mut shutdown_rx: watch::Receiver<bool>,
     ) {
         loop {
@@ -116,11 +121,15 @@ impl MeshTransport {
                     }
                 }
                 _ = async {
-                    for entry in peer_connections.iter() {
-                        let connection = &entry.value().connection;
-                        if let Ok(data) = connection.read_datagram().await {
-                            let peer_id = entry.key().clone();
-                            tracing::debug!("Received datagram from {}: {} bytes", peer_id, data.len());
+                    // Owned snapshot: awaiting inside a borrowed DashMap
+                    // iterator would hold a shard lock across the await.
+                    for peer in peers.snapshot() {
+                        if let Ok(data) = peer.connection.read_datagram().await {
+                            tracing::debug!(
+                                "Received datagram from {}: {} bytes",
+                                peer.node_id,
+                                data.len()
+                            );
                         }
                     }
                     tokio::time::sleep(Duration::from_millis(1)).await;
@@ -132,7 +141,8 @@ impl MeshTransport {
     pub(crate) async fn mesh_maintenance_loop(
         config: Arc<MeshConfig>,
         topology: Arc<MeshTopology>,
-        peer_connections: Arc<DashMap<String, MeshPeerConnection>>,
+        peers: Arc<MeshPeerRegistry>,
+        replay_states: Arc<ReplayStateRegistry>,
         mut shutdown_rx: watch::Receiver<bool>,
     ) {
         let announce_interval_secs = config.connection.announce_interval_secs;
@@ -153,13 +163,14 @@ impl MeshTransport {
                     }
                 }
                 _ = announce_interval.tick() => {
-                    Self::handle_announcements(&topology, &peer_connections).await;
+                    Self::handle_announcements(&topology, &peers).await;
                 }
                 _ = keepalive_interval.tick() => {
-                    Self::send_keepalives(&peer_connections).await;
+                    Self::send_keepalives(&peers).await;
                 }
                 _ = cleanup_interval.tick() => {
-                    Self::cleanup_stale_connections(&peer_connections, &topology).await;
+                    Self::cleanup_stale_connections(&peers, &topology, &replay_states).await;
+                    replay_states.sweep();
                     Self::cleanup_blocked_upstreams(&topology).await;
                     if let Some(partition) = topology.check_network_partition().await {
                         match partition {
@@ -204,7 +215,7 @@ impl MeshTransport {
         tracing::info!("Starting DHT bootstrap from {} seed nodes", seeds.len());
 
         for seed in &seeds {
-            let is_connected = self.peer_connections.contains_key(&seed.node_id);
+            let is_connected = self.peers.get(&seed.node_id).is_some();
 
             if is_connected {
                 routing_manager
@@ -511,29 +522,23 @@ impl MeshTransport {
         Ok(())
     }
 
-    pub(crate) async fn handle_announcements(
-        topology: &MeshTopology,
-        peer_connections: &DashMap<String, MeshPeerConnection>,
-    ) {
+    pub(crate) async fn handle_announcements(topology: &MeshTopology, peers: &MeshPeerRegistry) {
         let _owners = topology.get_upstream_owners().await;
 
-        for entry in peer_connections.iter() {
-            let peer = entry.value();
+        for peer in peers.snapshot() {
             if !peer.role.is_global() {
                 tracing::trace!("Would announce upstreams to peer {}", peer.node_id);
             }
         }
     }
 
-    pub(crate) async fn send_keepalives(peer_connections: &DashMap<String, MeshPeerConnection>) {
-        for entry in peer_connections.iter() {
-            let peer = entry.value();
+    pub(crate) async fn send_keepalives(peers: &MeshPeerRegistry) {
+        for peer in peers.snapshot() {
             let result = async {
-                let (mut send_stream, mut recv_stream) = {
-                    let mut pool = peer.stream_pool.lock().await;
-                    pool.acquire().await
-                }
-                .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
+                let (mut send_stream, mut recv_stream) =
+                    peer.connection.open_bi().await.map_err(|e| {
+                        MeshTransportError::SendFailed(format!("Failed to open stream: {:?}", e))
+                    })?;
 
                 let msg = MeshMessage::KeepAlive;
                 let encoded = msg.encode()?;
@@ -553,11 +558,6 @@ impl MeshTransport {
                 let mut response_buf = vec![0u8; len];
                 recv_stream.read_exact(&mut response_buf).await?;
 
-                {
-                    let mut pool = peer.stream_pool.lock().await;
-                    pool.release((send_stream, recv_stream));
-                }
-
                 Ok::<_, MeshTransportError>(())
             }
             .await;
@@ -574,27 +574,32 @@ impl MeshTransport {
     }
 
     pub(crate) async fn cleanup_stale_connections(
-        peer_connections: &DashMap<String, MeshPeerConnection>,
+        peers: &MeshPeerRegistry,
         topology: &MeshTopology,
+        replay_states: &ReplayStateRegistry,
     ) {
         let stale_threshold = Duration::from_secs(120);
         let now = Instant::now();
 
-        let stale: Vec<String> = peer_connections
+        let stale: Vec<String> = peers
             .iter()
-            .filter(|e| now.duration_since(e.value().last_seen) > stale_threshold)
-            .map(|e| e.key().clone())
+            .filter(|peer| now.saturating_duration_since(peer.last_seen()) > stale_threshold)
+            .map(|peer| peer.session_id.clone())
             .collect();
 
         for session_id in stale {
-            if let Some(peer) = peer_connections.get(&session_id) {
-                tracing::warn!("Removing stale peer connection: {}", peer.node_id);
-                topology.record_connection_failure(&peer.node_id).await;
-                topology
-                    .update_peer_status(&peer.node_id, PeerStatus::Disconnected)
-                    .await;
-            }
-            peer_connections.remove(&session_id);
+            // A stale session may already have been replaced. Only the removal
+            // that actually wins may claim the node went away.
+            let Some(peer) = peers.remove_if_current(&session_id) else {
+                continue;
+            };
+
+            tracing::warn!("Removing stale peer connection: {}", peer.node_id);
+            topology.record_connection_failure(&peer.node_id).await;
+            topology
+                .update_peer_status(&peer.node_id, PeerStatus::Disconnected)
+                .await;
+            replay_states.retain_after_close(&peer.node_id, DEFAULT_REPLAY_STATE_RETENTION);
         }
 
         topology
@@ -616,7 +621,7 @@ impl MeshTransport {
         let min_connections = self.config.connection.min_peer_connections;
         let max_connections = self.config.connection.max_peer_connections;
 
-        let current_count = self.peer_connections.len();
+        let current_count = self.peers.len();
 
         if current_count >= min_connections {
             tracing::debug!(
@@ -630,7 +635,7 @@ impl MeshTransport {
         let targets = self.topology.get_prioritized_connection_targets().await;
 
         for (node_id, priority) in targets {
-            if self.peer_connections.len() >= max_connections {
+            if self.peers.len() >= max_connections {
                 break;
             }
 
@@ -676,11 +681,8 @@ impl MeshTransport {
             return;
         }
 
-        let connected_peers: std::collections::HashSet<_> = self
-            .peer_connections
-            .iter()
-            .map(|entry| entry.key().clone())
-            .collect();
+        let connected_peers: std::collections::HashSet<_> =
+            self.peers.node_ids().into_iter().collect();
 
         let auth_failures: Vec<String> = {
             let failures = self.auth_failures.read();
@@ -741,8 +743,6 @@ impl MeshTransport {
     }
 
     pub(crate) fn is_connected_to(&self, node_id: &str) -> bool {
-        self.peer_connections
-            .iter()
-            .any(|e| e.value().node_id == node_id)
+        self.peers.get(node_id).is_some()
     }
 }

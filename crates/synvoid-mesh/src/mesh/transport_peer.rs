@@ -23,6 +23,28 @@ use crate::protocol::{ArcStr, HealthStatus, MeshMessage, RaftSnapshotFrame};
 
 use crate::topology::{MeshTopology, PeerStatus};
 
+/// Origin-side result of one `SiteConfigSync`, written back as a
+/// `SiteConfigAck` on the stream that carried the sync.
+#[derive(Debug, Clone)]
+pub(crate) struct SiteConfigApply {
+    pub accepted: bool,
+    /// Version live on the origin after handling this sync. For a stale
+    /// rejection this is the newer version already applied.
+    pub applied_version: Option<u64>,
+    /// Empty on success; a short machine-readable token otherwise.
+    pub reason: String,
+}
+
+impl SiteConfigApply {
+    fn rejected(reason: &str) -> Self {
+        Self {
+            accepted: false,
+            applied_version: None,
+            reason: reason.to_string(),
+        }
+    }
+}
+
 /// Parsed result of reading an HTTP request head (headers + body prefix).
 ///
 /// The `body_prefix` contains any bytes coalesced with the final header
@@ -767,6 +789,78 @@ pub async fn read_fixed_http_response_body<R: tokio::io::AsyncRead + Unpin>(
     Ok(body)
 }
 
+/// Parse a chunk-size token as hexadecimal digits.
+///
+/// Phase 06: the token is validated before it is turned into a length, so a
+/// sign (`+`/`-`), surrounding whitespace, or any non-hex byte is a framing
+/// error rather than a loose parse. `usize::from_str_radix` would accept a
+/// leading `+` and the call sites used to `trim()` the token, which let a
+/// peer choose a length the framing code did not intend to accept.
+fn parse_chunk_size(token: &str) -> Result<usize, HttpResponseFramingError> {
+    if token.is_empty() || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(HttpResponseFramingError::MalformedChunkedBody(format!(
+            "invalid chunk size: {token}"
+        )));
+    }
+    usize::from_str_radix(token, 16).map_err(|_| {
+        HttpResponseFramingError::MalformedChunkedBody(format!("invalid chunk size: {token}"))
+    })
+}
+
+/// Bound one `chunk-size CRLF chunk-data CRLF` block against the body cap
+/// before any buffer is sized from it.
+///
+/// `chunk_size.checked_add(2)` covers the trailing CRLF; an overflow, or a
+/// block that does not fit in the remaining wire-byte budget, is a
+/// `BodyTooLarge` violation. This must run before the caller allocates, so an
+/// unvalidated length can never size an allocation.
+fn bounded_chunk_block(
+    chunk_size: usize,
+    total_wire_bytes: usize,
+    max_body_bytes: usize,
+) -> Result<usize, HttpResponseFramingError> {
+    let payload_and_crlf =
+        chunk_size
+            .checked_add(2)
+            .ok_or(HttpResponseFramingError::BodyTooLarge {
+                limit: max_body_bytes,
+                declared: usize::MAX,
+            })?;
+    let remaining = max_body_bytes.saturating_sub(total_wire_bytes);
+    if payload_and_crlf > remaining {
+        return Err(HttpResponseFramingError::BodyTooLarge {
+            limit: max_body_bytes,
+            declared: total_wire_bytes.saturating_add(payload_and_crlf),
+        });
+    }
+    Ok(payload_and_crlf)
+}
+
+/// Add `add` bytes to a running wire-byte total, rejecting overflow and
+/// cap violations.
+///
+/// Used by the streaming reader so a peer cannot wrap the accounting and pass
+/// an over-cap body off as a small one.
+fn checked_wire_total(
+    total: usize,
+    add: usize,
+    limit: usize,
+) -> Result<usize, HttpResponseFramingError> {
+    let next = total
+        .checked_add(add)
+        .ok_or(HttpResponseFramingError::BodyTooLarge {
+            limit,
+            declared: usize::MAX,
+        })?;
+    if next > limit {
+        return Err(HttpResponseFramingError::BodyTooLarge {
+            limit,
+            declared: next,
+        });
+    }
+    Ok(next)
+}
+
 /// Read a chunked HTTP response body from an async reader.
 ///
 /// Preserves the raw wire chunked framing in the returned bytes.
@@ -815,12 +909,8 @@ pub async fn read_chunked_http_response_body<R: tokio::io::AsyncRead + Unpin>(
 
         let line_str = String::from_utf8_lossy(&line_buf);
         let size_str = line_str.trim_end_matches("\r\n");
-        let size_str = size_str.split(';').next().unwrap_or("").trim();
-        let chunk_size = usize::from_str_radix(size_str, 16).map_err(|_| {
-            HttpResponseFramingError::MalformedChunkedBody(format!(
-                "invalid chunk size: {size_str}"
-            ))
-        })?;
+        let size_str = size_str.split(';').next().unwrap_or("");
+        let chunk_size = parse_chunk_size(size_str)?;
 
         if chunk_size == 0 {
             // Trailer section: independently bounded by max_trailer_bytes.
@@ -850,7 +940,10 @@ pub async fn read_chunked_http_response_body<R: tokio::io::AsyncRead + Unpin>(
             }
         }
 
-        let payload_and_crlf = chunk_size + 2;
+        // Bound the block against the body cap before sizing any buffer from
+        // `chunk_size`: an unvalidated peer length must never reach an
+        // allocation.
+        let payload_and_crlf = bounded_chunk_block(chunk_size, total_wire_bytes, max_body_bytes)?;
         let mut chunk_buf = vec![0u8; payload_and_crlf];
         reader
             .read_exact_with_timeout(&mut chunk_buf, deadline, idle_timeout)
@@ -1248,14 +1341,18 @@ async fn read_exact_with_timeout(
 /// The caller has already consumed `first_byte`, which must satisfy
 /// [`crate::service_target::is_service_preface_start`]. On success the stream
 /// is positioned at the first byte of the HTTP/1.x request.
+///
+/// Version 2 prefaces carry the authenticated client metadata; a version 1
+/// preface from a legacy peer decodes with `None`.
 pub async fn read_service_preface<R: tokio::io::AsyncRead + Unpin>(
     reader: &mut R,
     first_byte: u8,
     idle_timeout: Duration,
-) -> Result<String, MeshTransportError> {
+) -> Result<(String, Option<crate::service_target::ClientMetadata>), MeshTransportError> {
     use crate::service_target::{
-        decode_service_preface, MAX_SERVICE_ID_BYTES, SERVICE_PREFACE_FLAGS,
+        decode_service_preface, MAX_SERVICE_ID_BYTES, MAX_SERVICE_METADATA_BYTES,
         SERVICE_PREFACE_HEADER_BYTES, SERVICE_PREFACE_MAGIC, SERVICE_PREFACE_VERSION,
+        SERVICE_PREFACE_VERSION_LEGACY,
     };
     use tokio::io::AsyncReadExt;
 
@@ -1271,16 +1368,10 @@ pub async fn read_service_preface<R: tokio::io::AsyncRead + Unpin>(
                 "service preface magic mismatch".to_string(),
             ));
         }
-        if header[4] != SERVICE_PREFACE_VERSION {
+        let version = header[4];
+        if version != SERVICE_PREFACE_VERSION && version != SERVICE_PREFACE_VERSION_LEGACY {
             return Err(MeshTransportError::ReceiveFailed(format!(
-                "unsupported service preface version {}",
-                header[4]
-            )));
-        }
-        if header[5] != SERVICE_PREFACE_FLAGS {
-            return Err(MeshTransportError::ReceiveFailed(format!(
-                "unsupported service preface flags {:#04x}",
-                header[5]
+                "unsupported service preface version {version}"
             )));
         }
         let len = u16::from_be_bytes([header[6], header[7]]) as usize;
@@ -1291,7 +1382,8 @@ pub async fn read_service_preface<R: tokio::io::AsyncRead + Unpin>(
             )));
         }
 
-        let mut wire = Vec::with_capacity(SERVICE_PREFACE_HEADER_BYTES + len);
+        let mut wire =
+            Vec::with_capacity(SERVICE_PREFACE_HEADER_BYTES + len + 2 + MAX_SERVICE_METADATA_BYTES);
         wire.extend_from_slice(&header);
         wire.resize(SERVICE_PREFACE_HEADER_BYTES + len, 0);
         reader
@@ -1301,14 +1393,173 @@ pub async fn read_service_preface<R: tokio::io::AsyncRead + Unpin>(
                 MeshTransportError::ReceiveFailed(format!("service preface payload: {e}"))
             })?;
 
+        if version == SERVICE_PREFACE_VERSION {
+            // Version 2 always carries the 2-byte metadata length, even when
+            // the metadata flag is clear.
+            let mut meta_len_buf = [0u8; 2];
+            reader.read_exact(&mut meta_len_buf).await.map_err(|e| {
+                MeshTransportError::ReceiveFailed(format!("service preface metadata length: {e}"))
+            })?;
+            let meta_len = u16::from_be_bytes(meta_len_buf) as usize;
+            if meta_len > MAX_SERVICE_METADATA_BYTES {
+                return Err(MeshTransportError::ReceiveFailed(format!(
+                    "service preface metadata is {} bytes, maximum is {}",
+                    meta_len, MAX_SERVICE_METADATA_BYTES
+                )));
+            }
+            wire.extend_from_slice(&meta_len_buf);
+            let meta_start = wire.len();
+            wire.resize(meta_start + meta_len, 0);
+            reader
+                .read_exact(&mut wire[meta_start..])
+                .await
+                .map_err(|e| {
+                    MeshTransportError::ReceiveFailed(format!("service preface metadata: {e}"))
+                })?;
+        }
+
         decode_service_preface(&wire)
-            .map(|(service_id, _)| service_id)
+            .map(|(service_id, meta, _)| (service_id, meta))
             .map_err(|e| MeshTransportError::ReceiveFailed(format!("invalid service preface: {e}")))
     };
 
     tokio::time::timeout(idle_timeout, read_all)
         .await
         .map_err(|_| MeshTransportError::Timeout)?
+}
+
+/// Rebuild the upstream request header block from the peer-supplied head.
+///
+/// The peer's header block is never forwarded verbatim: hop-by-hop headers
+/// (`Connection` and every header it names, `Keep-Alive`, `Proxy-Connection`,
+/// `TE`, `Trailer`, `Transfer-Encoding`, `Upgrade`, `Proxy-*`) and every
+/// client-supplied forwarding header (`X-Forwarded-For`, `X-Real-IP`,
+/// `Forwarded`, `X-Forwarded-Proto`, `X-Forwarded-Host`) are dropped.
+///
+/// When the preface carried authenticated client metadata, exactly one
+/// `X-Forwarded-For`, `X-Real-IP` and `X-Forwarded-Proto` are appended from it.
+/// The request line, `Host` and all end-to-end headers are preserved, as is the
+/// `\r\n\r\n` terminator.
+///
+/// `Transfer-Encoding: chunked` is re-emitted once when the head declares it:
+/// the caller forwards the chunked body bytes unchanged, so the validated
+/// framing value is authoritative rather than client-supplied.
+pub fn rebuild_upstream_head(
+    header_bytes: &[u8],
+    meta: Option<&crate::service_target::ClientMetadata>,
+) -> Vec<u8> {
+    let head_end = header_bytes
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .map(|position| position + 4)
+        .unwrap_or(header_bytes.len());
+    let head = &header_bytes[..head_end];
+
+    // Split into CRLF-delimited lines without decoding values: header values
+    // may carry opaque bytes.
+    let mut lines: Vec<&[u8]> = Vec::new();
+    let mut cursor = 0usize;
+    while cursor < head.len() {
+        let line_end = head[cursor..]
+            .windows(2)
+            .position(|window| window == b"\r\n")
+            .map(|offset| cursor + offset)
+            .unwrap_or(head.len());
+        let line = &head[cursor..line_end];
+        if line.is_empty() {
+            break;
+        }
+        lines.push(line);
+        cursor = line_end.saturating_add(2);
+    }
+
+    // First pass: the header names listed by `Connection` are hop-by-hop too.
+    let mut connection_named: Vec<Vec<u8>> = Vec::new();
+    let mut declares_chunked = false;
+    for line in lines.iter().skip(1) {
+        let Some(colon) = line.iter().position(|byte| *byte == b':') else {
+            continue;
+        };
+        let name = &line[..colon];
+        let value = &line[colon + 1..];
+        if name.eq_ignore_ascii_case(b"connection") {
+            for token in value.split(|byte| *byte == b',') {
+                let token = token.trim_ascii();
+                if !token.is_empty() {
+                    connection_named.push(token.to_ascii_lowercase());
+                }
+            }
+        } else if name.eq_ignore_ascii_case(b"transfer-encoding")
+            && value.trim_ascii().eq_ignore_ascii_case(b"chunked")
+        {
+            declares_chunked = true;
+        }
+    }
+
+    let mut out = Vec::with_capacity(head.len() + 128);
+    for (index, line) in lines.iter().enumerate() {
+        if index == 0 {
+            // Request line: preserved verbatim, including body-cap validation
+            // done by the caller.
+            out.extend_from_slice(line);
+            out.extend_from_slice(b"\r\n");
+            continue;
+        }
+        let Some(colon) = line.iter().position(|byte| *byte == b':') else {
+            // A header line without a colon is malformed; drop it rather than
+            // forwarding ambiguous bytes upstream.
+            continue;
+        };
+        let name = &line[..colon];
+        if is_rebuilt_away_header(name, &connection_named) {
+            continue;
+        }
+        out.extend_from_slice(line);
+        out.extend_from_slice(b"\r\n");
+    }
+
+    if declares_chunked {
+        out.extend_from_slice(b"Transfer-Encoding: chunked\r\n");
+    }
+
+    if let Some(meta) = meta {
+        let client_ip = meta.client_ip;
+        out.extend_from_slice(format!("X-Forwarded-For: {}\r\n", client_ip).as_bytes());
+        out.extend_from_slice(format!("X-Real-IP: {}\r\n", client_ip).as_bytes());
+        out.extend_from_slice(format!("X-Forwarded-Proto: {}\r\n", meta.proto.as_str()).as_bytes());
+    }
+
+    out.extend_from_slice(b"\r\n");
+    out
+}
+
+/// Headers the origin rebuilds instead of forwarding from the peer.
+fn is_rebuilt_away_header(name: &[u8], connection_named: &[Vec<u8>]) -> bool {
+    const DROPPED: [&[u8]; 7] = [
+        b"connection",
+        b"keep-alive",
+        b"proxy-connection",
+        b"te",
+        b"trailer",
+        b"transfer-encoding",
+        b"upgrade",
+    ];
+    const DROPPED_FORWARDING: [&[u8]; 5] = [
+        b"x-forwarded-for",
+        b"x-real-ip",
+        b"forwarded",
+        b"x-forwarded-proto",
+        b"x-forwarded-host",
+    ];
+
+    let lower = name.to_ascii_lowercase();
+    if lower.starts_with(b"proxy-")
+        || DROPPED.iter().any(|dropped| lower == *dropped)
+        || DROPPED_FORWARDING.iter().any(|dropped| lower == *dropped)
+    {
+        return true;
+    }
+    connection_named.iter().any(|named| named == &lower)
 }
 
 /// Copy a fixed-length HTTP body to `writer` incrementally.
@@ -1415,13 +1666,7 @@ where
             line_buf.push(byte);
         }
 
-        total_wire_bytes += line_buf.len();
-        if total_wire_bytes > max_body_bytes {
-            return Err(HttpResponseFramingError::BodyTooLarge {
-                limit: max_body_bytes,
-                declared: total_wire_bytes,
-            });
-        }
+        total_wire_bytes = checked_wire_total(total_wire_bytes, line_buf.len(), max_body_bytes)?;
         writer
             .write_all(&line_buf)
             .await
@@ -1429,12 +1674,8 @@ where
 
         let line_str = String::from_utf8_lossy(&line_buf);
         let size_str = line_str.trim_end_matches("\r\n");
-        let size_str = size_str.split(';').next().unwrap_or("").trim();
-        let chunk_size = usize::from_str_radix(size_str, 16).map_err(|_| {
-            HttpResponseFramingError::MalformedChunkedBody(format!(
-                "invalid chunk size: {size_str}"
-            ))
-        })?;
+        let size_str = size_str.split(';').next().unwrap_or("");
+        let chunk_size = parse_chunk_size(size_str)?;
 
         if chunk_size == 0 {
             // Trailer section, independently bounded. Seed the terminator
@@ -1453,13 +1694,7 @@ where
                         observed: trailer_bytes,
                     });
                 }
-                total_wire_bytes += 1;
-                if total_wire_bytes > max_body_bytes {
-                    return Err(HttpResponseFramingError::BodyTooLarge {
-                        limit: max_body_bytes,
-                        declared: total_wire_bytes,
-                    });
-                }
+                total_wire_bytes = checked_wire_total(total_wire_bytes, 1, max_body_bytes)?;
                 writer
                     .write_all(&[byte])
                     .await
@@ -1474,15 +1709,12 @@ where
             }
         }
 
-        total_wire_bytes += chunk_size + 2;
-        if total_wire_bytes > max_body_bytes {
-            return Err(HttpResponseFramingError::BodyTooLarge {
-                limit: max_body_bytes,
-                declared: total_wire_bytes,
-            });
-        }
-        let mut chunk_buf = vec![0u8; STREAM_COPY_CHUNK_BYTES.min(chunk_size + 2)];
-        let mut remaining = chunk_size + 2;
+        // Phase 06: overflow in `chunk_size + 2` or in the running total is a
+        // body-limit violation, never a wrap that shrinks the count.
+        let payload_and_crlf = bounded_chunk_block(chunk_size, total_wire_bytes, max_body_bytes)?;
+        total_wire_bytes = checked_wire_total(total_wire_bytes, payload_and_crlf, max_body_bytes)?;
+        let mut chunk_buf = vec![0u8; STREAM_COPY_CHUNK_BYTES.min(payload_and_crlf)];
+        let mut remaining = payload_and_crlf;
         while remaining > 0 {
             let want = remaining.min(chunk_buf.len());
             reader
@@ -1558,6 +1790,50 @@ where
 
 /// Backpressure-friendly copy granularity for mesh body streaming.
 pub const STREAM_COPY_CHUNK_BYTES: usize = 16 * 1024;
+
+/// The caller identity an origin authorizes for an inbound
+/// `ServerlessInvokeRequest`.
+///
+/// Phase 06 (C4): both fields come from the authenticated session. The
+/// message's `caller_node_id` is audit metadata — it is logged at the dispatch
+/// site and never becomes part of this value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerlessCallerIdentity {
+    /// Authenticated session peer. Drives `allowed_callers`, revocation, and
+    /// response routing.
+    pub node_id: String,
+    /// Role Phase 03 resolved from the local `peered_wafs` allowlist.
+    pub role: crate::config::MeshNodeRole,
+}
+
+/// Build the caller identity for a `ServerlessInvokeRequest` from the
+/// authenticated session.
+///
+/// The peer-controlled `caller_node_id` field is deliberately not a parameter:
+/// taking it here is how the origin used to authorize a forged caller.
+pub fn serverless_caller_identity(
+    authenticated_peer: &str,
+    session_role: crate::config::MeshNodeRole,
+) -> ServerlessCallerIdentity {
+    ServerlessCallerIdentity {
+        node_id: authenticated_peer.to_string(),
+        role: session_role,
+    }
+}
+
+/// Whether `peer_node_id` may dispatch a `serverless_function:` preface.
+///
+/// Phase 06 (C4): the serverless preface branch ran before
+/// `authorize_local_upstream`, so it bypassed `peered_wafs` entirely. This is
+/// the Phase 03 allowlist gate that must run before dispatch; function-level
+/// `allowed_callers` / `public_function` still applies on top inside
+/// `ServerlessManager::invoke_for_mesh`.
+pub fn serverless_dispatch_authorized(
+    config: &crate::config::MeshConfig,
+    peer_node_id: &str,
+) -> bool {
+    config.is_peer_allowlisted(peer_node_id)
+}
 
 impl MeshTransport {
     pub(crate) async fn send_keepalive_datagram(
@@ -1659,9 +1935,10 @@ impl MeshTransport {
         const POLL_TIMEOUT_MS: u64 = 100;
 
         let peers: Vec<(String, quinn::Connection)> = self
-            .peer_connections
-            .iter()
-            .map(|e| (e.key().clone(), e.value().connection.clone()))
+            .peers
+            .snapshot()
+            .into_iter()
+            .map(|session| (session.node_id.clone(), session.connection.clone()))
             .collect();
 
         if peers.is_empty() {
@@ -1701,6 +1978,10 @@ impl MeshTransport {
         peer_id: &str,
         data: Bytes,
     ) -> Result<(), MeshTransportError> {
+        if let Some(peer) = self.peers.get(peer_id) {
+            peer.touch_last_seen();
+        }
+
         let msg = match MeshMessage::decode(&data) {
             Some(m) => m,
             None => {
@@ -2900,29 +3181,20 @@ impl MeshTransport {
                 tracing::debug!("NodeShutdown received but DNS feature not enabled");
             }
             MeshMessage::SiteConfigSync {
-                request_id,
                 site_id,
                 config_version,
-                config_json,
-                timestamp,
-                source_node_id,
-                signature,
-                signer_public_key,
-                proxy_cache_preferences,
+                ..
             } => {
-                self.handle_site_config_sync(
-                    peer_id,
-                    &request_id,
-                    &site_id,
+                // State-bearing config must travel on a stream so the origin
+                // can ack it. A datagram copy is dropped: applying it would
+                // recreate the "operator sees success, origin may not have it"
+                // failure this path exists to remove.
+                tracing::warn!(
+                    site_id = %site_id,
                     config_version,
-                    &config_json,
-                    timestamp,
-                    &source_node_id,
-                    signature.as_ref(),
-                    signer_public_key.as_deref(),
-                    proxy_cache_preferences.as_ref(),
-                )
-                .await;
+                    peer = %peer_id,
+                    "Ignoring SiteConfigSync received as a datagram; configuration must be delivered over an acknowledged stream"
+                );
             }
             #[cfg(feature = "dns")]
             MeshMessage::DnsDomainRegisterRequest {
@@ -3360,30 +3632,29 @@ impl MeshTransport {
                     }
                 }
 
-                let replay_state = self
-                    .peer_connections
-                    .get(peer_id)
-                    .map(|conn| conn.replay_protection.clone());
-                if let Some(replay_protection) = replay_state {
-                    let replay_result = replay_protection
-                        .write()
-                        .await
-                        .check_and_add(&nonce, timestamp);
-                    if !matches!(replay_result, crate::protocol::ReplayResult::Valid) {
-                        tracing::warn!(
-                            "DhtRecordPush from {} rejected: replay protection {}",
-                            peer_id,
-                            match replay_result {
-                                crate::protocol::ReplayResult::FutureTimestamp =>
-                                    "future_timestamp",
-                                crate::protocol::ReplayResult::ExpiredTimestamp =>
-                                    "expired_timestamp",
-                                crate::protocol::ReplayResult::ReplayDetected => "replay_detected",
-                                crate::protocol::ReplayResult::Valid => "valid",
-                            }
-                        );
-                        return Ok(());
-                    }
+                let Some(replay_protection) = self.replay_state_for_peer(peer_id) else {
+                    tracing::warn!(
+                        "DhtRecordPush from {} rejected: no session or retained replay state",
+                        peer_id
+                    );
+                    return Ok(());
+                };
+                let replay_result = replay_protection
+                    .write()
+                    .await
+                    .check_and_add(&nonce, timestamp);
+                if !matches!(replay_result, crate::protocol::ReplayResult::Valid) {
+                    tracing::warn!(
+                        "DhtRecordPush from {} rejected: replay protection {}",
+                        peer_id,
+                        match replay_result {
+                            crate::protocol::ReplayResult::FutureTimestamp => "future_timestamp",
+                            crate::protocol::ReplayResult::ExpiredTimestamp => "expired_timestamp",
+                            crate::protocol::ReplayResult::ReplayDetected => "replay_detected",
+                            crate::protocol::ReplayResult::Valid => "valid",
+                        }
+                    );
+                    return Ok(());
                 }
 
                 if let Some(ref record_store) = self.record_store {
@@ -3444,8 +3715,8 @@ impl MeshTransport {
 
     pub(crate) async fn handle_keepalive_datagram(&self, peer_id: &str) {
         tracing::trace!("Received keepalive from {}", peer_id);
-        if let Some(mut peer) = self.peer_connections.get_mut(peer_id) {
-            peer.last_seen = Instant::now();
+        if let Some(peer) = self.peers.get(peer_id) {
+            peer.touch_last_seen();
         }
     }
 
@@ -3455,7 +3726,7 @@ impl MeshTransport {
         source_node_id: &str,
     ) -> Result<(), ()> {
         // Existing in-memory check
-        if let Some(peer) = self.peer_connections.get(peer_id) {
+        if let Some(peer) = self.peers.get(peer_id) {
             if peer.node_id != source_node_id {
                 tracing::warn!(
                     "Node ID mismatch: peer_id={}, expected node_id={}, got source_node_id={}",
@@ -3658,6 +3929,25 @@ impl MeshTransport {
             from_peer
         );
 
+        // A role is fixed for the life of a session. An announcement that
+        // contradicts the role recorded at handshake time is rejected instead
+        // of overwriting it.
+        if let Some(session) = self.peers.get(node_id) {
+            if session.role != role {
+                tracing::warn!(
+                    "Rejected role change for {}: session role {:?} vs announced {:?}",
+                    node_id,
+                    session.role,
+                    role
+                );
+                return;
+            }
+        }
+
+        // Trust is never derived from the announced role bits; only the local
+        // allowlist can make a peer trusted.
+        let is_trusted = self.config.is_peer_allowlisted(node_id);
+
         self.topology
             .add_peer(
                 crate::protocol::MeshPeerInfo {
@@ -3668,7 +3958,7 @@ impl MeshTransport {
                     is_global: role.is_global(),
                     latency_ms: None,
                     upstreams: vec![],
-                    is_trusted: role.is_global(),
+                    is_trusted,
                     quic_port: None,
                     wireguard_port: None,
                     advertised_port: None,
@@ -3722,7 +4012,7 @@ impl MeshTransport {
         signature: &[u8],
         signer_public_key: Option<&str>,
         proxy_cache_preferences: Option<&crate::protocol::ProxyCachePreferences>,
-    ) {
+    ) -> SiteConfigApply {
         tracing::info!(
             "Received site config sync for site {} version {} from node {}",
             site_id,
@@ -3741,7 +4031,7 @@ impl MeshTransport {
                 source_node_id,
                 site_id
             );
-            return;
+            return SiteConfigApply::rejected("unauthorized");
         }
 
         if signature.is_empty() {
@@ -3749,7 +4039,7 @@ impl MeshTransport {
                 "Site config sync from {} has no signature - rejecting",
                 source_node_id
             );
-            return;
+            return SiteConfigApply::rejected("unsigned");
         }
 
         let public_key = match signer_public_key {
@@ -3759,7 +4049,7 @@ impl MeshTransport {
                     "Site config sync from {} has signature but no public key - rejecting",
                     source_node_id
                 );
-                return;
+                return SiteConfigApply::rejected("unsigned");
             }
         };
 
@@ -3811,7 +4101,26 @@ impl MeshTransport {
                 "Rejected site config sync from {} due to invalid signature",
                 source_node_id
             );
-            return;
+            return SiteConfigApply::rejected("invalid_signature");
+        }
+
+        // Monotonicity: a config version never moves backwards on an origin.
+        // Replays and out-of-order deliveries are rejected instead of
+        // overwriting a newer site configuration.
+        if let Some(applied) = self.applied_site_config_version(site_id) {
+            if config_version <= applied {
+                tracing::warn!(
+                    "Rejected stale site config for {}: version {} <= applied {}",
+                    site_id,
+                    config_version,
+                    applied
+                );
+                return SiteConfigApply {
+                    accepted: false,
+                    applied_version: Some(applied),
+                    reason: "stale".to_string(),
+                };
+            }
         }
 
         let tx_to_send = {
@@ -3819,17 +4128,36 @@ impl MeshTransport {
             tx_option.clone()
         };
 
-        if let Some(tx) = tx_to_send {
-            let _ = tx
-                .send((
-                    site_id.to_string(),
-                    config_json.to_string(),
-                    proxy_cache_preferences.cloned(),
-                ))
-                .await;
-            tracing::debug!("Sent site config sync to callback handler");
-        } else {
+        let Some(tx) = tx_to_send else {
             tracing::warn!("No site config sync callback configured");
+            return SiteConfigApply::rejected("no_callback");
+        };
+
+        if tx
+            .send((
+                site_id.to_string(),
+                config_json.to_string(),
+                proxy_cache_preferences.cloned(),
+            ))
+            .await
+            .is_err()
+        {
+            tracing::warn!("Site config sync callback channel is closed");
+            return SiteConfigApply::rejected("apply_failed");
+        }
+
+        self.site_config_applied_versions
+            .insert(site_id.to_string(), config_version);
+        tracing::debug!(
+            "Applied site config for {} at version {}",
+            site_id,
+            config_version
+        );
+
+        SiteConfigApply {
+            accepted: true,
+            applied_version: Some(config_version),
+            reason: String::new(),
         }
     }
 
@@ -3862,7 +4190,8 @@ impl MeshTransport {
                     is_global: p.is_global,
                     latency_ms: p.latency_ms,
                     upstreams: p.upstreams.into_iter().collect(),
-                    is_trusted: p.role.is_global(),
+                    // Propagate the locally computed trust, never the role bits.
+                    is_trusted: p.is_trusted,
                     quic_port: p.quic_port,
                     wireguard_port: p.wireguard_port,
                     advertised_port: p.advertised_port,
@@ -4369,11 +4698,7 @@ impl MeshTransport {
             requests_per_second,
         };
 
-        let peer_ids: Vec<String> = self
-            .peer_connections
-            .iter()
-            .map(|e| e.key().clone())
-            .collect();
+        let peer_ids: Vec<String> = self.peers.node_ids();
 
         for peer_id in peer_ids {
             if let Err(e) = self.send_datagram_to_peer(&peer_id, &load_report).await {
@@ -4538,10 +4863,19 @@ impl MeshTransport {
             .aggregate_handler_failed
             .fetch_add(drain_report.failed, Ordering::Relaxed);
 
-        // Update topology status
-        topology
-            .update_peer_status(&peer_node_id, PeerStatus::Disconnected)
-            .await;
+        // Update topology status only if this session is still the node's
+        // current one. A session that lost a duplicate-session race was closed
+        // by the winner: the node is still connected, so publishing Disconnected
+        // here would make live traffic look dead.
+        if let Some(session) = self.peers.remove_if_current(&session_id) {
+            topology
+                .update_peer_status(&peer_node_id, PeerStatus::Disconnected)
+                .await;
+            self.replay_states.retain_after_close(
+                &session.node_id,
+                crate::transport_types::DEFAULT_REPLAY_STATE_RETENTION,
+            );
+        }
 
         // Phase 7-8: Emit the exit reason that reflects which path the
         // session took. Cooperative cancellation takes precedence over
@@ -4575,20 +4909,29 @@ impl MeshTransport {
         peer_node_id: String,
         read_timeout: Duration,
     ) -> Result<(), MeshTransportError> {
+        // Any accepted stream is liveness: the stale sweep must not reap a
+        // session that is still serving.
+        if let Some(peer) = self.peers.get(&peer_node_id) {
+            peer.touch_last_seen();
+        }
+
         let mut first_byte = [0u8; 1];
         read_exact_with_timeout(recv_stream, &mut first_byte, read_timeout).await?;
 
         // Mesh multi-upstream forwarding: an explicit service-target preface
         // may precede the HTTP request. It carries the operator-configured
         // `local_upstreams` key, so the origin does not infer the service from
-        // `Host`. Legacy peers omit it and keep the Host-derived key.
-        let service_id = if crate::service_target::is_service_preface_start(first_byte[0]) {
-            let service_id = read_service_preface(recv_stream, first_byte[0], read_timeout).await?;
-            read_exact_with_timeout(recv_stream, &mut first_byte, read_timeout).await?;
-            Some(service_id)
-        } else {
-            None
-        };
+        // `Host`. Legacy peers omit it and keep the Host-derived key. A
+        // version 2 preface also carries the authenticated client metadata.
+        let (service_id, client_meta) =
+            if crate::service_target::is_service_preface_start(first_byte[0]) {
+                let (service_id, meta) =
+                    read_service_preface(recv_stream, first_byte[0], read_timeout).await?;
+                read_exact_with_timeout(recv_stream, &mut first_byte, read_timeout).await?;
+                (Some(service_id), meta)
+            } else {
+                (None, None)
+            };
 
         let http_methods = [
             b'G', // GET
@@ -4646,6 +4989,7 @@ impl MeshTransport {
                     topology,
                     peer_node_id,
                     service_id.as_deref(),
+                    client_meta.as_ref(),
                 )
                 .await;
         }
@@ -4816,6 +5160,55 @@ impl MeshTransport {
                     }
                 }
             }
+            MeshMessage::SiteConfigSync {
+                request_id,
+                site_id,
+                config_version,
+                config_json,
+                timestamp,
+                source_node_id,
+                signature,
+                signer_public_key,
+                proxy_cache_preferences,
+            } => {
+                // The ack answers this exact stream, after the config has been
+                // handed to the apply callback. The sender treats a missing or
+                // rejected ack as a delivery failure for this origin.
+                let applied = self
+                    .handle_site_config_sync(
+                        &peer_node_id,
+                        &request_id,
+                        &site_id,
+                        config_version,
+                        &config_json,
+                        timestamp,
+                        &source_node_id,
+                        signature.as_ref(),
+                        signer_public_key.as_deref(),
+                        proxy_cache_preferences.as_ref(),
+                    )
+                    .await;
+                let ack = MeshMessage::SiteConfigAck {
+                    request_id,
+                    site_id,
+                    applied_version: applied.applied_version,
+                    accepted: applied.accepted,
+                    reason: applied.reason.into(),
+                };
+                let encoded = ack
+                    .encode()
+                    .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
+                let len = (encoded.len() as u32).to_be_bytes();
+                send_stream.write_all(&len).await.map_err(|e| {
+                    MeshTransportError::SendFailed(format!("ack write failed: {}", e))
+                })?;
+                send_stream.write_all(&encoded).await.map_err(|e| {
+                    MeshTransportError::SendFailed(format!("ack write failed: {}", e))
+                })?;
+                send_stream.finish().map_err(|e| {
+                    MeshTransportError::SendFailed(format!("ack finish failed: {}", e))
+                })?;
+            }
             MeshMessage::Ping {
                 request_id,
                 node_id: _,
@@ -4906,12 +5299,22 @@ impl MeshTransport {
                 self.handle_serverless_function_announce(announce).await;
             }
             MeshMessage::ServerlessInvokeRequest(req) => {
+                // Phase 06 (C4): `caller_node_id` is peer-controlled. It is
+                // audit metadata only — authorization and response routing use
+                // the authenticated session peer below.
+                let session_role = self
+                    .peers
+                    .get(&peer_node_id)
+                    .map(|peer| peer.role)
+                    .unwrap_or(crate::config::MeshNodeRole::EDGE);
                 tracing::debug!(
-                    "Received serverless invoke request: {} from {}",
-                    req.function_name,
-                    req.caller_node_id
+                    function = %req.function_name,
+                    authenticated_peer = %peer_node_id,
+                    claimed_caller = %req.caller_node_id,
+                    "Received serverless invoke request"
                 );
-                self.handle_serverless_invoke_request(&req).await?;
+                self.handle_serverless_invoke_request(&req, &peer_node_id, session_role)
+                    .await?;
             }
             MeshMessage::ServerlessInvokeResponse(response) => {
                 tracing::debug!(
@@ -5107,13 +5510,18 @@ impl MeshTransport {
         }
     }
 
+    // Without the `mesh` feature the first arm must diverge: the `mesh` arm is
+    // the tail expression, so clippy's cfg-blind `needless_return` is wrong.
+    #[allow(clippy::needless_return)]
     pub(crate) async fn handle_serverless_invoke_request(
         &self,
         req: &crate::protocol::ServerlessInvokeRequest,
+        authenticated_peer: &str,
+        session_role: crate::config::MeshNodeRole,
     ) -> Result<(), MeshTransportError> {
         #[cfg(not(feature = "mesh"))]
         {
-            let _ = req;
+            let _ = (req, authenticated_peer, session_role);
             tracing::warn!(
                 "ServerlessInvokeRequest for '{}' but mesh serverless support is not enabled",
                 req.function_name
@@ -5126,6 +5534,10 @@ impl MeshTransport {
             use synvoid_serverless::manager::CallerContext;
 
             let start = Instant::now();
+
+            // Phase 06 (C4): identity comes from the authenticated session.
+            // The message's `caller_node_id` is never an authorization input.
+            let caller_identity = serverless_caller_identity(authenticated_peer, session_role);
 
             let sm = {
                 let guard = self.application.serverless_manager.read();
@@ -5141,8 +5553,8 @@ impl MeshTransport {
             };
 
             let caller = CallerContext {
-                node_id: req.caller_node_id.clone(),
-                role: crate::config::MeshNodeRole::EDGE,
+                node_id: caller_identity.node_id.clone(),
+                role: caller_identity.role,
                 org_id: None,
                 tier: None,
                 is_local: false,
@@ -5182,7 +5594,9 @@ impl MeshTransport {
             let response_msg =
                 MeshMessage::ServerlessInvokeResponse(crate::protocol::ServerlessInvokeResponse {
                     function_name,
-                    caller_node_id: req.caller_node_id.clone(),
+                    // The requester correlates on its own node id, so the
+                    // response carries the authenticated peer, not the claim.
+                    caller_node_id: caller_identity.node_id.clone(),
                     timestamp: synvoid_utils::safe_unix_timestamp(),
                     response_data,
                     success,
@@ -5192,12 +5606,12 @@ impl MeshTransport {
                 });
 
             if let Err(e) = self
-                .send_message_to_peer(&req.caller_node_id, &response_msg)
+                .send_message_to_peer(&caller_identity.node_id, &response_msg)
                 .await
             {
                 tracing::warn!(
                     "Failed to send ServerlessInvokeResponse to {}: {}",
-                    req.caller_node_id,
+                    caller_identity.node_id,
                     e
                 );
             }
@@ -5722,13 +6136,12 @@ impl MeshTransport {
         // read timeout to prevent indefinite stalls on dead/slow peers.
         let read_timeout = Duration::from_secs(self.config.connection.peer_message_timeout_secs);
 
-        if let Some(peer) = self.peer_connections.get(peer_id) {
+        if let Some(peer) = self.peers.get(peer_id) {
             let result = async {
-                let (mut send_stream, mut recv_stream) = {
-                    let mut pool = peer.stream_pool.lock().await;
-                    pool.acquire().await
-                }
-                .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
+                let (mut send_stream, mut recv_stream) =
+                    peer.connection.open_bi().await.map_err(|e| {
+                        MeshTransportError::SendFailed(format!("Failed to open stream: {:?}", e))
+                    })?;
 
                 let msg = MeshMessage::PeerHealthCheck {
                     peer_id: self.config.node_id().into(),
@@ -5751,11 +6164,6 @@ impl MeshTransport {
                 }
                 let mut buf = vec![0u8; len];
                 read_exact_with_timeout(&mut recv_stream, &mut buf, read_timeout).await?;
-
-                {
-                    let mut pool = peer.stream_pool.lock().await;
-                    pool.release((send_stream, recv_stream));
-                }
 
                 Ok::<_, MeshTransportError>(())
             }
@@ -5808,6 +6216,7 @@ impl MeshTransport {
         topology: &MeshTopology,
         peer_node_id: String,
         service_id: Option<&str>,
+        client_meta: Option<&crate::service_target::ClientMetadata>,
     ) -> Result<(), MeshTransportError> {
         use crate::mesh::topology::LocalUpstreamAuthorization;
         use tokio::io::AsyncWriteExt;
@@ -5838,6 +6247,27 @@ impl MeshTransport {
         };
 
         if service_key.starts_with("serverless_function:") {
+            // Phase 06 (C4): this branch runs before
+            // `authorize_local_upstream`, so it must apply the Phase 03
+            // allowlist itself. A peer outside `peered_wafs` is refused here,
+            // before the body is read and before any function can execute.
+            // Function-level `allowed_callers` / `public_function` still
+            // applies on top inside `invoke_for_mesh`.
+            if !serverless_dispatch_authorized(&self.config, &peer_node_id) {
+                tracing::warn!(
+                    service_id = %service_key,
+                    peer = %peer_node_id,
+                    "mesh proxy rejected unlisted peer for serverless dispatch"
+                );
+                return self
+                    .write_mesh_http_error(
+                        send_stream,
+                        "403 Forbidden",
+                        "Mesh peer is not authorized for serverless dispatch",
+                    )
+                    .await;
+            }
+
             // Serverless dispatch still consumes the whole request buffer.
             let mut http_data = head.header_bytes.clone();
             match body_kind {
@@ -6051,8 +6481,13 @@ impl MeshTransport {
         };
 
         // Request: header first, then the body per the service policy.
+        //
+        // Phase 06 (C5): the peer's header block is rebuilt, not spliced. The
+        // client address reaches the upstream only through the authenticated
+        // preface metadata; the peer's own forwarding headers never survive.
+        let upstream_head = rebuild_upstream_head(&head.header_bytes, client_meta);
         backend_conn
-            .write_all(&head.header_bytes)
+            .write_all(&upstream_head)
             .await
             .map_err(|e| MeshTransportError::SendFailed(format!("Backend write failed: {}", e)))?;
 
@@ -6589,6 +7024,8 @@ impl MeshTransport {
         None
     }
 
+    // Same cfg-gated divergence as `handle_serverless_invoke_request`.
+    #[allow(clippy::needless_return)]
     async fn handle_serverless_proxy_stream(
         &self,
         upstream_id: &str,

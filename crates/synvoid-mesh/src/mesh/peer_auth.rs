@@ -420,8 +420,23 @@ pub fn validate_peer_role_after_tls(role: &crate::config::MeshNodeRole) -> Resul
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Validate a claimed peer role against the role the local allowlist grants.
+///
+/// `resolved_role` is [`crate::config::MeshConfig::resolve_peer_role`]'s output
+/// for this node id, and `allowlisted` is its
+/// [`crate::config::MeshConfig::is_peer_allowlisted`] answer. Authorization is
+/// decided by those two values, never by the peer's own `role` claim: a claim
+/// that differs from `resolved_role` is rejected here as well as at the call
+/// site.
+///
+/// For an unlisted peer both the PoW and the Ed25519 role signature are
+/// mandatory — PoW alone authenticates nobody. A listed peer is authenticated
+/// by its allowlist entry plus the certificate/key binding the transport
+/// enforced, so it may omit both, though any PoW it does send must verify.
 pub fn validate_peer_role(
     role: &crate::config::MeshNodeRole,
+    resolved_role: &crate::config::MeshNodeRole,
+    allowlisted: bool,
     authorized_global_pubkeys: &[String],
     peer_node_id: &str,
     peer_public_key: Option<&str>,
@@ -438,30 +453,53 @@ pub fn validate_peer_role(
     raft_attestation: Option<&SignedRaftAttestation>,
     allow_v1_raft_attestations: bool,
 ) -> Result<(), String> {
-    // Try Organization Trust Chain first if available for Edge nodes
-    if role.is_edge() {
-        if let (Some(cert), Some(org_key)) = (member_certificate, org_public_key) {
-            // Prefer value-bound Raft attestation path when attestation is available
-            if raft_attestation.is_some() {
-                // When an attestation is explicitly provided, use it exclusively.
-                // Reject if the attestation is invalid rather than falling through.
-                return validate_member_certificate_with_raft_attestation(
+    if role != resolved_role {
+        return Err(format!(
+            "Node {} claimed role {:?}, but its allowlisted role is {:?}",
+            peer_node_id, role, resolved_role
+        ));
+    }
+
+    // Try Organization Trust Chain first if available for Edge nodes.
+    //
+    // A presented member certificate is terminal: a rejected, revoked or
+    // expired certificate must not fall through to the PoW/signature branch,
+    // which would let a revoked member authenticate as an anonymous edge.
+    if resolved_role.is_edge() {
+        match (member_certificate, org_public_key) {
+            (Some(cert), Some(org_key)) => {
+                // Prefer value-bound Raft attestation path when attestation is available
+                if raft_attestation.is_some() {
+                    // When an attestation is explicitly provided, use it exclusively.
+                    // Reject if the attestation is invalid rather than falling through.
+                    return validate_member_certificate_with_raft_attestation(
+                        cert,
+                        org_key,
+                        authorized_global_pubkeys,
+                        peer_node_id,
+                        raft_attestation,
+                        allow_v1_raft_attestations,
+                    );
+                }
+                return validate_member_certificate(
                     cert,
                     org_key,
                     authorized_global_pubkeys,
                     peer_node_id,
-                    raft_attestation,
-                    allow_v1_raft_attestations,
-                );
-            } else if let Ok(()) =
-                validate_member_certificate(cert, org_key, authorized_global_pubkeys, peer_node_id)
-            {
-                return Ok(());
+                )
+                .map_err(|e| format!("Organization member certificate rejected: {}", e));
+            }
+            (None, None) => {}
+            _ => {
+                return Err(format!(
+                    "Edge node {} presented an incomplete organization membership (certificate and organization key must be sent together)",
+                    peer_node_id
+                ));
             }
         }
     }
 
-    if role.is_global() && role.is_edge() {
+    if resolved_role.is_global() && resolved_role.is_edge() {
         let mut errors = Vec::new();
 
         if pow_nonce.is_none() || pow_public_key.is_none() {
@@ -492,7 +530,7 @@ pub fn validate_peer_role(
         return Ok(());
     }
 
-    if role.is_global() && !role.is_origin() {
+    if resolved_role.is_global() && !resolved_role.is_origin() {
         return validate_global_node(
             peer_node_id,
             peer_public_key,
@@ -504,7 +542,7 @@ pub fn validate_peer_role(
         );
     }
 
-    if role.is_edge() && !role.is_global() && role.is_origin() {
+    if resolved_role.is_edge() && !resolved_role.is_global() && resolved_role.is_origin() {
         let mut errors = Vec::new();
 
         if let Err(e) = validate_edge_node(
@@ -516,7 +554,7 @@ pub fn validate_peer_role(
             revoked_nodes,
             pow_nonce,
             pow_public_key,
-            false,
+            allowlisted,
         ) {
             errors.push(format!("Edge validation failed: {}", e));
         }
@@ -541,8 +579,7 @@ pub fn validate_peer_role(
         return Ok(());
     }
 
-    if role.is_edge() {
-        let is_global_or_trusted = role.is_global();
+    if resolved_role.is_edge() {
         return validate_edge_node(
             peer_node_id,
             peer_public_key,
@@ -552,11 +589,11 @@ pub fn validate_peer_role(
             revoked_nodes,
             pow_nonce,
             pow_public_key,
-            is_global_or_trusted,
+            allowlisted,
         );
     }
 
-    if role.is_origin() {
+    if resolved_role.is_origin() {
         return validate_origin_node(
             peer_node_id,
             peer_public_key,
@@ -570,7 +607,7 @@ pub fn validate_peer_role(
         );
     }
 
-    Err(format!("Unknown node role: {}", role.bits()))
+    Err(format!("Unknown node role: {}", resolved_role.bits()))
 }
 
 /// Staged helper for canonical revocation and global-node authorization checks.
@@ -664,7 +701,7 @@ fn validate_edge_node(
     revoked_nodes: Option<&GlobalNodeRevocationList>,
     pow_nonce: Option<u64>,
     pow_public_key: Option<&str>,
-    is_global_or_trusted: bool,
+    allowlisted: bool,
 ) -> Result<(), String> {
     if let Some(revocation_list) = revoked_nodes {
         if let Some(revocation_info) = revocation_list.is_node_revoked(peer_node_id) {
@@ -675,40 +712,42 @@ fn validate_edge_node(
         }
     }
 
-    let mut pow_verified = false;
-
-    if !is_global_or_trusted {
-        let (nonce, pow_key) = match (pow_nonce, pow_public_key) {
-            (Some(nonce), Some(pk)) => (nonce, pk),
-            (None, None) => {
-                return Err(format!(
-                    "Edge node {} did not provide PoW nonce and public key - PoW is required",
-                    peer_node_id
-                ))
-            }
-            (None, Some(_)) => {
-                return Err(format!(
-                    "Edge node {} provided PoW public key but not nonce",
-                    peer_node_id
-                ))
-            }
-            (Some(_), None) => {
-                return Err(format!(
-                    "Edge node {} provided PoW nonce but not public key",
-                    peer_node_id
-                ))
-            }
-        };
-        validate_edge_node_pow(peer_node_id, peer_public_key, Some(nonce), Some(pow_key))?;
-        pow_verified = true;
-    } else if pow_nonce.is_some() && pow_public_key.is_some() {
-        validate_edge_node_pow(peer_node_id, peer_public_key, pow_nonce, pow_public_key)?;
-        pow_verified = true;
-    }
-
-    if pow_verified {
+    // A listed peer is authenticated by its allowlist entry plus the
+    // certificate/key binding the transport enforced, so PoW and the role
+    // signature are optional. A PoW it does send still has to verify.
+    if allowlisted {
+        if pow_nonce.is_some() && pow_public_key.is_some() {
+            validate_edge_node_pow(peer_node_id, peer_public_key, pow_nonce, pow_public_key)?;
+        }
         return Ok(());
     }
+
+    // Unlisted: the PoW and the Ed25519 role signature are both mandatory.
+    // Previously a verified PoW returned Ok here, which made the signature
+    // unreachable and let any key that mined a leading-zero hash claim any
+    // node id — the PoW key was never compared with the claimed id.
+    let (nonce, pow_key) = match (pow_nonce, pow_public_key) {
+        (Some(nonce), Some(pk)) => (nonce, pk),
+        (None, None) => {
+            return Err(format!(
+                "Edge node {} did not provide PoW nonce and public key - PoW is required",
+                peer_node_id
+            ))
+        }
+        (None, Some(_)) => {
+            return Err(format!(
+                "Edge node {} provided PoW public key but not nonce",
+                peer_node_id
+            ))
+        }
+        (Some(_), None) => {
+            return Err(format!(
+                "Edge node {} provided PoW nonce but not public key",
+                peer_node_id
+            ))
+        }
+    };
+    validate_edge_node_pow(peer_node_id, peer_public_key, Some(nonce), Some(pow_key))?;
 
     let pubkey = peer_public_key.ok_or_else(|| {
         format!(
@@ -861,6 +900,17 @@ pub fn validate_edge_node_pow(
         return Err(format!(
             "Edge node {} PoW public key does not match identity public key",
             peer_node_id
+        ));
+    }
+
+    // The work itself only proves that *some* key was mined. Bind that key to
+    // the claimed node id before validating the work, otherwise any mined key
+    // can claim any id.
+    let derived_node_id = crate::mesh::config::node_id_from_public_key(&pow_pk_bytes);
+    if derived_node_id.as_deref() != Some(peer_node_id) {
+        return Err(format!(
+            "Edge node {} presented a PoW public key that derives node id {:?}",
+            peer_node_id, derived_node_id
         ));
     }
 
@@ -1161,10 +1211,18 @@ mod tests {
         (secret, public)
     }
 
+    /// The node id a published key derives, as the handshake computes it.
+    fn node_id_for_public_key(public_b64: &str) -> String {
+        let bytes = URL_SAFE_NO_PAD.decode(public_b64).expect("valid base64");
+        crate::mesh::config::node_id_from_public_key(&bytes).expect("node id from key")
+    }
+
     #[test]
     fn test_non_global_passes() {
         let result = validate_peer_role(
             &crate::config::MeshNodeRole::EDGE,
+            &crate::config::MeshNodeRole::EDGE,
+            false,
             &[],
             "test-node",
             None,
@@ -1191,8 +1249,11 @@ mod tests {
     fn test_edge_node_with_valid_signature_passes() {
         use crate::dht::routing::node_id::NodeId;
         let (secret, public) = generate_test_keypair();
+        // The PoW path now binds the claimed id to the PoW key, so the node id
+        // must be the one the published key derives.
+        let node_id = node_id_for_public_key(&public);
         let timestamp = synvoid_utils::current_timestamp();
-        let challenge = format!("test-node:{}", timestamp);
+        let challenge = format!("{}:{}", node_id, timestamp);
         let signing_key = ed25519_dalek::SigningKey::from_bytes(&secret);
         let signature = URL_SAFE_NO_PAD.encode(signing_key.sign(challenge.as_bytes()).to_bytes());
 
@@ -1201,8 +1262,10 @@ mod tests {
 
         let result = validate_peer_role(
             &crate::config::MeshNodeRole::GLOBAL_EDGE,
+            &crate::config::MeshNodeRole::GLOBAL_EDGE,
+            false,
             std::slice::from_ref(&public),
-            "test-node",
+            &node_id,
             Some(&public),
             Some(&signature),
             timestamp,
@@ -1228,6 +1291,8 @@ mod tests {
 
         let result = validate_peer_role(
             &crate::config::MeshNodeRole::GLOBAL,
+            &crate::config::MeshNodeRole::GLOBAL,
+            false,
             std::slice::from_ref(&public),
             "test-global-node",
             Some(&public),
@@ -1258,6 +1323,8 @@ mod tests {
 
         let result = validate_peer_role(
             &crate::config::MeshNodeRole::GLOBAL,
+            &crate::config::MeshNodeRole::GLOBAL,
+            false,
             std::slice::from_ref(&public),
             "test-global-node",
             Some(&public),
@@ -1283,6 +1350,8 @@ mod tests {
         let (_, public) = generate_test_keypair();
         let result = validate_peer_role(
             &crate::config::MeshNodeRole::GLOBAL,
+            &crate::config::MeshNodeRole::GLOBAL,
+            false,
             &[public],
             "test-node",
             None,
@@ -1307,6 +1376,8 @@ mod tests {
         let (_, public) = generate_test_keypair();
         let result = validate_peer_role(
             &crate::config::MeshNodeRole::GLOBAL,
+            &crate::config::MeshNodeRole::GLOBAL,
+            false,
             &[],
             "test-node",
             Some(&public),
@@ -1336,6 +1407,8 @@ mod tests {
 
         let result = validate_peer_role(
             &crate::config::MeshNodeRole::GLOBAL,
+            &crate::config::MeshNodeRole::GLOBAL,
+            false,
             std::slice::from_ref(&public),
             "test-node",
             Some(&public),
@@ -1363,6 +1436,8 @@ mod tests {
 
         let result = validate_peer_role(
             &crate::config::MeshNodeRole::GLOBAL,
+            &crate::config::MeshNodeRole::GLOBAL,
+            false,
             &[public_a],
             "test-node",
             Some(&public_b),
@@ -1389,6 +1464,8 @@ mod tests {
 
         let result = validate_peer_role(
             &crate::config::MeshNodeRole::GLOBAL,
+            &crate::config::MeshNodeRole::GLOBAL,
+            false,
             &[],
             "test-node",
             Some(&public),
@@ -1419,6 +1496,8 @@ mod tests {
 
         let result = validate_peer_role(
             &crate::config::MeshNodeRole::GLOBAL,
+            &crate::config::MeshNodeRole::GLOBAL,
+            false,
             std::slice::from_ref(&public),
             "test-node",
             Some(&public),
@@ -1456,6 +1535,8 @@ mod tests {
 
         let result = validate_peer_role(
             &crate::config::MeshNodeRole::ORIGIN,
+            &crate::config::MeshNodeRole::ORIGIN,
+            false,
             std::slice::from_ref(&global_public),
             "origin-node",
             Some(&origin_public),
@@ -1489,6 +1570,8 @@ mod tests {
 
         let result = validate_peer_role(
             &crate::config::MeshNodeRole::ORIGIN,
+            &crate::config::MeshNodeRole::ORIGIN,
+            false,
             std::slice::from_ref(&global_public),
             "origin-node",
             Some(&origin_public),
@@ -1530,6 +1613,8 @@ mod tests {
 
         let result = validate_peer_role(
             &crate::config::MeshNodeRole::ORIGIN,
+            &crate::config::MeshNodeRole::ORIGIN,
+            false,
             &[unauthorized_global],
             "origin-node",
             Some(&origin_public),
@@ -1573,6 +1658,8 @@ mod tests {
 
         let result = validate_peer_role(
             &crate::config::MeshNodeRole::ORIGIN,
+            &crate::config::MeshNodeRole::ORIGIN,
+            false,
             std::slice::from_ref(&global_public),
             "origin-node",
             Some(&origin_public),
@@ -1598,17 +1685,31 @@ mod tests {
         use crate::dht::routing::node_id::NodeId;
 
         let (_, public) = generate_test_keypair();
+        let node_id = node_id_for_public_key(&public);
 
         let pow_pk_bytes = URL_SAFE_NO_PAD.decode(&public).expect("valid base64");
         let pow_nonce = NodeId::find_pow_nonce(&pow_pk_bytes).expect("pow nonce found");
 
-        let result = validate_edge_node_pow(
-            "edge-pow-node",
-            Some(&public),
-            Some(pow_nonce),
-            Some(&public),
-        );
+        let result =
+            validate_edge_node_pow(&node_id, Some(&public), Some(pow_nonce), Some(&public));
         assert!(result.is_ok(), "PoW validation failed: {:?}", result);
+    }
+
+    #[test]
+    fn test_pow_for_a_different_node_id_is_rejected() {
+        use crate::dht::routing::node_id::NodeId;
+
+        let (_, public) = generate_test_keypair();
+        let (_, other_public) = generate_different_keypair(0x0b);
+        let claimed_id = node_id_for_public_key(&other_public);
+
+        let pow_pk_bytes = URL_SAFE_NO_PAD.decode(&public).expect("valid base64");
+        let pow_nonce = NodeId::find_pow_nonce(&pow_pk_bytes).expect("pow nonce found");
+
+        let result =
+            validate_edge_node_pow(&claimed_id, Some(&public), Some(pow_nonce), Some(&public));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("derives node id"));
     }
 
     #[test]
@@ -1638,18 +1739,15 @@ mod tests {
     fn test_edge_node_pow_invalid_nonce_fails() {
         use crate::dht::routing::node_id::NodeId;
         let (_, public) = generate_test_keypair();
+        let node_id = node_id_for_public_key(&public);
 
         let pow_pk_bytes = URL_SAFE_NO_PAD.decode(&public).expect("valid base64");
         let _ = NodeId::find_pow_nonce(&pow_pk_bytes).expect("pow nonce found");
 
         let invalid_nonce = u64::MAX;
 
-        let result = validate_edge_node_pow(
-            "edge-pow-node",
-            Some(&public),
-            Some(invalid_nonce),
-            Some(&public),
-        );
+        let result =
+            validate_edge_node_pow(&node_id, Some(&public), Some(invalid_nonce), Some(&public));
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("PoW verification failed"));
     }
@@ -1679,18 +1777,21 @@ mod tests {
     }
 
     #[test]
-    fn test_edge_node_with_pow_bypasses_signature() {
+    fn test_unlisted_edge_with_valid_pow_still_requires_signature() {
         use crate::dht::routing::node_id::NodeId;
 
         let (_, public) = generate_test_keypair();
+        let node_id = node_id_for_public_key(&public);
 
         let pow_pk_bytes = URL_SAFE_NO_PAD.decode(&public).expect("valid base64");
         let pow_nonce = NodeId::find_pow_nonce(&pow_pk_bytes).expect("pow nonce found");
 
         let result = validate_peer_role(
             &crate::config::MeshNodeRole::EDGE,
+            &crate::config::MeshNodeRole::EDGE,
+            false,
             &[],
-            "edge-pow-node",
+            &node_id,
             Some(&public),
             None,
             0,
@@ -1705,22 +1806,90 @@ mod tests {
             None,
             false,
         );
-        assert!(result.is_ok(), "PoW validation failed: {:?}", result);
+        assert!(
+            result.is_err(),
+            "PoW alone must not authenticate: {result:?}"
+        );
+        assert!(result
+            .unwrap_err()
+            .contains("did not provide Ed25519 signature"));
+    }
+
+    #[test]
+    fn test_allowlisted_edge_skips_pow_and_signature() {
+        let (_, public) = generate_test_keypair();
+        let node_id = node_id_for_public_key(&public);
+
+        let result = validate_peer_role(
+            &crate::config::MeshNodeRole::EDGE,
+            &crate::config::MeshNodeRole::EDGE,
+            true,
+            &[],
+            &node_id,
+            Some(&public),
+            None,
+            0,
+            300,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        );
+        assert!(result.is_ok(), "allowlisted edge rejected: {result:?}");
+    }
+
+    #[test]
+    fn test_role_claim_must_match_the_allowlist() {
+        let (_, public) = generate_test_keypair();
+        let node_id = node_id_for_public_key(&public);
+
+        let result = validate_peer_role(
+            &crate::config::MeshNodeRole::ORIGIN,
+            &crate::config::MeshNodeRole::EDGE,
+            false,
+            &[],
+            &node_id,
+            Some(&public),
+            None,
+            0,
+            300,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        );
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert!(error.contains("claimed role"), "{error}");
+        assert!(error.contains("but its allowlisted role is"), "{error}");
     }
 
     #[test]
     fn test_composite_role_global_edge_passes_global_validation() {
         use crate::dht::routing::node_id::NodeId;
         let (secret, public) = generate_test_keypair();
-        let (signature, timestamp) = generate_global_node_auth("composite-node", &secret).unwrap();
+        let node_id = node_id_for_public_key(&public);
+        let (signature, timestamp) = generate_global_node_auth(&node_id, &secret).unwrap();
 
         let pow_pk_bytes = URL_SAFE_NO_PAD.decode(&public).expect("valid base64");
         let pow_nonce = NodeId::find_pow_nonce(&pow_pk_bytes).expect("pow nonce found");
 
         let result = validate_peer_role(
             &crate::config::MeshNodeRole::GLOBAL_EDGE,
+            &crate::config::MeshNodeRole::GLOBAL_EDGE,
+            false,
             std::slice::from_ref(&public),
-            "composite-node",
+            &node_id,
             Some(&public),
             Some(&signature),
             timestamp,
@@ -1756,6 +1925,8 @@ mod tests {
 
         let result = validate_peer_role(
             &crate::config::MeshNodeRole::GLOBAL_ORIGIN,
+            &crate::config::MeshNodeRole::GLOBAL_ORIGIN,
+            false,
             std::slice::from_ref(&global_public),
             "composite-origin",
             Some(&origin_public),
@@ -1785,6 +1956,8 @@ mod tests {
 
         let result = validate_peer_role(
             &crate::config::MeshNodeRole::GLOBAL,
+            &crate::config::MeshNodeRole::GLOBAL,
+            false,
             std::slice::from_ref(&public),
             "test-node",
             Some(&public),
@@ -1809,6 +1982,8 @@ mod tests {
     fn test_invalid_public_key_encoding_fails() {
         let result = validate_peer_role(
             &crate::config::MeshNodeRole::GLOBAL,
+            &crate::config::MeshNodeRole::GLOBAL,
+            false,
             &["invalid_base64_key".to_string()],
             "test-node",
             Some("invalid_base64_key"),
@@ -1843,6 +2018,8 @@ mod tests {
 
         let result = validate_peer_role(
             &crate::config::MeshNodeRole::EDGE,
+            &crate::config::MeshNodeRole::EDGE,
+            false,
             &[],
             "revoked-edge",
             Some(&public),
@@ -1873,6 +2050,8 @@ mod tests {
 
         let result = validate_peer_role(
             &crate::config::MeshNodeRole::GLOBAL,
+            &crate::config::MeshNodeRole::GLOBAL,
+            false,
             std::slice::from_ref(&public),
             "revoked-global",
             Some(&public),
@@ -1911,6 +2090,8 @@ mod tests {
 
         let result = validate_peer_role(
             &crate::config::MeshNodeRole::ORIGIN,
+            &crate::config::MeshNodeRole::ORIGIN,
+            false,
             &[],
             "origin-node",
             Some(&origin_public),
@@ -1942,6 +2123,8 @@ mod tests {
 
         let result = validate_peer_role(
             &crate::config::MeshNodeRole::GLOBAL,
+            &crate::config::MeshNodeRole::GLOBAL,
+            false,
             std::slice::from_ref(&public),
             node_id,
             Some(&public),
@@ -1968,8 +2151,9 @@ mod tests {
         let (origin_secret, origin_public) = generate_test_keypair();
         let (global_secret, global_public) = generate_different_keypair(0x09);
 
+        let node_id = node_id_for_public_key(&origin_public);
         let timestamp = synvoid_utils::current_timestamp();
-        let origin_challenge = format!("origin:edge-origin-node:{}", timestamp);
+        let origin_challenge = format!("origin:{}:{}", node_id, timestamp);
 
         let origin_signing_key = ed25519_dalek::SigningKey::from_bytes(&origin_secret);
         let origin_signature = URL_SAFE_NO_PAD.encode(
@@ -1990,10 +2174,14 @@ mod tests {
             .expect("valid base64");
         let pow_nonce = NodeId::find_pow_nonce(&pow_pk_bytes).expect("pow nonce found");
 
+        // An allowlisted composite peer: the edge half is covered by the
+        // allowlist entry, the origin half by its signature and attestation.
         let result = validate_peer_role(
             &crate::config::MeshNodeRole::EDGE_ORIGIN,
+            &crate::config::MeshNodeRole::EDGE_ORIGIN,
+            true,
             std::slice::from_ref(&global_public),
-            "edge-origin-node",
+            &node_id,
             Some(&origin_public),
             Some(&origin_signature),
             timestamp,
@@ -2018,16 +2206,18 @@ mod tests {
     #[test]
     fn test_global_edge_requires_pow_and_signature() {
         let (secret, public) = generate_test_keypair();
-        let (signature, timestamp) =
-            generate_global_node_auth("global-edge-node", &secret).unwrap();
+        let node_id = node_id_for_public_key(&public);
+        let (signature, timestamp) = generate_global_node_auth(&node_id, &secret).unwrap();
         use crate::dht::routing::node_id::NodeId;
         let pow_pk_bytes = URL_SAFE_NO_PAD.decode(&public).expect("valid base64");
         let pow_nonce = NodeId::find_pow_nonce(&pow_pk_bytes).expect("pow nonce found");
 
         let result_with_pow_only = validate_peer_role(
             &crate::config::MeshNodeRole::GLOBAL_EDGE,
+            &crate::config::MeshNodeRole::GLOBAL_EDGE,
+            false,
             std::slice::from_ref(&public),
-            "global-edge-node",
+            &node_id,
             Some(&public),
             None,
             timestamp,
@@ -2052,8 +2242,10 @@ mod tests {
 
         let result_with_signature_only = validate_peer_role(
             &crate::config::MeshNodeRole::GLOBAL_EDGE,
+            &crate::config::MeshNodeRole::GLOBAL_EDGE,
+            false,
             std::slice::from_ref(&public),
-            "global-edge-node",
+            &node_id,
             Some(&public),
             Some(&signature),
             timestamp,
@@ -2078,8 +2270,10 @@ mod tests {
 
         let result_with_both = validate_peer_role(
             &crate::config::MeshNodeRole::GLOBAL_EDGE,
+            &crate::config::MeshNodeRole::GLOBAL_EDGE,
+            false,
             std::slice::from_ref(&public),
-            "global-edge-node",
+            &node_id,
             Some(&public),
             Some(&signature),
             timestamp,
@@ -3107,6 +3301,8 @@ mod tests {
 
         let result = validate_peer_role(
             &crate::config::MeshNodeRole::EDGE,
+            &crate::config::MeshNodeRole::EDGE,
+            false,
             &[global_public_b64],
             "peer-1",
             None,
@@ -3138,6 +3334,8 @@ mod tests {
         // No attestation and no quorum sigs -> should fail
         let result = validate_peer_role(
             &crate::config::MeshNodeRole::EDGE,
+            &crate::config::MeshNodeRole::EDGE,
+            false,
             &[global_public_b64],
             "peer-1",
             None,
@@ -3185,6 +3383,8 @@ mod tests {
 
         let result = validate_peer_role(
             &crate::config::MeshNodeRole::EDGE,
+            &crate::config::MeshNodeRole::EDGE,
+            false,
             &[global_public_b64],
             "peer-1",
             None,
@@ -3235,6 +3435,8 @@ mod tests {
 
         let result = validate_peer_role(
             &crate::config::MeshNodeRole::EDGE,
+            &crate::config::MeshNodeRole::EDGE,
+            false,
             &[global_public_b64],
             "peer-1",
             None,
@@ -3285,6 +3487,8 @@ mod tests {
 
         let result = validate_peer_role(
             &crate::config::MeshNodeRole::EDGE,
+            &crate::config::MeshNodeRole::EDGE,
+            false,
             &[global_public_b64],
             "peer-1",
             None,

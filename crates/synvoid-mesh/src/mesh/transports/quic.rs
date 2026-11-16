@@ -72,14 +72,11 @@ impl MeshTransportTrait for QuicMeshTransport {
     }
 
     fn is_connected(&self, peer_id: &str) -> bool {
-        self.inner.peer_connections.contains_key(peer_id)
+        self.inner.peers.get(peer_id).is_some()
     }
 
     fn get_peer_address(&self, peer_id: &str) -> Option<String> {
-        self.inner
-            .peer_connections
-            .get(peer_id)
-            .map(|p| p.address.clone())
+        self.inner.peers.get(peer_id).map(|p| p.address.clone())
     }
 
     async fn send_stream(
@@ -105,12 +102,7 @@ impl MeshTransportTrait for QuicMeshTransport {
     }
 
     async fn broadcast_datagram(&self, message: &MeshMessage) -> Result<(), MeshTransportError> {
-        let peers: Vec<String> = self
-            .inner
-            .peer_connections
-            .iter()
-            .map(|e| e.key().clone())
-            .collect();
+        let peers: Vec<String> = self.inner.connected_peer_ids();
 
         if peers.is_empty() {
             return Ok(());
@@ -139,11 +131,7 @@ impl MeshTransportTrait for QuicMeshTransport {
     }
 
     fn get_connected_peers(&self) -> Vec<String> {
-        self.inner
-            .peer_connections
-            .iter()
-            .map(|e| e.key().clone())
-            .collect()
+        self.inner.connected_peer_ids()
     }
 
     fn local_addresses(&self) -> Vec<String> {

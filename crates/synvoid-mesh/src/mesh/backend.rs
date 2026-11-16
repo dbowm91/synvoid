@@ -69,17 +69,29 @@ pub fn create_record_store(
 
     let access_control = DhtAccessControl::new(config);
 
+    // The DHT record signer is the node identity: records are signed with the
+    // key whose verifying half the handshake binds to this node id, so a
+    // record's publisher can be checked against the peer that sent it.
+    //
+    // `MeshConfig::global_node_key` is deliberately not a signer source. It is
+    // a hex attestation key used for global-node authority elsewhere; treating
+    // its ASCII bytes as a seed produced a signer unrelated to the published
+    // identity.
     let mut signer = None;
-    if let Some(key) = config.global_node_key.as_ref() {
-        let mut key_bytes = [0u8; 32];
-        let bytes = key.as_bytes();
-        let len = bytes.len().min(32);
-        key_bytes[..len].copy_from_slice(&bytes[..len]);
-        let mut s = crate::protocol::MeshMessageSigner::new(key_bytes);
-        if let Some(ref pool) = verification_pool {
-            s = s.with_verification_pool(pool.clone());
+    match config.signing_seed() {
+        Ok(seed) => {
+            let mut s = crate::protocol::MeshMessageSigner::from_secret(seed);
+            if let Some(ref pool) = verification_pool {
+                s = s.with_verification_pool(pool.clone());
+            }
+            signer = Some(s);
         }
-        signer = Some(s);
+        Err(error) => {
+            // Signed DHT records become impossible without an identity, but a
+            // record store without a signer is still a valid read-only view;
+            // the peers' signed-push policy decides what they accept.
+            tracing::warn!(%error, "DHT record signing unavailable");
+        }
     }
 
     let verifier =

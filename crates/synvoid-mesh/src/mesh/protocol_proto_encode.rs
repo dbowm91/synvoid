@@ -2228,6 +2228,24 @@ impl From<&MeshMessage> for proto::MeshMessage {
                     },
                 )),
             },
+            MeshMessage::SiteConfigAck {
+                request_id,
+                site_id,
+                applied_version,
+                accepted,
+                reason,
+            } => proto::MeshMessage {
+                message_type: 183,
+                payload: Some(proto::mesh_message::Payload::SiteConfigAck(
+                    proto::SiteConfigAck {
+                        request_id: request_id.to_string(),
+                        site_id: site_id.to_string(),
+                        applied_version: *applied_version,
+                        accepted: *accepted,
+                        reason: reason.to_string(),
+                    },
+                )),
+            },
             MeshMessage::WasmModuleAnnounce {
                 request_id,
                 module_name,

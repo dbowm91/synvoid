@@ -3,6 +3,7 @@ use super::common::{config_path, OptionalAuth};
 use axum::{
     extract::{Path, State},
     http::StatusCode,
+    response::{IntoResponse, Response},
     Json,
 };
 use serde::{Deserialize, Serialize};
@@ -28,6 +29,108 @@ pub struct SiteInfo {
 pub struct SiteDetail {
     pub id: String,
     pub config: serde_json::Value,
+}
+
+/// One origin that did not confirm a site-config broadcast.
+#[cfg(feature = "mesh")]
+#[derive(Debug, Serialize, ToSchema)]
+pub struct SiteDeliveryFailure {
+    pub node_id: String,
+    pub reason: String,
+}
+
+/// Delivery outcome for a site-config edit that did not fully succeed.
+///
+/// The admin request now waits for the bounded fanout, so the operator learns
+/// which origins are still serving the previous configuration instead of
+/// reading a 200 for a fire-and-forget spawn.
+#[cfg(feature = "mesh")]
+#[derive(Debug, Serialize, ToSchema)]
+pub struct SiteDeliveryReport {
+    pub id: String,
+    pub config: serde_json::Value,
+    /// Origins that confirmed the new version.
+    pub acked_origins: Vec<String>,
+    /// Origins that timed out, failed, or rejected the new version.
+    pub failed_origins: Vec<SiteDeliveryFailure>,
+    /// Set when the broadcast could not start at all (for example a config
+    /// larger than the mesh message limit).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delivery_error: Option<String>,
+}
+
+/// Map a fanout result onto the admin status contract:
+/// `200` all acked, `207` some failed, `502` none acked.
+#[cfg(feature = "mesh")]
+fn site_delivery_response(
+    site_id: &str,
+    config: serde_json::Value,
+    deliveries: Result<Vec<synvoid_mesh::transport::OriginDelivery>, String>,
+) -> Response {
+    let deliveries = match deliveries {
+        Ok(deliveries) => deliveries,
+        Err(error) => {
+            tracing::error!("Site config broadcast for {} failed: {}", site_id, error);
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(SiteDeliveryReport {
+                    id: site_id.to_string(),
+                    config,
+                    acked_origins: Vec::new(),
+                    failed_origins: Vec::new(),
+                    delivery_error: Some(error),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    let mut acked_origins = Vec::new();
+    let mut failed_origins = Vec::new();
+    for delivery in deliveries {
+        match delivery.result {
+            Ok(()) => acked_origins.push(delivery.node_id),
+            Err(reason) => failed_origins.push(SiteDeliveryFailure {
+                node_id: delivery.node_id,
+                reason,
+            }),
+        }
+    }
+
+    if failed_origins.is_empty() {
+        return Json(SiteDetail {
+            id: site_id.to_string(),
+            config,
+        })
+        .into_response();
+    }
+
+    let status = if acked_origins.is_empty() {
+        StatusCode::BAD_GATEWAY
+    } else {
+        StatusCode::MULTI_STATUS
+    };
+
+    for failure in &failed_origins {
+        tracing::warn!(
+            "Site config for {} not applied by origin {}: {}",
+            site_id,
+            failure.node_id,
+            failure.reason
+        );
+    }
+
+    (
+        status,
+        Json(SiteDeliveryReport {
+            id: site_id.to_string(),
+            config,
+            acked_origins,
+            failed_origins,
+            delivery_error: None,
+        }),
+    )
+        .into_response()
 }
 
 #[utoipa::path(
@@ -123,7 +226,7 @@ pub async fn create_site(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<CreateSiteRequest>,
-) -> Result<Json<SiteDetail>, StatusCode> {
+) -> Result<Response, StatusCode> {
     if req.domains.is_empty() {
         return Err(StatusCode::BAD_REQUEST);
     }
@@ -190,45 +293,36 @@ pub async fn create_site(
 
     #[cfg(feature = "mesh")]
     if let Some(ref mesh_transport) = state.mesh.mesh_transport {
-        let mesh_transport_clone = mesh_transport.clone();
-        let mesh_transport_for_publish = mesh_transport.clone();
-        let version = crate::utils::safe_unix_timestamp();
+        // Local serving picks up the new config immediately; only the
+        // cross-origin confirmation is awaited below.
+        mesh_transport.publish_single_site_transform_config(&site_id, &site_config);
 
-        tokio::spawn(async move {
-            match mesh_transport_clone
-                .broadcast_site_config_to_origins(
-                    &site_id_for_broadcast,
-                    &toml_content_for_broadcast,
-                    version,
-                    proxy_cache_preferences,
-                )
-                .await
-            {
-                Ok((success, fail)) => {
-                    tracing::info!(
-                        "Broadcast new site config for {}: {} success, {} failed",
-                        site_id_for_broadcast,
-                        success,
-                        fail
-                    );
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to broadcast new site config for {}: {}",
-                        site_id_for_broadcast,
-                        e
-                    );
-                }
-            }
-        });
+        // The fanout is bounded (one stream round-trip per origin) and is
+        // awaited: a fire-and-forget task reported success the admin request
+        // had already returned, hiding origins that never applied the config.
+        let version = mesh_transport.next_site_config_version(&site_id_for_broadcast);
+        let deliveries = mesh_transport
+            .broadcast_site_config_to_origins(
+                &site_id_for_broadcast,
+                &toml_content_for_broadcast,
+                version,
+                proxy_cache_preferences,
+            )
+            .await
+            .map_err(|error| error.to_string());
 
-        mesh_transport_for_publish.publish_single_site_transform_config(&site_id, &site_config);
+        return Ok(site_delivery_response(
+            &site_id,
+            serde_json::to_value(&site_config).unwrap_or(serde_json::Value::Null),
+            deliveries,
+        ));
     }
 
     Ok(Json(SiteDetail {
         id: site_id,
         config: serde_json::to_value(&site_config).unwrap_or(serde_json::Value::Null),
-    }))
+    })
+    .into_response())
 }
 
 #[utoipa::path(
@@ -293,7 +387,7 @@ pub async fn update_site(
     _auth: OptionalAuth,
     Path(site_id): Path<String>,
     Json(req): Json<UpdateSiteRequest>,
-) -> Result<Json<SiteDetail>, StatusCode> {
+) -> Result<Response, StatusCode> {
     let config: crate::config::site::SiteConfig =
         serde_json::from_value(req.config.clone()).map_err(|_| StatusCode::BAD_REQUEST)?;
 
@@ -339,56 +433,41 @@ pub async fn update_site(
         .map(crate::mesh::protocol::ProxyCachePreferences::from);
     #[cfg(not(feature = "mesh"))]
     let proxy_cache_preferences: Option<()> = None;
-    let version = crate::utils::safe_unix_timestamp();
     let _ = (
         &toml_content_for_broadcast,
         &site_id_for_broadcast,
         &proxy_cache_preferences,
-        &version,
     );
     drop(state_config);
     drop(_guard);
 
     #[cfg(feature = "mesh")]
     if let Some(ref mesh_transport) = state.mesh.mesh_transport {
-        let mesh_transport_clone = mesh_transport.clone();
-        let mesh_transport_for_publish = mesh_transport.clone();
+        // Local serving picks up the new config immediately; only the
+        // cross-origin confirmation is awaited below.
+        mesh_transport.publish_single_site_transform_config(&site_id, &config);
 
-        tokio::spawn(async move {
-            match mesh_transport_clone
-                .broadcast_site_config_to_origins(
-                    &site_id_for_broadcast,
-                    &toml_content_for_broadcast,
-                    version,
-                    proxy_cache_preferences,
-                )
-                .await
-            {
-                Ok((success, fail)) => {
-                    tracing::info!(
-                        "Broadcast site config for {}: {} success, {} failed",
-                        site_id_for_broadcast,
-                        success,
-                        fail
-                    );
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to broadcast site config for {}: {}",
-                        site_id_for_broadcast,
-                        e
-                    );
-                }
-            }
-        });
+        // Same bounded, awaited fanout as create: the admin status code is the
+        // delivery result, not the local send result.
+        let version = mesh_transport.next_site_config_version(&site_id_for_broadcast);
+        let deliveries = mesh_transport
+            .broadcast_site_config_to_origins(
+                &site_id_for_broadcast,
+                &toml_content_for_broadcast,
+                version,
+                proxy_cache_preferences,
+            )
+            .await
+            .map_err(|error| error.to_string());
 
-        mesh_transport_for_publish.publish_single_site_transform_config(&site_id, &config);
+        return Ok(site_delivery_response(&site_id, req.config, deliveries));
     }
 
     Ok(Json(SiteDetail {
         id: site_id,
         config: req.config,
-    }))
+    })
+    .into_response())
 }
 
 #[derive(Debug, Serialize, ToSchema)]

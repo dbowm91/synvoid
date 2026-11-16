@@ -287,8 +287,11 @@ impl NodeIdentityConfig {
         hk.expand(public_key, &mut okm)
             .map_err(|e| format!("HKDF expand failed: {}", e))?;
 
+        // `okm` is an Ed25519 seed, exactly like the on-disk identity secret.
+        // The published key is its verifying key so message signatures verify
+        // against the identity the handshake binds.
         self.private_key = Some(okm.to_vec());
-        self.public_key = Some(derive_node_id_hash(&okm));
+        self.public_key = Some(derive_identity_public_key(&okm).to_vec());
         self.node_id = Some(derive_node_id(&okm));
         self.router_id = Some(crate::mesh::config::derive_router_id(&okm));
 
@@ -351,12 +354,16 @@ impl NodeIdentityConfig {
 
                 if key_data.len() == 32 + 12 + 16 {
                     let decrypted = self.decrypt_key(&key_data, passphrase)?;
-                    let pubkey = derive_node_id_hash(&decrypted);
-                    let node_id = derive_node_id(&decrypted);
-                    let router_id = crate::mesh::config::derive_router_id(&decrypted);
+                    let seed: [u8; 32] = decrypted
+                        .as_slice()
+                        .try_into()
+                        .map_err(|_| "Invalid signing key file format".to_string())?;
+                    let pubkey = derive_identity_public_key(&seed);
+                    let node_id = derive_node_id(&seed);
+                    let router_id = crate::mesh::config::derive_router_id(&seed);
 
                     if let Some(ref proof) = self.minting_proof {
-                        if pubkey != proof.node_public_key {
+                        if pubkey.to_vec() != proof.node_public_key {
                             return Err(
                                 "Private key mismatch with minting proof public key".to_string()
                             );
@@ -364,16 +371,20 @@ impl NodeIdentityConfig {
                     }
 
                     self.private_key = Some(decrypted);
-                    self.public_key = Some(pubkey);
+                    self.public_key = Some(pubkey.to_vec());
                     self.node_id = Some(node_id);
                     self.router_id = Some(router_id);
                     return Ok(());
                 } else if key_data.len() == 32 {
-                    let pubkey = derive_node_id_hash(&key_data);
-                    let node_id = derive_node_id(&key_data);
+                    let seed: [u8; 32] = key_data
+                        .as_slice()
+                        .try_into()
+                        .map_err(|_| "Invalid signing key file format".to_string())?;
+                    let pubkey = derive_identity_public_key(&seed);
+                    let node_id = derive_node_id(&seed);
 
                     if let Some(ref proof) = self.minting_proof {
-                        if pubkey != proof.node_public_key {
+                        if pubkey.to_vec() != proof.node_public_key {
                             return Err(
                                 "Private key mismatch with minting proof public key".to_string()
                             );
@@ -381,9 +392,9 @@ impl NodeIdentityConfig {
                     }
 
                     self.private_key = Some(key_data.clone());
-                    self.public_key = Some(pubkey);
+                    self.public_key = Some(pubkey.to_vec());
                     self.node_id = Some(node_id);
-                    self.router_id = Some(crate::mesh::config::derive_router_id(&key_data));
+                    self.router_id = Some(crate::mesh::config::derive_router_id(&seed));
                     return Ok(());
                 } else {
                     return Err("Invalid signing key file format".to_string());
@@ -402,7 +413,7 @@ impl NodeIdentityConfig {
         let mut rng = rand::rngs::OsRng;
         rng.try_fill_bytes(&mut key).expect("RNG failure");
         self.private_key = Some(key.to_vec());
-        self.public_key = Some(derive_node_id_hash(&key));
+        self.public_key = Some(derive_identity_public_key(&key).to_vec());
         self.node_id = Some(derive_node_id(&key));
         self.router_id = Some(crate::mesh::config::derive_router_id(&key));
 
@@ -518,7 +529,7 @@ impl NodeIdentityConfig {
 
 #[cfg(test)]
 mod phase99_identity_vectors {
-    use super::NodeIdentityConfig;
+    use super::{derive_identity_public_key, node_id_from_public_key, NodeIdentityConfig};
 
     #[test]
     fn genesis_hkdf_and_identity_derivation_known_answer() {
@@ -527,12 +538,94 @@ mod phase99_identity_vectors {
             .derive_signing_key_from_genesis(&[0x11; 32], &[0x22; 32])
             .expect("known-answer HKDF input is valid");
 
+        // The HKDF output is the identity seed; it is unchanged by the switch
+        // from hashing the seed to publishing the verifying key.
         assert_eq!(
             hex::encode(identity.private_key.as_deref().unwrap()),
             "fd64bff777ff2ebba7093c21fe46ba313cc6b98551730150f65d003d67a94c66"
         );
-        assert_eq!(identity.node_id.as_deref(), Some("node-b7bf0ec8e77fe742"));
-        assert_eq!(identity.router_id.as_deref(), Some("da2ajmfm6mowykea"));
+        assert_eq!(
+            hex::encode(identity.public_key.as_deref().unwrap()),
+            "e80ce6b276934eaacf7179c633772b4df6c76b5be9f685de37a06592e3ace335"
+        );
+        assert_eq!(identity.node_id.as_deref(), Some("node-be82b3e751c835f5"));
+        assert_eq!(identity.router_id.as_deref(), Some("vdpjyoa46mdm2opg"));
+    }
+
+    /// A realized identity and the seed it was generated from.
+    ///
+    /// Uses the production loader (`load_or_generate`) so the assertions cover
+    /// the derivation the node actually publishes, not a hand-built struct.
+    fn realized_identity() -> (tempfile::TempDir, NodeIdentityConfig, [u8; 32]) {
+        let dir = tempfile::tempdir().expect("identity temp dir");
+        let mut identity = NodeIdentityConfig {
+            private_key_path: Some(
+                dir.path()
+                    .join("identity.key")
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+            ..Default::default()
+        };
+        identity.load_or_generate().expect("identity realizes");
+        let seed: [u8; 32] = identity
+            .private_key
+            .as_deref()
+            .expect("identity seed")
+            .try_into()
+            .expect("the identity secret is a 32-byte seed");
+        (dir, identity, seed)
+    }
+
+    #[test]
+    fn identity_public_key_is_ed25519() {
+        let (_dir, identity, seed) = realized_identity();
+        let published = identity.public_key.clone().expect("published key");
+        assert_eq!(published.len(), 32, "an Ed25519 verifying key is 32 bytes");
+
+        let signer = crate::protocol::MeshMessageSigner::from_secret(seed);
+        assert_eq!(
+            signer.get_public_key_bytes(),
+            published,
+            "the signer must publish exactly the identity key"
+        );
+
+        let signature = signer.sign(b"mesh message body");
+        assert!(
+            crate::protocol::MeshMessageSigner::verify_with_public_key(
+                b"mesh message body",
+                &signature,
+                &published
+            ),
+            "a signature by the identity key must verify with the published key"
+        );
+        assert!(
+            !crate::protocol::MeshMessageSigner::verify_with_public_key(
+                b"mesh message body",
+                &signature,
+                &derive_identity_public_key(&[0xAB; 32])
+            ),
+            "another key must not verify the signature"
+        );
+    }
+
+    #[test]
+    fn node_id_is_derived_from_the_ed25519_public_key() {
+        let (_dir, identity, _seed) = realized_identity();
+
+        let published = identity.public_key.clone().expect("published key");
+        assert_eq!(
+            identity.node_id.clone().expect("node id"),
+            node_id_from_public_key(&published).expect("a 32-byte key derives an id"),
+            "the node id must be the hash of the published key"
+        );
+
+        // The seed is not the id input: a different key derives a different id.
+        let other = derive_identity_public_key(&[0xCD; 32]);
+        assert_ne!(
+            node_id_from_public_key(&other).unwrap(),
+            identity.node_id.clone().unwrap()
+        );
     }
 
     #[test]

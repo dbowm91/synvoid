@@ -531,6 +531,7 @@ impl MeshTransportManager {
             .proxy_http_request(
                 peer_node_id,
                 &format!("serverless_function:{}", function_name),
+                None,
                 request,
             )
             .await

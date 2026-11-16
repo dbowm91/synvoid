@@ -202,6 +202,26 @@ impl MeshConfig {
         self.node_identity.private_key.as_deref()
     }
 
+    /// The 32-byte identity seed the mesh message signer must use.
+    ///
+    /// The signer is the identity: its verifying key is the published
+    /// `public_key` the handshake binds, so every signature a peer checks is a
+    /// signature by the identity it authenticated. There is no derived subkey,
+    /// and a missing or malformed seed is an error rather than a silent
+    /// fallback.
+    pub fn signing_seed(&self) -> Result<[u8; 32], String> {
+        let key = self.signing_key().ok_or_else(|| {
+            "mesh node identity has no signing key; load or generate the identity before building the signer"
+                .to_string()
+        })?;
+        <[u8; 32]>::try_from(key).map_err(|_| {
+            format!(
+                "mesh node identity signing key must be a 32-byte seed, got {} bytes",
+                key.len()
+            )
+        })
+    }
+
     pub fn signing_public_key(&self) -> Option<String> {
         self.node_identity.public_key_hex()
     }
@@ -441,5 +461,70 @@ impl MeshConfig {
             .filter(|seed| self.verify_seed(seed))
             .cloned()
             .collect()
+    }
+
+    /// Derive a peer's role from the local allowlist, never from its own claim.
+    ///
+    /// Every `local_upstreams[*].peered_wafs` entry that names `node_id` with
+    /// `allowed = true` is a grant. An ungranted peer is an `EDGE`: joining as
+    /// an edge is always permitted (subject to PoW and the service allowlist),
+    /// while a privileged role needs a grant that names it.
+    ///
+    /// Errors when the allowlist grants the node conflicting roles, or when
+    /// `claimed_role` is not the granted role. Both are authentication
+    /// failures: the caller logs the error, which names both roles, and closes
+    /// the session.
+    pub fn resolve_peer_role(
+        &self,
+        node_id: &str,
+        claimed_role: MeshNodeRole,
+    ) -> Result<MeshNodeRole, String> {
+        let mut granted: Option<MeshNodeRole> = None;
+
+        for upstream in self.local_upstreams.values() {
+            for peer in &upstream.peered_wafs {
+                if peer.node_id != node_id || !peer.allowed {
+                    continue;
+                }
+                let role = match peer.role {
+                    None | Some(MeshPeerRoleGrant::Edge) => MeshNodeRole::EDGE,
+                    Some(MeshPeerRoleGrant::Origin) => MeshNodeRole::ORIGIN,
+                    Some(MeshPeerRoleGrant::Global) => MeshNodeRole::GLOBAL,
+                };
+                match granted {
+                    None => granted = Some(role),
+                    Some(existing) if existing == role => {}
+                    Some(existing) => {
+                        return Err(format!(
+                            "Node {} is granted conflicting roles {:?} and {:?} by the peered_wafs allowlist",
+                            node_id, existing, role
+                        ));
+                    }
+                }
+            }
+        }
+
+        let resolved = granted.unwrap_or(MeshNodeRole::EDGE);
+        if claimed_role != resolved {
+            return Err(format!(
+                "Node {} claimed role {:?}, but the peered_wafs allowlist grants {:?}",
+                node_id, claimed_role, resolved
+            ));
+        }
+        Ok(resolved)
+    }
+
+    /// Whether the local allowlist lists `node_id` as an allowed peer.
+    ///
+    /// This is the local half of trust: a session whose role resolution
+    /// succeeded and whose node id is allowlisted is trusted, regardless of any
+    /// `is_trusted`/role bit the peer advertised.
+    pub fn is_peer_allowlisted(&self, node_id: &str) -> bool {
+        self.local_upstreams.values().any(|upstream| {
+            upstream
+                .peered_wafs
+                .iter()
+                .any(|peer| peer.node_id == node_id && peer.allowed)
+        })
     }
 }

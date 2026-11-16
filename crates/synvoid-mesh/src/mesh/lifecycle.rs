@@ -306,6 +306,39 @@ pub struct MeshStartupPolicy {
     /// If true, DHT routing initialization failure is fatal (required when
     /// DHT routing is enabled and the node depends on DHT for operation).
     pub require_dht_initialization: bool,
+    /// If true, a node with configured seeds or peers may finish startup with
+    /// zero connected peers.
+    ///
+    /// Default `false` matches the product invariant that a mesh node with
+    /// configured peers cannot serve without one; with every other field at
+    /// its default this only records a degraded reason instead of failing.
+    pub allow_zero_peers: bool,
+    /// How long to wait for the first connected peer after seed/peer
+    /// bootstrap. `0` checks once. A non-zero value turns a zero-peer startup
+    /// into `MeshTransportError::NoPeerConnected`.
+    pub require_peer_within_secs: u64,
+}
+
+impl MeshStartupPolicy {
+    /// Production policy: a node with configured seeds or peers must have at
+    /// least one live session within `within_secs`, or startup fails.
+    pub fn require_peers(within_secs: u64) -> Self {
+        Self {
+            require_peer_within_secs: within_secs,
+            ..Self::default()
+        }
+    }
+
+    /// Whether any `require_*` field asks startup to treat a missing peer as
+    /// fatal. With every field at its default the same condition is only
+    /// reported as degraded.
+    pub fn requires_any_peer(&self) -> bool {
+        self.require_seed_connectivity
+            || self.require_configured_peers
+            || self.require_dht_bootstrap
+            || self.require_dht_initialization
+            || self.require_peer_within_secs > 0
+    }
 }
 
 /// Report of mesh startup outcomes.
@@ -313,10 +346,15 @@ pub struct MeshStartupPolicy {
 pub struct MeshStartupReport {
     /// Non-fatal reasons the mesh is in a degraded state.
     pub degraded_reasons: Vec<String>,
-    /// Number of seeds successfully connected.
+    /// Seeds with a live session at the end of startup. Never the configured
+    /// seed count.
     pub connected_seed_count: usize,
-    /// Number of configured peers successfully connected.
+    /// Configured peers with a live session at the end of startup. Never the
+    /// configured peer count.
     pub connected_configured_peer_count: usize,
+    /// Sessions in the node-keyed peer registry. This is the only count that
+    /// answers "can this node serve mesh traffic".
+    pub connected_peer_count: usize,
     /// Whether DHT routing table was initialized or restored.
     pub dht_routing_initialized: bool,
     /// Whether DHT bootstrap succeeded.

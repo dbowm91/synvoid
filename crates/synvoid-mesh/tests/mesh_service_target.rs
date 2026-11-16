@@ -10,7 +10,8 @@ use std::time::Duration;
 
 use synvoid_mesh::config::MeshConfig;
 use synvoid_mesh::service_target::{
-    decode_service_preface, encode_service_preface, is_service_preface_start, MAX_SERVICE_ID_BYTES,
+    decode_service_preface, encode_service_preface, is_service_preface_start, ClientMetadata,
+    ClientProtocol, MAX_SERVICE_ID_BYTES,
 };
 use synvoid_mesh::topology::{LocalUpstreamAuthorization, MeshTopology};
 use synvoid_mesh::transport_peer::read_service_preface;
@@ -46,7 +47,7 @@ fn origin_topology() -> MeshTopology {
 
 #[tokio::test]
 async fn preface_is_read_before_the_http_request() {
-    let encoded = encode_service_preface("blog-public").unwrap();
+    let encoded = encode_service_preface("blog-public", None).unwrap();
     let mut wire = encoded.clone();
     wire.extend_from_slice(b"GET / HTTP/1.1\r\nHost: blog.example\r\n\r\n");
 
@@ -55,10 +56,11 @@ async fn preface_is_read_before_the_http_request() {
     client.shutdown().await.unwrap();
 
     assert!(is_service_preface_start(wire[0]));
-    let service_id = read_service_preface(&mut server, wire[0], IDLE_TIMEOUT)
+    let (service_id, meta) = read_service_preface(&mut server, wire[0], IDLE_TIMEOUT)
         .await
         .unwrap();
     assert_eq!(service_id, "blog-public");
+    assert_eq!(meta, None);
 
     // The stream is positioned exactly at the HTTP request line.
     use tokio::io::AsyncReadExt;
@@ -68,8 +70,60 @@ async fn preface_is_read_before_the_http_request() {
 }
 
 #[tokio::test]
+async fn version_2_preface_carries_client_metadata() {
+    let meta = ClientMetadata {
+        client_ip: "198.51.100.23".parse().unwrap(),
+        proto: ClientProtocol::Https,
+    };
+    let encoded = encode_service_preface("blog-public", Some(&meta)).unwrap();
+    let mut wire = encoded.clone();
+    wire.extend_from_slice(b"GET / HTTP/1.1\r\nHost: blog.example\r\n\r\n");
+
+    let (mut client, mut server) = tokio::io::duplex(wire.len());
+    client.write_all(&wire[1..]).await.unwrap();
+    client.shutdown().await.unwrap();
+
+    let (service_id, decoded_meta) = read_service_preface(&mut server, wire[0], IDLE_TIMEOUT)
+        .await
+        .unwrap();
+    assert_eq!(service_id, "blog-public");
+    assert_eq!(decoded_meta, Some(meta));
+
+    use tokio::io::AsyncReadExt;
+    let mut rest = Vec::new();
+    server.read_to_end(&mut rest).await.unwrap();
+    assert!(
+        rest.starts_with(b"GET / HTTP/1.1\r\n"),
+        "the stream must be positioned at the request line after the metadata block"
+    );
+}
+
+#[tokio::test]
+async fn version_1_preface_from_a_legacy_peer_still_reads() {
+    let mut wire = vec![0x1f, b'M', b'S', b'V', 1, 0];
+    wire.extend_from_slice(&(b"blog-public".len() as u16).to_be_bytes());
+    wire.extend_from_slice(b"blog-public");
+    wire.extend_from_slice(b"GET / HTTP/1.1\r\nHost: blog.example\r\n\r\n");
+
+    let (mut client, mut server) = tokio::io::duplex(wire.len());
+    client.write_all(&wire[1..]).await.unwrap();
+    client.shutdown().await.unwrap();
+
+    let (service_id, meta) = read_service_preface(&mut server, wire[0], IDLE_TIMEOUT)
+        .await
+        .unwrap();
+    assert_eq!(service_id, "blog-public");
+    assert_eq!(meta, None, "version 1 carries no client identity");
+
+    use tokio::io::AsyncReadExt;
+    let mut rest = Vec::new();
+    server.read_to_end(&mut rest).await.unwrap();
+    assert!(rest.starts_with(b"GET / HTTP/1.1\r\n"));
+}
+
+#[tokio::test]
 async fn preface_rejects_empty_and_oversized_ids() {
-    assert!(encode_service_preface("").is_err());
+    assert!(encode_service_preface("", None).is_err());
 
     let mut wire = vec![0x1f, b'M', b'S', b'V', 1, 0];
     wire.extend_from_slice(&((MAX_SERVICE_ID_BYTES + 1) as u16).to_be_bytes());
@@ -81,7 +135,7 @@ async fn preface_rejects_empty_and_oversized_ids() {
 
 #[tokio::test]
 async fn preface_decode_rejects_control_characters() {
-    let mut encoded = encode_service_preface("blog").unwrap();
+    let mut encoded = encode_service_preface("blog", None).unwrap();
     encoded[8] = b'\n';
     assert!(decode_service_preface(&encoded).is_err());
 }

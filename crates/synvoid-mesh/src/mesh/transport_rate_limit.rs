@@ -3,17 +3,8 @@
 
 use crate::transport::{MeshTransport, PEER_RATE_LIMIT_WINDOW_SECS};
 use std::time::{Duration, Instant};
-use subtle::ConstantTimeEq;
 
 impl MeshTransport {
-    pub(crate) fn verify_auth_token(&self, node_id: &str, token: &str) -> bool {
-        let keys = self.auth_keys.read();
-        if let Some(expected_key) = keys.get(node_id) {
-            return bool::from(expected_key.as_slice().ct_eq(token.as_bytes()));
-        }
-        false
-    }
-
     pub(crate) fn record_auth_failure(&self, node_id: &str) {
         let now = Instant::now();
         let window = Duration::from_secs(self.config.connection.auth_failure_window_secs);

@@ -296,6 +296,7 @@ message MeshMessage {
         BlocklistCatchupResponse blocklist_catchup_response = 180;
         BlocklistSnapshotRequest blocklist_snapshot_request = 181;
         BlocklistSnapshotResponse blocklist_snapshot_response = 182;
+        SiteConfigAck site_config_ack = 183;
     }
 }
 
@@ -401,6 +402,9 @@ message Hello {
     uint32 roles = 3;
     MeshCapabilities capabilities = 4;
     map<string, UpstreamInfo> upstreams = 5;
+    // RESERVED (phase 03, authenticated peer identity): the shared-secret gate
+    // is retired. The number and type stay allocated so an older peer still
+    // parses; the receiver ignores any value. Do not reintroduce a check here.
     optional string auth_token = 6;
     optional string network_id = 7;
     optional string global_node_key = 8;
@@ -423,6 +427,9 @@ message HelloAck {
     string session_id = 4;
     optional MeshCapabilities capabilities = 15;
     map<string, UpstreamInfo> upstreams = 5;
+    // RESERVED (phase 03, authenticated peer identity): the shared-secret gate
+    // is retired. The number and type stay allocated so an older peer still
+    // parses; the receiver ignores any value. Do not reintroduce a check here.
     optional string auth_token = 6;
     optional string network_id = 7;
     optional string global_node_key = 8;
@@ -1655,6 +1662,17 @@ message SiteConfigSync {
     bytes signature = 7;
     optional string signer_public_key = 8;
     optional ProxyCachePreferences proxy_cache_preferences = 9;
+}
+
+// Origin's answer to SiteConfigSync, written on the same stream that carried
+// the request. `applied_version` is the version now live on the origin; it is
+// absent when nothing was applied.
+message SiteConfigAck {
+    string request_id = 1;
+    string site_id = 2;
+    optional uint64 applied_version = 3;
+    bool accepted = 4;
+    string reason = 5;
 }
 
 enum WasmModuleType {

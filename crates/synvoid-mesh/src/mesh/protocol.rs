@@ -111,6 +111,19 @@ impl MeshMessageSigner {
         synvoid_mesh_protocol::signer::verify_ed25519(content, signature, public_key)
     }
 
+    /// Verify a raw Ed25519 `signature` over `content` with `public_key`.
+    ///
+    /// Static because verifying a peer needs no local key material: the key is
+    /// the one the handshake bound to the peer's node id. Fails closed on a
+    /// signature or key of the wrong length, and on a hybrid envelope (its
+    /// ML-DSA half cannot be checked against an Ed25519 key alone).
+    pub fn verify_with_public_key(content: &[u8], signature: &[u8], public_key: &[u8]) -> bool {
+        if signature.len() != 64 || public_key.len() != 32 {
+            return false;
+        }
+        synvoid_mesh_protocol::signer::verify_ed25519(content, signature, public_key)
+    }
+
     pub fn verify_hybrid(&self, content: &[u8], hybrid: &HybridSignature) -> bool {
         let pk_bytes = match base64::engine::general_purpose::URL_SAFE_NO_PAD
             .decode(&hybrid.ed25519_public_key)
@@ -955,6 +968,19 @@ pub enum MeshMessage {
         signature: Vec<u8>,
         signer_public_key: Option<String>,
         proxy_cache_preferences: Option<ProxyCachePreferences>,
+    },
+    /// Origin's answer to [`MeshMessage::SiteConfigSync`], written on the same
+    /// stream. A missing ack is a delivery failure for that origin.
+    SiteConfigAck {
+        request_id: ArcStr,
+        site_id: ArcStr,
+        /// Version now live on the origin; `None` when nothing was applied.
+        applied_version: Option<u64>,
+        accepted: bool,
+        /// Empty on success; a short machine-readable token on rejection
+        /// (`stale`, `unsigned`, `invalid_signature`, `unauthorized`,
+        /// `no_callback`).
+        reason: ArcStr,
     },
     #[cfg(feature = "dns")]
     DnsDomainRegisterRequest {

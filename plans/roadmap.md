@@ -84,6 +84,40 @@ provides bounded streaming, chunked support, and explicit media caps.
 (end-to-end multi-node qualification and documentation truth) is in
 qualification, and the campaign is not closed until that evidence is recorded.
 
+## Mesh Trust Boundaries and Delivery Integrity — Proposed
+
+Status: **PROPOSED** (audit complete 2026-11-14; no implementation started).
+Research baseline: `4add005f`.
+
+Plan: `plans/mesh_trust_boundaries_roadmap.md`.
+Phase plans:
+`plans/mesh_trust_boundaries_phase_01_loopback_contract_harness.md` through
+`plans/mesh_trust_boundaries_phase_07_config_realization_and_operations.md`.
+
+A read-only audit of the mesh and networking stack at `4add005f` found that the
+QUIC/TLS layer is sound while everything above it is not:
+
+- `peer_connections` is keyed by a random session UUID while every sender looks
+  up by node id (`transport.rs:4387`, `:5168` vs `:1784`, `:1909`, `:1953`),
+  so no targeted mesh message is delivered;
+- the stream pool returns streams the peer has already closed
+  (`transport_peer.rs:4433-4472` vs `transport.rs:6097`);
+- peer role, peer trust, DHT record authorship, serverless caller identity, and
+  threat-intelligence signatures are all fields the sender supplies about
+  itself (`transport_peer.rs:3651-3681`, `transport.rs:4196`,
+  `signed.rs:1244-1272`, `transport_peer.rs:5144`, `threat_intel.rs:2691-2719`);
+- the mesh signing secret is derived from the public `node_id`
+  (`init_mesh.rs:300-319`);
+- `[tunnel.mesh.dht]`, `mlkem`, and `require_tier_claim` do not survive the DTO
+  to runtime JSON bridge, and `validate()` has no production caller
+  (`synvoid-config/src/mesh.rs:568-624`, `src/supervisor/mesh.rs:24-37`).
+
+The campaign is sequenced so the loopback contract harness lands first, the
+registry/stream lifecycle is repaired second, and identity, message
+authentication, delivery truthfulness, data-plane hardening, and config
+realization follow. It does not enable the DHT or multi-worker mesh; it makes
+their absence and their configuration honest.
+
 ## Documentation Corrective: Root README Public-Support Boundary — Ready
 
 Status: **READY** (2026-10-06).

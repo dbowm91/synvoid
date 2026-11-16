@@ -277,9 +277,12 @@ role = 1              # EDGE; GLOBAL=2, ORIGIN=4, GLOBAL|EDGE=3
 #
 # `node_id` here is only a fallback. `MeshConfig::node_id()` prefers
 # `[tunnel.mesh.node_identity] node_id`, and `load_node_identity()` overwrites
-# both from the signing key (`derive_node_id`, yielding `node-<hash>`, or
-# `mesh-<uuid>` when no identity material exists). Read the realized value from
-# `GET /api/mesh/status` (`node_id`) before writing it into a peer's
+# both from the identity secret (`derive_node_id`, yielding
+# `node-<hex(sha256("public-key-from:" || ed25519_verifying_key)[..8])>`, or
+# `mesh-<uuid>` when no identity material exists). The identity secret is an
+# Ed25519 seed and the published `public_key` is its verifying key, so message
+# signatures verify against the identity the handshake binds. Read the realized
+# value from `GET /api/mesh/status` (`node_id`) before writing it into a peer's
 # `peered_wafs`, or the allowlist will never match.
 # node_id = "edge-us-east-1"
 
@@ -434,9 +437,25 @@ Forbidden` with a short text body and never includes the upstream URL. An empty
 up empty — configure at least one `allowed = true` peer if you intend to
 restrict the service.
 
+Each entry can also carry `role`, the role the peer is granted in the
+handshake: `"edge"` (the default), `"origin"` or `"global"`. It is a grant, not
+a hint: the peer's `Hello` role must match it. A peer that claims `ORIGIN` or
+`GLOBAL` without a matching entry is rejected with both roles in the log. An
+unlisted peer is also rejected in this release: joining without an allowlist
+entry requires proof of work plus a role signature, and the edge-side role
+signature is not issued until the signing-key binding work lands. List every
+peer that may join, with its role. This is the migration point for existing
+deployments — an origin that is not listed with `role = "origin"` in the
+dialing node's `peered_wafs` is no longer accepted as an origin. `role` here is
+unrelated to the numeric `[tunnel.mesh] role` bitmask, which is the node's own
+role.
+
 The `node_id` values must be the peers' **realized** mesh identities, which are
-derived from their signing keys rather than taken from `[tunnel.mesh] node_id`.
-Query `GET /api/mesh/status` on the peer (field `node_id`) and use that value;
+derived from their published Ed25519 verifying keys rather than taken from
+`[tunnel.mesh] node_id`. The id is
+`node-<hex(sha256("public-key-from:" || verifying_key)[..8])>`, and the same
+verifying key is what the peer's message signatures verify against. Query
+`GET /api/mesh/status` on the peer (field `node_id`) and use that value;
 a hand-picked label silently matches nothing, and an allowlist that matches
 nothing refuses every peer.
 
@@ -445,13 +464,37 @@ nothing refuses every peer.
 upstream_url = "http://10.0.1.10:8080"
 
 [[tunnel.mesh.local_upstreams.blog-public.peered_wafs]]
-node_id = "edge-us-east-1"
+node_id = "node-1f2e3d4c5b6a7988"   # realized id, not a label
 allowed = true
+role = "edge"
 
 [[tunnel.mesh.local_upstreams.blog-public.peered_wafs]]
-node_id = "edge-eu-west-1"
+node_id = "node-0a1b2c3d4e5f6071"
 allowed = true
+role = "edge"
 ```
+
+#### Re-key migration: node ids changed
+
+Earlier releases published `sha256("public-key-from:" || identity_secret)` as the
+node's "public key" and derived `node-<first 8 bytes of that hash>`. The
+published key is now the identity's Ed25519 verifying key (the same key the
+signer holds), so every realized `node_id` changes once per node. There is no
+in-place alias: an old id does not match a new key.
+
+To migrate:
+
+1. Start every node once on the new release and read its realized
+   `node_id` from `GET /api/mesh/status`. A peer that presents the old
+   hash-shaped key is rejected with
+   `peer presented a legacy hashed identity key; re-key the node`.
+2. Replace the `node_id` in every peer's `peered_wafs` grants (and in seed
+   `node_id` pins) with the new value.
+3. Regenerate anything that bound the old identity: organization member
+   certificates, mesh CA/leaf material and pinned fingerprints, and any
+   `trusted_signers` entries that named the old signing key.
+4. Restart the mesh. Peer sessions established before the re-key do not
+   survive it.
 
 Service policy precedence is:
 
@@ -728,6 +771,14 @@ public_key = "base64-encoded-global-node-public-key"
 # pinned_cert_fingerprint, global_node_key
 ```
 
+`auth_token` is retired. The `Hello`/`HelloAck` fields are still parsed so an
+older peer interoperates, but the value is ignored (one debug log per process)
+and no shared secret is sent or checked. Peers are authenticated by mutual TLS
+plus the node-id/public-key binding, by the allowlisted role, and — for peers
+that are not allowlisted — by proof of work together with an Ed25519 role
+signature. A configured `auth_token` therefore neither protects nor blocks a
+peering.
+
 ### Origin Nodes
 
 Origin nodes are WAFs with direct upstream server connections:
@@ -749,8 +800,9 @@ priority_tier = 0
 allowed_protocols = ["http"]
 
 [[tunnel.mesh.local_upstreams.blog-public.peered_wafs]]
-node_id = "edge-us-east-1"
+node_id = "node-1f2e3d4c5b6a7988"   # realized id, not a label
 allowed = true
+role = "edge"      # edge | origin | global; absent means edge
 
 [tunnel.mesh.local_upstreams.blog-public.body_policy]
 max_request_body_bytes = 8388608
@@ -788,6 +840,12 @@ network_id = "staging"
 ```
 
 Nodes with different `network_id` values will not connect to each other, even if addresses are reachable.
+
+Isolation is mandatory in both directions once `[tunnel.mesh] network_id` is
+set: a peer that omits the field, sends an empty value, or sends a different
+value is rejected during the handshake — there is no "peer did not declare a
+network, so skip the check" path. Leaving `network_id` unset disables the check
+entirely, so set it on every node of an isolated mesh.
 
 ---
 

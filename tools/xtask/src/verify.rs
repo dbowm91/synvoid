@@ -148,6 +148,20 @@ fn verify_steps() -> Vec<(&'static str, &'static str)> {
             "core-compile",
             "cargo check --no-default-features --profile ci",
         ),
+        // Mesh contract: a real two-node handshake and the fixture it depends
+        // on. The guard step exists because a test binary that silently runs
+        // zero cases is how the registry/stream defects shipped unnoticed.
+        (
+            "mesh-contract",
+            "cargo nextest run -p synvoid-mesh --cargo-profile ci --profile ci \
+             --test mesh_fixture \
+             --test mesh_two_node_contract",
+        ),
+        (
+            "mesh-contract-guard",
+            "test \"$(cargo test -p synvoid-mesh --test mesh_two_node_contract \
+             --profile ci -- --list 2>/dev/null | grep -c ': test$')\" -ge 2",
+        ),
         (
             "repo-guards",
             "cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci",

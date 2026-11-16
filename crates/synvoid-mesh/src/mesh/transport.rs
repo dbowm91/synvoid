@@ -34,16 +34,13 @@ use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use lru_time_cache::LruCache;
-use subtle::ConstantTimeEq;
-
 use bytes::Bytes;
-use dashmap::DashMap;
 use futures::future::join_all;
 use futures::stream::{FuturesUnordered, StreamExt};
 use http_body::Body as HttpBody;
 use http_body_util::combinators::BoxBody;
 use hyper::{Request, Response};
+use lru_time_cache::LruCache;
 use parking_lot::RwLock;
 
 use tokio::sync::{broadcast, mpsc, oneshot, watch, Mutex};
@@ -70,7 +67,9 @@ use crate::protocol::{
 };
 use crate::session::SessionManager;
 use crate::topology::{MeshTopology, PeerStatus};
-use crate::transport_types::MeshStreamPool;
+use crate::transport_types::{
+    MeshPeerRegistry, RegisterOutcome, ReplayStateRegistry, SessionDirection,
+};
 use synvoid_tunnel::quic::runtime::QuicRuntime;
 
 pub use crate::transports::MeshTransportManager;
@@ -92,7 +91,8 @@ pub(crate) const MAX_MESSAGE_QUEUE_SIZE: usize = 1000;
 // SAFETY_REASON: Reserved for future protocol handling
 #[allow(dead_code)]
 pub(crate) const DEFAULT_MAX_PEER_MESSAGE_RATE: usize = 1000;
-pub(crate) const MAX_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
+/// Maximum size of a single mesh message, on the wire and on the receive path.
+pub const MAX_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
 pub(crate) const MAX_BATCH_KEYS: usize = 10000;
 pub(crate) const MAX_HTTP_BODY_SIZE: usize = 50 * 1024 * 1024;
 pub(crate) const PEER_RATE_LIMIT_WINDOW_SECS: u64 = 60;
@@ -110,6 +110,29 @@ pub(crate) struct AuxiliarySubmissionTestHooks {
     pub before_gate_release: Option<std::sync::Arc<tokio::sync::Barrier>>,
 }
 
+/// Outcome of delivering one site configuration to one origin.
+///
+/// Delivery is confirmed by the origin's `SiteConfigAck`, not by the local
+/// send returning `Ok`. `result` carries the origin's rejection reason, a
+/// decode failure, or the transport error.
+#[derive(Debug, Clone)]
+pub struct OriginDelivery {
+    pub node_id: String,
+    /// Version the origin reports as live. Absent when nothing was applied.
+    pub applied_version: Option<u64>,
+    pub result: Result<(), String>,
+}
+
+/// One live peer session, as reported by the node-keyed registry.
+#[derive(Debug, Clone)]
+pub struct ConnectedPeerSession {
+    pub node_id: String,
+    pub address: String,
+    pub role: crate::config::MeshNodeRole,
+    pub session_age_secs: u64,
+    pub last_seen_age_secs: u64,
+}
+
 pub struct MeshTransport {
     pub(crate) config: Arc<MeshConfig>,
     pub(crate) topology: Arc<MeshTopology>,
@@ -120,8 +143,10 @@ pub struct MeshTransport {
     pub(crate) runtime: Arc<std::sync::OnceLock<Arc<QuicRuntime>>>,
     pub(crate) running: Arc<RwLock<bool>>,
     pub(crate) shutdown_tx: Arc<RwLock<Option<broadcast::Sender<()>>>>,
-    pub(crate) peer_connections: Arc<DashMap<String, MeshPeerConnection>>,
-    pub(crate) auth_keys: Arc<RwLock<HashMap<String, Vec<u8>>>>,
+    /// One live session per peer node, keyed by node id.
+    pub(crate) peers: Arc<MeshPeerRegistry>,
+    /// Replay state keyed by node id; outlives the session it was created for.
+    pub(crate) replay_states: Arc<ReplayStateRegistry>,
     pub(crate) connection_times: Arc<RwLock<Vec<Instant>>>,
     pub(crate) pending: MeshPendingRequests,
     pub(crate) auth_failures: Arc<RwLock<HashMap<String, Vec<Instant>>>>,
@@ -160,6 +185,16 @@ pub struct MeshTransport {
     >,
     pub(crate) verification_manager:
         Arc<RwLock<Option<Arc<crate::verification::VerificationTaskManager>>>>,
+    /// Highest config version applied per site, origin side. Shared by every
+    /// clone of the transport; monotonic so a replayed sync cannot roll a site
+    /// configuration back.
+    pub(crate) site_config_applied_versions: Arc<dashmap::DashMap<String, u64>>,
+    /// Highest config version handed out per site, sender side. Two edits in
+    /// the same second must not share a version.
+    pub(crate) site_config_next_versions: Arc<dashmap::DashMap<String, u64>>,
+    /// Last startup report, so status surfaces can report connected peers and
+    /// degraded reasons long after `start_with_policy` returned.
+    pub(crate) last_startup_report: Arc<RwLock<Option<MeshStartupReport>>>,
     pub(crate) revocation_list: Option<Arc<crate::peer_auth::GlobalNodeRevocationList>>,
     #[cfg(feature = "dns")]
     pub(crate) ownership_challenge_store: Arc<RwLock<OwnershipChallengeStore>>,
@@ -442,8 +477,8 @@ impl Clone for MeshTransport {
             runtime: self.runtime.clone(),
             running: self.running.clone(),
             shutdown_tx: self.shutdown_tx.clone(),
-            peer_connections: self.peer_connections.clone(),
-            auth_keys: self.auth_keys.clone(),
+            peers: self.peers.clone(),
+            replay_states: self.replay_states.clone(),
             connection_times: self.connection_times.clone(),
             pending: MeshPendingRequests {
                 query_dedup: self.pending.query_dedup.clone(),
@@ -485,6 +520,9 @@ impl Clone for MeshTransport {
             dns_zones: self.dns_zones.clone(),
             site_config_sync_tx: self.site_config_sync_tx.clone(),
             verification_manager: self.verification_manager.clone(),
+            site_config_applied_versions: self.site_config_applied_versions.clone(),
+            site_config_next_versions: self.site_config_next_versions.clone(),
+            last_startup_report: self.last_startup_report.clone(),
             revocation_list: self.revocation_list.clone(),
             #[cfg(feature = "dns")]
             ownership_challenge_store: self.ownership_challenge_store.clone(),
@@ -625,6 +663,205 @@ fn validate_peer_identity_state_for_mode(
     }
 }
 
+/// Set once per process when a peer advertises `Hello.is_trusted`.
+///
+/// The field is kept on the wire for compatibility with older nodes, but trust
+/// is derived from local config, so a peer sending it is only worth one log
+/// line.
+static WARNED_ON_WIRE_TRUST: AtomicBool = AtomicBool::new(false);
+
+/// Set once per process when a peer advertises the retired `auth_token`.
+static WARNED_ON_WIRE_AUTH_TOKEN: AtomicBool = AtomicBool::new(false);
+
+/// I2: the role the peer will be recorded with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AuthenticatedHello {
+    /// Role granted by the local allowlist (equal to the claim, or the
+    /// handshake was rejected).
+    pub role: crate::config::MeshNodeRole,
+    /// Listed, allowed and role-confirmed by the local allowlist.
+    pub trusted: bool,
+}
+
+/// Bind a claimed node id to the public key the peer presented.
+///
+/// The node id derives from the published key (its Ed25519 verifying key), so
+/// the receiver can always recompute it; nothing else may vouch for the id. A
+/// missing or undecodable key is a rejection in every TLS mode, including
+/// `permissive` and `tofu`, which only relax the certificate requirement.
+pub fn bind_node_id_to_public_key(
+    node_id: &str,
+    public_key: Option<&str>,
+) -> Result<(), MeshTransportError> {
+    let public_key = public_key.ok_or_else(|| {
+        MeshTransportError::AuthFailed(format!("Node {} did not provide a public key", node_id))
+    })?;
+    let key_bytes = crate::mesh::config::decode_node_public_key(public_key).map_err(|error| {
+        MeshTransportError::AuthFailed(format!(
+            "Node {} presented an unusable public key: {}",
+            node_id, error
+        ))
+    })?;
+    let derived = crate::mesh::config::node_id_from_public_key(&key_bytes).ok_or_else(|| {
+        MeshTransportError::AuthFailed(format!(
+            "Node {} public key is not 32 bytes and cannot derive a node id",
+            node_id
+        ))
+    })?;
+    if derived != node_id {
+        // Pre-fix nodes published `sha256("public-key-from:" || seed)` as their
+        // "public key" and derived `node-<first 8 bytes of that key>`. Name the
+        // shape so an operator gets a re-key instruction instead of a bare
+        // mismatch; the claim is still rejected.
+        let legacy_id = format!("node-{}", hex::encode(&key_bytes[..8]));
+        if legacy_id == node_id {
+            tracing::warn!(
+                node_id = %node_id,
+                "peer presented a legacy hashed identity key; re-key the node"
+            );
+        }
+        return Err(MeshTransportError::AuthFailed(format!(
+            "Node id {} does not match the presented public key (derives {})",
+            node_id, derived
+        )));
+    }
+    Ok(())
+}
+
+/// Verify `signature` over `bytes` with the key registered for `from_node`.
+///
+/// Split from [`MeshTransport::verify_peer_message_signature`] so the decision
+/// can be exercised without a live session. A missing or malformed key is a
+/// failure: there is no "skip verification" branch.
+pub(crate) fn verify_peer_message_signature_with(
+    from_node: &str,
+    bytes: &[u8],
+    signature: &[u8],
+    registered_key: Option<Vec<u8>>,
+) -> Result<(), String> {
+    let Some(public_key) = registered_key else {
+        return Err(format!(
+            "no registered public key for node {from_node}; refusing to verify an unbound signature"
+        ));
+    };
+    if public_key.len() != 32 {
+        return Err(format!(
+            "registered public key for node {} is {} bytes (expected 32)",
+            from_node,
+            public_key.len()
+        ));
+    }
+    if !crate::protocol::MeshMessageSigner::verify_with_public_key(bytes, signature, &public_key) {
+        return Err(format!(
+            "message signature from node {} does not verify against its registered key",
+            from_node
+        ));
+    }
+    Ok(())
+}
+
+/// I5: when a network id is configured, the peer must send the same non-empty
+/// value. A missing value is a rejection, not a skip.
+pub fn verify_peer_network_id(
+    configured: Option<&str>,
+    peer_network_id: Option<&str>,
+    peer_node_id: &str,
+) -> Result<(), MeshTransportError> {
+    let Some(ours) = configured.filter(|value| !value.is_empty()) else {
+        return Ok(());
+    };
+    match peer_network_id {
+        None => Err(MeshTransportError::AuthFailed(format!(
+            "Node {} did not declare a network id; this mesh requires \"{}\"",
+            peer_node_id, ours
+        ))),
+        Some("") => Err(MeshTransportError::AuthFailed(format!(
+            "Node {} declared an empty network id; this mesh requires \"{}\"",
+            peer_node_id, ours
+        ))),
+        Some(theirs) if theirs != ours => Err(MeshTransportError::AuthFailed(format!(
+            "Node {} is on network \"{}\" but this mesh requires \"{}\"",
+            peer_node_id, theirs, ours
+        ))),
+        Some(_) => Ok(()),
+    }
+}
+
+/// Application-level authentication of an inbound `Hello`, in the order the
+/// accept path applies it: version, key binding, network isolation, allowlist
+/// role resolution, then the PoW/signature policy.
+///
+/// `Hello.is_trusted` and `Hello.auth_token` are deliberately not parameters:
+/// neither can influence a decision.
+#[allow(clippy::too_many_arguments)]
+pub fn authenticate_inbound_hello(
+    config: &MeshConfig,
+    revocation_list: Option<&crate::peer_auth::GlobalNodeRevocationList>,
+    version: u8,
+    node_id: &str,
+    claimed_role: crate::config::MeshNodeRole,
+    network_id: Option<&str>,
+    public_key: Option<&str>,
+    signature: Option<&str>,
+    timestamp: u64,
+    pow_nonce: Option<u64>,
+    pow_public_key: Option<&str>,
+    member_certificate: Option<&crate::organization::MemberCertificate>,
+    org_public_key: Option<&crate::organization::OrgPublicKey>,
+    attestation_key: Option<&str>,
+    attestation_sig: Option<&str>,
+) -> Result<AuthenticatedHello, MeshTransportError> {
+    if !crate::protocol::is_compatible_message_version(version) {
+        return Err(MeshTransportError::VersionMismatch {
+            expected: MESH_MESSAGE_VERSION,
+            got: version,
+        });
+    }
+
+    bind_node_id_to_public_key(node_id, public_key)?;
+
+    verify_peer_network_id(config.network_id.as_deref(), network_id, node_id)?;
+
+    let resolved_role = config
+        .resolve_peer_role(node_id, claimed_role)
+        .map_err(MeshTransportError::AuthFailed)?;
+    let allowlisted = config.is_peer_allowlisted(node_id);
+
+    let authorized_keys: Vec<String> = config
+        .seeds
+        .iter()
+        .filter_map(|seed| seed.public_key.clone())
+        .collect();
+    crate::peer_auth::validate_peer_role(
+        &claimed_role,
+        &resolved_role,
+        allowlisted,
+        &authorized_keys,
+        node_id,
+        public_key,
+        signature,
+        timestamp,
+        300,
+        revocation_list,
+        attestation_key,
+        attestation_sig,
+        pow_nonce,
+        pow_public_key,
+        member_certificate,
+        org_public_key,
+        None,
+        false,
+    )
+    .map_err(MeshTransportError::AuthFailed)?;
+
+    Ok(AuthenticatedHello {
+        role: resolved_role,
+        // Trust is `listed && allowed && role_matches`; resolution above
+        // already rejected a role that the allowlist does not grant.
+        trusted: allowlisted,
+    })
+}
+
 impl MeshTransport {
     fn verify_peer_connection_certificate_if_available(
         &self,
@@ -721,8 +958,6 @@ impl MeshTransport {
     ) -> Self {
         let is_genesis = config.is_genesis_node();
 
-        let auth_keys: HashMap<String, Vec<u8>> = HashMap::new();
-
         let global_rate_limiter = Arc::new(MeshGlobalRateLimiter::new(
             config.routing.mesh_messages_per_sec,
             config.routing.route_queries_per_minute,
@@ -795,8 +1030,8 @@ impl MeshTransport {
             runtime: Arc::new(std::sync::OnceLock::new()),
             running: Arc::new(RwLock::new(false)),
             shutdown_tx: Arc::new(RwLock::new(None)),
-            peer_connections: Arc::new(DashMap::new()),
-            auth_keys: Arc::new(RwLock::new(auth_keys)),
+            peers: Arc::new(MeshPeerRegistry::new(config.node_id())),
+            replay_states: Arc::new(ReplayStateRegistry::new()),
             connection_times: Arc::new(RwLock::new(Vec::new())),
             pending: MeshPendingRequests {
                 query_dedup: Arc::new(Mutex::new(HashMap::new())),
@@ -858,6 +1093,9 @@ impl MeshTransport {
             dns_zones: Arc::new(RwLock::new(None)),
             site_config_sync_tx: Arc::new(RwLock::new(None)),
             verification_manager: Arc::new(RwLock::new(None)),
+            site_config_applied_versions: Arc::new(dashmap::DashMap::new()),
+            site_config_next_versions: Arc::new(dashmap::DashMap::new()),
+            last_startup_report: Arc::new(RwLock::new(None)),
             revocation_list: if is_genesis {
                 Some(Arc::new(crate::peer_auth::GlobalNodeRevocationList::new()))
             } else {
@@ -1780,7 +2018,7 @@ impl MeshTransport {
         message: &MeshMessage,
     ) -> Result<(), MeshTransportError> {
         let peer = self
-            .peer_connections
+            .peers
             .get(peer_id)
             .ok_or_else(|| MeshTransportError::PeerNotFound(peer_id.to_string()))?;
 
@@ -1796,13 +2034,24 @@ impl MeshTransport {
         Ok(())
     }
 
+    /// Fan a site configuration out to every other origin of `site_id`.
+    ///
+    /// State-bearing config never travels on a datagram: each origin gets a
+    /// stream carrying `SiteConfigSync` and must answer with `SiteConfigAck`
+    /// on that same stream. A missing ack, an undecodable ack, or
+    /// `accepted = false` is a delivery failure for that origin, reported in
+    /// the returned vector. A config larger than [`MAX_MESSAGE_SIZE`] is
+    /// rejected before any frame is written.
+    ///
+    /// Topology gate: only a node that is itself an origin for the site fans
+    /// out. Any other node returns an empty result (success trivially).
     pub async fn broadcast_site_config_to_origins(
         &self,
         site_id: &str,
         config_json: &str,
         config_version: u64,
         proxy_cache_preferences: Option<crate::protocol::ProxyCachePreferences>,
-    ) -> Result<(usize, usize), String> {
+    ) -> Result<Vec<OriginDelivery>, MeshTransportError> {
         let current_node_id = self.topology.node_id().to_string();
 
         let is_origin = {
@@ -1816,13 +2065,23 @@ impl MeshTransport {
                 current_node_id,
                 site_id
             );
-            return Ok((0, 0));
+            return Ok(Vec::new());
+        }
+
+        if config_json.len() > MAX_MESSAGE_SIZE {
+            tracing::warn!(
+                "Refusing site config for {}: {} bytes exceeds the mesh message limit of {}",
+                site_id,
+                config_json.len(),
+                MAX_MESSAGE_SIZE
+            );
+            return Err(MeshTransportError::SiteConfigTooLarge {
+                size: config_json.len(),
+                max: MAX_MESSAGE_SIZE,
+            });
         }
 
         let origins = self.topology.find_all_origins_for_site(site_id).await;
-
-        let mut success_count = 0;
-        let mut fail_count = 0;
 
         let target_origins: Vec<String> = origins
             .into_iter()
@@ -1838,7 +2097,6 @@ impl MeshTransport {
             let current_node_id = current_node_id.clone();
             let node_id = origin_node_id.clone();
             let signer = self.mesh_signer.clone();
-            // config_version already in scope
             let proxy_cache_prefs = proxy_cache_prefs.clone();
             futures.push(async move {
                 let request_id = MeshMessage::generate_nonce();
@@ -1858,7 +2116,7 @@ impl MeshTransport {
                 };
 
                 let message = MeshMessage::SiteConfigSync {
-                    request_id,
+                    request_id: request_id.clone(),
                     site_id: site_id.clone().into(),
                     config_version,
                     config_json: config_json.clone().into(),
@@ -1869,32 +2127,141 @@ impl MeshTransport {
                     proxy_cache_preferences: proxy_cache_prefs,
                 };
 
-                let result = transport.send_datagram_to_peer(&node_id, &message).await;
-                (node_id, result)
+                // The encoded frame is what the peer's read path bounds; check
+                // it here so an oversized config surfaces as a typed cause
+                // rather than a generic send failure.
+                if let Ok(encoded) = message.encode() {
+                    if encoded.len() > MAX_MESSAGE_SIZE {
+                        return OriginDelivery {
+                            node_id,
+                            applied_version: None,
+                            result: Err(MeshTransportError::SiteConfigTooLarge {
+                                size: encoded.len(),
+                                max: MAX_MESSAGE_SIZE,
+                            }
+                            .to_string()),
+                        };
+                    }
+                }
+
+                let result = match transport
+                    .send_message_to_peer_with_response(&node_id, &message)
+                    .await
+                {
+                    Ok(response) => match MeshMessage::decode(&response) {
+                        Some(MeshMessage::SiteConfigAck {
+                            request_id: acked_request_id,
+                            accepted,
+                            applied_version,
+                            reason,
+                            ..
+                        }) => {
+                            if acked_request_id.as_str() != request_id.as_str() {
+                                Err(format!(
+                                    "ack request_id mismatch: expected {}, got {}",
+                                    request_id, acked_request_id
+                                ))
+                            } else if accepted {
+                                Ok(applied_version)
+                            } else if reason.is_empty() {
+                                Err("origin rejected the config".to_string())
+                            } else {
+                                Err(reason.to_string())
+                            }
+                        }
+                        Some(other) => Err(format!(
+                            "unexpected response to SiteConfigSync: {:?}",
+                            other.category()
+                        )),
+                        None => Err("failed to decode SiteConfigAck".to_string()),
+                    },
+                    Err(error) => Err(format!("delivery failed: {error}")),
+                };
+
+                let (applied_version, result) = match result {
+                    Ok(applied_version) => (applied_version, Ok(())),
+                    Err(reason) => (None, Err(reason)),
+                };
+
+                OriginDelivery {
+                    node_id,
+                    applied_version,
+                    result,
+                }
             });
         }
-        while let Some((node_id, result)) = futures.next().await {
-            match result {
-                Ok(_) => {
+
+        let mut deliveries = Vec::with_capacity(target_origins.len());
+        while let Some(delivery) = futures.next().await {
+            match &delivery.result {
+                Ok(()) => {
                     tracing::info!(
-                        "Sent site config sync to origin {} for site {}",
-                        node_id,
-                        site_id
+                        "Origin {} acked site config for {} at version {:?}",
+                        delivery.node_id,
+                        site_id,
+                        delivery.applied_version
                     );
-                    success_count += 1;
                 }
-                Err(e) => {
+                Err(reason) => {
                     tracing::warn!(
-                        "Failed to send site config sync to origin {}: {}",
-                        node_id,
-                        e
+                        "Origin {} did not apply site config for {}: {}",
+                        delivery.node_id,
+                        site_id,
+                        reason
                     );
-                    fail_count += 1;
                 }
             }
+            deliveries.push(delivery);
         }
 
-        Ok((success_count, fail_count))
+        Ok(deliveries)
+    }
+
+    /// Next config version for `site_id`, monotonic within this node.
+    ///
+    /// `safe_unix_timestamp()` only has one-second resolution, so two edits in
+    /// the same second used to reach the origin with the same version and the
+    /// origin could not tell them apart. `max(now, last + 1)` keeps versions
+    /// strictly increasing without a second source of time.
+    pub fn next_site_config_version(&self, site_id: &str) -> u64 {
+        let now = synvoid_utils::safe_unix_timestamp();
+        let mut entry = self
+            .site_config_next_versions
+            .entry(site_id.to_string())
+            .or_insert(0);
+        let next = now.max(entry.saturating_add(1));
+        *entry = next;
+        next
+    }
+
+    /// Highest config version this node has applied for `site_id`, if any.
+    pub fn applied_site_config_version(&self, site_id: &str) -> Option<u64> {
+        self.site_config_applied_versions
+            .get(site_id)
+            .map(|entry| *entry)
+    }
+
+    /// Live peer sessions with their age, straight from the registry.
+    pub fn connected_peer_sessions(&self) -> Vec<ConnectedPeerSession> {
+        let now = Instant::now();
+        self.peers
+            .snapshot()
+            .into_iter()
+            .map(|session| ConnectedPeerSession {
+                node_id: session.node_id.clone(),
+                address: session.address.clone(),
+                role: session.role,
+                session_age_secs: now
+                    .saturating_duration_since(session.connected_at)
+                    .as_secs(),
+                last_seen_age_secs: now.saturating_duration_since(session.last_seen()).as_secs(),
+            })
+            .collect()
+    }
+
+    /// Startup report from the most recent successful `start_with_policy`.
+    pub fn startup_report(&self) -> Option<MeshStartupReport> {
+        self.last_startup_report.read().clone()
     }
 
     /// Send a route query using QUIC streams for reliable, ordered delivery
@@ -1905,15 +2272,13 @@ impl MeshTransport {
         message: &MeshMessage,
     ) -> Result<(), MeshTransportError> {
         let peer = self
-            .peer_connections
+            .peers
             .get(peer_id)
             .ok_or_else(|| MeshTransportError::PeerNotFound(peer_id.to_string()))?;
 
-        let (mut send_stream, recv_stream) = {
-            let mut pool = peer.stream_pool.lock().await;
-            pool.acquire().await
-        }
-        .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
+        let (mut send_stream, _recv_stream) = peer.connection.open_bi().await.map_err(|e| {
+            MeshTransportError::SendFailed(format!("Failed to open stream: {:?}", e))
+        })?;
 
         let encoded = message
             .encode()
@@ -1928,36 +2293,28 @@ impl MeshTransport {
             .await
             .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
 
-        {
-            let mut pool = peer.stream_pool.lock().await;
-            pool.release((send_stream, recv_stream));
-        }
-
         tracing::debug!("Sent stream message to peer {}: {:?}", peer_id, message);
         Ok(())
     }
 
     const STREAM_RESPONSE_TIMEOUT_SECS: u64 = 30;
 
-    /// Send a message to a peer and wait for a response on the same stream.
-    /// This acquires a stream, writes the request, reads the response, then releases.
-    /// On any failure (timeout, decode error, oversized response), the stream is NOT
-    /// returned to the pool to prevent poisoning.
+    /// Send a message to a peer and wait for a response on a fresh stream.
+    /// The receiver handles exactly one exchange per stream, so the stream is
+    /// never reused: it is dropped when this call returns.
     pub async fn send_message_to_peer_with_response(
         &self,
         peer_id: &str,
         message: &MeshMessage,
     ) -> Result<Vec<u8>, MeshTransportError> {
         let peer = self
-            .peer_connections
+            .peers
             .get(peer_id)
             .ok_or_else(|| MeshTransportError::PeerNotFound(peer_id.to_string()))?;
 
-        let (mut send_stream, mut recv_stream) = {
-            let mut pool = peer.stream_pool.lock().await;
-            pool.acquire().await
-        }
-        .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
+        let (mut send_stream, mut recv_stream) = peer.connection.open_bi().await.map_err(|e| {
+            MeshTransportError::SendFailed(format!("Failed to open stream: {:?}", e))
+        })?;
 
         let encoded = message
             .encode()
@@ -1996,10 +2353,6 @@ impl MeshTransport {
 
         match result {
             Ok(Ok(response_buf)) => {
-                {
-                    let mut pool = peer.stream_pool.lock().await;
-                    pool.release((send_stream, recv_stream));
-                }
                 tracing::debug!(
                     "Sent stream message to peer {} and received response: {:?}",
                     peer_id,
@@ -2009,7 +2362,7 @@ impl MeshTransport {
             }
             Ok(Err(e)) => {
                 tracing::warn!(
-                    "Stream response read failed for peer {}: {:?} - NOT returning stream to pool",
+                    "Stream response read failed for peer {}: {:?} - stream closed",
                     peer_id,
                     e
                 );
@@ -2017,7 +2370,7 @@ impl MeshTransport {
             }
             Err(_) => {
                 tracing::warn!(
-                    "Stream response timed out after {}s for peer {} - NOT returning stream to pool",
+                    "Stream response timed out after {}s for peer {} - stream closed",
                     Self::STREAM_RESPONSE_TIMEOUT_SECS,
                     peer_id
                 );
@@ -2255,7 +2608,10 @@ impl MeshTransport {
         };
 
         match self.commit_startup(&mut stage, report).await {
-            Ok(report) => Ok(report),
+            Ok(report) => {
+                *self.last_startup_report.write() = Some(report.clone());
+                Ok(report)
+            }
             Err(error) => self.rollback_and_return(&mut stage, error).await,
         }
     }
@@ -2289,7 +2645,8 @@ impl MeshTransport {
         // Phase 3: Start critical transport loops
         let config = self.config.clone();
         let topology = self.topology.clone();
-        let peer_connections = self.peer_connections.clone();
+        let peers = self.peers.clone();
+        let replay_states = self.replay_states.clone();
         let maintenance_shutdown = shutdown_rx.clone();
         stage
             .task_group
@@ -2297,18 +2654,19 @@ impl MeshTransport {
                 Self::mesh_maintenance_loop(
                     config,
                     topology,
-                    peer_connections,
+                    peers,
+                    replay_states,
                     maintenance_shutdown,
                 )
                 .await;
             });
 
-        let peer_connections_dg = self.peer_connections.clone();
+        let peers_for_datagrams = self.peers.clone();
         let datagram_shutdown = shutdown_rx.clone();
         stage
             .task_group
             .spawn_critical("datagram_listener", async move {
-                Self::datagram_listener_loop(peer_connections_dg, datagram_shutdown).await;
+                Self::datagram_listener_loop(peers_for_datagrams, datagram_shutdown).await;
             });
 
         self.check_startup_failure_hook(StartupFailurePoint::AfterCriticalTasks)
@@ -2356,9 +2714,7 @@ impl MeshTransport {
             .await?;
         if !self.config.seeds.is_empty() {
             match self.bootstrap_from_seeds(stage).await {
-                Ok(()) => {
-                    report.connected_seed_count = self.config.seeds.len();
-                }
+                Ok(()) => {}
                 Err(e) => {
                     if policy.require_seed_connectivity {
                         return Err(MeshTransportError::StartupFailed(format!(
@@ -2377,9 +2733,7 @@ impl MeshTransport {
             .await?;
         if !self.config.peers.is_empty() {
             match self.connect_to_peers(stage).await {
-                Ok(()) => {
-                    report.connected_configured_peer_count = self.config.peers.len();
-                }
+                Ok(()) => {}
                 Err(e) => {
                     if policy.require_configured_peers {
                         return Err(MeshTransportError::StartupFailed(format!(
@@ -2468,10 +2822,7 @@ impl MeshTransport {
                         tokio::select! {
                             _ = interval.tick() => {
                                 let peers: Vec<String> = health_transport
-                                    .peer_connections
-                                    .iter()
-                                    .map(|e| e.value().node_id.clone())
-                                    .collect();
+                                    .connected_peer_ids();
                                 for peer_id in peers {
                                     health_transport.perform_health_check(&peer_id).await;
                                 }
@@ -2684,7 +3035,74 @@ impl MeshTransport {
             stage.mark_runtime_started();
         }
 
+        // Phase 10: Peer readiness. "Started" means a session exists, not that
+        // the connect step returned. A node with configured seeds/peers and no
+        // session cannot serve mesh-routed sites, so report that truth here
+        // instead of counting configured addresses as connected.
+        report.connected_peer_count = self.peers.len();
+        if !policy.allow_zero_peers
+            && report.connected_peer_count == 0
+            && (!self.config.seeds.is_empty() || !self.config.peers.is_empty())
+        {
+            self.wait_for_first_peer(policy).await;
+            report.connected_peer_count = self.peers.len();
+            if report.connected_peer_count == 0 {
+                if policy.requires_any_peer() {
+                    tracing::error!(
+                        "Mesh startup: no peer connected within {}s while the startup policy requires one",
+                        policy.require_peer_within_secs
+                    );
+                    return Err(MeshTransportError::NoPeerConnected);
+                }
+                report.degraded_reasons.push(format!(
+                    "no connected peer within {}s (zero-peer startup allowed by policy)",
+                    policy.require_peer_within_secs
+                ));
+            }
+        }
+
+        // Connected counts come from the registry, matched against the
+        // configured entries. A configured seed or peer that never produced a
+        // session is not connected.
+        let sessions = self.connected_peer_sessions();
+        report.connected_seed_count = self
+            .config
+            .seeds
+            .iter()
+            .filter(|seed| {
+                sessions.iter().any(|session| {
+                    session.address == seed.address
+                        || seed.node_id.as_deref() == Some(session.node_id.as_str())
+                })
+            })
+            .count();
+        report.connected_configured_peer_count = self
+            .config
+            .peers
+            .iter()
+            .filter(|peer| {
+                sessions
+                    .iter()
+                    .any(|session| session.address == peer.address)
+            })
+            .count();
+
         Ok(report)
+    }
+
+    /// Poll the node-keyed registry until one session exists or the policy
+    /// deadline expires. `require_peer_within_secs == 0` checks once.
+    async fn wait_for_first_peer(&self, policy: &MeshStartupPolicy) {
+        let deadline = Instant::now() + Duration::from_secs(policy.require_peer_within_secs);
+        loop {
+            if !self.peers.is_empty() {
+                return;
+            }
+            if policy.require_peer_within_secs == 0 || Instant::now() >= deadline {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
     }
 
     /// Commit a successful startup: transfer staged resources to the transport
@@ -2824,6 +3242,15 @@ impl MeshTransport {
                                         None => None,
                                     }
                                 };
+                                // Drop the session from the registry before
+                                // joining: this is the last point that still
+                                // knows which node it belonged to.
+                                if transport.peers.remove_if_current(&exit.session_id).is_some() {
+                                    transport.replay_states.retain_after_close(
+                                        &exit.node_id,
+                                        crate::transport_types::DEFAULT_REPLAY_STATE_RETENTION,
+                                    );
+                                }
                                 // Await the handle outside the lock (Iteration 74, Phase 15)
                                 if let Some(task) = removed {
                                     match task.handle.await {
@@ -3400,14 +3827,12 @@ impl MeshTransport {
         // Phase 2: Close attempt-created QUIC connections
         for peer in &stage.created_peers {
             if peer.connection_inserted {
-                if let Some(entry) = self.peer_connections.get(&peer.session_id) {
-                    entry
-                        .value()
-                        .connection
-                        .close(0u32.into(), b"Startup rollback");
+                // Only the session that is still current may be closed here: a
+                // slow rollback must not tear down the session that replaced it.
+                if let Some(session) = self.peers.remove_if_current(&peer.session_id) {
+                    session.connection.close(0u32.into(), b"Startup rollback");
                     report.peer_connections_closed += 1;
                 }
-                self.peer_connections.remove(&peer.session_id);
             }
         }
 
@@ -3666,7 +4091,7 @@ impl MeshTransport {
 
         // Check that all staged peer connections were removed
         for peer in &stage.created_peers {
-            if peer.connection_inserted && self.peer_connections.contains_key(&peer.session_id) {
+            if peer.connection_inserted && self.peers.session_owner(&peer.session_id).is_some() {
                 issues.push(format!(
                     "Peer connection for session {} still present after rollback",
                     peer.session_id
@@ -3795,13 +4220,10 @@ impl MeshTransport {
         }
 
         // Phase 4: Close all peer connections
-        for entry in self.peer_connections.iter() {
-            entry
-                .value()
-                .connection
-                .close(0u32.into(), b"Recovery cleanup");
+        for session in self.peers.snapshot() {
+            session.connection.close(0u32.into(), b"Recovery cleanup");
         }
-        self.peer_connections.clear();
+        self.peers.clear();
 
         // Phase 5: Drain/abort/await peer sessions using the shared
         // `stop_peer_session_task` helper (Iteration 76, Phase 10). A zero
@@ -3868,8 +4290,7 @@ impl MeshTransport {
                     Ok(()) => {
                         // Successfully restored - also close connection if still present
                         if peer.connection_inserted {
-                            if let Some((_key, peer_conn)) =
-                                self.peer_connections.remove(&peer.session_id)
+                            if let Some(peer_conn) = self.peers.remove_if_current(&peer.session_id)
                             {
                                 peer_conn
                                     .connection
@@ -3957,10 +4378,10 @@ impl MeshTransport {
         }
 
         // Verify peer connections are empty
-        if !self.peer_connections.is_empty() {
+        if !self.peers.is_empty() {
             issues.push(format!(
                 "{} peer connections still present",
-                self.peer_connections.len()
+                self.peers.len()
             ));
         }
 
@@ -4181,6 +4602,7 @@ impl MeshTransport {
             peer_quic_port,
             peer_wireguard_port,
             trusted_status,
+            peer_public_key,
         ) = match hello_msg {
             MeshMessage::Hello {
                 version,
@@ -4202,92 +4624,75 @@ impl MeshTransport {
                 member_certificate,
                 org_public_key,
             } => {
-                if !crate::protocol::is_compatible_message_version(version) {
-                    return Err(MeshTransportError::VersionMismatch {
-                        expected: MESH_MESSAGE_VERSION,
-                        got: version,
-                    });
-                }
-
-                if let Some(ref expected_token) = auth_token {
-                    if !self
-                        .auth_keys
-                        .read()
-                        .values()
-                        .any(|k| bool::from(k.as_slice().ct_eq(expected_token.as_bytes())))
-                    {
-                        tracing::warn!(
-                            "Authentication failed for node {}: invalid auth token",
-                            node_id
-                        );
-                        return Err(MeshTransportError::AuthFailed(
-                            "Invalid auth token".to_string(),
-                        ));
-                    }
-                }
-
-                if let Some(ref our_network) = self.config.network_id {
-                    if let Some(ref peer_network) = network_id {
-                        if peer_network.as_str() != our_network.as_str() {
-                            tracing::warn!("Network ID mismatch from {}", node_id);
-                            return Err(MeshTransportError::AuthFailed(
-                                "Network ID mismatch".to_string(),
-                            ));
-                        }
-                    }
-                }
-
-                let authorized_keys: Vec<String> = self
-                    .config
-                    .seeds
-                    .iter()
-                    .filter_map(|seed| seed.public_key.clone())
-                    .collect();
-                let peer_pk = public_key.as_ref().map(|pk| pk.as_str());
-                let peer_sig = global_node_key.as_ref().map(|sk| sk.as_str());
-                let global_node_att_key = if role.is_origin() {
-                    public_key.as_ref().map(|pk| pk.as_str())
-                } else {
-                    None
-                };
-                let global_node_att_sig = if role.is_origin() {
-                    global_node_key.as_ref().map(|sk| sk.as_str())
-                } else {
-                    None
-                };
-                if let Err(e) = crate::peer_auth::validate_peer_role(
-                    &role,
-                    &authorized_keys,
+                // Identity, network isolation, role and PoW/signature policy in
+                // one place. `is_trusted` and `auth_token` are not inputs.
+                let authenticated = authenticate_inbound_hello(
+                    &self.config,
+                    self.revocation_list.as_deref(),
+                    version,
                     &node_id,
-                    peer_pk,
-                    peer_sig,
+                    role,
+                    network_id.as_deref(),
+                    public_key.as_deref(),
+                    global_node_key.as_deref(),
                     timestamp.unwrap_or(0),
-                    300,
-                    self.revocation_list.as_ref().map(|r| r.as_ref()),
-                    global_node_att_key,
-                    global_node_att_sig,
                     pow_nonce,
-                    pow_public_key.as_ref().map(|s| s.as_str()),
+                    pow_public_key.as_deref(),
                     member_certificate.as_ref(),
                     org_public_key.as_ref(),
-                    None,
-                    false,
-                ) {
-                    tracing::warn!("Node verification failed for {}: {}", node_id, e);
-                    return Err(MeshTransportError::AuthFailed(e));
+                    // An origin attests itself with the global-node signature
+                    // it was granted; every other role carries no attestation.
+                    if role.is_origin() {
+                        public_key.as_deref()
+                    } else {
+                        None
+                    },
+                    if role.is_origin() {
+                        global_node_key.as_deref()
+                    } else {
+                        None
+                    },
+                )?;
+
+                if is_trusted && !WARNED_ON_WIRE_TRUST.swap(true, Ordering::Relaxed) {
+                    tracing::warn!(
+                        "Node {} advertised Hello.is_trusted; the wire flag is ignored and trust is computed from the local allowlist",
+                        node_id
+                    );
                 }
+                if auth_token.is_some() && !WARNED_ON_WIRE_AUTH_TOKEN.swap(true, Ordering::Relaxed)
+                {
+                    tracing::debug!(
+                        "Node {} sent the retired Hello.auth_token field; it is ignored",
+                        node_id
+                    );
+                }
+
+                // `authenticate_inbound_hello` already bound this key to the
+                // claimed id; decode it again so the session registry holds the
+                // bytes later signature checks need.
+                let peer_public_key = crate::mesh::config::decode_node_public_key(
+                    public_key.as_deref().unwrap_or_default(),
+                )
+                .map_err(|error| {
+                    MeshTransportError::AuthFailed(format!(
+                        "Node {} public key could not be retained: {}",
+                        node_id, error
+                    ))
+                })?;
 
                 let upstreams_map: HashMap<String, crate::protocol::UpstreamInfo> =
                     upstreams.into_iter().collect();
 
                 (
                     node_id.to_string(),
-                    role,
+                    authenticated.role,
                     capabilities,
                     upstreams_map,
                     quic_port,
                     wireguard_port,
-                    is_trusted,
+                    authenticated.trusted,
+                    peer_public_key,
                 )
             }
             _ => {
@@ -4363,29 +4768,61 @@ impl MeshTransport {
 
         self.verify_peer_connection_certificate_if_available(&peer_node_id, &connection)?;
 
-        let peer_connection = crate::transport_types::MeshPeerConnection {
+        let peer_connection = Arc::new(MeshPeerConnection {
             node_id: peer_node_id.clone(),
             address: remote_addr.to_string(),
             connection: connection.clone(),
             session_id: session_id.clone(),
             connected_at: Instant::now(),
-            last_seen: Instant::now(),
+            last_seen: parking_lot::RwLock::new(Instant::now()),
             role: peer_role,
             upstreams: peer_upstreams.keys().cloned().collect(),
             is_trusted: trusted_status,
-            replay_protection: Arc::new(tokio::sync::RwLock::new(
-                crate::protocol::ReplayProtection::new(),
-            )),
-            stream_pool: Arc::new(tokio::sync::Mutex::new(
-                crate::transport_types::MeshStreamPool::new(Some(connection.clone())),
-            )),
-        };
+            public_key: peer_public_key,
+            direction: SessionDirection::Inbound,
+            generation: 0,
+        });
+
+        // One session per node. A dial/accept race must converge on a single
+        // connection on both peers; the loser is closed here and never reaches
+        // topology or the session registry.
+        match self.peers.register(Arc::clone(&peer_connection)) {
+            RegisterOutcome::Inserted => {}
+            RegisterOutcome::Replaced(loser)
+                if loser.session_id.as_str() == session_id.as_str() =>
+            {
+                let kept = self
+                    .peers
+                    .get(&peer_node_id)
+                    .map(|session| session.session_id.clone())
+                    .unwrap_or_default();
+                peer_connection
+                    .connection
+                    .close(0x01u32.into(), b"duplicate node session");
+                tracing::info!(
+                    "Rejected inbound session {} for {}: kept session {} (duplicate node session)",
+                    session_id,
+                    peer_node_id,
+                    kept
+                );
+                return Ok(());
+            }
+            RegisterOutcome::Replaced(loser) => {
+                loser
+                    .connection
+                    .close(0x01u32.into(), b"duplicate node session");
+                tracing::info!(
+                    "Replaced session {} for {} with {} (duplicate node session)",
+                    loser.session_id,
+                    peer_node_id,
+                    session_id
+                );
+            }
+        }
 
         self.topology
             .add_peer(peer_info.clone(), crate::topology::PeerStatus::Healthy)
             .await;
-        self.peer_connections
-            .insert(session_id.clone(), peer_connection);
 
         if let Some(ref rm) = self.routing_manager {
             if rm.is_enabled() {
@@ -4494,14 +4931,11 @@ impl MeshTransport {
         let _ = self.lifecycle.session_reaper_shutdown.send(true);
 
         // Close all QUIC connections
-        for entry in self.peer_connections.iter() {
-            entry
-                .value()
-                .connection
-                .close(0u32.into(), b"Mesh shutdown");
+        for session in self.peers.snapshot() {
+            session.connection.close(0u32.into(), b"Mesh shutdown");
         }
-        let peers_at_shutdown_start = self.peer_connections.len();
-        self.peer_connections.clear();
+        let peers_at_shutdown_start = self.peers.len();
+        self.peers.clear();
 
         // Drain auxiliary tasks (Iteration 73, Phase 13-14).
         // Acquire submission lock first to prevent new submissions during drain.
@@ -4567,7 +5001,7 @@ impl MeshTransport {
         // Build report
         let mut report = MeshShutdownReport {
             peers_at_shutdown_start,
-            remaining_peers: self.peer_connections.len(),
+            remaining_peers: self.peers.len(),
             drained_peer_sessions: drained,
             aborted_peer_sessions: aborted,
             failed_peer_sessions: failed,
@@ -4716,9 +5150,13 @@ impl MeshTransport {
         for seed in &verified_seeds {
             tracing::info!("Attempting to connect to verified seed: {}", seed.address);
 
+            // The seed's public key used to be forwarded as the Hello
+            // auth_token. That gate is retired: a token is neither sent nor
+            // checked, and the seed's identity comes from the key binding plus
+            // the allowlist.
             let peer_config = MeshPeerConfig {
                 address: seed.address.clone(),
-                auth_token: seed.public_key.clone(),
+                auth_token: None,
             };
             match self.connect_to_peer(&peer_config, Some(stage)).await {
                 Ok(peer_info) => {
@@ -4741,7 +5179,7 @@ impl MeshTransport {
         &self,
         peer_config: &MeshPeerConfig,
         mut stage: Option<&mut MeshStartupStage>,
-    ) -> Result<MeshPeerConnection, MeshTransportError> {
+    ) -> Result<Arc<MeshPeerConnection>, MeshTransportError> {
         if !self.check_rate_limit() {
             return Err(MeshTransportError::RateLimited);
         }
@@ -4803,8 +5241,6 @@ impl MeshTransport {
             .into_iter()
             .map(|u| (u.upstream_id.clone(), u))
             .collect();
-
-        let auth_token = peer_config.auth_token.clone();
 
         let quic_port = self.get_actual_quic_port().await.map(|p| p as u32);
         let wireguard_port = None;
@@ -4883,7 +5319,9 @@ impl MeshTransport {
                 self.config.role,
             ),
             upstreams,
-            auth_token: auth_token.clone().map(|s| s.into()),
+            // Retired: peers ignore this field, so sending one would only
+            // advertise a secret that no longer gates anything.
+            auth_token: None,
             network_id: self.config.network_id.clone().map(|s| s.into()),
             global_node_key: global_node_auth_sig,
             timestamp: Some(MeshMessage::generate_timestamp()),
@@ -4963,42 +5401,62 @@ impl MeshTransport {
                 member_certificate: _,
                 org_public_key: _,
             } => {
-                if let Some(ref pk) = peer_public_key {
-                    // Bind the claimed node id to the key it presents. The
-                    // previous check compared a key-derived DHT `NodeId` with
-                    // `NodeId::from_node_id_string`, which hash different
-                    // inputs and can never match, so every session failed.
-                    match crate::mesh::config::decode_node_public_key(pk) {
-                        Ok(pk_bytes) => {
-                            let expected = crate::mesh::config::node_id_from_public_key(&pk_bytes);
-                            if expected.as_deref() != Some(node_id.as_str()) {
-                                tracing::warn!(
-                                    "Node ID mismatch: peer claimed {} but their public key derives {:?}",
-                                    node_id,
-                                    expected
-                                );
-                                return Err(MeshTransportError::AuthFailed(
-                                    "Node ID does not match public key".to_string(),
-                                ));
-                            }
-                        }
-                        Err(error) => {
-                            tracing::warn!(
-                                "Node {} presented an unusable public key: {}",
-                                node_id,
-                                error
-                            );
-                            return Err(MeshTransportError::AuthFailed(
-                                "Public key is invalid".to_string(),
-                            ));
-                        }
-                    }
-                } else {
-                    tracing::warn!("Node {} did not provide public key in handshake", node_id);
-                    return Err(MeshTransportError::AuthFailed(
-                        "Public key is required for authentication".to_string(),
-                    ));
+                if !crate::protocol::is_compatible_message_version(version) {
+                    return Err(MeshTransportError::VersionMismatch {
+                        expected: MESH_MESSAGE_VERSION,
+                        got: version,
+                    });
                 }
+
+                // The responder is authenticated with the same rules as the
+                // initiator: the ack's node id must be the id its key derives,
+                // and the certificate identity must match before trust or
+                // stake are applied.
+                bind_node_id_to_public_key(&node_id, peer_public_key.as_deref())?;
+                self.verify_peer_connection_certificate_if_available(&node_id, &connection)?;
+
+                // The binding above succeeded, so the ack's key is the one the
+                // peer's id derives from; keep it for signature checks.
+                let bound_public_key = crate::mesh::config::decode_node_public_key(
+                    peer_public_key.as_deref().unwrap_or_default(),
+                )
+                .map_err(|error| {
+                    MeshTransportError::AuthFailed(format!(
+                        "Node {} public key could not be retained: {}",
+                        node_id, error
+                    ))
+                })?;
+
+                verify_peer_network_id(
+                    self.config.network_id.as_deref(),
+                    resp_network_id.as_deref(),
+                    &node_id,
+                )?;
+
+                if resp_token.is_some() && !WARNED_ON_WIRE_AUTH_TOKEN.swap(true, Ordering::Relaxed)
+                {
+                    tracing::debug!(
+                        "Node {} sent the retired HelloAck.auth_token field; it is ignored",
+                        node_id
+                    );
+                }
+
+                // The role the responder may hold is the one this node's
+                // allowlist grants it; a different claim is a rejection.
+                let resolved_role = self
+                    .config
+                    .resolve_peer_role(&node_id, role)
+                    .map_err(MeshTransportError::AuthFailed)?;
+
+                if let Err(e) = crate::peer_auth::validate_peer_role_after_tls(&resolved_role) {
+                    tracing::warn!("Rejected peer {} with invalid role: {}", node_id, e);
+                    return Err(MeshTransportError::AuthFailed(e));
+                }
+
+                let role = resolved_role;
+                // Trust is local: listed and allowed, with the role above
+                // already confirmed against the same allowlist.
+                let trusted_status = self.config.is_peer_allowlisted(&node_id);
 
                 let is_genesis_org_member = {
                     let org_mgr = self.org_manager.read();
@@ -5008,9 +5466,11 @@ impl MeshTransport {
                         .unwrap_or_else(|| self.config.node_identity.genesis_org_id());
                     org_mgr.is_member(&genesis_org_id, &node_id)
                 };
-                let trusted_status = role.is_global() || is_genesis_org_member;
+                // Organization membership is local state and only exempts a
+                // peer from the stake gate; it does not make it trusted.
+                let stake_exempt = trusted_status || is_genesis_org_member;
 
-                if !trusted_status {
+                if !stake_exempt {
                     if let Some(ref stake_mgr) = self.stake_manager {
                         let config = stake_mgr.get_config();
                         let min_stake = config.min_stake_for_routing;
@@ -5043,83 +5503,64 @@ impl MeshTransport {
                     peer_wireguard_port
                 );
 
-                if !crate::protocol::is_compatible_message_version(version) {
-                    return Err(MeshTransportError::VersionMismatch {
-                        expected: MESH_MESSAGE_VERSION,
-                        got: version,
-                    });
-                }
-
-                if let Some(ref expected_token) = auth_token {
-                    match &resp_token {
-                        Some(resp_t)
-                            if bool::from(resp_t.as_bytes().ct_eq(expected_token.as_bytes())) => {}
-                        _ => {
-                            tracing::warn!("Authentication failed for node {}", node_id);
-                            return Err(MeshTransportError::AuthFailed(
-                                "Invalid auth token".to_string(),
-                            ));
-                        }
-                    }
-                }
-
-                if let Some(ref our_network) = self.config.network_id {
-                    if let Some(ref peer_network) = resp_network_id {
-                        if peer_network.as_str() != our_network.as_str() {
-                            tracing::warn!(
-                                "Network ID mismatch: peer {} is on network {} but we are on {}",
-                                node_id,
-                                peer_network,
-                                our_network
-                            );
-                            return Err(MeshTransportError::AuthFailed(
-                                "Network ID mismatch".to_string(),
-                            ));
-                        }
-                    }
-                }
-
-                let _authorized_keys: Vec<String> = self
-                    .config
-                    .seeds
-                    .iter()
-                    .filter_map(|seed| seed.public_key.clone())
-                    .collect();
-                let _peer_pk = peer_public_key.as_ref().map(|pk| pk.as_str());
-                // HelloAck has no signature or PoW field, so the responder is
-                // authenticated by the mutually verified TLS certificate plus
-                // the node-id/public-key binding checked above. Only the role
-                // bits are validated here; the full validate_peer_role
-                // contract cannot be satisfied on this path.
-                if let Err(e) = crate::peer_auth::validate_peer_role_after_tls(&role) {
-                    tracing::warn!("Rejected peer {} with invalid role: {}", node_id, e);
-                    return Err(MeshTransportError::AuthFailed(e));
-                }
-
                 let upstreams: Vec<String> = upstreams.keys().cloned().collect();
 
                 // peer_capabilities already in scope
                 let dns_serving_healthy = peer_capabilities.can_serve_dns;
 
-                self.verify_peer_connection_certificate_if_available(&node_id, &connection)?;
-
-                let peer_connection = MeshPeerConnection {
+                let peer_connection = Arc::new(MeshPeerConnection {
                     node_id: node_id.to_string(),
                     address: peer_config.address.clone(),
                     connection: connection.clone(),
                     session_id: session_id.to_string(),
                     connected_at: Instant::now(),
-                    last_seen: Instant::now(),
+                    last_seen: parking_lot::RwLock::new(Instant::now()),
                     role,
                     upstreams: upstreams.clone(),
                     is_trusted: trusted_status,
-                    replay_protection: Arc::new(tokio::sync::RwLock::new(
-                        crate::protocol::ReplayProtection::new(),
-                    )),
-                    stream_pool: Arc::new(tokio::sync::Mutex::new(MeshStreamPool::new(Some(
-                        connection.clone(),
-                    )))),
-                };
+                    public_key: bound_public_key,
+                    direction: SessionDirection::Outbound,
+                    generation: 0,
+                });
+
+                // Register before touching topology: a session that loses the
+                // dial/accept race must not appear connected.
+                match self.peers.register(Arc::clone(&peer_connection)) {
+                    RegisterOutcome::Inserted => {}
+                    RegisterOutcome::Replaced(loser)
+                        if loser.session_id.as_str() == session_id.as_str() =>
+                    {
+                        let kept = self
+                            .peers
+                            .get(&node_id)
+                            .map(|session| session.session_id.clone())
+                            .unwrap_or_default();
+                        peer_connection
+                            .connection
+                            .close(0x01u32.into(), b"duplicate node session");
+                        tracing::info!(
+                            "Rejected outbound session {} for {}: kept session {} (duplicate node session)",
+                            session_id,
+                            node_id,
+                            kept
+                        );
+                        return Err(MeshTransportError::ConnectionFailed(
+                            "duplicate node session: the peer-initiated connection is authoritative"
+                                .to_string(),
+                        ));
+                    }
+                    RegisterOutcome::Replaced(loser) => {
+                        loser
+                            .connection
+                            .close(0x01u32.into(), b"duplicate node session");
+                        tracing::info!(
+                            "Replaced session {} for {} with {} (duplicate node session)",
+                            loser.session_id,
+                            node_id,
+                            session_id
+                        );
+                    }
+                }
 
                 // Capture topology state before mutation (Iteration 73, Phase 2-3)
                 topology_snapshot_before = if stage.is_some() {
@@ -5164,9 +5605,7 @@ impl MeshTransport {
         let peer_node_id = peer_info.node_id.clone();
         let peer_address = peer_info.address.clone();
         let peer_role = peer_info.role;
-        let peer_info_return = peer_info.clone();
-        self.peer_connections
-            .insert(session_id.to_string(), peer_info);
+        let peer_info_return = Arc::clone(&peer_info);
 
         // Capture DHT state before mutation (Iteration 73, Phase 4-6)
         let dht_snapshot_before = if stage.is_some() {
@@ -5570,8 +6009,7 @@ impl MeshTransport {
             }
         }
 
-        for entry in self.peer_connections.iter() {
-            let peer = entry.value();
+        for peer in self.peers.snapshot() {
             if peer.role.is_global() {
                 let upstream_id_for_sig = upstream_id.to_string();
                 let upstream_id_for_msg = upstream_id.to_string();
@@ -5860,15 +6298,39 @@ impl MeshTransport {
         (success_count, fail_count, sent_node_ids)
     }
 
+    /// Node ids with a live session, straight from the registry.
+    ///
+    /// Topology can lag a takeover or a failed session; this cannot, which is
+    /// why status and tests read it instead.
+    pub fn connected_peer_ids(&self) -> Vec<String> {
+        self.peers.node_ids()
+    }
+
+    pub fn peer_count(&self) -> usize {
+        self.peers.len()
+    }
+
     pub fn connected_peer_count(&self) -> usize {
-        self.peer_connections.len()
+        self.peer_count()
+    }
+
+    /// Replay state for a node, created on demand for a live session.
+    ///
+    /// `None` means the node has neither a session nor retained state. Callers
+    /// must reject in that case: skipping the replay check for an unknown peer
+    /// is the defect node-scoped state exists to remove.
+    pub(crate) fn replay_state_for_peer(
+        &self,
+        node_id: &str,
+    ) -> Option<Arc<tokio::sync::RwLock<crate::protocol::ReplayProtection>>> {
+        if self.peers.get(node_id).is_some() {
+            return Some(self.replay_states.state_for(node_id));
+        }
+        self.replay_states.get(node_id)
     }
 
     pub fn get_connected_peers(&self) -> Vec<String> {
-        self.peer_connections
-            .iter()
-            .map(|e| e.value().node_id.clone())
-            .collect()
+        self.connected_peer_ids()
     }
 
     /// Forward one HTTP/1.x request to `peer_id` over the mesh.
@@ -5876,10 +6338,14 @@ impl MeshTransport {
     /// `service_id` is the origin's `local_upstreams` key. It travels as a
     /// typed, versioned preface ahead of the HTTP bytes so the origin resolves
     /// the operator-configured upstream instead of inferring it from `Host`.
+    /// `meta` is the authenticated client identity observed at this edge; it
+    /// travels in the same preface and is the origin's only trusted source of
+    /// client address and protocol.
     pub async fn proxy_http_request<B>(
         &self,
         peer_id: &str,
         service_id: &str,
+        meta: Option<&crate::service_target::ClientMetadata>,
         request: Request<B>,
     ) -> Result<Response<BoxBody<Bytes, Infallible>>, MeshTransportError>
     where
@@ -5889,10 +6355,10 @@ impl MeshTransport {
     {
         use http_body_util::BodyExt;
 
-        let preface = crate::service_target::encode_service_preface(service_id)
+        let preface = crate::service_target::encode_service_preface(service_id, meta)
             .map_err(|e| MeshTransportError::SendFailed(format!("invalid mesh service ID: {e}")))?;
 
-        let peer = match self.peer_connections.get(peer_id) {
+        let peer = match self.peers.get(peer_id) {
             Some(p) => p,
             None => {
                 if let Some(peer_state) = self.topology.get_peer(peer_id).await {
@@ -5913,17 +6379,15 @@ impl MeshTransport {
                         );
                     }
                 }
-                self.peer_connections
+                self.peers
                     .get(peer_id)
                     .ok_or_else(|| MeshTransportError::PeerNotFound(peer_id.to_string()))?
             }
         };
 
-        let (mut send_stream, mut recv_stream) = {
-            let mut pool = peer.stream_pool.lock().await;
-            pool.acquire().await
-        }
-        .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
+        let (mut send_stream, mut recv_stream) = peer.connection.open_bi().await.map_err(|e| {
+            MeshTransportError::SendFailed(format!("Failed to open stream: {:?}", e))
+        })?;
 
         let method = request.method().to_string();
         let uri = request.uri().to_string();
@@ -5958,6 +6422,13 @@ impl MeshTransport {
                 .await
                 .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
         }
+
+        // Tell the origin that the request is complete. Framing still comes
+        // from `Content-Length`; the FIN only distinguishes "no more bytes"
+        // from a stall.
+        send_stream.finish().map_err(|e| {
+            MeshTransportError::SendFailed(format!("Failed to finish request stream: {:?}", e))
+        })?;
 
         use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
         let mut reader = BufReader::with_capacity(4096, &mut recv_stream);
@@ -6094,11 +6565,6 @@ impl MeshTransport {
             .body(boxed_body)
             .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
 
-        {
-            let mut pool = peer.stream_pool.lock().await;
-            pool.release((send_stream, recv_stream));
-        }
-
         Ok(response)
     }
 
@@ -6139,6 +6605,28 @@ impl MeshTransport {
 
     pub fn get_global_verifying_key(&self) -> String {
         self.config.global_node_key.clone().unwrap_or_default()
+    }
+
+    /// Verify a message signature with the key bound to `from_node`'s identity.
+    ///
+    /// The live session is the primary source: its key is the one the handshake
+    /// bound to the node id, so a signature that verifies here is a signature
+    /// by the identity this node authenticated. Global nodes can be addressed
+    /// without a live session, so the configured global-node key is the
+    /// fallback. With neither, the call fails closed.
+    pub fn verify_peer_message_signature(
+        &self,
+        from_node: &str,
+        bytes: &[u8],
+        signature: &[u8],
+    ) -> Result<(), String> {
+        let session_key = self.peers.public_key(from_node);
+        let fallback = if session_key.is_none() {
+            self.cert_manager.read().get_global_node_key(from_node)
+        } else {
+            None
+        };
+        verify_peer_message_signature_with(from_node, bytes, signature, session_key.or(fallback))
     }
 
     pub fn get_origin_signer(&self) -> Option<Arc<synvoid_integrity::Ed25519Signer>> {
@@ -6308,6 +6796,100 @@ mod tests {
             "peer-c"
         )
         .is_ok());
+    }
+
+    #[test]
+    fn legacy_hash_key_is_rejected_with_a_hint() {
+        use sha2::{Digest, Sha256};
+
+        // The pre-fix derivation: the published "key" is a hash of the seed and
+        // the id is the first 8 bytes of that key. The warning is the only
+        // remediation hint an operator sees, so the rejection is the assertion.
+        let mut seed = [0x5au8; 32];
+        seed[0] = 0x11;
+        let mut hasher = Sha256::new();
+        hasher.update(b"public-key-from:");
+        hasher.update(seed);
+        let legacy_key = hasher.finalize().to_vec();
+        let claimed_id = format!("node-{}", hex::encode(&legacy_key[..8]));
+
+        let error = super::bind_node_id_to_public_key(&claimed_id, Some(&hex::encode(&legacy_key)))
+            .expect_err("a hashed-key identity must not bind");
+        assert!(
+            matches!(error, crate::transport::MeshTransportError::AuthFailed(_)),
+            "{error:?}"
+        );
+        assert!(
+            error
+                .to_string()
+                .contains("does not match the presented public key"),
+            "{error}"
+        );
+
+        // A genuine verifying key does not satisfy the legacy rule either, so
+        // the hint cannot be reached by a correctly keyed node.
+        let verifying_key = crate::mesh::config::derive_identity_public_key(&seed);
+        let genuine_id =
+            crate::mesh::config::node_id_from_public_key(&verifying_key).expect("32-byte key");
+        assert_ne!(genuine_id, claimed_id);
+        assert!(
+            super::bind_node_id_to_public_key(&genuine_id, Some(&hex::encode(verifying_key)))
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn verify_peer_message_signature_uses_the_registered_key() {
+        use crate::protocol::MeshMessageSigner;
+
+        let registered = MeshMessageSigner::from_secret([0x21u8; 32]);
+        let other = MeshMessageSigner::from_secret([0x22u8; 32]);
+        let payload = b"mesh message bytes";
+        let signature = registered.sign(payload);
+        let registered_key = registered.get_public_key_bytes();
+
+        super::verify_peer_message_signature_with(
+            "node-peer",
+            payload,
+            &signature,
+            Some(registered_key.clone()),
+        )
+        .expect("a signature by the registered key must verify");
+
+        let error = super::verify_peer_message_signature_with(
+            "node-peer",
+            payload,
+            &signature,
+            Some(other.get_public_key_bytes()),
+        )
+        .expect_err("a signature by another key must fail");
+        assert!(error.contains("does not verify"), "{error}");
+
+        let error =
+            super::verify_peer_message_signature_with("node-unknown", payload, &signature, None)
+                .expect_err("an unknown node has no key");
+        assert!(error.contains("no registered public key"), "{error}");
+
+        let error = super::verify_peer_message_signature_with(
+            "node-peer",
+            b"tampered bytes",
+            &signature,
+            Some(registered_key.clone()),
+        )
+        .expect_err("the signature only covers the exact bytes");
+        assert!(error.contains("does not verify"), "{error}");
+
+        // Truncated or empty keys never verify.
+        for key in [Vec::new(), registered_key[..16].to_vec()] {
+            let error = super::verify_peer_message_signature_with(
+                "node-peer",
+                payload,
+                &signature,
+                Some(key),
+            )
+            .expect_err("a malformed registered key must fail closed");
+            assert!(error.contains("expected 32"), "{error}");
+        }
     }
 
     #[tokio::test]

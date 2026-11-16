@@ -170,13 +170,13 @@ async fn start_required_mesh(
     }
 
     match crate::worker::mesh_supervision::start_mesh_generation(&input.mesh_transport, 0).await {
-        Ok(()) => {
+        Ok(report) => {
             if let Some(support) = input.support_tasks {
                 match super::register_mesh_generation_support(input.state, support, 1).await {
                     Ok(bundle) => {
                         {
                             let mut s = mesh_status.write().await;
-                            s.transition_running();
+                            s.record_startup_report(&report);
                         }
                         send_ready_if_deferred(input.state, input.worker_id, input.readiness)
                             .await?;
@@ -207,7 +207,7 @@ async fn start_required_mesh(
             } else {
                 {
                     let mut s = mesh_status.write().await;
-                    s.transition_running();
+                    s.record_startup_report(&report);
                 }
                 send_ready_if_deferred(input.state, input.worker_id, input.readiness).await?;
                 Ok(RequiredMeshStartOutput {
@@ -264,6 +264,7 @@ fn spawn_optional_support_registration(
 fn spawn_optional_mesh_startup(
     registry: &mut crate::worker::task_registry::WorkerTaskRegistry,
     mesh_transport: Arc<synvoid_mesh::MeshTransport>,
+    mesh_status: Arc<tokio::sync::RwLock<crate::worker::mesh_supervision::WorkerMeshStatus>>,
     event_tx: tokio::sync::mpsc::Sender<crate::worker::mesh_supervision::MeshSupervisionEvent>,
     support_rx: tokio::sync::oneshot::Receiver<Result<Option<MeshGenerationSupport>, String>>,
     startup_complete_tx: tokio::sync::oneshot::Sender<
@@ -272,11 +273,28 @@ fn spawn_optional_mesh_startup(
 ) {
     registry.spawn_one_shot("mesh_startup", async move {
         let result = mesh_transport
-            .start_with_policy(synvoid_mesh::lifecycle::MeshStartupPolicy::default())
+            .start_with_policy(synvoid_mesh::lifecycle::MeshStartupPolicy::require_peers(
+                30,
+            ))
             .await;
         match result {
             Ok(report) => {
-                tracing::info!(?report, "Mesh transport started");
+                if report.degraded_reasons.is_empty() {
+                    tracing::info!(
+                        connected_peers = report.connected_peer_count,
+                        "Mesh transport started"
+                    );
+                } else {
+                    tracing::warn!(
+                        connected_peers = report.connected_peer_count,
+                        degraded = ?report.degraded_reasons,
+                        "Mesh transport started degraded"
+                    );
+                }
+                {
+                    let mut status = mesh_status.write().await;
+                    status.record_startup_report(&report);
+                }
                 let bundle = match support_rx.await {
                     Ok(Ok(b)) => b,
                     Ok(Err(e)) => {
@@ -376,7 +394,15 @@ async fn await_optional_mesh_startup(
                         } else {
                             {
                                 let mut s = mesh_status.write().await;
-                                s.transition_running();
+                                // The startup task recorded the report before
+                                // sending completion; do not erase degradation
+                                // with a blanket "running" transition.
+                                if s.degraded_reasons.is_empty() {
+                                    s.transition_running();
+                                } else {
+                                    let reasons = s.degraded_reasons.join("; ");
+                                    s.transition_degraded(reasons);
+                                }
                             }
                             active_mesh_support = bundle;
                         }
@@ -489,6 +515,7 @@ pub async fn attach_mesh(
             spawn_optional_mesh_startup(
                 &mut registry,
                 mesh_transport,
+                mesh_status.clone(),
                 event_tx,
                 support_rx,
                 startup_complete_tx,

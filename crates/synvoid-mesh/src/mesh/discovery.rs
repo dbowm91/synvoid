@@ -569,8 +569,18 @@ impl MeshDiscovery {
                 // if the origin hasn't been properly attested by a real global node.
                 let global_node_att_key = None;
                 let global_node_att_sig = None;
+                let resolved_role = match self.config.resolve_peer_role(&node_id, role) {
+                    Ok(role) => role,
+                    Err(e) => {
+                        tracing::warn!("{}", e);
+                        return Err(MeshDiscoveryError::AuthFailed(e));
+                    }
+                };
+                let allowlisted = self.config.is_peer_allowlisted(&node_id);
                 if let Err(e) = crate::peer_auth::validate_peer_role(
                     &role,
+                    &resolved_role,
+                    allowlisted,
                     &self.get_authorized_global_pubkeys(),
                     &node_id,
                     public_key.as_ref().map(|pk| pk.as_str()),

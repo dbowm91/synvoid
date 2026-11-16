@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 // SAFETY_REASON: Reserved for future routing protocol handling
 
-use crate::transport::{MeshPeerConnection, MeshTransport, MeshTransportError};
+use crate::transport::{MeshTransport, MeshTransportError};
 use std::time::{Duration, Instant};
 
 use quinn::SendStream;
@@ -59,7 +59,7 @@ impl MeshTransport {
         upstream_id: &str,
     ) -> Result<(), MeshTransportError> {
         let peer = self
-            .peer_connections
+            .peers
             .get(peer_id)
             .ok_or_else(|| MeshTransportError::PeerNotFound(peer_id.to_string()))?;
 
@@ -76,11 +76,9 @@ impl MeshTransport {
             nonce,
         };
 
-        let (mut send_stream, recv_stream) = {
-            let mut pool = peer.stream_pool.lock().await;
-            pool.acquire().await
-        }
-        .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
+        let (mut send_stream, _recv_stream) = peer.connection.open_bi().await.map_err(|e| {
+            MeshTransportError::SendFailed(format!("Failed to open stream: {:?}", e))
+        })?;
 
         let encoded = query
             .encode()
@@ -94,11 +92,6 @@ impl MeshTransport {
             .write_all(&encoded)
             .await
             .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
-
-        {
-            let mut pool = peer.stream_pool.lock().await;
-            pool.release((send_stream, recv_stream));
-        }
 
         tracing::debug!("Sent stream route query to peer {}: {}", peer_id, query_id);
         Ok(())
@@ -196,7 +189,7 @@ impl MeshTransport {
 
         if initiator != from_peer {
             let initiator_exists = self.topology.get_peer(initiator).await.is_some();
-            let initiator_in_connections = self.peer_connections.contains_key(initiator);
+            let initiator_in_connections = self.peers.get(initiator).is_some();
 
             if !initiator_exists && !initiator_in_connections {
                 tracing::warn!(
@@ -308,12 +301,12 @@ impl MeshTransport {
         if max_hops > 0 {
             const ROUTE_QUERY_FANOUT: usize = 3;
 
-            let peers_to_query: Vec<_> = self
-                .peer_connections
-                .iter()
-                .filter(|e| e.key() != from_peer && e.key() != initiator)
+            let peers_to_query: Vec<String> = self
+                .peers
+                .node_ids()
+                .into_iter()
+                .filter(|node_id| node_id != from_peer && node_id != initiator)
                 .take(ROUTE_QUERY_FANOUT)
-                .map(|e| e.key().clone())
                 .collect();
 
             if !peers_to_query.is_empty() {
@@ -741,54 +734,8 @@ impl MeshTransport {
         Ok(())
     }
 
-    pub(crate) async fn send_route_query_to_peer(
-        &self,
-        peer: &MeshPeerConnection,
-        query_id: &str,
-        upstream_id: &str,
-    ) -> Result<(), MeshTransportError> {
-        let (mut send_stream, recv_stream) = {
-            let mut pool = peer.stream_pool.lock().await;
-            pool.acquire().await
-        }
-        .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
-
-        let sequence = self.config.routing.query_sequence.next();
-        let timestamp = MeshMessage::generate_timestamp();
-        let nonce = MeshMessage::generate_nonce();
-        let query = MeshMessage::RouteQuery {
-            query_id: query_id.into(),
-            upstream_id: upstream_id.into(),
-            max_hops: self.config.routing.max_hops,
-            initiator: self.config.node_id().into(),
-            sequence,
-            timestamp,
-            nonce,
-        };
-
-        let encoded = query
-            .encode()
-            .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
-        let len = (encoded.len() as u32).to_be_bytes();
-        send_stream
-            .write_all(&len)
-            .await
-            .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
-        send_stream
-            .write_all(&encoded)
-            .await
-            .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
-
-        {
-            let mut pool = peer.stream_pool.lock().await;
-            pool.release((send_stream, recv_stream));
-        }
-
-        Ok(())
-    }
-
     pub(crate) async fn proactive_cache_warm(&self) {
-        if self.peer_connections.is_empty() {
+        if self.peers.is_empty() {
             return;
         }
 
@@ -800,11 +747,7 @@ impl MeshTransport {
         }
 
         // Get peers we can query
-        let peers: Vec<String> = self
-            .peer_connections
-            .iter()
-            .map(|e| e.key().clone())
-            .collect();
+        let peers: Vec<String> = self.peers.node_ids();
 
         if peers.is_empty() {
             return;
