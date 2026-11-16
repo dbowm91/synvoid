@@ -63,11 +63,10 @@ jobs:
       - name: Verify
         run: cargo xtask verify
 
-  # `admin-ui/dist` is a committed build artifact that the admin server serves
-  # directly (`resolve_admin_ui_assets` in `src/admin/mod.rs`). Nothing in
-  # `cargo xtask verify` rebuilds it, so it drifted silently once already: the
-  # shipped WASM lagged the Rust sources by ~3 months while the stylesheet was
-  # regenerated separately. This job is the build `dist` has never had.
+  # `admin-ui/dist` is a committed build artifact served by the admin server
+  # (`resolve_admin_ui_assets` in `src/admin/mod.rs`). Build it here because
+  # `cargo xtask verify` does not cover it. WASM bytes vary by host, so the
+  # freshness guard checks a source fingerprint instead of binary equality.
   admin-ui-build:
     name: admin-ui-build
     runs-on: ubuntu-latest
@@ -96,8 +95,7 @@ jobs:
         working-directory: admin-ui
         run: npm ci && npm run build
 
-      # When the artifact drifts, expose the exact bundle this runner produced
-      # so it can be adopted without guessing at hash-name differences.
+      # Keep the runner's distribution available when build or freshness checks fail.
       - name: Upload built admin UI
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -106,15 +104,14 @@ jobs:
           path: admin-ui/dist
           if-no-files-found: error
 
-      # `git status --porcelain` rather than `git diff`: Trunk renames the
-      # bundle on every build, so drift shows up as an untracked new hash plus a
-      # deleted old one. `git diff` alone only sees the deleted half.
-      - name: Assert committed dist matches source
+      # npm run build refreshes this host-independent marker from the build inputs.
+      # Checking only the marker avoids false failures from host-specific WASM bytes.
+      - name: Assert committed admin UI fingerprint is current
         run: |
-          drift="$(git status --porcelain -- admin-ui/dist)"
+          drift="$(git status --porcelain -- admin-ui/build-source.sha256)"
           if [ -n "$drift" ]; then
-            echo "::error::admin-ui/dist is stale — the committed build artifact does not match admin-ui/src."
-            echo "Run 'cd admin-ui && npm run build' and commit the result."
+            echo "::error::admin-ui/build-source.sha256 is stale for the current admin UI sources."
+            echo "Run 'cd admin-ui && npm ci && npm run build' and commit the updated build."
             echo "$drift"
             exit 1
           fi
